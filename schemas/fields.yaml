@@ -1,0 +1,259 @@
+# ====================================================================
+# data4cyber - 字段 / Classification / Glossary 注册表
+# 
+# - 本文件是 **受控** 注册表,新增官方维度需 PR review
+# - 业务用户可自由使用 user.* / _auto.* 私有空间(无需注册)
+# - 被 asset-service 启动时加载,用于校验 tag 写入
+# - 被 UI 用来渲染分面过滤器
+# ====================================================================
+
+version: 1
+updated_at: "2026-04-22"
+
+# --------------------------------------------------------------------
+# 1. URN 命名空间(ADR-006)
+# --------------------------------------------------------------------
+urn_namespace: grace
+
+allowed_entity_types:
+  - asset
+  - mcap
+  - segment
+  - file
+  - tag
+  - classification
+  - glossary
+  - user
+  - algo
+  - run
+  - dataset
+  - export
+  - tenant
+
+# --------------------------------------------------------------------
+# 2. Asset 类型
+# --------------------------------------------------------------------
+asset_types:
+  - name: video_segment
+    description: 从 MCAP 文件中切出的视频有效片段(默认)
+  - name: derived_segment
+    description: 算法派生的 segment(如二次剪裁)
+  - name: audio_clip
+    description: 纯音频片段(Phase 2+)
+  - name: manual_annotation_set
+    description: 纯人工标注数据集(可选)
+
+# --------------------------------------------------------------------
+# 3. Classifications + Tags
+# --------------------------------------------------------------------
+# 规则:
+#   - Classification 首字母大写(如 Scene)
+#   - Tag 全小写(如 urban)
+#   - 写入约定:cf:tag 下 key 为 "<Classification>.<tag>"
+# --------------------------------------------------------------------
+classifications:
+
+  - name: Scene
+    description: 场景类型
+    mutually_exclusive: false     # 一个 asset 可多个 Scene
+    tags:
+      - { name: urban,    description: "城市道路场景" }
+      - { name: highway,  description: "高速公路场景" }
+      - { name: rural,    description: "乡村道路场景" }
+      - { name: parking,  description: "停车场" }
+      - { name: tunnel,   description: "隧道" }
+      - { name: bridge,   description: "桥梁" }
+      - { name: junction, description: "交叉路口" }
+
+  - name: Weather
+    description: 天气状况
+    mutually_exclusive: true
+    tags:
+      - { name: sunny,  description: "晴天" }
+      - { name: cloudy, description: "多云" }
+      - { name: rainy,  description: "雨天" }
+      - { name: snowy,  description: "雪天" }
+      - { name: foggy,  description: "雾天" }
+
+  - name: TimeOfDay
+    description: 时间段
+    mutually_exclusive: true
+    tags:
+      - { name: dawn,  description: "清晨 05:00-07:00" }
+      - { name: day,   description: "白天 07:00-17:00" }
+      - { name: dusk,  description: "黄昏 17:00-19:00" }
+      - { name: night, description: "夜晚 19:00-05:00" }
+
+  - name: Vehicle
+    description: 关键车辆类型(支持 count 后缀)
+    mutually_exclusive: false
+    tags:
+      - { name: car,        description: "小轿车" }
+      - { name: truck,      description: "卡车" }
+      - { name: bus,        description: "公交" }
+      - { name: motorcycle, description: "摩托车" }
+      - { name: bicycle,    description: "自行车" }
+
+  - name: Quality
+    description: 数据质量
+    mutually_exclusive: false
+    tags:
+      - { name: blur,      description: "模糊(0-1 浮点)" }
+      - { name: exposure,  description: "曝光(good/bad)" }
+      - { name: occluded,  description: "被遮挡" }
+      - { name: corrupted, description: "损坏" }
+
+  - name: Event
+    description: 关键事件
+    mutually_exclusive: false
+    tags:
+      - { name: collision,       description: "碰撞" }
+      - { name: hard_brake,      description: "急刹车" }
+      - { name: lane_change,     description: "变道" }
+      - { name: pedestrian_near, description: "有行人靠近" }
+      - { name: obstacle,        description: "异物" }
+
+  - name: Algo
+    description: 各算法相关 tag(如 labeled / skipped)
+    mutually_exclusive: false
+    tags:
+      - { name: sam2_v3.labeled,    description: "SAM2 v3 已标注" }
+      - { name: sam2_v3.skipped,    description: "SAM2 v3 跳过" }
+      - { name: tracker_v2.labeled, description: "Tracker v2 已跟踪" }
+
+# --------------------------------------------------------------------
+# 4. File Kinds(派生产物类型)
+# --------------------------------------------------------------------
+file_kinds:
+  - name: raw_mcap
+    description: 原始 MCAP(不可变,只引用)
+    mutable: false
+
+  - name: materialized_segment
+    description: 物化切出的小 MCAP(客户交付用)
+    mutable: false
+
+  - name: sam2_mask
+    description: SAM2 输出的 mask MCAP
+    mutable: true
+
+  - name: tracker_output
+    description: 跟踪器输出
+    mutable: true
+
+  - name: human_annotation
+    description: 人工标注 JSON
+    mutable: true
+
+  - name: ground_truth
+    description: 标注后 ground truth
+    mutable: true
+
+  - name: customer_delivery
+    description: 客户交付包
+    mutable: false
+
+  - name: embedding_pool
+    description: 特征池(parquet)
+    mutable: true
+
+  - name: auto_tag_result
+    description: 自动分类器输出
+    mutable: true
+
+# --------------------------------------------------------------------
+# 5. QA State Machine
+# --------------------------------------------------------------------
+qa_states:
+  - name: pending
+    description: 刚接入,未 QA
+    next: [in_review]
+
+  - name: in_review
+    description: QA 中
+    next: [approved, rejected, disputed]
+
+  - name: approved
+    description: QA 通过,可用
+    next: [disputed, archived]
+
+  - name: rejected
+    description: QA 驳回,可能重标
+    next: [in_review, archived]
+
+  - name: disputed
+    description: 争议中,升级处理
+    next: [approved, rejected, archived]
+
+  - name: archived
+    description: 归档(不再参与 pipeline)
+    next: []
+
+# --------------------------------------------------------------------
+# 6. Algo Status(cf:algo.<name>.status)
+# --------------------------------------------------------------------
+algo_statuses:
+  - pending
+  - running
+  - done
+  - failed
+  - skipped
+  - canceled
+
+# --------------------------------------------------------------------
+# 7. Event Types(cf:event.<event_name> 的合法值)
+# --------------------------------------------------------------------
+event_types:
+  - asset.created
+  - asset.updated
+  - asset.split
+  - asset.materialized
+  - asset.archived
+  - asset.restored
+  - asset.deleted
+
+  - qa.started
+  - qa.approved
+  - qa.rejected
+  - qa.disputed
+
+  - tag.added
+  - tag.removed
+
+  - file.added
+  - file.removed
+
+  - algo.started
+  - algo.completed
+  - algo.failed
+
+  - lineage.added
+
+# --------------------------------------------------------------------
+# 8. Glossary(业务术语)
+# --------------------------------------------------------------------
+glossary:
+  - term: valid_segment
+    synonyms: [有效片段, effective segment]
+    definition: |
+      经过 QA 确认后可以进入下游算法 / 交付链路的视频片段。
+      必须满足 cf:qa.state in [approved, disputed] 且未 archived。
+    owner: data-team
+
+  - term: mcap_recording
+    synonyms: [原始 MCAP, raw recording]
+    definition: 用户 / 机器人回传的 MCAP 物理文件,位于 grace-raw-mcap bucket。
+    owner: ingestion-team
+
+  - term: materialized_segment
+    definition: 从源 MCAP 物理切出的独立 MCAP 小文件,用于外部交付或归档解耦。
+    owner: data-team
+
+  - term: derived_product
+    synonyms: [派生产物]
+    definition: 算法基于 asset 生成的输出(mask / tracker / annotation 等),挂在 cf:file 下。
+    owner: data-team
+
+  - term: tenant
+    definition: 租户隔离单元,一个业务线 / 一个客户项目对应一个 tenant。
+    owner: ops-team
