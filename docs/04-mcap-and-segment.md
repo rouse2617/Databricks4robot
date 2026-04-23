@@ -323,5 +323,6 @@ foxglove_url = f"https://app.foxglove.dev/?ds=remote-file&url={urlencode(signed_
 
 - UI 嵌入 Foxglove → [05-ui-strategy.md](05-ui-strategy.md)
 - 字段 / kind 注册表 → [../schemas/fields.yaml](../schemas/fields.yaml)
+- Asset 契约(算法 / QA 必读) → [09-asset-contract.md](09-asset-contract.md)
 - ADR-002 Segment-centric → [adr/ADR-002-segment-centric-asset.md](adr/ADR-002-segment-centric-asset.md)
 - ADR-003 MCAP 原生 → [adr/ADR-003-mcap-as-primary-format.md](adr/ADR-003-mcap-as-primary-format.md)

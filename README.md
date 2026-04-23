@@ -36,6 +36,7 @@
 | [06-borrowed-patterns.md](docs/06-borrowed-patterns.md) | **DataHub / OpenMetadata 偷师清单** |
 | [07-tech-stack-gcp.md](docs/07-tech-stack-gcp.md) | **GCP 产品选型映射** |
 | [08-roadmap.md](docs/08-roadmap.md) | **Phase 0 / 1 / 2 演进路线** |
+| [09-asset-contract.md](docs/09-asset-contract.md) | **Asset 数据契约**(Asset=Segment,QA 可消费规则,API 契约) |
 
 ### 📜 架构决策记录(ADR)
 
@@ -120,6 +121,7 @@ GCS:  grace-raw-mcap / grace-derived / grace-annotation
 - **后端工程师**: [03](docs/03-data-model-wide-table.md) → [04](docs/04-mcap-and-segment.md) → [schemas/](schemas/)
 - **前端工程师**: [05-ui-strategy](docs/05-ui-strategy.md) → [06-borrowed-patterns](docs/06-borrowed-patterns.md)
 - **算法用户**: [01-overview](docs/01-overview.md)(了解 SDK 能做什么)
+- **算法 / QA 契约**: [09-asset-contract](docs/09-asset-contract.md) → [ADR-007](docs/adr/ADR-007-write-path-and-event-contract.md)
 
 ---
 
