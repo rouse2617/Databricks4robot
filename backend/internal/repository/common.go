@@ -1,0 +1,41 @@
+package repository
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"data-platform/internal/models"
+)
+
+// McapFileRepository defines persistence operations for mcap file metadata.
+type McapFileRepository interface {
+	Get(ctx context.Context, mcapFileID string) (*models.McapFile, error)
+	Set(ctx context.Context, f *models.McapFile) error
+	UpdateIngestState(ctx context.Context, mcapFileID string, state models.IngestState) error
+}
+
+// DeliveryRepository defines persistence operations for delivery records/indexes.
+type DeliveryRepository interface {
+	Set(ctx context.Context, d *models.Delivery) error
+	Get(ctx context.Context, deliveryID string) (*models.Delivery, error)
+	WriteIndexes(ctx context.Context, assetID string, d *models.Delivery) error
+	ListByCustomer(ctx context.Context, customerID string) ([]string, error)
+}
+
+// IdempotencyRecord stores one idempotent request result.
+type IdempotencyRecord struct {
+	Scope       string
+	Key         string
+	RequestHash string
+	StatusCode  int
+	Response    json.RawMessage
+	CreatedAt   time.Time
+}
+
+// IdempotencyRepository persists idempotency keys/results.
+type IdempotencyRepository interface {
+	Get(ctx context.Context, scope, key string) (*IdempotencyRecord, error)
+	Save(ctx context.Context, rec *IdempotencyRecord) error
+}
+

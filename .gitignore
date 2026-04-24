@@ -1,0 +1,40 @@
+# Go
+backend/bin/
+backend/*.exe
+backend/*.out
+backend/vendor/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Node / Frontend
+Frontend/node_modules/
+Frontend/dist/
+
+# Env files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# GCP
+*.json
+!package.json
+!tsconfig*.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
