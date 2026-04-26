@@ -396,3 +396,50 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_created_at
   ON idempotency_keys (created_at DESC);
+
+-- =====================================================================
+-- 12. asset_algo_events - 算法状态变更审计表
+--
+-- 记录每次算法状态转换事件,用于审计和调试。
+-- 每行 = 一次状态变更(start/finish/reset/依赖解锁)。
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS asset_algo_events (
+    event_id       UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    asset_id       UUID         NOT NULL REFERENCES assets(asset_id),
+    algo_key       TEXT         NOT NULL,
+    prev_status    TEXT,
+    new_status     TEXT         NOT NULL,
+    run_id         TEXT,
+    reason         TEXT,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+COMMENT ON TABLE asset_algo_events IS
+  '算法状态变更审计表;每行=一次状态转换(start/finish/reset/依赖解锁);用于审计和调试。';
+
+-- 12.1 按资产查事件(走 idx_algo_events_asset)
+CREATE INDEX IF NOT EXISTS idx_algo_events_asset
+  ON asset_algo_events (asset_id, created_at DESC);
+
+-- 12.2 按算法+状态查事件
+CREATE INDEX IF NOT EXISTS idx_algo_events_algo_status
+  ON asset_algo_events (algo_key, new_status, created_at DESC);
+
+-- 12.3 按 run_id 反查(部分索引,仅非空)
+CREATE INDEX IF NOT EXISTS idx_algo_events_run_id
+  ON asset_algo_events (run_id) WHERE run_id IS NOT NULL;
+
+-- =====================================================================
+-- 13. assets 表新增 cf_files JSONB 列 — 文件引用收敛
+--
+-- 所有关联文件的注册表。key=逻辑名(如 raw_mcap, hand_tracking@1.2.0),
+-- value=GCS URI。finish_algo 时同步写入,一次查询拿到所有文件。
+-- =====================================================================
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS
+    cf_files JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE INDEX IF NOT EXISTS idx_assets_cf_files_gin
+    ON assets USING GIN (cf_files);
+
+COMMENT ON COLUMN assets.cf_files IS
+    '所有关联文件的注册表。key=逻辑名, value=GCS URI。finish_algo 时同步写入。';

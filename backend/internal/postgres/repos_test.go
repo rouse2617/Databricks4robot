@@ -14,12 +14,13 @@ import (
 )
 
 type fakeDB struct {
-	queryRow rowScanner
-	queryErr error
-	rows     rowsScanner
-	execErr  error
-	pingErr  error
-	closed   bool
+	queryRow         rowScanner
+	queryErr         error
+	rows             rowsScanner
+	execErr          error
+	execRowsAffected int64
+	pingErr          error
+	closed           bool
 }
 
 func (f *fakeDB) QueryRow(_ context.Context, _ string, _ ...any) rowScanner {
@@ -38,8 +39,14 @@ func (f *fakeDB) Query(_ context.Context, _ string, _ ...any) (rowsScanner, erro
 	return f.rows, nil
 }
 func (f *fakeDB) Exec(_ context.Context, _ string, _ ...any) error { return f.execErr }
-func (f *fakeDB) Ping(_ context.Context) error                     { return f.pingErr }
-func (f *fakeDB) Close()                                           { f.closed = true }
+func (f *fakeDB) ExecResult(_ context.Context, _ string, _ ...any) (int64, error) {
+	if f.execErr != nil {
+		return 0, f.execErr
+	}
+	return f.execRowsAffected, nil
+}
+func (f *fakeDB) Ping(_ context.Context) error { return f.pingErr }
+func (f *fakeDB) Close()                       { f.closed = true }
 
 type fakeRow struct {
 	values []any
@@ -163,6 +170,7 @@ func TestRealDBPanicPaths(t *testing.T) {
 	assertPanic(t, func() { _ = r.QueryRow(context.Background(), "q") })
 	assertPanic(t, func() { _, _ = r.Query(context.Background(), "q") })
 	assertPanic(t, func() { _ = r.Exec(context.Background(), "q") })
+	assertPanic(t, func() { _, _ = r.ExecResult(context.Background(), "q") })
 	assertPanic(t, func() { _ = r.Ping(context.Background()) })
 	assertPanic(t, func() { r.Close() })
 }
@@ -228,8 +236,8 @@ func TestAssetRepo(t *testing.T) {
 		t.Fatalf("expected get error")
 	}
 	db.queryRow = &fakeRow{values: []any{
-		"a1", "m1", int64(10), "approved",
-		[]byte(`{"end_timestamp_ns":20,"duration_sec":1.2}`), []byte(`{"algo":"ok"}`), []byte(`{"tag":"v"}`),
+		"a1", "m1", int64(10), int64(20), (*string)(nil), "approved",
+		[]byte(`{"end_timestamp_ns":20,"duration_sec":1.2}`), []byte(`{"algo":"ok"}`), []byte(`{"tag":"v"}`), []byte(`{}`),
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
 	}}
 	got, err := repo.Get(ctx, "a1")
@@ -260,7 +268,7 @@ func TestAssetRepo(t *testing.T) {
 	db.execErr = nil
 
 	rows := &fakeRows{data: [][]any{
-		{"a1", "m1", int64(10), "approved", []byte(`{}`), []byte(`{}`), []byte(`{}`), mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
+		{"a1", "m1", int64(10), int64(20), (*string)(nil), "approved", []byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`), mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 	db.rows = rows
 	list, err := repo.ListByMcapFile(ctx, "m1")
@@ -432,4 +440,270 @@ func TestRepoConstructors(t *testing.T) {
 	if NewIdempotencyRepo(c) == nil {
 		t.Fatalf("NewIdempotencyRepo nil")
 	}
+}
+
+func TestMergeCfAlgo_Success(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{execRowsAffected: 1}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	algoKV := map[string]interface{}{"hand_tracking@1.2.0:status": "running"}
+	filesKV := map[string]interface{}{}
+
+	newVer, err := repo.MergeCfAlgo(ctx, "a1", 5, algoKV, filesKV)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if newVer != 6 {
+		t.Fatalf("expected version 6, got %d", newVer)
+	}
+}
+
+func TestMergeCfAlgo_OptimisticLockConflict(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{execRowsAffected: 0} // 0 rows affected = version mismatch
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	algoKV := map[string]interface{}{"hand_tracking@1.2.0:status": "running"}
+	filesKV := map[string]interface{}{}
+
+	_, err := repo.MergeCfAlgo(ctx, "a1", 5, algoKV, filesKV)
+	if err == nil {
+		t.Fatalf("expected optimistic lock error")
+	}
+	if !errors.Is(err, repository.ErrOptimisticLock) {
+		t.Fatalf("expected ErrOptimisticLock, got %v", err)
+	}
+}
+
+func TestMergeCfAlgo_DBError(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{execErr: errors.New("db down")}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	_, err := repo.MergeCfAlgo(ctx, "a1", 5, map[string]interface{}{}, map[string]interface{}{})
+	if err == nil || !strings.Contains(err.Error(), "MergeCfAlgo") {
+		t.Fatalf("expected db error, got %v", err)
+	}
+}
+
+func TestListWithFilters_NoFilters(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	// COUNT returns 2
+	db.queryRow = &fakeRow{values: []any{int64(2)}}
+	// DATA returns 2 rows
+	db.rows = &fakeRows{data: [][]any{
+		{"a1", "m1", int64(10), int64(20), (*string)(nil), "approved", []byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`), mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
+		{"a2", "m1", int64(20), int64(30), (*string)(nil), "approved", []byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`), mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(2)},
+	}}
+
+	assets, total, err := repo.ListWithFilters(ctx, "", nil, 1, 20, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("expected total 2, got %d", total)
+	}
+	if len(assets) != 2 {
+		t.Fatalf("expected 2 assets, got %d", len(assets))
+	}
+	if assets[0].AssetID != "a1" || assets[1].AssetID != "a2" {
+		t.Fatalf("unexpected asset IDs: %s, %s", assets[0].AssetID, assets[1].AssetID)
+	}
+}
+
+func TestListWithFilters_WithWhereSQL(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	db.queryRow = &fakeRow{values: []any{int64(1)}}
+	db.rows = &fakeRows{data: [][]any{
+		{"a1", "m1", int64(10), int64(20), (*string)(nil), "approved", []byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{"raw_mcap":"gs://bucket/file.mcap"}`), mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
+	}}
+
+	assets, total, err := repo.ListWithFilters(ctx, "status = $1", []interface{}{"approved"}, 1, 10, "created_at DESC")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected total 1, got %d", total)
+	}
+	if len(assets) != 1 || assets[0].AssetID != "a1" {
+		t.Fatalf("unexpected result")
+	}
+	if assets[0].Files["raw_mcap"] != "gs://bucket/file.mcap" {
+		t.Fatalf("expected cf_files to be parsed, got %v", assets[0].Files)
+	}
+}
+
+func TestListWithFilters_CountError(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	db.queryRow = &fakeRow{err: errors.New("count fail")}
+	_, _, err := repo.ListWithFilters(ctx, "", nil, 1, 20, "")
+	if err == nil || !strings.Contains(err.Error(), "count") {
+		t.Fatalf("expected count error, got %v", err)
+	}
+}
+
+func TestListWithFilters_QueryError(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	db.queryRow = &fakeRow{values: []any{int64(1)}}
+	db.queryErr = errors.New("query fail")
+	_, _, err := repo.ListWithFilters(ctx, "", nil, 1, 20, "")
+	if err == nil || !strings.Contains(err.Error(), "query") {
+		t.Fatalf("expected query error, got %v", err)
+	}
+}
+
+func TestListWithFilters_ScanError(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &AssetRepo{c: &Client{db: db}}
+
+	db.queryRow = &fakeRow{values: []any{int64(1)}}
+	db.rows = &fakeRows{data: [][]any{{"a1"}}} // too few columns → scan error
+	_, _, err := repo.ListWithFilters(ctx, "", nil, 1, 20, "")
+	if err == nil || !strings.Contains(err.Error(), "scan") {
+		t.Fatalf("expected scan error, got %v", err)
+	}
+}
+
+// Property 20: Optimistic lock version increment
+// For any successful MergeCfAlgo, the returned version must be expectedVersion + 1.
+// When expectedVersion doesn't match, the operation must fail with ErrOptimisticLock.
+// **Validates: Requirements 9.2**
+func TestProperty20_OptimisticLockVersionIncrement(t *testing.T) {
+	ctx := context.Background()
+
+	// Sub-property: successful merge returns expectedVersion + 1
+	for _, ver := range []int64{0, 1, 5, 100, 999} {
+		db := &fakeDB{execRowsAffected: 1}
+		repo := &AssetRepo{c: &Client{db: db}}
+
+		newVer, err := repo.MergeCfAlgo(ctx, "a1", ver,
+			map[string]interface{}{"k": "v"}, map[string]interface{}{})
+		if err != nil {
+			t.Fatalf("version %d: unexpected error: %v", ver, err)
+		}
+		if newVer != ver+1 {
+			t.Fatalf("version %d: expected new version %d, got %d", ver, ver+1, newVer)
+		}
+	}
+
+	// Sub-property: version mismatch returns ErrOptimisticLock
+	for _, ver := range []int64{0, 1, 5, 100, 999} {
+		db := &fakeDB{execRowsAffected: 0}
+		repo := &AssetRepo{c: &Client{db: db}}
+
+		_, err := repo.MergeCfAlgo(ctx, "a1", ver,
+			map[string]interface{}{"k": "v"}, map[string]interface{}{})
+		if !errors.Is(err, repository.ErrOptimisticLock) {
+			t.Fatalf("version %d: expected ErrOptimisticLock, got %v", ver, err)
+		}
+	}
+}
+
+func TestAlgoEventRepoConstructor(t *testing.T) {
+	c := &Client{db: &fakeDB{}}
+	if NewAlgoEventRepo(c) == nil {
+		t.Fatalf("NewAlgoEventRepo nil")
+	}
+}
+
+func TestAlgoEventRepo_Insert(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &AlgoEventRepo{c: &Client{db: db}}
+
+	event := &models.AlgoEvent{
+		EventID:   "e1",
+		AssetID:   "a1",
+		AlgoKey:   "hand_tracking@1.2.0",
+		NewStatus: "running",
+	}
+	if err := repo.Insert(ctx, event); err != nil {
+		t.Fatalf("insert err: %v", err)
+	}
+	if event.CreatedAt.IsZero() {
+		t.Fatalf("created_at should be set")
+	}
+
+	db.execErr = errors.New("insert fail")
+	if err := repo.Insert(ctx, &models.AlgoEvent{EventID: "e2"}); err == nil {
+		t.Fatalf("expected insert error")
+	}
+}
+
+func TestAlgoEventRepo_ListByAsset(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &AlgoEventRepo{c: &Client{db: db}}
+
+	ts := mustTime(t, "2026-04-21T00:00:00Z")
+	prev := "pending"
+	db.rows = &fakeRows{data: [][]any{
+		{"e1", "a1", "hand_tracking@1.2.0", &prev, "running", (*string)(nil), (*string)(nil), ts},
+	}}
+	events, err := repo.ListByAsset(ctx, "a1", nil)
+	if err != nil {
+		t.Fatalf("list err: %v", err)
+	}
+	if len(events) != 1 || events[0].EventID != "e1" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+
+	// With algo_key filter
+	db.rows = &fakeRows{data: [][]any{
+		{"e2", "a1", "deface@2.0.0", (*string)(nil), "running", (*string)(nil), (*string)(nil), ts},
+	}}
+	algoKey := "deface@2.0.0"
+	events, err = repo.ListByAsset(ctx, "a1", &algoKey)
+	if err != nil {
+		t.Fatalf("list with filter err: %v", err)
+	}
+	if len(events) != 1 || events[0].AlgoKey != "deface@2.0.0" {
+		t.Fatalf("unexpected filtered events: %+v", events)
+	}
+
+	// Query error
+	db.queryErr = errors.New("q")
+	if _, err := repo.ListByAsset(ctx, "a1", nil); err == nil {
+		t.Fatalf("expected query error")
+	}
+	db.queryErr = nil
+
+	// Scan error
+	db.rows = &fakeRows{data: [][]any{{"e1"}}}
+	if _, err := repo.ListByAsset(ctx, "a1", nil); err == nil {
+		t.Fatalf("expected scan error")
+	}
+}
+
+func TestApplyFilesJSON(t *testing.T) {
+	a := &models.Asset{}
+	applyFilesJSON(a, []byte(`{"raw_mcap":"gs://bucket/file.mcap","hand_tracking@1.2.0":"gs://derived/ht.mcap"}`))
+	if a.Files["raw_mcap"] != "gs://bucket/file.mcap" {
+		t.Fatalf("expected raw_mcap, got %v", a.Files)
+	}
+	if a.Files["hand_tracking@1.2.0"] != "gs://derived/ht.mcap" {
+		t.Fatalf("expected hand_tracking file, got %v", a.Files)
+	}
+
+	// Empty/nil data
+	a2 := &models.Asset{}
+	applyFilesJSON(a2, nil)
+	if a2.Files == nil {
+		t.Fatalf("Files should be initialized")
+	}
+	applyFilesJSON(a2, []byte(`bad json`))
 }

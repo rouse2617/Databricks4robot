@@ -30,6 +30,8 @@ type pgDB interface {
 	QueryRow(ctx context.Context, sql string, args ...any) rowScanner
 	Query(ctx context.Context, sql string, args ...any) (rowsScanner, error)
 	Exec(ctx context.Context, sql string, args ...any) error
+	// ExecResult executes a statement and returns the number of rows affected.
+	ExecResult(ctx context.Context, sql string, args ...any) (int64, error)
 	Ping(ctx context.Context) error
 	Close()
 }
@@ -49,6 +51,14 @@ func (r *realDB) Query(ctx context.Context, sql string, args ...any) (rowsScanne
 func (r *realDB) Exec(ctx context.Context, sql string, args ...any) error {
 	_, err := r.pool.Exec(ctx, sql, args...)
 	return err
+}
+
+func (r *realDB) ExecResult(ctx context.Context, sql string, args ...any) (int64, error) {
+	ct, err := r.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
 }
 
 func (r *realDB) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }

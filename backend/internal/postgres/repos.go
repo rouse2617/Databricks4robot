@@ -21,17 +21,18 @@ func NewAssetRepo(c *Client) *AssetRepo { return &AssetRepo{c: c} }
 
 func (r *AssetRepo) Get(ctx context.Context, assetID string) (*models.Asset, error) {
 	const q = `
-SELECT asset_id, mcap_file_id, start_timestamp_ns, status, cf_meta, cf_algo, cf_tag, created_at, updated_at, version
+SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator, status, cf_meta, cf_algo, cf_tag, cf_files, created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1 AND is_deleted = FALSE`
 	var (
-		a                                    models.Asset
-		status                               string
-		cfMetaBytes, cfAlgoBytes, cfTagBytes []byte
+		a                                                  models.Asset
+		status                                             string
+		segLoc                                             *string
+		cfMetaBytes, cfAlgoBytes, cfTagBytes, cfFilesBytes []byte
 	)
 	err := r.c.db.QueryRow(ctx, q, assetID).Scan(
-		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &status,
-		&cfMetaBytes, &cfAlgoBytes, &cfTagBytes,
+		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc, &status,
+		&cfMetaBytes, &cfAlgoBytes, &cfTagBytes, &cfFilesBytes,
 		&a.CreatedAt, &a.UpdatedAt, &a.Version,
 	)
 	if err != nil {
@@ -41,7 +42,11 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 		return nil, fmt.Errorf("postgres AssetRepo.Get: %w", err)
 	}
 	a.Status = models.AssetStatus(status)
+	if segLoc != nil {
+		a.SegmentLocator = *segLoc
+	}
 	applyAssetJSON(&a, cfMetaBytes, cfAlgoBytes, cfTagBytes)
+	applyFilesJSON(&a, cfFilesBytes)
 	return &a, nil
 }
 
@@ -52,22 +57,30 @@ func (r *AssetRepo) Set(ctx context.Context, a *models.Asset) error {
 	}
 	a.UpdatedAt = now
 	a.Version++
+	a.SegmentLocator = models.ComputeSegmentLocator(a.McapFileID, a.StartTimestampNs, a.EndTimestampNs)
 	meta, algo, tag := assetJSON(a)
+	filesJSON, _ := json.Marshal(a.Files)
+	if a.Files == nil {
+		filesJSON = []byte(`{}`)
+	}
 	const q = `
-INSERT INTO assets(asset_id, mcap_file_id, start_timestamp_ns, status, is_deleted, cf_meta, cf_algo, cf_tag, created_at, updated_at, version)
-VALUES ($1,$2,$3,$4,FALSE,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10)
+INSERT INTO assets(asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator, status, is_deleted, cf_meta, cf_algo, cf_tag, cf_files, created_at, updated_at, version)
+VALUES ($1,$2,$3,$4,$5,$6,FALSE,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13)
 ON CONFLICT (asset_id) DO UPDATE SET
   mcap_file_id=EXCLUDED.mcap_file_id,
   start_timestamp_ns=EXCLUDED.start_timestamp_ns,
+  end_timestamp_ns=EXCLUDED.end_timestamp_ns,
+  segment_locator=EXCLUDED.segment_locator,
   status=EXCLUDED.status,
   cf_meta=EXCLUDED.cf_meta,
   cf_algo=EXCLUDED.cf_algo,
   cf_tag=EXCLUDED.cf_tag,
+  cf_files=EXCLUDED.cf_files,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version`
 	err := r.c.db.Exec(ctx, q,
-		a.AssetID, a.McapFileID, a.StartTimestampNs, string(a.Status),
-		meta, algo, tag, a.CreatedAt, a.UpdatedAt, a.Version,
+		a.AssetID, a.McapFileID, a.StartTimestampNs, a.EndTimestampNs, a.SegmentLocator,
+		string(a.Status), meta, algo, tag, filesJSON, a.CreatedAt, a.UpdatedAt, a.Version,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres AssetRepo.Set: %w", err)
@@ -86,7 +99,7 @@ func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
 
 func (r *AssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error) {
 	const q = `
-SELECT asset_id, mcap_file_id, start_timestamp_ns, status, cf_meta, cf_algo, cf_tag, created_at, updated_at, version
+SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator, status, cf_meta, cf_algo, cf_tag, cf_files, created_at, updated_at, version
 FROM assets
 WHERE mcap_file_id = $1 AND is_deleted = FALSE
 ORDER BY start_timestamp_ns`
@@ -98,19 +111,24 @@ ORDER BY start_timestamp_ns`
 	var out []*models.Asset
 	for rows.Next() {
 		var (
-			a                                    models.Asset
-			status                               string
-			cfMetaBytes, cfAlgoBytes, cfTagBytes []byte
+			a                                                  models.Asset
+			status                                             string
+			segLoc                                             *string
+			cfMetaBytes, cfAlgoBytes, cfTagBytes, cfFilesBytes []byte
 		)
 		if err := rows.Scan(
-			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &status,
-			&cfMetaBytes, &cfAlgoBytes, &cfTagBytes,
+			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc, &status,
+			&cfMetaBytes, &cfAlgoBytes, &cfTagBytes, &cfFilesBytes,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListByMcapFile scan: %w", err)
 		}
 		a.Status = models.AssetStatus(status)
+		if segLoc != nil {
+			a.SegmentLocator = *segLoc
+		}
 		applyAssetJSON(&a, cfMetaBytes, cfAlgoBytes, cfTagBytes)
+		applyFilesJSON(&a, cfFilesBytes)
 		out = append(out, &a)
 	}
 	return out, nil
@@ -175,6 +193,48 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
 		return fmt.Errorf("postgres McapFileRepo.Set: %w", err)
 	}
 	return nil
+}
+
+func (r *McapFileRepo) List(ctx context.Context, page, pageSize int) ([]*models.McapFile, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	offset := (page - 1) * pageSize
+
+	var total int64
+	err := r.c.db.QueryRow(ctx, "SELECT COUNT(*) FROM mcap_files WHERE is_deleted = FALSE").Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("postgres McapFileRepo.List count: %w", err)
+	}
+
+	const q = `
+SELECT mcap_file_id, raw_hash_md5, cf_meta, cf_process, created_at, updated_at, version
+FROM mcap_files
+WHERE is_deleted = FALSE
+ORDER BY updated_at DESC
+LIMIT $1 OFFSET $2`
+	rows, err := r.c.db.Query(ctx, q, pageSize, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("postgres McapFileRepo.List query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*models.McapFile
+	for rows.Next() {
+		var (
+			f                       models.McapFile
+			metaBytes, processBytes []byte
+		)
+		if err := rows.Scan(&f.McapFileID, &f.RawHashMD5, &metaBytes, &processBytes, &f.CreatedAt, &f.UpdatedAt, &f.Version); err != nil {
+			return nil, 0, fmt.Errorf("postgres McapFileRepo.List scan: %w", err)
+		}
+		applyMcapJSON(&f, metaBytes, processBytes)
+		out = append(out, &f)
+	}
+	return out, total, nil
 }
 
 func (r *McapFileRepo) UpdateIngestState(ctx context.Context, mcapFileID string, state models.IngestState) error {
@@ -281,6 +341,28 @@ ON CONFLICT (delivery_id, asset_id) DO NOTHING`
 	return nil
 }
 
+func (r *DeliveryRepo) ListByAsset(ctx context.Context, assetID string) ([]string, error) {
+	const q = `
+SELECT delivery_id
+FROM delivery_items
+WHERE asset_id=$1
+ORDER BY created_at DESC`
+	rows, err := r.c.db.Query(ctx, q, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres DeliveryRepo.ListByAsset: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("postgres DeliveryRepo.ListByAsset scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
 func (r *DeliveryRepo) ListByCustomer(ctx context.Context, customerID string) ([]string, error) {
 	const q = `
 SELECT delivery_id
@@ -365,6 +447,10 @@ func assetJSON(a *models.Asset) (meta, algo, tag []byte) {
 	if a.LastDeliveredAt != nil {
 		metaMap["last_delivered_at"] = a.LastDeliveredAt
 	}
+	// Merge lifecycle governance fields into cf_meta.
+	for k, v := range a.LifecycleMeta {
+		metaMap[k] = v
+	}
 	meta, _ = json.Marshal(metaMap)
 	algo, _ = json.Marshal(a.AlgoResults)
 	tag, _ = json.Marshal(a.Tags)
@@ -411,6 +497,16 @@ func applyAssetJSON(a *models.Asset, meta, algo, tag []byte) {
 	}
 	if a.Tags == nil {
 		a.Tags = map[string]string{}
+	}
+	// Extract lifecycle governance fields from cf_meta.
+	lifecycleKeys := []string{"retention_tier", "archive_after_days", "delete_after_days", "total_size_bytes", "last_accessed_at"}
+	if a.LifecycleMeta == nil {
+		a.LifecycleMeta = map[string]interface{}{}
+	}
+	for _, k := range lifecycleKeys {
+		if v, ok := m[k]; ok {
+			a.LifecycleMeta[k] = v
+		}
 	}
 	_ = json.Unmarshal(algo, &a.AlgoResults)
 	_ = json.Unmarshal(tag, &a.Tags)
@@ -463,4 +559,110 @@ func applyMcapJSON(f *models.McapFile, meta, process []byte) {
 		f.ProcessState = map[string]string{}
 	}
 	_ = json.Unmarshal(process, &f.ProcessState)
+}
+
+func applyFilesJSON(a *models.Asset, data []byte) {
+	if a.Files == nil {
+		a.Files = map[string]string{}
+	}
+	if len(data) > 0 {
+		_ = json.Unmarshal(data, &a.Files)
+	}
+}
+
+// ListWithFilters queries assets with a parameterized WHERE clause, pagination, and ordering.
+func (r *AssetRepo) ListWithFilters(ctx context.Context, whereSQL string, args []interface{},
+	page, pageSize int, orderBy string) ([]*models.Asset, int64, error) {
+
+	if orderBy == "" {
+		orderBy = "created_at DESC"
+	}
+	offset := (page - 1) * pageSize
+
+	// Build the base WHERE clause — always exclude soft-deleted rows.
+	baseWhere := "is_deleted = FALSE"
+	if whereSQL != "" {
+		baseWhere += " AND " + whereSQL
+	}
+
+	// --- COUNT query ---
+	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM assets WHERE %s", baseWhere)
+	var total int64
+	err := r.c.db.QueryRow(ctx, countSQL, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("postgres AssetRepo.ListWithFilters count: %w", err)
+	}
+
+	// --- DATA query ---
+	// Append LIMIT and OFFSET as the next positional parameters.
+	nextParam := len(args) + 1
+	dataSQL := fmt.Sprintf(
+		`SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator, status, cf_meta, cf_algo, cf_tag, cf_files, created_at, updated_at, version
+FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
+		baseWhere, orderBy, nextParam, nextParam+1,
+	)
+	dataArgs := append(append([]interface{}{}, args...), pageSize, offset)
+
+	rows, err := r.c.db.Query(ctx, dataSQL, dataArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("postgres AssetRepo.ListWithFilters query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*models.Asset
+	for rows.Next() {
+		var (
+			a                                                  models.Asset
+			status                                             string
+			segLoc                                             *string
+			cfMetaBytes, cfAlgoBytes, cfTagBytes, cfFilesBytes []byte
+		)
+		if err := rows.Scan(
+			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc, &status,
+			&cfMetaBytes, &cfAlgoBytes, &cfTagBytes, &cfFilesBytes,
+			&a.CreatedAt, &a.UpdatedAt, &a.Version,
+		); err != nil {
+			return nil, 0, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
+		}
+		a.Status = models.AssetStatus(status)
+		if segLoc != nil {
+			a.SegmentLocator = *segLoc
+		}
+		applyAssetJSON(&a, cfMetaBytes, cfAlgoBytes, cfTagBytes)
+		applyFilesJSON(&a, cfFilesBytes)
+		out = append(out, &a)
+	}
+	return out, total, nil
+}
+
+// MergeCfAlgo atomically merges cf_algo and cf_files JSONB fields with optimistic locking.
+// Returns the new version. If expectedVersion doesn't match, returns repository.ErrOptimisticLock.
+func (r *AssetRepo) MergeCfAlgo(ctx context.Context, assetID string, expectedVersion int64,
+	algoKV map[string]interface{}, filesKV map[string]interface{}) (int64, error) {
+
+	algoJSON, err := json.Marshal(algoKV)
+	if err != nil {
+		return 0, fmt.Errorf("postgres AssetRepo.MergeCfAlgo marshal algoKV: %w", err)
+	}
+	filesJSON, err := json.Marshal(filesKV)
+	if err != nil {
+		return 0, fmt.Errorf("postgres AssetRepo.MergeCfAlgo marshal filesKV: %w", err)
+	}
+
+	const q = `
+UPDATE assets
+SET cf_algo = cf_algo || $1::jsonb,
+    cf_files = cf_files || $2::jsonb,
+    version = version + 1,
+    updated_at = now()
+WHERE asset_id = $3 AND version = $4 AND is_deleted = FALSE`
+
+	rowsAffected, err := r.c.db.ExecResult(ctx, q, algoJSON, filesJSON, assetID, expectedVersion)
+	if err != nil {
+		return 0, fmt.Errorf("postgres AssetRepo.MergeCfAlgo: %w", err)
+	}
+	if rowsAffected == 0 {
+		return 0, repository.ErrOptimisticLock
+	}
+	return expectedVersion + 1, nil
 }
