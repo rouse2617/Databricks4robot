@@ -15,7 +15,7 @@ func StaticTokenAuth(token string) gin.HandlerFunc {
 			got = c.GetHeader("Authorization")
 		}
 		if got != token && got != "Bearer "+token {
-			httpresp.Unauthorized(c, "UNAUTHORIZED", "unauthorized")
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "unauthorized")
 			c.Abort()
 			return
 		}

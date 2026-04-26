@@ -38,6 +38,9 @@ func (m *mockMcapRepo) UpdateIngestState(ctx context.Context, mcapFileID string,
 	}
 	return nil
 }
+func (m *mockMcapRepo) List(ctx context.Context, page, pageSize int) ([]*models.McapFile, int64, error) {
+	return []*models.McapFile{}, 0, nil
+}
 
 func setupMcapRouter(route, path string, fn gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)

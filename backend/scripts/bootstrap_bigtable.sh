@@ -10,24 +10,25 @@ set -euo pipefail
 #   - CBT_PROJECT + CBT_INSTANCE set (or in ~/.cbtrc)
 
 TABLES=(
-  "assets:cf:meta,cf:algo,cf:tag"
-  "mcap_files:cf:meta,cf:process"
-  "deliveries:cf:meta"
+  "assets:meta,algo,tag,files"
+  "mcap_files:meta,process"
+  "deliveries:meta"
   "idx_segments_by_file:ref"
   "idx_asset_deliveries:ref"
   "idx_customer_deliveries:ref"
   "idempotency_keys:meta"
+  "asset_algo_events:meta"
 )
 
 exists_table() {
   local table="$1"
-  cbt ls | rg -n "^${table}$" >/dev/null 2>&1
+  cbt ls 2>/dev/null | grep -qx "${table}"
 }
 
 exists_family() {
   local table="$1"
   local family="$2"
-  cbt ls "${table}" | rg -n "^[[:space:]]+Families:.*\\b${family}\\b" >/dev/null 2>&1
+  cbt ls "${table}" 2>/dev/null | awk '{print $1}' | grep -qx "${family}"
 }
 
 for entry in "${TABLES[@]}"; do

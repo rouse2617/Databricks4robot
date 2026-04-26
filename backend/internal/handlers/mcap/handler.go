@@ -2,6 +2,7 @@ package mcap
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -53,7 +54,33 @@ func (h *Handler) IterMessages(c *gin.Context) {
 
 // GET /api/v1/mcap-files
 func (h *Handler) ListFiles(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"items": []any{}, "note": "scan not implemented; use mcap_file_id for point reads"})
+	page := 1
+	pageSize := 20
+	if v := c.Query("page"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		if ps, err := strconv.Atoi(v); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
+
+	items, total, err := h.repo.List(c.Request.Context(), page, pageSize)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []*models.McapFile{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"items":     items,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
 // GET /api/v1/mcap-files/:id
@@ -69,4 +96,3 @@ func (h *Handler) GetFile(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, f)
 }
-

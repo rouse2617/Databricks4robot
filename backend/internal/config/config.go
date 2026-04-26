@@ -33,6 +33,21 @@ type Config struct {
 
 	// Auth (Phase 0 static token; Phase 0.5 → OIDC)
 	GraceToken string
+
+	// Logging
+	LogLevel  string // debug, info, warn, error
+	LogFormat string // text, json
+	LogFile   string // file path (empty = stdout only)
+
+	// Rate Limiting (per IP)
+	RateLimitRPS   string // requests per second (0 = disabled)
+	RateLimitBurst string // burst size (default = RPS * 2)
+
+	// Circuit Breaker
+	CBEnabled     string // "true" to enable
+	CBWindowSec   string // sliding window seconds (default: 60)
+	CBThreshold   string // error count to trip (default: 10)
+	CBCooldownSec string // cooldown seconds (default: 30)
 }
 
 func Load() *Config {
@@ -41,7 +56,7 @@ func Load() *Config {
 		Port:            getenv("PORT", "8080"),
 		McapGatewayPort: getenv("MCAP_GATEWAY_PORT", "8081"),
 		DeliveryPort:    getenv("DELIVERY_PORT", "8082"),
-		StorageBackend:  getenv("STORAGE_BACKEND", "bigtable"),
+		StorageBackend:  getenv("STORAGE_BACKEND", "postgres"),
 
 		BigtableProject:  getenv("BIGTABLE_PROJECT", ""),
 		BigtableInstance: getenv("BIGTABLE_INSTANCE", "poc-datainfra"),
@@ -60,6 +75,18 @@ func Load() *Config {
 		TopicAssetEvents:   getenv("TOPIC_ASSET_EVENTS", "grace-asset-events"),
 
 		GraceToken: getenv("GRACE_TOKEN", "dev-token"),
+
+		LogLevel:  getenv("LOG_LEVEL", "info"),
+		LogFormat: getenv("LOG_FORMAT", "text"),
+		LogFile:   getenv("LOG_FILE", ""),
+
+		RateLimitRPS:   getenv("RATE_LIMIT_RPS", "0"),
+		RateLimitBurst: getenv("RATE_LIMIT_BURST", "0"),
+
+		CBEnabled:     getenv("CB_ENABLED", "false"),
+		CBWindowSec:   getenv("CB_WINDOW_SEC", "60"),
+		CBThreshold:   getenv("CB_THRESHOLD", "10"),
+		CBCooldownSec: getenv("CB_COOLDOWN_SEC", "30"),
 	}
 }
 

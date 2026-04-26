@@ -6,25 +6,39 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"data-platform/internal/filter"
 	"data-platform/internal/httpresp"
 	"data-platform/internal/models"
+	"data-platform/internal/repository"
 	assetUC "data-platform/internal/usecase/asset"
+	"data-platform/internal/validate"
 )
 
 type Handler struct {
-	uc *assetUC.Usecase
+	uc           *assetUC.Usecase
+	deliveryRepo repository.DeliveryRepository
 }
 
-func New(uc *assetUC.Usecase) *Handler {
-	return &Handler{uc: uc}
+func New(uc *assetUC.Usecase, deliveryRepo repository.DeliveryRepository) *Handler {
+	return &Handler{uc: uc, deliveryRepo: deliveryRepo}
 }
 
-// GET /api/v1/assets/:id
+// Get returns a single asset by ID.
+// @Summary      Get asset
+// @Description  Get asset by ID
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} models.Asset
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	a, err := h.uc.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, "ASSET_NOT_FOUND", err.Error())
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 			return
 		}
 		httpresp.Internal(c, err.Error())
@@ -33,37 +47,96 @@ func (h *Handler) Get(c *gin.Context) {
 	c.JSON(200, a)
 }
 
-// GET /api/v1/assets?mcap_file_id=<id>
+// List returns assets with optional filters and pagination.
+// @Summary      List assets
+// @Description  List assets with optional filters, sorting, and pagination
+// @Tags         assets
+// @Produce      json
+// @Param        filter   query []string false "Filter expressions (field:op:value)"
+// @Param        sort_by  query string   false "Sort field (prefix - for desc)" default(-created_at)
+// @Param        page     query int      false "Page number" default(1)
+// @Param        page_size query int     false "Page size" default(20)
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets [get]
 func (h *Handler) List(c *gin.Context) {
-	assets, err := h.uc.ListByMcapFile(c.Request.Context(), c.Query("mcap_file_id"))
-	if err != nil {
-		if errors.Is(err, assetUC.ErrMcapFileIDRequired) {
-			httpresp.BadRequest(c, "INVALID_ARGUMENT", err.Error(), nil)
-			return
+	filterStrs := c.QueryArray("filter")
+	page, pageSize := parsePageParams(c.Query("page"), c.Query("page_size"))
+	sortBy := c.DefaultQuery("sort_by", "-created_at")
+
+	// Backward compatibility: no filter params → use mcap_file_id.
+	if len(filterStrs) == 0 {
+		mcapFileID := c.Query("mcap_file_id")
+		if mcapFileID != "" {
+			filterStrs = append(filterStrs, "mcap_file_id:eq:"+mcapFileID)
 		}
+	}
+
+	// Parse and validate filters.
+	filters, err := filter.ParseFilters(filterStrs)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidFilter, err.Error(), nil)
+		return
+	}
+	if err := filter.ValidateFilters(filters); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidFilter, err.Error(), nil)
+		return
+	}
+
+	// Build WHERE clause.
+	wc, err := filter.BuildWhereClause(filters, 1)
+	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	page, pageSize := parsePageParams(c.Query("page"), c.Query("page_size"))
-	items := paginateAssets(assets, page, pageSize)
-	c.JSON(200, gin.H{"items": items, "total": len(assets), "page": page, "page_size": pageSize})
+
+	orderBy, err := filter.ResolveSortBy(sortBy)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidFilter, err.Error(), nil)
+		return
+	}
+
+	items, total, err := h.uc.ListWithFilters(c.Request.Context(), wc.SQL, wc.Args, page, pageSize, orderBy)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
 }
 
-// POST /api/v1/assets
+// Create creates a new asset.
+// @Summary      Create asset
+// @Description  Create a new asset segment from an MCAP file
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        body body object true "Create asset request"
+// @Success      201 {object} models.Asset
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      422 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
-		McapFileID       string            `json:"mcap_file_id" binding:"required"`
-		StartTimestampNs int64             `json:"start_timestamp_ns" binding:"required"`
-		EndTimestampNs   int64             `json:"end_timestamp_ns" binding:"required"`
-		Reviewer         string            `json:"reviewer" binding:"required"`
-		Owner            string            `json:"owner"`
-		SegType          string            `json:"type"`
-		Env              string            `json:"env"`
-		Task             string            `json:"task"`
+		McapFileID       string            `json:"mcap_file_id" binding:"required" label:"MCAP文件ID"`
+		StartTimestampNs int64             `json:"start_timestamp_ns" binding:"required,gt=0" label:"起始时间戳"`
+		EndTimestampNs   int64             `json:"end_timestamp_ns" binding:"required,gt=0" label:"结束时间戳"`
+		Reviewer         string            `json:"reviewer" binding:"required" label:"审核人"`
+		Owner            string            `json:"owner" label:"所有者"`
+		SegType          string            `json:"type" label:"片段类型"`
+		Env              string            `json:"env" label:"环境"`
+		Task             string            `json:"task" label:"任务"`
 		Tags             map[string]string `json:"tags"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		httpresp.BadRequest(c, "INVALID_ARGUMENT", "invalid request body", map[string]any{"error": err.Error()})
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if valErr := validate.ValidateStruct(&req); valErr != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, valErr.Error(), nil)
 		return
 	}
 	a, err := h.uc.Create(c.Request.Context(), assetUC.CreateInput{
@@ -80,7 +153,9 @@ func (h *Handler) Create(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, assetUC.ErrMcapFileIDRequired), errors.Is(err, assetUC.ErrInvalidRange):
-			httpresp.Unprocessable(c, "INVALID_STATE", err.Error(), nil)
+			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
+		case errors.Is(err, assetUC.ErrInvalidTag):
+			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
 		default:
 			httpresp.Internal(c, err.Error())
 		}
@@ -98,7 +173,7 @@ func (h *Handler) Update(c *gin.Context) {
 		Tags     map[string]string `json:"tags"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		httpresp.BadRequest(c, "INVALID_ARGUMENT", "invalid request body", map[string]any{"error": err.Error()})
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
 	a, err := h.uc.Update(c.Request.Context(), c.Param("id"), assetUC.UpdateInput{
@@ -108,17 +183,29 @@ func (h *Handler) Update(c *gin.Context) {
 		Tags:     req.Tags,
 	})
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, "ASSET_NOT_FOUND", err.Error())
-			return
+		switch {
+		case errors.Is(err, assetUC.ErrNotFound):
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+		case errors.Is(err, assetUC.ErrInvalidTag):
+			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
+		default:
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(200, a)
 }
 
-// DELETE /api/v1/assets/:id  → soft delete (status = archived)
+// Delete soft-deletes an asset.
+// @Summary      Delete asset
+// @Description  Soft delete an asset (status = archived)
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
 	if err := h.uc.Delete(c.Request.Context(), c.Param("id")); err != nil {
 		httpresp.Internal(c, err.Error())
@@ -136,7 +223,7 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 		Owner      string     `json:"owner"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		httpresp.BadRequest(c, "INVALID_ARGUMENT", "invalid request body", map[string]any{"error": err.Error()})
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
 
@@ -149,7 +236,7 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, assetUC.ErrMcapFileIDRequired), errors.Is(err, assetUC.ErrInvalidRange):
-			httpresp.Unprocessable(c, "INVALID_STATE", err.Error(), map[string]any{"partial": created})
+			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), map[string]any{"partial": created})
 		default:
 			httpresp.Internal(c, err.Error())
 		}
@@ -160,7 +247,38 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 
 // GET /api/v1/assets/:id/deliveries
 func (h *Handler) ListDeliveries(c *gin.Context) {
-	c.JSON(200, gin.H{"items": []any{}, "asset_id": c.Param("id"), "page": 1, "page_size": 20, "next_token": ""})
+	assetID := c.Param("id")
+	page, pageSize := parsePageParams(c.Query("page"), c.Query("page_size"))
+
+	ids, err := h.deliveryRepo.ListByAsset(c.Request.Context(), assetID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+
+	// Paginate the delivery ID list.
+	start := (page - 1) * pageSize
+	var items []string
+	if start >= len(ids) {
+		items = []string{}
+	} else {
+		end := start + pageSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		items = ids[start:end]
+	}
+
+	c.JSON(200, gin.H{
+		"items":      items,
+		"asset_id":   assetID,
+		"page":       page,
+		"page_size":  pageSize,
+		"next_token": "",
+	})
 }
 
 func parsePageParams(pageStr, pageSizeStr string) (int, int) {

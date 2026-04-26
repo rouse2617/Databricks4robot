@@ -2,14 +2,19 @@ package routes
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"data-platform/internal/config"
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
 	mcapH "data-platform/internal/handlers/mcap"
 	"data-platform/internal/middleware"
+
+	_ "data-platform/docs/swagger" // swagger docs
 )
 
 // RegisterAll wires up all API domains in a single process.
@@ -20,9 +25,29 @@ func RegisterAll(
 	assetHandler *assetH.Handler,
 	mcapHandler *mcapH.Handler,
 	deliveryHandler *deliveryH.Handler,
+	algoHandler *assetH.AlgoHandler,
 ) {
 	r.Use(middleware.RequestID())
+	r.Use(middleware.RequestGuard(2048))
+	r.Use(middleware.StructuredLogger())
+
+	// Rate limiting (disabled by default, set RATE_LIMIT_RPS to enable).
+	if rl := middleware.RateLimitFromConfig(cfg.RateLimitRPS, cfg.RateLimitBurst); rl != nil {
+		r.Use(rl.Middleware())
+	}
+
+	// Circuit breaker (disabled by default, set CB_ENABLED=true to enable).
+	if cb := middleware.NewCircuitBreaker(
+		cfg.CBEnabled == "true",
+		atoi(cfg.CBWindowSec, 60),
+		atoi(cfg.CBThreshold, 10),
+		atoi(cfg.CBCooldownSec, 30),
+	); cb != nil {
+		r.Use(cb.Middleware())
+	}
+
 	r.GET("/healthz", healthz("backend"))
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	auth := middleware.StaticTokenAuth(cfg.GraceToken)
 
@@ -35,6 +60,14 @@ func RegisterAll(
 		assets.PATCH("/:id", assetHandler.Update)
 		assets.DELETE("/:id", assetHandler.Delete)
 		assets.GET("/:id/deliveries", assetHandler.ListDeliveries)
+
+		// Algorithm lifecycle routes
+		if algoHandler != nil {
+			assets.POST("/:id/algo/:algo_key/start", algoHandler.Start)
+			assets.POST("/:id/algo/:algo_key/finish", algoHandler.Finish)
+			assets.POST("/:id/algo/:algo_key/reset", algoHandler.Reset)
+			assets.GET("/:id/algo-events", algoHandler.ListEvents)
+		}
 
 		api.POST("/mcap/upload/finalize", mcapHandler.FinalizeUpload)
 		api.GET("/mcap/:id/messages", mcapHandler.IterMessages)
@@ -56,4 +89,12 @@ func healthz(service string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": service})
 	}
+}
+
+func atoi(s string, fallback int) int {
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
 }

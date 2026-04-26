@@ -1,4 +1,4 @@
-.PHONY: all run run-server build test fmt vet tidy deps bt-bootstrap clean
+.PHONY: all run run-server build test fmt vet tidy deps bt-bootstrap clean swagger
 
 SERVER_BIN := bin/server
 
@@ -44,3 +44,6 @@ bt-bootstrap:
 
 clean:
 	rm -rf bin/
+
+swagger:
+	swag init -g cmd/server/main.go -o docs/swagger

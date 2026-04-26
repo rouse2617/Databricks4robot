@@ -5,10 +5,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
 	"cloud.google.com/go/bigtable"
+	"google.golang.org/api/option"
 )
 
 const (
@@ -21,13 +23,17 @@ const (
 	TableIdxAssetDeliveries    = "idx_asset_deliveries"
 	TableIdxCustomerDeliveries = "idx_customer_deliveries"
 	TableIdempotencyKeys       = "idempotency_keys"
+	TableAssetAlgoEvents       = "asset_algo_events"
 
-	CFMeta    = "cf:meta"
-	CFAlgo    = "cf:algo"
-	CFTag     = "cf:tag"
-	CFProcess = "cf:process"
+	// Column family names — must match bootstrap_bigtable.sh definitions.
+	// bootstrap_bigtable.sh creates: meta, algo, tag, files, process, ref (per table).
+	CFMeta    = "meta"
+	CFAlgo    = "algo"
+	CFTag     = "tag"
+	CFProcess = "process"
+	CFFiles   = "files"
 	CFRef     = "ref"
-	CFIdem    = "meta"
+	CFIdem    = "meta" // idempotency_keys table also uses "meta" column family
 
 	RowKeyPrefix = "v1#"
 )
@@ -36,6 +42,7 @@ type btTable interface {
 	ReadRow(ctx context.Context, row string, opts ...bigtable.ReadOption) (bigtable.Row, error)
 	Apply(ctx context.Context, row string, m *bigtable.Mutation, opts ...bigtable.ApplyOption) error
 	ReadRows(ctx context.Context, arg bigtable.RowSet, f func(bigtable.Row) bool, opts ...bigtable.ReadOption) error
+	CheckAndMutateRow(ctx context.Context, row string, cond bigtable.Filter, mtrue, mfalse *bigtable.Mutation) (bool, error)
 }
 
 type btDataClient interface {
@@ -63,9 +70,19 @@ func (t *realTable) Apply(ctx context.Context, row string, m *bigtable.Mutation,
 func (t *realTable) ReadRows(ctx context.Context, arg bigtable.RowSet, f func(bigtable.Row) bool, opts ...bigtable.ReadOption) error {
 	return t.inner.ReadRows(ctx, arg, f, opts...)
 }
+func (t *realTable) CheckAndMutateRow(ctx context.Context, row string, cond bigtable.Filter, mtrue, mfalse *bigtable.Mutation) (bool, error) {
+	var matched bool
+	condMut := bigtable.NewCondMutation(cond, mtrue, mfalse)
+	if err := t.inner.Apply(ctx, row, condMut, bigtable.GetCondMutationResult(&matched)); err != nil {
+		return false, err
+	}
+	return matched, nil
+}
 
 var newDataClient = func(ctx context.Context, project, instance string) (btDataClient, error) {
-	c, err := bigtable.NewClient(ctx, project, instance)
+	c, err := bigtable.NewClient(ctx, project, instance,
+		option.WithGRPCConnectionPool(4), // 4 gRPC channels (SDK default, explicit for clarity)
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +102,23 @@ func New(ctx context.Context, project, instance string) (*Client, error) {
 		return nil, fmt.Errorf("bigtable.New: %w", err)
 	}
 	return &Client{inner: c, project: project, instance: instance}, nil
+}
+
+// Warmup pre-establishes gRPC connections by issuing a lightweight ReadRow
+// against each table. This avoids cold-start latency on the first real request.
+// Errors are logged but not fatal — the connection will be retried on first use.
+func (c *Client) Warmup(ctx context.Context) {
+	tables := []string{
+		TableAssets, TableMcapFiles, TableDeliveries,
+		TableIdxSegmentsByFile, TableIdxAssetDeliveries,
+		TableIdxCustomerDeliveries, TableIdempotencyKeys,
+		TableAssetAlgoEvents,
+	}
+	for _, name := range tables {
+		t := c.Table(name)
+		// Read a non-existent row — fast no-op that forces gRPC channel establishment.
+		_, _ = t.ReadRow(ctx, "__warmup__", bigtable.RowFilter(bigtable.LatestNFilter(1)))
+	}
 }
 
 func (c *Client) Table(name string) btTable {
@@ -153,8 +187,14 @@ func PackInt64(v int64) []byte {
 }
 
 // UnpackInt64 decodes big-endian bytes back to int64.
+// Falls back to strconv.ParseInt for legacy string-encoded values.
 func UnpackInt64(b []byte) int64 {
-	return int64(binary.BigEndian.Uint64(b))
+	if len(b) == 8 {
+		return int64(binary.BigEndian.Uint64(b))
+	}
+	// Legacy fallback: value may be stored as a decimal string.
+	v, _ := strconv.ParseInt(string(b), 10, 64)
+	return v
 }
 
 // B converts a string to bytes for Bigtable cell values.

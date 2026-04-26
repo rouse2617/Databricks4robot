@@ -3,6 +3,9 @@ backend/bin/
 backend/*.exe
 backend/*.out
 backend/vendor/
+backend/server
+backend/bench
+backend/megaTest
 
 # Python
 __pycache__/
@@ -18,12 +21,15 @@ dist/
 # Node / Frontend
 Frontend/node_modules/
 Frontend/dist/
+Frontend/tsconfig.tsbuildinfo
 
 # Env files
 .env
 .env.local
 .env.*.local
+backend/.env
 !.env.example
+!backend/.env.example
 
 # GCP
 *.json
@@ -33,6 +39,7 @@ Frontend/dist/
 # IDE
 .idea/
 .vscode/
+.kiro/
 *.swp
 
 # OS

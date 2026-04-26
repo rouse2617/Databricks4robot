@@ -1,3 +1,12 @@
+// @title           Data Platform API
+// @version         1.0
+// @description     Backend API for the Data Platform (asset, algo, delivery, mcap management).
+// @host            localhost:8080
+// @BasePath        /api/v1
+// @securityDefinitions.apikey GraceToken
+// @in header
+// @name X-Grace-Token
+
 package main
 
 import (
@@ -14,8 +23,11 @@ import (
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
 	mcapH "data-platform/internal/handlers/mcap"
+	"data-platform/internal/middleware"
 	"data-platform/internal/postgres"
+	"data-platform/internal/repository"
 	assetUC "data-platform/internal/usecase/asset"
+	"data-platform/internal/validate"
 	"data-platform/routes"
 )
 
@@ -25,14 +37,35 @@ func main() {
 	}
 
 	cfg := config.Load()
+
+	// Register custom validation rules before any handler uses Gin binding.
+	validate.RegisterCustomValidators()
+
+	// Setup structured logging (must be before any slog calls).
+	closeLog := middleware.SetupLogger(cfg.LogLevel, cfg.LogFormat, cfg.LogFile)
+	defer closeLog()
+
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	ctx := context.Background()
 
+	// Load registries (required for all backends).
+	algoRegistry, err := config.LoadAlgoRegistry("config/algo_registry.yaml")
+	if err != nil {
+		slog.Error("failed to load algo registry", "err", err)
+		os.Exit(1)
+	}
+	tagRegistry, err := config.LoadTagRegistry("config/tag_registry.yaml")
+	if err != nil {
+		slog.Error("failed to load tag registry", "err", err)
+		os.Exit(1)
+	}
+
 	var (
 		assetHandler    *assetH.Handler
+		algoHandler     *assetH.AlgoHandler
 		mcapHandler     *mcapH.Handler
 		deliveryHandler *deliveryH.Handler
 	)
@@ -46,10 +79,18 @@ func main() {
 		}
 		defer btClient.Close()
 
+		slog.Info("warming up bigtable connections...")
+		btClient.Warmup(ctx)
+		slog.Info("bigtable warmup complete")
+
 		assetRepo := btpkg.NewAssetRepo(btClient)
-		assetHandler = assetH.New(assetUC.New(assetRepo))
+		deliveryRepo := btpkg.NewDeliveryRepo(btClient)
+		algoEventRepo := btpkg.NewAlgoEventRepo(btClient)
+		algoUC := assetUC.NewAlgoUsecase(assetRepo, algoEventRepo, algoRegistry)
+		algoHandler = assetH.NewAlgoHandler(algoUC)
+		assetHandler = assetH.New(newAssetUsecase(assetRepo, tagRegistry, algoRegistry), deliveryRepo)
 		mcapHandler = mcapH.New(btpkg.NewMcapFileRepo(btClient))
-		deliveryHandler = deliveryH.New(btpkg.NewDeliveryRepo(btClient), btpkg.NewIdempotencyRepo(btClient))
+		deliveryHandler = deliveryH.New(deliveryRepo, btpkg.NewIdempotencyRepo(btClient))
 
 	case "postgres":
 		pgClient, err := postgres.New(ctx, cfg)
@@ -60,9 +101,13 @@ func main() {
 		defer pgClient.Close()
 
 		assetRepo := postgres.NewAssetRepo(pgClient)
-		assetHandler = assetH.New(assetUC.New(assetRepo))
+		algoEventRepo := postgres.NewAlgoEventRepo(pgClient)
+		deliveryRepo := postgres.NewDeliveryRepo(pgClient)
+		algoUC := assetUC.NewAlgoUsecase(assetRepo, algoEventRepo, algoRegistry)
+		algoHandler = assetH.NewAlgoHandler(algoUC)
+		assetHandler = assetH.New(newAssetUsecase(assetRepo, tagRegistry, algoRegistry), deliveryRepo)
 		mcapHandler = mcapH.New(postgres.NewMcapFileRepo(pgClient))
-		deliveryHandler = deliveryH.New(postgres.NewDeliveryRepo(pgClient), postgres.NewIdempotencyRepo(pgClient))
+		deliveryHandler = deliveryH.New(deliveryRepo, postgres.NewIdempotencyRepo(pgClient))
 
 	default:
 		slog.Error("invalid STORAGE_BACKEND", "value", cfg.StorageBackend, "allowed", "bigtable|postgres")
@@ -71,7 +116,16 @@ func main() {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
-	routes.RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler)
+	routes.RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, algoHandler)
+
+	// Start config watcher for hot-reload of registries.
+	configWatcher, err := config.NewConfigWatcher("config", tagRegistry, algoRegistry)
+	if err != nil {
+		slog.Warn("config watcher failed to start, hot-reload disabled", "err", err)
+	} else {
+		defer configWatcher.Stop()
+		slog.Info("config watcher started for hot-reload")
+	}
 
 	addr := ":" + cfg.Port
 	slog.Info("backend server starting", "addr", addr, "storage_backend", cfg.StorageBackend)
@@ -81,3 +135,10 @@ func main() {
 	}
 }
 
+func newAssetUsecase(
+	repo repository.AssetRepository,
+	tagRegistry *config.TagRegistry,
+	algoRegistry *config.AlgoRegistry,
+) *assetUC.Usecase {
+	return assetUC.NewFull(repo, tagRegistry, algoRegistry)
+}

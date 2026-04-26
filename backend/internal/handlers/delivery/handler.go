@@ -25,7 +25,20 @@ func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepo
 	return &Handler{repo: repo, idemRepo: idemRepo}
 }
 
-// POST /api/v1/deliveries
+// Commit creates a new delivery.
+// @Summary      Commit delivery
+// @Description  Create a new delivery for a set of assets
+// @Tags         deliveries
+// @Accept       json
+// @Produce      json
+// @Param        Idempotency-Key header string true "Idempotency key"
+// @Param        body body object true "Commit delivery request"
+// @Success      201 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      409 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /deliveries [post]
 func (h *Handler) Commit(c *gin.Context) {
 	var req struct {
 		AssetIDs   []string `json:"asset_ids" binding:"required,min=1"`
@@ -35,18 +48,18 @@ func (h *Handler) Commit(c *gin.Context) {
 		Owner      string   `json:"owner"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		httpresp.BadRequest(c, "INVALID_ARGUMENT", "invalid request body", map[string]any{"error": err.Error()})
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
 	idemKey := c.GetHeader("Idempotency-Key")
 	if idemKey == "" {
-		httpresp.BadRequest(c, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required", nil)
+		httpresp.BadRequest(c, httpresp.CodeMissingIdempotencyKey, "Idempotency-Key header is required", nil)
 		return
 	}
 	hash := hashDeliveryRequest(req)
 	if rec, err := h.idemRepo.Get(c.Request.Context(), "deliveries_commit", idemKey); err == nil && rec != nil {
 		if rec.RequestHash != hash {
-			httpresp.Conflict(c, "IDEMPOTENCY_CONFLICT", "same idempotency key used with different payload", nil)
+			httpresp.Conflict(c, httpresp.CodeIdempotencyConflict, "same idempotency key used with different payload", nil)
 			return
 		}
 		var body map[string]any
@@ -81,11 +94,11 @@ func (h *Handler) Commit(c *gin.Context) {
 	}
 
 	body := gin.H{
-		"delivery_id": d.DeliveryID,
-		"customer_id": d.CustomerID,
-		"asset_count": d.AssetCount,
+		"delivery_id":  d.DeliveryID,
+		"customer_id":  d.CustomerID,
+		"asset_count":  d.AssetCount,
 		"delivered_at": d.DeliveredAt,
-		"status":      d.Status,
+		"status":       d.Status,
 	}
 	c.JSON(http.StatusCreated, body)
 	respBytes, _ := json.Marshal(body)
@@ -102,7 +115,7 @@ func (h *Handler) Get(c *gin.Context) {
 		return
 	}
 	if d == nil {
-		httpresp.NotFound(c, "DELIVERY_NOT_FOUND", "delivery not found")
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
 		return
 	}
 	c.JSON(http.StatusOK, d)
@@ -119,10 +132,10 @@ func (h *Handler) ListByCustomer(c *gin.Context) {
 	items, nextToken := paginateIDs(ids, page, pageSize)
 	c.JSON(http.StatusOK, gin.H{
 		"delivery_ids": items,
-		"total":       len(ids),
-		"page":        page,
-		"page_size":   pageSize,
-		"next_token":  nextToken,
+		"total":        len(ids),
+		"page":         page,
+		"page_size":    pageSize,
+		"next_token":   nextToken,
 	})
 }
 

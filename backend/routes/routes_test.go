@@ -28,6 +28,12 @@ func (r *routeAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asse
 	return []*models.Asset{}, nil
 }
 func (r *routeAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (r *routeAssetRepo) ListWithFilters(context.Context, string, []interface{}, int, int, string) ([]*models.Asset, int64, error) {
+	return nil, 0, nil
+}
+func (r *routeAssetRepo) MergeCfAlgo(context.Context, string, int64, map[string]interface{}, map[string]interface{}) (int64, error) {
+	return 0, nil
+}
 
 type routeMcapRepo struct{}
 
@@ -38,6 +44,9 @@ func (r *routeMcapRepo) Set(context.Context, *models.McapFile) error { return ni
 func (r *routeMcapRepo) UpdateIngestState(context.Context, string, models.IngestState) error {
 	return nil
 }
+func (r *routeMcapRepo) List(context.Context, int, int) ([]*models.McapFile, int64, error) {
+	return []*models.McapFile{}, 0, nil
+}
 
 type routeDeliveryRepo struct{}
 
@@ -47,6 +56,9 @@ func (r *routeDeliveryRepo) Get(context.Context, string) (*models.Delivery, erro
 }
 func (r *routeDeliveryRepo) WriteIndexes(context.Context, string, *models.Delivery) error { return nil }
 func (r *routeDeliveryRepo) ListByCustomer(context.Context, string) ([]string, error) {
+	return []string{"d1"}, nil
+}
+func (r *routeDeliveryRepo) ListByAsset(context.Context, string) ([]string, error) {
 	return []string{"d1"}, nil
 }
 
@@ -61,12 +73,12 @@ func TestRegisterAll(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 
-	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}))
+	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler)
+	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)

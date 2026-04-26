@@ -53,6 +53,5 @@ func Unprocessable(c *gin.Context, code, message string, details map[string]any)
 }
 
 func Internal(c *gin.Context, message string) {
-	Error(c, http.StatusInternalServerError, "INTERNAL_ERROR", message, nil)
+	Error(c, http.StatusInternalServerError, CodeInternalError, message, nil)
 }
-
