@@ -1,90 +1,328 @@
-import { useEffect, useState } from "react";
-import { Table, Tag, Button, Space, Input, Select, Typography, message } from "antd";
+// ─── AssetsPage — Three-column discovery workbench container ───
+// Wires all extracted components to the centralized reducer.
+// Validates: Requirements R1, R7, R13
+
+import { useEffect, useCallback, useRef, useState } from "react";
+import { Typography, message } from "antd";
 import { useNavigate } from "react-router-dom";
-import type { ColumnsType } from "antd/es/table";
-import dayjs from "dayjs";
-import { assetsApi, type Asset } from "../api/assets";
+import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryReducer";
+import { useAssetsQuerySync } from "../hooks/assets/useAssetsQuerySync";
+import { useSavedViews } from "../hooks/assets/useSavedViews";
+import { buildPlaceholderPreviewManifest } from "../hooks/assets/useAssetPreview";
+import AssetsSearchBar from "../components/assets/AssetsSearchBar";
+import ActiveFilterChipsRow from "../components/assets/ActiveFilterChipsRow";
+import AssetsFacetSidebar from "../components/assets/AssetsFacetSidebar";
+import AssetsResultsPane from "../components/assets/AssetsResultsPane";
+import BulkActionBar from "../components/assets/BulkActionBar";
+import AssetQuickPreviewPane from "../components/assets/AssetQuickPreviewPane";
+import SavedViewSelector from "../components/assets/SavedViewSelector";
+import SaveViewDialog from "../components/assets/SaveViewDialog";
+import AddFilterPopover from "../components/assets/AddFilterPopover";
+import ColumnsConfigPopover from "../components/assets/ColumnsConfigPopover";
 
 const { Title } = Typography;
-const { Search } = Input;
-
-const statusColor: Record<string, string> = {
-  active: "green",
-  pending: "gold",
-  archived: "blue",
-  deleted: "red",
-};
 
 export default function AssetsPage() {
   const navigate = useNavigate();
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
-  const [status, setStatus] = useState<string>();
+  const [state, dispatch] = useAssetsDiscoveryReducer();
+  useAssetsQuerySync(state.queryState, state.routerState, dispatch);
+  const { views, currentViewId, selectView, saveView, deleteView } = useSavedViews(state, dispatch);
   const [msg, msgCtx] = message.useMessage();
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const load = async (p = page, s = status) => {
-    setLoading(true);
-    try {
-      const data = await assetsApi.list({ page: p, page_size: 20, status: s });
-      setAssets(data.items);
-      setTotal(data.total);
-    } catch {
-      msg.error("Failed to load assets");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Responsive: hide facet/preview on narrow screens
+  const [isNarrow, setIsNarrow] = useState(window.innerWidth < 1024);
+  useEffect(() => {
+    const handler = () => setIsNarrow(window.innerWidth < 1024);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
 
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Scroll to top on page change
+  useEffect(() => {
+    containerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [state.queryState.page]);
 
-  const columns: ColumnsType<Asset> = [
-    {
-      title: "Asset ID",
-      dataIndex: "asset_id",
-      render: (id: string) => (
-        <Button type="link" onClick={() => navigate(`/assets/${id}`)} className="p-0 font-mono text-xs">
-          {id.slice(0, 8)}…
-        </Button>
-      ),
+  // ── Keyboard handler: Up/Down arrows change activePreviewId, / focuses search, Escape closes dropdowns, Space toggles selection ──
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      const isInInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+      // `/` focuses search bar (when not already in an input)
+      if (e.key === "/" && !isInInput) {
+        e.preventDefault();
+        const searchInput = document.querySelector<HTMLInputElement>(
+          '[data-testid="assets-search-input"]',
+        );
+        searchInput?.focus();
+        return;
+      }
+
+      // `Escape` closes suggestion dropdown / popovers
+      if (e.key === "Escape") {
+        dispatch({ type: "TOGGLE_SUGGESTIONS", payload: { open: false } });
+        dispatch({ type: "TOGGLE_COLUMNS_POPOVER", payload: { open: false } });
+        dispatch({ type: "TOGGLE_ADD_FILTER", payload: { open: false } });
+        return;
+      }
+
+      // Don't intercept arrow/space if user is in an input/textarea
+      if (isInInput) return;
+
+      // `Space` toggles row selection for the active preview row
+      if (e.key === " ") {
+        const activeId = state.previewState.activeAssetId;
+        if (activeId) {
+          e.preventDefault();
+          dispatch({ type: "TOGGLE_ROW_SELECTION", payload: { id: activeId } });
+        }
+        return;
+      }
+
+      // `ArrowUp`/`ArrowDown` change activePreviewId
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+
+      const items = state.resultsState.items;
+      if (items.length === 0) return;
+
+      const currentId = state.previewState.activeAssetId;
+      const currentIdx = currentId
+        ? items.findIndex((a) => a.asset_id === currentId)
+        : -1;
+
+      let nextIdx: number;
+      if (e.key === "ArrowDown") {
+        nextIdx = currentIdx < items.length - 1 ? currentIdx + 1 : currentIdx;
+      } else {
+        nextIdx = currentIdx > 0 ? currentIdx - 1 : 0;
+      }
+
+      const nextAsset = items[nextIdx];
+      if (nextAsset && nextAsset.asset_id !== currentId) {
+        e.preventDefault();
+        dispatch({
+          type: "SET_ACTIVE_PREVIEW_ASSET",
+          payload: { assetId: nextAsset.asset_id },
+        });
+      }
     },
-    { title: "MCAP File", dataIndex: "mcap_file_id", render: (v: string) => <span className="font-mono text-xs">{v.slice(0, 8)}…</span> },
-    { title: "Duration (s)", dataIndex: "duration_sec", render: (v: number) => v.toFixed(2) },
-    { title: "Reviewer", dataIndex: "reviewer" },
-    {
-      title: "Status",
-      dataIndex: "status",
-      render: (s: string) => <Tag color={statusColor[s] ?? "default"}>{s}</Tag>,
-    },
-    { title: "Owner", dataIndex: "owner" },
-    { title: "Updated", dataIndex: "updated_at", render: (v: string) => dayjs(v).format("YYYY-MM-DD HH:mm") },
-  ];
+    [state.resultsState.items, state.previewState.activeAssetId, dispatch],
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
+  // ── Derived state ──
+  const selectedCount = state.selectionState.selectedIds.size;
+  const previewAsset = state.previewState.summary;
+  const previewManifest = previewAsset
+    ? buildPlaceholderPreviewManifest(previewAsset)
+    : null;
 
   return (
-    <div>
+    <div ref={containerRef}>
       {msgCtx}
-      <div className="flex justify-between items-center mb-4">
-        <Title level={4} className="!mb-0">Assets</Title>
-        <Space>
-          <Select
-            placeholder="Filter status"
-            allowClear
-            style={{ width: 140 }}
-            onChange={(v) => { setStatus(v); load(1, v); setPage(1); }}
-            options={["pending", "active", "archived", "deleted"].map((s) => ({ value: s, label: s }))}
+
+      {/* Page title */}
+      <Title level={4} style={{ margin: "0 0 12px 0" }}>
+        资产管理
+      </Title>
+
+      {/* Search bar + Saved Views + Add Filter */}
+      <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <AssetsSearchBar
+            searchMode={state.queryState.searchMode}
+            draftText={state.searchUiState.draftText}
+            committedQueryText={state.queryState.queryText}
+            onDraftChange={(text) =>
+              dispatch({ type: "SET_SEARCH_DRAFT", payload: { text } })
+            }
+            onCommitQuery={(text, tokens) =>
+              dispatch({ type: "COMMIT_QUERY_TEXT", payload: { text, tokens } })
+            }
+            onModeChange={(mode) =>
+              dispatch({ type: "SET_SEARCH_MODE", payload: { mode } })
+            }
           />
-          <Search placeholder="Search tags…" onSearch={() => load(1)} style={{ width: 220 }} />
-        </Space>
+        </div>
+        <SavedViewSelector
+          views={views}
+          currentViewId={currentViewId}
+          onSelectView={selectView}
+          onDeleteView={deleteView}
+          onOpenSaveDialog={() => dispatch({ type: "TOGGLE_SAVE_DIALOG", payload: { open: true } })}
+        />
+        <AddFilterPopover
+          onAddFilter={(chip) =>
+            dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } })
+          }
+        />
       </div>
-      <Table
-        rowKey="asset_id"
-        columns={columns}
-        dataSource={assets}
-        loading={loading}
-        pagination={{ current: page, total, pageSize: 20, onChange: (p) => { setPage(p); load(p); } }}
-        size="middle"
+
+      {/* Save View Dialog */}
+      <SaveViewDialog
+        open={state.savedViewState.saveDialogOpen}
+        onSave={(name) => saveView(name)}
+        onCancel={() => dispatch({ type: "TOGGLE_SAVE_DIALOG", payload: { open: false } })}
       />
+
+      {/* Active filter chips */}
+      <div style={{ marginBottom: 8 }}>
+        <ActiveFilterChipsRow
+          chips={state.queryState.activeFilters}
+          onRemoveChip={(id) =>
+            dispatch({ type: "REMOVE_FILTER_CHIP", payload: { id } })
+          }
+          onClearAll={() => dispatch({ type: "CLEAR_ALL_FILTERS" })}
+        />
+      </div>
+
+      {/* Three-column layout */}
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        {/* Left: Facet Sidebar */}
+        {!isNarrow && (
+        <div style={{ width: 220, flexShrink: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#1E293B" }}>筛选</span>
+            {state.queryState.activeFilters.length > 0 && (
+              <a
+                onClick={() => {
+                  dispatch({ type: "CLEAR_ALL_FILTERS" });
+                  dispatch({ type: "FACET_RANGE_DRAFT", payload: { field: "duration_sec", min: undefined, max: undefined } });
+                }}
+                style={{ fontSize: 12, color: "#2563EB", cursor: "pointer" }}
+              >
+                重置
+              </a>
+            )}
+          </div>
+          <AssetsFacetSidebar
+            activeFilters={state.queryState.activeFilters}
+            expandedGroups={state.facetUiState.expandedGroups}
+            rangeDrafts={state.facetUiState.rangeDrafts}
+            dateDrafts={state.facetUiState.dateDrafts}
+            onToggleFacet={(field, value) =>
+              dispatch({ type: "FACET_TOGGLE", payload: { field, value } })
+            }
+            onApplyRange={(field, min, max) =>
+              dispatch({ type: "FACET_RANGE_APPLY", payload: { field, min, max } })
+            }
+            onApplyDate={(field, start, end) =>
+              dispatch({ type: "FACET_DATE_APPLY", payload: { field, start, end } })
+            }
+            onRangeDraftChange={(field, min, max) =>
+              dispatch({ type: "FACET_RANGE_DRAFT", payload: { field, min, max } })
+            }
+            onDateDraftChange={(field, start, end) =>
+              dispatch({ type: "FACET_DATE_DRAFT", payload: { field, start, end } })
+            }
+            onToggleGroup={(group) =>
+              dispatch({ type: "FACET_GROUP_TOGGLE", payload: { group } })
+            }
+          />
+        </div>
+        )}
+
+        {/* Center: Bulk Action Bar + Columns Config + Results */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <BulkActionBar
+            selectedCount={selectedCount}
+            selectionMode={state.selectionState.mode}
+            totalFiltered={state.resultsState.total}
+            onCreateDelivery={() => msg.info("创建交付功能开发中")}
+            onRunAlgo={() => msg.info("批量触发算法功能开发中")}
+            onBatchTag={() => msg.info("批量打标签功能开发中")}
+            onExportIds={() => msg.info("导出 ID 功能开发中")}
+            onSelectAllFiltered={() => dispatch({ type: "SELECT_ALL_FILTERED" })}
+            onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
+          />
+          <AssetsResultsPane
+            items={state.resultsState.items}
+            total={state.resultsState.total}
+            totalApprox={state.resultsState.totalApprox}
+            fetchStatus={state.resultsState.fetchStatus}
+            error={state.resultsState.error}
+            activeFilterCount={state.queryState.activeFilters.length}
+            sort={state.queryState.sort}
+            page={state.queryState.page}
+            pageSize={state.queryState.pageSize}
+            viewMode={state.queryState.viewMode}
+            selectedColumns={state.queryState.selectedColumns}
+            selectedIds={state.selectionState.selectedIds}
+            activePreviewId={state.previewState.activeAssetId}
+            onSortChange={(sort) =>
+              dispatch({ type: "SET_SORT", payload: { sort } })
+            }
+            onPageChange={(page) =>
+              dispatch({ type: "SET_PAGE", payload: { page } })
+            }
+            onSelectRow={(id) =>
+              dispatch({ type: "TOGGLE_ROW_SELECTION", payload: { id } })
+            }
+            onRowClick={(assetId) =>
+              dispatch({
+                type: "SET_ACTIVE_PREVIEW_ASSET",
+                payload: { assetId },
+              })
+            }
+            onClearFilters={() => dispatch({ type: "CLEAR_ALL_FILTERS" })}
+            onRetry={() =>
+              dispatch({
+                type: "SET_PAGE",
+                payload: { page: state.queryState.page },
+              })
+            }
+            columnsConfigSlot={
+              <ColumnsConfigPopover
+                selectedColumns={state.queryState.selectedColumns}
+                open={state.layoutState.columnsPopoverOpen}
+                onOpenChange={(open) =>
+                  dispatch({ type: "TOGGLE_COLUMNS_POPOVER", payload: { open } })
+                }
+                onColumnsChange={(columns) =>
+                  dispatch({ type: "SET_SELECTED_COLUMNS", payload: { columns } })
+                }
+              />
+            }
+          />
+        </div>
+
+        {/* Right: Quick Preview Pane */}
+        {!isNarrow && (
+        <div
+          style={{
+            width: state.previewState.collapsed ? 36 : 320,
+            flexShrink: 0,
+            transition: "width 0.2s ease",
+          }}
+        >
+          <AssetQuickPreviewPane
+            activeAssetId={state.previewState.activeAssetId}
+            fetchStatus={state.previewState.fetchStatus}
+            asset={previewAsset}
+            previewManifest={previewManifest}
+            collapsed={state.previewState.collapsed}
+            onCollapse={() => dispatch({ type: "PREVIEW_COLLAPSE_TOGGLE" })}
+            onOpenDetail={(assetId) => navigate(`/assets/${assetId}`)}
+            onFindSimilar={() => {}}
+            onRetry={() => {
+              const id = state.previewState.activeAssetId;
+              if (id) {
+                dispatch({ type: "SET_ACTIVE_PREVIEW_ASSET", payload: { assetId: null } });
+                // Re-trigger by setting the asset id again on next tick
+                setTimeout(() => {
+                  dispatch({ type: "SET_ACTIVE_PREVIEW_ASSET", payload: { assetId: id } });
+                }, 0);
+              }
+            }}
+          />
+        </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -13,7 +13,7 @@ export default function LoginPage() {
       return;
     }
     login(token.trim());
-    navigate("/assets");
+    navigate("/dashboard");
   };
 
   return (

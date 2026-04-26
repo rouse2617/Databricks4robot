@@ -69,8 +69,17 @@ make frontend-dev
 ## Current Status
 
 - [x] 工程骨架已创建
-- [x] Bigtable repository 层已落地
-- [x] 服务入口与路由已接线
-- [ ] 端到端 smoke test
-- [ ] 更完整的业务逻辑与测试覆盖
+- [x] Bigtable repository 层已落地（全部 CRUD + 算法生命周期 + 交付）
+- [x] PostgreSQL repository 层已落地
+- [x] 服务入口与路由已接线（含 AlgoHandler Bigtable 分支）
+- [x] 算法状态机 + 依赖链自动 unblock
+- [x] 乐观锁 (CheckAndMutateRow)
+- [x] 单元测试 + 属性测试 (7 个正确性属性)
+- [x] 端到端测试 (httptest + fakeTable)
+- [x] 集成测试脚本 (真实 Bigtable)
+- [x] 极端 Case 测试 (85 cases)
+- [x] 千级测试 (1000 cases, 20 维度, 98.4% 通过率)
+- [x] 压测工具
+- [ ] ListWithFilters Bigtable 性能优化（当前全表扫描）
+- [ ] OIDC/JWT 认证 (Phase 0.5)
 

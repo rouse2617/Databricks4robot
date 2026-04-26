@@ -46,6 +46,10 @@ components:
         reviewer: { type: string }
         owner: { type: string }
         version: { type: integer, format: int64 }
+        files:
+          type: object
+          description: "File references. Key = logical name, value = GCS URI"
+          additionalProperties: { type: string }
     AssetListResponse:
       type: object
       properties:
@@ -67,15 +71,98 @@ components:
         contract_id: { type: string }
         note: { type: string }
         owner: { type: string }
+    StartAlgoRequest:
+      type: object
+      required: [method]
+      properties:
+        method: { type: string, description: "Processing method identifier" }
+        run_id: { type: string, description: "External orchestration run ID" }
+    FinishAlgoRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, failed]
+          description: "Algo completion status"
+        output_uri:
+          type: string
+          description: "GCS URI of the output artifact (required when status=ok and algo requires URI)"
+        run_id: { type: string, description: "External orchestration run ID" }
+        reason:
+          type: string
+          description: "Failure reason (required when status=failed)"
+        result_size_bytes:
+          type: integer
+          format: int64
+          description: "Size of the result in bytes"
+        extra_fields:
+          type: object
+          additionalProperties: true
+          description: "Additional output fields required by the algo registry"
+    AlgoLifecycleResponse:
+      type: object
+      properties:
+        asset_id: { type: string }
+        algo_key: { type: string }
+        status: { type: string }
+    AlgoEvent:
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        asset_id: { type: string, format: uuid }
+        algo_key: { type: string }
+        prev_status: { type: string, nullable: true }
+        new_status: { type: string }
+        run_id: { type: string, nullable: true }
+        reason: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+    AlgoEventListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AlgoEvent' }
+    McapFile:
+      type: object
+      properties:
+        mcap_file_id: { type: string }
+        gcs_path: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        raw_hash_md5: { type: string }
+        ingest_state: { type: string, enum: [pending, summarized, failed] }
+        start_timestamp_ns: { type: integer, format: int64 }
+        end_timestamp_ns: { type: integer, format: int64 }
+        channel_count: { type: integer }
+        chunk_count: { type: integer }
+        owner: { type: string }
+        process_state:
+          type: object
+          additionalProperties: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
 paths:
   /api/v1/assets:
     get:
-      summary: List assets by MCAP file
+      summary: List assets with optional filtering and sorting
       parameters:
         - in: query
           name: mcap_file_id
-          required: true
           schema: { type: string }
+          description: "Filter by MCAP file ID (backward compatible)"
+        - in: query
+          name: filter
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+          description: "Filter expressions in format field:op:value. Allowed fields: asset_id, mcap_file_id, status, reviewer, owner, type, env, task, created_at, updated_at, start_timestamp_ns, end_timestamp_ns, duration_sec, delivery_count, last_delivered_to, last_delivered_at, version, retention_tier, archive_after_days, delete_after_days, total_size_bytes, last_accessed_at, and dynamic prefixes tag.<key>, algo.<key>, files.<key>. Accepted aliases: tags.<key>, cf_tag.<key>, algo_results.<key>, cf_algo.<key>, cf_files.<key>."
+        - in: query
+          name: sort_by
+          schema: { type: string }
+          description: "Sort field, prefix with - for descending. Uses the same field whitelist and aliases as filter. Default: -created_at"
         - in: query
           name: page
           schema: { type: integer, minimum: 1, default: 1 }
@@ -147,6 +234,191 @@ paths:
           schema: { type: string }
       responses:
         '200': { description: ok }
+  /api/v1/assets/{id}/algo/{algo_key}/start:
+    post:
+      summary: Start algo processing on an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: algo_key
+          required: true
+          schema: { type: string }
+          description: "Algo key in format name@version (e.g. hand_tracking@1.2.0)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartAlgoRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoLifecycleResponse' }
+        '400':
+          description: "Invalid algo key (INVALID_ALGO_KEY)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: "Algo already running (ALGO_ALREADY_RUNNING) or invalid state transition (INVALID_STATE_TRANSITION) or concurrent conflict (CONCURRENT_CONFLICT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/algo/{algo_key}/finish:
+    post:
+      summary: Finish algo processing on an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: algo_key
+          required: true
+          schema: { type: string }
+          description: "Algo key in format name@version (e.g. hand_tracking@1.2.0)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FinishAlgoRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoLifecycleResponse' }
+        '400':
+          description: "Invalid algo key (INVALID_ALGO_KEY)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: "Invalid state transition (INVALID_STATE_TRANSITION) or concurrent conflict (CONCURRENT_CONFLICT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: "Missing required field (MISSING_REQUIRED_FIELD) or missing reason (MISSING_REASON)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/algo/{algo_key}/reset:
+    post:
+      summary: Reset algo to pending for retry
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: algo_key
+          required: true
+          schema: { type: string }
+          description: "Algo key in format name@version (e.g. hand_tracking@1.2.0)"
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoLifecycleResponse' }
+        '400':
+          description: "Invalid algo key (INVALID_ALGO_KEY)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: "Invalid state transition (INVALID_STATE_TRANSITION) or concurrent conflict (CONCURRENT_CONFLICT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/algo-events:
+    get:
+      summary: List algo state change events for an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: algo_key
+          schema: { type: string }
+          description: "Filter events by algo key"
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoEventListResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/mcap-files:
+    get:
+      summary: List MCAP files with pagination
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/McapFile' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  page_size: { type: integer }
+        '500':
+          description: internal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/mcap-files/{id}:
+    get:
+      summary: Get MCAP file by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: ok
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/mcap/upload/finalize:
     post:
       summary: Finalize upload

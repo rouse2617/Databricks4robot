@@ -1,0 +1,52 @@
+// ─── SaveViewDialog — Modal to name and save current queryState as a view ───
+// Validates: Requirements R11
+
+import { useState } from "react";
+import { Modal, Input } from "antd";
+
+export interface SaveViewDialogProps {
+  open: boolean;
+  onSave: (name: string) => void;
+  onCancel: () => void;
+}
+
+export default function SaveViewDialog({
+  open,
+  onSave,
+  onCancel,
+}: SaveViewDialogProps) {
+  const [name, setName] = useState("");
+
+  const handleOk = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onSave(trimmed);
+    setName("");
+  };
+
+  const handleCancel = () => {
+    setName("");
+    onCancel();
+  };
+
+  return (
+    <Modal
+      title="保存视图"
+      open={open}
+      onOk={handleOk}
+      onCancel={handleCancel}
+      okText="保存"
+      cancelText="取消"
+      okButtonProps={{ disabled: !name.trim() }}
+      destroyOnClose
+    >
+      <Input
+        placeholder="输入视图名称"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onPressEnter={handleOk}
+        autoFocus
+      />
+    </Modal>
+  );
+}
