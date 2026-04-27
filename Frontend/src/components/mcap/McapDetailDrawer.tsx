@@ -1,0 +1,284 @@
+import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  Drawer, Descriptions, Table, Tag, Button, Space, Typography, Spin, Tooltip,
+} from "antd";
+import {
+  LinkOutlined, CopyOutlined, PlayCircleOutlined,
+} from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
+import dayjs from "dayjs";
+import { assetsApi } from "../../api/assets";
+import type { McapFile, Asset } from "../../api/types";
+
+const { Text } = Typography;
+
+/* ── helpers ── */
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes === 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatNs(ns?: number): string {
+  if (!ns) return "—";
+  return dayjs(ns / 1e6).format("YYYY-MM-DD HH:mm:ss");
+}
+
+/** Derive algo summary string like "2 ok / 1 failed" from algo_results map. */
+function algoSummary(algoResults: Record<string, string> | undefined): string {
+  if (!algoResults) return "—";
+  const counts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(algoResults)) {
+    if (k.endsWith(":status")) {
+      counts[v] = (counts[v] ?? 0) + 1;
+    }
+  }
+  if (Object.keys(counts).length === 0) return "—";
+  return Object.entries(counts)
+    .map(([status, n]) => `${n} ${status}`)
+    .join(" / ");
+}
+
+const statusColor: Record<string, string> = {
+  approved: "success",
+  rejected: "error",
+  superseded: "warning",
+  archived: "default",
+};
+
+/* ── props ── */
+
+interface McapDetailDrawerProps {
+  open: boolean;
+  mcapFile: McapFile | null;
+  onClose: () => void;
+}
+
+
+export default function McapDetailDrawer({ open, mcapFile, onClose }: McapDetailDrawerProps) {
+  const navigate = useNavigate();
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [assetsLoading, setAssetsLoading] = useState(false);
+
+  const loadRelatedAssets = useCallback(async (fileId: string) => {
+    setAssetsLoading(true);
+    try {
+      const data = await assetsApi.list({
+        filter: [`mcap_file_id:eq:${fileId}`],
+        page_size: 100,
+      });
+      setAssets(data.items ?? []);
+    } catch {
+      setAssets([]);
+    } finally {
+      setAssetsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open && mcapFile) {
+      loadRelatedAssets(mcapFile.mcap_file_id);
+    }
+    if (!open) {
+      setAssets([]);
+    }
+  }, [open, mcapFile, loadRelatedAssets]);
+
+  const foxgloveUrl = mcapFile?.gcs_path
+    ? `foxglove://open?ds=remote-file&ds.url=${encodeURIComponent(mcapFile.gcs_path)}`
+    : null;
+
+  const assetColumns: ColumnsType<Asset> = [
+    {
+      title: "Asset ID",
+      dataIndex: "asset_id",
+      width: 140,
+      render: (id: string) => (
+        <a onClick={() => { onClose(); navigate(`/assets/${id}`); }}>
+          <span className="font-mono text-xs">{id?.slice(0, 12)}…</span>
+        </a>
+      ),
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 90,
+      render: (s: string) => (
+        <Tag color={statusColor[s] ?? "default"}>{s || "—"}</Tag>
+      ),
+    },
+    {
+      title: "时长 (s)",
+      dataIndex: "duration_sec",
+      width: 90,
+      render: (v: number) => (v != null ? v.toFixed(1) : "—"),
+    },
+    {
+      title: "环境",
+      dataIndex: "env",
+      width: 90,
+      render: (v: string) => v || "—",
+    },
+    {
+      title: "算法摘要",
+      key: "algo_summary",
+      width: 140,
+      render: (_: unknown, record: Asset) => algoSummary(record.algo_results),
+    },
+    {
+      title: "更新时间",
+      dataIndex: "updated_at",
+      width: 130,
+      render: (v: string) => (v ? dayjs(v).format("MM-DD HH:mm") : "—"),
+    },
+  ];
+
+  return (
+    <Drawer
+      title="MCAP 文件详情"
+      placement="right"
+      width={720}
+      open={open}
+      onClose={onClose}
+      extra={
+        foxgloveUrl ? (
+          <Tooltip title="在 Foxglove Studio 中打开">
+            <Button
+              icon={<PlayCircleOutlined />}
+              href={foxgloveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              size="small"
+            >
+              Foxglove
+            </Button>
+          </Tooltip>
+        ) : null
+      }
+    >
+      {mcapFile ? (
+        <>
+          {/* ── Metadata ── */}
+          <Descriptions
+            column={2}
+            size="small"
+            bordered
+            labelStyle={{ width: 140 }}
+          >
+            <Descriptions.Item label="MCAP File ID" span={2}>
+              <Text copyable className="font-mono text-xs">
+                {mcapFile.mcap_file_id}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="GCS Path" span={2}>
+              <Space size={4}>
+                <Text
+                  ellipsis={{ tooltip: mcapFile.gcs_path }}
+                  style={{ maxWidth: 420, fontSize: 12 }}
+                >
+                  {mcapFile.gcs_path || "—"}
+                </Text>
+                {mcapFile.gcs_path && (
+                  <Tooltip title="复制路径">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<CopyOutlined />}
+                      onClick={() => navigator.clipboard.writeText(mcapFile.gcs_path)}
+                    />
+                  </Tooltip>
+                )}
+              </Space>
+            </Descriptions.Item>
+            <Descriptions.Item label="大小">
+              {formatBytes(mcapFile.size_bytes)}
+            </Descriptions.Item>
+            <Descriptions.Item label="MD5">
+              <Text className="font-mono text-xs">
+                {mcapFile.raw_hash_md5 || "—"}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="状态">
+              <Tag
+                color={
+                  mcapFile.ingest_state === "summarized"
+                    ? "success"
+                    : mcapFile.ingest_state === "failed"
+                      ? "error"
+                      : "default"
+                }
+              >
+                {mcapFile.ingest_state || "—"}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="Owner">
+              {mcapFile.owner || "—"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Channels">
+              {mcapFile.channel_count ?? "—"}
+            </Descriptions.Item>
+            <Descriptions.Item label="Chunks">
+              {mcapFile.chunk_count ?? "—"}
+            </Descriptions.Item>
+            <Descriptions.Item label="开始时间">
+              {formatNs(mcapFile.start_timestamp_ns)}
+            </Descriptions.Item>
+            <Descriptions.Item label="结束时间">
+              {formatNs(mcapFile.end_timestamp_ns)}
+            </Descriptions.Item>
+            <Descriptions.Item label="创建时间">
+              {mcapFile.created_at
+                ? dayjs(mcapFile.created_at).format("YYYY-MM-DD HH:mm:ss")
+                : "—"}
+            </Descriptions.Item>
+            <Descriptions.Item label="更新时间">
+              {mcapFile.updated_at
+                ? dayjs(mcapFile.updated_at).format("YYYY-MM-DD HH:mm:ss")
+                : "—"}
+            </Descriptions.Item>
+            <Descriptions.Item label="版本">
+              {mcapFile.version}
+            </Descriptions.Item>
+            <Descriptions.Item label="Process State">
+              {mcapFile.process_state
+                ? JSON.stringify(mcapFile.process_state)
+                : "—"}
+            </Descriptions.Item>
+          </Descriptions>
+
+          {/* ── Related Assets ── */}
+          <div style={{ marginTop: 24 }}>
+            <Text strong style={{ fontSize: 14 }}>
+              <LinkOutlined style={{ marginRight: 6 }} />
+              关联资产 ({assets.length})
+            </Text>
+            <Table
+              rowKey="asset_id"
+              columns={assetColumns}
+              dataSource={assets}
+              loading={assetsLoading}
+              size="small"
+              pagination={false}
+              scroll={{ x: 600 }}
+              style={{ marginTop: 8 }}
+              locale={{ emptyText: "暂无关联资产" }}
+              onRow={(record) => ({
+                style: { cursor: "pointer" },
+                onClick: () => {
+                  onClose();
+                  navigate(`/assets/${record.asset_id}`);
+                },
+              })}
+            />
+          </div>
+        </>
+      ) : (
+        <Spin />
+      )}
+    </Drawer>
+  );
+}

@@ -479,6 +479,40 @@ curl "$BASE/api/v1/customers/{customer_id}/deliveries?page=1&page_size=20" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
+### 3.3 交付列表
+
+```bash
+# 基础分页
+curl "$BASE/api/v1/deliveries?page=1&page_size=20" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 按状态过滤
+curl "$BASE/api/v1/deliveries?page=1&page_size=20&status=delivered" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`:
+```json
+{
+  "items": [
+    {
+      "delivery_id": "uuid",
+      "customer_id": "customer-001",
+      "contract_id": "contract-001",
+      "status": "delivered",
+      "owner": "team-a",
+      "note": "Q1 delivery batch",
+      "item_count": 5,
+      "delivered_at": "2026-05-01T10:00:00Z",
+      "created_at": "2026-04-25T10:00:00Z"
+    }
+  ],
+  "total": 42,
+  "page": 1,
+  "page_size": 20
+}
+```
+
 ## 4. 批量创建片段 (内部接口)
 
 ```bash
@@ -541,7 +575,126 @@ curl "$BASE/api/v1/mcap-files/{mcap_file_id}" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
-## 6. 错误码参考
+## 6. 注册表 (Registry)
+
+### 6.1 算法注册表
+
+```bash
+curl "$BASE/api/v1/algo-registry" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`:
+```json
+{
+  "items": [
+    {
+      "key": "hand_tracking@1.2.0",
+      "name": "hand_tracking",
+      "version": "1.2.0",
+      "depends_on": []
+    },
+    {
+      "key": "action_annotation@1.0.0",
+      "name": "action_annotation",
+      "version": "1.0.0",
+      "depends_on": ["hand_tracking@1.2.0", "head_tracking@1.0.0", "body_tracking@1.0.0"]
+    }
+  ]
+}
+```
+
+### 6.2 标签注册表
+
+```bash
+curl "$BASE/api/v1/tag-registry" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`:
+```json
+{
+  "items": [
+    {"key": "priority", "type": "enum", "values": ["critical", "high", "medium", "low"]},
+    {"key": "quality", "type": "enum", "values": ["excellent", "good", "acceptable", "poor", "unusable"]},
+    {"key": "scene", "type": "enum", "values": ["indoor", "outdoor", "warehouse", "office", "factory"]},
+    {"key": "notes", "type": "string", "max_length": 500},
+    {"key": "batch", "type": "string", "max_length": 255}
+  ]
+}
+```
+
+## 7. OpenSearch 检索 (Search)
+
+### 7.1 全文检索资产
+
+```bash
+# 关键词搜索
+curl "$BASE/api/v1/search/assets?q=warehouse+rain&page=1&page_size=20" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 关键词 + 结构化过滤
+curl "$BASE/api/v1/search/assets?q=indoor&filter=status:eq:approved&filter=owner:eq:alice&page=1&page_size=20" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 纯结构化过滤（无关键词）
+curl "$BASE/api/v1/search/assets?filter=env:eq:warehouse&page=1&page_size=50" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`:
+```json
+{
+  "items": [...],
+  "total": 128,
+  "page": 1,
+  "page_size": 20,
+  "aggregations": {
+    "status": {"approved": 85, "rejected": 23, "archived": 20},
+    "env": {"indoor": 60, "outdoor": 40, "warehouse": 28}
+  }
+}
+```
+
+查询参数:
+- `q` — 全文搜索关键词，匹配 notes/owner/reviewer/task 字段
+- `filter` — 结构化过滤，语法与 `/api/v1/assets` 相同（`field:op:value`）
+- `page` / `page_size` — 分页参数
+
+注意: 需要 OpenSearch 服务运行。当 OpenSearch 不可用时返回 `503`。
+
+## 8. 湖仓同步状态
+
+### 8.1 查询同步状态
+
+```bash
+curl "$BASE/api/v1/lakehouse/sync-status" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`:
+```json
+{
+  "last_sync_at": "2026-05-15T08:30:00Z",
+  "postgres_count": 10000,
+  "iceberg_count": 9998,
+  "diff_count": 2,
+  "diff_pct": 0.02,
+  "status": "ok",
+  "duration_sec": 45.2,
+  "details": {
+    "status_distribution_match": true,
+    "env_distribution_match": true
+  }
+}
+```
+
+`status` 字段:
+- `ok` — 对账通过，差异 < 0.1%
+- `warning` — 差异 > 0.1%，需要关注
+- `unknown` — 尚未执行对账
+
+## 9. 错误码参考
 
 | HTTP | Code | 说明 |
 |------|------|------|
@@ -560,7 +713,7 @@ curl "$BASE/api/v1/mcap-files/{mcap_file_id}" \
 | 422 | `MISSING_REASON` | failed 状态缺少 reason |
 | 500 | `INTERNAL_ERROR` | 服务器内部错误 |
 
-## 7. 典型工作流
+## 10. 典型工作流
 
 ### 资产入库 → 算法处理 → 交付
 

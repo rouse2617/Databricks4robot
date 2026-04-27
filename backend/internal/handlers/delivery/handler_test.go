@@ -50,6 +50,9 @@ func (m *mockDeliveryRepo) ListByCustomer(ctx context.Context, customerID string
 func (m *mockDeliveryRepo) ListByAsset(_ context.Context, _ string) ([]string, error) {
 	return []string{}, nil
 }
+func (m *mockDeliveryRepo) List(_ context.Context, _, _ int, _ string) ([]*models.Delivery, int64, error) {
+	return []*models.Delivery{}, 0, nil
+}
 
 type mockIdemRepo struct {
 	getFn  func(ctx context.Context, scope, key string) (*repository.IdempotencyRecord, error)

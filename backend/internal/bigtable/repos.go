@@ -1057,6 +1057,12 @@ func (r *DeliveryRepo) WriteIndexes(ctx context.Context, assetID string, d *mode
 	return nil
 }
 
+// List returns a paginated list of deliveries. Bigtable implementation returns
+// an empty list as a degraded fallback — full listing is only supported on Postgres.
+func (r *DeliveryRepo) List(ctx context.Context, page, pageSize int, status string) ([]*models.Delivery, int64, error) {
+	return []*models.Delivery{}, 0, nil
+}
+
 // ListByAsset returns all delivery IDs for a given asset (via secondary index).
 func (r *DeliveryRepo) ListByAsset(ctx context.Context, assetID string) ([]string, error) {
 	prefix := assetID + "#"

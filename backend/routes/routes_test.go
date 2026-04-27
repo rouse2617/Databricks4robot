@@ -61,6 +61,9 @@ func (r *routeDeliveryRepo) ListByCustomer(context.Context, string) ([]string, e
 func (r *routeDeliveryRepo) ListByAsset(context.Context, string) ([]string, error) {
 	return []string{"d1"}, nil
 }
+func (r *routeDeliveryRepo) List(context.Context, int, int, string) ([]*models.Delivery, int64, error) {
+	return []*models.Delivery{}, 0, nil
+}
 
 type routeIdemRepo struct{}
 
@@ -78,7 +81,7 @@ func TestRegisterAll(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil)
+	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)

@@ -18,13 +18,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
+	"data-platform/internal/audit"
 	btpkg "data-platform/internal/bigtable"
 	"data-platform/internal/config"
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
 	lakehouseH "data-platform/internal/handlers/lakehouse"
 	mcapH "data-platform/internal/handlers/mcap"
+	registryH "data-platform/internal/handlers/registry"
+	searchH "data-platform/internal/handlers/search"
 	"data-platform/internal/middleware"
+	ospkg "data-platform/internal/opensearch"
 	"data-platform/internal/postgres"
 	"data-platform/internal/repository"
 	trinopkg "data-platform/internal/trino"
@@ -70,6 +74,7 @@ func main() {
 		algoHandler     *assetH.AlgoHandler
 		mcapHandler     *mcapH.Handler
 		deliveryHandler *deliveryH.Handler
+		pgClient        *postgres.Client
 	)
 
 	switch cfg.StorageBackend {
@@ -95,12 +100,15 @@ func main() {
 		deliveryHandler = deliveryH.New(deliveryRepo, btpkg.NewIdempotencyRepo(btClient))
 
 	case "postgres":
-		pgClient, err := postgres.New(ctx, cfg)
-		if err != nil {
-			slog.Error("postgres connect failed", "err", err)
+		var pgErr error
+		pgClient, pgErr = postgres.New(ctx, cfg)
+		if pgErr != nil {
+			slog.Error("postgres connect failed", "err", pgErr)
 			os.Exit(1)
 		}
 		defer pgClient.Close()
+
+		audit.Init(pgClient)
 
 		assetRepo := postgres.NewAssetRepo(pgClient)
 		algoEventRepo := postgres.NewAlgoEventRepo(pgClient)
@@ -124,6 +132,18 @@ func main() {
 		slog.Info("trino query layer connected", "catalog", cfg.TrinoCatalog, "schema", cfg.TrinoSchema)
 	}
 
+	// OpenSearch client (optional — search degrades gracefully if unavailable).
+	var osClient *ospkg.Client
+	if cfg.OpenSearchURL != "" {
+		osClient = ospkg.New(cfg.OpenSearchURL, "assets")
+		if err := osClient.Ping(ctx); err != nil {
+			slog.Warn("opensearch unavailable, search will return 503", "err", err)
+			osClient = nil
+		} else {
+			slog.Info("opensearch connected", "url", cfg.OpenSearchURL)
+		}
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 	routes.RegisterAll(
@@ -133,7 +153,9 @@ func main() {
 		mcapHandler,
 		deliveryHandler,
 		algoHandler,
-		lakehouseH.New(cfg.LakehouseReportPath, trinoClient),
+		lakehouseH.New(cfg.LakehouseReportPath, trinoClient, pgClient),
+		registryH.New(algoRegistry, tagRegistry),
+		searchH.New(osClient),
 	)
 
 	// Start config watcher for hot-reload of registries.

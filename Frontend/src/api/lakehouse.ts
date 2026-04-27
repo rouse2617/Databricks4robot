@@ -32,10 +32,29 @@ export interface LakehouseItemsResponse<T = Record<string, unknown>> {
   [key: string]: unknown;
 }
 
+export interface SyncStatusData {
+  dagster_run_id: string;
+  checked_at: string;
+  pg_total_count: number;
+  iceberg_total_count: number;
+  count_diff_pct: number;
+  pg_status_dist: Record<string, number>;
+  iceberg_status_dist: Record<string, number>;
+  status_diff: Record<string, { pg: number; iceberg: number; diff: number }>;
+  is_alert: boolean;
+}
+
+export interface SyncStatusResponse {
+  available: boolean;
+  message?: string;
+  data?: SyncStatusData;
+}
+
 export const lakehouseApi = {
   report: () => apiClient.get<LakehouseReport>("/lakehouse/report").then((r) => r.data),
   status: () => apiClient.get<LakehouseStatus>("/lakehouse/status").then((r) => r.data),
   tables: () => apiClient.get<LakehouseItemsResponse<LakehouseTableCount>>("/lakehouse/tables").then((r) => r.data),
+  syncStatus: () => apiClient.get<SyncStatusResponse>("/lakehouse/sync-status").then((r) => r.data),
   trainingAssets: (snapshotId = "mvp_hand_tracking_quality_v1") =>
     apiClient
       .get<LakehouseItemsResponse>("/lakehouse/training-assets", { params: { snapshot_id: snapshotId } })

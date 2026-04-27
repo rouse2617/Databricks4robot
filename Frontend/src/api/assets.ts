@@ -42,6 +42,12 @@ export const assetsApi = {
   delete: (id: string) =>
     apiClient.delete(`/assets/${id}`).then((r) => r.data),
 
+  // ─── Delivery association ───
+  listDeliveries: (assetId: string) =>
+    apiClient
+      .get<{ delivery_ids: string[] }>(`/assets/${assetId}/deliveries`)
+      .then((r) => r.data.delivery_ids ?? []),
+
   // ─── Algo lifecycle ───
   startAlgo: (assetId: string, algoKey: string, body: { method: string; run_id?: string }) =>
     apiClient.post(`/assets/${assetId}/algo/${algoKey}/start`, body).then((r) => r.data),

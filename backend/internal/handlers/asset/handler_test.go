@@ -46,6 +46,9 @@ func (m *mockDeliveryRepoForAsset) ListByAsset(_ context.Context, _ string) ([]s
 	}
 	return []string{}, nil
 }
+func (m *mockDeliveryRepoForAsset) List(_ context.Context, _, _ int, _ string) ([]*models.Delivery, int64, error) {
+	return []*models.Delivery{}, 0, nil
+}
 
 func (m *mockAssetRepo) Get(ctx context.Context, assetID string) (*models.Asset, error) {
 	if m.getFn != nil {

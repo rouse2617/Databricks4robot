@@ -2,7 +2,8 @@
 // Toolbar + Ant Design Table + pagination for the assets discovery workbench.
 // Validates: Requirements R6, R1
 
-import { Table, Select, Typography, Space, Tag, Tooltip } from "antd";
+import { Table, Select, Button, Typography, Space, Tag, Tooltip } from "antd";
+import { DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type { Asset } from "../../api/types";
@@ -148,6 +149,7 @@ export interface AssetsResultsPaneProps {
   onRowClick: (assetId: string) => void;
   onClearFilters?: () => void;
   onRetry?: () => void;
+  onExport?: () => void;
   columnsConfigSlot?: React.ReactNode;
 }
 
@@ -172,6 +174,7 @@ export default function AssetsResultsPane({
   onRowClick,
   onClearFilters,
   onRetry,
+  onExport,
   columnsConfigSlot,
 }: AssetsResultsPaneProps) {
   const loading = fetchStatus === "loading";
@@ -217,6 +220,17 @@ export default function AssetsResultsPane({
         </Text>
 
         <Space size={8}>
+          {/* Export Button (7.2) */}
+          {onExport && (
+            <Button
+              size="small"
+              icon={<DownloadOutlined />}
+              onClick={onExport}
+            >
+              导出
+            </Button>
+          )}
+
           {/* Sort Selector */}
           <Select
             value={sort}

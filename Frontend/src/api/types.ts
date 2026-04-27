@@ -20,6 +20,7 @@ export interface Asset {
   type?: string;
   env?: string;
   task?: string;
+  segment_locator?: string;
   last_delivered_at?: string;
   last_delivered_to?: string;
   delivery_count: number;

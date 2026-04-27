@@ -8,6 +8,7 @@ import {
   SendOutlined,
   RobotOutlined,
   TagOutlined,
+  DeleteOutlined,
   ExportOutlined,
 } from "@ant-design/icons";
 import type { SelectionMode } from "../../lib/assets/assetsDiscoveryTypes";
@@ -21,6 +22,7 @@ export interface BulkActionBarProps {
   onCreateDelivery: () => void;
   onRunAlgo: () => void;
   onBatchTag: () => void;
+  onBatchDeleteTag?: () => void;
   onExportIds: () => void;
   onSelectAllFiltered: () => void;
   onClearSelection: () => void;
@@ -33,6 +35,7 @@ export default function BulkActionBar({
   onCreateDelivery,
   onRunAlgo,
   onBatchTag,
+  onBatchDeleteTag,
   onExportIds,
   onSelectAllFiltered,
   onClearSelection,
@@ -61,6 +64,11 @@ export default function BulkActionBar({
         <Button size="small" icon={<TagOutlined />} onClick={onBatchTag}>
           批量打 Tag
         </Button>
+        {onBatchDeleteTag && (
+          <Button size="small" icon={<DeleteOutlined />} onClick={onBatchDeleteTag} danger>
+            删除 Tag
+          </Button>
+        )}
         <Button size="small" icon={<ExportOutlined />} onClick={onExportIds}>
           导出 ID
         </Button>

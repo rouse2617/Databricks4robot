@@ -9,6 +9,8 @@ dependencies = [
     "dagster-gcp>=0.24",
     "grace-sdk",
     "mcap>=1.1.1",
+    "pyspark>=3.5",
+    "psycopg2-binary>=2.9",
 ]
 
 [dependency-groups]

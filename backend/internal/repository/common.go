@@ -28,6 +28,10 @@ type DeliveryRepository interface {
 	WriteIndexes(ctx context.Context, assetID string, d *models.Delivery) error
 	ListByCustomer(ctx context.Context, customerID string) ([]string, error)
 	ListByAsset(ctx context.Context, assetID string) ([]string, error)
+
+	// List returns a paginated list of deliveries, optionally filtered by status.
+	// status may be empty to return all deliveries.
+	List(ctx context.Context, page, pageSize int, status string) ([]*models.Delivery, int64, error)
 }
 
 // IdempotencyRecord stores one idempotent request result.

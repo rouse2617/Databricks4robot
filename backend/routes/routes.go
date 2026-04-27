@@ -13,6 +13,8 @@ import (
 	deliveryH "data-platform/internal/handlers/delivery"
 	lakehouseH "data-platform/internal/handlers/lakehouse"
 	mcapH "data-platform/internal/handlers/mcap"
+	registryH "data-platform/internal/handlers/registry"
+	searchH "data-platform/internal/handlers/search"
 	"data-platform/internal/middleware"
 
 	_ "data-platform/docs/swagger" // swagger docs
@@ -28,6 +30,8 @@ func RegisterAll(
 	deliveryHandler *deliveryH.Handler,
 	algoHandler *assetH.AlgoHandler,
 	lakehouseHandler *lakehouseH.Handler,
+	registryHandler *registryH.Handler,
+	searchHandler *searchH.Handler,
 ) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.RequestGuard(2048))
@@ -79,13 +83,24 @@ func RegisterAll(
 		mcapFiles.GET("/:id", mcapHandler.GetFile)
 
 		api.POST("/deliveries", deliveryHandler.Commit)
+		api.GET("/deliveries", deliveryHandler.List)
 		api.GET("/deliveries/:id", deliveryHandler.Get)
 		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
+
+		// Registry endpoints (read-only, from YAML config)
+		api.GET("/algo-registry", registryHandler.AlgoRegistry)
+		api.GET("/tag-registry", registryHandler.TagRegistry)
+
+		// Search endpoints (OpenSearch-backed)
+		if searchHandler != nil {
+			api.GET("/search/assets", searchHandler.SearchAssets)
+		}
 
 		if lakehouseHandler != nil {
 			api.GET("/lakehouse/report", lakehouseHandler.Report)
 			api.GET("/lakehouse/status", lakehouseHandler.Status)
 			api.GET("/lakehouse/tables", lakehouseHandler.Tables)
+			api.GET("/lakehouse/sync-status", lakehouseHandler.SyncStatus)
 			api.GET("/lakehouse/training-assets", lakehouseHandler.TrainingAssets)
 			api.GET("/lakehouse/recompute-candidates", lakehouseHandler.RecomputeCandidates)
 			api.GET("/lakehouse/tag-timeline", lakehouseHandler.TagTimeline)

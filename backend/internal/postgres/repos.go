@@ -341,6 +341,79 @@ ON CONFLICT (delivery_id, asset_id) DO NOTHING`
 	return nil
 }
 
+func (r *DeliveryRepo) List(ctx context.Context, page, pageSize int, status string) ([]*models.Delivery, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	offset := (page - 1) * pageSize
+
+	// Count query
+	countSQL := "SELECT COUNT(*) FROM deliveries WHERE is_deleted = FALSE"
+	var countArgs []interface{}
+	if status != "" {
+		countSQL += " AND status = $1"
+		countArgs = append(countArgs, status)
+	}
+	var total int64
+	if err := r.c.db.QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("postgres DeliveryRepo.List count: %w", err)
+	}
+
+	// Data query
+	dataSQL := `SELECT delivery_id, customer_id, status, delivered_at, cf_meta, created_at, updated_at, version
+FROM deliveries WHERE is_deleted = FALSE`
+	var dataArgs []interface{}
+	paramIdx := 1
+	if status != "" {
+		dataSQL += fmt.Sprintf(" AND status = $%d", paramIdx)
+		dataArgs = append(dataArgs, status)
+		paramIdx++
+	}
+	dataSQL += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	dataArgs = append(dataArgs, pageSize, offset)
+
+	rows, err := r.c.db.Query(ctx, dataSQL, dataArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("postgres DeliveryRepo.List query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*models.Delivery
+	for rows.Next() {
+		var (
+			d    models.Delivery
+			st   string
+			meta []byte
+		)
+		if err := rows.Scan(&d.DeliveryID, &d.CustomerID, &st, &d.DeliveredAt, &meta, &d.CreatedAt, &d.UpdatedAt, &d.Version); err != nil {
+			return nil, 0, fmt.Errorf("postgres DeliveryRepo.List scan: %w", err)
+		}
+		d.Status = models.DeliveryStatus(st)
+		var m map[string]any
+		_ = json.Unmarshal(meta, &m)
+		if v, ok := m["manifest_uri"].(string); ok {
+			d.ManifestURI = v
+		}
+		if v, ok := m["contract_id"].(string); ok {
+			d.ContractID = v
+		}
+		if v, ok := m["note"].(string); ok {
+			d.Note = v
+		}
+		if v, ok := m["owner"].(string); ok {
+			d.Owner = v
+		}
+		if v, ok := m["asset_count"].(float64); ok {
+			d.AssetCount = int(v)
+		}
+		out = append(out, &d)
+	}
+	return out, total, nil
+}
+
 func (r *DeliveryRepo) ListByAsset(ctx context.Context, assetID string) ([]string, error) {
 	const q = `
 SELECT delivery_id

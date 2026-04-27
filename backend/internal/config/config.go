@@ -57,6 +57,9 @@ type Config struct {
 	TrinoURL     string
 	TrinoCatalog string
 	TrinoSchema  string
+
+	// OpenSearch
+	OpenSearchURL string
 }
 
 func Load() *Config {
@@ -103,6 +106,8 @@ func Load() *Config {
 		TrinoURL:     getenv("TRINO_URL", "http://data-platform@localhost:8082"),
 		TrinoCatalog: getenv("TRINO_CATALOG", "iceberg"),
 		TrinoSchema:  getenv("TRINO_SCHEMA", "robot"),
+
+		OpenSearchURL: getenv("OPENSEARCH_URL", "http://localhost:9200"),
 	}
 }
 

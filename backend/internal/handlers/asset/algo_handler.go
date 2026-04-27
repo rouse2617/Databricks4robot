@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"data-platform/internal/audit"
 	"data-platform/internal/httpresp"
 	"data-platform/internal/models"
 	assetUC "data-platform/internal/usecase/asset"
@@ -129,6 +130,7 @@ func (h *AlgoHandler) Reset(c *gin.Context) {
 		h.mapError(c, err)
 		return
 	}
+	audit.Log(c.Request.Context(), "algo.reset", "asset", []string{assetID}, map[string]any{"algo_key": algoKey})
 	c.JSON(200, gin.H{"asset_id": assetID, "algo_key": algoKey, "status": "pending"})
 }
 

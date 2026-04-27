@@ -91,3 +91,14 @@ func (r *TagRegistry) Validate(key, value string) error {
 		return fmt.Errorf("tag_registry: unknown type %q for key %q", def.Type, key)
 	}
 }
+
+// GetAllTags returns a copy of all registered tag definitions.
+func (r *TagRegistry) GetAllTags() map[string]TagDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	cp := make(map[string]TagDef, len(r.tags))
+	for k, v := range r.tags {
+		cp[k] = v
+	}
+	return cp
+}

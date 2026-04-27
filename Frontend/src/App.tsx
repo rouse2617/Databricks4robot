@@ -12,6 +12,7 @@ const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage"));
 const McapFilesPage = lazy(() => import("./pages/McapFilesPage"));
 const AlgoProcessingPage = lazy(() => import("./pages/AlgoProcessingPage"));
 const DeliveriesPage = lazy(() => import("./pages/DeliveriesPage"));
+const DeliveryDetailPage = lazy(() => import("./pages/DeliveryDetailPage"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const TagDictionaryPage = lazy(() => import("./pages/TagDictionaryPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
@@ -40,6 +41,7 @@ function ProtectedRoutes() {
             <Route path="/mcap-files" element={<McapFilesPage />} />
             <Route path="/algo" element={<AlgoProcessingPage />} />
             <Route path="/deliveries" element={<DeliveriesPage />} />
+            <Route path="/deliveries/:id" element={<DeliveryDetailPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/tags" element={<TagDictionaryPage />} />
             <Route path="/settings" element={<SettingsPage />} />

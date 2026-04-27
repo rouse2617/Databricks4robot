@@ -93,3 +93,14 @@ func (c *Client) Close() {
 		c.db.Close()
 	}
 }
+
+// Exec executes a SQL statement. Exposed for packages outside postgres (e.g. audit).
+func (c *Client) Exec(ctx context.Context, sql string, args ...any) error {
+	return c.db.Exec(ctx, sql, args...)
+}
+
+// QueryRow executes a query that returns at most one row.
+// Exposed for packages outside postgres (e.g. lakehouse handler).
+func (c *Client) QueryRow(ctx context.Context, sql string, args ...any) interface{ Scan(dest ...any) error } {
+	return c.db.QueryRow(ctx, sql, args...)
+}

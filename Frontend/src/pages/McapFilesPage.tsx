@@ -6,6 +6,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { mcapFilesApi } from "../api/mcapFiles";
 import type { McapFile } from "../api/types";
+import McapDetailDrawer from "../components/mcap/McapDetailDrawer";
 
 const { Title, Text } = Typography;
 
@@ -37,6 +38,8 @@ export default function McapFilesPage() {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(Number(searchParams.get("page")) || 1);
   const [stateFilter, setStateFilter] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<McapFile | null>(null);
 
   const load = useCallback(async (p = page) => {
     setLoading(true);
@@ -169,6 +172,13 @@ export default function McapFilesPage() {
         size="small"
         scroll={{ x: 800 }}
         locale={{ emptyText: emptyState }}
+        onRow={(record) => ({
+          style: { cursor: "pointer" },
+          onClick: () => {
+            setSelectedFile(record);
+            setDrawerOpen(true);
+          },
+        })}
         pagination={{
           current: page,
           total,
@@ -180,6 +190,12 @@ export default function McapFilesPage() {
             setSearchParams({ page: String(p) });
           },
         }}
+      />
+
+      <McapDetailDrawer
+        open={drawerOpen}
+        mcapFile={selectedFile}
+        onClose={() => setDrawerOpen(false)}
       />
     </div>
   );

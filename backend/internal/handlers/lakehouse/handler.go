@@ -5,20 +5,27 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"data-platform/internal/httpresp"
+	"data-platform/internal/postgres"
 	trinopkg "data-platform/internal/trino"
 )
 
 type Handler struct {
 	reportPath string
 	trino      *trinopkg.Client
+	pg         *postgres.Client
 }
 
-func New(reportPath string, trinoClient *trinopkg.Client) *Handler {
-	return &Handler{reportPath: reportPath, trino: trinoClient}
+func New(reportPath string, trinoClient *trinopkg.Client, pgClient ...*postgres.Client) *Handler {
+	h := &Handler{reportPath: reportPath, trino: trinoClient}
+	if len(pgClient) > 0 {
+		h.pg = pgClient[0]
+	}
+	return h
 }
 
 func (h *Handler) Report(c *gin.Context) {
@@ -175,4 +182,68 @@ func (h *Handler) requireTrino(c *gin.Context) bool {
 		return false
 	}
 	return true
+}
+
+// SyncStatusResponse represents the latest reconciliation result.
+type SyncStatusResponse struct {
+	DagsterRunID      string         `json:"dagster_run_id"`
+	CheckedAt         time.Time      `json:"checked_at"`
+	PgTotalCount      int64          `json:"pg_total_count"`
+	IcebergTotalCount int64          `json:"iceberg_total_count"`
+	CountDiffPct      float64        `json:"count_diff_pct"`
+	PgStatusDist      map[string]any `json:"pg_status_dist"`
+	IcebergStatusDist map[string]any `json:"iceberg_status_dist"`
+	StatusDiff        map[string]any `json:"status_diff"`
+	IsAlert           bool           `json:"is_alert"`
+}
+
+// SyncStatus returns the most recent reconciliation result from the sync_reconciliation table.
+func (h *Handler) SyncStatus(c *gin.Context) {
+	if h.pg == nil {
+		httpresp.Error(c, http.StatusServiceUnavailable, "PG_DISABLED", "postgres not available for sync status", nil)
+		return
+	}
+
+	const q = `
+SELECT dagster_run_id, checked_at, pg_total_count, iceberg_total_count,
+       count_diff_pct, pg_status_dist, iceberg_status_dist, status_diff, is_alert
+FROM sync_reconciliation
+ORDER BY checked_at DESC
+LIMIT 1`
+
+	var (
+		resp              SyncStatusResponse
+		pgStatusDistJSON  []byte
+		iceStatusDistJSON []byte
+		statusDiffJSON    []byte
+	)
+
+	err := h.pg.QueryRow(c.Request.Context(), q).Scan(
+		&resp.DagsterRunID,
+		&resp.CheckedAt,
+		&resp.PgTotalCount,
+		&resp.IcebergTotalCount,
+		&resp.CountDiffPct,
+		&pgStatusDistJSON,
+		&iceStatusDistJSON,
+		&statusDiffJSON,
+		&resp.IsAlert,
+	)
+	if err != nil {
+		// Table may not exist yet or no rows — return empty status
+		c.JSON(200, gin.H{
+			"available": false,
+			"message":   "对账数据暂不可用，请先运行 Dagster pipeline",
+		})
+		return
+	}
+
+	_ = json.Unmarshal(pgStatusDistJSON, &resp.PgStatusDist)
+	_ = json.Unmarshal(iceStatusDistJSON, &resp.IcebergStatusDist)
+	_ = json.Unmarshal(statusDiffJSON, &resp.StatusDiff)
+
+	c.JSON(200, gin.H{
+		"available": true,
+		"data":      resp,
+	})
 }

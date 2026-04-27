@@ -13,6 +13,7 @@ import type {
 import { defaultAssetsDiscoveryState } from "../../lib/assets/assetsDiscoveryTypes";
 import type { AssetsDiscoveryAction } from "../../lib/assets/assetsDiscoveryActions";
 import { assetsApi } from "../../api/assets";
+import { searchApi } from "../../api/search";
 import type { Asset } from "../../api/types";
 
 // ─── Helpers ───
@@ -27,7 +28,7 @@ function deriveQueryKey(state: AssetsDiscoveryState): string {
     .map((f) => `${f.field}:${f.op}:${Array.isArray(f.value) ? f.value.join(",") : f.value}`)
     .sort()
     .join("|");
-  return `${q.sort}::${q.page}::${q.pageSize}::${filterKeys}`;
+  return `${q.searchMode}::${q.queryText}::${q.sort}::${q.page}::${q.pageSize}::${filterKeys}`;
 }
 
 /**
@@ -99,12 +100,31 @@ export function useAssetsDiscoveryReducer(): [
 
       try {
         const filters = buildFilterParams(state);
-        const data = await assetsApi.list({
-          filter: filters.length > 0 ? filters : undefined,
-          sort_by: state.queryState.sort,
-          page: state.queryState.page,
-          page_size: state.queryState.pageSize,
-        });
+
+        let items: Asset[];
+        let total: number;
+
+        if (state.queryState.searchMode === "keyword") {
+          // Keyword mode → OpenSearch via /search/assets
+          const data = await searchApi.searchAssets({
+            q: state.queryState.queryText || undefined,
+            filter: filters.length > 0 ? filters : undefined,
+            page: state.queryState.page,
+            page_size: state.queryState.pageSize,
+          });
+          items = (data.items ?? []) as unknown as Asset[];
+          total = data.total ?? 0;
+        } else {
+          // Structured mode → Postgres via /assets
+          const data = await assetsApi.list({
+            filter: filters.length > 0 ? filters : undefined,
+            sort_by: state.queryState.sort,
+            page: state.queryState.page,
+            page_size: state.queryState.pageSize,
+          });
+          items = data.items ?? [];
+          total = data.total ?? 0;
+        }
 
         // Discard if a newer query has been issued
         if (cancelled || queryKeyRef.current !== currentKey) return;
@@ -112,11 +132,11 @@ export function useAssetsDiscoveryReducer(): [
         dispatch({
           type: "RESULTS_SUCCESS",
           payload: {
-            items: data.items ?? [],
-            total: data.total ?? 0,
+            items,
+            total,
             totalApprox:
-              (data.total ?? 0) > 0 &&
-              (data.items ?? []).length === state.queryState.pageSize,
+              total > 0 &&
+              items.length === state.queryState.pageSize,
           },
         });
       } catch (err) {

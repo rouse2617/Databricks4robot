@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"data-platform/internal/audit"
 	"data-platform/internal/filter"
 	"data-platform/internal/httpresp"
 	"data-platform/internal/models"
@@ -193,6 +194,9 @@ func (h *Handler) Update(c *gin.Context) {
 		}
 		return
 	}
+	if len(req.Tags) > 0 {
+		audit.Log(c.Request.Context(), "asset.batch_tag", "asset", []string{c.Param("id")}, map[string]any{"tags": req.Tags})
+	}
 	c.JSON(200, a)
 }
 
@@ -207,11 +211,13 @@ func (h *Handler) Update(c *gin.Context) {
 // @Security     GraceToken
 // @Router       /assets/{id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
-	if err := h.uc.Delete(c.Request.Context(), c.Param("id")); err != nil {
+	assetID := c.Param("id")
+	if err := h.uc.Delete(c.Request.Context(), assetID); err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	c.JSON(200, gin.H{"deleted": true, "asset_id": c.Param("id")})
+	audit.Log(c.Request.Context(), "asset.delete", "asset", []string{assetID}, nil)
+	c.JSON(200, gin.H{"deleted": true, "asset_id": assetID})
 }
 
 // POST /internal/commit-segments

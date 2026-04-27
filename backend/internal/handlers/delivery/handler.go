@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"data-platform/internal/audit"
 	"data-platform/internal/httpresp"
 	"data-platform/internal/models"
 	"data-platform/internal/repository"
@@ -101,9 +102,35 @@ func (h *Handler) Commit(c *gin.Context) {
 		"status":       d.Status,
 	}
 	c.JSON(http.StatusCreated, body)
+	audit.Log(c.Request.Context(), "delivery.commit", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id": req.CustomerID,
+		"asset_ids":   req.AssetIDs,
+		"asset_count": len(req.AssetIDs),
+	})
 	respBytes, _ := json.Marshal(body)
 	_ = h.idemRepo.Save(c.Request.Context(), &repository.IdempotencyRecord{
 		Scope: "deliveries_commit", Key: idemKey, RequestHash: hash, StatusCode: http.StatusCreated, Response: respBytes,
+	})
+}
+
+// GET /api/v1/deliveries
+func (h *Handler) List(c *gin.Context) {
+	page, pageSize := parsePageParams(c.Query("page"), c.Query("page_size"))
+	status := c.Query("status")
+
+	items, total, err := h.repo.List(c.Request.Context(), page, pageSize, status)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []*models.Delivery{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"items":     items,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
 }
 

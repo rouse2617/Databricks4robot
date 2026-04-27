@@ -82,6 +82,7 @@ make run
 | `TRINO_URL` | Trino SQL driver URL | `http://data-platform@localhost:8082` |
 | `TRINO_CATALOG` | Trino Iceberg catalog | `iceberg` |
 | `TRINO_SCHEMA` | Trino Iceberg schema/namespace | `robot` |
+| `OPENSEARCH_URL` | OpenSearch 连接地址 | `http://localhost:9200` |
 
 ## API 端点
 
@@ -114,8 +115,24 @@ make run
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `POST` | `/api/v1/deliveries` | 创建交付 (需要 `Idempotency-Key` header) |
+| `GET` | `/api/v1/deliveries` | 交付列表 (分页 + 可选 status 过滤) |
 | `GET` | `/api/v1/deliveries/:id` | 获取交付详情 |
 | `GET` | `/api/v1/customers/:cid/deliveries` | 按客户查询交付 |
+
+### 注册表 (Registry)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/v1/algo-registry` | 已注册算法列表 (从 algo_registry.yaml) |
+| `GET` | `/api/v1/tag-registry` | 已注册标签列表 (从 tag_registry.yaml) |
+
+### 搜索 (Search — OpenSearch)
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/v1/search/assets` | 全文检索资产 (multi_match + term filters + aggregations) |
+
+需要 OpenSearch 服务运行。当 OpenSearch 不可用时返回 503，前端降级到 Postgres 查询。
 
 ### Lakehouse / Trino
 
@@ -128,6 +145,7 @@ make run
 | `GET` | `/api/v1/lakehouse/tag-timeline` | 查询 tag current-state 更新时间线 |
 | `GET` | `/api/v1/lakehouse/quality-distribution` | 查询 segment 质量分布 |
 | `GET` | `/api/v1/lakehouse/customer-replay` | 查询客户交付 replay manifest |
+| `GET` | `/api/v1/lakehouse/sync-status` | 最近同步状态 (watermark、行数、耗时、对账结果) |
 | `GET` | `/api/v1/lakehouse/report` | 兼容接口：读取 Spark 生成的静态 MVP 报告 |
 
 ### 内部接口
@@ -188,10 +206,15 @@ backend/
 │   ├── handlers/        # HTTP Handler 层
 │   │   ├── asset/       # 资产 + 算法生命周期 handler
 │   │   ├── delivery/    # 交付 handler
-│   │   └── mcap/        # MCAP 文件 handler
+│   │   ├── mcap/        # MCAP 文件 handler
+│   │   ├── registry/    # 算法注册表 + 标签注册表 handler
+│   │   ├── search/      # OpenSearch 检索 handler
+│   │   └── lakehouse/   # 湖仓查询 handler
 │   ├── httpresp/        # 统一错误响应
-│   ├── middleware/       # RequestID, RequestGuard, StaticTokenAuth
+│   ├── middleware/       # RequestID, RequestGuard, StaticTokenAuth, RateLimit, CircuitBreaker
 │   ├── models/          # 领域模型 (Asset, McapFile, Delivery, AlgoEvent)
+│   ├── opensearch/      # OpenSearch Go 客户端 (Search/BulkIndex)
+│   ├── audit/           # 审计日志 (audit.Log)
 │   ├── repository/      # 仓库接口定义
 │   └── usecase/asset/   # 业务逻辑 (Usecase + AlgoUsecase)
 ├── routes/              # 路由注册
@@ -329,6 +352,8 @@ go run ./scripts/bench -c 20 -n 500 -s get
 | `delivery_items` | (delivery_id, asset_id) | 交付明细 (junction table) |
 | `asset_algo_events` | event_id (UUID) | 算法状态变更事件 |
 | `idempotency_keys` | (scope, idem_key) | 幂等键存储 |
+| `audit_events` | event_id (UUID) | 审计日志（操作人、操作类型、受影响资源、请求摘要） |
+| `sync_watermarks` | (table_name) | Dagster 增量同步水位持久化 |
 
 索引: `idx_assets_mcap_file_id`, `idx_assets_status`, `idx_assets_segment_locator`, `idx_assets_created_at`, `idx_delivery_items_asset_id`, `idx_algo_events_asset_created`, `idx_algo_events_algo_status`, `idx_algo_events_run_id` (partial)
 
@@ -348,6 +373,63 @@ go run ./scripts/bench -c 20 -n 500 -s get
 | `idempotency_keys` | meta | 幂等键存储 |
 
 初始化: `make bt-bootstrap` 或 `bash scripts/bootstrap_bigtable.sh`
+
+## OpenSearch 检索层
+
+Phase 2 新增 OpenSearch 作为全文检索引擎，与 Postgres 互补：
+
+- Postgres 负责 OLTP 精确查询（filter/sort/分页）
+- OpenSearch 负责全文模糊搜索、facet 聚合计数
+
+### 启动 OpenSearch
+
+```bash
+# 全栈启动（包含 OpenSearch）
+cd deploy/local
+docker compose -f docker-compose.all.yml up -d
+
+# 验证 OpenSearch 健康
+curl http://localhost:9200/_cluster/health
+```
+
+### 索引初始化
+
+```bash
+bash deploy/local/opensearch/init-index.sh
+```
+
+创建 `assets` 索引，mapping 包含 keyword/text/date/numeric 字段。
+
+### Search API
+
+```bash
+# 全文搜索 + 结构化过滤
+curl "$BASE/api/v1/search/assets?q=warehouse+rain&filter=status:eq:approved&page=1&page_size=20" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+- `q` 参数 → OpenSearch `multi_match` query（fields: notes, owner, reviewer, task）
+- `filter` 参数 → `bool.filter` term/range queries
+- 返回 `aggregations` 用于 facet 计数
+
+### 数据同步
+
+数据通过 Dagster pipeline 同步：Postgres → Bronze → Silver → Gold → OpenSearch。
+`gold_to_opensearch` asset 从 Gold 层 `gold_asset_search_docs` 增量同步到 OpenSearch。
+
+## 审计日志
+
+Phase 2 新增 `audit_events` 表，记录核心写操作的审计日志：
+
+```sql
+-- 查询最近审计事件
+SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 20;
+
+-- 按操作类型查询
+SELECT * FROM audit_events WHERE action = 'batch_tag' ORDER BY created_at DESC;
+```
+
+记录的操作：批量打标签、创建交付、资产删除、批量重试算法。
 
 ## 性能参考 (真实 Bigtable)
 

@@ -3,7 +3,7 @@
 // Validates: Requirements R1, R7, R13
 
 import { useEffect, useCallback, useRef, useState } from "react";
-import { Typography, message } from "antd";
+import { Typography, message, Modal } from "antd";
 import { useNavigate } from "react-router-dom";
 import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryReducer";
 import { useAssetsQuerySync } from "../hooks/assets/useAssetsQuerySync";
@@ -19,6 +19,11 @@ import SavedViewSelector from "../components/assets/SavedViewSelector";
 import SaveViewDialog from "../components/assets/SaveViewDialog";
 import AddFilterPopover from "../components/assets/AddFilterPopover";
 import ColumnsConfigPopover from "../components/assets/ColumnsConfigPopover";
+import CreateDeliveryModal from "../components/deliveries/CreateDeliveryModal";
+import BatchTagModal from "../components/assets/BatchTagModal";
+import BatchDeleteTagModal from "../components/assets/BatchDeleteTagModal";
+import ExportModal from "../components/assets/ExportModal";
+import type { BatchTagResult } from "../components/assets/BatchTagModal";
 
 const { Title } = Typography;
 
@@ -29,6 +34,11 @@ export default function AssetsPage() {
   const { views, currentViewId, selectView, saveView, deleteView } = useSavedViews(state, dispatch);
   const [msg, msgCtx] = message.useMessage();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
+  const [batchTagModalOpen, setBatchTagModalOpen] = useState(false);
+  const [batchDeleteTagModalOpen, setBatchDeleteTagModalOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [batchTagResult, setBatchTagResult] = useState<BatchTagResult | null>(null);
 
   // Responsive: hide facet/preview on narrow screens
   const [isNarrow, setIsNarrow] = useState(window.innerWidth < 1024);
@@ -233,9 +243,10 @@ export default function AssetsPage() {
             selectedCount={selectedCount}
             selectionMode={state.selectionState.mode}
             totalFiltered={state.resultsState.total}
-            onCreateDelivery={() => msg.info("创建交付功能开发中")}
+            onCreateDelivery={() => setDeliveryModalOpen(true)}
             onRunAlgo={() => msg.info("批量触发算法功能开发中")}
-            onBatchTag={() => msg.info("批量打标签功能开发中")}
+            onBatchTag={() => setBatchTagModalOpen(true)}
+            onBatchDeleteTag={() => setBatchDeleteTagModalOpen(true)}
             onExportIds={() => msg.info("导出 ID 功能开发中")}
             onSelectAllFiltered={() => dispatch({ type: "SELECT_ALL_FILTERED" })}
             onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
@@ -270,6 +281,7 @@ export default function AssetsPage() {
               })
             }
             onClearFilters={() => dispatch({ type: "CLEAR_ALL_FILTERS" })}
+            onExport={() => setExportModalOpen(true)}
             onRetry={() =>
               dispatch({
                 type: "SET_PAGE",
@@ -323,6 +335,77 @@ export default function AssetsPage() {
         </div>
         )}
       </div>
+
+      <CreateDeliveryModal
+        open={deliveryModalOpen}
+        assetIds={Array.from(state.selectionState.selectedIds)}
+        onClose={() => setDeliveryModalOpen(false)}
+        onSuccess={(deliveryId) => {
+          setDeliveryModalOpen(false);
+          dispatch({ type: "CLEAR_SELECTION" });
+          navigate(`/deliveries/${deliveryId}`);
+        }}
+      />
+
+      <BatchTagModal
+        open={batchTagModalOpen}
+        assetIds={Array.from(state.selectionState.selectedIds)}
+        onClose={() => setBatchTagModalOpen(false)}
+        onComplete={(result) => {
+          setBatchTagModalOpen(false);
+          setBatchTagResult(result);
+        }}
+      />
+
+      <BatchDeleteTagModal
+        open={batchDeleteTagModalOpen}
+        assetIds={Array.from(state.selectionState.selectedIds)}
+        onClose={() => setBatchDeleteTagModalOpen(false)}
+        onComplete={(result) => {
+          setBatchDeleteTagModalOpen(false);
+          setBatchTagResult(result);
+        }}
+      />
+
+      <ExportModal
+        open={exportModalOpen}
+        currentPageItems={state.resultsState.items}
+        totalFiltered={state.resultsState.total}
+        queryParams={{
+          filter: state.queryState.activeFilters.length > 0
+            ? state.queryState.activeFilters.map((chip) => {
+                const val = Array.isArray(chip.value)
+                  ? `[${chip.value.map((v) => `"${v}"`).join(",")}]`
+                  : chip.value;
+                return `${chip.field}:${chip.op}:${val}`;
+              })
+            : undefined,
+          sort_by: state.queryState.sort,
+        }}
+        onClose={() => setExportModalOpen(false)}
+      />
+
+      {/* Result summary modal (Task 4.6) */}
+      <Modal
+        title="操作结果"
+        open={batchTagResult !== null}
+        onOk={() => {
+          setBatchTagResult(null);
+          dispatch({ type: "CLEAR_SELECTION" });
+          dispatch({ type: "SET_PAGE", payload: { page: state.queryState.page } });
+        }}
+        onCancel={() => setBatchTagResult(null)}
+        okText="确定"
+        cancelButtonProps={{ style: { display: "none" } }}
+      >
+        {batchTagResult && (
+          <div style={{ fontSize: 15, lineHeight: 2 }}>
+            <div>✅ 成功：<strong>{batchTagResult.success}</strong> 个</div>
+            <div>⏭️ 跳过：<strong>{batchTagResult.skipped}</strong> 个</div>
+            <div>❌ 失败：<strong>{batchTagResult.failed}</strong> 个</div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
