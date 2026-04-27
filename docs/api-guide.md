@@ -17,6 +17,67 @@ export BASE=http://localhost:8080
 export TOKEN=dev-token
 ```
 
+## Lakehouse / Trino 验证
+
+先启动 Iceberg + Trino，并运行 Spark 同步任务生成 Iceberg 表：
+
+```bash
+make iceberg-up
+
+# Spark 读取 Docker 网络中的 Postgres
+make iceberg-mvp
+
+# 当前后端连接宿主机 localhost:5432 时，使用这个命令保持数据源一致
+make iceberg-mvp-host
+```
+
+检查 Trino 查询层状态：
+
+```bash
+curl "$BASE/api/v1/lakehouse/status" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+查看 Iceberg MVP 表行数：
+
+```bash
+curl "$BASE/api/v1/lakehouse/tables" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+五类湖仓查询：
+
+```bash
+# 某次训练当时用了哪些 asset？
+curl "$BASE/api/v1/lakehouse/training-assets?snapshot_id=mvp_hand_tracking_quality_v1" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 某个算法版本变更后，哪些历史 asset 要重算？
+curl "$BASE/api/v1/lakehouse/recompute-candidates?algo_key=hand_tracking@1.2.0&target_version=1.3.0" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 某个 tag 是什么时候被算法追加的？
+curl "$BASE/api/v1/lakehouse/tag-timeline?tag_key=quality" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 上个月/近 30 天所有 MCAP segment 的质量分布是什么？
+curl "$BASE/api/v1/lakehouse/quality-distribution?window=30d" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 某个客户交付过的数据是否能完整回放？
+curl "$BASE/api/v1/lakehouse/customer-replay?customer_id=urn:grace:customer:A" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+兼容的静态报告接口仍然保留：
+
+```bash
+curl "$BASE/api/v1/lakehouse/report" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+注意：当前仍是 Spark 批同步/准 CDC；Trino 负责查询 Iceberg，真正连续入湖后续由 RisingWave/Debezium 补齐。
+
 ## 1. 资产管理 (Assets)
 
 ### 1.1 创建资产

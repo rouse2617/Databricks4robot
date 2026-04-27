@@ -207,8 +207,20 @@ func ResolveSortBy(sortBy string) (string, error) {
 		}
 		column := spec.StorageField[:dotIdx]
 		key := spec.StorageField[dotIdx+1:]
-		return fmt.Sprintf("%s#>>'{%s}' %s", column, key, direction), nil
+		expr := fmt.Sprintf("%s#>>'{%s}'", column, key)
+		return fmt.Sprintf("%s %s", castJsonbSortExpr(spec.Canonical, expr), direction), nil
 	}
 
 	return fmt.Sprintf("%s %s", spec.StorageField, direction), nil
+}
+
+func castJsonbSortExpr(field, expr string) string {
+	switch field {
+	case "duration_sec", "delivery_count", "archive_after_days", "delete_after_days", "total_size_bytes":
+		return fmt.Sprintf("(%s)::NUMERIC", expr)
+	case "last_delivered_at", "last_accessed_at":
+		return fmt.Sprintf("(%s)::TIMESTAMPTZ", expr)
+	default:
+		return expr
+	}
 }

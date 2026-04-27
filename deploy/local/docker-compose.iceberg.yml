@@ -1,0 +1,81 @@
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+      MINIO_DOMAIN: minio
+    volumes:
+      - iceberg-minio-data:/data
+    networks:
+      default:
+        aliases:
+          - warehouse.minio
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 admin password; do
+        echo 'waiting for minio...';
+        sleep 1;
+      done;
+      mc mb --ignore-existing local/warehouse;
+      mc mb --ignore-existing local/datalake;
+      "
+    restart: "no"
+
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:latest
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8181:8181"
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+
+  spark-iceberg:
+    image: tabulario/spark-iceberg:latest
+    depends_on:
+      iceberg-rest:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8888:8888"
+      - "8081:8080"
+      - "10000:10000"
+      - "10001:10001"
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+    volumes:
+      - ./iceberg/notebooks:/home/iceberg/notebooks/notebooks
+
+  trino:
+    image: trinodb/trino:latest
+    depends_on:
+      iceberg-rest:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog:ro
+
+volumes:
+  iceberg-minio-data:

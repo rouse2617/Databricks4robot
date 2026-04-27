@@ -22,10 +22,12 @@ import (
 	"data-platform/internal/config"
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
+	lakehouseH "data-platform/internal/handlers/lakehouse"
 	mcapH "data-platform/internal/handlers/mcap"
 	"data-platform/internal/middleware"
 	"data-platform/internal/postgres"
 	"data-platform/internal/repository"
+	trinopkg "data-platform/internal/trino"
 	assetUC "data-platform/internal/usecase/asset"
 	"data-platform/internal/validate"
 	"data-platform/routes"
@@ -114,9 +116,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	trinoClient, err := trinopkg.New(ctx, cfg)
+	if err != nil {
+		slog.Warn("trino query layer unavailable", "err", err)
+	} else if trinoClient != nil {
+		defer trinoClient.Close()
+		slog.Info("trino query layer connected", "catalog", cfg.TrinoCatalog, "schema", cfg.TrinoSchema)
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
-	routes.RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, algoHandler)
+	routes.RegisterAll(
+		r,
+		cfg,
+		assetHandler,
+		mcapHandler,
+		deliveryHandler,
+		algoHandler,
+		lakehouseH.New(cfg.LakehouseReportPath, trinoClient),
+	)
 
 	// Start config watcher for hot-reload of registries.
 	configWatcher, err := config.NewConfigWatcher("config", tagRegistry, algoRegistry)

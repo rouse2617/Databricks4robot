@@ -77,6 +77,11 @@ make run
 | `PORT` | 监听端口 | `8080` |
 | `GRACE_TOKEN` | API 认证 token (Phase 0) | `dev-token` |
 | `DB_HOST/PORT/USER/PASSWORD/NAME` | PostgreSQL 连接 (postgres 模式) | localhost:5432 |
+| `LAKEHOUSE_REPORT_PATH` | 本地 Lakehouse MVP 报告路径 | `../deploy/local/iceberg/notebooks/lakehouse_report.json` |
+| `TRINO_ENABLED` | 是否启用 Trino 湖仓查询层 | `true` |
+| `TRINO_URL` | Trino SQL driver URL | `http://data-platform@localhost:8082` |
+| `TRINO_CATALOG` | Trino Iceberg catalog | `iceberg` |
+| `TRINO_SCHEMA` | Trino Iceberg schema/namespace | `robot` |
 
 ## API 端点
 
@@ -111,6 +116,19 @@ make run
 | `POST` | `/api/v1/deliveries` | 创建交付 (需要 `Idempotency-Key` header) |
 | `GET` | `/api/v1/deliveries/:id` | 获取交付详情 |
 | `GET` | `/api/v1/customers/:cid/deliveries` | 按客户查询交付 |
+
+### Lakehouse / Trino
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/v1/lakehouse/status` | Trino 查询层状态 |
+| `GET` | `/api/v1/lakehouse/tables` | Iceberg MVP 表行数 |
+| `GET` | `/api/v1/lakehouse/training-assets` | 查询训练快照包含的 assets |
+| `GET` | `/api/v1/lakehouse/recompute-candidates` | 查询算法版本变更后的历史重算候选 |
+| `GET` | `/api/v1/lakehouse/tag-timeline` | 查询 tag current-state 更新时间线 |
+| `GET` | `/api/v1/lakehouse/quality-distribution` | 查询 segment 质量分布 |
+| `GET` | `/api/v1/lakehouse/customer-replay` | 查询客户交付 replay manifest |
+| `GET` | `/api/v1/lakehouse/report` | 兼容接口：读取 Spark 生成的静态 MVP 报告 |
 
 ### 内部接口
 

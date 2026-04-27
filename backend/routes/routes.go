@@ -11,6 +11,7 @@ import (
 	"data-platform/internal/config"
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
+	lakehouseH "data-platform/internal/handlers/lakehouse"
 	mcapH "data-platform/internal/handlers/mcap"
 	"data-platform/internal/middleware"
 
@@ -26,6 +27,7 @@ func RegisterAll(
 	mcapHandler *mcapH.Handler,
 	deliveryHandler *deliveryH.Handler,
 	algoHandler *assetH.AlgoHandler,
+	lakehouseHandler *lakehouseH.Handler,
 ) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.RequestGuard(2048))
@@ -79,6 +81,17 @@ func RegisterAll(
 		api.POST("/deliveries", deliveryHandler.Commit)
 		api.GET("/deliveries/:id", deliveryHandler.Get)
 		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
+
+		if lakehouseHandler != nil {
+			api.GET("/lakehouse/report", lakehouseHandler.Report)
+			api.GET("/lakehouse/status", lakehouseHandler.Status)
+			api.GET("/lakehouse/tables", lakehouseHandler.Tables)
+			api.GET("/lakehouse/training-assets", lakehouseHandler.TrainingAssets)
+			api.GET("/lakehouse/recompute-candidates", lakehouseHandler.RecomputeCandidates)
+			api.GET("/lakehouse/tag-timeline", lakehouseHandler.TagTimeline)
+			api.GET("/lakehouse/quality-distribution", lakehouseHandler.QualityDistribution)
+			api.GET("/lakehouse/customer-replay", lakehouseHandler.CustomerReplay)
+		}
 	}
 
 	// Internal (service-to-service, no external auth required in Phase 0)

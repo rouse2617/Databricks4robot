@@ -41,7 +41,30 @@ make backend-run
 make -C backend bt-bootstrap
 ```
 
-### 3) 启动 Frontend
+### 3) 可选：启动本地 Iceberg 湖仓
+
+```bash
+make iceberg-up
+```
+
+启动后可访问：
+
+- Spark Notebook: http://localhost:8888
+- MinIO Console: http://localhost:9001 (`admin` / `password`)
+- Iceberg REST Catalog: http://localhost:8181
+- Trino: http://localhost:8082
+
+示例 notebook/script 在 `deploy/local/iceberg/notebooks/iceberg_smoke.py`。
+
+生成本地 10 万条 scale-test 数据并同步到 Iceberg：
+
+```bash
+ROW_COUNT=100000 BATCH_ID=scale_100k make pg-generate-scale
+make iceberg-mvp-host
+make trino-smoke
+```
+
+### 4) 启动 Frontend
 
 ```bash
 make frontend-install

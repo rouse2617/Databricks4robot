@@ -243,6 +243,14 @@ func TestResolveSortBy_WhitelistAndAliases(t *testing.T) {
 		t.Fatalf("unexpected owner orderBy: %q", got)
 	}
 
+	got, err = ResolveSortBy("duration_sec")
+	if err != nil {
+		t.Fatalf("ResolveSortBy duration_sec: %v", err)
+	}
+	if got != "(cf_meta#>>'{duration_sec}')::NUMERIC ASC" {
+		t.Fatalf("unexpected duration_sec orderBy: %q", got)
+	}
+
 	if _, err := ResolveSortBy("-drop_table"); err == nil {
 		t.Fatal("expected invalid sort field to be rejected")
 	}
@@ -261,7 +269,7 @@ func TestBuildWhereClause_AlgoStatusVirtual(t *testing.T) {
 		t.Fatalf("BuildWhereClause algo_status: %v", err)
 	}
 
-	expected := "EXISTS (SELECT 1 FROM jsonb_each_text(cf_algo) WHERE key LIKE '%:status' AND value = $1)"
+	expected := "asset_algo_statuses(cf_algo) @> ARRAY[$1]::text[]"
 	if wc.SQL != expected {
 		t.Fatalf("expected %q, got %q", expected, wc.SQL)
 	}
@@ -282,8 +290,8 @@ func TestBuildWhereClause_AlgoStatusWithOtherFilters(t *testing.T) {
 	if !strings.Contains(wc.SQL, "status = $1") {
 		t.Fatalf("expected status = $1 in SQL, got %q", wc.SQL)
 	}
-	if !strings.Contains(wc.SQL, "EXISTS (SELECT 1 FROM jsonb_each_text(cf_algo) WHERE key LIKE '%:status' AND value = $2)") {
-		t.Fatalf("expected algo_status EXISTS in SQL, got %q", wc.SQL)
+	if !strings.Contains(wc.SQL, "asset_algo_statuses(cf_algo) @> ARRAY[$2]::text[]") {
+		t.Fatalf("expected algo_status array containment in SQL, got %q", wc.SQL)
 	}
 	if len(wc.Args) != 2 {
 		t.Fatalf("expected 2 args, got %d", len(wc.Args))
@@ -301,8 +309,9 @@ func TestBuildWhereClause_HasDeliveryTrue(t *testing.T) {
 		t.Fatalf("BuildWhereClause has:delivery true: %v", err)
 	}
 
-	if wc.SQL != "delivery_count > 0" {
-		t.Fatalf("expected 'delivery_count > 0', got %q", wc.SQL)
+	want := "COALESCE((cf_meta->>'delivery_count')::int, 0) > 0"
+	if wc.SQL != want {
+		t.Fatalf("expected %q, got %q", want, wc.SQL)
 	}
 	if len(wc.Args) != 0 {
 		t.Fatalf("expected 0 args, got %d", len(wc.Args))
@@ -320,8 +329,9 @@ func TestBuildWhereClause_HasDeliveryFalse(t *testing.T) {
 		t.Fatalf("BuildWhereClause has:delivery false: %v", err)
 	}
 
-	if wc.SQL != "delivery_count = 0" {
-		t.Fatalf("expected 'delivery_count = 0', got %q", wc.SQL)
+	want := "COALESCE((cf_meta->>'delivery_count')::int, 0) = 0"
+	if wc.SQL != want {
+		t.Fatalf("expected %q, got %q", want, wc.SQL)
 	}
 }
 
@@ -336,7 +346,8 @@ func TestBuildWhereClause_HasDeliveryStringTrue(t *testing.T) {
 		t.Fatalf("BuildWhereClause has:delivery string true: %v", err)
 	}
 
-	if wc.SQL != "delivery_count > 0" {
-		t.Fatalf("expected 'delivery_count > 0', got %q", wc.SQL)
+	want := "COALESCE((cf_meta->>'delivery_count')::int, 0) > 0"
+	if wc.SQL != want {
+		t.Fatalf("expected %q, got %q", want, wc.SQL)
 	}
 }

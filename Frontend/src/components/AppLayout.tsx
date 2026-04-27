@@ -24,7 +24,7 @@ const menuItems = [
   { key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
   { key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
   { type: "divider" as const },
-  { key: "/analytics", icon: <BarChartOutlined />, label: "数据分析" },
+  { key: "/analytics", icon: <BarChartOutlined />, label: "湖仓验证" },
   { key: "/tags", icon: <TagsOutlined />, label: "标签字典" },
   { key: "/settings", icon: <SettingOutlined />, label: "设置" },
 ];

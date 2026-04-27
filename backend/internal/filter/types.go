@@ -84,12 +84,11 @@ var VirtualFields = map[string]VirtualFieldHandler{
 	"has:delivery": hasDeliveryVirtualHandler{},
 }
 
-// algoStatusVirtualHandler scans all cf_algo keys ending in ":status"
-// and matches if any value equals the filter value.
+// algoStatusVirtualHandler matches any cf_algo key ending in ":status".
 type algoStatusVirtualHandler struct{}
 
 func (h algoStatusVirtualHandler) BuildSQL(value interface{}, paramIdx int) (string, []interface{}, int, error) {
-	sql := fmt.Sprintf("EXISTS (SELECT 1 FROM jsonb_each_text(cf_algo) WHERE key LIKE '%%:status' AND value = $%d)", paramIdx)
+	sql := fmt.Sprintf("asset_algo_statuses(cf_algo) @> ARRAY[$%d]::text[]", paramIdx)
 	return sql, []interface{}{value}, paramIdx + 1, nil
 }
 
@@ -103,7 +102,7 @@ func (h algoStatusVirtualHandler) MatchBigtable(algoResults map[string]string, _
 	return false
 }
 
-// hasDeliveryVirtualHandler translates "has:delivery" to delivery_count > 0.
+// hasDeliveryVirtualHandler translates "has:delivery" to the JSONB-backed delivery count.
 type hasDeliveryVirtualHandler struct{}
 
 func (h hasDeliveryVirtualHandler) BuildSQL(value interface{}, paramIdx int) (string, []interface{}, int, error) {

@@ -1,4 +1,4 @@
-.PHONY: all dev-up dev-down test smoke build clean
+.PHONY: all dev-up dev-down pg-generate-scale iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test smoke build clean
 
 # ── Local infra ──────────────────────────────────────────
 dev-up:
@@ -7,6 +7,39 @@ dev-up:
 
 dev-down:
 	cd deploy/local && docker compose down
+
+pg-generate-scale:
+	psql postgresql://postgres:postgres@localhost:5432/data4cyber \
+		-v row_count=$${ROW_COUNT:-100000} \
+		-v batch_id=$${BATCH_ID:-scale_100k} \
+		-f backend/scripts/generate_mock_scale.sql
+
+iceberg-up:
+	cd deploy/local && docker compose -f docker-compose.iceberg.yml up -d
+	@echo "Spark Notebook: http://localhost:8888"
+	@echo "MinIO Console:  http://localhost:9001  (admin / password)"
+	@echo "Iceberg REST:   http://localhost:8181"
+	@echo "Trino:          http://localhost:8082"
+
+iceberg-down:
+	cd deploy/local && docker compose -f docker-compose.iceberg.yml down
+
+iceberg-logs:
+	cd deploy/local && docker compose -f docker-compose.iceberg.yml logs -f
+
+iceberg-mvp:
+	docker compose -f deploy/local/docker-compose.iceberg.yml exec -T spark-iceberg \
+		python /home/iceberg/notebooks/notebooks/build_lakehouse_mvp.py
+
+iceberg-mvp-host:
+	docker compose -f deploy/local/docker-compose.iceberg.yml exec -T \
+		-e POSTGRES_URL=jdbc:postgresql://host.docker.internal:5432/data4cyber \
+		spark-iceberg python /home/iceberg/notebooks/notebooks/build_lakehouse_mvp.py
+
+trino-smoke:
+	docker compose -f deploy/local/docker-compose.iceberg.yml exec -T trino \
+		trino --server http://localhost:8080 --catalog iceberg --schema robot \
+		--execute "SHOW TABLES"
 
 # ── Backend ───────────────────────────────────────────────
 backend-deps:

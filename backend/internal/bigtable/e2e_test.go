@@ -81,7 +81,7 @@ func setupE2E(t *testing.T) *e2eEnv {
 	// Build Gin engine and register all routes.
 	r := gin.New()
 	r.Use(gin.Recovery())
-	routes.RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, algoHandler)
+	routes.RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, algoHandler, nil)
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
@@ -283,9 +283,9 @@ func TestE2E_AlgoLifecycle(t *testing.T) {
 	// 2. POST /api/v1/assets/:id/algo/:algo_key/finish → finish algo (ok).
 	resultSize := int64(12345)
 	finishBody := map[string]interface{}{
-		"status":           "ok",
-		"output_uri":       "gs://bucket/hand_tracking/output.mcap",
-		"run_id":           "run-001",
+		"status":            "ok",
+		"output_uri":        "gs://bucket/hand_tracking/output.mcap",
+		"run_id":            "run-001",
 		"result_size_bytes": resultSize,
 		"extra_fields": map[string]interface{}{
 			"type": "hand_tracking_v1",

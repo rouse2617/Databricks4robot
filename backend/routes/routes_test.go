@@ -78,7 +78,7 @@ func TestRegisterAll(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil)
+	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
