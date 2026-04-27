@@ -28,11 +28,20 @@ export const GROUP_KEYS = ["basic", "capture", "algorithm", "delivery", "tags"] 
 
 // ─── Props ───
 
+/** Aggregation key mapping from ES agg names to facet field names. */
+const AGG_KEY_MAP: Record<string, string> = {
+  status_agg: "status",
+  env_agg: "env",
+  owner_agg: "owner",
+  task_agg: "task",
+};
+
 export interface AssetsFacetSidebarProps {
   activeFilters: FilterChip[];
   expandedGroups: string[];
   rangeDrafts: Record<string, { min?: number; max?: number }>;
   dateDrafts: Record<string, { start?: string; end?: string }>;
+  aggregations?: Record<string, { key: string; doc_count: number }[]>;
   onToggleFacet: (field: string, value: string) => void;
   onApplyRange: (field: string, min?: number, max?: number) => void;
   onApplyDate: (field: string, start?: string, end?: string) => void;
@@ -70,14 +79,23 @@ function CheckboxFacet({
   options,
   activeFilters,
   onToggleFacet,
+  counts,
 }: {
   label: string;
   field: string;
   options: string[];
   activeFilters: FilterChip[];
   onToggleFacet: (field: string, value: string) => void;
+  counts?: Record<string, number>;
 }) {
   const checked = getCheckedValues(activeFilters, field);
+  const optionsWithLabels = options.map((opt) => {
+    const count = counts?.[opt];
+    return {
+      label: count !== undefined ? `${opt} (${count.toLocaleString()})` : opt,
+      value: opt,
+    };
+  });
   return (
     <div style={{ marginBottom: 12 }}>
       <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
@@ -91,7 +109,7 @@ function CheckboxFacet({
           for (const v of added) onToggleFacet(field, v);
           for (const v of removed) onToggleFacet(field, v);
         }}
-        options={options}
+        options={optionsWithLabels}
         style={{ display: "flex", flexDirection: "column", gap: 4 }}
       />
     </div>
@@ -264,6 +282,7 @@ export default function AssetsFacetSidebar({
   expandedGroups,
   rangeDrafts,
   dateDrafts,
+  aggregations,
   onToggleFacet,
   onApplyRange,
   onApplyDate,
@@ -271,6 +290,21 @@ export default function AssetsFacetSidebar({
   onDateDraftChange,
   onToggleGroup,
 }: AssetsFacetSidebarProps) {
+  // Build counts map per field from aggregations
+  const fieldCounts: Record<string, Record<string, number>> = {};
+  if (aggregations) {
+    for (const [aggKey, buckets] of Object.entries(aggregations)) {
+      const field = AGG_KEY_MAP[aggKey];
+      if (field && buckets) {
+        const counts: Record<string, number> = {};
+        for (const b of buckets) {
+          counts[b.key] = b.doc_count;
+        }
+        fieldCounts[field] = counts;
+      }
+    }
+  }
+
   const items = [
     {
       key: "basic",
@@ -283,6 +317,7 @@ export default function AssetsFacetSidebar({
             options={STATUS_OPTIONS}
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
+            counts={fieldCounts["status"]}
           />
           <InputFacet
             label="Owner"
@@ -312,6 +347,7 @@ export default function AssetsFacetSidebar({
             options={ENV_OPTIONS}
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
+            counts={fieldCounts["env"]}
           />
           <RangeFacet
             label="时长 (秒)"

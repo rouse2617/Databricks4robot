@@ -313,6 +313,7 @@ export function assetsDiscoveryReducer(
           fetchStatus: "success",
           error: null,
           isStale: false,
+          aggregations: action.payload.aggregations,
         },
       };
 

@@ -29,7 +29,7 @@ func New(osClient *opensearch.Client) *Handler {
 // Query parameters:
 //
 //	q          — free-text query (multi_match across notes, owner, reviewer, task)
-//	filter     — repeated, format "field:eq:value" (only eq supported for now)
+//	filter     — repeated, format "field:op:value" where op is eq|ne|gt|gte|lt|lte
 //	page       — 1-based page number (default 1)
 //	page_size  — results per page (default 20, max 200)
 func (h *Handler) SearchAssets(c *gin.Context) {
@@ -51,12 +51,17 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 		pageSize = 20
 	}
 
-	// Parse filter params: "field:eq:value"
-	filters := make(map[string]string)
+	// Parse filter params: "field:op:value" where op can be eq, ne, gt, gte, lt, lte
+	var filters []opensearch.FilterOp
+	validOps := map[string]bool{"eq": true, "ne": true, "gt": true, "gte": true, "lt": true, "lte": true}
 	for _, f := range c.QueryArray("filter") {
 		parts := strings.SplitN(f, ":", 3)
-		if len(parts) == 3 && parts[1] == "eq" {
-			filters[parts[0]] = parts[2]
+		if len(parts) == 3 && validOps[parts[1]] {
+			filters = append(filters, opensearch.FilterOp{
+				Field: parts[0],
+				Op:    parts[1],
+				Value: parts[2],
+			})
 		}
 	}
 
@@ -75,11 +80,14 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 		return
 	}
 
-	// Map hits to items (flatten _source)
+	// Map hits to items (flatten _source, include highlight)
 	items := make([]map[string]any, 0, len(result.Hits))
 	for _, hit := range result.Hits {
 		doc := hit.Source
 		doc["_score"] = hit.Score
+		if len(hit.Highlight) > 0 {
+			doc["_highlight"] = hit.Highlight
+		}
 		items = append(items, doc)
 	}
 

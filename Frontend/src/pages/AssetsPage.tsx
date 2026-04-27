@@ -215,6 +215,7 @@ export default function AssetsPage() {
             expandedGroups={state.facetUiState.expandedGroups}
             rangeDrafts={state.facetUiState.rangeDrafts}
             dateDrafts={state.facetUiState.dateDrafts}
+            aggregations={state.resultsState.aggregations}
             onToggleFacet={(field, value) =>
               dispatch({ type: "FACET_TOGGLE", payload: { field, value } })
             }

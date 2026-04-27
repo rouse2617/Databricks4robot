@@ -54,7 +54,7 @@ export type AssetsDiscoveryAction =
 
   // ── Results Fetch (4) ──
   | { type: "RESULTS_LOADING" }
-  | { type: "RESULTS_SUCCESS"; payload: { items: Asset[]; total: number; totalApprox: boolean } }
+  | { type: "RESULTS_SUCCESS"; payload: { items: Asset[]; total: number; totalApprox: boolean; aggregations?: Record<string, { key: string; doc_count: number }[]> } }
   | { type: "RESULTS_ERROR"; payload: { error: string } }
   | { type: "MARK_RESULTS_FRESH" }
 

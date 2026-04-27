@@ -35,19 +35,27 @@ func New(baseURL, index string) *Client {
 
 // ---------- Search ----------
 
+// FilterOp represents a single filter with field, operator, and value.
+type FilterOp struct {
+	Field string
+	Op    string // eq, ne, gt, gte, lt, lte
+	Value string
+}
+
 // SearchRequest describes the parameters accepted by the search handler.
 type SearchRequest struct {
-	Query    string            // free-text query (multi_match)
-	Filters  map[string]string // field → value term filters
+	Query    string     // free-text query (multi_match)
+	Filters  []FilterOp // structured filters with operators
 	Page     int
 	PageSize int
 }
 
 // SearchHit is a single document returned by OpenSearch.
 type SearchHit struct {
-	ID     string         `json:"_id"`
-	Score  float64        `json:"_score"`
-	Source map[string]any `json:"_source"`
+	ID        string              `json:"_id"`
+	Score     float64             `json:"_score"`
+	Source    map[string]any      `json:"_source"`
+	Highlight map[string][]string `json:"highlight,omitempty"`
 }
 
 // AggBucket is one bucket from a terms aggregation.
@@ -77,6 +85,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 	// Build bool query
 	must := make([]map[string]any, 0)
 	filter := make([]map[string]any, 0)
+	mustNot := make([]map[string]any, 0)
 
 	if req.Query != "" {
 		must = append(must, map[string]any{
@@ -88,10 +97,33 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 		})
 	}
 
-	for field, value := range req.Filters {
-		filter = append(filter, map[string]any{
-			"term": map[string]any{field: value},
-		})
+	for _, f := range req.Filters {
+		switch f.Op {
+		case "eq":
+			filter = append(filter, map[string]any{
+				"term": map[string]any{f.Field: f.Value},
+			})
+		case "ne":
+			mustNot = append(mustNot, map[string]any{
+				"term": map[string]any{f.Field: f.Value},
+			})
+		case "gt":
+			filter = append(filter, map[string]any{
+				"range": map[string]any{f.Field: map[string]any{"gt": f.Value}},
+			})
+		case "gte":
+			filter = append(filter, map[string]any{
+				"range": map[string]any{f.Field: map[string]any{"gte": f.Value}},
+			})
+		case "lt":
+			filter = append(filter, map[string]any{
+				"range": map[string]any{f.Field: map[string]any{"lt": f.Value}},
+			})
+		case "lte":
+			filter = append(filter, map[string]any{
+				"range": map[string]any{f.Field: map[string]any{"lte": f.Value}},
+			})
+		}
 	}
 
 	boolQuery := map[string]any{}
@@ -101,10 +133,13 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 	if len(filter) > 0 {
 		boolQuery["filter"] = filter
 	}
+	if len(mustNot) > 0 {
+		boolQuery["must_not"] = mustNot
+	}
 
-	// If no must/filter, match_all
+	// If no must/filter/must_not, match_all
 	query := map[string]any{"match_all": map[string]any{}}
-	if len(must) > 0 || len(filter) > 0 {
+	if len(must) > 0 || len(filter) > 0 || len(mustNot) > 0 {
 		query = map[string]any{"bool": boolQuery}
 	}
 
@@ -116,12 +151,23 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 		"task_agg":   map[string]any{"terms": map[string]any{"field": "task", "size": 20}},
 	}
 
+	// Highlight configuration
+	highlight := map[string]any{
+		"fields": map[string]any{
+			"notes":    map[string]any{},
+			"owner":    map[string]any{},
+			"reviewer": map[string]any{},
+			"task":     map[string]any{},
+		},
+	}
+
 	body := map[string]any{
-		"query": query,
-		"from":  from,
-		"size":  req.PageSize,
-		"aggs":  aggs,
-		"sort":  []map[string]any{{"updated_at": map[string]any{"order": "desc"}}},
+		"query":     query,
+		"from":      from,
+		"size":      req.PageSize,
+		"aggs":      aggs,
+		"sort":      []map[string]any{{"updated_at": map[string]any{"order": "desc"}}},
+		"highlight": highlight,
 	}
 
 	return c.doSearch(ctx, body)
@@ -161,9 +207,10 @@ func (c *Client) doSearch(ctx context.Context, body map[string]any) (*SearchResp
 				Value int64 `json:"value"`
 			} `json:"total"`
 			Hits []struct {
-				ID     string         `json:"_id"`
-				Score  float64        `json:"_score"`
-				Source map[string]any `json:"_source"`
+				ID        string              `json:"_id"`
+				Score     float64             `json:"_score"`
+				Source    map[string]any      `json:"_source"`
+				Highlight map[string][]string `json:"highlight"`
 			} `json:"hits"`
 		} `json:"hits"`
 		Aggregations map[string]struct {
@@ -183,9 +230,10 @@ func (c *Client) doSearch(ctx context.Context, body map[string]any) (*SearchResp
 
 	for _, h := range osResp.Hits.Hits {
 		result.Hits = append(result.Hits, SearchHit{
-			ID:     h.ID,
-			Score:  h.Score,
-			Source: h.Source,
+			ID:        h.ID,
+			Score:     h.Score,
+			Source:    h.Source,
+			Highlight: h.Highlight,
 		})
 	}
 

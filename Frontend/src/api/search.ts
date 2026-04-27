@@ -13,7 +13,7 @@ export interface SearchAggBucket {
 }
 
 export interface SearchAssetsResponse {
-  items: Record<string, unknown>[];
+  items: (Record<string, unknown> & { _highlight?: Record<string, string[]> })[];
   total: number;
   page: number;
   page_size: number;

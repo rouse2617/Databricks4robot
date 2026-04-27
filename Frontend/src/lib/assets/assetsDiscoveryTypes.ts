@@ -105,6 +105,7 @@ export interface ResultsState {
   fetchStatus: FetchStatus;
   error: string | null;
   isStale: boolean;
+  aggregations?: Record<string, { key: string; doc_count: number }[]>;
 }
 
 // ─── State Domain 6: SelectionState ───

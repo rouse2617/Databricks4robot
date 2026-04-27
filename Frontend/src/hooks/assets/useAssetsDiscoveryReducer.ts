@@ -98,9 +98,9 @@ export function useAssetsDiscoveryReducer(): [
     const fetchResults = async () => {
       dispatch({ type: "RESULTS_LOADING" });
 
-      try {
-        const filters = buildFilterParams(state);
+      const filters = buildFilterParams(state);
 
+      try {
         let items: Asset[];
         let total: number;
 
@@ -114,6 +114,22 @@ export function useAssetsDiscoveryReducer(): [
           });
           items = (data.items ?? []) as unknown as Asset[];
           total = data.total ?? 0;
+
+          // Discard if a newer query has been issued
+          if (cancelled || queryKeyRef.current !== currentKey) return;
+
+          dispatch({
+            type: "RESULTS_SUCCESS",
+            payload: {
+              items,
+              total,
+              totalApprox:
+                total > 0 &&
+                items.length === state.queryState.pageSize,
+              aggregations: data.aggregations,
+            },
+          });
+          return;
         } else {
           // Structured mode → Postgres via /assets
           const data = await assetsApi.list({
@@ -141,6 +157,41 @@ export function useAssetsDiscoveryReducer(): [
         });
       } catch (err) {
         if (cancelled || queryKeyRef.current !== currentKey) return;
+
+        // Auto-fallback: if keyword mode (OpenSearch) fails, retry with Postgres
+        if (state.queryState.searchMode === "keyword") {
+          try {
+            const fallbackData = await assetsApi.list({
+              filter: filters.length > 0 ? filters : undefined,
+              sort_by: state.queryState.sort,
+              page: state.queryState.page,
+              page_size: state.queryState.pageSize,
+            });
+            if (cancelled || queryKeyRef.current !== currentKey) return;
+            const fallbackItems = fallbackData.items ?? [];
+            const fallbackTotal = fallbackData.total ?? 0;
+            dispatch({
+              type: "RESULTS_SUCCESS",
+              payload: {
+                items: fallbackItems,
+                total: fallbackTotal,
+                totalApprox:
+                  fallbackTotal > 0 &&
+                  fallbackItems.length === state.queryState.pageSize,
+              },
+            });
+            // Show degradation warning via error field
+            dispatch({
+              type: "RESULTS_ERROR",
+              payload: {
+                error: "OpenSearch 不可用，已降级到 Postgres 查询",
+              },
+            });
+            return;
+          } catch {
+            // Fallback also failed, show original error
+          }
+        }
 
         dispatch({
           type: "RESULTS_ERROR",
