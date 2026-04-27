@@ -1,6 +1,8 @@
 # 后训练数据平台高级架构设计
 
-本文描述 `data-platform` 面向机器人/自动驾驶后训练场景的长期演进架构。目标不是替换当前 `PostgreSQL + OpenSearch + Iceberg + Trino` 架构，而是在其基础上增加数据集治理、训练血缘、特征/向量平台、数据质量和任务编排能力。
+本文描述 `data-platform` 面向机器人/自动驾驶后训练场景的长期演进架构。目标不是替换当前 `PostgreSQL + OpenSearch + Iceberg + Trino` 架构，而是在其基础上增加数据集治理、训练样本层、训练血缘、特征/向量平台、数据质量和任务编排能力。
+
+参考业界实践：字节跳动在 EB 级 Iceberg 机器学习样本湖中，把 Iceberg 用作训练样本和特征工程底座，重点解决海量样本存储、特征调研、特征回填、版本管理、高吞吐读取和存储成本问题。这对本项目后续机器人数据后训练架构有直接参考价值。参考：[字节跳动 EB 级 Iceberg 数据湖的机器学习应用与优化](https://developer.volcengine.com/articles/7317095622338117641)。
 
 ## 1. 架构目标
 
@@ -21,6 +23,7 @@
 复杂检索
 历史事实
 训练数据集构建
+训练样本表
 训练任务追踪
 数据质量检查
 数据/模型血缘
@@ -54,7 +57,7 @@ Object Storage
 Iceberg
   -> Bronze: raw synced facts
   -> Silver: normalized history
-  -> Gold: dataset / replay / recompute / quality tables
+  -> Gold: dataset / training samples / replay / recompute / quality tables
 
 Spark / Ray / Dagster
   -> dataset build
@@ -197,6 +200,112 @@ dataset_snapshots
 - v1 到 v2 增加了哪些场景？
 - 训练效果变化是否由数据集变化引起？
 - 某批有问题的数据影响了哪些数据集？
+
+## 5.1 Training Sample Layer
+
+后训练场景里，训练任务不应该直接读取 PostgreSQL，也不应该通过 Backend API 一条条拉取 asset。训练真正读取的应该是 Iceberg Gold 层训练样本表，或者由 Iceberg/Spark/Ray 导出的 Parquet、Arrow、TFRecord 等样本文件。
+
+建议增加一层：
+
+```text
+Training Sample Layer
+```
+
+它位于 Iceberg Gold 层，职责是把 asset、tag、算法结果、feature、label 拼成训练框架可直接消费的样本。
+
+推荐表：
+
+```text
+gold_dataset_snapshot_items
+gold_training_samples
+gold_feature_samples
+gold_eval_samples
+gold_feature_branch_samples
+```
+
+职责说明：
+
+| 表 | 职责 |
+|---|---|
+| `gold_dataset_snapshot_items` | 保存某个 dataset snapshot 包含的 asset 明细 |
+| `gold_training_samples` | 训练主样本表，训练任务优先读取 |
+| `gold_feature_samples` | 特征工程后的样本表，包含可复用特征列 |
+| `gold_eval_samples` | 评测样本表，和训练样本分开管理 |
+| `gold_feature_branch_samples` | 特征调研/实验分支样本表 |
+
+训练样本层的关键字段：
+
+```text
+sample_id
+asset_id
+dataset_id
+snapshot_id
+feature_set_id
+feature_set_version
+sample_branch
+label_version
+algo_versions
+storage_uri
+sample_payload
+created_at
+```
+
+原则：
+
+```text
+PostgreSQL:
+  保存 dataset_snapshot、training_run、training_sample_export 元信息
+
+Iceberg:
+  保存训练样本行级明细、特征列、标签、历史版本
+
+Object Storage:
+  保存导出的 parquet / arrow / tfrecord / manifest
+
+Spark / Ray:
+  负责构建训练样本和导出文件
+```
+
+这样可以支持：
+
+- 同一个 dataset snapshot 生成不同训练样本格式。
+- 同一批 asset 拼接不同版本特征。
+- 新特征先进入实验分支，验证后再合并为正式特征版本。
+- 训练任务通过 `manifest_uri` 或 Iceberg table 复现数据。
+
+## 5.2 特征调研、回填与分支
+
+字节 Iceberg 机器学习样本实践里，一个重要思想是：特征调研不应该复制全量样本，而应该通过湖仓表、更新文件、分支或实验表复用主干样本数据。
+
+本项目可以先不依赖 Iceberg 原生 branch，而采用更简单的业务分支设计：
+
+```text
+feature_set_version
+sample_branch
+experiment_id
+feature_job_id
+```
+
+典型流程：
+
+```text
+1. 主干样本表 gold_training_samples_main 已存在
+2. 算法同学提出新特征 feature_x
+3. 创建 feature_job，job_type = branch_experiment
+4. Spark/Ray 回填 feature_x 到 gold_feature_branch_samples
+5. 使用实验分支样本训练
+6. 指标通过后，将 feature_set_version 升级为正式版本
+7. 后续训练读取新的 feature_set_version
+```
+
+这种方式可以避免：
+
+- 每次特征调研复制全量训练样本。
+- 新特征污染主干样本。
+- 多个算法团队互相覆盖实验结果。
+- 训练数据版本不可复现。
+
+长期如果 Iceberg 分支能力、Nessie catalog 或内部数据分支能力成熟，可以把 `sample_branch` 映射到真实 Iceberg branch。
 
 ## 6. 训练任务追踪
 
@@ -344,6 +453,28 @@ Object Storage:
 - 挖掘长尾失败场景。
 - 查找某类动作/场景的相似训练样本。
 
+特征工程层需要支持多版本：
+
+```text
+feature_name
+feature_set_id
+feature_set_version
+feature_job_id
+sample_branch
+source_algo_name
+source_algo_version
+```
+
+这样同一个 asset 可以存在多套特征结果：
+
+```text
+asset_id | feature_set | version | branch      | value
+a1       | scene_feat  | v1      | main        | ...
+a1       | scene_feat  | v2      | exp-rain-v2 | ...
+```
+
+当前态和任务状态放 PostgreSQL，大规模特征值和训练样本行进入 Iceberg。向量本体进入 Lance/Milvus/Vespa，PostgreSQL 只保存索引引用和任务状态。
+
 ## 9. 多模态检索
 
 OpenSearch 适合关键词和结构化条件，向量引擎适合语义相似。
@@ -390,7 +521,7 @@ OpenSearch keyword recall
 
 ## 10. Iceberg 分层设计
 
-Iceberg 是后训练历史事实层。
+Iceberg 是后训练历史事实层，也是训练样本层和特征工程层。
 
 ### Bronze
 
@@ -407,6 +538,9 @@ bronze_deliveries
 bronze_delivery_items
 bronze_dataset_snapshots
 bronze_training_runs
+bronze_feature_sets
+bronze_feature_jobs
+bronze_training_sample_exports
 ```
 
 ### Silver
@@ -422,6 +556,8 @@ silver_delivery_items
 silver_training_dataset_usage
 silver_feature_jobs
 silver_asset_embeddings
+silver_feature_samples
+silver_training_sample_exports
 ```
 
 ### Gold
@@ -432,6 +568,10 @@ silver_asset_embeddings
 gold_dataset_snapshot_items
 gold_dataset_quality_reports
 gold_dataset_diff_reports
+gold_training_samples
+gold_feature_samples
+gold_eval_samples
+gold_feature_branch_samples
 gold_recompute_candidates
 gold_customer_delivery_replay
 gold_quality_distribution
@@ -442,10 +582,35 @@ gold_model_dataset_lineage
 
 ```text
 PostgreSQL 保存在线当前态和元信息。
-Iceberg 保存大规模历史事实和训练明细。
+Iceberg 保存大规模历史事实、训练明细、特征样本和训练样本表。
 Trino 查询 Iceberg。
 Spark/Ray 生成训练需要的数据文件。
 ```
+
+训练读取优化建议：
+
+```text
+1. 训练任务读取 Iceberg Gold 表或导出的 Parquet / Arrow / TFRecord。
+2. 不通过 Backend API 单条读取 asset。
+3. 大规模训练样本按 snapshot_id、feature_set_version、date、scenario_type 等分区。
+4. 定期做 Iceberg compaction，避免小文件影响训练吞吐。
+5. 对高频训练样本保留 manifest_uri，便于训练框架直接读取。
+6. 后续可探索 Arrow 向量化读取，减少训练数据读取瓶颈。
+```
+
+算法多版本和特征多版本建议统一落在 Iceberg 业务字段上：
+
+```text
+algo_name
+algo_version
+feature_set_id
+feature_set_version
+run_id
+snapshot_id
+sample_branch
+```
+
+Iceberg 的表级 snapshot 用于数据湖时间旅行；业务字段用于算法/特征/样本版本管理。两者不要混淆。
 
 ## 11. 数据质量
 
@@ -643,6 +808,29 @@ dataset_quality_reports
 - 训练数据复现。
 - 数据集质量报告。
 - 数据集 diff。
+
+### Phase 4.5: 训练样本层和特征调研
+
+目标：让 Iceberg 不只是历史分析层，而是训练样本和特征工程底座。
+
+新增：
+
+```text
+training_sample_exports
+feature_sets
+feature_jobs
+gold_training_samples
+gold_feature_samples
+gold_feature_branch_samples
+```
+
+能力：
+
+- 将 asset、tag、algo result、feature、label 拼成训练样本。
+- 支持特征回填和实验分支。
+- 支持同一份 dataset snapshot 生成不同训练格式。
+- 支持导出 Parquet / Arrow / TFRecord。
+- 支持训练任务通过 manifest_uri 复现读取数据。
 
 ### Phase 5: Feature / Embedding 平台
 

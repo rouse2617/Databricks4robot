@@ -34,6 +34,14 @@
 | training_runs    | 主表   | 训练任务与数据集使用记录                      |
 | idempotency_keys | 控制表 | 幂等写入保护                                  |
 
+长期后训练场景可扩展：
+
+| 表名 | 类型 | 核心职责 |
+|------|------|----------|
+| feature_sets | 主表 | 特征集合定义，描述一组可复用训练特征 |
+| feature_jobs | 主表 | 特征抽取、回填、实验分支任务记录 |
+| training_sample_exports | 主表 | 训练样本导出任务元信息，明细写 Iceberg / 对象存储 |
+
 **表关系简表：**
 - mcap_files 1 ─── N assets
 - assets     1 ─── N asset_tags
@@ -414,7 +422,79 @@
 
 ---
 
-### 4.10 idempotency_keys（幂等写入保护）
+### 4.10 后训练扩展表（feature_sets / feature_jobs / training_sample_exports）
+
+这几张表用于长期演进，当前 MVP 可以先不落地。设计原则是：PostgreSQL 只保存定义、任务状态、manifest 和摘要，大规模样本明细、特征明细、训练样本行写入 Iceberg 或对象存储。
+
+#### feature_sets（特征集合定义）
+
+- **主键**：feature_set_id
+
+| 字段名 | 类型 | 必填 | 说明 | 同步目标 |
+|--------|------|------|------|----------|
+| feature_set_id | UUID | 是 | 特征集合 ID | ES / Iceberg |
+| name | TEXT | 是 | 特征集合名称 | ES / Iceberg |
+| feature_set_version | TEXT | 是 | 特征集合版本 | ES / Iceberg |
+| description | TEXT | 否 | 描述 | ES / Iceberg |
+| owner | TEXT | 否 | 负责人或团队 | ES / Iceberg |
+| schema_uri | TEXT | 否 | 特征 schema 文件地址 | Iceberg |
+| feature_spec | JSONB | 是 | 特征定义、来源、依赖算法、字段说明 | Iceberg |
+| status | TEXT | 是 | draft / active / deprecated | ES / Iceberg |
+| created_at | TIMESTAMPTZ | 是 | 创建时间 | ES / Iceberg |
+| updated_at | TIMESTAMPTZ | 是 | 更新时间 | ES / Iceberg |
+
+#### feature_jobs（特征抽取 / 回填 / 实验分支任务）
+
+- **主键**：feature_job_id
+
+| 字段名 | 类型 | 必填 | 说明 | 同步目标 |
+|--------|------|------|------|----------|
+| feature_job_id | UUID | 是 | 特征任务 ID | ES / Iceberg |
+| feature_set_id | UUID | 是 | 关联 feature_sets | ES / Iceberg |
+| feature_set_version | TEXT | 是 | 特征集合版本 | ES / Iceberg |
+| job_type | TEXT | 是 | extract / backfill / branch_experiment / merge | ES / Iceberg |
+| branch_name | TEXT | 否 | 实验分支名称，用于特征调研 | ES / Iceberg |
+| source_snapshot_id | UUID | 否 | 来源数据集快照 | Iceberg |
+| run_id | TEXT | 否 | Spark / Ray / Dagster 执行批次 | Iceberg |
+| input_manifest_uri | TEXT | 否 | 输入 asset 清单 | Iceberg |
+| output_table | TEXT | 否 | 输出 Iceberg 表名 | Iceberg |
+| output_manifest_uri | TEXT | 否 | 输出文件或 manifest 地址 | Iceberg |
+| status | TEXT | 是 | pending / running / succeeded / failed | ES / Iceberg |
+| metrics | JSONB | 是 | 行数、耗时、失败数等摘要 | Iceberg |
+| started_at | TIMESTAMPTZ | 否 | 开始时间 | ES / Iceberg |
+| finished_at | TIMESTAMPTZ | 否 | 完成时间 | ES / Iceberg |
+| created_at | TIMESTAMPTZ | 是 | 创建时间 | ES / Iceberg |
+| updated_at | TIMESTAMPTZ | 是 | 更新时间 | ES / Iceberg |
+
+#### training_sample_exports（训练样本导出任务）
+
+- **主键**：export_id
+
+| 字段名 | 类型 | 必填 | 说明 | 同步目标 |
+|--------|------|------|------|----------|
+| export_id | UUID | 是 | 导出任务 ID | ES / Iceberg |
+| dataset_id | UUID | 是 | 数据集 ID | ES / Iceberg |
+| snapshot_id | UUID | 是 | 数据集快照 ID | ES / Iceberg |
+| feature_set_id | UUID | 否 | 使用的特征集合 | ES / Iceberg |
+| feature_set_version | TEXT | 否 | 特征集合版本 | ES / Iceberg |
+| sample_table | TEXT | 否 | 训练样本 Iceberg 表名 | Iceberg |
+| manifest_uri | TEXT | 是 | 训练实际读取的 manifest / parquet / arrow 地址 | Iceberg |
+| file_format | TEXT | 是 | parquet / arrow / tfrecord / jsonl | Iceberg |
+| partition_spec | JSONB | 否 | 导出分区策略 | Iceberg |
+| item_count | BIGINT | 是 | 样本数 | ES / Iceberg |
+| total_size_bytes | BIGINT | 否 | 导出总大小 | ES / Iceberg |
+| status | TEXT | 是 | building / ready / failed | ES / Iceberg |
+| created_at | TIMESTAMPTZ | 是 | 创建时间 | ES / Iceberg |
+| updated_at | TIMESTAMPTZ | 是 | 更新时间 | ES / Iceberg |
+
+**设计说明**
+- 训练不要通过 API 一条条读取 asset，应读取 Iceberg Gold 表或导出的 Parquet / Arrow / TFRecord。
+- 特征调研可以先写实验 branch_name 或实验 sample_table，验证后再升级为正式 feature_set_version。
+- PostgreSQL 只记录任务和 manifest，训练样本行级明细由 Iceberg 承载。
+
+---
+
+### 4.11 idempotency_keys（幂等写入保护）
 
 | 字段名        | 类型         | 必填 | 说明                   | 同步目标 |
 |---------------|-------------|------|------------------------|----------|
@@ -488,10 +568,13 @@
 | bronze_asset_tags           | asset_tags       | tag 快照         |
 | bronze_asset_algo_latest    | asset_algo_latest| 算法快照         |
 | bronze_asset_events         | asset_events     | 事件事实         |
+| bronze_asset_relations      | asset_relations  | 资产血缘         |
 | bronze_deliveries           | deliveries       | 交付批次         |
 | bronze_delivery_items       | delivery_items   | 交付明细         |
 | bronze_dataset_snapshots    | dataset_snapshots| 数据集快照元信息 |
 | bronze_training_runs        | training_runs    | 训练记录         |
+| bronze_feature_sets         | feature_sets     | 特征集合定义     |
+| bronze_feature_jobs         | feature_jobs     | 特征任务记录     |
 
 **Silver 层**
 
@@ -500,14 +583,21 @@
 | silver_assets_current       | 资产当前态宽表         |
 | silver_asset_tag_history    | tag 历史变化           |
 | silver_asset_algo_runs      | 算法运行历史           |
+| silver_asset_lineage        | 资产父子血缘           |
 | silver_delivery_items       | 客户交付明细           |
 | silver_training_dataset_usage|训练任务与数据集关系    |
+| silver_feature_jobs         | 特征任务历史           |
+| silver_feature_samples      | 标准化特征样本         |
 
 **Gold 层**
 
 | Iceberg 表                   | 用途                                     |
 |------------------------------|------------------------------------------|
 | gold_dataset_snapshot_items  | 数据集快照 asset 明细                    |
+| gold_training_samples        | 训练可直接读取的样本表                   |
+| gold_feature_samples         | 特征工程与特征调研样本表                 |
+| gold_eval_samples            | 评测样本表                               |
+| gold_feature_branch_samples  | 实验分支特征样本表                       |
 | gold_recompute_candidates    | 算法版本变动后重算候选                   |
 | gold_customer_delivery_replay| 客户交付回放                             |
 | gold_quality_distribution    | 质量分布统计                             |
@@ -524,6 +614,8 @@
 | 哪些 asset 跑过某个算法    | asset_algo_latest，历史用 Trino      |
 | 某 tag 何时被算法追加      | asset_events，长期历史用 Trino       |
 | 某次训练用了哪些 asset     | PG 找 snapshot，Iceberg 查明细       |
+| 某次训练实际读取哪些样本文件 | PG 查 training_sample_exports，训练读 manifest |
+| 新特征如何做实验回填       | PG 查 feature_jobs，Iceberg 写 feature branch/sample 表 |
 | 某算法版本变更后要重算     | Trino + Iceberg                     |
 | 上月 MCAP segment 质量分布 | Trino + Iceberg                     |
 | 某客户交付是否能完整回放   | PG 查 delivery，Iceberg 查明细       |
