@@ -52,6 +52,9 @@ var allowedExactInputFields = []string{
 	"last_delivered_to",
 	"last_delivered_at",
 	"retention_tier",
+	"lifecycle_state",
+	"asset_type",
+	"expire_at",
 }
 
 var allowedDynamicInputFields = []string{

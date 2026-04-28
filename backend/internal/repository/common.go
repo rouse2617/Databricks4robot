@@ -49,3 +49,25 @@ type IdempotencyRepository interface {
 	Get(ctx context.Context, scope, key string) (*IdempotencyRecord, error)
 	Save(ctx context.Context, rec *IdempotencyRecord) error
 }
+
+// AssetTagRepository defines persistence operations for the asset_tags
+// projection table.
+type AssetTagRepository interface {
+	Upsert(ctx context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error
+	ListByAsset(ctx context.Context, assetID string) ([]*models.AssetTag, error)
+	Delete(ctx context.Context, assetID, tagKey string) error
+}
+
+// AssetAlgoLatestRepository defines persistence operations for the
+// asset_algo_latest projection table.
+type AssetAlgoLatestRepository interface {
+	Upsert(ctx context.Context, assetID, algoName, algoVersion, status string) error
+	ListByAsset(ctx context.Context, assetID string) ([]*models.AssetAlgoLatest, error)
+}
+
+// AssetEventRepository defines persistence operations for the asset_events
+// outbox table. Every mutation should call Append within the same transaction.
+type AssetEventRepository interface {
+	Append(ctx context.Context, eventType string, assetID string, mcapFileID string, eventPayload []byte) error
+	ListPending(ctx context.Context, limit int) ([]*models.AssetEvent, error)
+}

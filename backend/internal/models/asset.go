@@ -33,9 +33,9 @@ const (
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Asset — row in the `assets` Bigtable table.
-// Row key: v1#<asset_id>
-// CF layout:
+// Asset — row in the `assets` table (PostgreSQL).
+//
+// Legacy CF layout (retained for backward compat during dual-write):
 //
 //	cf:meta  → scalar metadata fields
 //	cf:algo  → algorithm results, key pattern: <algo>@<ver>:<field>
@@ -50,43 +50,66 @@ type Asset struct {
 	// Segment locator — deterministic SHA-1 of mcap_file_id + start_ns + end_ns.
 	SegmentLocator string `json:"segment_locator,omitempty"`
 
-	// cf:meta — immutable fields (written at creation, never updated afterwards)
-	// Phase 1 Bigtable: stay in cf:meta, GC policy maxVersions=1, no TTL.
+	// ── Legacy fields (retained for backward compatibility) ──────────────
 	StartTimestampNs int64       `json:"start_timestamp_ns"`
 	EndTimestampNs   int64       `json:"end_timestamp_ns"`
 	DurationSec      float64     `json:"duration_sec"`
 	Reviewer         string      `json:"reviewer"`
-	Status           AssetStatus `json:"status"` // mutable via QA workflow, but low-frequency
+	Status           AssetStatus `json:"status"`
 	Owner            string      `json:"owner"`
 	SegType          string      `json:"type,omitempty"`
 	Env              string      `json:"env,omitempty"`
 	Task             string      `json:"task,omitempty"`
 
-	// cf:meta — mutable fields (updated by delivery triggers, lifecycle jobs, API calls)
-	// Phase 1 Bigtable: consider splitting into cf:state with separate GC policy.
 	LastDeliveredAt *time.Time `json:"last_delivered_at,omitempty"`
 	LastDeliveredTo string     `json:"last_delivered_to,omitempty"`
 	DeliveryCount   int        `json:"delivery_count"`
 
-	// cf:algo — keyed by "<algo>@<ver>:<field>" (arbitrary map)
 	AlgoResults map[string]string `json:"algo_results,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Files       map[string]string `json:"files,omitempty"`
 
-	// cf:tag — free-form tags (arbitrary map)
-	Tags map[string]string `json:"tags,omitempty"`
-
-	// cf_files — file reference registry (key=logical name, value=GCS URI)
-	Files map[string]string `json:"files,omitempty"`
-
-	// LifecycleMeta holds lifecycle governance fields stored in cf_meta JSONB.
-	// These are mutable — updated by lifecycle jobs and finish_algo (total_size_bytes).
-	// Keys: retention_tier, archive_after_days, delete_after_days, total_size_bytes, last_accessed_at.
-	// Phase 1 Bigtable: move to cf:state alongside delivery summary fields.
 	LifecycleMeta map[string]interface{} `json:"lifecycle_meta,omitempty"`
+
+	// ── NEW typed fields (Phase 2 — schema evolution) ────────────────────
+	AssetType           string                 `json:"asset_type"`
+	LifecycleState      string                 `json:"lifecycle_state"`
+	DurationMs          int64                  `json:"duration_ms"`
+	StorageURI          string                 `json:"storage_uri,omitempty"`
+	ThumbURI            string                 `json:"thumb_uri,omitempty"`
+	RetentionTier       string                 `json:"retention_tier,omitempty"`
+	ExpireAt            *time.Time             `json:"expire_at,omitempty"`
+	AssetLevel          int                    `json:"asset_level"`
+	ParentAssetID       string                 `json:"parent_asset_id,omitempty"`
+	RootAssetID         string                 `json:"root_asset_id,omitempty"`
+	SplitMethod         string                 `json:"split_method,omitempty"`
+	SplitAlgoName       string                 `json:"split_algo_name,omitempty"`
+	SplitAlgoVersion    string                 `json:"split_algo_version,omitempty"`
+	SplitRunID          string                 `json:"split_run_id,omitempty"`
+	SplitReason         string                 `json:"split_reason,omitempty"`
+	SegmentIndex        *int                   `json:"segment_index,omitempty"`
+	ParentStartOffsetMs *int64                 `json:"parent_start_offset_ms,omitempty"`
+	ParentEndOffsetMs   *int64                 `json:"parent_end_offset_ms,omitempty"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
+	FilesJSON           map[string]interface{} `json:"files_json,omitempty"`
+	TenantID            string                 `json:"tenant_id,omitempty"`
+	ProjectID           string                 `json:"project_id,omitempty"`
 
 	// Timestamps / versioning
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Version   int64     `json:"version"`
+}
+
+// SyncLegacyFields computes backward-compatible legacy fields from the new
+// typed fields. Call this after reading from the database to ensure API
+// responses include both old and new field names.
+//
+//   - DurationSec = float64(DurationMs) / 1000.0
+//   - SegType mirrors AssetType
+func (a *Asset) SyncLegacyFields() {
+	a.DurationSec = float64(a.DurationMs) / 1000.0
+	a.SegType = a.AssetType
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -135,6 +158,19 @@ type Delivery struct {
 	Note        string         `json:"note,omitempty"`
 	AssetCount  int            `json:"asset_count"`
 	Owner       string         `json:"owner"`
+
+	// NEW typed fields (Phase 2 — schema evolution)
+	DeliveryType      string                 `json:"delivery_type"`
+	RequestedBy       string                 `json:"requested_by,omitempty"`
+	ApprovedBy        string                 `json:"approved_by,omitempty"`
+	DeliveredBy       string                 `json:"delivered_by,omitempty"`
+	ReplayManifestURI string                 `json:"replay_manifest_uri,omitempty"`
+	ItemCount         int64                  `json:"item_count"`
+	TotalSizeBytes    *int64                 `json:"total_size_bytes,omitempty"`
+	CompletedAt       *time.Time             `json:"completed_at,omitempty"`
+	Metadata          map[string]interface{} `json:"metadata,omitempty"`
+	TenantID          string                 `json:"tenant_id,omitempty"`
+	ProjectID         string                 `json:"project_id,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

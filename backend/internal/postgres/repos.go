@@ -21,18 +21,24 @@ func NewAssetRepo(c *Client) *AssetRepo { return &AssetRepo{c: c} }
 
 func (r *AssetRepo) Get(ctx context.Context, assetID string) (*models.Asset, error) {
 	const q = `
-SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator, status, cf_meta, cf_algo, cf_tag, cf_files, created_at, updated_at, version
+SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
+  status, lifecycle_state, asset_type, duration_ms,
+  owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
+  retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1 AND is_deleted = FALSE`
 	var (
-		a                                                  models.Asset
-		status                                             string
-		segLoc                                             *string
-		cfMetaBytes, cfAlgoBytes, cfTagBytes, cfFilesBytes []byte
+		a              models.Asset
+		status         string
+		lifecycleState string
+		segLoc         *string
 	)
 	err := r.c.db.QueryRow(ctx, q, assetID).Scan(
-		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc, &status,
-		&cfMetaBytes, &cfAlgoBytes, &cfTagBytes, &cfFilesBytes,
+		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
+		&status, &lifecycleState, &a.AssetType, &a.DurationMs,
+		&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
+		&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 		&a.CreatedAt, &a.UpdatedAt, &a.Version,
 	)
 	if err != nil {
@@ -42,11 +48,11 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 		return nil, fmt.Errorf("postgres AssetRepo.Get: %w", err)
 	}
 	a.Status = models.AssetStatus(status)
+	a.LifecycleState = lifecycleState
 	if segLoc != nil {
 		a.SegmentLocator = *segLoc
 	}
-	applyAssetJSON(&a, cfMetaBytes, cfAlgoBytes, cfTagBytes)
-	applyFilesJSON(&a, cfFilesBytes)
+	a.SyncLegacyFields()
 	return &a, nil
 }
 
@@ -67,30 +73,111 @@ func (r *AssetRepo) Set(ctx context.Context, a *models.Asset) error {
 	a.UpdatedAt = now
 	a.Version++
 	a.SegmentLocator = models.ComputeSegmentLocator(a.McapFileID, a.StartTimestampNs, a.EndTimestampNs)
-	meta, algo, tag := assetJSON(a)
-	filesJSON, _ := json.Marshal(a.Files)
-	if a.Files == nil {
-		filesJSON = []byte(`{}`)
+
+	// Sync lifecycle_state ↔ status bidirectionally.
+	if a.LifecycleState != "" {
+		a.Status = models.AssetStatus(LifecycleStateToStatus(a.LifecycleState))
+	} else if a.Status != "" {
+		a.LifecycleState = StatusToLifecycleState(string(a.Status))
 	}
+	// Sync legacy ↔ new typed fields for consistency.
+	if a.AssetType != "" && a.SegType == "" {
+		a.SegType = a.AssetType
+	} else if a.SegType != "" && a.AssetType == "" {
+		a.AssetType = a.SegType
+	}
+	if a.DurationMs != 0 && a.DurationSec == 0 {
+		a.DurationSec = float64(a.DurationMs) / 1000.0
+	} else if a.DurationSec != 0 && a.DurationMs == 0 {
+		a.DurationMs = int64(a.DurationSec * 1000)
+	}
+
 	const q = `
-INSERT INTO assets(asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator, status, is_deleted, cf_meta, cf_algo, cf_tag, cf_files, created_at, updated_at, version)
-VALUES ($1,$2,$3,$4,$5,$6,FALSE,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13)
+INSERT INTO assets(
+  asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
+  status, lifecycle_state, asset_type, duration_ms,
+  owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
+  retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  parent_asset_id, root_asset_id, metadata, files,
+  tenant_id, project_id,
+  is_deleted,
+  created_at, updated_at, version
+) VALUES (
+  $1,$2,$3,$4,$5,
+  $6,$7,$8,$9,
+  $10,$11,$12,$13,$14,
+  $15,$16,$17,$18,$19,
+  $20,$21,$22::jsonb,$23::jsonb,
+  $24,$25,
+  FALSE,
+  $26,$27,$28
+)
 ON CONFLICT (asset_id) DO UPDATE SET
   mcap_file_id=EXCLUDED.mcap_file_id,
   start_timestamp_ns=EXCLUDED.start_timestamp_ns,
   end_timestamp_ns=EXCLUDED.end_timestamp_ns,
   segment_locator=EXCLUDED.segment_locator,
   status=EXCLUDED.status,
-  cf_meta=EXCLUDED.cf_meta,
-  cf_algo=EXCLUDED.cf_algo,
-  cf_tag=EXCLUDED.cf_tag,
-  cf_files=EXCLUDED.cf_files,
+  lifecycle_state=EXCLUDED.lifecycle_state,
+  asset_type=EXCLUDED.asset_type,
+  duration_ms=EXCLUDED.duration_ms,
+  owner=EXCLUDED.owner,
+  reviewer=EXCLUDED.reviewer,
+  delivery_count=EXCLUDED.delivery_count,
+  last_delivered_at=EXCLUDED.last_delivered_at,
+  last_delivered_to=EXCLUDED.last_delivered_to,
+  retention_tier=EXCLUDED.retention_tier,
+  expire_at=EXCLUDED.expire_at,
+  storage_uri=EXCLUDED.storage_uri,
+  thumb_uri=EXCLUDED.thumb_uri,
+  asset_level=EXCLUDED.asset_level,
+  parent_asset_id=EXCLUDED.parent_asset_id,
+  root_asset_id=EXCLUDED.root_asset_id,
+  metadata=EXCLUDED.metadata,
+  files=EXCLUDED.files,
+  tenant_id=EXCLUDED.tenant_id,
+  project_id=EXCLUDED.project_id,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version
 WHERE assets.version = EXCLUDED.version - 1`
+
+	// Marshal metadata JSONB (new structured metadata column).
+	metadataJSON, _ := json.Marshal(a.Metadata)
+	if a.Metadata == nil {
+		metadataJSON = []byte(`{}`)
+	}
+	// Marshal files JSONB (new structured files column).
+	filesStructJSON, _ := json.Marshal(a.FilesJSON)
+	if a.FilesJSON == nil {
+		filesStructJSON = []byte(`{}`)
+	}
+
+	// Nullable UUID columns: convert empty string to nil for PG UUID type.
+	var parentAssetID, rootAssetID interface{}
+	if a.ParentAssetID != "" {
+		parentAssetID = a.ParentAssetID
+	}
+	if a.RootAssetID != "" {
+		rootAssetID = a.RootAssetID
+	}
+
+	// Nullable text columns.
+	var tenantID, projectID interface{}
+	if a.TenantID != "" {
+		tenantID = a.TenantID
+	}
+	if a.ProjectID != "" {
+		projectID = a.ProjectID
+	}
+
 	rowsAffected, err := r.c.db.ExecResult(ctx, q,
 		a.AssetID, a.McapFileID, a.StartTimestampNs, a.EndTimestampNs, a.SegmentLocator,
-		string(a.Status), meta, algo, tag, filesJSON, a.CreatedAt, a.UpdatedAt, a.Version,
+		string(a.Status), a.LifecycleState, a.AssetType, a.DurationMs,
+		a.Owner, a.Reviewer, a.DeliveryCount, a.LastDeliveredAt, a.LastDeliveredTo,
+		a.RetentionTier, a.ExpireAt, a.StorageURI, a.ThumbURI, a.AssetLevel,
+		parentAssetID, rootAssetID, metadataJSON, filesStructJSON,
+		tenantID, projectID,
+		a.CreatedAt, a.UpdatedAt, a.Version,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres AssetRepo.Set: %w", err)
@@ -112,7 +199,11 @@ func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
 
 func (r *AssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error) {
 	const q = `
-SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator, status, cf_meta, cf_algo, cf_tag, cf_files, created_at, updated_at, version
+SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
+  status, lifecycle_state, asset_type, duration_ms,
+  owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
+  retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  created_at, updated_at, version
 FROM assets
 WHERE mcap_file_id = $1 AND is_deleted = FALSE
 ORDER BY start_timestamp_ns`
@@ -124,24 +215,26 @@ ORDER BY start_timestamp_ns`
 	var out []*models.Asset
 	for rows.Next() {
 		var (
-			a                                                  models.Asset
-			status                                             string
-			segLoc                                             *string
-			cfMetaBytes, cfAlgoBytes, cfTagBytes, cfFilesBytes []byte
+			a              models.Asset
+			status         string
+			lifecycleState string
+			segLoc         *string
 		)
 		if err := rows.Scan(
-			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc, &status,
-			&cfMetaBytes, &cfAlgoBytes, &cfTagBytes, &cfFilesBytes,
+			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
+			&status, &lifecycleState, &a.AssetType, &a.DurationMs,
+			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
+			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListByMcapFile scan: %w", err)
 		}
 		a.Status = models.AssetStatus(status)
+		a.LifecycleState = lifecycleState
 		if segLoc != nil {
 			a.SegmentLocator = *segLoc
 		}
-		applyAssetJSON(&a, cfMetaBytes, cfAlgoBytes, cfTagBytes)
-		applyFilesJSON(&a, cfFilesBytes)
+		a.SyncLegacyFields()
 		out = append(out, &a)
 	}
 	return out, nil
@@ -164,15 +257,22 @@ func NewMcapFileRepo(c *Client) *McapFileRepo { return &McapFileRepo{c: c} }
 
 func (r *McapFileRepo) Get(ctx context.Context, mcapFileID string) (*models.McapFile, error) {
 	const q = `
-SELECT mcap_file_id, raw_hash_md5, cf_meta, cf_process, created_at, updated_at, version
+SELECT mcap_file_id, raw_hash_md5,
+  mcap_uri, size_bytes, start_timestamp_ns, end_timestamp_ns,
+  channel_count, chunk_count, ingest_state, owner, process_state,
+  created_at, updated_at, version
 FROM mcap_files
 WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 	var (
-		f                       models.McapFile
-		metaBytes, processBytes []byte
+		f                 models.McapFile
+		ingestState       string
+		processStateBytes []byte
 	)
 	err := r.c.db.QueryRow(ctx, q, mcapFileID).Scan(
-		&f.McapFileID, &f.RawHashMD5, &metaBytes, &processBytes, &f.CreatedAt, &f.UpdatedAt, &f.Version,
+		&f.McapFileID, &f.RawHashMD5,
+		&f.GCSPath, &f.SizeBytes, &f.StartTimestampNs, &f.EndTimestampNs,
+		&f.ChannelCount, &f.ChunkCount, &ingestState, &f.Owner, &processStateBytes,
+		&f.CreatedAt, &f.UpdatedAt, &f.Version,
 	)
 	if err != nil {
 		if errors.Is(err, errNoRows) {
@@ -180,7 +280,11 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		}
 		return nil, fmt.Errorf("postgres McapFileRepo.Get: %w", err)
 	}
-	applyMcapJSON(&f, metaBytes, processBytes)
+	f.IngestState = models.IngestState(ingestState)
+	if f.ProcessState == nil {
+		f.ProcessState = map[string]string{}
+	}
+	_ = json.Unmarshal(processStateBytes, &f.ProcessState)
 	return &f, nil
 }
 
@@ -191,17 +295,51 @@ func (r *McapFileRepo) Set(ctx context.Context, f *models.McapFile) error {
 	}
 	f.UpdatedAt = now
 	f.Version++
-	meta, process := mcapJSON(f)
+
+	// Marshal process_state JSONB (real column).
+	processStateJSON, _ := json.Marshal(f.ProcessState)
+	if f.ProcessState == nil {
+		processStateJSON = []byte(`{}`)
+	}
+
 	const q = `
-INSERT INTO mcap_files(mcap_file_id, raw_hash_md5, is_deleted, cf_meta, cf_process, created_at, updated_at, version)
-VALUES ($1,$2,FALSE,$3::jsonb,$4::jsonb,$5,$6,$7)
+INSERT INTO mcap_files(
+  mcap_file_id, raw_hash_md5, is_deleted,
+  mcap_uri, size_bytes, file_duration_ms,
+  start_timestamp_ns, end_timestamp_ns,
+  channel_count, chunk_count, ingest_state,
+  owner, process_state,
+  created_at, updated_at, version
+) VALUES (
+  $1,$2,FALSE,
+  $3,$4,$5,
+  $6,$7,
+  $8,$9,$10,
+  $11,$12::jsonb,
+  $13,$14,$15
+)
 ON CONFLICT (mcap_file_id) DO UPDATE SET
   raw_hash_md5=EXCLUDED.raw_hash_md5,
-  cf_meta=EXCLUDED.cf_meta,
-  cf_process=EXCLUDED.cf_process,
+  mcap_uri=EXCLUDED.mcap_uri,
+  size_bytes=EXCLUDED.size_bytes,
+  file_duration_ms=EXCLUDED.file_duration_ms,
+  start_timestamp_ns=EXCLUDED.start_timestamp_ns,
+  end_timestamp_ns=EXCLUDED.end_timestamp_ns,
+  channel_count=EXCLUDED.channel_count,
+  chunk_count=EXCLUDED.chunk_count,
+  ingest_state=EXCLUDED.ingest_state,
+  owner=EXCLUDED.owner,
+  process_state=EXCLUDED.process_state,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version`
-	err := r.c.db.Exec(ctx, q, f.McapFileID, f.RawHashMD5, meta, process, f.CreatedAt, f.UpdatedAt, f.Version)
+	err := r.c.db.Exec(ctx, q,
+		f.McapFileID, f.RawHashMD5,
+		f.GCSPath, f.SizeBytes, int64(0),
+		f.StartTimestampNs, f.EndTimestampNs,
+		f.ChannelCount, f.ChunkCount, string(f.IngestState),
+		f.Owner, processStateJSON,
+		f.CreatedAt, f.UpdatedAt, f.Version,
+	)
 	if err != nil {
 		return fmt.Errorf("postgres McapFileRepo.Set: %w", err)
 	}
@@ -217,18 +355,18 @@ func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState
 	}
 	offset := (page - 1) * pageSize
 
-	// Build dynamic WHERE clause
+	// Build dynamic WHERE clause.
 	where := "is_deleted = FALSE"
 	args := []any{}
 	argIdx := 1
 
 	if ingestState != "" {
-		where += fmt.Sprintf(" AND cf_meta->>'ingest_state' = $%d", argIdx)
+		where += fmt.Sprintf(" AND ingest_state = $%d", argIdx)
 		args = append(args, ingestState)
 		argIdx++
 	}
 	if owner != "" {
-		where += fmt.Sprintf(" AND cf_meta->>'owner' ILIKE $%d", argIdx)
+		where += fmt.Sprintf(" AND owner ILIKE $%d", argIdx)
 		args = append(args, "%"+owner+"%")
 		argIdx++
 	}
@@ -241,7 +379,10 @@ func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState
 	}
 
 	selectQ := fmt.Sprintf(`
-SELECT mcap_file_id, raw_hash_md5, cf_meta, cf_process, created_at, updated_at, version
+SELECT mcap_file_id, raw_hash_md5,
+  mcap_uri, size_bytes, start_timestamp_ns, end_timestamp_ns,
+  channel_count, chunk_count, ingest_state, owner, process_state,
+  created_at, updated_at, version
 FROM mcap_files
 WHERE %s
 ORDER BY updated_at DESC
@@ -257,13 +398,23 @@ LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 	var out []*models.McapFile
 	for rows.Next() {
 		var (
-			f                       models.McapFile
-			metaBytes, processBytes []byte
+			f                 models.McapFile
+			is                string
+			processStateBytes []byte
 		)
-		if err := rows.Scan(&f.McapFileID, &f.RawHashMD5, &metaBytes, &processBytes, &f.CreatedAt, &f.UpdatedAt, &f.Version); err != nil {
+		if err := rows.Scan(
+			&f.McapFileID, &f.RawHashMD5,
+			&f.GCSPath, &f.SizeBytes, &f.StartTimestampNs, &f.EndTimestampNs,
+			&f.ChannelCount, &f.ChunkCount, &is, &f.Owner, &processStateBytes,
+			&f.CreatedAt, &f.UpdatedAt, &f.Version,
+		); err != nil {
 			return nil, 0, fmt.Errorf("postgres McapFileRepo.List scan: %w", err)
 		}
-		applyMcapJSON(&f, metaBytes, processBytes)
+		f.IngestState = models.IngestState(is)
+		if f.ProcessState == nil {
+			f.ProcessState = map[string]string{}
+		}
+		_ = json.Unmarshal(processStateBytes, &f.ProcessState)
 		out = append(out, &f)
 	}
 	return out, total, nil
@@ -272,7 +423,7 @@ LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 func (r *McapFileRepo) UpdateIngestState(ctx context.Context, mcapFileID string, state models.IngestState) error {
 	const q = `
 UPDATE mcap_files
-SET cf_meta = jsonb_set(cf_meta, '{ingest_state}', to_jsonb($2::text), true),
+SET ingest_state = $2,
     updated_at = now(),
     version = version + 1
 WHERE mcap_file_id = $1`
@@ -298,24 +449,77 @@ func (r *DeliveryRepo) Set(ctx context.Context, d *models.Delivery) error {
 	}
 	d.UpdatedAt = now
 	d.Version++
-	meta, _ := json.Marshal(map[string]any{
-		"manifest_uri": d.ManifestURI,
-		"contract_id":  d.ContractID,
-		"note":         d.Note,
-		"asset_count":  d.AssetCount,
-		"owner":        d.Owner,
-	})
+
+	// Sync legacy AssetCount ↔ ItemCount for backward compat.
+	if d.ItemCount == 0 && d.AssetCount > 0 {
+		d.ItemCount = int64(d.AssetCount)
+	} else if d.AssetCount == 0 && d.ItemCount > 0 {
+		d.AssetCount = int(d.ItemCount)
+	}
+	// Sync Owner ↔ DeliveredBy for backward compat.
+	if d.DeliveredBy == "" && d.Owner != "" {
+		d.DeliveredBy = d.Owner
+	} else if d.Owner == "" && d.DeliveredBy != "" {
+		d.Owner = d.DeliveredBy
+	}
+
+	// Marshal metadata JSONB (new structured metadata column).
+	metadataJSON, _ := json.Marshal(d.Metadata)
+	if d.Metadata == nil {
+		metadataJSON = []byte(`{}`)
+	}
+
+	// Nullable text columns.
+	var tenantID, projectID interface{}
+	if d.TenantID != "" {
+		tenantID = d.TenantID
+	}
+	if d.ProjectID != "" {
+		projectID = d.ProjectID
+	}
+
 	const q = `
-INSERT INTO deliveries(delivery_id, customer_id, status, delivered_at, is_deleted, cf_meta, created_at, updated_at, version)
-VALUES ($1,$2,$3,$4,FALSE,$5::jsonb,$6,$7,$8)
+INSERT INTO deliveries(
+  delivery_id, customer_id, status, delivered_at,
+  contract_id, delivery_type, requested_by, approved_by, delivered_by,
+  manifest_uri, replay_manifest_uri, item_count, total_size_bytes,
+  completed_at, metadata, tenant_id, project_id,
+  is_deleted,
+  created_at, updated_at, version
+) VALUES (
+  $1,$2,$3,$4,
+  $5,$6,$7,$8,$9,
+  $10,$11,$12,$13,
+  $14,$15::jsonb,$16,$17,
+  FALSE,
+  $18,$19,$20
+)
 ON CONFLICT (delivery_id) DO UPDATE SET
   customer_id=EXCLUDED.customer_id,
   status=EXCLUDED.status,
   delivered_at=EXCLUDED.delivered_at,
-  cf_meta=EXCLUDED.cf_meta,
+  contract_id=EXCLUDED.contract_id,
+  delivery_type=EXCLUDED.delivery_type,
+  requested_by=EXCLUDED.requested_by,
+  approved_by=EXCLUDED.approved_by,
+  delivered_by=EXCLUDED.delivered_by,
+  manifest_uri=EXCLUDED.manifest_uri,
+  replay_manifest_uri=EXCLUDED.replay_manifest_uri,
+  item_count=EXCLUDED.item_count,
+  total_size_bytes=EXCLUDED.total_size_bytes,
+  completed_at=EXCLUDED.completed_at,
+  metadata=EXCLUDED.metadata,
+  tenant_id=EXCLUDED.tenant_id,
+  project_id=EXCLUDED.project_id,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version`
-	err := r.c.db.Exec(ctx, q, d.DeliveryID, d.CustomerID, string(d.Status), d.DeliveredAt, meta, d.CreatedAt, d.UpdatedAt, d.Version)
+	err := r.c.db.Exec(ctx, q,
+		d.DeliveryID, d.CustomerID, string(d.Status), d.DeliveredAt,
+		d.ContractID, d.DeliveryType, d.RequestedBy, d.ApprovedBy, d.DeliveredBy,
+		d.ManifestURI, d.ReplayManifestURI, d.ItemCount, d.TotalSizeBytes,
+		d.CompletedAt, metadataJSON, tenantID, projectID,
+		d.CreatedAt, d.UpdatedAt, d.Version,
+	)
 	if err != nil {
 		return fmt.Errorf("postgres DeliveryRepo.Set: %w", err)
 	}
@@ -324,15 +528,25 @@ ON CONFLICT (delivery_id) DO UPDATE SET
 
 func (r *DeliveryRepo) Get(ctx context.Context, deliveryID string) (*models.Delivery, error) {
 	const q = `
-SELECT delivery_id, customer_id, status, delivered_at, cf_meta, created_at, updated_at, version
+SELECT delivery_id, customer_id, status, delivered_at,
+  contract_id, delivery_type, requested_by, approved_by, delivered_by,
+  manifest_uri, replay_manifest_uri, item_count, total_size_bytes,
+  completed_at, metadata, tenant_id, project_id,
+  created_at, updated_at, version
 FROM deliveries WHERE delivery_id=$1 AND is_deleted=FALSE`
 	var (
-		d      models.Delivery
-		status string
-		meta   []byte
+		d            models.Delivery
+		status       string
+		metadataJSON []byte
+		tenantID     *string
+		projectID    *string
 	)
 	err := r.c.db.QueryRow(ctx, q, deliveryID).Scan(
-		&d.DeliveryID, &d.CustomerID, &status, &d.DeliveredAt, &meta, &d.CreatedAt, &d.UpdatedAt, &d.Version,
+		&d.DeliveryID, &d.CustomerID, &status, &d.DeliveredAt,
+		&d.ContractID, &d.DeliveryType, &d.RequestedBy, &d.ApprovedBy, &d.DeliveredBy,
+		&d.ManifestURI, &d.ReplayManifestURI, &d.ItemCount, &d.TotalSizeBytes,
+		&d.CompletedAt, &metadataJSON, &tenantID, &projectID,
+		&d.CreatedAt, &d.UpdatedAt, &d.Version,
 	)
 	if err != nil {
 		if errors.Is(err, errNoRows) {
@@ -341,22 +555,34 @@ FROM deliveries WHERE delivery_id=$1 AND is_deleted=FALSE`
 		return nil, fmt.Errorf("postgres DeliveryRepo.Get: %w", err)
 	}
 	d.Status = models.DeliveryStatus(status)
-	var m map[string]any
-	_ = json.Unmarshal(meta, &m)
-	if v, ok := m["manifest_uri"].(string); ok {
-		d.ManifestURI = v
+	if tenantID != nil {
+		d.TenantID = *tenantID
 	}
-	if v, ok := m["contract_id"].(string); ok {
-		d.ContractID = v
+	if projectID != nil {
+		d.ProjectID = *projectID
 	}
-	if v, ok := m["note"].(string); ok {
-		d.Note = v
+	// Parse metadata JSONB.
+	if len(metadataJSON) > 0 {
+		_ = json.Unmarshal(metadataJSON, &d.Metadata)
 	}
-	if v, ok := m["owner"].(string); ok {
-		d.Owner = v
+	// Populate legacy fields from real columns.
+	if d.Note == "" {
+		if m, ok := d.Metadata["note"].(string); ok {
+			d.Note = m
+		}
 	}
-	if v, ok := m["asset_count"].(float64); ok {
-		d.AssetCount = int(v)
+	if d.Owner == "" && d.DeliveredBy != "" {
+		d.Owner = d.DeliveredBy
+	}
+	// Sync legacy AssetCount ↔ ItemCount.
+	if d.AssetCount == 0 && d.ItemCount > 0 {
+		d.AssetCount = int(d.ItemCount)
+	} else if d.ItemCount == 0 && d.AssetCount > 0 {
+		d.ItemCount = int64(d.AssetCount)
+	}
+	// Sync Owner ↔ DeliveredBy.
+	if d.DeliveredBy == "" && d.Owner != "" {
+		d.DeliveredBy = d.Owner
 	}
 	return &d, nil
 }
@@ -395,7 +621,11 @@ func (r *DeliveryRepo) List(ctx context.Context, page, pageSize int, status stri
 	}
 
 	// Data query
-	dataSQL := `SELECT delivery_id, customer_id, status, delivered_at, cf_meta, created_at, updated_at, version
+	dataSQL := `SELECT delivery_id, customer_id, status, delivered_at,
+  contract_id, delivery_type, requested_by, approved_by, delivered_by,
+  manifest_uri, replay_manifest_uri, item_count, total_size_bytes,
+  completed_at, metadata, tenant_id, project_id,
+  created_at, updated_at, version
 FROM deliveries WHERE is_deleted = FALSE`
 	var dataArgs []interface{}
 	paramIdx := 1
@@ -416,30 +646,50 @@ FROM deliveries WHERE is_deleted = FALSE`
 	var out []*models.Delivery
 	for rows.Next() {
 		var (
-			d    models.Delivery
-			st   string
-			meta []byte
+			d            models.Delivery
+			st           string
+			metadataJSON []byte
+			tenantID     *string
+			projectID    *string
 		)
-		if err := rows.Scan(&d.DeliveryID, &d.CustomerID, &st, &d.DeliveredAt, &meta, &d.CreatedAt, &d.UpdatedAt, &d.Version); err != nil {
+		if err := rows.Scan(
+			&d.DeliveryID, &d.CustomerID, &st, &d.DeliveredAt,
+			&d.ContractID, &d.DeliveryType, &d.RequestedBy, &d.ApprovedBy, &d.DeliveredBy,
+			&d.ManifestURI, &d.ReplayManifestURI, &d.ItemCount, &d.TotalSizeBytes,
+			&d.CompletedAt, &metadataJSON, &tenantID, &projectID,
+			&d.CreatedAt, &d.UpdatedAt, &d.Version,
+		); err != nil {
 			return nil, 0, fmt.Errorf("postgres DeliveryRepo.List scan: %w", err)
 		}
 		d.Status = models.DeliveryStatus(st)
-		var m map[string]any
-		_ = json.Unmarshal(meta, &m)
-		if v, ok := m["manifest_uri"].(string); ok {
-			d.ManifestURI = v
+		if tenantID != nil {
+			d.TenantID = *tenantID
 		}
-		if v, ok := m["contract_id"].(string); ok {
-			d.ContractID = v
+		if projectID != nil {
+			d.ProjectID = *projectID
 		}
-		if v, ok := m["note"].(string); ok {
-			d.Note = v
+		// Parse metadata JSONB.
+		if len(metadataJSON) > 0 {
+			_ = json.Unmarshal(metadataJSON, &d.Metadata)
 		}
-		if v, ok := m["owner"].(string); ok {
-			d.Owner = v
+		// Populate legacy fields from real columns.
+		if d.Note == "" {
+			if m, ok := d.Metadata["note"].(string); ok {
+				d.Note = m
+			}
 		}
-		if v, ok := m["asset_count"].(float64); ok {
-			d.AssetCount = int(v)
+		if d.Owner == "" && d.DeliveredBy != "" {
+			d.Owner = d.DeliveredBy
+		}
+		// Sync legacy AssetCount ↔ ItemCount.
+		if d.AssetCount == 0 && d.ItemCount > 0 {
+			d.AssetCount = int(d.ItemCount)
+		} else if d.ItemCount == 0 && d.AssetCount > 0 {
+			d.ItemCount = int64(d.AssetCount)
+		}
+		// Sync Owner ↔ DeliveredBy.
+		if d.DeliveredBy == "" && d.Owner != "" {
+			d.DeliveredBy = d.Owner
 		}
 		out = append(out, &d)
 	}
@@ -535,144 +785,209 @@ ON CONFLICT (scope, idem_key) DO UPDATE SET
 	return nil
 }
 
-func assetJSON(a *models.Asset) (meta, algo, tag []byte) {
-	metaMap := map[string]any{
-		"end_timestamp_ns":  a.EndTimestampNs,
-		"duration_sec":      a.DurationSec,
-		"reviewer":          a.Reviewer,
-		"owner":             a.Owner,
-		"type":              a.SegType,
-		"env":               a.Env,
-		"task":              a.Task,
-		"delivery_count":    a.DeliveryCount,
-		"last_delivered_to": a.LastDeliveredTo,
-		"created_at":        a.CreatedAt,
-		"updated_at":        a.UpdatedAt,
-	}
-	if a.LastDeliveredAt != nil {
-		metaMap["last_delivered_at"] = a.LastDeliveredAt
-	}
-	// Merge lifecycle governance fields into cf_meta.
-	for k, v := range a.LifecycleMeta {
-		metaMap[k] = v
-	}
-	meta, _ = json.Marshal(metaMap)
-	algo, _ = json.Marshal(a.AlgoResults)
-	tag, _ = json.Marshal(a.Tags)
-	return
+// ──────────────────────────────────────────────────────────────────────────────
+// AssetTagRepo — upserts tags to the asset_tags projection table.
+// ──────────────────────────────────────────────────────────────────────────────
+
+type AssetTagRepo struct {
+	c *Client
 }
 
-func applyAssetJSON(a *models.Asset, meta, algo, tag []byte) {
-	var m map[string]any
-	_ = json.Unmarshal(meta, &m)
-	if v, ok := m["end_timestamp_ns"].(float64); ok {
-		a.EndTimestampNs = int64(v)
+func NewAssetTagRepo(c *Client) *AssetTagRepo { return &AssetTagRepo{c: c} }
+
+// Upsert inserts or updates a tag in the asset_tags table.
+func (r *AssetTagRepo) Upsert(ctx context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error {
+	const tagQ = `
+INSERT INTO asset_tags (asset_id, tag_key, tag_value, tag_type, source_type, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, now(), now())
+ON CONFLICT (asset_id, tag_key) DO UPDATE SET
+  tag_value   = EXCLUDED.tag_value,
+  tag_type    = EXCLUDED.tag_type,
+  source_type = EXCLUDED.source_type,
+  updated_at  = now()`
+	if err := r.c.db.Exec(ctx, tagQ, assetID, tagKey, tagValue, tagType, sourceType); err != nil {
+		return fmt.Errorf("postgres AssetTagRepo.Upsert asset_tags: %w", err)
 	}
-	if v, ok := m["duration_sec"].(float64); ok {
-		a.DurationSec = v
+	return nil
+}
+
+var _ repository.AssetTagRepository = (*AssetTagRepo)(nil)
+
+// ListByAsset returns all tags for the given asset, ordered by tag_key.
+func (r *AssetTagRepo) ListByAsset(ctx context.Context, assetID string) ([]*models.AssetTag, error) {
+	const q = `
+SELECT asset_id, tag_key, tag_value, tag_type, source_type,
+  COALESCE(source_name, ''), COALESCE(source_version, ''),
+  COALESCE(run_id, ''), COALESCE(tenant_id, ''), COALESCE(project_id, ''),
+  created_at, updated_at
+FROM asset_tags
+WHERE asset_id = $1
+ORDER BY tag_key`
+	rows, err := r.c.db.Query(ctx, q, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetTagRepo.ListByAsset: %w", err)
 	}
-	if v, ok := m["reviewer"].(string); ok {
-		a.Reviewer = v
-	}
-	if v, ok := m["owner"].(string); ok {
-		a.Owner = v
-	}
-	if v, ok := m["type"].(string); ok {
-		a.SegType = v
-	}
-	if v, ok := m["env"].(string); ok {
-		a.Env = v
-	}
-	if v, ok := m["task"].(string); ok {
-		a.Task = v
-	}
-	if v, ok := m["delivery_count"].(float64); ok {
-		a.DeliveryCount = int(v)
-	}
-	if v, ok := m["last_delivered_to"].(string); ok {
-		a.LastDeliveredTo = v
-	}
-	if v, ok := m["last_delivered_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
-			a.LastDeliveredAt = &t
+	defer rows.Close()
+	var out []*models.AssetTag
+	for rows.Next() {
+		var t models.AssetTag
+		if err := rows.Scan(
+			&t.AssetID, &t.TagKey, &t.TagValue, &t.TagType, &t.SourceType,
+			&t.SourceName, &t.SourceVersion,
+			&t.RunID, &t.TenantID, &t.ProjectID,
+			&t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetTagRepo.ListByAsset scan: %w", err)
 		}
+		out = append(out, &t)
 	}
-	if a.AlgoResults == nil {
-		a.AlgoResults = map[string]string{}
+	return out, nil
+}
+
+// Delete removes a tag from the asset_tags table.
+func (r *AssetTagRepo) Delete(ctx context.Context, assetID, tagKey string) error {
+	const delQ = `DELETE FROM asset_tags WHERE asset_id = $1 AND tag_key = $2`
+	if err := r.c.db.Exec(ctx, delQ, assetID, tagKey); err != nil {
+		return fmt.Errorf("postgres AssetTagRepo.Delete asset_tags: %w", err)
 	}
-	if a.Tags == nil {
-		a.Tags = map[string]string{}
+	return nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// AssetAlgoLatestRepo — upserts algo results to the asset_algo_latest table.
+// ──────────────────────────────────────────────────────────────────────────────
+
+type AssetAlgoLatestRepo struct {
+	c *Client
+}
+
+func NewAssetAlgoLatestRepo(c *Client) *AssetAlgoLatestRepo {
+	return &AssetAlgoLatestRepo{c: c}
+}
+
+var _ repository.AssetAlgoLatestRepository = (*AssetAlgoLatestRepo)(nil)
+
+// ListByAsset returns all algo results for the given asset, ordered by algo_name.
+func (r *AssetAlgoLatestRepo) ListByAsset(ctx context.Context, assetID string) ([]*models.AssetAlgoLatest, error) {
+	const q = `
+SELECT asset_id, algo_name, algo_version, status,
+  COALESCE(run_id, ''), COALESCE(tenant_id, ''), COALESCE(project_id, ''),
+  updated_at
+FROM asset_algo_latest
+WHERE asset_id = $1
+ORDER BY algo_name`
+	rows, err := r.c.db.Query(ctx, q, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetAlgoLatestRepo.ListByAsset: %w", err)
 	}
-	// Extract lifecycle governance fields from cf_meta.
-	lifecycleKeys := []string{"retention_tier", "archive_after_days", "delete_after_days", "total_size_bytes", "last_accessed_at"}
-	if a.LifecycleMeta == nil {
-		a.LifecycleMeta = map[string]interface{}{}
-	}
-	for _, k := range lifecycleKeys {
-		if v, ok := m[k]; ok {
-			a.LifecycleMeta[k] = v
+	defer rows.Close()
+	var out []*models.AssetAlgoLatest
+	for rows.Next() {
+		var a models.AssetAlgoLatest
+		if err := rows.Scan(
+			&a.AssetID, &a.AlgoName, &a.AlgoVersion, &a.Status,
+			&a.RunID, &a.TenantID, &a.ProjectID,
+			&a.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetAlgoLatestRepo.ListByAsset scan: %w", err)
 		}
+		out = append(out, &a)
 	}
-	_ = json.Unmarshal(algo, &a.AlgoResults)
-	_ = json.Unmarshal(tag, &a.Tags)
+	return out, nil
 }
 
-func mcapJSON(f *models.McapFile) (meta, process []byte) {
-	metaMap := map[string]any{
-		"gcs_path":           f.GCSPath,
-		"size_bytes":         f.SizeBytes,
-		"ingest_state":       f.IngestState,
-		"start_timestamp_ns": f.StartTimestampNs,
-		"end_timestamp_ns":   f.EndTimestampNs,
-		"channel_count":      f.ChannelCount,
-		"chunk_count":        f.ChunkCount,
-		"owner":              f.Owner,
+// Upsert inserts or updates an algo row in the asset_algo_latest table.
+func (r *AssetAlgoLatestRepo) Upsert(ctx context.Context, assetID, algoName, algoVersion, status string) error {
+	const algoQ = `
+INSERT INTO asset_algo_latest (asset_id, algo_name, algo_version, status, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (asset_id, algo_name) DO UPDATE SET
+  algo_version = EXCLUDED.algo_version,
+  status       = EXCLUDED.status,
+  updated_at   = now()`
+	if err := r.c.db.Exec(ctx, algoQ, assetID, algoName, algoVersion, status); err != nil {
+		return fmt.Errorf("postgres AssetAlgoLatestRepo.Upsert asset_algo_latest: %w", err)
 	}
-	meta, _ = json.Marshal(metaMap)
-	process, _ = json.Marshal(f.ProcessState)
-	return
+	return nil
 }
 
-func applyMcapJSON(f *models.McapFile, meta, process []byte) {
-	var m map[string]any
-	_ = json.Unmarshal(meta, &m)
-	if v, ok := m["gcs_path"].(string); ok {
-		f.GCSPath = v
-	}
-	if v, ok := m["size_bytes"].(float64); ok {
-		f.SizeBytes = int64(v)
-	}
-	if v, ok := m["ingest_state"].(string); ok {
-		f.IngestState = models.IngestState(v)
-	}
-	if v, ok := m["start_timestamp_ns"].(float64); ok {
-		f.StartTimestampNs = int64(v)
-	}
-	if v, ok := m["end_timestamp_ns"].(float64); ok {
-		f.EndTimestampNs = int64(v)
-	}
-	if v, ok := m["channel_count"].(float64); ok {
-		f.ChannelCount = int(v)
-	}
-	if v, ok := m["chunk_count"].(float64); ok {
-		f.ChunkCount = int(v)
-	}
-	if v, ok := m["owner"].(string); ok {
-		f.Owner = v
-	}
-	if f.ProcessState == nil {
-		f.ProcessState = map[string]string{}
-	}
-	_ = json.Unmarshal(process, &f.ProcessState)
+// ──────────────────────────────────────────────────────────────────────────────
+// AssetEventRepo — appends events to the asset_events outbox table.
+// ──────────────────────────────────────────────────────────────────────────────
+
+// AssetEventRepo provides append-only access to the asset_events outbox table.
+type AssetEventRepo struct {
+	c *Client
 }
 
-func applyFilesJSON(a *models.Asset, data []byte) {
-	if a.Files == nil {
-		a.Files = map[string]string{}
+// NewAssetEventRepo creates a new AssetEventRepo.
+func NewAssetEventRepo(c *Client) *AssetEventRepo { return &AssetEventRepo{c: c} }
+
+var _ repository.AssetEventRepository = (*AssetEventRepo)(nil)
+
+// ListPending returns up to `limit` events with publish_state='pending',
+// ordered by event_seq ascending (oldest first) for monotonic consumption.
+func (r *AssetEventRepo) ListPending(ctx context.Context, limit int) ([]*models.AssetEvent, error) {
+	if limit <= 0 {
+		limit = 100
 	}
-	if len(data) > 0 {
-		_ = json.Unmarshal(data, &a.Files)
+	const q = `
+SELECT event_id, event_seq, event_type, payload_schema_version,
+  COALESCE(asset_id::text, ''), COALESCE(mcap_file_id::text, ''),
+  COALESCE(tenant_id, ''), COALESCE(project_id, ''),
+  event_source, publish_state, event_payload,
+  retry_count, COALESCE(last_error, ''),
+  occurred_at, created_at, published_at
+FROM asset_events
+WHERE publish_state = 'pending'
+ORDER BY event_seq ASC
+LIMIT $1`
+	rows, err := r.c.db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetEventRepo.ListPending: %w", err)
 	}
+	defer rows.Close()
+	var out []*models.AssetEvent
+	for rows.Next() {
+		var e models.AssetEvent
+		if err := rows.Scan(
+			&e.EventID, &e.EventSeq, &e.EventType, &e.PayloadSchemaVersion,
+			&e.AssetID, &e.McapFileID,
+			&e.TenantID, &e.ProjectID,
+			&e.EventSource, &e.PublishState, &e.EventPayload,
+			&e.RetryCount, &e.LastError,
+			&e.OccurredAt, &e.CreatedAt, &e.PublishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetEventRepo.ListPending scan: %w", err)
+		}
+		out = append(out, &e)
+	}
+	return out, nil
+}
+
+// Append inserts a new event row into asset_events.
+func (r *AssetEventRepo) Append(ctx context.Context, eventType string, assetID string, mcapFileID string, eventPayload []byte) error {
+	if eventPayload == nil {
+		eventPayload = []byte(`{}`)
+	}
+
+	// Convert empty strings to nil for nullable UUID columns.
+	var assetIDParam, mcapFileIDParam interface{}
+	if assetID != "" {
+		assetIDParam = assetID
+	}
+	if mcapFileID != "" {
+		mcapFileIDParam = mcapFileID
+	}
+
+	const q = `
+INSERT INTO asset_events (event_id, event_type, payload_schema_version, asset_id, mcap_file_id, event_source, event_payload)
+VALUES (gen_random_uuid(), $1, 'v1', $2, $3, 'backend', $4::jsonb)`
+
+	if err := r.c.db.Exec(ctx, q, eventType, assetIDParam, mcapFileIDParam, eventPayload); err != nil {
+		return fmt.Errorf("postgres AssetEventRepo.Append: %w", err)
+	}
+	return nil
 }
 
 // ListWithFilters queries assets with a parameterized WHERE clause, pagination, and ordering.
@@ -699,10 +1014,13 @@ func (r *AssetRepo) ListWithFilters(ctx context.Context, whereSQL string, args [
 	}
 
 	// --- DATA query ---
-	// Append LIMIT and OFFSET as the next positional parameters.
 	nextParam := len(args) + 1
 	dataSQL := fmt.Sprintf(
-		`SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator, status, cf_meta, cf_algo, cf_tag, cf_files, created_at, updated_at, version
+		`SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
+  status, lifecycle_state, asset_type, duration_ms,
+  owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
+  retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  created_at, updated_at, version
 FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		baseWhere, orderBy, nextParam, nextParam+1,
 	)
@@ -717,57 +1035,106 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 	var out []*models.Asset
 	for rows.Next() {
 		var (
-			a                                                  models.Asset
-			status                                             string
-			segLoc                                             *string
-			cfMetaBytes, cfAlgoBytes, cfTagBytes, cfFilesBytes []byte
+			a              models.Asset
+			status         string
+			lifecycleState string
+			segLoc         *string
 		)
 		if err := rows.Scan(
-			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc, &status,
-			&cfMetaBytes, &cfAlgoBytes, &cfTagBytes, &cfFilesBytes,
+			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
+			&status, &lifecycleState, &a.AssetType, &a.DurationMs,
+			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
+			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, 0, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
 		}
 		a.Status = models.AssetStatus(status)
+		a.LifecycleState = lifecycleState
 		if segLoc != nil {
 			a.SegmentLocator = *segLoc
 		}
-		applyAssetJSON(&a, cfMetaBytes, cfAlgoBytes, cfTagBytes)
-		applyFilesJSON(&a, cfFilesBytes)
+		a.SyncLegacyFields()
 		out = append(out, &a)
 	}
 	return out, total, nil
 }
 
-// MergeCfAlgo atomically merges cf_algo and cf_files JSONB fields with optimistic locking.
+// MergeCfAlgo writes algo status updates to the asset_algo_latest table with
+// optimistic locking on the asset version.
 // Returns the new version. If expectedVersion doesn't match, returns repository.ErrOptimisticLock.
 func (r *AssetRepo) MergeCfAlgo(ctx context.Context, assetID string, expectedVersion int64,
 	algoKV map[string]interface{}, filesKV map[string]interface{}) (int64, error) {
 
-	algoJSON, err := json.Marshal(algoKV)
-	if err != nil {
-		return 0, fmt.Errorf("postgres AssetRepo.MergeCfAlgo marshal algoKV: %w", err)
-	}
-	filesJSON, err := json.Marshal(filesKV)
-	if err != nil {
-		return 0, fmt.Errorf("postgres AssetRepo.MergeCfAlgo marshal filesKV: %w", err)
-	}
-
+	// Bump the asset version with optimistic lock.
 	const q = `
 UPDATE assets
-SET cf_algo = cf_algo || $1::jsonb,
-    cf_files = cf_files || $2::jsonb,
-    version = version + 1,
+SET version = version + 1,
     updated_at = now()
-WHERE asset_id = $3 AND version = $4 AND is_deleted = FALSE`
+WHERE asset_id = $1 AND version = $2 AND is_deleted = FALSE`
 
-	rowsAffected, err := r.c.db.ExecResult(ctx, q, algoJSON, filesJSON, assetID, expectedVersion)
+	rowsAffected, err := r.c.db.ExecResult(ctx, q, assetID, expectedVersion)
 	if err != nil {
 		return 0, fmt.Errorf("postgres AssetRepo.MergeCfAlgo: %w", err)
 	}
 	if rowsAffected == 0 {
 		return 0, repository.ErrOptimisticLock
 	}
+
+	// Write to asset_algo_latest for any :status keys.
+	for key, val := range algoKV {
+		algoName, algoVersion, field := parseAlgoKVKey(key)
+		if field != "status" || algoName == "" {
+			continue
+		}
+		status, _ := val.(string)
+		if status == "" {
+			continue
+		}
+		const algoLatestQ = `
+INSERT INTO asset_algo_latest (asset_id, algo_name, algo_version, status, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (asset_id, algo_name) DO UPDATE SET
+  algo_version = EXCLUDED.algo_version,
+  status       = EXCLUDED.status,
+  updated_at   = now()`
+		if err := r.c.db.Exec(ctx, algoLatestQ, assetID, algoName, algoVersion, status); err != nil {
+			return expectedVersion + 1, fmt.Errorf("postgres AssetRepo.MergeCfAlgo asset_algo_latest: %w", err)
+		}
+	}
+
 	return expectedVersion + 1, nil
+}
+
+// parseAlgoKVKey parses a cf_algo key in the format "<algo_name>@<version>:<field>"
+// and returns the components. Returns empty strings if the format is invalid.
+func parseAlgoKVKey(key string) (algoName, algoVersion, field string) {
+	// Find the last colon to split field.
+	colonIdx := -1
+	for i := len(key) - 1; i >= 0; i-- {
+		if key[i] == ':' {
+			colonIdx = i
+			break
+		}
+	}
+	if colonIdx <= 0 || colonIdx >= len(key)-1 {
+		return "", "", ""
+	}
+	field = key[colonIdx+1:]
+	prefix := key[:colonIdx] // "algo_name@version"
+
+	// Find the @ to split name and version.
+	atIdx := -1
+	for i := len(prefix) - 1; i >= 0; i-- {
+		if prefix[i] == '@' {
+			atIdx = i
+			break
+		}
+	}
+	if atIdx <= 0 || atIdx >= len(prefix)-1 {
+		return "", "", ""
+	}
+	algoName = prefix[:atIdx]
+	algoVersion = prefix[atIdx+1:]
+	return
 }

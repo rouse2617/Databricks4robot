@@ -170,9 +170,9 @@ func TestList(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// JSONB-backed whitelist field resolves to cf_meta.
+	// Promoted field resolves to real column (owner was promoted from cf_meta JSONB).
 	repo.listWithFiltersFn = func(_ context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy string) ([]*models.Asset, int64, error) {
-		if whereSQL != "cf_meta#>>'{owner}' = $1" {
+		if whereSQL != "owner = $1" {
 			t.Fatalf("unexpected whereSQL: %s", whereSQL)
 		}
 		if len(args) != 1 || args[0] != "alice" {

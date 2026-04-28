@@ -125,9 +125,26 @@ curl -X POST "$BASE/api/v1/assets" \
   "asset_id": "b9a5a281-9761-4389-a227-6a6d28dd0057",
   "mcap_file_id": "mcap-001",
   "status": "approved",
+  "lifecycle_state": "ready",
+  "type": "task_demo",
+  "asset_type": "task_demo",
+  "duration_sec": 60.0,
+  "duration_ms": 60000,
   "reviewer": "alice",
   "owner": "team-a",
   "version": 1,
+  "storage_uri": "",
+  "thumb_uri": "",
+  "retention_tier": "standard",
+  "expire_at": null,
+  "tenant_id": null,
+  "project_id": null,
+  "asset_level": 0,
+  "parent_asset_id": null,
+  "root_asset_id": null,
+  "delivery_count": 0,
+  "last_delivered_at": null,
+  "last_delivered_to": null,
   "algo_results": {
     "env_analysis@1.0.0:status": "pending",
     "hand_tracking@1.0.0:status": "pending",
@@ -136,6 +153,7 @@ curl -X POST "$BASE/api/v1/assets" \
   },
   "tags": {"priority": "high", "quality": "good", "scene": "indoor"},
   "files": {"raw_mcap": "mcap-001"},
+  "metadata": {},
   "lifecycle_meta": {
     "retention_tier": "standard",
     "archive_after_days": 90,
@@ -145,6 +163,8 @@ curl -X POST "$BASE/api/v1/assets" \
   "updated_at": "2026-04-25T10:00:00Z"
 }
 ```
+
+> **双写期间字段说明**: 响应同时包含旧字段（`status`, `duration_sec`, `type`）和新字段（`lifecycle_state`, `duration_ms`, `asset_type`）。新字段是权威来源，旧字段由后端自动映射生成。新代码请优先使用新字段。
 
 必填字段:
 - `mcap_file_id` — 关联的 MCAP 文件 ID
@@ -168,7 +188,7 @@ curl "$BASE/api/v1/assets/{asset_id}" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
-响应 `200`: 完整 Asset JSON（同创建响应）
+响应 `200`: 完整 Asset JSON（同创建响应，包含所有新旧字段）
 
 响应 `404`:
 ```json

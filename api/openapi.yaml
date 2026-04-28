@@ -37,19 +37,96 @@ components:
           additionalProperties: true
     Asset:
       type: object
+      description: >
+        Asset resource. During the dual-write migration period, both legacy
+        fields (status, duration_sec, type) and new fields (lifecycle_state,
+        duration_ms, asset_type) are returned in every response. New consumers
+        should prefer the new field names. Legacy fields will be removed after
+        the dual-write period ends.
       properties:
         asset_id: { type: string }
         mcap_file_id: { type: string }
+        segment_locator: { type: string, description: "Deterministic SHA-1 of mcap_file_id + start_ns + end_ns" }
         start_timestamp_ns: { type: integer, format: int64 }
         end_timestamp_ns: { type: integer, format: int64 }
-        status: { type: string }
-        reviewer: { type: string }
-        owner: { type: string }
+        # ── Legacy fields (retained during dual-write) ──
+        status:
+          type: string
+          description: "Legacy lifecycle status (approved, rejected, archived, superseded). Prefer lifecycle_state."
+        duration_sec:
+          type: number
+          format: double
+          description: "Legacy duration in seconds. Prefer duration_ms."
+        type:
+          type: string
+          description: "Legacy asset type. Prefer asset_type."
+        # ── New fields (Phase 2 — schema evolution) ──
+        lifecycle_state:
+          type: string
+          enum: [created, processing, ready, rejected, delivered, archived, superseded]
+          description: "Authoritative lifecycle state. Maps bidirectionally to legacy status during dual-write."
+        asset_type:
+          type: string
+          description: "Asset type (e.g. segment, clip, frame_set, derived_asset). Mirrors legacy type field."
+        duration_ms:
+          type: integer
+          format: int64
+          description: "Duration in milliseconds. duration_sec = duration_ms / 1000."
+        owner: { type: string, description: "Owner identifier" }
+        reviewer: { type: string, description: "Reviewer identifier" }
+        retention_tier:
+          type: string
+          description: "Retention policy tier (e.g. standard, long-term, archive)"
+        expire_at:
+          type: string
+          format: date-time
+          description: "Expiration timestamp for retention policy"
+          nullable: true
+        storage_uri:
+          type: string
+          description: "Primary storage URI (GCS path)"
+        thumb_uri:
+          type: string
+          description: "Thumbnail URI"
+        tenant_id:
+          type: string
+          description: "Tenant identifier (pre-positioned for multi-tenant support)"
+          nullable: true
+        project_id:
+          type: string
+          description: "Project identifier (pre-positioned for multi-tenant support)"
+          nullable: true
+        asset_level: { type: integer, description: "Hierarchy depth (0 = root segment)" }
+        parent_asset_id: { type: string, description: "Parent asset UUID for split/derived assets", nullable: true }
+        root_asset_id: { type: string, description: "Root ancestor asset UUID", nullable: true }
+        delivery_count: { type: integer, description: "Number of times this asset has been delivered" }
+        last_delivered_at: { type: string, format: date-time, nullable: true }
+        last_delivered_to: { type: string, description: "Last delivery customer ID", nullable: true }
+        env: { type: string, description: "Environment tag (e.g. indoor, outdoor)" }
+        task: { type: string, description: "Task identifier" }
         version: { type: integer, format: int64 }
+        algo_results:
+          type: object
+          description: "Algorithm results from cf_algo JSONB (legacy, retained during dual-write)"
+          additionalProperties: { type: string }
+        tags:
+          type: object
+          description: "Free-form tags from cf_tag JSONB (legacy, retained during dual-write)"
+          additionalProperties: { type: string }
         files:
           type: object
           description: "File references. Key = logical name, value = GCS URI"
           additionalProperties: { type: string }
+        metadata:
+          type: object
+          description: "Structured metadata JSONB (new, Phase 2)"
+          additionalProperties: true
+        lifecycle_meta:
+          type: object
+          description: "Lifecycle metadata (retention_tier, archive_after_days, etc.)"
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
     AssetListResponse:
       type: object
       properties:
@@ -308,7 +385,7 @@ paths:
             items: { type: string }
           style: form
           explode: true
-          description: "Filter expressions in format field:op:value. Allowed fields: asset_id, mcap_file_id, status, reviewer, owner, type, env, task, created_at, updated_at, start_timestamp_ns, end_timestamp_ns, duration_sec, delivery_count, last_delivered_to, last_delivered_at, version, retention_tier, archive_after_days, delete_after_days, total_size_bytes, last_accessed_at, and dynamic prefixes tag.<key>, algo.<key>, files.<key>. Accepted aliases: tags.<key>, cf_tag.<key>, algo_results.<key>, cf_algo.<key>, cf_files.<key>."
+          description: "Filter expressions in format field:op:value. Allowed fields: asset_id, mcap_file_id, status, lifecycle_state, reviewer, owner, type, asset_type, env, task, created_at, updated_at, start_timestamp_ns, end_timestamp_ns, duration_sec, duration_ms, delivery_count, last_delivered_to, last_delivered_at, version, retention_tier, expire_at, archive_after_days, delete_after_days, total_size_bytes, last_accessed_at, tenant_id, project_id, and dynamic prefixes tag.<key>, algo.<key>, files.<key>. Accepted aliases: tags.<key>, cf_tag.<key>, algo_results.<key>, cf_algo.<key>, cf_files.<key>. Both legacy (status, type, duration_sec) and new (lifecycle_state, asset_type, duration_ms) field names are accepted during the dual-write period."
         - in: query
           name: sort_by
           schema: { type: string }

@@ -239,7 +239,7 @@ func TestResolveSortBy_WhitelistAndAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSortBy owner: %v", err)
 	}
-	if got != "cf_meta#>>'{owner}' ASC" {
+	if got != "owner ASC" {
 		t.Fatalf("unexpected owner orderBy: %q", got)
 	}
 
@@ -247,7 +247,7 @@ func TestResolveSortBy_WhitelistAndAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSortBy duration_sec: %v", err)
 	}
-	if got != "(cf_meta#>>'{duration_sec}')::NUMERIC ASC" {
+	if got != "duration_ms ASC" {
 		t.Fatalf("unexpected duration_sec orderBy: %q", got)
 	}
 
