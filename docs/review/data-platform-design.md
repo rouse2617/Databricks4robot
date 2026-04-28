@@ -528,7 +528,7 @@ stateDiagram-v2
 
 ---
 
-### 5.3 数据流与写路径
+### 5.3 数据流（读写路径与典型用户场景）
 
 #### 5.3.1 一次资产 mutation 的完整时序
 
@@ -626,16 +626,211 @@ sequenceDiagram
 - **审计强一致**：审计日志通过抽象 Sink 接口注入，由具体存储后端实现，业务层只产出事件不关心落地表。
 - **幂等**：写类接口要求 `Idempotency-Key`，命中则跳过整个事务，直接返回上次结果。
 
-#### 5.3.3 读路径
+#### 5.3.3 读路径概览
 
-读路径不走事件流，直接走主库 + 必要投影：
+读路径不走事件流，按场景路由到对应存储（**目标 2.0 架构**）：
 
 | 场景 | 路径 |
 |------|------|
-| 资产详情 / 列表（按 owner / lifecycle_state / 时间范围） | API 接口层 → 业务层 → `assets` + `asset_tags` 投影 |
-| 关键字 / 跨字段全文搜索 | API 接口层 → Elasticsearch 索引（由 outbox 同步） |
-| 历史轨迹 / 审计 / 回放 | API 接口层 → `asset_events`（按 `event_seq` 范围） |
-| 大规模分析 / 训练数据集筛选 | Trino → Iceberg gold（由 PyIceberg CronJob 增量入湖） |
+| 资产详情（按 id） | PG `assets` + `asset_tags` + `asset_algo_latest`（点查走 PG 最快） |
+| 列表筛选（多维 tag / lifecycle / 时间）| ES 多维过滤 + 高亮（PG fallback 兜底） |
+| 全文检索（关键字） | ES `_search` |
+| 历史 / 审计 / 回放 | PG `asset_events`（按 `event_seq` 范围）+ Iceberg 长期归档 |
+| MCAP 段在线预览 | Backend 颁 GCS signed URL，浏览器直拉 GCS |
+| 训练数据快照 / 大规模分析 | Trino → Iceberg |
+
+下面对每个典型用户操作给出端到端时序。
+
+#### 5.3.4 场景：用户查询单个资产详情
+
+**入口**：前端资产详情页 → `GET /api/v1/assets/{id}`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as 前端 (React)
+    participant API as API 接口层
+    participant UC as 业务层 (GetAsset)
+    participant Repo as 存储访问层
+    participant PG as PostgreSQL
+    participant ES as Elasticsearch (2.0)
+
+    FE->>API: GET /assets/{id} (X-Grace-Token)
+    API->>API: 鉴权 / 注入 X-Request-ID
+    API->>UC: GetAsset(ctx, id)
+
+    par 三个并行查询（同 PG 连接复用 PgBouncer）
+        UC->>Repo: AssetRepo.Get(id)
+        Repo->>PG: SELECT * FROM assets WHERE asset_id=$1
+        PG-->>Repo: row
+    and
+        UC->>Repo: AssetTagRepo.ListByAsset(id)
+        Repo->>PG: SELECT key,value,source FROM asset_tags WHERE asset_id=$1
+        PG-->>Repo: tags[]
+    and
+        UC->>Repo: AssetAlgoLatestRepo.ListByAsset(id)
+        Repo->>PG: SELECT algo,version,status FROM asset_algo_latest WHERE asset_id=$1
+        PG-->>Repo: algo[]
+    end
+
+    UC->>UC: 组装 DTO（合并 tags / algo / 字段）
+    UC-->>API: AssetDetail
+    API-->>FE: 200 OK { asset, tags[], algo[] }
+```
+
+**关键点**：
+- 点查全程走 PG，**不经 ES**——PG 单行查询 < 5 ms，ES 反而慢
+- 三个表并行查询（业务层 fan-out）后在内存合并，减少串行 RTT
+- PgBouncer transaction pool 不影响（每个查询独立短事务）
+
+#### 5.3.5 场景：列表筛选（多维过滤 + 分页）
+
+**入口**：前端资产列表页 → `GET /api/v1/assets?lifecycle_state=ready&tags.scene=highway&owner=alice&page=1&page_size=20`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as 前端
+    participant API as API 接口层
+    participant UC as 业务层 (ListAssets)
+    participant ES as Elasticsearch
+    participant PG as PostgreSQL (fallback)
+
+    FE->>API: GET /assets?lifecycle_state=...&tags.scene=...
+    API->>UC: ListAssets(ctx, filter, page)
+
+    alt ES 健康
+        UC->>ES: POST /assets/_search<br>{ bool: { filter: [<br>  { term: lifecycle_state }<br>  { term: tags.scene }<br>  { term: owner }<br>] }, sort, from, size }
+        ES-->>UC: hits[] + total
+        UC-->>API: list (含高亮 / aggregation)
+    else ES 故障 / 超时
+        Note over UC,PG: graceful degradation
+        UC->>PG: 降级到 SQL 多列索引查询
+        PG-->>UC: rows[]
+        UC-->>API: list (不含高亮)
+        API->>API: 响应头加 X-Search-Backend: pg-fallback
+    end
+
+    API-->>FE: 200 OK { items[], next_token }
+```
+
+**关键点**：
+- ES 索引由 outbox 异步同步（详见 §5.6.2），写入 → ES 可见 < 2 s
+- ES 故障 backend 自动降级到 PG，前端无感
+- aggregation（按 tag 分组计数、按 lifecycle 桶分布）走 ES path 提供
+
+#### 5.3.6 场景：全文检索
+
+**入口**：前端搜索框 → `GET /api/v1/search?q=highway+night`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as 前端
+    participant API as API 接口层
+    participant UC as 业务层 (SearchAssets)
+    participant ES as Elasticsearch
+
+    FE->>API: GET /search?q=highway+night&filter=lifecycle_state:ready
+    API->>UC: Search(ctx, q, filters)
+    UC->>ES: POST /assets/_search<br>{ query: multi_match q + bool filter,<br>  highlight, from, size }
+    ES-->>UC: hits[] + highlights + score
+    UC-->>API: list（按 _score 排序）
+    API-->>FE: 200 OK { items[], highlights[] }
+```
+
+**ES 索引设计要点**（详见 §5.6.1）：
+- `assets` index 字段：`asset_id (keyword)`、`description (text + analyzer)`、`tags (nested)`、`lifecycle_state (keyword)`、`owner (keyword)`、`created_at (date)`
+- 文档 ID = `asset_id`，由 outbox 用 `_bulk index` 写入，重复投递天然幂等
+
+#### 5.3.7 场景：MCAP 段在线预览（前端 Webviz / Foxglove 嵌入）
+
+**入口**：前端预览组件 → `GET /api/v1/mcap/{id}/segment-url?start_ns=...&end_ns=...`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as 前端 (Webviz / Foxglove)
+    participant API as API 接口层
+    participant UC as 业务层 (MCAPGateway)
+    participant Repo as MCAPRepo
+    participant PG as PostgreSQL
+    participant GCS as GCS
+
+    FE->>API: GET /mcap/{id}/segment-url?start_ns=&end_ns=
+    API->>UC: GetSegmentURL(ctx, id, range)
+    UC->>Repo: MCAPRepo.Get(id)
+    Repo->>PG: SELECT object_uri, size, manifest FROM mcap_files WHERE mcap_file_id=$1
+    PG-->>Repo: row
+    UC->>UC: 按 manifest 计算字节范围 [byte_start, byte_end]
+    UC->>GCS: signedURL(object_uri, GET, expires=10min, x-range hint)
+    GCS-->>UC: signed_url
+    UC-->>API: { url, byte_start, byte_end, expires_at }
+    API-->>FE: 200 OK
+
+    Note over FE,GCS: 前端拿 signed URL 后<br>直接对 GCS 发 HTTP Range 请求<br>不经 backend，不消耗后端带宽
+    FE->>GCS: GET signed_url, Range: bytes=byte_start-byte_end
+    GCS-->>FE: 206 Partial Content (MCAP segment)
+```
+
+**关键点**：
+- Backend **不当数据通道**——只做鉴权 + 路径解析 + 颁 signed URL，签名 10 min 失效
+- 真正的字节流走 浏览器 ↔ GCS，节约 backend 出口带宽
+- 跨云时 signed URL 颁发逻辑切换（GCS / S3 / OSS 各自 SDK），`object_uri` 用 `s3://` 抽象不变
+
+#### 5.3.8 场景：训练数据快照查询
+
+**入口**：训练 SDK 或 BI 工具 → `GET /api/v1/lakehouse/datasets/{id}/snapshot/{version}/preview?limit=100`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 训练 SDK / 前端
+    participant API as API 接口层
+    participant UC as 业务层 (LakehouseGateway)
+    participant Repo as DatasetRepo
+    participant PG as PostgreSQL
+    participant Trino as Trino
+    participant Cat as Polaris Catalog
+    participant Iceberg as Iceberg (GCS)
+
+    Client->>API: GET /lakehouse/datasets/{id}/snapshot/{version}/preview
+    API->>UC: PreviewSnapshot(ctx, dataset_id, version)
+    UC->>Repo: Get dataset_snapshot
+    Repo->>PG: SELECT manifest_uri, source_query, status FROM dataset_snapshots WHERE ...
+    PG-->>Repo: snapshot meta（含 Iceberg snapshot id / table 名）
+
+    UC->>Trino: POST /v1/statement<br>SELECT * FROM iceberg.gold.dataset_xxx<br>FOR VERSION AS OF :snapshot_id<br>LIMIT 100
+    Trino->>Cat: 解析 catalog / namespace / table
+    Cat-->>Trino: table metadata
+    Trino->>Iceberg: 读 manifest + parquet
+    Iceberg-->>Trino: rows
+    Trino-->>UC: rows[]
+
+    UC-->>API: preview rows
+    API-->>Client: 200 OK { schema, rows[] }
+```
+
+**关键点**：
+- `dataset_snapshots` 是 PG 的元数据指针；**真正的数据在 Iceberg**
+- `FOR VERSION AS OF` 是 Iceberg time travel，保证训练拿到的就是建集时刻的数据
+- Trino 仅作"读"，不写入；MERGE 由 PyIceberg CronJob 异步做（详见 §5.6.2）
+- 前端真要交互式探索时，可走专门的 Trino UI（如 SuperSet）；本接口面向程序化拉数
+
+#### 5.3.9 用户场景与服务路径对照表
+
+| 用户场景 | API 入口 | 走哪 | 时延目标 |
+|---------|----------|------|---------|
+| 资产详情 | `GET /assets/{id}` | PG（三表并行 fan-out） | < 100 ms P99 |
+| 列表筛选 | `GET /assets?...` | ES（PG fallback） | < 300 ms P99 |
+| 全文检索 | `GET /search?q=` | ES `_search` | < 500 ms P99 |
+| 打 tag / 改状态 | `PATCH /assets/{id}` | PG 同事务（业务表 + outbox `asset_events`） | < 200 ms P99 |
+| 提交算法结果 | `POST /algo/{name}/runs` | PG 同事务 | < 200 ms P99 |
+| 在线预览 MCAP | `GET /mcap/{id}/segment-url` | PG meta + GCS signed URL | < 100 ms P99（URL 颁发）|
+| 创建 dataset 快照 | `POST /lakehouse/datasets/{id}/snapshots` | PG（元数据）+ PyIceberg async build | 异步，< 30 min |
+| 查 dataset 快照 | `GET /lakehouse/.../preview` | Trino → Iceberg time travel | < 5 s P99（首次查询）|
+| 查算法历史 / 审计 | `GET /assets/{id}/events` | PG `asset_events` 范围 | < 300 ms P99 |
+| 训练拉训练集 | SDK `dataset.iter()` | PyIceberg 直读 GCS | 取决于数据量 |
 
 ---
 
@@ -942,28 +1137,50 @@ API 设计约定：
 | 错误格式 | 统一 envelope：`{ code, message, request_id, details }` |
 | 分页 | `page / page_size / next_token` |
 
-主要 endpoint 清单（v1）：
+主要 endpoint 清单（v1，**节选**——完整 use case 与 API 矩阵见 `use-cases.md`）：
 
-| Group | Method + Path | 用途 |
-|-------|---------------|------|
-| Asset | `GET /api/v1/assets` | 资产列表（基础筛选 + 分页） |
-| Asset | `GET /api/v1/assets/{id}` | 资产详情 |
-| Asset | `PATCH /api/v1/assets/{id}` | 更新资产（带乐观锁 version） |
-| Asset | `POST /api/v1/assets/{id}/algo/{algo}/start` | 触发算法运行 |
-| Asset | `POST /api/v1/assets/{id}/algo/{algo}/finish` | 算法完成回写 |
-| Asset | `POST /api/v1/assets/{id}/tags` | upsert tag |
-| Asset | `DELETE /api/v1/assets/{id}/tags/{key}` | 删除 tag |
-| MCAP | `POST /api/v1/mcap` | 注册 MCAP 文件 |
-| MCAP | `GET /api/v1/mcap/{id}` | MCAP 详情 |
-| MCAP | `GET /api/v1/mcap` | MCAP 列表（按 ingest_state / owner 过滤） |
-| Delivery | `POST /api/v1/deliveries` | 创建交付（必填 `Idempotency-Key`） |
-| Delivery | `GET /api/v1/deliveries/{id}` | 交付详情 |
-| Delivery | `POST /api/v1/deliveries/{id}/items` | 添加交付明细 |
-| Delivery | `POST /api/v1/deliveries/{id}/complete` | 完成交付 |
-| Search | `GET /api/v1/search/assets` | ES 复杂检索 + facets，ES 故障时 fallback PG |
-| Lakehouse | `GET /api/v1/lakehouse/training-snapshots` | 训练快照查询（Trino） |
-| Lakehouse | `GET /api/v1/lakehouse/recompute-candidates` | 重算候选（Trino） |
-| Health | `GET /healthz` / `GET /readyz` | K8s 探针 |
+| 编号 | Group | Method + Path | 用途 / 关键约束 |
+|------|-------|---------------|----------------|
+| A1 | Asset | `POST /api/v1/assets` | 注册新资产；同事务追加 `asset_created` 事件 |
+| A3 | Asset | `GET /api/v1/assets/{id}` | 详情（基础 + tags + algo 合并），PG 三表 fan-out |
+| A4 | Asset | `PATCH /api/v1/assets/{id}` | 部分更新；`If-Match: version` 乐观锁，冲突 `409` |
+| A5 | Asset | `GET /api/v1/assets` | 列表筛选 + 分页（多维 filter，走 ES，PG fallback）|
+| A7 | Asset | `PATCH /api/v1/assets/{id}/lifecycle` | 生命周期切换（仅状态机定义的转移）|
+| A10 | Asset | `GET /api/v1/assets/{id}/events` | 资产事件历史 / 时间线 |
+| B1 | Tag | `POST /api/v1/assets/{id}/tags` | upsert tag；按 `tag_registry` 校验 key/value |
+| B3 | Tag | `POST /api/v1/tags:bulk` | 批量打 tag（≤ 500 资产） |
+| B4 | Tag | `GET /api/v1/tags/registry` | 查 tag 注册表（来自 `tag_registry.yaml`） |
+| C1 | MCAP | `POST /api/v1/mcap` | 登记 MCAP 元数据（`raw_hash_md5` UNIQUE） |
+| C2 | MCAP | `GET /api/v1/mcap/{id}` | MCAP 详情（含 manifest） |
+| C4 | MCAP | `GET /api/v1/mcap/{id}/segment-url` | 颁 GCS signed URL，浏览器直拉 |
+| D1 | Algo | `GET /api/v1/algo/{name}/pending` | Worker 拉待处理资产（按 `depends_on`） |
+| D2 | Algo | `POST /api/v1/algo/{name}/runs` | 提交结果；同事务写投影 + 追加事件 |
+| D4 | Algo | `GET /api/v1/assets/{id}/algo` | 资产的所有算法状态（投影读） |
+| D6 | Algo | `POST /api/v1/algo/{name}:replay` | 回放（按 asset_id 列表 / 区间）|
+| D7 | Algo | `GET /api/v1/algo/registry` | 算法注册表 |
+| E1 | Delivery | `POST /api/v1/deliveries` | 创建交付，**必须带 `Idempotency-Key`** |
+| E2 | Delivery | `GET /api/v1/deliveries/{id}` | 交付详情 |
+| E5 | Delivery | `POST /api/v1/deliveries/{id}:cancel` | 取消（仅 `pending/in_progress`） |
+| E6 | Delivery | `POST /api/v1/deliveries/{id}:retry` | 重试失败项 |
+| E7 | Delivery | `POST /api/v1/deliveries/{id}/ack` | 客户回执（独立鉴权入口） |
+| F1 | Search | `GET /api/v1/search` | 全文检索 + 多维 filter + 高亮（ES）|
+| F3 | Search | `GET /api/v1/search/agg` | 聚合（按 tag / lifecycle / owner 分桶）|
+| G2 | Event | `GET /api/v1/events` | 全局事件流（按 `event_seq` 拉，下游订阅风格） |
+| G3 | Audit | `GET /api/v1/audit` | 审计查询（`actor / action / target`）|
+| H1 | Dataset | `POST /api/v1/datasets` | 创建 dataset（query 语义） |
+| H4 | Dataset | `POST /api/v1/datasets/{id}/snapshots` | 触发快照构建（异步 → PyIceberg）|
+| H7 | Dataset | `GET /api/v1/datasets/{id}/snapshots/{ver}/preview` | 快照采样预览（Trino time travel） |
+| H8 | Dataset | `POST /api/v1/datasets/{id}/snapshots/{ver}:archive` | **不可硬删**，仅归档 |
+| I1 | Training | `POST /api/v1/training-runs` | 注册训练任务（引用 dataset + snapshot） |
+| I3 | Training | `GET /api/v1/training-runs/{id}` | 训练详情（含 lineage） |
+| J1 | Lakehouse | `POST /api/v1/lakehouse/query` | 受限 SQL 自助查询（30s 超时） |
+| J2 | Lakehouse | `GET /api/v1/lakehouse/recompute-candidates` | 重算候选（Trino） |
+| M1 | Ops | `GET /healthz` `/readyz` | K8s 探针 |
+| M2 | Ops | `GET /metrics` | Prometheus（GMP 抓取） |
+| M3 | Ops | `POST /admin/search/reindex` | 强制重建 ES 索引（按 `from_seq`）|
+| M5 | Ops | `POST /admin/outbox/{sink}/watermark` | 重置 outbox watermark / DLQ |
+
+> 编号对齐 `use-cases.md`（A 资产 / B Tag / C MCAP / D 算法 / E 交付 / F 检索 / G 事件审计 / H 数据集 / I 训练 / J Lakehouse / M 运维）。**约 65 个端点的全集 + 角色 / 关键约束 / 开发优先级**见该文档。
 
 #### 5.8.1 API 版本治理与字段退役流程
 
@@ -975,10 +1192,10 @@ API 整体走 `/api/v1` 大版本，字段级别允许小版本演进。**新旧
 | 新字段引入 | 同时返回新旧字段；OpenAPI 用 `deprecated: true` 标旧字段 |
 | 旧字段读 | 兼容窗口内继续接受旧字段作为筛选 / 排序入参（后端内部映射到新字段） |
 | 破坏性变更 | 必须走「公告 → 双写 → 切读 → 停写」四步，每步至少 30 天 |
-| 废弃公告 | 在 `api-guide.md` 新增"已废弃字段"章节，写明截止日期 |
+| 废弃公告 | API 文档维护"已废弃字段"清单，写明截止日期；release notes 同步标注 |
 | SDK 同步 | SDK 主版本号跟 API v1 同步；字段映射在 SDK 内部做，调用方升级 SDK 自动拿到新字段 |
 
-实例：当前在迁移的字段对照表（详见 `api-guide.md` 顶部「字段命名口径」一节）：
+实例：当前在迁移的字段对照表：
 
 | 旧 | 新 | 当前阶段 | 计划停写日期 |
 |----|----|---------|--------------|
@@ -988,6 +1205,283 @@ API 整体走 `/api/v1` 大版本，字段级别允许小版本演进。**新旧
 | `cf_algo` JSONB | `asset_algo_latest` 投影 | 2.0 起双写 | 投影表稳定 60 天后停写 cf_algo |
 | `cf_tag` JSONB | `asset_tags` 投影 | 2.0 起双写 | 投影表稳定 60 天后停写 cf_tag |
 | `asset_algo_events` | `asset_events` | 2.0 起新事件只入 `asset_events` | 老表保留只读 6 个月后 drop |
+
+#### 5.8.2 代表性用户场景
+
+> 完整 use case 清单（全部角色 × 全部业务域，约 65 项）见 `use-cases.md`。本节抽 6 个最有代表性的场景，每个配 mermaid 时序图，覆盖核心写路径 / 读路径 / 异步事件 / 跨域协作。
+
+##### 5.8.2.0 角色 × 业务域全景图
+
+```mermaid
+flowchart LR
+    subgraph Roles[角色]
+        AlgoEng[算法工程师]
+        AlgoWorker[算法 Worker<br>外部编排]
+        BizOps[业务运营 / 数据 owner]
+        TrainEng[训练工程师]
+        FE[前端用户]
+        SRE[SRE / Admin]
+        Customer[客户系统]
+    end
+
+    subgraph Domains[业务域]
+        A[A 资产]
+        B[B Tag]
+        C[C MCAP]
+        D[D 算法]
+        E[E 交付]
+        F[F 检索]
+        G[G 事件审计]
+        H[H 数据集]
+        I[I 训练]
+        J[J Lakehouse]
+        M[M 运维]
+    end
+
+    AlgoEng --> A & D & F & J
+    AlgoWorker --> D & B & G
+    BizOps --> A & B & E & G
+    TrainEng --> H & I & J
+    FE --> A & C & F
+    SRE --> G & M
+    Customer --> E
+```
+
+每条线代表"角色经常触发的写 / 读路径"；同一域可被多角色访问。
+
+##### 场景 1：算法 Worker 拉待处理资产并提交结果（D1 + D2）
+
+- **角色**：算法 worker（Ray batch / k8s job / 任意外部编排器，平台不绑定）
+- **触发**：算法注册表声明 `depends_on=[mcap_ingested]`，新 MCAP 落地后该算法资产进入 pending
+- **关键性**：worker 完全 stateless；同事务写投影 + 事件，下游 ES / Iceberg 异步同步
+- **SLO**：D2 写入 < 200 ms P99；下游可见 < 2 s（ES），≤ 10 min（Iceberg Bronze）
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as 算法 Worker
+    participant API as Backend API
+    participant UC as 业务层
+    participant PG as PostgreSQL
+    participant Notify as LISTEN/NOTIFY
+    participant Out as Outbox Worker
+    participant ES as Elasticsearch
+    participant Lake as Iceberg Bronze
+
+    W->>API: GET /algo/{name}/pending?since=&limit=100
+    API->>UC: list pending（按 depends_on 链）
+    UC->>PG: 复合查询（asset_algo_latest + asset_events watermark）
+    PG-->>UC: pending asset_ids[]
+    UC-->>W: [{asset_id, ...}]
+
+    Note over W: 算法计算（外部编排，平台不感知）
+
+    W->>API: POST /algo/{name}/runs<br>(asset_id, status, metrics, artifact_uri)
+    API->>UC: SubmitAlgoRun
+
+    rect rgb(245,245,255)
+    Note over UC,PG: 同事务写
+    UC->>PG: BEGIN
+    UC->>PG: UPSERT asset_algo_latest
+    UC->>PG: INSERT asset_events('algo_completed', event_seq=BIGSERIAL)
+    UC->>PG: COMMIT + NOTIFY
+    end
+
+    UC-->>W: 200 OK
+
+    par 异步分发
+        Notify-->>Out: NOTIFY
+        Out->>ES: bulk index (doc_id=asset_id)
+    and
+        Out->>Lake: 写 staging parquet (event_seq 区间)
+    end
+```
+
+##### 场景 2：业务用户创建一次客户交付（E1 系列）
+
+- **角色**：业务运营 / 客户经理
+- **关键性**：`Idempotency-Key` 命中**跳过整个事务**直接返回首次结果——同 key 重发绝不会双发
+- **SLO**：E1 创建 < 200 ms P99；幂等性 100%
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as 前端
+    participant API as Backend API
+    participant UC as 业务层
+    participant PG as PostgreSQL
+
+    FE->>API: POST /deliveries<br>Idempotency-Key: K123<br>{asset_ids[], customer, sla}
+    API->>UC: CreateDelivery(K123, body)
+    UC->>PG: SELECT * FROM idempotency_keys<br>WHERE scope='delivery' AND idem_key='K123'
+
+    alt 命中（已处理过）
+        PG-->>UC: cached response
+        UC-->>FE: 200 OK（首次结果，绝不重复创建）
+    else 未命中（首次请求）
+        rect rgb(245,245,255)
+        UC->>PG: BEGIN
+        UC->>PG: INSERT deliveries
+        UC->>PG: INSERT delivery_items[*]
+        UC->>PG: UPDATE assets SET last_delivered_at, delivery_count
+        UC->>PG: INSERT asset_events('delivery_created')
+        UC->>PG: INSERT idempotency_keys(K123, response)
+        UC->>PG: COMMIT
+        end
+        UC-->>FE: 201 Created {delivery_id}
+    end
+
+    Note over FE: 后续可调 :retry / :cancel / :ack
+```
+
+##### 场景 3：训练工程师建数据集快照并启动训练（H1–H4 + I1）
+
+- **角色**：训练工程师 / Data Scientist
+- **关键性**：`dataset_snapshot` 一旦被引用**不可硬删**（仅 archived），训练审计链不断；训练拉数据**绕开 backend**，PyIceberg → GCS 直读
+- **SLO**：H4 异步快照 < 30 min；I1 注册 < 200 ms
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant TE as 训练工程师
+    participant API as Backend API
+    participant PG as PostgreSQL
+    participant Cron as PyIceberg CronJob
+    participant Iceberg as Iceberg / GCS
+    participant Trino as Trino
+    participant SDK as 训练系统 (PyIceberg)
+
+    TE->>API: POST /datasets {query, owner}
+    API->>PG: INSERT datasets
+    API-->>TE: dataset_id
+
+    TE->>API: POST /datasets/{id}/snapshots
+    API->>PG: INSERT dataset_snapshots(status='building')
+    API-->>TE: snapshot_id, version (异步)
+
+    Note over Cron,Iceberg: 异步物化（< 30 min）
+    Cron->>PG: SELECT building snapshots
+    Cron->>Iceberg: 按 query 物化为 Iceberg snapshot
+    Cron->>PG: UPDATE manifest_uri, row_count, status='sealed'
+
+    TE->>API: GET /datasets/{id}/snapshots/{ver}/preview?limit=100
+    API->>Trino: SELECT ... FOR VERSION AS OF :snap LIMIT 100
+    Trino->>Iceberg: 读 manifest + parquet
+    Trino-->>API: rows[]
+    API-->>TE: 200 OK
+
+    TE->>API: POST /training-runs<br>{dataset_id, snapshot_id, model}
+    API->>PG: INSERT training_runs(status='running')
+    API-->>TE: training_run_id
+
+    Note over SDK,Iceberg: 训练拉数据（不经 backend）
+    SDK->>Iceberg: PyIceberg time travel iter
+    Iceberg-->>SDK: rows stream
+
+    SDK->>API: PATCH /training-runs/{id}<br>{metrics, artifact_uri, status='ok'}
+    API->>PG: UPDATE training_runs
+```
+
+##### 场景 4：前端用户在线预览 MCAP 片段（C4）
+
+- **角色**：前端最终用户（业务 / 算法）
+- **关键性**：Backend **不当数据通道**——只颁 GCS signed URL（10 min 过期）；预览流量随用户增长不打到 backend
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as 前端 (Webviz/Foxglove)
+    participant API as Backend API
+    participant PG as PostgreSQL
+    participant GCS as GCS
+
+    FE->>API: GET /mcap/{id}/segment-url?start_ns=&end_ns=
+    API->>PG: SELECT object_uri, manifest, size FROM mcap_files
+    PG-->>API: row
+    API->>API: 鉴权 + 计算 byte_start/byte_end
+    API->>GCS: signedURL(GET, object_uri, expires=10m)
+    GCS-->>API: signed_url
+    API-->>FE: {url, byte_start, byte_end, expires_at}
+
+    Note over FE,GCS: 浏览器直接对 GCS<br>不经 backend
+    FE->>GCS: GET signed_url, Range: bytes=byte_start-byte_end
+    GCS-->>FE: 206 Partial Content (MCAP segment)
+```
+
+##### 场景 5：业务用户通过搜索定位资产并改 tag（F1 → B3）
+
+- **角色**：数据 owner / 标注负责人
+- **关键性**：搜索 + 写 + 异步同步形成闭环；用户 ~2 s 内看到 tag 在 ES 反映
+- **SLO**：F1 < 500 ms；B3 30 条规模 < 1 s；ES 反映 < 2 s
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 数据 owner
+    participant API as Backend API
+    participant ES as Elasticsearch
+    participant PG as PostgreSQL
+    participant Out as Outbox Worker
+
+    U->>API: GET /search?q=highway+night&filter=lifecycle:ready
+    API->>ES: _search (multi_match + filter + highlight + agg)
+    ES-->>API: hits[] + facets
+    API-->>U: 命中列表 + 高亮 + tag 桶分布
+
+    U->>U: 选中 30 条
+
+    U->>API: POST /tags:bulk<br>{asset_ids[30], changes:{scene:'highway-night'}}
+    API->>PG: BEGIN
+    API->>PG: UPSERT asset_tags（30 条）
+    API->>PG: INSERT asset_events('tag_updated', 30 条)
+    API->>PG: COMMIT + NOTIFY
+    API-->>U: 200 OK
+
+    Note over Out,ES: < 2s 异步刷新
+    Out->>ES: bulk update tags 字段
+    ES-->>Out: ok
+
+    U->>API: GET /search?... (用户刷新)
+    API->>ES: _search
+    ES-->>API: hits[] (已反映新 tag)
+    API-->>U: 200 OK
+```
+
+##### 场景 6：SRE 重放某区间事件以重建 ES 索引（M3 / G4）
+
+- **角色**：SRE / 平台运维
+- **触发**：ES 集群异常 / schema 升级 / 某段时间事件丢失
+- **关键性**：事件持久化在 PG outbox 表，**任意区间随时可重放**——doc_id=asset_id 天然幂等，重放不产生重复文档
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SRE as SRE
+    participant API as Backend API
+    participant PG as PostgreSQL
+    participant Out as Outbox Worker
+    participant ES as Elasticsearch
+    participant Graf as Grafana
+
+    SRE->>API: GET /events?from_seq=X&to_seq=Y (评估量级)
+    API->>PG: SELECT count, head/tail<br>FROM asset_events<br>WHERE event_seq BETWEEN X AND Y
+    PG-->>API: 区间统计
+    API-->>SRE: count, est_duration
+
+    SRE->>API: POST /admin/search/reindex?from_seq=X&to_seq=Y
+    API->>PG: UPDATE asset_events_sink_state<br>SET publish_state='pending'<br>WHERE sink='es' AND event_seq BETWEEN X AND Y
+    API-->>SRE: 202 Accepted
+
+    Note over Out,ES: 自动消费<br>doc_id=asset_id 天然幂等
+    loop 直到 lag=0
+        Out->>PG: SELECT pending FOR UPDATE SKIP LOCKED<br>LIMIT 500 ORDER BY event_seq
+        Out->>ES: bulk index
+        Out->>PG: UPDATE publish_state='published'
+    end
+
+    SRE->>Graf: 看 max(event_seq) - watermark 收敛到 0
+    Graf-->>SRE: lag = 0 ✓
+```
 
 ---
 
