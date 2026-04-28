@@ -29,6 +29,70 @@
 
 ---
 
+## 上线优先级
+
+判断标准：**这张表不在，资产平台核心闭环（导入 → 切分 → 加 tag/算法 → 检索 → 交付）能不能跑**。
+
+### 🟢 Tier 1 — 上线就得有（已在运行）
+
+| 表 | 必要性 |
+|----|--------|
+| `mcap_files` | 没它没有原料 |
+| `assets` | 平台核心实体，所有功能都挂在这上面 |
+| `deliveries` | 商业闭环的"出口" |
+| `delivery_items` | M:N 明细，"召回某批 / 客户收过哪些"的依据 |
+| `idempotency_keys` | API 防重复，第一天就要 |
+
+这五张今天已在 prod schema 中。**上线前需要做的不是新建，而是**把字段提升到目标形态：
+- `assets / mcap_files` 从 `cf_meta` 提升 `tenant_id / project_id / asset_type / lifecycle_state / end_timestamp_ns / duration_ms / owner / retention_tier / expire_at`
+- `tenant_id / project_id` 加 `NOT NULL DEFAULT '_default'`，避免上多租户时遗留 NULL 行
+- `assets.lifecycle_state` 和 `status` 双写一段时间，前端列表筛选切到 `lifecycle_state` 后下线 `status`
+
+### 🟡 Tier 2 — 上线前最好补齐（Phase 1，1–2 个迭代内）
+
+| 表 | 不上的代价 |
+|----|-----------|
+| `asset_tags` | tag 是资产页最高频的 filter/facet；继续用 `cf_tag` JSONB 过滤会让 PG 索引、ES 同步、`tag_registry.yaml` 校验都做不稳 |
+| `asset_algo_latest` | "哪些 asset 跑过 X 算法且 ok/failed" 是日常运营查询；散在 `cf_algo` JSONB 里没法做有效索引 |
+| `asset_events` | **outbox 起点**。ES 同步、Dagster 入湖、审计、回放全靠它；没它就只能用 `assets.updated_at` 拉同步，会漏事件、不能回放、审计断链 |
+
+> ⚠️ `asset_events` 上线**第一天**就要带 `event_seq` 和 `payload_schema_version`，否则后续添加是破坏性变更，需要补 backfill。
+
+落地方式：进入"双写期" —— 写 `cf_tag` 同时 upsert `asset_tags`、写 `cf_algo` 同时 upsert `asset_algo_latest`、所有当前态变更同事务追加 `asset_events`。老数据通过 backfill 从 JSONB 回填。
+
+### 🟠 Tier 3 — 推荐但不阻塞上线
+
+| 表 | 判断逻辑 |
+|----|---------|
+| `asset_relations` | 普通"一父多子"切分用 `assets.parent_asset_id` 就够；多父 / 融合 / 拼接出现前不必上 |
+| `asset_algo_events` | Phase 0 遗留：**保留只读**，新事件统一走 `asset_events`；backfill 完成后 drop |
+
+### 🔵 Tier 4 — 第二阶段再做（Phase 2+）
+
+| 表 | 触发条件 |
+|----|---------|
+| `datasets` + `dataset_snapshots` | 开始做"可复现训练数据集"流程时再加 |
+| `training_runs` | 有训练任务接入需要审计/复算时再加 |
+| `catalog_objects` + `catalog_object_versions` | 出现多 provider（湖表 / ES index / Lance dataset）需要统一注册时再加；只有一份 Iceberg 时不必 |
+
+这些表的共同特征是：**业务逻辑还没真正接入它们**。提前建只会晾着不维护，schema 漂移风险更高。
+
+### ⛔ Tier 5 — 现在别动
+
+`feature_sets` / `feature_jobs` / `training_sample_exports` —— 字段未冻结，直接照抄会被未来变更打脸。
+
+### 上线最小 checklist
+
+| 步骤 | 涉及表 | 输出 |
+|------|--------|------|
+| 1 | `assets` / `mcap_files` | 字段提升 + `tenant_id NOT NULL DEFAULT '_default'` |
+| 2 | `asset_tags` | 新建 + 双写 + backfill；前端 facet 切到 `tag_registry.yaml + asset_tags` |
+| 3 | `asset_algo_latest` | 新建 + 双写 + backfill |
+| 4 | `asset_events` | 新建（带 `event_seq` + `payload_schema_version`）；所有写路径同事务追加；Dagster sensor 切到读它 |
+| 5 | `assets.lifecycle_state` | 与 `status` 双写；前端列表过滤切到 `lifecycle_state`；老 `status` 退役 |
+
+---
+
 ## mcap_files
 
 原始 MCAP 文件当前态。
