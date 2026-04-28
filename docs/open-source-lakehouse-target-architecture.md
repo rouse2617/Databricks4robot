@@ -46,7 +46,7 @@
 - `docs/sql.md`
   - 当前 `assets` 已经区分 `cf:meta`、`cf:algo`、`cf:tag`、`cf:files`
   - 这非常适合在湖仓里拆成规范化明细表和派生宽表
-- `docs/algo-lifecycle-and-data-model.md`
+- `docs/review/algo-lifecycle-and-data-model.md`
   - 当前算法生命周期已经有 `pending / blocked / running / ok / failed`
   - 已经具备沉淀成事件流和算法运行历史表的基础
 - `docs/dagster-integration-guide.md`

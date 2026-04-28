@@ -143,7 +143,7 @@
   - `Files`、`AlgoResults`、`Tags`、`LifecycleMeta` 已经是湖仓友好的属性集合
 - `docs/sql.md`
   - 已经把 `assets` 拆成 `cf:meta / cf:algo / cf:tag / cf:files`
-- `docs/algo-lifecycle-and-data-model.md`
+- `docs/review/algo-lifecycle-and-data-model.md`
   - 已经定义好算法生命周期事件
 - `docs/postgres-risingwave-iceberg-architecture.md`
   - 已经确定当前阶段推荐链路是 `Postgres + RisingWave + Iceberg`

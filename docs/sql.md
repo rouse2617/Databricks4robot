@@ -415,7 +415,7 @@ catalog_name + namespace + object_name + object_type + provider + format + versi
 ```
 
 - 写入端：状态转移由 backend usecase 显式驱动，CHECK 约束或 application-level state machine 保证非法转移被拒。
-- 详细状态语义和算法子状态机参考 [`docs/algo-lifecycle-and-data-model.md`](./algo-lifecycle-and-data-model.md)。
+- 详细状态语义和算法子状态机参考 [`docs/review/algo-lifecycle-and-data-model.md`](./review/algo-lifecycle-and-data-model.md)。
 - 任何状态变更必须**同事务**追加 `asset_events(event_type='asset_lifecycle_changed', payload={from, to, reason, actor})`，否则审计链断裂。
 
 **交付汇总（last_delivered_at / delivery_count / last_delivered_to）所有权：**

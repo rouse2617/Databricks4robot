@@ -45,12 +45,12 @@ Practical project guidance for coding agents working in `Databricks4robot`.
 
 | 文档 | 路径 | 内容 |
 |------|------|------|
-| API 使用指南 | `docs/api-guide.md` | 全部端点 curl 示例、错误码、工作流 |
+| API 使用指南 | `docs/review/api-guide.md` | 全部端点 curl 示例、错误码、工作流 |
 | OpenAPI 规范 | `api/openapi.yaml` | 机器可读 API 定义 |
 | 后端 README | `backend/README.md` | 架构、开发指南、测试、性能 |
 | 算法注册表 | `backend/config/algo_registry.yaml` | 算法定义、依赖、输出要求 |
 | Tag 注册表 | `backend/config/tag_registry.yaml` | Tag 类型、枚举值 |
-| 数据模型 | `docs/algo-lifecycle-and-data-model.md` | 算法生命周期设计 |
+| 数据模型 | `docs/review/algo-lifecycle-and-data-model.md` | 算法生命周期设计 |
 | Bigtable Schema | `docs/sql.md` | 表结构、行键、列族 |
 | Lakehouse 查询边界 | `docs/lakehouse-query-and-tag-filtering.md` | Postgres / Trino / Iceberg 查询职责 |
 | 后训练平台架构 | `docs/advanced-training-data-platform-architecture.md` | 长期架构演进 |
@@ -165,7 +165,7 @@ From `backend/.env.example`:
 | `backend/routes/routes.go` | 注册路由 |
 | `backend/cmd/server/main.go` | 依赖注入接线 |
 | `api/openapi.yaml` | OpenAPI 规范 |
-| `docs/api-guide.md` | API 使用指南（curl 示例） |
+| `docs/review/api-guide.md` | API 使用指南（curl 示例） |
 | `backend/README.md` | API 端点表格 |
 
 ### 新增算法
@@ -173,7 +173,7 @@ From `backend/.env.example`:
 | 文件 | 说明 |
 |------|------|
 | `backend/config/algo_registry.yaml` | 算法定义（versions, depends_on, output） |
-| `docs/api-guide.md` | 可用算法表格 |
+| `docs/review/api-guide.md` | 可用算法表格 |
 
 不需要改代码 — 状态机和依赖链逻辑是通用的。
 
@@ -182,7 +182,7 @@ From `backend/.env.example`:
 | 文件 | 说明 |
 |------|------|
 | `backend/config/tag_registry.yaml` | Tag 定义（type, values, max_length） |
-| `docs/api-guide.md` | Tags 校验规则说明 |
+| `docs/review/api-guide.md` | Tags 校验规则说明 |
 
 ### 新增 Bigtable 表或列族
 
@@ -198,7 +198,7 @@ From `backend/.env.example`:
 | `backend/internal/bigtable/repos.go` | `rowToAsset()` / `Set()` 等转换函数 |
 | `backend/internal/postgres/repos.go` | SQL 查询 |
 | `api/openapi.yaml` | Schema 定义 |
-| `docs/api-guide.md` | 响应示例 |
+| `docs/review/api-guide.md` | 响应示例 |
 
 ### 修改中间件
 
@@ -214,7 +214,7 @@ From `backend/.env.example`:
 |------|------|
 | `backend/internal/httpresp/response.go` | 错误响应函数 |
 | `api/openapi.yaml` | 错误响应 schema |
-| `docs/api-guide.md` | 错误码参考表 |
+| `docs/review/api-guide.md` | 错误码参考表 |
 
 ### 测试相关
 
@@ -234,7 +234,7 @@ From `backend/.env.example`:
 - [ ] `go test ./...` 全部通过
 - [ ] `go vet ./...` 无警告
 - [ ] 如果改了 API → 更新 `api/openapi.yaml`
-- [ ] 如果改了 API → 更新 `docs/api-guide.md`
+- [ ] 如果改了 API → 更新 `docs/review/api-guide.md`
 - [ ] 如果改了架构/流程 → 更新 `backend/README.md`
 - [ ] 如果改了约定/规则 → 更新 `CLAUDE.md`
 - [ ] **Do not** add new code against `internal/bigtable` (deprecated)

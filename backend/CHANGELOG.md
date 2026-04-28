@@ -15,7 +15,7 @@
 - **`lakehouse.Handler` 显式参数** — `New(reportPath, trinoClient, pgClient)` 改为显式 `pgClient`，去除变长可选参数。
 
 ### Documentation
-- `docs/algo-lifecycle-and-data-model.md` 状态名 `success` 全部对齐为代码权威 `ok`，状态机补 `blocked`。
+- `docs/review/algo-lifecycle-and-data-model.md` 状态名 `success` 全部对齐为代码权威 `ok`，状态机补 `blocked`。
 - `CLAUDE.md` 同步当前架构（PostgreSQL 单后端、Bigtable 标记为 Deprecated、Elasticsearch、Trino）、环境变量与文档索引。
 - `deploy/local/docker-compose.all.yml` 新增 `elasticsearch-init` 容器，自动建索引；`Makefile` 新增 `all-up / all-down / all-logs`。
 
@@ -142,7 +142,7 @@
 
 ### Documentation
 - `backend/README.md` — 完整重写，含架构、API 表格、开发指南、测试指南、性能数据
-- `docs/api-guide.md` — 全部端点 curl 示例、错误码参考、工作流示例
+- `docs/review/api-guide.md` — 全部端点 curl 示例、错误码参考、工作流示例
 - `docs/goframe-research.md` — GoFrame 调研报告，可移植功能分析
 - `docs/go-web-frameworks-research.md` — 23 个 Go Web 框架全景调研
 - `CLAUDE.md` — 功能开发后必须更新的文件清单 + Definition of Done checklist

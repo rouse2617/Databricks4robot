@@ -2,7 +2,7 @@
 
 本文档提供 data-platform 后端 API 的完整使用说明，包含 curl 示例。
 
-> OpenAPI 规范: [`api/openapi.yaml`](../api/openapi.yaml)
+> OpenAPI 规范: [`api/openapi.yaml`](../../api/openapi.yaml)
 
 ## 基础信息
 
