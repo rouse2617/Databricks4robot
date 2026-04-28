@@ -67,7 +67,10 @@ func (h *Handler) ListFiles(c *gin.Context) {
 		}
 	}
 
-	items, total, err := h.repo.List(c.Request.Context(), page, pageSize)
+	ingestState := c.Query("ingest_state")
+	owner := c.Query("owner")
+
+	items, total, err := h.repo.List(c.Request.Context(), page, pageSize, ingestState, owner)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return

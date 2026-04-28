@@ -4,6 +4,8 @@ import type { McapFile, PaginatedResponse } from "./types";
 export interface ListMcapFilesParams {
   page?: number;
   page_size?: number;
+  ingest_state?: string;
+  owner?: string;
 }
 
 export const mcapFilesApi = {
@@ -11,6 +13,8 @@ export const mcapFilesApi = {
     const qp = new URLSearchParams();
     if (params?.page) qp.append("page", String(params.page));
     if (params?.page_size) qp.append("page_size", String(params.page_size));
+    if (params?.ingest_state) qp.append("ingest_state", params.ingest_state);
+    if (params?.owner) qp.append("owner", params.owner);
     return apiClient
       .get<PaginatedResponse<McapFile>>("/mcap-files", { params: qp })
       .then((r) => r.data);

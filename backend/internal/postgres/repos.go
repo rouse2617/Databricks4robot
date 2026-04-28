@@ -195,7 +195,7 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
 	return nil
 }
 
-func (r *McapFileRepo) List(ctx context.Context, page, pageSize int) ([]*models.McapFile, int64, error) {
+func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState, owner string) ([]*models.McapFile, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -204,19 +204,38 @@ func (r *McapFileRepo) List(ctx context.Context, page, pageSize int) ([]*models.
 	}
 	offset := (page - 1) * pageSize
 
+	// Build dynamic WHERE clause
+	where := "is_deleted = FALSE"
+	args := []any{}
+	argIdx := 1
+
+	if ingestState != "" {
+		where += fmt.Sprintf(" AND cf_meta->>'ingest_state' = $%d", argIdx)
+		args = append(args, ingestState)
+		argIdx++
+	}
+	if owner != "" {
+		where += fmt.Sprintf(" AND cf_meta->>'owner' ILIKE $%d", argIdx)
+		args = append(args, "%"+owner+"%")
+		argIdx++
+	}
+
 	var total int64
-	err := r.c.db.QueryRow(ctx, "SELECT COUNT(*) FROM mcap_files WHERE is_deleted = FALSE").Scan(&total)
+	countQ := "SELECT COUNT(*) FROM mcap_files WHERE " + where
+	err := r.c.db.QueryRow(ctx, countQ, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("postgres McapFileRepo.List count: %w", err)
 	}
 
-	const q = `
+	selectQ := fmt.Sprintf(`
 SELECT mcap_file_id, raw_hash_md5, cf_meta, cf_process, created_at, updated_at, version
 FROM mcap_files
-WHERE is_deleted = FALSE
+WHERE %s
 ORDER BY updated_at DESC
-LIMIT $1 OFFSET $2`
-	rows, err := r.c.db.Query(ctx, q, pageSize, offset)
+LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+	selectArgs := append(args, pageSize, offset)
+
+	rows, err := r.c.db.Query(ctx, selectQ, selectArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("postgres McapFileRepo.List query: %w", err)
 	}

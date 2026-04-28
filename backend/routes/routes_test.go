@@ -44,7 +44,7 @@ func (r *routeMcapRepo) Set(context.Context, *models.McapFile) error { return ni
 func (r *routeMcapRepo) UpdateIngestState(context.Context, string, models.IngestState) error {
 	return nil
 }
-func (r *routeMcapRepo) List(context.Context, int, int) ([]*models.McapFile, int64, error) {
+func (r *routeMcapRepo) List(context.Context, int, int, string, string) ([]*models.McapFile, int64, error) {
 	return []*models.McapFile{}, 0, nil
 }
 

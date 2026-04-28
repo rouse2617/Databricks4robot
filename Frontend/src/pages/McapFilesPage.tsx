@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Table, Tag, Typography, Button, Space, Select, Empty } from "antd";
+import { Table, Tag, Typography, Button, Space, Select, Empty, Input } from "antd";
 import { ReloadOutlined, FileOutlined, CloudUploadOutlined } from "@ant-design/icons";
 import { useSearchParams } from "react-router-dom";
 import type { ColumnsType } from "antd/es/table";
@@ -38,19 +38,20 @@ export default function McapFilesPage() {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(Number(searchParams.get("page")) || 1);
   const [stateFilter, setStateFilter] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<McapFile | null>(null);
 
   const load = useCallback(async (p = page) => {
     setLoading(true);
     try {
-      const data = await mcapFilesApi.list({ page: p, page_size: 20 });
-      let items = data.items ?? [];
-      // P2 #13: Client-side ingest_state filter
-      if (stateFilter) {
-        items = items.filter((f) => f.ingest_state === stateFilter);
-      }
-      setFiles(items);
+      const data = await mcapFilesApi.list({
+        page: p,
+        page_size: 20,
+        ingest_state: stateFilter || undefined,
+        owner: ownerFilter || undefined,
+      });
+      setFiles(data.items ?? []);
       setTotal(data.total ?? 0);
     } catch {
       setFiles([]);
@@ -58,11 +59,11 @@ export default function McapFilesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, stateFilter]);
+  }, [page, stateFilter, ownerFilter]);
 
   useEffect(() => {
     load(page);
-  }, [page, stateFilter]);
+  }, [page, stateFilter, ownerFilter]);
 
   const columns: ColumnsType<McapFile> = [
     {
@@ -151,6 +152,15 @@ export default function McapFilesPage() {
           </Text>
         </Title>
         <Space>
+          <Input
+            placeholder="搜索 Owner"
+            value={ownerFilter}
+            onChange={(e) => setOwnerFilter(e.target.value)}
+            onPressEnter={() => { setPage(1); load(1); }}
+            onBlur={() => { setPage(1); load(1); }}
+            style={{ width: 140 }}
+            allowClear
+          />
           <Select
             value={stateFilter}
             onChange={(v) => { setStateFilter(v); setPage(1); }}

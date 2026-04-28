@@ -903,7 +903,8 @@ func (r *McapFileRepo) Set(ctx context.Context, f *models.McapFile) error {
 }
 
 // List scans mcap_files with pagination and early termination.
-func (r *McapFileRepo) List(ctx context.Context, page, pageSize int) ([]*models.McapFile, int64, error) {
+// ingestState and owner provide optional client-side filtering (Bigtable fallback mode).
+func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState, owner string) ([]*models.McapFile, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -929,14 +930,27 @@ func (r *McapFileRepo) List(ctx context.Context, page, pageSize int) ([]*models.
 	scanErr := r.table.ReadRows(scanCtx, bigtable.PrefixRange(RowKeyPrefix), func(row bigtable.Row) bool {
 		scanned++
 		all = append(all, rowToMcapFile(row))
-		if len(all) >= needed {
-			return false
-		}
 		return scanned < maxScan
 	}, bigtable.RowFilter(bigtable.LatestNFilter(1)))
 
 	if scanErr != nil && scanCtx.Err() == nil {
 		return nil, 0, fmt.Errorf("McapFileRepo.List: %w", scanErr)
+	}
+
+	// Client-side filtering for Bigtable degraded mode
+	if ingestState != "" || owner != "" {
+		filtered := make([]*models.McapFile, 0, len(all))
+		ownerLower := strings.ToLower(owner)
+		for _, f := range all {
+			if ingestState != "" && string(f.IngestState) != ingestState {
+				continue
+			}
+			if owner != "" && !strings.Contains(strings.ToLower(f.Owner), ownerLower) {
+				continue
+			}
+			filtered = append(filtered, f)
+		}
+		all = filtered
 	}
 
 	total := int64(len(all))

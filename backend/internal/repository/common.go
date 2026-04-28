@@ -18,7 +18,7 @@ type McapFileRepository interface {
 	Get(ctx context.Context, mcapFileID string) (*models.McapFile, error)
 	Set(ctx context.Context, f *models.McapFile) error
 	UpdateIngestState(ctx context.Context, mcapFileID string, state models.IngestState) error
-	List(ctx context.Context, page, pageSize int) ([]*models.McapFile, int64, error)
+	List(ctx context.Context, page, pageSize int, ingestState, owner string) ([]*models.McapFile, int64, error)
 }
 
 // DeliveryRepository defines persistence operations for delivery records/indexes.

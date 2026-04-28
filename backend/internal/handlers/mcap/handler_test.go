@@ -38,7 +38,7 @@ func (m *mockMcapRepo) UpdateIngestState(ctx context.Context, mcapFileID string,
 	}
 	return nil
 }
-func (m *mockMcapRepo) List(ctx context.Context, page, pageSize int) ([]*models.McapFile, int64, error) {
+func (m *mockMcapRepo) List(ctx context.Context, page, pageSize int, ingestState, owner string) ([]*models.McapFile, int64, error) {
 	return []*models.McapFile{}, 0, nil
 }
 
