@@ -1,5 +1,7 @@
 # Schema Reference (PostgreSQL)
 
+> **主键约定**：所有 `*_id` 列类型为 PostgreSQL `UUID`，由 Backend 应用层用 **UUIDv7**（时序前缀 + 随机后缀）颁发；存量 v4 与新增 v7 在 PG 中共存，不区分、不 backfill。详见 `data-platform-design.md §5.12.6`。
+
 ## 表清单
 
 | 表名 | 类型 | 主键 | 一句话职责 |
@@ -48,7 +50,7 @@
 |----|-----------|
 | `asset_tags` | tag 是资产页最高频的 filter/facet；继续用 `cf_tag` JSONB 过滤会让 PG 索引、ES 同步、`tag_registry.yaml` 校验都做不稳 |
 | `asset_algo_latest` | "哪些 asset 跑过 X 算法且 ok/failed" 是日常运营查询；散在 `cf_algo` JSONB 里没法做有效索引 |
-| `asset_events` | **outbox 起点**。ES 同步、Dagster 入湖、审计、回放全靠它；没它就只能用 `assets.updated_at` 拉同步，会漏事件、不能回放、审计断链 |
+| `asset_events` | **outbox 起点**。ES 同步、Iceberg 入湖、审计、回放全靠它；没它就只能用 `assets.updated_at` 拉同步，会漏事件、不能回放、审计断链 |
 
 > ⚠️ `asset_events` 上线**第一天**就要带 `event_seq` 和 `payload_schema_version`，否则后续添加是破坏性变更，需要补 backfill。
 
@@ -82,7 +84,7 @@
 | 1 | `assets` / `mcap_files` | 字段提升（`asset_type / lifecycle_state / duration_ms / owner / retention_tier / expire_at`） |
 | 2 | `asset_tags` | 新建 + 双写 + backfill；前端 facet 切到 `tag_registry.yaml + asset_tags` |
 | 3 | `asset_algo_latest` | 新建 + 双写 + backfill |
-| 4 | `asset_events` | 新建（带 `event_seq` + `payload_schema_version`）；所有写路径同事务追加；Dagster sensor 切到读它 |
+| 4 | `asset_events` | 新建（带 `event_seq` + `payload_schema_version`）；所有写路径同事务追加；Outbox Worker 与 PyIceberg CronJob 都从这里读 |
 | 5 | `assets.lifecycle_state` | 与 `status` 双写；前端列表过滤切到 `lifecycle_state`；老 `status` 退役 |
 
 ---
@@ -248,7 +250,7 @@
 | payload_schema_version | TEXT | 是 | event_payload schema 版本（如 v1 / v2） |
 | asset_id | UUID | 否 | 关联 asset |
 | mcap_file_id | UUID | 否 | 关联 MCAP |
-| event_source | TEXT | 是 | backend / worker / dagster / spark / daft / system |
+| event_source | TEXT | 是 | backend / worker / cron / system |
 | actor_type | TEXT | 否 | user / service / algo / system |
 | actor_id | TEXT | 否 | 操作者 |
 | request_id | TEXT | 否 | 请求追踪 |

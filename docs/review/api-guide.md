@@ -36,16 +36,15 @@ export TOKEN=dev-token
 
 ## Lakehouse / Trino 验证
 
-先启动 Iceberg + Trino，并运行 Spark 同步任务生成 Iceberg 表：
+> Lakehouse 链路在 1.0 不可用；2.0 起由 PyIceberg CronJob 通过 outbox 增量入湖（详见 `data-platform-design.md §5.6.2 / §5.11`）。本节命令演示的是本地脚手架，仅用于 demo / 验证。
+
+启动 Iceberg + Trino + Catalog 服务：
 
 ```bash
 make iceberg-up
 
-# Spark 读取 Docker 网络中的 Postgres
+# 触发一次 PyIceberg 演示 MERGE（本地脚本，将 PG 当前快照灌入 Bronze）
 make iceberg-mvp
-
-# 当前后端连接宿主机 localhost:5432 时，使用这个命令保持数据源一致
-make iceberg-mvp-host
 ```
 
 检查 Trino 查询层状态：
@@ -93,7 +92,7 @@ curl "$BASE/api/v1/lakehouse/report" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
-注意：当前仍是 Spark 批同步/准 CDC；Trino 负责查询 Iceberg，真正连续入湖后续由 RisingWave/Debezium 补齐。
+注意：上述 Lakehouse 接口在 1.0 阶段未上线；2.0 起 Trino 负责查询 Iceberg，入湖由 outbox + PyIceberg CronJob 完成（不引入 Spark / Dagster / Kafka / Debezium）。
 
 ## 1. 资产管理 (Assets)
 
@@ -335,8 +334,8 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/start" \
   -H "X-Grace-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "method": "dagster",
-    "run_id": "dagster-run-12345"
+    "method": "k8s_job",
+    "run_id": "run-12345"
   }'
 ```
 
@@ -369,7 +368,7 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/hand_tracking@1.2.0/finish" \
   -d '{
     "status": "ok",
     "output_uri": "gs://bucket/hand_tracking/output.mcap",
-    "run_id": "dagster-run-12345",
+    "run_id": "run-12345",
     "result_size_bytes": 12345678,
     "extra_fields": {
       "type": "hand_tracking_v1"
@@ -385,7 +384,7 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/finish" \
   -d '{
     "status": "failed",
     "reason": "OOM: memory limit exceeded",
-    "run_id": "dagster-run-12345"
+    "run_id": "run-12345"
   }'
 ```
 
@@ -432,7 +431,7 @@ curl "$BASE/api/v1/assets/{asset_id}/algo-events?algo_key=env_analysis@1.0.0" \
       "algo_key": "env_analysis@1.0.0",
       "prev_status": "pending",
       "new_status": "running",
-      "run_id": "dagster-run-12345",
+      "run_id": "run-12345",
       "created_at": "2026-04-25T10:00:00Z"
     }
   ]
@@ -450,7 +449,7 @@ curl "$BASE/api/v1/assets/{asset_id}/algo-events?algo_key=env_analysis@1.0.0" \
 for algo in hand_tracking@1.2.0 head_tracking@1.0.0 body_tracking@1.0.0; do
   curl -X POST "$BASE/api/v1/assets/{id}/algo/$algo/start" \
     -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
-    -d '{"method":"dagster"}'
+    -d '{"method":"k8s_job"}'
   
   curl -X POST "$BASE/api/v1/assets/{id}/algo/$algo/finish" \
     -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
@@ -460,7 +459,7 @@ done
 # 2. action_annotation 自动变为 pending，现在可以启动了
 curl -X POST "$BASE/api/v1/assets/{id}/algo/action_annotation@1.0.0/start" \
   -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"method":"dagster"}'
+  -d '{"method":"k8s_job"}'
 ```
 
 ## 3. 交付管理 (Deliveries)
@@ -750,10 +749,10 @@ ASSET=$(curl -s -X POST "$BASE/api/v1/assets" \
   -d '{"mcap_file_id":"mcap-001","start_timestamp_ns":1700000000000000000,"end_timestamp_ns":1700000060000000000,"reviewer":"alice"}')
 ASSET_ID=$(echo $ASSET | python3 -c "import sys,json; print(json.load(sys.stdin)['asset_id'])")
 
-# 2. Dagster 触发算法处理
+# 2. 外部算法 worker 触发处理
 curl -X POST "$BASE/api/v1/assets/$ASSET_ID/algo/env_analysis@1.0.0/start" \
   -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"method":"dagster","run_id":"run-001"}'
+  -d '{"method":"k8s_job","run_id":"run-001"}'
 
 # 3. 算法完成回调
 curl -X POST "$BASE/api/v1/assets/$ASSET_ID/algo/env_analysis@1.0.0/finish" \

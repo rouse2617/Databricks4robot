@@ -25,7 +25,7 @@ asset_algo_latest (
     started_at      TIMESTAMPTZ,
     finished_at     TIMESTAMPTZ,
     method          TEXT,                -- ray_batch / local / ...
-    dagster_run_id  TEXT,
+    pipeline_run_id TEXT,                -- 外部编排器 run id，仅作 lineage 字段
     result_uri      TEXT,                -- 结果文件路径（GCS / S3 / 本地）
     error_message   TEXT,
     result_meta     JSONB,
@@ -47,7 +47,7 @@ blocked → pending → running → ok
 | `started_at` | running 时写入 | 开始处理时间 |
 | `finished_at` | ok / failed 时写入 | 完成时间 |
 | `method` | start 时写入 | 处理方法标识（`ray_batch` / `local` 等） |
-| `dagster_run_id` | 可选 | Dagster run id，用于 lineage 追溯 |
+| `pipeline_run_id` | 可选 | 外部编排器 run id（如算法 worker / k8s job），用于 lineage 追溯 |
 | `result_uri` | ok 时必填 | 结果文件路径 |
 | `error_message` | failed 时必填 | 错误信息 |
 | `result_meta` | 可选 | 算法特定元数据（帧数、置信度等） |
@@ -79,12 +79,12 @@ asset_events (
 
 | event_type | 触发条件 | payload 关键字段 |
 |------------|----------|------------------|
-| `algo.started` | `start_algo` 调用，`pending → running` | `algo_name`, `algo_version`, `method`, `dagster_run_id` |
+| `algo.started` | `start_algo` 调用，`pending → running` | `algo_name`, `algo_version`, `method`, `pipeline_run_id` |
 | `algo.finished` | `finish_algo(status=ok)`，`running → ok` | `result_uri`, `result_meta` |
 | `algo.failed` | `finish_algo(status=failed)`，`running → failed` | `error_message` |
 | `algo.reset` | `reset_algo`，`failed/ok → pending` | `reason` |
 
-**为什么不再单独建 `asset_algo_events` 表**：算法事件、tag 事件、QA 事件、生命周期事件全部走统一 `asset_events`，下游 outbox / ES 同步 / Dagster 入湖 / 审计 / 回放只对接一个表，不需要按 event 类型扇出。完整设计见 `data-platform-design.md §5.2.7 / §5.6.2`。
+**为什么不再单独建 `asset_algo_events` 表**：算法事件、tag 事件、QA 事件、生命周期事件全部走统一 `asset_events`，下游 outbox / ES 同步 / 入湖 / 审计 / 回放只对接一个表，不需要按 event 类型扇出。完整设计见 `data-platform-design.md §5.2.7 / §5.6.2`。
 
 ### 1.3 为什么用"投影表 + 事件表"而不是步骤表
 
@@ -159,13 +159,13 @@ POST /api/v1/assets/:id/algo/:algo_key/start
 ```json
 {
   "method": "ray_batch",
-  "dagster_run_id": "abc-123-def"
+  "pipeline_run_id": "abc-123-def"
 }
 ```
 
 行为（同一事务内）：
 1. 校验 `algo_key` 在注册表中、版本合法；
-2. upsert `asset_algo_latest`：`status = running`，写 `started_at / method / dagster_run_id`；
+2. upsert `asset_algo_latest`：`status = running`，写 `started_at / method / pipeline_run_id`；
 3. append `asset_events(event_type='algo.started', payload={...})`；
 4. 兼容期同步写 `assets.cf_algo` 对应键；
 5. 返回 200。
@@ -180,7 +180,7 @@ POST /api/v1/assets/:id/algo/:algo_key/finish
 {
   "status": "ok",
   "result_uri": "gs://bucket/results/xxx.npz",
-  "dagster_run_id": "abc-123-def",
+  "pipeline_run_id": "abc-123-def",
   "result_meta": { "frame_count": 3600, "confidence": 0.95 }
 }
 ```
@@ -200,7 +200,7 @@ POST /api/v1/assets/:id/algo/:algo_key/finish
 ```json
 {
   "status": "failed",
-  "dagster_run_id": "abc-123-def",
+  "pipeline_run_id": "abc-123-def",
   "error_message": "GPU OOM at frame 1234"
 }
 ```
@@ -223,7 +223,7 @@ GET /api/v1/assets/:id/events?event_type=algo.*&algo_key=hand_tracking@1.2.0
 
 直接查 `asset_events`，按 `created_at` 倒序。
 
-### 3.6 批量查询待处理资产（Dagster sensor 用）
+### 3.6 批量查询待处理资产（外部 worker 用）
 
 ```
 GET /api/v1/assets?algo=hand_tracking@1.2.0&algo_status=pending&page=1&page_size=100
@@ -233,40 +233,42 @@ GET /api/v1/assets?algo=hand_tracking@1.2.0&algo_status=pending&page=1&page_size
 
 ---
 
-## 四、Dagster 集成
+## 四、外部算法 worker 集成
 
-Dagster 的 sensor 和 asset 通过 SDK 调用上述 API：
+平台**不绑定具体编排器**。任何算法 worker（k8s Job / Ray Cluster / 自研脚本 / 未来引入的 Temporal 等）都通过 SDK 调用上述 API 完成 start / finish 闭环。`pipeline_run_id` 仅用作 lineage 字段，平台不解析其语义。
 
 ```python
-# sensor: 发现待处理的 Segment
+# Worker 启动时：发现待处理 Segment
 pending_assets = client.assets.list(
     algo="hand_tracking@1.2.0",
     algo_status="pending",
     page_size=100,
 )
 
-# asset: 开始处理
+# 开始处理
 client.assets.start_algo(
     asset_id=asset_id,
     algo_key="hand_tracking@1.2.0",
     method="ray_batch",
-    dagster_run_id=context.run_id,
+    pipeline_run_id="my-job-2026-04-28-xxx",
 )
 
-# asset: 处理完成
+# 处理完成
 client.assets.finish_algo(
     asset_id=asset_id,
     algo_key="hand_tracking@1.2.0",
     status="ok",
     result_uri="gs://bucket/results/xxx.npz",
-    dagster_run_id=context.run_id,
+    pipeline_run_id="my-job-2026-04-28-xxx",
     result_meta={"frame_count": 3600},
 )
 ```
 
 **Lineage 追溯**：
-- 从 asset 反查 Dagster：`asset_algo_latest.dagster_run_id` 或 `asset_events.payload->>'dagster_run_id'`；
-- 从 Dagster 正查 asset：通过 Dagster asset materialization metadata。
+- 从 asset 反查 worker：`asset_algo_latest.pipeline_run_id` 或 `asset_events.payload->>'pipeline_run_id'`；
+- 从 worker 正查 asset：worker 自身记录写入了哪些 `asset_id`（log / metadata），平台不强制约定。
+
+> 1.0 / 2.0 阶段，"如何调度算法 worker"是各算法团队自管理的工程问题（k8s Job / 一次性脚本即可），平台只提供状态接口；如未来需要平台级 DAG 编排（链式触发 / 长事务重试 / lineage 可视化），独立选型 ADR（候选 Temporal / Dagster / Argo），与本设计文档解耦。
 
 ---
 
@@ -275,8 +277,8 @@ client.assets.finish_algo(
 | 阶段 | Segment 规模 | 主库形态 | 检索 / 同步 |
 |------|--------------|----------|--------------|
 | **1.0（当前）** | < 100 万 | PostgreSQL 单库 + JSONB 过渡列 | 无 ES / 无湖仓，列表筛选直接走 PG |
-| 2.0 | 100 万 – 1000 万 | 同 PG，热字段提升为真实列 + `asset_tags / asset_algo_latest / asset_events` 投影 | ES 经 outbox + Go worker 同步；湖仓由 Dagster 按事件序号增量入 Bronze |
-| 3.0 | 1000 万 – 1 亿 | PG 主库 + Iceberg 历史 + 多模态 lake（Lance） | ES + 列存湖仓 + Trino 联邦 |
+| 2.0 | 100 万 – 1000 万 | 同 PG，热字段提升为真实列 + `asset_tags / asset_algo_latest / asset_events` 投影 | ES 经 outbox + Go worker（river）同步；湖仓由 PyIceberg CronJob 按事件序号增量入 Bronze |
+| 3.0 | 1000 万 – 1 亿 | PG 主库 + Iceberg 历史 + 多模态 lake（候选） | ES + 列存湖仓 + Trino |
 | 3.1+ | > 1 亿 | 平台 Catalog（catalog_objects + catalog_object_versions）抽象多源 | 联邦检索、血缘、生命周期托管统一对外 |
 
 > 1.0 现阶段 **不引入** Bigtable / HBase / Lindorm / Spanner，主库统一为 PostgreSQL（详见 `data-platform-design.md §5.4` 主库选型）。
@@ -320,7 +322,7 @@ client.assets.finish_algo(
 ### 待建设（按优先级）
 
 1. **`asset_algo_latest` 投影表**：与 `cf_algo` 双写，作为下一步切换主路径的前置。
-2. **`asset_events` outbox + Go worker**：替换 Dagster 60s 轮询。
+2. **`asset_events` outbox + Go Worker（river）+ PyIceberg CronJob**：作为 ES / 湖仓的统一同步链路，替换任何形式的轮询机制。
 3. **Dataset / DatasetSnapshot 实体**：筛选 → review → seal → 交付。
 4. **MCAP 解析**：用 foxglove/mcap Go 库提取文件摘要写入 `mcap_files` 标量列。
 
