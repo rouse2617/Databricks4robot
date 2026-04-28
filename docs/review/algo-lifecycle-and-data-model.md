@@ -66,7 +66,7 @@ asset_events (
     event_id                UUID PRIMARY KEY,
     asset_id                UUID NOT NULL,
     event_type              TEXT NOT NULL,           -- algo.started / algo.finished / algo.failed / algo.reset / ...
-    payload                 JSONB NOT NULL,
+    event_payload           JSONB NOT NULL,
     payload_schema_version  INT NOT NULL,
     actor                   TEXT,
     request_id              TEXT,

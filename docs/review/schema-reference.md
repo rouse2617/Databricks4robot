@@ -261,6 +261,8 @@
 | publish_state | TEXT | 是 | pending / published / failed |
 | published_at | TIMESTAMPTZ | 否 | 同步完成时间 |
 | event_payload | JSONB | 是 | 类型相关字段（按 `payload_schema_version` 解析） |
+| retry_count | INT | 是 | 投递重试次数（默认 0） |
+| last_error | TEXT | 否 | 最近一次投递失败的错误信息 |
 
 ---
 
@@ -354,7 +356,7 @@ Delivery ↔ Asset M:N 明细。
 | snapshot_version | TEXT | 否 | 快照版本号（如 v1 / 2026-04-27） |
 | created_by | TEXT | 否 | 创建人 |
 | query_spec | JSONB | 是 | 构建条件 |
-| source_query_hash | TEXT | 否 | 查询条件 hash（判断快照可复现/可比较） |
+| source_query_hash | TEXT | 否 | 查询条件 hash；UNIQUE 约束为 `(dataset_id, source_query_hash)`，即同一 dataset 内相同查询条件只创建一份快照 |
 | source_catalog_name | TEXT | 否 | 来源 Catalog（如 lakehouse） |
 | source_namespace | TEXT | 否 | 来源 namespace（如 robot.gold） |
 | source_object_name | TEXT | 否 | 来源表/视图名 |
@@ -458,6 +460,18 @@ API 幂等保护。`expires_at` 由 lifecycle job 清理（`response_json` 可�
 | status_code | INT | 否 | 首次响应状态码 |
 | created_at | TIMESTAMPTZ | 是 | 创建时间 |
 | expires_at | TIMESTAMPTZ | 否 | 过期时间 |
+
+---
+
+## outbox_sink_cursors
+
+Outbox Worker 各 sink 的消费进度。
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| sink_name | TEXT | 是 | sink 标识（es / iceberg_bronze / vector） |
+| last_published_seq | BIGINT | 是 | 该 sink 最后成功消费的 event_seq |
+| updated_at | TIMESTAMPTZ | 是 | 更新时间 |
 
 ---
 

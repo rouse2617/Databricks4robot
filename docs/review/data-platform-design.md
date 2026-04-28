@@ -208,10 +208,6 @@ stateDiagram-v2
     rejected --> [*]
     archived --> [*]
     superseded --> [*]
-
-
-
-
 ```
 
 | 状态 | 含义 |
@@ -410,6 +406,8 @@ UPDATE asset_events SET publish_state = 'published', published_at = now()
 
 物理治理：单表行数超过 1000 万后按 `occurred_at` 月分区；retention 默认 90 天，过期后只在 Iceberg 留档。
 
+> **Multi-sink 消费模型**：`asset_events.publish_state` 仅标记"是否已被快速投递通道（Outbox Worker）处理过"，不区分具体 sink。每个 sink（ES / Iceberg / 向量库）各自维护独立的 watermark cursor（存储在 `outbox_sink_cursors` 表或 Worker 内存中）。重放某个 sink 时，只需重置该 sink 的 cursor，不影响其他 sink。
+
 #### 5.2.8 deliveries —— 客户交付批次当前态
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -490,7 +488,7 @@ UPDATE asset_events SET publish_state = 'published', published_at = now()
 
 约束：
 - `dataset_snapshots` **被 `training_runs` 软引用过的快照禁止 DELETE**，只允许 `status → archived`（保审计链）。
-- `source_query_hash` 全局幂等键：同 hash 重复请求复用已有快照，不创建新版本。
+- `source_query_hash` per-dataset 幂等键：同 hash 重复请求复用已有快照，不创建新版本。
 - `status` 状态机不允许回退：
 
 ```mermaid
@@ -500,10 +498,6 @@ stateDiagram-v2
     sealed --> archived: 不再活跃 / 业务标记归档
     sealed --> [*]: training_runs 引用中（不可删）
     archived --> [*]: 仅删 manifest，metadata 留底
-
-
-
-
 ```
 
 索引：`(dataset_id, snapshot_version DESC)`、`UNIQUE (dataset_id, source_query_hash)`、`(status, created_at)`。
@@ -1201,7 +1195,7 @@ API 整体走 `/api/v1` 大版本，字段级别允许小版本演进。**新旧
 |----|----|---------|--------------|
 | `status` | `lifecycle_state` | 双写中 | 2.0 上线后 90 天 |
 | `type` | `asset_type` | 双写中 | 2.0 上线后 90 天 |
-| `duration_sec` | `duration_ms` | 双写中（后端自动单位换算） | 2.0 上线后 90 天 |
+| `duration_sec` | `duration_ms` | 双写中（后端计算：`duration_ms = (end_timestamp_ns - start_timestamp_ns) / 1_000_000`，API 同时返回两个字段） | 2.0 上线后 90 天 |
 | `cf_algo` JSONB | `asset_algo_latest` 投影 | 2.0 起双写 | 投影表稳定 60 天后停写 cf_algo |
 | `cf_tag` JSONB | `asset_tags` 投影 | 2.0 起双写 | 投影表稳定 60 天后停写 cf_tag |
 | `asset_algo_events` | `asset_events` | 2.0 起新事件只入 `asset_events` | 老表保留只读 6 个月后 drop |
@@ -1469,7 +1463,7 @@ sequenceDiagram
     API-->>SRE: count, est_duration
 
     SRE->>API: POST /admin/search/reindex?from_seq=X&to_seq=Y
-    API->>PG: UPDATE asset_events_sink_state<br>SET publish_state='pending'<br>WHERE sink='es' AND event_seq BETWEEN X AND Y
+    API->>PG: UPDATE outbox_sink_cursors SET last_published_seq = X - 1 WHERE sink_name = 'es'
     API-->>SRE: 202 Accepted
 
     Note over Out,ES: 自动消费<br>doc_id=asset_id 天然幂等
@@ -1752,6 +1746,8 @@ flowchart LR
 | pool 模式 | `transaction`（事务级复用，最高效） |
 | 默认参数 | `max_client_conn=1000`、`default_pool_size=25`、`reserve_pool=10` |
 | 例外通道 | Outbox Worker 的 `LISTEN/NOTIFY` 走**直连 PG**（transaction pool 不支持 session-level 状态） |
+
+> **进程内模式说明**：Phase 1 起步时 Outbox Worker 以 Backend 进程内 goroutine 运行。此时 Worker 的 `LISTEN/NOTIFY` 连接由 Backend 启动时单独建立一条直连 PG 的长连接（不经 PgBouncer），与业务请求的 PgBouncer 连接池共存于同一进程。抽离为独立 K8s Deployment 后，该直连逻辑不变，只是从进程内移到独立 Pod。
 | 不能用的 PG 特性 | session-level prepared statement、`SET LOCAL` 之外的 `SET`、临时表跨事务、advisory lock 跨事务（业务层已规避）|
 | 故障恢复 | PgBouncer 是无状态进程，挂了自动重启不影响数据；2 副本 + K8s service 即可 |
 

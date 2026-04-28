@@ -176,7 +176,7 @@ flowchart LR
 
 | # | 场景 | API | 角色 | 关键约束 |
 |---|------|-----|------|---------|
-| D1 | 拉待处理资产（pending） | `GET /api/v1/algo/{name}/pending?since=&limit=` | 算法 worker | 按 `depends_on` 链动态算 pending；游标 since |
+| D1 | 拉待处理资产（pending） | `GET /api/v1/algo/{name}/pending?since=&limit=` | 算法 worker | 按 `depends_on` 链动态算 pending；游标 since；待实现；当前可用 GET /api/v1/assets?filter=algo_status:eq:pending 替代 |
 | D2 | 提交算法运行结果 | `POST /api/v1/algo/{name}/runs` | 算法 worker | 同事务写 `asset_algo_latest` + 追加 `algo_completed` |
 | D3 | 查算法 run 详情 | `GET /api/v1/algo/runs/{run_id}` | 全部 | 含 metrics / artifact_uri |
 | D4 | 资产的所有算法状态 | `GET /api/v1/assets/{id}/algo` | 业务 | 投影表读，毫秒级 |
