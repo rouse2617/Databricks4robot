@@ -78,7 +78,7 @@ function renderPane(overrides: Partial<Parameters<typeof AssetQuickPreviewPane>[
 describe("AssetQuickPreviewPane", () => {
   it("renders empty state when no asset is selected", () => {
     renderPane();
-    expect(screen.getByText("Select a row to preview")).toBeTruthy();
+    expect(screen.getByText("点击行查看预览")).toBeTruthy();
   });
 
   it("renders collapsed state as thin bar with expand button", () => {
@@ -184,7 +184,7 @@ describe("AssetQuickPreviewPane", () => {
       asset,
       previewManifest: defaultManifest,
     });
-    expect(screen.getByText("Preview unavailable")).toBeTruthy();
+    expect(screen.getAllByText("暂无预览").length).toBeGreaterThan(0);
   });
 
   it("renders 查看详情 button and calls onOpenDetail", () => {
@@ -209,7 +209,7 @@ describe("AssetQuickPreviewPane", () => {
       asset,
       previewManifest: defaultManifest,
     });
-    const btn = screen.getByText("Find Similar").closest("button");
+    const btn = screen.getByText("查找相似").closest("button");
     expect(btn?.disabled).toBe(true);
   });
 
