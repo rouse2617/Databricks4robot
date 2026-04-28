@@ -1,10 +1,5 @@
 # Schema Reference (PostgreSQL)
 
-> 精简表 / 字段速查；只保留字段定义和必要说明，**不含设计取舍 / 架构解释 / 迁移路径**。
-> 完整背景见 [`docs/sql.md`](./sql.md)；可执行 DDL 见 [`schemas/pg-phase0.sql`](../schemas/pg-phase0.sql)。
-
----
-
 ## 表清单
 
 | 表名 | 类型 | 主键 | 一句话职责 |
