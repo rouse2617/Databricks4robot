@@ -4,6 +4,23 @@
 
 > OpenAPI 规范: [`api/openapi.yaml`](../../api/openapi.yaml)
 
+## 字段命名口径（重要）
+
+> **API 当前同时接受新旧字段名，但新代码 / SDK / 前端请优先使用"新字段"。** 旧字段在 1.0 → 2.0 迁移窗口内保留别名读写，2.0 之后会从响应中移除。
+
+| 维度 | 旧字段（兼容保留） | 新字段（主线，优先用） | 说明 |
+|------|-------------------|------------------------|------|
+| 资产生命周期 | `status` | `lifecycle_state` | 旧 `status` 沿用 review 流程枚举（pending / approved / rejected …），新 `lifecycle_state` 是统一的资产生命周期状态机（见 `data-platform-design.md §5.2.4`） |
+| 资产类型 | `type` | `asset_type` | 旧 `type` 名字过于宽泛，与 HTTP `Content-Type`、tag value type 容易混淆 |
+| 时长 | `duration_sec` | `duration_ms` | 与 `start_timestamp_ns / end_timestamp_ns` 单位对齐到毫秒精度 |
+| 算法结果存储 | `cf_algo.<algo>@<ver>:<field>` (JSONB key) | `asset_algo_latest` 投影表 + `asset_events` 事件表 | 详见 `algo-lifecycle-and-data-model.md` |
+| Tag 存储 | `cf_tag` JSONB | `asset_tags` 投影表 | 同上，过渡期双写 |
+| 业务事件 | `asset_algo_events`（仅算法） | `asset_events`（统一事件 / outbox） | 算法、tag、QA、生命周期事件统一一张表 |
+
+筛选 / 排序字段同时接受新旧两种写法，详见 §1.3。
+
+
+
 ## 基础信息
 
 - 基础 URL: `http://localhost:8080`（本地开发）
@@ -210,16 +227,23 @@ curl "$BASE/api/v1/assets?mcap_file_id=mcap-001" \
 | `in` | 包含在列表中 | `status:in:["approved","rejected"]` |
 | `nin` | 不在列表中 | `status:nin:["archived"]` |
 
-允许的过滤/排序字段:
+允许的过滤/排序字段（**优先使用新字段名**）:
 
-- 标量字段: `asset_id`, `mcap_file_id`, `status`, `reviewer`, `owner`, `type`, `env`, `task`, `created_at`, `updated_at`, `start_timestamp_ns`, `end_timestamp_ns`, `duration_sec`, `delivery_count`, `last_delivered_to`, `last_delivered_at`, `version`
-- 生命周期字段: `retention_tier`, `archive_after_days`, `delete_after_days`, `total_size_bytes`, `last_accessed_at`
-- Tag 前缀: `tag.<key>`
-- 算法结果前缀: `algo.<key>`
-- 文件引用前缀: `files.<key>`
+- 标识：`asset_id`, `mcap_file_id`, `version`
+- 生命周期：`lifecycle_state`（新）/ `status`（旧，兼容保留）, `qa_state`, `reviewer`, `owner`
+- 资产属性：`asset_type`（新）/ `type`（旧）, `env`, `task`
+- 时间：`created_at`, `updated_at`, `start_timestamp_ns`, `end_timestamp_ns`, `duration_ms`（新）/ `duration_sec`（旧）
+- 交付汇总：`delivery_count`, `last_delivered_to`, `last_delivered_at`
+- 留存策略：`retention_tier`, `archive_after_days`, `delete_after_days`, `total_size_bytes`, `last_accessed_at`
+- Tag 前缀：`tag.<key>`（推荐）
+- 算法结果前缀：`algo.<key>`（推荐，路由到 `asset_algo_latest`）
+- 文件引用前缀：`files.<key>`
 
-兼容别名:
+兼容别名（旧 → 新，仅过渡期支持）:
 
+- `status` → `lifecycle_state`（语义不完全一致，详见上方"字段命名口径"表）
+- `type` → `asset_type`
+- `duration_sec` → `duration_ms`（单位变换由后端自动处理）
 - `tags.<key>` → `tag.<key>`
 - `cf_tag.<key>` → `tag.<key>`
 - `algo_results.<key>` → `algo.<key>`

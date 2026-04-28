@@ -28,7 +28,7 @@
 
 判断标准：**这张表不在，资产平台核心闭环（导入 → 切分 → 加 tag/算法 → 检索 → 交付）能不能跑**。
 
-### 🟢 Tier 1 — 上线就得有（已在运行）
+### 🟢 Tier 1 — 上线就得有（schema + backend 已实现，未投产）
 
 | 表 | 必要性 |
 |----|--------|
@@ -38,9 +38,8 @@
 | `delivery_items` | M:N 明细，"召回某批 / 客户收过哪些"的依据 |
 | `idempotency_keys` | API 防重复，第一天就要 |
 
-这五张今天已在 prod schema 中。**上线前需要做的不是新建，而是**把字段提升到目标形态：
-- `assets / mcap_files` 从 `cf_meta` 提升 `tenant_id / project_id / asset_type / lifecycle_state / end_timestamp_ns / duration_ms / owner / retention_tier / expire_at`
-- `tenant_id / project_id` 加 `NOT NULL DEFAULT '_default'`，避免上多租户时遗留 NULL 行
+这五张表 DDL 已落地、后端读写通路已打通，但当前还在 1.0 内部阶段，**尚未正式投产**。**上线前需要做的不是新建，而是**把字段提升到目标形态：
+- `assets / mcap_files` 从 `cf_meta` 提升 `asset_type / lifecycle_state / end_timestamp_ns / duration_ms / owner / retention_tier / expire_at`
 - `assets.lifecycle_state` 和 `status` 双写一段时间，前端列表筛选切到 `lifecycle_state` 后下线 `status`
 
 ### 🟡 Tier 2 — 上线前最好补齐（Phase 1，1–2 个迭代内）
@@ -80,7 +79,7 @@
 
 | 步骤 | 涉及表 | 输出 |
 |------|--------|------|
-| 1 | `assets` / `mcap_files` | 字段提升 + `tenant_id NOT NULL DEFAULT '_default'` |
+| 1 | `assets` / `mcap_files` | 字段提升（`asset_type / lifecycle_state / duration_ms / owner / retention_tier / expire_at`） |
 | 2 | `asset_tags` | 新建 + 双写 + backfill；前端 facet 切到 `tag_registry.yaml + asset_tags` |
 | 3 | `asset_algo_latest` | 新建 + 双写 + backfill |
 | 4 | `asset_events` | 新建（带 `event_seq` + `payload_schema_version`）；所有写路径同事务追加；Dagster sensor 切到读它 |
@@ -115,8 +114,6 @@
 | scene_id | TEXT | 否 | 场景 ID |
 | environment_id | TEXT | 否 | 环境 ID |
 | collection_method | TEXT | 否 | 采集方式 |
-| tenant_id | TEXT | 否 | 租户 ID（单租户阶段默认 `_default`） |
-| project_id | TEXT | 否 | 项目 ID |
 | owner | TEXT | 否 | 数据归属方 |
 | retention_tier | TEXT | 否 | hot / warm / cold / archive |
 | expire_at | TIMESTAMPTZ | 否 | 过期/可清理时间 |
@@ -155,8 +152,6 @@
 | end_timestamp_ns | BIGINT | 否 | asset 结束时间 |
 | duration_ms | BIGINT | 否 | asset 时长 |
 | lifecycle_state | TEXT | 是 | created / processing / ready / rejected / delivered / archived / superseded |
-| tenant_id | TEXT | 否 | 租户 ID |
-| project_id | TEXT | 否 | 项目 ID |
 | owner | TEXT | 否 | 资产 owner |
 | reviewer | TEXT | 否 | 审核人 |
 | last_delivered_at | TIMESTAMPTZ | 否 | 最近交付时间（冗余，由 delivery usecase 同事务刷新） |
@@ -209,8 +204,6 @@
 | source_version | TEXT | 否 | 算法/规则版本 |
 | run_id | TEXT | 否 | 外部批次 |
 | confidence | DOUBLE PRECISION | 否 | 置信度 |
-| tenant_id | TEXT | 否 | 租户 ID（冗余） |
-| project_id | TEXT | 否 | 项目 ID（冗余） |
 | created_at | TIMESTAMPTZ | 是 | 首次创建时间 |
 | updated_at | TIMESTAMPTZ | 是 | 最近更新时间 |
 
@@ -237,8 +230,6 @@
 | error_message | TEXT | 否 | 失败原因 |
 | started_at | TIMESTAMPTZ | 否 | 开始时间 |
 | finished_at | TIMESTAMPTZ | 否 | 完成时间 |
-| tenant_id | TEXT | 否 | 租户 ID（冗余） |
-| project_id | TEXT | 否 | 项目 ID（冗余） |
 | updated_at | TIMESTAMPTZ | 是 | 更新时间 |
 
 ---
@@ -257,8 +248,6 @@
 | payload_schema_version | TEXT | 是 | event_payload schema 版本（如 v1 / v2） |
 | asset_id | UUID | 否 | 关联 asset |
 | mcap_file_id | UUID | 否 | 关联 MCAP |
-| tenant_id | TEXT | 否 | 租户 ID |
-| project_id | TEXT | 否 | 项目 ID |
 | event_source | TEXT | 是 | backend / worker / dagster / spark / daft / system |
 | actor_type | TEXT | 否 | user / service / algo / system |
 | actor_id | TEXT | 否 | 操作者 |
@@ -297,8 +286,6 @@
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | delivery_id | UUID | 是 | 交付批次主键 |
-| tenant_id | TEXT | 否 | 租户 ID |
-| project_id | TEXT | 否 | 项目 ID |
 | customer_id | TEXT | 是 | 客户 ID |
 | contract_id | TEXT | 否 | 合同/订单号 |
 | delivery_type | TEXT | 是 | asset_set / replay / dataset / … |
@@ -346,8 +333,6 @@ Delivery ↔ Asset M:N 明细。
 | name | TEXT | 是 | 数据集名称 |
 | description | TEXT | 否 | 描述 |
 | owner | TEXT | 否 | 负责人或团队 |
-| tenant_id | TEXT | 否 | 租户 ID |
-| project_id | TEXT | 否 | 项目 ID |
 | dataset_type | TEXT | 是 | training / eval / replay / delivery / experiment |
 | status | TEXT | 是 | active / archived / deleted |
 | created_by | TEXT | 否 | 创建人 |
@@ -387,8 +372,6 @@ Delivery ↔ Asset M:N 明细。
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | training_run_id | UUID | 是 | 训练任务 ID |
-| tenant_id | TEXT | 否 | 租户 ID |
-| project_id | TEXT | 否 | 项目 ID |
 | dataset_id | UUID | 是 | 数据集 ID（软引用） |
 | snapshot_id | UUID | 是 | 快照 ID（软引用） |
 | model_name | TEXT | 是 | 模型名称 |
@@ -428,8 +411,6 @@ Delivery ↔ Asset M:N 明细。
 | storage_uri | TEXT | 否 | 物理存储位置（仅运维定位） |
 | external_ref | TEXT | 否 | 外部系统对象引用 |
 | owner | TEXT | 否 | 负责人或团队 |
-| tenant_id | TEXT | 否 | 租户 ID |
-| project_id | TEXT | 否 | 项目 ID |
 | description | TEXT | 否 | 描述 |
 | tags | JSONB | 是 | 对象级标签（pii / training / gold / deprecated） |
 | properties | JSONB | 是 | provider 扩展属性 |
