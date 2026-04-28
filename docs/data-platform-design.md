@@ -1,7 +1,6 @@
-# 数据平台方案设计 v2
+# 数据平台方案设计
 
-> 本文是机器人多模态资产平台（Databricks4robot）的整体方案设计，
-> 在原 PDF《数据infra方案设计》基础上，根据当前代码与 schema 的实际形态重写。
+> 本文是机器人多模态资产平台（Databricks4robot）的整体方案设计。
 > 字段速查见 [`docs/schema-reference.md`](./schema-reference.md)；
 > 长期目标 schema 与 Phase 0/1/2 演进见 [`docs/sql.md`](./sql.md)；
 > 可执行 DDL 见 [`schemas/pg-phase0.sql`](../schemas/pg-phase0.sql)。
@@ -17,7 +16,7 @@
 
 ---
 
-## 2. 问题现状（保留 PDF 论断，仍然成立）
+## 2. 问题现状
 
 | 问题 | 现状 | 本方案如何解决 |
 |------|------|----------------|
@@ -28,7 +27,7 @@
 | 无统一检索 | 多表 JOIN 才能查派生产物/标签/QA | §5.6.1 ES 投影 + §5.2 投影表 |
 | 无多模态检索 | 找不到"相似片段" | §5.6.1 Phase 2+ 向量检索（VAI/Lance） |
 
-典型业务问题（PDF §3 列出，本方案回答路径）：
+典型业务问题与回答路径：
 
 | 业务问题 | 答这条问题的路径 |
 |----------|------------------|
@@ -115,8 +114,8 @@ Asset = Segment (业务事实，元数据可演化)
    └── files         → 派生文件引用     (assets.files JSONB)
 ```
 
-> ⚠️ 与 PDF 原稿对照：PDF 的 `cf:tag / cf:algo / cf:qa / cf:lineage / cf:event` 是 Bigtable 列族的物理表达。
-> 现在 Bigtable 已退役（`STORAGE_BACKEND=bigtable` 在 `main.go` 已 fail-fast），上述五个语义都改用关系型独立表承载。
+> Bigtable 已退役（`STORAGE_BACKEND=bigtable` 在 `main.go` 已 fail-fast）；
+> tag / algo / qa / lineage / event 五类语义都用 PG 关系型独立表承载。
 
 #### 资产分层
 
@@ -203,7 +202,7 @@ usecase 层
 | 运维 | 低 ✅ | 中（GCP 托管） | 中 |
 | 上云锁定 | 无 ✅ | GCP 绑定 | Spanner=GCP / TiDB=自托管 |
 
-**为什么从 PDF 的 Bigtable 切回 PG**：
+**为什么不选 Bigtable**：
 1. 项目目前不强绑 GCP，要保留多云可移植性
 2. 当前规模（< 100M assets）单实例 PG 足够
 3. Bigtable 弱事务 + 弱关系约束，让 `asset_tags / asset_events / training_runs` 这类强引用关系实现起来反而更难
@@ -254,7 +253,7 @@ asset.add_derived_file(kind="sam2_mask", file_path="./output.json")
 
 主库存向量 ID，真实 embedding 在向量引擎做 ANN。两阶段共用同一套 outbox 同步机制。
 
-#### 5.6.2 数据同步机制（PDF TODO，本节回填）
+#### 5.6.2 数据同步机制
 
 **核心原则**：PG 是权威主库，ES / 湖仓 / 向量库都是异步派生。**不轮询**，用 transactional outbox。
 
@@ -534,16 +533,3 @@ make all-down
 | [`backend/config/algo_registry.yaml`](../backend/config/algo_registry.yaml) | 算法注册表 |
 | [`CLAUDE.md`](../CLAUDE.md) | 项目工程约定 |
 
----
-
-## 附录 B：从原 PDF 方案到本方案的主要变更
-
-| 原 PDF 决策 | v2 决策 | 原因 |
-|-------------|---------|------|
-| Bigtable 做主库 | PostgreSQL only | 当前规模够用、避免 GCP 锁定、关系约束更好用 |
-| `cf:tag / cf:algo / cf:qa / cf:lineage / cf:event` 列族 | `asset_tags / asset_algo_latest / asset_events / asset_relations` 投影表 | 关系型表 + 强类型索引，比 JSONB 列族更稳定 |
-| OpenSearch | Elasticsearch | 客户偏好；功能等价 |
-| 数据同步 = TODO | Outbox + LISTEN/NOTIFY + 多 consumer | 见 §5.6.2 |
-| 双写 PG & Bigtable（§9 实施计划） | 取消 | Bigtable 已退役 |
-| Vertex AI Vector Search | VAI / Lance 二选一 | 不绑定 GCP，给 Lance 留口子 |
-| 资产字段设计 = TODO | [`docs/schema-reference.md`](./schema-reference.md) 完整定义 | 见 §5.2 |
