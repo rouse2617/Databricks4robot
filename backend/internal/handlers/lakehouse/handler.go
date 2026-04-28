@@ -20,12 +20,10 @@ type Handler struct {
 	pg         *postgres.Client
 }
 
-func New(reportPath string, trinoClient *trinopkg.Client, pgClient ...*postgres.Client) *Handler {
-	h := &Handler{reportPath: reportPath, trino: trinoClient}
-	if len(pgClient) > 0 {
-		h.pg = pgClient[0]
-	}
-	return h
+// New constructs a lakehouse Handler. pgClient may be nil; SyncStatus
+// degrades to "unavailable" in that case.
+func New(reportPath string, trinoClient *trinopkg.Client, pgClient *postgres.Client) *Handler {
+	return &Handler{reportPath: reportPath, trino: trinoClient, pg: pgClient}
 }
 
 func (h *Handler) Report(c *gin.Context) {
@@ -49,6 +47,10 @@ func (h *Handler) Report(c *gin.Context) {
 }
 
 func (h *Handler) Status(c *gin.Context) {
+	if h.trino == nil {
+		c.JSON(200, trinopkg.Status{Enabled: false, Healthy: false})
+		return
+	}
 	c.JSON(200, h.trino.Status(c.Request.Context()))
 }
 

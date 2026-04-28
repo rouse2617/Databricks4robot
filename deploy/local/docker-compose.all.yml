@@ -1,4 +1,4 @@
-# docker-compose.all.yml — Full stack: Postgres + Backend + Frontend + Iceberg + Trino
+# docker-compose.all.yml — Full stack: Postgres + Backend + Frontend + Iceberg + Trino + Elasticsearch
 # Usage: docker compose -f docker-compose.all.yml up -d --build
 
 services:
@@ -37,13 +37,18 @@ services:
       DB_PASSWORD: postgres
       DB_NAME: data4cyber
       GRACE_TOKEN: dev-token
-      TRINO_ENABLED: "false"
-      OPENSEARCH_URL: "http://opensearch:9200"
+      TRINO_ENABLED: "true"
+      TRINO_URL: "http://data-platform@trino:8080"
+      TRINO_CATALOG: "iceberg"
+      TRINO_SCHEMA: "robot"
+      ELASTICSEARCH_URL: "http://elasticsearch:9200"
     depends_on:
       postgres:
         condition: service_healthy
-      opensearch:
-        condition: service_healthy
+      elasticsearch-init:
+        condition: service_completed_successfully
+      trino:
+        condition: service_started
     restart: unless-stopped
 
   # ── Frontend (React + Nginx) ────────────────────────────────
@@ -136,24 +141,72 @@ services:
     volumes:
       - ./trino/catalog:/etc/trino/catalog:ro
 
-  # ── OpenSearch (Search) ──────────────────────────────────────
-  opensearch:
-    image: opensearchproject/opensearch:2
+  # ── Elasticsearch (Search) ──────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
     ports:
       - "9200:9200"
     environment:
-      discovery.type: single-node
-      DISABLE_SECURITY_PLUGIN: "true"
-      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      discovery.type: "single-node"
+      xpack.security.enabled: "false"
+      xpack.security.http.ssl.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
     volumes:
-      - opensearch-data:/usr/share/opensearch/data
+      - elasticsearch-data:/usr/share/elasticsearch/data
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
 
+  elasticsearch-init:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      set -e;
+      if curl -sf -I http://elasticsearch:9200/assets >/dev/null 2>&1; then
+        echo 'Elasticsearch assets index already exists.';
+        exit 0;
+      fi;
+      echo 'Creating Elasticsearch assets index mapping...';
+      curl -sf -X PUT http://elasticsearch:9200/assets
+        -H 'Content-Type: application/json'
+        -d '{
+          \"settings\": {
+            \"number_of_shards\": 1,
+            \"number_of_replicas\": 0
+          },
+          \"mappings\": {
+            \"properties\": {
+              \"asset_id\":        { \"type\": \"keyword\" },
+              \"mcap_file_id\":    { \"type\": \"keyword\" },
+              \"segment_locator\": { \"type\": \"keyword\" },
+              \"status\":          { \"type\": \"keyword\" },
+              \"env\":             { \"type\": \"keyword\" },
+              \"task\":            { \"type\": \"keyword\" },
+              \"owner\":           { \"type\": \"keyword\" },
+              \"reviewer\":        { \"type\": \"keyword\" },
+              \"notes\":           { \"type\": \"text\" },
+              \"batch\":           { \"type\": \"text\" },
+              \"duration_sec\":    { \"type\": \"float\" },
+              \"delivery_count\":  { \"type\": \"integer\" },
+              \"tag_priority\":    { \"type\": \"keyword\" },
+              \"tag_quality\":     { \"type\": \"keyword\" },
+              \"tags\":            { \"type\": \"object\", \"dynamic\": true },
+              \"algo_summary\":    { \"type\": \"object\", \"dynamic\": true },
+              \"created_at\":      { \"type\": \"date\" },
+              \"updated_at\":      { \"type\": \"date\" }
+            }
+          }
+        }';
+      echo 'Elasticsearch assets index mapping ready.';
+      "
+    restart: "no"
+
 volumes:
   pgdata:
   iceberg-minio-data:
-  opensearch-data:
+  elasticsearch-data:

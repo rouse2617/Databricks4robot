@@ -1,4 +1,4 @@
-.PHONY: all dev-up dev-down pg-generate-scale iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test smoke build clean
+.PHONY: all dev-up dev-down all-up all-down all-logs pg-generate-scale iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test smoke build clean
 
 # ── Local infra ──────────────────────────────────────────
 dev-up:
@@ -7,6 +7,19 @@ dev-up:
 
 dev-down:
 	cd deploy/local && docker compose down
+
+all-up:
+	cd deploy/local && docker compose -f docker-compose.all.yml up -d --build
+	@echo "Frontend: http://localhost:5173"
+	@echo "Backend:  http://localhost:8080"
+	@echo "Trino:    http://localhost:8082"
+	@echo "ES:       http://localhost:9200"
+
+all-down:
+	cd deploy/local && docker compose -f docker-compose.all.yml down
+
+all-logs:
+	cd deploy/local && docker compose -f docker-compose.all.yml logs -f
 
 pg-generate-scale:
 	psql postgresql://postgres:postgres@localhost:5432/data4cyber \

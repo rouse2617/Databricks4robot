@@ -1,5 +1,5 @@
 // Package search provides the GET /api/v1/search/assets handler that
-// builds an OpenSearch bool query from query parameters.
+// builds an Elasticsearch bool query from query parameters.
 package search
 
 import (
@@ -9,19 +9,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"data-platform/internal/elasticsearch"
 	"data-platform/internal/httpresp"
-	"data-platform/internal/opensearch"
 )
 
-// Handler serves search endpoints backed by OpenSearch.
+// Handler serves search endpoints backed by Elasticsearch.
 type Handler struct {
-	os *opensearch.Client
+	es *elasticsearch.Client
 }
 
-// New creates a search Handler. If osClient is nil the handler will
+// New creates a search Handler. If esClient is nil the handler will
 // return 503 for all requests (graceful degradation).
-func New(osClient *opensearch.Client) *Handler {
-	return &Handler{os: osClient}
+func New(esClient *elasticsearch.Client) *Handler {
+	return &Handler{es: esClient}
 }
 
 // SearchAssets handles GET /api/v1/search/assets.
@@ -33,10 +33,10 @@ func New(osClient *opensearch.Client) *Handler {
 //	page       — 1-based page number (default 1)
 //	page_size  — results per page (default 20, max 200)
 func (h *Handler) SearchAssets(c *gin.Context) {
-	if h.os == nil {
+	if h.es == nil {
 		httpresp.Error(c, http.StatusServiceUnavailable,
 			httpresp.CodeServiceUnavailable,
-			"OpenSearch is not available", nil)
+			"Elasticsearch is not available", nil)
 		return
 	}
 
@@ -52,12 +52,12 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 	}
 
 	// Parse filter params: "field:op:value" where op can be eq, ne, gt, gte, lt, lte
-	var filters []opensearch.FilterOp
+	var filters []elasticsearch.FilterOp
 	validOps := map[string]bool{"eq": true, "ne": true, "gt": true, "gte": true, "lt": true, "lte": true}
 	for _, f := range c.QueryArray("filter") {
 		parts := strings.SplitN(f, ":", 3)
 		if len(parts) == 3 && validOps[parts[1]] {
-			filters = append(filters, opensearch.FilterOp{
+			filters = append(filters, elasticsearch.FilterOp{
 				Field: parts[0],
 				Op:    parts[1],
 				Value: parts[2],
@@ -65,18 +65,18 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 		}
 	}
 
-	req := opensearch.SearchRequest{
+	req := elasticsearch.SearchRequest{
 		Query:    q,
 		Filters:  filters,
 		Page:     page,
 		PageSize: pageSize,
 	}
 
-	result, err := h.os.Search(c.Request.Context(), req)
+	result, err := h.es.Search(c.Request.Context(), req)
 	if err != nil {
 		httpresp.Error(c, http.StatusServiceUnavailable,
 			httpresp.CodeServiceUnavailable,
-			"OpenSearch query failed: "+err.Error(), nil)
+			"Elasticsearch query failed: "+err.Error(), nil)
 		return
 	}
 

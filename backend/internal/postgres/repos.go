@@ -50,6 +50,15 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 	return &a, nil
 }
 
+// Set performs an upsert with optimistic concurrency control on the asset
+// version. The caller must populate a.Version with the version it observed
+// (typically from a prior Get). The version is bumped before write; the DO
+// UPDATE clause guards on the previous version, so concurrent writers race
+// safely:
+//
+//   - Insert (no conflict): always succeeds.
+//   - Update (conflict): succeeds only when the existing row's version equals
+//     the caller's expected version. Otherwise repository.ErrOptimisticLock.
 func (r *AssetRepo) Set(ctx context.Context, a *models.Asset) error {
 	now := time.Now().UTC()
 	if a.CreatedAt.IsZero() {
@@ -77,13 +86,17 @@ ON CONFLICT (asset_id) DO UPDATE SET
   cf_tag=EXCLUDED.cf_tag,
   cf_files=EXCLUDED.cf_files,
   updated_at=EXCLUDED.updated_at,
-  version=EXCLUDED.version`
-	err := r.c.db.Exec(ctx, q,
+  version=EXCLUDED.version
+WHERE assets.version = EXCLUDED.version - 1`
+	rowsAffected, err := r.c.db.ExecResult(ctx, q,
 		a.AssetID, a.McapFileID, a.StartTimestampNs, a.EndTimestampNs, a.SegmentLocator,
 		string(a.Status), meta, algo, tag, filesJSON, a.CreatedAt, a.UpdatedAt, a.Version,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres AssetRepo.Set: %w", err)
+	}
+	if rowsAffected == 0 {
+		return repository.ErrOptimisticLock
 	}
 	return nil
 }

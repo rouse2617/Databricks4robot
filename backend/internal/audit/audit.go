@@ -6,27 +6,51 @@ import (
 	"log/slog"
 
 	"data-platform/internal/middleware"
-	"data-platform/internal/postgres"
 )
 
-// db holds the postgres client used for writing audit events.
-var db *postgres.Client
+// Sink is the storage-agnostic interface used to persist audit events.
+//
+// The package keeps a single global sink so handlers can call audit.Log()
+// without threading a dependency through every layer. Implementations live
+// in the storage packages (e.g. internal/postgres) and a NoopSink is used
+// when the active backend has no audit storage.
+type Sink interface {
+	WriteEvent(ctx context.Context, e Event) error
+}
 
-// Init sets the postgres client for the audit package.
-// Must be called once at startup before any Log calls.
-func Init(pgClient *postgres.Client) {
-	db = pgClient
+// Event is a single audit record. resource_ids is JSON-serialized as a string
+// array; summary is serialized to a JSON object.
+type Event struct {
+	Actor          string
+	Action         string
+	ResourceType   string
+	ResourceIDs    []string
+	RequestSummary json.RawMessage
+	RequestID      string
+}
+
+// NoopSink discards all events; used when the active backend doesn't persist audit.
+type NoopSink struct{}
+
+// WriteEvent implements Sink.
+func (NoopSink) WriteEvent(_ context.Context, _ Event) error { return nil }
+
+// sink holds the configured sink. Defaults to NoopSink so Log() never panics
+// even before Init has been called.
+var sink Sink = NoopSink{}
+
+// Init sets the audit sink. Must be called once at startup.
+func Init(s Sink) {
+	if s == nil {
+		s = NoopSink{}
+	}
+	sink = s
 }
 
 // Log records an audit event. It extracts actor and request_id from context.
 // Errors are logged but never returned — audit must not break the request flow.
 func Log(ctx context.Context, action, resourceType string, resourceIDs []string, summary map[string]any) {
-	if db == nil {
-		slog.Warn("audit: not initialized, skipping", "action", action)
-		return
-	}
-
-	actor := "dev-token" // Phase 0 static token; will be replaced by OIDC subject in Phase 0.5
+	actor := "dev-token" // Phase 0 static token; will be replaced by OIDC subject in Phase 0.5.
 	requestID := middleware.RequestIDFromContext(ctx)
 
 	summaryJSON, err := json.Marshal(summary)
@@ -34,11 +58,14 @@ func Log(ctx context.Context, action, resourceType string, resourceIDs []string,
 		summaryJSON = []byte("{}")
 	}
 
-	const q = `
-INSERT INTO audit_events (actor, action, resource_type, resource_ids, request_summary, request_id)
-VALUES ($1, $2, $3, $4, $5, $6)`
-
-	if err := db.Exec(ctx, q, actor, action, resourceType, resourceIDs, summaryJSON, requestID); err != nil {
+	if err := sink.WriteEvent(ctx, Event{
+		Actor:          actor,
+		Action:         action,
+		ResourceType:   resourceType,
+		ResourceIDs:    resourceIDs,
+		RequestSummary: summaryJSON,
+		RequestID:      requestID,
+	}); err != nil {
 		slog.Error("audit: failed to write event", "action", action, "err", err)
 	}
 }

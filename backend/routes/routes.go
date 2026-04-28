@@ -91,7 +91,7 @@ func RegisterAll(
 		api.GET("/algo-registry", registryHandler.AlgoRegistry)
 		api.GET("/tag-registry", registryHandler.TagRegistry)
 
-		// Search endpoints (OpenSearch-backed)
+		// Search endpoints (Elasticsearch-backed)
 		if searchHandler != nil {
 			api.GET("/search/assets", searchHandler.SearchAssets)
 		}

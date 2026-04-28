@@ -83,14 +83,16 @@ export function useAssetsDiscoveryReducer(): [
   );
 
   // Track the latest query key to discard stale responses
-  const queryKeyRef = useRef(deriveQueryKey(state));
+  const currentKey = deriveQueryKey(state);
+  const queryKeyRef = useRef(currentKey);
 
   // ── Results fetch effect ──
-  // Fires when resultsState.isStale becomes true.
+  // Fires when resultsState.isStale becomes true OR when the derived query key
+  // changes. Depending on `state.queryState` directly would re-run on every
+  // dispatch because reducers always produce new references.
   useEffect(() => {
     if (!state.resultsState.isStale || !state.routerState.urlHydrated) return;
 
-    const currentKey = deriveQueryKey(state);
     queryKeyRef.current = currentKey;
 
     let cancelled = false;
@@ -105,7 +107,7 @@ export function useAssetsDiscoveryReducer(): [
         let total: number;
 
         if (state.queryState.searchMode === "keyword") {
-          // Keyword mode → OpenSearch via /search/assets
+          // Keyword mode → Elasticsearch via /search/assets
           const data = await searchApi.searchAssets({
             q: state.queryState.queryText || undefined,
             filter: filters.length > 0 ? filters : undefined,
@@ -158,7 +160,7 @@ export function useAssetsDiscoveryReducer(): [
       } catch (err) {
         if (cancelled || queryKeyRef.current !== currentKey) return;
 
-        // Auto-fallback: if keyword mode (OpenSearch) fails, retry with Postgres
+        // Auto-fallback: if keyword mode (Elasticsearch) fails, retry with Postgres
         if (state.queryState.searchMode === "keyword") {
           try {
             const fallbackData = await assetsApi.list({
@@ -184,7 +186,7 @@ export function useAssetsDiscoveryReducer(): [
             dispatch({
               type: "RESULTS_ERROR",
               payload: {
-                error: "OpenSearch 不可用，已降级到 Postgres 查询",
+                error: "Elasticsearch 不可用，已降级到 Postgres 查询",
               },
             });
             return;
@@ -207,7 +209,8 @@ export function useAssetsDiscoveryReducer(): [
     return () => {
       cancelled = true;
     };
-  }, [state.resultsState.isStale, state.queryState, state.routerState.urlHydrated]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.resultsState.isStale, state.routerState.urlHydrated, currentKey]);
 
   // ── Preview fetch effect ──
   // Fires when previewState.activeAssetId changes to a non-null value.

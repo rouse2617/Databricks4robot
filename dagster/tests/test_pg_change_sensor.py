@@ -59,34 +59,85 @@ class TestSensorExists:
         assert callable(pg_assets_change_sensor)
 
 
-class TestGetPgMaxUpdatedAt:
-    """Test the _get_pg_max_updated_at helper."""
+class FakeCursor:
+    def __init__(self, existing_tables, table_watermarks):
+        self.existing_tables = existing_tables
+        self.table_watermarks = table_watermarks
+        self._result = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query, params=None):
+        if "to_regclass" in query:
+            table = params[0]
+            self._result = (table if table in self.existing_tables else None,)
+            return
+
+        for table, watermark in self.table_watermarks.items():
+            if f"FROM {table}" in query:
+                self._result = (watermark,)
+                return
+
+        self._result = (None,)
+
+    def fetchone(self):
+        return self._result
+
+
+class TestGetPgChangeWatermark:
+    """Test the _get_pg_change_watermark helper."""
 
     def test_returns_none_on_connection_error(self):
         # Mock psycopg2 to simulate a connection error
         psycopg2_mock = MagicMock()
         psycopg2_mock.connect.side_effect = Exception("Connection refused")
         with patch.dict(sys.modules, {"psycopg2": psycopg2_mock}):
-            from sensors.pg_change_sensor import _get_pg_max_updated_at
-            result = _get_pg_max_updated_at()
+            from sensors.pg_change_sensor import _get_pg_change_watermark
+            result = _get_pg_change_watermark()
             assert result is None
 
-    def test_returns_iso_string_on_success(self):
+    def test_prefers_latest_event_or_fallback_watermark(self):
         from datetime import datetime, timezone
 
-        ts = datetime(2025, 7, 15, 12, 0, 0, tzinfo=timezone.utc)
-        mock_cursor = MagicMock()
-        mock_cursor.fetchone.return_value = (ts,)
-        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_cursor.__exit__ = MagicMock(return_value=False)
+        event_ts = datetime(2025, 7, 15, 12, 0, 0, tzinfo=timezone.utc)
+        asset_ts = datetime(2025, 7, 15, 12, 5, 0, tzinfo=timezone.utc)
+        cursor = FakeCursor(
+            existing_tables={"asset_events", "assets"},
+            table_watermarks={"asset_events": event_ts, "assets": asset_ts},
+        )
 
         mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
+        mock_conn.cursor.return_value = cursor
 
         psycopg2_mock = MagicMock()
         psycopg2_mock.connect.return_value = mock_conn
 
         with patch.dict(sys.modules, {"psycopg2": psycopg2_mock}):
-            from sensors.pg_change_sensor import _get_pg_max_updated_at
-            result = _get_pg_max_updated_at()
-            assert result == ts.isoformat()
+            from sensors.pg_change_sensor import _get_pg_change_watermark
+            result = _get_pg_change_watermark()
+            assert result == f"assets:{asset_ts.isoformat()}"
+
+    def test_returns_event_watermark_when_event_table_is_latest(self):
+        from datetime import datetime, timezone
+
+        event_ts = datetime(2025, 7, 15, 12, 10, 0, tzinfo=timezone.utc)
+        asset_ts = datetime(2025, 7, 15, 12, 5, 0, tzinfo=timezone.utc)
+        cursor = FakeCursor(
+            existing_tables={"asset_events", "assets"},
+            table_watermarks={"asset_events": event_ts, "assets": asset_ts},
+        )
+
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = cursor
+
+        psycopg2_mock = MagicMock()
+        psycopg2_mock.connect.return_value = mock_conn
+
+        with patch.dict(sys.modules, {"psycopg2": psycopg2_mock}):
+            from sensors.pg_change_sensor import _get_pg_change_watermark
+            result = _get_pg_change_watermark()
+            assert result == f"asset_events:{event_ts.isoformat()}"

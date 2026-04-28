@@ -225,7 +225,7 @@ func TestMcapJSONHelpers(t *testing.T) {
 
 func TestAssetRepo(t *testing.T) {
 	ctx := context.Background()
-	db := &fakeDB{}
+	db := &fakeDB{execRowsAffected: 1}
 	repo := &AssetRepo{c: &Client{db: db}}
 
 	if got, err := repo.Get(ctx, "a1"); err != nil || got != nil {
@@ -257,6 +257,13 @@ func TestAssetRepo(t *testing.T) {
 		t.Fatalf("expected set error")
 	}
 	db.execErr = nil
+
+	// Optimistic lock: zero rows affected (CAS mismatch) maps to ErrOptimisticLock.
+	db.execRowsAffected = 0
+	if err := repo.Set(ctx, &models.Asset{AssetID: "a4"}); !errors.Is(err, repository.ErrOptimisticLock) {
+		t.Fatalf("expected ErrOptimisticLock on row CAS miss, got %v", err)
+	}
+	db.execRowsAffected = 1
 
 	if err := repo.SoftDelete(ctx, "a1"); err != nil {
 		t.Fatalf("soft delete err: %v", err)

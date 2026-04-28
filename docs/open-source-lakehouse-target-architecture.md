@@ -29,7 +29,7 @@
 - `Postgres` 继续承担控制面和事务型元数据
 - `Iceberg + Nessie` 成为长期历史真相和可复现数据底座
 - `Spark + Flink + Dagster` 承担批流一体加工和重算
-- `OpenSearch` 承担强检索
+- `Elasticsearch` 承担强检索
 - `OpenMetadata/DataHub + OpenLineage/Marquez` 承担治理、血缘、审计
 
 如果只回答一句话：你现在不是“要不要 Bigtable”，而是“要不要把 Bigtable 从唯一事实源降级为服务层”。答案是要。
@@ -86,7 +86,7 @@
 | 大规模重算 | Lakehouse + 编排 | `Spark backfill jobs` + `Nessie branch` + `gold_recompute_batches` |
 | 训练集构建 | Gold 层 | `gold_dataset_snapshots` + `gold_dataset_snapshot_items` |
 | 训练复现 | Gold + Catalog | `dataset snapshot ref` + `Iceberg snapshot id` + `training_manifest` |
-| 强检索 | 搜索服务层 | `gold_asset_search_docs` -> `OpenSearch`，可选 `Qdrant` |
+| 强检索 | 搜索服务层 | `gold_asset_search_docs` -> `Elasticsearch`，可选 `Qdrant` |
 | 数据管理 | Silver / Gold / Governance | 生命周期字段、血缘、审计、交付、治理目录 |
 
 ---
@@ -95,7 +95,7 @@
 
 ### 4.1 首选方案
 
-`Iceberg + Nessie + Spark + Flink + Trino + Dagster + OpenSearch + OpenMetadata + OpenLineage/Marquez`
+`Iceberg + Nessie + Spark + Flink + Trino + Dagster + Elasticsearch + OpenMetadata + OpenLineage/Marquez`
 
 这是最贴近你当前仓库和未来需求的一套开源方案。
 
@@ -158,7 +158,7 @@ flowchart LR
     end
 
     subgraph Serving[服务层]
-        Search[OpenSearch<br/>关键词 / facet / hybrid retrieval]
+        Search[Elasticsearch<br/>关键词 / facet / hybrid retrieval]
         Vector[Qdrant 可选<br/>向量召回]
         PG[Postgres<br/>控制面 / 工作流 / Saved Views]
         BT[Bigtable 可选过渡层<br/>在线点查 / 兼容现有路径]
@@ -218,7 +218,7 @@ flowchart LR
 | 流处理 | `Flink` | CDC、增量索引、近实时同步 | 分阶段必选 | 用于增量搜索索引、事件投影 |
 | 交互查询 | `Trino` | SQL 分析、运营查询、临时回溯 | 强烈建议 | 替代直接查线上库做分析 |
 | 编排 | `Dagster` | 任务调度、依赖编排、回灌编排 | 是 | 当前仓库已有骨架 |
-| 搜索 | `OpenSearch` | facet、关键词、过滤、排序、混合召回 | 是 | 对应 `assets-discovery` 工作台 |
+| 搜索 | `Elasticsearch` | facet、关键词、过滤、排序、混合召回 | 是 | 对应 `assets-discovery` 工作台 |
 | 治理目录 | `OpenMetadata` 或 `DataHub` | 资产目录、owner、schema、数据集说明 | 强烈建议 | 把 segment/dataset/delivery 变成可治理资产 |
 | 血缘审计 | `OpenLineage + Marquez` | 作业和表级血缘、运行审计 | 强烈建议 | 结合 Dagster/Spark/Flink |
 
@@ -489,12 +489,12 @@ Gold 不是事实源，而是给搜索、训练、交付、报表直接消费的
 | 粒度 | 1 行 = 1 个可检索的 asset 文档 |
 | 主键 | `asset_id` |
 | 关键字段 | `asset_id`, `segment_locator`, `title`, `search_text`, `owner`, `reviewer`, `status`, `env`, `task`, `seg_type`, `tag_json`, `algo_status_summary_json`, `delivery_flags_json`, `thumbnail_uri`, `preview_manifest_uri`, `raw_mcap_uri`, `created_at`, `updated_at` |
-| 去向 | 同步到 `OpenSearch` |
+| 去向 | 同步到 `Elasticsearch` |
 
 这里的关键原则：
 
 - `gold_asset_search_docs` 是搜索投影，不是事实主表
-- 任何搜索优化都优先做在这张表和 OpenSearch mapping 上
+- 任何搜索优化都优先做在这张表和 Elasticsearch mapping 上
 - 不要把高级检索压回 Bigtable 或 Postgres 事务表
 
 ### 7.4.2 `gold_asset_embeddings`
@@ -504,7 +504,7 @@ Gold 不是事实源，而是给搜索、训练、交付、报表直接消费的
 | 粒度 | 1 行 = 1 个 asset 的 1 套 embedding |
 | 主键 | `asset_id + embedding_model + embedding_version + embedding_source` |
 | 关键字段 | `asset_id`, `embedding_source`, `embedding_model`, `embedding_version`, `vector_uri`, `summary_text`, `generated_at` |
-| 去向 | 同步到 `Qdrant` 或 `OpenSearch Vector` |
+| 去向 | 同步到 `Qdrant` 或 `Elasticsearch Vector` |
 
 `embedding_source` 可以是：
 
@@ -593,7 +593,7 @@ Gold 不是事实源，而是给搜索、训练、交付、报表直接消费的
 
 ### 8.1 元数据过滤检索
 
-由 `OpenSearch` 负责。
+由 `Elasticsearch` 负责。
 
 主要字段来自 `gold_asset_search_docs`：
 
@@ -628,7 +628,7 @@ Gold 不是事实源，而是给搜索、训练、交付、报表直接消费的
 
 ### 8.2 语义检索
 
-由 `gold_asset_embeddings` + `Qdrant` 或 `OpenSearch Vector` 负责。
+由 `gold_asset_embeddings` + `Qdrant` 或 `Elasticsearch Vector` 负责。
 
 适用场景：
 
@@ -640,7 +640,7 @@ Gold 不是事实源，而是给搜索、训练、交付、报表直接消费的
 
 最终查询建议是：
 
-- 先在 `OpenSearch` 做结构化过滤
+- 先在 `Elasticsearch` 做结构化过滤
 - 再在向量库做相似召回
 - 最后做重排
 
@@ -704,7 +704,7 @@ Bigtable 不适合单独承担的事情：
 - 建 `silver_assets_current/history`
 - 建 `silver_asset_tags/files/algo_latest/algo_runs`
 - 建 `gold_asset_search_docs`
-- 建 `OpenSearch` 索引同步链路
+- 建 `Elasticsearch` 索引同步链路
 
 ### Phase 3：建立 dataset snapshot 与训练复现
 
@@ -744,7 +744,7 @@ Bigtable 不适合单独承担的事情：
 - `Nessie`
 - `Spark`
 - `Dagster`
-- `OpenSearch`
+- `Elasticsearch`
 - `Postgres`
 
 这个版本已经能解决：
@@ -777,7 +777,7 @@ Bigtable 不适合单独承担的事情：
 | `deliveries` | `silver_deliveries` |
 | `delivery_items` | `silver_delivery_items` |
 | `Dagster sensor/job` | `Bronze/Silver/Gold` 编排和重算入口 |
-| `Assets Discovery` | `gold_asset_search_docs` + `OpenSearch` |
+| `Assets Discovery` | `gold_asset_search_docs` + `Elasticsearch` |
 
 ---
 
@@ -790,7 +790,7 @@ Bigtable 不适合单独承担的事情：
 - 服务层保留 `Backend + Postgres`
 - 在线热点或过渡兼容层保留 `Bigtable`
 - 历史和分析底座切到 `Iceberg + Nessie`
-- 检索切到 `OpenSearch`
+- 检索切到 `Elasticsearch`
 - 编排统一到 `Dagster`
 - 批流加工用 `Spark + Flink`
 - 治理补上 `OpenMetadata/DataHub + OpenLineage/Marquez`

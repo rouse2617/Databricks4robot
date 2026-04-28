@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# init-index.sh — Create the `assets` index in OpenSearch with proper mapping.
-# Usage: ./init-index.sh [OPENSEARCH_URL]
-#   Default OPENSEARCH_URL = http://localhost:9200
+# init-index.sh — Create the `assets` index in Elasticsearch with proper mapping.
+# Usage: ./init-index.sh [ELASTICSEARCH_URL]
+#   Default ELASTICSEARCH_URL = http://localhost:9200
 
 set -euo pipefail
 
 OS_URL="${1:-http://localhost:9200}"
 
-echo "⏳ Waiting for OpenSearch at ${OS_URL} ..."
+echo "⏳ Waiting for Elasticsearch at ${OS_URL} ..."
 until curl -sf "${OS_URL}/_cluster/health" > /dev/null 2>&1; do
   sleep 2
 done
-echo "✅ OpenSearch is ready."
+echo "✅ Elasticsearch is ready."
 
 # Delete existing index if present (idempotent re-run).
 curl -sf -X DELETE "${OS_URL}/assets" > /dev/null 2>&1 || true

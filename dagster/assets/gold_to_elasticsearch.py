@@ -1,9 +1,9 @@
 """
-Dagster asset: gold_to_opensearch — incremental sync from
-gold_asset_search_docs Iceberg table to OpenSearch bulk API.
+Dagster asset: gold_to_elasticsearch — incremental sync from
+gold_asset_search_docs Iceberg table to Elasticsearch bulk API.
 
 Reads rows where _sync_timestamp > last watermark, converts to
-OpenSearch bulk upsert (index action, doc_id = asset_id).
+Elasticsearch bulk upsert (index action, doc_id = asset_id).
 """
 
 import json
@@ -17,9 +17,9 @@ from dagster import asset, Output, AssetExecutionContext
 # Configuration
 # ---------------------------------------------------------------------------
 
-OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://localhost:9200")
-OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX", "assets")
-BULK_BATCH_SIZE = int(os.getenv("OS_BULK_BATCH_SIZE", "500"))
+ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_INDEX", "assets")
+BULK_BATCH_SIZE = int(os.getenv("ES_BULK_BATCH_SIZE", "500"))
 
 ICEBERG_REST_URI = os.getenv("ICEBERG_REST_URI", "http://localhost:8183")
 S3_ENDPOINT = os.getenv("S3_ENDPOINT", "http://localhost:9000")
@@ -34,7 +34,7 @@ PG_PASSWORD = os.getenv("PG_PASSWORD", "postgres")
 PG_DATABASE = os.getenv("PG_DATABASE", "data4cyber")
 
 CATALOG_NS = "rest_catalog.default"
-WATERMARK_KEY = "gold_to_opensearch"
+WATERMARK_KEY = "gold_to_elasticsearch"
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ def _get_spark():
 
     return (
         SparkSession.builder
-        .appName("gold_to_opensearch")
+        .appName("gold_to_elasticsearch")
         .config("spark.sql.catalog.rest_catalog", "org.apache.iceberg.spark.SparkCatalog")
         .config("spark.sql.catalog.rest_catalog.type", "rest")
         .config("spark.sql.catalog.rest_catalog.uri", ICEBERG_REST_URI)
@@ -115,7 +115,7 @@ def _write_watermark(value: str) -> None:
 
 def _bulk_upsert(docs: list[dict]) -> tuple[int, int]:
     """
-    Send documents to OpenSearch via the _bulk API.
+    Send documents to Elasticsearch via the _bulk API.
     Returns (success_count, error_count).
     """
     import urllib.request
@@ -126,14 +126,14 @@ def _bulk_upsert(docs: list[dict]) -> tuple[int, int]:
     lines: list[str] = []
     for doc in docs:
         doc_id = doc.get("asset_id", "")
-        action = json.dumps({"index": {"_index": OPENSEARCH_INDEX, "_id": doc_id}})
+        action = json.dumps({"index": {"_index": ELASTICSEARCH_INDEX, "_id": doc_id}})
         lines.append(action)
         lines.append(json.dumps(doc, default=str))
 
     body = "\n".join(lines) + "\n"
 
     req = urllib.request.Request(
-        f"{OPENSEARCH_URL}/_bulk",
+        f"{ELASTICSEARCH_URL}/_bulk",
         data=body.encode("utf-8"),
         headers={"Content-Type": "application/x-ndjson"},
         method="POST",
@@ -152,7 +152,7 @@ def _bulk_upsert(docs: list[dict]) -> tuple[int, int]:
 
 
 def _row_to_doc(row: dict) -> dict:
-    """Convert a Spark Row (as dict) to an OpenSearch document."""
+    """Convert a Spark Row (as dict) to an Elasticsearch document."""
     doc: dict = {}
     skip_keys = {"_sync_timestamp", "_source_db", "_source_table", "_dagster_run_id"}
     for k, v in row.items():
@@ -174,18 +174,18 @@ def _row_to_doc(row: dict) -> dict:
 
 
 @asset(
-    group_name="opensearch",
+    group_name="elasticsearch",
     deps=["gold_asset_search_docs"],
     description=(
         "Incremental sync from gold_asset_search_docs Iceberg table "
-        "to OpenSearch 'assets' index via bulk API."
+        "to Elasticsearch 'assets' index via bulk API."
     ),
 )
-def gold_to_opensearch(context: AssetExecutionContext) -> Output[dict]:
+def gold_to_elasticsearch(context: AssetExecutionContext) -> Output[dict]:
     """
     1. Read watermark (last _sync_timestamp synced).
     2. Query gold_asset_search_docs WHERE _sync_timestamp > watermark.
-    3. Batch bulk upsert to OpenSearch.
+    3. Batch bulk upsert to Elasticsearch.
     4. Update watermark.
     """
     spark = _get_spark()
@@ -213,7 +213,7 @@ def gold_to_opensearch(context: AssetExecutionContext) -> Output[dict]:
                 },
             )
 
-        context.log.info(f"Syncing {total_rows} rows to OpenSearch ...")
+        context.log.info(f"Syncing {total_rows} rows to Elasticsearch ...")
 
         # Collect rows and batch-send
         rows = [row.asDict() for row in gold.collect()]

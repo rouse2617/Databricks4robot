@@ -13,7 +13,7 @@ from dagster import assets as dagster_assets
 from dagster.assets import postgres_to_bronze
 from dagster.assets import bronze_to_silver
 from dagster.assets import silver_to_gold
-from dagster.assets import gold_to_opensearch
+from dagster.assets import gold_to_elasticsearch
 
 defs = Definitions(
     assets=load_assets_from_modules([
@@ -21,7 +21,7 @@ defs = Definitions(
         postgres_to_bronze,
         bronze_to_silver,
         silver_to_gold,
-        gold_to_opensearch,
+        gold_to_elasticsearch,
     ]),
     jobs=[ingest_mcap_job, lakehouse_sync_job, iceberg_maintenance_job],
     sensors=[mcap_upload_sensor, pg_assets_change_sensor],

@@ -1,15 +1,18 @@
 # CLAUDE.md
 
-Practical project guidance for coding agents working in `data-platform`.
+Practical project guidance for coding agents working in `Databricks4robot`.
 
 ## What This Repo Is
 
-`data-platform` is a single-backend-process asset platform for MCAP-oriented metadata, delivery tracking, and SDK/frontend integration.
+`Databricks4robot` is a single-backend-process asset platform for MCAP-oriented metadata, delivery tracking, search, lakehouse analysis, and SDK/frontend integration.
 
 - Backend: Go + Gin (`backend/`)
 - SDK: Python + httpx + pydantic (`sdk/`)
 - Frontend: React + TypeScript (`Frontend/`)
-- Orchestration skeleton: Dagster (`dagster/`)
+- Orchestration: Dagster (`dagster/`)
+- Online store: PostgreSQL by default, Bigtable retained as an alternate backend
+- Search: Elasticsearch (`backend/internal/elasticsearch`, `/api/v1/search/assets`)
+- Lakehouse query layer: Trino over Iceberg (`backend/internal/trino`, `/api/v1/lakehouse/*`)
 
 ## Current Architecture (Source of Truth)
 
@@ -17,20 +20,24 @@ Practical project guidance for coding agents working in `data-platform`.
 
 - **Single process only**: `backend/cmd/server/main.go`
 - **Router entry**: `backend/routes/routes.go`
-- **Storage backend switch**: `STORAGE_BACKEND=bigtable|postgres`
+- **Storage backend**: PostgreSQL only. `STORAGE_BACKEND=postgres` (default).
+  - `STORAGE_BACKEND=bigtable` is **DEPRECATED**: the server fails fast at startup. The `internal/bigtable` package is kept as historical reference and is scheduled for removal; do not add new features against it.
 
 ### Backend layering
 
 - `handler -> usecase -> repository`
-- Handlers: `backend/internal/handlers/{asset,mcap,delivery}`
+- Handlers: `backend/internal/handlers/{asset,mcap,delivery,registry,search,lakehouse}`
 - Usecases: `backend/internal/usecase/`
 - Repositories:
-  - Bigtable: `backend/internal/bigtable/client.go`, `backend/internal/bigtable/repos.go`
-  - Postgres: `backend/internal/postgres/client.go`, `backend/internal/postgres/repos.go`
+  - Postgres (active): `backend/internal/postgres/client.go`, `backend/internal/postgres/repos.go`
+  - Bigtable (DEPRECATED, retained as reference): `backend/internal/bigtable/`
+- Optional service clients:
+  - Elasticsearch: `backend/internal/elasticsearch/client.go`
+  - Trino: `backend/internal/trino/client.go`
 
 ### Data schema sources
 
-- Bigtable schema source: `schemas/sql.md` in the `data4cyber` repository
+- Bigtable/logical schema source: `docs/sql.md`
 - OpenAPI source: `api/openapi.yaml`
 - PG schema: `schemas/pg-phase0.sql`
 
@@ -45,6 +52,8 @@ Practical project guidance for coding agents working in `data-platform`.
 | Tag 注册表 | `backend/config/tag_registry.yaml` | Tag 类型、枚举值 |
 | 数据模型 | `docs/algo-lifecycle-and-data-model.md` | 算法生命周期设计 |
 | Bigtable Schema | `docs/sql.md` | 表结构、行键、列族 |
+| Lakehouse 查询边界 | `docs/lakehouse-query-and-tag-filtering.md` | Postgres / Trino / Iceberg 查询职责 |
+| 后训练平台架构 | `docs/advanced-training-data-platform-architecture.md` | 长期架构演进 |
 
 ## Removed / Disabled Capabilities
 
@@ -54,6 +63,8 @@ These are intentionally removed and should not be reintroduced unless explicitly
 - `/api/v1/mcap/upload/init`
 - `/api/v1/mcap/:id/download-url`
 - Multi-process backend split (`asset-service`, `mcap-gateway`, `delivery-service`)
+- OpenSearch runtime/code paths (Elasticsearch is the current search backend)
+- Bigtable storage backend at runtime (`STORAGE_BACKEND=bigtable` fails fast; package retained as historical reference, do not extend)
 
 ## API Conventions (Must Keep)
 
@@ -126,9 +137,14 @@ From `backend/.env.example`:
 - `ENV`, `PORT`, `STORAGE_BACKEND`
 - `BIGTABLE_PROJECT`, `BIGTABLE_INSTANCE`
 - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- `TRINO_ENABLED`, `TRINO_URL`, `TRINO_CATALOG`, `TRINO_SCHEMA`, `LAKEHOUSE_REPORT_PATH`
+- `ELASTICSEARCH_URL`
 - `GCS_PROJECT`, `GCS_DERIVED_BUCKET`
 - `PUBSUB_PROJECT`, `TOPIC_MCAP_FINALIZED`, `TOPIC_ASSET_EVENTS`
 - `GRACE_TOKEN`
+- `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
+- `CB_ENABLED`, `CB_WINDOW_SEC`, `CB_THRESHOLD`, `CB_COOLDOWN_SEC`
+- `LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`
 - `GOOGLE_APPLICATION_CREDENTIALS` (optional local)
 
 ## 功能开发后必须更新的文件清单
@@ -141,9 +157,11 @@ From `backend/.env.example`:
 |------|------|
 | `backend/internal/handlers/*/` | 新增 handler 方法 |
 | `backend/internal/usecase/*/` | 新增业务逻辑 |
-| `backend/internal/repository/repository.go` | 接口定义（如需新仓库方法） |
+| `backend/internal/repository/*.go` | 接口定义（如需新仓库方法） |
 | `backend/internal/bigtable/repos.go` | Bigtable 实现 |
 | `backend/internal/postgres/repos.go` | PostgreSQL 实现 |
+| `backend/internal/elasticsearch/client.go` | 搜索客户端变更（如影响 search API） |
+| `backend/internal/trino/client.go` | 湖仓查询客户端变更（如影响 lakehouse API） |
 | `backend/routes/routes.go` | 注册路由 |
 | `backend/cmd/server/main.go` | 依赖注入接线 |
 | `api/openapi.yaml` | OpenAPI 规范 |
@@ -168,13 +186,9 @@ From `backend/.env.example`:
 
 ### 新增 Bigtable 表或列族
 
-| 文件 | 说明 |
-|------|------|
-| `backend/scripts/bootstrap_bigtable.sh` | 表/列族创建脚本 |
-| `backend/internal/bigtable/client.go` | 表名常量 + 列族常量 |
-| `backend/internal/bigtable/repos.go` | 仓库实现 |
-| `backend/internal/bigtable/repos_test.go` | 单元测试（fakeTable） |
-| `backend/README.md` | Bigtable 表结构表格 |
+> **DEPRECATED — do not add.** Bigtable is no longer a supported runtime backend.
+> If new storage requirements arise, extend `internal/postgres` and the
+> repository interfaces in `internal/repository`.
 
 ### 修改 Model 字段
 
@@ -223,6 +237,6 @@ From `backend/.env.example`:
 - [ ] 如果改了 API → 更新 `docs/api-guide.md`
 - [ ] 如果改了架构/流程 → 更新 `backend/README.md`
 - [ ] 如果改了约定/规则 → 更新 `CLAUDE.md`
-- [ ] 如果改了 Bigtable 表结构 → 更新 `scripts/bootstrap_bigtable.sh` + `client.go` 常量
+- [ ] **Do not** add new code against `internal/bigtable` (deprecated)
 - [ ] 如果新增了算法/Tag → 更新对应 YAML 注册表
 - [ ] 新代码有对应的单元测试

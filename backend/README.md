@@ -82,7 +82,7 @@ make run
 | `TRINO_URL` | Trino SQL driver URL | `http://data-platform@localhost:8082` |
 | `TRINO_CATALOG` | Trino Iceberg catalog | `iceberg` |
 | `TRINO_SCHEMA` | Trino Iceberg schema/namespace | `robot` |
-| `OPENSEARCH_URL` | OpenSearch 连接地址 | `http://localhost:9200` |
+| `ELASTICSEARCH_URL` | Elasticsearch 连接地址 | `http://localhost:9200` |
 
 ## API 端点
 
@@ -126,13 +126,13 @@ make run
 | `GET` | `/api/v1/algo-registry` | 已注册算法列表 (从 algo_registry.yaml) |
 | `GET` | `/api/v1/tag-registry` | 已注册标签列表 (从 tag_registry.yaml) |
 
-### 搜索 (Search — OpenSearch)
+### 搜索 (Search — Elasticsearch)
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/v1/search/assets` | 全文检索资产 (multi_match + term filters + aggregations) |
 
-需要 OpenSearch 服务运行。当 OpenSearch 不可用时返回 503，前端降级到 Postgres 查询。
+需要 Elasticsearch 服务运行。当 Elasticsearch 不可用时返回 503，前端降级到 Postgres 查询。
 
 ### Lakehouse / Trino
 
@@ -208,12 +208,12 @@ backend/
 │   │   ├── delivery/    # 交付 handler
 │   │   ├── mcap/        # MCAP 文件 handler
 │   │   ├── registry/    # 算法注册表 + 标签注册表 handler
-│   │   ├── search/      # OpenSearch 检索 handler
+│   │   ├── search/      # Elasticsearch 检索 handler
 │   │   └── lakehouse/   # 湖仓查询 handler
 │   ├── httpresp/        # 统一错误响应
 │   ├── middleware/       # RequestID, RequestGuard, StaticTokenAuth, RateLimit, CircuitBreaker
 │   ├── models/          # 领域模型 (Asset, McapFile, Delivery, AlgoEvent)
-│   ├── opensearch/      # OpenSearch Go 客户端 (Search/BulkIndex)
+│   ├── elasticsearch/      # Elasticsearch Go 客户端 (Search/BulkIndex)
 │   ├── audit/           # 审计日志 (audit.Log)
 │   ├── repository/      # 仓库接口定义
 │   └── usecase/asset/   # 业务逻辑 (Usecase + AlgoUsecase)
@@ -374,28 +374,28 @@ go run ./scripts/bench -c 20 -n 500 -s get
 
 初始化: `make bt-bootstrap` 或 `bash scripts/bootstrap_bigtable.sh`
 
-## OpenSearch 检索层
+## Elasticsearch 检索层
 
-Phase 2 新增 OpenSearch 作为全文检索引擎，与 Postgres 互补：
+Phase 2 新增 Elasticsearch 作为全文检索引擎，与 Postgres 互补：
 
 - Postgres 负责 OLTP 精确查询（filter/sort/分页）
-- OpenSearch 负责全文模糊搜索、facet 聚合计数
+- Elasticsearch 负责全文模糊搜索、facet 聚合计数
 
-### 启动 OpenSearch
+### 启动 Elasticsearch
 
 ```bash
-# 全栈启动（包含 OpenSearch）
+# 全栈启动（包含 Elasticsearch）
 cd deploy/local
 docker compose -f docker-compose.all.yml up -d
 
-# 验证 OpenSearch 健康
+# 验证 Elasticsearch 健康
 curl http://localhost:9200/_cluster/health
 ```
 
 ### 索引初始化
 
 ```bash
-bash deploy/local/opensearch/init-index.sh
+bash deploy/local/elasticsearch/init-index.sh
 ```
 
 创建 `assets` 索引，mapping 包含 keyword/text/date/numeric 字段。
@@ -408,14 +408,14 @@ curl "$BASE/api/v1/search/assets?q=warehouse+rain&filter=status:eq:approved&page
   -H "X-Grace-Token: $TOKEN"
 ```
 
-- `q` 参数 → OpenSearch `multi_match` query（fields: notes, owner, reviewer, task）
+- `q` 参数 → Elasticsearch `multi_match` query（fields: notes, owner, reviewer, task）
 - `filter` 参数 → `bool.filter` term/range queries
 - 返回 `aggregations` 用于 facet 计数
 
 ### 数据同步
 
-数据通过 Dagster pipeline 同步：Postgres → Bronze → Silver → Gold → OpenSearch。
-`gold_to_opensearch` asset 从 Gold 层 `gold_asset_search_docs` 增量同步到 OpenSearch。
+数据通过 Dagster pipeline 同步：Postgres → Bronze → Silver → Gold → Elasticsearch。
+`gold_to_elasticsearch` asset 从 Gold 层 `gold_asset_search_docs` 增量同步到 Elasticsearch。
 
 ## 审计日志
 

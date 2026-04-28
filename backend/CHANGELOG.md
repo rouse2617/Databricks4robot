@@ -4,20 +4,37 @@
 
 ## [Unreleased]
 
+### Deprecated / Breaking
+- **Bigtable 存储后端运行期下线** — `STORAGE_BACKEND=bigtable` 启动时直接 `slog.Error` + `os.Exit(1)`；`internal/bigtable` 包暂保留为历史参考，禁止新增功能或测试。后续会整体移除。`.env.example` 已注释相关变量。
+
+### Added
+- **Asset PATCH 乐观锁** — `postgres.AssetRepo.Set` 增加版本 CAS（`WHERE assets.version = EXCLUDED.version - 1`），并发更新冲突时返回 `repository.ErrOptimisticLock`，handler 映射到 `409 CONCURRENT_CONFLICT`。
+
+### Changed
+- **`audit` 模块解耦存储** — 抽出 `audit.Sink` 接口 + `NoopSink`，`audit.Init` 接收 sink；`postgres.NewAuditSink` 提供 PG 实现，不再静默丢失 audit 调用。
+- **`lakehouse.Handler` 显式参数** — `New(reportPath, trinoClient, pgClient)` 改为显式 `pgClient`，去除变长可选参数。
+
+### Documentation
+- `docs/algo-lifecycle-and-data-model.md` 状态名 `success` 全部对齐为代码权威 `ok`，状态机补 `blocked`。
+- `CLAUDE.md` 同步当前架构（PostgreSQL 单后端、Bigtable 标记为 Deprecated、Elasticsearch、Trino）、环境变量与文档索引。
+- `deploy/local/docker-compose.all.yml` 新增 `elasticsearch-init` 容器，自动建索引；`Makefile` 新增 `all-up / all-down / all-logs`。
+
+## [0.2.0] — 2026-04-28
+
 ### Added — Phase 2: 前端完善 + 新功能 + 湖仓开发
 
 #### 后端新增接口
 - **`GET /api/v1/deliveries`** — 交付列表接口，支持分页（page/page_size）和可选 status 过滤
 - **`GET /api/v1/algo-registry`** — 已注册算法列表，读取 `config/algo_registry.yaml`，返回 key/name/version/depends_on
 - **`GET /api/v1/tag-registry`** — 已注册标签列表，读取 `config/tag_registry.yaml`，返回 key/type/values/max_length
-- **`GET /api/v1/search/assets`** — OpenSearch 全文检索接口，支持 multi_match 查询 + term 过滤 + 聚合
+- **`GET /api/v1/search/assets`** — Elasticsearch 全文检索接口，支持 multi_match 查询 + term 过滤 + 聚合
 - **`GET /api/v1/lakehouse/sync-status`** — 湖仓同步状态，返回最近对账结果（watermark、行数、耗时、对账状态）
 
-#### OpenSearch 检索层
-- **OpenSearch Go 客户端** — `internal/opensearch/client.go`，封装 Search/BulkIndex 方法
-- **Search Handler** — `handlers/search/handler.go`，构建 OpenSearch bool query（multi_match + term filters + aggregations）
-- **Docker Compose** — `docker-compose.all.yml` 新增 `opensearch` 服务（opensearchproject/opensearch:2，单节点，禁用安全插件，端口 9200）
-- **Index Mapping** — `deploy/local/opensearch/init-index.sh`，创建 `assets` 索引 + mapping（keyword/text/date/numeric 字段）
+#### Elasticsearch 检索层
+- **Elasticsearch Go 客户端** — `internal/elasticsearch/client.go`，封装 Search/BulkIndex 方法
+- **Search Handler** — `handlers/search/handler.go`，构建 Elasticsearch bool query（multi_match + term filters + aggregations）
+- **Docker Compose** — `docker-compose.all.yml` 新增 `elasticsearch` 服务（docker.elastic.co/elasticsearch/elasticsearch:8.13.4，单节点，禁用安全特性，端口 9200）
+- **Index Mapping** — `deploy/local/elasticsearch/init-index.sh`，创建 `assets` 索引 + mapping（keyword/text/date/numeric 字段）
 
 #### 审计日志
 - **`audit_events` 表** — migration `005_audit_events.sql`，记录操作人、时间、操作类型、受影响资源 ID、请求摘要
@@ -30,7 +47,7 @@
 - **`postgres_to_bronze`** — 增量读取 Postgres 5 张表，按 `updated_at > watermark` 写入 Bronze Iceberg 表，包含审计列
 - **`bronze_to_silver`** — 从 Bronze 聚合生成 Silver 当前态（silver_assets_current、silver_asset_tags、silver_asset_algo_latest、silver_mcap_files_current、silver_deliveries_current）
 - **`silver_to_gold`** — 生成 Gold 消费层（gold_dataset_snapshot_items、gold_asset_search_docs）+ 数据对账
-- **`gold_to_opensearch`** — 从 Gold 层增量同步到 OpenSearch，bulk API
+- **`gold_to_elasticsearch`** — 从 Gold 层增量同步到 Elasticsearch，bulk API
 - **Iceberg 维护 job** — 每 24h 执行 expire_snapshots（7 天）、rewrite_data_files（compaction）、remove_orphan_files
 - **Postgres change sensor** — 轮询 `max(updated_at)` 变化时触发 pipeline
 
@@ -42,11 +59,11 @@
 - **资产详情页增强** — 交付历史 Tab、标签内联编辑、segment_locator 显示、GCS URI 复制按钮、启动算法 Modal
 - **MCAP 文件页增强** — `McapDetailDrawer`（元数据 + 关联资产 Table + Foxglove 按钮）
 - **湖仓验证页** — 同步状态卡片、Postgres vs Iceberg 行数对比表格
-- **搜索增强** — AssetsSearchBar 新增 Keyword 模式，查询走 OpenSearch
+- **搜索增强** — AssetsSearchBar 新增 Keyword 模式，查询走 Elasticsearch
 
 ### Changed
-- **Backend `depends_on`** — docker-compose.all.yml 中 backend 服务新增 `opensearch` 健康检查依赖
-- **Backend 环境变量** — 新增 `OPENSEARCH_URL` 配置项
+- **Backend `depends_on`** — docker-compose.all.yml 中 backend 服务新增 `elasticsearch` 健康检查依赖
+- **Backend 环境变量** — 新增 `ELASTICSEARCH_URL` 配置项
 
 ---
 

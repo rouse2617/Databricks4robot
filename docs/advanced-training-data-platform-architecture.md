@@ -1,8 +1,10 @@
 # 后训练数据平台高级架构设计
 
-本文描述 `data-platform` 面向机器人/自动驾驶后训练场景的长期演进架构。目标不是替换当前 `PostgreSQL + OpenSearch + Iceberg + Trino` 架构，而是在其基础上增加数据集治理、训练样本层、训练血缘、特征/向量平台、数据质量和任务编排能力。
+本文描述 `data-platform` 面向机器人/自动驾驶后训练场景的长期演进架构。目标不是替换当前 `PostgreSQL + Elasticsearch + Iceberg + Trino` 架构，而是在其基础上增加数据集治理、训练样本层、训练血缘、特征/向量平台、数据质量、任务编排，以及对标 LAS 的 `Daft + Lance` 多模态湖计算/湖存储能力。
 
 参考业界实践：字节跳动在 EB 级 Iceberg 机器学习样本湖中，把 Iceberg 用作训练样本和特征工程底座，重点解决海量样本存储、特征调研、特征回填、版本管理、高吞吐读取和存储成本问题。这对本项目后续机器人数据后训练架构有直接参考价值。参考：[字节跳动 EB 级 Iceberg 数据湖的机器学习应用与优化](https://developer.volcengine.com/articles/7317095622338117641)。
+
+同时，对标火山 LAS 的多模态数据湖方向时，需要把 `Daft + Lance` 作为后续核心增强层：Daft 负责多模态 DataFrame 处理、Ray 分布式执行、CPU/GPU 异构算子调度；Lance 负责图片、视频、音频、点云、embedding、tensor 等多模态样本的列式存储、高性能随机读取、版本化和向量检索能力。它们不是 PostgreSQL / Iceberg / Elasticsearch 的替代品，而是补齐 AI 多模态处理和训练读取性能的专用层。
 
 ## 1. 架构目标
 
@@ -37,12 +39,12 @@
 Frontend / SDK / Internal Tools
   -> Backend API
       -> PostgreSQL
-      -> OpenSearch / ES
+      -> Elasticsearch
       -> Trino
 
 PostgreSQL
   -> Outbox / CDC
-      -> OpenSearch / ES
+      -> Elasticsearch
       -> Iceberg
       -> Feature / Embedding Jobs
 
@@ -67,7 +69,16 @@ Spark / Ray / Dagster
   -> recompute
   -> export
 
-Vector Index / Lance / Milvus / Vespa
+Daft + Ray
+  -> multimodal dataframe processing
+  -> image / video / audio / point cloud operators
+  -> CPU/GPU heterogeneous execution
+  -> model-assisted data cleaning
+
+Lance / Vector Index / Milvus / Vespa
+  -> multimodal sample storage
+  -> tensor / embedding storage
+  -> high-performance random reads
   -> semantic search
   -> image search
   -> video clip similarity
@@ -79,10 +90,12 @@ Vector Index / Lance / Milvus / Vespa
 | 层 | 组件 | 主要职责 |
 |---|---|---|
 | 在线业务层 | PostgreSQL | 权威当前态、事务、权限、幂等、状态机 |
-| 检索层 | OpenSearch / ES | 模糊查询、全文检索、多字段过滤、facets、资产发现 |
+| 检索层 | Elasticsearch | 模糊查询、全文检索、多字段过滤、facets、资产发现 |
 | 湖仓层 | Iceberg | 历史事实、训练数据明细、审计回放、长期分析 |
 | SQL 查询层 | Trino | 查询 Iceberg，服务复杂分析、训练数据筛选、报表 |
 | 计算层 | Spark / Ray | 批处理、特征抽取、重算、数据导出 |
+| 多模态湖计算层 | Daft + Ray | 图片/视频/音频/点云处理、DataFrame 化数据清洗、CPU/GPU 异构调度 |
+| 多模态湖存储层 | Lance | 多模态样本、embedding、tensor、向量索引、高性能随机读取 |
 | 编排层 | Dagster | 调度 dataset build、feature build、CDC 校验、重算任务 |
 | 向量检索层 | Lance / Milvus / Vespa | 多模态 embedding 检索、相似片段召回 |
 | 质量与血缘层 | Data Quality / Lineage | 数据质量报告、训练血缘、影响分析 |
@@ -92,13 +105,13 @@ Vector Index / Lance / Milvus / Vespa
 当前架构应该保留：
 
 ```text
-PostgreSQL + OpenSearch + Iceberg + Trino
+PostgreSQL + Elasticsearch + Iceberg + Trino
 ```
 
 原因：
 
 - PostgreSQL 适合作为在线权威主库。
-- OpenSearch 适合做资产检索和发现。
+- Elasticsearch 适合做资产检索和发现。
 - Iceberg 适合保存全量历史事实和训练数据明细。
 - Trino 适合对 Iceberg 做复杂 SQL 查询。
 
@@ -107,7 +120,7 @@ PostgreSQL + OpenSearch + Iceberg + Trino
 | 组件 | 不适合替代什么 |
 |---|---|
 | PostgreSQL | 不适合承载所有 50 亿级历史明细和训练集 item |
-| OpenSearch | 不适合做事务主库、审计事实源、训练快照事实源 |
+| Elasticsearch | 不适合做事务主库、审计事实源、训练快照事实源 |
 | Iceberg | 不适合在线事务、毫秒级点查、权限状态更新 |
 | Bigtable | 不适合复杂过滤、join、训练分析和历史统计 |
 
@@ -477,7 +490,7 @@ a1       | scene_feat  | v2      | exp-rain-v2 | ...
 
 ## 9. 多模态检索
 
-OpenSearch 适合关键词和结构化条件，向量引擎适合语义相似。
+Elasticsearch 适合关键词和结构化条件，向量引擎适合语义相似。
 
 推荐混合检索：
 
@@ -486,7 +499,7 @@ query text / image / video clip
   -> embedding model
   -> vector search
   -> candidate asset_ids
-  -> OpenSearch filter / facets
+  -> Elasticsearch filter / facets
   -> PostgreSQL current state
   -> final result
 ```
@@ -494,7 +507,7 @@ query text / image / video clip
 或者：
 
 ```text
-OpenSearch keyword recall
+Elasticsearch keyword recall
   + Vector similarity recall
   + PostgreSQL permission/current-state filter
   -> rerank
@@ -509,12 +522,12 @@ OpenSearch keyword recall
 | Milvus | 大规模向量检索服务 |
 | Vespa | 搜索 + 向量 + 排序一体化 |
 | pgvector | 小规模、简单向量能力，适合早期验证 |
-| OpenSearch Vector | 搜索和向量结合，但复杂多模态场景可能需要专门向量引擎 |
+| Elasticsearch Vector | 搜索和向量结合，但复杂多模态场景可能需要专门向量引擎 |
 
 建议：
 
 ```text
-早期验证: pgvector / OpenSearch vector / LanceDB
+早期验证: pgvector / Elasticsearch vector / LanceDB
 中长期: Lance 或 Milvus
 搜索排序一体化: Vespa
 ```
@@ -681,7 +694,7 @@ build dataset snapshot
 assets ingestion job
 asset split job
 pg_to_iceberg sync job
-opensearch indexing job
+elasticsearch indexing job
 feature extraction job
 embedding build job
 dataset snapshot build job
@@ -698,7 +711,7 @@ PostgreSQL
   -> Debezium / RisingWave
   -> Kafka / Pulsar
   -> Iceberg
-  -> OpenSearch
+  -> Elasticsearch
   -> downstream jobs
 ```
 
@@ -706,7 +719,7 @@ PostgreSQL
 
 ```text
 PostgreSQL -> batch / worker -> Iceberg
-PostgreSQL -> outbox worker -> OpenSearch
+PostgreSQL -> outbox worker -> Elasticsearch
 ```
 
 ## 13. 推荐演进路线
@@ -749,7 +762,7 @@ asset_relations
 - 统一事件表。
 - 父子资产血缘。
 
-### Phase 2: OpenSearch 资产检索
+### Phase 2: Elasticsearch 资产检索
 
 目标：支持数据发现。
 
@@ -757,7 +770,7 @@ asset_relations
 
 ```text
 asset_search_docs
-PostgreSQL -> OpenSearch indexing worker
+PostgreSQL -> Elasticsearch indexing worker
 ```
 
 能力：
@@ -832,6 +845,49 @@ gold_feature_branch_samples
 - 支持导出 Parquet / Arrow / TFRecord。
 - 支持训练任务通过 manifest_uri 复现读取数据。
 
+### Phase 4.6: Daft + Lance 多模态湖层
+
+目标：对标 LAS 的多模态数据湖能力，补齐非结构化数据处理、高性能随机读取、向量/张量存储和训练侧读取性能。
+
+新增：
+
+```text
+Daft + Ray processing jobs
+Lance datasets
+lance_dataset_refs
+multimodal_operator_runs
+gold_multimodal_samples
+gold_lance_sample_refs
+```
+
+能力：
+
+- 用 Daft 统一处理结构化元数据和图片、视频、音频、点云等多模态样本。
+- 支持视频抽帧、图片质量检测、OCR、ASR、embedding 生成、模型辅助清洗等 AI 算子。
+- 用 Ray 扩展到分布式执行，并支持 CPU/GPU 异构调度。
+- 用 Lance 存储训练真正读取的多模态样本、embedding、tensor 和向量索引。
+- Iceberg 继续保存训练样本索引、版本、血缘和审计事实，Lance 保存高性能样本物理数据。
+- Dataset snapshot 可以同时产出 `manifest_uri`、`iceberg_table_ref` 和 `lance_dataset_uri`，服务不同训练/分析场景。
+
+推荐边界：
+
+```text
+PostgreSQL:
+  dataset snapshot、训练任务、权限、状态
+
+Iceberg:
+  历史事实、训练样本索引、样本版本、审计、重算候选
+
+Daft:
+  多模态样本处理、AI 算子执行、CPU/GPU 混合任务
+
+Lance:
+  图片/视频帧/音频片段/点云/embedding/tensor 的物理存储和随机读取
+
+Elasticsearch:
+  在线搜索、facets、资产发现
+```
+
 ### Phase 5: Feature / Embedding 平台
 
 目标：支持多模态检索和长尾挖掘。
@@ -881,7 +937,7 @@ OpenLineage / Marquez
 PostgreSQL:
   在线主库、事务、权限、当前态、状态机、幂等
 
-OpenSearch / ES:
+Elasticsearch:
   资产检索、全文搜索、模糊查询、facets、召回
 
 Iceberg:
@@ -907,7 +963,7 @@ Data Quality / Lineage:
 
 ```text
 PostgreSQL 管当前态，
-OpenSearch 管发现，
+Elasticsearch 管发现，
 Iceberg 管历史事实，
 Trino 管分析查询，
 Spark/Ray 管计算，

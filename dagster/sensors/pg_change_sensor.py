@@ -1,9 +1,12 @@
 """
-Dagster sensor: poll Postgres max(updated_at) from assets table.
+Dagster sensor: poll Postgres lakehouse change watermark.
 
-When the max updated_at changes compared to the last observed value,
-trigger the full lakehouse pipeline (postgres_to_bronze → silver → gold).
+The preferred trigger source is the event/outbox table (`asset_events`).
+For the current MVP schema, where `asset_events` may not exist yet, the
+sensor falls back to existing mutable tables so local sync still works.
 """
+
+from __future__ import annotations
 
 import os
 
@@ -31,10 +34,22 @@ PG_DATABASE = os.getenv("PG_DATABASE", "data4cyber")
 # ---------------------------------------------------------------------------
 
 
-def _get_pg_max_updated_at() -> str | None:
+def _table_exists(cur, table_name: str) -> bool:
+    """Return True when the given table exists in the current schema."""
+    cur.execute("SELECT to_regclass(%s)", (table_name,))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _get_pg_change_watermark() -> str | None:
     """
-    Query Postgres for the maximum updated_at from the assets table.
-    Returns ISO timestamp string or None if table is empty / unreachable.
+    Query Postgres for the latest change watermark.
+
+    Priority:
+    1. asset_events occurred_at/created_at — target event/outbox source.
+    2. Existing MVP tables — compatibility until all writes emit events.
+
+    Returns a stable string suitable for the Dagster sensor cursor.
     """
     import psycopg2
 
@@ -46,16 +61,51 @@ def _get_pg_max_updated_at() -> str | None:
         )
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT max(updated_at) FROM assets")
-                row = cur.fetchone()
-                if row and row[0]:
-                    return row[0].isoformat()
+                candidates: list[tuple[str, object]] = []
+
+                if _table_exists(cur, "asset_events"):
+                    cur.execute(
+                        """
+                        SELECT max(coalesce(occurred_at, created_at))
+                        FROM asset_events
+                        """
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        candidates.append(("asset_events", row[0]))
+
+                # Compatibility path for the current MVP schema.
+                fallback_queries = [
+                    ("asset_algo_events", "SELECT max(created_at) FROM asset_algo_events"),
+                    ("assets", "SELECT max(updated_at) FROM assets"),
+                    ("mcap_files", "SELECT max(updated_at) FROM mcap_files"),
+                    ("deliveries", "SELECT max(updated_at) FROM deliveries"),
+                    ("delivery_items", "SELECT max(created_at) FROM delivery_items"),
+                ]
+                for source, query in fallback_queries:
+                    if not _table_exists(cur, source):
+                        continue
+                    cur.execute(query)
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        candidates.append((source, row[0]))
+
+                if not candidates:
+                    return None
+
+                source, watermark = max(candidates, key=lambda item: item[1])
+                return f"{source}:{watermark.isoformat()}"
         finally:
             conn.close()
     except Exception:
         # Postgres may be unreachable — skip this tick
         return None
     return None
+
+
+def _get_pg_max_updated_at() -> str | None:
+    """Backward-compatible alias for older tests/imports."""
+    return _get_pg_change_watermark()
 
 
 # ---------------------------------------------------------------------------
@@ -68,19 +118,19 @@ def _get_pg_max_updated_at() -> str | None:
     minimum_interval_seconds=60,
     default_status=DefaultSensorStatus.STOPPED,
     description=(
-        "Polls Postgres SELECT max(updated_at) FROM assets every 60s. "
+        "Polls Postgres lakehouse change watermark every 60s. "
         "When the value changes, triggers the lakehouse sync pipeline."
     ),
 )
 def pg_assets_change_sensor(context: SensorEvaluationContext):
     """
-    Compare current max(updated_at) with the last observed cursor value.
+    Compare current Postgres change watermark with the last observed cursor value.
     If changed, emit a RunRequest to trigger the lakehouse pipeline.
     """
-    current_max = _get_pg_max_updated_at()
+    current_max = _get_pg_change_watermark()
 
     if current_max is None:
-        yield SkipReason("Could not read max(updated_at) from Postgres assets table")
+        yield SkipReason("Could not read lakehouse change watermark from Postgres")
         return
 
     last_observed = context.cursor
@@ -101,5 +151,5 @@ def pg_assets_change_sensor(context: SensorEvaluationContext):
 
     yield RunRequest(
         run_key=f"pg-change-{current_max}",
-        tags={"trigger": "pg_assets_change_sensor", "max_updated_at": current_max},
+        tags={"trigger": "pg_assets_change_sensor", "change_watermark": current_max},
     )

@@ -10,7 +10,7 @@
 
 ```json
 {
-  "hand_tracking@1.2.0:status": "success",
+  "hand_tracking@1.2.0:status": "ok",
   "hand_tracking@1.2.0:gcs_uri": "gs://bucket/results/xxx.npz",
   "hand_tracking@1.2.0:started_at": "2026-04-24T10:00:00Z",
   "hand_tracking@1.2.0:finished_at": "2026-04-24T10:05:00Z",
@@ -26,7 +26,7 @@
 **状态机**：
 
 ```
-pending → running → success
+blocked → pending → running → ok
                   → failed → pending (重试)
 ```
 
@@ -34,12 +34,12 @@ pending → running → success
 
 | 字段后缀 | 类型 | 必填 | 说明 |
 |----------|------|------|------|
-| `:status` | string | 是 | pending / running / success / failed |
+| `:status` | string | 是 | blocked / pending / running / ok / failed |
 | `:started_at` | RFC3339 | running 时写入 | 开始处理时间 |
-| `:finished_at` | RFC3339 | success/failed 时写入 | 完成时间 |
+| `:finished_at` | RFC3339 | ok/failed 时写入 | 完成时间 |
 | `:method` | string | 是 | 处理方法标识（ray_batch / local 等） |
 | `:dagster_run_id` | string | 否 | Dagster run ID，用于 lineage 追溯 |
-| `:gcs_uri` | string | success 时必填 | 结果文件的 GCS 路径 |
+| `:gcs_uri` | string | ok 时必填 | 结果文件的 GCS 路径 |
 | `:error_message` | string | failed 时填写 | 错误信息 |
 | `:result_meta` | JSON string | 否 | 算法特定的结果元数据（帧数、置信度等） |
 
@@ -145,7 +145,7 @@ algorithms:
 
 **验证逻辑**（usecase 层）：
 - start_algo：检查 algo_key 是否在注册表中，版本是否合法
-- finish_algo（success）：检查 result_ref 是否包含 required_fields
+- finish_algo（ok）：检查 result_ref 是否包含 required_fields
 - finish_algo（failed）：检查 error_message 非空
 
 ---
@@ -179,7 +179,7 @@ POST /api/v1/assets/:id/algo/:algo_key/finish
 
 ```json
 {
-  "status": "success",
+  "status": "ok",
   "gcs_uri": "gs://bucket/results/xxx.npz",
   "dagster_run_id": "abc-123-def",
   "result_meta": {
@@ -191,7 +191,7 @@ POST /api/v1/assets/:id/algo/:algo_key/finish
 
 行为：
 1. 验证 required_fields
-2. 更新 `cf_algo` 中对应键的 status → success，写入 finished_at、gcs_uri 等
+2. 更新 `cf_algo` 中对应键的 status → ok，写入 finished_at、gcs_uri 等
 3. 插入 `asset_algo_events` 记录
 4. 返回 200
 
@@ -258,7 +258,7 @@ client.assets.start_algo(
 client.assets.finish_algo(
     asset_id=asset_id,
     algo_key="hand_tracking@1.2.0",
-    status="success",
+    status="ok",
     gcs_uri="gs://bucket/results/xxx.npz",
     dagster_run_id=context.run_id,
     result_meta={"frame_count": 3600},
@@ -282,7 +282,7 @@ client.assets.finish_algo(
 | Phase 0 | < 100 万 | PostgreSQL + JSONB GIN | ✅ |
 | Phase 0.5 | 100 万 - 1000 万 | PG + 热字段提升为真实列 | ✅ |
 | Phase 1 | 1000 万 - 1 亿 | Bigtable | ✅ |
-| Phase 2 | > 1 亿 | Bigtable + OpenSearch CDC | ✅ |
+| Phase 2 | > 1 亿 | Bigtable + Elasticsearch CDC | ✅ |
 
 元数据湖的核心能力（宽表、高并发点查、列族隔离）在 Phase 1 由 Bigtable 提供。
 元数据湖的高级能力（联邦检索、血缘追踪、生命周期管理）可以在 Phase 2 按需引入。

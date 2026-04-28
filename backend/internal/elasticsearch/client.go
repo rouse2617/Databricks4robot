@@ -1,6 +1,6 @@
-// Package opensearch provides a lightweight OpenSearch client for search and
+// Package elasticsearch provides a lightweight Elasticsearch client for search and
 // bulk-index operations against the "assets" index.
-package opensearch
+package elasticsearch
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Client wraps HTTP calls to an OpenSearch cluster.
+// Client wraps HTTP calls to an Elasticsearch cluster.
 type Client struct {
 	baseURL    string
 	index      string
@@ -50,7 +50,7 @@ type SearchRequest struct {
 	PageSize int
 }
 
-// SearchHit is a single document returned by OpenSearch.
+// SearchHit is a single document returned by Elasticsearch.
 type SearchHit struct {
 	ID        string              `json:"_id"`
 	Score     float64             `json:"_score"`
@@ -176,29 +176,29 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 func (c *Client) doSearch(ctx context.Context, body map[string]any) (*SearchResponse, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("opensearch: marshal query: %w", err)
+		return nil, fmt.Errorf("elasticsearch: marshal query: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/%s/_search", c.baseURL, c.index)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
-		return nil, fmt.Errorf("opensearch: new request: %w", err)
+		return nil, fmt.Errorf("elasticsearch: new request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("opensearch: request failed: %w", err)
+		return nil, fmt.Errorf("elasticsearch: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("opensearch: read response: %w", err)
+		return nil, fmt.Errorf("elasticsearch: read response: %w", err)
 	}
 
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("opensearch: status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("elasticsearch: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var osResp struct {
@@ -219,7 +219,7 @@ func (c *Client) doSearch(ctx context.Context, body map[string]any) (*SearchResp
 	}
 
 	if err := json.Unmarshal(respBody, &osResp); err != nil {
-		return nil, fmt.Errorf("opensearch: unmarshal response: %w", err)
+		return nil, fmt.Errorf("elasticsearch: unmarshal response: %w", err)
 	}
 
 	result := &SearchResponse{
@@ -252,7 +252,7 @@ type BulkIndexDoc struct {
 	Doc map[string]any
 }
 
-// BulkIndex sends documents to OpenSearch via the _bulk API.
+// BulkIndex sends documents to Elasticsearch via the _bulk API.
 // Returns the number of successfully indexed documents.
 func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (int, error) {
 	if len(docs) == 0 {
@@ -278,23 +278,23 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (int, error
 	url := fmt.Sprintf("%s/_bulk", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
-		return 0, fmt.Errorf("opensearch: bulk request: %w", err)
+		return 0, fmt.Errorf("elasticsearch: bulk request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-ndjson")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return 0, fmt.Errorf("opensearch: bulk failed: %w", err)
+		return 0, fmt.Errorf("elasticsearch: bulk failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, fmt.Errorf("opensearch: read bulk response: %w", err)
+		return 0, fmt.Errorf("elasticsearch: read bulk response: %w", err)
 	}
 
 	if resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("opensearch: bulk status %d: %s", resp.StatusCode, string(respBody))
+		return 0, fmt.Errorf("elasticsearch: bulk status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var bulkResp struct {
@@ -306,7 +306,7 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (int, error
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(respBody, &bulkResp); err != nil {
-		return 0, fmt.Errorf("opensearch: unmarshal bulk response: %w", err)
+		return 0, fmt.Errorf("elasticsearch: unmarshal bulk response: %w", err)
 	}
 
 	ok := 0
@@ -318,7 +318,7 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (int, error
 	return ok, nil
 }
 
-// Ping checks if OpenSearch is reachable.
+// Ping checks if Elasticsearch is reachable.
 func (c *Client) Ping(ctx context.Context) error {
 	url := fmt.Sprintf("%s/_cluster/health", c.baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -331,7 +331,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("opensearch: ping status %d", resp.StatusCode)
+		return fmt.Errorf("elasticsearch: ping status %d", resp.StatusCode)
 	}
 	return nil
 }

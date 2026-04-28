@@ -3,7 +3,7 @@ Dagster assets: Silver → Gold Iceberg tables + data reconciliation.
 
 Gold tables:
   - gold_dataset_snapshot_items  (hand_tracking ok + quality good/excellent)
-  - gold_asset_search_docs       (wide table for OpenSearch sync)
+  - gold_asset_search_docs       (wide table for Elasticsearch sync)
 
 Reconciliation:
   - Compare Postgres count vs Iceberg silver_assets_current count
@@ -180,7 +180,7 @@ def gold_dataset_snapshot_items(context: AssetExecutionContext) -> Output[dict]:
     group_name="gold",
     deps=["silver_assets_current", "silver_asset_tags", "silver_asset_algo_latest"],
     description=(
-        "Gold wide table for OpenSearch sync: asset base fields + "
+        "Gold wide table for Elasticsearch sync: asset base fields + "
         "tags pivoted to columns + algo_summary. "
         "Produces gold_asset_search_docs."
     ),
@@ -192,7 +192,7 @@ def gold_asset_search_docs(context: AssetExecutionContext) -> Output[dict]:
       - silver_asset_tags (pivoted: one column per tag key)
       - silver_asset_algo_latest (aggregated into algo_summary JSON)
 
-    This table is the source for OpenSearch bulk indexing.
+    This table is the source for Elasticsearch bulk indexing.
     """
     spark = _get_spark()
     try:

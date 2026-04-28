@@ -243,6 +243,8 @@ curl -X PATCH "$BASE/api/v1/assets/{asset_id}" \
 
 所有字段都是可选的，只更新传入的字段，不影响其他字段。
 
+并发安全：服务端使用乐观锁（`assets.version` CAS）。如果在你 GET 之后有其他写入提交，PATCH 会返回 `409 CONCURRENT_CONFLICT`，请重新拉取最新资产后再重试。
+
 ### 1.5 软删除
 
 ```bash
@@ -624,7 +626,7 @@ curl "$BASE/api/v1/tag-registry" \
 }
 ```
 
-## 7. OpenSearch 检索 (Search)
+## 7. Elasticsearch 检索 (Search)
 
 ### 7.1 全文检索资产
 
@@ -661,7 +663,7 @@ curl "$BASE/api/v1/search/assets?filter=env:eq:warehouse&page=1&page_size=50" \
 - `filter` — 结构化过滤，语法与 `/api/v1/assets` 相同（`field:op:value`）
 - `page` / `page_size` — 分页参数
 
-注意: 需要 OpenSearch 服务运行。当 OpenSearch 不可用时返回 `503`。
+注意: 需要 Elasticsearch 服务运行。当 Elasticsearch 不可用时返回 `503`。
 
 ## 8. 湖仓同步状态
 
@@ -705,7 +707,7 @@ curl "$BASE/api/v1/lakehouse/sync-status" \
 | 404 | `ASSET_NOT_FOUND` | 资产不存在 |
 | 409 | `ALGO_ALREADY_RUNNING` | 算法已在运行 |
 | 409 | `INVALID_STATE_TRANSITION` | 状态转换非法 |
-| 409 | `CONCURRENT_CONFLICT` | 乐观锁冲突（重试 3 次后仍失败） |
+| 409 | `CONCURRENT_CONFLICT` | 乐观锁冲突 — 算法路径重试 3 次后仍失败，或 PATCH /assets/:id 期间资产被并发修改 |
 | 414 | `URI_TOO_LONG` | URL 超过 2048 字符 |
 | 422 | `INVALID_STATE` | 业务状态错误 (如 start > end) |
 | 422 | `INVALID_TAG` | Tag key 未注册或值不合法 |

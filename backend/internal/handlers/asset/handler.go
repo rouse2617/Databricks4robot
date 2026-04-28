@@ -189,6 +189,9 @@ func (h *Handler) Update(c *gin.Context) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 		case errors.Is(err, assetUC.ErrInvalidTag):
 			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
+		case errors.Is(err, repository.ErrOptimisticLock):
+			httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
+				"asset was modified concurrently; reload and retry", nil)
 		default:
 			httpresp.Internal(c, err.Error())
 		}

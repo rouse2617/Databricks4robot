@@ -150,7 +150,7 @@ flowchart LR
     end
 
     subgraph Serving[服务与消费]
-        SEARCH[OpenSearch<br/>Phase 2+]
+        SEARCH[Elasticsearch<br/>Phase 2+]
         TRAIN[Dataset Export / Training]
         BI[Trino / BI<br/>Phase 2+]
     end
@@ -571,7 +571,7 @@ flowchart LR
 - `gold_asset_search_docs`
 - `gold_dataset_snapshots`
 - `gold_training_manifests`
-- 接 `OpenSearch`
+- 接 `Elasticsearch`
 - 引入 `Spark`
 
 ---

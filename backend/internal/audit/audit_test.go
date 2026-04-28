@@ -7,12 +7,12 @@ import (
 	"data-platform/internal/middleware"
 )
 
-func TestLog_NilDB_DoesNotPanic(t *testing.T) {
-	// Reset global state for test isolation.
-	db = nil
+func TestLog_DefaultSink_DoesNotPanic(t *testing.T) {
+	// Reset to default (Noop) sink for test isolation.
+	sink = NoopSink{}
 
 	ctx := context.Background()
-	// Should not panic when db is nil.
+	// Should not panic when no sink has been configured.
 	Log(ctx, "asset.delete", "asset", []string{"abc-123"}, nil)
 }
 

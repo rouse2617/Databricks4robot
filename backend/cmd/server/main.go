@@ -19,8 +19,8 @@ import (
 	"github.com/joho/godotenv"
 
 	"data-platform/internal/audit"
-	btpkg "data-platform/internal/bigtable"
 	"data-platform/internal/config"
+	espkg "data-platform/internal/elasticsearch"
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
 	lakehouseH "data-platform/internal/handlers/lakehouse"
@@ -28,7 +28,6 @@ import (
 	registryH "data-platform/internal/handlers/registry"
 	searchH "data-platform/internal/handlers/search"
 	"data-platform/internal/middleware"
-	ospkg "data-platform/internal/opensearch"
 	"data-platform/internal/postgres"
 	"data-platform/internal/repository"
 	trinopkg "data-platform/internal/trino"
@@ -79,25 +78,12 @@ func main() {
 
 	switch cfg.StorageBackend {
 	case "bigtable":
-		btClient, err := btpkg.New(ctx, cfg.BigtableProject, cfg.BigtableInstance)
-		if err != nil {
-			slog.Error("bigtable connect failed", "err", err)
-			os.Exit(1)
-		}
-		defer btClient.Close()
-
-		slog.Info("warming up bigtable connections...")
-		btClient.Warmup(ctx)
-		slog.Info("bigtable warmup complete")
-
-		assetRepo := btpkg.NewAssetRepo(btClient)
-		deliveryRepo := btpkg.NewDeliveryRepo(btClient)
-		algoEventRepo := btpkg.NewAlgoEventRepo(btClient)
-		algoUC := assetUC.NewAlgoUsecase(assetRepo, algoEventRepo, algoRegistry)
-		algoHandler = assetH.NewAlgoHandler(algoUC)
-		assetHandler = assetH.New(newAssetUsecase(assetRepo, tagRegistry, algoRegistry), deliveryRepo)
-		mcapHandler = mcapH.New(btpkg.NewMcapFileRepo(btClient))
-		deliveryHandler = deliveryH.New(deliveryRepo, btpkg.NewIdempotencyRepo(btClient))
+		// Bigtable backend is DEPRECATED and no longer supported as a runtime
+		// target. The package and tests in `internal/bigtable` are retained
+		// only as historical reference and may be removed in a future cut.
+		// Use `STORAGE_BACKEND=postgres` (the default).
+		slog.Error("STORAGE_BACKEND=bigtable is deprecated and no longer supported; set STORAGE_BACKEND=postgres")
+		os.Exit(1)
 
 	case "postgres":
 		var pgErr error
@@ -108,7 +94,7 @@ func main() {
 		}
 		defer pgClient.Close()
 
-		audit.Init(pgClient)
+		audit.Init(postgres.NewAuditSink(pgClient))
 
 		assetRepo := postgres.NewAssetRepo(pgClient)
 		algoEventRepo := postgres.NewAlgoEventRepo(pgClient)
@@ -120,7 +106,7 @@ func main() {
 		deliveryHandler = deliveryH.New(deliveryRepo, postgres.NewIdempotencyRepo(pgClient))
 
 	default:
-		slog.Error("invalid STORAGE_BACKEND", "value", cfg.StorageBackend, "allowed", "bigtable|postgres")
+		slog.Error("invalid STORAGE_BACKEND", "value", cfg.StorageBackend, "allowed", "postgres")
 		os.Exit(1)
 	}
 
@@ -132,15 +118,15 @@ func main() {
 		slog.Info("trino query layer connected", "catalog", cfg.TrinoCatalog, "schema", cfg.TrinoSchema)
 	}
 
-	// OpenSearch client (optional — search degrades gracefully if unavailable).
-	var osClient *ospkg.Client
-	if cfg.OpenSearchURL != "" {
-		osClient = ospkg.New(cfg.OpenSearchURL, "assets")
-		if err := osClient.Ping(ctx); err != nil {
-			slog.Warn("opensearch unavailable, search will return 503", "err", err)
-			osClient = nil
+	// Elasticsearch client (optional — search degrades gracefully if unavailable).
+	var esClient *espkg.Client
+	if cfg.ElasticsearchURL != "" {
+		esClient = espkg.New(cfg.ElasticsearchURL, "assets")
+		if err := esClient.Ping(ctx); err != nil {
+			slog.Warn("elasticsearch unavailable, search will return 503", "err", err)
+			esClient = nil
 		} else {
-			slog.Info("opensearch connected", "url", cfg.OpenSearchURL)
+			slog.Info("elasticsearch connected", "url", cfg.ElasticsearchURL)
 		}
 	}
 
@@ -155,7 +141,7 @@ func main() {
 		algoHandler,
 		lakehouseH.New(cfg.LakehouseReportPath, trinoClient, pgClient),
 		registryH.New(algoRegistry, tagRegistry),
-		searchH.New(osClient),
+		searchH.New(esClient),
 	)
 
 	// Start config watcher for hot-reload of registries.
