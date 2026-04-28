@@ -1,9 +1,6 @@
 # 数据平台方案设计
 
-> 本文是机器人多模态资产平台（Databricks4robot）的整体方案设计。
-> 字段速查见 [`docs/schema-reference.md`](./schema-reference.md)；
-> 长期目标 schema 与 Phase 0/1/2 演进见 [`docs/sql.md`](./sql.md)；
-> 可执行 DDL 见 [`schemas/pg-phase0.sql`](../schemas/pg-phase0.sql)。
+本文是机器人多模态资产平台（Databricks4robot）的整体方案设计，包含背景、目标、架构、核心表与字段、数据同步机制、API、部署、可靠性、监控与实施计划。
 
 ---
 
@@ -88,7 +85,20 @@
                        Daft + Lance 多模态处理 / 向量检索
 ```
 
-详细分层职责见 [`docs/sql.md`](./sql.md) §1。
+分层职责：
+
+| 层级 | 组件 | 职责 |
+|------|------|------|
+| 在线业务层 | PostgreSQL | 点查、事务、当前态筛选、状态机、权限、幂等；权威主库 |
+| 检索层 | Elasticsearch | 模糊查询、全文检索、多字段过滤、facets、资产发现 |
+| Catalog 控制面 | Iceberg REST Catalog + PG Platform Catalog | 湖表事务、metadata pointer、跨引擎对象的中立引用 |
+| 湖仓层 | Iceberg | 历史事实、训练集、审计回放、统计分析、重算 |
+| 查询层 | Trino | 查询 Iceberg，服务复杂分析与离线报表 |
+| 计算层 | Spark / Dagster | 批处理、回填、特征抽取、重算、导出 |
+| 多模态层（Phase 2+） | Daft / Lance | AI 多模态样本处理、高性能随机读取、向量/张量存储 |
+| 异步派生通道 | Outbox + Worker | PG 主库变更 → ES / 湖仓 / 向量库的事件驱动同步 |
+
+设计约定：PostgreSQL 表结构先保障在线业务，再通过事件流（`asset_events` outbox）支撑 ES 与 Iceberg；任何外部数据对象都通过中立 Catalog 引用而非物理路径绑定。
 
 ---
 
@@ -134,35 +144,223 @@ created → processing → ready → delivered → archived
            rejected       superseded
 ```
 
-详见 [`docs/algo-lifecycle-and-data-model.md`](./algo-lifecycle-and-data-model.md)。
+| 状态 | 含义 |
+|------|------|
+| created | 资产刚建好，未开始处理 |
+| processing | 算法/切分流水线在跑 |
+| ready | 已就绪，可供检索/交付/训练 |
+| rejected | QA 或算法判定不合格 |
+| delivered | 已交付给至少一个客户 |
+| archived | 进入冷存档，不参与在线检索 |
+| superseded | 被新版本资产替代（rework） |
+
+任何状态转移必须**同事务**追加一条 `asset_events`（event_type=`asset_lifecycle_changed`），否则审计链断裂。
 
 ---
 
 ### 5.2 资产字段设计
 
-完整字段速查见 [`docs/schema-reference.md`](./schema-reference.md)。本节只列**核心表与上线优先级**：
+#### 5.2.1 表清单与上线优先级
 
-| 表 | 优先级 | 说明 |
-|----|--------|------|
-| `mcap_files` | 🟢 Tier 1 已运行 | 文件级元数据 |
-| `assets` | 🟢 Tier 1 已运行 | 资产当前态（待提升 `tenant_id / lifecycle_state / asset_type` 等列） |
-| `asset_tags` | 🟡 Tier 2 上线前 | tag 投影，驱动 facet/ES |
-| `asset_algo_latest` | 🟡 Tier 2 上线前 | 算法最新态 |
-| `asset_events` | 🟡 Tier 2 上线前 | **outbox 起点，必须带 `event_seq` + `payload_schema_version`** |
-| `deliveries` / `delivery_items` | 🟢 Tier 1 已运行 | 客户交付 |
-| `asset_relations` | 🟠 Tier 3 | 多父/融合血缘 |
-| `datasets` / `dataset_snapshots` / `training_runs` | 🔵 Tier 4 Phase 2 | 训练数据集与训练记录 |
-| `catalog_objects` / `catalog_object_versions` | 🔵 Tier 4 Phase 2 | 中立 Catalog 注册 |
-| `idempotency_keys` | 🟢 Tier 1 已运行 | API 幂等 |
+| 表 | 优先级 | 主键 | 一句话职责 |
+|----|--------|------|------------|
+| `mcap_files` | 🟢 Tier 1 已运行 | `mcap_file_id` | 原始 MCAP 文件当前态 |
+| `assets` | 🟢 Tier 1 已运行 | `asset_id` | 资产当前态（segment / clip / frame_set / derived_asset） |
+| `deliveries` | 🟢 Tier 1 已运行 | `delivery_id` | 客户交付批次当前态 |
+| `delivery_items` | 🟢 Tier 1 已运行 | `(delivery_id, asset_id)` | Delivery ↔ Asset M:N 明细 |
+| `idempotency_keys` | 🟢 Tier 1 已运行 | `(scope, idem_key)` | API 幂等保护 |
+| `asset_tags` | 🟡 Tier 2 上线前 | `(asset_id, tag_key)` | tag 当前态投影，驱动 facet/filter/ES 文档 |
+| `asset_algo_latest` | 🟡 Tier 2 上线前 | `(asset_id, algo_name)` | 每 (asset, algo) 最新一行算法状态 |
+| `asset_events` | 🟡 Tier 2 上线前 | `event_id`（UNIQUE `event_seq`） | 统一业务事件 / 审计 / outbox |
+| `asset_relations` | 🟠 Tier 3 可选 | `(parent_asset_id, child_asset_id, relation_type)` | 多父 / 融合 / 拼接血缘 |
+| `datasets` / `dataset_snapshots` | 🔵 Tier 4 Phase 2 | 见后 | 数据集定义与训练快照 |
+| `training_runs` | 🔵 Tier 4 Phase 2 | `training_run_id` | 训练任务记录（自包含 catalog 引用） |
+| `catalog_objects` / `catalog_object_versions` | 🔵 Tier 4 Phase 2 | 见后 | 中立对象与版本注册 |
 
 ⛔ **不做**：`feature_sets / feature_jobs / training_sample_exports` 字段未冻结，落地前重新评审。
 
-#### 字段设计原则（关键四条）
+#### 5.2.2 字段设计原则（关键四条）
 
 1. **高频过滤字段必须列化**：`tenant_id / project_id / asset_type / lifecycle_state / start_timestamp_ns / end_timestamp_ns / duration_ms / created_at` 一律真实列。JSONB 只放低频扩展。
-2. **行业语义不焊主表**：AV 的 `city / weather / scenario_type / quality_level` 必须进 `asset_tags`，由 [`backend/config/tag_registry.yaml`](../backend/config/tag_registry.yaml) 声明。机械臂/人形/四足以同样方式扩展。
+2. **行业语义不焊主表**：AV 的 `city / weather / scenario_type / quality_level` 必须进 `asset_tags`，由 `backend/config/tag_registry.yaml` 声明。机械臂/人形/四足以同样方式扩展，不需要改主表 schema。
 3. **外部数据对象用 Catalog 引用**：训练任务 / 数据集快照 / 导出表都引用 `catalog_name + namespace + object_name + version_ref` 四元组，**不直接绑物理路径或厂商 ID**，避免上云锁死。
 4. **多租户硬约束**：`tenant_id / project_id` 现阶段 `NOT NULL DEFAULT '_default'`，启用多租户时去 DEFAULT + 加 RLS。避免 NULL 历史包袱。
+
+#### 5.2.3 mcap_files —— 原始 MCAP 文件当前态
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| mcap_file_id | UUID | 是 | 文件主键 |
+| raw_hash_md5 | TEXT | 否 | 文件 MD5；`is_deleted=FALSE` 范围 UNIQUE，重复 ingest 走幂等 |
+| raw_hash_sha256 | TEXT | 否 | 长期内容指纹 |
+| mcap_uri | TEXT | 是 | MCAP 对象存储地址 |
+| size_bytes | BIGINT | 否 | 文件大小 |
+| file_duration_ms | BIGINT | 否 | 文件总时长 |
+| start_timestamp_ns / end_timestamp_ns | BIGINT | 否 | 文件起止时间 |
+| channel_count / chunk_count | INT | 否 | MCAP 结构摘要 |
+| ingest_state | TEXT | 是 | pending / ingesting / ready / failed |
+| vendor_id / collector_id / task_id / device_id | TEXT | 否 | 采集 provenance |
+| camera_model / data_source / location_id / scene_id / environment_id / collection_method | TEXT | 否 | 采集环境 |
+| tenant_id / project_id | TEXT | 否 | 多租户 |
+| owner | TEXT | 否 | 数据归属方 |
+| retention_tier | TEXT | 否 | hot / warm / cold / archive |
+| expire_at | TIMESTAMPTZ | 否 | 过期/可清理时间 |
+| metadata | JSONB | 是 | 低频扩展元数据 |
+| process_state | JSONB | 是 | 文件级处理状态扩展 |
+| is_deleted | BOOLEAN | 是 | 软删除 |
+| created_at / updated_at | TIMESTAMPTZ | 是 | 时间戳 |
+| version | BIGINT | 是 | 乐观锁版本 |
+
+#### 5.2.4 assets —— 资产当前态
+
+行业相关 facet（city / weather / scenario_type 等）**不进本表**，统一进 `asset_tags`。
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| asset_id | UUID | 是 | 资产主键 |
+| mcap_file_id | UUID | 是 | 来源 MCAP 文件 ID |
+| asset_type | TEXT | 是 | segment / clip / frame_set / derived_asset |
+| storage_uri / thumb_uri | TEXT | 否 | 资产/缩略图地址 |
+| parent_asset_id / root_asset_id | UUID | 否 | 父/根资产 ID（普通切分用） |
+| asset_level | INT | 是 | 资产层级（0=原始） |
+| split_method / split_algo_name / split_algo_version / split_run_id / split_reason | TEXT | 否 | 切分 provenance |
+| segment_index | INT | 否 | 父资产下片段序号 |
+| parent_start_offset_ms / parent_end_offset_ms | BIGINT | 否 | 相对父资产偏移 |
+| start_timestamp_ns / end_timestamp_ns / duration_ms | BIGINT | 否 | 时间范围 |
+| lifecycle_state | TEXT | 是 | created / processing / ready / rejected / delivered / archived / superseded |
+| tenant_id / project_id | TEXT | 否 | 多租户 |
+| owner / reviewer | TEXT | 否 | 资产 owner / 审核人 |
+| last_delivered_at / last_delivered_to / delivery_count | — | 否 | 交付汇总（冗余，由 delivery usecase 同事务刷新） |
+| retention_tier / expire_at | — | 否 | 生命周期 |
+| metadata / files | JSONB | 是 | 低频扩展 / 关联文件（key=algo@ver） |
+| is_deleted | BOOLEAN | 是 | 软删除 |
+| created_at / updated_at | TIMESTAMPTZ | 是 | 时间戳 |
+| version | BIGINT | 是 | 乐观锁版本 |
+
+#### 5.2.5 asset_tags —— tag 当前态投影
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| asset_id | UUID | 是 | 资产 ID |
+| tag_key | TEXT | 是 | tag 名（`tag_registry.yaml` 注册） |
+| tag_value | TEXT | 是 | 字符串值 |
+| tag_value_num | DOUBLE PRECISION | 否 | 数值型，用于范围过滤 |
+| tag_value_bool | BOOLEAN | 否 | 布尔型 |
+| tag_type | TEXT | 是 | string / number / bool / enum |
+| source_type / source_name / source_version | TEXT | 是/否 | human / algo / rule / system + 来源版本 |
+| run_id | TEXT | 否 | 外部批次 |
+| confidence | DOUBLE PRECISION | 否 | 置信度 |
+| tenant_id / project_id | TEXT | 否 | 多租户（冗余，便于 RLS） |
+| created_at / updated_at | TIMESTAMPTZ | 是 | 时间戳 |
+
+#### 5.2.6 asset_algo_latest —— 算法最新状态投影
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| asset_id | UUID | 是 | 资产 ID |
+| algo_name / algo_version | TEXT | 是 | 算法标识 |
+| status | TEXT | 是 | pending / running / ok / failed / blocked / skipped |
+| result_tag / result_score | TEXT / DOUBLE | 否 | 算法输出标签与分数 |
+| result_summary | JSONB | 是 | 低频结果摘要 |
+| run_id / method | TEXT | 否 | 执行批次 / 方式 |
+| model_uri / output_uri | TEXT | 否 | 模型 / 输出地址 |
+| error_code / error_message | TEXT | 否 | 失败原因 |
+| started_at / finished_at | TIMESTAMPTZ | 否 | 起止时间 |
+| tenant_id / project_id | TEXT | 否 | 多租户（冗余） |
+| updated_at | TIMESTAMPTZ | 是 | 更新时间 |
+
+完整算法生命周期写入 `asset_events`，本表仅留每 (asset, algo) 最新一行。
+
+#### 5.2.7 asset_events —— 统一业务事件 / 审计 / outbox
+
+消费者必须按 `event_seq` 严格递增推进 watermark，**不能用 `occurred_at`**（并发写入时间戳会冲突）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| event_id | UUID | 是 | 事件主键 |
+| event_seq | BIGSERIAL | 是 | 单调递增序号，UNIQUE；消费 watermark 用 |
+| event_type | TEXT | 是 | 事件类型（见下） |
+| payload_schema_version | TEXT | 是 | event_payload schema 版本（v1 / v2 …） |
+| asset_id / mcap_file_id | UUID | 否 | 关联实体 |
+| tenant_id / project_id | TEXT | 否 | 多租户 |
+| event_source | TEXT | 是 | backend / worker / dagster / spark / system |
+| actor_type / actor_id | TEXT | 否 | user / service / algo / system + 操作者 |
+| request_id / idempotency_key / run_id | TEXT | 否 | 追踪 / 幂等 / 批次 |
+| occurred_at | TIMESTAMPTZ | 是 | 业务发生时间 |
+| created_at | TIMESTAMPTZ | 是 | 入库时间 |
+| publish_state | TEXT | 是 | pending / published / failed |
+| published_at | TIMESTAMPTZ | 否 | 同步完成时间 |
+| event_payload | JSONB | 是 | 类型相关字段（按 `payload_schema_version` 解析） |
+
+典型事件类型：
+`mcap_ingested` · `asset_created` · `asset_updated` · `asset_lifecycle_changed` · `tag_upserted` · `tag_deleted` · `algo_started` · `algo_finished` · `algo_failed` · `delivery_created` · `delivery_item_added` · `delivery_completed` · `dataset_snapshot_created` · `training_run_started` · `training_run_finished`
+
+物理治理：单表行数超过 1000 万后按 `occurred_at` 月分区；retention 默认 90 天，过期后只在 Iceberg 留档。
+
+#### 5.2.8 deliveries —— 客户交付批次当前态
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| delivery_id | UUID | 是 | 交付批次主键 |
+| tenant_id / project_id | TEXT | 否 | 多租户 |
+| customer_id / contract_id | TEXT | 是/否 | 客户 / 合同 |
+| delivery_type | TEXT | 是 | asset_set / replay / dataset / … |
+| status | TEXT | 是 | pending / delivered / accepted / rejected / recalled |
+| requested_by / approved_by / delivered_by | TEXT | 否 | 流程参与者 |
+| manifest_uri / replay_manifest_uri | TEXT | 否 | 交付清单 / 回放清单 |
+| item_count / total_size_bytes | BIGINT | 是/否 | 数量与体积 |
+| delivered_at / completed_at | TIMESTAMPTZ | 否 | 时间节点 |
+| metadata | JSONB | 是 | 低频扩展 |
+| is_deleted | BOOLEAN | 是 | 软删除 |
+| created_at / updated_at | TIMESTAMPTZ | 是 | 时间戳 |
+| version | BIGINT | 是 | 乐观锁版本 |
+
+#### 5.2.9 delivery_items —— Delivery ↔ Asset 明细
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| delivery_id | UUID | 是 | 交付批次 ID |
+| asset_id | UUID | 是 | 资产 ID |
+| asset_version | BIGINT | 否 | 交付时资产版本（快照） |
+| item_state | TEXT | 是 | pending / delivered / failed |
+| checksum | TEXT | 否 | 导出文件校验 |
+| export_uri | TEXT | 否 | 导出对象地址 |
+| created_at | TIMESTAMPTZ | 是 | 创建时间 |
+
+#### 5.2.10 idempotency_keys —— API 幂等
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| scope | TEXT | 是 | 幂等域（如 `deliveries.create`） |
+| idem_key | TEXT | 是 | 客户端提供的幂等 key |
+| resource_type / resource_id | TEXT | 否 | 资源指代 |
+| request_hash | TEXT | 否 | 请求 hash |
+| response_json | JSONB | 否 | 首次响应缓存 |
+| status_code | INT | 否 | 首次响应状态码 |
+| created_at | TIMESTAMPTZ | 是 | 创建时间 |
+| expires_at | TIMESTAMPTZ | 否 | 过期时间（lifecycle job 清理） |
+
+#### 5.2.11 Phase 2+ 表（字段简表）
+
+> 本期暂不落地，列出主要字段以备评审；详细落地前会发独立 ADR。
+
+**`asset_relations`** — 复杂血缘（多父 / 融合 / 拼接 / 采样）：
+`parent_asset_id / child_asset_id / relation_type / method / algo_name / algo_version / run_id / parent_start_offset_ms / parent_end_offset_ms / created_at`
+
+**`datasets`** — 数据集定义父表：
+`dataset_id / name / description / owner / tenant_id / project_id / dataset_type / status / created_by / created_at / updated_at`
+
+**`dataset_snapshots`** — 数据集快照（PK `(dataset_id, snapshot_id)`，**被引用后禁止 DELETE**）：
+`dataset_id / snapshot_id / snapshot_version / created_by / query_spec / source_query_hash / source_catalog_name / source_namespace / source_object_name / source_object_version_ref / manifest_uri / item_count / status / created_at / updated_at`
+
+**`training_runs`** — 训练任务记录（**软引用 dataset_snapshots，自包含 catalog 引用**）：
+`training_run_id / tenant_id / project_id / dataset_id / snapshot_id / model_name / model_version / algo_name / code_version / config_uri / data_manifest_uri / data_catalog_name / data_namespace / data_object_name / data_object_version_ref / status / metrics / artifact_uri / started_at / finished_at / created_at / updated_at`
+
+**`catalog_objects`** — 中立对象注册（UNIQUE `(catalog_name, namespace, object_name, object_type)`）：
+`object_id / catalog_name / namespace / object_name / object_type / provider / format / storage_uri / external_ref / owner / tenant_id / project_id / description / tags / properties / status / created_at / updated_at`
+
+**`catalog_object_versions`** — 对象版本引用：
+`object_version_id / object_id / version_ref / version_type / schema_ref / manifest_uri / row_count / size_bytes / checksum / created_by / created_at / properties`
 
 ---
 
@@ -208,7 +406,7 @@ usecase 层
 3. Bigtable 弱事务 + 弱关系约束，让 `asset_tags / asset_events / training_runs` 这类强引用关系实现起来反而更难
 4. 业务真正爆量到 PB 级时再评估 Spanner / TiDB / 切片，**不必现在做**
 
-> 历史代码：`backend/internal/bigtable/*` 保留为参考，runtime 已 fail-fast，详见 [CLAUDE.md](../CLAUDE.md)。
+历史代码：`backend/internal/bigtable/*` 保留为参考，运行时设置 `STORAGE_BACKEND=bigtable` 时进程 fail-fast，禁止启动。
 
 ---
 
@@ -238,7 +436,7 @@ asset.add_derived_file(kind="sam2_mask", file_path="./output.json")
 2. **Virtual Namespace**：抹平多云路径（`/cyber/{biz}/{algo}/t1.mcap` → 路由解析为 `gs://...` / `s3://...`），通过 `catalog_objects` 路由表
 3. **最小权限隔离**：屏蔽 AK/SK，按 tenant/algo 维度颁发短期 token
 
-实现位置：[`sdk/`](../sdk/)（Python + httpx + pydantic）。
+实现位置：仓库 `sdk/` 目录（Python + httpx + pydantic）。
 
 ---
 
@@ -314,7 +512,7 @@ asset.add_derived_file(kind="sam2_mask", file_path="./output.json")
 
 - 当前规模用不上
 - Kafka + connect cluster + schema registry 是过度工程
-- 持续 > 1k events/s 或 ES 之外有 ≥ 3 个消费者时再切，对应 [`docs/sql.md`](./sql.md) §6.1 Phase 2 SLA
+- 持续 > 1k events/s 或 ES 之外有 ≥ 3 个消费者时再切（对应实施计划中的 Phase 2 SLA）
 
 ##### 为什么不让 backend 直接同步写 ES
 
@@ -340,17 +538,39 @@ asset.add_derived_file(kind="sam2_mask", file_path="./output.json")
 
 ### 5.8 平台 API 设计
 
-完整 API 见：
-- [`docs/api-guide.md`](./api-guide.md) — curl 示例 / 错误码 / 工作流
-- [`api/openapi.yaml`](../api/openapi.yaml) — 机器可读 OpenAPI 规范
-
 API 设计约定：
-- **Auth**：`X-Grace-Token`（短期），后续切 OIDC / mTLS
-- **Tracing**：`X-Request-ID` 中间件
-- **Idempotency**：`POST /deliveries` 必须带 `Idempotency-Key`
-- **乐观锁**：`PATCH /assets/{id}` 冲突返回 `409 CONCURRENT_CONFLICT`，客户端重试
-- **错误格式**：`{ code, message, request_id, details }` 统一 envelope
-- **分页**：`page / page_size / next_token`
+
+| 维度 | 约定 |
+|------|------|
+| Auth | `X-Grace-Token`（短期），后续切 OIDC / mTLS |
+| Tracing | `X-Request-ID` 中间件，全链路串联 |
+| Idempotency | `POST /api/v1/deliveries` 必须带 `Idempotency-Key` |
+| 乐观锁 | `PATCH /api/v1/assets/{id}` 冲突返回 `409 CONCURRENT_CONFLICT`，客户端重试 |
+| 错误格式 | 统一 envelope：`{ code, message, request_id, details }` |
+| 分页 | `page / page_size / next_token` |
+
+主要 endpoint 清单（v1）：
+
+| Group | Method + Path | 用途 |
+|-------|---------------|------|
+| Asset | `GET /api/v1/assets` | 资产列表（基础筛选 + 分页） |
+| Asset | `GET /api/v1/assets/{id}` | 资产详情 |
+| Asset | `PATCH /api/v1/assets/{id}` | 更新资产（带乐观锁 version） |
+| Asset | `POST /api/v1/assets/{id}/algo/{algo}/start` | 触发算法运行 |
+| Asset | `POST /api/v1/assets/{id}/algo/{algo}/finish` | 算法完成回写 |
+| Asset | `POST /api/v1/assets/{id}/tags` | upsert tag |
+| Asset | `DELETE /api/v1/assets/{id}/tags/{key}` | 删除 tag |
+| MCAP | `POST /api/v1/mcap` | 注册 MCAP 文件 |
+| MCAP | `GET /api/v1/mcap/{id}` | MCAP 详情 |
+| MCAP | `GET /api/v1/mcap` | MCAP 列表（按 ingest_state / owner 过滤） |
+| Delivery | `POST /api/v1/deliveries` | 创建交付（必填 `Idempotency-Key`） |
+| Delivery | `GET /api/v1/deliveries/{id}` | 交付详情 |
+| Delivery | `POST /api/v1/deliveries/{id}/items` | 添加交付明细 |
+| Delivery | `POST /api/v1/deliveries/{id}/complete` | 完成交付 |
+| Search | `GET /api/v1/search/assets` | ES 复杂检索 + facets，ES 故障时 fallback PG |
+| Lakehouse | `GET /api/v1/lakehouse/training-snapshots` | 训练快照查询（Trino） |
+| Lakehouse | `GET /api/v1/lakehouse/recompute-candidates` | 重算候选（Trino） |
+| Health | `GET /healthz` / `GET /readyz` | K8s 探针 |
 
 ---
 
@@ -361,9 +581,10 @@ API 设计约定：
 ```bash
 make all-up    # docker-compose: PG / MinIO / Iceberg REST / Spark / Trino / ES / Backend / Frontend
 make all-down
+make all-logs  # 查看任一服务日志
 ```
 
-详细 compose 见 [`deploy/local/docker-compose.all.yml`](../deploy/local/docker-compose.all.yml)。
+依赖容器：PostgreSQL 16、Elasticsearch 8.x、MinIO（S3 兼容）、Iceberg REST Catalog、Spark 3.5、Trino、Dagster、Backend、Frontend。本地开发默认全套自动起，资源占用约 6 GB RAM。
 
 ### 6.2 生产部署形态（建议）
 
@@ -436,8 +657,8 @@ make all-down
 - [x] OpenSearch → Elasticsearch 迁移
 - [x] Audit 模块解耦（Sink 接口）
 - [x] `assets.version` CAS 乐观锁 → 409
-- [x] 目标 schema 蓝图（[`docs/sql.md`](./sql.md) + [`schemas/pg-phase0.sql`](../schemas/pg-phase0.sql)）
-- [x] 字段速查（[`docs/schema-reference.md`](./schema-reference.md)）
+- [x] 目标 schema 蓝图与可执行 DDL
+- [x] 全表字段速查与上线优先级
 
 ### 9.2 Phase 1（上线前必须，1–3 个迭代）
 
@@ -513,23 +734,5 @@ make all-down
 | R3 | `lifecycle_state` 的 CHECK 约束 | 状态机非法转移 | 应用层校验 | 状态稳定后加 DB 约束 |
 | R4 | 多租户启用时机 | RLS / index routing | 单租户 `_default` | 第一个外部租户前定 |
 | R5 | 上云 Catalog 选型（Polaris vs Gravitino vs 云原生） | 跨引擎事务 / 元数据 | 暂不绑定，靠 catalog_objects 抽象 | 上云前评审 |
-| R6 | PII / GDPR 删除链路 | 合规 | 软删 + retention_tier 标注 | `docs/data-governance.md` 待写 |
-
----
-
-## 附录 A：参考文档
-
-| 文档 | 内容 |
-|------|------|
-| [`docs/schema-reference.md`](./schema-reference.md) | 字段速查 + 上线优先级 Tier |
-| [`docs/sql.md`](./sql.md) | 长期目标 schema + Phase 0/1/2 + 设计取舍 |
-| [`docs/api-guide.md`](./api-guide.md) | API 使用指南 |
-| [`docs/algo-lifecycle-and-data-model.md`](./algo-lifecycle-and-data-model.md) | 算法状态机与生命周期 |
-| [`docs/lakehouse-query-and-tag-filtering.md`](./lakehouse-query-and-tag-filtering.md) | 湖仓查询路径与 tag 过滤 |
-| [`docs/advanced-training-data-platform-architecture.md`](./advanced-training-data-platform-architecture.md) | 长期训练平台架构 |
-| [`schemas/pg-phase0.sql`](../schemas/pg-phase0.sql) | 可执行 DDL |
-| [`api/openapi.yaml`](../api/openapi.yaml) | OpenAPI 规范 |
-| [`backend/config/tag_registry.yaml`](../backend/config/tag_registry.yaml) | Tag 注册表 |
-| [`backend/config/algo_registry.yaml`](../backend/config/algo_registry.yaml) | 算法注册表 |
-| [`CLAUDE.md`](../CLAUDE.md) | 项目工程约定 |
+| R6 | PII / GDPR 删除链路 | 合规 | 软删 + retention_tier 标注 | 单独治理文档跟进 |
 
