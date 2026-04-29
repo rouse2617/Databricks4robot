@@ -296,7 +296,39 @@ else
   echo -e "  ${RED}✗${NC} 过滤后期望 ≥3, 实际=${FILTERED_COUNT}"
 fi
 
-# 2.7 finish failed 需要 reason
+# 2.7 cursor 翻页（验证 /events 分页协议）
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=algo_*&limit=1"
+assert_code 200 "GET .../events?event_type=algo_*&limit=1 — 首屏"
+
+FIRST_EVENT_ID=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['event_id'])" 2>/dev/null || echo "")
+FIRST_EVENT_SEQ=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['event_seq'])" 2>/dev/null || echo "")
+NEXT_CURSOR=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('next_cursor',''))" 2>/dev/null || echo "")
+
+TOTAL=$((TOTAL + 1))
+if [ -n "$NEXT_CURSOR" ]; then
+  PASS=$((PASS + 1))
+  echo -e "  ${GREEN}✓${NC} next_cursor 存在: ${NEXT_CURSOR}"
+else
+  FAIL=$((FAIL + 1))
+  echo -e "  ${RED}✗${NC} next_cursor 缺失"
+fi
+
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=algo_*&limit=1&cursor=${NEXT_CURSOR}"
+assert_code 200 "GET .../events?event_type=algo_*&cursor=...&limit=1 — 翻下一页"
+
+SECOND_EVENT_ID=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['event_id'])" 2>/dev/null || echo "")
+SECOND_EVENT_SEQ=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['event_seq'])" 2>/dev/null || echo "")
+
+TOTAL=$((TOTAL + 1))
+if [ "$FIRST_EVENT_ID" != "$SECOND_EVENT_ID" ] && [ -n "$FIRST_EVENT_SEQ" ] && [ -n "$SECOND_EVENT_SEQ" ] && [ "$SECOND_EVENT_SEQ" -lt "$FIRST_EVENT_SEQ" ]; then
+  PASS=$((PASS + 1))
+  echo -e "  ${GREEN}✓${NC} cursor 翻页返回更老事件 (${FIRST_EVENT_SEQ} -> ${SECOND_EVENT_SEQ})"
+else
+  FAIL=$((FAIL + 1))
+  echo -e "  ${RED}✗${NC} cursor 翻页异常: first=${FIRST_EVENT_ID}/${FIRST_EVENT_SEQ}, second=${SECOND_EVENT_ID}/${SECOND_EVENT_SEQ}"
+fi
+
+# 2.8 finish failed 需要 reason
 call POST "/api/v1/assets/${ASSET_ID}/algo/${ALGO_KEY}/start" -d '{"method": "dagster"}'
 # 先启动
 call POST "/api/v1/assets/${ASSET_ID}/algo/${ALGO_KEY}/finish" -d '{"status": "failed"}'

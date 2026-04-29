@@ -266,6 +266,13 @@ else
   FAIL=$((FAIL+1)); echo -e "  ${RED}✗${NC} 循环: ${CYCLE_OK}/10 成功, ${CYCLE_FAIL} 失败"
 fi
 
+# 追加两条非算法事件，供 /events 子集 vs 全集对账
+call POST "/api/v1/assets/${ASSET_ID}/tags" -d '{"key":"quality","value":"good"}'
+assert_code 200 "POST /assets/:id/tags — 追加 tag_upserted 事件"
+
+call DELETE "/api/v1/assets/${ASSET_ID}/tags/quality"
+assert_code 200 "DELETE /assets/:id/tags/:key — 追加 tag_deleted 事件"
+
 # 验证事件数量 (每次循环 3 个事件 = 30 + 之前的事件)
 call GET "/api/v1/assets/${ASSET_ID}/events?event_type=algo_*&algo_key=${ALGO}"
 EV_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
@@ -274,6 +281,58 @@ if [ "$EV_COUNT" -ge 30 ]; then
   PASS=$((PASS+1)); echo -e "  ${GREEN}✓${NC} 事件数量: ${EV_COUNT} (≥30)"
 else
   FAIL=$((FAIL+1)); echo -e "  ${RED}✗${NC} 事件数量: ${EV_COUNT} (期望 ≥30)"
+fi
+
+# 验证 /events cursor 翻页
+call GET "/api/v1/assets/${ASSET_ID}/events?limit=1"
+assert_code 200 "GET /events?limit=1 — 全量事件首屏"
+
+FIRST_EVENT_ID=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['event_id'])" 2>/dev/null || echo "")
+FIRST_EVENT_SEQ=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['event_seq'])" 2>/dev/null || echo "")
+NEXT_CURSOR=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('next_cursor',''))" 2>/dev/null || echo "")
+
+TOTAL=$((TOTAL+1))
+if [ -n "$NEXT_CURSOR" ]; then
+  PASS=$((PASS+1)); echo -e "  ${GREEN}✓${NC} next_cursor 存在: ${NEXT_CURSOR}"
+else
+  FAIL=$((FAIL+1)); echo -e "  ${RED}✗${NC} next_cursor 缺失"
+fi
+
+call GET "/api/v1/assets/${ASSET_ID}/events?limit=1&cursor=${NEXT_CURSOR}"
+assert_code 200 "GET /events?cursor=...&limit=1 — 翻下一页"
+
+SECOND_EVENT_ID=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['event_id'])" 2>/dev/null || echo "")
+SECOND_EVENT_SEQ=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['event_seq'])" 2>/dev/null || echo "")
+
+TOTAL=$((TOTAL+1))
+if [ "$FIRST_EVENT_ID" != "$SECOND_EVENT_ID" ] && [ -n "$FIRST_EVENT_SEQ" ] && [ -n "$SECOND_EVENT_SEQ" ] && [ "$SECOND_EVENT_SEQ" -lt "$FIRST_EVENT_SEQ" ]; then
+  PASS=$((PASS+1)); echo -e "  ${GREEN}✓${NC} cursor 翻页返回更老事件 (${FIRST_EVENT_SEQ} -> ${SECOND_EVENT_SEQ})"
+else
+  FAIL=$((FAIL+1)); echo -e "  ${RED}✗${NC} cursor 翻页异常: first=${FIRST_EVENT_ID}/${FIRST_EVENT_SEQ}, second=${SECOND_EVENT_ID}/${SECOND_EVENT_SEQ}"
+fi
+
+# 验证算法子集与完整事件流计数一致性
+call GET "/api/v1/assets/${ASSET_ID}/events?limit=200"
+ALL_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
+
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=algo_*&limit=200"
+ALGO_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
+
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=tag_*&limit=200"
+TAG_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
+
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=asset_created&limit=200"
+CREATED_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
+
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=asset_updated&limit=200"
+UPDATED_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
+
+TOTAL=$((TOTAL+1))
+EXPECTED_ALL=$((ALGO_COUNT + TAG_COUNT + CREATED_COUNT + UPDATED_COUNT))
+if [ "$ALL_COUNT" -eq "$EXPECTED_ALL" ]; then
+  PASS=$((PASS+1)); echo -e "  ${GREEN}✓${NC} 全量事件数 = algo(${ALGO_COUNT}) + tag(${TAG_COUNT}) + asset_created(${CREATED_COUNT}) + asset_updated(${UPDATED_COUNT})"
+else
+  FAIL=$((FAIL+1)); echo -e "  ${RED}✗${NC} 全量事件数不一致: all=${ALL_COUNT}, expected=${EXPECTED_ALL}"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
