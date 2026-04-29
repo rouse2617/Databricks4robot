@@ -41,7 +41,10 @@ export default function AssetsPage() {
   const [batchTagResult, setBatchTagResult] = useState<BatchTagResult | null>(null);
 
   // Responsive: hide facet/preview on narrow screens
-  const [isNarrow, setIsNarrow] = useState(window.innerWidth < 1024);
+  // Use lazy initializer to avoid window access during SSR
+  const [isNarrow, setIsNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 1024 : false
+  );
   useEffect(() => {
     const handler = () => setIsNarrow(window.innerWidth < 1024);
     window.addEventListener("resize", handler);
@@ -245,12 +248,13 @@ export default function AssetsPage() {
             selectionMode={state.selectionState.mode}
             totalFiltered={state.resultsState.total}
             onCreateDelivery={() => setDeliveryModalOpen(true)}
-            onRunAlgo={() => msg.info("批量触发算法功能开发中")}
+            onRunAlgo={() => msg.warning("批量触发算法功能开发中，敬请期待")} 
             onBatchTag={() => setBatchTagModalOpen(true)}
             onBatchDeleteTag={() => setBatchDeleteTagModalOpen(true)}
-            onExportIds={() => msg.info("导出 ID 功能开发中")}
+            onExportIds={() => setExportModalOpen(true)}
             onSelectAllFiltered={() => dispatch({ type: "SELECT_ALL_FILTERED" })}
             onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
+            disabledRunAlgo
           />
           <AssetsResultsPane
             items={state.resultsState.items}

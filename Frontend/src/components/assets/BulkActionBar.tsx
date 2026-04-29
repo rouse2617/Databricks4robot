@@ -3,7 +3,7 @@
 // "select all filtered" link, and a warning for large batch operations.
 // Validates: Requirements R9
 
-import { Button, Typography, Space, Alert } from "antd";
+import { Button, Typography, Space, Alert, Tooltip } from "antd";
 import {
   SendOutlined,
   RobotOutlined,
@@ -21,6 +21,8 @@ export interface BulkActionBarProps {
   totalFiltered: number;
   onCreateDelivery: () => void;
   onRunAlgo: () => void;
+  /** When true, the Run Algo button is rendered as disabled with an explanatory tooltip */
+  disabledRunAlgo?: boolean;
   onBatchTag: () => void;
   onBatchDeleteTag?: () => void;
   onExportIds: () => void;
@@ -34,6 +36,7 @@ export default function BulkActionBar({
   totalFiltered,
   onCreateDelivery,
   onRunAlgo,
+  disabledRunAlgo = false,
   onBatchTag,
   onBatchDeleteTag,
   onExportIds,
@@ -58,9 +61,19 @@ export default function BulkActionBar({
         <Button size="small" icon={<SendOutlined />} onClick={onCreateDelivery}>
           创建交付
         </Button>
-        <Button size="small" icon={<RobotOutlined />} onClick={onRunAlgo}>
-          触发算法
-        </Button>
+        <Tooltip
+          title={disabledRunAlgo ? "批量触发算法功能开发中" : undefined}
+          placement="top"
+        >
+          <Button
+            size="small"
+            icon={<RobotOutlined />}
+            onClick={disabledRunAlgo ? undefined : onRunAlgo}
+            disabled={disabledRunAlgo}
+          >
+            触发算法
+          </Button>
+        </Tooltip>
         <Button size="small" icon={<TagOutlined />} onClick={onBatchTag}>
           批量打 Tag
         </Button>

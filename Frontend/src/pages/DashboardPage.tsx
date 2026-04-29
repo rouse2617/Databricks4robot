@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, Col, Row, Table, Tag, Typography, Segmented, Spin, Space } from "antd";
+import { Card, Col, Row, Table, Tag, Typography, Segmented, Spin, Space, Alert } from "antd";
 import {
   DatabaseOutlined,
   FileOutlined,
@@ -14,6 +14,7 @@ import { useNavigate } from "react-router-dom";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { assetsApi } from "../api/assets";
+import type { AssetStats } from "../api/assets";
 import { mcapFilesApi } from "../api/mcapFiles";
 import type { Asset } from "../api/types";
 
@@ -32,16 +33,6 @@ function extractAlgoStatuses(algo: Record<string, string> | undefined) {
     }
   }
   return statuses;
-}
-
-function countAlgoStatuses(assets: Asset[]) {
-  const counts: Record<string, number> = { ok: 0, failed: 0, running: 0, pending: 0, blocked: 0 };
-  for (const a of assets) {
-    for (const s of extractAlgoStatuses(a.algo_results)) {
-      if (s.status in counts) counts[s.status]++;
-    }
-  }
-  return counts;
 }
 
 /** KPI Card component with SaaS styling */
@@ -97,40 +88,117 @@ function KpiCard({
   );
 }
 
-export default function DashboardPage() {
-  const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [total, setTotal] = useState(0);
-  const [mcapTotal, setMcapTotal] = useState<number | null>(null);
-  const [dimension, setDimension] = useState<string>("资产维度");
+// ─── Derived helpers that work on both stats-API and fallback data ───
 
-  useEffect(() => {
-    Promise.all([
-      assetsApi
-        .list({ page: 1, page_size: 100, sort_by: "-updated_at" })
-        .then((data) => {
-          setAssets(data.items ?? []);
-          setTotal(data.total ?? 0);
-        })
-        .catch(() => {}),
-      mcapFilesApi
-        .list({ page: 1, page_size: 1 })
-        .then((data) => {
-          setMcapTotal(data.total ?? 0);
-        })
-        .catch(() => {}),
-    ]).finally(() => setLoading(false));
-  }, []);
+interface DerivedStats {
+  total: number;
+  mcapTotal: number | null;
+  algoCounts: Record<string, number>;
+  algoTotal: number;
+  successRate: string;
+  deliveryTotal: number;
+  recentAssets: Asset[];
+  failedAssets: Asset[];
+  isSampled: boolean; // true when data comes from frontend sampling
+}
 
-  const algoCounts = countAlgoStatuses(assets);
+function deriveFromStats(stats: AssetStats, mcapTotal: number | null): DerivedStats {
+  // Sum algo status counts across all algo keys
+  const algoCounts: Record<string, number> = { ok: 0, failed: 0, running: 0, pending: 0, blocked: 0 };
+  for (const perAlgo of Object.values(stats.algo_status_summary ?? {})) {
+    for (const [status, count] of Object.entries(perAlgo)) {
+      if (status in algoCounts) algoCounts[status] += count;
+    }
+  }
+  const algoTotal = Object.values(algoCounts).reduce((a, b) => a + b, 0);
+  const successRate = algoTotal > 0 ? ((algoCounts.ok / algoTotal) * 100).toFixed(1) : "—";
+
+  const recentAssets = stats.recent_assets ?? [];
+  const failedAssets = recentAssets.filter((a) =>
+    extractAlgoStatuses(a.algo_results).some((s) => s.status === "failed")
+  );
+
+  return {
+    total: stats.total_assets,
+    mcapTotal,
+    algoCounts,
+    algoTotal,
+    successRate,
+    deliveryTotal: stats.total_deliveries,
+    recentAssets,
+    failedAssets,
+    isSampled: false,
+  };
+}
+
+function deriveFromSampling(assets: Asset[], total: number, mcapTotal: number | null): DerivedStats {
+  const algoCounts: Record<string, number> = { ok: 0, failed: 0, running: 0, pending: 0, blocked: 0 };
+  for (const a of assets) {
+    for (const s of extractAlgoStatuses(a.algo_results)) {
+      if (s.status in algoCounts) algoCounts[s.status]++;
+    }
+  }
+  const algoTotal = Object.values(algoCounts).reduce((a, b) => a + b, 0);
+  const successRate = algoTotal > 0 ? ((algoCounts.ok / algoTotal) * 100).toFixed(1) : "—";
+  const deliveryTotal = assets.reduce((sum, a) => sum + (a.delivery_count ?? 0), 0);
   const failedAssets = assets.filter((a) =>
     extractAlgoStatuses(a.algo_results).some((s) => s.status === "failed")
   );
-  const algoTotal = Object.values(algoCounts).reduce((a, b) => a + b, 0);
-  const successRate = algoTotal > 0 ? ((algoCounts.ok / algoTotal) * 100).toFixed(1) : "—";
-  // P0 #3: Compute delivery count from loaded assets
-  const deliveryTotal = assets.reduce((sum, a) => sum + (a.delivery_count ?? 0), 0);
+
+  return {
+    total,
+    mcapTotal,
+    algoCounts,
+    algoTotal,
+    successRate,
+    deliveryTotal,
+    recentAssets: assets.slice(0, 8),
+    failedAssets,
+    isSampled: total > 100,
+  };
+}
+
+export default function DashboardPage() {
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [derived, setDerived] = useState<DerivedStats | null>(null);
+  const [dimension, setDimension] = useState<string>("资产维度");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      // Always fetch MCAP count in parallel
+      const mcapPromise = mcapFilesApi
+        .list({ page: 1, page_size: 1 })
+        .then((d) => d.total ?? 0)
+        .catch(() => null);
+
+      try {
+        // Try the backend stats endpoint first (accurate, no sampling)
+        const [stats, mcapTotal] = await Promise.all([assetsApi.stats(), mcapPromise]);
+        if (!cancelled) setDerived(deriveFromStats(stats, mcapTotal));
+      } catch {
+        // Fallback: fetch a sample of recent assets for client-side stats
+        try {
+          const [data, mcapTotal] = await Promise.all([
+            assetsApi.list({ page: 1, page_size: 100, sort_by: "-updated_at" }),
+            mcapPromise,
+          ]);
+          if (!cancelled) {
+            setDerived(deriveFromSampling(data.items ?? [], data.total ?? 0, mcapTotal));
+          }
+        } catch {
+          if (!cancelled) setDerived(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, []);
 
   const failedColumns: ColumnsType<Asset> = [
     {
@@ -166,6 +234,22 @@ export default function DashboardPage() {
     );
   }
 
+  if (!derived) {
+    return (
+      <div style={{ maxWidth: 1400 }}>
+        <Title level={4} style={{ margin: "0 0 16px 0", fontWeight: 600 }}>概览</Title>
+        <Alert
+          type="error"
+          showIcon
+          message="数据加载失败"
+          description="无法连接到后端服务，请检查网络或联系管理员。"
+        />
+      </div>
+    );
+  }
+
+  const { total, mcapTotal, algoCounts, algoTotal, successRate, deliveryTotal, recentAssets, failedAssets, isSampled } = derived;
+
   return (
     <div style={{ maxWidth: 1400 }}>
       {/* Page header */}
@@ -173,6 +257,17 @@ export default function DashboardPage() {
         <Title level={4} style={{ margin: 0, fontWeight: 600 }}>概览</Title>
         <Text type="secondary" style={{ fontSize: 13 }}>平台运行状态一览</Text>
       </div>
+
+      {/* Sampling degradation notice */}
+      {isSampled && (
+        <Alert
+          type="warning"
+          showIcon
+          message="统计数据基于最近 100 条资产采样，算法成功率与交付总量仅供参考"
+          style={{ marginBottom: 16 }}
+          closable
+        />
+      )}
 
       {/* KPI Row */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
@@ -255,7 +350,7 @@ export default function DashboardPage() {
             {algoTotal > 0 && (
               <div style={{ marginTop: 12, fontSize: 12, color: "#64748B" }}>
                 共 {algoTotal} 个算法任务 · 成功率 {successRate}%
-                {total > 100 && (
+                {isSampled && (
                   <span style={{ marginLeft: 8, color: "#94A3B8" }}>
                     (基于最近 100 条资产采样)
                   </span>
@@ -318,7 +413,7 @@ export default function DashboardPage() {
       >
         <Table
           rowKey="asset_id"
-          dataSource={assets.slice(0, 8)}
+          dataSource={recentAssets.slice(0, 8)}
           size="small"
           pagination={false}
           columns={[

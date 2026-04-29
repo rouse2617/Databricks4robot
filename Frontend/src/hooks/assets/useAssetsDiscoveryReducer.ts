@@ -6,15 +6,13 @@ import { useReducer, useEffect, useRef } from "react";
 import { assetsDiscoveryReducer } from "../../lib/assets/assetsDiscoveryReducer";
 import type {
   AssetsDiscoveryState,
-  PreviewManifest,
-  PreviewAvailability,
-  PreviewMode,
 } from "../../lib/assets/assetsDiscoveryTypes";
 import { defaultAssetsDiscoveryState } from "../../lib/assets/assetsDiscoveryTypes";
 import type { AssetsDiscoveryAction } from "../../lib/assets/assetsDiscoveryActions";
 import { assetsApi } from "../../api/assets";
 import { searchApi } from "../../api/search";
 import type { Asset } from "../../api/types";
+import { buildPlaceholderPreviewManifest } from "./useAssetPreview";
 
 // ─── Helpers ───
 
@@ -42,33 +40,6 @@ function buildFilterParams(state: AssetsDiscoveryState): string[] {
       : chip.value;
     return `${chip.field}:${chip.op}:${val}`;
   });
-}
-
-/**
- * Build a placeholder PreviewManifest from an asset's files map.
- * Checks for thumbnail and preview_mp4 keys to determine availability.
- */
-function buildPlaceholderPreviewManifest(asset: Asset): PreviewManifest {
-  const hasThumbnail = !!(asset.files && asset.files.thumbnail);
-  const hasVideo = !!(asset.files && asset.files.preview_mp4);
-
-  let availability: PreviewAvailability = "missing";
-  let mode: PreviewMode = "none";
-
-  if (hasVideo) {
-    availability = "ready";
-    mode = "video";
-  } else if (hasThumbnail) {
-    availability = "ready";
-    mode = "thumbnail";
-  }
-
-  return {
-    thumbnailUrl: hasThumbnail ? asset.files.thumbnail : null,
-    previewVideoUrl: hasVideo ? asset.files.preview_mp4 : null,
-    availability,
-    mode,
-  };
 }
 
 // ─── Hook ───

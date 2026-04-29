@@ -3,6 +3,15 @@ import type { Asset, AlgoEvent, PaginatedResponse } from "./types";
 
 export type { Asset };
 
+// ─── Stats response type ───
+export interface AssetStats {
+  total_assets: number;
+  assets_by_status: Record<string, number>;
+  algo_status_summary: Record<string, Record<string, number>>;
+  total_deliveries: number;
+  recent_assets: Asset[];
+}
+
 export interface ListAssetsParams {
   mcap_file_id?: string;
   status?: string;
@@ -64,4 +73,8 @@ export const assetsApi = {
         params: algoKey ? { algo_key: algoKey } : undefined,
       })
       .then((r) => r.data.items),
+
+  // ─── Platform stats (aggregate, avoids full table scan on frontend) ───
+  stats: () =>
+    apiClient.get<AssetStats>("/assets/stats").then((r) => r.data),
 };

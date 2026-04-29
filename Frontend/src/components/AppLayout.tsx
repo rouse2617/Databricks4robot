@@ -40,7 +40,7 @@ function resolveSelectedKey(pathname: string): string {
 export default function AppLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
+  const { logout, username } = useAuth();
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
@@ -141,7 +141,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               />
               <div style={{ overflow: "hidden" }}>
                 <div style={{ color: "#E2E8F0", fontSize: 13, fontWeight: 500, lineHeight: 1.3 }}>
-                  管理员
+                  {username || "管理员"}
                 </div>
                 <div style={{ color: "#64748B", fontSize: 11, lineHeight: 1.3 }}>
                   Phase 0
