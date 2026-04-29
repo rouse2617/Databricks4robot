@@ -12,7 +12,6 @@
 
 - **1.0 当前态**：运行时只有 PostgreSQL + Backend 在线。
 - **主写入路径**：`assets` 标量列 + `asset_tags` / `asset_algo_latest` 投影表 + `asset_events` 统一事件表。
-- **兼容层**：`cf_meta / cf_algo / cf_tag / cf_files` 仅保留历史兼容 / 回滚价值，不再是主写入路径。
 - **2.0 起**：才启用 Outbox Worker，把 `asset_events` 同步到 ES / Iceberg / 其他 sink。
 
 ### 0.1 本文件与其他文档的分工

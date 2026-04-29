@@ -41,20 +41,20 @@
 | `idempotency_keys` | API 防重复，第一天就要 |
 
 这五张表 DDL 已落地、后端读写通路已打通，但当前还在 1.0 内部阶段，**尚未正式投产**。**上线前需要做的不是新建，而是**把字段提升到目标形态：
-- `assets / mcap_files` 从 `cf_meta` 提升 `asset_type / lifecycle_state / end_timestamp_ns / duration_ms / owner / retention_tier / expire_at`
+- `assets / mcap_files` 加 `asset_type / lifecycle_state / end_timestamp_ns / duration_ms / owner / retention_tier / expire_at` 标量列
 - `assets.lifecycle_state` 和 `status` 双写一段时间，前端列表筛选切到 `lifecycle_state` 后下线 `status`
 
 ### 🟢 Tier 1+ — 已建已用（1.0 当前态）
 
 | 表 | 状态 |
 |----|------|
-| `asset_tags` | **已上线**——后端唯一 tag 写入路径；`cf_tag` JSONB 保留为兼容/回滚路径（只读不写） |
-| `asset_algo_latest` | **已上线**——后端唯一算法当前态投影；`cf_algo` JSONB 保留为兼容/回滚路径（只读不写） |
+| `asset_tags` | **已上线**——后端唯一 tag 写入路径 |
+| `asset_algo_latest` | **已上线**——后端唯一算法当前态投影 |
 | `asset_events` | **outbox 起点**。ES 同步、Iceberg 入湖、审计、回放全靠它；没它就只能用 `assets.updated_at` 拉同步，会漏事件、不能回放、审计断链 |
 
 > ⚠️ `asset_events` 上线**第一天**就要带 `event_seq` 和 `payload_schema_version`，否则后续添加是破坏性变更，需要补 backfill。
 
-当前状态：后端已完成切换——`asset_tags / asset_algo_latest` 为唯一写入路径，`asset_events` 为统一事件表。`cf_tag / cf_algo` JSONB 列保留为兼容/回滚路径（只读不写），待稳定后 drop。
+当前状态：后端已完成切换——`asset_tags / asset_algo_latest` 为唯一写入路径，`asset_events` 为统一事件表。
 
 ### 🟠 Tier 3 — 推荐但不阻塞上线
 

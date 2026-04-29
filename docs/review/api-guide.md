@@ -13,8 +13,8 @@
 | 资产生命周期 | `status` | `lifecycle_state` | 旧 `status` 沿用 review 流程枚举（pending / approved / rejected …），新 `lifecycle_state` 是统一的资产生命周期状态机（见 `data-platform-design.md §5.2.4`） |
 | 资产类型 | `type` | `asset_type` | 旧 `type` 名字过于宽泛，与 HTTP `Content-Type`、tag value type 容易混淆 |
 | 时长 | `duration_sec` | `duration_ms` | 与 `start_timestamp_ns / end_timestamp_ns` 单位对齐到毫秒精度 |
-| 算法结果存储 | `cf_algo.<algo>@<ver>:<field>` (JSONB key) | `asset_algo_latest` 投影表 + `asset_events` 事件表 | **已切换**——后端唯一写入路径；`cf_algo` 保留只读兼容 |
-| Tag 存储 | `cf_tag` JSONB | `asset_tags` 投影表 | **已切换**——后端唯一写入路径；`cf_tag` 保留只读兼容 |
+| 算法结果存储 | `cf_algo.<algo>@<ver>:<field>` (JSONB key) | `asset_algo_latest` 投影表 + `asset_events` 事件表 | **已切换**——后端唯一写入路径 |
+| Tag 存储 | `cf_tag` JSONB | `asset_tags` 投影表 | **已切换**——后端唯一写入路径 |
 | 业务事件 | `asset_algo_events`（仅算法） | `asset_events`（统一事件 / outbox） | **已切换**——所有事件只入 `asset_events`；老表保留只读 |
 
 筛选 / 排序字段同时接受新旧两种写法，详见 §1.3。

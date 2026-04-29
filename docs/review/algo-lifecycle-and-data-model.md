@@ -1,9 +1,7 @@
 # 算法处理生命周期与数据模型设计
 
 > **架构基线说明**
-> 本文档当前对齐主线：**`asset_algo_latest`（投影表）+ `asset_events`（统一事件 / outbox）**。这是 1.0 算法状态的**唯一事实源**——后端 `AlgoUsecase` 全程不再读写 `assets.cf_algo` JSONB，也不再写独立 `asset_algo_events` 表（Issue 2 修正后已彻底切走）。
->
-> Phase 0 历史形态（`assets.cf_algo`、`asset_algo_events`）的表结构暂时保留以便回滚，但**只读不写**。详见附录 A。
+> 本文档当前对齐主线：**`asset_algo_latest`（投影表）+ `asset_events`（统一事件 / outbox）**。这是 1.0 算法状态的**唯一事实源**——后端 `AlgoUsecase` 只读写这两张表。
 >
 > 这份文档与 `data-platform-design.md §5.2.6 / §5.2.7 / §5.3.3 / §5.6.2`、`schema-reference.md` 同口径。
 
@@ -52,7 +50,7 @@ blocked → pending → running → ok
 | `error_message` | failed 时必填 | 错误信息（来自 `FinishAlgoInput.reason`） |
 | `result_summary` | 可选 | 算法特定元数据（帧数、置信度、`result_size_bytes` 等 extra_fields） |
 
-> **不再双写 `cf_algo`**：Issue 2 修正后，`AlgoUsecase` 不再触碰 `assets.cf_algo`、不再 bump `assets.version`、不再写独立 `asset_algo_events` 表。所有算法状态读写都只走 `asset_algo_latest` + `asset_events`。
+> 算法状态读写**只**走 `asset_algo_latest` + `asset_events`：`AlgoUsecase` 不触碰 `assets` 行（不 bump `assets.version`），也不写其他历史表。
 
 ### 1.2 状态变更同事务追加 `asset_events`
 
@@ -122,7 +120,7 @@ cyber-grace 用独立的 `video_steps` 表管理处理步骤，适合视频级�
 - **独立步骤表**：1000 万 Segment × 10 算法 = 1 亿行，每跑一次状态变更都要新建一行，写放大严重。
 - **投影表 + 事件表**：当前态在 `asset_algo_latest`（每个 (asset, algo, version) 只一行），历史轨迹在 `asset_events`（追加写）。当前态查询走 PK / 二级索引，不需要 GROUP BY 取最新；历史 / 审计 / 回放走事件表，可分区、可冷转。
 
-这是经典的 "current state table + event log" 拆分，避免 cf_algo JSONB 的两个老问题：
+这是经典的 "current state table + event log" 拆分，避免 JSONB 单列承载多算法状态时的两个老问题：
 1. **JSONB key 形如 `hand_tracking@1.2.0:status`，无法做有效组合索引**——投影表用 `(algo_name, status)` 普通 B-tree 即可；
 2. **历史轨迹和当前态混在一行里互相影响 vacuum / TOAST**——拆开后写当前态轻、写事件表也是顺序 append。
 
@@ -175,7 +173,7 @@ algorithms:
 
 ## 三、API 设计
 
-> API endpoint 不变；变化的是后端实现：以前写 `cf_algo` JSONB key，现在写 `asset_algo_latest` 一行 + 追加一条 `asset_events`。SDK 调用方无感知。
+> 后端实现：写 `asset_algo_latest` 一行 + 追加一条 `asset_events`。SDK 调用方对存储形态无感知。
 
 ### 3.1 开始处理
 
@@ -257,7 +255,7 @@ GET /api/v1/assets/:id/events?event_type=algo_*&algo_key=hand_tracking@1.2.0
 GET /api/v1/assets?algo=hand_tracking@1.2.0&algo_status=pending&page=1&page_size=100
 ```
 
-后端用 `asset_algo_latest` 的二级索引 `(algo_name, algo_version, status)` 直接过滤；不再依赖 `cf_algo` JSONB GIN。
+后端用 `asset_algo_latest` 的二级索引 `(algo_name, algo_version, status)` 直接过滤。
 
 ---
 
@@ -322,13 +320,13 @@ client.assets.finish_algo(
 │                                                                     │
 │  mcap_files (原始文件当前态)                                         │
 │   ├─ 标量列: gcs_path / size_bytes / raw_hash_md5 / device_id ...   │
-│   └─ ingest_state, cf_meta(JSONB 兼容)                              │
+│   └─ ingest_state, metadata(JSONB 低频扩展)                         │
 │         │                                                           │
 │         │ 1:N                                                       │
 │         ▼                                                           │
 │  assets (Segment 级资产当前态)                                       │
 │   ├─ 标量列: lifecycle_state / asset_type / duration_ms / qa_state  │
-│   ├─ cf_meta / cf_algo / cf_tag (JSONB 兼容，过渡期保留)             │
+│   ├─ metadata (JSONB 低频扩展)                                       │
 │   └─ version (OCC)                                                  │
 │         │                                                           │
 │         ├──► asset_tags (tag 当前态投影；M:N，PK = asset+key)         │
@@ -349,7 +347,7 @@ client.assets.finish_algo(
 
 ### 已落地
 
-1. **`asset_algo_latest` 投影表**：已切换为唯一写入路径；`cf_algo` 保留为兼容/回滚路径（只读不写）。
+1. **`asset_algo_latest` 投影表**：算法当前态唯一写入路径。
 2. **`asset_events` 统一事件表**：已建已用，作为审计事实源和 outbox 起点。
 
 ### 待建设（→ 2.0）
@@ -367,36 +365,3 @@ client.assets.finish_algo(
 
 ---
 
-## 附录 A：Phase 0 兼容路径（`cf_algo` JSONB）
-
-> 以下内容仅用于解释**历史代码 / 老数据**形态。新代码请勿基于此编写。
-
-Phase 0 早期把算法状态用 key 形如 `<algo>@<version>:<field>` 直接放到 `assets.cf_algo` JSONB 内：
-
-```json
-{
-  "hand_tracking@1.2.0:status": "ok",
-  "hand_tracking@1.2.0:gcs_uri": "gs://bucket/results/xxx.npz",
-  "hand_tracking@1.2.0:started_at": "2026-04-24T10:00:00Z",
-  "hand_tracking@1.2.0:finished_at": "2026-04-24T10:05:00Z"
-}
-```
-
-事件单独走一张 `asset_algo_events`：
-
-```sql
-asset_algo_events (
-    event_id, asset_id, algo_key, prev_status, new_status,
-    dagster_run_id, error_message, created_at
-);
-```
-
-**为什么退场**：
-- JSONB key 无法做组合索引，Phase 0.5 后 `(algo_name, status)` 过滤性能下降；
-- 算法事件、tag 事件、生命周期事件分散在不同表，下游 outbox / ES 同步要扇出多张表；
-- 当前态（cf_algo JSONB）和历史轨迹（asset_algo_events）行宽不对称，事务一致性靠应用层保证。
-
-**迁移状态**（当前已完成切换）：
-1. ~~双写期~~：已结束——后端 `AlgoUsecase` 不再写 `cf_algo`。
-2. ~~切读期~~：已完成——所有读路径已切到 `asset_algo_latest`。
-3. **当前态**：`cf_algo` 列保留为只读回滚路径，投影表稳定 60 天后计划 drop。

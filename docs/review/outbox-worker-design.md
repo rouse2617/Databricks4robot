@@ -604,7 +604,7 @@ func (s *ESSink) EnsureMapping(ctx context.Context) error {
 
 | 文件 | 覆盖 |
 |---|---|
-| `outbox/projection_test.go` | `BuildAssetDoc`：含 algo 多行聚合、tombstone、cf_meta 兼容回退 |
+| `outbox/projection_test.go` | `BuildAssetDoc`：含 algo 多行聚合、tombstone、空字段处理 |
 | `outbox/cursor_test.go` | `safe_horizon` 计算：注入乱序 ack 验证 cursor 单调 |
 | `outbox/worker_test.go` | 主循环：mock repo + sink，验证去重 / batch 行为 |
 

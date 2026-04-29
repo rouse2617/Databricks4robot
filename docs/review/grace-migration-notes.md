@@ -40,13 +40,13 @@ Grace `collection_meta`（JSONB）典型键包括：`vendor_id`、`scene_id`、`
 数据平台侧常见落点：
 
 - **提升为标量或 facet**：进入 `mcap_files` / `assets` 的列，或 **`asset_tags`** / 搜索索引里的 **`tags_flat.*`**、**`mcap.vendor_id`**、**`mcap.scene_id`** 等（以当前 ES mapping 与 `filter` 支持为准）。
-- **过渡期**：仍可落在 **`cf_meta` / `metadata` JSONB**，再逐步提升到投影与检索字段。
+- **过渡期**：未提升的低频字段统一落在 `metadata` JSONB；高频检索字段按本仓 `schema-reference.md` 提升为标量列或投影表行。
 
 建议在同一份**字段字典**里维护「Grace JSON 路径 → 平台列 / tag_key」，避免口头约定漂移。
 
 ### 3.2 存储（Grace `storage_meta`）
 
-对齐 **`mcap_files`** 的对象 URI、大小、`gcs_path` / `object_uri` 等；具体键名以 Grace `types` 与平台 `cf_meta` 约定为准。
+对齐 **`mcap_files`** 的对象 URI、大小、`gcs_path` / `object_uri` 等；具体键名以 Grace `types` 与平台 `mcap_files` / `metadata` 约定为准。
 
 ### 3.3 工序与算法（Grace `process_info`）
 
@@ -55,7 +55,7 @@ Grace 将各算法状态放在 **JSONB**（如 `hand_tracking`、`deface` 等字
 数据平台：
 
 - **主路径**：**`asset_algo_latest`** 每 (`asset_id`, `algo_name`) 一行 + **`asset_events`** 记录状态变迁。
-- **兼容/回滚**：历史 **`cf_algo`** 键风格 `<algo>@<ver>:<field>` 仅只读对照，新写入应走算法 API（`start` / `finish` / `reset`）。
+- **平台侧契约**：写入只走算法 API（`start` / `finish` / `reset`），由后端落到 `asset_algo_latest + asset_events`。
 
 迁移时建议：**按 algo 名与版本**把 `process_info` 译为 `asset_algo_latest` 行 + 可选一条 `algo_finished` 类事件（是否需要回放历史事件由合规/审计决定）。
 
@@ -84,7 +84,7 @@ Grace 将各算法状态放在 **JSONB**（如 `hand_tracking`、`deface` 等字
 2. **定幂等键**：默认 **`raw_hash_md5`** 与 Grace 一致。
 3. **字段字典**：`collection_meta` / `process_info` → 平台列与 tags 清单。
 4. **先只读同步或对账**：双写前用 batch job 校验条数、hash、关键标签一致率。
-5. **再写路径切换**：工序写入切到 **`asset_algo_latest` + 事件**，停写平台侧 `cf_algo` 扩展（与 `algo-lifecycle-and-data-model.md` 一致）。
+5. **再写路径切换**：工序写入统一走 **`asset_algo_latest` + `asset_events`**（与 `algo-lifecycle-and-data-model.md` 一致）。
 
 ---
 

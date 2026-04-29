@@ -97,7 +97,6 @@
 | 检索 | 无；列表筛选直接查 PG | 引入 Elasticsearch + 后端 `/api/v1/search/assets` |
 | 湖仓 | 无 | 引入 Iceberg REST Catalog + Trino，PG → Bronze → Silver → Gold |
 | 数据同步 | `asset_events` 已在线写入，但无下游消费 | 启用 Outbox Worker（30s 纯轮询）同步 ES / Iceberg |
-| JSONB 兼容列 | `cf_meta / cf_algo / cf_tag` 保留，仅作兼容 / 回滚路径 | 投影表稳定后逐步停写 |
 | 多模态 / Catalog 抽象 | 无 | 3.0 阶段，Phase 2 之后 |
 
 > 注：仓库里目前已有 Iceberg / ES / Trino 的本地 `docker-compose` 脚手架代码，但它们**尚未真正接入业务写路径**，因此架构基线仍按 1.0 评审。本设计文档即是从 1.0 → 2.0 → 3.0 的演进规划。
@@ -1338,8 +1337,6 @@ API 整体走 `/api/v1` 大版本，字段级别允许小版本演进。**新旧
 | `status` | `lifecycle_state` | 双写中 | 2.0 上线后 90 天 |
 | `type` | `asset_type` | 双写中 | 2.0 上线后 90 天 |
 | `duration_sec` | `duration_ms` | 双写中（后端计算：`duration_ms = (end_timestamp_ns - start_timestamp_ns) / 1_000_000`，API 同时返回两个字段） | 2.0 上线后 90 天 |
-| `cf_algo` JSONB | `asset_algo_latest` 投影 | **已切换**——后端只读写投影表；`cf_algo` 保留为兼容/回滚路径（只读不写） | 投影表稳定 60 天后 drop cf_algo |
-| `cf_tag` JSONB | `asset_tags` 投影 | **已切换**——后端只读写投影表；`cf_tag` 保留为兼容/回滚路径（只读不写） | 投影表稳定 60 天后 drop cf_tag |
 | `asset_algo_events` | `asset_events` | **已切换**——新事件只入 `asset_events`；老表保留只读 | 6 个月后 drop |
 
 #### 5.8.2 代表性用户场景
@@ -2179,8 +2176,8 @@ flowchart LR
 #### ✅ 已完成
 
 1. **`asset_events` 统一事件表** — DDL 已落地，后端所有 mutation 同事务追加事件
-2. **`asset_tags` 投影表** — 已建，后端唯一 tag 写入路径；`cf_tag` 只读不写
-3. **`asset_algo_latest` 投影表** — 已建，后端唯一算法当前态投影；`cf_algo` 只读不写
+2. **`asset_tags` 投影表** — 已建，后端唯一 tag 写入路径
+3. **`asset_algo_latest` 投影表** — 已建，后端唯一算法当前态投影
 4. **Backend 写路径接 outbox** — `asset / mcap / delivery / tag / algo` 所有 mutation 同事务追加 `asset_events`
 
 #### 🔜 Phase 1 剩余（→ 2.0 启用前）
@@ -2253,7 +2250,7 @@ flowchart LR
 | Schema 字段提升 | DDL 迁移 + backfill 脚本就绪 + 双写一周无差异 | 新旧字段一致率 100%；旧字段读流量 < 5% | backfill 不一致率 > 0.1% | 暂停字段切换；新字段读路径关闭，全部回退到旧字段 |
 | `asset_events` outbox | 表已建 + worker 部署 + ES 索引就绪 | event 投递成功率 > 99.9%（24 小时观察）；端到端 P99 延迟 ≤ 60s（30s tick + drain loop） | 投递失败率 > 1% 持续 1 小时 / 端到端延迟 P99 > 5 分钟 | 关闭 worker；事件继续累积在 PG（不丢），后续修复重启 |
 | ES 检索接入 | `/api/v1/search/assets` 上线 + fallback PG 验证 | ES 查询成功率 > 99%；查询结果与 PG 一致率 > 99.9% | ES 故障导致 fallback PG 触发率 > 5% 持续 30 分钟 | 流量直接切回 PG 查询，关闭 ES 检索入口 |
-| 投影表 `asset_tags / asset_algo_latest` | **已完成切换**——后端唯一写入路径；cf_* 列保留只读 | 投影表写入零异常（7 天观察）；历史数据 backfill 一致率 100% | 投影表写入失败率 > 0.1% | 回退方案：重新启用 cf_tag/cf_algo 双写（代码中保留 feature flag），同时保留投影表作对账基线 |
+| 投影表 `asset_tags / asset_algo_latest` | **已完成切换**——后端唯一写入路径 | 投影表写入零异常（7 天观察）；历史数据 backfill 一致率 100% | 投影表写入失败率 > 0.1% | 回退方案：暂停受影响业务路径，从 `asset_events` 重放投影表恢复一致；不退回 JSONB 主路径 |
 | `lifecycle_state` 切换 | 与 `status` 双写 ≥ 30 天 + 前端切流验证 | 前端列表过滤 lifecycle_state 流量 ≥ 80% | 用户报错率上升或筛选结果异常 | 前端筛选条件回切到 status；后端继续双写 |
 | **UUIDv7 主键切换** | `idgen.NewID()` 上线 + 所有 repo 改完 + go test 全过 | 新建实体 100% 用 v7；存量 v4 兼容读写无报错；PK 索引行为与 v4 完全一致 | 出现 UUID 解析 / 序列化问题（罕见） | 一行代码切回 `uuid.NewRandom()`（即 v4），数据无需迁移 |
 
@@ -2305,7 +2302,7 @@ flowchart LR
 | R4 | 上云 Catalog 选型（Polaris vs Gravitino vs 云原生） | 跨引擎事务 / 元数据 | 暂不绑定，靠 catalog_objects 抽象 | 待定（架构组） | 选型 ADR + 迁移 PoC 通过 | 上云前 | open |
 | R5 | PII / GDPR 删除链路 | 合规 | 软删 + retention_tier 标注；删除 SLA 30 天（§7.1.4） | 待定（合规 + 平台） | 独立合规文档发布 + 链路 PoC 通过 | 客户外部数据接入前 | open |
 | R6 | 事件 schema 演进 CI 守门 | 多 consumer 漂移风险 | PR 改 producer 必须改 schema；细节走工程 ADR | 待定（Backend + Data） | CI 检查上线 + 至少 1 次 major bump 演练 | 2.0 outbox 上线前 | open |
-| R7 | `asset_algo_latest` 已启用，监控投影一致性 | 投影表与 `asset_events` 的一致性 | 1.0 已上线；后端 `AlgoUsecase` 全程走 `asset_algo_latest + asset_events`，`cf_algo` 只读不写 | 待定（Backend） | 投影表 + 事件表一致性监控上线 + 回滚路径（cf_algo）停写确认 | 2.0 outbox 上线前 | open |
+| R7 | `asset_algo_latest` 已启用，监控投影一致性 | 投影表与 `asset_events` 的一致性 | 1.0 已上线；后端 `AlgoUsecase` 全程走 `asset_algo_latest + asset_events` | 待定（Backend） | 投影表 + 事件表一致性监控上线 | 2.0 outbox 上线前 | open |
 | R8 | PG 单库容量上限 / 何时分库 / 选哪条路 | 10 B 长期目标下的扩展边界 | 1.0–2.0 单库 + 分区 + 归档；3.x 触达触发线后启动分库 ADR，首选 PG-wire 兼容方案（Citus / Aurora Limitless） | 待定（架构组 + Backend） | 触发线监控上线 + 触达后独立 ADR 通过 | 热数据 > 1 B **或** WPS > 3 k **或** 单分区 > 500 M 任一触达 | open |
 
 ### 11.2 风险闭环节奏
