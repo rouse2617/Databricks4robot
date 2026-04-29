@@ -619,4 +619,4 @@ flowchart LR
 
 - `backend/cmd/server/main.go`
 - `dagster/README.md`
-- `docs/open-source-lakehouse-target-architecture.md`
+- `docs/archive/research/open-source-lakehouse-target-architecture.md`

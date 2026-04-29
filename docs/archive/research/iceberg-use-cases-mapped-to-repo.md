@@ -145,7 +145,7 @@
   - 已经把 `assets` 拆成 `cf:meta / cf:algo / cf:tag / cf:files`
 - `docs/review/algo-lifecycle-and-data-model.md`
   - 已经定义好算法生命周期事件
-- `docs/postgres-risingwave-iceberg-architecture.md`
+- `docs/archive/research/postgres-risingwave-iceberg-architecture.md`
   - 已经确定当前阶段推荐链路是 `Postgres + RisingWave + Iceberg`
 
 所以接下来最合理的做法，不是重新设计一套实体，而是把现有在线模型投影成一组 Iceberg 目标表。

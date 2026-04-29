@@ -1,10 +1,10 @@
 # Assets Discovery Component Tree And State Map
 
-> 本文档是 `docs/assets-discovery-ux-spec.md` 与 `docs/assets-discovery-wireframes.md` 的工程化展开。
+> 本文档是 `assets-discovery-ux-spec.md` 与 `assets-discovery-wireframes.md` 的工程化展开。
 >
 > 目标：把低保真 wireframe 进一步细化成可实现的组件树、状态域、事件流和页面状态图。
 >
-> 下一步实施计划：`docs/assets-discovery-frontend-implementation-plan.md`
+> 下一步实施计划：`assets-discovery-frontend-implementation-plan.md`
 
 ---
 
@@ -933,8 +933,8 @@ Frontend/src/hooks/assets/
 
 ## 16. 与文档体系的关系
 
-- 交互与信息架构：见 [assets-discovery-ux-spec.md](/Users/hrp/cyber/Databricks4robot/docs/assets-discovery-ux-spec.md:1)
-- 低保真页面线框：见 [assets-discovery-wireframes.md](/Users/hrp/cyber/Databricks4robot/docs/assets-discovery-wireframes.md:1)
+- 交互与信息架构：见 [assets-discovery-ux-spec.md](/Users/rick/Databricks4robot/docs/archive/frontend/assets-discovery-ux-spec.md:1)
+- 低保真页面线框：见 [assets-discovery-wireframes.md](/Users/rick/Databricks4robot/docs/archive/frontend/assets-discovery-wireframes.md:1)
 
 如果要继续往实现推进，下一份文档最合适的是：
 

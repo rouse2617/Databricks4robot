@@ -143,7 +143,7 @@
 ### Documentation
 - `backend/README.md` — 完整重写，含架构、API 表格、开发指南、测试指南、性能数据
 - `docs/review/api-guide.md` — 全部端点 curl 示例、错误码参考、工作流示例
-- `docs/goframe-research.md` — GoFrame 调研报告，可移植功能分析
-- `docs/go-web-frameworks-research.md` — 23 个 Go Web 框架全景调研
+- `docs/archive/research/goframe-research.md` — GoFrame 调研报告，可移植功能分析
+- `docs/archive/research/go-web-frameworks-research.md` — 23 个 Go Web 框架全景调研
 - `CLAUDE.md` — 功能开发后必须更新的文件清单 + Definition of Done checklist
 - `README.md` — Current Status 更新

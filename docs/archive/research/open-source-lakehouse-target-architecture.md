@@ -49,10 +49,10 @@
 - `docs/review/algo-lifecycle-and-data-model.md`
   - 当前算法生命周期已经有 `pending / blocked / running / ok / failed`
   - 已经具备沉淀成事件流和算法运行历史表的基础
-- `docs/dagster-integration-guide.md`
+- `docs/archive/research/dagster-integration-guide.md`
   - 当前 Dagster 定位本来就是调度层
   - 后面只需要把它从“调 API”扩成“调 API + 调湖仓作业”
-- `docs/assets-discovery-ux-spec.md`
+- `docs/archive/frontend/assets-discovery-ux-spec.md`
   - 当前前端目标已经不只是 CRUD 列表，而是检索工作台
   - 这意味着未来的发现与召回不应该依赖 Bigtable 全表扫
 

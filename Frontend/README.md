@@ -124,8 +124,8 @@ src/
 | `GET /deliveries` (全量列表) | 交付管理页 |
 | `GET /mcap-files/by-device` | MCAP 按设备聚合 |
 
-详见 `docs/assets-discovery-ux-spec.md`、`docs/assets-discovery-wireframes.md`、`docs/assets-discovery-component-state-map.md`、`docs/assets-discovery-frontend-implementation-plan.md` 与 `docs/frontend-design-reference.md`。
+历史设计文档已归档到 `docs/archive/frontend/`，详见 `docs/archive/frontend/assets-discovery-ux-spec.md`、`docs/archive/frontend/assets-discovery-wireframes.md`、`docs/archive/frontend/assets-discovery-component-state-map.md`、`docs/archive/frontend/assets-discovery-frontend-implementation-plan.md` 与 `docs/archive/frontend/frontend-design-reference.md`。
 
 ## 设计参考
 
-前端设计综合参考了 EmbodiFlow、RoboxStudio、Dagster、OpenMetadata、Airflow 五个平台，详见 `docs/frontend-design-reference.md`。
+前端设计综合参考了 EmbodiFlow、RoboxStudio、Dagster、OpenMetadata、Airflow 五个平台，归档参考见 `docs/archive/frontend/frontend-design-reference.md`。

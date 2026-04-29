@@ -1,12 +1,12 @@
 # Assets Discovery Wireframes
 
-> 这是 `docs/assets-discovery-ux-spec.md` 的配套低保真 wireframe。
+> 这是 `assets-discovery-ux-spec.md` 的配套低保真 wireframe。
 >
 > 目标不是表达视觉风格，而是把页面结构、信息层级、关键交互位和未来扩展位画清楚。
 >
-> 对应的组件树与状态图：`docs/assets-discovery-component-state-map.md`
+> 对应的组件树与状态图：`assets-discovery-component-state-map.md`
 >
-> 对应的实施计划：`docs/assets-discovery-frontend-implementation-plan.md`
+> 对应的实施计划：`assets-discovery-frontend-implementation-plan.md`
 
 ---
 
@@ -465,7 +465,7 @@ Quick View / Detail Preview
 
 ## 13. 与 Spec 的对应关系
 
-- 信息架构与搜索策略：见 [assets-discovery-ux-spec.md](/Users/hrp/cyber/Databricks4robot/docs/assets-discovery-ux-spec.md:210)
-- 多模态搜索模式：见 [9.7 多模态检索的搜索模式预埋](/Users/hrp/cyber/Databricks4robot/docs/assets-discovery-ux-spec.md:417)
-- 预览能力分层：见 [13.5 预览能力分层](/Users/hrp/cyber/Databricks4robot/docs/assets-discovery-ux-spec.md:756)
-- 详情页 Preview Hero：见 [13.7 从结果页到详情页的预览路径](/Users/hrp/cyber/Databricks4robot/docs/assets-discovery-ux-spec.md:825)
+- 信息架构与搜索策略：见 [assets-discovery-ux-spec.md](/Users/rick/Databricks4robot/docs/archive/frontend/assets-discovery-ux-spec.md:210)
+- 多模态搜索模式：见 [9.7 多模态检索的搜索模式预埋](/Users/rick/Databricks4robot/docs/archive/frontend/assets-discovery-ux-spec.md:417)
+- 预览能力分层：见 [13.5 预览能力分层](/Users/rick/Databricks4robot/docs/archive/frontend/assets-discovery-ux-spec.md:756)
+- 详情页 Preview Hero：见 [13.7 从结果页到详情页的预览路径](/Users/rick/Databricks4robot/docs/archive/frontend/assets-discovery-ux-spec.md:825)

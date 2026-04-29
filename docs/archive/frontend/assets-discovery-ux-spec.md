@@ -4,11 +4,11 @@
 >
 > 设计基底：`OpenMetadata` 的页面骨架 + `Labelbox` 的过滤交互 + `Kibana` 的高级搜索栏。
 >
-> 配套低保真线框：`docs/assets-discovery-wireframes.md`
+> 配套低保真线框：`assets-discovery-wireframes.md`
 >
-> 配套组件树与状态图：`docs/assets-discovery-component-state-map.md`
+> 配套组件树与状态图：`assets-discovery-component-state-map.md`
 >
-> 对应前端实施计划：`docs/assets-discovery-frontend-implementation-plan.md`
+> 对应前端实施计划：`assets-discovery-frontend-implementation-plan.md`
 
 ---
 
