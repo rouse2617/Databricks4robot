@@ -392,7 +392,37 @@ UPDATE asset_events SET publish_state = 'published', published_at = now()
 
 - `publish_state='pending'` 保证只读已 commit 的行，未 commit 的事务对其他 session 不可见，自然不会出现"看到 101 漏 100"。
 - `FOR UPDATE SKIP LOCKED` 让多 worker 并发拉取互不阻塞，没有锁竞争。
-- 下游（PyIceberg 入湖 CronJob、审计回放）的 watermark 才是"已 published 的最大 `event_seq`"——这一层永远不会读到 commit 顺序异常的 gap。
+
+##### 下游消费者推进 cursor 的"safe horizon"协议
+
+⚠️ **关键反直觉点**：多个 Worker 实例并发用 `SKIP LOCKED` 消费时，`publish_state` 被标记为 `published` 的**顺序不等于 `event_seq` 的顺序**。
+
+例如 Worker A 拿到 `seq=100`、Worker B 拿到 `seq=101`；B 处理快、先标 published；如果此时下游 consumer 用 `WHERE publish_state='published' AND event_seq > :cursor` 拉数据，再用 `cursor := max(event_seq)` 推进，**`seq=100` 在 A 完成前会被永久跳过**。
+
+所以下游（Iceberg CronJob、Lance 重建、审计回放、未来任意 batch consumer）**绝不能**用 `max(published event_seq)` 作为 cursor 推进依据。正确协议：
+
+```sql
+-- 1. 计算 safe_horizon = 当前没有 in-flight 行的最大 event_seq
+WITH h AS (
+  SELECT COALESCE(
+    (SELECT MIN(event_seq) - 1 FROM asset_events WHERE publish_state IN ('pending','failed')),
+    (SELECT COALESCE(MAX(event_seq), 0) FROM asset_events)
+  ) AS safe_horizon
+)
+-- 2. 在 (cursor, safe_horizon] 区间内严格按 event_seq 递增拉取
+SELECT * FROM asset_events, h
+WHERE event_seq > :cursor
+  AND event_seq <= h.safe_horizon
+ORDER BY event_seq;
+
+-- 3. 处理完成后，cursor 推进到本批 max(event_seq)（必然 ≤ safe_horizon）
+UPDATE outbox_sink_cursors SET last_published_seq = :new_cursor, updated_at = now()
+ WHERE sink_name = :sink;
+```
+
+`safe_horizon = MIN(pending) − 1` 是"已经连续完成的高水位"，物理上不会跨过任何在飞行（pending / failed）的行；cursor 推进永不越过它，因此**漏消费在协议上不可能**。
+
+每个 sink（ES、iceberg_bronze、vector_lance、audit_replay…）在 `outbox_sink_cursors` 各占一行，互相独立。重建某个 sink 只需把它那一行的 `last_published_seq` 重置回 0 或目标区间起点 −1，不影响其他 sink。
 
 ##### 三个时间维度各司其职
 
@@ -584,22 +614,24 @@ sequenceDiagram
     API-->>Client: 200 OK (asset, X-Request-ID)
 
     rect rgb(245,255,245)
-    note over Worker,ES: 异步同步，至少一次
+    note over Worker,ES: 快投递通道（Outbox Worker，至少一次，亚秒级）
     Notify-->>Worker: NOTIFY (event_seq=N)
     Worker->>PG: SELECT * FROM asset_events WHERE publish_state='pending' ORDER BY event_seq FOR UPDATE SKIP LOCKED LIMIT 500
     PG-->>Worker: batch
-    Worker->>ES: Bulk index (asset_id, version)
+    Worker->>ES: Bulk index (doc_id=asset_id)
     ES-->>Worker: ok
+    Worker->>Lake: 写 staging parquet（文件名带 event_seq 区间）
+    Lake-->>Worker: ok
     Worker->>PG: UPDATE asset_events SET publish_state='published', published_at=now()
     end
 
     rect rgb(255,250,240)
-    note over Cron,Lake: 调度增量入湖（PyIceberg CronJob，每 5–10 分钟）
-    Cron->>PG: SELECT * FROM asset_events WHERE publish_state='published' AND event_seq > :watermark ORDER BY event_seq
-    PG-->>Cron: batch
-    Cron->>Lake: PyIceberg MERGE INTO bronze (以 event_seq 作 idempotent 键)
-    Lake-->>Cron: ok
-    Cron->>Cron: 持久化新 watermark = max(event_seq)
+    note over Cron,Lake: 入湖合入（PyIceberg CronJob，5–10 分钟）
+    Cron->>Lake: 列 staging 新 parquet 文件（无 PG cursor，文件即工作单元）
+    Lake-->>Cron: file list
+    Cron->>Lake: MERGE INTO bronze.asset_events USING staging ON event_seq（幂等去重）
+    Lake-->>Cron: snapshot 提交
+    Cron->>Lake: 删除已合入的 staging 文件
     end
 
 
@@ -615,8 +647,9 @@ sequenceDiagram
   - 存储访问层（repository）：纯 CRUD，不知道业务规则；事务由调用方传入。
 - **乐观锁**：`assets.version` 走 CAS（`UPDATE ... WHERE version=$expected`），rows=0 直接判 `ErrOptimisticLock`，接口层映射为 `409 CONCURRENT_CONFLICT`。
 - **事件强一致**：业务写 + 事件写在**同一事务**内，COMMIT 之后才发 `NOTIFY`；事件**不依赖 PG trigger**（业务逻辑全部在业务层，PG 只做存储 + 中央 sequence）。
-- **outbox 消费规则**：worker 永远走 `publish_state='pending' + FOR UPDATE SKIP LOCKED`，不要直接按 `event_seq > watermark` 拉（避坑 §5.2.7）。
-- **下游增量**：PyIceberg 入湖 CronJob 等下游用 `event_seq` 作 watermark，且只读 `publish_state='published'` 的记录。
+- **outbox 快投递**：Outbox Worker 永远走 `publish_state='pending' + FOR UPDATE SKIP LOCKED`，不要直接按 `event_seq > cursor` 拉。
+- **下游增量两条路**：①  入湖路径 = Worker 写 staging parquet → CronJob 处理文件（无 PG cursor，文件即工作单元，按 `event_seq` 在 MERGE INTO 中幂等去重，结构上不可能漏）；② 任何**直查 PG** 的 batch consumer（重建、审计回放、未来 sink）必须用 §5.2.7 的 `safe_horizon` 协议推进，**禁止**用 `max(published event_seq)` 作 watermark（会漏 SKIP LOCKED 并发标 published 的 in-flight 行）。
+- **per-sink cursor**：每个 sink 在 `outbox_sink_cursors` 一行；`asset_events.publish_state` 仅服务 Worker 自己的去重。
 - **审计强一致**：审计日志通过抽象 Sink 接口注入，由具体存储后端实现，业务层只产出事件不关心落地表。
 - **幂等**：写类接口要求 `Idempotency-Key`，命中则跳过整个事务，直接返回上次结果。
 
@@ -1018,10 +1051,12 @@ flowchart LR
 
 | 段 | 谁 | 做什么 | 频率 |
 |----|----|--------|------|
-| 第 1 段 | **Outbox Worker（Bronze Sink）** | 拉 pending 事件 → 写 staging parquet（文件名带 `event_seq` 区间作幂等键）→ 标 published | 实时（NOTIFY 触发，秒级） |
-| 第 2 段 | **PyIceberg CronJob** | 扫 staging 新 parquet → `MERGE INTO bronze.asset_events USING staging ...`（按 `event_seq` 去重）→ 删已合入 staging | 每 5–10 分钟 |
+| 第 1 段 | **Outbox Worker（Bronze Sink）** | 拉 `publish_state='pending'` 事件（FOR UPDATE SKIP LOCKED）→ ES `_bulk` + 写 staging parquet（文件名带 `event_seq` 区间作幂等键）→ 标 published | 实时（NOTIFY 触发，秒级） |
+| 第 2 段 | **PyIceberg CronJob** | 列 staging **新文件**（不读 PG，无 cursor）→ `MERGE INTO bronze.asset_events USING staging ON event_seq`（幂等去重）→ 删除已合入 staging | 每 5–10 分钟 |
 
 **为什么不让 Worker 直写 Iceberg**：Iceberg 的 metadata 提交、snapshot 推进、并发协调由 PyIceberg 这一层职业选手做，Worker 只负责"事件落到对象存储"，简化职责边界；同时高频小文件直接写 Iceberg 后期 compaction 成本高，staging 攒批一次 MERGE 更紧凑。
+
+**为什么 CronJob 不走 PG cursor**：直接用文件作工作单元，天然按 `event_seq` 全 batch 幂等（MERGE INTO 去重），**无需** `safe_horizon` 计算，**无需**与 Worker 协调推进。Worker 标 published 的乱序问题在这条链路上结构性消失。
 
 ##### 三个角色的职责
 
@@ -1039,9 +1074,10 @@ flowchart LR
 | **唤醒** | PG `LISTEN/NOTIFY` 亚秒级；listener 断线期间丢通知不要紧，事件持久存在 outbox，重连后按 watermark 续 |
 | **消费并发** | `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 500`，多 worker 实例可并发拉取互不阻塞 |
 | **顺序** | 严格按 `event_seq` 推进，不用 `occurred_at`（详见 §5.2.7） |
+| **cursor 推进** | 直查 PG 的下游用 `safe_horizon = MIN(pending) − 1` 协议（§5.2.7）；走 staging 文件的下游不需要 cursor |
 | **payload 版本** | 每种 event_type 对应 schema 版本号 `payload_schema_version`；新增字段 minor，破坏性变更 major |
-| **幂等** | ES `_bulk` 用 `index` action + doc_id=asset_id，重复投递不产生重复文档；Iceberg 入湖用 `event_seq` 作 idempotent 键 |
-| **可观测** | `count(*) WHERE publish_state='pending'` → 待投递队列长度 SLO；`max(event_seq) - watermark` → 同步延迟指标 |
+| **幂等** | ES `_bulk` 用 `index` action + doc_id=asset_id，重复投递不产生重复文档；Iceberg 入湖用 `event_seq` 在 MERGE INTO 中去重 |
+| **可观测** | `count(*) WHERE publish_state='pending'` → 待投递队列长度 SLO；`max(event_seq) - last_published_seq`（按 sink 取自 `outbox_sink_cursors`）→ 各 sink 同步延迟指标 |
 | **物理治理** | `asset_events` 行数 > 1000 万后按 `occurred_at` 月分区；retention 默认 90 天，过期后只在 Iceberg 留档 |
 
 ##### 延迟目标（2.0 上线后）
@@ -1473,7 +1509,7 @@ sequenceDiagram
         Out->>PG: UPDATE publish_state='published'
     end
 
-    SRE->>Graf: 看 max(event_seq) - watermark 收敛到 0
+    SRE->>Graf: 看 max(event_seq) - outbox_sink_cursors.last_published_seq[es] 收敛到 0
     Graf-->>SRE: lag = 0 ✓
 ```
 
