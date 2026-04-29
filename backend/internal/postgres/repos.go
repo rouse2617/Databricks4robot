@@ -170,7 +170,8 @@ WHERE assets.version = EXCLUDED.version - 1`
 		projectID = a.ProjectID
 	}
 
-	rowsAffected, err := r.c.db.ExecResult(ctx, q,
+	db := dbFromCtx(ctx, r.c.db)
+	rowsAffected, err := db.ExecResult(ctx, q,
 		a.AssetID, a.McapFileID, a.StartTimestampNs, a.EndTimestampNs, a.SegmentLocator,
 		string(a.Status), a.LifecycleState, a.AssetType, a.DurationMs,
 		a.Owner, a.Reviewer, a.DeliveryCount, a.LastDeliveredAt, a.LastDeliveredTo,
@@ -190,7 +191,8 @@ WHERE assets.version = EXCLUDED.version - 1`
 
 func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
 	const q = `UPDATE assets SET is_deleted=TRUE, status='archived', updated_at=now() WHERE asset_id=$1`
-	err := r.c.db.Exec(ctx, q, assetID)
+	db := dbFromCtx(ctx, r.c.db)
+	err := db.Exec(ctx, q, assetID)
 	if err != nil {
 		return fmt.Errorf("postgres AssetRepo.SoftDelete: %w", err)
 	}
@@ -805,7 +807,8 @@ ON CONFLICT (asset_id, tag_key) DO UPDATE SET
   tag_type    = EXCLUDED.tag_type,
   source_type = EXCLUDED.source_type,
   updated_at  = now()`
-	if err := r.c.db.Exec(ctx, tagQ, assetID, tagKey, tagValue, tagType, sourceType); err != nil {
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, tagQ, assetID, tagKey, tagValue, tagType, sourceType); err != nil {
 		return fmt.Errorf("postgres AssetTagRepo.Upsert asset_tags: %w", err)
 	}
 	return nil
@@ -823,7 +826,8 @@ SELECT asset_id, tag_key, tag_value, tag_type, source_type,
 FROM asset_tags
 WHERE asset_id = $1
 ORDER BY tag_key`
-	rows, err := r.c.db.Query(ctx, q, assetID)
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, assetID)
 	if err != nil {
 		return nil, fmt.Errorf("postgres AssetTagRepo.ListByAsset: %w", err)
 	}
@@ -847,7 +851,8 @@ ORDER BY tag_key`
 // Delete removes a tag from the asset_tags table.
 func (r *AssetTagRepo) Delete(ctx context.Context, assetID, tagKey string) error {
 	const delQ = `DELETE FROM asset_tags WHERE asset_id = $1 AND tag_key = $2`
-	if err := r.c.db.Exec(ctx, delQ, assetID, tagKey); err != nil {
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, delQ, assetID, tagKey); err != nil {
 		return fmt.Errorf("postgres AssetTagRepo.Delete asset_tags: %w", err)
 	}
 	return nil

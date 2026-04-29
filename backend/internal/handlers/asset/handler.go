@@ -216,6 +216,10 @@ func (h *Handler) Update(c *gin.Context) {
 func (h *Handler) Delete(c *gin.Context) {
 	assetID := c.Param("id")
 	if err := h.uc.Delete(c.Request.Context(), assetID); err != nil {
+		if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}

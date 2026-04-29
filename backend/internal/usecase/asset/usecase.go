@@ -2,6 +2,7 @@ package asset
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"data-platform/internal/config"
+	"data-platform/internal/middleware"
 	"data-platform/internal/models"
 	"data-platform/internal/repository"
 )
@@ -36,6 +38,9 @@ type Usecase struct {
 	repo         repository.AssetRepository
 	tagRegistry  *config.TagRegistry
 	algoRegistry *config.AlgoRegistry
+	tx           repository.TxRunner
+	tagRepo      repository.AssetTagRepository
+	eventRepo    repository.AssetEventRepository
 }
 
 func New(repo repository.AssetRepository) *Usecase {
@@ -51,6 +56,117 @@ func NewWithTagRegistry(repo repository.AssetRepository, tagReg *config.TagRegis
 // The algo registry is used to initialize algorithm states on asset creation.
 func NewFull(repo repository.AssetRepository, tagReg *config.TagRegistry, algoReg *config.AlgoRegistry) *Usecase {
 	return &Usecase{repo: repo, tagRegistry: tagReg, algoRegistry: algoReg}
+}
+
+// NewWithProjections wires the asset usecase with the projection and outbox
+// repositories so asset mutations can update current-state tables and append
+// business events in the same transaction.
+func NewWithProjections(
+	tx repository.TxRunner,
+	repo repository.AssetRepository,
+	tagRepo repository.AssetTagRepository,
+	eventRepo repository.AssetEventRepository,
+	tagReg *config.TagRegistry,
+	algoReg *config.AlgoRegistry,
+) *Usecase {
+	return &Usecase{
+		repo:         repo,
+		tagRegistry:  tagReg,
+		algoRegistry: algoReg,
+		tx:           tx,
+		tagRepo:      tagRepo,
+		eventRepo:    eventRepo,
+	}
+}
+
+func (u *Usecase) withMutationTx(ctx context.Context, fn func(context.Context) error) error {
+	if u.tx == nil {
+		return fn(ctx)
+	}
+	return u.tx.WithTx(ctx, fn)
+}
+
+func (u *Usecase) tagTypeFor(key string) string {
+	if u.tagRegistry == nil {
+		return "string"
+	}
+	if def, ok := u.tagRegistry.GetAllTags()[key]; ok && def.Type != "" {
+		return def.Type
+	}
+	return "string"
+}
+
+func jsonPayload(v map[string]any) []byte {
+	if v == nil {
+		return []byte(`{}`)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return b
+}
+
+func (u *Usecase) appendAssetEvent(ctx context.Context, eventType string, a *models.Asset, payload map[string]any) error {
+	if u.eventRepo == nil || a == nil {
+		return nil
+	}
+	return u.eventRepo.Append(ctx, repository.AssetEventAppendInput{
+		EventType:     eventType,
+		AssetID:       a.AssetID,
+		McapFileID:    a.McapFileID,
+		TenantID:      a.TenantID,
+		ProjectID:     a.ProjectID,
+		EventSource:   "backend",
+		RequestID:     middleware.RequestIDFromContext(ctx),
+		EventPayload:  jsonPayload(payload),
+		AggregateType: "asset",
+	})
+}
+
+func (u *Usecase) upsertTagProjection(ctx context.Context, a *models.Asset, tags map[string]string, sourceType string) error {
+	if u.tagRepo == nil || a == nil {
+		return nil
+	}
+	for k, v := range tags {
+		tagType := u.tagTypeFor(k)
+		if err := u.tagRepo.Upsert(ctx, a.AssetID, k, v, tagType, sourceType); err != nil {
+			return err
+		}
+		if err := u.appendAssetEvent(ctx, "tag_upserted", a, map[string]any{
+			"tag_key":     k,
+			"tag_value":   v,
+			"tag_type":    tagType,
+			"source_type": sourceType,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (u *Usecase) persistNewAsset(ctx context.Context, a *models.Asset, tags map[string]string) error {
+	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
+		if err := u.repo.Set(txCtx, a); err != nil {
+			return err
+		}
+		if err := u.appendAssetEvent(txCtx, "asset_created", a, map[string]any{
+			"asset_id":        a.AssetID,
+			"mcap_file_id":    a.McapFileID,
+			"segment_locator": a.SegmentLocator,
+			"lifecycle_state": a.LifecycleState,
+			"asset_type":      a.AssetType,
+			"owner":           a.Owner,
+			"reviewer":        a.Reviewer,
+		}); err != nil {
+			return err
+		}
+		return u.upsertTagProjection(txCtx, a, tags, "manual")
+	}); err != nil {
+		return err
+	}
+	// Secondary index write is best-effort for now.
+	return u.repo.WriteSegmentIndex(ctx, a)
 }
 
 type CreateInput struct {
@@ -146,11 +262,9 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 		// Write raw_mcap reference to cf_files.
 		a.Files["raw_mcap"] = in.McapFileID
 	}
-	if err := u.repo.Set(ctx, a); err != nil {
+	if err := u.persistNewAsset(ctx, a, tags); err != nil {
 		return nil, err
 	}
-	// Secondary index write is best-effort for now.
-	_ = u.repo.WriteSegmentIndex(ctx, a)
 	return a, nil
 }
 
@@ -162,6 +276,8 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 	if a == nil {
 		return nil, ErrNotFound
 	}
+	prevStatus := string(a.Status)
+	prevLifecycle := a.LifecycleState
 	if in.Status != nil {
 		a.Status = models.AssetStatus(*in.Status)
 	}
@@ -180,16 +296,62 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 		}
 	}
 	for k, v := range in.Tags {
+		if a.Tags == nil {
+			a.Tags = map[string]string{}
+		}
 		a.Tags[k] = v
 	}
-	if err := u.repo.Set(ctx, a); err != nil {
+
+	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
+		if err := u.repo.Set(txCtx, a); err != nil {
+			return err
+		}
+		if err := u.appendAssetEvent(txCtx, "asset_updated", a, map[string]any{
+			"asset_id":        a.AssetID,
+			"lifecycle_state": a.LifecycleState,
+			"owner":           a.Owner,
+			"reviewer":        a.Reviewer,
+		}); err != nil {
+			return err
+		}
+		if in.Status != nil && (prevStatus != string(a.Status) || prevLifecycle != a.LifecycleState) {
+			if err := u.appendAssetEvent(txCtx, "asset_lifecycle_changed", a, map[string]any{
+				"prev_status":          prevStatus,
+				"new_status":           string(a.Status),
+				"prev_lifecycle_state": prevLifecycle,
+				"new_lifecycle_state":  a.LifecycleState,
+			}); err != nil {
+				return err
+			}
+		}
+		return u.upsertTagProjection(txCtx, a, in.Tags, "manual")
+	}); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
 func (u *Usecase) Delete(ctx context.Context, assetID string) error {
-	return u.repo.SoftDelete(ctx, assetID)
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if a == nil {
+		return ErrNotFound
+	}
+	prevStatus := string(a.Status)
+	prevLifecycle := a.LifecycleState
+	return u.withMutationTx(ctx, func(txCtx context.Context) error {
+		if err := u.repo.SoftDelete(txCtx, assetID); err != nil {
+			return err
+		}
+		return u.appendAssetEvent(txCtx, "asset_lifecycle_changed", a, map[string]any{
+			"prev_status":          prevStatus,
+			"new_status":           string(models.AssetStatusArchived),
+			"prev_lifecycle_state": prevLifecycle,
+			"new_lifecycle_state":  "archived",
+		})
+	})
 }
 
 func (u *Usecase) CommitSegments(ctx context.Context, in CommitSegmentsInput) ([]string, error) {
@@ -222,10 +384,9 @@ func (u *Usecase) CommitSegments(ctx context.Context, in CommitSegmentsInput) ([
 			initAlgoStates(a, u.algoRegistry)
 			a.Files["raw_mcap"] = in.McapFileID
 		}
-		if err := u.repo.Set(ctx, a); err != nil {
+		if err := u.persistNewAsset(ctx, a, a.Tags); err != nil {
 			return created, err
 		}
-		_ = u.repo.WriteSegmentIndex(ctx, a)
 		created = append(created, a.AssetID)
 	}
 	return created, nil
