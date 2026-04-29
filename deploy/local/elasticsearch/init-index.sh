@@ -44,9 +44,14 @@ curl -sf -X PUT "${OS_URL}/assets" \
       "lifecycle_state":    { "type": "keyword" },
       "status":             { "type": "keyword" },
       "is_deleted":         { "type": "boolean" },
+      "version":            { "type": "long" },
+      "retention_tier":     { "type": "keyword" },
+      "expire_at":          { "type": "date" },
 
       "tenant_id":          { "type": "keyword" },
       "project_id":         { "type": "keyword" },
+
+      "metadata":           { "type": "flattened" },
 
       "owner":              { "type": "keyword", "fields": { "text": { "type": "text" } } },
       "reviewer":           { "type": "keyword", "fields": { "text": { "type": "text" } } },
@@ -70,14 +75,16 @@ curl -sf -X PUT "${OS_URL}/assets" \
 
       "mcap": {
         "properties": {
-          "vendor_id":      { "type": "keyword" },
-          "device_id":      { "type": "keyword" },
-          "camera_model":   { "type": "keyword" },
-          "scene_id":       { "type": "keyword" },
-          "location_id":    { "type": "keyword" },
-          "environment_id": { "type": "keyword" },
-          "task_id":        { "type": "keyword" },
-          "data_source":    { "type": "keyword" }
+          "vendor_id":          { "type": "keyword" },
+          "device_id":          { "type": "keyword" },
+          "camera_model":       { "type": "keyword" },
+          "scene_id":           { "type": "keyword" },
+          "location_id":        { "type": "keyword" },
+          "environment_id":     { "type": "keyword" },
+          "task_id":            { "type": "keyword" },
+          "data_source":        { "type": "keyword" },
+          "file_duration_ms":   { "type": "long" },
+          "recorded_at":        { "type": "date" }
         }
       },
 

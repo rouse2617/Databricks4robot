@@ -361,10 +361,13 @@ Projector 输入是一个 `asset_id`，输出是与 ES `assets` 索引 mapping �
 | `mcap_file_id` / `segment_locator` | `assets.<col>` | keyword |
 | `asset_type` / `lifecycle_state` / `status` | `assets.<col>` | keyword |
 | `is_deleted` | `assets.is_deleted` | boolean |
+| `version` | `assets.version` | long（reindex 对账 / "新于某次同步"查询）|
+| `retention_tier` / `expire_at` | `assets.<col>` | keyword / date（保留 / 合规过滤）|
 | `tenant_id` / `project_id` | `assets.<col>` | keyword |
 | `parent_asset_id` / `root_asset_id` / `asset_level` | `assets.<col>` | keyword / int |
 | `owner` / `reviewer` | `assets.<col>`（提升列），多字段：`keyword` + `.text` | 双形态 |
 | `notes` | `assets.metadata->>'notes'` 或提升列 | text |
+| `metadata` | `assets.metadata` JSONB 整体平铺 | flattened（自定义字段兜底）|
 
 #### 6.2.2 时间 / 时长
 
@@ -384,6 +387,8 @@ Projector 输入是一个 `asset_id`，输出是与 ES `assets` 索引 mapping �
 | `mcap.vendor_id` / `device_id` / `camera_model` | `mcap_files.<col>` | 按设备 / 厂商过滤资产 |
 | `mcap.scene_id` / `location_id` / `environment_id` | `mcap_files.<col>` | 按拍摄场景 / 地点过滤 |
 | `mcap.task_id` / `data_source` | `mcap_files.<col>` | 按采集任务过滤 |
+| `mcap.file_duration_ms` | `mcap_files.file_duration_ms` | 按整段录制时长过滤（"找时长 > 10min 的整段录"）|
+| `mcap.recorded_at` | `mcap_files.start_timestamp_ns / 1_000_000` | mcap 维度时间桶聚合 |
 
 **为什么反范式**：ES 没有原生 join；这些字段查询频率高（例如"找 vendor=A 拍的 segment"），如果不预先平铺到资产 doc，必须先在 ES 拿 asset，再回 PG 取 mcap，链路立刻烂。代价是 mcap 字段更新时需要重新 fan-out 该 mcap 关联的所有 segment（事件 `mcap_metadata_updated`，下游 sink 收到后批量重投相关 asset doc）。
 
@@ -432,10 +437,13 @@ func (s *ESSink) EnsureMapping(ctx context.Context) error {
         "lifecycle_state":    "keyword",
         "tenant_id":          "keyword",
         "is_deleted":         "boolean",
+        "version":            "long",
+        "expire_at":          "date",
         "start_timestamp_ns": "long",
         "end_timestamp_ns":   "long",
         "duration_ms":        "long",
         "updated_at":         "date",
+        "metadata":           "flattened",
         "tags":               "nested",
         "tags_flat":          "flattened",
         "algos":              "nested",

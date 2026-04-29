@@ -818,12 +818,14 @@ sequenceDiagram
 
   | 类别 | 字段（节选） | 类型 | 说明 |
   |------|-------------|------|------|
-  | 标识 / 状态 | `asset_id` / `mcap_file_id` / `asset_type` / `lifecycle_state` / `status` / `is_deleted` / `tenant_id` / `project_id` | `keyword` / `boolean` | 高频 term filter |
+  | 标识 / 状态 | `asset_id` / `mcap_file_id` / `asset_type` / `lifecycle_state` / `status` / `is_deleted` / `version` / `tenant_id` / `project_id` | `keyword` / `boolean` / `long` | 高频 term filter；`version` 给 reindex 对账与"比某次同步新的资产"查询 |
+  | 保留 / 合规 | `retention_tier` / `expire_at` | `keyword` / `date` | "30 天内将过期"、"hot 层资产"等保留 / GDPR 用例 |
   | 时间 / 时长 | `start_timestamp_ns` / `end_timestamp_ns` / `duration_ms` | `long` | 纳秒精度，做 range 查询（"时长 ∈ [9000, 11000]"、"t1 ≤ start ≤ t2"）|
   | 时间 / 时长（聚合用）| `recorded_at` / `created_at` / `updated_at` / `last_delivered_at` | `date` | date_histogram 聚合（按月 / 按小时） |
-  | 投影 / 反范式 | `mcap.vendor_id / device_id / camera_model / scene_id / location_id / ...` | `keyword` | 写入时由 outbox sink 从 `mcap_files` 反范式过来，避免 ES 跨索引 join |
-  | Tags（复杂查询）| `tags` | **`nested`** | 每条 tag 一个内嵌 doc，含 `key / value / value_num / value_bool / source_type / confidence`；支持"算法打的、置信度 ≥ 0.9 的 highway tag"这类查询 |
-  | Tags（简单等值）| `tags_flat` | **`flattened`** | 给 90% 的 `tags.scene = "highway"` 等值查询用，写入廉价 |
+  | 投影 / 反范式 | `mcap.vendor_id / device_id / camera_model / scene_id / location_id / file_duration_ms / recorded_at / ...` | `keyword` / `long` / `date` | 写入时由 outbox sink 从 `mcap_files` 反范式过来，避免 ES 跨索引 join |
+  | 自定义元信息 | `metadata` | `flattened` | PG `metadata` JSONB 兜底字段平铺；用户自定义字段（如 `metadata.weather=rain`）不需要改 mapping 就能查 |
+  | Tags（复杂查询）| `tags` | **`nested`** | 每条 tag 一个内嵌 doc，含 `key / value / value_num / value_bool / source_type / source_name / confidence`；支持"算法打的、置信度 ≥ 0.9 的 highway tag"这类查询 |
+  | Tags（简单等值）| `tags_flat` | **`flattened`** | 给 90% 的 `tags_flat.scene = "highway"` 等值查询用，写入廉价 |
   | 算法状态 | `algos` | **`nested`** | 多算法组合查询（`hand_tracking.score > 0.8 AND face_blur.status = ok`）|
   | 全文 | `notes` / `owner.text` / `reviewer.text` | `text` | multi_match 全文 |
 
