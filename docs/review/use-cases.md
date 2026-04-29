@@ -174,17 +174,26 @@ flowchart LR
 
 ## D. 算法处理
 
+**当前 v1 API（asset-scoped 主口径）：**
+
 | # | 场景 | API | 角色 | 关键约束 |
 |---|------|-----|------|---------|
-| D1 | 拉待处理资产（pending） | `GET /api/v1/algo/{name}/pending?since=&limit=` | 算法 worker | 按 `depends_on` 链动态算 pending；游标 since；待实现；当前可用 GET /api/v1/assets?filter=algo_status:eq:pending 替代 |
-| D2 | 提交算法运行结果 | `POST /api/v1/algo/{name}/runs` | 算法 worker | 同事务写 `asset_algo_latest` + 追加 `algo_completed` |
-| D3 | 查算法 run 详情 | `GET /api/v1/algo/runs/{run_id}` | 全部 | 含 metrics / artifact_uri |
+| D2a | 启动算法 | `POST /api/v1/assets/{id}/algo/{algo_key}/start` | 算法 worker | `pending → running`；同事务写 `asset_algo_latest` + 追加 `algo_started` 事件 |
+| D2b | 完成算法 | `POST /api/v1/assets/{id}/algo/{algo_key}/finish` | 算法 worker | ok/failed；同事务写投影 + 追加 `algo_finished` / `algo_failed` 事件；相同 `run_id` 重复幂等 |
+| D2c | 重置算法 | `POST /api/v1/assets/{id}/algo/{algo_key}/reset` | Admin / 算法 worker | 仅 ok/failed 可重置为 pending |
 | D4 | 资产的所有算法状态 | `GET /api/v1/assets/{id}/algo` | 业务 | 投影表读，毫秒级 |
-| D5 | 列某算法的所有 run | `GET /api/v1/algo/{name}/runs?status=ok` | 算法 / Admin | 大量数据走 Trino 而非 PG |
-| D6 | 重跑算法 / 回放 | `POST /api/v1/algo/{name}:replay` | Admin / 算法 | 按 asset_id 列表 / 时间区间 |
 | D7 | 算法注册表查询 | `GET /api/v1/algo/registry` | 全部 | 来自 `algo_registry.yaml` |
 | D8 | 算法依赖（depends_on） | `GET /api/v1/algo/{name}/dependencies` | 算法 worker | 用于 worker 自调度 |
-| D9 | 标记算法状态 blocked / reset | `PATCH /api/v1/assets/{id}/algo/{name}` | Admin | 应急运维入口 |
+| D9 | 标记算法状态 blocked | `PATCH /api/v1/assets/{id}/algo/{name}` | Admin | 应急运维入口 |
+
+**目标态候选 API（worker convenience，未冻结）：**
+
+| # | 场景 | API | 角色 | 关键约束 |
+|---|------|-----|------|---------|
+| D1 | 拉待处理资产（pending） | `GET /api/v1/algo/{name}/pending?since=&limit=` | 算法 worker | 按 `depends_on` 链动态算 pending；待实现；当前可用 `GET /api/v1/assets?filter=algo_status:eq:pending` 替代 |
+| D3 | 查算法 run 详情 | `GET /api/v1/algo/runs/{run_id}` | 全部 | 含 metrics / output_uri |
+| D5 | 列某算法的所有 run | `GET /api/v1/algo/{name}/runs?status=ok` | 算法 / Admin | 大量数据走 Trino 而非 PG |
+| D6 | 重跑算法 / 回放 | `POST /api/v1/algo/{name}:replay` | Admin / 算法 | 按 asset_id 列表 / 时间区间 |
 
 ---
 

@@ -44,17 +44,17 @@
 - `assets / mcap_files` 从 `cf_meta` 提升 `asset_type / lifecycle_state / end_timestamp_ns / duration_ms / owner / retention_tier / expire_at`
 - `assets.lifecycle_state` 和 `status` 双写一段时间，前端列表筛选切到 `lifecycle_state` 后下线 `status`
 
-### 🟡 Tier 2 — 上线前最好补齐（Phase 1，1–2 个迭代内）
+### 🟢 Tier 1+ — 已建已用（1.0 当前态）
 
-| 表 | 不上的代价 |
-|----|-----------|
-| `asset_tags` | tag 是资产页最高频的 filter/facet；继续用 `cf_tag` JSONB 过滤会让 PG 索引、ES 同步、`tag_registry.yaml` 校验都做不稳 |
-| `asset_algo_latest` | "哪些 asset 跑过 X 算法且 ok/failed" 是日常运营查询；散在 `cf_algo` JSONB 里没法做有效索引 |
+| 表 | 状态 |
+|----|------|
+| `asset_tags` | **已上线**——后端唯一 tag 写入路径；`cf_tag` JSONB 保留为兼容/回滚路径（只读不写） |
+| `asset_algo_latest` | **已上线**——后端唯一算法当前态投影；`cf_algo` JSONB 保留为兼容/回滚路径（只读不写） |
 | `asset_events` | **outbox 起点**。ES 同步、Iceberg 入湖、审计、回放全靠它；没它就只能用 `assets.updated_at` 拉同步，会漏事件、不能回放、审计断链 |
 
 > ⚠️ `asset_events` 上线**第一天**就要带 `event_seq` 和 `payload_schema_version`，否则后续添加是破坏性变更，需要补 backfill。
 
-落地方式：进入"双写期" —— 写 `cf_tag` 同时 upsert `asset_tags`、写 `cf_algo` 同时 upsert `asset_algo_latest`、所有当前态变更同事务追加 `asset_events`。老数据通过 backfill 从 JSONB 回填。
+当前状态：后端已完成切换——`asset_tags / asset_algo_latest` 为唯一写入路径，`asset_events` 为统一事件表。`cf_tag / cf_algo` JSONB 列保留为兼容/回滚路径（只读不写），待稳定后 drop。
 
 ### 🟠 Tier 3 — 推荐但不阻塞上线
 
@@ -79,13 +79,13 @@
 
 ### 上线最小 checklist
 
-| 步骤 | 涉及表 | 输出 |
+| 步骤 | 涉及表 | 状态 |
 |------|--------|------|
-| 1 | `assets` / `mcap_files` | 字段提升（`asset_type / lifecycle_state / duration_ms / owner / retention_tier / expire_at`） |
-| 2 | `asset_tags` | 新建 + 双写 + backfill；前端 facet 切到 `tag_registry.yaml + asset_tags` |
-| 3 | `asset_algo_latest` | 新建 + 双写 + backfill |
-| 4 | `asset_events` | 新建（带 `event_seq` + `payload_schema_version`）；所有写路径同事务追加；Outbox Worker 与 PyIceberg CronJob 都从这里读 |
-| 5 | `assets.lifecycle_state` | 与 `status` 双写；前端列表过滤切到 `lifecycle_state`；老 `status` 退役 |
+| 1 | `assets` / `mcap_files` | 字段提升（`asset_type / lifecycle_state / duration_ms / owner / retention_tier / expire_at`）—— 进行中 |
+| 2 | `asset_tags` | **已上线**——后端唯一 tag 写入路径 |
+| 3 | `asset_algo_latest` | **已上线**——后端唯一算法投影路径 |
+| 4 | `asset_events` | **已上线**——统一事件表（带 `event_seq` + `payload_schema_version`），Outbox Worker 消费从 2.0 开始 |
+| 5 | `assets.lifecycle_state` | 与 `status` 双写中；前端列表过滤切到 `lifecycle_state` 后停写 `status` |
 
 ---
 
@@ -220,7 +220,7 @@
 | asset_id | UUID | 是 | 资产 ID |
 | algo_name | TEXT | 是 | 算法名称 |
 | algo_version | TEXT | 是 | 算法版本 |
-| status | TEXT | 是 | pending / running / ok / failed / blocked / skipped |
+| status | TEXT | 是 | pending / running / ok / failed / blocked |
 | result_tag | TEXT | 否 | 算法输出标签 |
 | result_score | DOUBLE PRECISION | 否 | 算法分数 |
 | result_summary | JSONB | 是 | 低频结果摘要 |

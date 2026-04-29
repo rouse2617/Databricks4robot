@@ -65,9 +65,9 @@ asset_events (
     event_seq               BIGSERIAL UNIQUE,        -- outbox 顺序号
     event_id                UUID PRIMARY KEY,
     asset_id                UUID NOT NULL,
-    event_type              TEXT NOT NULL,           -- algo.started / algo.finished / algo.failed / algo.reset / ...
+    event_type              TEXT NOT NULL,           -- algo_started / algo_finished / algo_failed / algo_reset / ...
     event_payload           JSONB NOT NULL,
-    payload_schema_version  INT NOT NULL,
+    payload_schema_version  TEXT NOT NULL,           -- 字符串版本，如 "1.0"
     actor                   TEXT,
     request_id              TEXT,
     created_at              TIMESTAMPTZ NOT NULL,
@@ -139,21 +139,21 @@ algorithms:
     description: "手部追踪"
     versions: ["1.0.0", "1.2.0"]
     output:
-      required_fields: ["result_uri", "type"]
+      required_fields: ["output_uri", "type"]
       uri_required: true
 
   head_tracking:
     description: "头部追踪"
     versions: ["1.0.0"]
     output:
-      required_fields: ["result_uri", "type"]
+      required_fields: ["output_uri", "type"]
       uri_required: true
 
   deface:
     description: "去人脸"
     versions: ["2.0.0"]
     output:
-      required_fields: ["result_uri", "width", "height", "fps"]
+      required_fields: ["output_uri", "width", "height", "fps"]
       uri_required: true
 
   env_analysis:
@@ -168,7 +168,7 @@ algorithms:
 
 **验证逻辑**：
 - `start_algo`：检查 `algo_name@algo_version` 是否在注册表中。
-- `finish_algo(ok)`：检查 `result_uri` / `required_fields` 是否齐全。
+- `finish_algo(ok)`：检查 `output_uri` / `required_fields` 是否齐全。
 - `finish_algo(failed)`：检查 `error_message` 非空。
 
 ---
@@ -188,16 +188,15 @@ POST /api/v1/assets/:id/algo/:algo_key/start
 ```json
 {
   "method": "ray_batch",
-  "pipeline_run_id": "abc-123-def"
+  "run_id": "abc-123-def"
 }
 ```
 
 行为（同一事务内）：
 1. 校验 `algo_key` 在注册表中、版本合法；
-2. upsert `asset_algo_latest`：`status = running`，写 `started_at / method / pipeline_run_id`；
-3. append `asset_events(event_type='algo.started', payload={...})`；
-4. 兼容期同步写 `assets.cf_algo` 对应键；
-5. 返回 200。
+2. upsert `asset_algo_latest`：`status = running`，写 `started_at / method / run_id`；
+3. append `asset_events(event_type='algo_started', payload={...})`；
+4. 返回 200。
 
 ### 3.2 完成处理（成功）
 
@@ -208,16 +207,16 @@ POST /api/v1/assets/:id/algo/:algo_key/finish
 ```json
 {
   "status": "ok",
-  "result_uri": "gs://bucket/results/xxx.npz",
-  "pipeline_run_id": "abc-123-def",
-  "result_meta": { "frame_count": 3600, "confidence": 0.95 }
+  "output_uri": "gs://bucket/results/xxx.npz",
+  "run_id": "abc-123-def",
+  "result_summary": { "frame_count": 3600, "confidence": 0.95 }
 }
 ```
 
 行为：
 1. 校验 `required_fields`；
-2. update `asset_algo_latest`：`status = ok`，写 `finished_at / result_uri / result_meta`；
-3. append `asset_events(event_type='algo.finished', ...)`；
+2. update `asset_algo_latest`：`status = ok`，写 `finished_at / output_uri / result_summary`；
+3. append `asset_events(event_type='algo_finished', ...)`；
 4. 返回 200。
 
 ### 3.3 完成处理（失败）
@@ -229,12 +228,12 @@ POST /api/v1/assets/:id/algo/:algo_key/finish
 ```json
 {
   "status": "failed",
-  "pipeline_run_id": "abc-123-def",
+  "run_id": "abc-123-def",
   "error_message": "GPU OOM at frame 1234"
 }
 ```
 
-行为：update 投影表 `status = failed` + append `asset_events(event_type='algo.failed', ...)`。
+行为：update 投影表 `status = failed` + append `asset_events(event_type='algo_failed', ...)`。
 
 ### 3.4 重置为 pending
 
@@ -242,12 +241,12 @@ POST /api/v1/assets/:id/algo/:algo_key/finish
 POST /api/v1/assets/:id/algo/:algo_key/reset
 ```
 
-清空 `error_message / result_uri / result_meta`，`status → pending`，append `asset_events(event_type='algo.reset', ...)`。
+清空 `error_message / output_uri / result_summary`，`status → pending`，append `asset_events(event_type='algo_reset', ...)`。
 
 ### 3.5 查询算法事件历史
 
 ```
-GET /api/v1/assets/:id/events?event_type=algo.*&algo_key=hand_tracking@1.2.0
+GET /api/v1/assets/:id/events?event_type=algo_*&algo_key=hand_tracking@1.2.0
 ```
 
 直接查 `asset_events`，按 `created_at` 倒序。
@@ -264,7 +263,7 @@ GET /api/v1/assets?algo=hand_tracking@1.2.0&algo_status=pending&page=1&page_size
 
 ## 四、外部算法 worker 集成
 
-平台**不绑定具体编排器**。任何算法 worker（k8s Job / Ray Cluster / 自研脚本 / 未来引入的 Temporal 等）都通过 SDK 调用上述 API 完成 start / finish 闭环。`pipeline_run_id` 仅用作 lineage 字段，平台不解析其语义。
+平台**不绑定具体编排器**。任何算法 worker（k8s Job / Ray Cluster / 自研脚本 / 未来引入的 Temporal 等）都通过 SDK 调用上述 API 完成 start / finish 闭环。`run_id` 仅用作 lineage 字段，平台不解析其语义。
 
 ```python
 # Worker 启动时：发现待处理 Segment
@@ -279,7 +278,7 @@ client.assets.start_algo(
     asset_id=asset_id,
     algo_key="hand_tracking@1.2.0",
     method="ray_batch",
-    pipeline_run_id="my-job-2026-04-28-xxx",
+    run_id="my-job-2026-04-28-xxx",
 )
 
 # 处理完成
@@ -287,14 +286,14 @@ client.assets.finish_algo(
     asset_id=asset_id,
     algo_key="hand_tracking@1.2.0",
     status="ok",
-    result_uri="gs://bucket/results/xxx.npz",
-    pipeline_run_id="my-job-2026-04-28-xxx",
-    result_meta={"frame_count": 3600},
+    output_uri="gs://bucket/results/xxx.npz",
+    run_id="my-job-2026-04-28-xxx",
+    result_summary={"frame_count": 3600},
 )
 ```
 
 **Lineage 追溯**：
-- 从 asset 反查 worker：`asset_algo_latest.pipeline_run_id` 或 `asset_events.payload->>'pipeline_run_id'`；
+- 从 asset 反查 worker：`asset_algo_latest.run_id` 或 `asset_events.payload->>'run_id'`；
 - 从 worker 正查 asset：worker 自身记录写入了哪些 `asset_id`（log / metadata），平台不强制约定。
 
 > 1.0 / 2.0 阶段，"如何调度算法 worker"是各算法团队自管理的工程问题（k8s Job / 一次性脚本即可），平台只提供状态接口；如未来需要平台级 DAG 编排（链式触发 / 长事务重试 / lineage 可视化），独立选型 ADR（候选 Temporal / Dagster / Argo），与本设计文档解耦。
@@ -333,7 +332,7 @@ client.assets.finish_algo(
 │   └─ version (OCC)                                                  │
 │         │                                                           │
 │         ├──► asset_tags (tag 当前态投影；M:N，PK = asset+key)         │
-│         ├──► asset_algo_latest (算法当前态投影；PK = asset+algo+ver) │
+│         ├──► asset_algo_latest (算法当前态投影；PK = asset_id+algo_name) │
 │         └──► asset_events (统一事件 / outbox; append-only)           │
 │                                                                     │
 │         │ M:N (delivery_items)                                       │
@@ -348,12 +347,16 @@ client.assets.finish_algo(
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 待建设（按优先级）
+### 已落地
 
-1. **`asset_algo_latest` 投影表**：与 `cf_algo` 双写，作为下一步切换主路径的前置。
-2. **`asset_events` outbox + Go Worker（river）+ PyIceberg CronJob**：作为 ES / 湖仓的统一同步链路，替换任何形式的轮询机制。
-3. **Dataset / DatasetSnapshot 实体**：筛选 → review → seal → 交付。
-4. **MCAP 解析**：用 foxglove/mcap Go 库提取文件摘要写入 `mcap_files` 标量列。
+1. **`asset_algo_latest` 投影表**：已切换为唯一写入路径；`cf_algo` 保留为兼容/回滚路径（只读不写）。
+2. **`asset_events` 统一事件表**：已建已用，作为审计事实源和 outbox 起点。
+
+### 待建设（→ 2.0）
+
+1. **Outbox Worker + ES / Iceberg Sink**：启用 Go Worker（30s 纯轮询），把 `asset_events` 同步到 ES 和湖仓。
+2. **Dataset / DatasetSnapshot 实体**：筛选 → review → seal → 交付。
+3. **MCAP 解析**：用 foxglove/mcap Go 库提取文件摘要写入 `mcap_files` 标量列。
 
 ### 显式不做（1.0 / 2.0 阶段）
 
@@ -393,7 +396,7 @@ asset_algo_events (
 - 算法事件、tag 事件、生命周期事件分散在不同表，下游 outbox / ES 同步要扇出多张表；
 - 当前态（cf_algo JSONB）和历史轨迹（asset_algo_events）行宽不对称，事务一致性靠应用层保证。
 
-**迁移窗口**：
-1. 双写期：`asset_algo_latest` 与 `cf_algo` 同事务写；读写仍可走 cf_algo。
-2. 切读期：所有读路径切到 `asset_algo_latest`；保留 cf_algo 作回退。
-3. 停写期：删除 cf_algo 写入，仅留 `asset_algo_latest + asset_events`。
+**迁移状态**（当前已完成切换）：
+1. ~~双写期~~：已结束——后端 `AlgoUsecase` 不再写 `cf_algo`。
+2. ~~切读期~~：已完成——所有读路径已切到 `asset_algo_latest`。
+3. **当前态**：`cf_algo` 列保留为只读回滚路径，投影表稳定 60 天后计划 drop。

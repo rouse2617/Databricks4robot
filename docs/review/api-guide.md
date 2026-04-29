@@ -13,9 +13,9 @@
 | 资产生命周期 | `status` | `lifecycle_state` | 旧 `status` 沿用 review 流程枚举（pending / approved / rejected …），新 `lifecycle_state` 是统一的资产生命周期状态机（见 `data-platform-design.md §5.2.4`） |
 | 资产类型 | `type` | `asset_type` | 旧 `type` 名字过于宽泛，与 HTTP `Content-Type`、tag value type 容易混淆 |
 | 时长 | `duration_sec` | `duration_ms` | 与 `start_timestamp_ns / end_timestamp_ns` 单位对齐到毫秒精度 |
-| 算法结果存储 | `cf_algo.<algo>@<ver>:<field>` (JSONB key) | `asset_algo_latest` 投影表 + `asset_events` 事件表 | 详见 `algo-lifecycle-and-data-model.md` |
-| Tag 存储 | `cf_tag` JSONB | `asset_tags` 投影表 | 同上，过渡期双写 |
-| 业务事件 | `asset_algo_events`（仅算法） | `asset_events`（统一事件 / outbox） | 算法、tag、QA、生命周期事件统一一张表 |
+| 算法结果存储 | `cf_algo.<algo>@<ver>:<field>` (JSONB key) | `asset_algo_latest` 投影表 + `asset_events` 事件表 | **已切换**——后端唯一写入路径；`cf_algo` 保留只读兼容 |
+| Tag 存储 | `cf_tag` JSONB | `asset_tags` 投影表 | **已切换**——后端唯一写入路径；`cf_tag` 保留只读兼容 |
+| 业务事件 | `asset_algo_events`（仅算法） | `asset_events`（统一事件 / outbox） | **已切换**——所有事件只入 `asset_events`；老表保留只读 |
 
 筛选 / 排序字段同时接受新旧两种写法，详见 §1.3。
 
@@ -432,33 +432,42 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/reset" \
 ### 2.4 查询算法事件
 
 ```bash
-# 查询所有事件
-curl "$BASE/api/v1/assets/{asset_id}/algo-events" \
+# 查询所有算法事件
+curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*" \
   -H "X-Grace-Token: $TOKEN"
 
 # 按算法过滤
-curl "$BASE/api/v1/assets/{asset_id}/algo-events?algo_key=env_analysis@1.0.0" \
+curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analysis@1.0.0" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
-响应 `200`:
+响应 `200`（统一 `asset_events` 格式）:
 ```json
 {
   "items": [
     {
       "event_id": "uuid",
+      "event_seq": 12345,
       "asset_id": "uuid",
-      "algo_key": "env_analysis@1.0.0",
-      "prev_status": "pending",
-      "new_status": "running",
-      "run_id": "run-12345",
+      "event_type": "algo_started",
+      "event_payload": {
+        "algo_key": "env_analysis@1.0.0",
+        "algo_name": "env_analysis",
+        "algo_version": "1.0.0",
+        "prev_status": "pending",
+        "new_status": "running",
+        "run_id": "run-12345"
+      },
+      "payload_schema_version": "1.0",
+      "actor": "worker-bot",
+      "request_id": "req-xxx",
       "created_at": "2026-04-25T10:00:00Z"
     }
   ]
 }
 ```
 
-事件按 `created_at` 降序排列（最新的在前）。
+事件按 `created_at` 降序排列（最新的在前）。响应字段与 `asset_events` 表一一对应，`prev_status / new_status` 等算法特有字段均在 `event_payload` 内。
 
 ### 2.5 依赖链自动 Unblock
 
