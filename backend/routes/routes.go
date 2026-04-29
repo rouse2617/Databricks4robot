@@ -67,6 +67,9 @@ func RegisterAll(
 		assets.DELETE("/:id", assetHandler.Delete)
 		assets.GET("/:id/deliveries", assetHandler.ListDeliveries)
 		assets.GET("/:id/events", assetHandler.ListEvents)
+		assets.POST("/:id/tags", assetHandler.UpsertTag)
+		assets.DELETE("/:id/tags/:key", assetHandler.DeleteTag)
+		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
 
 		// Algorithm lifecycle routes
 		if algoHandler != nil {

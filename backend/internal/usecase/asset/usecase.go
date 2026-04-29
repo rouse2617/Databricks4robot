@@ -111,6 +111,18 @@ func jsonPayload(v map[string]any) []byte {
 	return b
 }
 
+func (u *Usecase) validateTags(tags map[string]string) error {
+	if u.tagRegistry == nil {
+		return nil
+	}
+	for k, v := range tags {
+		if err := u.tagRegistry.Validate(k, v); err != nil {
+			return fmt.Errorf("%w: %s", ErrInvalidTag, err.Error())
+		}
+	}
+	return nil
+}
+
 func (u *Usecase) appendAssetEvent(ctx context.Context, eventType string, a *models.Asset, payload map[string]any) error {
 	if u.eventRepo == nil || a == nil {
 		return nil
@@ -325,6 +337,11 @@ type ListEventsResult struct {
 	NextCursor *int64
 }
 
+type UpsertTagInput struct {
+	Key   string
+	Value string
+}
+
 type CommitSegmentsInput struct {
 	McapFileID string
 	Ranges     [][2]int64
@@ -415,6 +432,13 @@ func (u *Usecase) ListEvents(ctx context.Context, assetID string, in ListEventsI
 	return res, nil
 }
 
+func (u *Usecase) ListTagHistory(ctx context.Context, assetID string, in ListEventsInput) (*ListEventsResult, error) {
+	in.EventTypes = []string{"tag_upserted", "tag_deleted"}
+	in.EventTypePatterns = nil
+	in.AlgoKey = ""
+	return u.ListEvents(ctx, assetID, in)
+}
+
 func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, error) {
 	if in.McapFileID == "" {
 		return nil, ErrMcapFileIDRequired
@@ -426,13 +450,8 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	if tags == nil {
 		tags = map[string]string{}
 	}
-	// Validate tags if registry is available.
-	if u.tagRegistry != nil {
-		for k, v := range tags {
-			if err := u.tagRegistry.Validate(k, v); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrInvalidTag, err.Error())
-			}
-		}
+	if err := u.validateTags(tags); err != nil {
+		return nil, err
 	}
 	a := &models.Asset{
 		AssetID:          uuid.NewString(),
@@ -483,13 +502,8 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 	if in.Owner != nil {
 		a.Owner = *in.Owner
 	}
-	// Validate tags if registry is available.
-	if u.tagRegistry != nil {
-		for k, v := range in.Tags {
-			if err := u.tagRegistry.Validate(k, v); err != nil {
-				return nil, fmt.Errorf("%w: %s", ErrInvalidTag, err.Error())
-			}
-		}
+	if err := u.validateTags(in.Tags); err != nil {
+		return nil, err
 	}
 	for k, v := range in.Tags {
 		if a.Tags == nil {
@@ -525,6 +539,75 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 		return nil, err
 	}
 	return a, nil
+}
+
+func (u *Usecase) UpsertTag(ctx context.Context, assetID string, in UpsertTagInput) (*models.Asset, error) {
+	if err := u.validateTags(map[string]string{in.Key: in.Value}); err != nil {
+		return nil, err
+	}
+
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, ErrNotFound
+	}
+
+	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
+		return u.upsertTagProjection(txCtx, a, map[string]string{in.Key: in.Value}, "manual")
+	}); err != nil {
+		return nil, err
+	}
+	return u.Get(ctx, assetID)
+}
+
+func (u *Usecase) findTag(ctx context.Context, assetID, tagKey string) (*models.AssetTag, error) {
+	if u.tagRepo == nil {
+		return nil, nil
+	}
+	rows, err := u.tagRepo.ListByAsset(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if row.TagKey == tagKey {
+			return row, nil
+		}
+	}
+	return nil, nil
+}
+
+func (u *Usecase) DeleteTag(ctx context.Context, assetID, tagKey string) (*models.Asset, error) {
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, ErrNotFound
+	}
+
+	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
+		existing, err := u.findTag(txCtx, assetID, tagKey)
+		if err != nil {
+			return err
+		}
+		if existing == nil {
+			return nil
+		}
+		if err := u.tagRepo.Delete(txCtx, assetID, tagKey); err != nil {
+			return err
+		}
+		return u.appendAssetEvent(txCtx, "tag_deleted", a, map[string]any{
+			"tag_key":     existing.TagKey,
+			"tag_value":   existing.TagValue,
+			"tag_type":    existing.TagType,
+			"source_type": "manual",
+		})
+	}); err != nil {
+		return nil, err
+	}
+	return u.Get(ctx, assetID)
 }
 
 func (u *Usecase) Delete(ctx context.Context, assetID string) error {

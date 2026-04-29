@@ -429,7 +429,30 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/reset" \
 
 只有 `ok` 或 `failed` 状态可以重置。
 
-### 2.4 查询资产事件 / 算法事件子集
+### 2.4 标签管理
+
+```bash
+# 新增 / 更新单个标签
+curl -X POST "$BASE/api/v1/assets/{asset_id}/tags" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"quality","value":"good"}'
+
+# 删除单个标签
+curl -X DELETE "$BASE/api/v1/assets/{asset_id}/tags/quality" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 查询标签变更历史
+curl "$BASE/api/v1/assets/{asset_id}/tags/history?limit=20" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+说明：
+- `POST /tags` 走 `tag_registry` 校验，未注册 key 或非法 enum value 返回 `422 INVALID_TAG`。
+- `DELETE /tags/{key}` 对不存在 key 按幂等成功处理，但不会伪造 `tag_deleted` 事件。
+- `GET /tags/history` 返回的仍是统一 `asset_events` 形状，只是固定过滤 `tag_upserted / tag_deleted`。
+
+### 2.5 查询资产事件 / 算法事件子集
 
 ```bash
 # 查询资产完整事件时间线（最新在前）
@@ -479,7 +502,7 @@ curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analy
 - `algo_key` 过滤的是 `event_payload.algo_key`，通常与 `event_type=algo_*` 搭配使用。
 - 响应字段与 `asset_events` 表一一对应；算法特有字段如 `prev_status / new_status / reason` 均保留在 `event_payload` 内。
 
-### 2.5 依赖链自动 Unblock
+### 2.6 依赖链自动 Unblock
 
 `action_annotation@1.0.0` 依赖三个算法。当所有依赖都完成（status=ok）后，系统自动将 `action_annotation` 从 `blocked` 变为 `pending`。
 

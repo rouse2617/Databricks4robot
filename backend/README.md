@@ -87,6 +87,9 @@ docker-compose up -d postgres  # 重新初始化
 | `DELETE` | `/api/v1/assets/:id` | 软删除 (status→archived) |
 | `GET` | `/api/v1/assets/:id/deliveries` | 资产关联的交付列表 |
 | `GET` | `/api/v1/assets/:id/events` | 查询资产事件时间线；可用 `event_type=algo_*` 取算法事件子集 |
+| `POST` | `/api/v1/assets/:id/tags` | 新增/更新单个标签 |
+| `DELETE` | `/api/v1/assets/:id/tags/:key` | 删除单个标签 |
+| `GET` | `/api/v1/assets/:id/tags/history` | 查询标签变更历史 |
 
 ### 算法生命周期 (Algo Lifecycle)
 

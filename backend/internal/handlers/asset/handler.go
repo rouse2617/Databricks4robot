@@ -2,6 +2,7 @@ package asset
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -108,6 +109,42 @@ func (h *Handler) List(c *gin.Context) {
 	c.JSON(200, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
 }
 
+type eventQuery struct {
+	beforeSeq *int64
+	afterSeq  *int64
+	limit     int
+}
+
+func parseEventQuery(c *gin.Context) (eventQuery, error) {
+	beforeSeq, err := parseOptionalInt64(c.Query("cursor"))
+	if err != nil {
+		return eventQuery{}, fmt.Errorf("invalid cursor: %w", err)
+	}
+	if beforeAlias := c.Query("before_event_seq"); beforeAlias != "" {
+		beforeSeq, err = parseOptionalInt64(beforeAlias)
+		if err != nil {
+			return eventQuery{}, fmt.Errorf("invalid before_event_seq: %w", err)
+		}
+	}
+	afterSeq, err := parseOptionalInt64(c.Query("after_event_seq"))
+	if err != nil {
+		return eventQuery{}, fmt.Errorf("invalid after_event_seq: %w", err)
+	}
+	return eventQuery{
+		beforeSeq: beforeSeq,
+		afterSeq:  afterSeq,
+		limit:     parseBoundedInt(c.Query("limit"), 50, 1, 200),
+	}, nil
+}
+
+func writeEventList(c *gin.Context, res *assetUC.ListEventsResult, limit int) {
+	resp := gin.H{"items": res.Items, "limit": limit}
+	if res.NextCursor != nil {
+		resp["next_cursor"] = *res.NextCursor
+	}
+	c.JSON(200, resp)
+}
+
 // ListEvents returns the asset event timeline ordered by event_seq DESC.
 // @Summary      List asset events
 // @Description  List generic asset events with optional event_type/algo_key filters
@@ -127,24 +164,11 @@ func (h *Handler) List(c *gin.Context) {
 // @Security     GraceToken
 // @Router       /assets/{id}/events [get]
 func (h *Handler) ListEvents(c *gin.Context) {
-	beforeSeq, err := parseOptionalInt64(c.Query("cursor"))
+	q, err := parseEventQuery(c)
 	if err != nil {
-		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid cursor", map[string]any{"error": err.Error()})
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid event query", map[string]any{"error": err.Error()})
 		return
 	}
-	if beforeAlias := c.Query("before_event_seq"); beforeAlias != "" {
-		beforeSeq, err = parseOptionalInt64(beforeAlias)
-		if err != nil {
-			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid before_event_seq", map[string]any{"error": err.Error()})
-			return
-		}
-	}
-	afterSeq, err := parseOptionalInt64(c.Query("after_event_seq"))
-	if err != nil {
-		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid after_event_seq", map[string]any{"error": err.Error()})
-		return
-	}
-	limit := parseBoundedInt(c.Query("limit"), 50, 1, 200)
 
 	var eventTypes []string
 	var eventTypePatterns []string
@@ -163,9 +187,9 @@ func (h *Handler) ListEvents(c *gin.Context) {
 		EventTypes:        eventTypes,
 		EventTypePatterns: eventTypePatterns,
 		AlgoKey:           c.Query("algo_key"),
-		BeforeEventSeq:    beforeSeq,
-		AfterEventSeq:     afterSeq,
-		Limit:             limit,
+		BeforeEventSeq:    q.beforeSeq,
+		AfterEventSeq:     q.afterSeq,
+		Limit:             q.limit,
 	})
 	if err != nil {
 		if errors.Is(err, assetUC.ErrNotFound) {
@@ -175,12 +199,112 @@ func (h *Handler) ListEvents(c *gin.Context) {
 		httpresp.Internal(c, err.Error())
 		return
 	}
+	writeEventList(c, res, q.limit)
+}
 
-	resp := gin.H{"items": res.Items, "limit": limit}
-	if res.NextCursor != nil {
-		resp["next_cursor"] = *res.NextCursor
+// UpsertTag creates or updates a single tag on an asset.
+// @Summary      Upsert asset tag
+// @Description  Create or update one tag entry under asset_tags and append tag_upserted
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        id   path string true "Asset ID"
+// @Param        body body object true "Tag upsert request"
+// @Success      200 {object} models.Asset
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      422 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/tags [post]
+func (h *Handler) UpsertTag(c *gin.Context) {
+	var req struct {
+		Key   string `json:"key" binding:"required" label:"标签 Key"`
+		Value string `json:"value" binding:"required" label:"标签值"`
 	}
-	c.JSON(200, resp)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	a, err := h.uc.UpsertTag(c.Request.Context(), c.Param("id"), assetUC.UpsertTagInput{
+		Key:   req.Key,
+		Value: req.Value,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, assetUC.ErrNotFound):
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+		case errors.Is(err, assetUC.ErrInvalidTag):
+			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
+		default:
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(200, a)
+}
+
+// DeleteTag removes a single tag from an asset.
+// @Summary      Delete asset tag
+// @Description  Delete one tag entry under asset_tags and append tag_deleted when present
+// @Tags         assets
+// @Produce      json
+// @Param        id  path string true "Asset ID"
+// @Param        key path string true "Tag key"
+// @Success      200 {object} models.Asset
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/tags/{key} [delete]
+func (h *Handler) DeleteTag(c *gin.Context) {
+	a, err := h.uc.DeleteTag(c.Request.Context(), c.Param("id"), c.Param("key"))
+	if err != nil {
+		if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, a)
+}
+
+// ListTagHistory returns tag_upserted and tag_deleted events for an asset.
+// @Summary      List asset tag history
+// @Description  List tag-specific events sourced from asset_events
+// @Tags         assets
+// @Produce      json
+// @Param        id               path  string true  "Asset ID"
+// @Param        cursor           query int64  false "Fetch older events with event_seq < cursor"
+// @Param        before_event_seq query int64  false "Alias of cursor"
+// @Param        after_event_seq  query int64  false "Fetch events with event_seq > after_event_seq"
+// @Param        limit            query int    false "Page size" default(50)
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/tags/history [get]
+func (h *Handler) ListTagHistory(c *gin.Context) {
+	q, err := parseEventQuery(c)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid event query", map[string]any{"error": err.Error()})
+		return
+	}
+	res, err := h.uc.ListTagHistory(c.Request.Context(), c.Param("id"), assetUC.ListEventsInput{
+		BeforeEventSeq: q.beforeSeq,
+		AfterEventSeq:  q.afterSeq,
+		Limit:          q.limit,
+	})
+	if err != nil {
+		if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	writeEventList(c, res, q.limit)
 }
 
 // Create creates a new asset.

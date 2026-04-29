@@ -597,6 +597,104 @@ func TestAssetListEvents(t *testing.T) {
 	}
 }
 
+func TestUpsertTagAndDeleteTag(t *testing.T) {
+	assetRepo := &mockAssetRepo{
+		getFn: func(context.Context, string) (*models.Asset, error) {
+			return &models.Asset{AssetID: "a1", McapFileID: "m1", Version: 1}, nil
+		},
+	}
+	tagRepo := newHandlerAssetTagRepo()
+	eventRepo := &handlerAssetEventRepo{}
+	uc := assetUC.NewWithProjections(
+		handlerTxRunner{},
+		assetRepo,
+		tagRepo,
+		nil,
+		eventRepo,
+		buildTestTagRegistryForAsset(t),
+		nil,
+	)
+	h := New(uc, &mockDeliveryRepoForAsset{})
+
+	r := gin.New()
+	r.POST("/assets/:id/tags", h.UpsertTag)
+	r.DELETE("/assets/:id/tags/:key", h.DeleteTag)
+
+	w := doReq(t, r, http.MethodPost, "/assets/a1/tags", map[string]any{"key": "quality", "value": "good"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from upsert tag, got %d", w.Code)
+	}
+	if row, ok := tagRepo.rows[tagRowKey("a1", "quality")]; !ok || row.TagValue != "good" {
+		t.Fatalf("expected projection row quality=good, got %#v", row)
+	}
+
+	w = doReq(t, r, http.MethodDelete, "/assets/a1/tags/quality", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from delete tag, got %d", w.Code)
+	}
+	if _, ok := tagRepo.rows[tagRowKey("a1", "quality")]; ok {
+		t.Fatalf("expected tag projection row to be deleted")
+	}
+}
+
+func TestUpsertTag_InvalidTag(t *testing.T) {
+	assetRepo := &mockAssetRepo{
+		getFn: func(context.Context, string) (*models.Asset, error) {
+			return &models.Asset{AssetID: "a1", McapFileID: "m1", Version: 1}, nil
+		},
+	}
+	uc := assetUC.NewWithProjections(
+		handlerTxRunner{},
+		assetRepo,
+		newHandlerAssetTagRepo(),
+		nil,
+		&handlerAssetEventRepo{},
+		buildTestTagRegistryForAsset(t),
+		nil,
+	)
+	h := New(uc, &mockDeliveryRepoForAsset{})
+	r := setupAssetRouter(http.MethodPost, "/assets/:id/tags", h.UpsertTag)
+
+	w := doReq(t, r, http.MethodPost, "/assets/a1/tags", map[string]any{"key": "unknown_tag", "value": "x"})
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for invalid tag, got %d", w.Code)
+	}
+}
+
+func TestListTagHistory(t *testing.T) {
+	assetRepo := &mockAssetRepo{
+		getFn: func(context.Context, string) (*models.Asset, error) {
+			return &models.Asset{AssetID: "a1", McapFileID: "m1", Version: 1}, nil
+		},
+	}
+	eventRepo := &handlerAssetEventRepo{}
+	eventRepo.seed("asset_created", 1, map[string]any{"asset_id": "a1"})
+	eventRepo.seed("tag_upserted", 2, map[string]any{"tag_key": "quality", "tag_value": "good"})
+	eventRepo.seed("tag_deleted", 3, map[string]any{"tag_key": "quality", "tag_value": "good"})
+	eventRepo.seed("algo_started", 4, map[string]any{"algo_key": "env_analysis@1.0.0"})
+	uc := assetUC.NewWithProjections(handlerTxRunner{}, assetRepo, newHandlerAssetTagRepo(), nil, eventRepo, nil, nil)
+	h := New(uc, &mockDeliveryRepoForAsset{})
+	r := setupAssetRouter(http.MethodGet, "/assets/:id/tags/history", h.ListTagHistory)
+
+	w := doReq(t, r, http.MethodGet, "/assets/a1/tags/history?limit=1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 from tag history, got %d", w.Code)
+	}
+	var resp struct {
+		Items      []models.AssetEvent `json:"items"`
+		NextCursor *int64              `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].EventType != "tag_deleted" {
+		t.Fatalf("unexpected tag history response: %+v", resp)
+	}
+	if resp.NextCursor == nil || *resp.NextCursor != 3 {
+		t.Fatalf("expected next_cursor=3, got %+v", resp.NextCursor)
+	}
+}
+
 func TestAlgoListCurrent(t *testing.T) {
 	h, _ := newAlgoEnv(t, true, map[string]string{"hand_tracking@1.2.0": "running"})
 	r := setupAlgoRouter(h)
@@ -667,6 +765,51 @@ type handlerTxRunner struct{}
 
 func (handlerTxRunner) WithTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
+}
+
+type handlerAssetTagRepo struct {
+	mu   sync.Mutex
+	rows map[string]*models.AssetTag
+}
+
+func newHandlerAssetTagRepo() *handlerAssetTagRepo {
+	return &handlerAssetTagRepo{rows: map[string]*models.AssetTag{}}
+}
+
+func tagRowKey(assetID, tagKey string) string { return assetID + "|" + tagKey }
+
+func (m *handlerAssetTagRepo) Upsert(_ context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rows[tagRowKey(assetID, tagKey)] = &models.AssetTag{
+		AssetID:    assetID,
+		TagKey:     tagKey,
+		TagValue:   tagValue,
+		TagType:    tagType,
+		SourceType: sourceType,
+		UpdatedAt:  time.Now().UTC(),
+	}
+	return nil
+}
+
+func (m *handlerAssetTagRepo) ListByAsset(_ context.Context, assetID string) ([]*models.AssetTag, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*models.AssetTag
+	for _, row := range m.rows {
+		if row.AssetID == assetID {
+			cp := *row
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (m *handlerAssetTagRepo) Delete(_ context.Context, assetID, tagKey string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.rows, tagRowKey(assetID, tagKey))
+	return nil
 }
 
 // handlerAlgoLatestRepo is a tiny in-memory AssetAlgoLatestRepository used
@@ -855,6 +998,15 @@ func buildTestAlgoRegistry(t *testing.T) *config.AlgoRegistry {
 	reg, err := config.LoadAlgoRegistry("../../../config/algo_registry.yaml")
 	if err != nil {
 		t.Fatalf("failed to load algo registry: %v", err)
+	}
+	return reg
+}
+
+func buildTestTagRegistryForAsset(t *testing.T) *config.TagRegistry {
+	t.Helper()
+	reg, err := config.LoadTagRegistry("../../../config/tag_registry.yaml")
+	if err != nil {
+		t.Fatalf("failed to load tag registry: %v", err)
 	}
 	return reg
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"data-platform/internal/config"
 	"data-platform/internal/models"
 	"data-platform/internal/repository"
 )
@@ -53,6 +54,15 @@ func (m *mockAssetTagRepo) Delete(_ context.Context, assetID, tagKey string) err
 }
 
 func ptrString(s string) *string { return &s }
+
+func buildTestTagRegistry(t *testing.T) *config.TagRegistry {
+	t.Helper()
+	reg, err := config.LoadTagRegistry("../../../config/tag_registry.yaml")
+	if err != nil {
+		t.Fatalf("failed to load tag registry: %v", err)
+	}
+	return reg
+}
 
 func hasEventType(events []*models.AssetEvent, want string) bool {
 	for _, e := range events {
@@ -110,6 +120,31 @@ func TestCreate_WritesTagProjectionAndOutbox(t *testing.T) {
 	}
 	if !hasEventType(events, "tag_upserted") {
 		t.Fatalf("expected tag_upserted event, got %#v", events)
+	}
+}
+
+func TestUpsertTag_WritesProjectionAndEvent(t *testing.T) {
+	repo := newMockAssetRepo()
+	repo.assets["a1"] = &models.Asset{AssetID: "a1", McapFileID: "m1"}
+	tagRepo := newMockAssetTagRepo()
+	eventRepo := newMockAssetEventRepo()
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, buildTestTagRegistry(t), nil)
+
+	a, err := uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
+		Key:   "quality",
+		Value: "good",
+	})
+	if err != nil {
+		t.Fatalf("UpsertTag failed: %v", err)
+	}
+	if got := a.Tags["quality"]; got != "good" {
+		t.Fatalf("expected hydrated tag quality=good, got %q", got)
+	}
+	if _, ok := tagRepo.rows[tagRowKey("a1", "quality")]; !ok {
+		t.Fatalf("expected asset_tags upsert for quality")
+	}
+	if !hasEventType(eventRepo.all(), "tag_upserted") {
+		t.Fatalf("expected tag_upserted event")
 	}
 }
 
@@ -173,6 +208,48 @@ func TestDelete_AppendsLifecycleEvent(t *testing.T) {
 	events := eventRepo.all()
 	if !hasEventType(events, "asset_lifecycle_changed") {
 		t.Fatalf("expected asset_lifecycle_changed event, got %#v", events)
+	}
+}
+
+func TestDeleteTag_RemovesProjectionAndAppendsEvent(t *testing.T) {
+	repo := newMockAssetRepo()
+	repo.assets["a1"] = &models.Asset{AssetID: "a1", McapFileID: "m1"}
+	tagRepo := newMockAssetTagRepo()
+	_ = tagRepo.Upsert(context.Background(), "a1", "quality", "good", "enum", "manual")
+	eventRepo := newMockAssetEventRepo()
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, nil, nil)
+
+	a, err := uc.DeleteTag(context.Background(), "a1", "quality")
+	if err != nil {
+		t.Fatalf("DeleteTag failed: %v", err)
+	}
+	if _, ok := tagRepo.rows[tagRowKey("a1", "quality")]; ok {
+		t.Fatalf("expected tag to be deleted from projection")
+	}
+	if _, ok := a.Tags["quality"]; ok {
+		t.Fatalf("expected hydrated asset tags to omit deleted key")
+	}
+	if !hasEventType(eventRepo.all(), "tag_deleted") {
+		t.Fatalf("expected tag_deleted event")
+	}
+}
+
+func TestDeleteTag_MissingIsIdempotent(t *testing.T) {
+	repo := newMockAssetRepo()
+	repo.assets["a1"] = &models.Asset{AssetID: "a1", McapFileID: "m1"}
+	tagRepo := newMockAssetTagRepo()
+	eventRepo := newMockAssetEventRepo()
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, nil, nil)
+
+	a, err := uc.DeleteTag(context.Background(), "a1", "missing")
+	if err != nil {
+		t.Fatalf("DeleteTag failed: %v", err)
+	}
+	if len(a.Tags) != 0 {
+		t.Fatalf("expected no tags after idempotent delete, got %#v", a.Tags)
+	}
+	if hasEventType(eventRepo.all(), "tag_deleted") {
+		t.Fatalf("did not expect tag_deleted event when tag was absent")
 	}
 }
 
@@ -319,5 +396,47 @@ func TestListEvents_GenericTimelineWithCursor(t *testing.T) {
 	}
 	if len(res.Items) != 1 || res.Items[0].EventType != "algo_started" {
 		t.Fatalf("unexpected follow-up page: %+v", res)
+	}
+}
+
+func TestListTagHistory_FiltersTagEventsOnly(t *testing.T) {
+	repo := &readModelAssetRepo{
+		getFn: func(context.Context, string) (*models.Asset, error) {
+			return &models.Asset{AssetID: "a1", McapFileID: "m1"}, nil
+		},
+	}
+	eventRepo := newMockAssetEventRepo()
+
+	appendEvent := func(eventType string, payload map[string]any) {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		if err := eventRepo.Append(context.Background(), repository.AssetEventAppendInput{
+			EventType:    eventType,
+			AssetID:      "a1",
+			EventPayload: raw,
+		}); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	appendEvent("asset_created", map[string]any{"asset_id": "a1"})
+	appendEvent("tag_upserted", map[string]any{"tag_key": "quality", "tag_value": "good"})
+	appendEvent("algo_started", map[string]any{"algo_key": "env_analysis@1.0.0"})
+	appendEvent("tag_deleted", map[string]any{"tag_key": "quality", "tag_value": "good"})
+
+	uc := NewWithProjections(noopTxRunner{}, repo, nil, nil, eventRepo, nil, nil)
+	res, err := uc.ListTagHistory(context.Background(), "a1", ListEventsInput{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListTagHistory failed: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("expected 2 tag events, got %d", len(res.Items))
+	}
+	for _, item := range res.Items {
+		if item.EventType != "tag_upserted" && item.EventType != "tag_deleted" {
+			t.Fatalf("unexpected event type in tag history: %s", item.EventType)
+		}
 	}
 }
