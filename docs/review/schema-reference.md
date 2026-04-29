@@ -1,6 +1,6 @@
 # Schema Reference (PostgreSQL)
 
-> **主键约定**：所有 `*_id` 列类型为 PostgreSQL `UUID`，由 Backend 应用层用 **UUIDv7**（时序前缀 + 随机后缀）颁发；存量 v4 与新增 v7 在 PG 中共存，不区分、不 backfill。
+> **主键约定**：所有 `*_id` 列类型为 PostgreSQL `UUID`，由 Backend 应用层生成（例如 `github.com/google/uuid`）。不要求特定 UUID 版本；列类型与序列化格式以 `schemas/pg-phase0.sql` 为准。
 
 ## 表清单
 

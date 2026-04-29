@@ -11,7 +11,7 @@
 | 维度 | 当前态 | 下一里程碑 |
 |------|--------|------------|
 | 架构基线 | 1.0（PG + Backend 单进程） | 启用 2.0：Outbox Worker + ES + Iceberg |
-| 投影表 | `asset_tags / asset_algo_latest` 已建已用，cf_* 列只读保留 | 字段消费收口 + UUIDv7 + lifecycle_state 主消费切换 |
+| 投影表 | `asset_tags / asset_algo_latest` 已建已用，cf_* 列只读保留 | 字段消费收口 + lifecycle_state 主消费切换 |
 | 事件流 | `asset_events` 在线写入，1.0 无下游消费 | Outbox Worker 上线（pure polling, 30s tick） |
 | 检索 | `/api/v1/search/assets` ES path 实现 + PG fallback | ES 真正接到 outbox 后才算"在线" |
 | 湖仓 | `docker-compose` 脚手架，未接业务写路径 | PyIceberg CronJob + Polaris/Lakekeeper 上线 |
@@ -28,24 +28,22 @@
 | **P0-1** | **Schema 字段提升收口**：核对 `assets / mcap_files` 上 `asset_type / lifecycle_state / end_timestamp_ns / duration_ms / owner / retention_tier / expire_at` 已在 migration / repo / OpenAPI / filter 白名单一致；只补缺口，不重做已上线字段 | 收口 PR 合入；仍缺的字段/索引补齐；`schemas/pg-phase0.sql` 与 `schema-reference.md` 同步；明确留下哪些 legacy 字段仍处兼容期 | M | backend | todo | — |
 | **P0-2** | **存量数据 backfill**（P0-1 落地后）：把现有 `assets` 行的新字段从源数据补齐 | backfill 脚本幂等、可重跑；执行后新字段空值率 < 0.1%；对账报告归档 | M | backend + data | todo | — |
 | **P0-3** | **`assets.lifecycle_state` 主消费切换**：列表过滤、详情展示、ES facet、查询文档都切到 `lifecycle_state`；老 `status` 进入退役计时（90 天） | 前端列表 / 详情 / facets 默认都用 `lifecycle_state`；API 仍同时返回两个字段，OpenAPI deprecated 标注；监控旧 `status` 读流量曲线 | M | backend + frontend | todo | — |
-| **P0-4** | **UUIDv7 主键切换**：新建实体走 `uuid.NewV7()`（`google/uuid` v1.6+），存量 v4 不动 | `models/*` Create 路径全部切换；e2e 测试一次通过；零数据迁移 | S | backend | todo | — |
-| **P0-5** | **Outbox Worker 进程内 MVP**（`OUTBOX_WORKER_ENABLED=true`） | 完整覆盖 `outbox-worker-design.md` G1–G5 验收；ES 索引投递端到端 P99 ≤ 60s；持续 24h 投递成功率 > 99.9% | L | backend | todo | — |
-| **P0-6** | **`/admin/search/reindex` 全量重建 API**（同步交付） | 给定 dry_run / rebuild_index 参数；扫 `assets` 全表重建 ES doc；不动 outbox cursor；权限走独立 `ADMIN_TOKEN` | S | backend | todo | — |
-| **P0-7** | **PgBouncer 入栈**：docker-compose / K8s 加 PgBouncer Deployment（transaction pool） | Backend & Worker 改 `DB_HOST/DB_PORT` 指向 PgBouncer，业务代码 0 改动；本地 + 预发跑 24h 无连接异常 | S | backend + 运维 | todo | — |
+| **P0-4** | **Outbox Worker 进程内 MVP**（`OUTBOX_WORKER_ENABLED=true`） | 完整覆盖 `outbox-worker-design.md` G1–G5 验收；ES 索引投递端到端 P99 ≤ 60s；持续 24h 投递成功率 > 99.9% | L | backend | todo | — |
+| **P0-5** | **`/admin/search/reindex` 全量重建 API**（同步交付） | 给定 dry_run / rebuild_index 参数；扫 `assets` 全表重建 ES doc；不动 outbox cursor；权限走独立 `ADMIN_TOKEN` | S | backend | todo | — |
+| **P0-6** | **PgBouncer 入栈**：docker-compose / K8s 加 PgBouncer Deployment（transaction pool） | Backend & Worker 改 `DB_HOST/DB_PORT` 指向 PgBouncer，业务代码 0 改动；本地 + 预发跑 24h 无连接异常 | S | backend + 运维 | todo | — |
 
 **关键依赖图**：
 
 ```
 阻塞 2.0 gate：
 P0-1 ──► P0-2 ──► P0-3
-P0-4（独立，可并行）
-P0-5 ──► P0-6
-P0-7（独立，可并行）
+P0-4 ──► P0-5
+P0-6（独立，可并行）
 
 同窗口配套（不单独阻塞 gate）：
 P0-FE-2 blocked-by P0-3
 P0-FE-3 blocked-by P0-1
-P0-T-1 blocked-by P0-5
+P0-T-1 blocked-by P0-4
 P0-T-2 blocked-by P0-T-1
 P0-T-3 blocked-by P0-2
 P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
@@ -72,7 +70,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 
 | ID | 任务 | DoD | 估时 | 状态 | 落地证据 |
 |----|------|-----|------|------|----------|
-| **P0-T-1** | **Outbox Worker 集成测试**（`outbox-worker-design.md` §12.2 五件套）：testcontainers-go 起 PG + ES 容器，build tag `//go:build integration` | `TestE2E_Notify_HappyPath` / `TestE2E_DedupBatch` / `TestE2E_RestartReplay` / `TestE2E_ConcurrentAck_NoSeqGap` / `TestE2E_ESDown_Backpressure` 五个用例全部通过；`make test-integration` 一键跑 | L | blocked-by-P0-5 | — |
+| **P0-T-1** | **Outbox Worker 集成测试**（`outbox-worker-design.md` §12.2 五件套）：testcontainers-go 起 PG + ES 容器，build tag `//go:build integration` | `TestE2E_Notify_HappyPath` / `TestE2E_DedupBatch` / `TestE2E_RestartReplay` / `TestE2E_ConcurrentAck_NoSeqGap` / `TestE2E_ESDown_Backpressure` 五个用例全部通过；`make test-integration` 一键跑 | L | blocked-by-P0-4 | — |
 | **P0-T-2** | **CI 接 `make test-integration`**：GitHub Actions 矩阵跑单测 + integration build tag | PR 中两条流水线都绿；失败回报到 PR check；testcontainers 镜像 cache 命中 | S | blocked-by-P0-T-1 | — |
 | **P0-T-3** | **字段提升 backfill 对账脚本**（与 P0-2 配套）：扫存量 `assets / mcap_files`，对比新字段空值率、双写一致率 | `scripts/backfill-audit.sh` 输出 JSON 报告；新字段空值率 < 0.1%；双写一致率 100%；纳入 P0-1 闸口验收 | M | blocked-by-P0-2 | — |
 | **P0-T-4** | **前端单测覆盖率守门**：vitest coverage gate（`Frontend/`），核心组件（assets / asset-detail）行覆盖 ≥ 70% | `vitest run --coverage` 跑通；CI 上线最低门槛；不达标禁止合 PR | S | todo | — |
@@ -91,7 +89,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | **P1-5** | **PyIceberg Compact CronJob**：合并小文件、过期 snapshot 清理（独立周期） | 跑 7 天后 bronze 表小文件数稳定；snapshot 历史保留策略生效 | M | data | todo | — |
 | **P1-6** | **Trino 查询接入 `/api/v1/lakehouse/*`**：当前 handler 已注册路由，需对接真实 catalog | sync-status / training-assets / quality-distribution 三个核心端点返回真实数据；E2E 通过 | M | backend + data | todo | — |
 | **P1-7** | **事件 schema CI 守门**：PR 改 producer 必须改 schema 版本（`payload_schema_version`） | CI workflow 上线；至少 1 次 major bump 演练通过；规则写进 `CLAUDE.md` | S | backend | todo | — |
-| **P1-8** | **Outbox Worker 抽离独立进程**（先内嵌 90 天稳定再切） | 独立 K8s Deployment；backend 关 `OUTBOX_WORKER_ENABLED`；切换无丢事件 | M | backend + 运维 | blocked-by-P0-5 | — |
+| **P1-8** | **Outbox Worker 抽离独立进程**（先内嵌 90 天稳定再切） | 独立 K8s Deployment；backend 关 `OUTBOX_WORKER_ENABLED`；切换无丢事件 | M | backend + 运维 | blocked-by-P0-4 | — |
 
 ### 2.1 P1 · 前端
 
@@ -99,7 +97,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 |----|------|-----|------|------|----------|
 | **P1-FE-1** | **Lakehouse Dashboard**：把已注册的 `/api/v1/lakehouse/*` 端点（training-assets / quality-distribution / customer-replay / tag-timeline）至少做成 1 个汇总 dashboard 页面（候选挂在 `AnalyticsPage`） | 4 个数据源中 ≥ 2 个有可视化卡片；ES 故障时降级 PG fallback；与 P1-6 后端联调一次 | M | blocked-by-P1-6 | — |
 | **P1-FE-2** | **同步状态可视化**：`/api/v1/lakehouse/sync-status` 接到 `SettingsPage` 或独立"同步监控"页 | 显示 `last_sync_at / postgres_count / iceberg_count / diff_pct`；`status != ok` 时红色徽标 | S | todo | — |
-| **P1-FE-3** | **Admin Reindex 入口**：`/admin/search/reindex` 在 SettingsPage 给 admin 角色一个"重建 ES 索引"按钮（带二次确认 + dry_run 选项 + 进度回显） | 仅 admin 可见；dry_run 默认开；调用后显示 `reindexed_assets / failed_assets`；失败列表可下载 | S | blocked-by-P0-6 | — |
+| **P1-FE-3** | **Admin Reindex 入口**：`/admin/search/reindex` 在 SettingsPage 给 admin 角色一个"重建 ES 索引"按钮（带二次确认 + dry_run 选项 + 进度回显） | 仅 admin 可见；dry_run 默认开；调用后显示 `reindexed_assets / failed_assets`；失败列表可下载 | S | blocked-by-P0-5 | — |
 | **P1-FE-4** | **保留期 / 过期视图**：列表加"30 天内将过期"快捷过滤（`expire_at:between:now,now+30d`），详情显示 retention badge | 快捷 chip 一键应用；`retention_tier` 用颜色区分（hot/warm/cold/archive）；vitest 覆盖 | S | blocked-by-P0-FE-3 | — |
 
 ### 2.2 P1 · 测试
@@ -177,7 +175,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 2. **新任务**：追加到 P0/P1/P2/P3 对应表底部，**按 ID 自增**（P1-9, P1-10…）；不要插队改 ID。
 3. **完成项**：把状态改成 `done`，落地证据列贴 PR 链接，**不删除行**。
 4. **争议项**：写进 `data-platform-design.md` §10.1 "未决事项" 表，不堆在这里。
-5. **拆 PR**：单个任务超过 600 行 diff 时拆子任务（`P0-5a / P0-5b …`），每个子任务独立 PR。
+5. **拆 PR**：单个任务超过 600 行 diff 时拆子任务（`P0-4a / P0-4b …`），每个子任务独立 PR。
 
 ---
 
