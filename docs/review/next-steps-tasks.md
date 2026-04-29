@@ -61,7 +61,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | **P0-FE-1** | **`duration_sec` → `duration_ms` 全面切换**：`AssetsResultsPane` 排序选项 / 时长列、`OverviewTab` / `AssetPreviewHero` 详情卡都改成读 `duration_ms`，**单位统一以毫秒为底，UI 仍按秒展示**（除以 1000） | 全仓 `rg "duration_sec"` 仅剩 SDK / API 兼容层；`AssetsFacetSidebar` 的范围 chip 已经是 `duration_ms`（已完成），其余消费点同步切换；vitest 通过 | S | todo | — |
 | **P0-FE-2** | **`lifecycle_state` 主路径切换**（与 P0-3 后端切换配套）：列表过滤、详情 badge、facet 都从 `status` 切到 `lifecycle_state`；老 `status` 仅在 `OverviewTab` 标灰显示并标注 `(legacy)` | 资产列表筛选默认走 `lifecycle_state`；`AssetsFacetSidebar` 的 `状态 (legacy)` chip 在 `lifecycle_state` 同时存在时隐藏；vitest + 手测交叉切换无回归 | M | blocked-by-P0-3 | — |
 | **P0-FE-3** | **暴露 P0-1 新增字段到 UI**：`asset_type / retention_tier / expire_at / owner` 进列表列（`ColumnsConfigPopover`）+ 详情概览 + AddFilterPopover | 4 个字段都可勾选展示、可过滤；`expire_at` 用相对时间渲染（"7 天后到期"）；vitest 覆盖 column toggle | M | blocked-by-P0-1 | — |
-| **P0-FE-4** | **通用事件时间线 UI**：`AssetDetailPage` 的算法事件 tab 改用 `/events?event_type=algo_*` + cursor 翻页；同时新增"全部事件"tab（不限 type）支持 `asset_created / tag_upserted / lifecycle_changed` 等 | 算法事件 tab 等价回归（已有适配器 `toAlgoEvent`，确保 cursor "load more" 工作）；新 tab 至少展示 5 种 event_type；空态友好 | M | todo | — |
+| **P0-FE-4** | **通用事件时间线 UI**：`AssetDetailPage` 的算法事件 tab 改用 `/events?event_type=algo_*` + cursor 翻页；同时新增"全部事件"tab（不限 type）支持 `asset_created / tag_upserted / lifecycle_changed` 等 | 算法事件 tab 等价回归（已有适配器 `toAlgoEvent`，确保 cursor "load more" 工作）；新 tab 至少展示 5 种 event_type；空态友好 | M | done | `75943e5` |
 
 ---
 
@@ -75,7 +75,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | **P0-T-2** | **CI 接 `make test-integration`**：GitHub Actions 矩阵跑单测 + integration build tag | PR 中两条流水线都绿；失败回报到 PR check；testcontainers 镜像 cache 命中 | S | blocked-by-P0-T-1 | — |
 | **P0-T-3** | **字段提升 backfill 对账脚本**（与 P0-2 配套）：扫存量 `assets / mcap_files`，对比新字段空值率、双写一致率 | `scripts/backfill-audit.sh` 输出 JSON 报告；新字段空值率 < 0.1%；双写一致率 100%；纳入 P0-1 闸口验收 | M | blocked-by-P0-2 | — |
 | **P0-T-4** | **前端单测覆盖率守门**：vitest coverage gate（`Frontend/`），核心组件（assets / asset-detail）行覆盖 ≥ 70% | `vitest run --coverage` 跑通；CI 上线最低门槛；不达标禁止合 PR | S | todo | — |
-| **P0-T-5** | **`/events` 端点回归脚本**（与 P0-FE-4 配套）：`scripts/test_edge_cases_*.sh` 加 `event_type=algo_*` + cursor 翻页用例，验证算法事件子集与完整事件流的一致性 | bash 脚本一次跑通；事件总数与翻页累计一致；`algo_*` 子集与全集合差等于其他类型计数 | S | todo | — |
+| **P0-T-5** | **`/events` 端点回归脚本**（与 P0-FE-4 配套）：`scripts/test_edge_cases_*.sh` 加 `event_type=algo_*` + cursor 翻页用例，验证算法事件子集与完整事件流的一致性 | bash 脚本一次跑通；事件总数与翻页累计一致；`algo_*` 子集与全集合差等于其他类型计数 | S | done | `0ed54f6` |
 
 ---
 
