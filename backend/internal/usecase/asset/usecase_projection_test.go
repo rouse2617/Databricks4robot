@@ -3,6 +3,7 @@ package asset
 import (
 	"context"
 	"testing"
+	"time"
 
 	"data-platform/internal/models"
 )
@@ -60,11 +61,30 @@ func hasEventType(events []*models.AssetEvent, want string) bool {
 	return false
 }
 
+type readModelAssetRepo struct {
+	getFn             func(context.Context, string) (*models.Asset, error)
+	listByMcapFileFn  func(context.Context, string) ([]*models.Asset, error)
+	listWithFiltersFn func(context.Context, string, []interface{}, int, int, string) ([]*models.Asset, int64, error)
+}
+
+func (r *readModelAssetRepo) Get(ctx context.Context, assetID string) (*models.Asset, error) {
+	return r.getFn(ctx, assetID)
+}
+func (r *readModelAssetRepo) Set(context.Context, *models.Asset) error { return nil }
+func (r *readModelAssetRepo) SoftDelete(context.Context, string) error { return nil }
+func (r *readModelAssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error) {
+	return r.listByMcapFileFn(ctx, mcapFileID)
+}
+func (r *readModelAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (r *readModelAssetRepo) ListWithFilters(ctx context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy string) ([]*models.Asset, int64, error) {
+	return r.listWithFiltersFn(ctx, whereSQL, args, page, pageSize, orderBy)
+}
+
 func TestCreate_WritesTagProjectionAndOutbox(t *testing.T) {
 	repo := newMockAssetRepo()
 	tagRepo := newMockAssetTagRepo()
 	eventRepo := newMockAssetEventRepo()
-	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, eventRepo, nil, nil)
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, nil, nil)
 
 	a, err := uc.Create(context.Background(), CreateInput{
 		McapFileID:       "mcap-create-001",
@@ -95,7 +115,7 @@ func TestUpdate_WritesTagProjectionAndLifecycleEvents(t *testing.T) {
 	repo := newMockAssetRepo()
 	tagRepo := newMockAssetTagRepo()
 	eventRepo := newMockAssetEventRepo()
-	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, eventRepo, nil, nil)
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, nil, nil)
 
 	repo.assets["a1"] = &models.Asset{
 		AssetID:    "a1",
@@ -131,7 +151,7 @@ func TestUpdate_WritesTagProjectionAndLifecycleEvents(t *testing.T) {
 func TestDelete_AppendsLifecycleEvent(t *testing.T) {
 	repo := newMockAssetRepo()
 	eventRepo := newMockAssetEventRepo()
-	uc := NewWithProjections(noopTxRunner{}, repo, nil, eventRepo, nil, nil)
+	uc := NewWithProjections(noopTxRunner{}, repo, nil, nil, eventRepo, nil, nil)
 
 	repo.assets["a1"] = &models.Asset{
 		AssetID:        "a1",
@@ -151,5 +171,96 @@ func TestDelete_AppendsLifecycleEvent(t *testing.T) {
 	events := eventRepo.all()
 	if !hasEventType(events, "asset_lifecycle_changed") {
 		t.Fatalf("expected asset_lifecycle_changed event, got %#v", events)
+	}
+}
+
+func TestGet_HydratesTagsAndAlgoResultsFromProjections(t *testing.T) {
+	repo := &readModelAssetRepo{
+		getFn: func(context.Context, string) (*models.Asset, error) {
+			return &models.Asset{AssetID: "a1", McapFileID: "m1"}, nil
+		},
+	}
+	tagRepo := newMockAssetTagRepo()
+	tagRepo.Upsert(context.Background(), "a1", "quality", "good", "string", "manual")
+	algoRepo := newMockAlgoLatestRepo()
+	now := time.Now().UTC()
+	_ = algoRepo.Upsert(context.Background(), &models.AssetAlgoLatest{
+		AssetID:     "a1",
+		AlgoName:    "hand_tracking",
+		AlgoVersion: "1.2.0",
+		Status:      "ok",
+		RunID:       "run-1",
+		StartedAt:   &now,
+		OutputURI:   "gs://bucket/out",
+	})
+
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, algoRepo, nil, nil, nil)
+
+	a, err := uc.Get(context.Background(), "a1")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if got := a.Tags["quality"]; got != "good" {
+		t.Fatalf("expected hydrated tag quality=good, got %q", got)
+	}
+	if got := a.AlgoResults["hand_tracking@1.2.0:status"]; got != "ok" {
+		t.Fatalf("expected hydrated algo status ok, got %q", got)
+	}
+	if got := a.AlgoResults["hand_tracking@1.2.0:run_id"]; got != "run-1" {
+		t.Fatalf("expected hydrated algo run_id, got %q", got)
+	}
+}
+
+func TestListWithFilters_HydratesProjectionData(t *testing.T) {
+	repo := &readModelAssetRepo{
+		listWithFiltersFn: func(context.Context, string, []interface{}, int, int, string) ([]*models.Asset, int64, error) {
+			return []*models.Asset{
+				{AssetID: "a1", McapFileID: "m1"},
+				{AssetID: "a2", McapFileID: "m2"},
+			}, 2, nil
+		},
+	}
+	tagRepo := newMockAssetTagRepo()
+	tagRepo.Upsert(context.Background(), "a1", "quality", "good", "string", "manual")
+	tagRepo.Upsert(context.Background(), "a2", "quality", "poor", "string", "manual")
+
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, nil, nil, nil)
+
+	items, total, err := uc.ListWithFilters(context.Background(), "", nil, 1, 20, "created_at DESC")
+	if err != nil {
+		t.Fatalf("ListWithFilters failed: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("expected total=2, got %d", total)
+	}
+	if items[0].Tags["quality"] == "" || items[1].Tags["quality"] == "" {
+		t.Fatalf("expected hydrated tags on all list items, got %#v", items)
+	}
+}
+
+func TestCreate_SeedsInitialAlgoProjectionRows(t *testing.T) {
+	repo := newMockAssetRepo()
+	algoRepo := newMockAlgoLatestRepo()
+	algoReg := buildTestAlgoRegistry(t)
+	uc := NewWithProjections(noopTxRunner{}, repo, nil, algoRepo, nil, nil, algoReg)
+
+	a, err := uc.Create(context.Background(), CreateInput{
+		McapFileID:       "mcap-seed-001",
+		StartTimestampNs: 100,
+		EndTimestampNs:   200,
+		Reviewer:         "alice",
+		Owner:            "team-a",
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	row, _ := algoRepo.GetByAlgo(context.Background(), a.AssetID, "env_analysis")
+	if row == nil || row.Status != string(models.AlgoStatusPending) {
+		t.Fatalf("expected env_analysis pending row in asset_algo_latest, got %#v", row)
+	}
+	row, _ = algoRepo.GetByAlgo(context.Background(), a.AssetID, "action_annotation")
+	if row == nil || row.Status != string(models.AlgoStatusBlocked) {
+		t.Fatalf("expected action_annotation blocked row in asset_algo_latest, got %#v", row)
 	}
 }

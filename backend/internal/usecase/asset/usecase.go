@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,12 +36,13 @@ func defaultLifecycleMeta() map[string]interface{} {
 }
 
 type Usecase struct {
-	repo         repository.AssetRepository
-	tagRegistry  *config.TagRegistry
-	algoRegistry *config.AlgoRegistry
-	tx           repository.TxRunner
-	tagRepo      repository.AssetTagRepository
-	eventRepo    repository.AssetEventRepository
+	repo           repository.AssetRepository
+	tagRegistry    *config.TagRegistry
+	algoRegistry   *config.AlgoRegistry
+	tx             repository.TxRunner
+	tagRepo        repository.AssetTagRepository
+	algoLatestRepo repository.AssetAlgoLatestRepository
+	eventRepo      repository.AssetEventRepository
 }
 
 func New(repo repository.AssetRepository) *Usecase {
@@ -65,17 +67,19 @@ func NewWithProjections(
 	tx repository.TxRunner,
 	repo repository.AssetRepository,
 	tagRepo repository.AssetTagRepository,
+	algoLatestRepo repository.AssetAlgoLatestRepository,
 	eventRepo repository.AssetEventRepository,
 	tagReg *config.TagRegistry,
 	algoReg *config.AlgoRegistry,
 ) *Usecase {
 	return &Usecase{
-		repo:         repo,
-		tagRegistry:  tagReg,
-		algoRegistry: algoReg,
-		tx:           tx,
-		tagRepo:      tagRepo,
-		eventRepo:    eventRepo,
+		repo:           repo,
+		tagRegistry:    tagReg,
+		algoRegistry:   algoReg,
+		tx:             tx,
+		tagRepo:        tagRepo,
+		algoLatestRepo: algoLatestRepo,
+		eventRepo:      eventRepo,
 	}
 }
 
@@ -150,6 +154,9 @@ func (u *Usecase) persistNewAsset(ctx context.Context, a *models.Asset, tags map
 		if err := u.repo.Set(txCtx, a); err != nil {
 			return err
 		}
+		if err := u.seedInitialAlgoProjection(txCtx, a); err != nil {
+			return err
+		}
 		if err := u.appendAssetEvent(txCtx, "asset_created", a, map[string]any{
 			"asset_id":        a.AssetID,
 			"mcap_file_id":    a.McapFileID,
@@ -167,6 +174,122 @@ func (u *Usecase) persistNewAsset(ctx context.Context, a *models.Asset, tags map
 	}
 	// Secondary index write is best-effort for now.
 	return u.repo.WriteSegmentIndex(ctx, a)
+}
+
+func parseAlgoStatusKey(key string) (algoName, algoVersion string, ok bool) {
+	const suffix = ":" + models.AlgoFieldStatus
+	if !strings.HasSuffix(key, suffix) {
+		return "", "", false
+	}
+	algoKey := strings.TrimSuffix(key, suffix)
+	at := strings.LastIndex(algoKey, "@")
+	if at <= 0 || at >= len(algoKey)-1 {
+		return "", "", false
+	}
+	return algoKey[:at], algoKey[at+1:], true
+}
+
+func (u *Usecase) seedInitialAlgoProjection(ctx context.Context, a *models.Asset) error {
+	if u.algoLatestRepo == nil || a == nil || len(a.AlgoResults) == 0 {
+		return nil
+	}
+	for key, status := range a.AlgoResults {
+		algoName, algoVersion, ok := parseAlgoStatusKey(key)
+		if !ok {
+			continue
+		}
+		if err := u.algoLatestRepo.Upsert(ctx, &models.AssetAlgoLatest{
+			AssetID:     a.AssetID,
+			AlgoName:    algoName,
+			AlgoVersion: algoVersion,
+			Status:      status,
+			TenantID:    a.TenantID,
+			ProjectID:   a.ProjectID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (u *Usecase) hydrateTags(ctx context.Context, a *models.Asset) error {
+	if a == nil || u.tagRepo == nil {
+		return nil
+	}
+	rows, err := u.tagRepo.ListByAsset(ctx, a.AssetID)
+	if err != nil {
+		return err
+	}
+	a.Tags = map[string]string{}
+	for _, row := range rows {
+		a.Tags[row.TagKey] = row.TagValue
+	}
+	return nil
+}
+
+func timeStringPtr(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func (u *Usecase) hydrateAlgoResults(ctx context.Context, a *models.Asset) error {
+	if a == nil || u.algoLatestRepo == nil {
+		return nil
+	}
+	rows, err := u.algoLatestRepo.ListByAsset(ctx, a.AssetID)
+	if err != nil {
+		return err
+	}
+	a.AlgoResults = map[string]string{}
+	for _, row := range rows {
+		algoKey := row.AlgoName + "@" + row.AlgoVersion
+		if row.Status != "" {
+			a.AlgoResults[algoKey+":"+models.AlgoFieldStatus] = row.Status
+		}
+		if row.RunID != "" {
+			a.AlgoResults[algoKey+":"+models.AlgoFieldRunID] = row.RunID
+		}
+		if row.Method != "" {
+			a.AlgoResults[algoKey+":"+models.AlgoFieldMethod] = row.Method
+		}
+		if row.OutputURI != "" {
+			a.AlgoResults[algoKey+":"+models.AlgoFieldOutputURI] = row.OutputURI
+		}
+		if startedAt := timeStringPtr(row.StartedAt); startedAt != "" {
+			a.AlgoResults[algoKey+":"+models.AlgoFieldStartedAt] = startedAt
+		}
+		if finishedAt := timeStringPtr(row.FinishedAt); finishedAt != "" {
+			a.AlgoResults[algoKey+":"+models.AlgoFieldFinishedAt] = finishedAt
+		}
+		if row.ErrorMessage != "" {
+			a.AlgoResults[algoKey+":"+models.AlgoFieldReason] = row.ErrorMessage
+		}
+	}
+	return nil
+}
+
+func (u *Usecase) hydrateAssetReadModels(ctx context.Context, a *models.Asset) error {
+	if a == nil {
+		return nil
+	}
+	if err := u.hydrateTags(ctx, a); err != nil {
+		return err
+	}
+	if err := u.hydrateAlgoResults(ctx, a); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *Usecase) hydrateAssetsReadModels(ctx context.Context, items []*models.Asset) error {
+	for _, a := range items {
+		if err := u.hydrateAssetReadModels(ctx, a); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type CreateInput struct {
@@ -203,6 +326,9 @@ func (u *Usecase) Get(ctx context.Context, assetID string) (*models.Asset, error
 	if a == nil {
 		return nil, ErrNotFound
 	}
+	if err := u.hydrateAssetReadModels(ctx, a); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
@@ -210,13 +336,27 @@ func (u *Usecase) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*mod
 	if mcapFileID == "" {
 		return nil, ErrMcapFileIDRequired
 	}
-	return u.repo.ListByMcapFile(ctx, mcapFileID)
+	items, err := u.repo.ListByMcapFile(ctx, mcapFileID)
+	if err != nil {
+		return nil, err
+	}
+	if err := u.hydrateAssetsReadModels(ctx, items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // ListWithFilters queries assets using a parameterized WHERE clause with pagination and sorting.
 func (u *Usecase) ListWithFilters(ctx context.Context, whereSQL string, args []interface{},
 	page, pageSize int, orderBy string) ([]*models.Asset, int64, error) {
-	return u.repo.ListWithFilters(ctx, whereSQL, args, page, pageSize, orderBy)
+	items, total, err := u.repo.ListWithFilters(ctx, whereSQL, args, page, pageSize, orderBy)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := u.hydrateAssetsReadModels(ctx, items); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, error) {

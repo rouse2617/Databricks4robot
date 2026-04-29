@@ -8,7 +8,7 @@ import (
 
 // WhereClause represents a built SQL WHERE clause with parameterized values.
 type WhereClause struct {
-	SQL  string        // e.g. "status = $1 AND cf_algo#>>'{hand_tracking@1.2.0,status}' = $2"
+	SQL  string        // e.g. "status = $1 AND EXISTS (SELECT 1 FROM asset_algo_latest ...)"
 	Args []interface{} // Parameterized values
 }
 
@@ -55,6 +55,13 @@ func buildCondition(f Filter, paramIdx int) (string, []interface{}, int, error) 
 		return buildMcapLookupCondition(f, paramIdx)
 	}
 
+	if strings.HasPrefix(f.StorageField, "asset_tags.") {
+		return buildAssetTagCondition(f, paramIdx)
+	}
+	if strings.HasPrefix(f.StorageField, "asset_algo_latest.") {
+		return buildAssetAlgoLatestCondition(f, paramIdx)
+	}
+
 	colExpr := resolveColumnExpr(f)
 
 	switch f.Op {
@@ -65,6 +72,114 @@ func buildCondition(f Filter, paramIdx int) (string, []interface{}, int, error) 
 	default:
 		return buildSimpleCondition(f, colExpr, paramIdx)
 	}
+}
+
+func existsCondition(base, expr string, f Filter, paramIdx int) (string, []interface{}, int, error) {
+	switch f.Op {
+	case "IN", "NOT IN":
+		arr, ok := f.Value.([]interface{})
+		if !ok {
+			sql := fmt.Sprintf("EXISTS (SELECT 1 FROM %s AND %s %s ($%d))", base, expr, f.Op, paramIdx)
+			return sql, []interface{}{f.Value}, paramIdx + 1, nil
+		}
+		if len(arr) == 0 {
+			if f.Op == "IN" {
+				return "FALSE", nil, paramIdx, nil
+			}
+			return "TRUE", nil, paramIdx, nil
+		}
+		placeholders := make([]string, len(arr))
+		args := make([]interface{}, len(arr))
+		for i, v := range arr {
+			placeholders[i] = fmt.Sprintf("$%d", paramIdx+i)
+			args[i] = v
+		}
+		sql := fmt.Sprintf("EXISTS (SELECT 1 FROM %s AND %s %s (%s))", base, expr, f.Op, strings.Join(placeholders, ", "))
+		return sql, args, paramIdx + len(arr), nil
+	case "BETWEEN":
+		lo, hi, err := parseBetweenValuePair(f.Value)
+		if err != nil {
+			return "", nil, paramIdx, err
+		}
+		sql := fmt.Sprintf("EXISTS (SELECT 1 FROM %s AND %s >= $%d AND %s <= $%d)", base, expr, paramIdx, expr, paramIdx+1)
+		return sql, []interface{}{lo, hi}, paramIdx + 2, nil
+	default:
+		if f.Value == nil {
+			switch f.Op {
+			case "=":
+				return fmt.Sprintf("EXISTS (SELECT 1 FROM %s AND %s IS NULL)", base, expr), nil, paramIdx, nil
+			case "!=":
+				return fmt.Sprintf("EXISTS (SELECT 1 FROM %s AND %s IS NOT NULL)", base, expr), nil, paramIdx, nil
+			}
+		}
+		sql := fmt.Sprintf("EXISTS (SELECT 1 FROM %s AND %s %s $%d)", base, expr, f.Op, paramIdx)
+		return sql, []interface{}{f.Value}, paramIdx + 1, nil
+	}
+}
+
+func tagValueColumn(v interface{}) string {
+	switch v.(type) {
+	case bool:
+		return "tag_value_bool"
+	case int, int8, int16, int32, int64, float32, float64:
+		return "tag_value_num"
+	default:
+		return "tag_value"
+	}
+}
+
+func buildAssetTagCondition(f Filter, paramIdx int) (string, []interface{}, int, error) {
+	key := strings.TrimPrefix(f.StorageField, "asset_tags.")
+	base := fmt.Sprintf("asset_tags t WHERE t.asset_id = assets.asset_id AND t.tag_key = '%s'", key)
+	expr := "t." + tagValueColumn(f.Value)
+	return existsCondition(base, expr, f, paramIdx)
+}
+
+func algoLatestAttrColumn(attr string) (string, error) {
+	switch attr {
+	case "status":
+		return "status", nil
+	case "run_id":
+		return "run_id", nil
+	case "method":
+		return "method", nil
+	case "output_uri":
+		return "output_uri", nil
+	case "error_message", "reason":
+		return "error_message", nil
+	case "started_at":
+		return "started_at", nil
+	case "finished_at":
+		return "finished_at", nil
+	case "updated_at":
+		return "updated_at", nil
+	default:
+		return "", fmt.Errorf("filter: unsupported algo attribute %q", attr)
+	}
+}
+
+func buildAssetAlgoLatestCondition(f Filter, paramIdx int) (string, []interface{}, int, error) {
+	key := strings.TrimPrefix(f.StorageField, "asset_algo_latest.")
+	colon := strings.LastIndex(key, ":")
+	if colon <= 0 || colon >= len(key)-1 {
+		return "", nil, paramIdx, fmt.Errorf("filter: invalid algo field %q", f.Field)
+	}
+	algoKey := key[:colon]
+	attr := key[colon+1:]
+	at := strings.LastIndex(algoKey, "@")
+	if at <= 0 || at >= len(algoKey)-1 {
+		return "", nil, paramIdx, fmt.Errorf("filter: invalid algo key %q", algoKey)
+	}
+	algoName, algoVersion := algoKey[:at], algoKey[at+1:]
+	col, err := algoLatestAttrColumn(attr)
+	if err != nil {
+		return "", nil, paramIdx, err
+	}
+	base := fmt.Sprintf(
+		"asset_algo_latest al WHERE al.asset_id = assets.asset_id AND al.algo_name = '%s' AND al.algo_version = '%s'",
+		algoName, algoVersion,
+	)
+	return existsCondition(base, "al."+col, f, paramIdx)
 }
 
 // resolveColumnExpr returns the SQL column expression for a filter.
@@ -79,7 +194,7 @@ func resolveColumnExpr(f Filter) string {
 		return field
 	}
 
-	// Split at first dot: cf_tag.priority → cf_tag#>>'{priority}'
+	// Split at first dot: metadata.priority → metadata#>>'{priority}'
 	dotIdx := strings.Index(field, ".")
 	if dotIdx < 0 {
 		return field
@@ -268,6 +383,31 @@ func ResolveSortBy(sortBy string) (string, error) {
 	}
 
 	if spec.IsJSONB {
+		if strings.HasPrefix(spec.StorageField, "asset_tags.") {
+			key := strings.TrimPrefix(spec.StorageField, "asset_tags.")
+			expr := fmt.Sprintf("(SELECT t.tag_value FROM asset_tags t WHERE t.asset_id = assets.asset_id AND t.tag_key = '%s' LIMIT 1)", key)
+			return fmt.Sprintf("%s %s", castJsonbSortExpr(spec.Canonical, expr), direction), nil
+		}
+		if strings.HasPrefix(spec.StorageField, "asset_algo_latest.") {
+			key := strings.TrimPrefix(spec.StorageField, "asset_algo_latest.")
+			colon := strings.LastIndex(key, ":")
+			if colon <= 0 || colon >= len(key)-1 {
+				return "", fmt.Errorf("filter: invalid algo sort field %q", field)
+			}
+			algoKey := key[:colon]
+			attr := key[colon+1:]
+			at := strings.LastIndex(algoKey, "@")
+			if at <= 0 || at >= len(algoKey)-1 {
+				return "", fmt.Errorf("filter: invalid algo sort field %q", field)
+			}
+			algoName, algoVersion := algoKey[:at], algoKey[at+1:]
+			col, err := algoLatestAttrColumn(attr)
+			if err != nil {
+				return "", err
+			}
+			expr := fmt.Sprintf("(SELECT al.%s FROM asset_algo_latest al WHERE al.asset_id = assets.asset_id AND al.algo_name = '%s' AND al.algo_version = '%s' LIMIT 1)", col, algoName, algoVersion)
+			return fmt.Sprintf("%s %s", castJsonbSortExpr(spec.Canonical, expr), direction), nil
+		}
 		dotIdx := strings.Index(spec.StorageField, ".")
 		if dotIdx < 0 {
 			return "", fmt.Errorf("filter: invalid JSONB sort field %q", field)

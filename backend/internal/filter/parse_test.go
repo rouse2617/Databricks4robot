@@ -329,8 +329,8 @@ func TestParseFilter_ResolvesAliases(t *testing.T) {
 	if f.Field != "tag.notes" {
 		t.Fatalf("expected canonical tag field, got %q", f.Field)
 	}
-	if f.StorageField != "cf_tag.notes" {
-		t.Fatalf("expected cf_tag storage field, got %q", f.StorageField)
+	if f.StorageField != "asset_tags.notes" {
+		t.Fatalf("expected asset_tags storage field, got %q", f.StorageField)
 	}
 
 	f, err = ParseFilter("cf_algo.hand_tracking@1.2.0:status:eq:failed")
@@ -340,8 +340,8 @@ func TestParseFilter_ResolvesAliases(t *testing.T) {
 	if f.Field != "algo.hand_tracking@1.2.0:status" {
 		t.Fatalf("expected canonical algo field, got %q", f.Field)
 	}
-	if f.StorageField != "cf_algo.hand_tracking@1.2.0:status" {
-		t.Fatalf("expected cf_algo storage field, got %q", f.StorageField)
+	if f.StorageField != "asset_algo_latest.hand_tracking@1.2.0:status" {
+		t.Fatalf("expected asset_algo_latest storage field, got %q", f.StorageField)
 	}
 }
 
@@ -428,8 +428,8 @@ func TestParseFilter_AliasedTagField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if f.StorageField != "cf_tag.notes" {
-		t.Fatalf("expected StorageField cf_tag.notes, got %q", f.StorageField)
+	if f.StorageField != "asset_tags.notes" {
+		t.Fatalf("expected StorageField asset_tags.notes, got %q", f.StorageField)
 	}
 	if f.Field != "tag.notes" {
 		t.Fatalf("expected canonical Field tag.notes, got %q", f.Field)
@@ -444,8 +444,8 @@ func TestParseFilter_AliasedTagPriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if f.StorageField != "cf_tag.priority" {
-		t.Fatalf("expected StorageField cf_tag.priority, got %q", f.StorageField)
+	if f.StorageField != "asset_tags.priority" {
+		t.Fatalf("expected StorageField asset_tags.priority, got %q", f.StorageField)
 	}
 	if f.Field != "tag.priority" {
 		t.Fatalf("expected canonical Field tag.priority, got %q", f.Field)

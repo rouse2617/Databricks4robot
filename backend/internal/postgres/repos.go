@@ -142,11 +142,29 @@ ON CONFLICT (asset_id) DO UPDATE SET
 WHERE assets.version = EXCLUDED.version - 1`
 
 	// Marshal metadata JSONB (new structured metadata column).
+	if a.Metadata == nil {
+		a.Metadata = map[string]interface{}{}
+	}
+	if a.Env != "" {
+		a.Metadata["env"] = a.Env
+	}
+	if a.Task != "" {
+		a.Metadata["task"] = a.Task
+	}
+	for k, v := range a.LifecycleMeta {
+		a.Metadata[k] = v
+	}
 	metadataJSON, _ := json.Marshal(a.Metadata)
 	if a.Metadata == nil {
 		metadataJSON = []byte(`{}`)
 	}
 	// Marshal files JSONB (new structured files column).
+	if a.FilesJSON == nil && len(a.Files) > 0 {
+		a.FilesJSON = make(map[string]interface{}, len(a.Files))
+		for k, v := range a.Files {
+			a.FilesJSON[k] = v
+		}
+	}
 	filesStructJSON, _ := json.Marshal(a.FilesJSON)
 	if a.FilesJSON == nil {
 		filesStructJSON = []byte(`{}`)

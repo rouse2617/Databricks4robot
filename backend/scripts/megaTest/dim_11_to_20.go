@@ -192,7 +192,7 @@ func genAuth(suite *TestSuite) {
 	suite.record(TestResult{cat, "Auth直接token", c == 404, c, 404, lat, ""})
 }
 
-// ── 维度 16: algo-events 查询 ───────────────────────────────────────────────
+// ── 维度 16: asset events 查询（算法事件子集）──────────────────────────────
 
 func genAlgoEvents(suite *TestSuite) {
 	cat := "16.AlgoEvents"
@@ -213,28 +213,28 @@ func genAlgoEvents(suite *TestSuite) {
 	doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/reset", id, ak), nil, nil)
 
 	// 查询全部事件
-	c, resp, lat := doReq("GET", "/api/v1/assets/"+id+"/algo-events", nil, nil)
+	c, resp, lat := doReq("GET", "/api/v1/assets/"+id+"/events", nil, nil)
 	evCount := jsonArrayLen(resp, "items")
 	suite.record(TestResult{cat, fmt.Sprintf("全部事件 count=%d", evCount), c == 200 && evCount >= 12, c, 200, lat, ""})
 
 	// 按 algo_key 过滤
-	c, resp, lat = doReq("GET", "/api/v1/assets/"+id+"/algo-events?algo_key="+ak, nil, nil)
+	c, resp, lat = doReq("GET", "/api/v1/assets/"+id+"/events?algo_key="+ak, nil, nil)
 	filteredCount := jsonArrayLen(resp, "items")
 	suite.record(TestResult{cat, fmt.Sprintf("过滤 %s count=%d", ak, filteredCount), c == 200 && filteredCount >= 12, c, 200, lat, ""})
 
 	// 不存在的 algo_key 过滤
-	c, resp, lat = doReq("GET", "/api/v1/assets/"+id+"/algo-events?algo_key=fake@0.0.0", nil, nil)
+	c, resp, lat = doReq("GET", "/api/v1/assets/"+id+"/events?algo_key=fake@0.0.0", nil, nil)
 	suite.record(TestResult{cat, "过滤不存在key", c == 200 && jsonArrayLen(resp, "items") == 0, c, 200, lat, ""})
 
 	// 不存在的资产
-	c, _, lat = doReq("GET", "/api/v1/assets/nonexistent/algo-events", nil, nil)
+	c, _, lat = doReq("GET", "/api/v1/assets/nonexistent/events", nil, nil)
 	suite.record(TestResult{cat, "不存在资产", c == 404, c, 404, lat, ""})
 
 	// 多算法事件混合
 	ak2 := "hand_tracking@1.2.0"
 	doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/start", id, ak2), map[string]interface{}{"method": "t"}, nil)
 	doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/finish", id, ak2), buildFinishBody(ak2, "ok"), nil)
-	c, resp, lat = doReq("GET", "/api/v1/assets/"+id+"/algo-events?algo_key="+ak2, nil, nil)
+	c, resp, lat = doReq("GET", "/api/v1/assets/"+id+"/events?algo_key="+ak2, nil, nil)
 	suite.record(TestResult{cat, fmt.Sprintf("过滤 %s", ak2), c == 200 && jsonArrayLen(resp, "items") >= 2, c, 200, lat, ""})
 
 	deleteAsset(id)

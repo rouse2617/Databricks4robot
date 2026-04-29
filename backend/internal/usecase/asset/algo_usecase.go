@@ -606,3 +606,18 @@ func (u *AlgoUsecase) ListAlgoEvents(ctx context.Context, assetID string, algoKe
 	}
 	return out, nil
 }
+
+// ListCurrentStates returns every current algorithm projection row for an asset.
+func (u *AlgoUsecase) ListCurrentStates(ctx context.Context, assetID string) ([]*models.AssetAlgoLatest, error) {
+	if err := u.requireAssetExists(ctx, assetID); err != nil {
+		return nil, err
+	}
+	rows, err := u.algoLatestRepo.ListByAsset(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		return []*models.AssetAlgoLatest{}, nil
+	}
+	return rows, nil
+}

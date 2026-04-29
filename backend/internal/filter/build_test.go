@@ -211,7 +211,7 @@ func TestProperty9_JsonbNumericTypeCasting(t *testing.T) {
 func TestBuildWhereClause_AlgoKeyWithDotsUsesSingleJsonKey(t *testing.T) {
 	wc, err := BuildWhereClause([]Filter{{
 		Field:        "algo.hand_tracking@1.2.0:status",
-		StorageField: "cf_algo.hand_tracking@1.2.0:status",
+		StorageField: "asset_algo_latest.hand_tracking@1.2.0:status",
 		Op:           "=",
 		Value:        "failed",
 		IsJsonb:      true,
@@ -220,7 +220,7 @@ func TestBuildWhereClause_AlgoKeyWithDotsUsesSingleJsonKey(t *testing.T) {
 		t.Fatalf("BuildWhereClause: %v", err)
 	}
 
-	expected := "cf_algo#>>'{hand_tracking@1.2.0:status}' = $1"
+	expected := "EXISTS (SELECT 1 FROM asset_algo_latest al WHERE al.asset_id = assets.asset_id AND al.algo_name = 'hand_tracking' AND al.algo_version = '1.2.0' AND al.status = $1)"
 	if wc.SQL != expected {
 		t.Fatalf("expected %q, got %q", expected, wc.SQL)
 	}
@@ -231,7 +231,7 @@ func TestResolveSortBy_WhitelistAndAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSortBy alias: %v", err)
 	}
-	if got != "cf_tag#>>'{notes}' DESC" {
+	if got != "(SELECT t.tag_value FROM asset_tags t WHERE t.asset_id = assets.asset_id AND t.tag_key = 'notes' LIMIT 1) DESC" {
 		t.Fatalf("unexpected orderBy: %q", got)
 	}
 
@@ -269,7 +269,7 @@ func TestBuildWhereClause_AlgoStatusVirtual(t *testing.T) {
 		t.Fatalf("BuildWhereClause algo_status: %v", err)
 	}
 
-	expected := "asset_algo_statuses(cf_algo) @> ARRAY[$1]::text[]"
+	expected := "EXISTS (SELECT 1 FROM asset_algo_latest al WHERE al.asset_id = assets.asset_id AND al.status = $1)"
 	if wc.SQL != expected {
 		t.Fatalf("expected %q, got %q", expected, wc.SQL)
 	}
@@ -290,7 +290,7 @@ func TestBuildWhereClause_AlgoStatusWithOtherFilters(t *testing.T) {
 	if !strings.Contains(wc.SQL, "status = $1") {
 		t.Fatalf("expected status = $1 in SQL, got %q", wc.SQL)
 	}
-	if !strings.Contains(wc.SQL, "asset_algo_statuses(cf_algo) @> ARRAY[$2]::text[]") {
+	if !strings.Contains(wc.SQL, "EXISTS (SELECT 1 FROM asset_algo_latest al WHERE al.asset_id = assets.asset_id AND al.status = $2)") {
 		t.Fatalf("expected algo_status array containment in SQL, got %q", wc.SQL)
 	}
 	if len(wc.Args) != 2 {
@@ -309,7 +309,7 @@ func TestBuildWhereClause_HasDeliveryTrue(t *testing.T) {
 		t.Fatalf("BuildWhereClause has:delivery true: %v", err)
 	}
 
-	want := "COALESCE((cf_meta->>'delivery_count')::int, 0) > 0"
+	want := "COALESCE(delivery_count, 0) > 0"
 	if wc.SQL != want {
 		t.Fatalf("expected %q, got %q", want, wc.SQL)
 	}
@@ -329,7 +329,7 @@ func TestBuildWhereClause_HasDeliveryFalse(t *testing.T) {
 		t.Fatalf("BuildWhereClause has:delivery false: %v", err)
 	}
 
-	want := "COALESCE((cf_meta->>'delivery_count')::int, 0) = 0"
+	want := "COALESCE(delivery_count, 0) = 0"
 	if wc.SQL != want {
 		t.Fatalf("expected %q, got %q", want, wc.SQL)
 	}
@@ -346,7 +346,7 @@ func TestBuildWhereClause_HasDeliveryStringTrue(t *testing.T) {
 		t.Fatalf("BuildWhereClause has:delivery string true: %v", err)
 	}
 
-	want := "COALESCE((cf_meta->>'delivery_count')::int, 0) > 0"
+	want := "COALESCE(delivery_count, 0) > 0"
 	if wc.SQL != want {
 		t.Fatalf("expected %q, got %q", want, wc.SQL)
 	}

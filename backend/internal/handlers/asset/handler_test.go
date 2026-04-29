@@ -174,7 +174,7 @@ func TestList(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Promoted field resolves to real column (owner was promoted from cf_meta JSONB).
+	// Promoted field resolves to real column; tag sort now resolves via projection subquery.
 	repo.listWithFiltersFn = func(_ context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy string) ([]*models.Asset, int64, error) {
 		if whereSQL != "owner = $1" {
 			t.Fatalf("unexpected whereSQL: %s", whereSQL)
@@ -182,7 +182,7 @@ func TestList(t *testing.T) {
 		if len(args) != 1 || args[0] != "alice" {
 			t.Fatalf("unexpected args: %#v", args)
 		}
-		if orderBy != "cf_tag#>>'{notes}' DESC" {
+		if orderBy != "(SELECT t.tag_value FROM asset_tags t WHERE t.asset_id = assets.asset_id AND t.tag_key = 'notes' LIMIT 1) DESC" {
 			t.Fatalf("unexpected orderBy: %s", orderBy)
 		}
 		return []*models.Asset{}, 0, nil
@@ -395,10 +395,11 @@ func TestListResponseFormat(t *testing.T) {
 func setupAlgoRouter(h *AlgoHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
+	r.GET("/assets/:id/algo", h.ListCurrent)
 	r.POST("/assets/:id/algo/:algo_key/start", h.Start)
 	r.POST("/assets/:id/algo/:algo_key/finish", h.Finish)
 	r.POST("/assets/:id/algo/:algo_key/reset", h.Reset)
-	r.GET("/assets/:id/algo-events", h.ListEvents)
+	r.GET("/assets/:id/events", h.ListEvents)
 	return r
 }
 
@@ -537,7 +538,7 @@ func TestAlgoListEvents(t *testing.T) {
 	// Asset not found → 404.
 	h, _ := newAlgoEnv(t, false, nil)
 	r := setupAlgoRouter(h)
-	w := doReq(t, r, http.MethodGet, "/assets/nonexistent/algo-events", nil)
+	w := doReq(t, r, http.MethodGet, "/assets/nonexistent/events", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for nonexistent asset, got %d", w.Code)
 	}
@@ -545,9 +546,26 @@ func TestAlgoListEvents(t *testing.T) {
 	// Success with empty events.
 	h2, _ := newAlgoEnv(t, true, nil)
 	r2 := setupAlgoRouter(h2)
-	w = doReq(t, r2, http.MethodGet, "/assets/a1/algo-events", nil)
+	w = doReq(t, r2, http.MethodGet, "/assets/a1/events", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestAlgoListCurrent(t *testing.T) {
+	h, _ := newAlgoEnv(t, true, map[string]string{"hand_tracking@1.2.0": "running"})
+	r := setupAlgoRouter(h)
+	w := doReq(t, r, http.MethodGet, "/assets/a1/algo", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items, ok := resp["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected 1 algo row, got %v", resp["items"])
 	}
 }
 

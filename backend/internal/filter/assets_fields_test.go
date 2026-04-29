@@ -48,7 +48,7 @@ func TestProperty12_PromotedFieldResolution(t *testing.T) {
 // ── Property 13: Filter JSONB prefix support preserved ───────────────────────
 // For any valid dynamic field key with prefix tag.*, algo.*, or files.*,
 // ResolveField() SHALL continue to return a fieldSpec with IsJSONB = true and
-// StorageField pointing to the corresponding cf_tag.*, cf_algo.*, or cf_files.* JSONB path.
+// StorageField pointing to the corresponding projection/JSON path.
 // **Validates: Requirements 15.4**
 func TestProperty13_JSONBPrefixSupportPreserved(t *testing.T) {
 	type prefixCase struct {
@@ -56,14 +56,14 @@ func TestProperty13_JSONBPrefixSupportPreserved(t *testing.T) {
 		storagePrefix string
 	}
 	prefixes := []prefixCase{
-		{"tag.", "cf_tag."},
-		{"tags.", "cf_tag."},
-		{"cf_tag.", "cf_tag."},
-		{"algo.", "cf_algo."},
-		{"algo_results.", "cf_algo."},
-		{"cf_algo.", "cf_algo."},
-		{"files.", "cf_files."},
-		{"cf_files.", "cf_files."},
+		{"tag.", "asset_tags."},
+		{"tags.", "asset_tags."},
+		{"cf_tag.", "asset_tags."},
+		{"algo.", "asset_algo_latest."},
+		{"algo_results.", "asset_algo_latest."},
+		{"cf_algo.", "asset_algo_latest."},
+		{"files.", "files."},
+		{"cf_files.", "files."},
 	}
 
 	// Generate random valid key suffixes
@@ -167,9 +167,9 @@ func TestResolveField_JSONBPrefixesStillWork(t *testing.T) {
 		field       string
 		wantStorage string
 	}{
-		{"tag.priority", "cf_tag.priority"},
-		{"algo.hand_tracking@1.2.0:status", "cf_algo.hand_tracking@1.2.0:status"},
-		{"files.preview_mp4", "cf_files.preview_mp4"},
+		{"tag.priority", "asset_tags.priority"},
+		{"algo.hand_tracking@1.2.0:status", "asset_algo_latest.hand_tracking@1.2.0:status"},
+		{"files.preview_mp4", "files.preview_mp4"},
 	}
 
 	for _, tc := range cases {

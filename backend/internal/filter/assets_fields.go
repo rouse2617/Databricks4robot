@@ -57,8 +57,8 @@ var exactFieldSpecs = map[string]fieldSpec{
 	"reviewer":          {Canonical: "reviewer", StorageField: "reviewer", IsJSONB: false},
 	"owner":             {Canonical: "owner", StorageField: "owner", IsJSONB: false},
 	"type":              {Canonical: "type", StorageField: "asset_type", IsJSONB: false},
-	"env":               {Canonical: "env", StorageField: "cf_meta.env", IsJSONB: true},
-	"task":              {Canonical: "task", StorageField: "cf_meta.task", IsJSONB: true},
+	"env":               {Canonical: "env", StorageField: "metadata.env", IsJSONB: true},
+	"task":              {Canonical: "task", StorageField: "metadata.task", IsJSONB: true},
 	"delivery_count":    {Canonical: "delivery_count", StorageField: "delivery_count", IsJSONB: false},
 	"last_delivered_to": {Canonical: "last_delivered_to", StorageField: "last_delivered_to", IsJSONB: false},
 	"last_delivered_at": {Canonical: "last_delivered_at", StorageField: "last_delivered_at", IsJSONB: false},
@@ -69,32 +69,32 @@ var exactFieldSpecs = map[string]fieldSpec{
 	"expire_at":       {Canonical: "expire_at", StorageField: "expire_at", IsJSONB: false},
 
 	"retention_tier":     {Canonical: "retention_tier", StorageField: "retention_tier", IsJSONB: false},
-	"archive_after_days": {Canonical: "archive_after_days", StorageField: "cf_meta.archive_after_days", IsJSONB: true},
-	"delete_after_days":  {Canonical: "delete_after_days", StorageField: "cf_meta.delete_after_days", IsJSONB: true},
-	"total_size_bytes":   {Canonical: "total_size_bytes", StorageField: "cf_meta.total_size_bytes", IsJSONB: true},
-	"last_accessed_at":   {Canonical: "last_accessed_at", StorageField: "cf_meta.last_accessed_at", IsJSONB: true},
+	"archive_after_days": {Canonical: "archive_after_days", StorageField: "metadata.archive_after_days", IsJSONB: true},
+	"delete_after_days":  {Canonical: "delete_after_days", StorageField: "metadata.delete_after_days", IsJSONB: true},
+	"total_size_bytes":   {Canonical: "total_size_bytes", StorageField: "metadata.total_size_bytes", IsJSONB: true},
+	"last_accessed_at":   {Canonical: "last_accessed_at", StorageField: "metadata.last_accessed_at", IsJSONB: true},
 }
 
 var prefixedFieldSpecs = []fieldPrefixSpec{
 	{
 		InputPrefixes:   []string{"tag.", "tags.", "cf_tag."},
 		CanonicalPrefix: "tag.",
-		StoragePrefix:   "cf_tag.",
+		StoragePrefix:   "asset_tags.",
 	},
 	{
 		InputPrefixes:   []string{"algo.", "algo_results.", "cf_algo."},
 		CanonicalPrefix: "algo.",
-		StoragePrefix:   "cf_algo.",
+		StoragePrefix:   "asset_algo_latest.",
 	},
 	{
 		InputPrefixes:   []string{"files.", "cf_files."},
 		CanonicalPrefix: "files.",
-		StoragePrefix:   "cf_files.",
+		StoragePrefix:   "files.",
 	},
 	{
 		InputPrefixes:   []string{"lifecycle.", "lifecycle_meta."},
 		CanonicalPrefix: "lifecycle.",
-		StoragePrefix:   "cf_meta.",
+		StoragePrefix:   "metadata.",
 	},
 }
 
@@ -114,7 +114,7 @@ func ResolveField(field string) (fieldSpec, error) {
 		}
 		return fieldSpec{
 			Canonical:    "tag." + key,
-			StorageField: "cf_tag." + key,
+			StorageField: "asset_tags." + key,
 			IsJSONB:      true,
 		}, nil
 	}

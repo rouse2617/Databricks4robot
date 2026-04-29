@@ -6,8 +6,9 @@ import (
 	"time"
 )
 
-// FieldAliasMap maps business-friendly field prefixes to storage column prefixes.
-// The frontend sends "tag.notes" and the backend resolves it to "cf_tag.notes".
+// FieldAliasMap maps business-friendly field prefixes to internal filter
+// prefixes. ResolveField then maps those prefixes to the current storage
+// backend representation (projection tables or JSONB columns).
 var FieldAliasMap = map[string]string{
 	"tag.":  "cf_tag.",
 	"file.": "cf_files.",
@@ -91,11 +92,12 @@ var VirtualFields = map[string]VirtualFieldHandler{
 	"has:delivery": hasDeliveryVirtualHandler{},
 }
 
-// algoStatusVirtualHandler matches any cf_algo key ending in ":status".
+// algoStatusVirtualHandler matches any current algorithm state row with the
+// given status.
 type algoStatusVirtualHandler struct{}
 
 func (h algoStatusVirtualHandler) BuildSQL(value interface{}, paramIdx int) (string, []interface{}, int, error) {
-	sql := fmt.Sprintf("asset_algo_statuses(cf_algo) @> ARRAY[$%d]::text[]", paramIdx)
+	sql := fmt.Sprintf("EXISTS (SELECT 1 FROM asset_algo_latest al WHERE al.asset_id = assets.asset_id AND al.status = $%d)", paramIdx)
 	return sql, []interface{}{value}, paramIdx + 1, nil
 }
 
@@ -109,12 +111,12 @@ func (h algoStatusVirtualHandler) MatchBigtable(algoResults map[string]string, _
 	return false
 }
 
-// hasDeliveryVirtualHandler translates "has:delivery" to the JSONB-backed delivery count.
+// hasDeliveryVirtualHandler translates "has:delivery" to the promoted
+// delivery_count column.
 type hasDeliveryVirtualHandler struct{}
 
 func (h hasDeliveryVirtualHandler) BuildSQL(value interface{}, paramIdx int) (string, []interface{}, int, error) {
 	// has:delivery is a boolean check: delivery_count > 0
-	// delivery_count lives inside cf_meta JSONB, so use JSONB extraction.
 	boolVal := true
 	switch v := value.(type) {
 	case bool:
@@ -123,9 +125,9 @@ func (h hasDeliveryVirtualHandler) BuildSQL(value interface{}, paramIdx int) (st
 		boolVal = v != "false" && v != "0"
 	}
 	if boolVal {
-		return "COALESCE((cf_meta->>'delivery_count')::int, 0) > 0", nil, paramIdx, nil
+		return "COALESCE(delivery_count, 0) > 0", nil, paramIdx, nil
 	}
-	return "COALESCE((cf_meta->>'delivery_count')::int, 0) = 0", nil, paramIdx, nil
+	return "COALESCE(delivery_count, 0) = 0", nil, paramIdx, nil
 }
 
 func (h hasDeliveryVirtualHandler) MatchBigtable(_ map[string]string, deliveryCount int, value interface{}) bool {
@@ -145,7 +147,7 @@ func (h hasDeliveryVirtualHandler) MatchBigtable(_ map[string]string, deliveryCo
 // Filter represents a parsed filter condition.
 type Filter struct {
 	Field        string      // Canonical public field name, e.g. "status" or "tag.priority"
-	StorageField string      // Resolved storage field, e.g. "cf_meta.owner" or "cf_tag.priority"
+	StorageField string      // Resolved storage field, e.g. "owner", "metadata.env", or "asset_tags.priority"
 	Op           string      // SQL operator, e.g. "=", "!=", "LIKE"
 	Value        interface{} // Typed value
 	IsJsonb      bool        // Whether the resolved storage field is a JSONB path query
@@ -172,17 +174,17 @@ var OperatorMap = map[string]string{
 
 // ReverseOperatorMap maps SQL operators back to filter operator names.
 var ReverseOperatorMap = map[string]string{
-	"=":      "eq",
-	"!=":     "ne",
-	"<":      "lt",
-	">":      "gt",
-	"<=":     "lte",
-	">=":     "gte",
-	"LIKE":   "like",
-	"ILIKE":  "ilike",
-	"IN":     "in",
-	"NOT IN": "nin",
-	"@>":     "contains",
+	"=":       "eq",
+	"!=":      "ne",
+	"<":       "lt",
+	">":       "gt",
+	"<=":      "lte",
+	">=":      "gte",
+	"LIKE":    "like",
+	"ILIKE":   "ilike",
+	"IN":      "in",
+	"NOT IN":  "nin",
+	"@>":      "contains",
 	"BETWEEN": "between",
 }
 

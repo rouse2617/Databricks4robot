@@ -221,13 +221,13 @@ func benchAlgoLifecycle(st *stats, wg *sync.WaitGroup, ids []string, count int) 
 	}
 }
 
-// benchGetEvents: GET /api/v1/assets/:id/algo-events
+// benchGetEvents: GET /api/v1/assets/:id/events
 func benchGetEvents(st *stats, wg *sync.WaitGroup, ids []string, count int) {
 	defer wg.Done()
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for i := 0; i < count; i++ {
 		id := ids[rng.Intn(len(ids))]
-		code, _, elapsed, err := doReq("GET", "/api/v1/assets/"+id+"/algo-events", nil)
+		code, _, elapsed, err := doReq("GET", "/api/v1/assets/"+id+"/events", nil)
 		if err != nil {
 			st.recordErr()
 			continue
@@ -413,7 +413,7 @@ func main() {
 		wallTime := time.Since(start)
 
 		fmt.Printf("  耗时 %s (%.1f req/s)\n", wallTime.Round(time.Millisecond), float64(evN)/wallTime.Seconds())
-		evStats.report("GET /algo-events")
+		evStats.report("GET /events")
 		fmt.Println()
 	}
 

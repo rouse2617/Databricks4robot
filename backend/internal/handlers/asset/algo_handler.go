@@ -134,7 +134,18 @@ func (h *AlgoHandler) Reset(c *gin.Context) {
 	c.JSON(200, gin.H{"asset_id": assetID, "algo_key": algoKey, "status": "pending"})
 }
 
-// GET /api/v1/assets/:id/algo-events?algo_key=...
+// GET /api/v1/assets/:id/algo
+func (h *AlgoHandler) ListCurrent(c *gin.Context) {
+	assetID := c.Param("id")
+	rows, err := h.uc.ListCurrentStates(c.Request.Context(), assetID)
+	if err != nil {
+		h.mapError(c, err)
+		return
+	}
+	c.JSON(200, gin.H{"items": rows})
+}
+
+// GET /api/v1/assets/:id/events?event_type=algo_*&algo_key=...
 func (h *AlgoHandler) ListEvents(c *gin.Context) {
 	assetID := c.Param("id")
 	var algoKeyPtr *string

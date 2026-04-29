@@ -69,10 +69,11 @@ func RegisterAll(
 
 		// Algorithm lifecycle routes
 		if algoHandler != nil {
+			assets.GET("/:id/algo", algoHandler.ListCurrent)
 			assets.POST("/:id/algo/:algo_key/start", algoHandler.Start)
 			assets.POST("/:id/algo/:algo_key/finish", algoHandler.Finish)
 			assets.POST("/:id/algo/:algo_key/reset", algoHandler.Reset)
-			assets.GET("/:id/algo-events", algoHandler.ListEvents)
+			assets.GET("/:id/events", algoHandler.ListEvents)
 		}
 
 		api.POST("/mcap/upload/finalize", mcapHandler.FinalizeUpload)

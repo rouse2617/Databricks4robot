@@ -103,7 +103,7 @@ func main() {
 		deliveryRepo := postgres.NewDeliveryRepo(pgClient)
 		algoUC := assetUC.NewAlgoUsecase(pgClient, assetRepo, algoLatestRepo, assetEventRepo, algoRegistry)
 		algoHandler = assetH.NewAlgoHandler(algoUC)
-		assetHandler = assetH.New(assetUC.NewWithProjections(pgClient, assetRepo, assetTagRepo, assetEventRepo, tagRegistry, algoRegistry), deliveryRepo)
+		assetHandler = assetH.New(assetUC.NewWithProjections(pgClient, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, tagRegistry, algoRegistry), deliveryRepo)
 		mcapHandler = mcapH.New(postgres.NewMcapFileRepo(pgClient))
 		deliveryHandler = deliveryH.New(deliveryRepo, postgres.NewIdempotencyRepo(pgClient))
 
