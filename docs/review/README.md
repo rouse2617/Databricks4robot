@@ -26,6 +26,8 @@
 | 5 | [`use-cases.md`](./use-cases.md) | 全部角色 × 业务域 use case 矩阵，约 65 项端点 + 关键约束 + 开发优先级 | 前端 / SDK / 后端 |
 | 6 | [`outbox-worker-design.md`](./outbox-worker-design.md) | Outbox Worker MVP 工程落地（**2.0 目标态**），并发模型、cursor 协议与验收标准 | 后端 / 数据工程 |
 | 7 | [`grace-migration-notes.md`](./grace-migration-notes.md) | **cyber-grace**（`grace_videos`）与本平台 `assets` / `mcap_files` / 算法投影的字段与幂等对照 | 集成 / 后端 / 数据工程 |
+| 8 | [`sql.md`](./sql.md) | **Schema companion**：保留 DDL/字段 section 编号，给 `schemas/pg-phase0.sql`、历史注释与 review 使用 | 后端 / DBA |
+| 9 | [`3.0-multimodal-design.md`](./3.0-multimodal-design.md) | **未来草稿**：3.x 多模态检索 / Lance 路线，未进入当前 1.0/2.0 基线 | 架构 / 算法 |
 
 ## 这份文档包覆盖了什么
 
@@ -73,5 +75,7 @@
 | `schema-reference.md` | 字段速查 + 上线优先级 | 表 / 字段变化时跟随更新 | DDL / 字段定义以 [`schemas/pg-phase0.sql`](../../schemas/pg-phase0.sql) 为最终源；本文档为人类可读视图 |
 | `api-guide.md` | API 使用指南 + curl 示例 | 长期维护，随后端 API 演进同步更新 | API 行为最终以 [`api/openapi.yaml`](../../api/openapi.yaml) 为源 |
 | `algo-lifecycle-and-data-model.md` | 算法子领域设计 | 长期维护，随算法生命周期 / 状态机演进同步更新 | 与 `data-platform-design.md` 冲突时以**整体设计文档为准** |
+| `sql.md` | DDL 伴随文档 / 历史引用兼容层 | 仅在表结构与 section 编号变化时更新 | 不再承载 ES / Iceberg / 同步链路主设计；这些内容以主设计文档为准 |
+| `3.0-multimodal-design.md` | 未来方向草稿 | 进入 3.x 立项后再提升为主文或 ADR | 当前不参与 1.0/2.0 基线裁决 |
 
-仓库内其他 `docs/` 下的文档（`docs/sql.md`、`docs/iceberg-*` 等）为历史调研、对比、深入设计资料，可能领先或滞后于当前主线；如与本目录冲突，**以本目录为评审基线**。
+仓库内 `docs/archive/` 及其他 review 外文档多为历史调研、对比或深入草稿；如与本目录冲突，**以本目录为评审基线**。

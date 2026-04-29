@@ -36,6 +36,35 @@
 - DLQ 表（先用 `retry_count` + 告警 + 人工 reindex 兜底）
 - Web UI 监控（先靠 metrics + Feishu 告警）
 
+### 1.3 两种正交机制：`publish_state` 字段驱动 + `event_seq` 寻址
+
+第一次读容易把这两件事混在一起，先讲清楚——它们**正交**、**各管各的**：
+
+| 维度 | `asset_events.publish_state` 字段 | `asset_events.event_seq`（BIGSERIAL）|
+|------|----------------------------------|--------------------------------------|
+| **谁用** | ES Sink worker 自己 | 别的下游 / reindex / 监控 lag |
+| **干什么** | 决定"这条事件还要不要投" | 给事件**永久编号 + 永久寻址** |
+| **取值** | `pending` → `published` 二态 | `1, 2, 3, …` 单调递增，永不复用 |
+| **Worker 怎么用它驱动** | `WHERE publish_state='pending' ORDER BY event_seq LIMIT 1000` —— **就是按"pending 字段"拉的** | 仅作为本批拉取的排序键，不影响驱动力 |
+| **是否影响事件能否被消费** | 是：`pending` 才会被拉 | 否：行不删，任意 seq 永远可重读 |
+
+**典型疑问**：
+
+> "我以为是按字段（`pending`）轮询的？"
+
+**对的**——ES Sink worker 就是这么干的，第 77 行就是这意思。`event_seq` 不是 worker 的驱动力，**它是给"水位线"和"重放"用的另一个维度**：
+
+| 角色 | 怎么知道还有没有要做的事 |
+|------|--------------------------|
+| ES Sink worker（自己）| 看 `publish_state='pending'` 字段 |
+| Iceberg CronJob / 其他直读 PG 的下游 | 看 `outbox_sink_cursors.last_published_seq`，拉 `event_seq > cursor` |
+| `/admin/search/reindex` API | 给一个 `[from_seq, to_seq]` 区间，扫这段事件按 asset_id 折叠后重投 ES |
+| 监控 lag | `MAX(event_seq) - last_published_seq` |
+
+**"可重放"的物理基础**：`asset_events` 行**永不删**（带长 retention），即使 `publish_state` 已是 `published`，行还在，按 `event_seq` 区间扫历史就能重建任意时刻的下游状态。重放**不会**把 `published` 改回 `pending`——而是另起一个 reindex 流程按 seq 区间扫历史。
+
+> 一句话：**worker 用字段干活，下游 / 重放用 seq 寻址**。两者解耦，所以可以新接下游、可以全量重建 ES、可以重放任意区间，都不影响在线 worker 自己跑。
+
 ---
 
 ## 2. 总体架构

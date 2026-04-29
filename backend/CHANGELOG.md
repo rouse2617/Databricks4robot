@@ -90,7 +90,7 @@
 
 ### Documentation
 - `backend/README.md` — 新增 Postgres 本地开发指南、docker-compose 用法、数据重置方法
-- `docs/sql.md` — 标注 Postgres 为主存储后端
+- `docs/review/sql.md` — 标注 Postgres 为主存储后端
 
 ### Added
 - **MCAP 文件列表接口** — `GET /api/v1/mcap-files` 支持分页查询

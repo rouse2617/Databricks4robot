@@ -37,7 +37,7 @@ Practical project guidance for coding agents working in `Databricks4robot`.
 
 ### Data schema sources
 
-- Bigtable/logical schema source: `docs/sql.md`
+- Logical schema companion: `docs/review/sql.md`
 - OpenAPI source: `api/openapi.yaml`
 - PG schema: `schemas/pg-phase0.sql`
 
@@ -52,7 +52,7 @@ Practical project guidance for coding agents working in `Databricks4robot`.
 | Tag 注册表 | `backend/config/tag_registry.yaml` | Tag 类型、枚举值 |
 | 数据模型 | `docs/review/algo-lifecycle-and-data-model.md` | 算法生命周期设计 |
 | Grace ↔ 平台迁移对照 | `docs/review/grace-migration-notes.md` | cyber-grace `grace_videos` 与本仓库资产/mcap/算法字段与幂等 |
-| Bigtable Schema | `docs/sql.md` | 表结构、行键、列族 |
+| Schema Companion | `docs/review/sql.md` | 表结构、字段命名、DDL section 锚点 |
 | Lakehouse 查询边界（归档） | `docs/archive/research/lakehouse-query-and-tag-filtering.md` | 历史调研：Postgres / Trino / Iceberg 查询职责 |
 | 后训练平台架构（归档） | `docs/archive/research/advanced-training-data-platform-architecture.md` | 历史调研：长期架构演进 |
 
@@ -82,7 +82,7 @@ These are intentionally removed and should not be reintroduced unless explicitly
 1. **Keep interfaces stable** between handlers/usecases/repos.
 2. **Update OpenAPI when API behavior changes**.
 3. **No dead endpoints**: if route is removed, remove handler/docs/sdk usage together.
-4. **Respect source-of-truth schema** (`sql.md`) for table/key/CF naming.
+4. **Respect source-of-truth schema docs** (`docs/review/sql.md` + `schemas/pg-phase0.sql`) for table/key/CF naming.
 5. **Prefer simple structure**:
    - keep storage package layout as `client.go + repos.go` unless complexity requires split.
 

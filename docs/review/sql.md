@@ -1,293 +1,110 @@
-# 数据平台架构与核心表结构整理
+# SQL Companion
+
+> **作用定位**：这篇文档只保留 **schema / DDL / 字段命名** 相关内容，给 `schemas/pg-phase0.sql`、仓库内历史注释和代码 review 提供一个稳定锚点。
+>
+> **主设计已合并**：架构分层、ES / Iceberg / Outbox Worker、运维、阶段计划等内容，统一收敛到 [`data-platform-design.md`](./data-platform-design.md) 与 [`schema-reference.md`](./schema-reference.md)。本文件不再重复那部分长篇设计叙事。
 
 ---
 
 ## 0. 当前实现 vs 目标 Schema
 
-本文是长期目标 schema 蓝图，不等于当前代码已经全部实现。当前仓库仍处于 Phase 0/Phase 1 之间：PostgreSQL 里大量资产字段仍保存在 `cf_meta / cf_algo / cf_tag` JSONB 中，部分目标表还没有落地。
+当前评审基线以 `docs/review/README.md` 为准：
 
-### 0.1 当前已实现（Phase 0）
+- **1.0 当前态**：运行时只有 PostgreSQL + Backend 在线。
+- **主写入路径**：`assets` 标量列 + `asset_tags` / `asset_algo_latest` 投影表 + `asset_events` 统一事件表。
+- **兼容层**：`cf_meta / cf_algo / cf_tag / cf_files` 仅保留历史兼容 / 回滚价值，不再是主写入路径。
+- **2.0 起**：才启用 Outbox Worker，把 `asset_events` 同步到 ES / Iceberg / 其他 sink。
 
-当前 `schemas/pg-phase0.sql` 和代码主要包含：
+### 0.1 本文件与其他文档的分工
 
-| 表 | 当前形态 | 说明 |
-|----|----------|------|
-| `mcap_files` | `raw_hash_md5 / is_deleted / cf_meta / cf_process` | 原始 MCAP 文件，JSONB 保留 Bigtable 时代 CF 结构 |
-| `assets` | `mcap_file_id / start_timestamp_ns / status / is_deleted / cf_meta / cf_algo / cf_tag` | asset 当前态，tag 和算法状态仍在 JSONB |
-| `deliveries` | `customer_id / status / delivered_at / is_deleted / cf_meta` | 交付批次 |
-| `delivery_items` | `(delivery_id, asset_id)` | delivery 和 asset 关联 |
-| `asset_algo_events` | 已存在/兼容旧逻辑 | 算法事件旧表，长期会被 `asset_events` 替代 |
-| `idempotency_keys` | 已存在 | 幂等写入保护 |
+| 文档 | 用途 |
+|------|------|
+| [`data-platform-design.md`](./data-platform-design.md) | 架构、事件流、同步机制、部署、SLO、阶段计划 |
+| [`schema-reference.md`](./schema-reference.md) | 人类可读的字段速查、上线优先级、索引与约束摘要 |
+| [`sql.md`](./sql.md) | DDL 伴随文档：保留 section 编号，解释为什么这些表/列存在 |
+| [`../../schemas/pg-phase0.sql`](../../schemas/pg-phase0.sql) | 当前 PG 参考 DDL，机器可读视图 |
 
-当前阶段的原则是：**不要求一次性迁移到目标 schema**。目标 schema 只用于指导后续 migration、双写、回填和 API 演进。
+### 0.2 表状态速览
 
-### 0.2 近期落地（Phase 1）
-
-Phase 1 目标是减少 JSONB 对在线查询的影响，同时不破坏当前代码：
-
-1. 从 `assets.cf_meta` 提升真正通用的高频字段：
-   - `tenant_id`
-   - `project_id`
-   - `asset_type`
-   - `lifecycle_state`
-   - `start_timestamp_ns`
-   - `end_timestamp_ns`
-   - `duration_ms`
-   - `owner`
-   - `retention_tier`
-   - `expire_at`
-2. 新增 `asset_tags` 投影表，进入双写期：
-   - 写入/更新 `cf_tag` 时同步 upsert `asset_tags`
-   - 老数据通过 backfill 从 `cf_tag` 回填
-   - 前端 facet/filter 从 `tag_registry.yaml + asset_tags` 驱动
-3. 新增 `asset_algo_latest` 投影表，进入双写期：
-   - 写入/更新 `cf_algo` 时同步 upsert 最新算法状态
-   - 历史仍可保留旧 `asset_algo_events`
-4. 新增瘦身版 `asset_events` 作为 outbox：
-   - 先记录关键事件和 `event_payload`
-   - Dagster sensor 优先读 `asset_events`
-   - 兼容期 fallback 到 `asset_algo_events / assets.updated_at`
-
-### 0.3 长期落地（Phase 2+）
-
-Phase 2 以后再逐步落地：
-
-| 能力 | 目标表/组件 | 说明 |
-|------|-------------|------|
-| 数据集管理 | `datasets / dataset_snapshots` | 先做 snapshot 元信息，明细进 Iceberg |
-| 训练记录 | `training_runs` | 训练记录必须自包含，不强依赖可变 FK |
-| Catalog 抽象 | `catalog_objects / catalog_object_versions` | 只做中立引用注册，不重写权限/血缘/质量系统 |
-| 血缘 | OpenLineage / Marquez | PG 不复刻完整 lineage，只保留对象引用和最近摘要 |
-| 权限 | Backend RBAC / Cloud IAM / Ranger / Lake Formation | PG 不自研细粒度权限引擎 |
-| 质量 | Dagster asset checks / Great Expectations / Soda | PG 不复刻质量系统，只保存状态摘要或 dashboard link |
-| 多模态训练 | Daft + Lance | Lance 存多模态样本，Iceberg 存索引和版本事实 |
+| 表 / 能力 | 当前状态 | 备注 |
+|-----------|----------|------|
+| `mcap_files` / `assets` / `deliveries` / `delivery_items` / `idempotency_keys` | 已上线 | 在线业务主表 |
+| `asset_tags` / `asset_algo_latest` | 已上线 | 当前态投影，服务筛选与详情回填 |
+| `asset_events` | 已上线 | 统一业务事件表；1.0 只写不消费 |
+| `asset_algo_events` | 遗留只读 | 历史兼容，不再新增写入 |
+| `datasets` / `dataset_snapshots` / `training_runs` | 目标表 | 训练平台真正接入时启用 |
+| `catalog_objects` / `catalog_object_versions` | 目标表 | 中立 Catalog 抽象，按需启用 |
 
 ---
 
-## 1. 架构分层与组件职责
+## 1. 表族与职责
 
-| 层级   | 组件              | 职责说明                                       |
-|--------|-------------------|------------------------------------------------|
-| 在线业务层 | PostgreSQL        | 点查、事务、当前态筛选、状态机、权限、幂等       |
-| 检索层   | Elasticsearch   | 模糊查询、全文检索、多字段过滤、facets、资产发现 |
-| 湖仓层   | Iceberg           | 历史事实、训练集、审计回放、统计分析、重算       |
-| Catalog 控制面 | Iceberg REST Catalog + PostgreSQL Platform Catalog | 湖表事务、跨引擎对象注册、中立引用 |
-| 查询层   | Trino             | 查询 Iceberg，服务复杂分析和离线报表            |
-| 计算层   | Spark / Dagster   | 批处理、回填、特征抽取、重算、导出              |
-| 多模态湖层 | Daft / Lance      | AI 多模态样本处理、高性能随机读取、向量/张量存储 |
-
-- PostgreSQL：在线权威主库，负责事务、点查、当前态、权限、幂等、状态更新。
-- Elasticsearch：资产检索层，模糊搜索、全文检索、多字段过滤、聚合与资产发现。
-- Iceberg：历史事实分析层，负责大规模历史查询、训练集、审计回放、算法重算、长期统计。
-- Catalog 控制面：短期用 Iceberg REST Catalog 管湖表事务和 metadata pointer，用 PostgreSQL Platform Catalog 管外部对象中立引用；长期可替换/接入 Polaris、Gravitino、Nessie 或云厂商 Glue / DLF / Dataplex。权限、血缘、质量不在 PG 里重写完整系统，只保留对象引用和摘要。
-- Daft / Lance：对标 LAS 的多模态湖计算和湖存储层。Daft 负责图片、视频、音频、点云、embedding 等非结构化样本处理和 CPU/GPU 异构算子编排；Lance 负责多模态样本、向量、tensor 的列式存储、高性能随机读取和训练侧消费。
-- 设计约定：PostgreSQL 表结构先保障在线业务，再通过事件流与同步服务支撑 ES 和 Iceberg。
-
-### 1.1 与 LAS / Daft + Lance 的边界
-
-当前 `PostgreSQL + Elasticsearch + Iceberg + Trino` 不需要被 Daft/Lance 替换。它们解决的是不同层次的问题：
-
-| 能力 | 当前主组件 | 后续对标 LAS 的增强 |
-|------|------------|---------------------|
-| 在线资产当前态、权限、状态机 | PostgreSQL | 继续保留 |
-| 资产搜索、标签过滤、facets | Elasticsearch | 继续保留 |
-| 历史事实、审计、训练样本索引 | Iceberg + Trino | 继续保留 |
-| 数据集版本、训练任务引用 | PostgreSQL + Iceberg | 后续补 dataset snapshot / manifest 闭环 |
-| 图片/视频/音频/点云/tensor 处理 | Spark / Dagster 雏形 | 引入 Daft + Ray |
-| 多模态样本物理存储和随机读取 | 对象存储 + Parquet/manifest | 引入 Lance |
-
-推荐长期形态：
-
-```text
-PostgreSQL 管在线元数据和业务事实
-Elasticsearch 管资产检索和发现
-Iceberg 管历史事实、训练样本索引和版本追溯
-Trino 管湖仓 SQL 查询
-Daft + Ray 管多模态处理算子和分布式执行
-Lance 管多模态样本、embedding、tensor 的高性能存储和训练读取
-```
-
-因此，Daft/Lance 应作为 `Gold / Training Sample Layer` 之后的 AI 多模态处理与样本物理格式层，而不是替代 PostgreSQL 或 Iceberg。
-
-### 1.2 Catalog 抽象与上云可移植原则
-
-本项目后续会上云，但不希望被某个云厂商的 Catalog API 锁死。因此从早期开始，所有湖表、搜索索引、多模态数据集、训练导出都必须使用中立 Catalog 引用，不直接把业务逻辑绑定到物理路径或某个厂商 ID。
-
-短期形态：
-
-```text
-Iceberg REST Catalog
-  负责 Iceberg namespace / table / snapshot / metadata pointer / commit 事务
-
-PostgreSQL Platform Catalog
-  负责平台侧对象注册、owner、project、tenant、provider、version 引用
-```
-
-长期可替换形态：
-
-```text
-provider = iceberg_rest | polaris | gravitino | nessie | glue | dlf | dataplex | purview
-```
-
-**统一引用模型：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| catalog_name | TEXT | 平台内 Catalog 名称，如 lakehouse / online / multimodal / search |
-| namespace | TEXT | 命名空间，如 robot / gold / project_a |
-| object_name | TEXT | 表、索引、Lance dataset、fileset 名称 |
-| object_type | TEXT | iceberg_table / postgres_table / elasticsearch_index / lance_dataset / object_prefix / manifest |
-| provider | TEXT | 底层 Catalog provider，如 iceberg_rest / polaris / gravitino / dlf |
-| format | TEXT | iceberg / postgres / elasticsearch / lance / parquet / webdataset / manifest |
-| storage_uri | TEXT | 可选物理位置，仅作定位和运维，不作为业务主键 |
-| external_ref | TEXT | 外部系统对象 ID 或 REST catalog identifier，可为空 |
-| version_ref | TEXT | 版本引用，如 Iceberg snapshot_id、Lance version、ES index generation |
-
-**禁止的长期设计：**
-
-```text
-业务表只保存 s3://warehouse/robot/assets/data/xxx.parquet
-业务表只保存 aws_glue_database / aliyun_dlf_catalog_id / gcp_biglake_table
-训练任务直接依赖某个对象存储文件路径作为唯一版本
-```
-
-**推荐的长期设计：**
-
-```text
-catalog_name = lakehouse
-namespace = robot.gold
-object_name = gold_training_samples
-object_type = iceberg_table
-provider = iceberg_rest
-format = iceberg
-version_ref = iceberg_snapshot_id
-storage_uri = s3://warehouse/robot/gold/gold_training_samples
-```
+| 表族 | 说明 |
+|------|------|
+| 在线主表 | `mcap_files`、`assets`、`deliveries`、`delivery_items`、`idempotency_keys` |
+| 当前态投影 | `asset_tags`、`asset_algo_latest` |
+| 事件 / 审计 / outbox | `asset_events` |
+| 训练 / 数据集 | `datasets`、`dataset_snapshots`、`training_runs` |
+| Catalog 抽象 | `catalog_objects`、`catalog_object_versions` |
 
 ---
 
-## 2. 核心表清单及主职责
+## 2. 关系总览
 
-| 表名             | 类型   | 核心职责                                     |
-|------------------|--------|----------------------------------------------|
-| mcap_files       | 主表   | 原始 MCAP 文件当前态                          |
-| assets           | 主表   | Segment / Clip / Asset 当前态                 |
-| asset_tags       | 投影表 | 资产 tag 当前态，支持在线过滤、ES 文档生成    |
-| asset_algo_latest| 投影表 | 资产算法最新状态，支持在线过滤、ES 文档生成   |
-| asset_events     | 事件表 | 统一业务事件、审计、同步 Iceberg/ES           |
-| deliveries       | 主表   | 客户交付批次当前态                            |
-| delivery_items   | 关联表 | Delivery 和 Asset 的 M:N 明细                 |
-| datasets         | 主表   | 数据集定义，保存 name/owner/project 等稳定属性 |
-| dataset_snapshots| 主表   | 训练/评测数据集快照元信息                     |
-| training_runs    | 主表   | 训练任务与数据集使用记录                      |
-| catalog_objects  | Catalog 表 | 湖表、PG 表、ES 索引、Lance dataset 等统一注册 |
-| catalog_object_versions | Catalog 表 | 外部对象版本引用，如 Iceberg snapshot / Lance version |
-| idempotency_keys | 控制表 | 幂等写入保护                                  |
-
-长期后训练场景可扩展：
-
-| 表名 | 类型 | 核心职责 |
-|------|------|----------|
-| feature_sets | 主表 | 特征集合定义，描述一组可复用训练特征 |
-| feature_jobs | 主表 | 特征抽取、回填、实验分支任务记录 |
-| training_sample_exports | 主表 | 训练样本导出任务元信息，明细写 Iceberg / 对象存储 |
-
-**表关系简表：**
-- mcap_files 1 ─── N assets
-- assets     1 ─── N asset_tags
-- assets     1 ─── N asset_algo_latest
-- assets     1 ─── N asset_events
-- assets     N ─── N deliveries        (via delivery_items)
-- datasets   1 ─── N dataset_snapshots
-- dataset_snapshots 1 ─── N training_runs
-- catalog_objects 1 ─── N catalog_object_versions
+- `mcap_files 1 -> N assets`
+- `assets 1 -> N asset_tags`
+- `assets 1 -> N asset_algo_latest`
+- `assets 1 -> N asset_events`
+- `assets N <-> N deliveries`，通过 `delivery_items`
+- `datasets 1 -> N dataset_snapshots`
+- `dataset_snapshots 1 -> N training_runs`
+- `catalog_objects 1 -> N catalog_object_versions`
 
 ---
 
 ## 3. 字段设计原则
 
-### 3.1 高频过滤字段列化
-> 资产管理页经常过滤字段必须用普通列存储，不能长期放在 JSONB 里：
+### 3.1 高频过滤字段必须列化
 
-- tenant_id
-- project_id
-- asset_type
-- lifecycle_state
-- start_timestamp_ns
-- end_timestamp_ns
-- duration_ms
-- created_at
-- updated_at
+以下字段属于在线筛选 / 排序 / 聚合高频路径，不能长期躲在 JSONB：
 
-行业语义字段不要焊进 `assets` 主表。自动驾驶里的 `city / road_type / weather / time_of_day / scenario_type / quality_level`，机械臂/人形/四足/室内导航未必适用，应放入 `asset_tags`，并由 `tag_registry.yaml` 声明哪些 tag 是必填 facet、哪些 tag 需要出现在前端 sidebar 和 Elasticsearch 聚合里。
+- `tenant_id`
+- `project_id`
+- `asset_type`
+- `lifecycle_state`
+- `start_timestamp_ns`
+- `end_timestamp_ns`
+- `duration_ms`
+- `owner`
+- `retention_tier`
+- `expire_at`
+- `created_at`
+- `updated_at`
 
-`tag_registry.yaml` 维护说明：
-- 文件位置：[`backend/config/tag_registry.yaml`](../backend/config/tag_registry.yaml)
-- 后端启动时由 `backend/internal/registry` 加载，控制 tag 校验、facet 生成、ES mapping
-- 改动流程：tag 增删改通过 PR + 后端 review；新增 tag 必须声明 `type / values / indexed / facet`
+### 3.2 当前态与历史分离
 
-### 3.2 tag 与算法状态用投影表
+- **当前态**：读 `assets` + `asset_tags` + `asset_algo_latest`
+- **历史 / 审计 / 回放**：读 `asset_events`
+- **兼容 JSONB**：只保留旧路径兼容，不再承担当前态权威职责
 
-- 高频 tag / algo 不要写 assets.metadata  
-  - tag 当前态：asset_tags
-  - 算法当前状态：asset_algo_latest
-  - 历史/审计：asset_events
-  - 复杂检索：Elasticsearch
-  - 历史分析/重算：Iceberg + Trino
+### 3.3 事件是业务事实的一部分
 
-### 3.3 JSONB 只作扩展区
+- 任何重要 mutation 都必须在**同一事务**里追加 `asset_events`
+- 下游一律按 `event_seq` 推进，不能用 `occurred_at` 当 watermark
+- `payload_schema_version` 从第一天开始就是必填，不允许后补
 
-- 合理用途：
-  - 低频扩展字段
-  - 详情页展示
-  - 非核心查询条件
-  - 事件 payload
-  - 算法结果摘要
-- 不推荐：
-  - 资产列表筛选/主过滤
-  - 高频 tag / algo 状态
-  - 权限判断
-  - 幂等控制
+### 3.4 Catalog 引用优先于物理路径绑定
 
-### 3.4 外部数据对象必须用 Catalog 引用
+训练、导出、湖表、搜索索引、多模态 dataset 等跨系统对象，优先用：
 
-凡是指向 Iceberg 表、Lance dataset、Elasticsearch index、对象存储 manifest、Parquet/WebDataset 导出文件的字段，都必须同时考虑：
+- `catalog_name`
+- `namespace`
+- `object_name`
+- `object_type`
+- `provider`
+- `version_ref`
 
-```text
-catalog_name + namespace + object_name + object_type + provider + format + version_ref
-```
-
-`storage_uri` 可以保留，但只作为运维定位和实际读取入口之一，不能作为业务唯一标识。这样未来从本地 Iceberg REST Catalog 切换到 Polaris / Gravitino / Nessie / Glue / DLF 时，不需要迁移业务表和训练记录。
-
-### 3.5 多租户与生命周期策略
-
-#### 多租户硬约束（避免 NULL tenant 历史包袱）
-
-`tenant_id / project_id` 在所有面向用户数据的主表、投影表、事件表、任务表上都是必填，但分两阶段落地：
-
-| 阶段 | 列约束 | 写入端要求 | 说明 |
-|------|--------|------------|------|
-| 单租户阶段（当前） | NOT NULL DEFAULT '_default' | 写入端可省略，DB 默认填 `_default` | 避免 NULL 行成为未来包袱 |
-| 多租户启用阶段 | NOT NULL，去除 DEFAULT | 写入端必须显式填 tenant_id；启用 RLS policy | 启用前先把 `_default` 行迁移到真实 tenant |
-
-这条约束的目的：**避免某天上多租户时，历史 NULL 行无法归属、RLS 失效**。新表不允许 `tenant_id NULL`。
-
-#### 行级安全（RLS）落地路径
-
-- 上线多租户那天：`ALTER TABLE ... ENABLE ROW LEVEL SECURITY`，policy 基于 `current_setting('app.tenant_id')`；backend 在每个事务起始 `SET LOCAL app.tenant_id = ...`。
-- ES 端配套：每个租户独立 index 或带 routing key，避免跨租户 search。
-- Iceberg 端配套：`tenant_id` 作为分区列，存储路径按租户隔离。
-
-#### 软删与生命周期
-
-- `asset_tags / asset_algo_latest` 不保存 `is_deleted`，asset 软删除后通过 JOIN `assets.is_deleted = false` 过滤；历史仍由 `asset_events` 和 Iceberg 保留。
-- `retention_tier` 表示 hot / warm / cold / archive 等生命周期层级；`expire_at` 到期后的动作由独立 lifecycle job 执行，策略可以是软删除、对象存储降级或物理清理。
-- 被 `dataset_snapshots` / `training_runs` 引用的 asset / mcap_file 不允许进入 `archive` 物理清理路径，最多软删 + 标 `superseded`，详见 §4.8 不可硬删约定。
-
-#### PII / 合规
-
-- PII / 合规信息不直接散落在业务表字段名里，优先通过 `catalog_objects.tags/properties`、`tag_registry.yaml` 和对象级 policy metadata 标注，例如 `pii_classification`、`retention_policy`、`deletion_policy`。
-- 完整删除链路（GDPR right-to-be-forgotten）和加密策略另行在 `docs/data-governance.md` 维护，本文档不展开。
+`storage_uri` 只做运维定位，不做业务主键。
 
 ---
 
@@ -892,139 +709,16 @@ PG 里的 Platform Catalog 只保留 `catalog_objects + catalog_object_versions`
 
 ## 5. Elasticsearch 文档设计
 
-- **ES 只做检索，非权威主库。**
-- 推荐主表：asset_search_docs，主键：asset_id
-- **建议文档结构：**
-
-```json
-{
-  "asset_id": "uuid",
-  "mcap_file_id": "uuid",
-  "asset_type": "segment",
-  "lifecycle_state": "ready",
-  "tags":     { "quality": "good", "has_pedestrian": "true", "weather": "rain", "scenario_type": "cut_in" },
-  "algos":    { "hand_tracking": { "version":"1.2.0", "status":"ok", "score":0.96 } },
-  "text":     "rain night cut in pedestrian",
-  "thumb_uri": "s3://...",
-  "updated_at": "2026-04-27T00:00:00Z"
-}
-```
-
-- **同步来源参考表：**
-
-| ES 字段     | PostgreSQL 来源          |
-|-------------|-------------------------|
-| 基础字段    | assets                  |
-| 采集字段    | mcap_files              |
-| tags        | asset_tags              |
-| algos       | asset_algo_latest       |
-| 删除状态    | assets.is_deleted       |
-| 更新时间    | assets.updated_at / asset_events.occurred_at |
-
-- **查询原则：**
-  - 复杂搜索走 ES，结果 asset_id 列表
-  - 权威详情回查 PostgreSQL（assets/tags/algo_latest）
-  - 历史分析走 Trino 查询 Iceberg
+已合并到 [`data-platform-design.md` §5.6.1](./data-platform-design.md)。本文件不再重复维护 ES 文档结构、mapping 与 fallback 设计。
 
 ---
 
 ## 6. Iceberg 表映射
 
-### 6.1 Bronze 同步机制
-
-当前本地 MVP 可以继续使用 Dagster/Spark 批同步，把 PostgreSQL 表周期性写入 Iceberg Bronze。长期生产形态建议演进为：
-
-```text
-Backend API -> PostgreSQL
-PostgreSQL asset_events / outbox -> CDC / stream processor -> Iceberg Bronze
-Dagster -> backfill / reconciliation / maintenance
-```
-
-推荐 SLA 与切换阈值：
-
-| 阶段 | 同步方式 | 目标延迟 | 适用条件 | 切换到下一阶段触发条件 |
-|------|----------|----------|----------|------------------------|
-| Phase 0 | Dagster/Spark 批同步 | 小时级 | 本地验证、< 100k events/d | 任意一项触发：(a) 入湖延迟 SLA 收紧到分钟级；(b) 全量批扫描成本不可接受 |
-| Phase 1 | asset_events outbox + Dagster sensor | 分钟级 | < 1k events/s 写入峰值 | 任意一项触发：(a) 写入峰值持续 > 1k events/s；(b) `publish_state='pending'` 队列堆积超过 5 分钟未恢复；(c) 入湖延迟 SLA 收紧到 < 10s |
-| Phase 2 | Debezium / RisingWave / Flink CDC（读 PG WAL） | 秒级 | 生产级 CDC | 长期稳定形态 |
-
-切换原则：
-- Phase 1 → Phase 2 是单向迁移；切换时 outbox worker 与 CDC pipeline 双跑一段时间，对账后再切流。
-- 不论 Phase 1 还是 Phase 2，下游消费者一律按 `asset_events.event_seq` 推进 watermark，不依赖 `occurred_at` 或 LSN，保证业务顺序稳定。
-
-`asset_events` 物理治理：
-- 单表行数预计超过 1000 万后，按 `occurred_at` 月分区（`PARTITION BY RANGE`）。
-- Bronze 入湖后，PG 侧 retention 默认 90 天（按分区 DROP）；超过 retention 的事件仅在 Iceberg 中留档。
-- `publish_state='pending'` 走 partial index `(publish_state, event_seq) WHERE publish_state='pending'`；published 行不进入此索引，避免 vacuum 膨胀。
-
-Bronze 表只负责保留源事实，不承担复杂业务语义。清洗、去重、状态展开、payload 平展应放在 Silver 层。
-
-### 6.2 表分层
-
-**Bronze 层**
-
-| Iceberg 表                  | 来源表           | 用途             |
-|-----------------------------|------------------|------------------|
-| bronze_mcap_files           | mcap_files       | 原始文件快照     |
-| bronze_assets               | assets           | 资产快照         |
-| bronze_asset_tags           | asset_tags       | tag 快照         |
-| bronze_asset_algo_latest    | asset_algo_latest| 算法快照         |
-| bronze_asset_events         | asset_events     | 事件事实         |
-| bronze_asset_relations      | asset_relations  | 资产血缘         |
-| bronze_deliveries           | deliveries       | 交付批次         |
-| bronze_delivery_items       | delivery_items   | 交付明细         |
-| bronze_datasets             | datasets         | 数据集定义       |
-| bronze_dataset_snapshots    | dataset_snapshots| 数据集快照元信息 |
-| bronze_training_runs        | training_runs    | 训练记录         |
-| bronze_feature_sets         | feature_sets     | 特征集合定义     |
-| bronze_feature_jobs         | feature_jobs     | 特征任务记录     |
-| bronze_catalog_objects      | catalog_objects  | 平台 Catalog 对象 |
-| bronze_catalog_object_versions | catalog_object_versions | 平台对象版本 |
-
-**Silver 层**
-
-| Iceberg 表                  | 用途                   |
-|-----------------------------|------------------------|
-| silver_assets_current       | 资产当前态宽表         |
-| silver_asset_tag_history    | tag 历史变化           |
-| silver_asset_algo_runs      | 算法运行历史           |
-| silver_asset_lineage        | 资产父子血缘           |
-| silver_delivery_items       | 客户交付明细           |
-| silver_training_dataset_usage|训练任务与数据集关系    |
-| silver_feature_jobs         | 特征任务历史           |
-| silver_feature_samples      | 标准化特征样本         |
-| silver_catalog_objects      | 跨引擎数据对象当前态   |
-
-**Gold 层**
-
-| Iceberg 表                   | 用途                                     |
-|------------------------------|------------------------------------------|
-| gold_dataset_snapshot_items  | 数据集快照 asset 明细                    |
-| gold_training_samples        | 训练可直接读取的样本表                   |
-| gold_feature_samples         | 特征工程与特征调研样本表                 |
-| gold_eval_samples            | 评测样本表                               |
-| gold_feature_branch_samples  | 实验分支特征样本表                       |
-| gold_recompute_candidates    | 算法版本变动后重算候选                   |
-| gold_customer_delivery_replay| 客户交付回放                             |
-| gold_quality_distribution    | 质量分布统计                             |
-| gold_catalog_inventory       | 面向 UI 的数据目录与资产发现宽表          |
+已合并到 [`data-platform-design.md` §5.6.2 / §5.6.4](./data-platform-design.md)。本文件只保留 `datasets`、`training_runs`、`catalog_objects` 等 PG 元数据表本身，不再重复 Bronze/Silver/Gold 分层与同步阶段说明。
 
 ---
 
 ## 7. 典型问题与推荐查询路径一览
 
-| 问题                       | 推荐查询路径                        |
-|----------------------------|-------------------------------------|
-| 单个 asset 详情            | PostgreSQL                          |
-| 资产列表基础筛选           | PostgreSQL                          |
-| 多字段模糊检索和 facets    | Elasticsearch                     |
-| 哪些 asset 跑过某个算法    | asset_algo_latest，历史用 Trino      |
-| 某 tag 何时被算法追加      | asset_events，长期历史用 Trino       |
-| 某次训练用了哪些 asset     | PG 找 snapshot，Iceberg 查明细       |
-| 某次训练实际读取哪些样本文件 | PG 查 training_sample_exports，训练读 manifest |
-| 某张湖表/索引/Lance dataset 属于谁、在哪里 | PG 查 catalog_objects + catalog_object_versions |
-| 后续替换 Polaris/Gravitino/云 Catalog 是否要迁移业务数据 | 不迁移业务数据，只更新 catalog_objects.provider/external_ref |
-| 新特征如何做实验回填       | PG 查 feature_jobs，Iceberg 写 feature branch/sample 表 |
-| 某算法版本变更后要重算     | Trino + Iceberg                     |
-| 上月 MCAP segment 质量分布 | Trino + Iceberg                     |
-| 某客户交付是否能完整回放   | PG 查 delivery，Iceberg 查明细       |
+已合并到 [`api-guide.md`](./api-guide.md) 与 [`use-cases.md`](./use-cases.md)。查询路径的维护粒度更适合放在 API / use case 文档，而不是 schema companion。

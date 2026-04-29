@@ -793,7 +793,9 @@ sequenceDiagram
 
 #### 5.3.6 场景：全文检索
 
-**入口**：前端搜索框 → `GET /api/v1/search?q=highway+night`
+**入口**：前端搜索框 → `GET /api/v1/search/assets?q=corner+case&filter=tags_flat.scene:eq:highway&filter=lifecycle_state:eq:ready`
+
+> ⚠️ 易错点：`q` 走 ES `multi_match`，**仅**搜 `notes / owner.text / reviewer.text / asset_id` 四个字段（实现见 `internal/elasticsearch/client.go` `buildSearchBody`）。**Tag 值（`scene=highway`）、vendor、device 等结构化字段必须用 `filter=`，不能塞进 `q`**——否则除非 `notes` 里恰好出现该词，否则搜不到。
 
 ```mermaid
 sequenceDiagram
@@ -803,13 +805,31 @@ sequenceDiagram
     participant UC as 业务层 (SearchAssets)
     participant ES as Elasticsearch
 
-    FE->>API: GET /search?q=highway+night&filter=lifecycle_state:ready
+    FE->>API: GET /search/assets?q=corner+case&filter=tags_flat.scene:eq:highway&filter=lifecycle_state:eq:ready
     API->>UC: Search(ctx, q, filters)
-    UC->>ES: POST /assets/_search<br>{ query: multi_match q + bool filter,<br>  highlight, from, size }
-    ES-->>UC: hits[] + highlights + score
-    UC-->>API: list（按 _score 排序）
-    API-->>FE: 200 OK { items[], highlights[] }
+    UC->>ES: POST /assets/_search<br>{ query: multi_match q + bool filter,<br>  highlight, from, size, aggs }
+    ES-->>UC: hits[] + highlights + facets + score
+    UC-->>API: list（按 updated_at desc 排序，可切 _score）
+    API-->>FE: 200 OK { items[], total, facets, _highlight }
 ```
+
+**`filter` 语法速查**（多个 `filter` 之间 AND）：
+
+| op | 例子 | 含义 |
+|----|------|------|
+| `eq` / `ne` | `owner:eq:alice` | 等于 / 不等于 |
+| `in` / `nin` | `tags_flat.scene:in:highway,urban` | 命中 / 不命中集合 |
+| `gt` / `gte` / `lt` / `lte` | `duration_ms:gte:60000` | 数值 / 时间比较 |
+| `between` | `duration_ms:between:30000,120000` | 闭区间 |
+| `exists` | `tags_flat.weather:exists:true` | 字段存在 |
+| `ilike` | `notes:ilike:%夜间%` | 大小写不敏感子串（PG fallback 时直接落 `ILIKE`） |
+
+**字段前缀约定**：
+
+- `tags_flat.<key>` —— 物化扁平字段，**首选**（90% 等值场景，最快）
+- `mcap.<col>` —— mcap 反范式属性（`vendor_id / device_id / scene_id / camera_model …`）
+- `algos.<key>.status` / `algos.<key>.score` —— 算法状态（nested，后端自动转 nested query）
+- 顶层：`lifecycle_state / asset_type / owner / duration_ms / created_at / updated_at`
 
 **ES 索引设计要点**（详见 §5.6.1）：
 

@@ -429,15 +429,19 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/reset" \
 
 只有 `ok` 或 `failed` 状态可以重置。
 
-### 2.4 查询算法事件
+### 2.4 查询资产事件 / 算法事件子集
 
 ```bash
-# 查询所有算法事件
-curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*" \
+# 查询资产完整事件时间线（最新在前）
+curl "$BASE/api/v1/assets/{asset_id}/events?limit=50" \
   -H "X-Grace-Token: $TOKEN"
 
-# 按算法过滤
-curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analysis@1.0.0" \
+# 只看算法事件
+curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&limit=50" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 按算法过滤，并用 cursor 继续翻下一页
+curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analysis@1.0.0&cursor=12345&limit=20" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
@@ -458,16 +462,22 @@ curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analy
         "new_status": "running",
         "run_id": "run-12345"
       },
-      "payload_schema_version": "1.0",
-      "actor": "worker-bot",
+      "payload_schema_version": "v1",
+      "event_source": "backend",
       "request_id": "req-xxx",
       "created_at": "2026-04-25T10:00:00Z"
     }
-  ]
+  ],
+  "limit": 20,
+  "next_cursor": 12345
 }
 ```
 
-事件按 `created_at` 降序排列（最新的在前）。响应字段与 `asset_events` 表一一对应，`prev_status / new_status` 等算法特有字段均在 `event_payload` 内。
+说明：
+- 事件按 `event_seq` **降序**排列；`cursor` 语义为“继续取 `event_seq < cursor` 的更老事件”。
+- `event_type` 支持精确值，也支持前缀通配，如 `algo_*`、`tag_*`。
+- `algo_key` 过滤的是 `event_payload.algo_key`，通常与 `event_type=algo_*` 搭配使用。
+- 响应字段与 `asset_events` 表一一对应；算法特有字段如 `prev_status / new_status / reason` 均保留在 `event_payload` 内。
 
 ### 2.5 依赖链自动 Unblock
 
@@ -685,39 +695,173 @@ curl "$BASE/api/v1/tag-registry" \
 ### 7.1 全文检索资产
 
 ```bash
-# 关键词搜索
-curl "$BASE/api/v1/search/assets?q=warehouse+rain&page=1&page_size=20" \
+# 1) 纯关键词（在 notes / owner / reviewer / asset_id 里搜）
+curl "$BASE/api/v1/search/assets?q=corner+case&page=1&page_size=20" \
   -H "X-Grace-Token: $TOKEN"
 
-# 关键词 + 结构化过滤
-curl "$BASE/api/v1/search/assets?q=indoor&filter=status:eq:approved&filter=owner:eq:alice&page=1&page_size=20" \
-  -H "X-Grace-Token: $TOKEN"
+# 2) 关键词 + 结构化过滤（推荐：tag 走 filter，不要塞进 q）
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "q=corner case" \
+  --data-urlencode "filter=lifecycle_state:eq:ready" \
+  --data-urlencode "filter=tags_flat.scene:eq:highway" \
+  --data-urlencode "filter=duration_ms:between:30000,120000"
 
-# 纯结构化过滤（无关键词）
-curl "$BASE/api/v1/search/assets?filter=env:eq:warehouse&page=1&page_size=50" \
-  -H "X-Grace-Token: $TOKEN"
+# 3) 纯结构化过滤（无关键词，等同于按 tag 资产发现）
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags_flat.scene:in:highway,urban" \
+  --data-urlencode "filter=mcap.vendor_id:eq:vendor-a" \
+  --data-urlencode "filter=owner:ne:test-bot"
 ```
 
 响应 `200`:
 ```json
 {
-  "items": [...],
+  "items": [
+    {
+      "asset_id": "ast_01HX...",
+      "lifecycle_state": "ready",
+      "owner": "alice",
+      "duration_ms": 87500,
+      "tags_flat": {"scene": "highway", "time_of_day": "night"},
+      "mcap": {"vendor_id": "vendor-a", "scene_id": "highway-01"},
+      "_highlight": {"notes": ["典型的 <em>corner</em> <em>case</em> ..."]}
+    }
+  ],
   "total": 128,
   "page": 1,
   "page_size": 20,
-  "aggregations": {
-    "status": {"approved": 85, "rejected": 23, "archived": 20},
-    "env": {"indoor": 60, "outdoor": 40, "warehouse": 28}
+  "facets": {
+    "lifecycle_state_agg": {"buckets": [{"key": "ready", "doc_count": 120}]},
+    "asset_type_agg":      {"buckets": [{"key": "mcap_segment", "doc_count": 110}]},
+    "owner_agg":           {"buckets": [{"key": "alice", "doc_count": 32}]},
+    "vendor_agg":          {"buckets": [{"key": "vendor-a", "doc_count": 58}]},
+    "scene_agg":           {"buckets": [{"key": "highway", "doc_count": 58}]}
   }
 }
 ```
 
 查询参数:
-- `q` — 全文搜索关键词，匹配 notes/owner/reviewer/task 字段
-- `filter` — 结构化过滤，语法与 `/api/v1/assets` 相同（`field:op:value`）
-- `page` / `page_size` — 分页参数
+
+- `q` — 全文搜索关键词，**仅匹配** `notes` / `owner.text` / `reviewer.text` / `asset_id` 四个字段（ES `multi_match`）。**Tag 值、vendor、device 等结构化字段不在这里**——走 `filter=`。
+- `filter` — 结构化过滤，可重复多个，AND 关系。语法 `field:op:value`，与 `/api/v1/assets` 一致。
+- `page` / `page_size` — 分页（`page_size ≤ 200`）。
+
+`filter` 语法速查:
+
+| op | 例子 | 含义 |
+|----|------|------|
+| `eq` / `ne` | `owner:eq:alice` | 等于 / 不等于 |
+| `in` / `nin` | `tags_flat.scene:in:highway,urban` | 命中 / 不命中集合 |
+| `gt` / `gte` / `lt` / `lte` | `duration_ms:gte:60000` | 数值 / 时间比较 |
+| `between` | `duration_ms:between:30000,120000` | 闭区间 |
+| `exists` | `tags_flat.weather:exists:true` | 字段存在 |
+| `ilike` | `notes:ilike:%夜间%` | 大小写不敏感子串 |
+
+字段前缀约定:
+
+- `tags_flat.<key>` — 物化扁平字段，**首选**等值过滤路径（如 `tags_flat.scene`、`tags_flat.time_of_day`）。
+- `mcap.<col>` — mcap 反范式属性（`vendor_id` / `device_id` / `scene_id` / `camera_model` 等）。
+- `algos.<key>.status` / `algos.<key>.score` — 算法状态（nested，后端自动转 nested query）。
+- 顶层字段：`lifecycle_state` / `asset_type` / `owner` / `duration_ms` / `created_at` / `updated_at`。
+
+常见误区:
+
+- ❌ `q=highway` 想找 `scene=highway` 的资产 → 应改成 `filter=tags_flat.scene:eq:highway`。
+- ❌ `q=alice` 想精确匹配 owner → 应改成 `filter=owner:eq:alice`（否则 `notes` 里出现 alice 的也会命中）。
+- ✅ 关键词 + 多 tag 同时使用：`q=...` + 多个 `filter=tags_flat.<key>:eq:<value>`。
 
 注意: 需要 Elasticsearch 服务运行。当 Elasticsearch 不可用时返回 `503`。
+
+### 7.1.1 按 tag 检索（三条路径）
+
+ES 提供 3 条互补的 tag 检索路径，前端按需挑一条即可。底层映射在 `internal/elasticsearch/client.go` 的 `nestedPath()` / `buildNestedClause()`。
+
+| 路径 | API 写法 | ES 底层 | 适用场景 |
+|------|---------|---------|---------|
+| **A. `tags_flat.<key>`** | `filter=tags_flat.scene:eq:highway` | ES `term` on `flattened` 子键 | **90% 等值过滤**，最快，首选 |
+| **B. `tags.<key>`** | `filter=tags.scene:eq:highway` | ES `nested` query（自动 pin `tags.key + tags.value`） | 复杂条件（带 source / confidence） |
+| **C. `tags.<inner>`** | `filter=tags.source_type:eq:algo` | ES `nested` 内部条件 | 不挑 key，只问"有没有算法打的 tag" |
+
+#### A. 等值（最常用）—— `tags_flat`
+
+```bash
+# scene=highway
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags_flat.scene:eq:highway"
+
+# 多 tag AND：高速 + 夜间 + ready
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags_flat.scene:eq:highway" \
+  --data-urlencode "filter=tags_flat.time_of_day:eq:night" \
+  --data-urlencode "filter=lifecycle_state:eq:ready"
+
+# OR 集合：高速 OR 城市
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags_flat.scene:in:highway,urban"
+
+# 排除 / 存在性
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags_flat.scene:ne:highway"
+
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags_flat.weather:exists:true"
+```
+
+#### B. 复杂条件 —— `tags.<key>` (nested)
+
+```bash
+# scene=highway 且必须是算法打的
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags.scene:eq:highway" \
+  --data-urlencode "filter=tags.source_type:eq:algo"
+```
+
+> ⚠️ 多个 `tags.*` filter **作用在不同 nested doc 上**——即"有一条 scene=highway"和"有一条 source_type=algo"，**不强制是同一条 tag**。如需"同一条 tag 内多条件捆绑"，目前不支持（候选 P2）。90% 场景下 A 路径足够。
+
+#### C. 只问元信息 —— `tags.<inner>`
+
+允许的 inner 字段：`source_type` / `source_name` / `confidence` / `value_num` / `value_bool` / `value` / `key`。
+
+```bash
+# 任何被算法打过 tag 的资产
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags.source_type:eq:algo"
+
+# 任何 confidence ≥ 0.9 的 tag（不限 key）
+curl -G "$BASE/api/v1/search/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags.confidence:gte:0.9"
+```
+
+#### PG fallback
+
+`/api/v1/assets`（或 `/search/assets` 在 ES 不可用时降级）也支持按 tag 过滤，走 `EXISTS` 子查询命中 `asset_tags(tag_key, tag_value, asset_id)` 索引：
+
+```bash
+curl -G "$BASE/api/v1/assets" \
+  -H "X-Grace-Token: $TOKEN" \
+  --data-urlencode "filter=tags.scene:eq:highway"
+```
+
+#### 能力边界
+
+| 能力 | ES | PG fallback |
+|------|----|-------------|
+| 单 tag 等值 / IN / NOT / 存在性 | ✅ | ✅ |
+| 多 tag AND | ✅ | ✅ |
+| 数值 tag 范围（`value_num`、`confidence`） | ✅ B 路径 | ❌（仅 text 等值） |
+| Tag 计数 facet（`scene_agg` / `vendor_agg` 等） | ✅ | ❌ |
+| 同一条 tag 内多条件捆绑 | ❌ 候选 P2 | ❌ |
+| Tag 时间范围（`tagged_at`） | ❌ 候选 P2 | ⚠️ PG `asset_tags.created_at` 可手写查 |
 
 ## 8. 湖仓同步状态
 

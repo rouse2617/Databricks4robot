@@ -1,23 +1,21 @@
 -- =====================================================================
 -- Databricks4robot · PostgreSQL Reference DDL
 --
--- 这个文件是 docs/sql.md 描述的目标 schema 的 DDL 镜像，作为：
+-- 这个文件是 docs/review/sql.md 描述的 schema companion 的 DDL 镜像，作为：
 --   1) 新环境从零拉起时的参考脚本（idempotent，可重复执行）
---   2) docs/sql.md 字段表的"机器可读"版本
+--   2) docs/review/sql.md 字段表的"机器可读"版本
 --
 -- 它 **不是** 生产迁移脚本；生产/CI 环境通过 backend/migrations/00X_*.sql
 -- 顺序执行。两者保持字段集合一致，但本文件不保证记录历史变更顺序。
 --
--- 命名与 docs/sql.md 第 0/4 节对齐：
---   · Phase 0  (当前已实现)：mcap_files / assets / deliveries / delivery_items
---                            / asset_algo_events / idempotency_keys
---                            （含遗留 cf_meta / cf_algo / cf_tag / cf_files / cf_process）
---   · Phase 1  (近期落地)  ：assets/mcap_files 提升高频列、新增投影/事件表
---                            asset_tags / asset_algo_latest / asset_events / asset_relations
---   · Phase 2+ (长期目标)  ：datasets / dataset_snapshots / training_runs
---                            catalog_objects / catalog_object_versions
+-- 命名与 docs/review/sql.md 第 0/4 节对齐：
+--   · 1.0 当前态：mcap_files / assets / deliveries / delivery_items
+--                 / asset_tags / asset_algo_latest / asset_events / idempotency_keys
+--                 （兼容列 cf_meta / cf_algo / cf_tag / cf_files / cf_process 仍保留）
+--   · 2.0+ 扩展：asset_relations / datasets / dataset_snapshots / training_runs
+--                / catalog_objects / catalog_object_versions
 --
--- 设计原则（详见 docs/sql.md §3）：
+-- 设计原则（详见 docs/review/sql.md §3）：
 --   · 高频过滤字段 = 普通列；JSONB 仅作低频扩展区
 --   · tag / algo 当前态走投影表，历史走 asset_events + Iceberg
 --   · 外部数据对象用 Catalog 引用 (catalog_name + namespace + object_name + version_ref)
@@ -29,7 +27,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gin;
 
 -- =====================================================================
 -- 1. mcap_files —— 原始 MCAP 文件当前态
---    docs/sql.md §4.1
+--    docs/review/sql.md §4.1
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS mcap_files (
     mcap_file_id        UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -94,11 +92,11 @@ CREATE INDEX IF NOT EXISTS idx_mcap_files_metadata_gin
     ON mcap_files USING GIN (metadata);
 
 COMMENT ON TABLE mcap_files IS
-    '原始 MCAP 文件当前态。docs/sql.md §4.1。';
+    '原始 MCAP 文件当前态。docs/review/sql.md §4.1。';
 
 -- =====================================================================
 -- 2. assets —— 资产当前态 (segment / clip / frame_set / derived_asset)
---    docs/sql.md §4.2
+--    docs/review/sql.md §4.2
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS assets (
     asset_id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -193,11 +191,11 @@ CREATE INDEX IF NOT EXISTS idx_assets_cf_tag_gin  ON assets USING GIN (cf_tag);
 CREATE INDEX IF NOT EXISTS idx_assets_cf_files_gin ON assets USING GIN (cf_files);
 
 COMMENT ON TABLE assets IS
-    '资产当前态。docs/sql.md §4.2。行业相关 facet (city/weather/...) 入 asset_tags，不进本表。';
+    '资产当前态。docs/review/sql.md §4.2。行业相关 facet (city/weather/...) 入 asset_tags，不进本表。';
 
 -- =====================================================================
 -- 3. asset_relations —— 复杂血缘（多父 / 融合 / 拼接 / 派生）
---    docs/sql.md §4.2.1
+--    docs/review/sql.md §4.2.1
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS asset_relations (
     parent_asset_id         UUID         NOT NULL REFERENCES assets(asset_id),
@@ -221,7 +219,7 @@ COMMENT ON TABLE asset_relations IS
 
 -- =====================================================================
 -- 4. asset_tags —— 资产 tag 当前态投影
---    docs/sql.md §4.3
+--    docs/review/sql.md §4.3
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS asset_tags (
     asset_id        UUID                 NOT NULL REFERENCES assets(asset_id),
@@ -256,7 +254,7 @@ COMMENT ON TABLE asset_tags IS
 
 -- =====================================================================
 -- 5. asset_algo_latest —— 资产算法最新状态投影
---    docs/sql.md §4.4
+--    docs/review/sql.md §4.4
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS asset_algo_latest (
     asset_id        UUID              NOT NULL REFERENCES assets(asset_id),
@@ -294,7 +292,7 @@ COMMENT ON TABLE asset_algo_latest IS
 
 -- =====================================================================
 -- 6. asset_events —— 统一业务事件表（瘦身版 outbox）
---    docs/sql.md §4.5
+--    docs/review/sql.md §4.5
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS asset_events (
     event_id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -368,7 +366,7 @@ COMMENT ON TABLE asset_algo_events IS
 
 -- =====================================================================
 -- 8. deliveries —— 客户交付批次当前态
---    docs/sql.md §4.6
+--    docs/review/sql.md §4.6
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS deliveries (
     delivery_id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -405,11 +403,11 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_completed
 CREATE INDEX IF NOT EXISTS idx_deliveries_tenant_project
     ON deliveries (tenant_id, project_id) WHERE is_deleted = FALSE;
 
-COMMENT ON TABLE deliveries IS '客户交付批次当前态。docs/sql.md §4.6。';
+COMMENT ON TABLE deliveries IS '客户交付批次当前态。docs/review/sql.md §4.6。';
 
 -- =====================================================================
 -- 9. delivery_items —— Delivery ↔ Asset M:N 明细
---    docs/sql.md §4.7
+--    docs/review/sql.md §4.7
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS delivery_items (
     delivery_id    UUID         NOT NULL REFERENCES deliveries(delivery_id) ON DELETE CASCADE,
@@ -427,7 +425,7 @@ CREATE INDEX IF NOT EXISTS idx_delivery_items_by_asset
 
 -- =====================================================================
 -- 10. datasets / dataset_snapshots —— 数据集与快照
---     docs/sql.md §4.8
+--     docs/review/sql.md §4.8
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS datasets (
     dataset_id     UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -479,7 +477,7 @@ COMMENT ON TABLE dataset_snapshots IS
 
 -- =====================================================================
 -- 11. training_runs —— 训练任务记录（自包含数据引用）
---     docs/sql.md §4.9
+--     docs/review/sql.md §4.9
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS training_runs (
     training_run_id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -526,7 +524,7 @@ COMMENT ON TABLE training_runs IS
 
 -- =====================================================================
 -- 12. catalog_objects / catalog_object_versions —— Platform Catalog 抽象
---     docs/sql.md §4.11
+--     docs/review/sql.md §4.11
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS catalog_objects (
     object_id      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -559,7 +557,7 @@ CREATE INDEX IF NOT EXISTS idx_catalog_objects_tags_gin
     ON catalog_objects USING GIN (tags);
 
 COMMENT ON TABLE catalog_objects IS
-    '中立 Catalog 注册：湖表 / PG 表 / ES 索引 / Lance dataset 等。docs/sql.md §1.2 / §4.11。';
+    '中立 Catalog 注册：湖表 / PG 表 / ES 索引 / Lance dataset 等。docs/review/sql.md §1.2 / §4.11。';
 
 CREATE TABLE IF NOT EXISTS catalog_object_versions (
     object_version_id  UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -586,9 +584,9 @@ COMMENT ON TABLE catalog_object_versions IS
 
 -- =====================================================================
 -- 13. idempotency_keys —— API 幂等保护
---     docs/sql.md §4.12
+--     docs/review/sql.md §4.12
 -- =====================================================================
--- 主键 (scope, idem_key) 与 docs/sql.md §4.12 一致。
+-- 主键 (scope, idem_key) 与 docs/review/sql.md §4.12 一致。
 -- expires_at 由独立 lifecycle job 定期清理（response_json 可能含 PII，禁止无限保留）。
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     scope          TEXT         NOT NULL,
