@@ -2,6 +2,8 @@
 
 > Source of truth: #[[file:docs/review/next-steps-tasks.md]]
 > 设计文档: #[[file:docs/review/data-platform-design.md]], #[[file:docs/review/outbox-worker-design.md]]
+>
+> **同步规则**：每完成一个 task（`[ ]` → `[x]`），必须同步更新 #[[file:docs/review/next-steps-tasks.md]] 中对应条目的状态为 `done` 并补落地证据（PR 链接或 commit hash）。两边保持一致。
 
 ---
 
