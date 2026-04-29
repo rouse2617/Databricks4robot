@@ -7,12 +7,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"data-platform/internal/config"
 	"data-platform/internal/models"
+	"data-platform/internal/repository"
 	assetUC "data-platform/internal/usecase/asset"
 )
 
@@ -398,17 +402,50 @@ func setupAlgoRouter(h *AlgoHandler) *gin.Engine {
 	return r
 }
 
-func TestAlgoStart(t *testing.T) {
-	// Test bad request body.
+// algoTestEnv bundles the dependencies an AlgoHandler test needs.
+type algoTestEnv struct {
+	asset      *mockAssetRepo
+	algoLatest *handlerAlgoLatestRepo
+	events     *handlerAssetEventRepo
+}
+
+// newAlgoEnv constructs an environment with optional pre-seeded algo state.
+// presence controls whether the asset exists; statuses keys are algo_key strings.
+func newAlgoEnv(t *testing.T, presence bool, statuses map[string]string) (*assetH_AlgoHandler, *algoTestEnv) {
+	t.Helper()
+	env := &algoTestEnv{
+		asset:      &mockAssetRepo{},
+		algoLatest: newHandlerAlgoLatestRepo(),
+		events:     &handlerAssetEventRepo{},
+	}
+	if presence {
+		env.asset.getFn = func(context.Context, string) (*models.Asset, error) {
+			return &models.Asset{AssetID: "a1", Version: 1}, nil
+		}
+	} else {
+		env.asset.getFn = func(context.Context, string) (*models.Asset, error) { return nil, nil }
+	}
+	for algoKey, status := range statuses {
+		env.algoLatest.seed(algoKey, status, "")
+	}
 	uc := assetUC.NewAlgoUsecase(
-		&mockAssetRepo{getFn: func(context.Context, string) (*models.Asset, error) { return nil, nil }},
-		&mockAlgoEventRepo{},
+		handlerTxRunner{},
+		env.asset,
+		env.algoLatest,
+		env.events,
 		buildTestAlgoRegistry(t),
 	)
 	h := NewAlgoHandler(uc)
-	r := setupAlgoRouter(h)
+	return h, env
+}
 
+// assetH_AlgoHandler is a tiny alias to keep handler tests local-imports clean.
+type assetH_AlgoHandler = AlgoHandler
+
+func TestAlgoStart(t *testing.T) {
 	// Missing method field → 400.
+	h, _ := newAlgoEnv(t, true, nil)
+	r := setupAlgoRouter(h)
 	w := doReq(t, r, http.MethodPost, "/assets/a1/algo/hand_tracking@1.2.0/start", map[string]any{})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing method, got %d", w.Code)
@@ -421,51 +458,26 @@ func TestAlgoStart(t *testing.T) {
 	}
 
 	// Asset not found → 404.
-	w = doReq(t, r, http.MethodPost, "/assets/nonexistent/algo/hand_tracking@1.2.0/start", map[string]any{"method": "test"})
+	h2, _ := newAlgoEnv(t, false, nil)
+	r2 := setupAlgoRouter(h2)
+	w = doReq(t, r2, http.MethodPost, "/assets/nonexistent/algo/hand_tracking@1.2.0/start", map[string]any{"method": "test"})
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for nonexistent asset, got %d", w.Code)
 	}
 
 	// Already running → 409.
-	uc2 := assetUC.NewAlgoUsecase(
-		&mockAssetRepo{getFn: func(context.Context, string) (*models.Asset, error) {
-			return &models.Asset{
-				AssetID:     "a1",
-				AlgoResults: map[string]string{"hand_tracking@1.2.0:status": "running"},
-				Tags:        map[string]string{},
-				Files:       map[string]string{},
-				Version:     1,
-			}, nil
-		}},
-		&mockAlgoEventRepo{},
-		buildTestAlgoRegistry(t),
-	)
-	h2 := NewAlgoHandler(uc2)
-	r2 := setupAlgoRouter(h2)
-	w = doReq(t, r2, http.MethodPost, "/assets/a1/algo/hand_tracking@1.2.0/start", map[string]any{"method": "test"})
+	h3, _ := newAlgoEnv(t, true, map[string]string{"hand_tracking@1.2.0": "running"})
+	r3 := setupAlgoRouter(h3)
+	w = doReq(t, r3, http.MethodPost, "/assets/a1/algo/hand_tracking@1.2.0/start", map[string]any{"method": "test"})
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for already running, got %d", w.Code)
 	}
 }
 
 func TestAlgoFinish(t *testing.T) {
-	uc := assetUC.NewAlgoUsecase(
-		&mockAssetRepo{getFn: func(context.Context, string) (*models.Asset, error) {
-			return &models.Asset{
-				AssetID:     "a1",
-				AlgoResults: map[string]string{"env_analysis@1.0.0:status": "running"},
-				Tags:        map[string]string{},
-				Files:       map[string]string{},
-				Version:     1,
-			}, nil
-		}},
-		&mockAlgoEventRepo{},
-		buildTestAlgoRegistry(t),
-	)
-	h := NewAlgoHandler(uc)
-	r := setupAlgoRouter(h)
-
 	// Missing status → 400.
+	h, _ := newAlgoEnv(t, true, map[string]string{"env_analysis@1.0.0": "running"})
+	r := setupAlgoRouter(h)
 	w := doReq(t, r, http.MethodPost, "/assets/a1/algo/env_analysis@1.0.0/finish", map[string]any{})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing status, got %d", w.Code)
@@ -482,21 +494,8 @@ func TestAlgoFinish(t *testing.T) {
 		t.Fatalf("expected MISSING_REASON, got %v", errBody["code"])
 	}
 
-	// Ok with required fields for hand_tracking (missing output_uri) → 422.
-	uc2 := assetUC.NewAlgoUsecase(
-		&mockAssetRepo{getFn: func(context.Context, string) (*models.Asset, error) {
-			return &models.Asset{
-				AssetID:     "a1",
-				AlgoResults: map[string]string{"hand_tracking@1.2.0:status": "running"},
-				Tags:        map[string]string{},
-				Files:       map[string]string{},
-				Version:     1,
-			}, nil
-		}},
-		&mockAlgoEventRepo{},
-		buildTestAlgoRegistry(t),
-	)
-	h2 := NewAlgoHandler(uc2)
+	// hand_tracking ok with no output_uri → 422.
+	h2, _ := newAlgoEnv(t, true, map[string]string{"hand_tracking@1.2.0": "running"})
 	r2 := setupAlgoRouter(h2)
 	w = doReq(t, r2, http.MethodPost, "/assets/a1/algo/hand_tracking@1.2.0/finish", map[string]any{"status": "ok"})
 	if w.Code != http.StatusUnprocessableEntity {
@@ -507,25 +506,11 @@ func TestAlgoFinish(t *testing.T) {
 		t.Fatalf("expected MISSING_REQUIRED_FIELD, got %v", errBody["code"])
 	}
 
-	// Invalid state transition (not running) → 409.
-	uc3 := assetUC.NewAlgoUsecase(
-		&mockAssetRepo{getFn: func(context.Context, string) (*models.Asset, error) {
-			return &models.Asset{
-				AssetID:     "a1",
-				AlgoResults: map[string]string{"env_analysis@1.0.0:status": "pending"},
-				Tags:        map[string]string{},
-				Files:       map[string]string{},
-				Version:     1,
-			}, nil
-		}},
-		&mockAlgoEventRepo{},
-		buildTestAlgoRegistry(t),
-	)
-	h3 := NewAlgoHandler(uc3)
+	// Invalid state transition (status=pending) → 409.
+	h3, _ := newAlgoEnv(t, true, map[string]string{"env_analysis@1.0.0": "pending"})
 	r3 := setupAlgoRouter(h3)
 	w = doReq(t, r3, http.MethodPost, "/assets/a1/algo/env_analysis@1.0.0/finish", map[string]any{
-		"status": "failed",
-		"reason": "test",
+		"status": "failed", "reason": "test",
 	})
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for invalid state transition, got %d", w.Code)
@@ -533,23 +518,9 @@ func TestAlgoFinish(t *testing.T) {
 }
 
 func TestAlgoReset(t *testing.T) {
-	// Reset from pending → 409 (only failed/ok allowed).
-	uc := assetUC.NewAlgoUsecase(
-		&mockAssetRepo{getFn: func(context.Context, string) (*models.Asset, error) {
-			return &models.Asset{
-				AssetID:     "a1",
-				AlgoResults: map[string]string{"env_analysis@1.0.0:status": "pending"},
-				Tags:        map[string]string{},
-				Files:       map[string]string{},
-				Version:     1,
-			}, nil
-		}},
-		&mockAlgoEventRepo{},
-		buildTestAlgoRegistry(t),
-	)
-	h := NewAlgoHandler(uc)
+	// Reset from pending → 409.
+	h, _ := newAlgoEnv(t, true, map[string]string{"env_analysis@1.0.0": "pending"})
 	r := setupAlgoRouter(h)
-
 	w := doReq(t, r, http.MethodPost, "/assets/a1/algo/env_analysis@1.0.0/reset", nil)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409 for reset from pending, got %d", w.Code)
@@ -564,28 +535,15 @@ func TestAlgoReset(t *testing.T) {
 
 func TestAlgoListEvents(t *testing.T) {
 	// Asset not found → 404.
-	uc := assetUC.NewAlgoUsecase(
-		&mockAssetRepo{getFn: func(context.Context, string) (*models.Asset, error) { return nil, nil }},
-		&mockAlgoEventRepo{},
-		buildTestAlgoRegistry(t),
-	)
-	h := NewAlgoHandler(uc)
+	h, _ := newAlgoEnv(t, false, nil)
 	r := setupAlgoRouter(h)
-
 	w := doReq(t, r, http.MethodGet, "/assets/nonexistent/algo-events", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for nonexistent asset, got %d", w.Code)
 	}
 
-	// Success with events.
-	uc2 := assetUC.NewAlgoUsecase(
-		&mockAssetRepo{getFn: func(context.Context, string) (*models.Asset, error) {
-			return &models.Asset{AssetID: "a1", Tags: map[string]string{}, Files: map[string]string{}, AlgoResults: map[string]string{}}, nil
-		}},
-		&mockAlgoEventRepo{},
-		buildTestAlgoRegistry(t),
-	)
-	h2 := NewAlgoHandler(uc2)
+	// Success with empty events.
+	h2, _ := newAlgoEnv(t, true, nil)
 	r2 := setupAlgoRouter(h2)
 	w = doReq(t, r2, http.MethodGet, "/assets/a1/algo-events", nil)
 	if w.Code != http.StatusOK {
@@ -639,11 +597,98 @@ func TestProperty10_SoftDeletedAssetsNeverInResults(t *testing.T) {
 
 // ─── Test Helpers for Algo Handler ──────────────────────────────────────────
 
-type mockAlgoEventRepo struct{}
+// handlerTxRunner runs fn directly. Repos in this file are not transactional
+// in any meaningful sense — they hold serialised maps protected by their
+// own mutex, mirroring the contract a single PG transaction provides.
+type handlerTxRunner struct{}
 
-func (m *mockAlgoEventRepo) Insert(_ context.Context, _ *models.AlgoEvent) error { return nil }
-func (m *mockAlgoEventRepo) ListByAsset(_ context.Context, _ string, _ *string) ([]*models.AlgoEvent, error) {
-	return []*models.AlgoEvent{}, nil
+func (handlerTxRunner) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
+// handlerAlgoLatestRepo is a tiny in-memory AssetAlgoLatestRepository used
+// only by AlgoHandler tests. It enforces the (asset_id, algo_name) PK and
+// monotonic algo_version guard like the production repo.
+type handlerAlgoLatestRepo struct {
+	mu   sync.Mutex
+	rows map[string]*models.AssetAlgoLatest
+}
+
+func newHandlerAlgoLatestRepo() *handlerAlgoLatestRepo {
+	return &handlerAlgoLatestRepo{rows: make(map[string]*models.AssetAlgoLatest)}
+}
+
+func handlerKey(assetID, algoName string) string { return assetID + "|" + algoName }
+
+func (m *handlerAlgoLatestRepo) Upsert(_ context.Context, row *models.AssetAlgoLatest) error {
+	if row == nil {
+		return errors.New("nil row")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := handlerKey(row.AssetID, row.AlgoName)
+	if cur, ok := m.rows[k]; ok && cur.AlgoVersion > row.AlgoVersion {
+		return nil
+	}
+	cp := *row
+	if cp.UpdatedAt.IsZero() {
+		cp.UpdatedAt = time.Now().UTC()
+	}
+	m.rows[k] = &cp
+	return nil
+}
+
+func (m *handlerAlgoLatestRepo) GetByAlgo(_ context.Context, assetID, algoName string) (*models.AssetAlgoLatest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.rows[handlerKey(assetID, algoName)]
+	if !ok {
+		return nil, nil
+	}
+	cp := *r
+	return &cp, nil
+}
+
+func (m *handlerAlgoLatestRepo) ListByAsset(_ context.Context, assetID string) ([]*models.AssetAlgoLatest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*models.AssetAlgoLatest
+	for _, r := range m.rows {
+		if r.AssetID == assetID {
+			cp := *r
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+// seed pre-populates state. algoKey is the "name@version" string used in
+// the public API.
+func (m *handlerAlgoLatestRepo) seed(algoKey, status, runID string) {
+	parts := strings.SplitN(algoKey, "@", 2)
+	if len(parts) != 2 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rows[handlerKey("a1", parts[0])] = &models.AssetAlgoLatest{
+		AssetID: "a1", AlgoName: parts[0], AlgoVersion: parts[1],
+		Status: status, RunID: runID, UpdatedAt: time.Now().UTC(),
+	}
+}
+
+// handlerAssetEventRepo is a no-op append-only AssetEventRepository for the
+// handler tests; we don't assert on event payload at this level.
+type handlerAssetEventRepo struct{}
+
+func (handlerAssetEventRepo) Append(context.Context, repository.AssetEventAppendInput) error {
+	return nil
+}
+func (handlerAssetEventRepo) ListPending(context.Context, int) ([]*models.AssetEvent, error) {
+	return nil, nil
+}
+func (handlerAssetEventRepo) ListByAsset(_ context.Context, _ string, _ []string, _ int) ([]*models.AssetEvent, error) {
+	return nil, nil
 }
 
 func buildTestAlgoRegistry(t *testing.T) *config.AlgoRegistry {

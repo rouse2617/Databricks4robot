@@ -7,7 +7,17 @@ import (
 )
 
 // AssetRepository defines persistence operations required by asset usecases.
-// This interface is intentionally storage-agnostic to decouple usecases from Bigtable.
+// Storage-agnostic by design — concrete implementations live in
+// internal/postgres and internal/bigtable.
+//
+// NOTE: Per-algorithm state (status, run_id, output_uri, finished_at, ...)
+// is owned by AssetAlgoLatestRepository, NOT this repo. The previous
+// MergeCfAlgo method on this interface implemented optimistic locking on
+// `assets.version` for algo writes; that path was retired in the Issue-2
+// fix (see data-platform-design.md §5.3.1) because contention on
+// assets.version was the dominant write hotspot. Any algo-state mutation
+// must now go through AssetAlgoLatestRepository.Upsert + AssetEventRepository.Append
+// inside Client.WithTx.
 type AssetRepository interface {
 	Get(ctx context.Context, assetID string) (*models.Asset, error)
 	Set(ctx context.Context, a *models.Asset) error
@@ -20,11 +30,4 @@ type AssetRepository interface {
 	// Returns matching assets and total count for pagination.
 	ListWithFilters(ctx context.Context, whereSQL string, args []interface{},
 		page, pageSize int, orderBy string) ([]*models.Asset, int64, error)
-
-	// MergeCfAlgo atomically merges cf_algo and cf_files JSONB fields using
-	// optimistic locking. Returns the new version number.
-	// If expectedVersion does not match, returns ErrOptimisticLock.
-	MergeCfAlgo(ctx context.Context, assetID string, expectedVersion int64,
-		algoKV map[string]interface{}, filesKV map[string]interface{}) (int64, error)
 }
-

@@ -645,7 +645,7 @@ sequenceDiagram
   - 接口层：参数解析、鉴权、限流、`X-Request-ID` 注入、错误码映射。**不直接操作 DB，不持有事务**。
   - 业务层（usecase）：事务边界的**唯一持有者**，组合多个 repo 调用、维护投影表 / 事件表 / 审计的强一致。
   - 存储访问层（repository）：纯 CRUD，不知道业务规则；事务由调用方传入。
-- **乐观锁**：`assets.version` 走 CAS（`UPDATE ... WHERE version=$expected`），rows=0 直接判 `ErrOptimisticLock`，接口层映射为 `409 CONCURRENT_CONFLICT`。
+- **乐观锁仅用于 `assets` 行内字段**：`assets.version` 走 CAS（`UPDATE ... WHERE version=$expected`），rows=0 直接判 `ErrOptimisticLock`，接口层映射为 `409 CONCURRENT_CONFLICT`。**算法状态变更（`algo.start/finish/reset`）不再触碰 `assets.version`**——它们只写 `asset_algo_latest`（PK = `(asset_id, algo_name)` + `algo_version` 单调守卫）+ `asset_events`，因此同一资产上**多个算法并发完成**互不冲突，彻底消除原 OCC 热点（详见 §5.3.4）。
 - **事件强一致**：业务写 + 事件写在**同一事务**内，COMMIT 之后才发 `NOTIFY`；事件**不依赖 PG trigger**（业务逻辑全部在业务层，PG 只做存储 + 中央 sequence）。
 - **outbox 快投递**：Outbox Worker 永远走 `publish_state='pending' + FOR UPDATE SKIP LOCKED`，不要直接按 `event_seq > cursor` 拉。
 - **下游增量两条路**：①  入湖路径 = Worker 写 staging parquet → CronJob 处理文件（无 PG cursor，文件即工作单元，按 `event_seq` 在 MERGE INTO 中幂等去重，结构上不可能漏）；② 任何**直查 PG** 的 batch consumer（重建、审计回放、未来 sink）必须用 §5.2.7 的 `safe_horizon` 协议推进，**禁止**用 `max(published event_seq)` 作 watermark（会漏 SKIP LOCKED 并发标 published 的 in-flight 行）。
@@ -653,7 +653,54 @@ sequenceDiagram
 - **审计强一致**：审计日志通过抽象 Sink 接口注入，由具体存储后端实现，业务层只产出事件不关心落地表。
 - **幂等**：写类接口要求 `Idempotency-Key`，命中则跳过整个事务，直接返回上次结果。
 
-#### 5.3.3 读路径概览
+#### 5.3.3 算法生命周期写路径（Issue 2 修正后）
+
+`POST /assets/{id}/algo/{algo_key}/start|finish|reset` 走的是与上面 PATCH 完全不同的事务：**它只写算法投影 + 事件，绝不进 `assets` 行**。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant API
+    participant UC as AlgoUsecase
+    participant ALR as AssetAlgoLatestRepo
+    participant EVT as AssetEventRepo
+    participant PG as PostgreSQL
+
+    Client->>API: POST /assets/{id}/algo/{algo_key}/finish
+    API->>UC: FinishAlgo(asset_id, algo_key, status, payload)
+
+    UC->>ALR: GetByAlgo(asset_id, algo_name)  %% existence + state machine
+    ALR-->>UC: row or nil
+    UC->>UC: 校验状态机 / 必填字段 / 幂等 (run_id 命中 → 直接返回)
+
+    rect rgb(245,255,245)
+    note over UC,PG: 单事务 (Client.WithTx)
+    UC->>PG: BEGIN
+    UC->>ALR: Upsert(row{status, run_id, output_uri, finished_at,...})
+    ALR->>PG: INSERT ... ON CONFLICT DO UPDATE WHERE existing.algo_version <= EXCLUDED.algo_version
+    UC->>EVT: Append(event_type=algo_finished, payload, run_id)
+    EVT->>PG: INSERT INTO asset_events (event_seq=BIGSERIAL, publish_state='pending')
+    UC->>UC: tryUnblockDownstream (per-dep GetByAlgo + Upsert/Append)
+    UC->>PG: COMMIT
+    end
+
+    UC-->>API: ok
+    API-->>Client: 200 OK
+```
+
+要点：
+
+- **不读不写 `assets`**。`AssetRepository.Get` 只用作存在性校验（asset 不存在 → 404）。
+- **PK + 单调守卫替代 CAS**：`asset_algo_latest` 的 `(asset_id, algo_name)` 主键加 `algo_version` 单调守卫（`ON CONFLICT DO UPDATE WHERE existing.algo_version <= EXCLUDED.algo_version`）保证：① 同一算法同一版本的并发完成 last-writer-wins，状态收敛；② 旧版本不会回滚新版本的状态；③ 不同算法之间彻底解耦，写互不影响。
+- **事务包裹投影 + 事件**：`Client.WithTx(ctx, fn)` 保证 `asset_algo_latest.Upsert` 与 `asset_events.Append` 原子提交；下游消费者永远不会看到"投影变了但事件没生成"或反之。
+- **下游解锁也在同一事务**：`tryUnblockDownstream` 把因为本次 ok 而依赖满足的下游算法从 `blocked` 转 `pending`，并 emit `algo_unblocked` 事件——全部在同一事务里完成，调度器拉到 pending 时已经能看到完整的事件链。
+- **幂等**：finish 输入带 `run_id` 时，若投影行已经是 `ok` 且 `run_id` 匹配，直接返回（不写不发事件），处理调用方重试。
+- **事件类型**：`algo_started` / `algo_finished`（status=ok）/ `algo_failed`（status=failed）/ `algo_reset` / `algo_unblocked`，统一 payload schema：`{algo_key, algo_name, algo_version, prev_status, new_status, run_id?, reason?}`。
+
+回归性能影响：旧实现下三算法并发 finish 同一资产会撞 `assets.version` CAS 产生 `409 CONCURRENT_CONFLICT` 风暴，触发客户端重试放大写流量。修正后并发 finish 没有共享行锁，吞吐随并发线性扩展。
+
+#### 5.3.4 读路径概览
 
 读路径不走事件流，按场景路由到对应存储（**目标 2.0 架构**）：
 
@@ -1967,6 +2014,39 @@ flowchart LR
 | PyIceberg CronJob | 失败次数 / 完成时间 / staging 文件积压 | 连续失败 ≥ 2 次或积压 > 30 分钟告警 |
 | Iceberg | snapshot 数量 / metadata 大小 | snapshot > 1000 提示 compact |
 | 对象存储 | 4xx/5xx rate / 流量异常 | 模型 anomaly |
+
+#### 8.1.1 Issue 3：UUIDv7 与二级索引的运维基线
+
+UUIDv7 只改善**主键 B-tree 写入局部性**，对 `lifecycle_state` / `owner` 这类高频更新列上的二级索引不提供\"自动优化\"。因此从 1.0 起就要把下面这组动作纳入日常运维：
+
+1. **给高更新表设置更激进的 autovacuum**
+   - `assets` 级别先用：
+     - `autovacuum_vacuum_scale_factor = 0.02`
+     - `autovacuum_analyze_scale_factor = 0.01`
+     - `autovacuum_vacuum_threshold = 5000`
+   - 目标：尽早回收 HOT/非 HOT 更新留下的 dead tuples，避免索引持续膨胀。
+
+2. **高频更新索引降 fillfactor，给页分裂留空间**
+   - 对 `assets(lifecycle_state)`、`assets(owner)` 等更新频繁索引，建议 `fillfactor=80~90` 起步；
+   - 业务低峰做 `REINDEX CONCURRENTLY` 生效，避免阻塞在线流量。
+
+3. **把索引膨胀纳入 P1 告警**
+   - 监控来源：`pg_stat_user_indexes` + `pg_stat_all_tables` + `pg_stat_progress_vacuum`；
+   - 告警建议：
+     - `idx_scan` 持续上升但 `idx_tup_fetch` 明显背离（命中效率下降）；
+     - `n_dead_tup` 持续高位且 autovacuum 跟不上；
+     - 单索引估算膨胀率 > 30% 持续 24h（进入重建窗口）。
+
+4. **固定维护窗口**
+   - 每周一次低峰检查 Top N 膨胀索引；
+   - 对确认膨胀的索引执行 `REINDEX CONCURRENTLY`；
+   - 对写热点表执行 `VACUUM (ANALYZE)` 验证统计信息回收效果。
+
+5. **GIN 索引单独评估 `fastupdate`**
+   - 若未来在 `metadata` / `tags` 上引入 GIN，需按写入模式评估 `fastupdate=on/off`；
+   - 规则：写多读少可关 `fastupdate` 减少 pending list 尖刺；读多写少保持默认。
+
+这部分是 Issue 3 的落地口径：**UUIDv7 不是二级索引性能银弹**，必须用 autovacuum + fillfactor + reindex + 可观测闭环兜住长期写放大。
 
 ### 8.2 业务级 SLO
 

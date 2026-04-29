@@ -854,7 +854,10 @@ func (r *AssetTagRepo) Delete(ctx context.Context, assetID, tagKey string) error
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// AssetAlgoLatestRepo — upserts algo results to the asset_algo_latest table.
+// AssetAlgoLatestRepo — source of truth for per-algorithm state on an asset.
+// PK = (asset_id, algo_name). Concurrent writes from different algo versions
+// are made safe by the monotonic guard in Upsert (older algo_version is
+// silently discarded), so no lock on `assets` is required for finishes.
 // ──────────────────────────────────────────────────────────────────────────────
 
 type AssetAlgoLatestRepo struct {
@@ -867,16 +870,64 @@ func NewAssetAlgoLatestRepo(c *Client) *AssetAlgoLatestRepo {
 
 var _ repository.AssetAlgoLatestRepository = (*AssetAlgoLatestRepo)(nil)
 
-// ListByAsset returns all algo results for the given asset, ordered by algo_name.
+const algoLatestSelectColumns = `
+asset_id, algo_name, algo_version, status,
+COALESCE(result_tag, ''), result_score, result_summary,
+COALESCE(run_id, ''), COALESCE(method, ''), COALESCE(model_uri, ''),
+COALESCE(output_uri, ''), COALESCE(error_code, ''), COALESCE(error_message, ''),
+started_at, finished_at,
+COALESCE(tenant_id, ''), COALESCE(project_id, ''),
+updated_at`
+
+func scanAlgoLatest(rs rowScanner, a *models.AssetAlgoLatest) error {
+	var (
+		summaryBytes []byte
+		score        *float64
+	)
+	if err := rs.Scan(
+		&a.AssetID, &a.AlgoName, &a.AlgoVersion, &a.Status,
+		&a.ResultTag, &score, &summaryBytes,
+		&a.RunID, &a.Method, &a.ModelURI,
+		&a.OutputURI, &a.ErrorCode, &a.ErrorMessage,
+		&a.StartedAt, &a.FinishedAt,
+		&a.TenantID, &a.ProjectID,
+		&a.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	a.ResultScore = score
+	if len(summaryBytes) > 0 {
+		_ = json.Unmarshal(summaryBytes, &a.ResultSummary)
+	}
+	return nil
+}
+
+// GetByAlgo returns the latest row for (assetID, algoName) or (nil, nil) when
+// no row exists. Tx-aware via ctx.
+func (r *AssetAlgoLatestRepo) GetByAlgo(ctx context.Context, assetID, algoName string) (*models.AssetAlgoLatest, error) {
+	const q = `SELECT ` + algoLatestSelectColumns + `
+FROM asset_algo_latest
+WHERE asset_id = $1 AND algo_name = $2`
+	db := dbFromCtx(ctx, r.c.db)
+	row := db.QueryRow(ctx, q, assetID, algoName)
+	var a models.AssetAlgoLatest
+	if err := scanAlgoLatest(row, &a); err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres AssetAlgoLatestRepo.GetByAlgo: %w", err)
+	}
+	return &a, nil
+}
+
+// ListByAsset returns all algo rows for the given asset, ordered by algo_name.
 func (r *AssetAlgoLatestRepo) ListByAsset(ctx context.Context, assetID string) ([]*models.AssetAlgoLatest, error) {
-	const q = `
-SELECT asset_id, algo_name, algo_version, status,
-  COALESCE(run_id, ''), COALESCE(tenant_id, ''), COALESCE(project_id, ''),
-  updated_at
+	const q = `SELECT ` + algoLatestSelectColumns + `
 FROM asset_algo_latest
 WHERE asset_id = $1
 ORDER BY algo_name`
-	rows, err := r.c.db.Query(ctx, q, assetID)
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, assetID)
 	if err != nil {
 		return nil, fmt.Errorf("postgres AssetAlgoLatestRepo.ListByAsset: %w", err)
 	}
@@ -884,11 +935,7 @@ ORDER BY algo_name`
 	var out []*models.AssetAlgoLatest
 	for rows.Next() {
 		var a models.AssetAlgoLatest
-		if err := rows.Scan(
-			&a.AssetID, &a.AlgoName, &a.AlgoVersion, &a.Status,
-			&a.RunID, &a.TenantID, &a.ProjectID,
-			&a.UpdatedAt,
-		); err != nil {
+		if err := scanAlgoLatest(rows, &a); err != nil {
 			return nil, fmt.Errorf("postgres AssetAlgoLatestRepo.ListByAsset scan: %w", err)
 		}
 		out = append(out, &a)
@@ -896,17 +943,71 @@ ORDER BY algo_name`
 	return out, nil
 }
 
-// Upsert inserts or updates an algo row in the asset_algo_latest table.
-func (r *AssetAlgoLatestRepo) Upsert(ctx context.Context, assetID, algoName, algoVersion, status string) error {
-	const algoQ = `
-INSERT INTO asset_algo_latest (asset_id, algo_name, algo_version, status, updated_at)
-VALUES ($1, $2, $3, $4, now())
+// Upsert writes a full algo row with a MONOTONIC GUARD on algo_version: when
+// a row with the same (asset_id, algo_name) already exists with a strictly
+// newer algo_version, the write is silently dropped (rows-affected = 0) so
+// out-of-order concurrent finishes never roll state backwards. Tx-aware.
+//
+// Distinct algo_version values are compared lexicographically; this is the
+// same comparison used elsewhere in the system (e.g. `gripper@v1` < `gripper@v2`).
+// If a strict ordering is needed across non-lexicographic versions, callers
+// should normalise to a sortable form before writing.
+func (r *AssetAlgoLatestRepo) Upsert(ctx context.Context, row *models.AssetAlgoLatest) error {
+	if row == nil {
+		return errors.New("postgres AssetAlgoLatestRepo.Upsert: nil row")
+	}
+	summaryBytes := []byte(`{}`)
+	if row.ResultSummary != nil {
+		b, err := json.Marshal(row.ResultSummary)
+		if err != nil {
+			return fmt.Errorf("postgres AssetAlgoLatestRepo.Upsert marshal result_summary: %w", err)
+		}
+		summaryBytes = b
+	}
+	const q = `
+INSERT INTO asset_algo_latest (
+  asset_id, algo_name, algo_version, status,
+  result_tag, result_score, result_summary,
+  run_id, method, model_uri,
+  output_uri, error_code, error_message,
+  started_at, finished_at,
+  tenant_id, project_id, updated_at
+) VALUES (
+  $1, $2, $3, $4,
+  NULLIF($5, ''), $6, $7::jsonb,
+  NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''),
+  NULLIF($11, ''), NULLIF($12, ''), NULLIF($13, ''),
+  $14, $15,
+  NULLIF($16, ''), NULLIF($17, ''), now()
+)
 ON CONFLICT (asset_id, algo_name) DO UPDATE SET
-  algo_version = EXCLUDED.algo_version,
-  status       = EXCLUDED.status,
-  updated_at   = now()`
-	if err := r.c.db.Exec(ctx, algoQ, assetID, algoName, algoVersion, status); err != nil {
-		return fmt.Errorf("postgres AssetAlgoLatestRepo.Upsert asset_algo_latest: %w", err)
+  algo_version    = EXCLUDED.algo_version,
+  status          = EXCLUDED.status,
+  result_tag      = EXCLUDED.result_tag,
+  result_score    = EXCLUDED.result_score,
+  result_summary  = EXCLUDED.result_summary,
+  run_id          = EXCLUDED.run_id,
+  method          = COALESCE(EXCLUDED.method, asset_algo_latest.method),
+  model_uri       = COALESCE(EXCLUDED.model_uri, asset_algo_latest.model_uri),
+  output_uri      = EXCLUDED.output_uri,
+  error_code      = EXCLUDED.error_code,
+  error_message   = EXCLUDED.error_message,
+  started_at      = COALESCE(EXCLUDED.started_at, asset_algo_latest.started_at),
+  finished_at     = EXCLUDED.finished_at,
+  tenant_id       = COALESCE(EXCLUDED.tenant_id, asset_algo_latest.tenant_id),
+  project_id      = COALESCE(EXCLUDED.project_id, asset_algo_latest.project_id),
+  updated_at      = now()
+WHERE asset_algo_latest.algo_version <= EXCLUDED.algo_version`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q,
+		row.AssetID, row.AlgoName, row.AlgoVersion, row.Status,
+		row.ResultTag, row.ResultScore, summaryBytes,
+		row.RunID, row.Method, row.ModelURI,
+		row.OutputURI, row.ErrorCode, row.ErrorMessage,
+		row.StartedAt, row.FinishedAt,
+		row.TenantID, row.ProjectID,
+	); err != nil {
+		return fmt.Errorf("postgres AssetAlgoLatestRepo.Upsert: %w", err)
 	}
 	return nil
 }
@@ -965,29 +1066,118 @@ LIMIT $1`
 	return out, nil
 }
 
-// Append inserts a new event row into asset_events.
-func (r *AssetEventRepo) Append(ctx context.Context, eventType string, assetID string, mcapFileID string, eventPayload []byte) error {
-	if eventPayload == nil {
-		eventPayload = []byte(`{}`)
+// Append inserts a new event row into asset_events. Tx-aware via ctx so the
+// caller's transaction (e.g. inside Client.WithTx) atomically wraps the
+// business write and the event row — this is the outbox correctness
+// guarantee that lets consumers replay safely.
+func (r *AssetEventRepo) Append(ctx context.Context, in repository.AssetEventAppendInput) error {
+	if in.EventType == "" {
+		return errors.New("postgres AssetEventRepo.Append: event_type is required")
+	}
+	payload := in.EventPayload
+	if payload == nil {
+		payload = []byte(`{}`)
+	}
+	schemaVer := in.PayloadSchemaVersion
+	if schemaVer == "" {
+		schemaVer = "v1"
+	}
+	source := in.EventSource
+	if source == "" {
+		source = "backend"
 	}
 
-	// Convert empty strings to nil for nullable UUID columns.
-	var assetIDParam, mcapFileIDParam interface{}
-	if assetID != "" {
-		assetIDParam = assetID
-	}
-	if mcapFileID != "" {
-		mcapFileIDParam = mcapFileID
+	// Convert empty strings to NULL for nullable columns.
+	nullable := func(s string) interface{} {
+		if s == "" {
+			return nil
+		}
+		return s
 	}
 
 	const q = `
-INSERT INTO asset_events (event_id, event_type, payload_schema_version, asset_id, mcap_file_id, event_source, event_payload)
-VALUES (gen_random_uuid(), $1, 'v1', $2, $3, 'backend', $4::jsonb)`
+INSERT INTO asset_events (
+  event_id, event_type, payload_schema_version,
+  asset_id, mcap_file_id,
+  tenant_id, project_id,
+  event_source,
+  actor_type, actor_id, request_id, idempotency_key, run_id,
+  event_payload
+) VALUES (
+  gen_random_uuid(), $1, $2,
+  $3, $4,
+  $5, $6,
+  $7,
+  $8, $9, $10, $11, $12,
+  $13::jsonb
+)`
 
-	if err := r.c.db.Exec(ctx, q, eventType, assetIDParam, mcapFileIDParam, eventPayload); err != nil {
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q,
+		in.EventType, schemaVer,
+		nullable(in.AssetID), nullable(in.McapFileID),
+		nullable(in.TenantID), nullable(in.ProjectID),
+		source,
+		nullable(in.ActorType), nullable(in.ActorID), nullable(in.RequestID),
+		nullable(in.IdempotencyKey), nullable(in.RunID),
+		payload,
+	); err != nil {
 		return fmt.Errorf("postgres AssetEventRepo.Append: %w", err)
 	}
 	return nil
+}
+
+// ListByAsset returns events for a given asset, optionally filtered by event
+// types, ordered by event_seq DESC (most recent first). Used by the
+// "list algo events" API (replaces the deprecated algo_events table).
+// limit ≤ 0 defaults to 100.
+func (r *AssetEventRepo) ListByAsset(ctx context.Context, assetID string, eventTypes []string, limit int) ([]*models.AssetEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	args := []interface{}{assetID, limit}
+	whereTypes := ""
+	if len(eventTypes) > 0 {
+		// Build a positional ANY($N) parameter; pgx accepts []string via $N=ANY.
+		args = []interface{}{assetID, eventTypes, limit}
+		whereTypes = " AND event_type = ANY($2)"
+	}
+	limitParam := "$2"
+	if len(eventTypes) > 0 {
+		limitParam = "$3"
+	}
+	q := `
+SELECT event_id, event_seq, event_type, payload_schema_version,
+  COALESCE(asset_id::text, ''), COALESCE(mcap_file_id::text, ''),
+  COALESCE(tenant_id, ''), COALESCE(project_id, ''),
+  event_source, publish_state, event_payload,
+  retry_count, COALESCE(last_error, ''),
+  occurred_at, created_at, published_at
+FROM asset_events
+WHERE asset_id = $1` + whereTypes + `
+ORDER BY event_seq DESC
+LIMIT ` + limitParam
+	rows, err := r.c.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetEventRepo.ListByAsset: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.AssetEvent
+	for rows.Next() {
+		var e models.AssetEvent
+		if err := rows.Scan(
+			&e.EventID, &e.EventSeq, &e.EventType, &e.PayloadSchemaVersion,
+			&e.AssetID, &e.McapFileID,
+			&e.TenantID, &e.ProjectID,
+			&e.EventSource, &e.PublishState, &e.EventPayload,
+			&e.RetryCount, &e.LastError,
+			&e.OccurredAt, &e.CreatedAt, &e.PublishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetEventRepo.ListByAsset scan: %w", err)
+		}
+		out = append(out, &e)
+	}
+	return out, nil
 }
 
 // ListWithFilters queries assets with a parameterized WHERE clause, pagination, and ordering.

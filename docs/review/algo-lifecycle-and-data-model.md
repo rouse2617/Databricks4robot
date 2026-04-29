@@ -1,11 +1,11 @@
 # 算法处理生命周期与数据模型设计
 
 > **架构基线说明**
-> 本文档当前对齐主线：**`asset_algo_latest`（投影表）+ `asset_events`（统一事件 / outbox）**。
+> 本文档当前对齐主线：**`asset_algo_latest`（投影表）+ `asset_events`（统一事件 / outbox）**。这是 1.0 算法状态的**唯一事实源**——后端 `AlgoUsecase` 全程不再读写 `assets.cf_algo` JSONB，也不再写独立 `asset_algo_events` 表（Issue 2 修正后已彻底切走）。
 >
-> Phase 0 历史形态（在 `assets.cf_algo` JSONB 内嵌算法状态、独立 `asset_algo_events` 表）目前仍可读、仍可写，但**仅作为兼容路径保留**；新代码应直接读写投影表 + 事件表。详见附录 A。
+> Phase 0 历史形态（`assets.cf_algo`、`asset_algo_events`）的表结构暂时保留以便回滚，但**只读不写**。详见附录 A。
 >
-> 这份文档与 `data-platform-design.md §5.2.6 / §5.2.7 / §5.6.2`、`schema-reference.md` 同口径。
+> 这份文档与 `data-platform-design.md §5.2.6 / §5.2.7 / §5.3.3 / §5.6.2`、`schema-reference.md` 同口径。
 
 ---
 
@@ -13,24 +13,24 @@
 
 ### 1.1 算法当前态投影到 `asset_algo_latest`
 
-每个 `(asset_id, algo_name, algo_version)` 三元组在 `asset_algo_latest` 占一行，存放该算法在该资产上的**最新状态**（运行中 / 成功 / 失败）。
+每个 `(asset_id, algo_name)` 二元组在 `asset_algo_latest` 占**一行**——同一个算法在一个资产上**同时只有一个版本是当前态**。`algo_version` 是普通列，参与并发安全的"单调守卫"：旧版本不会覆盖新版本（详见 §1.4）。
 
 ```sql
--- 字段简表（完整定义见 schema-reference.md）
+-- 字段简表（完整定义见 schema-reference.md / migrations/008_schema_evolution_tables.sql）
 asset_algo_latest (
-    asset_id        UUID    NOT NULL,
+    asset_id        UUID    NOT NULL REFERENCES assets(asset_id),
     algo_name       TEXT    NOT NULL,
-    algo_version    TEXT    NOT NULL,
+    algo_version    TEXT    NOT NULL,    -- 当前活跃版本；并发更新走单调守卫
     status          TEXT    NOT NULL,    -- blocked / pending / running / ok / failed
     started_at      TIMESTAMPTZ,
     finished_at     TIMESTAMPTZ,
     method          TEXT,                -- ray_batch / local / ...
-    pipeline_run_id TEXT,                -- 外部编排器 run id，仅作 lineage 字段
-    result_uri      TEXT,                -- 结果文件路径（GCS / S3 / 本地）
+    run_id          TEXT,                -- 外部编排器 run id，仅作 lineage 字段
+    output_uri      TEXT,                -- 结果文件路径（GCS / S3 / 本地）
     error_message   TEXT,
-    result_meta     JSONB,
+    result_summary  JSONB NOT NULL DEFAULT '{}',  -- 算法特定元数据 + extra_fields
     updated_at      TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (asset_id, algo_name, algo_version)
+    PRIMARY KEY (asset_id, algo_name)
 );
 ```
 
@@ -47,12 +47,12 @@ blocked → pending → running → ok
 | `started_at` | running 时写入 | 开始处理时间 |
 | `finished_at` | ok / failed 时写入 | 完成时间 |
 | `method` | start 时写入 | 处理方法标识（`ray_batch` / `local` 等） |
-| `pipeline_run_id` | 可选 | 外部编排器 run id（如算法 worker / k8s job），用于 lineage 追溯 |
-| `result_uri` | ok 时必填 | 结果文件路径 |
-| `error_message` | failed 时必填 | 错误信息 |
-| `result_meta` | 可选 | 算法特定元数据（帧数、置信度等） |
+| `run_id` | 可选 | 外部编排器 run id（算法 worker / k8s job），lineage + 幂等的命中键 |
+| `output_uri` | ok 时按注册表要求 | 结果文件路径（registry `output.uri_required=true` 时必填） |
+| `error_message` | failed 时必填 | 错误信息（来自 `FinishAlgoInput.reason`） |
+| `result_summary` | 可选 | 算法特定元数据（帧数、置信度、`result_size_bytes` 等 extra_fields） |
 
-> 在 1.0 / Phase 0 兼容期内，相同信息会**同事务双写**到 `assets.cf_algo` JSONB（key 形如 `hand_tracking@1.2.0:status`）；新代码不应直接读 `cf_algo`。
+> **不再双写 `cf_algo`**：Issue 2 修正后，`AlgoUsecase` 不再触碰 `assets.cf_algo`、不再 bump `assets.version`、不再写独立 `asset_algo_events` 表。所有算法状态读写都只走 `asset_algo_latest` + `asset_events`。
 
 ### 1.2 状态变更同事务追加 `asset_events`
 
@@ -75,16 +75,45 @@ asset_events (
 );
 ```
 
-`event_type` 与算法相关的命名空间使用 `algo.*` 前缀：
+`event_type` 与算法相关的命名空间使用 `algo_*` 前缀：
 
 | event_type | 触发条件 | payload 关键字段 |
 |------------|----------|------------------|
-| `algo.started` | `start_algo` 调用，`pending → running` | `algo_name`, `algo_version`, `method`, `pipeline_run_id` |
-| `algo.finished` | `finish_algo(status=ok)`，`running → ok` | `result_uri`, `result_meta` |
-| `algo.failed` | `finish_algo(status=failed)`，`running → failed` | `error_message` |
-| `algo.reset` | `reset_algo`，`failed/ok → pending` | `reason` |
+| `algo_started` | `start_algo` 调用，`pending → running` | `algo_key`, `algo_name`, `algo_version`, `prev_status`, `new_status`, `run_id` |
+| `algo_finished` | `finish_algo(status=ok)`，`running → ok` | `algo_key`, `prev_status`, `new_status=ok`, `run_id` |
+| `algo_failed` | `finish_algo(status=failed)`，`running → failed` | `algo_key`, `prev_status`, `new_status=failed`, `run_id`, `reason` |
+| `algo_reset` | `reset_algo`，`failed/ok → pending` | `algo_key`, `prev_status`, `new_status=pending` |
+| `algo_unblocked` | 上游 finish-ok 触发依赖满足，`blocked → pending` | `algo_key`, `prev_status=blocked`, `new_status=pending` |
 
 **为什么不再单独建 `asset_algo_events` 表**：算法事件、tag 事件、QA 事件、生命周期事件全部走统一 `asset_events`，下游 outbox / ES 同步 / 入湖 / 审计 / 回放只对接一个表，不需要按 event 类型扇出。完整设计见 `data-platform-design.md §5.2.7 / §5.6.2`。
+
+### 1.4 并发安全：PK + 单调守卫，不锁 `assets`
+
+`asset_algo_latest` 的并发写完全在投影表内部解决，不再像旧方案那样需要 CAS `assets.version`：
+
+| 并发场景 | 处理方式 | 结果 |
+|----------|----------|------|
+| 同一资产、不同算法（`hand_tracking` + `env_analysis` + `head_tracking`）同时 finish | 写不同的 `(asset_id, algo_name)` 行 | 完全无冲突，互不阻塞 |
+| 同一资产、同一算法、同一版本的两次 finish（重试） | `run_id` 命中投影行的 `run_id` → 直接返回 nil；否则 last-writer-wins，状态收敛 | 幂等，不放大写流量 |
+| 同一资产、同一算法、不同版本（`hand_tracking@1.0.0` 旧请求迟到）| `INSERT ... ON CONFLICT DO UPDATE WHERE asset_algo_latest.algo_version <= EXCLUDED.algo_version` | 旧版本静默丢弃，新版本不会被覆盖回去 |
+
+实现：
+
+```sql
+INSERT INTO asset_algo_latest (asset_id, algo_name, algo_version, status, ...)
+VALUES (...)
+ON CONFLICT (asset_id, algo_name) DO UPDATE SET
+    status        = EXCLUDED.status,
+    algo_version  = EXCLUDED.algo_version,
+    finished_at   = EXCLUDED.finished_at,
+    output_uri    = EXCLUDED.output_uri,
+    ...
+WHERE asset_algo_latest.algo_version <= EXCLUDED.algo_version;
+```
+
+修正前（Issue 2）的失败模式：三个算法并发 finish 同一资产 → 都拿同一个 `assets.version` 做 CAS → 只有一个成功，其余 `409 CONCURRENT_CONFLICT` → 客户端重试放大写流量。
+
+修正后：吞吐随并发线性扩展；`assets` 行的 vacuum / MVCC 压力也降下来（算法路径不再产生 `UPDATE assets`）。
 
 ### 1.3 为什么用"投影表 + 事件表"而不是步骤表
 

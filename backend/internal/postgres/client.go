@@ -10,6 +10,9 @@ import (
 	"data-platform/internal/config"
 )
 
+// Client owns a connection pool and dispatches all SQL through `db`. When
+// inside a transaction (via WithTx), `db` is a tx-bound implementation and
+// repos using `dbFromCtx(ctx, c.db)` automatically pick it up.
 type Client struct {
 	db pgDB
 }
@@ -26,6 +29,8 @@ type rowsScanner interface {
 	Close()
 }
 
+// pgDB abstracts the few database operations repos need so that the same
+// repo code path runs against a pool or a transaction interchangeably.
 type pgDB interface {
 	QueryRow(ctx context.Context, sql string, args ...any) rowScanner
 	Query(ctx context.Context, sql string, args ...any) (rowsScanner, error)
@@ -34,6 +39,22 @@ type pgDB interface {
 	ExecResult(ctx context.Context, sql string, args ...any) (int64, error)
 	Ping(ctx context.Context) error
 	Close()
+}
+
+// txKey is the context key under which a tx-bound pgDB is stashed by WithTx.
+type txKey struct{}
+
+// dbFromCtx returns the tx-bound pgDB if the context was created by WithTx,
+// otherwise the fallback pool-bound pgDB. Repo methods that need to run
+// inside a caller-provided transaction call this; methods that don't need
+// tx awareness can keep using c.db directly.
+func dbFromCtx(ctx context.Context, fallback pgDB) pgDB {
+	if v := ctx.Value(txKey{}); v != nil {
+		if tx, ok := v.(pgDB); ok {
+			return tx
+		}
+	}
+	return fallback
 }
 
 type realDB struct {
@@ -63,6 +84,39 @@ func (r *realDB) ExecResult(ctx context.Context, sql string, args ...any) (int64
 
 func (r *realDB) Ping(ctx context.Context) error { return r.pool.Ping(ctx) }
 func (r *realDB) Close()                         { r.pool.Close() }
+
+// realTx wraps pgx.Tx so that the same repo code path works inside a
+// transaction. It is *not* directly closeable; the lifecycle is owned by
+// WithTx via Commit / Rollback on the underlying tx.
+type realTx struct {
+	tx pgx.Tx
+}
+
+func (r *realTx) QueryRow(ctx context.Context, sql string, args ...any) rowScanner {
+	return r.tx.QueryRow(ctx, sql, args...)
+}
+
+func (r *realTx) Query(ctx context.Context, sql string, args ...any) (rowsScanner, error) {
+	return r.tx.Query(ctx, sql, args...)
+}
+
+func (r *realTx) Exec(ctx context.Context, sql string, args ...any) error {
+	_, err := r.tx.Exec(ctx, sql, args...)
+	return err
+}
+
+func (r *realTx) ExecResult(ctx context.Context, sql string, args ...any) (int64, error) {
+	ct, err := r.tx.Exec(ctx, sql, args...)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
+// Ping / Close are not meaningful on a transaction; provide no-ops so realTx
+// still satisfies pgDB.
+func (r *realTx) Ping(_ context.Context) error { return nil }
+func (r *realTx) Close()                       {}
 
 var newPool = func(ctx context.Context, dsn string) (pgDB, error) {
 	pool, err := pgxpool.New(ctx, dsn)
@@ -103,4 +157,34 @@ func (c *Client) Exec(ctx context.Context, sql string, args ...any) error {
 // Exposed for packages outside postgres (e.g. lakehouse handler).
 func (c *Client) QueryRow(ctx context.Context, sql string, args ...any) interface{ Scan(dest ...any) error } {
 	return c.db.QueryRow(ctx, sql, args...)
+}
+
+// WithTx runs fn inside a single PostgreSQL transaction. Repo methods that
+// use dbFromCtx(ctx, ...) inside fn will transparently use the tx; methods
+// that don't use it will run on the pool and are NOT part of the tx — when
+// in doubt, every repo method called from within fn should be tx-aware.
+//
+// On non-pool-backed Clients (e.g. tests with an in-memory pgDB mock that
+// does not support real transactions), WithTx degrades to calling fn with
+// the plain ctx; the caller is then responsible for ensuring its mock
+// honours the contract.
+func (c *Client) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	real, ok := c.db.(*realDB)
+	if !ok {
+		// Test/mocked client: no real transaction available; pass ctx as-is.
+		return fn(ctx)
+	}
+	tx, err := real.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres WithTx begin: %w", err)
+	}
+	txCtx := context.WithValue(ctx, txKey{}, &realTx{tx: tx})
+	if err := fn(txCtx); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres WithTx commit: %w", err)
+	}
+	return nil
 }

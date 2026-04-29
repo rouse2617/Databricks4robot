@@ -1246,7 +1246,9 @@ func TestAssetAlgoLatestRepo_Upsert_Success(t *testing.T) {
 	db := &fakeDB{}
 	repo := &AssetAlgoLatestRepo{c: &Client{db: db}}
 
-	err := repo.Upsert(ctx, "a1", "hand_tracking", "1.2.0", "running")
+	err := repo.Upsert(ctx, &models.AssetAlgoLatest{
+		AssetID: "a1", AlgoName: "hand_tracking", AlgoVersion: "1.2.0", Status: "running",
+	})
 	if err != nil {
 		t.Fatalf("Upsert err: %v", err)
 	}
@@ -1257,13 +1259,23 @@ func TestAssetAlgoLatestRepo_Upsert_AlgoInsertError(t *testing.T) {
 	db := &fakeDB{execErr: errors.New("algo insert fail")}
 	repo := &AssetAlgoLatestRepo{c: &Client{db: db}}
 
-	err := repo.Upsert(ctx, "a1", "hand_tracking", "1.2.0", "running")
-	if err == nil || !strings.Contains(err.Error(), "asset_algo_latest") {
-		t.Fatalf("expected asset_algo_latest error, got %v", err)
+	err := repo.Upsert(ctx, &models.AssetAlgoLatest{
+		AssetID: "a1", AlgoName: "hand_tracking", AlgoVersion: "1.2.0", Status: "running",
+	})
+	if err == nil || !strings.Contains(err.Error(), "AssetAlgoLatestRepo.Upsert") {
+		t.Fatalf("expected AssetAlgoLatestRepo.Upsert error, got %v", err)
 	}
 }
 
-// Property 9: Algo upsert writes to asset_algo_latest table
+func TestAssetAlgoLatestRepo_Upsert_NilRow(t *testing.T) {
+	repo := &AssetAlgoLatestRepo{c: &Client{db: &fakeDB{}}}
+	if err := repo.Upsert(context.Background(), nil); err == nil {
+		t.Fatal("expected error for nil row")
+	}
+}
+
+// Property 9: Upsert writes the canonical positional arguments to
+// asset_algo_latest, in column order.
 func TestProperty9_AlgoUpsertConsistency(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		assetID := "prop9-" + rapid.StringMatching(`[a-f0-9]{8}`).Draw(t, "asset_id")
@@ -1274,31 +1286,30 @@ func TestProperty9_AlgoUpsertConsistency(t *testing.T) {
 		tracker := &execTracker{fakeDB: &fakeDB{}}
 		repo := &AssetAlgoLatestRepo{c: &Client{db: tracker}}
 
-		err := repo.Upsert(context.Background(), assetID, algoName, algoVersion, status)
+		err := repo.Upsert(context.Background(), &models.AssetAlgoLatest{
+			AssetID: assetID, AlgoName: algoName, AlgoVersion: algoVersion, Status: status,
+		})
 		if err != nil {
 			t.Fatalf("Upsert failed: %v", err)
 		}
 
-		// Verify exactly 1 Exec call (asset_algo_latest only, no cf_algo).
 		if len(tracker.calls) != 1 {
 			t.Fatalf("expected 1 Exec call, got %d", len(tracker.calls))
 		}
 
 		call := tracker.calls[0]
-		if len(call) < 4 {
-			t.Fatalf("asset_algo_latest call: expected ≥4 args, got %d", len(call))
-		}
+		// args 1..4 are asset_id, algo_name, algo_version, status (1-indexed in SQL).
 		if call[0] != assetID {
-			t.Fatalf("asset_algo_latest asset_id: got %v, want %v", call[0], assetID)
+			t.Fatalf("asset_id: got %v, want %v", call[0], assetID)
 		}
 		if call[1] != algoName {
-			t.Fatalf("asset_algo_latest algo_name: got %v, want %v", call[1], algoName)
+			t.Fatalf("algo_name: got %v, want %v", call[1], algoName)
 		}
 		if call[2] != algoVersion {
-			t.Fatalf("asset_algo_latest algo_version: got %v, want %v", call[2], algoVersion)
+			t.Fatalf("algo_version: got %v, want %v", call[2], algoVersion)
 		}
 		if call[3] != status {
-			t.Fatalf("asset_algo_latest status: got %v, want %v", call[3], status)
+			t.Fatalf("status: got %v, want %v", call[3], status)
 		}
 	})
 }
@@ -1421,9 +1432,19 @@ func TestAssetEventRepo_Append_Success(t *testing.T) {
 	db := &fakeDB{}
 	repo := &AssetEventRepo{c: &Client{db: db}}
 
-	err := repo.Append(ctx, "asset_created", "a1", "", []byte(`{"action":"create"}`))
+	err := repo.Append(ctx, repository.AssetEventAppendInput{
+		EventType: "asset_created", AssetID: "a1",
+		EventPayload: []byte(`{"action":"create"}`),
+	})
 	if err != nil {
 		t.Fatalf("Append err: %v", err)
+	}
+}
+
+func TestAssetEventRepo_Append_RequiresEventType(t *testing.T) {
+	repo := &AssetEventRepo{c: &Client{db: &fakeDB{}}}
+	if err := repo.Append(context.Background(), repository.AssetEventAppendInput{AssetID: "a1"}); err == nil {
+		t.Fatal("expected error when event_type is empty")
 	}
 }
 
@@ -1432,17 +1453,22 @@ func TestAssetEventRepo_Append_NilPayload(t *testing.T) {
 	tracker := &execTracker{fakeDB: &fakeDB{}}
 	repo := &AssetEventRepo{c: &Client{db: tracker}}
 
-	err := repo.Append(ctx, "asset_updated", "a1", "m1", nil)
+	err := repo.Append(ctx, repository.AssetEventAppendInput{
+		EventType: "asset_updated", AssetID: "a1", McapFileID: "m1",
+		EventPayload: nil,
+	})
 	if err != nil {
 		t.Fatalf("Append err: %v", err)
 	}
-
 	if len(tracker.calls) != 1 {
 		t.Fatalf("expected 1 Exec call, got %d", len(tracker.calls))
 	}
-	payloadArg, ok := tracker.calls[0][3].([]byte)
+	// SQL positional: $1=event_type, $2=schema, $3=asset_id, $4=mcap_file_id,
+	// $5=tenant_id, $6=project_id, $7=event_source, $8=actor_type, $9=actor_id,
+	// $10=request_id, $11=idempotency_key, $12=run_id, $13=event_payload.
+	payloadArg, ok := tracker.calls[0][12].([]byte)
 	if !ok {
-		t.Fatalf("payload arg is not []byte: %T", tracker.calls[0][3])
+		t.Fatalf("payload arg is not []byte: %T", tracker.calls[0][12])
 	}
 	if string(payloadArg) != "{}" {
 		t.Fatalf("expected '{}' payload for nil input, got %q", string(payloadArg))
@@ -1454,30 +1480,35 @@ func TestAssetEventRepo_Append_NullableIDs(t *testing.T) {
 	tracker := &execTracker{fakeDB: &fakeDB{}}
 	repo := &AssetEventRepo{c: &Client{db: tracker}}
 
-	err := repo.Append(ctx, "delivery_created", "", "", []byte(`{}`))
+	err := repo.Append(ctx, repository.AssetEventAppendInput{
+		EventType: "delivery_created", EventPayload: []byte(`{}`),
+	})
 	if err != nil {
 		t.Fatalf("Append err: %v", err)
 	}
 	if len(tracker.calls) != 1 {
 		t.Fatalf("expected 1 Exec call, got %d", len(tracker.calls))
 	}
-	if tracker.calls[0][1] != nil {
-		t.Fatalf("expected nil assetID for empty string, got %v", tracker.calls[0][1])
-	}
 	if tracker.calls[0][2] != nil {
-		t.Fatalf("expected nil mcapFileID for empty string, got %v", tracker.calls[0][2])
+		t.Fatalf("expected nil assetID for empty string, got %v", tracker.calls[0][2])
+	}
+	if tracker.calls[0][3] != nil {
+		t.Fatalf("expected nil mcapFileID for empty string, got %v", tracker.calls[0][3])
 	}
 
 	tracker.calls = nil
-	err = repo.Append(ctx, "asset_updated", "a1", "m1", []byte(`{}`))
+	err = repo.Append(ctx, repository.AssetEventAppendInput{
+		EventType: "asset_updated", AssetID: "a1", McapFileID: "m1",
+		EventPayload: []byte(`{}`),
+	})
 	if err != nil {
 		t.Fatalf("Append err: %v", err)
 	}
-	if tracker.calls[0][1] != "a1" {
-		t.Fatalf("expected assetID 'a1', got %v", tracker.calls[0][1])
+	if tracker.calls[0][2] != "a1" {
+		t.Fatalf("expected assetID 'a1', got %v", tracker.calls[0][2])
 	}
-	if tracker.calls[0][2] != "m1" {
-		t.Fatalf("expected mcapFileID 'm1', got %v", tracker.calls[0][2])
+	if tracker.calls[0][3] != "m1" {
+		t.Fatalf("expected mcapFileID 'm1', got %v", tracker.calls[0][3])
 	}
 }
 
@@ -1486,7 +1517,9 @@ func TestAssetEventRepo_Append_DBError(t *testing.T) {
 	db := &fakeDB{execErr: errors.New("insert fail")}
 	repo := &AssetEventRepo{c: &Client{db: db}}
 
-	err := repo.Append(ctx, "asset_created", "a1", "", []byte(`{}`))
+	err := repo.Append(ctx, repository.AssetEventAppendInput{
+		EventType: "asset_created", AssetID: "a1", EventPayload: []byte(`{}`),
+	})
 	if err == nil || !strings.Contains(err.Error(), "AssetEventRepo.Append") {
 		t.Fatalf("expected Append error, got %v", err)
 	}
@@ -1520,7 +1553,10 @@ func TestProperty10_MutationEventInvariant(t *testing.T) {
 		tracker := &execTracker{fakeDB: &fakeDB{}}
 		repo := &AssetEventRepo{c: &Client{db: tracker}}
 
-		err := repo.Append(context.Background(), eventType, assetID, mcapFileID, payload)
+		err := repo.Append(context.Background(), repository.AssetEventAppendInput{
+			EventType: eventType, AssetID: assetID, McapFileID: mcapFileID,
+			EventPayload: payload,
+		})
 		if err != nil {
 			t.Fatalf("Append failed: %v", err)
 		}
@@ -1530,33 +1566,37 @@ func TestProperty10_MutationEventInvariant(t *testing.T) {
 		}
 
 		call := tracker.calls[0]
-		if len(call) < 4 {
-			t.Fatalf("expected ≥4 args, got %d", len(call))
+		// $1=event_type, $2=schema_version, $3=asset_id, $4=mcap_file_id,
+		// $5=tenant, $6=project, $7=event_source, $8..$12 actor/run, $13=payload.
+		if len(call) < 13 {
+			t.Fatalf("expected 13 args, got %d", len(call))
 		}
 		if call[0] != eventType {
 			t.Fatalf("event_type mismatch: got %v, want %v", call[0], eventType)
 		}
+		if call[1] != "v1" {
+			t.Fatalf("schema_version: got %v, want v1", call[1])
+		}
 		if assetID == "" {
-			if call[1] != nil {
-				t.Fatalf("expected nil assetID for empty input, got %v", call[1])
+			if call[2] != nil {
+				t.Fatalf("expected nil assetID for empty input, got %v", call[2])
 			}
-		} else {
-			if call[1] != assetID {
-				t.Fatalf("assetID mismatch: got %v, want %v", call[1], assetID)
-			}
+		} else if call[2] != assetID {
+			t.Fatalf("assetID mismatch: got %v, want %v", call[2], assetID)
 		}
 		if mcapFileID == "" {
-			if call[2] != nil {
-				t.Fatalf("expected nil mcapFileID for empty input, got %v", call[2])
+			if call[3] != nil {
+				t.Fatalf("expected nil mcapFileID for empty input, got %v", call[3])
 			}
-		} else {
-			if call[2] != mcapFileID {
-				t.Fatalf("mcapFileID mismatch: got %v, want %v", call[2], mcapFileID)
-			}
+		} else if call[3] != mcapFileID {
+			t.Fatalf("mcapFileID mismatch: got %v, want %v", call[3], mcapFileID)
 		}
-		payloadArg, ok := call[3].([]byte)
+		if call[6] != "backend" {
+			t.Fatalf("event_source: got %v, want backend", call[6])
+		}
+		payloadArg, ok := call[12].([]byte)
 		if !ok {
-			t.Fatalf("payload arg is not []byte: %T", call[3])
+			t.Fatalf("payload arg is not []byte: %T", call[12])
 		}
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(payloadArg, &parsed); err != nil {

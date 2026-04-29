@@ -97,9 +97,10 @@ func main() {
 		audit.Init(postgres.NewAuditSink(pgClient))
 
 		assetRepo := postgres.NewAssetRepo(pgClient)
-		algoEventRepo := postgres.NewAlgoEventRepo(pgClient)
+		algoLatestRepo := postgres.NewAssetAlgoLatestRepo(pgClient)
+		assetEventRepo := postgres.NewAssetEventRepo(pgClient)
 		deliveryRepo := postgres.NewDeliveryRepo(pgClient)
-		algoUC := assetUC.NewAlgoUsecase(assetRepo, algoEventRepo, algoRegistry)
+		algoUC := assetUC.NewAlgoUsecase(pgClient, assetRepo, algoLatestRepo, assetEventRepo, algoRegistry)
 		algoHandler = assetH.NewAlgoHandler(algoUC)
 		assetHandler = assetH.New(newAssetUsecase(assetRepo, tagRegistry, algoRegistry), deliveryRepo)
 		mcapHandler = mcapH.New(postgres.NewMcapFileRepo(pgClient))
