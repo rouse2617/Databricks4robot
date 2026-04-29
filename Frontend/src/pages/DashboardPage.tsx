@@ -13,9 +13,8 @@ import {
 import { useNavigate } from "react-router-dom";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { assetsApi } from "../api/assets";
-import type { AssetStats } from "../api/assets";
 import { mcapFilesApi } from "../api/mcapFiles";
+import { assetsApi } from "../api/assets";
 import type { Asset } from "../api/types";
 
 const { Title, Text } = Typography;
@@ -88,7 +87,7 @@ function KpiCard({
   );
 }
 
-// ─── Derived helpers that work on both stats-API and fallback data ───
+// ─── Derived helpers (frontend sampling fallback) ───
 
 interface DerivedStats {
   total: number;
@@ -100,35 +99,6 @@ interface DerivedStats {
   recentAssets: Asset[];
   failedAssets: Asset[];
   isSampled: boolean; // true when data comes from frontend sampling
-}
-
-function deriveFromStats(stats: AssetStats, mcapTotal: number | null): DerivedStats {
-  // Sum algo status counts across all algo keys
-  const algoCounts: Record<string, number> = { ok: 0, failed: 0, running: 0, pending: 0, blocked: 0 };
-  for (const perAlgo of Object.values(stats.algo_status_summary ?? {})) {
-    for (const [status, count] of Object.entries(perAlgo)) {
-      if (status in algoCounts) algoCounts[status] += count;
-    }
-  }
-  const algoTotal = Object.values(algoCounts).reduce((a, b) => a + b, 0);
-  const successRate = algoTotal > 0 ? ((algoCounts.ok / algoTotal) * 100).toFixed(1) : "—";
-
-  const recentAssets = stats.recent_assets ?? [];
-  const failedAssets = recentAssets.filter((a) =>
-    extractAlgoStatuses(a.algo_results).some((s) => s.status === "failed")
-  );
-
-  return {
-    total: stats.total_assets,
-    mcapTotal,
-    algoCounts,
-    algoTotal,
-    successRate,
-    deliveryTotal: stats.total_deliveries,
-    recentAssets,
-    failedAssets,
-    isSampled: false,
-  };
 }
 
 function deriveFromSampling(assets: Asset[], total: number, mcapTotal: number | null): DerivedStats {
@@ -168,29 +138,21 @@ export default function DashboardPage() {
     let cancelled = false;
 
     const load = async () => {
-      // Always fetch MCAP count in parallel
       const mcapPromise = mcapFilesApi
         .list({ page: 1, page_size: 1 })
         .then((d) => d.total ?? 0)
         .catch(() => null);
 
       try {
-        // Try the backend stats endpoint first (accurate, no sampling)
-        const [stats, mcapTotal] = await Promise.all([assetsApi.stats(), mcapPromise]);
-        if (!cancelled) setDerived(deriveFromStats(stats, mcapTotal));
-      } catch {
-        // Fallback: fetch a sample of recent assets for client-side stats
-        try {
-          const [data, mcapTotal] = await Promise.all([
-            assetsApi.list({ page: 1, page_size: 100, sort_by: "-updated_at" }),
-            mcapPromise,
-          ]);
-          if (!cancelled) {
-            setDerived(deriveFromSampling(data.items ?? [], data.total ?? 0, mcapTotal));
-          }
-        } catch {
-          if (!cancelled) setDerived(null);
+        const [data, mcapTotal] = await Promise.all([
+          assetsApi.list({ page: 1, page_size: 100, sort_by: "-updated_at" }),
+          mcapPromise,
+        ]);
+        if (!cancelled) {
+          setDerived(deriveFromSampling(data.items ?? [], data.total ?? 0, mcapTotal));
         }
+      } catch {
+        if (!cancelled) setDerived(null);
       } finally {
         if (!cancelled) setLoading(false);
       }

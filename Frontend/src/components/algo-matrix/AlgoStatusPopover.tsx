@@ -5,7 +5,7 @@ import { assetsApi } from "../../api/assets";
 import dayjs from "dayjs";
 
 interface AlgoDetail {
-  status: string;
+  status?: string;
   started_at?: string;
   finished_at?: string;
   run_id?: string;

@@ -5,7 +5,7 @@ import { useState, useCallback } from "react";
 import { assetsApi } from "../../api/assets";
 import type { Asset } from "../../api/types";
 import type { AlgoRegistryItem } from "../../api/algoRegistry";
-import { isFailedStatus, parseStatusFromRaw } from "../../lib/algoStatus";
+import { getAlgoStatusFromResults, isFailedStatus } from "../../lib/algoStatus";
 
 export interface FailedPair {
   assetId: string;
@@ -27,8 +27,7 @@ export function collectFailedPairs(
   const pairs: FailedPair[] = [];
   for (const asset of assets) {
     for (const algo of algorithms) {
-      const raw = asset.algo_results?.[algo.key];
-      if (isFailedStatus(parseStatusFromRaw(raw))) {
+      if (isFailedStatus(getAlgoStatusFromResults(asset.algo_results, algo.key))) {
         pairs.push({ assetId: asset.asset_id, algoKey: algo.key });
       }
     }

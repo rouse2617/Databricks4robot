@@ -120,8 +120,8 @@ export const assetsApi = {
   // ─── Delivery association ───
   listDeliveries: (assetId: string) =>
     apiClient
-      .get<{ delivery_ids: string[] }>(`/assets/${assetId}/deliveries`)
-      .then((r) => r.data.delivery_ids ?? []),
+      .get<{ items: string[] }>(`/assets/${assetId}/deliveries`)
+      .then((r) => r.data.items ?? []),
 
   // ─── Algo lifecycle ───
   startAlgo: (assetId: string, algoKey: string, body: { method: string; run_id?: string }) =>
@@ -171,7 +171,4 @@ export const assetsApi = {
         limit: r.limit,
       })),
 
-  // ─── Platform stats (aggregate, avoids full table scan on frontend) ───
-  stats: () =>
-    apiClient.get<AssetStats>("/assets/stats").then((r) => r.data),
 };

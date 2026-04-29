@@ -2,8 +2,9 @@ import { Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { Asset } from "../../api/types";
 import type { AlgoRegistryItem } from "../../api/algoRegistry";
-import AlgoStatusCell, { type CellStatus } from "./AlgoStatusCell";
+import AlgoStatusCell from "./AlgoStatusCell";
 import AlgoStatusPopover from "./AlgoStatusPopover";
+import { getAlgoResultDetail, getAlgoStatusFromResults } from "../../lib/algoStatus";
 
 interface AlgoMatrixGridProps {
   assets: Asset[];
@@ -14,43 +15,6 @@ interface AlgoMatrixGridProps {
   pageSize: number;
   onPageChange: (page: number, pageSize: number) => void;
   onRefresh: () => void;
-}
-
-/** Parse the algo_results map value into a CellStatus */
-function parseStatus(raw?: string): CellStatus {
-  if (!raw) return "none";
-  // algo_results values can be JSON strings or plain status strings
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === "object" && parsed.status) {
-      return normalizeStatus(parsed.status);
-    }
-    return normalizeStatus(String(parsed));
-  } catch {
-    return normalizeStatus(raw);
-  }
-}
-
-function normalizeStatus(s: string): CellStatus {
-  const lower = s.toLowerCase();
-  if (lower === "ok" || lower === "success") return "ok";
-  if (lower === "failed" || lower === "error") return "failed";
-  if (lower === "running") return "running";
-  if (lower === "pending") return "pending";
-  if (lower === "blocked") return "blocked";
-  return "none";
-}
-
-/** Extract detail object from algo_results value */
-function parseDetail(raw?: string) {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === "object") return parsed;
-    return { status: raw };
-  } catch {
-    return { status: raw };
-  }
 }
 
 export default function AlgoMatrixGrid({
@@ -88,9 +52,8 @@ export default function AlgoMatrixGrid({
       width: 80,
       align: "center" as const,
       render: (_: unknown, asset: Asset) => {
-        const rawValue = asset.algo_results?.[algo.key];
-        const status = parseStatus(rawValue);
-        const detail = parseDetail(rawValue);
+        const detail = getAlgoResultDetail(asset.algo_results, algo.key);
+        const status = getAlgoStatusFromResults(asset.algo_results, algo.key);
         return (
           <AlgoStatusPopover
             assetId={asset.asset_id}

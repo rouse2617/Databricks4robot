@@ -151,13 +151,6 @@ export function useAssetsDiscoveryReducer(): [
                   fallbackItems.length === state.queryState.pageSize,
               },
             });
-            // Show degradation warning via error field
-            dispatch({
-              type: "RESULTS_ERROR",
-              payload: {
-                error: "Elasticsearch 不可用，已降级到 Postgres 查询",
-              },
-            });
             return;
           } catch {
             // Fallback also failed, show original error

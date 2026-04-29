@@ -5,7 +5,7 @@ import { assetsApi } from "../api/assets";
 import { algoRegistryApi, type AlgoRegistryItem } from "../api/algoRegistry";
 import type { Asset } from "../api/types";
 import AlgoMatrixGrid from "../components/algo-matrix/AlgoMatrixGrid";
-import { parseStatusFromRaw, type CellStatus } from "../lib/algoStatus";
+import { getAlgoStatusFromResults, type CellStatus } from "../lib/algoStatus";
 import { collectFailedPairs, useRetryAllFailed } from "../hooks/algo-matrix/useRetryAllFailed";
 
 const { Title } = Typography;
@@ -62,8 +62,7 @@ export default function AlgoProcessingPage() {
       ? assets
       : assets.filter((asset) =>
           algorithms.some((algo) => {
-            const raw = asset.algo_results?.[algo.key];
-            const s = parseStatusFromRaw(raw);
+            const s = getAlgoStatusFromResults(asset.algo_results, algo.key);
             return statusFilter.includes(s);
           }),
         );
