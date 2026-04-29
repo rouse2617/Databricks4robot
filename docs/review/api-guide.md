@@ -660,6 +660,8 @@ curl "$BASE/api/v1/algo-registry" \
 
 ### 6.2 标签注册表
 
+**`tag_registry.yaml` 是 tag 的「白名单字典」**：只有在这里声明过的 **key**（例如 `priority`、`scene`）才允许作为 `tag_key` 出现在受校验的写入路径里；**`enum` 类型还限制 value 必须在给出的列表中。** 源文件路径：`backend/config/tag_registry.yaml`；可在进程运行中热重载。
+
 ```bash
 curl "$BASE/api/v1/tag-registry" \
   -H "X-Grace-Token: $TOKEN"

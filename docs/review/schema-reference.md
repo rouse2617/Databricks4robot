@@ -193,10 +193,22 @@
 
 资产 tag 当前态投影。一 asset 多 tag，多行设计。
 
+### `tag_key` 与 `tag_registry.yaml`（什么是「注册」）
+
+| 概念 | 说明 |
+|------|------|
+| **`tag_key`** | 表 `asset_tags.tag_key` 一列，即「标签的名字」字符串，例如 `priority`、`quality`、`scene`。与 Grace `collection_meta` 等里的键**不是自动同名**，集成时要在字段字典里显式映射。 |
+| **注册** | 指该 key 出现在仓库源文件 **[`backend/config/tag_registry.yaml`](../../backend/config/tag_registry.yaml)** 的 `tags:` 下。每个 key 对应一段定义：`description`、`type`（`enum` / `string` 等），`enum` 还带合法 `values` 白名单，`string` 可带 `max_length`。 |
+| **运行时行为** | 服务端启动时加载 YAML；支持**热重载**（改文件后由 config watcher 重新加载，见后端实现）。对走 **tag 校验** 的写路径（如创建/更新资产时 body 里的 `tags`）：**`key` 必须在注册表里**，否则 API 返回校验错误；**`enum` 的 `value` 必须在 `values` 列表里**；**`string` 超长**会拒绝。 |
+| **读路径** | **`GET /api/v1/tag-registry`** 把当前注册表下发给前端/SDK，用于下拉选项、表单校验，与后端规则一致。 |
+| **新增业务 tag** | 1）编辑 `tag_registry.yaml` 增加 key 与类型/枚举；2）发版或热重载；3）必要时更新前端 facet / ES mapping（若该 tag 要进搜索聚合）。**不要**只往 DB 里插未注册的 key 却期望写 API 一定成功——是否允许未注册 key 以代码为准，当前主路径是**白名单**。 |
+
+### 字段表
+
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | asset_id | UUID | 是 | 资产 ID |
-| tag_key | TEXT | 是 | tag 名称（在 `tag_registry.yaml` 注册） |
+| tag_key | TEXT | 是 | tag 名；**须与 `tag_registry.yaml` 中某一顶层 key 一致**（通过 API 写入时由后端校验） |
 | tag_value | TEXT | 是 | tag 值（统一字符串表达） |
 | tag_value_num | DOUBLE PRECISION | 否 | 数值型 tag，用于范围过滤 |
 | tag_value_bool | BOOLEAN | 否 | 布尔型 tag |
