@@ -4,6 +4,14 @@
 > 设计文档: #[[file:docs/review/data-platform-design.md]], #[[file:docs/review/outbox-worker-design.md]]
 >
 > **同步规则**：每完成一个 task（`[ ]` → `[x]`），必须同步更新 #[[file:docs/review/next-steps-tasks.md]] 中对应条目的状态为 `done` 并补落地证据（PR 链接或 commit hash）。两边保持一致。
+>
+> **编码与提交规范**：严格遵循 #[[file:CLAUDE.md]]，包括：
+> - Conventional Commits 格式：`<type>[scope]: <description>`
+> - 每次提交前必须 `go build ./...` + `go vet ./...` + `go test ./...` 全过
+> - 改了 API → 更新 `api/openapi.yaml` + `docs/review/api-guide.md`
+> - 改了架构/流程 → 更新 `backend/README.md`
+> - 新代码有对应的单元测试
+> - 只改任务要求的代码，不顺手重构不相关的部分
 
 ---
 
