@@ -85,8 +85,7 @@ export default function BatchDeleteTagModal({
 
     const tasks = assetIds.map((assetId) => async () => {
       try {
-        // Delete tag by setting value to empty string
-        await assetsApi.update(assetId, { tags: { [selectedKey]: "" } });
+        await assetsApi.deleteTag(assetId, selectedKey);
         success++;
       } catch {
         failed++;

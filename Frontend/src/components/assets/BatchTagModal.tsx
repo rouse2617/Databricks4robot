@@ -106,7 +106,7 @@ export default function BatchTagModal({
             return;
           }
         }
-        await assetsApi.update(assetId, { tags: { [selectedKey]: tagValue.trim() } });
+        await assetsApi.upsertTag(assetId, { key: selectedKey, value: tagValue.trim() });
         success++;
       } catch {
         failed++;

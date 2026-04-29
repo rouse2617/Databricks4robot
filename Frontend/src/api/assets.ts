@@ -80,6 +80,12 @@ export const assetsApi = {
   delete: (id: string) =>
     apiClient.delete(`/assets/${id}`).then((r) => r.data),
 
+  upsertTag: (assetId: string, body: { key: string; value: string }) =>
+    apiClient.post<Asset>(`/assets/${assetId}/tags`, body).then((r) => r.data),
+
+  deleteTag: (assetId: string, key: string) =>
+    apiClient.delete<Asset>(`/assets/${assetId}/tags/${encodeURIComponent(key)}`).then((r) => r.data),
+
   // ─── Delivery association ───
   listDeliveries: (assetId: string) =>
     apiClient

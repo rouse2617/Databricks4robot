@@ -33,7 +33,7 @@ export default function TagsTab({ assetId, tags, onUpdate }: Props) {
     }
     setSaving(true);
     try {
-      await assetsApi.update(assetId, { tags: { ...tags, [key]: value } });
+      await assetsApi.upsertTag(assetId, { key, value });
       message.success("标签已更新");
       onUpdate();
     } catch {
@@ -47,9 +47,7 @@ export default function TagsTab({ assetId, tags, onUpdate }: Props) {
   const handleDelete = async (key: string) => {
     setSaving(true);
     try {
-      const newTags = { ...tags };
-      delete newTags[key];
-      await assetsApi.update(assetId, { tags: newTags });
+      await assetsApi.deleteTag(assetId, key);
       message.success("标签已删除");
       onUpdate();
     } catch {
@@ -63,7 +61,7 @@ export default function TagsTab({ assetId, tags, onUpdate }: Props) {
     if (!newKey) return;
     setSaving(true);
     try {
-      await assetsApi.update(assetId, { tags: { ...tags, [newKey]: newValue } });
+      await assetsApi.upsertTag(assetId, { key: newKey, value: newValue });
       message.success("标签已添加");
       setNewKey("");
       setNewValue("");
