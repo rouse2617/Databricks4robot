@@ -5,6 +5,7 @@ import { useState, useCallback } from "react";
 import { assetsApi } from "../../api/assets";
 import type { Asset } from "../../api/types";
 import type { AlgoRegistryItem } from "../../api/algoRegistry";
+import { isFailedStatus, parseStatusFromRaw } from "../../lib/algoStatus";
 
 export interface FailedPair {
   assetId: string;
@@ -16,21 +17,9 @@ export interface RetryResult {
   failed: number;
 }
 
-/** Parse status from algo_results raw value — mirrors AlgoProcessingPage logic */
-function parseStatusFromRaw(raw?: string): string {
-  if (!raw) return "none";
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === "object" && parsed.status) {
-      return parsed.status.toLowerCase();
-    }
-    return String(parsed).toLowerCase();
-  } catch {
-    return raw.toLowerCase();
-  }
-}
-
-/** Collect all (asset_id, algo_key) pairs where status is "failed" or "error" */
+// Collect all (asset_id, algo_key) pairs whose status normalizes to "failed".
+// Uses the same parser as the matrix grid so the two views agree on what is
+// considered failed (covers raw "error", "failed", JSON {status:"failed"} etc).
 export function collectFailedPairs(
   assets: Asset[],
   algorithms: AlgoRegistryItem[],
@@ -39,8 +28,7 @@ export function collectFailedPairs(
   for (const asset of assets) {
     for (const algo of algorithms) {
       const raw = asset.algo_results?.[algo.key];
-      const status = parseStatusFromRaw(raw);
-      if (status === "failed" || status === "error") {
+      if (isFailedStatus(parseStatusFromRaw(raw))) {
         pairs.push({ assetId: asset.asset_id, algoKey: algo.key });
       }
     }

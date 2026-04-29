@@ -9,6 +9,7 @@ import {
   type LakehouseTableCount,
   type SyncStatusResponse,
 } from "../api/lakehouse";
+import { extractApiErrorMessage } from "../lib/apiError";
 
 const { Title, Text } = Typography;
 
@@ -68,22 +69,41 @@ function DynamicTable({ rows }: { rows: Record<string, unknown>[] }) {
   );
 }
 
-function QuestionPanel({ answer, response }: { answer: string; response?: LakehouseItemsResponse }) {
+function QuestionPanel({
+  answer,
+  response,
+  errorMessage,
+}: {
+  answer: string;
+  response?: LakehouseItemsResponse;
+  errorMessage?: string;
+}) {
   return (
     <div>
       <Alert type="info" showIcon message={answer} style={{ marginBottom: 12 }} />
-      {response && (
-        <div style={{ marginBottom: 12 }}>
-          {Object.entries(response)
-            .filter(([key]) => key !== "items")
-            .map(([key, value]) => (
-              <Tag key={key}>
-                {key}: {String(value)}
-              </Tag>
-            ))}
-        </div>
+      {errorMessage ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="该查询暂不可用"
+          description={errorMessage}
+        />
+      ) : (
+        <>
+          {response && (
+            <div style={{ marginBottom: 12 }}>
+              {Object.entries(response)
+                .filter(([key]) => key !== "items")
+                .map(([key, value]) => (
+                  <Tag key={key}>
+                    {key}: {String(value)}
+                  </Tag>
+                ))}
+            </div>
+          )}
+          <DynamicTable rows={asRows(response?.items)} />
+        </>
       )}
-      <DynamicTable rows={asRows(response?.items)} />
     </div>
   );
 }
@@ -212,41 +232,78 @@ function PgIcebergComparisonTable({ syncStatus }: { syncStatus: SyncStatusRespon
 }
 
 /* ─── Main Page ─── */
+const QUERY_KEYS = [
+  "trainingAssets",
+  "recomputeCandidates",
+  "tagTimeline",
+  "qualityDistribution",
+  "customerReplay",
+] as const;
+
 export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<LakehouseStatus | null>(null);
   const [tables, setTables] = useState<LakehouseTableCount[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatusResponse | null>(null);
   const [queryResults, setQueryResults] = useState<Record<string, LakehouseItemsResponse>>({});
+  const [queryErrors, setQueryErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const loadLakehouse = () => {
     setLoading(true);
     setError(null);
-    Promise.all([
+    setQueryErrors({});
+
+    // Use allSettled so one slow/failing endpoint doesn't blank out the whole
+    // page. Required endpoints (status + tables) drive the top-level error;
+    // optional query endpoints are degraded into per-panel error messages.
+    Promise.allSettled([
       lakehouseApi.status(),
       lakehouseApi.tables(),
-      lakehouseApi.syncStatus().catch(() => ({ available: false } as SyncStatusResponse)),
+      lakehouseApi.syncStatus(),
       lakehouseApi.trainingAssets(),
       lakehouseApi.recomputeCandidates(),
       lakehouseApi.tagTimeline(),
       lakehouseApi.qualityDistribution(),
       lakehouseApi.customerReplay(),
     ])
-      .then(([statusData, tableData, syncData, trainingAssets, recomputeCandidates, tagTimeline, qualityDistribution, customerReplay]) => {
-        setStatus(statusData);
-        setTables(tableData.items ?? []);
-        setSyncStatus(syncData);
-        setQueryResults({
-          trainingAssets,
-          recomputeCandidates,
-          tagTimeline,
-          qualityDistribution,
-          customerReplay,
+      .then(([statusRes, tablesRes, syncRes, ...queryRes]) => {
+        if (statusRes.status === "fulfilled") {
+          setStatus(statusRes.value);
+        } else {
+          setStatus(null);
+        }
+
+        if (tablesRes.status === "fulfilled") {
+          setTables(tablesRes.value.items ?? []);
+        } else {
+          setTables([]);
+        }
+
+        // syncStatus has its own "available: false" fallback shape.
+        if (syncRes.status === "fulfilled") {
+          setSyncStatus(syncRes.value);
+        } else {
+          setSyncStatus({ available: false } as SyncStatusResponse);
+        }
+
+        // Top-level error only when both critical endpoints fail.
+        if (statusRes.status === "rejected" && tablesRes.status === "rejected") {
+          setError(extractApiErrorMessage(statusRes.reason, "加载 Trino 湖仓查询失败"));
+        }
+
+        const successResults: Record<string, LakehouseItemsResponse> = {};
+        const errors: Record<string, string> = {};
+        QUERY_KEYS.forEach((key, idx) => {
+          const r = queryRes[idx];
+          if (r.status === "fulfilled") {
+            successResults[key] = r.value;
+          } else {
+            errors[key] = extractApiErrorMessage(r.reason, "查询失败");
+          }
         });
-      })
-      .catch((err) => {
-        setError(err.response?.data?.message ?? err.message ?? "加载 Trino 湖仓查询失败");
+        setQueryResults(successResults);
+        setQueryErrors(errors);
       })
       .finally(() => setLoading(false));
   };
@@ -376,7 +433,13 @@ export default function AnalyticsPage() {
                   items={Object.entries(questionMeta).map(([key, item]) => ({
                     key,
                     label: item.title,
-                    children: <QuestionPanel answer={item.answer} response={queryResults[key]} />,
+                    children: (
+                      <QuestionPanel
+                        answer={item.answer}
+                        response={queryResults[key]}
+                        errorMessage={queryErrors[key]}
+                      />
+                    ),
                   }))}
                 />
               </Card>

@@ -4,9 +4,10 @@
 // Validates: Requirements REQ-3.2
 
 import { useState, useCallback } from "react";
-import { Modal, Radio, Progress, Typography, Alert, Space } from "antd";
+import { Modal, Radio, Progress, Typography, Alert, Space, message } from "antd";
 import type { Asset } from "../../api/types";
 import { assetsApi, type ListAssetsParams } from "../../api/assets";
+import { extractApiErrorMessage } from "../../lib/apiError";
 
 const { Text } = Typography;
 
@@ -182,7 +183,10 @@ export default function ExportModal({
         // 7.3: Export current page directly from loaded data
         assets = currentPageItems;
       } else {
-        // 7.4: Export all filtered with paginated fetch
+        // 7.4: Export all filtered with paginated fetch.
+        // If any batch fails, surface the error to the user instead of
+        // silently aborting (previous behaviour swallowed errors in the
+        // outer try/finally with no message).
         assets = await fetchAllFiltered(queryParams, totalFiltered, (fetched) => {
           setProgress(Math.round((fetched / Math.min(totalFiltered, MAX_EXPORT_ROWS)) * 100));
         });
@@ -198,7 +202,10 @@ export default function ExportModal({
         triggerDownload(content, `assets-${timestamp}.json`, "application/json;charset=utf-8");
       }
 
+      message.success(`已导出 ${assets.length} 条记录`);
       onClose();
+    } catch (err) {
+      message.error(`导出失败：${extractApiErrorMessage(err, "请稍后重试")}`);
     } finally {
       setExporting(false);
       setProgress(0);

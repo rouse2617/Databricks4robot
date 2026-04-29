@@ -5,7 +5,7 @@ import { assetsApi } from "../api/assets";
 import { algoRegistryApi, type AlgoRegistryItem } from "../api/algoRegistry";
 import type { Asset } from "../api/types";
 import AlgoMatrixGrid from "../components/algo-matrix/AlgoMatrixGrid";
-import type { CellStatus } from "../components/algo-matrix/AlgoStatusCell";
+import { parseStatusFromRaw, type CellStatus } from "../lib/algoStatus";
 import { collectFailedPairs, useRetryAllFailed } from "../hooks/algo-matrix/useRetryAllFailed";
 
 const { Title } = Typography;
@@ -17,30 +17,6 @@ const STATUS_OPTIONS: { label: string; value: CellStatus }[] = [
   { label: "待处理", value: "pending" },
   { label: "已阻塞", value: "blocked" },
 ];
-
-/** Parse status from algo_results value (same logic as grid) */
-function parseStatusFromRaw(raw?: string): CellStatus {
-  if (!raw) return "none";
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === "object" && parsed.status) {
-      return normalizeStatus(parsed.status);
-    }
-    return normalizeStatus(String(parsed));
-  } catch {
-    return normalizeStatus(raw);
-  }
-}
-
-function normalizeStatus(s: string): CellStatus {
-  const lower = s.toLowerCase();
-  if (lower === "ok" || lower === "success") return "ok";
-  if (lower === "failed" || lower === "error") return "failed";
-  if (lower === "running") return "running";
-  if (lower === "pending") return "pending";
-  if (lower === "blocked") return "blocked";
-  return "none";
-}
 
 export default function AlgoProcessingPage() {
   const [algorithms, setAlgorithms] = useState<AlgoRegistryItem[]>([]);

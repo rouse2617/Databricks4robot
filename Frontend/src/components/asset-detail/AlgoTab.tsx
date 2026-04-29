@@ -12,6 +12,7 @@ import dayjs from "dayjs";
 import { assetsApi } from "../../api/assets";
 import { algoRegistryApi, type AlgoRegistryItem } from "../../api/algoRegistry";
 import type { AlgoEvent, AlgoStatus } from "../../api/types";
+import { extractApiErrorMessage } from "../../lib/apiError";
 
 const { Text } = Typography;
 
@@ -61,8 +62,8 @@ export default function AlgoTab({ assetId, algoList, events, onRefresh }: Props)
       await assetsApi.resetAlgo(assetId, key);
       message.success(`${key} 已重置为 pending`);
       onRefresh();
-    } catch (err: any) {
-      message.error(err?.response?.data?.message ?? "操作失败");
+    } catch (err) {
+      message.error(extractApiErrorMessage(err, "操作失败"));
     } finally {
       setActionLoading(null);
     }
@@ -78,8 +79,8 @@ export default function AlgoTab({ assetId, algoList, events, onRefresh }: Props)
       setAlgoKey("");
       setMethod("");
       onRefresh();
-    } catch (err: any) {
-      message.error(err?.response?.data?.message ?? "启动算法失败");
+    } catch (err) {
+      message.error(extractApiErrorMessage(err, "启动算法失败"));
     } finally {
       setStarting(false);
     }
