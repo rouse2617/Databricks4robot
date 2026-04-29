@@ -26,6 +26,11 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   status, lifecycle_state, asset_type, duration_ms,
   owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
   retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  parent_asset_id, root_asset_id,
+  split_method, split_algo_name, split_algo_version, split_run_id, split_reason,
+  segment_index, parent_start_offset_ms, parent_end_offset_ms,
+  tenant_id, project_id,
+  metadata, files,
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1 AND is_deleted = FALSE`
@@ -34,12 +39,26 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 		status         string
 		lifecycleState string
 		segLoc         *string
+		parentID       *string
+		rootID         *string
+		tenantID       *string
+		projectID      *string
+		segIndex       *int
+		parentStartOff *int64
+		parentEndOff   *int64
+		metadataBytes  []byte
+		filesBytes     []byte
 	)
 	err := r.c.db.QueryRow(ctx, q, assetID).Scan(
 		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
 		&status, &lifecycleState, &a.AssetType, &a.DurationMs,
 		&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 		&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
+		&parentID, &rootID,
+		&a.SplitMethod, &a.SplitAlgoName, &a.SplitAlgoVersion, &a.SplitRunID, &a.SplitReason,
+		&segIndex, &parentStartOff, &parentEndOff,
+		&tenantID, &projectID,
+		&metadataBytes, &filesBytes,
 		&a.CreatedAt, &a.UpdatedAt, &a.Version,
 	)
 	if err != nil {
@@ -52,6 +71,33 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 	a.LifecycleState = lifecycleState
 	if segLoc != nil {
 		a.SegmentLocator = *segLoc
+	}
+	if parentID != nil {
+		a.ParentAssetID = *parentID
+	}
+	if rootID != nil {
+		a.RootAssetID = *rootID
+	}
+	if tenantID != nil {
+		a.TenantID = *tenantID
+	}
+	if projectID != nil {
+		a.ProjectID = *projectID
+	}
+	if segIndex != nil {
+		a.SegmentIndex = segIndex
+	}
+	if parentStartOff != nil {
+		a.ParentStartOffsetMs = parentStartOff
+	}
+	if parentEndOff != nil {
+		a.ParentEndOffsetMs = parentEndOff
+	}
+	if len(metadataBytes) > 0 {
+		_ = json.Unmarshal(metadataBytes, &a.Metadata)
+	}
+	if len(filesBytes) > 0 {
+		_ = json.Unmarshal(filesBytes, &a.FilesJSON)
 	}
 	a.SyncLegacyFields()
 	return &a, nil
@@ -209,7 +255,7 @@ WHERE assets.version = EXCLUDED.version - 1`
 }
 
 func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
-	const q = `UPDATE assets SET is_deleted=TRUE, status='archived', updated_at=now() WHERE asset_id=$1`
+	const q = `UPDATE assets SET is_deleted=TRUE, status='archived', lifecycle_state='archived', updated_at=now() WHERE asset_id=$1`
 	db := dbFromCtx(ctx, r.c.db)
 	err := db.Exec(ctx, q, assetID)
 	if err != nil {
@@ -224,6 +270,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   status, lifecycle_state, asset_type, duration_ms,
   owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
   retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  parent_asset_id, root_asset_id, tenant_id, project_id,
   created_at, updated_at, version
 FROM assets
 WHERE mcap_file_id = $1 AND is_deleted = FALSE
@@ -240,12 +287,17 @@ ORDER BY start_timestamp_ns`
 			status         string
 			lifecycleState string
 			segLoc         *string
+			parentID       *string
+			rootID         *string
+			tenantID       *string
+			projectID      *string
 		)
 		if err := rows.Scan(
 			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
 			&status, &lifecycleState, &a.AssetType, &a.DurationMs,
 			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
+			&parentID, &rootID, &tenantID, &projectID,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListByMcapFile scan: %w", err)
@@ -254,6 +306,18 @@ ORDER BY start_timestamp_ns`
 		a.LifecycleState = lifecycleState
 		if segLoc != nil {
 			a.SegmentLocator = *segLoc
+		}
+		if parentID != nil {
+			a.ParentAssetID = *parentID
+		}
+		if rootID != nil {
+			a.RootAssetID = *rootID
+		}
+		if tenantID != nil {
+			a.TenantID = *tenantID
+		}
+		if projectID != nil {
+			a.ProjectID = *projectID
 		}
 		a.SyncLegacyFields()
 		out = append(out, &a)
@@ -278,9 +342,14 @@ func NewMcapFileRepo(c *Client) *McapFileRepo { return &McapFileRepo{c: c} }
 
 func (r *McapFileRepo) Get(ctx context.Context, mcapFileID string) (*models.McapFile, error) {
 	const q = `
-SELECT mcap_file_id, raw_hash_md5,
-  mcap_uri, size_bytes, start_timestamp_ns, end_timestamp_ns,
-  channel_count, chunk_count, ingest_state, owner, process_state,
+SELECT mcap_file_id, raw_hash_md5, raw_hash_sha256,
+  mcap_uri, size_bytes, file_duration_ms,
+  start_timestamp_ns, end_timestamp_ns,
+  channel_count, chunk_count, ingest_state, owner,
+  vendor_id, collector_id, task_id, device_id,
+  camera_model, data_source, location_id, scene_id, environment_id, collection_method,
+  retention_tier, expire_at, tenant_id, project_id,
+  metadata, process_state,
   created_at, updated_at, version
 FROM mcap_files
 WHERE mcap_file_id = $1 AND is_deleted = FALSE`
@@ -288,11 +357,23 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		f                 models.McapFile
 		ingestState       string
 		processStateBytes []byte
+		metadataBytes     []byte
+		retentionTier     *string
+		expireAt          *time.Time
+		tenantID          *string
+		projectID         *string
+		rawHashSHA256     *string
+		fileDurationMs    *int64
 	)
 	err := r.c.db.QueryRow(ctx, q, mcapFileID).Scan(
-		&f.McapFileID, &f.RawHashMD5,
-		&f.GCSPath, &f.SizeBytes, &f.StartTimestampNs, &f.EndTimestampNs,
-		&f.ChannelCount, &f.ChunkCount, &ingestState, &f.Owner, &processStateBytes,
+		&f.McapFileID, &f.RawHashMD5, &rawHashSHA256,
+		&f.GCSPath, &f.SizeBytes, &fileDurationMs,
+		&f.StartTimestampNs, &f.EndTimestampNs,
+		&f.ChannelCount, &f.ChunkCount, &ingestState, &f.Owner,
+		&f.VendorID, &f.CollectorID, &f.TaskID, &f.DeviceID,
+		&f.CameraModel, &f.DataSource, &f.LocationID, &f.SceneID, &f.EnvironmentID, &f.CollectionMethod,
+		&retentionTier, &expireAt, &tenantID, &projectID,
+		&metadataBytes, &processStateBytes,
 		&f.CreatedAt, &f.UpdatedAt, &f.Version,
 	)
 	if err != nil {
@@ -302,6 +383,27 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		return nil, fmt.Errorf("postgres McapFileRepo.Get: %w", err)
 	}
 	f.IngestState = models.IngestState(ingestState)
+	if rawHashSHA256 != nil {
+		f.RawHashSHA256 = *rawHashSHA256
+	}
+	if fileDurationMs != nil {
+		f.FileDurationMs = *fileDurationMs
+	}
+	if retentionTier != nil {
+		f.RetentionTier = *retentionTier
+	}
+	if expireAt != nil {
+		f.ExpireAt = expireAt
+	}
+	if tenantID != nil {
+		f.TenantID = *tenantID
+	}
+	if projectID != nil {
+		f.ProjectID = *projectID
+	}
+	if len(metadataBytes) > 0 {
+		_ = json.Unmarshal(metadataBytes, &f.Metadata)
+	}
 	if f.ProcessState == nil {
 		f.ProcessState = map[string]string{}
 	}
@@ -322,25 +424,45 @@ func (r *McapFileRepo) Set(ctx context.Context, f *models.McapFile) error {
 	if f.ProcessState == nil {
 		processStateJSON = []byte(`{}`)
 	}
+	// Marshal metadata JSONB.
+	metadataJSON, _ := json.Marshal(f.Metadata)
+	if f.Metadata == nil {
+		metadataJSON = []byte(`{}`)
+	}
+
+	// Nullable columns.
+	nullable := func(s string) interface{} {
+		if s == "" {
+			return nil
+		}
+		return s
+	}
 
 	const q = `
 INSERT INTO mcap_files(
-  mcap_file_id, raw_hash_md5, is_deleted,
+  mcap_file_id, raw_hash_md5, raw_hash_sha256, is_deleted,
   mcap_uri, size_bytes, file_duration_ms,
   start_timestamp_ns, end_timestamp_ns,
   channel_count, chunk_count, ingest_state,
-  owner, process_state,
+  owner, vendor_id, collector_id, task_id, device_id,
+  camera_model, data_source, location_id, scene_id, environment_id, collection_method,
+  retention_tier, expire_at, tenant_id, project_id,
+  metadata, process_state,
   created_at, updated_at, version
 ) VALUES (
-  $1,$2,FALSE,
-  $3,$4,$5,
-  $6,$7,
-  $8,$9,$10,
-  $11,$12::jsonb,
-  $13,$14,$15
+  $1,$2,$3,FALSE,
+  $4,$5,$6,
+  $7,$8,
+  $9,$10,$11,
+  $12,$13,$14,$15,$16,
+  $17,$18,$19,$20,$21,$22,
+  $23,$24,$25,$26,
+  $27::jsonb,$28::jsonb,
+  $29,$30,$31
 )
 ON CONFLICT (mcap_file_id) DO UPDATE SET
   raw_hash_md5=EXCLUDED.raw_hash_md5,
+  raw_hash_sha256=EXCLUDED.raw_hash_sha256,
   mcap_uri=EXCLUDED.mcap_uri,
   size_bytes=EXCLUDED.size_bytes,
   file_duration_ms=EXCLUDED.file_duration_ms,
@@ -350,15 +472,33 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
   chunk_count=EXCLUDED.chunk_count,
   ingest_state=EXCLUDED.ingest_state,
   owner=EXCLUDED.owner,
+  vendor_id=EXCLUDED.vendor_id,
+  collector_id=EXCLUDED.collector_id,
+  task_id=EXCLUDED.task_id,
+  device_id=EXCLUDED.device_id,
+  camera_model=EXCLUDED.camera_model,
+  data_source=EXCLUDED.data_source,
+  location_id=EXCLUDED.location_id,
+  scene_id=EXCLUDED.scene_id,
+  environment_id=EXCLUDED.environment_id,
+  collection_method=EXCLUDED.collection_method,
+  retention_tier=EXCLUDED.retention_tier,
+  expire_at=EXCLUDED.expire_at,
+  tenant_id=EXCLUDED.tenant_id,
+  project_id=EXCLUDED.project_id,
+  metadata=EXCLUDED.metadata,
   process_state=EXCLUDED.process_state,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version`
 	err := r.c.db.Exec(ctx, q,
-		f.McapFileID, f.RawHashMD5,
-		f.GCSPath, f.SizeBytes, int64(0),
+		f.McapFileID, f.RawHashMD5, nullable(f.RawHashSHA256),
+		f.GCSPath, f.SizeBytes, f.FileDurationMs,
 		f.StartTimestampNs, f.EndTimestampNs,
 		f.ChannelCount, f.ChunkCount, string(f.IngestState),
-		f.Owner, processStateJSON,
+		f.Owner, nullable(f.VendorID), nullable(f.CollectorID), nullable(f.TaskID), nullable(f.DeviceID),
+		nullable(f.CameraModel), nullable(f.DataSource), nullable(f.LocationID), nullable(f.SceneID), nullable(f.EnvironmentID), nullable(f.CollectionMethod),
+		nullable(f.RetentionTier), f.ExpireAt, nullable(f.TenantID), nullable(f.ProjectID),
+		metadataJSON, processStateJSON,
 		f.CreatedAt, f.UpdatedAt, f.Version,
 	)
 	if err != nil {
@@ -400,9 +540,14 @@ func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState
 	}
 
 	selectQ := fmt.Sprintf(`
-SELECT mcap_file_id, raw_hash_md5,
-  mcap_uri, size_bytes, start_timestamp_ns, end_timestamp_ns,
-  channel_count, chunk_count, ingest_state, owner, process_state,
+SELECT mcap_file_id, raw_hash_md5, raw_hash_sha256,
+  mcap_uri, size_bytes, file_duration_ms,
+  start_timestamp_ns, end_timestamp_ns,
+  channel_count, chunk_count, ingest_state, owner,
+  vendor_id, collector_id, task_id, device_id,
+  camera_model, data_source, location_id, scene_id, environment_id, collection_method,
+  retention_tier, expire_at, tenant_id, project_id,
+  metadata, process_state,
   created_at, updated_at, version
 FROM mcap_files
 WHERE %s
@@ -422,16 +567,49 @@ LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 			f                 models.McapFile
 			is                string
 			processStateBytes []byte
+			metadataBytes     []byte
+			rawHashSHA256     *string
+			fileDurationMs    *int64
+			retentionTier     *string
+			expireAt          *time.Time
+			tenantID          *string
+			projectID         *string
 		)
 		if err := rows.Scan(
-			&f.McapFileID, &f.RawHashMD5,
-			&f.GCSPath, &f.SizeBytes, &f.StartTimestampNs, &f.EndTimestampNs,
-			&f.ChannelCount, &f.ChunkCount, &is, &f.Owner, &processStateBytes,
+			&f.McapFileID, &f.RawHashMD5, &rawHashSHA256,
+			&f.GCSPath, &f.SizeBytes, &fileDurationMs,
+			&f.StartTimestampNs, &f.EndTimestampNs,
+			&f.ChannelCount, &f.ChunkCount, &is, &f.Owner,
+			&f.VendorID, &f.CollectorID, &f.TaskID, &f.DeviceID,
+			&f.CameraModel, &f.DataSource, &f.LocationID, &f.SceneID, &f.EnvironmentID, &f.CollectionMethod,
+			&retentionTier, &expireAt, &tenantID, &projectID,
+			&metadataBytes, &processStateBytes,
 			&f.CreatedAt, &f.UpdatedAt, &f.Version,
 		); err != nil {
 			return nil, 0, fmt.Errorf("postgres McapFileRepo.List scan: %w", err)
 		}
 		f.IngestState = models.IngestState(is)
+		if rawHashSHA256 != nil {
+			f.RawHashSHA256 = *rawHashSHA256
+		}
+		if fileDurationMs != nil {
+			f.FileDurationMs = *fileDurationMs
+		}
+		if retentionTier != nil {
+			f.RetentionTier = *retentionTier
+		}
+		if expireAt != nil {
+			f.ExpireAt = expireAt
+		}
+		if tenantID != nil {
+			f.TenantID = *tenantID
+		}
+		if projectID != nil {
+			f.ProjectID = *projectID
+		}
+		if len(metadataBytes) > 0 {
+			_ = json.Unmarshal(metadataBytes, &f.Metadata)
+		}
 		if f.ProcessState == nil {
 			f.ProcessState = map[string]string{}
 		}
@@ -1325,6 +1503,7 @@ func (r *AssetRepo) ListWithFilters(ctx context.Context, whereSQL string, args [
   status, lifecycle_state, asset_type, duration_ms,
   owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
   retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  parent_asset_id, root_asset_id, tenant_id, project_id,
   created_at, updated_at, version
 FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		baseWhere, orderBy, nextParam, nextParam+1,
@@ -1344,12 +1523,17 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			status         string
 			lifecycleState string
 			segLoc         *string
+			parentID       *string
+			rootID         *string
+			tenantID       *string
+			projectID      *string
 		)
 		if err := rows.Scan(
 			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
 			&status, &lifecycleState, &a.AssetType, &a.DurationMs,
 			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
+			&parentID, &rootID, &tenantID, &projectID,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, 0, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
@@ -1358,6 +1542,18 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		a.LifecycleState = lifecycleState
 		if segLoc != nil {
 			a.SegmentLocator = *segLoc
+		}
+		if parentID != nil {
+			a.ParentAssetID = *parentID
+		}
+		if rootID != nil {
+			a.RootAssetID = *rootID
+		}
+		if tenantID != nil {
+			a.TenantID = *tenantID
+		}
+		if projectID != nil {
+			a.ProjectID = *projectID
 		}
 		a.SyncLegacyFields()
 		out = append(out, &a)

@@ -113,30 +113,46 @@ func (a *Asset) SyncLegacyFields() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// McapFile — row in the `mcap_files` Bigtable table.
-// Row key: v1#<mcap_file_id>
-// CF layout:
-//
-//	cf:meta    → scalar metadata
-//	cf:process → per-algorithm processing state
-//
-// ──────────────────────────────────────────────────────────────────────────────
+// McapFile — row in the `mcap_files` PostgreSQL table.
 type McapFile struct {
 	McapFileID string `json:"mcap_file_id"`
 
-	// cf:meta
-	GCSPath          string      `json:"gcs_path"`
-	SizeBytes        int64       `json:"size_bytes"`
-	RawHashMD5       string      `json:"raw_hash_md5"`
-	IngestState      IngestState `json:"ingest_state"`
-	StartTimestampNs int64       `json:"start_timestamp_ns,omitempty"`
-	EndTimestampNs   int64       `json:"end_timestamp_ns,omitempty"`
-	ChannelCount     int         `json:"channel_count,omitempty"`
-	ChunkCount       int         `json:"chunk_count,omitempty"`
-	Owner            string      `json:"owner"`
+	// Content identity
+	GCSPath       string      `json:"gcs_path"`
+	SizeBytes     int64       `json:"size_bytes"`
+	RawHashMD5    string      `json:"raw_hash_md5"`
+	RawHashSHA256 string      `json:"raw_hash_sha256,omitempty"`
+	IngestState   IngestState `json:"ingest_state"`
 
-	// cf:process — keyed by algorithm name (arbitrary map)
-	ProcessState map[string]string `json:"process_state,omitempty"`
+	// Time / structure summary
+	FileDurationMs   int64 `json:"file_duration_ms,omitempty"`
+	StartTimestampNs int64 `json:"start_timestamp_ns,omitempty"`
+	EndTimestampNs   int64 `json:"end_timestamp_ns,omitempty"`
+	ChannelCount     int   `json:"channel_count,omitempty"`
+	ChunkCount       int   `json:"chunk_count,omitempty"`
+
+	// Provenance
+	VendorID         string `json:"vendor_id,omitempty"`
+	CollectorID      string `json:"collector_id,omitempty"`
+	TaskID           string `json:"task_id,omitempty"`
+	DeviceID         string `json:"device_id,omitempty"`
+	CameraModel      string `json:"camera_model,omitempty"`
+	DataSource       string `json:"data_source,omitempty"`
+	LocationID       string `json:"location_id,omitempty"`
+	SceneID          string `json:"scene_id,omitempty"`
+	EnvironmentID    string `json:"environment_id,omitempty"`
+	CollectionMethod string `json:"collection_method,omitempty"`
+
+	// Ownership / lifecycle
+	Owner         string     `json:"owner"`
+	RetentionTier string     `json:"retention_tier,omitempty"`
+	ExpireAt      *time.Time `json:"expire_at,omitempty"`
+	TenantID      string     `json:"tenant_id,omitempty"`
+	ProjectID     string     `json:"project_id,omitempty"`
+
+	// Extension
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ProcessState map[string]string      `json:"process_state,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -144,10 +160,7 @@ type McapFile struct {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Delivery — row in the `deliveries` Bigtable table.
-// Row key: v1#<delivery_id>
-// CF layout: cf:meta
-// ──────────────────────────────────────────────────────────────────────────────
+// Delivery — row in the `deliveries` PostgreSQL table.
 type Delivery struct {
 	DeliveryID  string         `json:"delivery_id"`
 	CustomerID  string         `json:"customer_id"`

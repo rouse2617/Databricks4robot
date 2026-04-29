@@ -69,6 +69,13 @@ var exactFieldSpecs = map[string]fieldSpec{
 	"expire_at":       {Canonical: "expire_at", StorageField: "expire_at", IsJSONB: false},
 
 	"retention_tier":     {Canonical: "retention_tier", StorageField: "retention_tier", IsJSONB: false},
+	"segment_locator":    {Canonical: "segment_locator", StorageField: "segment_locator", IsJSONB: false},
+	"parent_asset_id":    {Canonical: "parent_asset_id", StorageField: "parent_asset_id", IsJSONB: false},
+	"root_asset_id":      {Canonical: "root_asset_id", StorageField: "root_asset_id", IsJSONB: false},
+	"asset_level":        {Canonical: "asset_level", StorageField: "asset_level", IsJSONB: false},
+	"storage_uri":        {Canonical: "storage_uri", StorageField: "storage_uri", IsJSONB: false},
+	"tenant_id":          {Canonical: "tenant_id", StorageField: "tenant_id", IsJSONB: false},
+	"project_id":         {Canonical: "project_id", StorageField: "project_id", IsJSONB: false},
 	"archive_after_days": {Canonical: "archive_after_days", StorageField: "metadata.archive_after_days", IsJSONB: true},
 	"delete_after_days":  {Canonical: "delete_after_days", StorageField: "metadata.delete_after_days", IsJSONB: true},
 	"total_size_bytes":   {Canonical: "total_size_bytes", StorageField: "metadata.total_size_bytes", IsJSONB: true},

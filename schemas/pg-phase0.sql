@@ -316,6 +316,9 @@ CREATE TABLE IF NOT EXISTS asset_events (
     created_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
     publish_state           TEXT         NOT NULL DEFAULT 'pending',  -- pending / published / failed
     published_at            TIMESTAMPTZ,
+    retry_count             INT          NOT NULL DEFAULT 0,
+    last_error              TEXT,
+    aggregate_type          TEXT         NOT NULL DEFAULT 'asset',
     event_payload           JSONB        NOT NULL DEFAULT '{}'::jsonb
 );
 

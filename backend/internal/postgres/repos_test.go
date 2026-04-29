@@ -189,12 +189,17 @@ func TestAssetRepo(t *testing.T) {
 	if _, err := repo.Get(ctx, "a1"); err == nil {
 		t.Fatalf("expected get error")
 	}
-	// Get now scans 22 columns (no cf_* JSONB)
+	// Get now scans 35 columns (added parent/root/split/tenant/project/metadata/files)
 	db.queryRow = &fakeRow{values: []any{
 		"a1", "m1", int64(10), int64(20), (*string)(nil),
 		"approved", "ready", "segment", int64(1200),
 		"o", "r", int(0), (*time.Time)(nil), "",
 		"", (*time.Time)(nil), "", "", int(0),
+		(*string)(nil), (*string)(nil),
+		"", "", "", "", "",
+		(*int)(nil), (*int64)(nil), (*int64)(nil),
+		(*string)(nil), (*string)(nil),
+		[]byte(`{}`), []byte(`{}`),
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
 	}}
 	got, err := repo.Get(ctx, "a1")
@@ -239,6 +244,7 @@ func TestAssetRepo(t *testing.T) {
 			"approved", "ready", "segment", int64(0),
 			"", "", int(0), (*time.Time)(nil), "",
 			"", (*time.Time)(nil), "", "", int(0),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 	db.rows = rows
@@ -273,11 +279,16 @@ func TestMcapRepo(t *testing.T) {
 	if _, err := repo.Get(ctx, "m1"); err == nil {
 		t.Fatalf("expected get error")
 	}
-	// Get now scans 14 columns (no cf_meta, cf_process)
+	// Get now scans 31 columns (all real columns including provenance/retention/metadata)
 	db.queryRow = &fakeRow{values: []any{
-		"m1", "md5",
-		"gs://x", int64(10), int64(1), int64(2),
-		int(3), int(4), "pending", "o", []byte(`{"p":"done"}`),
+		"m1", "md5", (*string)(nil), // raw_hash_sha256
+		"gs://x", int64(10), (*int64)(nil), // file_duration_ms
+		int64(1), int64(2),
+		int(3), int(4), "pending", "o",
+		"", "", "", "", // vendor_id, collector_id, task_id, device_id
+		"", "", "", "", "", "", // camera_model, data_source, location_id, scene_id, environment_id, collection_method
+		(*string)(nil), (*time.Time)(nil), (*string)(nil), (*string)(nil), // retention_tier, expire_at, tenant_id, project_id
+		[]byte(`{}`), []byte(`{"p":"done"}`), // metadata, process_state
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
 	}}
 	got, err := repo.Get(ctx, "m1")
@@ -491,17 +502,19 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 
 	// COUNT returns 2
 	db.queryRow = &fakeRow{values: []any{int64(2)}}
-	// DATA returns 2 rows (22 columns each)
+	// DATA returns 2 rows (27 columns each — includes parent/root/tenant/project)
 	db.rows = &fakeRows{data: [][]any{
 		{"a1", "m1", int64(10), int64(20), (*string)(nil),
 			"approved", "ready", "segment", int64(0),
 			"", "", int(0), (*time.Time)(nil), "",
 			"", (*time.Time)(nil), "", "", int(0),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 		{"a2", "m1", int64(20), int64(30), (*string)(nil),
 			"approved", "ready", "segment", int64(0),
 			"", "", int(0), (*time.Time)(nil), "",
 			"", (*time.Time)(nil), "", "", int(0),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(2)},
 	}}
 
@@ -531,6 +544,7 @@ func TestListWithFilters_WithWhereSQL(t *testing.T) {
 			"approved", "ready", "segment", int64(0),
 			"", "", int(0), (*time.Time)(nil), "",
 			"", (*time.Time)(nil), "", "", int(0),
+			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 
@@ -873,6 +887,11 @@ func buildAssetRow(
 		status, lifecycleState, assetType, durationMs,
 		owner, reviewer, deliveryCount, lastDeliveredAt, lastDeliveredTo,
 		retentionTier, expireAt, storageURI, thumbURI, assetLevel,
+		(*string)(nil), (*string)(nil),
+		"", "", "", "", "",
+		(*int)(nil), (*int64)(nil), (*int64)(nil),
+		(*string)(nil), (*string)(nil),
+		[]byte(`{}`), []byte(`{}`),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1029,10 +1048,17 @@ func TestGet_SegTypeMirrorsAssetType(t *testing.T) {
 func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 	ctx := context.Background()
 
-	row := buildAssetRow(
-		"lf-1", "approved", "delivered", "frame_set", int64(5000),
-		"dave", "carol", 1, nil, "partner", "warm", nil, "", "", 0,
-	)
+	// List queries return 27 columns (no split_*/segment_index/offset/metadata/files)
+	row := []any{
+		"lf-1", "m1", int64(100), int64(200), (*string)(nil),
+		"approved", "delivered", "frame_set", int64(5000),
+		"dave", "carol", int(1), (*time.Time)(nil), "partner",
+		"warm", (*time.Time)(nil), "", "", int(0),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+		int64(1),
+	}
 
 	db := &fakeDB{
 		queryRow: &fakeRow{values: []any{int64(1)}}, // COUNT
@@ -1078,10 +1104,17 @@ func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 func TestListByMcapFile_PopulatesBothOldAndNewFields(t *testing.T) {
 	ctx := context.Background()
 
-	row := buildAssetRow(
-		"lm-1", "rejected", "rejected", "segment", int64(7500),
-		"frank", "eve", 0, nil, "", "cold", nil, "gs://s/data", "gs://s/thumb", 1,
-	)
+	// List queries return 27 columns (no split_*/segment_index/offset/metadata/files)
+	row := []any{
+		"lm-1", "m1", int64(100), int64(200), (*string)(nil),
+		"rejected", "rejected", "segment", int64(7500),
+		"frank", "eve", int(0), (*time.Time)(nil), "",
+		"cold", (*time.Time)(nil), "gs://s/data", "gs://s/thumb", int(1),
+		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
+		int64(1),
+	}
 
 	db := &fakeDB{rows: &fakeRows{data: [][]any{row}}}
 	repo := &AssetRepo{c: &Client{db: db}}
@@ -1615,7 +1648,7 @@ func TestProperty10_MutationEventInvariant(t *testing.T) {
 // McapFileRepo tests
 // ---------------------------------------------------------------------------
 
-// buildMcapRow builds a fake row slice (14 columns) matching the SELECT in
+// buildMcapRow builds a fake row slice (31 columns) matching the SELECT in
 // McapFileRepo.Get() and List().
 func buildMcapRow(
 	mcapFileID string,
@@ -1631,9 +1664,14 @@ func buildMcapRow(
 	processState []byte,
 ) []any {
 	return []any{
-		mcapFileID, rawHashMD5,
-		mcapURI, sizeBytes, startNs, endNs,
-		channelCount, chunkCount, ingestState, owner, processState,
+		mcapFileID, rawHashMD5, (*string)(nil), // raw_hash_sha256
+		mcapURI, sizeBytes, (*int64)(nil), // file_duration_ms
+		startNs, endNs,
+		channelCount, chunkCount, ingestState, owner,
+		"", "", "", "", // vendor_id, collector_id, task_id, device_id
+		"", "", "", "", "", "", // camera_model, data_source, location_id, scene_id, environment_id, collection_method
+		(*string)(nil), (*time.Time)(nil), (*string)(nil), (*string)(nil), // retention_tier, expire_at, tenant_id, project_id
+		[]byte(`{}`), processState, // metadata, process_state
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1730,43 +1768,43 @@ func TestMcapFileRepo_Set_WritesRealColumns(t *testing.T) {
 	}
 
 	args := tracker.calls[0]
-	// Set() passes 15 args (no cf_meta, cf_process)
-	if len(args) != 15 {
-		t.Fatalf("expected 15 args, got %d", len(args))
+	// Set() passes 31 args (all real columns including provenance/retention/metadata)
+	if len(args) != 31 {
+		t.Fatalf("expected 31 args, got %d", len(args))
 	}
 
 	if args[0] != "m-dw-1" {
 		t.Errorf("mcap_file_id: got %v, want m-dw-1", args[0])
 	}
-	if args[2] != "gs://bucket/test.mcap" {
-		t.Errorf("mcap_uri: got %v, want gs://bucket/test.mcap", args[2])
+	if args[3] != "gs://bucket/test.mcap" {
+		t.Errorf("mcap_uri: got %v, want gs://bucket/test.mcap", args[3])
 	}
-	if args[3] != int64(2048) {
-		t.Errorf("size_bytes: got %v, want 2048", args[3])
+	if args[4] != int64(2048) {
+		t.Errorf("size_bytes: got %v, want 2048", args[4])
 	}
-	if args[5] != int64(1000) {
-		t.Errorf("start_timestamp_ns: got %v, want 1000", args[5])
+	if args[6] != int64(1000) {
+		t.Errorf("start_timestamp_ns: got %v, want 1000", args[6])
 	}
-	if args[6] != int64(2000) {
-		t.Errorf("end_timestamp_ns: got %v, want 2000", args[6])
+	if args[7] != int64(2000) {
+		t.Errorf("end_timestamp_ns: got %v, want 2000", args[7])
 	}
-	if args[7] != int(8) {
-		t.Errorf("channel_count: got %v, want 8", args[7])
+	if args[8] != int(8) {
+		t.Errorf("channel_count: got %v, want 8", args[8])
 	}
-	if args[8] != int(16) {
-		t.Errorf("chunk_count: got %v, want 16", args[8])
+	if args[9] != int(16) {
+		t.Errorf("chunk_count: got %v, want 16", args[9])
 	}
-	if args[9] != "pending" {
-		t.Errorf("ingest_state: got %v, want pending", args[9])
+	if args[10] != "pending" {
+		t.Errorf("ingest_state: got %v, want pending", args[10])
 	}
-	if args[10] != "bob" {
-		t.Errorf("owner: got %v, want bob", args[10])
+	if args[11] != "bob" {
+		t.Errorf("owner: got %v, want bob", args[11])
 	}
 
-	// Verify process_state JSONB.
-	psRaw, ok := args[11].([]byte)
+	// Verify process_state JSONB (arg index 27 in the new layout).
+	psRaw, ok := args[27].([]byte)
 	if !ok {
-		t.Fatalf("process_state arg is not []byte: %T", args[11])
+		t.Fatalf("process_state arg is not []byte: %T", args[27])
 	}
 	var ps map[string]string
 	if err := json.Unmarshal(psRaw, &ps); err != nil {
@@ -1956,34 +1994,34 @@ func TestProperty_McapFileRealColumnConsistency(t *testing.T) {
 		}
 
 		args := tracker.calls[0]
-		if len(args) != 15 {
-			t.Fatalf("expected 15 args, got %d", len(args))
+		if len(args) != 31 {
+			t.Fatalf("expected 31 args, got %d", len(args))
 		}
 
 		// Verify real column values.
-		if args[2] != gcsPath {
-			t.Fatalf("mcap_uri mismatch: real=%v want=%v", args[2], gcsPath)
+		if args[3] != gcsPath {
+			t.Fatalf("mcap_uri mismatch: real=%v want=%v", args[3], gcsPath)
 		}
-		if args[3] != sizeBytes {
-			t.Fatalf("size_bytes mismatch: real=%v want=%v", args[3], sizeBytes)
+		if args[4] != sizeBytes {
+			t.Fatalf("size_bytes mismatch: real=%v want=%v", args[4], sizeBytes)
 		}
-		if args[9] != string(ingestState) {
-			t.Fatalf("ingest_state mismatch: real=%v want=%v", args[9], ingestState)
+		if args[10] != string(ingestState) {
+			t.Fatalf("ingest_state mismatch: real=%v want=%v", args[10], ingestState)
 		}
-		if args[10] != owner {
-			t.Fatalf("owner mismatch: real=%v want=%v", args[10], owner)
+		if args[11] != owner {
+			t.Fatalf("owner mismatch: real=%v want=%v", args[11], owner)
 		}
-		if args[5] != startNs {
-			t.Fatalf("start_timestamp_ns mismatch: real=%v want=%v", args[5], startNs)
+		if args[6] != startNs {
+			t.Fatalf("start_timestamp_ns mismatch: real=%v want=%v", args[6], startNs)
 		}
-		if args[6] != endNs {
-			t.Fatalf("end_timestamp_ns mismatch: real=%v want=%v", args[6], endNs)
+		if args[7] != endNs {
+			t.Fatalf("end_timestamp_ns mismatch: real=%v want=%v", args[7], endNs)
 		}
-		if args[7] != channelCount {
-			t.Fatalf("channel_count mismatch: real=%v want=%v", args[7], channelCount)
+		if args[8] != channelCount {
+			t.Fatalf("channel_count mismatch: real=%v want=%v", args[8], channelCount)
 		}
-		if args[8] != chunkCount {
-			t.Fatalf("chunk_count mismatch: real=%v want=%v", args[8], chunkCount)
+		if args[9] != chunkCount {
+			t.Fatalf("chunk_count mismatch: real=%v want=%v", args[9], chunkCount)
 		}
 	})
 }
