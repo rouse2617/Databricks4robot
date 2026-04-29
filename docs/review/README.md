@@ -49,7 +49,7 @@
 | 故障域 / 冗余 / SLO | 1. data-platform-design §7、§8 |
 | 安全 / 权限 / 删除 SLA | 1. data-platform-design §7.1（密钥与数据分级由独立运维 / 合规手册承载）|
 | 上线计划 / Phase 拆分 | 1. data-platform-design §9 + 2. schema-reference 上线优先级 |
-| Phase Gate（验收 + 回滚） | 1. data-platform-design §9.5 |
+| Phase Gate（验收 + 回滚） | 1. data-platform-design §9.1 |
 | 风险与未决事项（含 owner / 关闭标准） | 1. data-platform-design §10.1 |
 | PII / GDPR 策略 | 1. data-platform-design §7.1.2 |
 

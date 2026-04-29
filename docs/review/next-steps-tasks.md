@@ -13,6 +13,7 @@
 | 架构基线 | 1.0（PG + Backend 单进程） | 启用 2.0：Outbox Worker + ES + Iceberg |
 | 投影表 | `asset_tags / asset_algo_latest` 已建已用，cf_* 列只读保留 | 字段消费收口 + lifecycle_state 主消费切换 |
 | 事件流 | `asset_events` 在线写入，1.0 无下游消费 | Outbox Worker 上线（pure polling, 30s tick） |
+| Tag 子域 | 独立 tag CRUD + history API 已上线；详情页 / 批量操作已切专用 tag 接口 | 下一步：tag history UI / `cf_*` 兼容层清理 |
 | 检索 | `/api/v1/search/assets` ES path 实现 + PG fallback | ES 真正接到 outbox 后才算"在线" |
 | 湖仓 | `docker-compose` 脚手架，未接业务写路径 | PyIceberg CronJob + Polaris/Lakekeeper 上线 |
 | Frontend | 资产发现 v2 facets / 详情 / 算法 / 交付齐全 | Phase 2+ 训练数据集 UI（按业务节奏） |
@@ -21,7 +22,7 @@
 
 ## 1. P0 · 1.0 收尾 / 2.0 启用前置（阻塞）
 
-> 这一组完成才能开 2.0 启用闸口（详见 `data-platform-design.md` §9.5.1）。
+> 这一组完成才能开 2.0 启用闸口（详见 `data-platform-design.md` §9.1.1）。
 
 | ID | 任务 | DoD（验收口径） | 估时 | Owner | 状态 | 落地证据 |
 |----|------|----------------|------|-------|------|----------|
@@ -127,7 +128,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | **P2-FE-2** | 通用事件流总览页（跨 asset 的事件流，按 `event_type` 聚合的实时面板） | 仅在出现"运营 / SRE 想看全量事件流"诉求时启动 | M | parked |
 | **P2-T-1** | Frontend coverage 提升到 ≥ 85%（核心组件 + 业务页） | P0-T-4 守门稳定 90 天后再加码 | M | parked |
 | **P2-T-2** | Outbox chaos 测试（`testcontainers` 注入 PG / ES 故障）| Outbox MVP 跑稳 60 天后再加 | M | parked |
-| **P2-8** | **Tag 子域闭环**：补独立 tag 写接口与历史接口（`POST /api/v1/assets/{id}/tags`、`DELETE /api/v1/assets/{id}/tags/{key}`、`GET /api/v1/assets/{id}/tags/history`） | 同事务更新 `asset_tags` + 追加 `tag_upserted / tag_deleted` 到 `asset_events`；历史查询直接走统一事件流；完成后与 `use-cases.md` 的 B1 / B2 / B6 对齐，前端/SDK 不再依赖 `PATCH /assets/{id}` 承担 tag 专项职责 | M | todo |
+| **P2-8** | **Tag 子域闭环**：补独立 tag 写接口与历史接口（`POST /api/v1/assets/{id}/tags`、`DELETE /api/v1/assets/{id}/tags/{key}`、`GET /api/v1/assets/{id}/tags/history`） | 同事务更新 `asset_tags` + 追加 `tag_upserted / tag_deleted` 到 `asset_events`；历史查询直接走统一事件流；完成后与 `use-cases.md` 的 B1 / B2 / B6 对齐，前端/SDK 不再依赖 `PATCH /assets/{id}` 承担 tag 专项职责 | M | done | `be7f699` (backend API) + `4e4e4f7` (frontend 切专用 tag API) |
 | **P2-9** | **彻底移除 `cf_*` 遗留层**：清掉 `cf_meta / cf_algo / cf_tag / cf_files / cf_process` 的运行时依赖与兼容别名，最终 drop 列 / 索引 | 分 4 步完成：1）filter / API / SDK 不再接受 `cf_*` 别名；2）seed / mock / 脚本 / 旧测试改用 typed columns + projection tables；3）确认前端、运维脚本、reindex / backfill 不再读 `cf_*`；4）出 migration 删除 `assets/mcap_files/deliveries` 上的 `cf_*` 列与相关 GIN/表达式索引，并同步 `schemas/pg-phase0.sql`、`schema-reference.md`、`sql.md` | L | todo |
 
 ---
@@ -149,7 +150,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 
 ## 5. 不做（明确排除，避免被 PR 重新提）
 
-详细见 `data-platform-design.md` §9.4。摘录关键项：
+详细见 `data-platform-design.md` §5.11.2。摘录关键项：
 
 - ❌ 在 PG 重写血缘 / 权限 / 质量系统（用专业组件）
 - ❌ Spark / Dagster / Kafka / Debezium / Flink / Daft / Lance（除非命中升级触发条件）
@@ -162,10 +163,10 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 
 | 闸口 | 触发条件 | 验收文档 |
 |------|----------|----------|
-| **1.0 → 2.0** | P0 全绿 + P1-1 / P1-2 通过 | `data-platform-design.md` §9.5.1 |
-| **2.0 → 3.x** | Iceberg 入湖 90 天稳定 + 第一个 dataset 上线 | `data-platform-design.md` §9.5.2 |
+| **1.0 → 2.0** | P0 全绿 + P1-1 / P1-2 通过 | `data-platform-design.md` §9.1.1 |
+| **2.0 → 3.x** | Iceberg 入湖 90 天稳定 + 第一个 dataset 上线 | `data-platform-design.md` §9.1.2 |
 
-每个闸口都有「上线前置 / 验收指标 / 回滚触发 / 回滚动作」，**不通过禁止进下一阶段**。
+每个闸口表含「验收摘要 / 回滚要点」两列，**不通过禁止进下一阶段**。
 
 ---
 
