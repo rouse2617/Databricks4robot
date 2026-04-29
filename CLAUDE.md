@@ -2,6 +2,20 @@
 
 Practical project guidance for coding agents working in `Databricks4robot`.
 
+## Agent behavior (LLM-assisted coding)
+
+Concise habits that reduce wrong assumptions, scope creep, and noisy diffs. Adapted from [andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills) (Karpathy-style pitfalls). **Tradeoff:** these bias toward caution over speed — trivial one-off edits do not need full ceremony.
+
+1. **Think before coding** — State assumptions explicitly. If the ask is ambiguous, spell out interpretations or ask; do not silently pick one. Say when a simpler design fits the goal.
+
+2. **Simplicity first** — Ship the minimum code that satisfies the request. No speculative features, extra configurability, or one-off abstractions. If it reads overbuilt for the problem, simplify.
+
+3. **Surgical changes** — Edit only what the task requires; match existing style and patterns. Do not refactor, reformat, or “clean up” unrelated code or comments. Remove imports/symbols only when **your** change made them unused; you may note pre-existing dead code — do not delete it unless asked.
+
+4. **Goal-driven execution** — Prefer verifiable outcomes: e.g. bugfix → reproduce (test or steps), then fix; behavior change → tests or manual checks named upfront. For multi-step work, use a short plan with a concrete verify step per step.
+
+Project-specific rules follow below (**Development Rules**, OpenAPI/schema checklist, **Definition of Done**).
+
 ## What This Repo Is
 
 `Databricks4robot` is a single-backend-process asset platform for MCAP-oriented metadata, delivery tracking, search, lakehouse analysis, and SDK/frontend integration.

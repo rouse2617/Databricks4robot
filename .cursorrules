@@ -25,3 +25,5 @@ Examples:
 - feat(backend): add delivery retry endpoint
 - fix(frontend): prevent duplicate request on page refresh
 - docs(api): document pagination token behavior
+
+Broader agent conventions (assumptions, scope, verification): see `CLAUDE.md` section **Agent behavior (LLM-assisted coding)**.

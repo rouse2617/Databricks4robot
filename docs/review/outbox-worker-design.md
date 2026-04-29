@@ -3,16 +3,6 @@
 > **⚠️ 本文档描述的是 2.0 目标态 / MVP 实施方案，不代表 1.0 当前 runtime 已启用 Outbox Worker。**
 > 1.0 已有 `asset_events` 统一事件表在线写入，但无下游消费；本文档定义 2.0 启用 Worker 后的并发模型、cursor 协议与验收标准。
 
-> Scope：把 `asset_events` outbox 持久化事件流以**分钟级**延迟同步到
-> Elasticsearch `assets` 索引。本文档是总体架构设计 "异步同步层" 章节
-> 的工程落地版本。
->
-> 同步路径采用**纯轮询**（单 worker、tick=30s），不使用 PG LISTEN/NOTIFY。
-> 决策依据见 §16.1。
-
-> Status：DRAFT，待评审。MVP 仅含 ES Sink；Iceberg Bronze staging Sink
-> 列入二期。
-
 ---
 
 ## 1. 目标与非目标
