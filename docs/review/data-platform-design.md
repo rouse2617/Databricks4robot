@@ -43,7 +43,7 @@
 | **算法用户零感知底层** | Python SDK `grace_sdk`，`asset.get(id)` / `asset.stream(topic)` 一行拿到所有 |
 | **资产即一等公民** | 主键 `asset_id`；`asset_tags / asset_algo_latest / asset_events` 投影 |
 | **统一元数据底座** | PG 主库 + ES 检索 + Iceberg 历史；Catalog 抽象支持上云不绑定厂商 |
-| **事件驱动数据链路** | `asset_events` outbox + Go worker，PG `LISTEN/NOTIFY` 实时唤醒 |
+| **事件驱动数据链路** | `asset_events` outbox + Go worker（30s 轮询，分钟级延迟） |
 | **多维检索** | Tag 过滤 / 全文 / 向量（Phase 2+） |
 | **强追溯/审计** | `asset_events` 全量事件流；`training_runs` 自包含 catalog 引用 |
 | **MCAP 原生** | SDK 走 HTTP Range Request 流式读，不下整文件 |
@@ -57,7 +57,7 @@
 | 多租户 / RLS / `tenant_id` | 当前是单业务、单实例形态，多租户会显著放大 schema、权限、审计、计费复杂度；2.0 也不引入 |
 | 实时秒级湖仓 | Iceberg 入湖按 5–10 min batch 已满足训练 / 分析需求；秒级实时只在 ES 通道兜底，不在湖仓承诺 |
 | OLTP 全量替代分析查询 | PG 不背分析负载，分析查询走 Trino + Iceberg；想跑大宽表全量扫描不要打到 PG |
-| 自建 CDC 管道 | 不引 Debezium / Kafka / Flink，复杂度回报不成正比；走 Outbox + river 自有方案 |
+| 自建 CDC 管道 | 不引 Debezium / Kafka / Flink，复杂度回报不成正比；走 Outbox + 自写 Worker 方案 |
 | 客户公网 API / 外部租户接入 | 当前无外部入口，所有访问都在内网 + SSO 之内 |
 | 多模态向量库 | 3.x 才评估，1.0 / 2.0 不绑定 pgvector / Milvus / Lance 任一选型 |
 | 跨区域 / 跨云强一致 | 单区域单云足够；真有跨区域写场景另写独立 ADR |
@@ -97,7 +97,7 @@
 | 主库 | PostgreSQL（含 `cf_meta / cf_algo / cf_tag` JSONB 过渡列） | 同 PG，但提升高频字段为真实列 + 引入 `asset_tags / asset_algo_latest` 投影表 |
 | 检索 | 无；列表筛选直接查 PG | 引入 Elasticsearch + 后端 `/api/v1/search/assets` |
 | 湖仓 | 无 | 引入 Iceberg REST Catalog + Trino，PG → Bronze → Silver → Gold |
-| 数据同步 | 无（所有读写都走 PG） | 引入 `asset_events` outbox + Go worker + LISTEN/NOTIFY |
+| 数据同步 | 无（所有读写都走 PG） | 引入 `asset_events` outbox + Go worker（30s 轮询） |
 | 多模态 / Catalog 抽象 | 无 | 3.1 阶段，Phase 2 之后 |
 
 > 注：仓库里目前已有 Iceberg / ES / Trino 的本地 `docker-compose` 脚手架代码，但它们**尚未真正接入业务写路径**，因此架构基线仍按 1.0 评审。本设计文档即是从 1.0 → 2.0 → 3.0 的演进规划。
@@ -118,7 +118,7 @@ flowchart LR
     end
 
     PG[(PostgreSQL<br>主库 + outbox)]
-    Worker[Outbox Worker<br>Go + river]
+    Worker[Outbox Worker<br>Go · 30s tick]
     ES[(Elasticsearch)]
 
     subgraph Lake[Lakehouse]
@@ -131,7 +131,7 @@ flowchart LR
 
     Users --> API
     WR --> PG
-    PG -. NOTIFY / replay .-> Worker
+    PG -. SELECT pending .-> Worker
     Worker -- _bulk --> ES
     Worker -- staging parquet --> Staging
     RD --> PG
@@ -150,7 +150,7 @@ flowchart LR
 | 湖仓层 | Iceberg | 历史事实、训练集、审计回放、统计分析、重算 |
 | 查询层 | Trino | 查询 Iceberg，服务复杂分析与离线报表 |
 | 计算层 | PyIceberg + k8s CronJob | 周期性 MERGE / compact / Bronze→Silver→Gold transformation；不引入 Spark / Dagster |
-| 异步派生通道 | Outbox + Worker（Go + river） | PG 主库变更 → ES / 湖仓 / 向量库的事件驱动同步 |
+| 异步派生通道 | Outbox + Worker（Go） | PG 主库变更 → ES / 湖仓 / 向量库的事件驱动同步（30s 轮询，分钟级延迟）|
 | 多模态层（Phase 3.x 候选） | 待定 | AI 多模态样本处理、向量 / 张量存储；3.x 启动前再选型 |
 
 设计约定：PostgreSQL 表结构先保障在线业务，再通过事件流（`asset_events` outbox）支撑 ES 与 Iceberg；任何外部数据对象都通过中立 Catalog 引用而非物理路径绑定。
@@ -384,7 +384,7 @@ SELECT * FROM asset_events
 WHERE publish_state = 'pending'
 ORDER BY event_seq
 FOR UPDATE SKIP LOCKED
-LIMIT 500;
+LIMIT 1000;
 -- 处理完 ES / 湖仓推送后:
 UPDATE asset_events SET publish_state = 'published', published_at = now()
  WHERE event_id = ANY(:processed);
@@ -567,7 +567,6 @@ sequenceDiagram
     participant Repo as 存储访问层 (repository)
     participant PG as PostgreSQL 主库
     participant Audit as 审计 Sink
-    participant Notify as PG LISTEN/NOTIFY
     participant Worker as Outbox Worker
     participant ES as Elasticsearch
     participant Cron as PyIceberg (k8s CronJob)
@@ -606,7 +605,6 @@ sequenceDiagram
         Audit->>PG: INSERT INTO audit_events
         UC->>Repo: COMMIT
         Repo->>PG: COMMIT
-        PG->>Notify: NOTIFY 'asset_events', payload=N
     end
     end
 
@@ -614,9 +612,9 @@ sequenceDiagram
     API-->>Client: 200 OK (asset, X-Request-ID)
 
     rect rgb(245,255,245)
-    note over Worker,ES: 快投递通道（Outbox Worker，至少一次，亚秒级）
-    Notify-->>Worker: NOTIFY (event_seq=N)
-    Worker->>PG: SELECT * FROM asset_events WHERE publish_state='pending' ORDER BY event_seq FOR UPDATE SKIP LOCKED LIMIT 500
+    note over Worker,ES: 异步投递通道（Outbox Worker，至少一次，30s 轮询 + drain loop，端到端 ≤ 60s）
+    Worker->>Worker: 30s ticker fires
+    Worker->>PG: SELECT * FROM asset_events WHERE publish_state='pending' ORDER BY event_seq FOR UPDATE SKIP LOCKED LIMIT 1000
     PG-->>Worker: batch
     Worker->>ES: Bulk index (doc_id=asset_id)
     ES-->>Worker: ok
@@ -646,7 +644,7 @@ sequenceDiagram
   - 业务层（usecase）：事务边界的**唯一持有者**，组合多个 repo 调用、维护投影表 / 事件表 / 审计的强一致。
   - 存储访问层（repository）：纯 CRUD，不知道业务规则；事务由调用方传入。
 - **乐观锁仅用于 `assets` 行内字段**：`assets.version` 走 CAS（`UPDATE ... WHERE version=$expected`），rows=0 直接判 `ErrOptimisticLock`，接口层映射为 `409 CONCURRENT_CONFLICT`。**算法状态变更（`algo.start/finish/reset`）不再触碰 `assets.version`**——它们只写 `asset_algo_latest`（PK = `(asset_id, algo_name)` + `algo_version` 单调守卫）+ `asset_events`，因此同一资产上**多个算法并发完成**互不冲突，彻底消除原 OCC 热点（详见 §5.3.4）。
-- **事件强一致**：业务写 + 事件写在**同一事务**内，COMMIT 之后才发 `NOTIFY`；事件**不依赖 PG trigger**（业务逻辑全部在业务层，PG 只做存储 + 中央 sequence）。
+- **事件强一致**：业务写 + 事件写在**同一事务**内，COMMIT 即对 worker 可见；事件**不依赖 PG trigger / `LISTEN/NOTIFY`**（业务逻辑全部在业务层，PG 只做存储 + 中央 sequence；worker 走 30s 纯轮询，详见 §5.6.2）。
 - **outbox 快投递**：Outbox Worker 永远走 `publish_state='pending' + FOR UPDATE SKIP LOCKED`，不要直接按 `event_seq > cursor` 拉。
 - **下游增量两条路**：①  入湖路径 = Worker 写 staging parquet → CronJob 处理文件（无 PG cursor，文件即工作单元，按 `event_seq` 在 MERGE INTO 中幂等去重，结构上不可能漏）；② 任何**直查 PG** 的 batch consumer（重建、审计回放、未来 sink）必须用 §5.2.7 的 `safe_horizon` 协议推进，**禁止**用 `max(published event_seq)` 作 watermark（会漏 SKIP LOCKED 并发标 published 的 in-flight 行）。
 - **per-sink cursor**：每个 sink 在 `outbox_sink_cursors` 一行；`asset_events.publish_state` 仅服务 Worker 自己的去重。
@@ -789,7 +787,7 @@ sequenceDiagram
 ```
 
 **关键点**：
-- ES 索引由 outbox 异步同步（详见 §5.6.2），写入 → ES 可见 < 2 s
+- ES 索引由 outbox 异步同步（详见 §5.6.2），写入 → ES 可见 ≤ 60 s（30s 轮询 + drain loop）
 - ES 故障 backend 自动降级到 PG，前端无感
 - aggregation（按 tag 分组计数、按 lifecycle 桶分布）走 ES path 提供
 
@@ -814,8 +812,43 @@ sequenceDiagram
 ```
 
 **ES 索引设计要点**（详见 §5.6.1）：
-- `assets` index 字段：`asset_id (keyword)`、`description (text + analyzer)`、`tags (nested)`、`lifecycle_state (keyword)`、`owner (keyword)`、`created_at (date)`
+
 - 文档 ID = `asset_id`，由 outbox 用 `_bulk index` 写入，重复投递天然幂等
+- 字段分四类（详细 mapping 见 `deploy/local/elasticsearch/init-index.sh`）：
+
+  | 类别 | 字段（节选） | 类型 | 说明 |
+  |------|-------------|------|------|
+  | 标识 / 状态 | `asset_id` / `mcap_file_id` / `asset_type` / `lifecycle_state` / `status` / `is_deleted` / `tenant_id` / `project_id` | `keyword` / `boolean` | 高频 term filter |
+  | 时间 / 时长 | `start_timestamp_ns` / `end_timestamp_ns` / `duration_ms` | `long` | 纳秒精度，做 range 查询（"时长 ∈ [9000, 11000]"、"t1 ≤ start ≤ t2"）|
+  | 时间 / 时长（聚合用）| `recorded_at` / `created_at` / `updated_at` / `last_delivered_at` | `date` | date_histogram 聚合（按月 / 按小时） |
+  | 投影 / 反范式 | `mcap.vendor_id / device_id / camera_model / scene_id / location_id / ...` | `keyword` | 写入时由 outbox sink 从 `mcap_files` 反范式过来，避免 ES 跨索引 join |
+  | Tags（复杂查询）| `tags` | **`nested`** | 每条 tag 一个内嵌 doc，含 `key / value / value_num / value_bool / source_type / confidence`；支持"算法打的、置信度 ≥ 0.9 的 highway tag"这类查询 |
+  | Tags（简单等值）| `tags_flat` | **`flattened`** | 给 90% 的 `tags.scene = "highway"` 等值查询用，写入廉价 |
+  | 算法状态 | `algos` | **`nested`** | 多算法组合查询（`hand_tracking.score > 0.8 AND face_blur.status = ok`）|
+  | 全文 | `notes` / `owner.text` / `reviewer.text` | `text` | multi_match 全文 |
+
+- **设计取舍**（重要）：
+  - 不用 `object + dynamic:true` 表达 tags / algos——首次写入会锁定字段类型，后续类型不一致直接 reject，且无法表达 `source_type / confidence` 等元信息。
+  - `tags` 和 `tags_flat` 双写：`flattened` 给简单等值（便宜），`nested` 给复杂组合（可表达"按来源 / 置信度过滤"）。两者由同一份 PG `asset_tags` 投影，存储多约 30%，查询能力跨越式扩展。
+  - 时间字段一律 `long`（纳秒），如需按时间桶聚合用派生 ms 字段 `recorded_at`。
+
+**示例查询**：
+
+```json
+// 时长 ≈ 10s 且 scene=highway
+{ "query": { "bool": { "filter": [
+  {"range": {"duration_ms": {"gte": 9000, "lte": 11000}}},
+  {"term":  {"tags_flat.scene": "highway"}}
+]}}}
+
+// "算法打的、置信度 ≥ 0.9 的 scene=highway"
+{ "query": { "nested": { "path": "tags", "query": { "bool": { "must": [
+  {"term":  {"tags.key": "scene"}},
+  {"term":  {"tags.value": "highway"}},
+  {"term":  {"tags.source_type": "algo"}},
+  {"range": {"tags.confidence": {"gte": 0.9}}}
+]}}}}}
+```
 
 #### 5.3.7 场景：MCAP 段在线预览（前端 Webviz / Foxglove 嵌入）
 
@@ -1036,9 +1069,11 @@ flowchart LR
 
 设计上"主库存 ID + 关键字段，衍生引擎只做检索 / 分析"——任何衍生存储**丢了都能从 PG 重建**，不允许出现仅存在于 ES / Iceberg 的业务事实。
 
-> **明确不引入**：Spark / Dagster / Kafka / Debezium / Flink / Daft / Lance。同步链路全部基于「Go Worker（river）+ PyIceberg CronJob」，详细技术栈见 §5.11。
+> **明确不引入**：Spark / Dagster / Kafka / Debezium / Flink / Daft / Lance。同步链路全部基于「自写 Go Outbox Worker（30s 轮询）+ PyIceberg CronJob」，详细技术栈见 §5.11。
 
 #### 5.6.2 数据同步机制：Transactional Outbox
+
+> **详细 worker 设计**见 `docs/review/outbox-worker-design.md`（轮询协议、cursor 推进、drain loop、panic 恢复、metrics、灾难恢复）。本节只描述架构层决策。
 
 ##### 这是干嘛的
 
@@ -1064,21 +1099,21 @@ ES 和 Iceberg 的同步走**同一套 outbox 投递语义**，差别只在 Sink
 flowchart LR
     subgraph TX[① 业务事务（同步，毫秒级）]
         direction TB
-        WT[写业务表] --> WE[追加 asset_events<br>publish_state='pending'] --> CM[COMMIT + pg_notify]
+        WT[写业务表] --> WE[追加 asset_events<br>publish_state='pending'] --> CM[COMMIT]
     end
 
     PG[(asset_events<br>（outbox）)]
     CM --> PG
 
-    subgraph WK["② Outbox Worker (Go + river)"]
+    subgraph WK["② Outbox Worker (Go)"]
         direction TB
-        Loop[LISTEN + 1s tick<br>FOR UPDATE SKIP LOCKED]
+        Loop[30s ticker · drain loop<br>FOR UPDATE SKIP LOCKED LIMIT 1000]
         Loop --> SES[ES Sink]
         Loop --> SLK[Bronze Sink]
         Loop --> SV["Vec Sink (3.x)"]
     end
 
-    PG -. NOTIFY / replay .-> Loop
+    PG -. SELECT pending .-> Loop
 
     ES[(Elasticsearch)]
     Staging[(Staging<br>Parquet)]
@@ -1098,7 +1133,7 @@ flowchart LR
 
 | 段 | 谁 | 做什么 | 频率 |
 |----|----|--------|------|
-| 第 1 段 | **Outbox Worker（Bronze Sink）** | 拉 `publish_state='pending'` 事件（FOR UPDATE SKIP LOCKED）→ ES `_bulk` + 写 staging parquet（文件名带 `event_seq` 区间作幂等键）→ 标 published | 实时（NOTIFY 触发，秒级） |
+| 第 1 段 | **Outbox Worker（Bronze Sink）** | 拉 `publish_state='pending'` 事件（FOR UPDATE SKIP LOCKED）→ ES `_bulk` + 写 staging parquet（文件名带 `event_seq` 区间作幂等键）→ 标 published | 30s 轮询 + drain loop，端到端 ≤ 60s |
 | 第 2 段 | **PyIceberg CronJob** | 列 staging **新文件**（不读 PG，无 cursor）→ `MERGE INTO bronze.asset_events USING staging ON event_seq`（幂等去重）→ 删除已合入 staging | 每 5–10 分钟 |
 
 **为什么不让 Worker 直写 Iceberg**：Iceberg 的 metadata 提交、snapshot 推进、并发协调由 PyIceberg 这一层职业选手做，Worker 只负责"事件落到对象存储"，简化职责边界；同时高频小文件直接写 Iceberg 后期 compaction 成本高，staging 攒批一次 MERGE 更紧凑。
@@ -1109,8 +1144,8 @@ flowchart LR
 
 | 角色 | 谁 | 做什么 |
 |------|----|--------|
-| **生产者** | 业务层 usecase | 业务写 + 事件写**同一事务**，COMMIT 后发 NOTIFY。这是平台**唯一**写事件的入口 |
-| **快投递者** | Outbox Worker（Go + river） | 收 NOTIFY → 拉 pending 事件 → 调 Sink（ES / Bronze staging）→ 标 published；亚秒级延迟，至少一次语义 |
+| **生产者** | 业务层 usecase | 业务写 + 事件写**同一事务**，COMMIT 即对 worker 可见。这是平台**唯一**写事件的入口 |
+| **投递者** | Outbox Worker（Go，自写 ticker + SQL） | 30s ticker 触发 → drain loop 拉 pending → 调 Sink（ES / Bronze staging）→ 标 published；端到端 ≤ 60s，至少一次语义 |
 | **湖仓合入** | PyIceberg k8s CronJob | 周期扫 staging parquet → MERGE INTO Iceberg Bronze；分钟级延迟，幂等去重 |
 
 ##### 关键约定
@@ -1118,8 +1153,8 @@ flowchart LR
 | 维度 | 实现 |
 |------|------|
 | **入口** | usecase 在状态变更时同事务追加 `asset_events`，带 `event_seq BIGSERIAL UNIQUE` 和 `payload_schema_version` |
-| **唤醒** | PG `LISTEN/NOTIFY` 亚秒级；listener 断线期间丢通知不要紧，事件持久存在 outbox，重连后按 watermark 续 |
-| **消费并发** | `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 500`，多 worker 实例可并发拉取互不阻塞 |
+| **唤醒** | 30s 固定 tick 轮询（纯 polling，不引入 LISTEN/NOTIFY）；事件持久存在 outbox，worker 重启后从 watermark 续；单 tick 内 drain loop 直至排空 |
+| **消费并发** | `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1000`，多 worker 实例可并发拉取互不阻塞 |
 | **顺序** | 严格按 `event_seq` 推进，不用 `occurred_at`（详见 §5.2.7） |
 | **cursor 推进** | 直查 PG 的下游用 `safe_horizon = MIN(pending) − 1` 协议（§5.2.7）；走 staging 文件的下游不需要 cursor |
 | **payload 版本** | 每种 event_type 对应 schema 版本号 `payload_schema_version`；新增字段 minor，破坏性变更 major |
@@ -1131,16 +1166,16 @@ flowchart LR
 
 | 下游 | 端到端延迟 |
 |------|------------|
-| Elasticsearch | < 1 秒（NOTIFY 唤醒 + worker 直接投递） |
+| Elasticsearch | ≤ 60 秒（30s tick + drain loop） |
 | Iceberg Bronze | 5–10 分钟（PyIceberg CronJob 周期合入） |
 | 向量库（3.x） | < 10 秒（embedding 异步 batch） |
 
 ##### 边界与替代方案
 
 - **为什么 1.0 不上**：1.0 还没有 ES / 湖仓 / 向量库，没有"下游"要同步。`asset_events` 表设计可以提前进 schema，但 outbox worker 不需要起。
-- **为什么不上 Debezium / Kafka / Flink CDC**：当前规模（事件量 < 100 events/s 预期，consumer 数 ≤ 3）远未触达这些重型 CDC 的收益区。river 这套自建 worker 在 PG 单库 + 单 NOTIFY 通道下足够，运维复杂度低一个数量级。如果未来事件量持续 > 1k/s 或 consumer ≥ 5 时再独立评估。
+- **为什么不上 Debezium / Kafka / Flink CDC**：当前规模（事件量 < 100 events/s 预期，consumer 数 ≤ 3）远未触达这些重型 CDC 的收益区。一个自写 worker（ticker + `FOR UPDATE SKIP LOCKED`）在 PG 单库下足够，运维复杂度低一个数量级。如果未来事件量持续 > 1k/s 或 consumer ≥ 5 时再独立评估。
 - **为什么不让 backend 直接同步双写 ES / 湖仓**：违反"PG 权威 + 衍生异步"，ES 慢 / 故障会拖死在线 API，且事务内调外部 IO 是反模式。
-- **为什么不只用 LISTEN/NOTIFY**：NOTIFY 只是"快速唤醒"，listener 断线期间通知**永久丢失**且无法 replay；outbox 持久表才是"保底重放"。两者组合：NOTIFY 让正常情况下延迟 < 1s，outbox 让故障 / 重启情况下不丢事件。
+- **为什么不引入 LISTEN/NOTIFY**：业务 SLA 已放宽到分钟级（≤ 60s），30s 纯轮询足够；引入 NOTIFY 会带来"会话级长连接 / 不能走 PgBouncer transaction pool / 通知丢失需 fallback 轮询"等额外复杂度，收益不抵成本。outbox 持久表本身就是"保底重放"，故障 / 重启情况下不丢事件。详见 `outbox-worker-design.md`。
 
 #### 5.6.4 为什么选 Iceberg / 湖仓是否贴合本场景
 
@@ -1331,7 +1366,7 @@ flowchart LR
 - **角色**：算法 worker（Ray batch / k8s job / 任意外部编排器，平台不绑定）
 - **触发**：算法注册表声明 `depends_on=[mcap_ingested]`，新 MCAP 落地后该算法资产进入 pending
 - **关键性**：worker 完全 stateless；同事务写投影 + 事件，下游 ES / Iceberg 异步同步
-- **SLO**：D2 写入 < 200 ms P99；下游可见 < 2 s（ES），≤ 10 min（Iceberg Bronze）
+- **SLO**：D2 写入 < 200 ms P99；下游可见 ≤ 60 s（ES），≤ 10 min（Iceberg Bronze）
 
 ```mermaid
 sequenceDiagram
@@ -1340,7 +1375,6 @@ sequenceDiagram
     participant API as Backend API
     participant UC as 业务层
     participant PG as PostgreSQL
-    participant Notify as LISTEN/NOTIFY
     participant Out as Outbox Worker
     participant ES as Elasticsearch
     participant Lake as Iceberg Bronze
@@ -1361,13 +1395,14 @@ sequenceDiagram
     UC->>PG: BEGIN
     UC->>PG: UPSERT asset_algo_latest
     UC->>PG: INSERT asset_events('algo_completed', event_seq=BIGSERIAL)
-    UC->>PG: COMMIT + NOTIFY
+    UC->>PG: COMMIT
     end
 
     UC-->>W: 200 OK
 
+    Note over Out: 30s ticker fire（drain loop）
+    Out->>PG: SELECT pending FOR UPDATE SKIP LOCKED LIMIT 1000
     par 异步分发
-        Notify-->>Out: NOTIFY
         Out->>ES: bulk index (doc_id=asset_id)
     and
         Out->>Lake: 写 staging parquet (event_seq 区间)
@@ -1489,7 +1524,7 @@ sequenceDiagram
 
 - **角色**：数据 owner / 标注负责人
 - **关键性**：搜索 + 写 + 异步同步形成闭环；用户 ~2 s 内看到 tag 在 ES 反映
-- **SLO**：F1 < 500 ms；B3 30 条规模 < 1 s；ES 反映 < 2 s
+- **SLO**：F1 < 500 ms；B3 30 条规模 < 1 s；ES 反映 ≤ 60 s
 
 ```mermaid
 sequenceDiagram
@@ -1511,10 +1546,10 @@ sequenceDiagram
     API->>PG: BEGIN
     API->>PG: UPSERT asset_tags（30 条）
     API->>PG: INSERT asset_events('tag_updated', 30 条)
-    API->>PG: COMMIT + NOTIFY
+    API->>PG: COMMIT
     API-->>U: 200 OK
 
-    Note over Out,ES: < 2s 异步刷新
+    Note over Out,ES: ≤ 60s 异步刷新（30s tick）
     Out->>ES: bulk update tags 字段
     ES-->>Out: ok
 
@@ -1551,7 +1586,7 @@ sequenceDiagram
 
     Note over Out,ES: 自动消费<br>doc_id=asset_id 天然幂等
     loop 直到 lag=0
-        Out->>PG: SELECT pending FOR UPDATE SKIP LOCKED<br>LIMIT 500 ORDER BY event_seq
+        Out->>PG: SELECT pending FOR UPDATE SKIP LOCKED<br>LIMIT 1000 ORDER BY event_seq
         Out->>ES: bulk index
         Out->>PG: UPDATE publish_state='published'
     end
@@ -1570,8 +1605,8 @@ sequenceDiagram
 
 | event_type | producer | 主要 consumer | 幂等键 | 端到端延迟 SLO |
 |------------|----------|---------------|--------|----------------|
-| `mcap_ingested` | Backend | ES, Iceberg | `mcap_file_id` | ES < 1s, Lake 10min |
-| `asset_created` | Backend | ES, Iceberg | `asset_id` | ES < 1s, Lake 10min |
+| `mcap_ingested` | Backend | ES, Iceberg | `mcap_file_id` | ES ≤ 60s, Lake 10min |
+| `asset_created` | Backend | ES, Iceberg | `asset_id` | ES ≤ 60s, Lake 10min |
 | `asset_updated` | Backend | ES, Iceberg | `(asset_id, version)` | 同上 |
 | `asset_lifecycle_changed` | Backend | ES, Iceberg, Audit | `(asset_id, version)` | 同上 |
 | `tag_upserted` | Backend, Algo Worker | ES, Iceberg | `(asset_id, tag_key)` | 同上 |
@@ -1611,7 +1646,7 @@ Consumer 必须保证：
 
 ### 5.10 一致性与补偿机制
 
-> outbox 给的是"业务表 + 事件表强一致"，但下游投递天然是异步、可能失败。本节明确**每条链路的语义、重试策略、毒消息处理、人工补偿入口**。
+> outbox 给的是"业务表 + 事件表强一致"，但下游投递天然是异步、可能失败。本节明确**每条链路的语义、重试策略、死信消息处理、人工补偿入口**。
 
 #### 5.10.1 各链路投递语义
 
@@ -1634,9 +1669,9 @@ Consumer 必须保证：
 | ES `429`（背压） | 自动重试 | 指数退避 + 减小 batch size | 持续超过 1 小时升级告警 |
 | consumer 进程崩溃 | `FOR UPDATE SKIP LOCKED` 释放锁，下一轮被其他 worker 拿走 | — | — |
 
-#### 5.10.3 毒消息（Dead Letter Queue）
+#### 5.10.3 死信消息（Dead Letter Queue）
 
-任何事件被同一 consumer 重试 ≥ 5 次仍失败 → 标记为毒消息：
+任何事件被同一 consumer 重试 ≥ 5 次仍失败 → 标记为死信消息：
 
 - `asset_events.publish_state` 设为 `failed`，写入 `last_error`、`retry_count` 字段；
 - 不再被快速 worker 拉取，避免堵塞队列；
@@ -1689,7 +1724,7 @@ flowchart LR
 | 角色 | 选型 | 仓库 | 备注 |
 |------|------|------|------|
 | 主库 | **PostgreSQL 16+** | postgres/postgres | 标准托管 PG（CloudSQL / RDS / Aliyun RDS） |
-| Outbox / Worker 框架 | **river**（Go） | [riverqueue/river](https://github.com/riverqueue/river) | PG-backed job queue，原生支持 LISTEN/NOTIFY + SKIP LOCKED + 重试 + 退避 + DLQ；与 `asset_events` 设计契合 |
+| Outbox Worker | **自写 ticker + SQL**（Go 标准库） | 本仓 `backend/internal/outbox/`（Phase 2 引入） | 30s 轮询 + `FOR UPDATE SKIP LOCKED` + drain loop；自写 ~300 行可控，不引入第三方 job queue（评估过 river，对当前 SLA 与 sink 数 ≤ 3 收益不抵复杂度）；详见 `outbox-worker-design.md` |
 | ES 客户端 | **go-elasticsearch**（Go 官方） | [elastic/go-elasticsearch](https://github.com/elastic/go-elasticsearch) | 直接调 `_bulk` API，几十行代码接通 |
 | Iceberg 写入 / MERGE / compact | **PyIceberg**（Python 官方） | [apache/iceberg-python](https://github.com/apache/iceberg-python) | 不需要 JVM / Spark；CronJob 跑 Python 脚本即可；适合 1.0 / 2.0 规模 |
 | Iceberg REST Catalog | **Polaris**（首选）或 **Lakekeeper**（轻量替代） | [apache/polaris](https://github.com/apache/polaris) / [lakekeeper/lakekeeper](https://github.com/lakekeeper/lakekeeper) | 独立服务；2026 中后期 Polaris 成熟前可先用 Lakekeeper |
@@ -1705,7 +1740,7 @@ flowchart LR
 |------|------|
 | **Dagster** | DAG / lineage 能力当前用不上；纯调度需求 k8s CronJob 已足够；引入 Dagster 后 ops 成本增加一倍 |
 | **Apache Spark** | PyIceberg 在 1.0 / 2.0 规模下足以承担 MERGE / compact；引入 Spark 需要单独运维 JVM 集群 |
-| **Apache Kafka / Pulsar** | 单一事件源 + 少量 consumer 不需要消息总线；PG `LISTEN/NOTIFY` + `asset_events` outbox 已具备消息持久化、回放、多消费者特性 |
+| **Apache Kafka / Pulsar** | 单一事件源 + 少量 consumer 不需要消息总线；`asset_events` outbox + 30s 轮询 worker 已具备消息持久化、回放、多消费者特性 |
 | **Debezium** | CDC 收益主要来自跨系统、低代码采集；本平台 producer 全部由 Backend 同事务写 `asset_events`，比 CDC 语义更强（exactly-once 入 outbox） |
 | **Apache Flink / Flink CDC** | Streaming 计算能力当前没有需求；同步链路是"事件→Sink"的简单形态，不需要 CEP / window / state 等 Flink 强项 |
 | **Daft / Lance** | 多模态向量场景在 3.x 才出现；那时再独立选型 |
@@ -1717,7 +1752,7 @@ flowchart LR
 
 | 触发条件 | 候选升级路径 |
 |----------|--------------|
-| 事件持续 > 1k events/s | river → 维持，但 PG outbox 表分库 / Debezium 评估 |
+| 事件持续 > 1k events/s | 自写 worker → 维持，但 PG outbox 表分库 / 评估 Debezium / 多 worker 并发拉取 |
 | outbox consumer ≥ 5 个 | 评估引入消息总线（Kafka / NATS）作 fan-out |
 | Bronze MERGE 单批 > 1000 万行 / 跑 > 30 分钟 | PyIceberg → Spark + Iceberg Connector 评估 |
 | Bronze→Silver→Gold transformation 出现 ≥ 5 步 DAG 依赖 | k8s CronJob → 评估 Dagster / Argo Workflows |
@@ -1758,7 +1793,7 @@ flowchart LR
 |--------|----------|-------------|--------------------|----------|
 | 主库 | PostgreSQL | MySQL / Bigtable / ClickHouse / Spanner / CockroachDB | OLTP 成熟度 + 事务 + JSONB + outbox 同事务原子写；ClickHouse 不适合 OLTP；NewSQL 共识延迟过高、单位成本 3–10× | §5.4 / §5.12 |
 | 表格式 | Iceberg | Delta Lake / Hudi / 裸 Parquet | 引擎中立性最强；Delta 偏 Databricks，Hudi 引擎窄；裸 Parquet 无 ACID / snapshot | §5.6.4 |
-| 同步机制 | Outbox + river | Debezium + Kafka / Flink CDC / 业务双写 / 定时轮询 | 当前事件量 < 100 events/s，重型 CDC 收益不抵复杂度；双写违反 PG 权威；轮询漏事件不能回放 | §5.6.2 |
+| 同步机制 | Outbox + 自写 Worker（30s 轮询） | Debezium + Kafka / Flink CDC / 业务双写 / 定时扫 `updated_at` | 当前事件量 < 100 events/s，重型 CDC 收益不抵复杂度；双写违反 PG 权威；扫 `updated_at` 漏事件不能回放（outbox 表则可重放） | §5.6.2 |
 | 编排 | k8s CronJob + PyIceberg | Dagster / Airflow / Prefect / Temporal / Argo | 当前唯一周期任务是 5–10 min PyIceberg MERGE，CronJob 足够；编排器收益要等 DAG / 多任务依赖出现 | §5.11 / §9.4 |
 | Iceberg Catalog | Polaris / Lakekeeper（自建） | Glue / Unity Catalog / Nessie / BigLake metadata | 自建保证跨云零绑定；托管 Catalog 锁定云厂商 | §5.6.4 / §6.4.1 |
 | 计算引擎 | Trino | BigQuery / Spark / Athena | BigQuery 锁定 GCP 且贵；Spark 重运维；Trino 多源联邦 + 与 Iceberg 一等支持 | §5.6.1 / §6.4.1 |
@@ -1790,7 +1825,7 @@ make all-logs  # 查看任一服务日志
 | 组件 | 形态 | 备注 |
 |------|------|------|
 | Backend (Go) | Kubernetes Deployment，HPA 按 CPU 扩 | 单镜像，仅对接 PostgreSQL（经 PgBouncer） |
-| Outbox Worker（Go + river） | 起步：Backend 进程内 goroutine；后续：独立 K8s Deployment | 多实例靠 `FOR UPDATE SKIP LOCKED` 协调；river 内置告警 / 重试 / DLQ；`LISTEN/NOTIFY` 直连 PG |
+| Outbox Worker（Go） | 起步：Backend 进程内 goroutine（`OUTBOX_WORKER_ENABLED=true`）；后续：独立 K8s Deployment | 自写 ticker + `FOR UPDATE SKIP LOCKED`；多实例可并发拉取；30s 轮询，无 LISTEN/NOTIFY 长连接 |
 | **PgBouncer** | K8s Deployment（独立 Pod，2 副本） | transaction pooling，收敛 backend 横扩后的 PG 连接数 |
 | PostgreSQL | 云托管（CloudSQL / RDS / Aliyun RDS） | 主从 + PITR |
 | Elasticsearch | 云托管（Elastic Cloud / 阿里云 ES） | 单 cluster |
@@ -1810,16 +1845,15 @@ Backend 横向扩容后，每个 pod 自带连接池（默认 25–50 个 conn�
 flowchart LR
     subgraph App[应用层]
         BE[Backend × N<br>每 pod pool ≈ 25]
-        Worker["Outbox Worker<br>(river)"]
+        Worker["Outbox Worker<br>Go · 30s tick"]
     end
 
     PgB[(PgBouncer<br>transaction pool<br>≈ 100 conn)]
     PG[(PostgreSQL<br>primary)]
 
     BE -->|业务读写<br>:6432| PgB
-    Worker -->|普通任务<br>:6432| PgB
+    Worker -->|轮询 + FOR UPDATE SKIP LOCKED<br>:6432| PgB
     PgB -->|池化连接<br>:5432| PG
-    Worker -. "LISTEN/NOTIFY<br>长驻直连 :5432" .-> PG
 ```
 
 **关键约定**：
@@ -1828,9 +1862,7 @@ flowchart LR
 |------|------|
 | pool 模式 | `transaction`（事务级复用，最高效） |
 | 默认参数 | `max_client_conn=1000`、`default_pool_size=25`、`reserve_pool=10` |
-| 例外通道 | Outbox Worker 的 `LISTEN/NOTIFY` 走**直连 PG**（transaction pool 不支持 session-level 状态） |
-
-> **进程内模式说明**：Phase 1 起步时 Outbox Worker 以 Backend 进程内 goroutine 运行。此时 Worker 的 `LISTEN/NOTIFY` 连接由 Backend 启动时单独建立一条直连 PG 的长连接（不经 PgBouncer），与业务请求的 PgBouncer 连接池共存于同一进程。抽离为独立 K8s Deployment 后，该直连逻辑不变，只是从进程内移到独立 Pod。
+| 例外通道 | 当前**无例外**——Outbox Worker 走 30s 轮询，所有连接均经 PgBouncer transaction pool（不依赖 LISTEN/NOTIFY 的会话级状态） |
 | 不能用的 PG 特性 | session-level prepared statement、`SET LOCAL` 之外的 `SET`、临时表跨事务、advisory lock 跨事务（业务层已规避）|
 | 故障恢复 | PgBouncer 是无状态进程，挂了自动重启不影响数据；2 副本 + K8s service 即可 |
 
@@ -2132,7 +2164,6 @@ flowchart LR
 
 3. **Backend 写路径接 outbox**
    - `asset / mcap / delivery / tag / algo` 所有 mutation 同事务追加 events
-   - `pg_notify` 唤醒
    - 单元测试覆盖
 
 4. **新建投影表 `asset_tags / asset_algo_latest`** + 进入双写期
@@ -2140,12 +2171,12 @@ flowchart LR
    - cf_* 历史数据 backfill
    - 前端 facet/filter 切到投影表 + `tag_registry.yaml`
 
-5. **Outbox Worker（Go + river）**
-   - 引入 [river](https://github.com/riverqueue/river) 做 PG 后端 job queue
-   - 起步：Backend 进程内 goroutine（最简）；后续抽离为独立 K8s Deployment
-   - LISTEN/NOTIFY + 1s tick 兜底；`FOR UPDATE SKIP LOCKED` 并发安全
+5. **Outbox Worker（Go，自写 ticker + SQL）**
+   - 起步：Backend 进程内 goroutine（`OUTBOX_WORKER_ENABLED=true`，最简）；后续抽离为独立 K8s Deployment
+   - 30s 固定 tick 轮询（纯 polling，无 LISTEN/NOTIFY）+ drain loop；`FOR UPDATE SKIP LOCKED LIMIT 1000` 并发安全；端到端 ≤ 60s
    - Sink 接口：`ES Sink`（go-elasticsearch `_bulk`）+ `Bronze Sink`（写 staging parquet）
-   - 监控指标接 Prometheus
+   - panic recovery + 监控指标接 Prometheus
+   - 详细设计见 `outbox-worker-design.md`
 
 6. **Iceberg 入湖（PyIceberg + Polaris/Lakekeeper）**
    - 部署 Polaris（首选）或 Lakekeeper 作 Iceberg REST Catalog
@@ -2166,7 +2197,7 @@ flowchart LR
 9. **PgBouncer 入栈**（详见 §6.3）
    - docker-compose / K8s 加 PgBouncer Deployment（transaction pool）
    - Backend 改 `DB_HOST/DB_PORT` 指向 PgBouncer，业务代码 0 改动
-   - Outbox Worker 的 `LISTEN/NOTIFY` 走直连 PG 例外通道
+   - Outbox Worker 同样走 PgBouncer（无 LISTEN/NOTIFY 长连接，无例外通道）
 
 10. **可观测性**
     - Prometheus + Grafana dashboard（API / Outbox / PG / PgBouncer / ES / PyIceberg CronJob）
@@ -2202,7 +2233,7 @@ flowchart LR
 | 维度 | 上线前置 | 验收指标 | 回滚触发 | 回滚动作 |
 |------|----------|----------|----------|----------|
 | Schema 字段提升 | DDL 迁移 + backfill 脚本就绪 + 双写一周无差异 | 新旧字段一致率 100%；旧字段读流量 < 5% | backfill 不一致率 > 0.1% | 暂停字段切换；新字段读路径关闭，全部回退到旧字段 |
-| `asset_events` outbox | 表已建 + worker 部署 + ES 索引就绪 | event 投递成功率 > 99.9%（24 小时观察）；P99 延迟 < 2s | 投递失败率 > 1% 持续 1 小时 | 关闭 worker；事件继续累积在 PG（不丢），后续修复重启 |
+| `asset_events` outbox | 表已建 + worker 部署 + ES 索引就绪 | event 投递成功率 > 99.9%（24 小时观察）；端到端 P99 延迟 ≤ 60s（30s tick + drain loop） | 投递失败率 > 1% 持续 1 小时 / 端到端延迟 P99 > 5 分钟 | 关闭 worker；事件继续累积在 PG（不丢），后续修复重启 |
 | ES 检索接入 | `/api/v1/search/assets` 上线 + fallback PG 验证 | ES 查询成功率 > 99%；查询结果与 PG 一致率 > 99.9% | ES 故障导致 fallback PG 触发率 > 5% 持续 30 分钟 | 流量直接切回 PG 查询，关闭 ES 检索入口 |
 | 投影表 `asset_tags / asset_algo_latest` | 双写期已运行 ≥ 30 天 + 数据一致 | cf_tag/cf_algo 与投影表一致率 100%（每日对账） | 投影表落后 > 1000 行或一致性 < 99.9% | 读路径切回 cf_tag/cf_algo JSONB；保留双写但暂停切读 |
 | `lifecycle_state` 切换 | 与 `status` 双写 ≥ 30 天 + 前端切流验证 | 前端列表过滤 lifecycle_state 流量 ≥ 80% | 用户报错率上升或筛选结果异常 | 前端筛选条件回切到 status；后端继续双写 |
@@ -2234,7 +2265,7 @@ flowchart LR
 | 基础设施 | ✅ | §6.1 / §6.2 / §6.4 | GKE Autopilot + Cloud SQL + GCS + GMP，原则"用 GCP 托管，少自运维"，全套保留跨云退路 |
 | 可扩展性 | ✅ | §5.12 / §6.4.4 | 1.0 单库 PG → 2.0 月分区 + 归档 → 3.x 触达触发线后 PG-wire 兼容分片（Citus / Aurora Limitless）；ES / Iceberg / Trino 横扩友好 |
 | 数据完整性 | ✅ | §5.6.2 / §5.10 / §7 | 业务表 + `asset_events` 同事务原子写；下游消费按 `event_seq` 推进 watermark；`dataset_snapshots` 不可硬删；事件可重放 |
-| 延迟 | ✅ | §5.6.2（同步延迟）/ §8.2（业务 SLO） | API P99 < 500 ms；写入到 ES < 2 s；写入到 Iceberg ≤ 10 min |
+| 延迟 | ✅ | §5.6.2（同步延迟）/ §8.2（业务 SLO） | API P99 < 500 ms；写入到 ES ≤ 60 s（30s tick + drain）；写入到 Iceberg ≤ 10 min |
 | 冗余 & 可靠性 | ✅ | §7 故障域应对表 | 业务异步派生与主库解耦；ES 故障走 PG fallback；Worker 全挂事件不丢 |
 | 稳定性（SLO / 监控） | ✅ | §8 | API 可用性 ≥ 99.9%；GMP + Cloud Monitoring + 飞书告警 |
 | 外部依赖 | ✅ | §7.2 | 11 类外部依赖逐项列出 SLA / 影响 / 降级 / 跨云退路 |

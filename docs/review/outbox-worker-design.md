@@ -41,33 +41,32 @@
 
 ```mermaid
 flowchart LR
-    TX["业务事务<br/>同事务写<br/>业务表 + asset_events"]
+    TX["业务事务<br/>同事务写业务表<br/>+ asset_events"]:::biz
 
-    subgraph PG["PostgreSQL（主库）"]
-      direction TB
-      AS[("assets /<br/>asset_algo_latest")]
-      AE[("asset_events<br/>pending → published")]
-      OC[("outbox_sink_cursors<br/>safe_horizon")]
-    end
+    AS["PG · assets /<br/>asset_algo_latest"]:::pg
+    AE["PG · asset_events<br/>pending → published"]:::pg
 
-    WK["Outbox Worker<br/>30s tick<br/>drain loop"]
+    WK["Outbox Worker<br/>30s tick · drain loop"]:::wk
 
-    subgraph SK["下游"]
-      direction TB
-      ES[("Elasticsearch<br/>index: assets")]
-      Adm["/admin/search/reindex<br/>全量重建"]:::adm
-    end
+    ES["Elasticsearch<br/>index: assets"]:::sink
+    Adm["/admin/search/reindex<br/>全量重建"]:::adm
 
-    TX --> AS
-    TX --> AE
-    AS --> WK
-    AE --> WK
-    WK --> ES
-    WK -. ack：mark published + advance horizon .-> PG
-    Adm -. 旁路重写 .-> ES
+    TX -->|"写业务态"| AS
+    TX -->|"INSERT pending"| AE
+    AS -->|"投影读"| WK
+    AE -->|"FetchPending"| WK
+    WK -->|"BulkIndex doc_id=asset_id"| ES
+    WK -. "ack：mark published + advance horizon" .-> AE
+    Adm -. "旁路重写" .-> ES
 
-    classDef adm fill:#fff5e6,stroke:#d4a574,color:#7a5a2e;
+    classDef biz  fill:#eef2ff,stroke:#5b6cff,color:#1f2a6b;
+    classDef pg   fill:#e6f5ec,stroke:#3a9b65,color:#173d27;
+    classDef wk   fill:#fff7d6,stroke:#c4a233,color:#5a4708;
+    classDef sink fill:#eaf4fb,stroke:#3d8ec9,color:#143a5a;
+    classDef adm  fill:#fff5e6,stroke:#d4a574,color:#7a5a2e;
 ```
+
+> Cursor 表 `outbox_sink_cursors` 不在总览图里画——它只承载"已投递到哪个 `event_seq`"的记账，详见 §3.2。
 
 > Worker 内部链路：`tick → FetchPending → DedupByAsset → Projector.Build → ESSink.BulkIndex → MarkPublishedAndAdvanceCursor`，drain loop 在同一 tick 内反复拉直到 pending 空。详见 §5.1 伪代码。
 
@@ -340,40 +339,72 @@ stateDiagram-v2
 
 ### 6.1 输入与输出
 
-```go
-// 输入：asset_id
-// 输出：ES doc，shape 与 elasticsearch-init 的 mapping 严格对齐
+Projector 输入是一个 `asset_id`，输出是与 ES `assets` 索引 mapping 严格对齐的文档。
+为了避免 ES 跨索引 join，Projector 同事务内读取四张 PG 表后做反范式：
 
-func (p *Projector) Build(ctx context.Context, assetID string) (ESDoc, error) {
-    asset, err := p.assetRepo.Get(ctx, assetID)
-    if err != nil { return nil, err }
-    if asset == nil {
-        // 资产已软删除：返回 tombstone 让 ES 删除该 doc
-        return ESDoc{ID: assetID, Tombstone: true}, nil
-    }
+| 来源表 | 用途 |
+|--------|------|
+| `assets` | 主体字段（生命周期、时长、归属、交付汇总）|
+| `mcap_files` | 设备 / 场景维度反范式到 `mcap.*` 命名空间 |
+| `asset_tags` | 投影成 `tags` (nested) + `tags_flat` (flattened) |
+| `asset_algo_latest` | 投影成 `algos` (nested) |
 
-    algos, err := p.algoLatestRepo.ListByAsset(ctx, assetID)
-    if err != nil { return nil, err }
-
-    return projectToESDoc(asset, algos), nil
-}
-```
+软删除（`assets.is_deleted=true`）时输出 tombstone，由 ES Sink 调 `DELETE /assets/_doc/<asset_id>`。
 
 ### 6.2 字段映射
 
+#### 6.2.1 标识 / 状态
+
+| ES 字段 | 来源 | 类型 |
+|---|---|---|
+| `asset_id` | `assets.asset_id` | keyword（doc_id）|
+| `mcap_file_id` / `segment_locator` | `assets.<col>` | keyword |
+| `asset_type` / `lifecycle_state` / `status` | `assets.<col>` | keyword |
+| `is_deleted` | `assets.is_deleted` | boolean |
+| `tenant_id` / `project_id` | `assets.<col>` | keyword |
+| `parent_asset_id` / `root_asset_id` / `asset_level` | `assets.<col>` | keyword / int |
+| `owner` / `reviewer` | `assets.<col>`（提升列），多字段：`keyword` + `.text` | 双形态 |
+| `notes` | `assets.metadata->>'notes'` 或提升列 | text |
+
+#### 6.2.2 时间 / 时长
+
+| ES 字段 | 来源 | 类型 |
+|---|---|---|
+| `start_timestamp_ns` / `end_timestamp_ns` | `assets.<col>` | long（纳秒）|
+| `duration_ms` | `assets.duration_ms` | long |
+| `recorded_at` | `assets.start_timestamp_ns / 1_000_000`（派生）| date（毫秒，给 date_histogram 聚合用）|
+| `created_at` / `updated_at` | `assets.<col>` | date |
+| `delivery_count` | `assets.delivery_count` | int |
+| `last_delivered_at` / `last_delivered_to` | `assets.<col>` | date / keyword |
+
+#### 6.2.3 mcap 反范式（`mcap.*` namespace）
+
 | ES 字段 | 来源 | 说明 |
 |---|---|---|
-| `asset_id` | `assets.asset_id` | doc_id |
-| `mcap_file_id` | `assets.mcap_file_id` | |
-| `segment_locator` | `assets.segment_locator` | |
-| `status` | `assets.status` | |
-| `env` / `task` / `owner` / `reviewer` / `notes` / `batch` | 优先 `assets.<col>`（提升列），缺省退到 `assets.cf_meta->>field`（兼容期）| |
-| `duration_sec` | `assets.duration_ms / 1000.0` | float |
-| `delivery_count` | `assets.delivery_count` | int |
-| `tag_priority` / `tag_quality` | `assets.cf_tag->>priority` / `quality` | 兼容期；将来切到 `asset_tags` 表 |
-| `tags` | `assets.cf_tag` 整体 JSONB | dynamic object |
-| `algo_summary` | `asset_algo_latest` 多行聚合 → `{algo_name: {status, version, output_uri, finished_at}}` | dynamic object |
-| `created_at` / `updated_at` | `assets.<col>` | date |
+| `mcap.vendor_id` / `device_id` / `camera_model` | `mcap_files.<col>` | 按设备 / 厂商过滤资产 |
+| `mcap.scene_id` / `location_id` / `environment_id` | `mcap_files.<col>` | 按拍摄场景 / 地点过滤 |
+| `mcap.task_id` / `data_source` | `mcap_files.<col>` | 按采集任务过滤 |
+
+**为什么反范式**：ES 没有原生 join；这些字段查询频率高（例如"找 vendor=A 拍的 segment"），如果不预先平铺到资产 doc，必须先在 ES 拿 asset，再回 PG 取 mcap，链路立刻烂。代价是 mcap 字段更新时需要重新 fan-out 该 mcap 关联的所有 segment（事件 `mcap_metadata_updated`，下游 sink 收到后批量重投相关 asset doc）。
+
+#### 6.2.4 Tags（双形态）
+
+| ES 字段 | 来源 | 形态 |
+|---|---|---|
+| `tags` | `asset_tags` 全部行投影 | **nested** array：`[{key, value, value_num, value_bool, source_type, source_name, confidence}, ...]` |
+| `tags_flat` | 同上，平铺为 `{key: value}` 对象 | **flattened**：给简单等值过滤（`tags_flat.scene = "highway"`）|
+
+**取舍**：90% 的 tag 查询是简单等值，走 `tags_flat` 性能最好；剩下 10% 复杂查询（按 `source_type` / `confidence` 过滤、按 tag 来源做 facet）走 `tags`。两者由同一份 `asset_tags` 投影，存储约多 30%。
+
+不再用 `object + dynamic:true` —— 它会被首次写入的类型锁死，且无法表达 `source_type` / `confidence` 等元信息。
+
+#### 6.2.5 Algos（nested）
+
+| ES 字段 | 来源 | 形态 |
+|---|---|---|
+| `algos` | `asset_algo_latest` 全部行投影 | **nested** array：`[{name, version, status, result_tag, result_score, run_id, finished_at}, ...]` |
+
+支持复杂组合查询（"hand_tracking.score>0.8 AND face_blur.status=ok"），每个算法一条 nested doc，相互不串。
 
 ### 6.3 Tombstone 处理
 
@@ -397,12 +428,17 @@ func (s *ESSink) EnsureMapping(ctx context.Context) error {
     actual, _ := s.client.GetMapping(ctx, "assets")
     // 强校验：字段存在 + 类型匹配。只有"完整 + 类型对齐"才算可写。
     required := map[string]string{
-        "asset_id":      "keyword",
-        "updated_at":    "date",
-        "duration_sec":  "float",
-        "tags":          "object",
-        "algo_summary":  "object",
-        "is_deleted":    "boolean",
+        "asset_id":           "keyword",
+        "lifecycle_state":    "keyword",
+        "tenant_id":          "keyword",
+        "is_deleted":         "boolean",
+        "start_timestamp_ns": "long",
+        "end_timestamp_ns":   "long",
+        "duration_ms":        "long",
+        "updated_at":         "date",
+        "tags":               "nested",
+        "tags_flat":          "flattened",
+        "algos":              "nested",
     }
     if missing := mappingDiff(actual, required); len(missing) > 0 {
         log.Warn("ES mapping incomplete or type mismatch; skipping auto-fix to avoid data loss",
