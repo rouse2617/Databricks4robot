@@ -1,62 +1,75 @@
 # data-platform
 
-`data-platform` 是一个面向视频/多模态资产管理与交付的工程骨架，当前以 **Bigtable + GCS + Pub/Sub** 为核心。
+面向视频 / 多模态**资产元数据、算法状态、检索与交付**的单进程后端 + Web / SDK 工程骨架。
 
-## Repository Layout
+> **架构基线与评审文档**以 [`docs/review/README.md`](docs/review/README.md) 为准（当前 **1.0：PostgreSQL + Backend**；**Bigtable 已不作为运行时存储**，`STORAGE_BACKEND=bigtable` 会启动失败）。本页只负责仓库导航与本地启动。
 
-- `backend/`：Go 单进程服务（统一暴露 assets / mcap / deliveries API）
-- `sdk/`：Python SDK（`grace_sdk`）
-- `Frontend/`：React 前端
-- `dagster/`：Dagster 任务编排骨架
-- `deploy/`：本地与部署脚本（emulator、k8s 等）
-- `schemas/`：数据模型与 schema 文档
-- `docs/`：架构、ADR、设计文档
+## Runtime snapshot
 
-当前 Bigtable 写入结构以 `data4cyber` 仓库内的 `schemas/sql.md` 为准，`backend/internal/bigtable/` 已对齐表名、列族与索引 rowkey 规则。
+| 组件 | 状态 |
+|------|------|
+| 存储 | **PostgreSQL**（默认 `STORAGE_BACKEND=postgres`） |
+| 服务 | Go 单进程（`backend/cmd/server`） |
+| 检索 | 可选 **Elasticsearch**（`ELASTICSEARCH_URL`，未配置则搜索接口不可用） |
+| 分析 | 可选 **Trino / Iceberg**（lakehouse 路由与本地脚手架） |
+| Bigtable | **保留代码与测试作历史参考**，不再支持生产运行时 |
 
-## Module READMEs
+## Repository layout
 
-- Backend: `backend/README.md`
-- SDK: `sdk/README.md`
-- Frontend: `Frontend/README.md`
-- Dagster: `dagster/README.md`
+| 路径 | 说明 |
+|------|------|
+| `backend/` | Go API（assets / mcap / deliveries / algo / search / lakehouse） |
+| `sdk/` | Python SDK（`grace_sdk`） |
+| `Frontend/` | React 前端 |
+| `dagster/` | Dagster 编排骨架 |
+| `deploy/` | 本地与部署（Docker Compose、脚本） |
+| `schemas/` | SQL / 阶段 schema |
+| `api/openapi.yaml` | HTTP 契约（与实现一致的源） |
+| `docs/review/` | **评审与设计主文档包**（整体方案、schema 速查、API 指南） |
+| `docs/archive/` | 历史调研与旧版前端规格（仅供参考） |
 
-## Quick Start
+各子模块细节见对应目录内的 README。
 
-### 1) 启动本地依赖（Emulator）
+## Quick start
+
+### 1) 本地依赖（最小：Postgres + 可选模拟器）
 
 ```bash
 make dev-up
 ```
 
-### 2) 启动后端服务
+默认会拉起 **PostgreSQL**（及本地 Bigtable / Pub/Sub 模拟器；后者仅在不走 GCP 时的可选依赖）。数据库会执行 `backend/migrations` 初始化。
+
+### 2) 后端配置与启动
 
 ```bash
+cp backend/.env.example backend/.env
+# 按需编辑 DB_*、GRACE_TOKEN、ELASTICSEARCH_URL 等
 make backend-run
 ```
 
-### 2.5) 初始化 Bigtable 表结构（首次）
+等价于 `cd backend && make run-server`。详见 [`backend/README.md`](backend/README.md)。
+
+### 3) 全栈（Postgres + 后端 + 前端 + Iceberg + Trino + ES）
 
 ```bash
-make -C backend bt-bootstrap
+make all-up
 ```
 
-### 3) 可选：启动本地 Iceberg 湖仓
+- 前端: http://localhost:5173  
+- 后端: http://localhost:8080  
+- Trino: http://localhost:8082  
+- Elasticsearch: http://localhost:9200  
+
+停止：`make all-down`。
+
+### 4) 仅 Iceberg / Trino 湖仓脚手架
 
 ```bash
 make iceberg-up
 ```
 
-启动后可访问：
-
-- Spark Notebook: http://localhost:8888
-- MinIO Console: http://localhost:9001 (`admin` / `password`)
-- Iceberg REST Catalog: http://localhost:8181
-- Trino: http://localhost:8082
-
-示例 notebook/script 在 `deploy/local/iceberg/notebooks/iceberg_smoke.py`。
-
-生成本地 10 万条 scale-test 数据并同步到 Iceberg：
+Notebook 与示例脚本在 `deploy/local/iceberg/notebooks/`。大规模本机数据示例（可选）：
 
 ```bash
 ROW_COUNT=100000 BATCH_ID=scale_100k make pg-generate-scale
@@ -64,7 +77,7 @@ make iceberg-mvp-host
 make trino-smoke
 ```
 
-### 4) 启动 Frontend
+### 5) 前端
 
 ```bash
 make frontend-install
@@ -73,36 +86,45 @@ make frontend-dev
 
 ## Environment
 
-- Backend env: `backend/.env.example`
-- Frontend env: `Frontend/.env.example`
+- 后端：`backend/.env.example` → `backend/.env`
+- 前端：`Frontend/.env.example`
 
-## README Framework (建议统一模板)
+## Commit 规范
 
-后续每个子目录建议都使用下面这个 README 模板，方便团队协作：
+- 提交信息遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/)：`<type>[optional scope]: <description>`
+- 推荐类型：`feat`、`fix`、`docs`、`refactor`、`test`、`chore`
+- 例如：`feat(backend): add delivery retry endpoint`
 
-1. **What**：模块职责（这个模块做什么）
-2. **How to Run**：本地启动命令
-3. **Config**：环境变量说明（最小可运行配置）
-4. **API/Interfaces**：对外接口（HTTP/SDK/事件）
-5. **Directory Structure**：核心目录解释
-6. **Development Workflow**：测试、lint、构建命令
-7. **Known Limitations**：当前未完成能力/约束
-8. **Next Milestones**：下一阶段计划
+首次拉取仓库后，建议执行一次以下命令启用本仓库的 commit 校验 hook：
 
-## Current Status
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/commit-msg
+```
 
-- [x] 工程骨架已创建
-- [x] Bigtable repository 层已落地（全部 CRUD + 算法生命周期 + 交付）
-- [x] PostgreSQL repository 层已落地
-- [x] 服务入口与路由已接线（含 AlgoHandler Bigtable 分支）
-- [x] 算法状态机 + 依赖链自动 unblock
-- [x] 乐观锁 (CheckAndMutateRow)
-- [x] 单元测试 + 属性测试 (7 个正确性属性)
-- [x] 端到端测试 (httptest + fakeTable)
-- [x] 集成测试脚本 (真实 Bigtable)
-- [x] 极端 Case 测试 (85 cases)
-- [x] 千级测试 (1000 cases, 20 维度, 98.4% 通过率)
-- [x] 压测工具
-- [ ] ListWithFilters Bigtable 性能优化（当前全表扫描）
-- [ ] OIDC/JWT 认证 (Phase 0.5)
+启用后，不符合规范的 `git commit` 会被拦截并提示修正。
 
+## 常用 Makefile 目标
+
+| 目标 | 作用 |
+|------|------|
+| `make dev-up` / `dev-down` | 本地 `docker-compose`（含 Postgres） |
+| `make all-up` / `all-down` | 全栈 compose |
+| `make backend-run` | 启动 API |
+| `make backend-test` | `go test ./...` |
+| `make test` | 后端 + SDK 单测 |
+| `make iceberg-up` / `iceberg-down` | 独立湖仓 compose |
+
+## README 模板（子模块建议）
+
+子目录 README 建议包含：What · How to Run · Config · API/Interfaces · Directory Structure · Dev Workflow · Known Limitations · Next Milestones。
+
+## Current status（高层）
+
+- [x] PostgreSQL 仓储与单进程路由（含算法 `start` / `finish` / `reset`、`asset_events` 写入）
+- [x] 可选 Elasticsearch 资产搜索、可选 Trino lakehouse 查询
+- [x] 前端资产发现工作台、`sdk` 单测骨架
+- [ ] 设计文档中的 **Outbox Worker → ES/Iceberg** 异步投递（表与写侧已有，消费侧按 2.0 规划）
+- [ ] 生产级身份认证（当前 Phase 0：`X-Grace-Token`）
+
+历史 Bigtable 实现仍存在于 `backend/internal/bigtable/`（测试与参考），**新功能不要依赖其扩展**。

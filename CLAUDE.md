@@ -85,6 +85,39 @@ These are intentionally removed and should not be reintroduced unless explicitly
 5. **Prefer simple structure**:
    - keep storage package layout as `client.go + repos.go` unless complexity requires split.
 
+## Commit Message Convention (Required)
+
+All commits in this repository MUST follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
+
+Required header format:
+
+```text
+<type>[optional scope]: <description>
+```
+
+Allowed primary types (recommended for this repo):
+
+- `feat`: new feature
+- `fix`: bug fix
+- `docs`: documentation-only changes
+- `refactor`: code changes that neither fix a bug nor add a feature
+- `test`: adding or updating tests
+- `chore`: maintenance tasks (build, tooling, housekeeping)
+
+Rules:
+
+- Use lowercase `type` and concise, imperative `description`.
+- Keep the first line focused; add a body when context is needed.
+- For breaking changes, use either `!` (for example `feat(api)!: ...`) or a `BREAKING CHANGE:` footer.
+- Prefer adding scope when useful, such as `backend`, `frontend`, `sdk`, `docs`, or `dagster`.
+
+Examples:
+
+- `feat(backend): add lakehouse report export endpoint`
+- `fix(frontend): handle empty delivery state on first load`
+- `docs(api): clarify idempotency key requirements`
+- `refactor(sdk): simplify request retry policy`
+
 ## Verification Checklist
 
 Run after backend changes:
