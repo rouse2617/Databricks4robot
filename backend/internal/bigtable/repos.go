@@ -1092,6 +1092,12 @@ func (r *DeliveryRepo) ListByAsset(ctx context.Context, assetID string) ([]strin
 	return ids, nil
 }
 
+// ListItems is not supported on the deprecated Bigtable runtime path.
+// It returns an empty slice so legacy tests continue to compile.
+func (r *DeliveryRepo) ListItems(context.Context, string) ([]*models.DeliveryItem, error) {
+	return []*models.DeliveryItem{}, nil
+}
+
 // ListByCustomer returns all delivery IDs for a given customer (via secondary index).
 func (r *DeliveryRepo) ListByCustomer(ctx context.Context, customerID string) ([]string, error) {
 	prefix := customerID + "#"

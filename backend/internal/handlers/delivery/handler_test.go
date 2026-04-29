@@ -21,6 +21,7 @@ type mockDeliveryRepo struct {
 	getFn            func(ctx context.Context, deliveryID string) (*models.Delivery, error)
 	writeIndexesFn   func(ctx context.Context, assetID string, d *models.Delivery) error
 	listByCustomerFn func(ctx context.Context, customerID string) ([]string, error)
+	listItemsFn      func(ctx context.Context, deliveryID string) ([]*models.DeliveryItem, error)
 }
 
 func (m *mockDeliveryRepo) Set(ctx context.Context, d *models.Delivery) error {
@@ -49,6 +50,12 @@ func (m *mockDeliveryRepo) ListByCustomer(ctx context.Context, customerID string
 }
 func (m *mockDeliveryRepo) ListByAsset(_ context.Context, _ string) ([]string, error) {
 	return []string{}, nil
+}
+func (m *mockDeliveryRepo) ListItems(ctx context.Context, deliveryID string) ([]*models.DeliveryItem, error) {
+	if m.listItemsFn != nil {
+		return m.listItemsFn(ctx, deliveryID)
+	}
+	return []*models.DeliveryItem{}, nil
 }
 func (m *mockDeliveryRepo) List(_ context.Context, _, _ int, _ string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
@@ -222,6 +229,32 @@ func TestGetAndListByCustomer(t *testing.T) {
 
 	repo.listByCustomerFn = func(context.Context, string) ([]string, error) { return nil, errors.New("boom") }
 	w = doDeliveryReq(t, r, http.MethodGet, "/customers/c1/deliveries", nil, nil)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestListItems(t *testing.T) {
+	repo := &mockDeliveryRepo{
+		listItemsFn: func(context.Context, string) ([]*models.DeliveryItem, error) {
+			return []*models.DeliveryItem{
+				{DeliveryID: "d1", AssetID: "a1"},
+				{DeliveryID: "d1", AssetID: "a2"},
+			}, nil
+		},
+	}
+	h := New(repo, &mockIdemRepo{})
+	r := setupDeliveryRouter(http.MethodGet, "/deliveries/:id/items", h.ListItems)
+
+	w := doDeliveryReq(t, r, http.MethodGet, "/deliveries/d1/items", nil, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	repo.listItemsFn = func(context.Context, string) ([]*models.DeliveryItem, error) {
+		return nil, errors.New("boom")
+	}
+	w = doDeliveryReq(t, r, http.MethodGet, "/deliveries/d1/items", nil, nil)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}

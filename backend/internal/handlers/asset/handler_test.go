@@ -50,6 +50,9 @@ func (m *mockDeliveryRepoForAsset) ListByAsset(_ context.Context, _ string) ([]s
 	}
 	return []string{}, nil
 }
+func (m *mockDeliveryRepoForAsset) ListItems(context.Context, string) ([]*models.DeliveryItem, error) {
+	return []*models.DeliveryItem{}, nil
+}
 func (m *mockDeliveryRepoForAsset) List(_ context.Context, _, _ int, _ string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
 }

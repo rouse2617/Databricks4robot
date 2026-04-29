@@ -111,6 +111,7 @@ docker-compose up -d postgres  # 重新初始化
 | `POST` | `/api/v1/deliveries` | 创建交付 (需要 `Idempotency-Key` header) |
 | `GET` | `/api/v1/deliveries` | 交付列表 (分页 + 可选 status 过滤) |
 | `GET` | `/api/v1/deliveries/:id` | 获取交付详情 |
+| `GET` | `/api/v1/deliveries/:id/items` | 获取交付关联资产明细 |
 | `GET` | `/api/v1/customers/:cid/deliveries` | 按客户查询交付 |
 
 ### 注册表 (Registry)

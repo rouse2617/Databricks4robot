@@ -148,6 +148,19 @@ func (h *Handler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, d)
 }
 
+// GET /api/v1/deliveries/:id/items
+func (h *Handler) ListItems(c *gin.Context) {
+	items, err := h.repo.ListItems(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []*models.DeliveryItem{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
 // GET /api/v1/customers/:customer_id/deliveries
 func (h *Handler) ListByCustomer(c *gin.Context) {
 	ids, err := h.repo.ListByCustomer(c.Request.Context(), c.Param("customer_id"))

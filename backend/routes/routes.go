@@ -89,6 +89,7 @@ func RegisterAll(
 		api.POST("/deliveries", deliveryHandler.Commit)
 		api.GET("/deliveries", deliveryHandler.List)
 		api.GET("/deliveries/:id", deliveryHandler.Get)
+		api.GET("/deliveries/:id/items", deliveryHandler.ListItems)
 		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
 
 		// Registry endpoints (read-only, from YAML config)

@@ -38,6 +38,7 @@ type DeliveryRepository interface {
 	WriteIndexes(ctx context.Context, assetID string, d *models.Delivery) error
 	ListByCustomer(ctx context.Context, customerID string) ([]string, error)
 	ListByAsset(ctx context.Context, assetID string) ([]string, error)
+	ListItems(ctx context.Context, deliveryID string) ([]*models.DeliveryItem, error)
 
 	// List returns a paginated list of deliveries, optionally filtered by status.
 	// status may be empty to return all deliveries.

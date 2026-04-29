@@ -739,6 +739,28 @@ ORDER BY created_at DESC`
 	return out, nil
 }
 
+func (r *DeliveryRepo) ListItems(ctx context.Context, deliveryID string) ([]*models.DeliveryItem, error) {
+	const q = `
+SELECT delivery_id, asset_id, created_at
+FROM delivery_items
+WHERE delivery_id = $1
+ORDER BY created_at DESC`
+	rows, err := r.c.db.Query(ctx, q, deliveryID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres DeliveryRepo.ListItems: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.DeliveryItem
+	for rows.Next() {
+		var item models.DeliveryItem
+		if err := rows.Scan(&item.DeliveryID, &item.AssetID, &item.CreatedAt); err != nil {
+			return nil, fmt.Errorf("postgres DeliveryRepo.ListItems scan: %w", err)
+		}
+		out = append(out, &item)
+	}
+	return out, nil
+}
+
 func (r *DeliveryRepo) ListByCustomer(ctx context.Context, customerID string) ([]string, error) {
 	const q = `
 SELECT delivery_id

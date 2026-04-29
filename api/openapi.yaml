@@ -832,6 +832,21 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}/items:
+    get:
+      summary: List delivery items
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+        '500':
+          description: internal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/customers/{customer_id}/deliveries:
     get:
       summary: List customer deliveries

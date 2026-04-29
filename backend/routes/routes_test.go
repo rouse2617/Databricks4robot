@@ -61,6 +61,9 @@ func (r *routeDeliveryRepo) ListByCustomer(context.Context, string) ([]string, e
 func (r *routeDeliveryRepo) ListByAsset(context.Context, string) ([]string, error) {
 	return []string{"d1"}, nil
 }
+func (r *routeDeliveryRepo) ListItems(context.Context, string) ([]*models.DeliveryItem, error) {
+	return []*models.DeliveryItem{{DeliveryID: "d1", AssetID: "a1"}}, nil
+}
 func (r *routeDeliveryRepo) List(context.Context, int, int, string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
 }
