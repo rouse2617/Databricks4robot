@@ -16,7 +16,7 @@ import dayjs from "dayjs";
 import { mcapFilesApi } from "../api/mcapFiles";
 import { assetsApi } from "../api/assets";
 import type { Asset } from "../api/types";
-import { formatDurationSeconds } from "../lib/assetPresentation";
+import { formatDurationSeconds, getAssetStateColor, getLifecycleState } from "../lib/assetPresentation";
 
 const { Title, Text } = Typography;
 
@@ -391,10 +391,12 @@ export default function DashboardPage() {
               ),
             },
             {
-              title: "状态",
-              dataIndex: "status",
+              title: "生命周期",
+              key: "lifecycle",
               width: 90,
-              render: (s: string) => <Tag>{s}</Tag>,
+              render: (_: unknown, r: Asset) => (
+                <Tag color={getAssetStateColor(r)}>{getLifecycleState(r) || "—"}</Tag>
+              ),
             },
             {
               title: "时长",

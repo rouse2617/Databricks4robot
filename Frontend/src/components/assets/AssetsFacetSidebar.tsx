@@ -42,7 +42,6 @@ export const GROUP_KEYS = ["basic", "capture", "algorithm", "delivery", "tags"] 
 const AGG_KEY_MAP: Record<string, string> = {
   lifecycle_state_agg: "lifecycle_state",
   asset_type_agg: "asset_type",
-  status_agg: "status",
   owner_agg: "owner",
   vendor_agg: "mcap.vendor_id",
   scene_agg: "mcap.scene_id",
@@ -330,14 +329,6 @@ export default function AssetsFacetSidebar({
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
             counts={fieldCounts["lifecycle_state"]}
-          />
-          <CheckboxFacet
-            label="状态 (legacy)"
-            field="status"
-            options={STATUS_OPTIONS}
-            activeFilters={activeFilters}
-            onToggleFacet={onToggleFacet}
-            counts={fieldCounts["status"]}
           />
           <InputFacet
             label="Owner"

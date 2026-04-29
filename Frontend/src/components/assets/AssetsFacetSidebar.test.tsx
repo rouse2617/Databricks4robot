@@ -177,22 +177,21 @@ describe("AssetsFacetSidebar", () => {
     }
   });
 
-  it("calls onToggleFacet when a checkbox is clicked", () => {
+  it("calls onToggleFacet when a lifecycle checkbox is clicked", () => {
     const onToggleFacet = vi.fn();
     render(<AssetsFacetSidebar {...defaultProps({ onToggleFacet })} />);
-    fireEvent.click(screen.getByText("approved"));
-    expect(onToggleFacet).toHaveBeenCalledWith("status", "approved");
+    fireEvent.click(screen.getByText("ready"));
+    expect(onToggleFacet).toHaveBeenCalledWith("lifecycle_state", "ready");
   });
 
-  it("calls onToggleFacet to remove when unchecking a checked value", () => {
+  it("calls onToggleFacet to remove when unchecking a checked lifecycle value", () => {
     const onToggleFacet = vi.fn();
-    const filters = [makeChip({ id: "1", field: "status", value: "approved" })];
+    const filters = [makeChip({ id: "1", field: "lifecycle_state", value: "ready" })];
     render(
       <AssetsFacetSidebar {...defaultProps({ activeFilters: filters, onToggleFacet })} />,
     );
-    // Click the already-checked "approved" to uncheck it
-    fireEvent.click(screen.getByText("approved"));
-    expect(onToggleFacet).toHaveBeenCalledWith("status", "approved");
+    fireEvent.click(screen.getByText("ready"));
+    expect(onToggleFacet).toHaveBeenCalledWith("lifecycle_state", "ready");
   });
 
   it("calls onApplyRange when Apply button is clicked for duration", () => {
@@ -227,7 +226,7 @@ describe("AssetsFacetSidebar", () => {
       <AssetsFacetSidebar {...defaultProps({ expandedGroups: ["basic"] })} />,
     );
     // Basic group content should be visible
-    expect(screen.getByText("状态 (legacy)")).toBeTruthy();
+    expect(screen.getByText("生命周期")).toBeTruthy();
     // Algorithm group content should not be visible (collapsed)
     expect(screen.queryByText("算法状态")).toBeNull();
   });

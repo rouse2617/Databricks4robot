@@ -150,6 +150,15 @@ describe("ActiveFilterChipsRow", () => {
     expect(tag?.className).toContain("green");
   });
 
+  it("applies green color for lifecycle_state:ready chip", () => {
+    const chip = makeChip({ field: "lifecycle_state", op: "eq", value: "ready" });
+    render(
+      <ActiveFilterChipsRow chips={[chip]} onRemoveChip={() => {}} onClearAll={() => {}} />,
+    );
+    const tag = screen.getByText("lifecycle_state = ready").closest(".ant-tag");
+    expect(tag?.className).toContain("green");
+  });
+
   it("uses default color for other chips", () => {
     const chip = makeChip({ field: "env", op: "eq", value: "warehouse" });
     render(

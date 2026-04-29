@@ -12,7 +12,7 @@ const ALL_COLUMNS = [
   { key: "mcap_file_id", label: "MCAP" },
   { key: "duration", label: "时长" },
   { key: "env", label: "环境" },
-  { key: "status", label: "状态" },
+  { key: "status", label: "生命周期" },
   { key: "algo", label: "算法状态" },
   { key: "tags", label: "标签" },
   { key: "updated_at", label: "更新时间" },

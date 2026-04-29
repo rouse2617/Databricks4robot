@@ -24,6 +24,7 @@ const OP_LABELS: Record<string, string> = {
 
 function chipColor(chip: FilterChip): string | undefined {
   if (chip.field === "algo_status" && chip.value === "failed") return "red";
+  if (chip.field === "lifecycle_state" && chip.value === "ready") return "green";
   if (chip.field === "status" && chip.value === "approved") return "green";
   return undefined; // Ant Design default
 }
