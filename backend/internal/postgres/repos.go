@@ -1033,7 +1033,7 @@ func (r *AssetEventRepo) ListPending(ctx context.Context, limit int) ([]*models.
 		limit = 100
 	}
 	const q = `
-SELECT event_id, event_seq, event_type, payload_schema_version,
+SELECT event_id, event_seq, event_type, aggregate_type, payload_schema_version,
   COALESCE(asset_id::text, ''), COALESCE(mcap_file_id::text, ''),
   COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   event_source, publish_state, event_payload,
@@ -1052,7 +1052,7 @@ LIMIT $1`
 	for rows.Next() {
 		var e models.AssetEvent
 		if err := rows.Scan(
-			&e.EventID, &e.EventSeq, &e.EventType, &e.PayloadSchemaVersion,
+			&e.EventID, &e.EventSeq, &e.EventType, &e.AggregateType, &e.PayloadSchemaVersion,
 			&e.AssetID, &e.McapFileID,
 			&e.TenantID, &e.ProjectID,
 			&e.EventSource, &e.PublishState, &e.EventPayload,
@@ -1086,6 +1086,10 @@ func (r *AssetEventRepo) Append(ctx context.Context, in repository.AssetEventApp
 	if source == "" {
 		source = "backend"
 	}
+	aggregateType := in.AggregateType
+	if aggregateType == "" {
+		aggregateType = "asset"
+	}
 
 	// Convert empty strings to NULL for nullable columns.
 	nullable := func(s string) interface{} {
@@ -1097,24 +1101,24 @@ func (r *AssetEventRepo) Append(ctx context.Context, in repository.AssetEventApp
 
 	const q = `
 INSERT INTO asset_events (
-  event_id, event_type, payload_schema_version,
+  event_id, event_type, aggregate_type, payload_schema_version,
   asset_id, mcap_file_id,
   tenant_id, project_id,
   event_source,
   actor_type, actor_id, request_id, idempotency_key, run_id,
   event_payload
 ) VALUES (
-  gen_random_uuid(), $1, $2,
-  $3, $4,
-  $5, $6,
-  $7,
-  $8, $9, $10, $11, $12,
-  $13::jsonb
+  gen_random_uuid(), $1, $2, $3,
+  $4, $5,
+  $6, $7,
+  $8,
+  $9, $10, $11, $12, $13,
+  $14::jsonb
 )`
 
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
-		in.EventType, schemaVer,
+		in.EventType, aggregateType, schemaVer,
 		nullable(in.AssetID), nullable(in.McapFileID),
 		nullable(in.TenantID), nullable(in.ProjectID),
 		source,
@@ -1147,7 +1151,7 @@ func (r *AssetEventRepo) ListByAsset(ctx context.Context, assetID string, eventT
 		limitParam = "$3"
 	}
 	q := `
-SELECT event_id, event_seq, event_type, payload_schema_version,
+SELECT event_id, event_seq, event_type, aggregate_type, payload_schema_version,
   COALESCE(asset_id::text, ''), COALESCE(mcap_file_id::text, ''),
   COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   event_source, publish_state, event_payload,
@@ -1166,7 +1170,7 @@ LIMIT ` + limitParam
 	for rows.Next() {
 		var e models.AssetEvent
 		if err := rows.Scan(
-			&e.EventID, &e.EventSeq, &e.EventType, &e.PayloadSchemaVersion,
+			&e.EventID, &e.EventSeq, &e.EventType, &e.AggregateType, &e.PayloadSchemaVersion,
 			&e.AssetID, &e.McapFileID,
 			&e.TenantID, &e.ProjectID,
 			&e.EventSource, &e.PublishState, &e.EventPayload,

@@ -90,6 +90,7 @@ type AssetAlgoLatestRepository interface {
 // created_at and publish_state are assigned by the database.
 type AssetEventAppendInput struct {
 	EventType            string
+	AggregateType        string // defaults to "asset" when empty; routing key for downstream sinks
 	PayloadSchemaVersion string // defaults to "v1" when empty
 	AssetID              string // empty → SQL NULL
 	McapFileID           string // empty → SQL NULL

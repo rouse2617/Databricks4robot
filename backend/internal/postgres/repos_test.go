@@ -1463,12 +1463,13 @@ func TestAssetEventRepo_Append_NilPayload(t *testing.T) {
 	if len(tracker.calls) != 1 {
 		t.Fatalf("expected 1 Exec call, got %d", len(tracker.calls))
 	}
-	// SQL positional: $1=event_type, $2=schema, $3=asset_id, $4=mcap_file_id,
-	// $5=tenant_id, $6=project_id, $7=event_source, $8=actor_type, $9=actor_id,
-	// $10=request_id, $11=idempotency_key, $12=run_id, $13=event_payload.
-	payloadArg, ok := tracker.calls[0][12].([]byte)
+	// SQL positional: $1=event_type, $2=aggregate_type, $3=schema,
+	// $4=asset_id, $5=mcap_file_id, $6=tenant_id, $7=project_id,
+	// $8=event_source, $9=actor_type, $10=actor_id, $11=request_id,
+	// $12=idempotency_key, $13=run_id, $14=event_payload.
+	payloadArg, ok := tracker.calls[0][13].([]byte)
 	if !ok {
-		t.Fatalf("payload arg is not []byte: %T", tracker.calls[0][12])
+		t.Fatalf("payload arg is not []byte: %T", tracker.calls[0][13])
 	}
 	if string(payloadArg) != "{}" {
 		t.Fatalf("expected '{}' payload for nil input, got %q", string(payloadArg))
@@ -1489,11 +1490,12 @@ func TestAssetEventRepo_Append_NullableIDs(t *testing.T) {
 	if len(tracker.calls) != 1 {
 		t.Fatalf("expected 1 Exec call, got %d", len(tracker.calls))
 	}
-	if tracker.calls[0][2] != nil {
-		t.Fatalf("expected nil assetID for empty string, got %v", tracker.calls[0][2])
-	}
+	// $4=asset_id, $5=mcap_file_id (after $1=event_type, $2=aggregate_type, $3=schema).
 	if tracker.calls[0][3] != nil {
-		t.Fatalf("expected nil mcapFileID for empty string, got %v", tracker.calls[0][3])
+		t.Fatalf("expected nil assetID for empty string, got %v", tracker.calls[0][3])
+	}
+	if tracker.calls[0][4] != nil {
+		t.Fatalf("expected nil mcapFileID for empty string, got %v", tracker.calls[0][4])
 	}
 
 	tracker.calls = nil
@@ -1504,11 +1506,11 @@ func TestAssetEventRepo_Append_NullableIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Append err: %v", err)
 	}
-	if tracker.calls[0][2] != "a1" {
-		t.Fatalf("expected assetID 'a1', got %v", tracker.calls[0][2])
+	if tracker.calls[0][3] != "a1" {
+		t.Fatalf("expected assetID 'a1', got %v", tracker.calls[0][3])
 	}
-	if tracker.calls[0][3] != "m1" {
-		t.Fatalf("expected mcapFileID 'm1', got %v", tracker.calls[0][3])
+	if tracker.calls[0][4] != "m1" {
+		t.Fatalf("expected mcapFileID 'm1', got %v", tracker.calls[0][4])
 	}
 }
 
@@ -1566,37 +1568,41 @@ func TestProperty10_MutationEventInvariant(t *testing.T) {
 		}
 
 		call := tracker.calls[0]
-		// $1=event_type, $2=schema_version, $3=asset_id, $4=mcap_file_id,
-		// $5=tenant, $6=project, $7=event_source, $8..$12 actor/run, $13=payload.
-		if len(call) < 13 {
-			t.Fatalf("expected 13 args, got %d", len(call))
+		// $1=event_type, $2=aggregate_type, $3=schema_version,
+		// $4=asset_id, $5=mcap_file_id, $6=tenant, $7=project,
+		// $8=event_source, $9..$13 actor/run, $14=payload.
+		if len(call) < 14 {
+			t.Fatalf("expected 14 args, got %d", len(call))
 		}
 		if call[0] != eventType {
 			t.Fatalf("event_type mismatch: got %v, want %v", call[0], eventType)
 		}
-		if call[1] != "v1" {
-			t.Fatalf("schema_version: got %v, want v1", call[1])
+		if call[1] != "asset" {
+			t.Fatalf("aggregate_type: got %v, want asset", call[1])
+		}
+		if call[2] != "v1" {
+			t.Fatalf("schema_version: got %v, want v1", call[2])
 		}
 		if assetID == "" {
-			if call[2] != nil {
-				t.Fatalf("expected nil assetID for empty input, got %v", call[2])
+			if call[3] != nil {
+				t.Fatalf("expected nil assetID for empty input, got %v", call[3])
 			}
-		} else if call[2] != assetID {
-			t.Fatalf("assetID mismatch: got %v, want %v", call[2], assetID)
+		} else if call[3] != assetID {
+			t.Fatalf("assetID mismatch: got %v, want %v", call[3], assetID)
 		}
 		if mcapFileID == "" {
-			if call[3] != nil {
-				t.Fatalf("expected nil mcapFileID for empty input, got %v", call[3])
+			if call[4] != nil {
+				t.Fatalf("expected nil mcapFileID for empty input, got %v", call[4])
 			}
-		} else if call[3] != mcapFileID {
-			t.Fatalf("mcapFileID mismatch: got %v, want %v", call[3], mcapFileID)
+		} else if call[4] != mcapFileID {
+			t.Fatalf("mcapFileID mismatch: got %v, want %v", call[4], mcapFileID)
 		}
-		if call[6] != "backend" {
-			t.Fatalf("event_source: got %v, want backend", call[6])
+		if call[7] != "backend" {
+			t.Fatalf("event_source: got %v, want backend", call[7])
 		}
-		payloadArg, ok := call[12].([]byte)
+		payloadArg, ok := call[13].([]byte)
 		if !ok {
-			t.Fatalf("payload arg is not []byte: %T", call[12])
+			t.Fatalf("payload arg is not []byte: %T", call[13])
 		}
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(payloadArg, &parsed); err != nil {

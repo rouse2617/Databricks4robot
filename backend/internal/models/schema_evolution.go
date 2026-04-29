@@ -52,6 +52,7 @@ type AssetEvent struct {
 	EventID              string          `json:"event_id"`
 	EventSeq             int64           `json:"event_seq"`
 	EventType            string          `json:"event_type"`
+	AggregateType        string          `json:"aggregate_type"`
 	PayloadSchemaVersion string          `json:"payload_schema_version"`
 	AssetID              string          `json:"asset_id,omitempty"`
 	McapFileID           string          `json:"mcap_file_id,omitempty"`

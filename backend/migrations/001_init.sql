@@ -222,6 +222,11 @@ CREATE TABLE asset_events (
     event_id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     event_seq               BIGSERIAL    NOT NULL UNIQUE,
     event_type              TEXT         NOT NULL,
+    aggregate_type          TEXT         NOT NULL DEFAULT 'asset',
+        -- Aggregate root type for fan-out routing in downstream sinks
+        -- (e.g., Iceberg Bronze partitions by aggregate_type). Allowed
+        -- values today: 'asset' | 'mcap_file' | 'delivery'. Index on
+        -- (aggregate_type, occurred_at) below for incremental consumers.
     payload_schema_version  TEXT         NOT NULL DEFAULT 'v1',
     asset_id                UUID         REFERENCES assets(asset_id),
     mcap_file_id            UUID         REFERENCES mcap_files(mcap_file_id),
@@ -356,6 +361,8 @@ CREATE INDEX idx_asset_events_publish_pending
     ON asset_events (publish_state, event_seq) WHERE publish_state = 'pending';
 CREATE INDEX idx_asset_events_tenant_project
     ON asset_events (tenant_id, project_id, occurred_at DESC);
+CREATE INDEX idx_asset_events_aggregate_time
+    ON asset_events (aggregate_type, occurred_at DESC);
 
 CREATE INDEX idx_asset_relations_child
     ON asset_relations (child_asset_id, relation_type);
