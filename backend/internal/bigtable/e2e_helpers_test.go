@@ -37,6 +37,6 @@ func (bigtableNoopAssetEventRepo) Append(context.Context, repository.AssetEventA
 func (bigtableNoopAssetEventRepo) ListPending(context.Context, int) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
-func (bigtableNoopAssetEventRepo) ListByAsset(context.Context, string, []string, int) ([]*models.AssetEvent, error) {
+func (bigtableNoopAssetEventRepo) ListByAsset(context.Context, string, repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil
 }

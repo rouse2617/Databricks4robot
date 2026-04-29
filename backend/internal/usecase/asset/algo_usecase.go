@@ -566,7 +566,10 @@ func (u *AlgoUsecase) ListAlgoEvents(ctx context.Context, assetID string, algoKe
 	}
 
 	const queryLimit = 200
-	rows, err := u.eventRepo.ListByAsset(ctx, assetID, algoEventTypes, queryLimit)
+	rows, err := u.eventRepo.ListByAsset(ctx, assetID, repository.AssetEventListOptions{
+		EventTypes: algoEventTypes,
+		Limit:      queryLimit,
+	})
 	if err != nil {
 		return nil, err
 	}

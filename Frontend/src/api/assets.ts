@@ -21,6 +21,35 @@ export interface ListAssetsParams {
   page_size?: number;
 }
 
+type AssetEventEnvelope = {
+  algo_key?: string;
+  prev_status?: string;
+  new_status?: string;
+  run_id?: string;
+  reason?: string;
+};
+
+type AssetEventRow = {
+  event_id: string;
+  asset_id: string;
+  created_at: string;
+  event_payload?: AssetEventEnvelope;
+};
+
+function toAlgoEvent(row: AssetEventRow): AlgoEvent {
+  const payload = row.event_payload ?? {};
+  return {
+    event_id: row.event_id,
+    asset_id: row.asset_id,
+    algo_key: payload.algo_key ?? "",
+    prev_status: payload.prev_status,
+    new_status: payload.new_status ?? "",
+    run_id: payload.run_id,
+    reason: payload.reason,
+    created_at: row.created_at,
+  };
+}
+
 export const assetsApi = {
   list: (params?: ListAssetsParams) => {
     // Build URLSearchParams manually to ensure filter[] is sent as repeated params
@@ -69,10 +98,13 @@ export const assetsApi = {
 
   listAlgoEvents: (assetId: string, algoKey?: string) =>
     apiClient
-      .get<{ items: AlgoEvent[] }>(`/assets/${assetId}/algo-events`, {
-        params: algoKey ? { algo_key: algoKey } : undefined,
+      .get<{ items: AssetEventRow[] }>(`/assets/${assetId}/events`, {
+        params: {
+          event_type: "algo_*",
+          ...(algoKey ? { algo_key: algoKey } : {}),
+        },
       })
-      .then((r) => r.data.items),
+      .then((r) => r.data.items.map(toAlgoEvent)),
 
   // ─── Platform stats (aggregate, avoids full table scan on frontend) ───
   stats: () =>

@@ -230,14 +230,15 @@ func (m *mockAssetEventRepo) ListPending(_ context.Context, limit int) ([]*model
 	return out, nil
 }
 
-func (m *mockAssetEventRepo) ListByAsset(_ context.Context, assetID string, eventTypes []string, limit int) ([]*models.AssetEvent, error) {
+func (m *mockAssetEventRepo) ListByAsset(_ context.Context, assetID string, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 	allow := map[string]struct{}{}
-	for _, t := range eventTypes {
+	for _, t := range opts.EventTypes {
 		allow[t] = struct{}{}
 	}
 	var out []*models.AssetEvent
@@ -249,8 +250,43 @@ func (m *mockAssetEventRepo) ListByAsset(_ context.Context, assetID string, even
 		}
 		if len(allow) > 0 {
 			if _, ok := allow[e.EventType]; !ok {
+				matched := false
+				for _, pattern := range opts.EventTypePatterns {
+					if strings.HasSuffix(pattern, "%") && strings.HasPrefix(e.EventType, strings.TrimSuffix(pattern, "%")) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+		} else if len(opts.EventTypePatterns) > 0 {
+			matched := false
+			for _, pattern := range opts.EventTypePatterns {
+				if strings.HasSuffix(pattern, "%") && strings.HasPrefix(e.EventType, strings.TrimSuffix(pattern, "%")) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
 				continue
 			}
+		}
+		if opts.AlgoKey != "" {
+			var payload map[string]any
+			if err := json.Unmarshal(e.EventPayload, &payload); err != nil {
+				continue
+			}
+			if got, _ := payload["algo_key"].(string); got != opts.AlgoKey {
+				continue
+			}
+		}
+		if opts.BeforeEventSeq != nil && e.EventSeq >= *opts.BeforeEventSeq {
+			continue
+		}
+		if opts.AfterEventSeq != nil && e.EventSeq <= *opts.AfterEventSeq {
+			continue
 		}
 		out = append(out, e)
 		if len(out) >= limit {

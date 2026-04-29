@@ -311,6 +311,20 @@ type UpdateInput struct {
 	Tags     map[string]string
 }
 
+type ListEventsInput struct {
+	EventTypes        []string
+	EventTypePatterns []string
+	AlgoKey           string
+	BeforeEventSeq    *int64
+	AfterEventSeq     *int64
+	Limit             int
+}
+
+type ListEventsResult struct {
+	Items      []*models.AssetEvent
+	NextCursor *int64
+}
+
 type CommitSegmentsInput struct {
 	McapFileID string
 	Ranges     [][2]int64
@@ -357,6 +371,48 @@ func (u *Usecase) ListWithFilters(ctx context.Context, whereSQL string, args []i
 		return nil, 0, err
 	}
 	return items, total, nil
+}
+
+func (u *Usecase) ListEvents(ctx context.Context, assetID string, in ListEventsInput) (*ListEventsResult, error) {
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, ErrNotFound
+	}
+	if u.eventRepo == nil {
+		return &ListEventsResult{Items: []*models.AssetEvent{}}, nil
+	}
+
+	limit := in.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	queryLimit := limit + 1
+	rows, err := u.eventRepo.ListByAsset(ctx, assetID, repository.AssetEventListOptions{
+		EventTypes:        in.EventTypes,
+		EventTypePatterns: in.EventTypePatterns,
+		AlgoKey:           in.AlgoKey,
+		BeforeEventSeq:    in.BeforeEventSeq,
+		AfterEventSeq:     in.AfterEventSeq,
+		Limit:             queryLimit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res := &ListEventsResult{Items: rows}
+	if len(rows) > limit {
+		rows = rows[:limit]
+		res.Items = rows
+		cursor := rows[len(rows)-1].EventSeq
+		res.NextCursor = &cursor
+	}
+	if res.Items == nil {
+		res.Items = []*models.AssetEvent{}
+	}
+	return res, nil
 }
 
 func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, error) {

@@ -7,7 +7,6 @@ import (
 
 	"data-platform/internal/audit"
 	"data-platform/internal/httpresp"
-	"data-platform/internal/models"
 	assetUC "data-platform/internal/usecase/asset"
 )
 
@@ -143,25 +142,6 @@ func (h *AlgoHandler) ListCurrent(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"items": rows})
-}
-
-// GET /api/v1/assets/:id/events?event_type=algo_*&algo_key=...
-func (h *AlgoHandler) ListEvents(c *gin.Context) {
-	assetID := c.Param("id")
-	var algoKeyPtr *string
-	if ak := c.Query("algo_key"); ak != "" {
-		algoKeyPtr = &ak
-	}
-
-	events, err := h.uc.ListAlgoEvents(c.Request.Context(), assetID, algoKeyPtr)
-	if err != nil {
-		h.mapError(c, err)
-		return
-	}
-	if events == nil {
-		events = []*models.AlgoEvent{}
-	}
-	c.JSON(200, gin.H{"items": events})
 }
 
 // mapError maps usecase errors to appropriate HTTP responses.

@@ -2,10 +2,12 @@ package asset
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"data-platform/internal/models"
+	"data-platform/internal/repository"
 )
 
 type noopTxRunner struct{}
@@ -262,5 +264,60 @@ func TestCreate_SeedsInitialAlgoProjectionRows(t *testing.T) {
 	row, _ = algoRepo.GetByAlgo(context.Background(), a.AssetID, "action_annotation")
 	if row == nil || row.Status != string(models.AlgoStatusBlocked) {
 		t.Fatalf("expected action_annotation blocked row in asset_algo_latest, got %#v", row)
+	}
+}
+
+func TestListEvents_GenericTimelineWithCursor(t *testing.T) {
+	repo := &readModelAssetRepo{
+		getFn: func(context.Context, string) (*models.Asset, error) {
+			return &models.Asset{AssetID: "a1", McapFileID: "m1"}, nil
+		},
+	}
+	eventRepo := newMockAssetEventRepo()
+
+	appendEvent := func(eventType string, payload map[string]any) {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		if err := eventRepo.Append(context.Background(), repository.AssetEventAppendInput{
+			EventType:    eventType,
+			AssetID:      "a1",
+			EventPayload: raw,
+		}); err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+	}
+
+	appendEvent("asset_created", map[string]any{"asset_id": "a1"})
+	appendEvent("algo_started", map[string]any{"algo_key": "env_analysis@1.0.0"})
+	appendEvent("algo_finished", map[string]any{"algo_key": "env_analysis@1.0.0"})
+
+	uc := NewWithProjections(noopTxRunner{}, repo, nil, nil, eventRepo, nil, nil)
+	res, err := uc.ListEvents(context.Background(), "a1", ListEventsInput{
+		EventTypePatterns: []string{"algo_%"},
+		Limit:             1,
+	})
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].EventType != "algo_finished" {
+		t.Fatalf("unexpected first page: %+v", res)
+	}
+	if res.NextCursor == nil || *res.NextCursor != res.Items[0].EventSeq {
+		t.Fatalf("expected next cursor from first page, got %+v", res.NextCursor)
+	}
+
+	res, err = uc.ListEvents(context.Background(), "a1", ListEventsInput{
+		EventTypePatterns: []string{"algo_%"},
+		AlgoKey:           "env_analysis@1.0.0",
+		BeforeEventSeq:    res.NextCursor,
+		Limit:             10,
+	})
+	if err != nil {
+		t.Fatalf("ListEvents follow-up failed: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].EventType != "algo_started" {
+		t.Fatalf("unexpected follow-up page: %+v", res)
 	}
 }

@@ -328,8 +328,8 @@ func TestE2E_AlgoLifecycle(t *testing.T) {
 		t.Fatalf("reset algo: expected status=pending, got %v", resetResp["status"])
 	}
 
-	// 4. GET /api/v1/assets/:id/algo-events → query events.
-	resp = env.doJSON(t, "GET", "/api/v1/assets/"+assetID+"/algo-events", nil)
+	// 4. GET /api/v1/assets/:id/events?event_type=algo_* → query algo event subset.
+	resp = env.doJSON(t, "GET", "/api/v1/assets/"+assetID+"/events?event_type=algo_*", nil)
 	if resp.StatusCode != http.StatusOK {
 		body := readJSON(t, resp)
 		t.Fatalf("list events: expected 200, got %d: %v", resp.StatusCode, body)

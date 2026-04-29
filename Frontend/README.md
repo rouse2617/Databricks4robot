@@ -112,7 +112,7 @@ src/
 | `PATCH /assets/:id` | AssetDetailPage (标签编辑) |
 | `DELETE /assets/:id` | AssetsPage (批量删除) |
 | `POST /assets/:id/algo/:key/reset` | AssetDetailPage (算法重置) |
-| `GET /assets/:id/algo-events` | AssetDetailPage (状态变更时间线) |
+| `GET /assets/:id/events?event_type=algo_*` | AssetDetailPage (状态变更时间线) |
 
 尚需后端新建的接口（Phase 2）：
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"data-platform/internal/models"
@@ -1154,25 +1155,45 @@ INSERT INTO asset_events (
 	return nil
 }
 
-// ListByAsset returns events for a given asset, optionally filtered by event
-// types, ordered by event_seq DESC (most recent first). Used by the
-// "list algo events" API (replaces the deprecated algo_events table).
-// limit ≤ 0 defaults to 100.
-func (r *AssetEventRepo) ListByAsset(ctx context.Context, assetID string, eventTypes []string, limit int) ([]*models.AssetEvent, error) {
+// ListByAsset returns the asset event stream in DESC event_seq order with
+// optional exact event_type filters, wildcard event_type patterns, algo_key
+// filter, and event_seq cursor bounds.
+func (r *AssetEventRepo) ListByAsset(ctx context.Context, assetID string, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = 100
 	}
-	args := []interface{}{assetID, limit}
-	whereTypes := ""
-	if len(eventTypes) > 0 {
-		// Build a positional ANY($N) parameter; pgx accepts []string via $N=ANY.
-		args = []interface{}{assetID, eventTypes, limit}
-		whereTypes = " AND event_type = ANY($2)"
+
+	args := []interface{}{assetID}
+	where := []string{"asset_id = $1"}
+
+	if len(opts.EventTypes) > 0 || len(opts.EventTypePatterns) > 0 {
+		parts := make([]string, 0, 2)
+		if len(opts.EventTypes) > 0 {
+			args = append(args, opts.EventTypes)
+			parts = append(parts, fmt.Sprintf("event_type = ANY($%d)", len(args)))
+		}
+		if len(opts.EventTypePatterns) > 0 {
+			args = append(args, opts.EventTypePatterns)
+			parts = append(parts, fmt.Sprintf("event_type LIKE ANY($%d)", len(args)))
+		}
+		where = append(where, "("+strings.Join(parts, " OR ")+")")
 	}
-	limitParam := "$2"
-	if len(eventTypes) > 0 {
-		limitParam = "$3"
+	if opts.AlgoKey != "" {
+		args = append(args, opts.AlgoKey)
+		where = append(where, fmt.Sprintf("event_payload->>'algo_key' = $%d", len(args)))
 	}
+	if opts.BeforeEventSeq != nil {
+		args = append(args, *opts.BeforeEventSeq)
+		where = append(where, fmt.Sprintf("event_seq < $%d", len(args)))
+	}
+	if opts.AfterEventSeq != nil {
+		args = append(args, *opts.AfterEventSeq)
+		where = append(where, fmt.Sprintf("event_seq > $%d", len(args)))
+	}
+
+	args = append(args, limit)
+	limitParam := fmt.Sprintf("$%d", len(args))
 	q := `
 SELECT event_id, event_seq, event_type, aggregate_type, payload_schema_version,
   COALESCE(asset_id::text, ''), COALESCE(mcap_file_id::text, ''),
@@ -1181,10 +1202,11 @@ SELECT event_id, event_seq, event_type, aggregate_type, payload_schema_version,
   retry_count, COALESCE(last_error, ''),
   occurred_at, created_at, published_at
 FROM asset_events
-WHERE asset_id = $1` + whereTypes + `
+WHERE ` + strings.Join(where, " AND ") + `
 ORDER BY event_seq DESC
 LIMIT ` + limitParam
-	rows, err := r.c.db.Query(ctx, q, args...)
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("postgres AssetEventRepo.ListByAsset: %w", err)
 	}

@@ -1,6 +1,6 @@
 # Backend
 
-Go 后端服务，支持 `bigtable` 和 `postgres` 双存储后端，提供资产管理、算法生命周期、交付管理全套 API。
+Go 后端服务，当前运行时以 `postgres` 为唯一存储后端，提供资产管理、算法生命周期、交付管理全套 API。`internal/bigtable/` 仅保留为历史参考与测试编译目标。
 
 ## 架构概览
 
@@ -14,7 +14,7 @@ HTTP Request
           └── PostgreSQL 实现 (internal/postgres/)
 ```
 
-存储后端通过 `STORAGE_BACKEND` 环境变量切换，两种模式功能完全对等。
+运行时默认且仅支持 `STORAGE_BACKEND=postgres`。`bigtable` 模式已从运行期下线。
 
 ## 快速开始
 
@@ -48,21 +48,11 @@ docker-compose down -v   # 删除 volume
 docker-compose up -d postgres  # 重新初始化
 ```
 
-### Local Development with Bigtable
+### Bigtable Notes (历史保留)
 
 ```bash
-# 1. 安装依赖
-make deps
-
-# 2. 配置环境变量
-cp .env.example .env
-# 编辑 .env: STORAGE_BACKEND=bigtable，填入 GCP 项目信息
-
-# 3. 初始化 Bigtable 表结构（首次）
-make bt-bootstrap
-
-# 4. 启动服务
-make run
+# 运行时已不支持 bigtable。
+# 相关代码仅保留给历史测试与参考，不再作为本地开发路径。
 ```
 
 服务默认监听 `:8080`，健康检查: `GET /healthz`
@@ -96,6 +86,7 @@ make run
 | `PATCH` | `/api/v1/assets/:id` | 部分更新 |
 | `DELETE` | `/api/v1/assets/:id` | 软删除 (status→archived) |
 | `GET` | `/api/v1/assets/:id/deliveries` | 资产关联的交付列表 |
+| `GET` | `/api/v1/assets/:id/events` | 查询资产事件时间线；可用 `event_type=algo_*` 取算法事件子集 |
 
 ### 算法生命周期 (Algo Lifecycle)
 
@@ -104,7 +95,7 @@ make run
 | `POST` | `/api/v1/assets/:id/algo/:algo_key/start` | 启动算法 |
 | `POST` | `/api/v1/assets/:id/algo/:algo_key/finish` | 完成算法 (ok/failed) |
 | `POST` | `/api/v1/assets/:id/algo/:algo_key/reset` | 重置算法 |
-| `GET` | `/api/v1/assets/:id/algo-events` | 查询算法事件 |
+| `GET` | `/api/v1/assets/:id/algo` | 查询当前算法投影状态 |
 
 算法状态机: `blocked → pending → running → ok/failed → (reset) → pending`
 
@@ -438,7 +429,7 @@ SELECT * FROM audit_events WHERE action = 'batch_tag' ORDER BY created_at DESC;
 | POST /assets (创建) | 499ms | 519ms | 591ms | ~19 |
 | GET /assets/:id (读取) | 234ms | 227ms | 271ms | ~42 |
 | algo start→finish→reset | 1.0s | 900ms | 1.7s | ~3 ops/s |
-| GET /algo-events | 459ms | 443ms | 579ms | ~21 |
+| GET /events | 459ms | 443ms | 579ms | ~21 |
 
 测试环境: macOS → GCP Bigtable (green-valley-442103/poc-datainfra), 10 并发
 

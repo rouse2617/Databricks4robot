@@ -66,6 +66,7 @@ func RegisterAll(
 		assets.PATCH("/:id", assetHandler.Update)
 		assets.DELETE("/:id", assetHandler.Delete)
 		assets.GET("/:id/deliveries", assetHandler.ListDeliveries)
+		assets.GET("/:id/events", assetHandler.ListEvents)
 
 		// Algorithm lifecycle routes
 		if algoHandler != nil {
@@ -73,7 +74,6 @@ func RegisterAll(
 			assets.POST("/:id/algo/:algo_key/start", algoHandler.Start)
 			assets.POST("/:id/algo/:algo_key/finish", algoHandler.Finish)
 			assets.POST("/:id/algo/:algo_key/reset", algoHandler.Reset)
-			assets.GET("/:id/events", algoHandler.ListEvents)
 		}
 
 		api.POST("/mcap/upload/finalize", mcapHandler.FinalizeUpload)

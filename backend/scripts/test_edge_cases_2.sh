@@ -267,7 +267,7 @@ else
 fi
 
 # 验证事件数量 (每次循环 3 个事件 = 30 + 之前的事件)
-call GET "/api/v1/assets/${ASSET_ID}/algo-events?algo_key=${ALGO}"
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=algo_*&algo_key=${ALGO}"
 EV_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
 TOTAL=$((TOTAL+1))
 if [ "$EV_COUNT" -ge 30 ]; then

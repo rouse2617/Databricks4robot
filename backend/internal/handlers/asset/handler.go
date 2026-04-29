@@ -3,6 +3,7 @@ package asset
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -105,6 +106,81 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
+}
+
+// ListEvents returns the asset event timeline ordered by event_seq DESC.
+// @Summary      List asset events
+// @Description  List generic asset events with optional event_type/algo_key filters
+// @Tags         assets
+// @Produce      json
+// @Param        id               path  string true  "Asset ID"
+// @Param        event_type       query []string false "Repeated event type filter; supports wildcard suffix like algo_*"
+// @Param        algo_key         query string false "Filter event_payload.algo_key"
+// @Param        cursor           query int64  false "Fetch older events with event_seq < cursor"
+// @Param        before_event_seq query int64  false "Alias of cursor"
+// @Param        after_event_seq  query int64  false "Fetch events with event_seq > after_event_seq"
+// @Param        limit            query int    false "Page size" default(50)
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/events [get]
+func (h *Handler) ListEvents(c *gin.Context) {
+	beforeSeq, err := parseOptionalInt64(c.Query("cursor"))
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid cursor", map[string]any{"error": err.Error()})
+		return
+	}
+	if beforeAlias := c.Query("before_event_seq"); beforeAlias != "" {
+		beforeSeq, err = parseOptionalInt64(beforeAlias)
+		if err != nil {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid before_event_seq", map[string]any{"error": err.Error()})
+			return
+		}
+	}
+	afterSeq, err := parseOptionalInt64(c.Query("after_event_seq"))
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid after_event_seq", map[string]any{"error": err.Error()})
+		return
+	}
+	limit := parseBoundedInt(c.Query("limit"), 50, 1, 200)
+
+	var eventTypes []string
+	var eventTypePatterns []string
+	for _, raw := range c.QueryArray("event_type") {
+		if raw == "" {
+			continue
+		}
+		if strings.Contains(raw, "*") {
+			eventTypePatterns = append(eventTypePatterns, strings.ReplaceAll(raw, "*", "%"))
+			continue
+		}
+		eventTypes = append(eventTypes, raw)
+	}
+
+	res, err := h.uc.ListEvents(c.Request.Context(), c.Param("id"), assetUC.ListEventsInput{
+		EventTypes:        eventTypes,
+		EventTypePatterns: eventTypePatterns,
+		AlgoKey:           c.Query("algo_key"),
+		BeforeEventSeq:    beforeSeq,
+		AfterEventSeq:     afterSeq,
+		Limit:             limit,
+	})
+	if err != nil {
+		if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	resp := gin.H{"items": res.Items, "limit": limit}
+	if res.NextCursor != nil {
+		resp["next_cursor"] = *res.NextCursor
+	}
+	c.JSON(200, resp)
 }
 
 // Create creates a new asset.
@@ -308,6 +384,28 @@ func parsePageParams(pageStr, pageSizeStr string) (int, int) {
 		}
 	}
 	return page, pageSize
+}
+
+func parseOptionalInt64(raw string) (*int64, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func parseBoundedInt(raw string, fallback, min, max int) int {
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < min || v > max {
+		return fallback
+	}
+	return v
 }
 
 func paginateAssets(items []*models.Asset, page, pageSize int) []*models.Asset {

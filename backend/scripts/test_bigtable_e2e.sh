@@ -269,8 +269,8 @@ else
 fi
 
 # 2.5 查询算法事件
-call GET "/api/v1/assets/${ASSET_ID}/algo-events"
-assert_code 200 "GET .../algo-events — 查询事件列表"
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=algo_*"
+assert_code 200 "GET .../events?event_type=algo_* — 查询事件列表"
 
 EVENT_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
 TOTAL=$((TOTAL + 1))
@@ -283,8 +283,8 @@ else
 fi
 
 # 2.6 按 algo_key 过滤事件
-call GET "/api/v1/assets/${ASSET_ID}/algo-events?algo_key=${ALGO_KEY}"
-assert_code 200 "GET .../algo-events?algo_key=${ALGO_KEY} — 按 algo_key 过滤"
+call GET "/api/v1/assets/${ASSET_ID}/events?event_type=algo_*&algo_key=${ALGO_KEY}"
+assert_code 200 "GET .../events?event_type=algo_*&algo_key=${ALGO_KEY} — 按 algo_key 过滤"
 
 FILTERED_COUNT=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['items']))" 2>/dev/null || echo "0")
 TOTAL=$((TOTAL + 1))

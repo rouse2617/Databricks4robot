@@ -399,7 +399,6 @@ func setupAlgoRouter(h *AlgoHandler) *gin.Engine {
 	r.POST("/assets/:id/algo/:algo_key/start", h.Start)
 	r.POST("/assets/:id/algo/:algo_key/finish", h.Finish)
 	r.POST("/assets/:id/algo/:algo_key/reset", h.Reset)
-	r.GET("/assets/:id/events", h.ListEvents)
 	return r
 }
 
@@ -534,21 +533,67 @@ func TestAlgoReset(t *testing.T) {
 	}
 }
 
-func TestAlgoListEvents(t *testing.T) {
+func TestAssetListEvents(t *testing.T) {
+	makeHandler := func(presence bool, seed func(*handlerAssetEventRepo)) *Handler {
+		assetRepo := &mockAssetRepo{}
+		if presence {
+			assetRepo.getFn = func(context.Context, string) (*models.Asset, error) {
+				return &models.Asset{AssetID: "a1", Version: 1}, nil
+			}
+		} else {
+			assetRepo.getFn = func(context.Context, string) (*models.Asset, error) { return nil, nil }
+		}
+		eventRepo := &handlerAssetEventRepo{}
+		if seed != nil {
+			seed(eventRepo)
+		}
+		uc := assetUC.NewWithProjections(handlerTxRunner{}, assetRepo, nil, nil, eventRepo, nil, nil)
+		return New(uc, &mockDeliveryRepoForAsset{})
+	}
+
 	// Asset not found → 404.
-	h, _ := newAlgoEnv(t, false, nil)
-	r := setupAlgoRouter(h)
+	h := makeHandler(false, nil)
+	r := setupAssetRouter(http.MethodGet, "/assets/:id/events", h.ListEvents)
 	w := doReq(t, r, http.MethodGet, "/assets/nonexistent/events", nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for nonexistent asset, got %d", w.Code)
 	}
 
-	// Success with empty events.
-	h2, _ := newAlgoEnv(t, true, nil)
-	r2 := setupAlgoRouter(h2)
-	w = doReq(t, r2, http.MethodGet, "/assets/a1/events", nil)
+	// Success with wildcard event_type filter and cursor pagination.
+	h2 := makeHandler(true, func(repo *handlerAssetEventRepo) {
+		repo.seed("asset_created", 1, map[string]any{"asset_id": "a1"})
+		repo.seed("algo_started", 2, map[string]any{"algo_key": "env_analysis@1.0.0"})
+		repo.seed("algo_finished", 3, map[string]any{"algo_key": "env_analysis@1.0.0"})
+		repo.seed("tag_upserted", 4, map[string]any{"tag_key": "quality"})
+	})
+	r2 := setupAssetRouter(http.MethodGet, "/assets/:id/events", h2.ListEvents)
+	w = doReq(t, r2, http.MethodGet, "/assets/a1/events?event_type=algo_*&limit=1", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp struct {
+		Items      []models.AssetEvent `json:"items"`
+		NextCursor *int64              `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].EventType != "algo_finished" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if resp.NextCursor == nil || *resp.NextCursor != 3 {
+		t.Fatalf("expected next_cursor=3, got %+v", resp.NextCursor)
+	}
+
+	w = doReq(t, r2, http.MethodGet, "/assets/a1/events?event_type=algo_*&algo_key=env_analysis@1.0.0&cursor=3", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 on cursor follow-up, got %d", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal follow-up: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].EventType != "algo_started" {
+		t.Fatalf("unexpected follow-up response: %+v", resp)
 	}
 }
 
@@ -695,18 +740,114 @@ func (m *handlerAlgoLatestRepo) seed(algoKey, status, runID string) {
 	}
 }
 
-// handlerAssetEventRepo is a no-op append-only AssetEventRepository for the
-// handler tests; we don't assert on event payload at this level.
-type handlerAssetEventRepo struct{}
+// handlerAssetEventRepo is a tiny in-memory AssetEventRepository used by handler tests.
+type handlerAssetEventRepo struct {
+	mu     sync.Mutex
+	events []*models.AssetEvent
+}
 
-func (handlerAssetEventRepo) Append(context.Context, repository.AssetEventAppendInput) error {
+func (m *handlerAssetEventRepo) Append(_ context.Context, in repository.AssetEventAppendInput) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	payload := in.EventPayload
+	if payload == nil {
+		payload = []byte(`{}`)
+	}
+	m.events = append(m.events, &models.AssetEvent{
+		EventID:      "evt-" + time.Now().UTC().Format("150405.000000000"),
+		EventSeq:     int64(len(m.events) + 1),
+		EventType:    in.EventType,
+		AssetID:      in.AssetID,
+		McapFileID:   in.McapFileID,
+		EventPayload: append([]byte(nil), payload...),
+		CreatedAt:    time.Now().UTC(),
+		OccurredAt:   time.Now().UTC(),
+	})
 	return nil
 }
-func (handlerAssetEventRepo) ListPending(context.Context, int) ([]*models.AssetEvent, error) {
+
+func (m *handlerAssetEventRepo) ListPending(context.Context, int) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
-func (handlerAssetEventRepo) ListByAsset(_ context.Context, _ string, _ []string, _ int) ([]*models.AssetEvent, error) {
-	return nil, nil
+
+func (m *handlerAssetEventRepo) ListByAsset(_ context.Context, assetID string, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	allow := map[string]struct{}{}
+	for _, t := range opts.EventTypes {
+		allow[t] = struct{}{}
+	}
+	var out []*models.AssetEvent
+	for i := len(m.events) - 1; i >= 0; i-- {
+		e := m.events[i]
+		if e.AssetID != assetID {
+			continue
+		}
+		if len(allow) > 0 {
+			if _, ok := allow[e.EventType]; !ok {
+				matched := false
+				for _, pattern := range opts.EventTypePatterns {
+					if strings.HasSuffix(pattern, "%") && strings.HasPrefix(e.EventType, strings.TrimSuffix(pattern, "%")) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+		} else if len(opts.EventTypePatterns) > 0 {
+			matched := false
+			for _, pattern := range opts.EventTypePatterns {
+				if strings.HasSuffix(pattern, "%") && strings.HasPrefix(e.EventType, strings.TrimSuffix(pattern, "%")) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		if opts.AlgoKey != "" {
+			var payload map[string]any
+			if err := json.Unmarshal(e.EventPayload, &payload); err != nil {
+				continue
+			}
+			if got, _ := payload["algo_key"].(string); got != opts.AlgoKey {
+				continue
+			}
+		}
+		if opts.BeforeEventSeq != nil && e.EventSeq >= *opts.BeforeEventSeq {
+			continue
+		}
+		if opts.AfterEventSeq != nil && e.EventSeq <= *opts.AfterEventSeq {
+			continue
+		}
+		out = append(out, e)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (m *handlerAssetEventRepo) seed(eventType string, seq int64, payload map[string]any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	raw, _ := json.Marshal(payload)
+	m.events = append(m.events, &models.AssetEvent{
+		EventID:      "evt-seed-" + strings.ReplaceAll(time.Now().UTC().Format(time.RFC3339Nano), ":", "-"),
+		EventSeq:     seq,
+		EventType:    eventType,
+		AssetID:      "a1",
+		EventPayload: raw,
+		CreatedAt:    time.Now().UTC(),
+		OccurredAt:   time.Now().UTC(),
+	})
 }
 
 func buildTestAlgoRegistry(t *testing.T) *config.AlgoRegistry {

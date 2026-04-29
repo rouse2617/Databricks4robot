@@ -105,6 +105,17 @@ type AssetEventAppendInput struct {
 	EventPayload         []byte // raw JSON; nil → '{}'
 }
 
+// AssetEventListOptions defines filters for querying an asset event stream.
+// The HTTP API uses DESC order (newest first) and paginates by event_seq.
+type AssetEventListOptions struct {
+	EventTypes        []string
+	EventTypePatterns []string
+	AlgoKey           string
+	BeforeEventSeq    *int64
+	AfterEventSeq     *int64
+	Limit             int
+}
+
 // AssetEventRepository persists rows to the asset_events outbox table.
 //
 // Strong invariants:
@@ -118,5 +129,5 @@ type AssetEventAppendInput struct {
 type AssetEventRepository interface {
 	Append(ctx context.Context, in AssetEventAppendInput) error
 	ListPending(ctx context.Context, limit int) ([]*models.AssetEvent, error)
-	ListByAsset(ctx context.Context, assetID string, eventTypes []string, limit int) ([]*models.AssetEvent, error)
+	ListByAsset(ctx context.Context, assetID string, opts AssetEventListOptions) ([]*models.AssetEvent, error)
 }
