@@ -19,6 +19,16 @@ const { Text } = Typography;
 // ─── Facet Option Constants ───
 
 export const STATUS_OPTIONS = ["approved", "rejected", "superseded", "archived"];
+export const LIFECYCLE_OPTIONS = [
+  "created",
+  "processing",
+  "ready",
+  "rejected",
+  "delivered",
+  "archived",
+  "superseded",
+];
+export const ASSET_TYPE_OPTIONS = ["segment", "clip", "frame_set", "derived_asset"];
 export const ENV_OPTIONS = ["kitchen", "outdoor", "warehouse", "office", "factory"];
 export const ALGO_STATUS_OPTIONS = ["ok", "failed", "running", "pending", "blocked"];
 export const PRIORITY_OPTIONS = ["critical", "high", "medium", "low"];
@@ -28,12 +38,14 @@ export const GROUP_KEYS = ["basic", "capture", "algorithm", "delivery", "tags"] 
 
 // ─── Props ───
 
-/** Aggregation key mapping from ES agg names to facet field names. */
+/** Aggregation key mapping from ES agg names to filter field names. */
 const AGG_KEY_MAP: Record<string, string> = {
+  lifecycle_state_agg: "lifecycle_state",
+  asset_type_agg: "asset_type",
   status_agg: "status",
-  env_agg: "env",
   owner_agg: "owner",
-  task_agg: "task",
+  vendor_agg: "mcap.vendor_id",
+  scene_agg: "mcap.scene_id",
 };
 
 export interface AssetsFacetSidebarProps {
@@ -312,7 +324,15 @@ export default function AssetsFacetSidebar({
       children: (
         <>
           <CheckboxFacet
-            label="状态"
+            label="生命周期"
+            field="lifecycle_state"
+            options={LIFECYCLE_OPTIONS}
+            activeFilters={activeFilters}
+            onToggleFacet={onToggleFacet}
+            counts={fieldCounts["lifecycle_state"]}
+          />
+          <CheckboxFacet
+            label="状态 (legacy)"
             field="status"
             options={STATUS_OPTIONS}
             activeFilters={activeFilters}
@@ -342,16 +362,45 @@ export default function AssetsFacetSidebar({
       children: (
         <>
           <CheckboxFacet
-            label="环境"
+            label="资产类型"
+            field="asset_type"
+            options={ASSET_TYPE_OPTIONS}
+            activeFilters={activeFilters}
+            onToggleFacet={onToggleFacet}
+            counts={fieldCounts["asset_type"]}
+          />
+          <CheckboxFacet
+            label="环境 (cf_meta)"
             field="env"
             options={ENV_OPTIONS}
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
             counts={fieldCounts["env"]}
           />
+          <InputFacet
+            label="Vendor (mcap.vendor_id)"
+            field="mcap.vendor_id"
+            placeholder="vendor_id"
+            activeFilters={activeFilters}
+            onToggleFacet={onToggleFacet}
+          />
+          <InputFacet
+            label="设备 (mcap.device_id)"
+            field="mcap.device_id"
+            placeholder="device_id"
+            activeFilters={activeFilters}
+            onToggleFacet={onToggleFacet}
+          />
+          <InputFacet
+            label="场景 ID (mcap.scene_id)"
+            field="mcap.scene_id"
+            placeholder="scene_id"
+            activeFilters={activeFilters}
+            onToggleFacet={onToggleFacet}
+          />
           <RangeFacet
-            label="时长 (秒)"
-            field="duration_sec"
+            label="时长 (毫秒)"
+            field="duration_ms"
             rangeDrafts={rangeDrafts}
             onRangeDraftChange={onRangeDraftChange}
             onApplyRange={onApplyRange}
@@ -393,7 +442,7 @@ export default function AssetsFacetSidebar({
         <>
           <SwitchFacet
             label="有交付"
-            field="has_delivery"
+            field="has:delivery"
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
           />
@@ -413,23 +462,23 @@ export default function AssetsFacetSidebar({
       children: (
         <>
           <CheckboxFacet
-            label="优先级"
-            field="tag.priority"
+            label="优先级 (tags_flat)"
+            field="tags_flat.priority"
             options={PRIORITY_OPTIONS}
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
           />
           <CheckboxFacet
-            label="质量"
-            field="tag.quality"
+            label="质量 (tags_flat)"
+            field="tags_flat.quality"
             options={QUALITY_OPTIONS}
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
           />
           <InputFacet
-            label="备注"
-            field="tag.notes"
-            placeholder="搜索备注"
+            label="场景标签 (tags.scene)"
+            field="tags.scene"
+            placeholder="eq 操作在关键词模式下走 nested"
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
           />

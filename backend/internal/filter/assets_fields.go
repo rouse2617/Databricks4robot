@@ -10,6 +10,9 @@ type fieldSpec struct {
 	Canonical    string
 	StorageField string
 	IsJSONB      bool
+	// McapColumn names a whitelisted mcap_files column when the public field
+	// is mcap.<col> — SQL is emitted as EXISTS (SELECT 1 FROM mcap_files ...).
+	McapColumn string
 }
 
 type fieldPrefixSpec struct {
@@ -28,6 +31,17 @@ var allowedLifecycleKeys = map[string]bool{
 	"last_accessed_at":   true,
 }
 
+var mcapFilterColumns = map[string]bool{
+	"vendor_id":      true,
+	"device_id":      true,
+	"camera_model":   true,
+	"scene_id":       true,
+	"location_id":    true,
+	"environment_id": true,
+	"task_id":        true,
+	"data_source":    true,
+}
+
 var exactFieldSpecs = map[string]fieldSpec{
 	"asset_id":           {Canonical: "asset_id", StorageField: "asset_id", IsJSONB: false},
 	"mcap_file_id":       {Canonical: "mcap_file_id", StorageField: "mcap_file_id", IsJSONB: false},
@@ -39,6 +53,7 @@ var exactFieldSpecs = map[string]fieldSpec{
 
 	"end_timestamp_ns":  {Canonical: "end_timestamp_ns", StorageField: "end_timestamp_ns", IsJSONB: false},
 	"duration_sec":      {Canonical: "duration_sec", StorageField: "duration_ms", IsJSONB: false},
+	"duration_ms":       {Canonical: "duration_ms", StorageField: "duration_ms", IsJSONB: false},
 	"reviewer":          {Canonical: "reviewer", StorageField: "reviewer", IsJSONB: false},
 	"owner":             {Canonical: "owner", StorageField: "owner", IsJSONB: false},
 	"type":              {Canonical: "type", StorageField: "asset_type", IsJSONB: false},
@@ -87,6 +102,35 @@ func ResolveField(field string) (fieldSpec, error) {
 	field = strings.TrimSpace(field)
 	if field == "" {
 		return fieldSpec{}, fmt.Errorf("filter: empty field name")
+	}
+
+	if strings.HasPrefix(field, "tags_flat.") {
+		key := strings.TrimPrefix(field, "tags_flat.")
+		if key == "" {
+			return fieldSpec{}, fmt.Errorf("filter: field %q is missing a key suffix", field)
+		}
+		if !dynamicFieldKeyPattern.MatchString(key) {
+			return fieldSpec{}, fmt.Errorf("filter: field %q contains unsupported characters", field)
+		}
+		return fieldSpec{
+			Canonical:    "tag." + key,
+			StorageField: "cf_tag." + key,
+			IsJSONB:      true,
+		}, nil
+	}
+
+	if strings.HasPrefix(field, "mcap.") {
+		key := strings.TrimPrefix(field, "mcap.")
+		if key == "" {
+			return fieldSpec{}, fmt.Errorf("filter: field %q is missing a column suffix", field)
+		}
+		if !mcapFilterColumns[key] {
+			return fieldSpec{}, fmt.Errorf("filter: mcap column %q is not allowed", key)
+		}
+		return fieldSpec{
+			Canonical:  field,
+			McapColumn: key,
+		}, nil
 	}
 
 	if spec, ok := exactFieldSpecs[field]; ok {

@@ -18,24 +18,56 @@ interface FieldMeta {
   values?: string[];
 }
 
+/** Fields align with ES v2 mapping (`nested` tags / algos, `flattened` tags_flat, `mcap.*`). */
 const SEARCHABLE_FIELDS: FieldMeta[] = [
-  { key: "status", label: "状态", type: "enum", values: ["approved", "rejected", "superseded", "archived"] },
-  { key: "env", label: "环境", type: "enum", values: ["kitchen", "outdoor", "warehouse", "office", "factory"] },
-  { key: "algo_status", label: "算法状态", type: "enum", values: ["ok", "failed", "running", "pending", "blocked"] },
-  { key: "tag.priority", label: "优先级", type: "enum", values: ["critical", "high", "medium", "low"] },
-  { key: "tag.quality", label: "质量", type: "enum", values: ["excellent", "good", "acceptable", "poor", "unusable"] },
-  { key: "duration_sec", label: "时长(秒)", type: "numeric" },
+  {
+    key: "lifecycle_state",
+    label: "生命周期",
+    type: "enum",
+    values: ["created", "processing", "ready", "rejected", "delivered", "archived", "superseded"],
+  },
+  {
+    key: "asset_type",
+    label: "资产类型",
+    type: "enum",
+    values: ["segment", "clip", "frame_set", "derived_asset"],
+  },
+  { key: "status", label: "状态(legacy)", type: "enum", values: ["approved", "rejected", "superseded", "archived"] },
+  { key: "env", label: "环境(cf_meta)", type: "enum", values: ["kitchen", "outdoor", "warehouse", "office", "factory"] },
+  { key: "algo_status", label: "算法状态(虚拟)", type: "enum", values: ["ok", "failed", "running", "pending", "blocked"] },
+  { key: "tags_flat.priority", label: "优先级(tags_flat)", type: "enum", values: ["critical", "high", "medium", "low"] },
+  { key: "tags_flat.quality", label: "质量(tags_flat)", type: "enum", values: ["excellent", "good", "acceptable", "poor", "unusable"] },
+  {
+    key: "tags.source_type",
+    label: "Tag来源(nested)",
+    type: "enum",
+    values: ["human", "algo"],
+  },
+  { key: "tags.scene", label: "场景标签 scene (nested)", type: "string" },
+  { key: "algos.hand_tracking.status", label: "hand_tracking 状态", type: "enum", values: ["ok", "failed", "running", "pending", "blocked"] },
+  { key: "algos.face_blur.status", label: "face_blur 状态", type: "enum", values: ["ok", "failed", "running", "pending", "blocked"] },
+  { key: "duration_ms", label: "时长(毫秒)", type: "numeric" },
   { key: "delivery_count", label: "交付次数", type: "numeric" },
   { key: "asset_id", label: "Asset ID", type: "string" },
   { key: "mcap_file_id", label: "MCAP ID", type: "string" },
+  { key: "mcap.vendor_id", label: "设备商 vendor_id", type: "string" },
+  { key: "mcap.device_id", label: "设备 device_id", type: "string" },
+  { key: "mcap.scene_id", label: "采集场景 scene_id", type: "string" },
   { key: "owner", label: "Owner", type: "string" },
   { key: "reviewer", label: "Reviewer", type: "string" },
-  { key: "tag.notes", label: "备注", type: "string" },
+  { key: "tag.notes", label: "备注(cf_tag)", type: "string" },
   { key: "created_at", label: "创建时间", type: "timestamp" },
   { key: "updated_at", label: "更新时间", type: "timestamp" },
 ];
 
-const QUICK_FIELDS = ["status", "owner", "tag.priority", "algo_status", "duration_sec", "env"];
+const QUICK_FIELDS = [
+  "lifecycle_state",
+  "duration_ms",
+  "tags_flat.priority",
+  "tags.source_type",
+  "mcap.vendor_id",
+  "mcap.scene_id",
+];
 
 // ─── Operator options by field type ───
 
@@ -45,7 +77,6 @@ function getOperators(type: FieldType): { value: string; label: string }[] {
       return [
         { value: "eq", label: "等于" },
         { value: "ne", label: "不等于" },
-        { value: "in", label: "包含(多选)" },
       ];
     case "numeric":
       return [
@@ -66,8 +97,19 @@ function getOperators(type: FieldType): { value: string; label: string }[] {
         { value: "eq", label: "等于" },
         { value: "gt", label: "晚于" },
         { value: "lt", label: "早于" },
+        { value: "between", label: "范围" },
       ];
   }
+}
+
+function valuePlaceholder(fieldMeta: FieldMeta, op: string | null): string {
+  if (fieldMeta.type === "numeric" && op === "between") {
+    return "最小,最大（如 9000,11000）";
+  }
+  if (fieldMeta.type === "timestamp" && op === "between") {
+    return "起始,结束（RFC3339，逗号分隔）";
+  }
+  return "输入值";
 }
 
 // ─── Props ───
@@ -159,12 +201,12 @@ export default function AddFilterPopover({ onAddFilter }: AddFilterPopoverProps)
             />
           ) : (
             <Input
-              placeholder="输入值"
+              placeholder={valuePlaceholder(fieldMeta, selectedOp)}
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onPressEnter={handleSubmit}
               size="small"
-              type={fieldMeta.type === "numeric" ? "number" : "text"}
+              type={fieldMeta.type === "numeric" ? "text" : "text"}
             />
           )
         )}

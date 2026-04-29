@@ -35,9 +35,7 @@ function deriveQueryKey(state: AssetsDiscoveryState): string {
  */
 function buildFilterParams(state: AssetsDiscoveryState): string[] {
   return state.queryState.activeFilters.map((chip) => {
-    const val = Array.isArray(chip.value)
-      ? `[${chip.value.map((v) => `"${v}"`).join(",")}]`
-      : chip.value;
+    const val = Array.isArray(chip.value) ? chip.value.join(",") : chip.value;
     return `${chip.field}:${chip.op}:${val}`;
   });
 }

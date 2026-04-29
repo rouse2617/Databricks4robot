@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -38,7 +40,7 @@ func New(baseURL, index string) *Client {
 // FilterOp represents a single filter with field, operator, and value.
 type FilterOp struct {
 	Field string
-	Op    string // eq, ne, gt, gte, lt, lte
+	Op    string // eq, ne, gt, gte, lt, lte, between
 	Value string
 }
 
@@ -72,6 +74,22 @@ type SearchResponse struct {
 }
 
 // Search executes a bool query against the assets index.
+//
+// Filter field routing:
+//
+//   - tags.<key>            → nested query on path "tags",
+//     match {tags.key=<key>, tags.value=<value>} (also supports range/ne).
+//   - algos.<name>          → nested query on path "algos",
+//     match {algos.name=<name>, algos.status=<value>}.
+//   - algos.<name>.<attr>   → nested query on path "algos",
+//     match {algos.name=<name>, algos.<attr> op <value>}; attr "score"
+//     is rewritten to nested field result_score.
+//   - everything else       → flat term/range on the literal field name.
+//     This includes flattened paths (`tags_flat.<key>`,
+//     `metadata.<key>`) and reflective namespaces (`mcap.<col>`).
+//
+// Operator "between" expects Value="lower,upper" and translates to
+// {"range": {field: {gte: lower, lte: upper}}}.
 func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse, error) {
 	if req.Page < 1 {
 		req.Page = 1
@@ -80,9 +98,15 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 		req.PageSize = 20
 	}
 
+	body := buildSearchBody(req)
+	return c.doSearch(ctx, body)
+}
+
+// buildSearchBody is exported via Search; kept package-private and pure so it
+// can be unit-tested without an HTTP roundtrip.
+func buildSearchBody(req SearchRequest) map[string]any {
 	from := (req.Page - 1) * req.PageSize
 
-	// Build bool query
 	must := make([]map[string]any, 0)
 	filter := make([]map[string]any, 0)
 	mustNot := make([]map[string]any, 0)
@@ -91,38 +115,19 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 		must = append(must, map[string]any{
 			"multi_match": map[string]any{
 				"query":  req.Query,
-				"fields": []string{"notes", "owner", "reviewer", "task", "env", "asset_id"},
+				"fields": []string{"notes", "owner.text", "reviewer.text", "asset_id"},
 				"type":   "best_fields",
 			},
 		})
 	}
 
 	for _, f := range req.Filters {
-		switch f.Op {
-		case "eq":
-			filter = append(filter, map[string]any{
-				"term": map[string]any{f.Field: f.Value},
-			})
-		case "ne":
-			mustNot = append(mustNot, map[string]any{
-				"term": map[string]any{f.Field: f.Value},
-			})
-		case "gt":
-			filter = append(filter, map[string]any{
-				"range": map[string]any{f.Field: map[string]any{"gt": f.Value}},
-			})
-		case "gte":
-			filter = append(filter, map[string]any{
-				"range": map[string]any{f.Field: map[string]any{"gte": f.Value}},
-			})
-		case "lt":
-			filter = append(filter, map[string]any{
-				"range": map[string]any{f.Field: map[string]any{"lt": f.Value}},
-			})
-		case "lte":
-			filter = append(filter, map[string]any{
-				"range": map[string]any{f.Field: map[string]any{"lte": f.Value}},
-			})
+		positive, negative := buildFilterClause(f)
+		if positive != nil {
+			filter = append(filter, positive)
+		}
+		if negative != nil {
+			mustNot = append(mustNot, negative)
 		}
 	}
 
@@ -137,31 +142,31 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 		boolQuery["must_not"] = mustNot
 	}
 
-	// If no must/filter/must_not, match_all
 	query := map[string]any{"match_all": map[string]any{}}
 	if len(must) > 0 || len(filter) > 0 || len(mustNot) > 0 {
 		query = map[string]any{"bool": boolQuery}
 	}
 
-	// Aggregations for facets
+	// Facets aligned with the v2 mapping. terms aggs only — the heavy
+	// histogram/percentile aggs are exposed via dedicated endpoints later.
 	aggs := map[string]any{
-		"status_agg": map[string]any{"terms": map[string]any{"field": "status", "size": 20}},
-		"env_agg":    map[string]any{"terms": map[string]any{"field": "env", "size": 20}},
-		"owner_agg":  map[string]any{"terms": map[string]any{"field": "owner", "size": 20}},
-		"task_agg":   map[string]any{"terms": map[string]any{"field": "task", "size": 20}},
+		"lifecycle_state_agg": map[string]any{"terms": map[string]any{"field": "lifecycle_state", "size": 20}},
+		"asset_type_agg":      map[string]any{"terms": map[string]any{"field": "asset_type", "size": 20}},
+		"status_agg":          map[string]any{"terms": map[string]any{"field": "status", "size": 20}},
+		"owner_agg":           map[string]any{"terms": map[string]any{"field": "owner", "size": 20}},
+		"vendor_agg":          map[string]any{"terms": map[string]any{"field": "mcap.vendor_id", "size": 20}},
+		"scene_agg":           map[string]any{"terms": map[string]any{"field": "mcap.scene_id", "size": 20}},
 	}
 
-	// Highlight configuration
 	highlight := map[string]any{
 		"fields": map[string]any{
-			"notes":    map[string]any{},
-			"owner":    map[string]any{},
-			"reviewer": map[string]any{},
-			"task":     map[string]any{},
+			"notes":         map[string]any{},
+			"owner.text":    map[string]any{},
+			"reviewer.text": map[string]any{},
 		},
 	}
 
-	body := map[string]any{
+	return map[string]any{
 		"query":     query,
 		"from":      from,
 		"size":      req.PageSize,
@@ -169,8 +174,204 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResponse
 		"sort":      []map[string]any{{"updated_at": map[string]any{"order": "desc"}}},
 		"highlight": highlight,
 	}
+}
 
-	return c.doSearch(ctx, body)
+// buildFilterClause returns (positive, negative) clauses for a single filter.
+// Exactly one of the two is non-nil for typical filters; "ne" returns
+// (nil, term clause) so the caller adds it to `must_not`.
+func buildFilterClause(f FilterOp) (positive, negative map[string]any) {
+	if path, ok := nestedPath(f.Field); ok {
+		clause := buildNestedClause(path, f)
+		if f.Op == "ne" {
+			return nil, clause
+		}
+		return clause, nil
+	}
+
+	clause := buildScalarClause(f.Field, f.Op, f.Value)
+	if clause == nil {
+		return nil, nil
+	}
+	if f.Op == "ne" {
+		return nil, clause
+	}
+	return clause, nil
+}
+
+// nestedPath reports whether the filter field targets a nested document path.
+// Only `tags.<...>` and `algos.<...>` are nested in the v2 mapping; flattened
+// paths like `tags_flat.<key>` or object paths like `mcap.<col>` stay flat.
+func nestedPath(field string) (string, bool) {
+	switch {
+	case strings.HasPrefix(field, "tags.") && !strings.HasPrefix(field, "tags_flat."):
+		return "tags", true
+	case strings.HasPrefix(field, "algos."):
+		return "algos", true
+	}
+	return "", false
+}
+
+// tagInnerMatchFields are tag document sub-fields that can be filtered without
+// pinning tags.key (e.g. tags.source_type:eq:algo).
+var tagInnerMatchFields = map[string]bool{
+	"source_type": true,
+	"source_name": true,
+	"confidence":  true,
+	"value_num":   true,
+	"value_bool":  true,
+	"value":       true,
+	"key":         true,
+}
+
+// buildNestedClause produces a `nested` query that pins both the "selector"
+// (e.g. tags.key=scene, algos.name=hand_tracking) and the "value/range" inside
+// the same nested document, which is what users mean when they write
+// `tags.scene:eq:highway` or `algos.hand_tracking.result_score:gt:0.8`.
+func buildNestedClause(path string, f FilterOp) map[string]any {
+	must := []map[string]any{}
+
+	switch path {
+	case "tags":
+		rest := strings.TrimPrefix(f.Field, "tags.")
+		if tagInnerMatchFields[rest] {
+			clause := buildScalarClause("tags."+rest, coerceOp(f.Op), f.Value)
+			if clause != nil {
+				must = append(must, clause)
+			}
+			break
+		}
+		// tags.<key> — pin key + match value (string or numeric).
+		key := rest
+		must = append(must, map[string]any{"term": map[string]any{"tags.key": key}})
+		for _, c := range tagKeyValueClauses(coerceOp(f.Op), f.Value) {
+			must = append(must, c)
+		}
+
+	case "algos":
+		// f.Field is "algos.<name>" or "algos.<name>.<attr>".
+		rest := strings.TrimPrefix(f.Field, "algos.")
+		parts := strings.SplitN(rest, ".", 2)
+		algoName := parts[0]
+		attr := "status"
+		if len(parts) == 2 {
+			attr = parts[1]
+		}
+		// Map API-friendly "score" to ES nested field result_score.
+		if attr == "score" {
+			attr = "result_score"
+		}
+		must = append(must, map[string]any{"term": map[string]any{"algos.name": algoName}})
+		valueClause := buildScalarClause("algos."+attr, coerceOp(f.Op), f.Value)
+		if valueClause != nil {
+			must = append(must, valueClause)
+		}
+	}
+
+	return map[string]any{
+		"nested": map[string]any{
+			"path":  path,
+			"query": map[string]any{"bool": map[string]any{"must": must}},
+		},
+	}
+}
+
+// tagKeyValueClauses returns clauses matching tags.value or tags.value_num for
+// a pinned tags.key (caller adds the key term separately).
+func tagKeyValueClauses(op, value string) []map[string]any {
+	if op == "between" {
+		lo, hi, ok := splitBetween(value)
+		if !ok {
+			return nil
+		}
+		if isNumericString(lo) && isNumericString(hi) {
+			return []map[string]any{{
+				"range": map[string]any{"tags.value_num": map[string]any{"gte": lo, "lte": hi}},
+			}}
+		}
+		return []map[string]any{{
+			"range": map[string]any{"tags.value": map[string]any{"gte": lo, "lte": hi}},
+		}}
+	}
+	if op == "gt" || op == "gte" || op == "lt" || op == "lte" {
+		field := "tags.value"
+		if isNumericString(value) {
+			field = "tags.value_num"
+		}
+		return []map[string]any{buildScalarClause(field, op, value)}
+	}
+	if op == "eq" || op == "ne" {
+		if isNumericString(value) {
+			return []map[string]any{buildScalarClause("tags.value_num", op, value)}
+		}
+		return []map[string]any{buildScalarClause("tags.value", op, value)}
+	}
+	return nil
+}
+
+func isNumericString(s string) bool {
+	if s == "" {
+		return false
+	}
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
+}
+
+// coerceOp downgrades "ne" inside a nested clause to "eq", because negation
+// at the nested-document level is awkward (requires must_not at the outer
+// level). The caller of buildNestedClause hoists "ne" to the outer must_not.
+func coerceOp(op string) string {
+	if op == "ne" {
+		return "eq"
+	}
+	return op
+}
+
+// buildScalarClause builds a single term/range clause for a flat field.
+// Returns nil for unknown ops.
+func buildScalarClause(field, op, value string) map[string]any {
+	switch op {
+	case "eq", "ne":
+		return map[string]any{"term": map[string]any{field: value}}
+	case "gt", "gte", "lt", "lte":
+		return map[string]any{"range": map[string]any{field: map[string]any{op: value}}}
+	case "between":
+		lo, hi, ok := splitBetween(value)
+		if !ok {
+			return nil
+		}
+		return map[string]any{"range": map[string]any{field: map[string]any{"gte": lo, "lte": hi}}}
+	case "ilike":
+		pattern := "*" + elasticsearchWildcardQuote(value) + "*"
+		return map[string]any{
+			"wildcard": map[string]any{
+				field: map[string]any{"value": pattern, "case_insensitive": true},
+			},
+		}
+	}
+	return nil
+}
+
+// elasticsearchWildcardQuote escapes * and \ for ES wildcard syntax, then lowercases
+// so case_insensitive matching is predictable on keyword fields.
+func elasticsearchWildcardQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `*`, `\*`)
+	s = strings.ReplaceAll(s, `?`, `\?`)
+	return strings.ToLower(s)
+}
+
+// splitBetween parses "lower,upper". Both sides must be non-empty.
+func splitBetween(value string) (string, string, bool) {
+	parts := strings.SplitN(value, ",", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	lo := strings.TrimSpace(parts[0])
+	hi := strings.TrimSpace(parts[1])
+	if lo == "" || hi == "" {
+		return "", "", false
+	}
+	return lo, hi, true
 }
 
 func (c *Client) doSearch(ctx context.Context, body map[string]any) (*SearchResponse, error) {

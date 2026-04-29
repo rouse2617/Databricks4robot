@@ -28,8 +28,12 @@ func New(esClient *elasticsearch.Client) *Handler {
 //
 // Query parameters:
 //
-//	q          — free-text query (multi_match across notes, owner, reviewer, task)
-//	filter     — repeated, format "field:op:value" where op is eq|ne|gt|gte|lt|lte
+//	q          — free-text query (multi_match over notes/owner.text/reviewer.text/asset_id)
+//	filter     — repeated, format "field:op:value" where op is one of
+//	             eq | ne | gt | gte | lt | lte | between.
+//	             "between" expects value="lower,upper" (e.g. "9000,11000").
+//	             Field routing is handled by the ES client; nested paths
+//	             tags.<key> and algos.<name>[.<attr>] are auto-detected.
 //	page       — 1-based page number (default 1)
 //	page_size  — results per page (default 20, max 200)
 func (h *Handler) SearchAssets(c *gin.Context) {
@@ -51,9 +55,14 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 		pageSize = 20
 	}
 
-	// Parse filter params: "field:op:value" where op can be eq, ne, gt, gte, lt, lte
+	// Parse filter params: "field:op:value"
 	var filters []elasticsearch.FilterOp
-	validOps := map[string]bool{"eq": true, "ne": true, "gt": true, "gte": true, "lt": true, "lte": true}
+	validOps := map[string]bool{
+		"eq": true, "ne": true,
+		"gt": true, "gte": true, "lt": true, "lte": true,
+		"between": true,
+		"ilike": true,
+	}
 	for _, f := range c.QueryArray("filter") {
 		parts := strings.SplitN(f, ":", 3)
 		if len(parts) == 3 && validOps[parts[1]] {

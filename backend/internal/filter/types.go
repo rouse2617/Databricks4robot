@@ -32,6 +32,7 @@ var SearchableFields = map[string]FieldMeta{
 	"task":              {Type: "string"},
 	"batch":             {Type: "string"},
 	"duration_sec":      {Type: "numeric"},
+	"duration_ms":       {Type: "numeric"},
 	"created_at":        {Type: "timestamp"},
 	"updated_at":        {Type: "timestamp"},
 	"delivery_count":    {Type: "numeric"},
@@ -149,6 +150,8 @@ type Filter struct {
 	Value        interface{} // Typed value
 	IsJsonb      bool        // Whether the resolved storage field is a JSONB path query
 	IsVirtual    bool        // Whether this is a virtual field handled by VirtualFieldHandler
+	// McapColumn names mcap_files.<col> when filtering on mcap.* public fields.
+	McapColumn string
 }
 
 // OperatorMap defines allowed query operators and their SQL mappings.
@@ -164,6 +167,7 @@ var OperatorMap = map[string]string{
 	"in":       "IN",
 	"nin":      "NOT IN",
 	"contains": "@>",
+	"between":  "BETWEEN",
 }
 
 // ReverseOperatorMap maps SQL operators back to filter operator names.
@@ -179,6 +183,7 @@ var ReverseOperatorMap = map[string]string{
 	"IN":     "in",
 	"NOT IN": "nin",
 	"@>":     "contains",
+	"BETWEEN": "between",
 }
 
 // Serialize converts a Filter back to its canonical string form: <field>:<op>:<value>.

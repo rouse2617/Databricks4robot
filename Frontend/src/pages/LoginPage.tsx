@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
 export default function LoginPage() {
-  const { login, getRedirectTarget } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const [msg, msgCtx] = message.useMessage();
 
@@ -13,12 +13,8 @@ export default function LoginPage() {
       msg.error("Token is required");
       return;
     }
-    // Store first 8 chars of token as display username
-    const displayUser = `user-${trimmed.slice(0, 8)}`;
-    login(trimmed, displayUser);
-    // Navigate back to the page the user came from (or dashboard)
-    const target = getRedirectTarget();
-    navigate(target, { replace: true });
+    login(trimmed);
+    navigate("/dashboard");
   };
 
   return (

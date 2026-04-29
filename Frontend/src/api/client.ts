@@ -26,9 +26,7 @@ apiClient.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem(TOKEN_KEY);
-      // Preserve the current path so login page can redirect back
-      const from = encodeURIComponent(window.location.pathname + window.location.search);
-      window.location.href = `/login?from=${from}`;
+      window.location.href = "/login";
     }
     return Promise.reject(err);
   }

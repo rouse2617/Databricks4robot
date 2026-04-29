@@ -102,6 +102,7 @@ func ParseFilter(filterStr string) (*Filter, error) {
 		Op:           sqlOp,
 		Value:        value,
 		IsJsonb:      spec.IsJSONB,
+		McapColumn:   spec.McapColumn,
 	}, nil
 }
 

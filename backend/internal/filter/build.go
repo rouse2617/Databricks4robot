@@ -51,6 +51,10 @@ func buildCondition(f Filter, paramIdx int) (string, []interface{}, int, error) 
 		return handler.BuildSQL(f.Value, paramIdx)
 	}
 
+	if f.McapColumn != "" {
+		return buildMcapLookupCondition(f, paramIdx)
+	}
+
 	colExpr := resolveColumnExpr(f)
 
 	switch f.Op {
@@ -98,6 +102,19 @@ func buildSimpleCondition(f Filter, colExpr string, paramIdx int) (string, []int
 		default:
 			return fmt.Sprintf("%s %s $%d", colExpr, f.Op, paramIdx), []interface{}{f.Value}, paramIdx + 1, nil
 		}
+	}
+
+	if f.Op == "BETWEEN" {
+		lo, hi, err := parseBetweenValuePair(f.Value)
+		if err != nil {
+			return "", nil, paramIdx, err
+		}
+		expr := colExpr
+		if f.IsJsonb {
+			expr = addTypeCast(colExpr, lo)
+		}
+		sql := fmt.Sprintf("(%s >= $%d AND %s <= $%d)", expr, paramIdx, expr, paramIdx+1)
+		return sql, []interface{}{lo, hi}, paramIdx + 2, nil
 	}
 
 	// For JSONB numeric/timestamp comparisons, add type cast
@@ -176,6 +193,56 @@ func addTypeCast(colExpr string, value interface{}) string {
 	}
 }
 
+// parseBetweenValuePair parses BETWEEN bounds from a "lo,hi" string or a
+// two-element JSON array (as produced by inferValueType).
+func parseBetweenValuePair(v interface{}) (interface{}, interface{}, error) {
+	switch val := v.(type) {
+	case string:
+		parts := strings.SplitN(val, ",", 2)
+		if len(parts) != 2 {
+			return nil, nil, fmt.Errorf("filter: between value must be two comma-separated parts")
+		}
+		lo := strings.TrimSpace(parts[0])
+		hi := strings.TrimSpace(parts[1])
+		if lo == "" || hi == "" {
+			return nil, nil, fmt.Errorf("filter: between bounds must be non-empty")
+		}
+		return inferValueType(lo), inferValueType(hi), nil
+	case []interface{}:
+		if len(val) != 2 {
+			return nil, nil, fmt.Errorf("filter: between value must be a two-element array")
+		}
+		return val[0], val[1], nil
+	default:
+		return nil, nil, fmt.Errorf("filter: invalid between value type %T", v)
+	}
+}
+
+// buildMcapLookupCondition turns mcap.<col> filters into EXISTS subqueries
+// against mcap_files (column names were validated in ResolveField).
+func buildMcapLookupCondition(f Filter, paramIdx int) (string, []interface{}, int, error) {
+	col := f.McapColumn
+	prefix := fmt.Sprintf(
+		`EXISTS (SELECT 1 FROM mcap_files mf WHERE mf.mcap_file_id = assets.mcap_file_id AND COALESCE(mf.is_deleted, FALSE) = FALSE AND mf.%s `,
+		col,
+	)
+
+	switch f.Op {
+	case "BETWEEN":
+		lo, hi, err := parseBetweenValuePair(f.Value)
+		if err != nil {
+			return "", nil, paramIdx, err
+		}
+		sql := fmt.Sprintf("%sBETWEEN $%d AND $%d)", prefix, paramIdx, paramIdx+1)
+		return sql, []interface{}{lo, hi}, paramIdx + 2, nil
+	case "ILIKE", "LIKE", "=", "!=", "<", ">", "<=", ">=":
+		sql := fmt.Sprintf("%s%s $%d)", prefix, f.Op, paramIdx)
+		return sql, []interface{}{f.Value}, paramIdx + 1, nil
+	default:
+		return "", nil, paramIdx, fmt.Errorf("filter: operator %q not supported for mcap fields", f.Op)
+	}
+}
+
 // ResolveSortBy converts a validated sort field to a SQL ORDER BY expression.
 // Supports "-" prefix for DESC and approved JSONB-backed aliases.
 func ResolveSortBy(sortBy string) (string, error) {
@@ -216,7 +283,7 @@ func ResolveSortBy(sortBy string) (string, error) {
 
 func castJsonbSortExpr(field, expr string) string {
 	switch field {
-	case "duration_sec", "delivery_count", "archive_after_days", "delete_after_days", "total_size_bytes":
+	case "duration_sec", "duration_ms", "delivery_count", "archive_after_days", "delete_after_days", "total_size_bytes":
 		return fmt.Sprintf("(%s)::NUMERIC", expr)
 	case "last_delivered_at", "last_accessed_at":
 		return fmt.Sprintf("(%s)::TIMESTAMPTZ", expr)
