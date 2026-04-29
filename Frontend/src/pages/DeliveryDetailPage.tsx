@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Typography,
   Descriptions,
@@ -34,6 +34,12 @@ export default function DeliveryDetailPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(false);
 
+  // antd useMessage may return a fresh reference per render; capture in ref so
+  // fetchDelivery's identity stays stable (otherwise useEffect re-fires every
+  // render → infinite refetch).
+  const msgRef = useRef(msg);
+  msgRef.current = msg;
+
   const fetchDelivery = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -41,11 +47,11 @@ export default function DeliveryDetailPage() {
       const d = await deliveriesApi.get(id);
       setDelivery(d);
     } catch {
-      msg.error("加载交付详情失败");
+      msgRef.current.error("加载交付详情失败");
     } finally {
       setLoading(false);
     }
-  }, [id, msg]);
+  }, [id]);
 
   const fetchAssets = useCallback(async () => {
     if (!id) return;

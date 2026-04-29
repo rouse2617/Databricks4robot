@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Typography, Table, Select, Button, Tag, Space, message } from "antd";
 import { ReloadOutlined, PlusOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
@@ -36,6 +36,13 @@ export default function DeliveriesPage() {
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
 
+  // antd v5 useMessage may return a fresh `msg` reference on every render.
+  // Capture it in a ref so fetchData's identity only depends on real query
+  // params; otherwise useCallback ties to msg → useEffect re-fires every
+  // render → infinite API spam.
+  const msgRef = useRef(msg);
+  msgRef.current = msg;
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -47,11 +54,11 @@ export default function DeliveriesPage() {
       setItems(res.items ?? []);
       setTotal(res.total);
     } catch {
-      msg.error("加载交付列表失败");
+      msgRef.current.error("加载交付列表失败");
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, status, msg]);
+  }, [page, pageSize, status]);
 
   useEffect(() => {
     fetchData();
