@@ -91,7 +91,7 @@ func setupE2E(t *testing.T) *e2eEnv {
 	// Build Gin engine and register all routes.
 	r := gin.New()
 	r.Use(gin.Recovery())
-	routes.RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, algoHandler, nil, nil, nil)
+	routes.RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, algoHandler, nil, nil, nil, nil)
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)

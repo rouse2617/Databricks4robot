@@ -1177,6 +1177,50 @@ INSERT INTO asset_events (
 	return nil
 }
 
+// MarkPublished marks outbox rows as successfully published (ES sink MVP).
+func (r *AssetEventRepo) MarkPublished(ctx context.Context, eventSeqs []int64) error {
+	if len(eventSeqs) == 0 {
+		return nil
+	}
+	const q = `
+UPDATE asset_events
+SET publish_state = 'published', published_at = now()
+WHERE event_seq = ANY($1::bigint[]) AND publish_state = 'pending'`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, eventSeqs); err != nil {
+		return fmt.Errorf("postgres AssetEventRepo.MarkPublished: %w", err)
+	}
+	return nil
+}
+
+// MarkFailed increments retry_count and records last_error; row stays pending.
+func (r *AssetEventRepo) MarkFailed(ctx context.Context, eventSeq int64, errMsg string) error {
+	if errMsg == "" {
+		errMsg = "unknown error"
+	}
+	const q = `
+UPDATE asset_events
+SET retry_count = retry_count + 1,
+    last_error = $2
+WHERE event_seq = $1 AND publish_state = 'pending'`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, eventSeq, errMsg); err != nil {
+		return fmt.Errorf("postgres AssetEventRepo.MarkFailed: %w", err)
+	}
+	return nil
+}
+
+// CountPending returns pending outbox rows (for metrics / ops).
+func (r *AssetEventRepo) CountPending(ctx context.Context) (int64, error) {
+	const q = `SELECT COUNT(*) FROM asset_events WHERE publish_state = 'pending'`
+	db := dbFromCtx(ctx, r.c.db)
+	var n int64
+	if err := db.QueryRow(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("postgres AssetEventRepo.CountPending: %w", err)
+	}
+	return n, nil
+}
+
 // ListByAsset returns the asset event stream in DESC event_seq order with
 // optional exact event_type filters, wildcard event_type patterns, algo_key
 // filter, and event_seq cursor bounds.

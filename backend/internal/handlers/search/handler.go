@@ -61,7 +61,7 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 		"eq": true, "ne": true,
 		"gt": true, "gte": true, "lt": true, "lte": true,
 		"between": true,
-		"ilike": true,
+		"ilike":   true,
 	}
 	for _, f := range c.QueryArray("filter") {
 		parts := strings.SplitN(f, ":", 3)

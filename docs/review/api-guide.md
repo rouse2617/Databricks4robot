@@ -771,6 +771,24 @@ curl -G "$BASE/api/v1/search/assets" \
 - `filter` — 结构化过滤，可重复多个，AND 关系。语法 `field:op:value`，与 `/api/v1/assets` 一致。
 - `page` / `page_size` — 分页（`page_size ≤ 200`）。
 
+### 7.2 Admin：全量从 PG 重建 ES（不推进 outbox 游标）
+
+使用 **`X-Admin-Token`**（与 `ADMIN_TOKEN` 环境变量一致），**不要**带 `X-Grace-Token`。
+
+```bash
+ADMIN_TOKEN="your-admin-secret"
+curl -sS -X POST "$BASE/api/v1/admin/search/reindex" \
+  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run": true, "page_size": 200}' | jq .
+```
+
+`dry_run: true` 时只统计将要索引/删除的文档数，不写 ES。
+
+### 7.3 Prometheus 指标（Outbox MVP）
+
+同一进程暴露 `GET /metrics`（无认证；建议仅内网可达）。Outbox worker 相关：`outbox_pending_events`、`outbox_worker_batches_total`、`outbox_worker_events_published_total` 等。
+
 `filter` 语法速查:
 
 | op | 例子 | 含义 |

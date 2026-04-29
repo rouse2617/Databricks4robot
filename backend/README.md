@@ -73,6 +73,10 @@ docker-compose up -d postgres  # 重新初始化
 | `TRINO_CATALOG` | Trino Iceberg catalog | `iceberg` |
 | `TRINO_SCHEMA` | Trino Iceberg schema/namespace | `robot` |
 | `ELASTICSEARCH_URL` | Elasticsearch 连接地址 | `http://localhost:9200` |
+| `OUTBOX_WORKER_ENABLED` | 进程内 Outbox→ES worker | `false` |
+| `OUTBOX_WORKER_TICK_SEC` | Worker 轮询间隔（秒） | `30` |
+| `OUTBOX_WORKER_BATCH` | 每批最多拉取 pending 事件数 | `100` |
+| `ADMIN_TOKEN` | `X-Admin-Token`（`/api/v1/admin/*`）；空则禁用 | 空 |
 
 ## API 端点
 
@@ -129,7 +133,14 @@ docker-compose up -d postgres  # 重新初始化
 
 需要 Elasticsearch 服务运行。当 Elasticsearch 不可用时返回 503，前端降级到 Postgres 查询。
 
-### Lakehouse / Trino
+**索引写入**：`OUTBOX_WORKER_ENABLED=true` 且启动时 ES 可达时，服务端会按 `asset_events` pending 行将资产投影写入 `assets` 索引；详见 `docs/review/outbox-worker-design.md`。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（请求头 `X-Admin-Token`=`ADMIN_TOKEN`）；不改变 outbox 游标 |
+| `GET` | `/metrics` | Prometheus 指标（`outbox_*` 等；无认证，建议内网暴露） |
+
+**告警建议（MVP）**：`outbox_pending_events` 在业务低峰持续 > 1000 或 30min 单调上升 → 查 worker 日志与 ES 连通性；`outbox_worker_events_failed_mark_total` 突增 → 查 `asset_events.last_error`。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|

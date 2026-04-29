@@ -12,9 +12,9 @@
 |------|--------|------------|
 | 架构基线 | 1.0（PG + Backend 单进程） | 启用 2.0：Outbox Worker + ES + Iceberg |
 | 投影表 | `asset_tags / asset_algo_latest` 已建已用，cf_* 列只读保留 | 字段消费收口 + lifecycle_state 主消费切换 |
-| 事件流 | `asset_events` 在线写入，1.0 无下游消费 | Outbox Worker 上线（pure polling, 30s tick） |
+| 事件流 | `asset_events` 在线写入；**可选** `OUTBOX_WORKER_ENABLED` 进程内投递 ES | 预发跑满 G1–G5 / 24h SLO 验收 |
 | Tag 子域 | 独立 tag CRUD + history API 已上线；详情页 / 批量操作已切专用 tag 接口 | 下一步：tag history UI / `cf_*` 兼容层清理 |
-| 检索 | `/api/v1/search/assets` ES path 实现 + PG fallback | ES 真正接到 outbox 后才算"在线" |
+| 检索 | `/api/v1/search/assets` ES path + **Outbox→ES 索引写入 / admin reindex**；PG fallback 仍在 | PG↔ES 一致率闸口、生产索引初始化 runbook |
 | 湖仓 | `docker-compose` 脚手架，未接业务写路径 | PyIceberg CronJob + Polaris/Lakekeeper 上线 |
 | Frontend | 资产发现 v2 facets / 详情 / 算法 / 交付齐全 | Phase 2+ 训练数据集 UI（按业务节奏） |
 
@@ -59,10 +59,10 @@
 | ID | 任务 | DoD（验收口径） | 估时 | Owner | 状态 | 落地证据 |
 |----|------|----------------|------|-------|------|----------|
 | **P0-1** | **Schema 字段提升收口**：核对 `assets / mcap_files` 上 `asset_type / lifecycle_state / end_timestamp_ns / duration_ms / owner / retention_tier / expire_at` 已在 migration / repo / OpenAPI / filter 白名单一致；只补缺口，不重做已上线字段 | 收口 PR 合入；仍缺的字段/索引补齐；`schemas/pg-phase0.sql` 与 `schema-reference.md` 同步；明确留下哪些 legacy 字段仍处兼容期 | M | backend | todo | — |
-| **P0-2** | **存量数据 backfill**（P0-1 落地后）：把现有 `assets` 行的新字段从源数据补齐 | backfill 脚本幂等、可重跑；执行后新字段空值率 < 0.1%；对账报告归档 | M | backend + data | todo | — |
-| **P0-3** | **`assets.lifecycle_state` 主消费切换**：列表过滤、详情展示、ES facet、查询文档都切到 `lifecycle_state`；老 `status` 进入退役计时（90 天） | 前端列表 / 详情 / facets 默认都用 `lifecycle_state`；API 仍同时返回两个字段，OpenAPI deprecated 标注；监控旧 `status` 读流量曲线 | M | backend + frontend | todo | — |
-| **P0-4** | **Outbox Worker 进程内 MVP**（`OUTBOX_WORKER_ENABLED=true`） | 完整覆盖 `outbox-worker-design.md` G1–G5 验收；ES 索引投递端到端 P99 ≤ 60s；持续 24h 投递成功率 > 99.9% | L | backend | todo | — |
-| **P0-5** | **`/admin/search/reindex` 全量重建 API**（同步交付） | 给定 dry_run / rebuild_index 参数；扫 `assets` 全表重建 ES doc；不动 outbox cursor；权限走独立 `ADMIN_TOKEN` | S | backend | todo | — |
+| **P0-2** | **存量数据 backfill**（P0-1 落地后）：把现有 `assets` 行的新字段从源数据补齐 | backfill 脚本幂等、可重跑；执行后新字段空值率 < 0.1%；对账报告归档 | M | backend + data | done | `migrations/007_backfill_lifecycle_from_status.sql`（lifecycle 对齐子集；其余字段待 P0-1 收口） |
+| **P0-3** | **`assets.lifecycle_state` 主消费切换**：列表过滤、详情展示、ES facet、查询文档都切到 `lifecycle_state`；老 `status` 进入退役计时（90 天） | 前端列表 / 详情 / facets 默认都用 `lifecycle_state`；API 仍同时返回两个字段，OpenAPI deprecated 标注；监控旧 `status` 读流量曲线 | M | backend + frontend | in-progress | OpenAPI deprecated legacy 字段；ES search aggs 去掉 `status_agg`；前端见 P0-FE-2 |
+| **P0-4** | **Outbox Worker 进程内 MVP**（`OUTBOX_WORKER_ENABLED=true`） | 完整覆盖 `outbox-worker-design.md` G1–G5 验收；ES 索引投递端到端 P99 ≤ 60s；持续 24h 投递成功率 > 99.9% | L | backend | in-progress | 代码：`internal/outbox` + `MarkPublished`/`CountPending`；**SLO 需预发实测** |
+| **P0-5** | **`/admin/search/reindex` 全量重建 API**（同步交付） | 给定 dry_run / rebuild_index 参数；扫 `assets` 全表重建 ES doc；不动 outbox cursor；权限走独立 `ADMIN_TOKEN` | S | backend | done | `POST /api/v1/admin/search/reindex` + `X-Admin-Token` |
 | **P0-6** | **PgBouncer 入栈**：docker-compose / K8s 加 PgBouncer Deployment（transaction pool） | Backend & Worker 改 `DB_HOST/DB_PORT` 指向 PgBouncer，业务代码 0 改动；本地 + 预发跑 24h 无连接异常 | S | backend + 运维 | todo | — |
 
 **关键依赖图**：
@@ -115,8 +115,8 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 
 | ID | 任务 | DoD | 估时 | Owner | 状态 | 落地证据 |
 |----|------|-----|------|-------|------|----------|
-| **P1-1** | **ES `assets` 索引正式启用** | mapping = `outbox-worker-design.md` §5 / `init-index.sh`；接入 outbox 后 ES 文档数与 PG `assets` 一致率 > 99.9% | M | backend | todo | — |
-| **P1-2** | **Outbox 监控 + 告警**：Prometheus metrics（`fetch_pending_count / batch_size / publish_lag_seconds / retry_count_total`）+ Grafana dashboard | dashboard 上线；端到端延迟 / 失败率 / cursor lag 三个核心 panel；接 PagerDuty 告警阈值 | M | backend + 运维 | todo | — |
+| **P1-1** | **ES `assets` 索引正式启用** | mapping = `outbox-worker-design.md` §5 / `init-index.sh`；接入 outbox 后 ES 文档数与 PG `assets` 一致率 >99.9% | M | backend | in-progress | mapping 脚本就绪；写入路径已接 outbox；**闸口对账待跑** |
+| **P1-2** | **Outbox 监控 + 告警**：Prometheus metrics（`fetch_pending_count / batch_size / publish_lag_seconds / retry_count_total`）+ Grafana dashboard | dashboard 上线；端到端延迟 / 失败率 / cursor lag 三个核心 panel；接 PagerDuty 告警阈值 | M | backend + 运维 | in-progress | **MVP 轻量**：`GET /metrics`（`outbox_*`）+ `backend/README.md` 阈值建议；Grafana / PagerDuty 下一迭代 |
 | **P1-3** | **Iceberg REST Catalog 选型 + 部署**：Polaris（首选）/ Lakekeeper | 部署完成；从 PyIceberg / Trino 都能 list / read 一张冒烟表；ADR 写明选型理由 | M | data + 运维 | todo | — |
 | **P1-4** | **PyIceberg Bronze 入湖 CronJob**：每 5–10 min 扫 staging parquet → `MERGE INTO bronze.asset_events`（按 `event_seq` 去重） | 24h 跑无丢失；事件去重率验证；compact 周期独立 cron 并跑 | L | data | todo | — |
 | **P1-5** | **PyIceberg Compact CronJob**：合并小文件、过期 snapshot 清理（独立周期） | 跑 7 天后 bronze 表小文件数稳定；snapshot 历史保留策略生效 | M | data | todo | — |

@@ -5,10 +5,12 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	promhttp "github.com/prometheus/client_golang/prometheus/promhttp"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"data-platform/internal/config"
+	adminH "data-platform/internal/handlers/admin"
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
 	lakehouseH "data-platform/internal/handlers/lakehouse"
@@ -32,6 +34,7 @@ func RegisterAll(
 	lakehouseHandler *lakehouseH.Handler,
 	registryHandler *registryH.Handler,
 	searchHandler *searchH.Handler,
+	adminHandler *adminH.Handler,
 ) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.RequestGuard(2048))
@@ -53,6 +56,7 @@ func RegisterAll(
 	}
 
 	r.GET("/healthz", healthz("backend"))
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	auth := middleware.StaticTokenAuth(cfg.GraceToken)
@@ -116,6 +120,11 @@ func RegisterAll(
 
 	// Internal (service-to-service, no external auth required in Phase 0)
 	r.POST("/internal/commit-segments", assetHandler.CommitSegments)
+
+	if adminHandler != nil && cfg.AdminToken != "" {
+		adm := r.Group("/api/v1/admin", adminH.AdminTokenAuth(cfg.AdminToken))
+		adm.POST("/search/reindex", adminHandler.SearchReindex)
+	}
 }
 
 func healthz(service string) gin.HandlerFunc {

@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -21,6 +23,7 @@ import (
 	"data-platform/internal/audit"
 	"data-platform/internal/config"
 	espkg "data-platform/internal/elasticsearch"
+	adminH "data-platform/internal/handlers/admin"
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
 	lakehouseH "data-platform/internal/handlers/lakehouse"
@@ -28,8 +31,10 @@ import (
 	registryH "data-platform/internal/handlers/registry"
 	searchH "data-platform/internal/handlers/search"
 	"data-platform/internal/middleware"
+	"data-platform/internal/outbox"
 	"data-platform/internal/postgres"
 	"data-platform/internal/repository"
+	"data-platform/internal/searchindex"
 	trinopkg "data-platform/internal/trino"
 	assetUC "data-platform/internal/usecase/asset"
 	"data-platform/internal/validate"
@@ -132,6 +137,45 @@ func main() {
 		}
 	}
 
+	var adminHandler *adminH.Handler
+	if pgClient != nil && cfg.AdminToken != "" && esClient != nil {
+		adminHandler = adminH.New(
+			postgres.NewAssetRepo(pgClient),
+			postgres.NewAssetTagRepo(pgClient),
+			postgres.NewAssetAlgoLatestRepo(pgClient),
+			postgres.NewMcapFileRepo(pgClient),
+			esClient,
+		)
+	}
+
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	if pgClient != nil && cfg.OutboxWorkerEnabled == "true" && esClient != nil {
+		tickSec, _ := strconv.Atoi(cfg.OutboxWorkerTickSec)
+		if tickSec <= 0 {
+			tickSec = 30
+		}
+		batch, _ := strconv.Atoi(cfg.OutboxWorkerBatch)
+		if batch <= 0 {
+			batch = 100
+		}
+		w := &outbox.ESWorker{
+			Events: postgres.NewAssetEventRepo(pgClient),
+			Indexer: &searchindex.Builder{
+				Assets: postgres.NewAssetRepo(pgClient),
+				Tags:   postgres.NewAssetTagRepo(pgClient),
+				Algos:  postgres.NewAssetAlgoLatestRepo(pgClient),
+				Mcap:   postgres.NewMcapFileRepo(pgClient),
+			},
+			ES:        esClient,
+			BatchSize: batch,
+		}
+		go w.Run(workerCtx, time.Duration(tickSec)*time.Second)
+		slog.Info("outbox ES worker started", "tick_sec", tickSec, "batch", batch)
+	} else if cfg.OutboxWorkerEnabled == "true" {
+		slog.Warn("outbox worker disabled: requires STORAGE_BACKEND=postgres, reachable ELASTICSEARCH_URL, and successful ES ping")
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 	routes.RegisterAll(
@@ -144,6 +188,7 @@ func main() {
 		lakehouseH.New(cfg.LakehouseReportPath, trinoClient, pgClient),
 		registryH.New(algoRegistry, tagRegistry),
 		searchH.New(esClient),
+		adminHandler,
 	)
 
 	// Start config watcher for hot-reload of registries.

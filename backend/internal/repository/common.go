@@ -127,8 +127,15 @@ type AssetEventListOptions struct {
 //   - Append is tx-aware via context.
 //   - ListPending is consumed by the Outbox Worker; rows return in
 //     ascending event_seq order.
+//   - MarkPublished / MarkFailed are consumed by the worker after ES I/O.
 type AssetEventRepository interface {
 	Append(ctx context.Context, in AssetEventAppendInput) error
 	ListPending(ctx context.Context, limit int) ([]*models.AssetEvent, error)
 	ListByAsset(ctx context.Context, assetID string, opts AssetEventListOptions) ([]*models.AssetEvent, error)
+	// MarkPublished sets publish_state='published' and published_at=now() for the given monotonic event_seq values.
+	MarkPublished(ctx context.Context, eventSeqs []int64) error
+	// MarkFailed increments retry_count and stores last_error; rows stay pending for retry (or manual fix when retry_count is high).
+	MarkFailed(ctx context.Context, eventSeq int64, errMsg string) error
+	// CountPending returns the number of rows still awaiting sink delivery.
+	CountPending(ctx context.Context) (int64, error)
 }

@@ -152,7 +152,6 @@ func buildSearchBody(req SearchRequest) map[string]any {
 	aggs := map[string]any{
 		"lifecycle_state_agg": map[string]any{"terms": map[string]any{"field": "lifecycle_state", "size": 20}},
 		"asset_type_agg":      map[string]any{"terms": map[string]any{"field": "asset_type", "size": 20}},
-		"status_agg":          map[string]any{"terms": map[string]any{"field": "status", "size": 20}},
 		"owner_agg":           map[string]any{"terms": map[string]any{"field": "owner", "size": 20}},
 		"vendor_agg":          map[string]any{"terms": map[string]any{"field": "mcap.vendor_id", "size": 20}},
 		"scene_agg":           map[string]any{"terms": map[string]any{"field": "mcap.scene_id", "size": 20}},
@@ -517,6 +516,59 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (int, error
 		}
 	}
 	return ok, nil
+}
+
+// DeleteDocument removes a document from the index by id (asset_id). Idempotent: 404 is treated as success.
+func (c *Client) DeleteDocument(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	url := fmt.Sprintf("%s/%s/_doc/%s", strings.TrimRight(c.baseURL, "/"), c.index, id)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("elasticsearch: delete request: %w", err)
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("elasticsearch: delete failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("elasticsearch: delete status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// Count returns the total document count in the index (approximate for large indices).
+func (c *Client) Count(ctx context.Context) (int64, error) {
+	url := fmt.Sprintf("%s/%s/_count", strings.TrimRight(c.baseURL, "/"), c.index)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("elasticsearch: count request: %w", err)
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return 0, fmt.Errorf("elasticsearch: count failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("elasticsearch: count read: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("elasticsearch: count status %d: %s", resp.StatusCode, string(body))
+	}
+	var parsed struct {
+		Count int64 `json:"count"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return 0, fmt.Errorf("elasticsearch: count unmarshal: %w", err)
+	}
+	return parsed.Count, nil
 }
 
 // Ping checks if Elasticsearch is reachable.

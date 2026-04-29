@@ -296,6 +296,12 @@ func (m *mockAssetEventRepo) ListByAsset(_ context.Context, assetID string, opts
 	return out, nil
 }
 
+func (m *mockAssetEventRepo) MarkPublished(context.Context, []int64) error { return nil }
+
+func (m *mockAssetEventRepo) MarkFailed(context.Context, int64, string) error { return nil }
+
+func (m *mockAssetEventRepo) CountPending(context.Context) (int64, error) { return 0, nil }
+
 func (m *mockAssetEventRepo) all() []*models.AssetEvent {
 	m.mu.Lock()
 	defer m.mu.Unlock()

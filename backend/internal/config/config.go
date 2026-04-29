@@ -60,6 +60,14 @@ type Config struct {
 
 	// Elasticsearch
 	ElasticsearchURL string
+
+	// Outbox worker (in-process ES sink).
+	OutboxWorkerEnabled string
+	OutboxWorkerTickSec string
+	OutboxWorkerBatch   string
+
+	// Admin endpoints (search reindex, etc.). Empty disables routes.
+	AdminToken string
 }
 
 func Load() *Config {
@@ -108,6 +116,12 @@ func Load() *Config {
 		TrinoSchema:  getenv("TRINO_SCHEMA", "robot"),
 
 		ElasticsearchURL: getenv("ELASTICSEARCH_URL", "http://localhost:9200"),
+
+		OutboxWorkerEnabled: getenv("OUTBOX_WORKER_ENABLED", "false"),
+		OutboxWorkerTickSec: getenv("OUTBOX_WORKER_TICK_SEC", "30"),
+		OutboxWorkerBatch:   getenv("OUTBOX_WORKER_BATCH", "100"),
+
+		AdminToken: getenv("ADMIN_TOKEN", ""),
 	}
 }
 

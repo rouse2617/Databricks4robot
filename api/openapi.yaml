@@ -12,6 +12,10 @@ components:
       type: apiKey
       in: header
       name: X-Grace-Token
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
   parameters:
     RequestIdHeader:
       in: header
@@ -52,13 +56,16 @@ components:
         # ── Legacy fields (retained during dual-write) ──
         status:
           type: string
+          deprecated: true
           description: "Legacy lifecycle status (approved, rejected, archived, superseded). Prefer lifecycle_state."
         duration_sec:
           type: number
           format: double
+          deprecated: true
           description: "Legacy duration in seconds. Prefer duration_ms."
         type:
           type: string
+          deprecated: true
           description: "Legacy asset type. Prefer asset_type."
         # ── New fields (Phase 2 — schema evolution) ──
         lifecycle_state:
@@ -303,6 +310,46 @@ components:
         updated_at: { type: string, format: date-time }
         version: { type: integer, format: int64 }
 paths:
+  /api/v1/admin/search/reindex:
+    post:
+      summary: Rebuild Elasticsearch `assets` index from PostgreSQL
+      description: >
+        Scans all non-deleted assets and bulk-indexes documents. Does not modify
+        `outbox_sink_cursors` or `asset_events.publish_state`. Requires `ADMIN_TOKEN` and reachable ES.
+      security:
+        - AdminToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+                  default: false
+                page_size:
+                  type: integer
+                  maximum: 500
+                  default: 200
+      responses:
+        '200':
+          description: Summary counters
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: invalid or missing admin token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Elasticsearch not configured
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/lakehouse/report:
     get:
       summary: Get local lakehouse MVP report

@@ -40,3 +40,9 @@ func (bigtableNoopAssetEventRepo) ListPending(context.Context, int) ([]*models.A
 func (bigtableNoopAssetEventRepo) ListByAsset(context.Context, string, repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
+
+func (bigtableNoopAssetEventRepo) MarkPublished(context.Context, []int64) error { return nil }
+
+func (bigtableNoopAssetEventRepo) MarkFailed(context.Context, int64, string) error { return nil }
+
+func (bigtableNoopAssetEventRepo) CountPending(context.Context) (int64, error) { return 0, nil }
