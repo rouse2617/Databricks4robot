@@ -1,6 +1,6 @@
 # 下一步开发任务清单 / Next-Step Task Board
 
-> 状态：**评审基线**，2026-04-29 出。每完成一项把状态改为 `done` + 把 PR 链接补到「落地证据」列。  
+> 状态：**评审基线**，2026-04-29 出；**执行顺序优先看 §0.5 MVP v1**。每完成一项把状态改为 `done` + 把 PR 链接补到「落地证据」列。  
 > 优先级：P0 = 当前最高优先级（其中 **§1 主表项阻塞 2.0 启用**；§1.1 / §1.2 标注为“同窗口配套”的任务不单独卡 gate）/ P1 = 2.0 关键路径 / P2 = 2.0 打磨 / P3 = Phase 2+ 候选。  
 > 维护规则：**不要把 done 的项删除**，留档可追溯；新任务追加到对应 P 表底部。
 
@@ -17,6 +17,38 @@
 | 检索 | `/api/v1/search/assets` ES path 实现 + PG fallback | ES 真正接到 outbox 后才算"在线" |
 | 湖仓 | `docker-compose` 脚手架，未接业务写路径 | PyIceberg CronJob + Polaris/Lakekeeper 上线 |
 | Frontend | 资产发现 v2 facets / 详情 / 算法 / 交付齐全 | Phase 2+ 训练数据集 UI（按业务节奏） |
+
+---
+
+## 0.5 MVP v1 范围（**先交付这一刀**，再铺开 P1 余量）
+
+> 目的：任务板上 P2/P3 与湖仓线很长，**MVP = 最小可用的「2.0 检索闭环」**——用户能稳定用 ES 搜资产，事件从 PG `asset_events` 可靠进索引，运维有 **reindex** 逃生口；**不搞 Iceberg / Trino / 训练数据集 UI**。
+
+### MVP 必做（按顺序）
+
+| 顺序 | ID | 说明 |
+|------|-----|------|
+| 1 | **P0-1 → P0-2 → P0-3** | Schema 收口、存量 backfill、`lifecycle_state` 主消费（API + OpenAPI + ES facet + 前端默认；`status` deprecated）。 |
+| 2 | **P0-4** | 进程内 Outbox Worker，**仅 ES sink**，满足 `outbox-worker-design.md` G1–G5。 |
+| 3 | **P0-5** | `/admin/search/reindex`，用于灾难恢复与初始全量，**不**与 cursor 打架。 |
+| 4 | **P1-1** | ES `assets` mapping 按设计落地；**PG 与 ES 文档一致率 > 99.9%**（闸口口径）。 |
+| 5 | **P1-2** | **MVP 可接受「轻量版」**：暴露 Prometheus 指标（或等价 `/metrics`）+ 根因可查日志 + 文档写死告警阈值；Grafana 大盘与 PagerDuty **可紧跟一个迭代**，不拦首拍上线。 |
+
+### MVP 明确延期（别挡首发）
+
+- **P0-6** PgBouncer：连接数健康时可后置（Cloud SQL / 托管池化先顶着）。
+- **P1-3～P1-6** Iceberg / PyIceberg / Trino / 湖仓 API 实数 — 整体 **MVP 之后**。
+- **P1-7 / P1-8** schema CI 守门、Worker 独立进程 — **稳定运行后再上**。
+- **P0-FE-3 / P1-FE-*** 大块 UI（lakehouse dashboard、admin 按钮、保留期视图）— **MVP 后按产品开**；与检索无关的已_done 项（如 P0-FE-4、P2-8）保留不动。
+
+### 前端与 MVP 同框
+
+- **P0-FE-1**：建议在 P0-3 窗口内做完，避免时长字段双轨。
+- **P0-FE-2**：与 P0-3 合拢；侧栏 / Dashboard 主路径已切 `lifecycle_state` 的，**板上可标 in-progress 并挂 PR**。详情页 legacy `status` 灰显待 P0-3 收口时一并验收。
+
+### 闸口对齐
+
+- 「**1.0 → 2.0**」正式闸口仍见 `data-platform-design.md` §9.1.1；**MVP v1 交付 ≈ 该表 ES + outbox + 投影 + lifecycle 相关行通过**，PgBouncer 若未做须在评审纪要里记 **已知技术债 + 补救时间点**。
 
 ---
 
@@ -59,7 +91,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | ID | 任务 | DoD | 估时 | 状态 | 落地证据 |
 |----|------|-----|------|------|----------|
 | **P0-FE-1** | **`duration_sec` → `duration_ms` 全面切换**：`AssetsResultsPane` 排序选项 / 时长列、`OverviewTab` / `AssetPreviewHero` 详情卡都改成读 `duration_ms`，**单位统一以毫秒为底，UI 仍按秒展示**（除以 1000） | 全仓 `rg "duration_sec"` 仅剩 SDK / API 兼容层；`AssetsFacetSidebar` 的范围 chip 已经是 `duration_ms`（已完成），其余消费点同步切换；vitest 通过 | S | todo | — |
-| **P0-FE-2** | **`lifecycle_state` 主路径切换**（与 P0-3 后端切换配套）：列表过滤、详情 badge、facet 都从 `status` 切到 `lifecycle_state`；老 `status` 仅在 `OverviewTab` 标灰显示并标注 `(legacy)` | 资产列表筛选默认走 `lifecycle_state`；`AssetsFacetSidebar` 的 `状态 (legacy)` chip 在 `lifecycle_state` 同时存在时隐藏；vitest + 手测交叉切换无回归 | M | blocked-by-P0-3 | — |
+| **P0-FE-2** | **`lifecycle_state` 主路径切换**（与 P0-3 后端切换配套）：列表过滤、详情 badge、facet 都从 `status` 切到 `lifecycle_state`；老 `status` 仅在 `OverviewTab` 标灰显示并标注 `(legacy)` | 资产列表筛选默认走 `lifecycle_state`；legacy status facet 不在主路径；OpenAPI/API 侧与详情灰显待 P0-3 合入；vitest + 手测无回归 | M | in-progress | `9317d8b`（侧栏/最近更新/chips/列名）；余量见 DoD |
 | **P0-FE-3** | **暴露 P0-1 新增字段到 UI**：`asset_type / retention_tier / expire_at / owner` 进列表列（`ColumnsConfigPopover`）+ 详情概览 + AddFilterPopover | 4 个字段都可勾选展示、可过滤；`expire_at` 用相对时间渲染（"7 天后到期"）；vitest 覆盖 column toggle | M | blocked-by-P0-1 | — |
 | **P0-FE-4** | **通用事件时间线 UI**：`AssetDetailPage` 的算法事件 tab 改用 `/events?event_type=algo_*` + cursor 翻页；同时新增"全部事件"tab（不限 type）支持 `asset_created / tag_upserted / lifecycle_changed` 等 | 算法事件 tab 等价回归（已有适配器 `toAlgoEvent`，确保 cursor "load more" 工作）；新 tab 至少展示 5 种 event_type；空态友好 | M | done | `75943e5` |
 
