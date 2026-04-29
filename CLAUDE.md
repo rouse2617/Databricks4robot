@@ -52,6 +52,7 @@ Practical project guidance for coding agents working in `Databricks4robot`.
 | Tag 注册表 | `backend/config/tag_registry.yaml` | Tag 类型、枚举值 |
 | 数据模型 | `docs/review/algo-lifecycle-and-data-model.md` | 算法生命周期设计 |
 | Grace ↔ 平台迁移对照 | `docs/review/grace-migration-notes.md` | cyber-grace `grace_videos` 与本仓库资产/mcap/算法字段与幂等 |
+| 下一步任务清单 | `docs/review/next-steps-tasks.md` | P0/P1/P2/P3 任务拆分、DoD、估时、依赖、Phase Gate |
 | Schema Companion | `docs/review/sql.md` | 表结构、字段命名、DDL section 锚点 |
 | Lakehouse 查询边界（归档） | `docs/archive/research/lakehouse-query-and-tag-filtering.md` | 历史调研：Postgres / Trino / Iceberg 查询职责 |
 | 后训练平台架构（归档） | `docs/archive/research/advanced-training-data-platform-architecture.md` | 历史调研：长期架构演进 |
