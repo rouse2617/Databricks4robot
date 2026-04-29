@@ -26,8 +26,20 @@ export default function DeliveryHistoryTab({ assetId }: Props) {
     setLoading(true);
 
     assetsApi
-      .listDeliveries(assetId)
-      .then(async (ids) => {
+      .listDeliveries(assetId, 1, 100)
+      .then(async (firstPage) => {
+        let ids = firstPage.items ?? [];
+        let page = firstPage.page ?? 1;
+        const pageSize = firstPage.page_size ?? 100;
+        let nextToken = firstPage.next_token ?? "";
+
+        while (nextToken && !cancelled && ids.length < (firstPage.total ?? ids.length)) {
+          page += 1;
+          const nextPage = await assetsApi.listDeliveries(assetId, page, pageSize);
+          ids = ids.concat(nextPage.items ?? []);
+          nextToken = nextPage.next_token ?? "";
+        }
+
         if (cancelled || ids.length === 0) {
           if (!cancelled) setDeliveries([]);
           return;

@@ -13,11 +13,14 @@ export interface Asset {
   mcap_file_id: string;
   start_timestamp_ns: number;
   end_timestamp_ns: number;
-  duration_sec: number;
+  duration_sec?: number;
+  duration_ms?: number;
   reviewer: string;
-  status: string;
+  status?: string;
+  lifecycle_state?: string;
   owner: string;
   type?: string;
+  asset_type?: string;
   env?: string;
   task?: string;
   segment_locator?: string;
@@ -28,6 +31,8 @@ export interface Asset {
   tags: Record<string, string>;
   files: Record<string, string>;
   lifecycle_meta: Record<string, any>;
+  retention_tier?: string;
+  expire_at?: string | null;
   created_at: string;
   updated_at: string;
   version: number;

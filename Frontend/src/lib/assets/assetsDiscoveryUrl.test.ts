@@ -82,10 +82,10 @@ describe("serializeQueryStateToUrl", () => {
   it("serializes array filter values with comma", () => {
     const state = {
       ...defaultQueryState(),
-      activeFilters: [chip("duration_sec", "between", ["10", "200"])],
+      activeFilters: [chip("duration_ms", "between", ["10", "200"])],
     };
     const sp = serializeQueryStateToUrl(state);
-    expect(sp.getAll("filter")).toEqual(["duration_sec:between:10,200"]);
+    expect(sp.getAll("filter")).toEqual(["duration_ms:between:10,200"]);
   });
 
   it("includes sort when not default", () => {
@@ -179,7 +179,7 @@ describe("parseQueryStateFromUrl", () => {
   });
 
   it("parses filter with array value (comma-separated)", () => {
-    const sp = new URLSearchParams("filter=duration_sec:between:10,200");
+    const sp = new URLSearchParams("filter=duration_ms:between:10,200");
     const result = parseQueryStateFromUrl(sp);
     expect(result.activeFilters).toHaveLength(1);
     expect(result.activeFilters![0].value).toEqual(["10", "200"]);

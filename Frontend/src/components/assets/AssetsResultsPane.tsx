@@ -10,24 +10,18 @@ import type { Asset } from "../../api/types";
 import type { FetchStatus, ViewMode } from "../../lib/assets/assetsDiscoveryTypes";
 import AlgoSummaryCell from "./AlgoSummaryCell";
 import ResultsEmptyState from "./ResultsEmptyState";
+import { formatDurationSeconds, getAssetStateColor, getLifecycleState } from "../../lib/assetPresentation";
 
 const { Text } = Typography;
 
 // ─── Status Color Map ───
-
-const statusColor: Record<string, string> = {
-  approved: "success",
-  rejected: "error",
-  superseded: "warning",
-  archived: "default",
-};
 
 // ─── Sort Options ───
 
 const SORT_OPTIONS = [
   { value: "-updated_at", label: "更新时间 ↓" },
   { value: "-created_at", label: "创建时间 ↓" },
-  { value: "duration_sec", label: "时长 ↑" },
+  { value: "duration_ms", label: "时长 ↑" },
 ];
 
 // ─── Column Definitions ───
@@ -68,8 +62,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
     title: "时长",
     key: "duration",
     width: 70,
-    render: (_: unknown, r: Asset) =>
-      r.duration_sec ? `${r.duration_sec.toFixed(1)}s` : "—",
+    render: (_: unknown, r: Asset) => formatDurationSeconds(r),
   }),
   env: () => ({
     title: "环境",
@@ -78,10 +71,11 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
     render: (_: unknown, r: Asset) => r.env ?? "—",
   }),
   status: () => ({
-    title: "状态",
-    dataIndex: "status",
+    title: "生命周期",
     width: 90,
-    render: (s: string) => <Tag color={statusColor[s] ?? "default"}>{s}</Tag>,
+    render: (_: unknown, r: Asset) => (
+      <Tag color={getAssetStateColor(r)}>{getLifecycleState(r) || "—"}</Tag>
+    ),
   }),
   algo: () => ({
     title: "算法状态",

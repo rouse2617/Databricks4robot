@@ -1,6 +1,7 @@
 import { Card, Descriptions } from "antd";
 import dayjs from "dayjs";
 import type { Asset } from "../../api/types";
+import { formatDurationSeconds, getAssetType, getLifecycleState } from "../../lib/assetPresentation";
 
 interface Props {
   asset: Asset;
@@ -26,9 +27,13 @@ export default function OverviewTab({ asset }: Props) {
           {asset.end_timestamp_ns ?? "—"}
         </Descriptions.Item>
         <Descriptions.Item label="时长">
-          {asset.duration_sec ? `${asset.duration_sec.toFixed(3)} s` : "—"}
+          {formatDurationSeconds(asset, 3)}
         </Descriptions.Item>
-        <Descriptions.Item label="类型">{asset.type ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="资产类型">{getAssetType(asset) || "—"}</Descriptions.Item>
+        <Descriptions.Item label="生命周期">{getLifecycleState(asset) || "—"}</Descriptions.Item>
+        <Descriptions.Item label="状态 (legacy)">
+          <span style={{ color: "#8c8c8c" }}>{asset.status ?? "—"}</span>
+        </Descriptions.Item>
         <Descriptions.Item label="环境">{asset.env ?? "—"}</Descriptions.Item>
         <Descriptions.Item label="任务">{asset.task ?? "—"}</Descriptions.Item>
         <Descriptions.Item label="审核人">{asset.reviewer ?? "—"}</Descriptions.Item>

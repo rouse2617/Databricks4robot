@@ -10,6 +10,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { assetsApi } from "../../api/assets";
 import type { McapFile, Asset } from "../../api/types";
+import { formatDurationSeconds, getAssetStateColor, getLifecycleState } from "../../lib/assetPresentation";
 
 const { Text } = Typography;
 
@@ -42,13 +43,6 @@ function algoSummary(algoResults: Record<string, string> | undefined): string {
     .map(([status, n]) => `${n} ${status}`)
     .join(" / ");
 }
-
-const statusColor: Record<string, string> = {
-  approved: "success",
-  rejected: "error",
-  superseded: "warning",
-  archived: "default",
-};
 
 /* ── props ── */
 
@@ -104,18 +98,16 @@ export default function McapDetailDrawer({ open, mcapFile, onClose }: McapDetail
       ),
     },
     {
-      title: "状态",
-      dataIndex: "status",
+      title: "生命周期",
       width: 90,
-      render: (s: string) => (
-        <Tag color={statusColor[s] ?? "default"}>{s || "—"}</Tag>
+      render: (_: unknown, asset: Asset) => (
+        <Tag color={getAssetStateColor(asset)}>{getLifecycleState(asset) || "—"}</Tag>
       ),
     },
     {
       title: "时长 (s)",
-      dataIndex: "duration_sec",
       width: 90,
-      render: (v: number) => (v != null ? v.toFixed(1) : "—"),
+      render: (_: unknown, asset: Asset) => formatDurationSeconds(asset),
     },
     {
       title: "环境",

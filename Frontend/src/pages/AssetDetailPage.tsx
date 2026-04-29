@@ -16,12 +16,9 @@ import AssetEventsTab from "../components/asset-detail/AssetEventsTab";
 import TagsTab from "../components/asset-detail/TagsTab";
 import DeliveryHistoryTab from "../components/asset-detail/DeliveryHistoryTab";
 import FilesTab from "../components/asset-detail/FilesTab";
+import { getAssetStateColor, getLifecycleState } from "../lib/assetPresentation";
 
 const { Title, Text } = Typography;
-
-const statusColor: Record<string, string> = {
-  approved: "success", rejected: "error", superseded: "warning", archived: "default",
-};
 
 /** Parse algo_results map into structured algo info list. */
 function parseAlgoResults(algoResults: Record<string, string> | undefined) {
@@ -199,7 +196,7 @@ export default function AssetDetailPage() {
         <Title level={4} style={{ margin: 0 }}>
           资产详情
         </Title>
-        <Tag color={statusColor[asset.status] ?? "default"}>{asset.status}</Tag>
+        <Tag color={getAssetStateColor(asset)}>{getLifecycleState(asset) || "—"}</Tag>
         <Text type="secondary" className="text-xs font-mono">
           {asset.asset_id}
         </Text>

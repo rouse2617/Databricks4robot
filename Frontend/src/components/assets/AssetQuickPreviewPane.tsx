@@ -30,6 +30,7 @@ import type {
   PreviewAvailability,
 } from "../../lib/assets/assetsDiscoveryTypes";
 import { parseAlgoEntries, countStatuses } from "./AlgoSummaryCell";
+import { formatDurationSeconds, getAssetStateColor, getLifecycleState } from "../../lib/assetPresentation";
 
 const { Text, Title } = Typography;
 
@@ -48,13 +49,6 @@ export interface AssetQuickPreviewPaneProps {
 }
 
 // ─── Status Color Map ───
-
-const STATUS_TAG_COLOR: Record<string, string> = {
-  approved: "green",
-  rejected: "red",
-  superseded: "orange",
-  archived: "default",
-};
 
 const PRIORITY_TAG_COLOR: Record<string, string> = {
   critical: "red",
@@ -279,7 +273,7 @@ function LoadedContent({
           {asset.asset_id}
         </Title>
         <div style={{ marginTop: 6, display: "flex", gap: 4, flexWrap: "wrap" }}>
-          <Tag color={STATUS_TAG_COLOR[asset.status] ?? "default"}>{asset.status}</Tag>
+          <Tag color={getAssetStateColor(asset)}>{getLifecycleState(asset) || "—"}</Tag>
           {priority && (
             <Tag color={PRIORITY_TAG_COLOR[priority] ?? "default"}>
               {priority}
@@ -309,7 +303,7 @@ function LoadedContent({
         <Descriptions.Item label="MCAP">{asset.mcap_file_id}</Descriptions.Item>
         <Descriptions.Item label="Env">{asset.env ?? "—"}</Descriptions.Item>
         <Descriptions.Item label="Scene">{asset.tags?.scene ?? "—"}</Descriptions.Item>
-        <Descriptions.Item label="Duration">{asset.duration_sec}s</Descriptions.Item>
+        <Descriptions.Item label="Duration">{formatDurationSeconds(asset)}</Descriptions.Item>
         <Descriptions.Item label="Owner">{asset.owner}</Descriptions.Item>
         <Descriptions.Item label="Reviewer">{asset.reviewer}</Descriptions.Item>
       </Descriptions>

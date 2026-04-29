@@ -31,9 +31,10 @@ function makeAsset(overrides: Partial<Asset> = {}): Asset {
     mcap_file_id: "mcap_001",
     start_timestamp_ns: 0,
     end_timestamp_ns: 1000000000,
-    duration_sec: 12.5,
+    duration_ms: 12500,
     reviewer: "reviewer1",
     status: "approved",
+    lifecycle_state: "ready",
     owner: "owner1",
     env: "warehouse",
     delivery_count: 0,
@@ -94,6 +95,7 @@ describe("AssetsResultsPane", () => {
     expect(headers.length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("12.5s")).toBeTruthy();
     expect(screen.getByText("warehouse")).toBeTruthy();
+    expect(screen.getByText("ready")).toBeTruthy();
   });
 
   it("renders algo summary cell with dash when no algo results", () => {

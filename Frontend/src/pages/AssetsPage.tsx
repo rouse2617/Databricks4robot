@@ -205,7 +205,7 @@ export default function AssetsPage() {
               <a
                 onClick={() => {
                   dispatch({ type: "CLEAR_ALL_FILTERS" });
-                  dispatch({ type: "FACET_RANGE_DRAFT", payload: { field: "duration_sec", min: undefined, max: undefined } });
+                  dispatch({ type: "FACET_RANGE_DRAFT", payload: { field: "duration_ms", min: undefined, max: undefined } });
                 }}
                 style={{ fontSize: 12, color: "#2563EB", cursor: "pointer" }}
               >

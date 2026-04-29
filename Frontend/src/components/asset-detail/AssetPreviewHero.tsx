@@ -24,6 +24,7 @@ import type {
   PreviewAvailability,
 } from "../../lib/assets/assetsDiscoveryTypes";
 import { parseAlgoEntries, countStatuses } from "../assets/AlgoSummaryCell";
+import { formatDurationSeconds, getAssetStateColor, getLifecycleState } from "../../lib/assetPresentation";
 
 const { Text } = Typography;
 
@@ -35,13 +36,6 @@ export interface AssetPreviewHeroProps {
 }
 
 // ─── Color Maps ───
-
-const STATUS_TAG_COLOR: Record<string, string> = {
-  approved: "green",
-  rejected: "red",
-  superseded: "orange",
-  archived: "default",
-};
 
 const PRIORITY_TAG_COLOR: Record<string, string> = {
   critical: "red",
@@ -180,7 +174,7 @@ function AssetSummaryPanel({ asset }: { asset: Asset }) {
     >
       {/* Status + Priority/Quality Tags */}
       <div style={{ marginBottom: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <Tag color={STATUS_TAG_COLOR[asset.status] ?? "default"}>{asset.status}</Tag>
+        <Tag color={getAssetStateColor(asset)}>{getLifecycleState(asset) || "—"}</Tag>
         {priority && (
           <Tag color={PRIORITY_TAG_COLOR[priority] ?? "default"}>{priority}</Tag>
         )}
@@ -201,7 +195,7 @@ function AssetSummaryPanel({ asset }: { asset: Asset }) {
         <Descriptions.Item label="Owner">{asset.owner || "—"}</Descriptions.Item>
         <Descriptions.Item label="Reviewer">{asset.reviewer || "—"}</Descriptions.Item>
         <Descriptions.Item label="Duration">
-          {asset.duration_sec ? `${asset.duration_sec.toFixed(1)}s` : "—"}
+          {formatDurationSeconds(asset)}
         </Descriptions.Item>
         <Descriptions.Item label="Env">{asset.env ?? "—"}</Descriptions.Item>
         <Descriptions.Item label="Algo">

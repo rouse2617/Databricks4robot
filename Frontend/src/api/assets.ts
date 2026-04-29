@@ -81,6 +81,14 @@ type EventListResponse = {
   limit: number;
 };
 
+type AssetDeliveryListResponse = {
+  items: string[];
+  total: number;
+  page: number;
+  page_size: number;
+  next_token?: string;
+};
+
 export const assetsApi = {
   list: (params?: ListAssetsParams) => {
     // Build URLSearchParams manually to ensure filter[] is sent as repeated params
@@ -118,10 +126,12 @@ export const assetsApi = {
     apiClient.delete<Asset>(`/assets/${assetId}/tags/${encodeURIComponent(key)}`).then((r) => r.data),
 
   // ─── Delivery association ───
-  listDeliveries: (assetId: string) =>
+  listDeliveries: (assetId: string, page = 1, pageSize = 20) =>
     apiClient
-      .get<{ items: string[] }>(`/assets/${assetId}/deliveries`)
-      .then((r) => r.data.items ?? []),
+      .get<AssetDeliveryListResponse>(`/assets/${assetId}/deliveries`, {
+        params: { page, page_size: pageSize },
+      })
+      .then((r) => r.data),
 
   // ─── Algo lifecycle ───
   startAlgo: (assetId: string, algoKey: string, body: { method: string; run_id?: string }) =>

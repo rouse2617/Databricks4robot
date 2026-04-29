@@ -13,6 +13,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { deliveriesApi } from "../api/deliveries";
 import { assetsApi } from "../api/assets";
 import type { Delivery, DeliveryItem, Asset } from "../api/types";
+import { formatDurationSeconds, getAssetStateColor, getLifecycleState } from "../lib/assetPresentation";
 
 const { Title } = Typography;
 
@@ -58,7 +59,7 @@ export default function DeliveryDetailPage() {
     setAssetsLoading(true);
     try {
       const items: DeliveryItem[] = await deliveriesApi.listItems(id);
-      // Fetch each asset in parallel (limited batch)
+      // Fetch each asset in parallel
       const assetResults = await Promise.allSettled(
         items.map((item) => assetsApi.get(item.asset_id)),
       );
@@ -71,7 +72,7 @@ export default function DeliveryDetailPage() {
           .map((r) => r.value),
       );
     } catch {
-      // delivery_items endpoint may not exist yet — silently ignore
+      // Keep the page usable even if the related-assets call fails.
       setAssets([]);
     } finally {
       setAssetsLoading(false);
@@ -110,12 +111,19 @@ export default function DeliveryDetailPage() {
         <a onClick={() => navigate(`/assets/${val}`)}>{val}</a>
       ),
     },
-    { title: "状态", dataIndex: "status", key: "status", width: 100 },
+    {
+      title: "生命周期",
+      key: "status",
+      width: 100,
+      render: (_: unknown, asset: Asset) => (
+        <Tag color={getAssetStateColor(asset)}>{getLifecycleState(asset) || "—"}</Tag>
+      ),
+    },
     {
       title: "时长 (s)",
-      dataIndex: "duration_sec",
       key: "duration_sec",
       width: 100,
+      render: (_: unknown, asset: Asset) => formatDurationSeconds(asset),
     },
     { title: "Owner", dataIndex: "owner", key: "owner", width: 120 },
     {

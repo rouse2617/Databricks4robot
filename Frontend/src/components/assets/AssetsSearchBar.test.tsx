@@ -50,17 +50,17 @@ describe("parseOneToken", () => {
   });
 
   it("parses field>value as gt", () => {
-    const t = parseOneToken("duration_sec>60");
-    expect(t.field).toBe("duration_sec");
+    const t = parseOneToken("duration_ms>60000");
+    expect(t.field).toBe("duration_ms");
     expect(t.op).toBe("gt");
-    expect(t.value).toBe("60");
+    expect(t.value).toBe("60000");
   });
 
   it("parses field>=value as gte", () => {
-    const t = parseOneToken("duration_sec>=100");
-    expect(t.field).toBe("duration_sec");
+    const t = parseOneToken("duration_ms>=100000");
+    expect(t.field).toBe("duration_ms");
     expect(t.op).toBe("gte");
-    expect(t.value).toBe("100");
+    expect(t.value).toBe("100000");
   });
 
   it("parses field<value as lt", () => {
@@ -156,7 +156,7 @@ describe("tokenizeDraftText", () => {
   });
 
   it("handles comparison operators", () => {
-    const tokens = tokenizeDraftText("duration_sec>60 delivery_count<=3");
+    const tokens = tokenizeDraftText("duration_ms>60000 delivery_count<=3");
     expect(tokens).toHaveLength(2);
     expect(tokens[0].op).toBe("gt");
     expect(tokens[1].op).toBe("lte");

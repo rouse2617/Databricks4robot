@@ -16,6 +16,7 @@ import dayjs from "dayjs";
 import { mcapFilesApi } from "../api/mcapFiles";
 import { assetsApi } from "../api/assets";
 import type { Asset } from "../api/types";
+import { formatDurationSeconds } from "../lib/assetPresentation";
 
 const { Title, Text } = Typography;
 
@@ -400,7 +401,7 @@ export default function DashboardPage() {
               key: "duration",
               width: 70,
               render: (_: unknown, r: Asset) =>
-                r.duration_sec ? `${r.duration_sec.toFixed(1)}s` : "—",
+                formatDurationSeconds(r),
             },
             {
               title: "环境",

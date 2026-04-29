@@ -32,9 +32,10 @@ function makeAsset(overrides: Partial<Asset> = {}): Asset {
     mcap_file_id: "mcap-001",
     start_timestamp_ns: 0,
     end_timestamp_ns: 1000000000,
-    duration_sec: 120,
+    duration_ms: 120000,
     reviewer: "reviewer-a",
     status: "approved",
+    lifecycle_state: "ready",
     owner: "owner-a",
     env: "warehouse",
     delivery_count: 0,
@@ -121,7 +122,7 @@ describe("AssetQuickPreviewPane", () => {
       previewManifest: defaultManifest,
     });
     expect(screen.getByText("asset-001")).toBeTruthy();
-    expect(screen.getByText("approved")).toBeTruthy();
+    expect(screen.getByText("ready")).toBeTruthy();
     expect(screen.getByText("high")).toBeTruthy();
     expect(screen.getByText("good")).toBeTruthy();
   });
@@ -136,7 +137,7 @@ describe("AssetQuickPreviewPane", () => {
     });
     expect(screen.getByText("mcap-001")).toBeTruthy();
     expect(screen.getByText("warehouse")).toBeTruthy();
-    expect(screen.getByText("120s")).toBeTruthy();
+    expect(screen.getByText("120.0s")).toBeTruthy();
     expect(screen.getByText("owner-a")).toBeTruthy();
     expect(screen.getByText("reviewer-a")).toBeTruthy();
   });

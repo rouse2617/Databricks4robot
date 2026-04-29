@@ -13,12 +13,13 @@ const KNOWN_FIELDS = new Set([
   "mcap_file_id",
   "owner",
   "reviewer",
+  "lifecycle_state",
   "status",
   "env",
   "scene",
   "task",
   "batch",
-  "duration_sec",
+  "duration_ms",
   "created_at",
   "updated_at",
   "delivery_count",
@@ -238,7 +239,7 @@ export default function AssetsSearchBar({
             <div><code>field&lt;=value</code> — 小于等于</div>
             <div><code>field!=value</code> — 不等于</div>
             <div style={{ marginTop: 4, fontSize: 12, opacity: 0.85 }}>
-              可用字段: env, status, owner, algo_status, duration_sec, tag.priority, tag.quality 等
+              可用字段: env, lifecycle_state, owner, algo_status, duration_ms, tag.priority, tag.quality 等
             </div>
           </div>
         }

@@ -272,12 +272,12 @@ describe("FACET_TOGGLE", () => {
 
 describe("FACET_RANGE_APPLY", () => {
   it("removes existing chips for that field and adds new range chip", () => {
-    const chip = createFilterChip("duration_sec", "eq", "100", "facet");
+    const chip = createFilterChip("duration_ms", "eq", "100", "facet");
     const s = freshState();
     s.queryState.activeFilters = [chip];
     const result = assetsDiscoveryReducer(s, {
       type: "FACET_RANGE_APPLY",
-      payload: { field: "duration_sec", min: 10, max: 200 },
+      payload: { field: "duration_ms", min: 10, max: 200 },
     });
     expect(result.queryState.activeFilters).toHaveLength(1);
     expect(result.queryState.activeFilters[0].op).toBe("between");

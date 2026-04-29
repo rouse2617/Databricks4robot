@@ -50,8 +50,29 @@ export function getAlgoResultDetail(
   algoKey: string,
 ): AlgoResultDetail | null {
   if (!algoResults) return null;
-  const prefix = `${algoKey}:`;
   const detail: AlgoResultDetail = {};
+
+  const legacyRaw = algoResults[algoKey];
+  if (legacyRaw) {
+    try {
+      const parsed = JSON.parse(legacyRaw);
+      if (parsed && typeof parsed === "object") {
+        if (typeof parsed.status === "string") detail.status = parsed.status;
+        if (typeof parsed.started_at === "string") detail.started_at = parsed.started_at;
+        if (typeof parsed.finished_at === "string") detail.finished_at = parsed.finished_at;
+        if (typeof parsed.method === "string") detail.method = parsed.method;
+        if (typeof parsed.run_id === "string") detail.run_id = parsed.run_id;
+        if (typeof parsed.output_uri === "string") detail.output_uri = parsed.output_uri;
+        if (typeof parsed.reason === "string") detail.reason = parsed.reason;
+      } else {
+        detail.status = String(parsed);
+      }
+    } catch {
+      detail.status = legacyRaw;
+    }
+  }
+
+  const prefix = `${algoKey}:`;
   for (const [key, value] of Object.entries(algoResults)) {
     if (!key.startsWith(prefix)) continue;
     const field = key.slice(prefix.length) as keyof AlgoResultDetail;
