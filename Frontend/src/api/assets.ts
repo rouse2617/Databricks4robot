@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { Asset, AlgoEvent, PaginatedResponse } from "./types";
+import type { Asset, AlgoEvent, AssetEvent, PaginatedResponse } from "./types";
 
 export type { Asset };
 
@@ -31,9 +31,17 @@ type AssetEventEnvelope = {
 
 type AssetEventRow = {
   event_id: string;
+  event_seq?: number;
+  event_type?: string;
+  payload_schema_version?: string;
   asset_id: string;
+  mcap_file_id?: string;
+  event_source?: string;
+  request_id?: string;
+  publish_state?: string;
+  occurred_at?: string;
   created_at: string;
-  event_payload?: AssetEventEnvelope;
+  event_payload?: AssetEventEnvelope & Record<string, unknown>;
 };
 
 function toAlgoEvent(row: AssetEventRow): AlgoEvent {
@@ -49,6 +57,29 @@ function toAlgoEvent(row: AssetEventRow): AlgoEvent {
     created_at: row.created_at,
   };
 }
+
+function toAssetEvent(row: AssetEventRow): AssetEvent {
+  return {
+    event_id: row.event_id,
+    event_seq: row.event_seq ?? 0,
+    event_type: row.event_type ?? "",
+    payload_schema_version: row.payload_schema_version,
+    asset_id: row.asset_id,
+    mcap_file_id: row.mcap_file_id,
+    event_source: row.event_source,
+    request_id: row.request_id,
+    publish_state: row.publish_state,
+    event_payload: row.event_payload,
+    created_at: row.created_at,
+    occurred_at: row.occurred_at,
+  };
+}
+
+type EventListResponse = {
+  items: AssetEvent[];
+  next_cursor?: number;
+  limit: number;
+};
 
 export const assetsApi = {
   list: (params?: ListAssetsParams) => {
@@ -102,15 +133,43 @@ export const assetsApi = {
   resetAlgo: (assetId: string, algoKey: string) =>
     apiClient.post(`/assets/${assetId}/algo/${algoKey}/reset`).then((r) => r.data),
 
-  listAlgoEvents: (assetId: string, algoKey?: string) =>
+  listEvents: (
+    assetId: string,
+    params?: {
+      event_type?: string | string[];
+      algo_key?: string;
+      cursor?: number;
+      limit?: number;
+    },
+  ) =>
     apiClient
       .get<{ items: AssetEventRow[] }>(`/assets/${assetId}/events`, {
-        params: {
-          event_type: "algo_*",
-          ...(algoKey ? { algo_key: algoKey } : {}),
-        },
+        params,
       })
-      .then((r) => r.data.items.map(toAlgoEvent)),
+      .then((r) => ({
+        items: (r.data.items ?? []).map(toAssetEvent),
+        next_cursor: (r.data as { next_cursor?: number }).next_cursor,
+        limit: (r.data as { limit?: number }).limit ?? params?.limit ?? 50,
+      }) as EventListResponse),
+
+  listAlgoEvents: (
+    assetId: string,
+    algoKey?: string,
+    cursor?: number,
+    limit = 20,
+  ) =>
+    assetsApi
+      .listEvents(assetId, {
+        event_type: "algo_*",
+        ...(algoKey ? { algo_key: algoKey } : {}),
+        ...(cursor ? { cursor } : {}),
+        limit,
+      })
+      .then((r) => ({
+        items: r.items.map((row) => toAlgoEvent(row as AssetEventRow)),
+        next_cursor: r.next_cursor,
+        limit: r.limit,
+      })),
 
   // ─── Platform stats (aggregate, avoids full table scan on frontend) ───
   stats: () =>

@@ -7,11 +7,12 @@ import {
   ArrowLeftOutlined, FileOutlined, TagOutlined, SendOutlined,
 } from "@ant-design/icons";
 import { assetsApi } from "../api/assets";
-import type { Asset, AlgoEvent, AlgoStatus } from "../api/types";
+import type { Asset, AlgoEvent, AlgoStatus, AssetEvent } from "../api/types";
 import AssetPreviewHero from "../components/asset-detail/AssetPreviewHero";
 import { buildPlaceholderPreviewManifest } from "../hooks/assets/useAssetPreview";
 import OverviewTab from "../components/asset-detail/OverviewTab";
 import AlgoTab from "../components/asset-detail/AlgoTab";
+import AssetEventsTab from "../components/asset-detail/AssetEventsTab";
 import TagsTab from "../components/asset-detail/TagsTab";
 import DeliveryHistoryTab from "../components/asset-detail/DeliveryHistoryTab";
 import FilesTab from "../components/asset-detail/FilesTab";
@@ -53,7 +54,12 @@ export default function AssetDetailPage() {
   const navigate = useNavigate();
   const [asset, setAsset] = useState<Asset | null>(null);
   const [loading, setLoading] = useState(true);
-  const [events, setEvents] = useState<AlgoEvent[]>([]);
+  const [algoEvents, setAlgoEvents] = useState<AlgoEvent[]>([]);
+  const [algoEventsCursor, setAlgoEventsCursor] = useState<number | null>(null);
+  const [algoEventsLoading, setAlgoEventsLoading] = useState(false);
+  const [allEvents, setAllEvents] = useState<AssetEvent[]>([]);
+  const [allEventsCursor, setAllEventsCursor] = useState<number | null>(null);
+  const [allEventsLoading, setAllEventsLoading] = useState(false);
   const [msg, msgCtx] = message.useMessage();
 
   const loadAsset = () => {
@@ -66,17 +72,40 @@ export default function AssetDetailPage() {
       .finally(() => setLoading(false));
   };
 
-  const loadEvents = () => {
+  const loadAlgoEvents = (cursor?: number) => {
     if (!id) return;
+    setAlgoEventsLoading(true);
     assetsApi
-      .listAlgoEvents(id)
-      .then((evts) => setEvents(evts ?? []))
-      .catch(() => setEvents([]));
+      .listAlgoEvents(id, undefined, cursor, 20)
+      .then((resp) => {
+        setAlgoEvents((prev) => (cursor ? [...prev, ...(resp.items ?? [])] : (resp.items ?? [])));
+        setAlgoEventsCursor(resp.next_cursor ?? null);
+      })
+      .catch(() => {
+        if (!cursor) setAlgoEvents([]);
+      })
+      .finally(() => setAlgoEventsLoading(false));
+  };
+
+  const loadAllEvents = (cursor?: number) => {
+    if (!id) return;
+    setAllEventsLoading(true);
+    assetsApi
+      .listEvents(id, cursor ? { cursor, limit: 20 } : { limit: 20 })
+      .then((resp) => {
+        setAllEvents((prev) => (cursor ? [...prev, ...(resp.items ?? [])] : (resp.items ?? [])));
+        setAllEventsCursor(resp.next_cursor ?? null);
+      })
+      .catch(() => {
+        if (!cursor) setAllEvents([]);
+      })
+      .finally(() => setAllEventsLoading(false));
   };
 
   const refresh = () => {
     loadAsset();
-    loadEvents();
+    loadAlgoEvents();
+    loadAllEvents();
   };
 
   useEffect(() => {
@@ -109,8 +138,27 @@ export default function AssetDetailPage() {
         <AlgoTab
           assetId={asset.asset_id}
           algoList={algoList}
-          events={events}
+          events={algoEvents}
+          eventsLoading={algoEventsLoading}
+          hasMoreEvents={algoEventsCursor !== null}
+          onLoadMoreEvents={() => {
+            if (algoEventsCursor !== null) loadAlgoEvents(algoEventsCursor);
+          }}
           onRefresh={refresh}
+        />
+      ),
+    },
+    {
+      key: "events",
+      label: `全部事件 (${allEvents.length})`,
+      children: (
+        <AssetEventsTab
+          events={allEvents}
+          loading={allEventsLoading}
+          hasMore={allEventsCursor !== null}
+          onLoadMore={() => {
+            if (allEventsCursor !== null) loadAllEvents(allEventsCursor);
+          }}
         />
       ),
     },
@@ -121,7 +169,7 @@ export default function AssetDetailPage() {
         <TagsTab
           assetId={asset.asset_id}
           tags={asset.tags ?? {}}
-          onUpdate={loadAsset}
+          onUpdate={refresh}
         />
       ),
     },

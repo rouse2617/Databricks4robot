@@ -86,6 +86,21 @@ export interface AlgoEvent {
   created_at: string;
 }
 
+export interface AssetEvent {
+  event_id: string;
+  event_seq: number;
+  event_type: string;
+  payload_schema_version?: string;
+  asset_id: string;
+  mcap_file_id?: string;
+  event_source?: string;
+  request_id?: string;
+  publish_state?: string;
+  event_payload?: Record<string, unknown>;
+  created_at: string;
+  occurred_at?: string;
+}
+
 // ─── Algo status helpers ───
 export type AlgoStatus = "blocked" | "pending" | "running" | "ok" | "failed";
 

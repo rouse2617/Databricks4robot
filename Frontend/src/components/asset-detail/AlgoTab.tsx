@@ -41,10 +41,21 @@ interface Props {
   assetId: string;
   algoList: AlgoInfo[];
   events: AlgoEvent[];
+  eventsLoading?: boolean;
+  hasMoreEvents?: boolean;
+  onLoadMoreEvents?: () => void;
   onRefresh: () => void;
 }
 
-export default function AlgoTab({ assetId, algoList, events, onRefresh }: Props) {
+export default function AlgoTab({
+  assetId,
+  algoList,
+  events,
+  eventsLoading = false,
+  hasMoreEvents = false,
+  onLoadMoreEvents,
+  onRefresh,
+}: Props) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [startModalOpen, setStartModalOpen] = useState(false);
   const [algoKey, setAlgoKey] = useState("");
@@ -206,6 +217,17 @@ export default function AlgoTab({ assetId, algoList, events, onRefresh }: Props)
               ),
             }))}
           />
+          {hasMoreEvents && (
+            <div className="mt-3">
+              <Button
+                size="small"
+                onClick={onLoadMoreEvents}
+                loading={eventsLoading}
+              >
+                加载更多
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
