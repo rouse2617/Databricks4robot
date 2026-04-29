@@ -2048,39 +2048,6 @@ flowchart LR
 | Iceberg | snapshot 数量 / metadata 大小 | snapshot > 1000 提示 compact |
 | 对象存储 | 4xx/5xx rate / 流量异常 | 模型 anomaly |
 
-#### 8.1.1 Issue 3：UUIDv7 与二级索引的运维基线
-
-UUIDv7 只改善**主键 B-tree 写入局部性**，对 `lifecycle_state` / `owner` 这类高频更新列上的二级索引不提供\"自动优化\"。因此从 1.0 起就要把下面这组动作纳入日常运维：
-
-1. **给高更新表设置更激进的 autovacuum**
-   - `assets` 级别先用：
-     - `autovacuum_vacuum_scale_factor = 0.02`
-     - `autovacuum_analyze_scale_factor = 0.01`
-     - `autovacuum_vacuum_threshold = 5000`
-   - 目标：尽早回收 HOT/非 HOT 更新留下的 dead tuples，避免索引持续膨胀。
-
-2. **高频更新索引降 fillfactor，给页分裂留空间**
-   - 对 `assets(lifecycle_state)`、`assets(owner)` 等更新频繁索引，建议 `fillfactor=80~90` 起步；
-   - 业务低峰做 `REINDEX CONCURRENTLY` 生效，避免阻塞在线流量。
-
-3. **把索引膨胀纳入 P1 告警**
-   - 监控来源：`pg_stat_user_indexes` + `pg_stat_all_tables` + `pg_stat_progress_vacuum`；
-   - 告警建议：
-     - `idx_scan` 持续上升但 `idx_tup_fetch` 明显背离（命中效率下降）；
-     - `n_dead_tup` 持续高位且 autovacuum 跟不上；
-     - 单索引估算膨胀率 > 30% 持续 24h（进入重建窗口）。
-
-4. **固定维护窗口**
-   - 每周一次低峰检查 Top N 膨胀索引；
-   - 对确认膨胀的索引执行 `REINDEX CONCURRENTLY`；
-   - 对写热点表执行 `VACUUM (ANALYZE)` 验证统计信息回收效果。
-
-5. **GIN 索引单独评估 `fastupdate`**
-   - 若未来在 `metadata` / `tags` 上引入 GIN，需按写入模式评估 `fastupdate=on/off`；
-   - 规则：写多读少可关 `fastupdate` 减少 pending list 尖刺；读多写少保持默认。
-
-这部分是 Issue 3 的落地口径：**UUIDv7 不是二级索引性能银弹**，必须用 autovacuum + fillfactor + reindex + 可观测闭环兜住长期写放大。
-
 ### 8.2 业务级 SLO
 
 - API 可用性 ≥ 99.9%（月度）
