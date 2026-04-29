@@ -1,8 +1,8 @@
 # Outbox Worker MVP 设计
 
 > Scope：把 `asset_events` outbox 持久化事件流以**分钟级**延迟同步到
-> Elasticsearch `assets` 索引。本文档是 `data-platform-design.md §5.6.2`
-> 的工程落地版本，定义 MVP 的代码边界、并发模型、cursor 协议与验收标准。
+> Elasticsearch `assets` 索引。本文档是总体架构设计 "异步同步层" 章节
+> 的工程落地版本，定义 MVP 的并发模型、cursor 协议与验收标准。
 >
 > 同步路径采用**纯轮询**（单 worker、tick=30s），不使用 PG LISTEN/NOTIFY。
 > 决策依据见 §16.1。
@@ -40,70 +40,36 @@
 ### 2.1 数据流总览
 
 ```mermaid
-flowchart TB
-    subgraph CLI["客户端"]
-        UI["前端 / SDK / 算法回调"]
+flowchart LR
+    TX["业务事务<br/>同事务写<br/>业务表 + asset_events"]
+
+    subgraph PG["PostgreSQL（主库）"]
+      direction TB
+      AS[("assets /<br/>asset_algo_latest")]
+      AE[("asset_events<br/>pending → published")]
+      OC[("outbox_sink_cursors<br/>safe_horizon")]
     end
 
-    subgraph BE["Backend 单进程"]
-        direction TB
-        H["Handler<br/>(/api/v1/...)"]
-        UC["Usecase<br/>(AlgoUsecase, AssetUsecase, ...)"]
+    WK["Outbox Worker<br/>30s tick<br/>drain loop"]
 
-        subgraph TX["业务事务（同一个 PG 事务）"]
-            direction TB
-            B1["写业务表<br/>assets / asset_algo_latest / asset_tags"]
-            B2["写 outbox<br/>INSERT asset_events<br/>(publish_state='pending', event_seq=BIGSERIAL)"]
-            B3["COMMIT"]
-            B1 --> B2 --> B3
-        end
-
-        subgraph WK["Outbox Worker (goroutine)"]
-            direction TB
-            TK["30s Ticker<br/>+ defer recover() panic 兜底"]
-            DR["drain loop"]
-            FP["FetchPending<br/>FOR UPDATE SKIP LOCKED LIMIT 1000"]
-            DD["DedupByAsset<br/>N events → M unique assets"]
-            PJ["Projector.Build<br/>JOIN assets + asset_algo_latest"]
-            BK["ESSink.BulkIndex<br/>doc_id = asset_id（幂等）"]
-            MK["MarkPublished<br/>+ AdvanceCursor<br/>(safe_horizon)"]
-            TK --> DR --> FP --> DD --> PJ --> BK --> MK
-            MK -. 同 tick 内反复拉直到空 .-> FP
-        end
-
-        H --> UC --> TX
-        UC -. 写入 .-> WK_NOTE
-        WK_NOTE["（业务路径写完即返回；<br/>worker 异步消费 outbox）"]
+    subgraph SK["下游"]
+      direction TB
+      ES[("Elasticsearch<br/>index: assets")]
+      Adm["/admin/search/reindex<br/>全量重建"]:::adm
     end
 
-    subgraph PG_DB["PostgreSQL"]
-        direction LR
-        AE[("asset_events<br/>事件流 / outbox")]
-        AS[("assets")]
-        AL[("asset_algo_latest")]
-        OC[("outbox_sink_cursors<br/>各 sink 水位线")]
-    end
+    TX --> AS
+    TX --> AE
+    AS --> WK
+    AE --> WK
+    WK --> ES
+    WK -. ack：mark published + advance horizon .-> PG
+    Adm -. 旁路重写 .-> ES
 
-    subgraph EXT["Elasticsearch"]
-        ES[("index: assets<br/>doc_id = asset_id")]
-    end
-
-    classDef adminPath fill:#fff5e6,stroke:#d4a574,color:#7a5a2e;
-    Adm["POST /admin/search/reindex<br/>(运维全量重建)"]:::adminPath
-
-    UI --> H
-    B1 -. 写 .-> AS
-    B1 -. 写 .-> AL
-    B2 -. 写 .-> AE
-    FP -. SELECT pending .-> AE
-    PJ -. SELECT 实时态 .-> AS
-    PJ -. SELECT 实时态 .-> AL
-    MK -. UPDATE published .-> AE
-    MK -. UPDATE last_published_seq .-> OC
-    BK -. _bulk index .-> ES
-    Adm -. 全量扫 .-> AS
-    Adm -. _bulk 重建 .-> ES
+    classDef adm fill:#fff5e6,stroke:#d4a574,color:#7a5a2e;
 ```
+
+> Worker 内部链路：`tick → FetchPending → DedupByAsset → Projector.Build → ESSink.BulkIndex → MarkPublishedAndAdvanceCursor`，drain loop 在同一 tick 内反复拉直到 pending 空。详见 §5.1 伪代码。
 
 > 关键：**没有 PG trigger，没有 LISTEN/NOTIFY，没有任何 PG → backend 的主动通道**。
 > 业务事务 commit 后，事件静静躺在 `asset_events.publish_state='pending'`，
@@ -114,48 +80,30 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     autonumber
-    participant T as 30s Ticker
+    participant T as Ticker
     participant W as Worker
     participant PG as PostgreSQL
     participant ES as Elasticsearch
-    participant H as Health Probe
 
-    T->>W: tick
-    activate W
-    Note over W: drain loop 开始
-
-    loop 直到 pending 空
-        W->>PG: BEGIN<br/>SELECT 1000 events<br/>FOR UPDATE SKIP LOCKED
-        PG-->>W: events[1..n]
-        Note over W: dedup by asset_id<br/>→ unique_assets[1..m]
-
-        loop 对每个 asset
-            W->>PG: SELECT assets + asset_algo_latest<br/>WHERE asset_id = ?
-            PG-->>W: 行数据
-        end
-        Note over W: 投影成 ESDoc[1..m]
-
+    T->>W: 30s tick
+    loop drain until pending empty
+        W->>PG: SELECT 1000 pending<br/>FOR UPDATE SKIP LOCKED
+        PG-->>W: events
+        Note over W: dedup + 投影<br/>(读 assets/asset_algo_latest)
         W->>ES: _bulk index docs
         alt 全成功
-            ES-->>W: 200 OK
-            W->>PG: UPDATE events SET published<br/>UPDATE outbox_sink_cursors<br/>COMMIT
+            ES-->>W: OK
+            W->>PG: events→published<br/>+ advance cursor
         else 部分失败
             ES-->>W: 200 + errors[]
-            W->>PG: 成功 events → published<br/>失败 events → retry_count++<br/>cursor 推到 MIN(pending)-1<br/>COMMIT
-        else 整批失败 / 投影报错
+            W->>PG: OK→published / 失败→retry++<br/>cursor 停在 MIN(pending)-1
+        else 整批失败
             ES--xW: error
-            W->>PG: retry_count++<br/>不动 cursor<br/>ROLLBACK ack
-            Note over W: 整批保留 pending<br/>退出 drain，等下次 tick
+            W->>PG: retry++ · 不动 cursor<br/>退出 drain，下次 tick 再来
         end
     end
-
-    Note over W: pending 空，退出 drain
-    deactivate W
-
-    opt 出现 panic
-        Note over W: defer recover()<br/>health.MarkUnhealthy
-        W->>H: /healthz/outbox = unhealthy
-        Note over W: 可选 os.Exit(1)<br/>K8s liveness 重启
+    opt panic
+        Note over W: recover → MarkUnhealthy<br/>可选 os.Exit(1) 让 K8s 重启
     end
 ```
 
@@ -181,7 +129,7 @@ worker 完全靠"按 tick 拉 `publish_state='pending'`"驱动。
 
 ### 4.1 为什么不能用 `MAX(本批 event_seq)`
 
-参见 `data-platform-design.md §5.2.7` Issue 1 修复。简述：
+背景：
 
 - `event_seq BIGSERIAL` 是 INSERT 取号、COMMIT 才可见
 - 多 worker 并发处理时，`publish_state='pending' → 'published'` 标记顺序与 `event_seq` 顺序无关
@@ -192,34 +140,25 @@ worker 完全靠"按 tick 拉 `publish_state='pending'`"驱动。
 ```mermaid
 sequenceDiagram
     autonumber
-    participant TxA as Tx A<br/>(algo.finished)
-    participant TxB as Tx B<br/>(tag.updated)
-    participant PG as PostgreSQL
+    participant TxA as Tx A
+    participant TxB as Tx B
+    participant PG
     participant W as Worker
-    participant DS as 下游消费者<br/>(PyIceberg cron)
+    participant DS as 下游 (cron)
 
-    TxA->>PG: INSERT asset_events<br/>(event_seq=100, pending)
-    Note over TxA,PG: BIGSERIAL 已分配 100<br/>但事务尚未 commit
-    TxB->>PG: INSERT asset_events<br/>(event_seq=101, pending)
-    TxB->>PG: COMMIT → 101 可见
-    Note over PG: 此时表里只能看到 seq=101，<br/>seq=100 还在 in-flight 事务里
-
-    W->>PG: FetchPending → [101]
-    W->>W: 处理 101，ES 写入成功
+    TxA->>PG: INSERT seq=100 (in-flight)
+    TxB->>PG: INSERT seq=101 + COMMIT
+    Note over PG: 表里只见 101，100 仍未 commit
+    W->>PG: FetchPending → [101]，处理成功
 
     rect rgb(255, 230, 230)
-    Note over W,DS: ❌ 错误协议：cursor = MAX(processed) = 101
-    W->>PG: UPDATE outbox_sink_cursors<br/>SET last_published_seq = 101
-    DS->>PG: SELECT WHERE event_seq > 101
-    Note over DS: 跳过了即将出现的 100
-    TxA->>PG: COMMIT → 100 终于可见
-    Note over DS: 但 cursor 已 = 101<br/>seq=100 永远不会被消费
+    Note over W,DS: ❌ MAX(processed)=101 → cursor=101
+    DS->>PG: SELECT WHERE seq > 101
+    TxA->>PG: COMMIT → 100 可见，但 cursor 已越过它<br/>seq=100 永远不会被消费
     end
 
     rect rgb(230, 255, 230)
-    Note over W,DS: ✅ 正确协议（safe_horizon = MIN(pending) - 1）
-    W->>PG: MIN(pending)=101，但 100 仍 in-flight<br/>cursor 只推到 99，不越过未确认的 seq
-    Note over W,DS: 等 100 commit + 处理后 cursor 自然续推到 101+
+    Note over W,DS: ✅ safe_horizon = MIN(pending)-1<br/>100 未 commit 时 cursor 卡在 99；commit 后续推
     end
 ```
 
@@ -381,25 +320,17 @@ func (w *Worker) processBatch(ctx context.Context) (done bool, err error) {
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> pending: 业务事务 COMMIT<br/>(asset_events INSERT)
 
-    pending --> pending: ES 整批失败<br/>retry_count++
-    pending --> pending: ES 部分失败 / 投影报错<br/>(本条仍未投递)<br/>retry_count++
-    pending --> pending: Worker 崩溃<br/>未 commit 的 ack 事务回滚
+    pending --> pending: 投递失败 → retry_count++<br/>(ES 整批/部分失败 · 投影报错 · worker 崩溃回滚)
+    pending --> published: 投递成功<br/>(MarkPublished + cursor 推进)
 
-    pending --> published: MarkPublishedAndAdvanceCursor<br/>成功投递 ES + cursor 推进
-
-    published --> [*]: 保留作审计 / 回放
-    note left of published
-        published 行不再被 worker 拉取，
-        但永远保留在表中（GET /assets/{id}/events 可见，
-        二期 Iceberg Bronze 仍然可消费）
-    end note
+    published --> [*]: 永久保留<br/>(审计 / 回放 / 二期 Bronze 消费)
 
     note right of pending
-        retry_count > 10 触发 P1 告警，
-        运维介入：要么修 mapping 后再
-        重试，要么 reindex API 全量重建
+        retry_count > 10 → P1 告警
+        运维：修 mapping 重试，或 reindex 全量重建
     end note
 ```
 
@@ -485,13 +416,12 @@ func (s *ESSink) EnsureMapping(ctx context.Context) error {
 
 设计选择：**绝不自动 DELETE 索引**——即使 mapping 不全也只告警，由人工触发 `POST /admin/search/reindex?rebuild_index=true` 显式重建。这避免"启动期误删生产索引"的灾难场景。`mappingDiff` 同时校验字段缺失与类型不一致（如生产被人手 PUT 成 `keyword` 而 worker 期望 `date`），避免静默数据破坏。
 
-> Mapping JSON embed 在 `backend/internal/outbox/sink_es_mapping.json`，与
-> `deploy/local/elasticsearch/init-index.sh` 同源同义。CI 加一个 test
-> assert 两份内容字节对齐，避免漂移。
+> Mapping JSON 内嵌在 worker 包内，与本地部署初始化 ES 用的 mapping
+> 同源同义。CI 加一个 assertion 校验两份内容字节对齐，避免漂移。
 
 ### 7.2 BulkIndex 调用
 
-复用现有 `backend/internal/elasticsearch/client.go:BulkIndex`，添加：
+复用现有 ES 客户端的 BulkIndex 方法，新增以下约束：
 - 批大小上限：100 docs / batch（ES `_bulk` body 不超过 5 MB 经验值）
 - 超时：15s（已是 `Client.httpClient.Timeout`）
 - 部分失败：记录失败 doc_id 列表，整批仍标 published
@@ -502,7 +432,7 @@ func (s *ESSink) EnsureMapping(ctx context.Context) error {
 
 仅为评审方便重述。**不需要改 schema**。
 
-### `asset_events`（`001_init.sql` 第 200–230 行）
+### `asset_events`（schema 见数据库设计文档）
 
 | 列 | 类型 | worker 用途 |
 |---|---|---|
@@ -559,7 +489,7 @@ func (s *ESSink) EnsureMapping(ctx context.Context) error {
 | `ELASTICSEARCH_URL` | ES 地址 | 现有 |
 | `ELASTICSEARCH_INDEX` | 索引名 | `assets` |
 
-加到 `backend/.env.example` 与 `internal/config/config.go`。
+环境变量定义随同应用配置一起维护。
 
 ---
 
@@ -612,28 +542,26 @@ func (s *ESSink) EnsureMapping(ctx context.Context) error {
 | `TestE2E_ConcurrentAck_NoSeqGap` | 模拟乱序 publish 标记 → cursor 永不越过 MIN(pending) - 1 |
 | `TestE2E_ESDown_Backpressure` | ES 容器停掉 30 s → 期间事件累积在 pending → ES 恢复后全量到位 |
 
-放在 `backend/internal/outbox/integration_test.go`，用 testcontainers-go 起 PG + ES，build tag `//go:build integration` 隔离。
+用 testcontainers-go 启 PG + ES 容器，build tag `//go:build integration` 与单元测试隔离。
 
 ---
 
-## 13. 文件布局
+## 13. 模块组成（逻辑视图）
 
-```
-backend/internal/outbox/
-├── worker.go              # Run + processBatch 主循环（~120 行）
-├── projection.go          # BuildAssetDoc + 字段映射（~80 行）
-├── sink_es.go             # ESSink (BulkIndex + DeleteDoc + EnsureMapping)（~80 行）
-├── sink_es_mapping.json   # 与 init-index.sh 同源
-├── repo.go                # OutboxRepo: FetchPending / MarkPublishedAndAdvanceCursor / IncrementRetry（~120 行）
-├── config.go              # 环境变量解析（~30 行）
-└── *_test.go
-```
+| 模块 | 职责 | 估算代码量 |
+|---|---|---|
+| Worker 主循环 | tick 调度 + drain loop + panic 兜底 | ~120 行 |
+| Projector | 从 `assets` + `asset_algo_latest` 构造 ES doc | ~80 行 |
+| ESSink | `BulkIndex` / `DeleteDoc` / 启动期 `EnsureMapping` | ~80 行 |
+| OutboxRepo | `FetchPending` / `MarkPublishedAndAdvanceCursor` / `IncrementRetry` | ~120 行 |
+| 配置 | 环境变量解析 | ~30 行 |
+| 单测 + 集成测试 | 同模块就近 | — |
 
-`main.go` 接线（伪代码）：
+启动接线：
 
 ```go
 if cfg.OutboxWorkerEnabled {
-    worker := outbox.NewWorker(pgClient, esClient, assetRepo, algoLatestRepo, cfg.Outbox)
+    worker := NewWorker(pgClient, esClient, assetRepo, algoLatestRepo, cfg.Outbox)
     go func() {
         if err := worker.Run(ctx); err != nil {
             log.Error("outbox worker exited", err)
@@ -684,8 +612,8 @@ Body: { "rebuild_index": false, "dry_run": false }
 - [ ] `OUTBOX_WORKER_ENABLED=true` 启动后，对 5 个 seed asset 调一次 `POST /admin/search/reindex` → ES `_count` = 5
 - [ ] 触发 `algo.start` → ≤ 60 s 内 ES doc 的 `algo_summary` 出现该 algo（一次 tick + drain 余量）
 - [ ] 杀 worker / 杀 ES 容器 / 重启 backend 三种故障注入手动验证一遍
-- [ ] `metrics_summary.md` 增加 outbox 指标说明
-- [ ] `data-platform-design.md §5.6.2` 末尾加一行链接到本文档
+- [ ] 指标说明文档增加 outbox 相关指标条目
+- [ ] 总体架构设计文档的"异步同步层"章节末尾链接回本文档
 
 ---
 
@@ -715,7 +643,7 @@ Body: { "rebuild_index": false, "dry_run": false }
 | 长 gap 恢复（ES 宕数天）期间 pending 累积 | 不影响 PG 主路径写入；恢复后 worker 自然 drain；若想加速，调一次 `POST /admin/search/reindex` 全量重建即可。指标 `outbox_oldest_pending_age_seconds` 是 SLO 主依据 |
 | **Hot asset**（同 asset 短时间被密集更新）| dedup by asset_id 已是天然防护：N 行 → 1 doc。`OUTBOX_BATCH_SIZE` 默认 **1000**（不是 200）专门为此场景——一次拉完 hot asset 所有 pending，drain 内只投影 1 次写 1 次。业务侧应在 API 层加 `Idempotency-Key` + 单 asset 限流（建议 10/s）从根上抑制 |
 | Worker goroutine panic 不带崩主进程，但 panic 后不再消费 | 顶层 `recover` → `health.MarkUnhealthy` + 可选 `os.Exit(1)`；K8s liveness probe 检查 `/healthz/outbox`，自动重启容器 |
-| Mapping 漂移（init-index.sh vs sink_es_mapping.json）| CI assertion 字节比对，diff 必失败 |
+| Mapping 漂移（部署脚本里的 mapping vs worker 内嵌 mapping）| CI assertion 字节比对，diff 必失败 |
 | 事件 payload schema 演进 | MVP 不读 payload；二期"从 event_seq 重放"开始才需要 `payload_schema_version` 兼容矩阵 |
 
 ### 16.3 开放问题（评审时定）
