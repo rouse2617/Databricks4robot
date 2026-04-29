@@ -47,11 +47,11 @@
 | 算法接入 / 状态流转 / 依赖编排 | 4. algo-lifecycle |
 | 部署形态 | 1. data-platform-design §6 |
 | 故障域 / 冗余 / SLO | 1. data-platform-design §7、§8 |
-| 安全 / 权限 / 密钥 / 数据分级 / 删除 SLA | 1. data-platform-design §7.1 |
+| 安全 / 权限 / 删除 SLA | 1. data-platform-design §7.1（密钥与数据分级由独立运维 / 合规手册承载）|
 | 上线计划 / Phase 拆分 | 1. data-platform-design §9 + 2. schema-reference 上线优先级 |
 | Phase Gate（验收 + 回滚） | 1. data-platform-design §9.5 |
 | 风险与未决事项（含 owner / 关闭标准） | 1. data-platform-design §10.1 |
-| PII / GDPR 策略 | 1. data-platform-design §7.1.4 |
+| PII / GDPR 策略 | 1. data-platform-design §7.1.2 |
 
 ## 这份文档包不覆盖的（评审外议题）
 
@@ -63,6 +63,8 @@
 - 多模态数据集物理格式（Daft / Lance）的具体落地 —— Phase 2+ 单独评审
 - 训练平台 / 特征平台 / 实验分支管理 —— 独立后续设计
 - PII / GDPR 删除链路细则 —— 单独治理文档（待写）
+- 密钥管理 / 凭据轮换具体方案 —— 由独立运维手册承载（K8s Secret / Workload Identity / Vault 选型）
+- 数据分级（L1–L4）与脱敏链路细节 —— 由独立合规文档承载
 - 上云 Catalog 选型（Polaris / Gravitino / 云原生）的最终决策 —— 上云前 ADR
 
 ## 文档维护说明

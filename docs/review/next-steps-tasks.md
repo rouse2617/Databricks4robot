@@ -145,7 +145,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | **P3-5** | Dagster / Argo / Temporal 引入 | 算法 job 链式 / 多步 DAG / lineage 可视化需求出现时 |
 | **P3-6** | 跨地域多活、HLC / Snowflake-id 替换 BIGSERIAL | 单点 PG 容量触达瓶颈时；3.x 跨地域阶段 |
 | **P3-7** | Iceberg Silver / Gold 派生层与维度表 | Bronze 跑稳后按 BI / 训练需求拍板 |
-| **P3-8** | PII / GDPR 删除链路（软删 + `retention_tier` + 物理清理 SLA 30 天） | 客户外部数据接入前；具体方案见 `data-platform-design.md` §7.1.4 + §10.1 R5；关闭条件：独立合规文档发布 + 链路 PoC 通过 |
+| **P3-8** | PII / GDPR 删除链路（软删 + `retention_tier` + 物理清理 SLA 30 天） | 客户外部数据接入前；具体方案见 `data-platform-design.md` §7.1.2 + §10.1 R5；关闭条件：独立合规文档发布 + 链路 PoC 通过 |
 
 ---
 
