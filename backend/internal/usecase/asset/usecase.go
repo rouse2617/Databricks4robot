@@ -14,17 +14,17 @@ import (
 )
 
 var (
-	ErrNotFound            = errors.New("asset not found")
-	ErrInvalidRange        = errors.New("end_timestamp_ns must be greater than start_timestamp_ns")
-	ErrMcapFileIDRequired  = errors.New("mcap_file_id is required")
-	ErrInvalidTag          = errors.New("invalid tag")
+	ErrNotFound           = errors.New("asset not found")
+	ErrInvalidRange       = errors.New("end_timestamp_ns must be greater than start_timestamp_ns")
+	ErrMcapFileIDRequired = errors.New("mcap_file_id is required")
+	ErrInvalidTag         = errors.New("invalid tag")
 )
 
 // defaultLifecycleMeta returns the lifecycle governance defaults for cf_meta.
 // These fields are reserved at ingest time for future storage governance.
 func defaultLifecycleMeta() map[string]interface{} {
 	return map[string]interface{}{
-		"retention_tier":    "standard",
+		"retention_tier":     "standard",
 		"archive_after_days": 90,
 		"delete_after_days":  365,
 		"total_size_bytes":   0,
@@ -33,8 +33,8 @@ func defaultLifecycleMeta() map[string]interface{} {
 }
 
 type Usecase struct {
-	repo        repository.AssetRepository
-	tagRegistry *config.TagRegistry
+	repo         repository.AssetRepository
+	tagRegistry  *config.TagRegistry
 	algoRegistry *config.AlgoRegistry
 }
 
@@ -230,7 +230,6 @@ func (u *Usecase) CommitSegments(ctx context.Context, in CommitSegmentsInput) ([
 	}
 	return created, nil
 }
-
 
 // initAlgoStates initializes algorithm statuses on a new asset based on the algo registry.
 // Algorithms with no dependencies get status "pending"; those with dependencies get "blocked".

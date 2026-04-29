@@ -16,7 +16,9 @@ func genDelivery(suite *TestSuite) {
 	// 多资产关联 (10 轮, 每轮 3 资产)
 	for i := 0; i < 10; i++ {
 		ids := make([]string, 3)
-		for j := range ids { ids[j], _ = createAsset(nil) }
+		for j := range ids {
+			ids[j], _ = createAsset(nil)
+		}
 		idem := fmt.Sprintf("del-multi-%d-%d", time.Now().UnixNano(), i)
 		c, _, lat := doReq("POST", "/api/v1/deliveries", map[string]interface{}{"asset_ids": ids, "customer_id": "c", "owner": "o"}, map[string]string{"Idempotency-Key": idem})
 		suite.record(TestResult{cat, fmt.Sprintf("多资产#%d", i), c == 201, c, 201, lat, ""})
@@ -30,7 +32,9 @@ func genDelivery(suite *TestSuite) {
 	// 缺少 Idempotency-Key (5)
 	for i := 0; i < 5; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		c, _, lat := doReq("POST", "/api/v1/deliveries", map[string]interface{}{"asset_ids": []string{id}, "customer_id": "c", "owner": "o"}, nil)
 		suite.record(TestResult{cat, fmt.Sprintf("无idem-key#%d", i), c == 400, c, 400, lat, ""})
 		deleteAsset(id)
@@ -63,17 +67,19 @@ func genCommitSegments(suite *TestSuite) {
 		var m map[string]interface{}
 		json.Unmarshal(resp, &m)
 		if arr, ok := m["created"].([]interface{}); ok {
-			for _, v := range arr { deleteAsset(fmt.Sprintf("%v", v)) }
+			for _, v := range arr {
+				deleteAsset(fmt.Sprintf("%v", v))
+			}
 		}
 	}
 
 	// 非法 ranges (5)
 	badRanges := [][][2]int64{
-		{{ts, ts}},           // start==end
-		{{ts + 100, ts}},     // start>end
+		{{ts, ts}},                             // start==end
+		{{ts + 100, ts}},                       // start>end
 		{{ts, ts + 1e9}, {ts + 2e9, ts + 2e9}}, // 第二个非法
-		{{0, 0}},             // 零值
-		{{-100, -100}},       // 负数相等
+		{{0, 0}},                               // 零值
+		{{-100, -100}},                         // 负数相等
 	}
 	for i, r := range badRanges {
 		c, _, lat := doReq("POST", "/internal/commit-segments", map[string]interface{}{"mcap_file_id": fmt.Sprintf("cs-bad-%d", i), "ranges": r, "reviewer": "t"}, nil)
@@ -91,7 +97,10 @@ func genErrorFormat(suite *TestSuite) {
 	cat := "13.错误响应格式"
 
 	// 各种错误码的响应都应有 code + message + request_id (20)
-	errorCases := []struct{ n, method, path string; body interface{} }{
+	errorCases := []struct {
+		n, method, path string
+		body            interface{}
+	}{
 		{"404 GET", "GET", "/api/v1/assets/nonexistent", nil},
 		{"400 空body", "POST", "/api/v1/assets", ""},
 		{"401 无token", "GET", "/api/v1/assets/x", nil}, // 特殊处理
@@ -130,7 +139,9 @@ func genErrorFormat(suite *TestSuite) {
 func genHTTPMethods(suite *TestSuite) {
 	cat := "14.HTTP方法路由"
 	id, _ := createAsset(nil)
-	if id == "" { return }
+	if id == "" {
+		return
+	}
 	defer deleteAsset(id)
 
 	// 不支持的方法 (6)
@@ -186,7 +197,9 @@ func genAuth(suite *TestSuite) {
 func genAlgoEvents(suite *TestSuite) {
 	cat := "16.AlgoEvents"
 	id, _ := createAsset(nil)
-	if id == "" { return }
+	if id == "" {
+		return
+	}
 	ak := "env_analysis@1.0.0"
 
 	// 生成事件 (start+finish+reset ×3 + start+failed+reset ×1 = 12 events)
@@ -265,7 +278,9 @@ func genLargeData(suite *TestSuite) {
 	// 创建资产后通过多次 algo finish 写入大量 algo_results (5)
 	for i := 0; i < 5; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		// 对每个算法都跑一遍 start→finish
 		for _, ak := range []string{"env_analysis@1.0.0", "hand_tracking@1.0.0", "hand_tracking@1.2.0", "head_tracking@1.0.0", "body_tracking@1.0.0", "deface@2.0.0"} {
 			doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/start", id, ak), map[string]interface{}{"method": "t"}, nil)
@@ -305,7 +320,9 @@ func genEmptyVsMissing(suite *TestSuite) {
 		body := map[string]interface{}{"mcap_file_id": fmt.Sprintf("miss-%s-%d", field, rand.Intn(1e6)), "start_timestamp_ns": ts, "end_timestamp_ns": end, "reviewer": "t"}
 		c, resp, lat := doReq("POST", "/api/v1/assets", body, nil)
 		suite.record(TestResult{cat, fmt.Sprintf("%s不传", field), c == 201, c, 201, lat, ""})
-		if c == 201 { deleteAsset(jsonGet(resp, "asset_id")) }
+		if c == 201 {
+			deleteAsset(jsonGet(resp, "asset_id"))
+		}
 	}
 
 	// PATCH 空字符串 (5)
@@ -326,7 +343,9 @@ func genFuzz(suite *TestSuite, targetTotal int) {
 	cat := "20.随机Fuzz"
 	current := int(suite.pass) + int(suite.fail)
 	remaining := targetTotal - current
-	if remaining <= 0 { return }
+	if remaining <= 0 {
+		return
+	}
 
 	ts := time.Now().UnixNano()
 	end := ts + 60_000_000_000
@@ -340,8 +359,16 @@ func genFuzz(suite *TestSuite, targetTotal int) {
 
 	// 预创建一些资产用于 fuzz
 	fuzzIDs := make([]string, 5)
-	for i := range fuzzIDs { fuzzIDs[i], _ = createAsset(nil) }
-	defer func() { for _, id := range fuzzIDs { if id != "" { deleteAsset(id) } } }()
+	for i := range fuzzIDs {
+		fuzzIDs[i], _ = createAsset(nil)
+	}
+	defer func() {
+		for _, id := range fuzzIDs {
+			if id != "" {
+				deleteAsset(id)
+			}
+		}
+	}()
 
 	for i := 0; i < remaining; i++ {
 		ep := endpoints[rng.Intn(len(endpoints))]
@@ -357,10 +384,10 @@ func genFuzz(suite *TestSuite, targetTotal int) {
 		var body interface{}
 		if ep.method == "POST" || ep.method == "PATCH" {
 			body = map[string]interface{}{
-				"mcap_file_id": fmt.Sprintf("fuzz-%d", rng.Intn(1e6)),
+				"mcap_file_id":       fmt.Sprintf("fuzz-%d", rng.Intn(1e6)),
 				"start_timestamp_ns": ts + int64(rng.Intn(1000)),
-				"end_timestamp_ns": end + int64(rng.Intn(1000)),
-				"reviewer": fmt.Sprintf("fuzz-%d", rng.Intn(100)),
+				"end_timestamp_ns":   end + int64(rng.Intn(1000)),
+				"reviewer":           fmt.Sprintf("fuzz-%d", rng.Intn(100)),
 			}
 		}
 

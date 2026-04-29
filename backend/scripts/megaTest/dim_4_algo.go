@@ -12,7 +12,9 @@ func genAlgoStateMachine(suite *TestSuite) {
 	// 完整生命周期 (6×3=18)
 	for _, ak := range algoKeys {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		c, _, l := doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/start", id, ak), map[string]interface{}{"method": "t"}, nil)
 		suite.record(TestResult{cat, fmt.Sprintf("%s start", ak), c == 200, c, 200, l, ""})
 		c, _, l = doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/finish", id, ak), buildFinishBody(ak, "ok"), nil)
@@ -25,7 +27,9 @@ func genAlgoStateMachine(suite *TestSuite) {
 	// 非法转换 (2 algos × 7 = 14)
 	for _, ak := range []string{"env_analysis@1.0.0", "hand_tracking@1.2.0"} {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		c, _, l := doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/finish", id, ak), map[string]interface{}{"status": "ok"}, nil)
 		suite.record(TestResult{cat, fmt.Sprintf("%s pending→finish", ak), c == 409, c, 409, l, ""})
 		c, _, l = doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/reset", id, ak), nil, nil)
@@ -47,7 +51,9 @@ func genAlgoStateMachine(suite *TestSuite) {
 	// failed 场景 (6×2=12)
 	for _, ak := range algoKeys {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/start", id, ak), map[string]interface{}{"method": "t"}, nil)
 		c, _, l := doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/finish", id, ak), map[string]interface{}{"status": "failed"}, nil)
 		suite.record(TestResult{cat, fmt.Sprintf("%s failed无reason", ak), c == 422, c, 422, l, ""})

@@ -16,7 +16,9 @@ func genDependencyChain(suite *TestSuite) {
 	deps := []string{"hand_tracking@1.2.0", "head_tracking@1.0.0", "body_tracking@1.0.0"}
 	for i := 0; i < 5; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		for _, dk := range deps {
 			doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/start", id, dk), map[string]interface{}{"method": "t"}, nil)
 			doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/finish", id, dk), buildFinishBody(dk, "ok"), nil)
@@ -30,7 +32,9 @@ func genDependencyChain(suite *TestSuite) {
 	// 部分依赖完成 → 仍 blocked (5 次, 只完成 2/3)
 	for i := 0; i < 5; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		for _, dk := range deps[:2] { // 只完成前 2 个
 			doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/start", id, dk), map[string]interface{}{"method": "t"}, nil)
 			doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/finish", id, dk), buildFinishBody(dk, "ok"), nil)
@@ -50,7 +54,9 @@ func genIdempotency(suite *TestSuite) {
 	// finish 幂等 (相同 run_id) (10)
 	for i := 0; i < 10; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		ak := "env_analysis@1.0.0"
 		runID := fmt.Sprintf("idem-run-%d", i)
 		doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/start", id, ak), map[string]interface{}{"method": "t", "run_id": runID}, nil)
@@ -67,7 +73,9 @@ func genIdempotency(suite *TestSuite) {
 	// delivery 幂等 (10)
 	for i := 0; i < 10; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		idemKey := fmt.Sprintf("idem-del-%d-%d", time.Now().UnixNano(), i)
 		body := map[string]interface{}{"asset_ids": []string{id}, "customer_id": "c", "owner": "o"}
 		c1, r1, _ := doReq("POST", "/api/v1/deliveries", body, map[string]string{"Idempotency-Key": idemKey})
@@ -91,13 +99,17 @@ func genRapidCycle(suite *TestSuite) {
 	// 5 个资产各循环 3 次 = 15 个循环
 	for i := 0; i < 5; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		ok := 0
 		for j := 0; j < 3; j++ {
 			c1, _, _ := doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/start", id, ak), map[string]interface{}{"method": fmt.Sprintf("c%d", j)}, nil)
 			c2, _, _ := doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/finish", id, ak), map[string]interface{}{"status": "ok"}, nil)
 			c3, _, _ := doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/reset", id, ak), nil, nil)
-			if c1 == 200 && c2 == 200 && c3 == 200 { ok++ }
+			if c1 == 200 && c2 == 200 && c3 == 200 {
+				ok++
+			}
 		}
 		suite.record(TestResult{cat, fmt.Sprintf("资产#%d 循环3次 ok=%d", i, ok), ok == 3, 200, 200, 0, ""})
 		deleteAsset(id)
@@ -112,7 +124,9 @@ func genConcurrency(suite *TestSuite) {
 	// 并发 start 同一算法 (5 轮 × 5 并发)
 	for i := 0; i < 5; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		ak := "env_analysis@1.0.0"
 		var wg sync.WaitGroup
 		codes := make([]int, 5)
@@ -126,7 +140,11 @@ func genConcurrency(suite *TestSuite) {
 		}
 		wg.Wait()
 		ok200 := 0
-		for _, c := range codes { if c == 200 { ok200++ } }
+		for _, c := range codes {
+			if c == 200 {
+				ok200++
+			}
+		}
 		suite.record(TestResult{cat, fmt.Sprintf("并发start#%d 200×%d", i, ok200), ok200 >= 1, 200, 200, 0, ""})
 		doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/finish", id, ak), map[string]interface{}{"status": "ok"}, nil)
 		doReq("POST", fmt.Sprintf("/api/v1/assets/%s/algo/%s/reset", id, ak), nil, nil)
@@ -136,7 +154,9 @@ func genConcurrency(suite *TestSuite) {
 	// 并发 PATCH 同一资产 (5 轮 × 5 并发)
 	for i := 0; i < 5; i++ {
 		id, _ := createAsset(nil)
-		if id == "" { continue }
+		if id == "" {
+			continue
+		}
 		var wg sync.WaitGroup
 		for j := 0; j < 5; j++ {
 			wg.Add(1)
@@ -167,10 +187,16 @@ func genConcurrency(suite *TestSuite) {
 	wg.Wait()
 	ok := 0
 	for j := 0; j < 50; j++ {
-		if codes[j] == 201 { ok++ }
+		if codes[j] == 201 {
+			ok++
+		}
 	}
 	suite.record(TestResult{cat, fmt.Sprintf("并发创建50个 ok=%d", ok), ok == 50, 200, 200, 0, ""})
-	for _, id := range ids { if id != "" { deleteAsset(id) } }
+	for _, id := range ids {
+		if id != "" {
+			deleteAsset(id)
+		}
+	}
 }
 
 // ── 维度 9: Unicode & 特殊字符 ──────────────────────────────────────────────
@@ -212,7 +238,9 @@ func genUnicode(suite *TestSuite) {
 		body := map[string]interface{}{"mcap_file_id": mid, "start_timestamp_ns": ts, "end_timestamp_ns": end, "reviewer": "t"}
 		c, resp, lat := doReq("POST", "/api/v1/assets", body, nil)
 		suite.record(TestResult{cat, fmt.Sprintf("mcap_id %q", mid), c == 201, c, 201, lat, ""})
-		if c == 201 { deleteAsset(jsonGet(resp, "asset_id")) }
+		if c == 201 {
+			deleteAsset(jsonGet(resp, "asset_id"))
+		}
 	}
 }
 
@@ -221,11 +249,16 @@ func genUnicode(suite *TestSuite) {
 func genPagination(suite *TestSuite) {
 	cat := "10.分页边界"
 	id, _ := createAsset(nil)
-	if id == "" { return }
+	if id == "" {
+		return
+	}
 	defer deleteAsset(id)
 
 	// deliveries 分页参数 (20)
-	pageCases := []struct{ n, p, ps string; exp int }{
+	pageCases := []struct {
+		n, p, ps string
+		exp      int
+	}{
 		{"正常", "1", "10", 200}, {"page=0", "0", "10", 200}, {"page=-1", "-1", "10", 200},
 		{"page=999999", "999999", "10", 200}, {"ps=0", "1", "0", 200}, {"ps=-1", "1", "-1", 200},
 		{"ps=999", "1", "999", 200}, {"ps=abc", "1", "abc", 200}, {"page=abc", "abc", "10", 200},

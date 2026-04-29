@@ -20,7 +20,9 @@ func genTagValidation(suite *TestSuite) {
 		for _, v := range vals {
 			code, resp, lat := doReq("POST", "/api/v1/assets", mk(map[string]string{tag: v}), nil)
 			suite.record(TestResult{cat, fmt.Sprintf("enum %s=%s", tag, v), code == 201, code, 201, lat, ""})
-			if code == 201 { deleteAsset(jsonGet(resp, "asset_id")) }
+			if code == 201 {
+				deleteAsset(jsonGet(resp, "asset_id"))
+			}
 		}
 	}
 
@@ -37,7 +39,9 @@ func genTagValidation(suite *TestSuite) {
 		for _, v := range []string{"normal", "", "中文", "emoji🤖", strings.Repeat("x", 100), strings.Repeat("长", 200), "a b c", "k=v&f=b"} {
 			code, resp, lat := doReq("POST", "/api/v1/assets", mk(map[string]string{tag: v}), nil)
 			suite.record(TestResult{cat, fmt.Sprintf("str %s=%q", tag, truncStr(v, 15)), code == 201 || code == 422, code, 0, lat, ""})
-			if code == 201 { deleteAsset(jsonGet(resp, "asset_id")) }
+			if code == 201 {
+				deleteAsset(jsonGet(resp, "asset_id"))
+			}
 		}
 	}
 
@@ -57,6 +61,8 @@ func genTagValidation(suite *TestSuite) {
 	} {
 		code, resp, lat := doReq("POST", "/api/v1/assets", mk(tags), nil)
 		suite.record(TestResult{cat, fmt.Sprintf("组合#%d", i+1), code == 201, code, 201, lat, ""})
-		if code == 201 { deleteAsset(jsonGet(resp, "asset_id")) }
+		if code == 201 {
+			deleteAsset(jsonGet(resp, "asset_id"))
+		}
 	}
 }

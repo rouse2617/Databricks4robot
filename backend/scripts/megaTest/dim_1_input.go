@@ -15,19 +15,43 @@ func genCreateValidation(suite *TestSuite) {
 	for mask := 0; mask < 16; mask++ {
 		body := map[string]interface{}{}
 		missing := []string{}
-		if mask&1 != 0 { body["mcap_file_id"] = "test" } else { missing = append(missing, "mcap_file_id") }
-		if mask&2 != 0 { body["start_timestamp_ns"] = ts } else { missing = append(missing, "start_timestamp_ns") }
-		if mask&4 != 0 { body["end_timestamp_ns"] = end } else { missing = append(missing, "end_timestamp_ns") }
-		if mask&8 != 0 { body["reviewer"] = "tester" } else { missing = append(missing, "reviewer") }
+		if mask&1 != 0 {
+			body["mcap_file_id"] = "test"
+		} else {
+			missing = append(missing, "mcap_file_id")
+		}
+		if mask&2 != 0 {
+			body["start_timestamp_ns"] = ts
+		} else {
+			missing = append(missing, "start_timestamp_ns")
+		}
+		if mask&4 != 0 {
+			body["end_timestamp_ns"] = end
+		} else {
+			missing = append(missing, "end_timestamp_ns")
+		}
+		if mask&8 != 0 {
+			body["reviewer"] = "tester"
+		} else {
+			missing = append(missing, "reviewer")
+		}
 		expected := 400
-		if mask == 15 { expected = 201 }
+		if mask == 15 {
+			expected = 201
+		}
 		code, resp, lat := doReq("POST", "/api/v1/assets", body, nil)
 		suite.record(TestResult{cat, fmt.Sprintf("必填组合 mask=%d miss=[%s]", mask, strings.Join(missing, ",")), code == expected, code, expected, lat, ""})
-		if code == 201 { deleteAsset(jsonGet(resp, "asset_id")) }
+		if code == 201 {
+			deleteAsset(jsonGet(resp, "asset_id"))
+		}
 	}
 
 	// 1.2 timestamp 边界 (10)
-	tsCases := []struct{ n string; s, e interface{}; exp int }{
+	tsCases := []struct {
+		n    string
+		s, e interface{}
+		exp  int
+	}{
 		{"start==end", ts, ts, 422}, {"start>end", end, ts, 422},
 		{"start=1,end=2", 1, 2, 201}, {"负数start", -1000, 1000, 201},
 		{"极大值", int64(9223372036854775000), int64(9223372036854775807), 201},
@@ -39,7 +63,9 @@ func genCreateValidation(suite *TestSuite) {
 		body := map[string]interface{}{"mcap_file_id": fmt.Sprintf("ts-%s", tc.n), "start_timestamp_ns": tc.s, "end_timestamp_ns": tc.e, "reviewer": "t"}
 		code, resp, lat := doReq("POST", "/api/v1/assets", body, nil)
 		suite.record(TestResult{cat, fmt.Sprintf("ts: %s", tc.n), code == tc.exp, code, tc.exp, lat, ""})
-		if code == 201 { deleteAsset(jsonGet(resp, "asset_id")) }
+		if code == 201 {
+			deleteAsset(jsonGet(resp, "asset_id"))
+		}
 	}
 
 	// 1.3 字段长度 (5 fields × 6 lengths = 30)
@@ -49,7 +75,9 @@ func genCreateValidation(suite *TestSuite) {
 			body[field] = strings.Repeat("A", l)
 			code, resp, lat := doReq("POST", "/api/v1/assets", body, nil)
 			suite.record(TestResult{cat, fmt.Sprintf("长度 %s=%d", field, l), code == 201 || code == 400, code, 0, lat, ""})
-			if code == 201 { deleteAsset(jsonGet(resp, "asset_id")) }
+			if code == 201 {
+				deleteAsset(jsonGet(resp, "asset_id"))
+			}
 		}
 	}
 
