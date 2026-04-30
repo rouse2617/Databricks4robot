@@ -46,6 +46,11 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 		segIndex       *int
 		parentStartOff *int64
 		parentEndOff   *int64
+		splitMethod    *string
+		splitAlgoName  *string
+		splitAlgoVer   *string
+		splitRunID     *string
+		splitReason    *string
 		metadataBytes  []byte
 		filesBytes     []byte
 	)
@@ -55,7 +60,7 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 		&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 		&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 		&parentID, &rootID,
-		&a.SplitMethod, &a.SplitAlgoName, &a.SplitAlgoVersion, &a.SplitRunID, &a.SplitReason,
+		&splitMethod, &splitAlgoName, &splitAlgoVer, &splitRunID, &splitReason,
 		&segIndex, &parentStartOff, &parentEndOff,
 		&tenantID, &projectID,
 		&metadataBytes, &filesBytes,
@@ -92,6 +97,21 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 	}
 	if parentEndOff != nil {
 		a.ParentEndOffsetMs = parentEndOff
+	}
+	if splitMethod != nil {
+		a.SplitMethod = *splitMethod
+	}
+	if splitAlgoName != nil {
+		a.SplitAlgoName = *splitAlgoName
+	}
+	if splitAlgoVer != nil {
+		a.SplitAlgoVersion = *splitAlgoVer
+	}
+	if splitRunID != nil {
+		a.SplitRunID = *splitRunID
+	}
+	if splitReason != nil {
+		a.SplitReason = *splitReason
 	}
 	if len(metadataBytes) > 0 {
 		_ = json.Unmarshal(metadataBytes, &a.Metadata)
@@ -364,14 +384,24 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 		projectID         *string
 		rawHashSHA256     *string
 		fileDurationMs    *int64
+		vendorID          *string
+		collectorID       *string
+		taskID            *string
+		deviceID          *string
+		cameraModel       *string
+		dataSource        *string
+		locationID        *string
+		sceneID           *string
+		environmentID     *string
+		collectionMethod  *string
 	)
 	err := r.c.db.QueryRow(ctx, q, mcapFileID).Scan(
 		&f.McapFileID, &f.RawHashMD5, &rawHashSHA256,
 		&f.GCSPath, &f.SizeBytes, &fileDurationMs,
 		&f.StartTimestampNs, &f.EndTimestampNs,
 		&f.ChannelCount, &f.ChunkCount, &ingestState, &f.Owner,
-		&f.VendorID, &f.CollectorID, &f.TaskID, &f.DeviceID,
-		&f.CameraModel, &f.DataSource, &f.LocationID, &f.SceneID, &f.EnvironmentID, &f.CollectionMethod,
+		&vendorID, &collectorID, &taskID, &deviceID,
+		&cameraModel, &dataSource, &locationID, &sceneID, &environmentID, &collectionMethod,
 		&retentionTier, &expireAt, &tenantID, &projectID,
 		&metadataBytes, &processStateBytes,
 		&f.CreatedAt, &f.UpdatedAt, &f.Version,
@@ -388,6 +418,36 @@ WHERE mcap_file_id = $1 AND is_deleted = FALSE`
 	}
 	if fileDurationMs != nil {
 		f.FileDurationMs = *fileDurationMs
+	}
+	if vendorID != nil {
+		f.VendorID = *vendorID
+	}
+	if collectorID != nil {
+		f.CollectorID = *collectorID
+	}
+	if taskID != nil {
+		f.TaskID = *taskID
+	}
+	if deviceID != nil {
+		f.DeviceID = *deviceID
+	}
+	if cameraModel != nil {
+		f.CameraModel = *cameraModel
+	}
+	if dataSource != nil {
+		f.DataSource = *dataSource
+	}
+	if locationID != nil {
+		f.LocationID = *locationID
+	}
+	if sceneID != nil {
+		f.SceneID = *sceneID
+	}
+	if environmentID != nil {
+		f.EnvironmentID = *environmentID
+	}
+	if collectionMethod != nil {
+		f.CollectionMethod = *collectionMethod
 	}
 	if retentionTier != nil {
 		f.RetentionTier = *retentionTier
