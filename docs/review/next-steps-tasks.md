@@ -129,8 +129,8 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | ID | 任务 | DoD | 估时 | 状态 | 落地证据 |
 |----|------|-----|------|------|----------|
 | **P1-FE-1** | **Lakehouse Dashboard**：把已注册的 `/api/v1/lakehouse/*` 端点（training-assets / quality-distribution / customer-replay / tag-timeline）至少做成 1 个汇总 dashboard 页面（候选挂在 `AnalyticsPage`） | 4 个数据源中 ≥ 2 个有可视化卡片；ES 故障时降级 PG fallback；与 P1-6 后端联调一次 | M | blocked-by-P1-6 | — |
-| **P1-FE-2** | **同步状态可视化**：`/api/v1/lakehouse/sync-status` 接到 `SettingsPage` 或独立"同步监控"页 | 显示 `last_sync_at / postgres_count / iceberg_count / diff_pct`；`status != ok` 时红色徽标 | S | todo | — |
-| **P1-FE-3** | **Admin Reindex 入口**：`/admin/search/reindex` 在 SettingsPage 给 admin 角色一个"重建 ES 索引"按钮（带二次确认 + dry_run 选项 + 进度回显） | 仅 admin 可见；dry_run 默认开；调用后显示 `reindexed_assets / failed_assets`；失败列表可下载 | S | blocked-by-P0-5 | — |
+| **P1-FE-2** | **同步状态可视化**：`/api/v1/lakehouse/sync-status` 接到 `SettingsPage` 或独立"同步监控"页 | 显示 `last_sync_at / postgres_count / iceberg_count / diff_pct`；`status != ok` 时红色徽标 | S | in-progress | `Frontend/src/pages/AnalyticsPage.tsx` 已统一 realtime / sync_reconciliation envelope，并展示来源 / diff / traffic light；余量：按产品需要决定是否迁到 SettingsPage |
+| **P1-FE-3** | **Admin Reindex 入口**：`/admin/search/reindex` 在 SettingsPage 给 admin 角色一个"重建 ES 索引"按钮（带二次确认 + dry_run 选项 + 进度回显） | 仅 admin 可见；dry_run 默认开；调用后显示 `reindexed_assets / failed_assets`；失败列表可下载 | S | in-progress | `Frontend/src/pages/SettingsPage.tsx` + `Frontend/src/api/admin.ts` 已支持独立 `X-Admin-Token`、dry_run、确认框与结果回显；余量：接入真正的 admin 可见性判定 |
 | **P1-FE-4** | **保留期 / 过期视图**：列表加"30 天内将过期"快捷过滤（`expire_at:between:now,now+30d`），详情显示 retention badge | 快捷 chip 一键应用；`retention_tier` 用颜色区分（hot/warm/cold/archive）；vitest 覆盖 | S | blocked-by-P0-FE-3 | — |
 
 ### 2.2 P1 · 测试

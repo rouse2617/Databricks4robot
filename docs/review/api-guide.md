@@ -801,9 +801,29 @@ curl -sS -X POST "$BASE/api/v1/admin/search/reindex" \
 
 `dry_run: true` 时只统计将要索引/删除的文档数，不写 ES。
 
+响应 `200`:
+
+```json
+{
+  "dry_run": true,
+  "total_assets": 1200,
+  "indexed": 1180,
+  "deleted": 20,
+  "failed": 0,
+  "duration_ms": 842,
+  "errors": [],
+  "assets_scanned": 1200,
+  "documents_indexed": 1180,
+  "documents_deleted": 20
+}
+```
+
+- `indexed` / `deleted` 在 `dry_run=true` 时表示“将会执行”的数量。
+- `failed > 0` 时，优先看 `errors[]`；ES `_bulk` 的局部失败不会再被误报成全成功。
+
 ### 7.3 Prometheus 指标（Outbox MVP）
 
-同一进程暴露 `GET /metrics`（无认证；建议仅内网可达）。Outbox worker 相关：`outbox_pending_events`、`outbox_worker_batches_total`、`outbox_worker_events_published_total` 等。
+同一进程暴露 `GET /metrics`（无认证；建议仅内网可达）。Outbox worker 相关：`outbox_worker_pending_total`、`outbox_worker_batches_total`、`outbox_worker_events_published_total` 等。
 
 `filter` 语法速查:
 
@@ -932,24 +952,27 @@ curl "$BASE/api/v1/lakehouse/sync-status" \
 响应 `200`:
 ```json
 {
-  "last_sync_at": "2026-05-15T08:30:00Z",
-  "postgres_count": 10000,
-  "iceberg_count": 9998,
-  "diff_count": 2,
-  "diff_pct": 0.02,
-  "status": "ok",
-  "duration_sec": 45.2,
-  "details": {
-    "status_distribution_match": true,
-    "env_distribution_match": true
+  "available": true,
+  "source": "realtime",
+  "data": {
+    "dagster_run_id": "",
+    "checked_at": "2026-05-15T08:30:00Z",
+    "pg_total_count": 10000,
+    "iceberg_total_count": 9998,
+    "count_diff_pct": 0.0002,
+    "pg_status_dist": {},
+    "iceberg_status_dist": {},
+    "status_diff": {},
+    "is_alert": false,
+    "iceberg_max_seq": 456789
   }
 }
 ```
 
-`status` 字段:
-- `ok` — 对账通过，差异 < 0.1%
-- `warning` — 差异 > 0.1%，需要关注
-- `unknown` — 尚未执行对账
+- `source = realtime` 表示直接比较 `asset_events.publish_state='published'` 与 Iceberg Bronze 的事件总数。
+- `source = sync_reconciliation` 表示读取 Dagster 落表结果。
+- `count_diff_pct` 是 **比值**，不是已经乘过 100 的百分数；例如 `0.001 = 0.1%`。
+- 当 `available=false` 时，接口仍返回 `200`，并通过 `message` 说明是 Dagster 数据未生成还是 Bronze 尚未追平。
 
 ## 9. 错误码参考
 

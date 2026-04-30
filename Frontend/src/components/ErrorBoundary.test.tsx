@@ -4,6 +4,7 @@ import ErrorBoundary from "./ErrorBoundary";
 
 function ThrowingChild() {
   throw new Error("Test error");
+  return null;
 }
 
 describe("ErrorBoundary", () => {

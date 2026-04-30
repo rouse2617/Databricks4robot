@@ -290,6 +290,54 @@ components:
           items:
             type: object
             additionalProperties: true
+    SearchReindexResponse:
+      type: object
+      properties:
+        dry_run: { type: boolean }
+        total_assets: { type: integer, format: int64 }
+        indexed: { type: integer, format: int64 }
+        deleted: { type: integer, format: int64 }
+        failed: { type: integer, format: int64 }
+        duration_ms: { type: integer, format: int64 }
+        errors:
+          type: array
+          items: { type: string }
+        elasticsearch_doc_count: { type: integer, format: int64 }
+        assets_scanned: { type: integer, format: int64 }
+        documents_indexed: { type: integer, format: int64 }
+        documents_deleted: { type: integer, format: int64 }
+    SyncStatusData:
+      type: object
+      properties:
+        dagster_run_id: { type: string }
+        checked_at: { type: string, format: date-time }
+        pg_total_count: { type: integer, format: int64 }
+        iceberg_total_count: { type: integer, format: int64 }
+        count_diff_pct:
+          type: number
+          format: double
+          description: "Difference ratio in [0,1]. Example: 0.001 = 0.1%."
+        pg_status_dist:
+          type: object
+          additionalProperties: true
+        iceberg_status_dist:
+          type: object
+          additionalProperties: true
+        status_diff:
+          type: object
+          additionalProperties: true
+        is_alert: { type: boolean }
+        iceberg_max_seq: { type: integer, format: int64 }
+    SyncStatusResponse:
+      type: object
+      properties:
+        available: { type: boolean }
+        source:
+          type: string
+          enum: [realtime, sync_reconciliation]
+        message: { type: string }
+        data:
+          $ref: '#/components/schemas/SyncStatusData'
     McapFile:
       type: object
       properties:
@@ -337,9 +385,7 @@ paths:
           description: Summary counters
           content:
             application/json:
-              schema:
-                type: object
-                additionalProperties: true
+              schema: { $ref: '#/components/schemas/SearchReindexResponse' }
         '401':
           description: invalid or missing admin token
           content:
@@ -385,6 +431,20 @@ paths:
               schema: { $ref: '#/components/schemas/LakehouseTableListResponse' }
         '503':
           description: trino disabled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/lakehouse/sync-status:
+    get:
+      summary: Get realtime or reconciled PG vs Iceberg sync status
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncStatusResponse' }
+        '503':
+          description: postgres unavailable
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

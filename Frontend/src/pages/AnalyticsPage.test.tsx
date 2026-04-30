@@ -65,6 +65,7 @@ function setupMocks(overrides?: {
   statusError?: boolean;
   tablesError?: boolean;
   syncAlert?: boolean;
+  syncSource?: "realtime" | "sync_reconciliation";
 }) {
   if (overrides?.statusError) {
     mockStatus.mockRejectedValue(new Error("status error"));
@@ -87,6 +88,7 @@ function setupMocks(overrides?: {
   const diffPct = overrides?.syncAlert ? 0.1 : 0.001;
   mockSyncStatus.mockResolvedValue({
     available: true,
+    source: overrides?.syncSource ?? "sync_reconciliation",
     data: {
       dagster_run_id: "run-123",
       checked_at: "2025-01-15T10:00:00Z",
@@ -100,6 +102,7 @@ function setupMocks(overrides?: {
         processing: { pg: 200, iceberg: 200, diff: 0 },
       },
       is_alert: overrides?.syncAlert ?? false,
+      iceberg_max_seq: overrides?.syncSource === "realtime" ? 12345 : undefined,
     },
   });
 
@@ -159,6 +162,31 @@ describe("AnalyticsPage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("pg-count").textContent).toBe("1,000");
       expect(screen.getByTestId("iceberg-count").textContent).toBe("999");
+    });
+  });
+
+  it("renders realtime sync source without requiring dagster metadata", async () => {
+    setupMocks({ syncSource: "realtime" });
+    mockSyncStatus.mockResolvedValue({
+      available: true,
+      source: "realtime",
+      data: {
+        dagster_run_id: "",
+        checked_at: "2025-01-15T10:00:00Z",
+        pg_total_count: 1000,
+        iceberg_total_count: 999,
+        count_diff_pct: 0.001,
+        pg_status_dist: {},
+        iceberg_status_dist: {},
+        status_diff: {},
+        is_alert: false,
+        iceberg_max_seq: 12345,
+      },
+    });
+    render(<AnalyticsPage />);
+    await waitFor(() => {
+      expect(screen.getByTestId("sync-source").textContent).toBe("实时检查");
+      expect(screen.getByText("12,345")).toBeTruthy();
     });
   });
 

@@ -187,8 +187,8 @@ func (h *Handler) requireTrino(c *gin.Context) bool {
 	return true
 }
 
-// SyncStatusResponse represents the latest reconciliation result.
-type SyncStatusResponse struct {
+// SyncStatusData represents the latest reconciliation result.
+type SyncStatusData struct {
 	DagsterRunID      string         `json:"dagster_run_id"`
 	CheckedAt         time.Time      `json:"checked_at"`
 	PgTotalCount      int64          `json:"pg_total_count"`
@@ -198,6 +198,43 @@ type SyncStatusResponse struct {
 	IcebergStatusDist map[string]any `json:"iceberg_status_dist"`
 	StatusDiff        map[string]any `json:"status_diff"`
 	IsAlert           bool           `json:"is_alert"`
+	IcebergMaxSeq     int64          `json:"iceberg_max_seq,omitempty"`
+}
+
+type SyncStatusEnvelope struct {
+	Available bool            `json:"available"`
+	Source    string          `json:"source,omitempty"`
+	Message   string          `json:"message,omitempty"`
+	Data      *SyncStatusData `json:"data,omitempty"`
+}
+
+func newRealtimeSyncStatusData(checkedAt time.Time, pgTotal, iceTotal, iceMaxSeq int64) SyncStatusData {
+	var diffRatio float64
+	switch {
+	case pgTotal == 0 && iceTotal == 0:
+		diffRatio = 0
+	case pgTotal == 0:
+		diffRatio = 1.0
+	default:
+		diff := pgTotal - iceTotal
+		if diff < 0 {
+			diff = -diff
+		}
+		diffRatio = float64(diff) / float64(pgTotal)
+	}
+
+	return SyncStatusData{
+		DagsterRunID:      "",
+		CheckedAt:         checkedAt.UTC(),
+		PgTotalCount:      pgTotal,
+		IcebergTotalCount: iceTotal,
+		CountDiffPct:      diffRatio,
+		PgStatusDist:      map[string]any{},
+		IcebergStatusDist: map[string]any{},
+		StatusDiff:        map[string]any{},
+		IsAlert:           diffRatio > 0.001,
+		IcebergMaxSeq:     iceMaxSeq,
+	}
 }
 
 // SyncStatus returns the latest reconciliation result.
@@ -214,24 +251,11 @@ func (h *Handler) SyncStatus(c *gin.Context) {
 		iceMaxSeq, seqErr := h.trino.BronzeMaxEventSeq(ctx)
 
 		if pgErr == nil && iceErr == nil && seqErr == nil {
-			var diffPct float64
-			if pgTotal > 0 {
-				diff := pgTotal - iceTotal
-				if diff < 0 {
-					diff = -diff
-				}
-				diffPct = float64(diff) * 100.0 / float64(pgTotal)
-			}
-
-			c.JSON(200, gin.H{
-				"available":           true,
-				"source":              "realtime",
-				"checked_at":          time.Now().UTC().Format(time.RFC3339),
-				"pg_published_count":  pgTotal,
-				"iceberg_total_count": iceTotal,
-				"iceberg_max_seq":     iceMaxSeq,
-				"count_diff_pct":      diffPct,
-				"is_alert":            diffPct > 1.0,
+			data := newRealtimeSyncStatusData(time.Now(), pgTotal, iceTotal, iceMaxSeq)
+			c.JSON(200, SyncStatusEnvelope{
+				Available: true,
+				Source:    "realtime",
+				Data:      &data,
 			})
 			return
 		}
@@ -252,7 +276,7 @@ ORDER BY checked_at DESC
 LIMIT 1`
 
 	var (
-		resp              SyncStatusResponse
+		resp              SyncStatusData
 		pgStatusDistJSON  []byte
 		iceStatusDistJSON []byte
 		statusDiffJSON    []byte
@@ -270,9 +294,9 @@ LIMIT 1`
 		&resp.IsAlert,
 	)
 	if err != nil {
-		c.JSON(200, gin.H{
-			"available": false,
-			"message":   "对账数据暂不可用，请先运行 Dagster pipeline 或等待 Bronze MERGE",
+		c.JSON(200, SyncStatusEnvelope{
+			Available: false,
+			Message:   "对账数据暂不可用，请先运行 Dagster pipeline 或等待 Bronze MERGE",
 		})
 		return
 	}
@@ -281,10 +305,10 @@ LIMIT 1`
 	_ = json.Unmarshal(iceStatusDistJSON, &resp.IcebergStatusDist)
 	_ = json.Unmarshal(statusDiffJSON, &resp.StatusDiff)
 
-	c.JSON(200, gin.H{
-		"available": true,
-		"source":    "sync_reconciliation",
-		"data":      resp,
+	c.JSON(200, SyncStatusEnvelope{
+		Available: true,
+		Source:    "sync_reconciliation",
+		Data:      &resp,
 	})
 }
 

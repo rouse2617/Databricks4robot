@@ -137,10 +137,10 @@ docker-compose up -d postgres  # 重新初始化
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（请求头 `X-Admin-Token`=`ADMIN_TOKEN`）；不改变 outbox 游标 |
+| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（请求头 `X-Admin-Token`=`ADMIN_TOKEN`）；支持 `dry_run`，返回 `indexed / deleted / failed / duration_ms` 汇总，不改变 outbox 游标 |
 | `GET` | `/metrics` | Prometheus 指标（`outbox_*` 等；无认证，建议内网暴露） |
 
-**告警建议（MVP）**：`outbox_pending_events` 在业务低峰持续 > 1000 或 30min 单调上升 → 查 worker 日志与 ES 连通性；`outbox_worker_events_failed_mark_total` 突增 → 查 `asset_events.last_error`。
+**告警建议（MVP）**：`outbox_worker_pending_total` 在业务低峰持续 > 1000 或 30min 单调上升 → 查 worker 日志与 ES 连通性；`outbox_worker_events_failed_mark_total` 突增 → 查 `asset_events.last_error`。
 
 ### Outbox Prometheus 告警阈值建议
 
@@ -177,7 +177,7 @@ docker-compose up -d postgres  # 重新初始化
 | `GET` | `/api/v1/lakehouse/tag-timeline` | 查询 tag current-state 更新时间线 |
 | `GET` | `/api/v1/lakehouse/quality-distribution` | 查询 segment 质量分布 |
 | `GET` | `/api/v1/lakehouse/customer-replay` | 查询客户交付 replay manifest |
-| `GET` | `/api/v1/lakehouse/sync-status` | 最近同步状态 (watermark、行数、耗时、对账结果) |
+| `GET` | `/api/v1/lakehouse/sync-status` | 最近同步状态；统一返回 `{ available, source, data }`，支持 realtime 与 Dagster reconciliation 两种来源 |
 | `GET` | `/api/v1/lakehouse/report` | 兼容接口：读取 Spark 生成的静态 MVP 报告 |
 
 ### 内部接口

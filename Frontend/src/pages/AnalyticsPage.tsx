@@ -216,13 +216,14 @@ function SyncStatusCard({ syncStatus }: { syncStatus: SyncStatusResponse | null 
   if (!syncStatus || !syncStatus.available || !syncStatus.data) {
     return (
       <Card title="同步对账状态" size="small">
-        <Text type="secondary">对账数据暂不可用，请先运行 Dagster pipeline</Text>
+        <Text type="secondary">对账数据暂不可用，请先运行 Dagster pipeline 或等待实时 Bronze 对账</Text>
       </Card>
     );
   }
 
   const d = syncStatus.data;
   const diffPct = d.count_diff_pct * 100;
+  const sourceLabel = syncStatus.source === "realtime" ? "实时检查" : "Dagster 对账";
 
   // Traffic light logic: green (<1%), yellow (1-5%), red (>5% or is_alert)
   let lightColor: string;
@@ -300,8 +301,15 @@ function SyncStatusCard({ syncStatus }: { syncStatus: SyncStatusResponse | null 
 
       <Descriptions column={2} size="small">
         <Descriptions.Item label="最近同步时间">{checkedAt}</Descriptions.Item>
+        <Descriptions.Item label="数据来源">
+          <span data-testid="sync-source">{sourceLabel}</span>
+        </Descriptions.Item>
         <Descriptions.Item label="Dagster Run ID">
-          <Text copyable className="font-mono text-xs">{d.dagster_run_id}</Text>
+          {d.dagster_run_id ? (
+            <Text copyable className="font-mono text-xs">{d.dagster_run_id}</Text>
+          ) : (
+            <Text type="secondary">—</Text>
+          )}
         </Descriptions.Item>
         <Descriptions.Item label="Postgres 行数">
           <span data-testid="pg-count">{d.pg_total_count.toLocaleString()}</span>
@@ -309,6 +317,11 @@ function SyncStatusCard({ syncStatus }: { syncStatus: SyncStatusResponse | null 
         <Descriptions.Item label="Iceberg 行数">
           <span data-testid="iceberg-count">{d.iceberg_total_count.toLocaleString()}</span>
         </Descriptions.Item>
+        {typeof d.iceberg_max_seq === "number" && (
+          <Descriptions.Item label="Iceberg 最大序号">
+            {d.iceberg_max_seq.toLocaleString()}
+          </Descriptions.Item>
+        )}
         <Descriptions.Item label="差异百分比">
           <span data-testid="diff-pct">{diffPctStr}</span>
         </Descriptions.Item>

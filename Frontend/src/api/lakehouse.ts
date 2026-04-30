@@ -42,10 +42,12 @@ export interface SyncStatusData {
   iceberg_status_dist: Record<string, number>;
   status_diff: Record<string, { pg: number; iceberg: number; diff: number }>;
   is_alert: boolean;
+  iceberg_max_seq?: number;
 }
 
 export interface SyncStatusResponse {
   available: boolean;
+  source?: "realtime" | "sync_reconciliation";
   message?: string;
   data?: SyncStatusData;
 }

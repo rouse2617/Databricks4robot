@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Typography, Card, Descriptions, Button, Modal, Alert, Space, Spin } from "antd";
+import { Typography, Card, Descriptions, Button, Modal, Alert, Space, Spin, Input } from "antd";
 import { SettingOutlined, ThunderboltOutlined, ExclamationCircleOutlined } from "@ant-design/icons";
 import { useAuth } from "../hooks/useAuth";
-import { adminApi, type ReindexResult } from "../api/admin";
+import { adminApi, readAdminToken, type ReindexResult, writeAdminToken } from "../api/admin";
 import { extractApiErrorMessage } from "../lib/apiError";
 
 const { Title, Text } = Typography;
@@ -11,12 +11,24 @@ type ReindexPhase = "idle" | "dry_running" | "dry_done" | "reindexing" | "done" 
 
 export default function SettingsPage() {
   const { token } = useAuth();
+  const [adminToken, setAdminToken] = useState(() => readAdminToken());
   const [phase, setPhase] = useState<ReindexPhase>("idle");
   const [dryResult, setDryResult] = useState<ReindexResult | null>(null);
   const [result, setResult] = useState<ReindexResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const hasAdminToken = adminToken.trim() !== "";
+
+  const handleAdminTokenChange = (value: string) => {
+    setAdminToken(value);
+    writeAdminToken(value);
+  };
+
   const handleDryRun = async () => {
+    if (!hasAdminToken) {
+      setError("请先填写 Admin Token");
+      return;
+    }
     setPhase("dry_running");
     setError(null);
     setDryResult(null);
@@ -99,6 +111,18 @@ export default function SettingsPage() {
           首先执行 Dry Run 预览影响范围，确认后再执行实际重建。
         </Text>
 
+        <div style={{ marginBottom: 12 }}>
+          <Text type="secondary" style={{ display: "block", marginBottom: 6 }}>
+            Admin Token 独立于 `X-Grace-Token`，仅用于 `/api/v1/admin/*` 维护接口。
+          </Text>
+          <Input.Password
+            placeholder="输入 X-Admin-Token"
+            value={adminToken}
+            onChange={(e) => handleAdminTokenChange(e.target.value)}
+            data-testid="admin-token-input"
+          />
+        </div>
+
         {error && (
           <Alert
             type="error"
@@ -136,6 +160,7 @@ export default function SettingsPage() {
               <div>
                 <p>总资产数：{result.total_assets}</p>
                 <p>成功索引：{result.indexed}</p>
+                <p>删除文档：{result.deleted}</p>
                 <p>失败：{result.failed}</p>
                 <p>耗时：{(result.duration_ms / 1000).toFixed(1)} 秒</p>
               </div>
@@ -162,6 +187,7 @@ export default function SettingsPage() {
               type="primary"
               onClick={handleDryRun}
               data-testid="reindex-dry-run-btn"
+              disabled={!hasAdminToken}
             >
               Dry Run（预览）
             </Button>
