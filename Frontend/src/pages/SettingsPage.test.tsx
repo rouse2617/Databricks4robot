@@ -107,4 +107,29 @@ describe("SettingsPage", () => {
       expect(screen.getByTestId("reindex-confirm-btn")).toBeTruthy();
     });
   });
+
+  it("opens confirmation modal when confirming reindex after dry run", async () => {
+    mockReindex.mockResolvedValue({
+      dry_run: true,
+      total_assets: 50,
+      indexed: 0,
+      deleted: 0,
+      failed: 0,
+      duration_ms: 200,
+    });
+
+    render(<SettingsPage />);
+    fireEvent.click(screen.getByTestId("reindex-dry-run-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("reindex-confirm-btn")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTestId("reindex-confirm-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: /确认重建 ES 索引/ })).toBeTruthy();
+      expect(screen.getByText("确定继续？")).toBeTruthy();
+    });
+  });
 });

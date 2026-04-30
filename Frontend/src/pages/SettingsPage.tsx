@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Typography, Card, Descriptions, Button, Modal, Alert, Space, Spin } from "antd";
+import { Typography, Card, Descriptions, Button, Alert, Space, Spin, Modal } from "antd";
 import { SettingOutlined, ThunderboltOutlined, ExclamationCircleOutlined } from "@ant-design/icons";
 import { useAuth } from "../hooks/useAuth";
 import { adminApi, type ReindexResult } from "../api/admin";
@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [dryResult, setDryResult] = useState<ReindexResult | null>(null);
   const [result, setResult] = useState<ReindexResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const handleDryRun = async () => {
     setPhase("dry_running");
@@ -31,33 +32,21 @@ export default function SettingsPage() {
     }
   };
 
-  const handleConfirmReindex = () => {
-    Modal.confirm({
-      title: "确认重建 ES 索引",
-      icon: <ExclamationCircleOutlined />,
-      content: (
-        <div>
-          <p>即将对 <strong>{dryResult?.total_assets ?? 0}</strong> 个资产重建 Elasticsearch 索引。</p>
-          <p>此操作可能需要数分钟，期间搜索结果可能不完整。</p>
-          <p>确定继续？</p>
-        </div>
-      ),
-      okText: "确认重建",
-      okType: "danger",
-      cancelText: "取消",
-      onOk: async () => {
-        setPhase("reindexing");
-        setError(null);
-        try {
-          const res = await adminApi.reindex(false);
-          setResult(res);
-          setPhase("done");
-        } catch (err) {
-          setError(extractApiErrorMessage(err, "重建索引失败"));
-          setPhase("error");
-        }
-      },
-    });
+  const handleConfirmReindex = () => setConfirmOpen(true);
+
+  const handleReindexSubmit = async () => {
+    setPhase("reindexing");
+    setError(null);
+    try {
+      const res = await adminApi.reindex(false);
+      setResult(res);
+      setPhase("done");
+      setConfirmOpen(false);
+    } catch (err) {
+      setError(extractApiErrorMessage(err, "重建索引失败"));
+      setPhase("error");
+      setConfirmOpen(false);
+    }
   };
 
   const handleReset = () => {
@@ -65,6 +54,7 @@ export default function SettingsPage() {
     setDryResult(null);
     setResult(null);
     setError(null);
+    setConfirmOpen(false);
   };
 
   return (
@@ -146,7 +136,7 @@ export default function SettingsPage() {
         )}
 
         {/* Loading state */}
-        {(phase === "dry_running" || phase === "reindexing") && (
+        {(phase === "dry_running" || (phase === "reindexing" && !confirmOpen)) && (
           <div style={{ textAlign: "center", padding: "16px 0" }}>
             <Spin />
             <div style={{ marginTop: 8 }}>
@@ -184,6 +174,29 @@ export default function SettingsPage() {
             <Button onClick={handleReset}>重置</Button>
           )}
         </Space>
+
+        <Modal
+          title={
+            <span>
+              <ExclamationCircleOutlined style={{ color: "var(--color-warning, #faad14)", marginRight: 8 }} />
+              确认重建 ES 索引
+            </span>
+          }
+          open={confirmOpen}
+          okText="确认重建"
+          cancelText="取消"
+          okButtonProps={{ danger: true }}
+          confirmLoading={phase === "reindexing"}
+          onOk={handleReindexSubmit}
+          onCancel={() => setConfirmOpen(false)}
+          destroyOnClose
+        >
+          <div>
+            <p>即将对 <strong>{dryResult?.total_assets ?? 0}</strong> 个资产重建 Elasticsearch 索引。</p>
+            <p>此操作可能需要数分钟，期间搜索结果可能不完整。</p>
+            <p>确定继续？</p>
+          </div>
+        </Modal>
       </Card>
     </div>
   );
