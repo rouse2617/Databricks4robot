@@ -117,6 +117,21 @@ func assign(dst any, src any) error {
 		elem.Set(sv)
 		return nil
 	}
+	if elem.Kind() == reflect.Ptr {
+		target := elem.Type().Elem()
+		switch {
+		case sv.Type().AssignableTo(target):
+			ptr := reflect.New(target)
+			ptr.Elem().Set(sv)
+			elem.Set(ptr)
+			return nil
+		case sv.Type().ConvertibleTo(target):
+			ptr := reflect.New(target)
+			ptr.Elem().Set(sv.Convert(target))
+			elem.Set(ptr)
+			return nil
+		}
+	}
 	if sv.Type().ConvertibleTo(elem.Type()) {
 		elem.Set(sv.Convert(elem.Type()))
 		return nil

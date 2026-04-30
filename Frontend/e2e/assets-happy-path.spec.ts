@@ -35,19 +35,23 @@ test.describe("Assets page happy-path", () => {
   test("navigate to assets, verify page loads, and search", async ({
     page,
   }) => {
+    const errors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        errors.push(msg.text());
+      }
+    });
+
     // 1. Navigate to assets page
     await page.goto(`${BASE_URL}/assets`);
 
     // 2. Wait for the page to load — look for common UI elements
-    //    The assets page should have a table or list of assets
-    await expect(
-      page.locator("table, [class*='ant-table'], [data-testid='assets-list']"),
-    ).toBeVisible({ timeout: 15_000 });
+    const resultsTable = page.locator(".ant-table-wrapper").first();
+    await expect(resultsTable).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: "资产管理" })).toBeVisible();
 
     // 3. Look for a search input
-    const searchInput = page.locator(
-      "input[placeholder*='搜索'], input[placeholder*='search'], input[placeholder*='Search'], input[type='search'], .ant-input-search input",
-    );
+    const searchInput = page.locator('[data-testid="assets-search-input"]');
 
     // If search input exists, type a query
     if ((await searchInput.count()) > 0) {
@@ -56,25 +60,14 @@ test.describe("Assets page happy-path", () => {
       await page.waitForTimeout(1_000);
 
       // Verify the page didn't crash — table should still be visible
-      await expect(
-        page.locator(
-          "table, [class*='ant-table'], [data-testid='assets-list']",
-        ),
-      ).toBeVisible();
+      await expect(resultsTable).toBeVisible();
     }
-
-    // 4. Verify no uncaught errors in console
-    const errors: string[] = [];
-    page.on("console", (msg) => {
-      if (msg.type() === "error") {
-        errors.push(msg.text());
-      }
-    });
 
     // Take a final screenshot for visual verification
     await page.screenshot({ path: "e2e/screenshots/assets-happy-path.png" });
 
     // Page should not have crashed
     await expect(page).toHaveURL(/\/assets/);
+    expect(errors).toEqual([]);
   });
 });

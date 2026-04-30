@@ -145,17 +145,28 @@ else
   echo -e "  ${YELLOW}⚠${NC}  GET /healthz/outbox — ${RESP_CODE} (确认 OUTBOX_WORKER_ENABLED=true)"
 fi
 
-# ── 1. 创建资产 ──────────────────────────────────────────────────────────────
+# ── 1. 获取可用 MCAP File 并创建资产 ────────────────────────────────────────
 
-section "1. 创建资产 (触发 outbox event)"
+section "1. 选择 MCAP File 并创建资产 (触发 outbox event)"
 
 TS_NOW=$(date +%s)
-UNIQUE_ID="outbox-e2e-${TS_NOW}-$$"
 START_NS=$((TS_NOW * 1000000000))
 END_NS=$(( (TS_NOW + 120) * 1000000000 ))
 
+call GET "/api/v1/mcap-files?page=1&page_size=1"
+if ! assert_code 200 "GET /api/v1/mcap-files — 选取可用 MCAP"; then
+  echo -e "${RED}无法获取 MCAP 文件，终止测试${NC}"
+  exit 1
+fi
+
+MCAP_FILE_ID=$(json_field "['items'][0]['mcap_file_id']")
+if [ -z "$MCAP_FILE_ID" ] || [ "$MCAP_FILE_ID" = "None" ]; then
+  echo -e "${RED}未找到可用 mcap_file_id，终止测试${NC}"
+  exit 1
+fi
+
 call POST "/api/v1/assets" -d "{
-  \"mcap_file_id\": \"${UNIQUE_ID}\",
+  \"mcap_file_id\": \"${MCAP_FILE_ID}\",
   \"start_timestamp_ns\": ${START_NS},
   \"end_timestamp_ns\": ${END_NS},
   \"reviewer\": \"outbox-e2e-tester\",
@@ -172,7 +183,7 @@ fi
 
 ASSET_ID=$(json_field "['asset_id']")
 echo -e "    asset_id    = ${YELLOW}${ASSET_ID}${NC}"
-echo -e "    mcap_file_id = ${YELLOW}${UNIQUE_ID}${NC}"
+echo -e "    mcap_file_id = ${YELLOW}${MCAP_FILE_ID}${NC}"
 
 if [ -z "$ASSET_ID" ] || [ "$ASSET_ID" = "None" ]; then
   echo -e "${RED}无法获取 asset_id，终止测试${NC}"
@@ -202,7 +213,7 @@ while [ "$ELAPSED" -lt "$TIMEOUT_SEC" ]; do
   fi
 
   # 方式 2: 通过搜索 API 查 (备选验证)
-  call GET "/api/v1/search/assets?q=${UNIQUE_ID}&page=1&page_size=1"
+  call GET "/api/v1/search/assets?q=${ASSET_ID}&page=1&page_size=1"
   if [ "$RESP_CODE" = "200" ]; then
     SEARCH_TOTAL=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total', 0))" 2>/dev/null || echo "0")
     if [ "$SEARCH_TOTAL" -gt 0 ]; then

@@ -305,15 +305,40 @@ func (u *Usecase) hydrateAssetsReadModels(ctx context.Context, items []*models.A
 }
 
 type CreateInput struct {
+	AssetID          string
 	McapFileID       string
 	StartTimestampNs int64
 	EndTimestampNs   int64
 	Reviewer         string
 	Owner            string
 	SegType          string
+	AssetType        string
+	Status           string
+	LifecycleState   string
 	Env              string
 	Task             string
 	Tags             map[string]string
+	Files            map[string]string
+	Metadata         map[string]interface{}
+	LifecycleMeta    map[string]interface{}
+	RetentionTier    string
+	ExpireAt         *time.Time
+	StorageURI       string
+	ThumbURI         string
+	AssetLevel       int
+	ParentAssetID    string
+	RootAssetID      string
+	SegmentIndex     *int
+	ParentStartOffsetMs *int64
+	ParentEndOffsetMs   *int64
+	SplitMethod      string
+	SplitAlgoName    string
+	SplitAlgoVersion string
+	SplitRunID       string
+	SplitReason      string
+	DeliveryCount    int
+	LastDeliveredAt  *time.Time
+	LastDeliveredTo  string
 }
 
 type UpdateInput struct {
@@ -479,19 +504,78 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 		Status:           models.AssetStatusApproved,
 		Owner:            in.Owner,
 		SegType:          in.SegType,
+		AssetType:        in.AssetType,
+		LifecycleState:   in.LifecycleState,
 		Env:              in.Env,
 		Task:             in.Task,
 		Tags:             tags,
 		AlgoResults:      map[string]string{},
 		Files:            map[string]string{},
+		Metadata:         map[string]interface{}{},
 		LifecycleMeta:    defaultLifecycleMeta(),
+		RetentionTier:    in.RetentionTier,
+		ExpireAt:         in.ExpireAt,
+		StorageURI:       in.StorageURI,
+		ThumbURI:         in.ThumbURI,
+		AssetLevel:       in.AssetLevel,
+		ParentAssetID:    in.ParentAssetID,
+		RootAssetID:      in.RootAssetID,
+		SegmentIndex:     in.SegmentIndex,
+		ParentStartOffsetMs: in.ParentStartOffsetMs,
+		ParentEndOffsetMs:   in.ParentEndOffsetMs,
+		SplitMethod:      in.SplitMethod,
+		SplitAlgoName:    in.SplitAlgoName,
+		SplitAlgoVersion: in.SplitAlgoVersion,
+		SplitRunID:       in.SplitRunID,
+		SplitReason:      in.SplitReason,
+		DeliveryCount:    in.DeliveryCount,
+		LastDeliveredAt:  in.LastDeliveredAt,
+		LastDeliveredTo:  in.LastDeliveredTo,
 		CreatedAt:        time.Now(),
+	}
+	if in.AssetID != "" {
+		a.AssetID = in.AssetID
+	}
+	if in.Status != "" {
+		a.Status = models.AssetStatus(in.Status)
+	}
+	if a.AssetType == "" {
+		a.AssetType = in.SegType
+	}
+	if a.SegType == "" {
+		a.SegType = a.AssetType
+	}
+	for k, v := range in.Files {
+		a.Files[k] = v
+	}
+	if len(in.Metadata) > 0 {
+		a.Metadata = in.Metadata
+	}
+	if len(in.LifecycleMeta) > 0 {
+		a.LifecycleMeta = in.LifecycleMeta
+	}
+	if a.RetentionTier == "" {
+		if v, ok := a.LifecycleMeta["retention_tier"].(string); ok && v != "" {
+			a.RetentionTier = v
+		}
+	}
+	if a.StorageURI == "" {
+		if raw, ok := a.Files["raw_mcap"]; ok {
+			a.StorageURI = raw
+		}
+	}
+	if a.ThumbURI == "" {
+		if thumb, ok := a.Files["thumbnail"]; ok {
+			a.ThumbURI = thumb
+		}
 	}
 	// Initialize algorithm states from algo_registry if available.
 	if u.algoRegistry != nil {
 		initAlgoStates(a, u.algoRegistry)
 		// Write raw_mcap reference to files.
-		a.Files["raw_mcap"] = in.McapFileID
+		if _, ok := a.Files["raw_mcap"]; !ok {
+			a.Files["raw_mcap"] = in.McapFileID
+		}
 	}
 	if err := u.persistNewAsset(ctx, a, tags); err != nil {
 		return nil, err

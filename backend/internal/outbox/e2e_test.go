@@ -14,8 +14,10 @@ package outbox
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync"
 	"testing"
@@ -56,13 +58,17 @@ type testEnv struct {
 
 // migrationFiles lists the SQL files applied in order to bootstrap the schema.
 var migrationFiles = []string{
-	"../../../migrations/001_init.sql",
-	"../../../migrations/002_seed.sql",
-	"../../../migrations/004_asset_query_indexes.sql",
-	"../../../migrations/005_audit_events.sql",
-	"../../../migrations/006_sync_watermarks.sql",
-	"../../../migrations/007_backfill_lifecycle_from_status.sql",
-	"../../../migrations/008_asset_events_outbox_columns.sql",
+	"../../migrations/001_init.sql",
+	"../../migrations/002_seed.sql",
+	"../../migrations/004_asset_query_indexes.sql",
+	"../../migrations/005_audit_events.sql",
+	"../../migrations/006_sync_watermarks.sql",
+	"../../migrations/007_backfill_lifecycle_from_status.sql",
+	"../../migrations/008_asset_events_outbox_columns.sql",
+	"../../migrations/009_lifecycle_state_check.sql",
+	"../../migrations/010_outbox_dlq.sql",
+	"../../migrations/011_event_retention.sql",
+	"../../migrations/012_backfill_real_columns_and_projections.sql",
 }
 
 // setupEnv starts PG + ES containers, applies migrations, and returns a
@@ -210,7 +216,7 @@ func (e *testEnv) insertAsset(ctx context.Context, t *testing.T, assetID, mcapFi
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO assets (asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns,
 		                    lifecycle_state, status, created_at, updated_at)
-		VALUES ($1, $2, 1000000000, 2000000000, 'active', 'approved', now(), now())
+		VALUES ($1, $2, 1000000000, 2000000000, 'ready', 'approved', now(), now())
 		ON CONFLICT DO NOTHING`, assetID, mcapFileID)
 	if err != nil {
 		t.Fatalf("insert asset %s: %v", assetID, err)
@@ -237,15 +243,19 @@ func (e *testEnv) waitForESDoc(ctx context.Context, t *testing.T, assetID string
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := e.esClient.Search(ctx, elasticsearch.SearchRequest{
-			Filters: []elasticsearch.FilterOp{
-				{Field: "asset_id", Op: "eq", Value: assetID},
-			},
-			Page:     1,
-			PageSize: 1,
-		})
-		if err == nil && resp.Total > 0 {
-			return
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/assets/_doc/%s", e.esURL, assetID), nil)
+		if err == nil {
+			httpResp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				var docResp struct {
+					Found bool `json:"found"`
+				}
+				_ = json.NewDecoder(httpResp.Body).Decode(&docResp)
+				httpResp.Body.Close()
+				if httpResp.StatusCode == http.StatusOK && docResp.Found {
+					return
+				}
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -281,9 +291,18 @@ func (e *testEnv) pendingCount(ctx context.Context, t *testing.T) int64 {
 // refreshES forces an ES index refresh so recently indexed docs become searchable.
 func (e *testEnv) refreshES(ctx context.Context, t *testing.T) {
 	t.Helper()
-	// Use the Ping endpoint as a lightweight health check, then rely on
-	// the _count endpoint which implicitly refreshes for accuracy.
-	_ = e.esClient.Ping(ctx)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/assets/_refresh", e.esURL), nil)
+	if err != nil {
+		t.Fatalf("build ES refresh request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("ES refresh request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		t.Fatalf("ES refresh returned status %d", resp.StatusCode)
+	}
 }
 
 // cursorSeq returns the current last_published_seq for the given sink.

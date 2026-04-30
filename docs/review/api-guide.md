@@ -108,14 +108,47 @@ curl "$BASE/api/v1/lakehouse/report" \
 
 ## 1. 资产管理 (Assets)
 
+> 前置条件：`POST /api/v1/assets` 里的 `mcap_file_id` 必须指向一个**已存在**的 MCAP 文件记录。当前后端会在写 `asset_events` 时校验 `mcap_file_id` 外键，因此不能再像早期文档那样随便传 `"mcap-001"` 这类占位字符串。
+
+最简单的真实链路是：
+
+1. 先调用 `POST /api/v1/mcap-files` 创建一条 MCAP 记录
+2. 再把返回/自带的 `mcap_file_id` 用在 `POST /api/v1/assets`
+
 ### 1.1 创建资产
+
+```bash
+MCAP_ID="11111111-1111-4111-8111-111111111111"
+
+curl -X POST "$BASE/api/v1/mcap-files" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"mcap_file_id\": \"$MCAP_ID\",
+    \"gcs_path\": \"gs://bucket/path/file.mcap\",
+    \"raw_hash_md5\": \"d41d8cd98f00b204e9800998ecf8427e\",
+    \"ingest_state\": \"summarized\",
+    \"size_bytes\": 1048576,
+    \"file_duration_ms\": 60000,
+    \"start_timestamp_ns\": 1700000000000000000,
+    \"end_timestamp_ns\": 1700000060000000000,
+    \"channel_count\": 12,
+    \"chunk_count\": 5,
+    \"vendor_id\": \"vendor-a\",
+    \"device_id\": \"device-001\",
+    \"scene_id\": \"indoor\",
+    \"owner\": \"team-a\"
+  }"
+```
+
+再创建资产：
 
 ```bash
 curl -X POST "$BASE/api/v1/assets" \
   -H "X-Grace-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "mcap_file_id": "mcap-001",
+  -d "{
+    \"mcap_file_id\": \"$MCAP_ID\",
     "start_timestamp_ns": 1700000000000000000,
     "end_timestamp_ns":   1700000060000000000,
     "reviewer": "alice",
@@ -128,7 +161,7 @@ curl -X POST "$BASE/api/v1/assets" \
       "quality": "good",
       "scene": "indoor"
     }
-  }'
+  }"
 ```
 
 响应 `201`:
@@ -637,7 +670,39 @@ curl -X POST "$BASE/internal/commit-segments" \
 
 ## 5. MCAP 文件管理
 
-### 5.1 列出 MCAP 文件
+### 5.1 创建 MCAP 文件
+
+```bash
+curl -X POST "$BASE/api/v1/mcap-files" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mcap_file_id": "11111111-1111-4111-8111-111111111111",
+    "gcs_path": "gs://bucket/path/file.mcap",
+    "raw_hash_md5": "d41d8cd98f00b204e9800998ecf8427e",
+    "ingest_state": "summarized",
+    "size_bytes": 1048576,
+    "file_duration_ms": 60000,
+    "start_timestamp_ns": 1700000000000000000,
+    "end_timestamp_ns": 1700000060000000000,
+    "channel_count": 12,
+    "chunk_count": 5,
+    "vendor_id": "vendor-a",
+    "device_id": "device-001",
+    "scene_id": "indoor",
+    "owner": "team-a",
+    "metadata": {
+      "source": "manual_import"
+    },
+    "process_state": {
+      "hand_tracking": "completed"
+    }
+  }'
+```
+
+响应 `201`：返回完整 `McapFile` JSON。
+
+### 5.2 列出 MCAP 文件
 
 ```bash
 curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
@@ -667,7 +732,7 @@ curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
 }
 ```
 
-### 5.2 获取单个 MCAP 文件
+### 5.3 获取单个 MCAP 文件
 
 ```bash
 curl "$BASE/api/v1/mcap-files/{mcap_file_id}" \
@@ -849,6 +914,8 @@ curl -sS -X POST "$BASE/api/v1/admin/search/reindex" \
 - ✅ 关键词 + 多 tag 同时使用：`q=...` + 多个 `filter=tags_flat.<key>:eq:<value>`。
 
 注意: 需要 Elasticsearch 服务运行。当 Elasticsearch 不可用时返回 `503`。
+
+> 当前 ES facet 聚合依赖 `*.keyword` 子字段。如果你本地索引是旧 mapping，`/api/v1/search/assets` 可能返回 `503`。先调用一次 `POST /api/v1/admin/search/reindex` 或重建本地 `assets` 索引。
 
 ### 7.1.1 按 tag 检索（三条路径）
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -322,15 +323,40 @@ func (h *Handler) ListTagHistory(c *gin.Context) {
 // @Router       /assets [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
+		AssetID          string            `json:"asset_id" label:"资产ID"`
 		McapFileID       string            `json:"mcap_file_id" binding:"required" label:"MCAP文件ID"`
 		StartTimestampNs int64             `json:"start_timestamp_ns" binding:"required,gt=0" label:"起始时间戳"`
 		EndTimestampNs   int64             `json:"end_timestamp_ns" binding:"required,gt=0" label:"结束时间戳"`
 		Reviewer         string            `json:"reviewer" binding:"required" label:"审核人"`
 		Owner            string            `json:"owner" label:"所有者"`
 		SegType          string            `json:"type" label:"片段类型"`
+		AssetType        string            `json:"asset_type" label:"资产类型"`
+		Status           string            `json:"status" label:"旧生命周期状态"`
+		LifecycleState   string            `json:"lifecycle_state" label:"新生命周期状态"`
 		Env              string            `json:"env" label:"环境"`
 		Task             string            `json:"task" label:"任务"`
 		Tags             map[string]string `json:"tags"`
+		Files            map[string]string `json:"files"`
+		Metadata         map[string]interface{} `json:"metadata"`
+		LifecycleMeta    map[string]interface{} `json:"lifecycle_meta"`
+		RetentionTier    string            `json:"retention_tier"`
+		ExpireAt         *time.Time        `json:"expire_at"`
+		StorageURI       string            `json:"storage_uri"`
+		ThumbURI         string            `json:"thumb_uri"`
+		AssetLevel       int               `json:"asset_level"`
+		ParentAssetID    string            `json:"parent_asset_id"`
+		RootAssetID      string            `json:"root_asset_id"`
+		SegmentIndex     *int              `json:"segment_index"`
+		ParentStartOffsetMs *int64         `json:"parent_start_offset_ms"`
+		ParentEndOffsetMs   *int64         `json:"parent_end_offset_ms"`
+		SplitMethod      string            `json:"split_method"`
+		SplitAlgoName    string            `json:"split_algo_name"`
+		SplitAlgoVersion string            `json:"split_algo_version"`
+		SplitRunID       string            `json:"split_run_id"`
+		SplitReason      string            `json:"split_reason"`
+		DeliveryCount    int               `json:"delivery_count"`
+		LastDeliveredAt  *time.Time        `json:"last_delivered_at"`
+		LastDeliveredTo  string            `json:"last_delivered_to"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
@@ -341,15 +367,40 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 	a, err := h.uc.Create(c.Request.Context(), assetUC.CreateInput{
+		AssetID:          req.AssetID,
 		McapFileID:       req.McapFileID,
 		StartTimestampNs: req.StartTimestampNs,
 		EndTimestampNs:   req.EndTimestampNs,
 		Reviewer:         req.Reviewer,
 		Owner:            req.Owner,
 		SegType:          req.SegType,
+		AssetType:        req.AssetType,
+		Status:           req.Status,
+		LifecycleState:   req.LifecycleState,
 		Env:              req.Env,
 		Task:             req.Task,
 		Tags:             req.Tags,
+		Files:            req.Files,
+		Metadata:         req.Metadata,
+		LifecycleMeta:    req.LifecycleMeta,
+		RetentionTier:    req.RetentionTier,
+		ExpireAt:         req.ExpireAt,
+		StorageURI:       req.StorageURI,
+		ThumbURI:         req.ThumbURI,
+		AssetLevel:       req.AssetLevel,
+		ParentAssetID:    req.ParentAssetID,
+		RootAssetID:      req.RootAssetID,
+		SegmentIndex:     req.SegmentIndex,
+		ParentStartOffsetMs: req.ParentStartOffsetMs,
+		ParentEndOffsetMs:   req.ParentEndOffsetMs,
+		SplitMethod:      req.SplitMethod,
+		SplitAlgoName:    req.SplitAlgoName,
+		SplitAlgoVersion: req.SplitAlgoVersion,
+		SplitRunID:       req.SplitRunID,
+		SplitReason:      req.SplitReason,
+		DeliveryCount:    req.DeliveryCount,
+		LastDeliveredAt:  req.LastDeliveredAt,
+		LastDeliveredTo:  req.LastDeliveredTo,
 	})
 	if err != nil {
 		switch {

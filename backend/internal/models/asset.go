@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // AssetStatus mirrors the Bigtable cf:meta.status values.
 type AssetStatus string
@@ -110,6 +113,29 @@ type Asset struct {
 func (a *Asset) SyncLegacyFields() {
 	a.DurationSec = float64(a.DurationMs) / 1000.0
 	a.SegType = a.AssetType
+	if a.Metadata != nil {
+		if a.Env == "" {
+			if v, ok := a.Metadata["env"].(string); ok {
+				a.Env = v
+			}
+		}
+		if a.Task == "" {
+			if v, ok := a.Metadata["task"].(string); ok {
+				a.Task = v
+			}
+		}
+	}
+	if len(a.Files) == 0 && len(a.FilesJSON) > 0 {
+		a.Files = make(map[string]string, len(a.FilesJSON))
+		for k, v := range a.FilesJSON {
+			switch val := v.(type) {
+			case string:
+				a.Files[k] = val
+			default:
+				a.Files[k] = fmt.Sprint(val)
+			}
+		}
+	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

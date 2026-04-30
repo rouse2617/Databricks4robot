@@ -88,6 +88,55 @@ func TestFinalizeUpload(t *testing.T) {
 	}
 }
 
+func TestCreateFile(t *testing.T) {
+	repo := &mockMcapRepo{}
+	h := New(repo)
+	r := setupMcapRouter(http.MethodPost, "/mcap-files", h.CreateFile)
+
+	w := doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{"x": 1})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+
+	repo.setFn = func(context.Context, *models.McapFile) error { return errors.New("boom") }
+	w = doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{
+		"mcap_file_id": "m1",
+		"gcs_path":     "gs://bucket/a.mcap",
+	})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+
+	var got *models.McapFile
+	repo.setFn = func(_ context.Context, f *models.McapFile) error {
+		got = f
+		return nil
+	}
+	w = doMcapReq(t, r, http.MethodPost, "/mcap-files", map[string]any{
+		"mcap_file_id":     "m1",
+		"gcs_path":         "gs://bucket/a.mcap",
+		"raw_hash_md5":     "md5-1",
+		"ingest_state":     "summarized",
+		"size_bytes":       123,
+		"channel_count":    4,
+		"chunk_count":      8,
+		"owner":            "team-a",
+		"vendor_id":        "vendor-1",
+		"scene_id":         "kitchen",
+		"metadata":         map[string]any{"source": "test"},
+		"process_state":    map[string]string{"hand_tracking": "completed"},
+		"retention_tier":   "standard",
+		"storage_uri":      "ignored-by-handler",
+		"collection_method": "manual_import",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", w.Code, w.Body.String())
+	}
+	if got == nil || got.GCSPath != "gs://bucket/a.mcap" || got.Owner != "team-a" || got.IngestState != models.IngestStateSummarized {
+		t.Fatalf("unexpected mcap file passed to repo: %+v", got)
+	}
+}
+
 func TestGetFileAndStaticEndpoints(t *testing.T) {
 	repo := &mockMcapRepo{}
 	h := New(repo)

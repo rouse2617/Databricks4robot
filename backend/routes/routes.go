@@ -95,6 +95,7 @@ func RegisterAll(
 		api.GET("/mcap/:id/messages", mcapHandler.IterMessages)
 
 		mcapFiles := api.Group("/mcap-files")
+		mcapFiles.POST("", mcapHandler.CreateFile)
 		mcapFiles.GET("", mcapHandler.ListFiles)
 		mcapFiles.GET("/:id", mcapHandler.GetFile)
 
@@ -126,6 +127,7 @@ func RegisterAll(
 		}
 
 		if adminHandler != nil {
+			api.POST("/admin/mock-data/generate", adminHandler.GenerateMockData)
 			api.POST("/admin/search/reindex", adminHandler.SearchReindex)
 		}
 	}

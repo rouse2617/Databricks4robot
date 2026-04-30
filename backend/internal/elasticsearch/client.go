@@ -235,11 +235,11 @@ func buildSearchBody(req SearchRequest) map[string]any {
 	// Facets aligned with the v2 mapping. terms aggs only — the heavy
 	// histogram/percentile aggs are exposed via dedicated endpoints later.
 	aggs := map[string]any{
-		"lifecycle_state_agg": map[string]any{"terms": map[string]any{"field": "lifecycle_state", "size": 20}},
-		"asset_type_agg":      map[string]any{"terms": map[string]any{"field": "asset_type", "size": 20}},
-		"owner_agg":           map[string]any{"terms": map[string]any{"field": "owner", "size": 20}},
-		"vendor_agg":          map[string]any{"terms": map[string]any{"field": "mcap.vendor_id", "size": 20}},
-		"scene_agg":           map[string]any{"terms": map[string]any{"field": "mcap.scene_id", "size": 20}},
+		"lifecycle_state_agg": map[string]any{"terms": map[string]any{"field": keywordAggField("lifecycle_state"), "size": 20}},
+		"asset_type_agg":      map[string]any{"terms": map[string]any{"field": keywordAggField("asset_type"), "size": 20}},
+		"owner_agg":           map[string]any{"terms": map[string]any{"field": keywordAggField("owner"), "size": 20}},
+		"vendor_agg":          map[string]any{"terms": map[string]any{"field": keywordAggField("mcap.vendor_id"), "size": 20}},
+		"scene_agg":           map[string]any{"terms": map[string]any{"field": keywordAggField("mcap.scene_id"), "size": 20}},
 	}
 
 	highlight := map[string]any{
@@ -257,6 +257,15 @@ func buildSearchBody(req SearchRequest) map[string]any {
 		"aggs":      aggs,
 		"sort":      []map[string]any{{"updated_at": map[string]any{"order": "desc"}}},
 		"highlight": highlight,
+	}
+}
+
+func keywordAggField(field string) string {
+	switch field {
+	case "lifecycle_state", "asset_type", "owner", "mcap.vendor_id", "mcap.scene_id":
+		return field + ".keyword"
+	default:
+		return field
 	}
 }
 

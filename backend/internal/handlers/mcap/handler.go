@@ -3,6 +3,7 @@ package mcap
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -17,6 +18,87 @@ type Handler struct {
 
 func New(repo repository.McapFileRepository) *Handler {
 	return &Handler{repo: repo}
+}
+
+// POST /api/v1/mcap-files
+func (h *Handler) CreateFile(c *gin.Context) {
+	var req struct {
+		McapFileID       string                 `json:"mcap_file_id" binding:"required"`
+		GCSPath          string                 `json:"gcs_path"`
+		McapURI          string                 `json:"mcap_uri"`
+		SizeBytes        int64                  `json:"size_bytes"`
+		RawHashMD5       string                 `json:"raw_hash_md5"`
+		RawHashSHA256    string                 `json:"raw_hash_sha256"`
+		IngestState      string                 `json:"ingest_state"`
+		FileDurationMs   int64                  `json:"file_duration_ms"`
+		StartTimestampNs int64                  `json:"start_timestamp_ns"`
+		EndTimestampNs   int64                  `json:"end_timestamp_ns"`
+		ChannelCount     int                    `json:"channel_count"`
+		ChunkCount       int                    `json:"chunk_count"`
+		VendorID         string                 `json:"vendor_id"`
+		CollectorID      string                 `json:"collector_id"`
+		TaskID           string                 `json:"task_id"`
+		DeviceID         string                 `json:"device_id"`
+		CameraModel      string                 `json:"camera_model"`
+		DataSource       string                 `json:"data_source"`
+		LocationID       string                 `json:"location_id"`
+		SceneID          string                 `json:"scene_id"`
+		EnvironmentID    string                 `json:"environment_id"`
+		CollectionMethod string                 `json:"collection_method"`
+		Owner            string                 `json:"owner"`
+		RetentionTier    string                 `json:"retention_tier"`
+		ExpireAt         *time.Time             `json:"expire_at"`
+		Metadata         map[string]interface{} `json:"metadata"`
+		ProcessState     map[string]string      `json:"process_state"`
+		TenantID         string                 `json:"tenant_id"`
+		ProjectID        string                 `json:"project_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	gcsPath := req.GCSPath
+	if gcsPath == "" {
+		gcsPath = req.McapURI
+	}
+	if req.IngestState == "" {
+		req.IngestState = string(models.IngestStatePending)
+	}
+	f := &models.McapFile{
+		McapFileID:       req.McapFileID,
+		GCSPath:          gcsPath,
+		SizeBytes:        req.SizeBytes,
+		RawHashMD5:       req.RawHashMD5,
+		RawHashSHA256:    req.RawHashSHA256,
+		IngestState:      models.IngestState(req.IngestState),
+		FileDurationMs:   req.FileDurationMs,
+		StartTimestampNs: req.StartTimestampNs,
+		EndTimestampNs:   req.EndTimestampNs,
+		ChannelCount:     req.ChannelCount,
+		ChunkCount:       req.ChunkCount,
+		VendorID:         req.VendorID,
+		CollectorID:      req.CollectorID,
+		TaskID:           req.TaskID,
+		DeviceID:         req.DeviceID,
+		CameraModel:      req.CameraModel,
+		DataSource:       req.DataSource,
+		LocationID:       req.LocationID,
+		SceneID:          req.SceneID,
+		EnvironmentID:    req.EnvironmentID,
+		CollectionMethod: req.CollectionMethod,
+		Owner:            req.Owner,
+		RetentionTier:    req.RetentionTier,
+		ExpireAt:         req.ExpireAt,
+		Metadata:         req.Metadata,
+		ProcessState:     req.ProcessState,
+		TenantID:         req.TenantID,
+		ProjectID:        req.ProjectID,
+	}
+	if err := h.repo.Set(c.Request.Context(), f); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, f)
 }
 
 // POST /api/v1/mcap/upload/finalize

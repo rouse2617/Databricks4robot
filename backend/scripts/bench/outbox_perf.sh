@@ -38,6 +38,9 @@ P99_TARGET_SEC="${P99_TARGET_SEC:-60}"
 
 TOTAL_EVENTS=$((EVENTS_PER_SEC * DURATION_SEC))
 INTERVAL_US=$(( 1000000 / EVENTS_PER_SEC ))  # microseconds between events
+BENCH_RUN_ID=$(date +%s)
+BENCH_OWNER="bench-team-${BENCH_RUN_ID}"
+BENCH_REVIEWER="bench-perf-${BENCH_RUN_ID}"
 
 # ── 颜色 ─────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -84,13 +87,22 @@ if [ "$ES_CODE" != "200" ]; then
 fi
 echo -e "  ${GREEN}✓${NC} Elasticsearch 就绪"
 
+MCAP_FILE_ID=$(curl -sf "${BASE_URL}/api/v1/mcap-files?page=1&page_size=1" \
+  -H "X-Grace-Token: ${AUTH_TOKEN}" 2>/dev/null \
+  | python3 -c "import sys, json; print(json.load(sys.stdin)['items'][0]['mcap_file_id'])" 2>/dev/null || echo "")
+if [ -z "$MCAP_FILE_ID" ]; then
+  echo -e "  ${RED}✗ 无法获取可用 mcap_file_id${NC}"
+  exit 1
+fi
+echo -e "  ${GREEN}✓${NC} 使用 mcap_file_id=${MCAP_FILE_ID}"
+
 # ── 1. 生成事件 ──────────────────────────────────────────────────────────────
 
 section "1. 生成 ${TOTAL_EVENTS} 个事件 (${EVENTS_PER_SEC}/s × ${DURATION_SEC}s)"
 
 CREATED=0
 FAILED=0
-BENCH_START=$(date +%s)
+BENCH_START=$BENCH_RUN_ID
 
 for sec in $(seq 1 "$DURATION_SEC"); do
   SEC_START=$(python3 -c "import time; print(time.time())")
@@ -98,8 +110,6 @@ for sec in $(seq 1 "$DURATION_SEC"); do
   for i in $(seq 1 "$EVENTS_PER_SEC"); do
     TS_NS=$(python3 -c "import time; print(int(time.time() * 1e9))")
     END_NS=$((TS_NS + 120000000000))
-    UNIQUE="bench-${BENCH_START}-${sec}-${i}"
-
     CREATE_TS=$(python3 -c "import time; print(time.time())")
 
     RESP=$(curl -sf -w "\n%{http_code}" \
@@ -107,11 +117,11 @@ for sec in $(seq 1 "$DURATION_SEC"); do
       -H "Content-Type: application/json" \
       -H "X-Grace-Token: ${AUTH_TOKEN}" \
       -d "{
-        \"mcap_file_id\": \"${UNIQUE}\",
+        \"mcap_file_id\": \"${MCAP_FILE_ID}\",
         \"start_timestamp_ns\": ${TS_NS},
         \"end_timestamp_ns\": ${END_NS},
-        \"reviewer\": \"bench-perf\",
-        \"owner\": \"bench-team\",
+        \"reviewer\": \"${BENCH_REVIEWER}\",
+        \"owner\": \"${BENCH_OWNER}\",
         \"type\": \"task_demo\",
         \"env\": \"indoor\",
         \"task\": \"navigation\"
@@ -176,9 +186,9 @@ while true; do
   curl -sf -X POST "${ES_URL}/assets/_refresh" > /dev/null 2>&1 || true
 
   # Count how many of our bench assets are in ES
-  SYNCED=$(curl -sf "${ES_URL}/assets/_count" \
+  SYNCED=$(curl -sf -X POST "${ES_URL}/assets/_count" \
     -H "Content-Type: application/json" \
-    -d '{"query":{"prefix":{"reviewer":{"value":"bench-perf"}}}}' 2>/dev/null \
+    -d "{\"query\":{\"term\":{\"owner.keyword\":\"${BENCH_OWNER}\"}}}" 2>/dev/null \
     | python3 -c "import sys,json; print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo "0")
 
   echo -e "  ${ELAPSED}s — ${YELLOW}${SYNCED}/${CREATED}${NC} 已同步到 ES"

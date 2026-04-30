@@ -23,9 +23,9 @@ func NewAssetRepo(c *Client) *AssetRepo { return &AssetRepo{c: c} }
 func (r *AssetRepo) Get(ctx context.Context, assetID string) (*models.Asset, error) {
 	const q = `
 SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  status, lifecycle_state, asset_type, duration_ms,
-  owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
-  retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  COALESCE(status, ''), COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
+  COALESCE(owner, ''), COALESCE(reviewer, ''), COALESCE(delivery_count, 0), last_delivered_at, COALESCE(last_delivered_to, ''),
+  COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id,
   split_method, split_algo_name, split_algo_version, split_run_id, split_reason,
   segment_index, parent_start_offset_ms, parent_end_offset_ms,
@@ -287,9 +287,9 @@ func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
 func (r *AssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error) {
 	const q = `
 SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  status, lifecycle_state, asset_type, duration_ms,
-  owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
-  retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  COALESCE(status, ''), COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
+  COALESCE(owner, ''), COALESCE(reviewer, ''), COALESCE(delivery_count, 0), last_delivered_at, COALESCE(last_delivered_to, ''),
+  COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id, tenant_id, project_id,
   created_at, updated_at, version
 FROM assets
@@ -362,14 +362,14 @@ func NewMcapFileRepo(c *Client) *McapFileRepo { return &McapFileRepo{c: c} }
 
 func (r *McapFileRepo) Get(ctx context.Context, mcapFileID string) (*models.McapFile, error) {
 	const q = `
-SELECT mcap_file_id, raw_hash_md5, raw_hash_sha256,
-  mcap_uri, size_bytes, file_duration_ms,
-  start_timestamp_ns, end_timestamp_ns,
-  channel_count, chunk_count, ingest_state, owner,
-  vendor_id, collector_id, task_id, device_id,
-  camera_model, data_source, location_id, scene_id, environment_id, collection_method,
-  retention_tier, expire_at, tenant_id, project_id,
-  metadata, process_state,
+SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
+  COALESCE(mcap_uri, ''), COALESCE(size_bytes, 0), file_duration_ms,
+  COALESCE(start_timestamp_ns, 0), COALESCE(end_timestamp_ns, 0),
+  COALESCE(channel_count, 0), COALESCE(chunk_count, 0), COALESCE(ingest_state, ''), COALESCE(owner, ''),
+  COALESCE(vendor_id, ''), COALESCE(collector_id, ''), COALESCE(task_id, ''), COALESCE(device_id, ''),
+  COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
+  COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
+  COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
   created_at, updated_at, version
 FROM mcap_files
 WHERE mcap_file_id = $1 AND is_deleted = FALSE`
@@ -600,14 +600,14 @@ func (r *McapFileRepo) List(ctx context.Context, page, pageSize int, ingestState
 	}
 
 	selectQ := fmt.Sprintf(`
-SELECT mcap_file_id, raw_hash_md5, raw_hash_sha256,
-  mcap_uri, size_bytes, file_duration_ms,
-  start_timestamp_ns, end_timestamp_ns,
-  channel_count, chunk_count, ingest_state, owner,
-  vendor_id, collector_id, task_id, device_id,
-  camera_model, data_source, location_id, scene_id, environment_id, collection_method,
-  retention_tier, expire_at, tenant_id, project_id,
-  metadata, process_state,
+SELECT mcap_file_id, COALESCE(raw_hash_md5, ''), raw_hash_sha256,
+  COALESCE(mcap_uri, ''), COALESCE(size_bytes, 0), file_duration_ms,
+  COALESCE(start_timestamp_ns, 0), COALESCE(end_timestamp_ns, 0),
+  COALESCE(channel_count, 0), COALESCE(chunk_count, 0), COALESCE(ingest_state, ''), COALESCE(owner, ''),
+  COALESCE(vendor_id, ''), COALESCE(collector_id, ''), COALESCE(task_id, ''), COALESCE(device_id, ''),
+  COALESCE(camera_model, ''), COALESCE(data_source, ''), COALESCE(location_id, ''), COALESCE(scene_id, ''), COALESCE(environment_id, ''), COALESCE(collection_method, ''),
+  COALESCE(retention_tier, ''), expire_at, COALESCE(tenant_id, ''), COALESCE(project_id, ''),
+  COALESCE(metadata, '{}'::jsonb), COALESCE(process_state, '{}'::jsonb),
   created_at, updated_at, version
 FROM mcap_files
 WHERE %s
@@ -795,10 +795,10 @@ func (r *DeliveryRepo) WithTx(ctx context.Context, fn func(context.Context) erro
 
 func (r *DeliveryRepo) Get(ctx context.Context, deliveryID string) (*models.Delivery, error) {
 	const q = `
-SELECT delivery_id, customer_id, status, delivered_at,
-  contract_id, delivery_type, requested_by, approved_by, delivered_by,
-  manifest_uri, replay_manifest_uri, item_count, total_size_bytes,
-  completed_at, metadata, tenant_id, project_id,
+SELECT delivery_id, customer_id, COALESCE(status, ''), delivered_at,
+  COALESCE(contract_id, ''), COALESCE(delivery_type, ''), COALESCE(requested_by, ''), COALESCE(approved_by, ''), COALESCE(delivered_by, ''),
+  COALESCE(manifest_uri, ''), COALESCE(replay_manifest_uri, ''), COALESCE(item_count, 0), total_size_bytes,
+  completed_at, COALESCE(metadata, '{}'::jsonb), COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   created_at, updated_at, version
 FROM deliveries WHERE delivery_id=$1 AND is_deleted=FALSE`
 	var (
@@ -889,10 +889,10 @@ func (r *DeliveryRepo) List(ctx context.Context, page, pageSize int, status stri
 	}
 
 	// Data query
-	dataSQL := `SELECT delivery_id, customer_id, status, delivered_at,
-  contract_id, delivery_type, requested_by, approved_by, delivered_by,
-  manifest_uri, replay_manifest_uri, item_count, total_size_bytes,
-  completed_at, metadata, tenant_id, project_id,
+	dataSQL := `SELECT delivery_id, customer_id, COALESCE(status, ''), delivered_at,
+  COALESCE(contract_id, ''), COALESCE(delivery_type, ''), COALESCE(requested_by, ''), COALESCE(approved_by, ''), COALESCE(delivered_by, ''),
+  COALESCE(manifest_uri, ''), COALESCE(replay_manifest_uri, ''), COALESCE(item_count, 0), total_size_bytes,
+  completed_at, COALESCE(metadata, '{}'::jsonb), COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   created_at, updated_at, version
 FROM deliveries WHERE is_deleted = FALSE`
 	var dataArgs []interface{}
@@ -1646,9 +1646,9 @@ func (r *AssetRepo) ListWithFilters(ctx context.Context, whereSQL string, args [
 	nextParam := len(args) + 1
 	dataSQL := fmt.Sprintf(
 		`SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  status, lifecycle_state, asset_type, duration_ms,
-  owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
-  retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
+  COALESCE(status, ''), COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
+  COALESCE(owner, ''), COALESCE(reviewer, ''), COALESCE(delivery_count, 0), last_delivered_at, COALESCE(last_delivered_to, ''),
+  COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id, tenant_id, project_id,
   created_at, updated_at, version
 FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
