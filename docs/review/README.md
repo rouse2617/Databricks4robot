@@ -24,10 +24,12 @@
 | 4 | [`algo-lifecycle-and-data-model.md`](./algo-lifecycle-and-data-model.md) | 算法生命周期、状态机、依赖解锁、数据模型细节（主线：`asset_algo_latest + asset_events`） | 算法 / 后端 |
 | 5 | [`use-cases.md`](./use-cases.md) | 全部角色 × 业务域 use case 矩阵，约 65 项端点 + 关键约束 + 开发优先级 | 前端 / SDK / 后端 |
 | 6 | [`outbox-worker-design.md`](./outbox-worker-design.md) | Outbox Worker MVP 工程落地（**2.0 目标态**），并发模型、cursor 协议与验收标准 | 后端 / 数据工程 |
-| 7 | [`grace-migration-notes.md`](./grace-migration-notes.md) | **cyber-grace**（`grace_videos`）与本平台 `assets` / `mcap_files` / 算法投影的字段与幂等对照 | 集成 / 后端 / 数据工程 |
-| 8 | [`sql.md`](./sql.md) | **Schema companion**：保留 DDL/字段 section 编号，给 `schemas/pg-phase0.sql`、历史注释与 review 使用 | 后端 / DBA |
-| 9 | [`3.0-multimodal-design.md`](./3.0-multimodal-design.md) | **未来草稿**：3.x 多模态检索 / Lance 路线，未进入当前 1.0/2.0 基线 | 架构 / 算法 |
-| 10 | [`next-steps-tasks.md`](./next-steps-tasks.md) | **任务看板**：P0/P1/P2/P3 拆分 + DoD + 估时 + Phase Gate；周会用这份盯进度 | 全员 |
+| 7 | [`asset-events-bronze-design.md`](./asset-events-bronze-design.md) | 长期方案：`asset_events` 通过 WAL/CDC 同步到 Iceberg Bronze，ES 从 current-state tables 的 CDC 重建文档 | 后端 / 数据工程 |
+| 8 | [`cdc-rollout-plan.md`](./cdc-rollout-plan.md) | 从当前 MVP 到 CDC/WAL 长期架构的分阶段实施、测试、上线与回滚计划 | 后端 / 数据工程 / 运维 |
+| 9 | [`grace-migration-notes.md`](./grace-migration-notes.md) | **cyber-grace**（`grace_videos`）与本平台 `assets` / `mcap_files` / 算法投影的字段与幂等对照 | 集成 / 后端 / 数据工程 |
+| 10 | [`sql.md`](./sql.md) | **Schema companion**：保留 DDL/字段 section 编号，给 `schemas/pg-phase0.sql`、历史注释与 review 使用 | 后端 / DBA |
+| 11 | [`3.0-multimodal-design.md`](./3.0-multimodal-design.md) | **未来草稿**：3.x 多模态检索 / Lance 路线，未进入当前 1.0/2.0 基线 | 架构 / 算法 |
+| 12 | [`next-steps-tasks.md`](./next-steps-tasks.md) | **任务看板**：P0/P1/P2/P3 拆分 + DoD + 估时 + Phase Gate；周会用这份盯进度 | 全员 |
 
 ## 这份文档包覆盖了什么
 

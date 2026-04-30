@@ -61,6 +61,20 @@ type Config struct {
 	// Elasticsearch
 	ElasticsearchURL string
 
+	// CDC / WAL-driven sync (long-term architecture skeleton).
+	CDCEnabled              string
+	CDCSourceDriver         string
+	CDCKafkaBrokers         string
+	CDCKafkaGroupID         string
+	CDCKafkaPollTimeoutMs   string
+	CDCKafkaMaxBatch        string
+	CDCAssetEventsTopic     string
+	CDCAssetsTopic          string
+	CDCAssetTagsTopic       string
+	CDCAssetAlgoLatestTopic string
+	CDCMcapFilesTopic       string
+	CDCBronzeStagingDir     string
+
 	// Outbox worker (in-process ES sink).
 	OutboxWorkerEnabled      string
 	OutboxWorkerTickSec      string
@@ -118,6 +132,19 @@ func Load() *Config {
 		TrinoSchema:  getenv("TRINO_SCHEMA", "robot"),
 
 		ElasticsearchURL: getenv("ELASTICSEARCH_URL", "http://localhost:9200"),
+
+		CDCEnabled:              getenv("CDC_ENABLED", "false"),
+		CDCSourceDriver:         getenv("CDC_SOURCE_DRIVER", ""),
+		CDCKafkaBrokers:         getenv("CDC_KAFKA_BROKERS", "localhost:19092"),
+		CDCKafkaGroupID:         getenv("CDC_KAFKA_GROUP_ID", "data-platform-cdc"),
+		CDCKafkaPollTimeoutMs:   getenv("CDC_KAFKA_POLL_TIMEOUT_MS", "1000"),
+		CDCKafkaMaxBatch:        getenv("CDC_KAFKA_MAX_BATCH", "100"),
+		CDCAssetEventsTopic:     getenv("CDC_TOPIC_ASSET_EVENTS", "asset_events"),
+		CDCAssetsTopic:          getenv("CDC_TOPIC_ASSETS", "assets"),
+		CDCAssetTagsTopic:       getenv("CDC_TOPIC_ASSET_TAGS", "asset_tags"),
+		CDCAssetAlgoLatestTopic: getenv("CDC_TOPIC_ASSET_ALGO_LATEST", "asset_algo_latest"),
+		CDCMcapFilesTopic:       getenv("CDC_TOPIC_MCAP_FILES", "mcap_files"),
+		CDCBronzeStagingDir:     getenv("CDC_BRONZE_STAGING_DIR", "/tmp/iceberg-staging"),
 
 		OutboxWorkerEnabled:      getenv("OUTBOX_WORKER_ENABLED", "false"),
 		OutboxWorkerTickSec:      getenv("OUTBOX_WORKER_TICK_SEC", "30"),

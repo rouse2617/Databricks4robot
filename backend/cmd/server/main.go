@@ -21,6 +21,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"data-platform/internal/audit"
+	"data-platform/internal/cdc"
 	"data-platform/internal/config"
 	espkg "data-platform/internal/elasticsearch"
 	adminH "data-platform/internal/handlers/admin"
@@ -83,6 +84,11 @@ func main() {
 		mcapHandler     *mcapH.Handler
 		deliveryHandler *deliveryH.Handler
 		pgClient        *postgres.Client
+		assetRepo       repository.AssetRepository
+		assetTagRepo    repository.AssetTagRepository
+		algoLatestRepo  repository.AssetAlgoLatestRepository
+		assetEventRepo  repository.AssetEventRepository
+		mcapRepo        repository.McapFileRepository
 	)
 
 	switch cfg.StorageBackend {
@@ -106,15 +112,16 @@ func main() {
 
 		audit.Init(postgres.NewAuditSink(pgClient))
 
-		assetRepo := postgres.NewAssetRepo(pgClient)
-		assetTagRepo := postgres.NewAssetTagRepo(pgClient)
-		algoLatestRepo := postgres.NewAssetAlgoLatestRepo(pgClient)
-		assetEventRepo := postgres.NewAssetEventRepo(pgClient)
+		assetRepo = postgres.NewAssetRepo(pgClient)
+		assetTagRepo = postgres.NewAssetTagRepo(pgClient)
+		algoLatestRepo = postgres.NewAssetAlgoLatestRepo(pgClient)
+		assetEventRepo = postgres.NewAssetEventRepo(pgClient)
+		mcapRepo = postgres.NewMcapFileRepo(pgClient)
 		deliveryRepo := postgres.NewDeliveryRepo(pgClient)
 		algoUC := assetUC.NewAlgoUsecase(pgClient, assetRepo, algoLatestRepo, assetEventRepo, algoRegistry)
 		algoHandler = assetH.NewAlgoHandler(algoUC)
 		assetHandler = assetH.New(assetUC.NewWithProjections(pgClient, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, tagRegistry, algoRegistry), deliveryRepo)
-		mcapHandler = mcapH.New(postgres.NewMcapFileRepo(pgClient))
+		mcapHandler = mcapH.New(mcapRepo)
 		deliveryHandler = deliveryH.New(deliveryRepo, postgres.NewIdempotencyRepo(pgClient))
 
 	default:
@@ -147,10 +154,10 @@ func main() {
 	var adminHandler *adminH.Handler
 	if pgClient != nil && esClient != nil {
 		adminHandler = adminH.New(
-			postgres.NewAssetRepo(pgClient),
-			postgres.NewAssetTagRepo(pgClient),
-			postgres.NewAssetAlgoLatestRepo(pgClient),
-			postgres.NewMcapFileRepo(pgClient),
+			assetRepo,
+			assetTagRepo,
+			algoLatestRepo,
+			mcapRepo,
 			esClient,
 		)
 	}
@@ -172,12 +179,12 @@ func main() {
 			retryLimit = 10
 		}
 		w := &outbox.ESWorker{
-			Events: postgres.NewAssetEventRepo(pgClient),
+			Events: assetEventRepo,
 			Indexer: &searchindex.Builder{
-				Assets: postgres.NewAssetRepo(pgClient),
-				Tags:   postgres.NewAssetTagRepo(pgClient),
-				Algos:  postgres.NewAssetAlgoLatestRepo(pgClient),
-				Mcap:   postgres.NewMcapFileRepo(pgClient),
+				Assets: assetRepo,
+				Tags:   assetTagRepo,
+				Algos:  algoLatestRepo,
+				Mcap:   mcapRepo,
 			},
 			ES:           esClient,
 			DLQ:          postgres.NewOutboxDLQRepo(pgClient),
@@ -192,6 +199,52 @@ func main() {
 		slog.Info("outbox ES worker started", "tick_sec", tickSec, "batch", batch, "fatal_on_panic", cfg.OutboxWorkerFatalOnPanic == "true")
 	} else if cfg.OutboxWorkerEnabled == "true" {
 		slog.Warn("outbox worker disabled: requires STORAGE_BACKEND=postgres, reachable ELASTICSEARCH_URL, and successful ES ping")
+	}
+
+	if pgClient != nil && cfg.CDCEnabled == "true" {
+		runtimeCfg := cdc.BuildRuntimeConfig(cfg)
+		handlers := map[string]cdc.BatchHandler{}
+		if esClient != nil {
+			esConsumer := &cdc.ESConsumer{
+				Assets: assetRepo,
+				Builder: &searchindex.Builder{
+					Assets: assetRepo,
+					Tags:   assetTagRepo,
+					Algos:  algoLatestRepo,
+					Mcap:   mcapRepo,
+				},
+				ES: esClient,
+			}
+			for _, topic := range runtimeCfg.TopicsFor(cdc.ConsumerKindSearchProjection) {
+				handlers[topic] = esConsumer
+			}
+		}
+		bronzeSink := outbox.NewBronzeSink(outbox.BronzeSinkConfig{
+			Enabled:    true,
+			StagingDir: cfg.CDCBronzeStagingDir,
+		})
+		bronzeConsumer := &cdc.BronzeConsumer{Sink: bronzeSink}
+		for _, topic := range runtimeCfg.TopicsFor(cdc.ConsumerKindBronzeEvents) {
+			handlers[topic] = bronzeConsumer
+		}
+		cdcRuntime := &cdc.Runtime{
+			Config:   runtimeCfg,
+			Handlers: handlers,
+			Source:   nil,
+		}
+		switch cfg.CDCSourceDriver {
+		case "":
+			// keep nil; Validate will warn that no transport adapter is configured
+		case "debezium-kafka":
+			cdcRuntime.Source = cdc.NewKafkaSourceFromConfig(cfg, runtimeCfg)
+		case "in-memory":
+			cdcRuntime.Source = &cdc.InMemorySource{}
+		default:
+			slog.Warn("unknown CDC_SOURCE_DRIVER", "driver", cfg.CDCSourceDriver)
+		}
+		if err := cdcRuntime.Validate(); err != nil {
+			slog.Warn("cdc runtime skeleton not started", "err", err, "source_driver", cfg.CDCSourceDriver)
+		}
 	}
 
 	r := gin.New()
