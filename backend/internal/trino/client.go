@@ -3,6 +3,7 @@ package trino
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -115,7 +116,10 @@ func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
 
 	rows, err := c.db.QueryContext(ctx, strings.Join(parts, " UNION ALL "))
 	if err != nil {
-		return nil, err
+		if !strings.Contains(err.Error(), "does not exist") {
+			return nil, err
+		}
+		return c.tablesBestEffort(ctx)
 	}
 	defer rows.Close()
 
@@ -130,6 +134,25 @@ func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
 	return result, rows.Err()
 }
 
+func (c *Client) tablesBestEffort(ctx context.Context) ([]TableCount, error) {
+	result := make([]TableCount, 0, len(KnownTables))
+	for _, tableName := range KnownTables {
+		var count int64
+		err := c.db.QueryRowContext(
+			ctx,
+			fmt.Sprintf("SELECT count(*) FROM %s", c.table(tableName)),
+		).Scan(&count)
+		if err != nil {
+			if strings.Contains(err.Error(), "does not exist") {
+				continue
+			}
+			return nil, err
+		}
+		result = append(result, TableCount{TableName: tableName, RowCount: count})
+	}
+	return result, nil
+}
+
 // BronzeEventCount returns the total row count in bronze_asset_events.
 // Used by the sync-status endpoint to compare PG vs Iceberg counts.
 func (c *Client) BronzeEventCount(ctx context.Context) (int64, error) {
@@ -137,6 +160,11 @@ func (c *Client) BronzeEventCount(ctx context.Context) (int64, error) {
 	err := c.db.QueryRowContext(ctx,
 		fmt.Sprintf("SELECT count(*) FROM %s", c.table("bronze_asset_events")),
 	).Scan(&count)
+	if err != nil && strings.Contains(err.Error(), "does not exist") {
+		err = c.db.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT count(*) FROM %s", c.table("bronze_asset_algo_events")),
+		).Scan(&count)
+	}
 	return count, err
 }
 
@@ -146,6 +174,9 @@ func (c *Client) BronzeMaxEventSeq(ctx context.Context) (int64, error) {
 	err := c.db.QueryRowContext(ctx,
 		fmt.Sprintf("SELECT COALESCE(max(event_seq), 0) FROM %s", c.table("bronze_asset_events")),
 	).Scan(&seq)
+	if err != nil && strings.Contains(err.Error(), "does not exist") {
+		return 0, errors.New("bronze_asset_events table missing event_seq; no realtime cursor fallback available")
+	}
 	return seq, err
 }
 

@@ -165,6 +165,16 @@ func (c *Client) QueryRow(ctx context.Context, sql string, args ...any) interfac
 	return c.db.QueryRow(ctx, sql, args...)
 }
 
+// Query executes a query that returns multiple rows.
+// Exposed for packages outside postgres (e.g. lakehouse handler).
+func (c *Client) Query(ctx context.Context, sql string, args ...any) (interface {
+	Next() bool
+	Scan(dest ...any) error
+	Close()
+}, error) {
+	return c.db.Query(ctx, sql, args...)
+}
+
 // WithTx runs fn inside a single PostgreSQL transaction. Repo methods that
 // use dbFromCtx(ctx, ...) inside fn will transparently use the tx; methods
 // that don't use it will run on the pool and are NOT part of the tx — when

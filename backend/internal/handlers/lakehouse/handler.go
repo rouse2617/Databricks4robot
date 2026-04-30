@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -237,6 +238,120 @@ func newRealtimeSyncStatusData(checkedAt time.Time, pgTotal, iceTotal, iceMaxSeq
 	}
 }
 
+func buildStatusDiff(pgDist, iceDist map[string]int64) map[string]any {
+	keysMap := map[string]struct{}{}
+	for key := range pgDist {
+		keysMap[key] = struct{}{}
+	}
+	for key := range iceDist {
+		keysMap[key] = struct{}{}
+	}
+
+	keys := make([]string, 0, len(keysMap))
+	for key := range keysMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	diff := make(map[string]any, len(keys))
+	for _, key := range keys {
+		pg := pgDist[key]
+		ice := iceDist[key]
+		diff[key] = map[string]int64{
+			"pg":      pg,
+			"iceberg": ice,
+			"diff":    pg - ice,
+		}
+	}
+	return diff
+}
+
+func (h *Handler) pgAssetCurrentStatusSummary(ctx context.Context) (int64, map[string]int64, error) {
+	const q = `
+SELECT status, count(*)::bigint
+FROM assets
+WHERE is_deleted = false
+GROUP BY status`
+
+	var total int64
+	if err := h.pg.QueryRow(ctx, "SELECT count(*) FROM assets WHERE is_deleted = false").Scan(&total); err != nil {
+		return 0, nil, err
+	}
+
+	rows, err := h.pg.Query(ctx, q)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+
+	dist := map[string]int64{}
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return 0, nil, err
+		}
+		dist[status] = count
+	}
+	return total, dist, nil
+}
+
+func (h *Handler) icebergAssetCurrentStatusSummary(ctx context.Context) (int64, map[string]int64, error) {
+	rows, err := h.trino.QueryRows(ctx, `
+		SELECT status, count(*) AS row_count
+		FROM `+h.trino.Table("silver_assets_current")+`
+		WHERE is_deleted = false
+		GROUP BY status
+	`)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	var total int64
+	dist := map[string]int64{}
+	for _, row := range rows {
+		status, _ := row["status"].(string)
+		switch v := row["row_count"].(type) {
+		case int64:
+			dist[status] = v
+			total += v
+		case int32:
+			dist[status] = int64(v)
+			total += int64(v)
+		case int:
+			dist[status] = int64(v)
+			total += int64(v)
+		case float64:
+			dist[status] = int64(v)
+			total += int64(v)
+		}
+	}
+	return total, dist, nil
+}
+
+func (h *Handler) buildMvpAssetSyncStatus(ctx context.Context) (*SyncStatusData, error) {
+	pgTotal, pgDist, err := h.pgAssetCurrentStatusSummary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	iceTotal, iceDist, err := h.icebergAssetCurrentStatusSummary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	data := newRealtimeSyncStatusData(time.Now(), pgTotal, iceTotal, 0)
+	data.PgStatusDist = map[string]any{}
+	for key, value := range pgDist {
+		data.PgStatusDist[key] = value
+	}
+	data.IcebergStatusDist = map[string]any{}
+	for key, value := range iceDist {
+		data.IcebergStatusDist[key] = value
+	}
+	data.StatusDiff = buildStatusDiff(pgDist, iceDist)
+	data.IcebergMaxSeq = 0
+	return &data, nil
+}
+
 // SyncStatus returns the latest reconciliation result.
 // It compares PG event counts with Iceberg Bronze counts via Trino
 // for a real-time sync health check. Falls back to the sync_reconciliation
@@ -256,6 +371,14 @@ func (h *Handler) SyncStatus(c *gin.Context) {
 				Available: true,
 				Source:    "realtime",
 				Data:      &data,
+			})
+			return
+		}
+		if data, err := h.buildMvpAssetSyncStatus(ctx); err == nil {
+			c.JSON(200, SyncStatusEnvelope{
+				Available: true,
+				Source:    "realtime",
+				Data:      data,
 			})
 			return
 		}
