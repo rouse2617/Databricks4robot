@@ -2453,6 +2453,17 @@ func TestDeliveryRepo_Set_WritesRealColumns(t *testing.T) {
 	if args[11] != int64(10) {
 		t.Errorf("item_count: got %v, want 10", args[11])
 	}
+	metadata, ok := args[14].([]byte)
+	if !ok {
+		t.Fatalf("metadata arg type: got %T want []byte", args[14])
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	if got := meta["note"]; got != "batch delivery" {
+		t.Fatalf("metadata.note: got %v want %q", got, "batch delivery")
+	}
 }
 
 func TestDeliveryRepo_List_ReadsNewColumns(t *testing.T) {

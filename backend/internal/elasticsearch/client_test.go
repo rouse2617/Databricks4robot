@@ -1,7 +1,10 @@
 package elasticsearch
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -64,5 +67,105 @@ func TestBuildSearchBody_NestedAlgosScore(t *testing.T) {
 	}
 	if body["from"] != 10 {
 		t.Fatalf("expected from=10, got %v", body["from"])
+	}
+}
+
+func TestBuildSearchBody_MixedNestedEqAndNeStayInSameTagGroup(t *testing.T) {
+	req := SearchRequest{
+		Filters: []FilterOp{
+			{Field: "tags.quality", Op: "ne", Value: "good"},
+			{Field: "tags.source_type", Op: "eq", Value: "algo"},
+		},
+		Page:     1,
+		PageSize: 20,
+	}
+
+	body := buildSearchBody(req)
+	boolQuery := body["query"].(map[string]any)["bool"].(map[string]any)
+	filters := boolQuery["filter"].([]map[string]any)
+	if len(filters) != 1 {
+		t.Fatalf("expected 1 grouped nested filter, got %d", len(filters))
+	}
+
+	inner := filters[0]["nested"].(map[string]any)["query"].(map[string]any)["bool"].(map[string]any)
+	must := inner["must"].([]map[string]any)
+	mustNot := inner["must_not"].([]map[string]any)
+
+	if !containsTermClause(must, "tags.key", "quality") {
+		t.Fatalf("expected tags.key=quality in must, got %#v", must)
+	}
+	if !containsTermClause(must, "tags.source_type", "algo") {
+		t.Fatalf("expected tags.source_type=algo in must, got %#v", must)
+	}
+	if !containsTermClause(mustNot, "tags.value", "good") {
+		t.Fatalf("expected tags.value=good in must_not, got %#v", mustNot)
+	}
+}
+
+func TestBuildSearchBody_PureNegativeInnerTagClauseStaysOuterMustNot(t *testing.T) {
+	req := SearchRequest{
+		Filters: []FilterOp{
+			{Field: "tags.source_type", Op: "ne", Value: "algo"},
+		},
+		Page:     1,
+		PageSize: 20,
+	}
+
+	body := buildSearchBody(req)
+	boolQuery := body["query"].(map[string]any)["bool"].(map[string]any)
+	if _, ok := boolQuery["filter"]; ok {
+		t.Fatalf("did not expect top-level filter for pure negative nested clause: %#v", boolQuery)
+	}
+	mustNot := boolQuery["must_not"].([]map[string]any)
+	if len(mustNot) != 1 {
+		t.Fatalf("expected 1 top-level must_not clause, got %d", len(mustNot))
+	}
+
+	inner := mustNot[0]["nested"].(map[string]any)["query"].(map[string]any)["bool"].(map[string]any)
+	must := inner["must"].([]map[string]any)
+	if !containsTermClause(must, "tags.source_type", "algo") {
+		t.Fatalf("expected tags.source_type=algo in outer must_not nested clause, got %#v", must)
+	}
+}
+
+func containsTermClause(clauses []map[string]any, field, value string) bool {
+	for _, clause := range clauses {
+		term, ok := clause["term"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if got, exists := term[field]; exists && got == value {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDeleteAllDocuments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/assets/_delete_by_query" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("conflicts"); got != "proceed" {
+			t.Fatalf("unexpected conflicts query: %q", got)
+		}
+		if got := r.URL.Query().Get("refresh"); got != "true" {
+			t.Fatalf("unexpected refresh query: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"deleted": 7})
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, "assets")
+	deleted, err := client.DeleteAllDocuments(context.Background())
+	if err != nil {
+		t.Fatalf("DeleteAllDocuments() error: %v", err)
+	}
+	if deleted != 7 {
+		t.Fatalf("expected deleted=7, got %d", deleted)
 	}
 }

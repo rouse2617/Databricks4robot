@@ -61,6 +61,10 @@ func (m *mockDeliveryRepo) List(_ context.Context, _, _ int, _ string) ([]*model
 	return []*models.Delivery{}, 0, nil
 }
 
+func (m *mockDeliveryRepo) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
+
 type mockIdemRepo struct {
 	getFn  func(ctx context.Context, scope, key string) (*repository.IdempotencyRecord, error)
 	saveFn func(ctx context.Context, rec *repository.IdempotencyRecord) error
@@ -175,7 +179,7 @@ func TestCommit(t *testing.T) {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
 
-	// Fresh commit success
+	// Fresh commit error on secondary index write
 	saved := false
 	repo.setFn = nil
 	idem.saveFn = func(context.Context, *repository.IdempotencyRecord) error { saved = true; return nil }
@@ -184,6 +188,19 @@ func TestCommit(t *testing.T) {
 		"asset_ids":   []string{"a1", "a2"},
 		"customer_id": "c1",
 	}, map[string]string{"Idempotency-Key": "k3"})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+	if saved {
+		t.Fatalf("did not expect idempotency save on failed commit")
+	}
+
+	// Fresh commit success
+	repo.writeIndexesFn = nil
+	w = doDeliveryReq(t, r, http.MethodPost, "/deliveries", map[string]any{
+		"asset_ids":   []string{"a1", "a2"},
+		"customer_id": "c1",
+	}, map[string]string{"Idempotency-Key": "k4"})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", w.Code)
 	}
@@ -236,6 +253,10 @@ func TestGetAndListByCustomer(t *testing.T) {
 
 func TestListItems(t *testing.T) {
 	repo := &mockDeliveryRepo{
+		getFn: func(context.Context, string) (*models.Delivery, error) {
+			now := time.Now()
+			return &models.Delivery{DeliveryID: "d1", DeliveredAt: &now}, nil
+		},
 		listItemsFn: func(context.Context, string) ([]*models.DeliveryItem, error) {
 			return []*models.DeliveryItem{
 				{DeliveryID: "d1", AssetID: "a1"},
@@ -257,6 +278,12 @@ func TestListItems(t *testing.T) {
 	w = doDeliveryReq(t, r, http.MethodGet, "/deliveries/d1/items", nil, nil)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
+	}
+
+	repo.getFn = func(context.Context, string) (*models.Delivery, error) { return nil, nil }
+	w = doDeliveryReq(t, r, http.MethodGet, "/deliveries/missing/items", nil, nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 

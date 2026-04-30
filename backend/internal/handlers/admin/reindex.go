@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -46,6 +48,59 @@ type SearchReindexRequest struct {
 	PageSize int  `json:"page_size"`
 }
 
+type SearchReindexResponse struct {
+	DryRun                bool     `json:"dry_run"`
+	TotalAssets           int64    `json:"total_assets"`
+	Indexed               int64    `json:"indexed"`
+	Deleted               int64    `json:"deleted"`
+	Failed                int64    `json:"failed"`
+	DurationMs            int64    `json:"duration_ms"`
+	Errors                []string `json:"errors,omitempty"`
+	ElasticsearchDocCount int64    `json:"elasticsearch_doc_count,omitempty"`
+	AssetsScanned         int64    `json:"assets_scanned"`
+	DocumentsIndexed      int64    `json:"documents_indexed"`
+	DocumentsDeleted      int64    `json:"documents_deleted"`
+}
+
+const maxReportedReindexErrors = 20
+
+func parseSearchReindexRequest(c *gin.Context) (SearchReindexRequest, error) {
+	var req SearchReindexRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			return SearchReindexRequest{}, fmt.Errorf("invalid request body: %w", err)
+		}
+	}
+
+	if raw := c.Query("dry_run"); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			return SearchReindexRequest{}, fmt.Errorf("invalid dry_run: %w", err)
+		}
+		req.DryRun = v
+	}
+
+	if raw := c.Query("page_size"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return SearchReindexRequest{}, fmt.Errorf("invalid page_size: %w", err)
+		}
+		req.PageSize = v
+	}
+
+	if req.PageSize <= 0 || req.PageSize > 500 {
+		req.PageSize = 200
+	}
+	return req, nil
+}
+
+func appendReindexError(errors []string, msg string) []string {
+	if len(errors) >= maxReportedReindexErrors {
+		return errors
+	}
+	return append(errors, msg)
+}
+
 // SearchReindex rebuilds all ES documents from PostgreSQL (does not move outbox cursors).
 func (h *Handler) SearchReindex(c *gin.Context) {
 	if h.es == nil {
@@ -53,16 +108,26 @@ func (h *Handler) SearchReindex(c *gin.Context) {
 			"Elasticsearch is not configured", nil)
 		return
 	}
-	var req SearchReindexRequest
-	if c.Request.ContentLength > 0 {
-		_ = c.ShouldBindJSON(&req)
-	}
-	if req.PageSize <= 0 || req.PageSize > 500 {
-		req.PageSize = 200
+	req, err := parseSearchReindexRequest(c)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid reindex request", map[string]any{"error": err.Error()})
+		return
 	}
 
 	ctx := c.Request.Context()
-	var scanned, indexed, deleted int64
+	startedAt := time.Now()
+	var scanned, indexed, deleted, failed int64
+	var errors []string
+
+	if !req.DryRun {
+		cleared, err := h.es.DeleteAllDocuments(ctx)
+		if err != nil {
+			httpresp.Error(c, http.StatusBadGateway, httpresp.CodeInternalError, err.Error(), nil)
+			return
+		}
+		deleted += cleared
+	}
+
 	page := 1
 	for {
 		assets, total, err := h.assets.ListWithFilters(ctx, "", nil, page, req.PageSize, "asset_id ASC")
@@ -78,8 +143,9 @@ func (h *Handler) SearchReindex(c *gin.Context) {
 			scanned++
 			doc, ok, err := h.indexer.Build(ctx, a.AssetID)
 			if err != nil {
-				httpresp.Error(c, http.StatusInternalServerError, httpresp.CodeInternalError, err.Error(), nil)
-				return
+				failed++
+				errors = appendReindexError(errors, fmt.Sprintf("build %s: %v", a.AssetID, err))
+				continue
 			}
 			if !ok {
 				if req.DryRun {
@@ -87,21 +153,33 @@ func (h *Handler) SearchReindex(c *gin.Context) {
 					continue
 				}
 				if err := h.es.DeleteDocument(ctx, a.AssetID); err != nil {
-					httpresp.Error(c, http.StatusBadGateway, httpresp.CodeInternalError, err.Error(), nil)
-					return
+					failed++
+					errors = appendReindexError(errors, fmt.Sprintf("delete %s: %v", a.AssetID, err))
+					continue
 				}
 				deleted++
 				continue
 			}
-			if !req.DryRun {
-				docs = append(docs, espkg.BulkIndexDoc{ID: a.AssetID, Doc: doc})
+			if req.DryRun {
+				indexed++
+				continue
 			}
-			indexed++
+			docs = append(docs, espkg.BulkIndexDoc{ID: a.AssetID, Doc: doc})
 		}
 		if !req.DryRun && len(docs) > 0 {
-			if _, err := h.es.BulkIndex(ctx, docs); err != nil {
+			bulkResult, err := h.es.BulkIndex(ctx, docs)
+			if err != nil {
 				httpresp.Error(c, http.StatusBadGateway, httpresp.CodeInternalError, err.Error(), nil)
 				return
+			}
+			indexed += int64(len(bulkResult.Succeeded))
+			failed += int64(len(bulkResult.Failed))
+			for _, item := range bulkResult.Failed {
+				reason := item.Error
+				if reason == "" {
+					reason = fmt.Sprintf("status %d", item.Status)
+				}
+				errors = appendReindexError(errors, fmt.Sprintf("index %s: %s", item.ID, reason))
 			}
 		}
 		if int64(page*req.PageSize) >= total {
@@ -119,14 +197,20 @@ func (h *Handler) SearchReindex(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"dry_run":                 req.DryRun,
-		"assets_scanned":          scanned,
-		"documents_indexed":       indexed,
-		"documents_deleted":       deleted,
-		"elasticsearch_doc_count": esCount,
-		"finished_at":             time.Now().UTC().Format(time.RFC3339Nano),
-	})
+	resp := SearchReindexResponse{
+		DryRun:                req.DryRun,
+		TotalAssets:           scanned,
+		Indexed:               indexed,
+		Deleted:               deleted,
+		Failed:                failed,
+		DurationMs:            time.Since(startedAt).Milliseconds(),
+		Errors:                errors,
+		ElasticsearchDocCount: esCount,
+		AssetsScanned:         scanned,
+		DocumentsIndexed:      indexed,
+		DocumentsDeleted:      deleted,
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // AdminTokenAuth validates X-Admin-Token (or admin_token query for scripts).

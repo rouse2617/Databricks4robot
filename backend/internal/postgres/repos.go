@@ -642,6 +642,7 @@ var _ repository.DeliveryRepository = (*DeliveryRepo)(nil)
 func NewDeliveryRepo(c *Client) *DeliveryRepo { return &DeliveryRepo{c: c} }
 
 func (r *DeliveryRepo) Set(ctx context.Context, d *models.Delivery) error {
+	db := dbFromCtx(ctx, r.c.db)
 	now := time.Now().UTC()
 	if d.CreatedAt.IsZero() {
 		d.CreatedAt = now
@@ -663,10 +664,13 @@ func (r *DeliveryRepo) Set(ctx context.Context, d *models.Delivery) error {
 	}
 
 	// Marshal metadata JSONB (new structured metadata column).
-	metadataJSON, _ := json.Marshal(d.Metadata)
 	if d.Metadata == nil {
-		metadataJSON = []byte(`{}`)
+		d.Metadata = map[string]interface{}{}
 	}
+	if d.Note != "" {
+		d.Metadata["note"] = d.Note
+	}
+	metadataJSON, _ := json.Marshal(d.Metadata)
 
 	// Nullable text columns.
 	var tenantID, projectID interface{}
@@ -712,7 +716,7 @@ ON CONFLICT (delivery_id) DO UPDATE SET
   project_id=EXCLUDED.project_id,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version`
-	err := r.c.db.Exec(ctx, q,
+	err := db.Exec(ctx, q,
 		d.DeliveryID, d.CustomerID, string(d.Status), d.DeliveredAt,
 		d.ContractID, d.DeliveryType, d.RequestedBy, d.ApprovedBy, d.DeliveredBy,
 		d.ManifestURI, d.ReplayManifestURI, d.ItemCount, d.TotalSizeBytes,
@@ -723,6 +727,10 @@ ON CONFLICT (delivery_id) DO UPDATE SET
 		return fmt.Errorf("postgres DeliveryRepo.Set: %w", err)
 	}
 	return nil
+}
+
+func (r *DeliveryRepo) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	return r.c.WithTx(ctx, fn)
 }
 
 func (r *DeliveryRepo) Get(ctx context.Context, deliveryID string) (*models.Delivery, error) {
@@ -787,11 +795,12 @@ FROM deliveries WHERE delivery_id=$1 AND is_deleted=FALSE`
 }
 
 func (r *DeliveryRepo) WriteIndexes(ctx context.Context, assetID string, d *models.Delivery) error {
+	db := dbFromCtx(ctx, r.c.db)
 	const q = `
 INSERT INTO delivery_items(delivery_id, asset_id, created_at)
 VALUES ($1,$2,now())
 ON CONFLICT (delivery_id, asset_id) DO NOTHING`
-	err := r.c.db.Exec(ctx, q, d.DeliveryID, assetID)
+	err := db.Exec(ctx, q, d.DeliveryID, assetID)
 	if err != nil {
 		return fmt.Errorf("postgres DeliveryRepo.WriteIndexes: %w", err)
 	}

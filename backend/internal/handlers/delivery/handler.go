@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,25 @@ type Handler struct {
 
 func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepository) *Handler {
 	return &Handler{repo: repo, idemRepo: idemRepo}
+}
+
+func (h *Handler) commitDelivery(ctx context.Context, d *models.Delivery, assetIDs []string) error {
+	writeFn := func(txCtx context.Context) error {
+		if err := h.repo.Set(txCtx, d); err != nil {
+			return err
+		}
+		for _, assetID := range assetIDs {
+			if err := h.repo.WriteIndexes(txCtx, assetID, d); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if txRunner, ok := h.repo.(repository.TxRunner); ok {
+		return txRunner.WithTx(ctx, writeFn)
+	}
+	return writeFn(ctx)
 }
 
 // Commit creates a new delivery.
@@ -82,16 +102,9 @@ func (h *Handler) Commit(c *gin.Context) {
 		CreatedAt:   now,
 	}
 
-	if err := h.repo.Set(c.Request.Context(), d); err != nil {
+	if err := h.commitDelivery(c.Request.Context(), d, req.AssetIDs); err != nil {
 		httpresp.Internal(c, err.Error())
 		return
-	}
-
-	// Write secondary indexes for each asset
-	for _, assetID := range req.AssetIDs {
-		if err := h.repo.WriteIndexes(c.Request.Context(), assetID, d); err != nil {
-			c.Header("X-Warning", "index write partial failure: "+err.Error())
-		}
 	}
 
 	body := gin.H{
@@ -150,6 +163,16 @@ func (h *Handler) Get(c *gin.Context) {
 
 // GET /api/v1/deliveries/:id/items
 func (h *Handler) ListItems(c *gin.Context) {
+	d, err := h.repo.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+
 	items, err := h.repo.ListItems(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		httpresp.Internal(c, err.Error())

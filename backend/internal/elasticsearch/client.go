@@ -127,8 +127,8 @@ func buildSearchBody(req SearchRequest) map[string]any {
 	// the conditions match within the same nested document.
 	type nestedGroup struct {
 		path    string
-		clauses []map[string]any
-		isNeg   bool
+		must    []map[string]any
+		mustNot []map[string]any
 	}
 	tagGroups := make(map[string]*nestedGroup) // key: "tags:<tagKey>" or "algos:<algoName>"
 
@@ -136,19 +136,15 @@ func buildSearchBody(req SearchRequest) map[string]any {
 		if path, ok := nestedPath(f.Field); ok {
 			// Determine the grouping key (tag key or algo name).
 			groupKey := nestedGroupKey(path, f.Field)
+			clauses := buildGroupedNestedClauses(path, f)
 			if g, exists := tagGroups[groupKey]; exists {
-				// Append inner clauses to existing group.
-				innerClauses := buildNestedInnerClauses(path, f)
-				g.clauses = append(g.clauses, innerClauses...)
-				if f.Op == "ne" {
-					g.isNeg = true
-				}
+				g.must = append(g.must, clauses.must...)
+				g.mustNot = append(g.mustNot, clauses.mustNot...)
 			} else {
-				innerClauses := buildNestedInnerClauses(path, f)
 				tagGroups[groupKey] = &nestedGroup{
 					path:    path,
-					clauses: innerClauses,
-					isNeg:   f.Op == "ne",
+					must:    clauses.must,
+					mustNot: clauses.mustNot,
 				}
 			}
 			continue
@@ -162,15 +158,58 @@ func buildSearchBody(req SearchRequest) map[string]any {
 		}
 	}
 
+	// When a request targets exactly one concrete tag key plus one or more
+	// tag inner fields (e.g. tags.quality + tags.source_type), bind the inner
+	// field clauses into that key group so they match on the same nested doc.
+	var soleTagGroup *nestedGroup
+	var soleTagGroupKey string
+	tagKeyGroups := 0
+	for key, g := range tagGroups {
+		if g.path != "tags" || strings.HasPrefix(key, "tags:_inner:") {
+			continue
+		}
+		tagKeyGroups++
+		soleTagGroup = g
+		soleTagGroupKey = key
+	}
+	if tagKeyGroups == 1 && soleTagGroup != nil {
+		for key, g := range tagGroups {
+			if g.path != "tags" || !strings.HasPrefix(key, "tags:_inner:") {
+				continue
+			}
+			soleTagGroup.must = append(soleTagGroup.must, g.must...)
+			soleTagGroup.mustNot = append(soleTagGroup.mustNot, g.mustNot...)
+			delete(tagGroups, key)
+		}
+		tagGroups[soleTagGroupKey] = soleTagGroup
+	}
+
 	// Emit grouped nested queries.
 	for _, g := range tagGroups {
+		if len(g.must) == 0 && len(g.mustNot) == 0 {
+			continue
+		}
+		boolQuery := map[string]any{}
+		if len(g.must) == 0 && len(g.mustNot) > 0 {
+			boolQuery["must"] = g.mustNot
+		} else if len(g.must) > 0 {
+			boolQuery["must"] = g.must
+		}
+		if len(g.must) > 0 && len(g.mustNot) > 0 {
+			boolQuery["must_not"] = g.mustNot
+		}
+
 		nested := map[string]any{
 			"nested": map[string]any{
 				"path":  g.path,
-				"query": map[string]any{"bool": map[string]any{"must": g.clauses}},
+				"query": map[string]any{"bool": boolQuery},
 			},
 		}
-		if g.isNeg {
+
+		// Pure negative inner-field groups (e.g. tags.source_type != algo) must
+		// stay as outer must_not; otherwise ES would match any sibling nested doc
+		// that does not satisfy the excluded clause.
+		if len(g.must) == 0 && len(g.mustNot) > 0 {
 			mustNot = append(mustNot, nested)
 		} else {
 			filter = append(filter, nested)
@@ -288,24 +327,37 @@ func nestedGroupKey(path, field string) string {
 	return path + ":" + field
 }
 
-// buildNestedInnerClauses returns the inner must clauses for a nested filter
-// WITHOUT wrapping them in a nested query. The caller groups and wraps them.
-func buildNestedInnerClauses(path string, f FilterOp) []map[string]any {
-	must := []map[string]any{}
+// buildGroupedNestedClauses returns the grouped must / must_not clauses for a
+// nested filter without wrapping them in a nested query. The caller merges
+// groups that target the same nested document and wraps them once.
+type groupedNestedClauses struct {
+	must    []map[string]any
+	mustNot []map[string]any
+}
+
+func buildGroupedNestedClauses(path string, f FilterOp) groupedNestedClauses {
+	clauses := groupedNestedClauses{}
 	switch path {
 	case "tags":
 		rest := strings.TrimPrefix(f.Field, "tags.")
 		if tagInnerMatchFields[rest] {
 			clause := buildScalarClause("tags."+rest, coerceOp(f.Op), f.Value)
 			if clause != nil {
-				must = append(must, clause)
+				if f.Op == "ne" {
+					clauses.mustNot = append(clauses.mustNot, clause)
+				} else {
+					clauses.must = append(clauses.must, clause)
+				}
 			}
-			break
+			return clauses
 		}
 		key := rest
-		must = append(must, map[string]any{"term": map[string]any{"tags.key": key}})
-		for _, c := range tagKeyValueClauses(coerceOp(f.Op), f.Value) {
-			must = append(must, c)
+		clauses.must = append(clauses.must, map[string]any{"term": map[string]any{"tags.key": key}})
+		valueClauses := tagKeyValueClauses(coerceOp(f.Op), f.Value)
+		if f.Op == "ne" {
+			clauses.mustNot = append(clauses.mustNot, valueClauses...)
+		} else {
+			clauses.must = append(clauses.must, valueClauses...)
 		}
 	case "algos":
 		rest := strings.TrimPrefix(f.Field, "algos.")
@@ -318,13 +370,17 @@ func buildNestedInnerClauses(path string, f FilterOp) []map[string]any {
 		if attr == "score" {
 			attr = "result_score"
 		}
-		must = append(must, map[string]any{"term": map[string]any{"algos.name": algoName}})
+		clauses.must = append(clauses.must, map[string]any{"term": map[string]any{"algos.name": algoName}})
 		valueClause := buildScalarClause("algos."+attr, coerceOp(f.Op), f.Value)
 		if valueClause != nil {
-			must = append(must, valueClause)
+			if f.Op == "ne" {
+				clauses.mustNot = append(clauses.mustNot, valueClause)
+			} else {
+				clauses.must = append(clauses.must, valueClause)
+			}
 		}
 	}
-	return must
+	return clauses
 }
 
 // buildNestedClause produces a `nested` query that pins both the "selector"
@@ -679,6 +735,44 @@ func (c *Client) DeleteDocument(ctx context.Context, id string) error {
 		return fmt.Errorf("elasticsearch: delete status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// DeleteAllDocuments removes every document in the configured index while
+// preserving the index and its mapping. Returns the number of deleted docs.
+func (c *Client) DeleteAllDocuments(ctx context.Context) (int64, error) {
+	url := fmt.Sprintf(
+		"%s/%s/_delete_by_query?conflicts=proceed&refresh=true",
+		strings.TrimRight(c.baseURL, "/"),
+		c.index,
+	)
+	body := strings.NewReader(`{"query":{"match_all":{}}}`)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return 0, fmt.Errorf("elasticsearch: delete_by_query request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return 0, fmt.Errorf("elasticsearch: delete_by_query failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("elasticsearch: read delete_by_query response: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("elasticsearch: delete_by_query status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var deleteResp struct {
+		Deleted int64 `json:"deleted"`
+	}
+	if err := json.Unmarshal(respBody, &deleteResp); err != nil {
+		return 0, fmt.Errorf("elasticsearch: unmarshal delete_by_query response: %w", err)
+	}
+	return deleteResp.Deleted, nil
 }
 
 // Count returns the total document count in the index (approximate for large indices).
