@@ -248,7 +248,18 @@ export default function AssetsPage() {
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
         {/* Left: Facet Sidebar */}
         {!isNarrow && (
-        <div style={{ width: 220, flexShrink: 0 }}>
+        <div
+          style={{
+            width: 220,
+            flexShrink: 0,
+            position: "sticky",
+            top: 24,
+            alignSelf: "flex-start",
+            maxHeight: "calc(100vh - 48px)",
+            overflowY: "auto",
+            paddingRight: 4,
+          }}
+        >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: "#1E293B" }}>筛选</span>
             {state.queryState.activeFilters.length > 0 && (
