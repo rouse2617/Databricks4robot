@@ -324,11 +324,11 @@ describe("CLEAR_SELECTION", () => {
 describe("PREVIEW_COLLAPSE_TOGGLE", () => {
   it("toggles previewState.collapsed", () => {
     const s = freshState();
-    expect(s.previewState.collapsed).toBe(false);
+    expect(s.previewState.collapsed).toBe(true);
     const r1 = assetsDiscoveryReducer(s, { type: "PREVIEW_COLLAPSE_TOGGLE" });
-    expect(r1.previewState.collapsed).toBe(true);
+    expect(r1.previewState.collapsed).toBe(false);
     const r2 = assetsDiscoveryReducer(r1, { type: "PREVIEW_COLLAPSE_TOGGLE" });
-    expect(r2.previewState.collapsed).toBe(false);
+    expect(r2.previewState.collapsed).toBe(true);
   });
 });
 

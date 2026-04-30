@@ -3,7 +3,7 @@
 // Validates: Requirements R1, R7, R13
 
 import { useEffect, useCallback, useRef, useState } from "react";
-import { Typography, message, Modal, Button, Popover } from "antd";
+import { Typography, message, Modal, Button, Popover, Drawer, Badge } from "antd";
 import { FilterOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryReducer";
@@ -44,6 +44,7 @@ export default function AssetsPage() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [batchTagResult, setBatchTagResult] = useState<BatchTagResult | null>(null);
   const [tagAdvancedOpen, setTagAdvancedOpen] = useState(false);
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
 
   // Responsive: hide facet/preview on narrow screens
   // Use lazy initializer to avoid window access during SSR
@@ -151,7 +152,7 @@ export default function AssetsPage() {
 
       {/* Search bar + Saved Views + Add Filter */}
       <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ flex: "0 1 480px", minWidth: 240 }}>
           <AssetsSearchBar
             searchMode={state.queryState.searchMode}
             draftText={state.searchUiState.draftText}
@@ -167,6 +168,19 @@ export default function AssetsPage() {
             }
           />
         </div>
+        {isNarrow && (
+          <Badge count={state.queryState.activeFilters.length} size="small" offset={[-4, 4]}>
+            <Button
+              icon={<FilterOutlined />}
+              type={state.queryState.activeFilters.length > 0 ? "primary" : "default"}
+              ghost={state.queryState.activeFilters.length > 0}
+              onClick={() => setFilterDrawerOpen(true)}
+              data-testid="open-filters-drawer"
+            >
+              筛选
+            </Button>
+          </Badge>
+        )}
         <SavedViewSelector
           views={views}
           currentViewId={currentViewId}
@@ -221,6 +235,60 @@ export default function AssetsPage() {
         />
       </div>
 
+      <Drawer
+        title={
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>筛选</span>
+            {state.queryState.activeFilters.length > 0 && (
+              <a
+                onClick={() => {
+                  dispatch({ type: "CLEAR_ALL_FILTERS" });
+                  dispatch({
+                    type: "FACET_RANGE_DRAFT",
+                    payload: { field: "duration_ms", min: undefined, max: undefined },
+                  });
+                }}
+                style={{ fontSize: 12, color: "#2563EB", cursor: "pointer", marginRight: 24 }}
+              >
+                重置
+              </a>
+            )}
+          </div>
+        }
+        placement="right"
+        width={400}
+        open={filterDrawerOpen}
+        onClose={() => setFilterDrawerOpen(false)}
+        destroyOnClose={false}
+      >
+        <AssetsFacetSidebar
+          layout="vertical"
+          activeFilters={state.queryState.activeFilters}
+          expandedGroups={state.facetUiState.expandedGroups}
+          rangeDrafts={state.facetUiState.rangeDrafts}
+          dateDrafts={state.facetUiState.dateDrafts}
+          aggregations={state.resultsState.aggregations}
+          onToggleFacet={(field, value) =>
+            dispatch({ type: "FACET_TOGGLE", payload: { field, value } })
+          }
+          onApplyRange={(field, min, max) =>
+            dispatch({ type: "FACET_RANGE_APPLY", payload: { field, min, max } })
+          }
+          onApplyDate={(field, start, end) =>
+            dispatch({ type: "FACET_DATE_APPLY", payload: { field, start, end } })
+          }
+          onRangeDraftChange={(field, min, max) =>
+            dispatch({ type: "FACET_RANGE_DRAFT", payload: { field, min, max } })
+          }
+          onDateDraftChange={(field, start, end) =>
+            dispatch({ type: "FACET_DATE_DRAFT", payload: { field, start, end } })
+          }
+          onToggleGroup={(group) =>
+            dispatch({ type: "FACET_GROUP_TOGGLE", payload: { group } })
+          }
+        />
+      </Drawer>
+
       {/* Save View Dialog */}
       <SaveViewDialog
         open={state.savedViewState.saveDialogOpen}
@@ -244,62 +312,75 @@ export default function AssetsPage() {
         />
       </div>
 
-      {/* Three-column layout */}
+      {/* Main layout */}
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        {/* Left: Facet Sidebar */}
+        {/* Left: Facet sidebar (always visible on wide screens) */}
         {!isNarrow && (
-        <div
-          style={{
-            width: 220,
-            flexShrink: 0,
-            position: "sticky",
-            top: 24,
-            alignSelf: "flex-start",
-            maxHeight: "calc(100vh - 48px)",
-            overflowY: "auto",
-            paddingRight: 4,
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#1E293B" }}>筛选</span>
-            {state.queryState.activeFilters.length > 0 && (
-              <a
-                onClick={() => {
-                  dispatch({ type: "CLEAR_ALL_FILTERS" });
-                  dispatch({ type: "FACET_RANGE_DRAFT", payload: { field: "duration_ms", min: undefined, max: undefined } });
-                }}
-                style={{ fontSize: 12, color: "#2563EB", cursor: "pointer" }}
-              >
-                重置
-              </a>
-            )}
-          </div>
-          <AssetsFacetSidebar
-            activeFilters={state.queryState.activeFilters}
-            expandedGroups={state.facetUiState.expandedGroups}
-            rangeDrafts={state.facetUiState.rangeDrafts}
-            dateDrafts={state.facetUiState.dateDrafts}
-            aggregations={state.resultsState.aggregations}
-            onToggleFacet={(field, value) =>
-              dispatch({ type: "FACET_TOGGLE", payload: { field, value } })
-            }
-            onApplyRange={(field, min, max) =>
-              dispatch({ type: "FACET_RANGE_APPLY", payload: { field, min, max } })
-            }
-            onApplyDate={(field, start, end) =>
-              dispatch({ type: "FACET_DATE_APPLY", payload: { field, start, end } })
-            }
-            onRangeDraftChange={(field, min, max) =>
-              dispatch({ type: "FACET_RANGE_DRAFT", payload: { field, min, max } })
-            }
-            onDateDraftChange={(field, start, end) =>
-              dispatch({ type: "FACET_DATE_DRAFT", payload: { field, start, end } })
-            }
-            onToggleGroup={(group) =>
-              dispatch({ type: "FACET_GROUP_TOGGLE", payload: { group } })
-            }
-          />
-        </div>
+          <aside
+            style={{
+              width: 240,
+              flexShrink: 0,
+              position: "sticky",
+              top: 12,
+              maxHeight: "calc(100vh - 24px)",
+              overflowY: "auto",
+              padding: 12,
+              border: "1px solid #E5E7EB",
+              borderRadius: 8,
+              background: "#fff",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#1E293B" }}>筛选</span>
+              {state.queryState.activeFilters.length > 0 && (
+                <a
+                  onClick={() => {
+                    dispatch({ type: "CLEAR_ALL_FILTERS" });
+                    dispatch({
+                      type: "FACET_RANGE_DRAFT",
+                      payload: { field: "duration_ms", min: undefined, max: undefined },
+                    });
+                  }}
+                  style={{ fontSize: 12, color: "#2563EB", cursor: "pointer" }}
+                >
+                  重置
+                </a>
+              )}
+            </div>
+            <AssetsFacetSidebar
+              layout="vertical"
+              activeFilters={state.queryState.activeFilters}
+              expandedGroups={state.facetUiState.expandedGroups}
+              rangeDrafts={state.facetUiState.rangeDrafts}
+              dateDrafts={state.facetUiState.dateDrafts}
+              aggregations={state.resultsState.aggregations}
+              onToggleFacet={(field, value) =>
+                dispatch({ type: "FACET_TOGGLE", payload: { field, value } })
+              }
+              onApplyRange={(field, min, max) =>
+                dispatch({ type: "FACET_RANGE_APPLY", payload: { field, min, max } })
+              }
+              onApplyDate={(field, start, end) =>
+                dispatch({ type: "FACET_DATE_APPLY", payload: { field, start, end } })
+              }
+              onRangeDraftChange={(field, min, max) =>
+                dispatch({ type: "FACET_RANGE_DRAFT", payload: { field, min, max } })
+              }
+              onDateDraftChange={(field, start, end) =>
+                dispatch({ type: "FACET_DATE_DRAFT", payload: { field, start, end } })
+              }
+              onToggleGroup={(group) =>
+                dispatch({ type: "FACET_GROUP_TOGGLE", payload: { group } })
+              }
+            />
+          </aside>
         )}
 
         {/* Center: Bulk Action Bar + Columns Config + Results */}

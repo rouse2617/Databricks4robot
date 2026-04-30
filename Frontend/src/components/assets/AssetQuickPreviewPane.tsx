@@ -22,7 +22,9 @@ import {
   InboxOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  CopyOutlined,
 } from "@ant-design/icons";
+import { message } from "antd";
 import type { Asset } from "../../api/types";
 import type {
   FetchStatus,
@@ -331,7 +333,7 @@ function LoadedContent({
       <Divider style={{ margin: "8px 0" }} />
 
       {/* Actions */}
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Button
           type="primary"
           size="small"
@@ -339,6 +341,20 @@ function LoadedContent({
           onClick={() => onOpenDetail(asset.asset_id)}
         >
           查看详情
+        </Button>
+        <Button
+          size="small"
+          icon={<CopyOutlined />}
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(asset.asset_id);
+              message.success("已复制 Asset ID");
+            } catch {
+              message.error("复制失败");
+            }
+          }}
+        >
+          复制 ID
         </Button>
         <Tooltip title="Coming in Phase 3">
           <Button

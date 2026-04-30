@@ -3,13 +3,14 @@
 // Validates: Requirements R4
 
 import {
+  Badge,
+  Button,
   Collapse,
   Checkbox,
+  DatePicker,
   Input,
   InputNumber,
-  DatePicker,
   Switch,
-  Button,
   Typography,
 } from "antd";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
@@ -54,6 +55,7 @@ export interface AssetsFacetSidebarProps {
   rangeDrafts: Record<string, { min?: number; max?: number }>;
   dateDrafts: Record<string, { start?: string; end?: string }>;
   aggregations?: Record<string, { key: string; doc_count: number }[]>;
+  layout?: "vertical" | "horizontal";
   onToggleFacet: (field: string, value: string) => void;
   onApplyRange: (field: string, min?: number, max?: number) => void;
   onApplyDate: (field: string, start?: string, end?: string) => void;
@@ -151,6 +153,7 @@ function InputFacet({
         size="small"
         placeholder={placeholder}
         value={current}
+        style={{ width: "100%" }}
         onPressEnter={(e) => {
           const val = (e.target as HTMLInputElement).value.trim();
           if (val) onToggleFacet(field, val);
@@ -287,6 +290,14 @@ const GROUP_LABELS: Record<string, string> = {
   tags: "标签",
 };
 
+const GROUP_FIELDS: Record<string, string[]> = {
+  basic: ["lifecycle_state", "retention_tier", "owner", "reviewer"],
+  capture: ["asset_type", "env", "mcap.vendor_id", "mcap.device_id", "mcap.scene_id", "duration_ms", "created_at", "updated_at"],
+  algorithm: ["algo_status"],
+  delivery: ["has:delivery", "delivery_count"],
+  tags: ["tags_flat.priority", "tags_flat.quality", "tags.scene"],
+};
+
 // ─── Main Component ───
 
 export default function AssetsFacetSidebar({
@@ -295,6 +306,7 @@ export default function AssetsFacetSidebar({
   rangeDrafts,
   dateDrafts,
   aggregations,
+  layout = "vertical",
   onToggleFacet,
   onApplyRange,
   onApplyDate,
@@ -485,6 +497,61 @@ export default function AssetsFacetSidebar({
       ),
     },
   ];
+
+  if (layout === "horizontal") {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 12,
+          alignItems: "flex-start",
+        }}
+      >
+        {items.map((item) => {
+          const activeCount = activeFilters.filter((chip) =>
+            GROUP_FIELDS[item.key]?.includes(chip.field),
+          ).length;
+
+          return (
+            <div
+              key={item.key}
+              style={{
+                width: 220,
+                flexShrink: 0,
+                alignSelf: "flex-start",
+              }}
+            >
+              <div style={{ marginBottom: 8 }}>
+                <Badge count={activeCount} size="small" offset={[-6, 6]}>
+                  <Button
+                    size="small"
+                    type={activeCount > 0 ? "primary" : "default"}
+                    ghost={activeCount > 0}
+                  >
+                    {typeof item.label === "string" ? item.label : GROUP_LABELS[item.key]}
+                  </Button>
+                </Badge>
+              </div>
+
+              <div
+                style={{
+                  maxHeight: 420,
+                  overflowY: "auto",
+                  padding: 12,
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 10,
+                  background: "#fff",
+                }}
+              >
+                <div>{item.children}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <Collapse

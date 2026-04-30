@@ -173,13 +173,7 @@ export const DEFAULT_COLUMNS: string[] = [
   "updated_at",
 ];
 
-export const DEFAULT_EXPANDED_GROUPS: string[] = [
-  "basic",
-  "capture",
-  "algorithm",
-  "delivery",
-  "tags",
-];
+export const DEFAULT_EXPANDED_GROUPS: string[] = ["basic", "capture"];
 
 // ─── Default State ───
 
@@ -224,10 +218,12 @@ export const defaultAssetsDiscoveryState: AssetsDiscoveryState = {
   },
   previewState: {
     activeAssetId: null,
+    // Default collapsed: hand the horizontal space back to the results table.
+    // Users open the panel on demand via the toggle button.
     fetchStatus: "idle",
     summary: null,
     availability: "missing",
-    collapsed: false,
+    collapsed: true,
   },
   savedViewState: {
     currentViewId: null,

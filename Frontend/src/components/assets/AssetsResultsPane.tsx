@@ -126,8 +126,18 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
   owner: () => ({
     title: "Owner",
     dataIndex: "owner",
-    width: 100,
-    render: (v: string) => v || "—",
+    width: 120,
+    ellipsis: { showTitle: false },
+    render: (v: string) => {
+      if (!v) return "—";
+      return (
+        <Tooltip title={v} placement="topLeft">
+          <span style={{ display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {v}
+          </span>
+        </Tooltip>
+      );
+    },
   }),
   expire_at: () => ({
     title: "过期时间",
@@ -286,9 +296,10 @@ export default function AssetsResultsPane({
         loading={loading}
         size="small"
         scroll={{ x: 900 }}
-        rowClassName={(record) =>
-          record.asset_id === activePreviewId ? "assets-active-preview-row" : ""
-        }
+        rowClassName={(record, index) => {
+          if (record.asset_id === activePreviewId) return "assets-active-preview-row";
+          return index % 2 === 1 ? "assets-zebra-row" : "";
+        }}
         onRow={(record) => ({
           onClick: () => onRowClick(record.asset_id),
           style: { cursor: "pointer" },
@@ -318,13 +329,18 @@ export default function AssetsResultsPane({
         }}
       />
 
-      {/* Active preview row highlight style */}
+      {/* Active preview row highlight + zebra + hover style */}
       <style>{`
-        .assets-active-preview-row {
-          background-color: #e6f4ff !important;
+        .assets-zebra-row > td {
+          background-color: #FAFBFC;
         }
-        .assets-active-preview-row td {
-          background-color: #e6f4ff !important;
+        .ant-table-tbody > tr.assets-zebra-row:hover > td,
+        .ant-table-tbody > tr:hover > td {
+          background-color: #EFF6FF !important;
+        }
+        .assets-active-preview-row > td,
+        .ant-table-tbody > tr.assets-active-preview-row:hover > td {
+          background-color: #DBEAFE !important;
         }
       `}</style>
     </div>
