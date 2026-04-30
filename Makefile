@@ -16,6 +16,8 @@ all-up:
 	@echo "Backend:  http://localhost:8080"
 	@echo "Trino:    http://localhost:8082"
 	@echo "ES:       http://localhost:9200"
+	@echo "Prom:     http://localhost:9090"
+	@echo "Grafana:  http://localhost:3000  (admin / admin)"
 
 all-down:
 	cd deploy/local && docker compose -f docker-compose.all.yml down

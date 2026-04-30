@@ -109,7 +109,7 @@ chmod +x .githooks/commit-msg
 | 目标 | 作用 |
 |------|------|
 | `make dev-up` / `dev-down` | 本地 `docker-compose`（含 Postgres） |
-| `make all-up` / `all-down` | 全栈 compose |
+| `make all-up` / `all-down` | 全栈 compose（前后端、PG、ES、Iceberg/Trino、Prometheus、Grafana） |
 | `make backend-run` | 启动 API |
 | `make backend-test` | `go test ./...` |
 | `make test` | 后端 + SDK 单测 |

@@ -39,6 +39,7 @@ func RegisterAll(
 	outboxHealth *outbox.HealthStatus,
 ) {
 	r.Use(middleware.RequestID())
+	r.Use(middleware.HTTPMetrics())
 	r.Use(middleware.RequestGuard(2048))
 	r.Use(middleware.StructuredLogger())
 

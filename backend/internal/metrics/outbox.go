@@ -85,4 +85,29 @@ var (
 		Name: "outbox_cursor_deadlock_total",
 		Help: "Number of MarkPublishedAndAdvanceCursor deadlock or transaction errors",
 	})
+
+	OutboxDLQMoved = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "outbox_dlq_moved_total",
+		Help: "Number of asset_events rows moved into outbox_dlq",
+	})
+
+	OutboxDLQCount = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_dlq_total",
+		Help: "Current count of rows in outbox_dlq",
+	})
+
+	OutboxWorkerHealth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_worker_health_status",
+		Help: "Outbox worker health status (1=healthy, 0=unhealthy)",
+	})
+
+	OutboxWorkerConsecutiveFailures = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_worker_consecutive_failures",
+		Help: "Current number of consecutive outbox worker batch failures",
+	})
+
+	OutboxWorkerLastSuccessUnix = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_worker_last_success_unixtime",
+		Help: "Unix timestamp of the most recent successful outbox batch",
+	})
 )

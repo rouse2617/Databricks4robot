@@ -12,6 +12,7 @@ import (
 	_ "github.com/trinodb/trino-go-client/trino"
 
 	"data-platform/internal/config"
+	"data-platform/internal/metrics"
 )
 
 type Client struct {
@@ -66,10 +67,19 @@ func (c *Client) Close() {
 }
 
 func (c *Client) Ping(ctx context.Context) error {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		metrics.TrinoRequestsTotal.WithLabelValues("ping", outcome).Inc()
+		metrics.TrinoRequestDurationSeconds.WithLabelValues("ping", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	if c == nil || c.db == nil {
+		outcome = "error"
 		return fmt.Errorf("trino disabled")
 	}
 	if err := c.db.PingContext(ctx); err != nil {
+		outcome = "error"
 		return fmt.Errorf("trino ping: %w", err)
 	}
 	return nil
@@ -105,6 +115,13 @@ var KnownTables = []string{
 }
 
 func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		metrics.TrinoRequestsTotal.WithLabelValues("tables", outcome).Inc()
+		metrics.TrinoRequestDurationSeconds.WithLabelValues("tables", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	parts := make([]string, 0, len(KnownTables))
 	for _, tableName := range KnownTables {
 		parts = append(parts, fmt.Sprintf(
@@ -117,9 +134,15 @@ func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
 	rows, err := c.db.QueryContext(ctx, strings.Join(parts, " UNION ALL "))
 	if err != nil {
 		if !strings.Contains(err.Error(), "does not exist") {
+			outcome = "error"
 			return nil, err
 		}
-		return c.tablesBestEffort(ctx)
+		items, bestErr := c.tablesBestEffort(ctx)
+		if bestErr != nil {
+			outcome = "error"
+			return nil, bestErr
+		}
+		return items, nil
 	}
 	defer rows.Close()
 
@@ -127,11 +150,16 @@ func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
 	for rows.Next() {
 		var item TableCount
 		if err := rows.Scan(&item.TableName, &item.RowCount); err != nil {
+			outcome = "error"
 			return nil, err
 		}
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		outcome = "error"
+		return nil, err
+	}
+	return result, nil
 }
 
 func (c *Client) tablesBestEffort(ctx context.Context) ([]TableCount, error) {
@@ -156,6 +184,13 @@ func (c *Client) tablesBestEffort(ctx context.Context) ([]TableCount, error) {
 // BronzeEventCount returns the total row count in bronze_asset_events.
 // Used by the sync-status endpoint to compare PG vs Iceberg counts.
 func (c *Client) BronzeEventCount(ctx context.Context) (int64, error) {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		metrics.TrinoRequestsTotal.WithLabelValues("bronze_event_count", outcome).Inc()
+		metrics.TrinoRequestDurationSeconds.WithLabelValues("bronze_event_count", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	var count int64
 	err := c.db.QueryRowContext(ctx,
 		fmt.Sprintf("SELECT count(*) FROM %s", c.table("bronze_asset_events")),
@@ -165,28 +200,55 @@ func (c *Client) BronzeEventCount(ctx context.Context) (int64, error) {
 			fmt.Sprintf("SELECT count(*) FROM %s", c.table("bronze_asset_algo_events")),
 		).Scan(&count)
 	}
+	if err != nil {
+		outcome = "error"
+	}
 	return count, err
 }
 
 // BronzeMaxEventSeq returns the maximum event_seq in bronze_asset_events.
 func (c *Client) BronzeMaxEventSeq(ctx context.Context) (int64, error) {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		metrics.TrinoRequestsTotal.WithLabelValues("bronze_max_event_seq", outcome).Inc()
+		metrics.TrinoRequestDurationSeconds.WithLabelValues("bronze_max_event_seq", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	var seq int64
 	err := c.db.QueryRowContext(ctx,
 		fmt.Sprintf("SELECT COALESCE(max(event_seq), 0) FROM %s", c.table("bronze_asset_events")),
 	).Scan(&seq)
 	if err != nil && strings.Contains(err.Error(), "does not exist") {
+		outcome = "error"
 		return 0, errors.New("bronze_asset_events table missing event_seq; no realtime cursor fallback available")
+	}
+	if err != nil {
+		outcome = "error"
 	}
 	return seq, err
 }
 
 func (c *Client) QueryRows(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		metrics.TrinoRequestsTotal.WithLabelValues("query_rows", outcome).Inc()
+		metrics.TrinoRequestDurationSeconds.WithLabelValues("query_rows", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	rows, err := c.db.QueryContext(ctx, query, args...)
 	if err != nil {
+		outcome = "error"
 		return nil, err
 	}
 	defer rows.Close()
-	return rowsToMaps(rows)
+	items, err := rowsToMaps(rows)
+	if err != nil {
+		outcome = "error"
+		return nil, err
+	}
+	return items, nil
 }
 
 func (c *Client) Table(name string) string {

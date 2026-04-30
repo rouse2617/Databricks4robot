@@ -1481,6 +1481,33 @@ func (r *AssetEventRepo) OldestPendingAge(ctx context.Context) (float64, error) 
 	return age, nil
 }
 
+// MaxPendingRetryCount returns the maximum retry_count among pending events.
+func (r *AssetEventRepo) MaxPendingRetryCount(ctx context.Context) (int64, error) {
+	const q = `SELECT COALESCE(MAX(retry_count), 0) FROM asset_events WHERE publish_state = 'pending'`
+	db := dbFromCtx(ctx, r.c.db)
+	var retryMax int64
+	if err := db.QueryRow(ctx, q).Scan(&retryMax); err != nil {
+		return 0, fmt.Errorf("postgres AssetEventRepo.MaxPendingRetryCount: %w", err)
+	}
+	return retryMax, nil
+}
+
+// SinkLagSeq returns MAX(event_seq) - last_published_seq for the given sink.
+func (r *AssetEventRepo) SinkLagSeq(ctx context.Context, sinkName string) (int64, error) {
+	const q = `
+SELECT GREATEST(
+  COALESCE((SELECT MAX(event_seq) FROM asset_events), 0) -
+  COALESCE((SELECT last_published_seq FROM outbox_sink_cursors WHERE sink_name = $1), 0),
+  0
+)`
+	db := dbFromCtx(ctx, r.c.db)
+	var lag int64
+	if err := db.QueryRow(ctx, q, sinkName).Scan(&lag); err != nil {
+		return 0, fmt.Errorf("postgres AssetEventRepo.SinkLagSeq: %w", err)
+	}
+	return lag, nil
+}
+
 // ComputeSafeHorizon returns the highest event_seq that can safely be used as
 // a cursor checkpoint (§4.2 of outbox-worker-design.md).
 //   - If pending events exist: MIN(event_seq WHERE pending) - 1
@@ -1812,4 +1839,13 @@ WHERE event_seq IN (SELECT event_seq FROM moved)`
 		return 0, fmt.Errorf("postgres OutboxDLQRepo.MoveToDLQ: %w", err)
 	}
 	return rowsAffected, nil
+}
+
+func (r *OutboxDLQRepo) Count(ctx context.Context) (int64, error) {
+	const q = `SELECT COUNT(*) FROM outbox_dlq`
+	var n int64
+	if err := r.c.db.QueryRow(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("postgres OutboxDLQRepo.Count: %w", err)
+	}
+	return n, nil
 }

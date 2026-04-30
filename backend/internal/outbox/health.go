@@ -3,6 +3,8 @@ package outbox
 import (
 	"net/http"
 	"sync"
+
+	"data-platform/internal/metrics"
 )
 
 // HealthStatus tracks the health of the outbox worker. It implements the
@@ -18,6 +20,7 @@ type HealthStatus struct {
 
 // NewHealthStatus returns a HealthStatus that starts in the healthy state.
 func NewHealthStatus() *HealthStatus {
+	metrics.OutboxWorkerHealth.Set(1)
 	return &HealthStatus{healthy: true}
 }
 
@@ -28,6 +31,7 @@ func (h *HealthStatus) MarkUnhealthy(reason string) {
 	defer h.mu.Unlock()
 	h.healthy = false
 	h.reason = reason
+	metrics.OutboxWorkerHealth.Set(0)
 }
 
 // IsHealthy returns true when the worker is considered healthy.

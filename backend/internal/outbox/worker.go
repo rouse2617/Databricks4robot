@@ -21,6 +21,15 @@ type HealthMarker interface {
 	MarkUnhealthy(reason string)
 }
 
+type metricsEventSampler interface {
+	MaxPendingRetryCount(ctx context.Context) (int64, error)
+	SinkLagSeq(ctx context.Context, sinkName string) (int64, error)
+}
+
+type metricsDLQSampler interface {
+	Count(ctx context.Context) (int64, error)
+}
+
 // ESWorker polls pending asset_events and projects affected assets into Elasticsearch.
 type ESWorker struct {
 	Events       repository.AssetEventRepository
@@ -97,8 +106,10 @@ func (w *ESWorker) processBatch(ctx context.Context) (done bool, err error) {
 	}
 	pending, err := w.Events.ListPending(ctx, w.BatchSize)
 	if err != nil {
+		metrics.OutboxFetchDeadlock.Inc()
 		return false, err
 	}
+	metrics.OutboxBatchSize.Observe(float64(len(pending)))
 	if len(pending) == 0 {
 		return true, nil
 	}
@@ -148,6 +159,7 @@ func (w *ESWorker) processBatch(ctx context.Context) (done bool, err error) {
 		}
 		if !ok {
 			if err := w.ES.DeleteDocument(ctx, assetID); err != nil {
+				metrics.OutboxTombstoneFailure.Inc()
 				for _, seq := range seqs {
 					_ = w.Events.MarkFailed(ctx, seq, err.Error())
 				}
@@ -216,6 +228,7 @@ func (w *ESWorker) processBatch(ctx context.Context) (done bool, err error) {
 
 	if len(markSeqs) > 0 {
 		if err := w.Events.MarkPublishedAndAdvanceCursor(ctx, markSeqs, w.sinkName()); err != nil {
+			metrics.OutboxCursorDeadlock.Inc()
 			return false, err
 		}
 		metrics.OutboxEventsPublished.Add(float64(len(markSeqs)))
@@ -279,12 +292,27 @@ func (w *ESWorker) Run(ctx context.Context, tick time.Duration) {
 				metrics.OutboxOldestPendingAge.Set(age)
 			}
 
+			if sampler, ok := w.Events.(metricsEventSampler); ok {
+				if retryMax, err := sampler.MaxPendingRetryCount(ctx); err == nil {
+					metrics.OutboxRetryMax.Set(float64(retryMax))
+				}
+				if lagSeq, err := sampler.SinkLagSeq(ctx, w.sinkName()); err == nil {
+					metrics.OutboxSinkLagSeq.Set(float64(lagSeq))
+				}
+			}
+
 			// Sweep permanently failed events to DLQ before processing.
 			if w.DLQ != nil && w.RetryLimit > 0 {
 				if moved, err := w.DLQ.MoveToDLQ(ctx, w.RetryLimit); err != nil {
 					slog.Warn("dlq sweep failed", "err", err)
 				} else if moved > 0 {
+					metrics.OutboxDLQMoved.Add(float64(moved))
 					slog.Info("moved events to DLQ", "count", moved)
+				}
+				if sampler, ok := w.DLQ.(metricsDLQSampler); ok {
+					if dlqCount, err := sampler.Count(ctx); err == nil {
+						metrics.OutboxDLQCount.Set(float64(dlqCount))
+					}
 				}
 			}
 
@@ -296,6 +324,7 @@ func (w *ESWorker) Run(ctx context.Context, tick time.Duration) {
 				metrics.OutboxBatchDurationMs.Observe(float64(time.Since(batchStart).Milliseconds()))
 				if err != nil {
 					consecutiveFetchFails++
+					metrics.OutboxWorkerConsecutiveFailures.Set(float64(consecutiveFetchFails))
 					wait := backoffDuration(consecutiveFetchFails)
 					slog.Error("outbox worker batch failed",
 						"err", err,
@@ -309,6 +338,8 @@ func (w *ESWorker) Run(ctx context.Context, tick time.Duration) {
 					break // exit drain, wait for next tick
 				}
 				consecutiveFetchFails = 0 // reset on success
+				metrics.OutboxWorkerConsecutiveFailures.Set(0)
+				metrics.OutboxWorkerLastSuccessUnix.Set(float64(time.Now().Unix()))
 				metrics.OutboxWorkerBatches.Inc()
 				if done {
 					break // pending exhausted

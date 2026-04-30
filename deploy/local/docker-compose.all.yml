@@ -54,6 +54,9 @@ services:
       TRINO_CATALOG: "iceberg"
       TRINO_SCHEMA: "robot"
       ELASTICSEARCH_URL: "http://elasticsearch:9200"
+      OUTBOX_WORKER_ENABLED: "true"
+      OUTBOX_WORKER_TICK_SEC: "1"
+      OUTBOX_WORKER_BATCH: "200"
     depends_on:
       pgbouncer:
         condition: service_started
@@ -61,8 +64,24 @@ services:
         condition: service_healthy
       elasticsearch-init:
         condition: service_completed_successfully
+      lakehouse-mvp-init:
+        condition: service_completed_successfully
       trino:
-        condition: service_started
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        until nc -z pgbouncer 6432; do
+          echo "waiting for pgbouncer..."
+          sleep 1
+        done
+        exec ./server
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   # ── Frontend (React + Nginx) ────────────────────────────────
@@ -75,7 +94,8 @@ services:
     ports:
       - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
   # ── Iceberg Stack (ADR-001: Polaris selected for prod; local uses iceberg-rest-fixture) ──
@@ -95,11 +115,18 @@ services:
       default:
         aliases:
           - warehouse.minio
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
   minio-init:
     image: minio/mc:latest
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     entrypoint: >
       /bin/sh -c "
       until mc alias set local http://minio:9000 admin password; do
@@ -125,12 +152,20 @@ services:
       CATALOG_WAREHOUSE: s3://warehouse/
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
       CATALOG_S3_ENDPOINT: http://minio:9000
+    volumes:
+      - iceberg-rest-data:/tmp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8181/v1/config >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
 
   spark-iceberg:
     image: tabulario/spark-iceberg:latest
     depends_on:
       iceberg-rest:
-        condition: service_started
+        condition: service_healthy
       minio-init:
         condition: service_completed_successfully
     ports:
@@ -142,18 +177,47 @@ services:
       AWS_REGION: us-east-1
     volumes:
       - ./iceberg/notebooks:/home/iceberg/notebooks/notebooks
+    restart: unless-stopped
+
+  lakehouse-mvp-init:
+    image: tabulario/spark-iceberg:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      iceberg-rest:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+    volumes:
+      - ./iceberg/notebooks:/home/iceberg/notebooks/notebooks
+    entrypoint:
+      - /bin/sh
+      - -lc
+    command:
+      - python /home/iceberg/notebooks/notebooks/build_lakehouse_mvp.py
+    restart: "no"
 
   trino:
     image: trinodb/trino:latest
     depends_on:
       iceberg-rest:
-        condition: service_started
+        condition: service_healthy
       minio-init:
         condition: service_completed_successfully
     ports:
       - "8082:8080"
     volumes:
       - ./trino/catalog:/etc/trino/catalog:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/info >/dev/null 2>&1 || curl -sf http://localhost:8080/v1/info >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
 
   # ── Elasticsearch (Search) ──────────────────────────────────────
   elasticsearch:
@@ -172,6 +236,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   elasticsearch-init:
     image: curlimages/curl:8.7.1
@@ -281,7 +346,74 @@ services:
       "
     restart: "no"
 
+  # ── Observability ───────────────────────────────────────────────
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres:5432/data4cyber?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  elasticsearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:latest
+    command:
+      - "--es.uri=http://elasticsearch:9200"
+      - "--es.all"
+      - "--es.indices"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  blackbox-exporter:
+    image: quay.io/prometheus/blackbox-exporter:latest
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+    volumes:
+      - ./monitoring/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - backend
+      - postgres-exporter
+      - elasticsearch-exporter
+      - blackbox-exporter
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   pgdata:
   iceberg-minio-data:
+  iceberg-rest-data:
   elasticsearch-data:
+  prometheus-data:
+  grafana-data:

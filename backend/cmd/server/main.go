@@ -30,6 +30,7 @@ import (
 	mcapH "data-platform/internal/handlers/mcap"
 	registryH "data-platform/internal/handlers/registry"
 	searchH "data-platform/internal/handlers/search"
+	"data-platform/internal/metrics"
 	"data-platform/internal/middleware"
 	"data-platform/internal/outbox"
 	"data-platform/internal/postgres"
@@ -60,6 +61,9 @@ func main() {
 	}
 
 	ctx := context.Background()
+	for _, dep := range []string{"postgres", "trino", "elasticsearch", "outbox_worker"} {
+		metrics.BackendDependencyUp.WithLabelValues(dep).Set(0)
+	}
 
 	// Load registries (required for all backends).
 	algoRegistry, err := config.LoadAlgoRegistry("config/algo_registry.yaml")
@@ -97,6 +101,7 @@ func main() {
 			slog.Error("postgres connect failed", "err", pgErr)
 			os.Exit(1)
 		}
+		metrics.BackendDependencyUp.WithLabelValues("postgres").Set(1)
 		defer pgClient.Close()
 
 		audit.Init(postgres.NewAuditSink(pgClient))
@@ -121,6 +126,7 @@ func main() {
 	if err != nil {
 		slog.Warn("trino query layer unavailable", "err", err)
 	} else if trinoClient != nil {
+		metrics.BackendDependencyUp.WithLabelValues("trino").Set(1)
 		defer trinoClient.Close()
 		slog.Info("trino query layer connected", "catalog", cfg.TrinoCatalog, "schema", cfg.TrinoSchema)
 	}
@@ -133,6 +139,7 @@ func main() {
 			slog.Warn("elasticsearch unavailable, search will return 503", "err", err)
 			esClient = nil
 		} else {
+			metrics.BackendDependencyUp.WithLabelValues("elasticsearch").Set(1)
 			slog.Info("elasticsearch connected", "url", cfg.ElasticsearchURL)
 		}
 	}
@@ -181,6 +188,7 @@ func main() {
 			Health:       outboxHealth,
 		}
 		go w.Run(workerCtx, time.Duration(tickSec)*time.Second)
+		metrics.BackendDependencyUp.WithLabelValues("outbox_worker").Set(1)
 		slog.Info("outbox ES worker started", "tick_sec", tickSec, "batch", batch, "fatal_on_panic", cfg.OutboxWorkerFatalOnPanic == "true")
 	} else if cfg.OutboxWorkerEnabled == "true" {
 		slog.Warn("outbox worker disabled: requires STORAGE_BACKEND=postgres, reachable ELASTICSEARCH_URL, and successful ES ping")

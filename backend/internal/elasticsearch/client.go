@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"data-platform/internal/metrics"
 )
 
 // Client wraps HTTP calls to an Elasticsearch cluster.
@@ -544,6 +546,13 @@ func splitBetween(value string) (string, string, bool) {
 }
 
 func (c *Client) doSearch(ctx context.Context, body map[string]any) (*SearchResponse, error) {
+	start := time.Now()
+	outcome := "error"
+	defer func() {
+		metrics.ElasticsearchRequestsTotal.WithLabelValues("search", outcome).Inc()
+		metrics.ElasticsearchRequestDurationSeconds.WithLabelValues("search", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch: marshal query: %w", err)
@@ -611,6 +620,7 @@ func (c *Client) doSearch(ctx context.Context, body map[string]any) (*SearchResp
 		result.Aggregations[name] = agg.Buckets
 	}
 
+	outcome = "ok"
 	return result, nil
 }
 
@@ -640,6 +650,13 @@ type BulkIndexResult struct {
 // On success (HTTP 2xx) it returns per-doc results so the caller can
 // handle partial failures (some docs succeed, some fail).
 func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (*BulkIndexResult, error) {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		metrics.ElasticsearchRequestsTotal.WithLabelValues("bulk_index", outcome).Inc()
+		metrics.ElasticsearchRequestDurationSeconds.WithLabelValues("bulk_index", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	if len(docs) == 0 {
 		return &BulkIndexResult{}, nil
 	}
@@ -669,6 +686,7 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (*BulkIndex
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		outcome = "error"
 		return nil, fmt.Errorf("elasticsearch: bulk failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -679,6 +697,7 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (*BulkIndex
 	}
 
 	if resp.StatusCode >= 300 {
+		outcome = "http_error"
 		return nil, fmt.Errorf("elasticsearch: bulk status %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -696,6 +715,7 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (*BulkIndex
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(respBody, &bulkResp); err != nil {
+		outcome = "error"
 		return nil, fmt.Errorf("elasticsearch: unmarshal bulk response: %w", err)
 	}
 
@@ -718,11 +738,21 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (*BulkIndex
 			result.Failed = append(result.Failed, bir)
 		}
 	}
+	if len(result.Failed) > 0 {
+		outcome = "partial_error"
+	}
 	return result, nil
 }
 
 // DeleteDocument removes a document from the index by id (asset_id). Idempotent: 404 is treated as success.
 func (c *Client) DeleteDocument(ctx context.Context, id string) error {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		metrics.ElasticsearchRequestsTotal.WithLabelValues("delete_document", outcome).Inc()
+		metrics.ElasticsearchRequestDurationSeconds.WithLabelValues("delete_document", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	if id == "" {
 		return nil
 	}
@@ -733,6 +763,7 @@ func (c *Client) DeleteDocument(ctx context.Context, id string) error {
 	}
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		outcome = "error"
 		return fmt.Errorf("elasticsearch: delete failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -740,6 +771,7 @@ func (c *Client) DeleteDocument(ctx context.Context, id string) error {
 		return nil
 	}
 	if resp.StatusCode >= 300 {
+		outcome = "http_error"
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("elasticsearch: delete status %d: %s", resp.StatusCode, string(body))
 	}
@@ -814,17 +846,27 @@ func (c *Client) Count(ctx context.Context) (int64, error) {
 
 // Ping checks if Elasticsearch is reachable.
 func (c *Client) Ping(ctx context.Context) error {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		metrics.ElasticsearchRequestsTotal.WithLabelValues("ping", outcome).Inc()
+		metrics.ElasticsearchRequestDurationSeconds.WithLabelValues("ping", outcome).Observe(time.Since(start).Seconds())
+	}()
+
 	url := fmt.Sprintf("%s/_cluster/health", c.baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		outcome = "error"
 		return err
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		outcome = "error"
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		outcome = "http_error"
 		return fmt.Errorf("elasticsearch: ping status %d", resp.StatusCode)
 	}
 	return nil
