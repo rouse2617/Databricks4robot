@@ -14,6 +14,17 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ../../backend/migrations:/docker-entrypoint-initdb.d
 
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23.1-p2
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
   bigtable-emulator:
     image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
     command: gcloud beta emulators bigtable start --host-port=0.0.0.0:8086

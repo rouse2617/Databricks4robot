@@ -238,7 +238,7 @@ func TestCommitSegments_AlgoStateInitialization(t *testing.T) {
 	}
 }
 
-// ─── Task 11.2: cf_files["raw_mcap"] Written ───────────────────────────────
+// ─── Task 11.2: files["raw_mcap"] Written ───────────────────────────────
 
 func TestCreate_CfFilesRawMcap(t *testing.T) {
 	repo := newMockAssetRepo()
@@ -257,13 +257,13 @@ func TestCreate_CfFilesRawMcap(t *testing.T) {
 		t.Fatalf("Create failed: %v", err)
 	}
 
-	// cf_files["raw_mcap"] should be set to the mcap_file_id.
+	// files["raw_mcap"] should be set to the mcap_file_id.
 	rawMcap, ok := asset.Files["raw_mcap"]
 	if !ok {
-		t.Fatal("cf_files[raw_mcap] not set")
+		t.Fatal("files[raw_mcap] not set")
 	}
 	if rawMcap != "mcap-test-006" {
-		t.Errorf("cf_files[raw_mcap]: expected 'mcap-test-006', got %q", rawMcap)
+		t.Errorf("files[raw_mcap]: expected 'mcap-test-006', got %q", rawMcap)
 	}
 }
 
@@ -287,11 +287,11 @@ func TestCommitSegments_CfFilesRawMcap(t *testing.T) {
 		asset, _ := repo.Get(ctx, id)
 		rawMcap, ok := asset.Files["raw_mcap"]
 		if !ok {
-			t.Errorf("asset %s: cf_files[raw_mcap] not set", id)
+			t.Errorf("asset %s: files[raw_mcap] not set", id)
 			continue
 		}
 		if rawMcap != "mcap-test-007" {
-			t.Errorf("asset %s: cf_files[raw_mcap] expected 'mcap-test-007', got %q", id, rawMcap)
+			t.Errorf("asset %s: files[raw_mcap] expected 'mcap-test-007', got %q", id, rawMcap)
 		}
 	}
 }

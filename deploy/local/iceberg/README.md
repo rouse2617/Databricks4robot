@@ -37,7 +37,13 @@ The Spark container mounts `deploy/local/iceberg/notebooks` into the notebook wo
 
 ## Smoke Test
 
-Open `notebooks/iceberg_smoke.py` in Jupyter and run the cells. It creates a small Iceberg table at:
+Run the automated smoke test to verify PyIceberg + Trino connectivity:
+
+```bash
+bash deploy/local/iceberg/smoke-test.sh
+```
+
+Or open `notebooks/iceberg_smoke.py` in Jupyter and run the cells. It creates a small Iceberg table at:
 
 ```text
 demo.robot_assets
@@ -150,3 +156,51 @@ To remove persisted MinIO data too:
 cd deploy/local
 docker compose -f docker-compose.iceberg.yml down -v
 ```
+
+## Bronze MERGE (Outbox → Iceberg)
+
+The two-stage ingestion pipeline (§5.6.2):
+
+1. **Outbox Worker Bronze Sink** writes staging JSONL files to `/tmp/iceberg-staging/`
+2. **PyIceberg CronJob** merges staging files into `bronze_asset_events` with event_seq dedup
+
+Run the merge manually:
+
+```bash
+python deploy/local/iceberg/bronze_merge.py
+```
+
+Dry run (report only):
+
+```bash
+DRY_RUN=true python deploy/local/iceberg/bronze_merge.py
+```
+
+## Iceberg Maintenance (Compact)
+
+Run snapshot expiry, data file compaction, and orphan file cleanup:
+
+```bash
+python deploy/local/iceberg/compact.py
+python deploy/local/iceberg/compact.py --dry-run
+python deploy/local/iceberg/compact.py --expire-only
+python deploy/local/iceberg/compact.py --compact-only
+```
+
+## Verification Scripts
+
+24h no-loss verification:
+
+```bash
+bash deploy/local/iceberg/verify_no_loss.sh
+```
+
+Small file count stability (run daily for 7+ days):
+
+```bash
+bash deploy/local/iceberg/verify_small_files.sh
+```
+
+## ADR
+
+Catalog selection decision: [docs/adr/001-iceberg-catalog-selection.md](../../docs/adr/001-iceberg-catalog-selection.md)

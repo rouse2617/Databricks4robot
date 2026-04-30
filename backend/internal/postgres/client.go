@@ -131,6 +131,12 @@ func New(ctx context.Context, cfg *config.Config) (*Client, error) {
 		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
 		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName,
 	)
+	return NewFromDSN(ctx, dsn)
+}
+
+// NewFromDSN creates a Client from a raw DSN string. Useful for integration
+// tests where the DSN comes from a testcontainer rather than config.Config.
+func NewFromDSN(ctx context.Context, dsn string) (*Client, error) {
 	db, err := newPool(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres connect: %w", err)

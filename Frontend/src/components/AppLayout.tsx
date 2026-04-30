@@ -10,6 +10,7 @@ import {
   SettingOutlined,
   LogoutOutlined,
   UserOutlined,
+  UnorderedListOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
@@ -25,6 +26,7 @@ const menuItems = [
   { key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
   { type: "divider" as const },
   { key: "/analytics", icon: <BarChartOutlined />, label: "湖仓验证" },
+  { key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
   { key: "/tags", icon: <TagsOutlined />, label: "标签字典" },
   { key: "/settings", icon: <SettingOutlined />, label: "设置" },
 ];

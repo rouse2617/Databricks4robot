@@ -1399,6 +1399,83 @@ func (r *AssetEventRepo) CountPending(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
+// OldestPendingAge returns the age of the oldest pending event in seconds
+// (now() - MIN(occurred_at) WHERE publish_state='pending'). Returns 0 when
+// no pending events exist.
+func (r *AssetEventRepo) OldestPendingAge(ctx context.Context) (float64, error) {
+	const q = `SELECT COALESCE(EXTRACT(EPOCH FROM now() - MIN(occurred_at)), 0) FROM asset_events WHERE publish_state = 'pending'`
+	db := dbFromCtx(ctx, r.c.db)
+	var age float64
+	if err := db.QueryRow(ctx, q).Scan(&age); err != nil {
+		return 0, fmt.Errorf("postgres AssetEventRepo.OldestPendingAge: %w", err)
+	}
+	return age, nil
+}
+
+// ComputeSafeHorizon returns the highest event_seq that can safely be used as
+// a cursor checkpoint (§4.2 of outbox-worker-design.md).
+//   - If pending events exist: MIN(event_seq WHERE pending) - 1
+//   - If no pending events:    MAX(event_seq) across all events
+//   - If the table is empty:   0, nil
+func (r *AssetEventRepo) ComputeSafeHorizon(ctx context.Context) (int64, error) {
+	const q = `
+SELECT COALESCE(
+  (SELECT MIN(event_seq) - 1 FROM asset_events WHERE publish_state = 'pending'),
+  (SELECT MAX(event_seq) FROM asset_events),
+  0
+)`
+	db := dbFromCtx(ctx, r.c.db)
+	var horizon int64
+	if err := db.QueryRow(ctx, q).Scan(&horizon); err != nil {
+		return 0, fmt.Errorf("postgres AssetEventRepo.ComputeSafeHorizon: %w", err)
+	}
+	return horizon, nil
+}
+
+// MarkPublishedAndAdvanceCursor atomically marks the given event sequences as
+// published, computes the safe horizon, and advances the outbox_sink_cursors
+// row for sinkName. All three steps run in a single transaction (§4.2).
+func (r *AssetEventRepo) MarkPublishedAndAdvanceCursor(ctx context.Context, eventSeqs []int64, sinkName string) error {
+	if len(eventSeqs) == 0 {
+		return nil
+	}
+	return r.c.WithTx(ctx, func(txCtx context.Context) error {
+		db := dbFromCtx(txCtx, r.c.db)
+
+		// Step 1: Mark events as published.
+		const markQ = `
+UPDATE asset_events
+SET publish_state = 'published', published_at = now()
+WHERE event_seq = ANY($1::bigint[]) AND publish_state = 'pending'`
+		if err := db.Exec(txCtx, markQ, eventSeqs); err != nil {
+			return fmt.Errorf("postgres MarkPublishedAndAdvanceCursor mark: %w", err)
+		}
+
+		// Step 2: Compute safe horizon.
+		const horizonQ = `
+SELECT COALESCE(
+  (SELECT MIN(event_seq) - 1 FROM asset_events WHERE publish_state = 'pending'),
+  (SELECT MAX(event_seq) FROM asset_events),
+  0
+)`
+		var horizon int64
+		if err := db.QueryRow(txCtx, horizonQ).Scan(&horizon); err != nil {
+			return fmt.Errorf("postgres MarkPublishedAndAdvanceCursor horizon: %w", err)
+		}
+
+		// Step 3: Advance cursor (monotonic guard: only move forward).
+		const cursorQ = `
+UPDATE outbox_sink_cursors
+SET last_published_seq = $1, updated_at = now()
+WHERE sink_name = $2 AND last_published_seq < $1`
+		if err := db.Exec(txCtx, cursorQ, horizon, sinkName); err != nil {
+			return fmt.Errorf("postgres MarkPublishedAndAdvanceCursor cursor: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // ListByAsset returns the asset event stream in DESC event_seq order with
 // optional exact event_type filters, wildcard event_type patterns, algo_key
 // filter, and event_seq cursor bounds.
@@ -1607,7 +1684,7 @@ ON CONFLICT (asset_id, algo_name) DO UPDATE SET
 	return expectedVersion + 1, nil
 }
 
-// parseAlgoKVKey parses a cf_algo key in the format "<algo_name>@<version>:<field>"
+// parseAlgoKVKey parses an algo key in the format "<algo_name>@<version>:<field>"
 // and returns the components. Returns empty strings if the format is invalid.
 func parseAlgoKVKey(key string) (algoName, algoVersion, field string) {
 	// Find the last colon to split field.
@@ -1638,4 +1715,32 @@ func parseAlgoKVKey(key string) (algoName, algoVersion, field string) {
 	algoName = prefix[:atIdx]
 	algoVersion = prefix[atIdx+1:]
 	return
+}
+
+// ─── OutboxDLQRepo ──────────────────────────────────────────────────────────
+
+type OutboxDLQRepo struct {
+	c *Client
+}
+
+func NewOutboxDLQRepo(c *Client) *OutboxDLQRepo { return &OutboxDLQRepo{c: c} }
+
+// MoveToDLQ moves events with retry_count > retryThreshold from asset_events
+// to outbox_dlq, then marks them as published so the worker stops retrying.
+func (r *OutboxDLQRepo) MoveToDLQ(ctx context.Context, retryThreshold int) (int64, error) {
+	const q = `
+WITH moved AS (
+  INSERT INTO outbox_dlq (event_id, event_seq, event_type, aggregate_type, asset_id, mcap_file_id, event_source, event_payload, retry_count, last_error, original_created_at)
+  SELECT event_id, event_seq, event_type, aggregate_type, asset_id, mcap_file_id, event_source, event_payload, retry_count, last_error, created_at
+  FROM asset_events
+  WHERE publish_state = 'pending' AND retry_count > $1
+  RETURNING event_seq
+)
+UPDATE asset_events SET publish_state = 'dlq', published_at = now()
+WHERE event_seq IN (SELECT event_seq FROM moved)`
+	rowsAffected, err := r.c.db.ExecResult(ctx, q, retryThreshold)
+	if err != nil {
+		return 0, fmt.Errorf("postgres OutboxDLQRepo.MoveToDLQ: %w", err)
+	}
+	return rowsAffected, nil
 }

@@ -99,7 +99,8 @@ curl -sf -X PUT "${OS_URL}/assets" \
           "value_bool":  { "type": "boolean" },
           "source_type": { "type": "keyword" },
           "source_name": { "type": "keyword" },
-          "confidence":  { "type": "double" }
+          "confidence":  { "type": "double" },
+          "tagged_at":   { "type": "date" }
         }
       },
 

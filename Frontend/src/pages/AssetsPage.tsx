@@ -18,6 +18,7 @@ import AssetQuickPreviewPane from "../components/assets/AssetQuickPreviewPane";
 import SavedViewSelector from "../components/assets/SavedViewSelector";
 import SaveViewDialog from "../components/assets/SaveViewDialog";
 import AddFilterPopover from "../components/assets/AddFilterPopover";
+import ExpiringAssetsChip from "../components/assets/ExpiringAssetsChip";
 import ColumnsConfigPopover from "../components/assets/ColumnsConfigPopover";
 import CreateDeliveryModal from "../components/deliveries/CreateDeliveryModal";
 import BatchTagModal from "../components/assets/BatchTagModal";
@@ -172,6 +173,15 @@ export default function AssetsPage() {
         <AddFilterPopover
           onAddFilter={(chip) =>
             dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } })
+          }
+        />
+        <ExpiringAssetsChip
+          activeFilters={state.queryState.activeFilters}
+          onAddFilter={(chip) =>
+            dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } })
+          }
+          onRemoveFilter={(id) =>
+            dispatch({ type: "REMOVE_FILTER_CHIP", payload: { id } })
           }
         />
       </div>

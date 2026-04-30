@@ -142,7 +142,7 @@ func TestTagValidate_StringNoMaxLength(t *testing.T) {
 // ── Property tests ───────────────────────────────────────────────────────────
 
 // Property 24: tag_registry 校验拒绝未注册 key
-// For any write to cf_tag, when the tag key is not registered in tag_registry.yaml,
+// For any write to tags, when the tag key is not registered in tag_registry.yaml,
 // the operation should return an error. When the key is registered and type is enum,
 // the value must be in the values list, otherwise return an error.
 // **Validates: Requirements 13.4, 13.5**

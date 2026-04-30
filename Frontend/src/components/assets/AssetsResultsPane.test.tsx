@@ -58,7 +58,7 @@ const defaultProps = {
   page: 1,
   pageSize: 20,
   viewMode: "table" as const,
-  selectedColumns: ["asset_id", "duration", "env", "status", "algo", "updated_at"],
+  selectedColumns: ["asset_id", "duration", "env", "lifecycle_state", "algo", "updated_at"],
   selectedIds: new Set<string>(),
   activePreviewId: null,
   onSortChange: vi.fn(),

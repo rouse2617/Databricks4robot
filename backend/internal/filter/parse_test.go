@@ -60,11 +60,8 @@ var allowedExactInputFields = []string{
 var allowedDynamicInputFields = []string{
 	"tag.priority",
 	"tags.notes",
-	"cf_tag.scene",
 	"algo.hand_tracking@1.2.0:status",
-	"cf_algo.deface@2.0.0:status",
 	"files.preview_mp4",
-	"cf_files.raw_mcap",
 	"lifecycle.total_size_bytes",
 }
 
@@ -333,7 +330,7 @@ func TestParseFilter_ResolvesAliases(t *testing.T) {
 		t.Fatalf("expected asset_tags storage field, got %q", f.StorageField)
 	}
 
-	f, err = ParseFilter("cf_algo.hand_tracking@1.2.0:status:eq:failed")
+	f, err = ParseFilter("algo.hand_tracking@1.2.0:status:eq:failed")
 	if err != nil {
 		t.Fatalf("ParseFilter algo alias: %v", err)
 	}
@@ -351,26 +348,27 @@ func TestParseFilter_RejectsUnknownField(t *testing.T) {
 	}
 }
 
-// ── ResolveFieldAlias tests ──────────────────────────────────────────────────
+// ── ResolveFieldAlias tests (cf_* legacy layer removed in P2-9) ──────────────
 
 func TestResolveFieldAlias_TagPrefix(t *testing.T) {
+	// After cf_* removal, tag. prefix is no longer aliased.
 	got := ResolveFieldAlias("tag.notes")
-	if got != "cf_tag.notes" {
-		t.Fatalf("expected cf_tag.notes, got %q", got)
+	if got != "tag.notes" {
+		t.Fatalf("expected tag.notes (no alias), got %q", got)
 	}
 }
 
 func TestResolveFieldAlias_FilePrefix(t *testing.T) {
 	got := ResolveFieldAlias("file.raw")
-	if got != "cf_files.raw" {
-		t.Fatalf("expected cf_files.raw, got %q", got)
+	if got != "file.raw" {
+		t.Fatalf("expected file.raw (no alias), got %q", got)
 	}
 }
 
 func TestResolveFieldAlias_AlgoPrefix(t *testing.T) {
 	got := ResolveFieldAlias("algo.hand_tracking")
-	if got != "cf_algo.hand_tracking" {
-		t.Fatalf("expected cf_algo.hand_tracking, got %q", got)
+	if got != "algo.hand_tracking" {
+		t.Fatalf("expected algo.hand_tracking (no alias), got %q", got)
 	}
 }
 

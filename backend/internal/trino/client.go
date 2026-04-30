@@ -89,20 +89,23 @@ func (c *Client) Status(ctx context.Context) Status {
 	return status
 }
 
-func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
-	tableNames := []string{
-		"bronze_asset_algo_events",
-		"bronze_delivery_items",
-		"silver_mcap_files_current",
-		"silver_assets_current",
-		"silver_deliveries_current",
-		"silver_asset_algo_latest",
-		"silver_asset_tags",
-		"gold_dataset_snapshot_items",
-	}
+// KnownTables lists all Iceberg tables the platform manages.
+// bronze_asset_events is the outbox-driven event lake (§5.6.2).
+var KnownTables = []string{
+	"bronze_asset_events",
+	"bronze_asset_algo_events",
+	"bronze_delivery_items",
+	"silver_mcap_files_current",
+	"silver_assets_current",
+	"silver_deliveries_current",
+	"silver_asset_algo_latest",
+	"silver_asset_tags",
+	"gold_dataset_snapshot_items",
+}
 
-	parts := make([]string, 0, len(tableNames))
-	for _, tableName := range tableNames {
+func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
+	parts := make([]string, 0, len(KnownTables))
+	for _, tableName := range KnownTables {
 		parts = append(parts, fmt.Sprintf(
 			"SELECT '%s' AS table_name, count(*) AS row_count FROM %s",
 			tableName,
@@ -125,6 +128,25 @@ func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// BronzeEventCount returns the total row count in bronze_asset_events.
+// Used by the sync-status endpoint to compare PG vs Iceberg counts.
+func (c *Client) BronzeEventCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := c.db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT count(*) FROM %s", c.table("bronze_asset_events")),
+	).Scan(&count)
+	return count, err
+}
+
+// BronzeMaxEventSeq returns the maximum event_seq in bronze_asset_events.
+func (c *Client) BronzeMaxEventSeq(ctx context.Context) (int64, error) {
+	var seq int64
+	err := c.db.QueryRowContext(ctx,
+		fmt.Sprintf("SELECT COALESCE(max(event_seq), 0) FROM %s", c.table("bronze_asset_events")),
+	).Scan(&seq)
+	return seq, err
 }
 
 func (c *Client) QueryRows(ctx context.Context, query string, args ...any) ([]map[string]any, error) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Collapse, Descriptions, Row, Spin, Statistic, Table, Tag, Typography } from "antd";
-import { BarChartOutlined, CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
+import { BarChartOutlined, CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, SyncOutlined, WarningOutlined } from "@ant-design/icons";
+import ReactECharts from "echarts-for-react";
 import type { ColumnsType } from "antd/es/table";
 import {
   lakehouseApi,
@@ -108,7 +109,109 @@ function QuestionPanel({
   );
 }
 
-/* ─── Sync Status Card (Task 15.2) ─── */
+/* ─── Quality Distribution Chart (Task 8.1) ─── */
+function QualityDistributionChart({
+  data,
+  errorMessage,
+}: {
+  data?: LakehouseItemsResponse;
+  errorMessage?: string;
+}) {
+  if (errorMessage) {
+    return (
+      <Card title="质量分布" size="small">
+        <Alert type="warning" showIcon message="质量分布数据暂不可用" description={errorMessage} />
+      </Card>
+    );
+  }
+
+  const rows = asRows(data?.items);
+  if (rows.length === 0) {
+    return (
+      <Card title="质量分布" size="small">
+        <Text type="secondary">暂无质量分布数据</Text>
+      </Card>
+    );
+  }
+
+  const qualityLabels = rows.map((r) => String(r.quality ?? r.tag_value ?? r.key ?? "unknown"));
+  const counts = rows.map((r) => Number(r.count ?? r.asset_count ?? r.doc_count ?? 0));
+
+  const colorMap: Record<string, string> = {
+    excellent: "#52c41a",
+    good: "#73d13d",
+    acceptable: "#faad14",
+    poor: "#ff7a45",
+    unusable: "#ff4d4f",
+  };
+  const colors = qualityLabels.map((label) => colorMap[label.toLowerCase()] ?? "#1890ff");
+
+  const option = {
+    tooltip: { trigger: "item" as const },
+    legend: { bottom: 0 },
+    series: [
+      {
+        type: "pie",
+        radius: ["40%", "70%"],
+        avoidLabelOverlap: false,
+        itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 },
+        label: { show: true, formatter: "{b}: {c} ({d}%)" },
+        data: qualityLabels.map((label, i) => ({
+          name: label,
+          value: counts[i],
+          itemStyle: { color: colors[i] },
+        })),
+      },
+    ],
+  };
+
+  return (
+    <Card title="质量分布" size="small" data-testid="quality-distribution-chart">
+      <ReactECharts option={option} style={{ height: 280 }} />
+    </Card>
+  );
+}
+
+/* ─── Table Row Count Bar Chart (Task 8.1) ─── */
+function TableRowCountChart({ tables }: { tables: LakehouseTableCount[] }) {
+  if (tables.length === 0) {
+    return (
+      <Card title="Iceberg 表行数" size="small">
+        <Text type="secondary">暂无表数据</Text>
+      </Card>
+    );
+  }
+
+  const names = tables.map((t) => t.table_name);
+  const counts = tables.map((t) => t.row_count);
+
+  const option = {
+    tooltip: { trigger: "axis" as const },
+    grid: { left: 180, right: 30, top: 10, bottom: 30 },
+    xAxis: { type: "value" as const },
+    yAxis: {
+      type: "category" as const,
+      data: names,
+      axisLabel: { fontSize: 11 },
+    },
+    series: [
+      {
+        type: "bar",
+        data: counts,
+        itemStyle: { color: "#1890ff", borderRadius: [0, 4, 4, 0] },
+        label: { show: true, position: "right" as const, formatter: "{c}" },
+      },
+    ],
+  };
+
+  return (
+    <Card title="Iceberg 表行数" size="small" data-testid="table-row-count-chart">
+      <ReactECharts option={option} style={{ height: Math.max(200, tables.length * 40) }} />
+    </Card>
+  );
+}
+
+/* ─── Sync Status Traffic Light Card (Task 8.2) ─── */
 function SyncStatusCard({ syncStatus }: { syncStatus: SyncStatusResponse | null }) {
   if (!syncStatus || !syncStatus.available || !syncStatus.data) {
     return (
@@ -119,11 +222,28 @@ function SyncStatusCard({ syncStatus }: { syncStatus: SyncStatusResponse | null 
   }
 
   const d = syncStatus.data;
-  const alertColor = d.is_alert ? "#ff4d4f" : "#52c41a";
-  const alertText = d.is_alert ? "差异告警" : "数据一致";
-  const alertIcon = d.is_alert ? <CloseCircleOutlined /> : <CheckCircleOutlined />;
+  const diffPct = d.count_diff_pct * 100;
+
+  // Traffic light logic: green (<1%), yellow (1-5%), red (>5% or is_alert)
+  let lightColor: string;
+  let lightLabel: string;
+  let lightIcon: React.ReactNode;
+  if (d.is_alert || diffPct > 5) {
+    lightColor = "#ff4d4f";
+    lightLabel = "差异告警";
+    lightIcon = <CloseCircleOutlined />;
+  } else if (diffPct > 1) {
+    lightColor = "#faad14";
+    lightLabel = "轻微差异";
+    lightIcon = <WarningOutlined />;
+  } else {
+    lightColor = "#52c41a";
+    lightLabel = "数据一致";
+    lightIcon = <CheckCircleOutlined />;
+  }
+
   const checkedAt = new Date(d.checked_at).toLocaleString("zh-CN");
-  const diffPctStr = (d.count_diff_pct * 100).toFixed(3) + "%";
+  const diffPctStr = diffPct.toFixed(3) + "%";
 
   return (
     <Card
@@ -136,22 +256,65 @@ function SyncStatusCard({ syncStatus }: { syncStatus: SyncStatusResponse | null 
       size="small"
       extra={
         <Badge
-          count={alertText}
-          style={{ backgroundColor: alertColor }}
+          count={lightLabel}
+          style={{ backgroundColor: lightColor }}
         />
       }
+      data-testid="sync-status-card"
     >
+      {/* Traffic light indicator */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 16,
+          padding: "8px 12px",
+          borderRadius: 8,
+          backgroundColor: `${lightColor}10`,
+          border: `1px solid ${lightColor}40`,
+        }}
+        data-testid="sync-traffic-light"
+      >
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: "50%",
+            backgroundColor: lightColor,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            fontSize: 18,
+          }}
+          aria-label={`同步状态: ${lightLabel}`}
+        >
+          {lightIcon}
+        </div>
+        <div>
+          <div style={{ fontWeight: 600, color: lightColor }}>{lightLabel}</div>
+          <div style={{ fontSize: 12, color: "#666" }}>差异 {diffPctStr}</div>
+        </div>
+      </div>
+
       <Descriptions column={2} size="small">
         <Descriptions.Item label="最近同步时间">{checkedAt}</Descriptions.Item>
         <Descriptions.Item label="Dagster Run ID">
           <Text copyable className="font-mono text-xs">{d.dagster_run_id}</Text>
         </Descriptions.Item>
-        <Descriptions.Item label="Postgres 行数">{d.pg_total_count.toLocaleString()}</Descriptions.Item>
-        <Descriptions.Item label="Iceberg 行数">{d.iceberg_total_count.toLocaleString()}</Descriptions.Item>
-        <Descriptions.Item label="差异百分比">{diffPctStr}</Descriptions.Item>
+        <Descriptions.Item label="Postgres 行数">
+          <span data-testid="pg-count">{d.pg_total_count.toLocaleString()}</span>
+        </Descriptions.Item>
+        <Descriptions.Item label="Iceberg 行数">
+          <span data-testid="iceberg-count">{d.iceberg_total_count.toLocaleString()}</span>
+        </Descriptions.Item>
+        <Descriptions.Item label="差异百分比">
+          <span data-testid="diff-pct">{diffPctStr}</span>
+        </Descriptions.Item>
         <Descriptions.Item label="对账状态">
-          <span style={{ color: alertColor }}>
-            {alertIcon} {alertText}
+          <span style={{ color: lightColor }}>
+            {lightIcon} {lightLabel}
           </span>
         </Descriptions.Item>
       </Descriptions>
@@ -159,7 +322,7 @@ function SyncStatusCard({ syncStatus }: { syncStatus: SyncStatusResponse | null 
   );
 }
 
-/* ─── Postgres vs Iceberg Comparison Table (Task 15.3) ─── */
+/* ─── Postgres vs Iceberg Comparison Table ─── */
 interface ComparisonRow {
   status: string;
   pg: number;
@@ -312,20 +475,6 @@ export default function AnalyticsPage() {
     loadLakehouse();
   }, []);
 
-  const tableColumns: ColumnsType<LakehouseTableCount> = [
-    {
-      title: "Iceberg 表",
-      dataIndex: "table_name",
-      render: (value: string) => <span className="font-mono text-xs">{value}</span>,
-    },
-    {
-      title: "行数",
-      dataIndex: "row_count",
-      align: "right",
-      render: (value: number) => value.toLocaleString(),
-    },
-  ];
-
   const goldCount = tables.find((t) => t.table_name === "gold_dataset_snapshot_items")?.row_count ?? 0;
   const silverAssets = tables.find((t) => t.table_name === "silver_assets_current")?.row_count ?? 0;
   const bronzeEvents = tables.find((t) => t.table_name === "bronze_asset_algo_events")?.row_count ?? 0;
@@ -381,7 +530,7 @@ export default function AnalyticsPage() {
             style={{ marginBottom: 16 }}
           />
 
-          {/* Sync Status Card (Task 15.2) */}
+          {/* Sync Status Traffic Light Card (Task 8.2) */}
           <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
             <Col span={24}>
               <SyncStatusCard syncStatus={syncStatus} />
@@ -406,21 +555,22 @@ export default function AnalyticsPage() {
             </Col>
           </Row>
 
+          {/* Visualization Cards (Task 8.1) */}
           <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            {/* Iceberg Table Counts (Task 15.1 — real data from /lakehouse/tables) */}
             <Col xs={24} lg={12}>
-              <Card title="Iceberg 表行数" size="small">
-                <Table
-                  size="small"
-                  rowKey="table_name"
-                  columns={tableColumns}
-                  dataSource={tables}
-                  pagination={false}
-                />
-              </Card>
+              <QualityDistributionChart
+                data={queryResults.qualityDistribution}
+                errorMessage={queryErrors.qualityDistribution}
+              />
             </Col>
-            {/* Postgres vs Iceberg Comparison (Task 15.3) */}
             <Col xs={24} lg={12}>
+              <TableRowCountChart tables={tables} />
+            </Col>
+          </Row>
+
+          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+            {/* Postgres vs Iceberg Comparison */}
+            <Col span={24}>
               <PgIcebergComparisonTable syncStatus={syncStatus} />
             </Col>
           </Row>

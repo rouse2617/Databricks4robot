@@ -20,6 +20,18 @@ services:
       timeout: 3s
       retries: 10
 
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23.1-p2
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ── Backend (Go) ────────────────────────────────────────────
   backend:
     build:
@@ -31,8 +43,8 @@ services:
       ENV: development
       PORT: "8080"
       STORAGE_BACKEND: postgres
-      DB_HOST: postgres
-      DB_PORT: "5432"
+      DB_HOST: pgbouncer
+      DB_PORT: "6432"
       DB_USER: postgres
       DB_PASSWORD: postgres
       DB_NAME: data4cyber
@@ -43,6 +55,8 @@ services:
       TRINO_SCHEMA: "robot"
       ELASTICSEARCH_URL: "http://elasticsearch:9200"
     depends_on:
+      pgbouncer:
+        condition: service_started
       postgres:
         condition: service_healthy
       elasticsearch-init:
@@ -64,7 +78,7 @@ services:
       - backend
     restart: unless-stopped
 
-  # ── Iceberg Stack ───────────────────────────────────────────
+  # ── Iceberg Stack (ADR-001: Polaris selected for prod; local uses iceberg-rest-fixture) ──
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -181,24 +195,85 @@ services:
           },
           \"mappings\": {
             \"properties\": {
-              \"asset_id\":        { \"type\": \"keyword\" },
-              \"mcap_file_id\":    { \"type\": \"keyword\" },
-              \"segment_locator\": { \"type\": \"keyword\" },
-              \"status\":          { \"type\": \"keyword\" },
-              \"env\":             { \"type\": \"keyword\" },
-              \"task\":            { \"type\": \"keyword\" },
-              \"owner\":           { \"type\": \"keyword\" },
-              \"reviewer\":        { \"type\": \"keyword\" },
-              \"notes\":           { \"type\": \"text\" },
-              \"batch\":           { \"type\": \"text\" },
-              \"duration_sec\":    { \"type\": \"float\" },
-              \"delivery_count\":  { \"type\": \"integer\" },
-              \"tag_priority\":    { \"type\": \"keyword\" },
-              \"tag_quality\":     { \"type\": \"keyword\" },
-              \"tags\":            { \"type\": \"object\", \"dynamic\": true },
-              \"algo_summary\":    { \"type\": \"object\", \"dynamic\": true },
-              \"created_at\":      { \"type\": \"date\" },
-              \"updated_at\":      { \"type\": \"date\" }
+              \"asset_id\":           { \"type\": \"keyword\" },
+              \"mcap_file_id\":       { \"type\": \"keyword\" },
+              \"segment_locator\":    { \"type\": \"keyword\" },
+
+              \"asset_type\":         { \"type\": \"keyword\" },
+              \"lifecycle_state\":    { \"type\": \"keyword\" },
+              \"status\":             { \"type\": \"keyword\" },
+              \"is_deleted\":         { \"type\": \"boolean\" },
+              \"version\":            { \"type\": \"long\" },
+              \"retention_tier\":     { \"type\": \"keyword\" },
+              \"expire_at\":          { \"type\": \"date\" },
+
+              \"tenant_id\":          { \"type\": \"keyword\" },
+              \"project_id\":         { \"type\": \"keyword\" },
+
+              \"metadata\":           { \"type\": \"flattened\" },
+
+              \"owner\":              { \"type\": \"keyword\", \"fields\": { \"text\": { \"type\": \"text\" } } },
+              \"reviewer\":           { \"type\": \"keyword\", \"fields\": { \"text\": { \"type\": \"text\" } } },
+              \"notes\":              { \"type\": \"text\" },
+
+              \"start_timestamp_ns\": { \"type\": \"long\" },
+              \"end_timestamp_ns\":   { \"type\": \"long\" },
+              \"duration_ms\":        { \"type\": \"long\" },
+              \"recorded_at\":        { \"type\": \"date\" },
+
+              \"created_at\":         { \"type\": \"date\" },
+              \"updated_at\":         { \"type\": \"date\" },
+
+              \"delivery_count\":     { \"type\": \"integer\" },
+              \"last_delivered_at\":  { \"type\": \"date\" },
+              \"last_delivered_to\":  { \"type\": \"keyword\" },
+
+              \"parent_asset_id\":    { \"type\": \"keyword\" },
+              \"root_asset_id\":      { \"type\": \"keyword\" },
+              \"asset_level\":        { \"type\": \"integer\" },
+
+              \"mcap\": {
+                \"properties\": {
+                  \"vendor_id\":        { \"type\": \"keyword\" },
+                  \"device_id\":        { \"type\": \"keyword\" },
+                  \"camera_model\":     { \"type\": \"keyword\" },
+                  \"scene_id\":         { \"type\": \"keyword\" },
+                  \"location_id\":      { \"type\": \"keyword\" },
+                  \"environment_id\":   { \"type\": \"keyword\" },
+                  \"task_id\":          { \"type\": \"keyword\" },
+                  \"data_source\":      { \"type\": \"keyword\" },
+                  \"file_duration_ms\": { \"type\": \"long\" },
+                  \"recorded_at\":      { \"type\": \"date\" }
+                }
+              },
+
+              \"tags_flat\": { \"type\": \"flattened\" },
+
+              \"tags\": {
+                \"type\": \"nested\",
+                \"properties\": {
+                  \"key\":         { \"type\": \"keyword\" },
+                  \"value\":       { \"type\": \"keyword\" },
+                  \"value_num\":   { \"type\": \"double\" },
+                  \"value_bool\":  { \"type\": \"boolean\" },
+                  \"source_type\": { \"type\": \"keyword\" },
+                  \"source_name\": { \"type\": \"keyword\" },
+                  \"confidence\":  { \"type\": \"double\" }
+                }
+              },
+
+              \"algos\": {
+                \"type\": \"nested\",
+                \"properties\": {
+                  \"name\":         { \"type\": \"keyword\" },
+                  \"version\":      { \"type\": \"keyword\" },
+                  \"status\":       { \"type\": \"keyword\" },
+                  \"result_tag\":   { \"type\": \"keyword\" },
+                  \"result_score\": { \"type\": \"double\" },
+                  \"run_id\":       { \"type\": \"keyword\" },
+                  \"finished_at\":  { \"type\": \"date\" }
+                }
+              }
             }
           }
         }';

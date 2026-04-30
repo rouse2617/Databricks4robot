@@ -14,7 +14,6 @@ export interface AssetStats {
 
 export interface ListAssetsParams {
   mcap_file_id?: string;
-  status?: string;
   filter?: string[];
   sort_by?: string;
   page?: number;

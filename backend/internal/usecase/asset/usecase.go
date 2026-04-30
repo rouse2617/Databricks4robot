@@ -23,7 +23,7 @@ var (
 	ErrInvalidTag         = errors.New("invalid tag")
 )
 
-// defaultLifecycleMeta returns the lifecycle governance defaults for cf_meta.
+// defaultLifecycleMeta returns the lifecycle governance defaults for metadata.
 // These fields are reserved at ingest time for future storage governance.
 func defaultLifecycleMeta() map[string]interface{} {
 	return map[string]interface{}{
@@ -363,6 +363,22 @@ func (u *Usecase) Get(ctx context.Context, assetID string) (*models.Asset, error
 	return a, nil
 }
 
+// BatchGet returns multiple assets by their IDs, skipping not-found ones.
+func (u *Usecase) BatchGet(ctx context.Context, assetIDs []string) ([]*models.Asset, error) {
+	items := make([]*models.Asset, 0, len(assetIDs))
+	for _, id := range assetIDs {
+		a, err := u.Get(ctx, id)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		items = append(items, a)
+	}
+	return items, nil
+}
+
 func (u *Usecase) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error) {
 	if mcapFileID == "" {
 		return nil, ErrMcapFileIDRequired
@@ -474,7 +490,7 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	// Initialize algorithm states from algo_registry if available.
 	if u.algoRegistry != nil {
 		initAlgoStates(a, u.algoRegistry)
-		// Write raw_mcap reference to cf_files.
+		// Write raw_mcap reference to files.
 		a.Files["raw_mcap"] = in.McapFileID
 	}
 	if err := u.persistNewAsset(ctx, a, tags); err != nil {

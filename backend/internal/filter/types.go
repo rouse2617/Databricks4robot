@@ -6,14 +6,12 @@ import (
 	"time"
 )
 
-// FieldAliasMap maps business-friendly field prefixes to internal filter
-// prefixes. ResolveField then maps those prefixes to the current storage
-// backend representation (projection tables or JSONB columns).
-var FieldAliasMap = map[string]string{
-	"tag.":  "cf_tag.",
-	"file.": "cf_files.",
-	"algo.": "cf_algo.",
-}
+// FieldAliasMap is empty after the cf_* legacy layer removal (P2-9).
+// Retained as an empty map for backward compatibility with any code that
+// references it. The previous entries (tag.→cf_tag., file.→cf_files.,
+// algo.→cf_algo.) are no longer needed because ResolveField handles all
+// prefix routing directly via prefixedFieldSpecs.
+var FieldAliasMap = map[string]string{}
 
 // FieldMeta describes a searchable field's type and allowed values.
 type FieldMeta struct {

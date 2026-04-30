@@ -29,6 +29,7 @@ export const LIFECYCLE_OPTIONS = [
   "superseded",
 ];
 export const ASSET_TYPE_OPTIONS = ["segment", "clip", "frame_set", "derived_asset"];
+export const RETENTION_TIER_OPTIONS = ["standard", "archive", "cold"];
 export const ENV_OPTIONS = ["kitchen", "outdoor", "warehouse", "office", "factory"];
 export const ALGO_STATUS_OPTIONS = ["ok", "failed", "running", "pending", "blocked"];
 export const PRIORITY_OPTIONS = ["critical", "high", "medium", "low"];
@@ -329,6 +330,13 @@ export default function AssetsFacetSidebar({
             activeFilters={activeFilters}
             onToggleFacet={onToggleFacet}
             counts={fieldCounts["lifecycle_state"]}
+          />
+          <CheckboxFacet
+            label="保留层级"
+            field="retention_tier"
+            options={RETENTION_TIER_OPTIONS}
+            activeFilters={activeFilters}
+            onToggleFacet={onToggleFacet}
           />
           <InputFacet
             label="Owner"

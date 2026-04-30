@@ -8,17 +8,15 @@
 
 ## 0. 现状快照（截至 2026-04-29）
 
-> **已完成 spec 归档**：`.kiro/specs/phase2-features/tasks.md` 全部 16 个 Task（共 85 子项）已完成（`[x]`），覆盖：交付管理页、算法矩阵视图、批量标签、导出功能、MCAP 文件页增强、审计日志、Dagster Pipeline（Bronze→Silver→Gold）、OpenSearch 检索层、湖仓验证页面对接、构建验证与文档。
-
-| 维度　　 | 当前态　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　 | 下一里程碑　　　　　　　　　　　　　　　　　|
-| ----------| --------------------------------------------------------------------------------------------| ---------------------------------------------|
-| 架构基线 | 1.0（PG + Backend 单进程）　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　　 | 启用 2.0：Outbox Worker + ES + Iceberg　　　|
-| 投影表　 | `asset_tags / asset_algo_latest` 已建已用，cf_* 列只读保留　　　　　　　　　　　　　　　　 | 字段消费收口 + lifecycle_state 主消费切换　 |
-| 事件流　 | `asset_events` 在线写入；**可选** `OUTBOX_WORKER_ENABLED` 进程内投递 ES　　　　　　　　　　| 预发跑满 G1–G5 / 24h SLO 验收　　　　　　　 |
-| Tag 子域 | 独立 tag CRUD + history API 已上线；详情页 / 批量操作已切专用 tag 接口　　　　　　　　　　 | 下一步：tag history UI / `cf_*` 兼容层清理　|
-| 检索　　 | `/api/v1/search/assets` ES path + **Outbox→ES 索引写入 / admin reindex**；PG fallback 仍在 | PG↔ES 一致率闸口、生产索引初始化 runbook　　|
-| 湖仓　　 | `docker-compose` 脚手架，未接业务写路径　　　　　　　　　　　　　　　　　　　　　　　　　　| PyIceberg CronJob + Polaris/Lakekeeper 上线 |
-| Frontend | 资产发现 v2 facets / 详情 / 算法 / 交付齐全　　　　　　　　　　　　　　　　　　　　　　　　| Phase 2+ 训练数据集 UI（按业务节奏）　　　　|
+| 维度 | 当前态 | 下一里程碑 |
+|------|--------|------------|
+| 架构基线 | 1.0（PG + Backend 单进程） | 启用 2.0：Outbox Worker + ES + Iceberg |
+| 投影表 | `asset_tags / asset_algo_latest` 已建已用，cf_* 列只读保留 | 字段消费收口 + lifecycle_state 主消费切换 |
+| 事件流 | `asset_events` 在线写入；**可选** `OUTBOX_WORKER_ENABLED` 进程内投递 ES | 预发跑满 G1–G5 / 24h SLO 验收 |
+| Tag 子域 | 独立 tag CRUD + history API 已上线；详情页 / 批量操作已切专用 tag 接口 | 下一步：tag history UI / `cf_*` 兼容层清理 |
+| 检索 | `/api/v1/search/assets` ES path + **Outbox→ES 索引写入 / admin reindex**；PG fallback 仍在 | PG↔ES 一致率闸口、生产索引初始化 runbook |
+| 湖仓 | `docker-compose` 脚手架，未接业务写路径 | PyIceberg CronJob + Polaris/Lakekeeper 上线 |
+| Frontend | 资产发现 v2 facets / 详情 / 算法 / 交付齐全 | Phase 2+ 训练数据集 UI（按业务节奏） |
 
 ---
 

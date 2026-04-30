@@ -142,6 +142,32 @@ docker-compose up -d postgres  # 重新初始化
 
 **告警建议（MVP）**：`outbox_pending_events` 在业务低峰持续 > 1000 或 30min 单调上升 → 查 worker 日志与 ES 连通性；`outbox_worker_events_failed_mark_total` 突增 → 查 `asset_events.last_error`。
 
+### Outbox Prometheus 告警阈值建议
+
+> 设计依据: `docs/review/outbox-worker-design.md` §11.1
+
+| 指标 | 类型 | 含义 | 告警级别 | 阈值 / 条件 |
+|------|------|------|----------|-------------|
+| `outbox_worker_batch_duration_ms` | histogram | 单轮 processBatch 耗时 | P1 | P99 > 5 000 ms 持续 5 min |
+| `outbox_worker_pending_total` | gauge | 当前 pending 事件数 | WARN | > 10 000 持续 5 min |
+| `outbox_worker_pending_total` | gauge | 当前 pending 事件数 | P1 | > 100 000 持续 5 min |
+| `outbox_oldest_pending_age_seconds` | gauge | 最老 pending 事件年龄 | WARN | > 300 (5 min) |
+| `outbox_oldest_pending_age_seconds` | gauge | 最老 pending 事件年龄 | P1 | > 3 600 (1 h) |
+| `outbox_oldest_pending_age_seconds` | gauge | 最老 pending 事件年龄 | P0 | > 86 400 (24 h) |
+| `outbox_worker_retry_max` | gauge | pending 中最大 retry_count | WARN | > 5 持续 10 min |
+| `outbox_sink_lag_seq` | gauge | `MAX(event_seq) - cursor` | WARN | > 10 000 持续 5 min |
+| `outbox_es_bulk_failures_total` | counter | ES bulk 整批失败 | P1 | rate > 0.1/s |
+| `outbox_bulk_partial_failure_total` | counter | ES bulk 部分失败 | WARN | rate > 0.5/s 持续 5 min |
+| `outbox_tombstone_failure_total` | counter | DELETE doc 失败 | WARN | rate > 0 |
+| `outbox_fetch_deadlock_total` | counter | FetchPending 死锁 | WARN | rate > 0.05/s |
+| `outbox_cursor_deadlock_total` | counter | cursor 推进死锁 | WARN | rate > 0.05/s |
+
+**处置建议**:
+- `outbox_oldest_pending_age_seconds` 是最核心的 SLO 指标，持续超阈值时优先排查 ES 连通性和 worker 日志。
+- `outbox_worker_retry_max > 10` 表示有事件反复失败，查 `asset_events.last_error` 定位根因。
+- `outbox_sink_lag_seq` 持续增长说明 worker 消费速度跟不上写入，考虑增大 `OUTBOX_BATCH_SIZE` 或排查 ES 写入瓶颈。
+- 极端长 gap 恢复（ES 宕数天）后，可调用 `POST /api/v1/admin/search/reindex` 全量重建加速追平。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/v1/lakehouse/status` | Trino 查询层状态 |

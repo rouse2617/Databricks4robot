@@ -121,13 +121,59 @@ func buildSearchBody(req SearchRequest) map[string]any {
 		})
 	}
 
+	// Group nested filters by path+key so that multiple conditions on the
+	// same tag (e.g. tags.quality:eq:good AND tags.source_type:eq:algo) are
+	// combined into a single nested query with all must clauses. This ensures
+	// the conditions match within the same nested document.
+	type nestedGroup struct {
+		path    string
+		clauses []map[string]any
+		isNeg   bool
+	}
+	tagGroups := make(map[string]*nestedGroup) // key: "tags:<tagKey>" or "algos:<algoName>"
+
 	for _, f := range req.Filters {
+		if path, ok := nestedPath(f.Field); ok {
+			// Determine the grouping key (tag key or algo name).
+			groupKey := nestedGroupKey(path, f.Field)
+			if g, exists := tagGroups[groupKey]; exists {
+				// Append inner clauses to existing group.
+				innerClauses := buildNestedInnerClauses(path, f)
+				g.clauses = append(g.clauses, innerClauses...)
+				if f.Op == "ne" {
+					g.isNeg = true
+				}
+			} else {
+				innerClauses := buildNestedInnerClauses(path, f)
+				tagGroups[groupKey] = &nestedGroup{
+					path:    path,
+					clauses: innerClauses,
+					isNeg:   f.Op == "ne",
+				}
+			}
+			continue
+		}
 		positive, negative := buildFilterClause(f)
 		if positive != nil {
 			filter = append(filter, positive)
 		}
 		if negative != nil {
 			mustNot = append(mustNot, negative)
+		}
+	}
+
+	// Emit grouped nested queries.
+	for _, g := range tagGroups {
+		nested := map[string]any{
+			"nested": map[string]any{
+				"path":  g.path,
+				"query": map[string]any{"bool": map[string]any{"must": g.clauses}},
+			},
+		}
+		if g.isNeg {
+			mustNot = append(mustNot, nested)
+		} else {
+			filter = append(filter, nested)
 		}
 	}
 
@@ -220,6 +266,65 @@ var tagInnerMatchFields = map[string]bool{
 	"value_bool":  true,
 	"value":       true,
 	"key":         true,
+}
+
+// nestedGroupKey returns a grouping key for nested filter consolidation.
+// Filters with the same group key are combined into a single nested query.
+func nestedGroupKey(path, field string) string {
+	switch path {
+	case "tags":
+		rest := strings.TrimPrefix(field, "tags.")
+		if tagInnerMatchFields[rest] {
+			// Inner-only fields (e.g. tags.source_type) don't pin a key,
+			// so each gets its own group to avoid merging unrelated conditions.
+			return "tags:_inner:" + rest
+		}
+		return "tags:" + rest
+	case "algos":
+		rest := strings.TrimPrefix(field, "algos.")
+		parts := strings.SplitN(rest, ".", 2)
+		return "algos:" + parts[0]
+	}
+	return path + ":" + field
+}
+
+// buildNestedInnerClauses returns the inner must clauses for a nested filter
+// WITHOUT wrapping them in a nested query. The caller groups and wraps them.
+func buildNestedInnerClauses(path string, f FilterOp) []map[string]any {
+	must := []map[string]any{}
+	switch path {
+	case "tags":
+		rest := strings.TrimPrefix(f.Field, "tags.")
+		if tagInnerMatchFields[rest] {
+			clause := buildScalarClause("tags."+rest, coerceOp(f.Op), f.Value)
+			if clause != nil {
+				must = append(must, clause)
+			}
+			break
+		}
+		key := rest
+		must = append(must, map[string]any{"term": map[string]any{"tags.key": key}})
+		for _, c := range tagKeyValueClauses(coerceOp(f.Op), f.Value) {
+			must = append(must, c)
+		}
+	case "algos":
+		rest := strings.TrimPrefix(f.Field, "algos.")
+		parts := strings.SplitN(rest, ".", 2)
+		algoName := parts[0]
+		attr := "status"
+		if len(parts) == 2 {
+			attr = parts[1]
+		}
+		if attr == "score" {
+			attr = "result_score"
+		}
+		must = append(must, map[string]any{"term": map[string]any{"algos.name": algoName}})
+		valueClause := buildScalarClause("algos."+attr, coerceOp(f.Op), f.Value)
+		if valueClause != nil {
+			must = append(must, valueClause)
+		}
+	}
+	return must
 }
 
 // buildNestedClause produces a `nested` query that pins both the "selector"
@@ -452,11 +557,26 @@ type BulkIndexDoc struct {
 	Doc map[string]any
 }
 
+// BulkItemResult holds the per-document outcome of a bulk index operation.
+type BulkItemResult struct {
+	ID     string // document _id
+	Status int    // HTTP status code for this item
+	Error  string // non-empty when the item failed
+}
+
+// BulkIndexResult holds the aggregate outcome of a BulkIndex call.
+type BulkIndexResult struct {
+	Succeeded []BulkItemResult // items with status < 300
+	Failed    []BulkItemResult // items with status >= 300
+}
+
 // BulkIndex sends documents to Elasticsearch via the _bulk API.
-// Returns the number of successfully indexed documents.
-func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (int, error) {
+// On transport-level or HTTP-level failure it returns a non-nil error.
+// On success (HTTP 2xx) it returns per-doc results so the caller can
+// handle partial failures (some docs succeed, some fail).
+func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (*BulkIndexResult, error) {
 	if len(docs) == 0 {
-		return 0, nil
+		return &BulkIndexResult{}, nil
 	}
 
 	var buf bytes.Buffer
@@ -478,44 +598,62 @@ func (c *Client) BulkIndex(ctx context.Context, docs []BulkIndexDoc) (int, error
 	url := fmt.Sprintf("%s/_bulk", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
-		return 0, fmt.Errorf("elasticsearch: bulk request: %w", err)
+		return nil, fmt.Errorf("elasticsearch: bulk request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-ndjson")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return 0, fmt.Errorf("elasticsearch: bulk failed: %w", err)
+		return nil, fmt.Errorf("elasticsearch: bulk failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, fmt.Errorf("elasticsearch: read bulk response: %w", err)
+		return nil, fmt.Errorf("elasticsearch: read bulk response: %w", err)
 	}
 
 	if resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("elasticsearch: bulk status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("elasticsearch: bulk status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var bulkResp struct {
 		Errors bool `json:"errors"`
 		Items  []struct {
 			Index struct {
-				Status int `json:"status"`
+				ID     string `json:"_id"`
+				Status int    `json:"status"`
+				Error  *struct {
+					Type   string `json:"type"`
+					Reason string `json:"reason"`
+				} `json:"error,omitempty"`
 			} `json:"index"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(respBody, &bulkResp); err != nil {
-		return 0, fmt.Errorf("elasticsearch: unmarshal bulk response: %w", err)
+		return nil, fmt.Errorf("elasticsearch: unmarshal bulk response: %w", err)
 	}
 
-	ok := 0
-	for _, item := range bulkResp.Items {
+	result := &BulkIndexResult{}
+	for i, item := range bulkResp.Items {
+		docID := item.Index.ID
+		if docID == "" && i < len(docs) {
+			docID = docs[i].ID
+		}
+		bir := BulkItemResult{
+			ID:     docID,
+			Status: item.Index.Status,
+		}
+		if item.Index.Error != nil {
+			bir.Error = item.Index.Error.Type + ": " + item.Index.Error.Reason
+		}
 		if item.Index.Status < 300 {
-			ok++
+			result.Succeeded = append(result.Succeeded, bir)
+		} else {
+			result.Failed = append(result.Failed, bir)
 		}
 	}
-	return ok, nil
+	return result, nil
 }
 
 // DeleteDocument removes a document from the index by id (asset_id). Idempotent: 404 is treated as success.

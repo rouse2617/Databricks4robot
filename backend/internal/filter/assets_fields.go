@@ -84,17 +84,17 @@ var exactFieldSpecs = map[string]fieldSpec{
 
 var prefixedFieldSpecs = []fieldPrefixSpec{
 	{
-		InputPrefixes:   []string{"tag.", "tags.", "cf_tag."},
+		InputPrefixes:   []string{"tag.", "tags."},
 		CanonicalPrefix: "tag.",
 		StoragePrefix:   "asset_tags.",
 	},
 	{
-		InputPrefixes:   []string{"algo.", "algo_results.", "cf_algo."},
+		InputPrefixes:   []string{"algo.", "algo_results."},
 		CanonicalPrefix: "algo.",
 		StoragePrefix:   "asset_algo_latest.",
 	},
 	{
-		InputPrefixes:   []string{"files.", "cf_files."},
+		InputPrefixes:   []string{"files."},
 		CanonicalPrefix: "files.",
 		StoragePrefix:   "files.",
 	},

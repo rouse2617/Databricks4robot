@@ -9,6 +9,7 @@ const makeAsset = (id: string, algoResults: Record<string, string>): Asset => ({
   mcap_file_id: "mcap-1",
   start_timestamp_ns: 0,
   end_timestamp_ns: 0,
+  duration_ms: 10000,
   duration_sec: 10,
   reviewer: "",
   status: "approved",

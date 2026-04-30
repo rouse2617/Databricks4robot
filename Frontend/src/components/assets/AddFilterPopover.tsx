@@ -32,6 +32,12 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
     type: "enum",
     values: ["segment", "clip", "frame_set", "derived_asset"],
   },
+  {
+    key: "retention_tier",
+    label: "保留层级",
+    type: "enum",
+    values: ["standard", "archive", "cold"],
+  },
   { key: "status", label: "状态(legacy)", type: "enum", values: ["approved", "rejected", "superseded", "archived"] },
   { key: "env", label: "环境(cf_meta)", type: "enum", values: ["kitchen", "outdoor", "warehouse", "office", "factory"] },
   { key: "algo_status", label: "算法状态(虚拟)", type: "enum", values: ["ok", "failed", "running", "pending", "blocked"] },
@@ -58,6 +64,7 @@ const SEARCHABLE_FIELDS: FieldMeta[] = [
   { key: "tag.notes", label: "备注(cf_tag)", type: "string" },
   { key: "created_at", label: "创建时间", type: "timestamp" },
   { key: "updated_at", label: "更新时间", type: "timestamp" },
+  { key: "expire_at", label: "过期时间", type: "timestamp" },
 ];
 
 const QUICK_FIELDS = [

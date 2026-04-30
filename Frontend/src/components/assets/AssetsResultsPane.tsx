@@ -10,7 +10,7 @@ import type { Asset } from "../../api/types";
 import type { FetchStatus, ViewMode } from "../../lib/assets/assetsDiscoveryTypes";
 import AlgoSummaryCell from "./AlgoSummaryCell";
 import ResultsEmptyState from "./ResultsEmptyState";
-import { formatDurationSeconds, getAssetStateColor, getLifecycleState } from "../../lib/assetPresentation";
+import { formatDurationSeconds, getAssetStateColor, getAssetType, getLifecycleState } from "../../lib/assetPresentation";
 
 const { Text } = Typography;
 
@@ -64,13 +64,34 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
     width: 70,
     render: (_: unknown, r: Asset) => formatDurationSeconds(r),
   }),
+  asset_type: () => ({
+    title: "资产类型",
+    key: "asset_type",
+    width: 100,
+    render: (_: unknown, r: Asset) => getAssetType(r) || "—",
+  }),
+  retention_tier: () => ({
+    title: "保留层级",
+    key: "retention_tier",
+    width: 100,
+    render: (_: unknown, r: Asset) => {
+      const tier = r.retention_tier;
+      if (!tier) return "—";
+      const colorMap: Record<string, string> = {
+        standard: "blue",
+        archive: "orange",
+        cold: "default",
+      };
+      return <Tag color={colorMap[tier] ?? "default"}>{tier}</Tag>;
+    },
+  }),
   env: () => ({
     title: "环境",
     key: "env",
     width: 80,
     render: (_: unknown, r: Asset) => r.env ?? "—",
   }),
-  status: () => ({
+  lifecycle_state: () => ({
     title: "生命周期",
     width: 90,
     render: (_: unknown, r: Asset) => (
@@ -101,6 +122,19 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
         </Space>
       );
     },
+  }),
+  owner: () => ({
+    title: "Owner",
+    dataIndex: "owner",
+    width: 100,
+    render: (v: string) => v || "—",
+  }),
+  expire_at: () => ({
+    title: "过期时间",
+    dataIndex: "expire_at",
+    width: 130,
+    render: (v: string | null | undefined) =>
+      v ? dayjs(v).fromNow() : "—",
   }),
   updated_at: () => ({
     title: "更新时间",

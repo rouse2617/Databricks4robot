@@ -19,6 +19,18 @@
 
 筛选 / 排序字段同时接受新旧两种写法，详见 §1.3。
 
+### 已废弃字段清单（Deprecated Fields）
+
+以下字段已在 OpenAPI 规范中标记 `deprecated: true`（见 `api/openapi.yaml` Asset schema）。双写期间 API 响应**同时返回新旧字段**，新字段为权威来源，旧字段由后端自动映射生成。新消费方应仅读取新字段。
+
+| 旧字段（DEPRECATED） | 替代新字段 | 当前阶段 | 计划停写日期 |
+|----------------------|-----------|----------|-------------|
+| `status` | `lifecycle_state` | 双写中 | 2.0 上线后 90 天 |
+| `type` | `asset_type` | 双写中 | 2.0 上线后 90 天 |
+| `duration_sec` | `duration_ms` | 双写中 | 2.0 上线后 90 天 |
+
+> **迁移建议**：新代码 / SDK / 前端请立即切换到新字段。旧字段将在兼容窗口（2.0 上线后 90 天 + 一个完整发版周期）结束后从响应中移除。详见 `data-platform-design.md §5.8.1`。
+
 
 
 ## 基础信息
@@ -120,16 +132,16 @@ curl -X POST "$BASE/api/v1/assets" \
 ```
 
 响应 `201`:
-```json
+```jsonc
 {
   "asset_id": "b9a5a281-9761-4389-a227-6a6d28dd0057",
   "mcap_file_id": "mcap-001",
-  "status": "approved",
-  "lifecycle_state": "ready",
-  "type": "task_demo",
-  "asset_type": "task_demo",
-  "duration_sec": 60.0,
-  "duration_ms": 60000,
+  "status": "approved",           // DEPRECATED — 请使用 lifecycle_state
+  "lifecycle_state": "ready",     // ✅ 新字段（权威来源）
+  "type": "task_demo",            // DEPRECATED — 请使用 asset_type
+  "asset_type": "task_demo",      // ✅ 新字段（权威来源）
+  "duration_sec": 60.0,           // DEPRECATED — 请使用 duration_ms
+  "duration_ms": 60000,           // ✅ 新字段（权威来源）
   "reviewer": "alice",
   "owner": "team-a",
   "version": 1,
@@ -164,7 +176,7 @@ curl -X POST "$BASE/api/v1/assets" \
 }
 ```
 
-> **双写期间字段说明**: 响应同时包含旧字段（`status`, `duration_sec`, `type`）和新字段（`lifecycle_state`, `duration_ms`, `asset_type`）。新字段是权威来源，旧字段由后端自动映射生成。新代码请优先使用新字段。
+> **双写期间字段说明**: 响应同时包含旧字段（`status`, `duration_sec`, `type`）和新字段（`lifecycle_state`, `duration_ms`, `asset_type`）。新字段是权威来源，旧字段由后端自动映射生成。新代码请优先使用新字段。旧字段将在 2.0 上线后 90 天移除，详见上方"已废弃字段清单"。
 
 必填字段:
 - `mcap_file_id` — 关联的 MCAP 文件 ID
@@ -188,7 +200,7 @@ curl "$BASE/api/v1/assets/{asset_id}" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
-响应 `200`: 完整 Asset JSON（同创建响应，包含所有新旧字段）
+响应 `200`: 完整 Asset JSON（同创建响应，包含所有新旧字段；`status`/`type`/`duration_sec` 为 DEPRECATED，请使用 `lifecycle_state`/`asset_type`/`duration_ms`）
 
 响应 `404`:
 ```json
@@ -249,20 +261,20 @@ curl "$BASE/api/v1/assets?mcap_file_id=mcap-001" \
 允许的过滤/排序字段（**优先使用新字段名**）:
 
 - 标识：`asset_id`, `mcap_file_id`, `version`
-- 生命周期：`lifecycle_state`（新）/ `status`（旧，兼容保留）, `qa_state`, `reviewer`, `owner`
-- 资产属性：`asset_type`（新）/ `type`（旧）, `env`, `task`
-- 时间：`created_at`, `updated_at`, `start_timestamp_ns`, `end_timestamp_ns`, `duration_ms`（新）/ `duration_sec`（旧）
+- 生命周期：`lifecycle_state`（新，✅ 推荐）/ `status`（DEPRECATED，兼容保留）, `qa_state`, `reviewer`, `owner`
+- 资产属性：`asset_type`（新，✅ 推荐）/ `type`（DEPRECATED）, `env`, `task`
+- 时间：`created_at`, `updated_at`, `start_timestamp_ns`, `end_timestamp_ns`, `duration_ms`（新，✅ 推荐）/ `duration_sec`（DEPRECATED）
 - 交付汇总：`delivery_count`, `last_delivered_to`, `last_delivered_at`
 - 留存策略：`retention_tier`, `archive_after_days`, `delete_after_days`, `total_size_bytes`, `last_accessed_at`
 - Tag 前缀：`tag.<key>`（推荐）
 - 算法结果前缀：`algo.<key>`（推荐，路由到 `asset_algo_latest`）
 - 文件引用前缀：`files.<key>`
 
-兼容别名（旧 → 新，仅过渡期支持）:
+兼容别名（旧 → 新，仅过渡期支持，旧字段 DEPRECATED）:
 
-- `status` → `lifecycle_state`（语义不完全一致，详见上方"字段命名口径"表）
-- `type` → `asset_type`
-- `duration_sec` → `duration_ms`（单位变换由后端自动处理）
+- `status` → `lifecycle_state`（DEPRECATED，语义不完全一致，详见上方"字段命名口径"表）
+- `type` → `asset_type`（DEPRECATED）
+- `duration_sec` → `duration_ms`（DEPRECATED，单位变换由后端自动处理）
 - `tags.<key>` → `tag.<key>`
 - `cf_tag.<key>` → `tag.<key>`
 - `algo_results.<key>` → `algo.<key>`
@@ -739,14 +751,18 @@ curl -G "$BASE/api/v1/search/assets" \
 ```
 
 响应 `200`:
-```json
+```jsonc
 {
   "items": [
     {
       "asset_id": "ast_01HX...",
-      "lifecycle_state": "ready",
+      "status": "approved",           // DEPRECATED — 请使用 lifecycle_state
+      "lifecycle_state": "ready",     // ✅ 新字段（权威来源）
+      "type": "mcap_segment",        // DEPRECATED — 请使用 asset_type
+      "asset_type": "mcap_segment",  // ✅ 新字段（权威来源）
       "owner": "alice",
-      "duration_ms": 87500,
+      "duration_sec": 87.5,          // DEPRECATED — 请使用 duration_ms
+      "duration_ms": 87500,          // ✅ 新字段（权威来源）
       "tags_flat": {"scene": "highway", "time_of_day": "night"},
       "mcap": {"vendor_id": "vendor-a", "scene_id": "highway-01"},
       "_highlight": {"notes": ["典型的 <em>corner</em> <em>case</em> ..."]}

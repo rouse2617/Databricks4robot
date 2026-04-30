@@ -302,6 +302,16 @@ func (m *mockAssetEventRepo) MarkFailed(context.Context, int64, string) error { 
 
 func (m *mockAssetEventRepo) CountPending(context.Context) (int64, error) { return 0, nil }
 
+func (m *mockAssetEventRepo) ComputeSafeHorizon(context.Context) (int64, error) { return 0, nil }
+
+func (m *mockAssetEventRepo) MarkPublishedAndAdvanceCursor(context.Context, []int64, string) error {
+	return nil
+}
+
+func (m *mockAssetEventRepo) OldestPendingAge(context.Context) (float64, error) {
+	return 0, nil
+}
+
 func (m *mockAssetEventRepo) all() []*models.AssetEvent {
 	m.mu.Lock()
 	defer m.mu.Unlock()

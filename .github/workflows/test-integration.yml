@@ -1,0 +1,105 @@
+# CI: Integration tests (testcontainers-go → PG + ES)
+# Tasks: 4.8 GitHub Actions test-integration job
+#         4.9 testcontainers image cache
+name: test-integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - run: go vet ./...
+      - run: go test -v -timeout 120s ./...
+
+  integration:
+    name: Integration tests (testcontainers)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # ── Docker layer cache for testcontainers images ──────────────
+      # Pre-pull heavy images so testcontainers reuses the local cache
+      # instead of pulling on every CI run.
+      - name: Cache Docker images
+        uses: actions/cache@v4
+        id: docker-cache
+        with:
+          path: /tmp/docker-images
+          key: docker-tc-${{ runner.os }}-postgres16-es817
+          restore-keys: |
+            docker-tc-${{ runner.os }}-
+
+      - name: Load cached Docker images
+        if: steps.docker-cache.outputs.cache-hit == 'true'
+        run: |
+          for img in /tmp/docker-images/*.tar; do
+            docker load -i "$img" || true
+          done
+
+      - name: Pull testcontainers images
+        if: steps.docker-cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull postgres:16-alpine
+          docker pull elasticsearch:8.17.0
+          mkdir -p /tmp/docker-images
+          docker save postgres:16-alpine -o /tmp/docker-images/postgres-16-alpine.tar
+          docker save elasticsearch:8.17.0 -o /tmp/docker-images/elasticsearch-8.17.0.tar
+
+      # ── Run integration tests ─────────────────────────────────────
+      - name: Run integration tests
+        run: go test -tags integration -v -timeout 300s ./...
+
+  frontend:
+    name: Frontend tests + coverage gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      - run: npm ci
+
+      # Coverage thresholds (core components ≥ 70%) are enforced via
+      # vite.config.ts → test.coverage.thresholds. The grep check below
+      # catches threshold violations that vitest may only log as warnings.
+      - name: Run tests with coverage gate
+        run: |
+          npx vitest run --coverage 2>&1 | tee /tmp/coverage-output.txt
+          if grep -q 'does not meet.*threshold' /tmp/coverage-output.txt; then
+            echo "::error::Coverage thresholds not met — see output above"
+            exit 1
+          fi

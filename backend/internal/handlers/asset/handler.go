@@ -532,6 +532,45 @@ func parseBoundedInt(raw string, fallback, min, max int) int {
 	return v
 }
 
+// BatchGet returns multiple assets by their IDs.
+// @Summary      Batch get assets
+// @Description  Retrieve multiple assets by ID in a single request (max 100)
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        body body object true "Batch get request"
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets:batch_get [post]
+func (h *Handler) BatchGet(c *gin.Context) {
+	var req struct {
+		AssetIDs []string `json:"asset_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if len(req.AssetIDs) == 0 {
+		c.JSON(200, gin.H{"items": []any{}})
+		return
+	}
+	if len(req.AssetIDs) > 100 {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset_ids exceeds maximum of 100", nil)
+		return
+	}
+
+	items := make([]*models.Asset, 0, len(req.AssetIDs))
+	result, err := h.uc.BatchGet(c.Request.Context(), req.AssetIDs)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	items = result
+	c.JSON(200, gin.H{"items": items})
+}
+
 func paginateAssets(items []*models.Asset, page, pageSize int) []*models.Asset {
 	if len(items) == 0 {
 		return []*models.Asset{}

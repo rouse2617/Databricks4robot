@@ -46,3 +46,8 @@ backend/.env
 .DS_Store
 Thumbs.db
 sdk/
+
+# Playwright
+Frontend/e2e/test-results/
+Frontend/e2e/report/
+Frontend/e2e/screenshots/*.png

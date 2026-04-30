@@ -1216,7 +1216,7 @@ func TestProperty8_TagUpsertConsistency(t *testing.T) {
 			t.Fatalf("Upsert failed: %v", err)
 		}
 
-		// Verify exactly 1 Exec call (asset_tags only, no cf_tag).
+		// Verify exactly 1 Exec call (asset_tags only).
 		if len(tracker.calls) != 1 {
 			t.Fatalf("expected 1 Exec call, got %d", len(tracker.calls))
 		}
@@ -1642,6 +1642,248 @@ func TestProperty10_MutationEventInvariant(t *testing.T) {
 			t.Fatalf("payload is not valid JSON: %v", err)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// AssetEventRepo.ComputeSafeHorizon tests (§4.2)
+// ---------------------------------------------------------------------------
+
+func TestAssetEventRepo_ComputeSafeHorizon_WithPending(t *testing.T) {
+	// When pending events exist, safe_horizon = MIN(pending event_seq) - 1.
+	db := &fakeDB{queryRow: &fakeRow{values: []any{int64(99)}}}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	horizon, err := repo.ComputeSafeHorizon(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if horizon != 99 {
+		t.Fatalf("expected horizon 99, got %d", horizon)
+	}
+}
+
+func TestAssetEventRepo_ComputeSafeHorizon_NoPending(t *testing.T) {
+	// When no pending events exist, safe_horizon = MAX(event_seq).
+	// The COALESCE falls through to the MAX subquery.
+	db := &fakeDB{queryRow: &fakeRow{values: []any{int64(500)}}}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	horizon, err := repo.ComputeSafeHorizon(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if horizon != 500 {
+		t.Fatalf("expected horizon 500, got %d", horizon)
+	}
+}
+
+func TestAssetEventRepo_ComputeSafeHorizon_EmptyTable(t *testing.T) {
+	// When the table is empty, both subqueries return NULL → COALESCE returns 0.
+	db := &fakeDB{queryRow: &fakeRow{values: []any{int64(0)}}}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	horizon, err := repo.ComputeSafeHorizon(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if horizon != 0 {
+		t.Fatalf("expected horizon 0, got %d", horizon)
+	}
+}
+
+func TestAssetEventRepo_ComputeSafeHorizon_DBError(t *testing.T) {
+	db := &fakeDB{queryRow: &fakeRow{err: errors.New("connection lost")}}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	_, err := repo.ComputeSafeHorizon(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ComputeSafeHorizon") {
+		t.Fatalf("expected ComputeSafeHorizon error, got %v", err)
+	}
+}
+
+func TestAssetEventRepo_ComputeSafeHorizon_TxAware(t *testing.T) {
+	// Verify that ComputeSafeHorizon uses dbFromCtx (tx-aware).
+	txDB := &fakeDB{queryRow: &fakeRow{values: []any{int64(42)}}}
+	poolDB := &fakeDB{queryRow: &fakeRow{values: []any{int64(999)}}}
+	repo := &AssetEventRepo{c: &Client{db: poolDB}}
+
+	// Without tx context → uses pool DB.
+	horizon, err := repo.ComputeSafeHorizon(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if horizon != 999 {
+		t.Fatalf("expected pool horizon 999, got %d", horizon)
+	}
+
+	// With tx context → uses tx DB.
+	txCtx := context.WithValue(context.Background(), txKey{}, txDB)
+	horizon, err = repo.ComputeSafeHorizon(txCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if horizon != 42 {
+		t.Fatalf("expected tx horizon 42, got %d", horizon)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AssetEventRepo.MarkPublishedAndAdvanceCursor tests (§4.2)
+// ---------------------------------------------------------------------------
+
+// multiStepDB tracks Exec and QueryRow calls in order, allowing tests to
+// verify the SQL sequence of MarkPublishedAndAdvanceCursor.
+type multiStepDB struct {
+	execCalls     [][]any // args for each Exec call
+	execErrs      []error // error to return per Exec call (nil = success)
+	queryRowVal   *fakeRow
+	queryRowCalls int
+	execIdx       int
+}
+
+func (m *multiStepDB) Exec(_ context.Context, _ string, args ...any) error {
+	m.execCalls = append(m.execCalls, args)
+	idx := m.execIdx
+	m.execIdx++
+	if idx < len(m.execErrs) {
+		return m.execErrs[idx]
+	}
+	return nil
+}
+
+func (m *multiStepDB) ExecResult(_ context.Context, _ string, _ ...any) (int64, error) {
+	return 0, nil
+}
+
+func (m *multiStepDB) QueryRow(_ context.Context, _ string, _ ...any) rowScanner {
+	m.queryRowCalls++
+	if m.queryRowVal != nil {
+		return m.queryRowVal
+	}
+	return &fakeRow{err: errNoRows}
+}
+
+func (m *multiStepDB) Query(_ context.Context, _ string, _ ...any) (rowsScanner, error) {
+	return &fakeRows{}, nil
+}
+
+func (m *multiStepDB) Ping(_ context.Context) error { return nil }
+func (m *multiStepDB) Close()                       {}
+
+func TestAssetEventRepo_MarkPublishedAndAdvanceCursor_HappyPath(t *testing.T) {
+	db := &multiStepDB{
+		queryRowVal: &fakeRow{values: []any{int64(50)}}, // safe horizon = 50
+	}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	err := repo.MarkPublishedAndAdvanceCursor(context.Background(), []int64{10, 11, 12}, "es_assets")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have 2 Exec calls: mark published + advance cursor.
+	if len(db.execCalls) != 2 {
+		t.Fatalf("expected 2 Exec calls, got %d", len(db.execCalls))
+	}
+
+	// First Exec: mark published with event seqs.
+	markArgs := db.execCalls[0]
+	if len(markArgs) != 1 {
+		t.Fatalf("expected 1 arg for mark, got %d", len(markArgs))
+	}
+	seqs, ok := markArgs[0].([]int64)
+	if !ok {
+		t.Fatalf("expected []int64 arg, got %T", markArgs[0])
+	}
+	if len(seqs) != 3 || seqs[0] != 10 || seqs[1] != 11 || seqs[2] != 12 {
+		t.Fatalf("unexpected seqs: %v", seqs)
+	}
+
+	// QueryRow should have been called once (for safe horizon).
+	if db.queryRowCalls != 1 {
+		t.Fatalf("expected 1 QueryRow call, got %d", db.queryRowCalls)
+	}
+
+	// Second Exec: advance cursor with horizon=50 and sinkName.
+	cursorArgs := db.execCalls[1]
+	if len(cursorArgs) != 2 {
+		t.Fatalf("expected 2 args for cursor, got %d", len(cursorArgs))
+	}
+	if cursorArgs[0] != int64(50) {
+		t.Fatalf("expected horizon 50, got %v", cursorArgs[0])
+	}
+	if cursorArgs[1] != "es_assets" {
+		t.Fatalf("expected sink_name es_assets, got %v", cursorArgs[1])
+	}
+}
+
+func TestAssetEventRepo_MarkPublishedAndAdvanceCursor_EmptySeqs(t *testing.T) {
+	db := &multiStepDB{}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	err := repo.MarkPublishedAndAdvanceCursor(context.Background(), nil, "es_assets")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No DB calls should be made for empty seqs.
+	if len(db.execCalls) != 0 {
+		t.Fatalf("expected 0 Exec calls for empty seqs, got %d", len(db.execCalls))
+	}
+}
+
+func TestAssetEventRepo_MarkPublishedAndAdvanceCursor_MarkError(t *testing.T) {
+	db := &multiStepDB{
+		execErrs: []error{errors.New("mark failed")},
+	}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	err := repo.MarkPublishedAndAdvanceCursor(context.Background(), []int64{1}, "es_assets")
+	if err == nil {
+		t.Fatal("expected error from mark step")
+	}
+	if !strings.Contains(err.Error(), "mark") {
+		t.Fatalf("expected error to mention 'mark', got: %v", err)
+	}
+
+	// Only 1 Exec call (the failed mark); no QueryRow or cursor Exec.
+	if len(db.execCalls) != 1 {
+		t.Fatalf("expected 1 Exec call, got %d", len(db.execCalls))
+	}
+	if db.queryRowCalls != 0 {
+		t.Fatalf("expected 0 QueryRow calls, got %d", db.queryRowCalls)
+	}
+}
+
+func TestAssetEventRepo_MarkPublishedAndAdvanceCursor_HorizonError(t *testing.T) {
+	db := &multiStepDB{
+		queryRowVal: &fakeRow{err: errors.New("horizon query failed")},
+	}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	err := repo.MarkPublishedAndAdvanceCursor(context.Background(), []int64{1}, "es_assets")
+	if err == nil {
+		t.Fatal("expected error from horizon step")
+	}
+	if !strings.Contains(err.Error(), "horizon") {
+		t.Fatalf("expected error to mention 'horizon', got: %v", err)
+	}
+}
+
+func TestAssetEventRepo_MarkPublishedAndAdvanceCursor_CursorError(t *testing.T) {
+	db := &multiStepDB{
+		queryRowVal: &fakeRow{values: []any{int64(10)}},
+		execErrs:    []error{nil, errors.New("cursor update failed")}, // mark OK, cursor fails
+	}
+	repo := &AssetEventRepo{c: &Client{db: db}}
+
+	err := repo.MarkPublishedAndAdvanceCursor(context.Background(), []int64{1}, "es_assets")
+	if err == nil {
+		t.Fatal("expected error from cursor step")
+	}
+	if !strings.Contains(err.Error(), "cursor") {
+		t.Fatalf("expected error to mention 'cursor', got: %v", err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2182,7 +2424,7 @@ func TestDeliveryRepo_Set_WritesRealColumns(t *testing.T) {
 	}
 
 	args := tracker.calls[0]
-	// Set() passes 20 args (no cf_meta).
+	// Set() passes 20 args.
 	if len(args) != 20 {
 		t.Fatalf("expected 20 args, got %d", len(args))
 	}

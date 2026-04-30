@@ -922,6 +922,16 @@ func (m *handlerAssetEventRepo) MarkFailed(context.Context, int64, string) error
 
 func (m *handlerAssetEventRepo) CountPending(context.Context) (int64, error) { return 0, nil }
 
+func (m *handlerAssetEventRepo) ComputeSafeHorizon(context.Context) (int64, error) { return 0, nil }
+
+func (m *handlerAssetEventRepo) MarkPublishedAndAdvanceCursor(context.Context, []int64, string) error {
+	return nil
+}
+
+func (m *handlerAssetEventRepo) OldestPendingAge(context.Context) (float64, error) {
+	return 0, nil
+}
+
 func (m *handlerAssetEventRepo) ListByAsset(_ context.Context, assetID string, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

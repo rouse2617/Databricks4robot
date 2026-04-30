@@ -3,6 +3,8 @@
 # ── Local infra ──────────────────────────────────────────
 dev-up:
 	cd deploy/local && docker compose up -d
+	@echo "PostgreSQL:       localhost:5432"
+	@echo "PgBouncer:        localhost:6432"
 	@echo "Bigtable emulator: localhost:8086  |  Pubsub emulator: localhost:8085"
 
 dev-down:

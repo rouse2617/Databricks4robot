@@ -138,4 +138,27 @@ type AssetEventRepository interface {
 	MarkFailed(ctx context.Context, eventSeq int64, errMsg string) error
 	// CountPending returns the number of rows still awaiting sink delivery.
 	CountPending(ctx context.Context) (int64, error)
+	// ComputeSafeHorizon returns the highest event_seq that can safely be used
+	// as a cursor checkpoint (§4.2 of outbox-worker-design.md).
+	//   - If pending events exist: MIN(event_seq WHERE pending) - 1
+	//   - If no pending events:    MAX(event_seq) across all events
+	//   - If the table is empty:   0, nil
+	ComputeSafeHorizon(ctx context.Context) (int64, error)
+	// MarkPublishedAndAdvanceCursor atomically (in a single transaction):
+	//   1. Marks the given event sequences as published.
+	//   2. Computes the safe horizon (same logic as ComputeSafeHorizon).
+	//   3. Updates the outbox_sink_cursors row for sinkName to the safe horizon.
+	// See §4.2 of outbox-worker-design.md.
+	MarkPublishedAndAdvanceCursor(ctx context.Context, eventSeqs []int64, sinkName string) error
+	// OldestPendingAge returns the age of the oldest pending event as
+	// seconds since its occurred_at timestamp. Returns 0 when no pending
+	// events exist.
+	OldestPendingAge(ctx context.Context) (float64, error)
+}
+
+// OutboxDLQRepository persists permanently failed events to the dead letter queue.
+type OutboxDLQRepository interface {
+	// MoveToDLQ moves events that have exceeded the retry threshold from
+	// asset_events to outbox_dlq. Returns the number of events moved.
+	MoveToDLQ(ctx context.Context, retryThreshold int) (int64, error)
 }

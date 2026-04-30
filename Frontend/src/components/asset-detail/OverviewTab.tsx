@@ -30,6 +30,7 @@ export default function OverviewTab({ asset }: Props) {
           {formatDurationSeconds(asset, 3)}
         </Descriptions.Item>
         <Descriptions.Item label="资产类型">{getAssetType(asset) || "—"}</Descriptions.Item>
+        <Descriptions.Item label="保留层级">{asset.retention_tier ?? "—"}</Descriptions.Item>
         <Descriptions.Item label="生命周期">{getLifecycleState(asset) || "—"}</Descriptions.Item>
         <Descriptions.Item label="状态 (legacy)">
           <span style={{ color: "#8c8c8c" }}>{asset.status ?? "—"}</span>
@@ -38,6 +39,9 @@ export default function OverviewTab({ asset }: Props) {
         <Descriptions.Item label="任务">{asset.task ?? "—"}</Descriptions.Item>
         <Descriptions.Item label="审核人">{asset.reviewer ?? "—"}</Descriptions.Item>
         <Descriptions.Item label="Owner">{asset.owner ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="过期时间">
+          {asset.expire_at ? dayjs(asset.expire_at).fromNow() : "—"}
+        </Descriptions.Item>
         <Descriptions.Item label="版本">{asset.version}</Descriptions.Item>
         <Descriptions.Item label="创建时间">
           {dayjs(asset.created_at).format("YYYY-MM-DD HH:mm:ss")}

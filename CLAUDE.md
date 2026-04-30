@@ -100,6 +100,12 @@ These are intentionally removed and should not be reintroduced unless explicitly
 4. **Respect source-of-truth schema docs** (`docs/review/sql.md` + `schemas/pg-phase0.sql`) for table/key/CF naming.
 5. **Prefer simple structure**:
    - keep storage package layout as `client.go + repos.go` unless complexity requires split.
+6. **Event schema changes** — when adding or modifying event types emitted to `asset_events`:
+   - Update or create the corresponding JSON Schema in `backend/schemas/events/`.
+   - Update `backend/schemas/events/registry.json` if the current version changes.
+   - **Minor bumps** (adding optional fields): edit the existing `.v<N>.json` in place. Do NOT add new required fields.
+   - **Major bumps** (new required fields, type changes, field removals): create a new `.v<N+1>.json` file and update `registry.json`.
+   - See `backend/schemas/events/VERSIONING.md` for the full procedure.
 
 ## Commit Message Convention (Required)
 
@@ -265,6 +271,16 @@ From `backend/.env.example`:
 | `api/openapi.yaml` | 错误响应 schema |
 | `docs/review/api-guide.md` | 错误码参考表 |
 
+### 新增或修改事件类型
+
+| 文件 | 说明 |
+|------|------|
+| `backend/schemas/events/<event_type>.v<N>.json` | 事件 payload JSON Schema |
+| `backend/schemas/events/registry.json` | 事件类型注册表（版本号、schema 文件引用） |
+| `backend/schemas/events/VERSIONING.md` | 版本演进规范（参考） |
+
+规则：minor bump 只加可选字段（不改 `required`）；major bump 新建 `.v<N+1>.json` 文件。
+
 ### 测试相关
 
 | 场景 | 需要更新的测试文件 |
@@ -288,4 +304,5 @@ From `backend/.env.example`:
 - [ ] 如果改了约定/规则 → 更新 `CLAUDE.md`
 - [ ] **Do not** add new code against `internal/bigtable` (deprecated)
 - [ ] 如果新增了算法/Tag → 更新对应 YAML 注册表
+- [ ] 如果新增或修改了事件类型 → 更新 `backend/schemas/events/` 下的 JSON Schema + `registry.json`
 - [ ] 新代码有对应的单元测试

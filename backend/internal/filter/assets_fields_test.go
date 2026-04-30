@@ -58,12 +58,9 @@ func TestProperty13_JSONBPrefixSupportPreserved(t *testing.T) {
 	prefixes := []prefixCase{
 		{"tag.", "asset_tags."},
 		{"tags.", "asset_tags."},
-		{"cf_tag.", "asset_tags."},
 		{"algo.", "asset_algo_latest."},
 		{"algo_results.", "asset_algo_latest."},
-		{"cf_algo.", "asset_algo_latest."},
 		{"files.", "files."},
-		{"cf_files.", "files."},
 	}
 
 	// Generate random valid key suffixes

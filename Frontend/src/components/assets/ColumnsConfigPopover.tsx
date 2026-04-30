@@ -11,10 +11,14 @@ const ALL_COLUMNS = [
   { key: "asset_id", label: "Asset ID" },
   { key: "mcap_file_id", label: "MCAP" },
   { key: "duration", label: "时长" },
+  { key: "asset_type", label: "资产类型" },
+  { key: "retention_tier", label: "保留层级" },
   { key: "env", label: "环境" },
-  { key: "status", label: "生命周期" },
+  { key: "lifecycle_state", label: "生命周期" },
   { key: "algo", label: "算法状态" },
   { key: "tags", label: "标签" },
+  { key: "owner", label: "Owner" },
+  { key: "expire_at", label: "过期时间" },
   { key: "updated_at", label: "更新时间" },
 ];
 

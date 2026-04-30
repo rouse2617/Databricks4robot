@@ -16,7 +16,7 @@ type AlgoEvent struct {
 }
 
 // AlgoStatus represents the lifecycle status of an algorithm on an asset.
-// It preserves the legacy cf_algo flat-key semantics documented in
+// It preserves the flat-key semantics documented in
 // docs/review/sql.md §4.2 for backward-compatible API hydration.
 type AlgoStatus string
 
@@ -28,8 +28,8 @@ const (
 	AlgoStatusFailed  AlgoStatus = "failed"
 )
 
-// cf:algo field suffix constants used by the legacy flat-key representation.
-// Key pattern in cf_algo JSONB: <algo>@<ver>:<field>
+// Algo field suffix constants used by the flat-key representation.
+// Key pattern: <algo>@<ver>:<field>
 const (
 	AlgoFieldStatus     = "status"
 	AlgoFieldStartedAt  = "started_at"

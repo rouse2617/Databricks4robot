@@ -1,6 +1,7 @@
 package lakehouse
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -199,8 +200,45 @@ type SyncStatusResponse struct {
 	IsAlert           bool           `json:"is_alert"`
 }
 
-// SyncStatus returns the most recent reconciliation result from the sync_reconciliation table.
+// SyncStatus returns the latest reconciliation result.
+// It compares PG event counts with Iceberg Bronze counts via Trino
+// for a real-time sync health check. Falls back to the sync_reconciliation
+// table if available.
 func (h *Handler) SyncStatus(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Try real-time comparison: PG published count vs Iceberg bronze count.
+	if h.pg != nil && h.trino != nil {
+		pgTotal, pgErr := h.pgPublishedEventCount(ctx)
+		iceTotal, iceErr := h.trino.BronzeEventCount(ctx)
+		iceMaxSeq, seqErr := h.trino.BronzeMaxEventSeq(ctx)
+
+		if pgErr == nil && iceErr == nil && seqErr == nil {
+			var diffPct float64
+			if pgTotal > 0 {
+				diff := pgTotal - iceTotal
+				if diff < 0 {
+					diff = -diff
+				}
+				diffPct = float64(diff) * 100.0 / float64(pgTotal)
+			}
+
+			c.JSON(200, gin.H{
+				"available":           true,
+				"source":              "realtime",
+				"checked_at":          time.Now().UTC().Format(time.RFC3339),
+				"pg_published_count":  pgTotal,
+				"iceberg_total_count": iceTotal,
+				"iceberg_max_seq":     iceMaxSeq,
+				"count_diff_pct":      diffPct,
+				"is_alert":            diffPct > 1.0,
+			})
+			return
+		}
+		// Fall through to sync_reconciliation table if Trino query fails.
+	}
+
+	// Fallback: read from sync_reconciliation table (Dagster-populated).
 	if h.pg == nil {
 		httpresp.Error(c, http.StatusServiceUnavailable, "PG_DISABLED", "postgres not available for sync status", nil)
 		return
@@ -220,7 +258,7 @@ LIMIT 1`
 		statusDiffJSON    []byte
 	)
 
-	err := h.pg.QueryRow(c.Request.Context(), q).Scan(
+	err := h.pg.QueryRow(ctx, q).Scan(
 		&resp.DagsterRunID,
 		&resp.CheckedAt,
 		&resp.PgTotalCount,
@@ -232,10 +270,9 @@ LIMIT 1`
 		&resp.IsAlert,
 	)
 	if err != nil {
-		// Table may not exist yet or no rows — return empty status
 		c.JSON(200, gin.H{
 			"available": false,
-			"message":   "对账数据暂不可用，请先运行 Dagster pipeline",
+			"message":   "对账数据暂不可用，请先运行 Dagster pipeline 或等待 Bronze MERGE",
 		})
 		return
 	}
@@ -246,6 +283,16 @@ LIMIT 1`
 
 	c.JSON(200, gin.H{
 		"available": true,
+		"source":    "sync_reconciliation",
 		"data":      resp,
 	})
+}
+
+// pgPublishedEventCount returns the count of published events in PG.
+func (h *Handler) pgPublishedEventCount(ctx context.Context) (int64, error) {
+	var count int64
+	err := h.pg.QueryRow(ctx,
+		"SELECT count(*) FROM asset_events WHERE publish_state = 'published'",
+	).Scan(&count)
+	return count, err
 }

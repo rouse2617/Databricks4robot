@@ -169,7 +169,7 @@ export const DEFAULT_COLUMNS: string[] = [
   "mcap_file_id",
   "duration",
   "env",
-  "status",
+  "lifecycle_state",
   "algo",
   "tags",
   "updated_at",

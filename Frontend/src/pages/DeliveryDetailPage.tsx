@@ -121,7 +121,7 @@ export default function DeliveryDetailPage() {
     },
     {
       title: "时长 (s)",
-      key: "duration_sec",
+      key: "duration",
       width: 100,
       render: (_: unknown, asset: Asset) => formatDurationSeconds(asset),
     },

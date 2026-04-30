@@ -62,9 +62,11 @@ type Config struct {
 	ElasticsearchURL string
 
 	// Outbox worker (in-process ES sink).
-	OutboxWorkerEnabled string
-	OutboxWorkerTickSec string
-	OutboxWorkerBatch   string
+	OutboxWorkerEnabled      string
+	OutboxWorkerTickSec      string
+	OutboxWorkerBatch        string
+	OutboxWorkerRetryLimit   string
+	OutboxWorkerFatalOnPanic string
 
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
@@ -117,9 +119,11 @@ func Load() *Config {
 
 		ElasticsearchURL: getenv("ELASTICSEARCH_URL", "http://localhost:9200"),
 
-		OutboxWorkerEnabled: getenv("OUTBOX_WORKER_ENABLED", "false"),
-		OutboxWorkerTickSec: getenv("OUTBOX_WORKER_TICK_SEC", "30"),
-		OutboxWorkerBatch:   getenv("OUTBOX_WORKER_BATCH", "100"),
+		OutboxWorkerEnabled:      getenv("OUTBOX_WORKER_ENABLED", "false"),
+		OutboxWorkerTickSec:      getenv("OUTBOX_WORKER_TICK_SEC", "30"),
+		OutboxWorkerBatch:        getenv("OUTBOX_WORKER_BATCH", "100"),
+		OutboxWorkerRetryLimit:   getenv("OUTBOX_WORKER_RETRY_LIMIT", "10"),
+		OutboxWorkerFatalOnPanic: getenv("OUTBOX_WORKER_FATAL_ON_PANIC", "false"),
 
 		AdminToken: getenv("ADMIN_TOKEN", ""),
 	}

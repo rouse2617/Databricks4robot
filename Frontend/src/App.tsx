@@ -16,6 +16,7 @@ const DeliveryDetailPage = lazy(() => import("./pages/DeliveryDetailPage"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const TagDictionaryPage = lazy(() => import("./pages/TagDictionaryPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const EventsPage = lazy(() => import("./pages/EventsPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
 function PageLoader() {
@@ -44,6 +45,7 @@ function ProtectedRoutes() {
             <Route path="/deliveries/:id" element={<DeliveryDetailPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/tags" element={<TagDictionaryPage />} />
+            <Route path="/events" element={<EventsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </Suspense>

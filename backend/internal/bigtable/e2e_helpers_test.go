@@ -46,3 +46,13 @@ func (bigtableNoopAssetEventRepo) MarkPublished(context.Context, []int64) error 
 func (bigtableNoopAssetEventRepo) MarkFailed(context.Context, int64, string) error { return nil }
 
 func (bigtableNoopAssetEventRepo) CountPending(context.Context) (int64, error) { return 0, nil }
+
+func (bigtableNoopAssetEventRepo) ComputeSafeHorizon(context.Context) (int64, error) { return 0, nil }
+
+func (bigtableNoopAssetEventRepo) MarkPublishedAndAdvanceCursor(context.Context, []int64, string) error {
+	return nil
+}
+
+func (bigtableNoopAssetEventRepo) OldestPendingAge(context.Context) (float64, error) {
+	return 0, nil
+}

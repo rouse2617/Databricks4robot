@@ -35,13 +35,20 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		}
 	}
 
+	// lifecycle_state is the primary aggregation/facet field (P0-3).
+	// Fall back to legacy status for rows not yet backfilled.
+	lifecycleState := a.LifecycleState
+	if lifecycleState == "" {
+		lifecycleState = string(a.Status)
+	}
+
 	doc = map[string]any{
 		"asset_id":           a.AssetID,
 		"mcap_file_id":       a.McapFileID,
 		"segment_locator":    a.SegmentLocator,
 		"asset_type":         a.AssetType,
-		"lifecycle_state":    a.LifecycleState,
-		"status":             string(a.Status),
+		"lifecycle_state":    lifecycleState,
+		"status":             string(a.Status), // deprecated — retained during dual-write window (§5.8.1)
 		"is_deleted":         false,
 		"version":            a.Version,
 		"retention_tier":     a.RetentionTier,
@@ -105,6 +112,9 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 			"value":       t.TagValue,
 			"source_type": t.SourceType,
 			"source_name": t.SourceName,
+		}
+		if !t.UpdatedAt.IsZero() {
+			entry["tagged_at"] = t.UpdatedAt.UTC().Format(time.RFC3339Nano)
 		}
 		tagsNested = append(tagsNested, entry)
 		tagsFlat[t.TagKey] = t.TagValue

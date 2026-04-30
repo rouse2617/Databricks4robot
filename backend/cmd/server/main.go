@@ -150,6 +150,7 @@ func main() {
 
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
+	outboxHealth := outbox.NewHealthStatus()
 	if pgClient != nil && cfg.OutboxWorkerEnabled == "true" && esClient != nil {
 		tickSec, _ := strconv.Atoi(cfg.OutboxWorkerTickSec)
 		if tickSec <= 0 {
@@ -159,6 +160,10 @@ func main() {
 		if batch <= 0 {
 			batch = 100
 		}
+		retryLimit, _ := strconv.Atoi(cfg.OutboxWorkerRetryLimit)
+		if retryLimit <= 0 {
+			retryLimit = 10
+		}
 		w := &outbox.ESWorker{
 			Events: postgres.NewAssetEventRepo(pgClient),
 			Indexer: &searchindex.Builder{
@@ -167,11 +172,16 @@ func main() {
 				Algos:  postgres.NewAssetAlgoLatestRepo(pgClient),
 				Mcap:   postgres.NewMcapFileRepo(pgClient),
 			},
-			ES:        esClient,
-			BatchSize: batch,
+			ES:           esClient,
+			DLQ:          postgres.NewOutboxDLQRepo(pgClient),
+			BatchSize:    batch,
+			SinkName:     "es_assets",
+			FatalOnPanic: cfg.OutboxWorkerFatalOnPanic == "true",
+			RetryLimit:   retryLimit,
+			Health:       outboxHealth,
 		}
 		go w.Run(workerCtx, time.Duration(tickSec)*time.Second)
-		slog.Info("outbox ES worker started", "tick_sec", tickSec, "batch", batch)
+		slog.Info("outbox ES worker started", "tick_sec", tickSec, "batch", batch, "fatal_on_panic", cfg.OutboxWorkerFatalOnPanic == "true")
 	} else if cfg.OutboxWorkerEnabled == "true" {
 		slog.Warn("outbox worker disabled: requires STORAGE_BACKEND=postgres, reachable ELASTICSEARCH_URL, and successful ES ping")
 	}
@@ -189,6 +199,7 @@ func main() {
 		registryH.New(algoRegistry, tagRegistry),
 		searchH.New(esClient),
 		adminHandler,
+		outboxHealth,
 	)
 
 	// Start config watcher for hot-reload of registries.

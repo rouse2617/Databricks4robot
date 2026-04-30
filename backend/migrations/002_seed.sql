@@ -157,3 +157,10 @@ INSERT INTO asset_algo_events (event_id, asset_id, algo_key, prev_status, new_st
     NULL,
     '2026-04-20T09:05:00Z'
 );
+
+-- ============================================================
+-- Outbox Sink Cursors (ES sink bootstrap)
+-- ============================================================
+INSERT INTO outbox_sink_cursors (sink_name, last_published_seq)
+VALUES ('es_assets', 0)
+ON CONFLICT DO NOTHING;

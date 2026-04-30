@@ -471,7 +471,7 @@ paths:
             items: { type: string }
           style: form
           explode: true
-          description: "Filter expressions in format field:op:value. Allowed fields: asset_id, mcap_file_id, status, lifecycle_state, reviewer, owner, type, asset_type, env, task, created_at, updated_at, start_timestamp_ns, end_timestamp_ns, duration_sec, duration_ms, delivery_count, last_delivered_to, last_delivered_at, version, retention_tier, expire_at, archive_after_days, delete_after_days, total_size_bytes, last_accessed_at, tenant_id, project_id, and dynamic prefixes tag.<key>, algo.<key>, files.<key>. Accepted aliases: tags.<key>, cf_tag.<key>, algo_results.<key>, cf_algo.<key>, cf_files.<key>. Both legacy (status, type, duration_sec) and new (lifecycle_state, asset_type, duration_ms) field names are accepted during the dual-write period."
+          description: "Filter expressions in format field:op:value. Allowed fields: asset_id, mcap_file_id, status, lifecycle_state, reviewer, owner, type, asset_type, env, task, created_at, updated_at, start_timestamp_ns, end_timestamp_ns, duration_sec, duration_ms, delivery_count, last_delivered_to, last_delivered_at, version, retention_tier, expire_at, archive_after_days, delete_after_days, total_size_bytes, last_accessed_at, tenant_id, project_id, and dynamic prefixes tag.<key>, algo.<key>, files.<key>. Accepted aliases: tags.<key>, algo_results.<key>. Both legacy (status, type, duration_sec) and new (lifecycle_state, asset_type, duration_ms) field names are accepted during the dual-write period."
         - in: query
           name: sort_by
           schema: { type: string }
@@ -912,6 +912,41 @@ paths:
         '200': { description: ok }
         '500':
           description: internal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets:batch_get:
+    post:
+      summary: Batch get assets by IDs
+      description: >
+        Retrieve multiple assets in a single request. Returns only found assets;
+        missing IDs are silently skipped. Maximum 100 IDs per request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset_ids]
+              properties:
+                asset_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Asset' }
+        '400':
+          description: invalid request (empty or >100 IDs)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
