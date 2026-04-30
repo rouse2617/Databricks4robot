@@ -2,32 +2,66 @@
 // Mode selector + search input + help button + tokenizer.
 // Validates: Requirements R2
 
-import { Select, Input, Button, Tooltip } from "antd";
+import { Button, Input, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { SearchOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import type { SearchMode, QueryToken } from "../../lib/assets/assetsDiscoveryTypes";
 
+const { Text } = Typography;
+
+type SearchFieldType = "enum" | "numeric" | "timestamp" | "string";
+
+interface SearchFieldSpec {
+  key: string;
+  label: string;
+  type: SearchFieldType;
+  values?: string[];
+}
+
 // ─── Known Fields ───
 
-const KNOWN_FIELDS = new Set([
-  "asset_id",
-  "mcap_file_id",
-  "owner",
-  "reviewer",
-  "lifecycle_state",
-  "status",
-  "env",
-  "scene",
-  "task",
-  "batch",
-  "duration_ms",
-  "created_at",
-  "updated_at",
-  "delivery_count",
-  "tag.priority",
-  "tag.quality",
-  "tag.notes",
-  "algo_status",
-]);
+export const SEARCH_FIELD_SPECS: SearchFieldSpec[] = [
+  { key: "asset_id", label: "Asset ID", type: "string" },
+  { key: "mcap_file_id", label: "MCAP ID", type: "string" },
+  { key: "owner", label: "Owner", type: "string" },
+  { key: "reviewer", label: "Reviewer", type: "string" },
+  {
+    key: "lifecycle_state",
+    label: "生命周期",
+    type: "enum",
+    values: ["created", "processing", "ready", "rejected", "delivered", "archived", "superseded"],
+  },
+  {
+    key: "status",
+    label: "状态(legacy)",
+    type: "enum",
+    values: ["approved", "rejected", "superseded", "archived"],
+  },
+  {
+    key: "env",
+    label: "环境",
+    type: "enum",
+    values: ["kitchen", "outdoor", "warehouse", "office", "factory"],
+  },
+  { key: "scene", label: "场景", type: "string" },
+  { key: "task", label: "任务", type: "string" },
+  { key: "batch", label: "批次", type: "string" },
+  { key: "duration_ms", label: "时长", type: "numeric" },
+  { key: "created_at", label: "创建时间", type: "timestamp" },
+  { key: "updated_at", label: "更新时间", type: "timestamp" },
+  { key: "delivery_count", label: "交付次数", type: "numeric" },
+  { key: "tag.priority", label: "优先级", type: "string" },
+  { key: "tag.quality", label: "质量", type: "string" },
+  { key: "tag.notes", label: "备注", type: "string" },
+  {
+    key: "algo_status",
+    label: "算法状态",
+    type: "enum",
+    values: ["ok", "failed", "running", "pending", "blocked"],
+  },
+];
+
+const KNOWN_FIELDS = new Set(SEARCH_FIELD_SPECS.map((field) => field.key));
+const FIELD_SPEC_BY_KEY = new Map(SEARCH_FIELD_SPECS.map((field) => [field.key, field]));
 
 // ─── Operator Patterns (order matters: >= before >, <= before <, != before :) ───
 
@@ -71,6 +105,112 @@ export function splitRespectingQuotes(input: string): string[] {
   }
   if (current) tokens.push(current);
   return tokens;
+}
+
+interface StructuredCandidate {
+  field: string;
+  op: string;
+  value: string;
+}
+
+export interface DraftIssue {
+  token: string;
+  message: string;
+}
+
+function extractStructuredCandidate(raw: string): StructuredCandidate | null {
+  for (const { pattern, op } of OP_PATTERNS) {
+    const idx = raw.indexOf(pattern);
+    if (idx > 0) {
+      return {
+        field: raw.slice(0, idx),
+        op,
+        value: raw.slice(idx + pattern.length),
+      };
+    }
+  }
+  return null;
+}
+
+function isNumericValue(value: string): boolean {
+  if (value.trim() === "") return false;
+  return !Number.isNaN(Number(value));
+}
+
+function isTimestampValue(value: string): boolean {
+  if (value.trim() === "") return false;
+  return !Number.isNaN(Date.parse(value));
+}
+
+export function getDraftIssues(text: string): DraftIssue[] {
+  return splitRespectingQuotes(text.trim())
+    .map((raw): DraftIssue | null => {
+      const candidate = extractStructuredCandidate(raw);
+      if (!candidate) return null;
+
+      const spec = FIELD_SPEC_BY_KEY.get(candidate.field);
+      if (!spec) return null;
+
+      if (!candidate.value.trim()) {
+        return {
+          token: raw,
+          message: `字段 ${candidate.field} 还缺少值`,
+        };
+      }
+
+      if (spec.type === "enum") {
+        if (!["eq", "ne"].includes(candidate.op)) {
+          return {
+            token: raw,
+            message: `字段 ${candidate.field} 只支持 = 和 !=`,
+          };
+        }
+        if (spec.values && !spec.values.includes(candidate.value)) {
+          return {
+            token: raw,
+            message: `字段 ${candidate.field} 不支持值 ${candidate.value}`,
+          };
+        }
+      }
+
+      if (spec.type === "numeric" && !isNumericValue(candidate.value)) {
+        return {
+          token: raw,
+          message: `字段 ${candidate.field} 需要数值，例如 ${candidate.field}:60000`,
+        };
+      }
+
+      if (spec.type === "timestamp" && !isTimestampValue(candidate.value)) {
+        return {
+          token: raw,
+          message: `字段 ${candidate.field} 需要有效时间，例如 ${candidate.field}:2026-05-01T00:00:00Z`,
+        };
+      }
+
+      return null;
+    })
+    .filter((issue): issue is DraftIssue => issue !== null);
+}
+
+function replaceCurrentToken(text: string, replacement: string): string {
+  if (text === "" || /\s$/.test(text)) {
+    return `${text}${replacement}`;
+  }
+  const lastSpaceIdx = Math.max(text.lastIndexOf(" "), text.lastIndexOf("\n"), text.lastIndexOf("\t"));
+  if (lastSpaceIdx === -1) {
+    return replacement;
+  }
+  return `${text.slice(0, lastSpaceIdx + 1)}${replacement}`;
+}
+
+export function getFieldSuggestions(text: string): SearchFieldSpec[] {
+  const parts = splitRespectingQuotes(text);
+  const currentToken = /\s$/.test(text) ? "" : (parts.length > 0 ? parts[parts.length - 1] : "");
+  if (!currentToken || extractStructuredCandidate(currentToken)) {
+    return [];
+  }
+  const needle = currentToken.toLowerCase();
+  return SEARCH_FIELD_SPECS.filter((field) => field.key.startsWith(needle)).slice(0, 5);
 }
 
 /**
@@ -186,13 +326,19 @@ export default function AssetsSearchBar({
   onCommitQuery,
   onModeChange,
 }: AssetsSearchBarProps) {
+  const draftIssues = getDraftIssues(draftText);
+  const suggestions = getFieldSuggestions(draftText);
+
   const handlePressEnter = () => {
+    if (draftIssues.length > 0) {
+      return;
+    }
     const tokens = tokenizeDraftText(draftText);
     onCommitQuery(draftText.trim(), tokens);
   };
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
       {/* Search Mode Selector */}
       <Select
         value={searchMode}
@@ -213,19 +359,48 @@ export default function AssetsSearchBar({
         )}
       </Select>
 
-      {/* Search Input */}
-      <Input
-        placeholder="搜索 Asset、MCAP、Owner、Tag，或输入 env:warehouse algo_status:failed"
-        prefix={<SearchOutlined />}
-        value={draftText}
-        onChange={(e) => onDraftChange(e.target.value)}
-        onPressEnter={handlePressEnter}
-        allowClear
-        onClear={() => onCommitQuery("", [])}
-        style={{ flex: 1 }}
-        aria-label="资产搜索"
-        data-testid="assets-search-input"
-      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Search Input */}
+        <Input
+          placeholder="搜索 Asset、MCAP、Owner、Tag，或输入 env:warehouse algo_status:failed"
+          prefix={<SearchOutlined />}
+          value={draftText}
+          onChange={(e) => onDraftChange(e.target.value)}
+          onPressEnter={handlePressEnter}
+          allowClear
+          onClear={() => onCommitQuery("", [])}
+          style={{ flex: 1 }}
+          status={draftIssues.length > 0 ? "error" : undefined}
+          aria-label="资产搜索"
+          data-testid="assets-search-input"
+        />
+        {(suggestions.length > 0 || draftIssues.length > 0) && (
+          <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+            {suggestions.length > 0 && (
+              <Space size={4} wrap>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  字段建议
+                </Text>
+                {suggestions.map((field) => (
+                  <Tag
+                    key={field.key}
+                    color="blue"
+                    style={{ cursor: "pointer", marginInlineEnd: 0 }}
+                    onClick={() => onDraftChange(replaceCurrentToken(draftText, `${field.key}:`))}
+                  >
+                    {field.key}:
+                  </Tag>
+                ))}
+              </Space>
+            )}
+            {draftIssues.length > 0 && (
+              <Text type="danger" style={{ fontSize: 12 }} data-testid="search-draft-error">
+                {draftIssues[0].message}
+              </Text>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Help Button */}
       <Tooltip

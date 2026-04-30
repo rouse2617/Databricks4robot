@@ -2,9 +2,11 @@
 // Renders active filter chips with remove/clear-all actions.
 // Validates: Requirements R3
 
-import { Tag, Button } from "antd";
+import { Button, Space, Tag, Typography } from "antd";
 import { CloseCircleOutlined } from "@ant-design/icons";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
+
+const { Text } = Typography;
 
 // ─── Operator Display Map ───
 
@@ -49,6 +51,7 @@ export interface ActiveFilterChipsRowProps {
   chips: FilterChip[];
   onRemoveChip: (id: string) => void;
   onClearAll: () => void;
+  onClearField?: (field: string) => void;
 }
 
 // ─── Component ───
@@ -57,30 +60,62 @@ export default function ActiveFilterChipsRow({
   chips,
   onRemoveChip,
   onClearAll,
+  onClearField,
 }: ActiveFilterChipsRowProps) {
   if (chips.length === 0) return null;
 
+  const uniqueFields = Array.from(new Set(chips.map((chip) => chip.field)));
+
+  const handleClearField = (field: string) => {
+    if (onClearField) {
+      onClearField(field);
+      return;
+    }
+    chips
+      .filter((chip) => chip.field === field)
+      .forEach((chip) => onRemoveChip(chip.id));
+  };
+
   return (
-    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-      {chips.map((chip) => (
-        <Tag
-          key={chip.id}
-          closable
-          color={chipColor(chip)}
-          onClose={() => onRemoveChip(chip.id)}
-          aria-label={`移除筛选: ${formatChipText(chip)}`}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <Space size={8} wrap>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          已应用筛选
+        </Text>
+        {uniqueFields.map((field) => (
+          <Button
+            key={field}
+            type="link"
+            size="small"
+            onClick={() => handleClearField(field)}
+            style={{ paddingInline: 0 }}
+          >
+            清空 {field}
+          </Button>
+        ))}
+        <Button
+          type="link"
+          size="small"
+          icon={<CloseCircleOutlined />}
+          onClick={onClearAll}
+          style={{ paddingInline: 0 }}
         >
-          {formatChipText(chip)}
-        </Tag>
-      ))}
-      <Button
-        type="link"
-        size="small"
-        icon={<CloseCircleOutlined />}
-        onClick={onClearAll}
-      >
-        清除全部
-      </Button>
+          清除全部
+        </Button>
+      </Space>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        {chips.map((chip) => (
+          <Tag
+            key={chip.id}
+            closable
+            color={chipColor(chip)}
+            onClose={() => onRemoveChip(chip.id)}
+            aria-label={`移除筛选: ${formatChipText(chip)}`}
+          >
+            {formatChipText(chip)}
+          </Tag>
+        ))}
+      </div>
     </div>
   );
 }

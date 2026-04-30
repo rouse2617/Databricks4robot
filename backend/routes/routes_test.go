@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"data-platform/internal/config"
+	adminH "data-platform/internal/handlers/admin"
 	assetH "data-platform/internal/handlers/asset"
 	deliveryH "data-platform/internal/handlers/delivery"
 	mcapH "data-platform/internal/handlers/mcap"
@@ -187,5 +188,27 @@ func TestHealthzOutbox_NilSkipped(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("/healthz/outbox with nil health expected 404, got %d", w.Code)
+	}
+}
+
+func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	assetRepo := &routeAssetRepo{}
+	assetHandler := assetH.New(assetUC.New(assetRepo), &routeDeliveryRepo{})
+	mcapHandler := mcapH.New(&routeMcapRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil)
+	cfg := &config.Config{GraceToken: "dev-token"}
+
+	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
+	req.Header.Set("X-Grace-Token", "dev-token")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 from handler with nil ES, got %d", w.Code)
 	}
 }

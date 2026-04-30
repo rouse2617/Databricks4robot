@@ -1,38 +1,4 @@
-import axios from "axios";
-
-export const ADMIN_TOKEN_KEY = "grace_admin_token";
-
-export function readAdminToken(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return localStorage.getItem(ADMIN_TOKEN_KEY) ?? "";
-}
-
-export function writeAdminToken(token: string): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  const trimmed = token.trim();
-  if (trimmed === "") {
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-    return;
-  }
-  localStorage.setItem(ADMIN_TOKEN_KEY, trimmed);
-}
-
-const adminClient = axios.create({
-  baseURL: "/api/v1/admin",
-  timeout: 30_000,
-});
-
-adminClient.interceptors.request.use((config) => {
-  const token = readAdminToken();
-  if (token) {
-    config.headers["X-Admin-Token"] = token;
-  }
-  return config;
-});
+import { apiClient } from "./client";
 
 export interface ReindexResult {
   dry_run: boolean;
@@ -47,8 +13,8 @@ export interface ReindexResult {
 
 export const adminApi = {
   reindex: (dryRun: boolean) =>
-    adminClient
-      .post<ReindexResult>("/search/reindex", {
+    apiClient
+      .post<ReindexResult>("/admin/search/reindex", {
         dry_run: dryRun,
       })
       .then((r) => r.data),

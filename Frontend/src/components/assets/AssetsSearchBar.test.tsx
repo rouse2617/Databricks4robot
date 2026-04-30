@@ -1,9 +1,30 @@
-import { describe, it, expect } from "vitest";
+// @vitest-environment jsdom
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import {
+  getDraftIssues,
+  getFieldSuggestions,
   splitRespectingQuotes,
   parseOneToken,
   tokenizeDraftText,
 } from "./AssetsSearchBar";
+import AssetsSearchBar from "./AssetsSearchBar";
+
+beforeAll(() => {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+});
 
 // ─── splitRespectingQuotes ───
 
@@ -167,5 +188,76 @@ describe("tokenizeDraftText", () => {
     for (const t of tokens) {
       expect(t.source).toBe("search");
     }
+  });
+});
+
+describe("getFieldSuggestions", () => {
+  it("suggests matching structured fields from the current token prefix", () => {
+    const suggestions = getFieldSuggestions("own");
+    expect(suggestions.map((item) => item.key)).toContain("owner");
+  });
+
+  it("does not suggest after a structured operator is present", () => {
+    expect(getFieldSuggestions("owner:alice")).toEqual([]);
+  });
+});
+
+describe("getDraftIssues", () => {
+  it("flags invalid enum values", () => {
+    const issues = getDraftIssues("env:warehouze");
+    expect(issues).toHaveLength(1);
+    expect(issues[0].message).toContain("env");
+  });
+
+  it("flags invalid numeric values", () => {
+    const issues = getDraftIssues("duration_ms:abc");
+    expect(issues).toHaveLength(1);
+    expect(issues[0].message).toContain("duration_ms");
+  });
+});
+
+describe("AssetsSearchBar component", () => {
+  it("renders field suggestions for partial structured prefixes", () => {
+    render(
+      <AssetsSearchBar
+        searchMode="structured"
+        draftText="lif"
+        committedQueryText=""
+        onDraftChange={vi.fn()}
+        onCommitQuery={vi.fn()}
+        onModeChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("lifecycle_state:")).toBeTruthy();
+  });
+
+  it("shows immediate validation feedback for invalid structured tokens", () => {
+    render(
+      <AssetsSearchBar
+        searchMode="structured"
+        draftText="env:warehouze"
+        committedQueryText=""
+        onDraftChange={vi.fn()}
+        onCommitQuery={vi.fn()}
+        onModeChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("search-draft-error").textContent).toContain("env");
+  });
+
+  it("blocks submit when the draft contains invalid structured tokens", () => {
+    const onCommitQuery = vi.fn();
+    render(
+      <AssetsSearchBar
+        searchMode="structured"
+        draftText="duration_ms:abc"
+        committedQueryText=""
+        onDraftChange={vi.fn()}
+        onCommitQuery={onCommitQuery}
+        onModeChange={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(screen.getByTestId("assets-search-input"), { key: "Enter", code: "Enter" });
+    expect(onCommitQuery).not.toHaveBeenCalled();
   });
 });

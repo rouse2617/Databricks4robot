@@ -789,12 +789,11 @@ curl -G "$BASE/api/v1/search/assets" \
 
 ### 7.2 Admin：全量从 PG 重建 ES（不推进 outbox 游标）
 
-使用 **`X-Admin-Token`**（与 `ADMIN_TOKEN` 环境变量一致），**不要**带 `X-Grace-Token`。
+当前先复用 **`X-Grace-Token`**；不再额外要求 `X-Admin-Token`。
 
 ```bash
-ADMIN_TOKEN="your-admin-secret"
 curl -sS -X POST "$BASE/api/v1/admin/search/reindex" \
-  -H "X-Admin-Token: $ADMIN_TOKEN" \
+  -H "X-Grace-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"dry_run": true, "page_size": 200}' | jq .
 ```

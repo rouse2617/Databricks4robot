@@ -54,20 +54,25 @@ export default function ResultsEmptyState({
         icon={<SearchOutlined style={{ color: "#bfbfbf" }} />}
         title="没有匹配的资产"
         subTitle={
-          activeFilterCount > 0 ? (
+          <Space direction="vertical" size={2}>
             <Text type="secondary">
-              当前有 {activeFilterCount} 个筛选条件，尝试减少筛选范围
+              {activeFilterCount > 0
+                ? `当前有 ${activeFilterCount} 个筛选条件，先放宽筛选范围再试一次`
+                : "先放宽条件，再回到默认视图"}
             </Text>
-          ) : undefined
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              也可以从上方“已应用筛选”里按字段清空，例如 owner、生命周期或 Tag 条件。
+            </Text>
+          </Space>
         }
         extra={
           <Space>
             {onClearFilters && (
-              <Button onClick={onClearFilters}>清空筛选</Button>
+              <Button onClick={onClearFilters}>放宽筛选</Button>
             )}
             {onClearFilters && (
               <Button type="primary" onClick={onClearFilters}>
-                回到全部资产
+                回到默认视图
               </Button>
             )}
           </Space>

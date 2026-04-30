@@ -124,15 +124,14 @@ func RegisterAll(
 			api.GET("/lakehouse/quality-distribution", lakehouseHandler.QualityDistribution)
 			api.GET("/lakehouse/customer-replay", lakehouseHandler.CustomerReplay)
 		}
+
+		if adminHandler != nil {
+			api.POST("/admin/search/reindex", adminHandler.SearchReindex)
+		}
 	}
 
 	// Internal (service-to-service, no external auth required in Phase 0)
 	r.POST("/internal/commit-segments", assetHandler.CommitSegments)
-
-	if adminHandler != nil && cfg.AdminToken != "" {
-		adm := r.Group("/api/v1/admin", adminH.AdminTokenAuth(cfg.AdminToken))
-		adm.POST("/search/reindex", adminHandler.SearchReindex)
-	}
 }
 
 func healthz(service string) gin.HandlerFunc {

@@ -76,7 +76,7 @@ docker-compose up -d postgres  # 重新初始化
 | `OUTBOX_WORKER_ENABLED` | 进程内 Outbox→ES worker | `false` |
 | `OUTBOX_WORKER_TICK_SEC` | Worker 轮询间隔（秒） | `30` |
 | `OUTBOX_WORKER_BATCH` | 每批最多拉取 pending 事件数 | `100` |
-| `ADMIN_TOKEN` | `X-Admin-Token`（`/api/v1/admin/*`）；空则禁用 | 空 |
+| `ADMIN_TOKEN` | 预留配置；当前 `reindex` 先复用 `X-Grace-Token` | 空 |
 
 ## API 端点
 
@@ -137,7 +137,7 @@ docker-compose up -d postgres  # 重新初始化
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（请求头 `X-Admin-Token`=`ADMIN_TOKEN`）；支持 `dry_run`，返回 `indexed / deleted / failed / duration_ms` 汇总，不改变 outbox 游标 |
+| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（当前复用 `X-Grace-Token` 认证）；支持 `dry_run`，返回 `indexed / deleted / failed / duration_ms` 汇总，不改变 outbox 游标 |
 | `GET` | `/metrics` | Prometheus 指标（`outbox_*` 等；无认证，建议内网暴露） |
 
 **告警建议（MVP）**：`outbox_worker_pending_total` 在业务低峰持续 > 1000 或 30min 单调上升 → 查 worker 日志与 ES 连通性；`outbox_worker_events_failed_mark_total` 突增 → 查 `asset_events.last_error`。

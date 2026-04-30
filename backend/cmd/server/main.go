@@ -138,7 +138,7 @@ func main() {
 	}
 
 	var adminHandler *adminH.Handler
-	if pgClient != nil && cfg.AdminToken != "" && esClient != nil {
+	if pgClient != nil && esClient != nil {
 		adminHandler = adminH.New(
 			postgres.NewAssetRepo(pgClient),
 			postgres.NewAssetTagRepo(pgClient),

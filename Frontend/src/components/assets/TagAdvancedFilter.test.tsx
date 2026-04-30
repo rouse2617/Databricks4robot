@@ -7,12 +7,13 @@ describe("TagAdvancedFilter", () => {
     render(<TagAdvancedFilter onApply={vi.fn()} />);
     expect(screen.getByText("Tag 高级筛选")).toBeTruthy();
     expect(screen.getByText("条件组 1")).toBeTruthy();
+    expect(screen.getByText("当前版本只支持一个 Tag 条件组")).toBeTruthy();
   });
 
-  it("adds a new condition group when clicking add button", () => {
+  it("adds a new condition when clicking add button", () => {
     render(<TagAdvancedFilter onApply={vi.fn()} />);
-    fireEvent.click(screen.getByText("添加条件组"));
-    expect(screen.getByText("条件组 2")).toBeTruthy();
+    fireEvent.click(screen.getByText("添加条件"));
+    expect(screen.getAllByText("AND").length).toBeGreaterThanOrEqual(1);
   });
 
   it("calls onApply with filter chips when apply is clicked", () => {

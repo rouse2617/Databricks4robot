@@ -132,6 +132,23 @@ describe("ActiveFilterChipsRow", () => {
     expect(onClearAll).toHaveBeenCalledOnce();
   });
 
+  it("calls onClearField when a field-level clear button is clicked", () => {
+    const onClearField = vi.fn();
+    render(
+      <ActiveFilterChipsRow
+        chips={[
+          makeChip({ id: "1", field: "owner", value: "alice" }),
+          makeChip({ id: "2", field: "owner", value: "bob" }),
+        ]}
+        onRemoveChip={() => {}}
+        onClearAll={() => {}}
+        onClearField={onClearField}
+      />,
+    );
+    fireEvent.click(screen.getByText("清空 owner"));
+    expect(onClearField).toHaveBeenCalledWith("owner");
+  });
+
   it("applies red color for algo_status:failed chip", () => {
     const chip = makeChip({ field: "algo_status", op: "eq", value: "failed" });
     render(

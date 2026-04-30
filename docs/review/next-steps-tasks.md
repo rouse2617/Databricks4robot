@@ -62,7 +62,7 @@
 | **P0-2** | **存量数据 backfill**（P0-1 落地后）：把现有 `assets` 行的新字段从源数据补齐 | backfill 脚本幂等、可重跑；执行后新字段空值率 < 0.1%；对账报告归档 | M | backend + data | done | `migrations/007_backfill_lifecycle_from_status.sql`（lifecycle 对齐子集；其余字段待 P0-1 收口） |
 | **P0-3** | **`assets.lifecycle_state` 主消费切换**：列表过滤、详情展示、ES facet、查询文档都切到 `lifecycle_state`；老 `status` 进入退役计时（90 天） | 前端列表 / 详情 / facets 默认都用 `lifecycle_state`；API 仍同时返回两个字段，OpenAPI deprecated 标注；监控旧 `status` 读流量曲线 | M | backend + frontend | in-progress | OpenAPI deprecated legacy 字段；ES search aggs 去掉 `status_agg`；前端见 P0-FE-2 |
 | **P0-4** | **Outbox Worker 进程内 MVP**（`OUTBOX_WORKER_ENABLED=true`） | 完整覆盖 `outbox-worker-design.md` G1–G5 验收；ES 索引投递端到端 P99 ≤ 60s；持续 24h 投递成功率 > 99.9% | L | backend | in-progress | 代码：`internal/outbox` + `MarkPublished`/`CountPending`；**SLO 需预发实测** |
-| **P0-5** | **`/admin/search/reindex` 全量重建 API**（同步交付） | 给定 dry_run / rebuild_index 参数；扫 `assets` 全表重建 ES doc；不动 outbox cursor；权限走独立 `ADMIN_TOKEN` | S | backend | done | `POST /api/v1/admin/search/reindex` + `X-Admin-Token` |
+| **P0-5** | **`/admin/search/reindex` 全量重建 API**（同步交付） | 给定 dry_run / rebuild_index 参数；扫 `assets` 全表重建 ES doc；不动 outbox cursor；当前先复用 `X-Grace-Token`，后续再评估是否切回独立 admin 鉴权 | S | backend | done | `POST /api/v1/admin/search/reindex` |
 | **P0-6** | **PgBouncer 入栈**：docker-compose / K8s 加 PgBouncer Deployment（transaction pool） | Backend & Worker 改 `DB_HOST/DB_PORT` 指向 PgBouncer，业务代码 0 改动；本地 + 预发跑 24h 无连接异常 | S | backend + 运维 | todo | — |
 
 **关键依赖图**：
@@ -130,7 +130,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 |----|------|-----|------|------|----------|
 | **P1-FE-1** | **Lakehouse Dashboard**：把已注册的 `/api/v1/lakehouse/*` 端点（training-assets / quality-distribution / customer-replay / tag-timeline）至少做成 1 个汇总 dashboard 页面（候选挂在 `AnalyticsPage`） | 4 个数据源中 ≥ 2 个有可视化卡片；ES 故障时降级 PG fallback；与 P1-6 后端联调一次 | M | blocked-by-P1-6 | — |
 | **P1-FE-2** | **同步状态可视化**：`/api/v1/lakehouse/sync-status` 接到 `SettingsPage` 或独立"同步监控"页 | 显示 `last_sync_at / postgres_count / iceberg_count / diff_pct`；`status != ok` 时红色徽标 | S | in-progress | `Frontend/src/pages/AnalyticsPage.tsx` 已统一 realtime / sync_reconciliation envelope，并展示来源 / diff / traffic light；余量：按产品需要决定是否迁到 SettingsPage |
-| **P1-FE-3** | **Admin Reindex 入口**：`/admin/search/reindex` 在 SettingsPage 给 admin 角色一个"重建 ES 索引"按钮（带二次确认 + dry_run 选项 + 进度回显） | 仅 admin 可见；dry_run 默认开；调用后显示 `reindexed_assets / failed_assets`；失败列表可下载 | S | in-progress | `Frontend/src/pages/SettingsPage.tsx` + `Frontend/src/api/admin.ts` 已支持独立 `X-Admin-Token`、dry_run、确认框与结果回显；余量：接入真正的 admin 可见性判定 |
+| **P1-FE-3** | **Admin Reindex 入口**：`/admin/search/reindex` 在 SettingsPage 给 admin 角色一个"重建 ES 索引"按钮（带二次确认 + dry_run 选项 + 进度回显） | 仅 admin 可见；dry_run 默认开；调用后显示 `reindexed_assets / failed_assets`；失败列表可下载 | S | in-progress | `Frontend/src/pages/SettingsPage.tsx` + `Frontend/src/api/admin.ts` 已接入 dry_run、确认框与结果回显；当前先复用 `X-Grace-Token`，余量：接入真正的 admin 可见性判定 |
 | **P1-FE-4** | **保留期 / 过期视图**：列表加"30 天内将过期"快捷过滤（`expire_at:between:now,now+30d`），详情显示 retention badge | 快捷 chip 一键应用；`retention_tier` 用颜色区分（hot/warm/cold/archive）；vitest 覆盖 | S | blocked-by-P0-FE-3 | — |
 
 ### 2.2 P1 · 测试
@@ -156,7 +156,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | **P2-5** | 资产详情 fan-out 单 SQL 化（用 `JSON_AGG`） | 仅当 PG 连接池压力上升时启用；当前 3 条并行已足够 | S | parked |
 | **P2-6** | DLQ 表替代 `retry_count` 阈值 | 当 retry 失败事件出现非偶发漏投时启用；MVP 用人工 reindex 兜底 | M | parked |
 | **P2-7** | 事件 retention 策略（`asset_events` 滚动归档到 cold tier） | 表行数到达千万级 / 90 天后再评估；不在 2.0 关键路径 | M | parked |
-| **P2-FE-1** | tag 高级筛选 UI：基于 `tags.<key>` nested + `source_type / confidence` 的复合 chip 编辑器 | 用户能筛"算法打的、置信度 ≥ 0.9 的 highway tag"；调研后再拍 | M | todo |
+| **P2-FE-1** | tag 高级筛选 UI：基于 `tags.<key>` nested + `source_type / confidence` 的复合 chip 编辑器 | 用户能筛"算法打的、置信度 ≥ 0.9 的 highway tag"；当前版本先收敛为单个 tag key 条件组，避免前端表达能力超过后端 filter 协议 | M | in-progress |
 | **P2-FE-2** | 通用事件流总览页（跨 asset 的事件流，按 `event_type` 聚合的实时面板） | 仅在出现"运营 / SRE 想看全量事件流"诉求时启动 | M | parked |
 | **P2-T-1** | Frontend coverage 提升到 ≥ 85%（核心组件 + 业务页） | P0-T-4 守门稳定 90 天后再加码 | M | parked |
 | **P2-T-2** | Outbox chaos 测试（`testcontainers` 注入 PG / ES 故障）| Outbox MVP 跑稳 60 天后再加 | M | parked |

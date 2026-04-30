@@ -3,7 +3,8 @@
 // Validates: Requirements R1, R7, R13
 
 import { useEffect, useCallback, useRef, useState } from "react";
-import { Typography, message, Modal } from "antd";
+import { Typography, message, Modal, Button, Popover } from "antd";
+import { FilterOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryReducer";
 import { useAssetsQuerySync } from "../hooks/assets/useAssetsQuerySync";
@@ -20,6 +21,8 @@ import SaveViewDialog from "../components/assets/SaveViewDialog";
 import AddFilterPopover from "../components/assets/AddFilterPopover";
 import ExpiringAssetsChip from "../components/assets/ExpiringAssetsChip";
 import ColumnsConfigPopover from "../components/assets/ColumnsConfigPopover";
+import QuickFiltersRow from "../components/assets/QuickFiltersRow";
+import TagAdvancedFilter from "../components/assets/TagAdvancedFilter";
 import CreateDeliveryModal from "../components/deliveries/CreateDeliveryModal";
 import BatchTagModal from "../components/assets/BatchTagModal";
 import BatchDeleteTagModal from "../components/assets/BatchDeleteTagModal";
@@ -40,6 +43,7 @@ export default function AssetsPage() {
   const [batchDeleteTagModalOpen, setBatchDeleteTagModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [batchTagResult, setBatchTagResult] = useState<BatchTagResult | null>(null);
+  const [tagAdvancedOpen, setTagAdvancedOpen] = useState(false);
 
   // Responsive: hide facet/preview on narrow screens
   // Use lazy initializer to avoid window access during SSR
@@ -175,7 +179,38 @@ export default function AssetsPage() {
             dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } })
           }
         />
+        <Popover
+          content={(
+            <TagAdvancedFilter
+              onApply={(chips) => {
+                for (const chip of chips) {
+                  dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } });
+                }
+              }}
+              onClose={() => setTagAdvancedOpen(false)}
+            />
+          )}
+          title={null}
+          trigger="click"
+          open={tagAdvancedOpen}
+          onOpenChange={setTagAdvancedOpen}
+          placement="bottomLeft"
+        >
+          <Button icon={<FilterOutlined />}>Tag 高级筛选</Button>
+        </Popover>
         <ExpiringAssetsChip
+          activeFilters={state.queryState.activeFilters}
+          onAddFilter={(chip) =>
+            dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } })
+          }
+          onRemoveFilter={(id) =>
+            dispatch({ type: "REMOVE_FILTER_CHIP", payload: { id } })
+          }
+        />
+      </div>
+
+      <div style={{ marginBottom: 8 }}>
+        <QuickFiltersRow
           activeFilters={state.queryState.activeFilters}
           onAddFilter={(chip) =>
             dispatch({ type: "ADD_FILTER_CHIP", payload: { chip } })
@@ -200,6 +235,11 @@ export default function AssetsPage() {
           onRemoveChip={(id) =>
             dispatch({ type: "REMOVE_FILTER_CHIP", payload: { id } })
           }
+          onClearField={(field) => {
+            for (const chip of state.queryState.activeFilters.filter((item) => item.field === field)) {
+              dispatch({ type: "REMOVE_FILTER_CHIP", payload: { id: chip.id } });
+            }
+          }}
           onClearAll={() => dispatch({ type: "CLEAR_ALL_FILTERS" })}
         />
       </div>

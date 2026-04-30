@@ -166,12 +166,10 @@ export interface AssetsDiscoveryState {
 
 export const DEFAULT_COLUMNS: string[] = [
   "asset_id",
-  "mcap_file_id",
-  "duration",
-  "env",
+  "asset_type",
   "lifecycle_state",
-  "algo",
-  "tags",
+  "owner",
+  "duration",
   "updated_at",
 ];
 
