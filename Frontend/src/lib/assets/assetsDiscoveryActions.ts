@@ -17,7 +17,7 @@ import type {
 
 export type AssetsDiscoveryAction =
   // ── Route / Hydration (3) ──
-  | { type: "URL_HYDRATE"; payload: { queryState: Partial<QueryState> } }
+  | { type: "URL_HYDRATE"; payload: { queryState: Partial<QueryState>; previewAssetId: string | null } }
   | { type: "MARK_URL_HYDRATED" }
   | { type: "SET_CURRENT_PATH"; payload: { path: string } }
 

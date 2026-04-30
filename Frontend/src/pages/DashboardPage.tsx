@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, Col, Row, Table, Tag, Typography, Segmented, Spin, Space, Alert } from "antd";
+import { Card, Col, Row, Table, Tag, Typography, Segmented, Spin, Space, Alert, Statistic, List } from "antd";
 import {
   DatabaseOutlined,
   FileOutlined,
@@ -11,6 +11,7 @@ import {
   RightOutlined,
 } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
+import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { mcapFilesApi } from "../api/mcapFiles";
@@ -97,6 +98,9 @@ interface DerivedStats {
   algoTotal: number;
   successRate: string;
   deliveryTotal: number;
+  assetsWithDeliveries: number;
+  topDeliveryAssets: Asset[];
+  sampleSize: number;
   recentAssets: Asset[];
   failedAssets: Asset[];
   isSampled: boolean; // true when data comes from frontend sampling
@@ -112,6 +116,11 @@ function deriveFromSampling(assets: Asset[], total: number, mcapTotal: number | 
   const algoTotal = Object.values(algoCounts).reduce((a, b) => a + b, 0);
   const successRate = algoTotal > 0 ? ((algoCounts.ok / algoTotal) * 100).toFixed(1) : "—";
   const deliveryTotal = assets.reduce((sum, a) => sum + (a.delivery_count ?? 0), 0);
+  const assetsWithDeliveries = assets.filter((a) => (a.delivery_count ?? 0) > 0).length;
+  const topDeliveryAssets = [...assets]
+    .filter((a) => (a.delivery_count ?? 0) > 0)
+    .sort((a, b) => (b.delivery_count ?? 0) - (a.delivery_count ?? 0))
+    .slice(0, 6);
   const failedAssets = assets.filter((a) =>
     extractAlgoStatuses(a.algo_results).some((s) => s.status === "failed")
   );
@@ -123,6 +132,9 @@ function deriveFromSampling(assets: Asset[], total: number, mcapTotal: number | 
     algoTotal,
     successRate,
     deliveryTotal,
+    assetsWithDeliveries,
+    topDeliveryAssets,
+    sampleSize: assets.length,
     recentAssets: assets.slice(0, 8),
     failedAssets,
     isSampled: total > 100,
@@ -168,7 +180,7 @@ export default function DashboardPage() {
       title: "Asset",
       dataIndex: "asset_id",
       render: (id: string) => (
-        <a className="font-mono text-xs cursor-pointer" onClick={() => navigate(`/assets/${id}`)}>
+        <a className="font-mono text-xs cursor-pointer" onClick={() => navigateToAssetDetail(navigate, id)}>
           {id.slice(0, 8)}…
         </a>
       ),
@@ -211,7 +223,20 @@ export default function DashboardPage() {
     );
   }
 
-  const { total, mcapTotal, algoCounts, algoTotal, successRate, deliveryTotal, recentAssets, failedAssets, isSampled } = derived;
+  const {
+    total,
+    mcapTotal,
+    algoCounts,
+    algoTotal,
+    successRate,
+    deliveryTotal,
+    assetsWithDeliveries,
+    topDeliveryAssets,
+    sampleSize,
+    recentAssets,
+    failedAssets,
+    isSampled,
+  } = derived;
 
   return (
     <div style={{ maxWidth: 1400 }}>
@@ -279,48 +304,106 @@ export default function DashboardPage() {
         options={["资产维度", "算法维度", "交付维度"]}
         value={dimension}
         onChange={(v) => setDimension(v as string)}
-        style={{ marginBottom: 16 }}
+        style={{ marginBottom: 12 }}
       />
+      {dimension === "算法维度" && (
+        <Text type="secondary" style={{ display: "block", marginBottom: 16, fontSize: 13 }}>
+          以下算法状态分布以采样资产中的算法任务为口径。
+        </Text>
+      )}
+      {dimension === "交付维度" && (
+        <Text type="secondary" style={{ display: "block", marginBottom: 16, fontSize: 13 }}>
+          以下交付统计以采样资产上的 delivery 次数字段为口径；全量请前往交付列表。
+        </Text>
+      )}
 
       <Row gutter={[16, 16]}>
-        {/* Algo status distribution */}
+        {/* Main block: algo distribution vs delivery sampling */}
         <Col xs={24} lg={14}>
-          <Card
-            title="算法状态分布"
-            size="small"
-            styles={{ body: { padding: 16 } }}
-          >
-            <Row gutter={[12, 12]}>
-              {Object.entries(algoCounts).map(([status, count]) => (
-                <Col span={8} key={status}>
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "16px 8px",
-                      borderRadius: 8,
-                      background: "#F8FAFC",
-                      border: "1px solid #F1F5F9",
-                    }}
-                  >
-                    <Tag color={algoStatusColor[status]} style={{ marginBottom: 8 }}>{status}</Tag>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: "#1E293B", fontVariantNumeric: "tabular-nums" }}>
-                      {count}
-                    </div>
-                  </div>
+          {dimension === "交付维度" ? (
+            <Card
+              title="交付活跃度（采样）"
+              size="small"
+              styles={{ body: { padding: 16 } }}
+            >
+              <Row gutter={16}>
+                <Col xs={12}>
+                  <Statistic
+                    title="有交付记录的资产"
+                    value={assetsWithDeliveries}
+                    suffix={`/ ${sampleSize}`}
+                  />
                 </Col>
-              ))}
-            </Row>
-            {algoTotal > 0 && (
-              <div style={{ marginTop: 12, fontSize: 12, color: "#64748B" }}>
-                共 {algoTotal} 个算法任务 · 成功率 {successRate}%
-                {isSampled && (
-                  <span style={{ marginLeft: 8, color: "#94A3B8" }}>
-                    (基于最近 100 条资产采样)
-                  </span>
+                <Col xs={12}>
+                  <Statistic title="采样内交付总次数" value={deliveryTotal} suffix="次" />
+                </Col>
+              </Row>
+              <div style={{ marginTop: 16 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>交付次数 Top（采样内）</Text>
+                {topDeliveryAssets.length > 0 ? (
+                  <List
+                    size="small"
+                    style={{ marginTop: 8 }}
+                    dataSource={topDeliveryAssets}
+                    renderItem={(a) => (
+                      <List.Item style={{ padding: "8px 0" }}>
+                        <Space wrap>
+                          <a
+                            className="font-mono text-xs cursor-pointer"
+                            onClick={() => navigateToAssetDetail(navigate, a.asset_id)}
+                          >
+                            {a.asset_id.slice(0, 8)}…
+                          </a>
+                          <Tag color="cyan">{a.delivery_count ?? 0} 次</Tag>
+                        </Space>
+                      </List.Item>
+                    )}
+                  />
+                ) : (
+                  <div style={{ marginTop: 12, color: "#94A3B8", fontSize: 13 }}>
+                    采样内暂无交付次数大于 0 的资产
+                  </div>
                 )}
               </div>
-            )}
-          </Card>
+            </Card>
+          ) : (
+            <Card
+              title={dimension === "算法维度" ? "算法状态分布（算法维度）" : "算法状态分布"}
+              size="small"
+              styles={{ body: { padding: 16 } }}
+            >
+              <Row gutter={[12, 12]}>
+                {Object.entries(algoCounts).map(([status, count]) => (
+                  <Col span={8} key={status}>
+                    <div
+                      style={{
+                        textAlign: "center",
+                        padding: "16px 8px",
+                        borderRadius: 8,
+                        background: "#F8FAFC",
+                        border: "1px solid #F1F5F9",
+                      }}
+                    >
+                      <Tag color={algoStatusColor[status]} style={{ marginBottom: 8 }}>{status}</Tag>
+                      <div style={{ fontSize: 24, fontWeight: 700, color: "#1E293B", fontVariantNumeric: "tabular-nums" }}>
+                        {count}
+                      </div>
+                    </div>
+                  </Col>
+                ))}
+              </Row>
+              {algoTotal > 0 && (
+                <div style={{ marginTop: 12, fontSize: 12, color: "#64748B" }}>
+                  共 {algoTotal} 个算法任务 · 成功率 {successRate}%
+                  {isSampled && (
+                    <span style={{ marginLeft: 8, color: "#94A3B8" }}>
+                      (基于最近 100 条资产采样)
+                    </span>
+                  )}
+                </div>
+              )}
+            </Card>
+          )}
         </Col>
 
         {/* Failed tasks */}
@@ -385,7 +468,7 @@ export default function DashboardPage() {
               dataIndex: "asset_id",
               width: 120,
               render: (id: string) => (
-                <a className="font-mono text-xs cursor-pointer" onClick={() => navigate(`/assets/${id}`)}>
+                <a className="font-mono text-xs cursor-pointer" onClick={() => navigateToAssetDetail(navigate, id)}>
                   {id.slice(0, 8)}…
                 </a>
               ),

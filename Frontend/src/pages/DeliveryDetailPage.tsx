@@ -7,9 +7,11 @@ import {
   Spin,
   Button,
   message,
+  Alert,
 } from "antd";
 import { ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
+import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
 import { deliveriesApi } from "../api/deliveries";
 import { assetsApi } from "../api/assets";
 import type { Delivery, DeliveryItem, Asset } from "../api/types";
@@ -34,6 +36,12 @@ export default function DeliveryDetailPage() {
   const [loading, setLoading] = useState(true);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(false);
+  /** Rows from GET …/items; resolved rows after assetsApi.get per item */
+  const [relatedCounts, setRelatedCounts] = useState({
+    itemRows: 0,
+    resolvedAssets: 0,
+    rejectedFetches: 0,
+  });
 
   // antd useMessage may return a fresh reference per render; capture in ref so
   // fetchDelivery's identity stays stable (otherwise useEffect re-fires every
@@ -59,20 +67,24 @@ export default function DeliveryDetailPage() {
     setAssetsLoading(true);
     try {
       const items: DeliveryItem[] = await deliveriesApi.listItems(id);
-      // Fetch each asset in parallel
       const assetResults = await Promise.allSettled(
         items.map((item) => assetsApi.get(item.asset_id)),
       );
-      setAssets(
-        assetResults
-          .filter(
-            (r): r is PromiseFulfilledResult<Asset> =>
-              r.status === "fulfilled",
-          )
-          .map((r) => r.value),
-      );
+      const resolved = assetResults
+        .filter(
+          (r): r is PromiseFulfilledResult<Asset> =>
+            r.status === "fulfilled",
+        )
+        .map((r) => r.value);
+      setRelatedCounts({
+        itemRows: items.length,
+        resolvedAssets: resolved.length,
+        rejectedFetches: assetResults.filter((r) => r.status === "rejected")
+          .length,
+      });
+      setAssets(resolved);
     } catch {
-      // Keep the page usable even if the related-assets call fails.
+      setRelatedCounts({ itemRows: 0, resolvedAssets: 0, rejectedFetches: 0 });
       setAssets([]);
     } finally {
       setAssetsLoading(false);
@@ -108,7 +120,7 @@ export default function DeliveryDetailPage() {
       width: 240,
       ellipsis: true,
       render: (val: string) => (
-        <a onClick={() => navigate(`/assets/${val}`)}>{val}</a>
+        <a onClick={() => navigateToAssetDetail(navigate, val)}>{val}</a>
       ),
     },
     {
@@ -213,6 +225,37 @@ export default function DeliveryDetailPage() {
       <Title level={5} style={{ marginBottom: 12 }}>
         关联资产
       </Title>
+      {delivery.asset_count > 0 && relatedCounts.itemRows === 0 && !assetsLoading && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="资产数与关联列表不一致"
+          description={
+            "详情里记录的资产数大于 0，但交付明细项列表为空。通常是 mock/种子数据未写入 delivery_items，或后端列表接口未返回行。可刷新重试或核对交付数据。"
+          }
+        />
+      )}
+      {relatedCounts.itemRows > 0 && relatedCounts.rejectedFetches > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="部分资产详情未加载"
+          description={`${relatedCounts.resolvedAssets} / ${relatedCounts.itemRows} 条资产拉取成功，其余请求失败（可检查权限或资产是否存在）。`}
+        />
+      )}
+      {delivery.asset_count > 0 &&
+        relatedCounts.itemRows > 0 &&
+        delivery.asset_count !== relatedCounts.itemRows && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="资产数与明细行数不一致"
+            description={`交付摘要 asset_count=${delivery.asset_count}，明细项 ${relatedCounts.itemRows} 条。若以明细为准，可忽略摘要差异或联系后端对齐字段。`}
+          />
+        )}
       <Table
         rowKey="asset_id"
         columns={assetColumns}

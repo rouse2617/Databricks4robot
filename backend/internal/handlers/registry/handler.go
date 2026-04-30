@@ -2,6 +2,7 @@ package registry
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/gin-gonic/gin"
 
@@ -51,21 +52,30 @@ func (h *Handler) AlgoRegistry(c *gin.Context) {
 
 // TagRegistryItem is the JSON shape returned by GET /api/v1/tag-registry.
 type TagRegistryItem struct {
-	Key       string   `json:"key"`
-	Type      string   `json:"type"`
-	Values    []string `json:"values,omitempty"`
-	MaxLength int      `json:"max_length,omitempty"`
+	Key         string   `json:"key"`
+	Description string   `json:"description,omitempty"`
+	Type        string   `json:"type"`
+	Values      []string `json:"values,omitempty"`
+	MaxLength   int      `json:"max_length,omitempty"`
 }
 
 // TagRegistry returns the list of registered tags.
 // GET /api/v1/tag-registry
 func (h *Handler) TagRegistry(c *gin.Context) {
 	tags := h.tagRegistry.GetAllTags()
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
 	var items []TagRegistryItem
-	for key, def := range tags {
+	for _, key := range keys {
+		def := tags[key]
 		item := TagRegistryItem{
-			Key:  key,
-			Type: def.Type,
+			Key:         key,
+			Description: def.Description,
+			Type:        def.Type,
 		}
 		if def.Type == "enum" {
 			vals := def.Values

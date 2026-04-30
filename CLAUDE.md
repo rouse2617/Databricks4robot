@@ -16,6 +16,21 @@ Concise habits that reduce wrong assumptions, scope creep, and noisy diffs. Adap
 
 Project-specific rules follow below (**Development Rules**, OpenAPI/schema checklist, **Definition of Done**).
 
+## Recommended workflow skills (external)
+
+Optional structured workflows from [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills). Use when the task fits; they complement **Agent behavior** above — they do **not** replace repo **Development Rules** or **Definition of Done**.
+
+| Focus | Skill | When to lean on it |
+|-------|--------|---------------------|
+| API & boundaries | [api-and-interface-design](https://github.com/addyosmani/agent-skills/blob/main/skills/api-and-interface-design/SKILL.md) | New/changed HTTP handlers, public modules, error semantics; stay aligned with `api/openapi.yaml`. |
+| Tests first | [test-driven-development](https://github.com/addyosmani/agent-skills/blob/main/skills/test-driven-development/SKILL.md) | Behavior changes in Go or SDK; red → green → refactor. |
+| Vertical slices | [incremental-implementation](https://github.com/addyosmani/agent-skills/blob/main/skills/incremental-implementation/SKILL.md) | Multi-file features; small steps, verify between commits. |
+| Debugging | [debugging-and-error-recovery](https://github.com/addyosmani/agent-skills/blob/main/skills/debugging-and-error-recovery/SKILL.md) | Failing tests or integrations (Postgres, Elasticsearch, Trino, etc.). |
+| Architecture docs | [documentation-and-adrs](https://github.com/addyosmani/agent-skills/blob/main/skills/documentation-and-adrs/SKILL.md) | Material design decisions; record **why** in ADRs / `docs/review/*` without duplicating `api-guide.md`. |
+| Frontend (`Frontend/`) | [frontend-ui-engineering](https://github.com/addyosmani/agent-skills/blob/main/skills/frontend-ui-engineering/SKILL.md) | Components, structure, responsive layout, state; treat **WCAG 2.1 AA** as the accessibility bar unless the task says otherwise. |
+
+Pack overview and tool install: [README](https://github.com/addyosmani/agent-skills/blob/main/README.md) · Cursor: [docs/cursor-setup.md](https://github.com/addyosmani/agent-skills/blob/main/docs/cursor-setup.md).
+
 ## What This Repo Is
 
 `Databricks4robot` is a single-backend-process asset platform for MCAP-oriented metadata, delivery tracking, search, lakehouse analysis, and SDK/frontend integration.

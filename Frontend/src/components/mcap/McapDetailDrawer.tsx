@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { navigateToAssetDetail } from "../../lib/assets/assetWorkbenchNavigation";
 import {
   Drawer, Descriptions, Table, Tag, Button, Space, Typography, Spin, Tooltip,
 } from "antd";
@@ -92,7 +93,7 @@ export default function McapDetailDrawer({ open, mcapFile, onClose }: McapDetail
       dataIndex: "asset_id",
       width: 140,
       render: (id: string) => (
-        <a onClick={() => { onClose(); navigate(`/assets/${id}`); }}>
+        <a onClick={() => { onClose(); navigateToAssetDetail(navigate, id); }}>
           <span className="font-mono text-xs">{id?.slice(0, 12)}…</span>
         </a>
       ),
@@ -262,7 +263,7 @@ export default function McapDetailDrawer({ open, mcapFile, onClose }: McapDetail
                 style: { cursor: "pointer" },
                 onClick: () => {
                   onClose();
-                  navigate(`/assets/${record.asset_id}`);
+                  navigateToAssetDetail(navigate, record.asset_id);
                 },
               })}
             />

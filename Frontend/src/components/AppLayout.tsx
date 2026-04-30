@@ -5,6 +5,7 @@ import {
   FileOutlined,
   RobotOutlined,
   SendOutlined,
+  BarChartOutlined,
   TagsOutlined,
   SettingOutlined,
   LogoutOutlined,
@@ -23,6 +24,7 @@ const menuItems = [
   { key: "/mcap-files", icon: <FileOutlined />, label: "MCAP 文件" },
   { key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
   { key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
+  { key: "/analytics", icon: <BarChartOutlined />, label: "湖仓验证" },
   { type: "divider" as const },
   { key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
   { key: "/tags", icon: <TagsOutlined />, label: "标签字典" },
@@ -31,6 +33,7 @@ const menuItems = [
 
 function resolveSelectedKey(pathname: string): string {
   if (pathname.startsWith("/assets")) return "/assets";
+  if (pathname.startsWith("/analytics")) return "/analytics";
   const exact = menuItems.find((m) => "key" in m && m.key === pathname);
   if (exact && "key" in exact) return exact.key as string;
   const prefix = menuItems.find((m) => "key" in m && pathname.startsWith(m.key as string));

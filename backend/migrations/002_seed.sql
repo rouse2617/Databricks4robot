@@ -95,13 +95,25 @@ INSERT INTO assets (asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns
 
 -- ============================================================
 -- Deliveries (2 records)
+-- item_count / manifest_uri / contract_id / delivered_by / metadata are what the
+-- API reads; cf_meta kept for legacy parity (includes redundant asset_count).
 -- ============================================================
-INSERT INTO deliveries (delivery_id, customer_id, status, delivered_at, cf_meta, created_at, updated_at, version) VALUES
+INSERT INTO deliveries (
+    delivery_id, customer_id, status, delivered_at,
+    contract_id, delivered_by, manifest_uri,
+    item_count, metadata, cf_meta,
+    created_at, updated_at, version
+) VALUES
 (
     'cccccccc-3333-4000-8000-000000000001',
     'urn:grace:customer:A',
     'delivered',
     '2026-04-20T14:00:00Z',
+    'CT-2026-0401',
+    'urn:grace:user:alice',
+    'gs://deliveries/cc-01/manifest.json',
+    2,
+    '{"note":"Q1 batch delivery"}'::jsonb,
     '{"manifest_uri":"gs://deliveries/cc-01/manifest.json","contract_id":"CT-2026-0401","note":"Q1 batch delivery","asset_count":2,"owner":"urn:grace:user:alice"}'::jsonb,
     '2026-04-20T13:55:00Z', '2026-04-20T14:00:00Z', 2
 ),
@@ -110,6 +122,11 @@ INSERT INTO deliveries (delivery_id, customer_id, status, delivered_at, cf_meta,
     'urn:grace:customer:B',
     'pending',
     NULL,
+    'CT-2026-0502',
+    'urn:grace:user:charlie',
+    'gs://deliveries/cc-02/manifest.json',
+    2,
+    '{"note":"Calibration data"}'::jsonb,
     '{"manifest_uri":"gs://deliveries/cc-02/manifest.json","contract_id":"CT-2026-0502","note":"Calibration data","asset_count":2,"owner":"urn:grace:user:charlie"}'::jsonb,
     '2026-04-21T08:00:00Z', '2026-04-21T08:00:00Z', 1
 );

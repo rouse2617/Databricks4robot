@@ -133,7 +133,7 @@ export default function BatchTagModal({
       okButtonProps={{ disabled: !canSubmit }}
       closable={!executing}
       maskClosable={!executing}
-      destroyOnClose
+      destroyOnHidden
     >
       {msgCtx}
 

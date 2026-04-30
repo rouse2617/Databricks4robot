@@ -231,13 +231,26 @@ describe("URL_HYDRATE", () => {
   it("merges partial QueryState into current state", () => {
     const result = assetsDiscoveryReducer(freshState(), {
       type: "URL_HYDRATE",
-      payload: { queryState: { page: 5, sort: "created_at" } },
+      payload: { queryState: { page: 5, sort: "created_at" }, previewAssetId: null },
     });
     expect(result.queryState.page).toBe(5);
     expect(result.queryState.sort).toBe("created_at");
     // other fields preserved
     expect(result.queryState.pageSize).toBe(20);
     expect(result.queryState.searchMode).toBe("structured");
+    expect(result.previewState.activeAssetId).toBeNull();
+  });
+
+  it("hydrates preview asset id from URL payload", () => {
+    const result = assetsDiscoveryReducer(freshState(), {
+      type: "URL_HYDRATE",
+      payload: {
+        queryState: {},
+        previewAssetId: "4e8496ae-c881-4860-b308-7b13c3f5d688",
+      },
+    });
+    expect(result.previewState.activeAssetId).toBe("4e8496ae-c881-4860-b308-7b13c3f5d688");
+    expect(result.previewState.fetchStatus).toBe("loading");
   });
 });
 

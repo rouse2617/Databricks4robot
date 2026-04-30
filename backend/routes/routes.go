@@ -127,7 +127,6 @@ func RegisterAll(
 		}
 
 		if adminHandler != nil {
-			api.POST("/admin/mock-data/generate", adminHandler.GenerateMockData)
 			api.POST("/admin/search/reindex", adminHandler.SearchReindex)
 		}
 	}

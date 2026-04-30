@@ -208,6 +208,26 @@ FROM (
 JOIN tmp_mock_assets a ON a.seq BETWEEN ((d.rn - 1) * 20 + 1) AND (d.rn * 20)
 ON CONFLICT DO NOTHING;
 
+-- item_count must match junction rows (API reads item_count → asset_count).
+UPDATE deliveries d
+SET
+  item_count = s.cnt,
+  contract_id = COALESCE(NULLIF(TRIM(contract_id), ''), d.cf_meta->>'contract_id'),
+  manifest_uri = COALESCE(NULLIF(TRIM(manifest_uri), ''), d.cf_meta->>'manifest_uri'),
+  delivered_by = COALESCE(NULLIF(TRIM(delivered_by), ''), d.cf_meta->>'owner')
+FROM (
+  SELECT delivery_id, COUNT(*)::bigint AS cnt
+  FROM delivery_items
+  GROUP BY delivery_id
+) s
+WHERE d.delivery_id = s.delivery_id
+  AND d.cf_meta ->> 'mock_batch' = :'batch_id';
+
+UPDATE deliveries d
+SET item_count = 0
+WHERE d.cf_meta ->> 'mock_batch' = :'batch_id'
+  AND NOT EXISTS (SELECT 1 FROM delivery_items di WHERE di.delivery_id = d.delivery_id);
+
 INSERT INTO asset_algo_events (event_id, asset_id, algo_key, prev_status, new_status, run_id, reason, created_at)
 SELECT
   gen_random_uuid(),

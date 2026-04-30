@@ -32,9 +32,16 @@ export function assetsDiscoveryReducer(
 
     case "URL_HYDRATE": {
       const partial = action.payload.queryState;
+      const pid = action.payload.previewAssetId;
       return {
         ...state,
         queryState: { ...state.queryState, ...partial },
+        previewState: {
+          ...state.previewState,
+          activeAssetId: pid,
+          fetchStatus: pid ? "loading" : "idle",
+          summary: pid ? state.previewState.summary : null,
+        },
         routerState: { ...state.routerState, urlHydrated: true },
         resultsState: { ...state.resultsState, isStale: true },
       };

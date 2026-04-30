@@ -9,6 +9,7 @@ import { useEffect, useRef } from "react";
 import {
   serializeQueryStateToUrl,
   parseQueryStateFromUrl,
+  parsePreviewAssetIdFromUrl,
 } from "../../lib/assets/assetsDiscoveryUrl";
 import type { QueryState, RouterState } from "../../lib/assets/assetsDiscoveryTypes";
 import type { AssetsDiscoveryAction } from "../../lib/assets/assetsDiscoveryActions";
@@ -23,6 +24,7 @@ import type { AssetsDiscoveryAction } from "../../lib/assets/assetsDiscoveryActi
 export function useAssetsQuerySync(
   queryState: QueryState,
   routerState: RouterState,
+  previewAssetId: string | null,
   dispatch: React.Dispatch<AssetsDiscoveryAction>,
 ): void {
   // Track whether a URL change was initiated by us (to avoid re-parsing our own changes)
@@ -41,8 +43,9 @@ export function useAssetsQuerySync(
 
     const sp = new URLSearchParams(window.location.search);
     const parsed = parseQueryStateFromUrl(sp);
+    const previewId = parsePreviewAssetIdFromUrl(sp);
 
-    dispatch({ type: "URL_HYDRATE", payload: { queryState: parsed } });
+    dispatch({ type: "URL_HYDRATE", payload: { queryState: parsed, previewAssetId: previewId } });
     dispatch({ type: "MARK_URL_HYDRATED" });
   }, [dispatch]);
 
@@ -50,7 +53,7 @@ export function useAssetsQuerySync(
   useEffect(() => {
     if (!routerState.urlHydrated) return;
 
-    const sp = serializeQueryStateToUrl(queryState);
+    const sp = serializeQueryStateToUrl(queryState, previewAssetId);
     const search = sp.toString();
     const newUrl = search ? `${window.location.pathname}?${search}` : window.location.pathname;
 
@@ -77,7 +80,7 @@ export function useAssetsQuerySync(
     queueMicrotask(() => {
       weChangedUrlRef.current = false;
     });
-  }, [queryState, routerState.urlHydrated]);
+  }, [queryState, routerState.urlHydrated, previewAssetId]);
 
   // ── Listen for popstate (browser back/forward) ──
   useEffect(() => {
@@ -87,7 +90,8 @@ export function useAssetsQuerySync(
 
       const sp = new URLSearchParams(window.location.search);
       const parsed = parseQueryStateFromUrl(sp);
-      dispatch({ type: "URL_HYDRATE", payload: { queryState: parsed } });
+      const previewId = parsePreviewAssetIdFromUrl(sp);
+      dispatch({ type: "URL_HYDRATE", payload: { queryState: parsed, previewAssetId: previewId } });
     };
 
     window.addEventListener("popstate", handlePopstate);

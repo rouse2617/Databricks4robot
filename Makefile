@@ -1,4 +1,4 @@
-.PHONY: all dev-up dev-down all-up all-down all-logs pg-generate-scale iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test smoke build clean
+.PHONY: all dev-up dev-down all-up all-down all-logs pg-generate-scale pg-generate-rich iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test smoke build clean
 
 # ── Local infra ──────────────────────────────────────────
 dev-up:
@@ -28,6 +28,13 @@ pg-generate-scale:
 		-v row_count=$${ROW_COUNT:-100000} \
 		-v batch_id=$${BATCH_ID:-scale_100k} \
 		-f backend/scripts/generate_mock_scale.sql
+
+pg-generate-rich:
+	BATCH_ID=$${BATCH_ID:-rich_10k_2k} \
+	ASSET_COUNT=$${ASSET_COUNT:-10000} \
+	MCAP_COUNT=$${MCAP_COUNT:-2000} \
+	DELIVERY_COUNT=$${DELIVERY_COUNT:-600} \
+	bash backend/scripts/load_rich_scale.sh
 
 iceberg-up:
 	cd deploy/local && docker compose -f docker-compose.iceberg.yml up -d

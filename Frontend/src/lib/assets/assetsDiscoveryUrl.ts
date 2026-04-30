@@ -66,9 +66,20 @@ function parseFilterParam(raw: string): FilterChip | null {
 // ─── Public API ───
 
 /**
- * Serialize a QueryState into URLSearchParams, omitting default values.
+ * Read optional quick-preview asset id from the URL (`preview` query param).
  */
-export function serializeQueryStateToUrl(state: QueryState): URLSearchParams {
+export function parsePreviewAssetIdFromUrl(sp: URLSearchParams): string | null {
+  const raw = sp.get("preview");
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * Serialize a QueryState into URLSearchParams, omitting default values.
+ * When `previewAssetId` is a non-empty string, adds `preview=<uuid>` for shareable workbench state.
+ */
+export function serializeQueryStateToUrl(state: QueryState, previewAssetId?: string | null): URLSearchParams {
   const sp = new URLSearchParams();
 
   if (state.searchMode !== DEFAULT_MODE) {
@@ -101,6 +112,10 @@ export function serializeQueryStateToUrl(state: QueryState): URLSearchParams {
 
   if (!arraysEqual(state.selectedColumns, DEFAULT_COLUMNS)) {
     sp.set("columns", state.selectedColumns.join(","));
+  }
+
+  if (previewAssetId && previewAssetId.trim()) {
+    sp.set("preview", previewAssetId.trim());
   }
 
   return sp;

@@ -64,11 +64,20 @@ afterEach(() => {
 function setupMocks(overrides?: {
   statusError?: boolean;
   tablesError?: boolean;
+  trinoUnhealthy?: boolean;
   syncAlert?: boolean;
   syncSource?: "realtime" | "sync_reconciliation";
 }) {
   if (overrides?.statusError) {
     mockStatus.mockRejectedValue(new Error("status error"));
+  } else if (overrides?.trinoUnhealthy) {
+    mockStatus.mockResolvedValue({
+      enabled: true,
+      healthy: false,
+      catalog: "iceberg",
+      schema: "robot",
+      error: "trino query layer is disabled",
+    });
   } else {
     mockStatus.mockResolvedValue({ enabled: true, healthy: true, catalog: "iceberg", schema: "robot" });
   }
@@ -196,6 +205,17 @@ describe("AnalyticsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Trino 湖仓查询暂不可用")).toBeTruthy();
     });
+  });
+
+  it("does not call tables or training APIs when Trino reports unhealthy", async () => {
+    setupMocks({ trinoUnhealthy: true });
+    render(<AnalyticsPage />);
+    await waitFor(() => {
+      expect(screen.getByText("湖仓验证")).toBeTruthy();
+    });
+    expect(mockTables).not.toHaveBeenCalled();
+    expect(mockTrainingAssets).not.toHaveBeenCalled();
+    expect(mockQualityDistribution).not.toHaveBeenCalled();
   });
 
   it("renders statistic cards with table row counts", async () => {

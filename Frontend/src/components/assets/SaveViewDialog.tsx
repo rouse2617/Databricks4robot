@@ -38,7 +38,7 @@ export default function SaveViewDialog({
       okText="保存"
       cancelText="取消"
       okButtonProps={{ disabled: !name.trim() }}
-      destroyOnClose
+      destroyOnHidden
     >
       <Input
         placeholder="输入视图名称"

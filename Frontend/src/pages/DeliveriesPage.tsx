@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Typography, Table, Select, Button, Tag, Space, message } from "antd";
 import { ReloadOutlined, PlusOutlined } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { deliveriesApi } from "../api/deliveries";
 import type { Delivery } from "../api/types";
 import CreateDeliveryModal from "../components/deliveries/CreateDeliveryModal";
@@ -71,6 +71,15 @@ export default function DeliveriesPage() {
       key: "delivery_id",
       width: 220,
       ellipsis: true,
+      render: (id: string) => (
+        <Link
+          to={`/deliveries/${id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="font-mono text-xs"
+        >
+          {id}
+        </Link>
+      ),
     },
     {
       title: "客户",
@@ -162,7 +171,17 @@ export default function DeliveriesPage() {
           },
         }}
         onRow={(record) => ({
-          onClick: () => navigate(`/deliveries/${record.delivery_id}`),
+          onClick: (e) => {
+            const el = e.target as HTMLElement;
+            if (
+              el.closest(
+                "a, button, input, textarea, select, label, [role='checkbox'], .ant-pagination, .ant-select, .ant-pagination-item",
+              )
+            ) {
+              return;
+            }
+            navigate(`/deliveries/${record.delivery_id}`);
+          },
           style: { cursor: "pointer" },
         })}
         size="middle"

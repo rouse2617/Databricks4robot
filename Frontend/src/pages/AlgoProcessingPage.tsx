@@ -111,7 +111,7 @@ export default function AlgoProcessingPage() {
       <Card
         size="small"
         style={{ marginBottom: 16 }}
-        bodyStyle={{ padding: "8px 16px" }}
+        styles={{ body: { padding: "8px 16px" } }}
       >
         <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
           <Space wrap>

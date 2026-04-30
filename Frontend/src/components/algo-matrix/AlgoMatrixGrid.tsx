@@ -1,10 +1,12 @@
 import { Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import { useNavigate } from "react-router-dom";
 import type { Asset } from "../../api/types";
 import type { AlgoRegistryItem } from "../../api/algoRegistry";
 import AlgoStatusCell from "./AlgoStatusCell";
 import AlgoStatusPopover from "./AlgoStatusPopover";
 import { getAlgoResultDetail, getAlgoStatusFromResults } from "../../lib/algoStatus";
+import { navigateToAssetDetail } from "../../lib/assets/assetWorkbenchNavigation";
 
 interface AlgoMatrixGridProps {
   assets: Asset[];
@@ -27,6 +29,7 @@ export default function AlgoMatrixGrid({
   onPageChange,
   onRefresh,
 }: AlgoMatrixGridProps) {
+  const navigate = useNavigate();
   const columns: ColumnsType<Asset> = [
     {
       title: "Asset ID",
@@ -36,7 +39,15 @@ export default function AlgoMatrixGrid({
       fixed: "left",
       ellipsis: true,
       render: (id: string) => (
-        <a href={`/assets/${id}`} style={{ fontFamily: "monospace", fontSize: 12 }}>
+        <a
+          href={`/assets/${id}`}
+          style={{ fontFamily: "monospace", fontSize: 12 }}
+          onClick={(e) => {
+            if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            navigateToAssetDetail(navigate, id);
+          }}
+        >
           {id.slice(0, 12)}…
         </a>
       ),

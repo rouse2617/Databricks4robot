@@ -223,7 +223,7 @@ export default function ExportModal({
       cancelButtonProps={{ disabled: exporting }}
       closable={!exporting}
       maskClosable={!exporting}
-      destroyOnClose
+      destroyOnHidden
     >
       <Space direction="vertical" size={16} style={{ width: "100%" }}>
         {/* Range selection */}

@@ -777,15 +777,16 @@ curl "$BASE/api/v1/tag-registry" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
-响应 `200`:
+响应 `200`（`items` 按 `key` 字母序；每项含 YAML 中的 `description`，便于前端字典页展示）:
 ```json
 {
   "items": [
-    {"key": "priority", "type": "enum", "values": ["critical", "high", "medium", "low"]},
-    {"key": "quality", "type": "enum", "values": ["excellent", "good", "acceptable", "poor", "unusable"]},
-    {"key": "scene", "type": "enum", "values": ["indoor", "outdoor", "warehouse", "office", "factory"]},
-    {"key": "notes", "type": "string", "max_length": 500},
-    {"key": "batch", "type": "string", "max_length": 255}
+    {"key": "priority", "description": "处理优先级", "type": "enum", "values": ["critical", "high", "medium", "low"]},
+    {"key": "quality", "description": "数据质量评级", "type": "enum", "values": ["excellent", "good", "acceptable", "poor", "unusable"]},
+    {"key": "scene", "description": "采集场景", "type": "enum", "values": ["indoor", "outdoor", "warehouse", "office", "factory"]},
+    {"key": "notes", "description": "自由备注", "type": "string", "max_length": 500},
+    {"key": "batch", "description": "采集批次号", "type": "string"},
+    {"key": "task", "description": "采集任务标识", "type": "string"}
   ]
 }
 ```

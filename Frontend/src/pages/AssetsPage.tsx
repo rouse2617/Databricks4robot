@@ -6,8 +6,10 @@ import { useEffect, useCallback, useRef, useState } from "react";
 import { Typography, message, Modal, Button, Popover, Drawer, Badge } from "antd";
 import { FilterOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
+import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
 import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryReducer";
 import { useAssetsQuerySync } from "../hooks/assets/useAssetsQuerySync";
+import { serializeQueryStateToUrl } from "../lib/assets/assetsDiscoveryUrl";
 import { useSavedViews } from "../hooks/assets/useSavedViews";
 import { buildPlaceholderPreviewManifest } from "../hooks/assets/useAssetPreview";
 import AssetsSearchBar from "../components/assets/AssetsSearchBar";
@@ -34,7 +36,7 @@ const { Title } = Typography;
 export default function AssetsPage() {
   const navigate = useNavigate();
   const [state, dispatch] = useAssetsDiscoveryReducer();
-  useAssetsQuerySync(state.queryState, state.routerState, dispatch);
+  useAssetsQuerySync(state.queryState, state.routerState, state.previewState.activeAssetId, dispatch);
   const { views, currentViewId, selectView, saveView, deleteView } = useSavedViews(state, dispatch);
   const [msg, msgCtx] = message.useMessage();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -259,7 +261,7 @@ export default function AssetsPage() {
         width={400}
         open={filterDrawerOpen}
         onClose={() => setFilterDrawerOpen(false)}
-        destroyOnClose={false}
+        destroyOnHidden={false}
       >
         <AssetsFacetSidebar
           layout="vertical"
@@ -466,7 +468,16 @@ export default function AssetsPage() {
             previewManifest={previewManifest}
             collapsed={state.previewState.collapsed}
             onCollapse={() => dispatch({ type: "PREVIEW_COLLAPSE_TOGGLE" })}
-            onOpenDetail={(assetId) => navigate(`/assets/${assetId}`)}
+            onOpenDetail={(assetId) => {
+              const sp = serializeQueryStateToUrl(
+                state.queryState,
+                assetId,
+              );
+              const qs = sp.toString();
+              navigateToAssetDetail(navigate, assetId, {
+                state: { assetsReturnTo: qs ? `/assets?${qs}` : "/assets" },
+              });
+            }}
             onFindSimilar={() => {}}
             onRetry={() => {
               const id = state.previewState.activeAssetId;

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   serializeQueryStateToUrl,
   parseQueryStateFromUrl,
+  parsePreviewAssetIdFromUrl,
 } from "./assetsDiscoveryUrl";
 import {
   DEFAULT_COLUMNS,
@@ -145,6 +146,17 @@ describe("serializeQueryStateToUrl", () => {
     const sp = serializeQueryStateToUrl(defaultQueryState());
     expect(sp.has("columns")).toBe(false);
   });
+
+  it("includes preview when second arg is a non-empty id", () => {
+    const state = defaultQueryState();
+    const sp = serializeQueryStateToUrl(state, "abc-123");
+    expect(sp.get("preview")).toBe("abc-123");
+  });
+
+  it("omits preview when second arg is null or undefined", () => {
+    expect(serializeQueryStateToUrl(defaultQueryState(), null).has("preview")).toBe(false);
+    expect(serializeQueryStateToUrl(defaultQueryState(), undefined).has("preview")).toBe(false);
+  });
 });
 
 // ─── parseQueryStateFromUrl ───
@@ -250,6 +262,21 @@ describe("parseQueryStateFromUrl", () => {
     expect(result.activeFilters![0].field).toBe("tag.notes");
     expect(result.activeFilters![0].op).toBe("ilike");
     expect(result.activeFilters![0].value).toBe("foo:bar:baz");
+  });
+});
+
+// ─── parsePreviewAssetIdFromUrl ───
+
+describe("parsePreviewAssetIdFromUrl", () => {
+  it("parses preview id", () => {
+    const sp = new URLSearchParams("preview=uuid-one");
+    expect(parsePreviewAssetIdFromUrl(sp)).toBe("uuid-one");
+  });
+
+  it("returns null for missing or blank preview", () => {
+    expect(parsePreviewAssetIdFromUrl(new URLSearchParams())).toBeNull();
+    expect(parsePreviewAssetIdFromUrl(new URLSearchParams("preview="))).toBeNull();
+    expect(parsePreviewAssetIdFromUrl(new URLSearchParams("preview=  "))).toBeNull();
   });
 });
 

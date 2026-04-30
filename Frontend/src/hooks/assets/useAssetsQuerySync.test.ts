@@ -54,13 +54,14 @@ describe("useAssetsQuerySync", () => {
 
     const dispatch = vi.fn();
     renderHook(() =>
-      useAssetsQuerySync(defaultQueryState(), unhydratedRouter(), dispatch),
+      useAssetsQuerySync(defaultQueryState(), unhydratedRouter(), null, dispatch),
     );
 
     expect(dispatch).toHaveBeenCalledWith({
       type: "URL_HYDRATE",
       payload: {
         queryState: expect.objectContaining({ page: 3, sort: "created_at" }),
+        previewAssetId: null,
       },
     });
     expect(dispatch).toHaveBeenCalledWith({ type: "MARK_URL_HYDRATED" });
@@ -69,12 +70,12 @@ describe("useAssetsQuerySync", () => {
   it("dispatches URL_HYDRATE with empty object for clean URL", () => {
     const dispatch = vi.fn();
     renderHook(() =>
-      useAssetsQuerySync(defaultQueryState(), unhydratedRouter(), dispatch),
+      useAssetsQuerySync(defaultQueryState(), unhydratedRouter(), null, dispatch),
     );
 
     expect(dispatch).toHaveBeenCalledWith({
       type: "URL_HYDRATE",
-      payload: { queryState: {} },
+      payload: { queryState: {}, previewAssetId: null },
     });
   });
 
@@ -87,6 +88,7 @@ describe("useAssetsQuerySync", () => {
       useAssetsQuerySync(
         { ...defaultQueryState(), page: 5 },
         unhydratedRouter(),
+        null,
         dispatch,
       ),
     );
@@ -103,7 +105,7 @@ describe("useAssetsQuerySync", () => {
     pushStateSpy.mockClear();
     replaceStateSpy.mockClear();
 
-    renderHook(() => useAssetsQuerySync(qs, hydratedRouter(), dispatch));
+    renderHook(() => useAssetsQuerySync(qs, hydratedRouter(), null, dispatch));
 
     expect(replaceStateSpy).toHaveBeenCalledWith(
       null,
@@ -116,11 +118,12 @@ describe("useAssetsQuerySync", () => {
     const dispatch = vi.fn();
 
     const { rerender } = renderHook(
-      ({ qs, router }) => useAssetsQuerySync(qs, router, dispatch),
+      ({ qs, router, preview }) => useAssetsQuerySync(qs, router, preview ?? null, dispatch),
       {
         initialProps: {
           qs: { ...defaultQueryState(), page: 1 },
           router: hydratedRouter(),
+          preview: null as string | null,
         },
       },
     );
@@ -132,12 +135,54 @@ describe("useAssetsQuerySync", () => {
     rerender({
       qs: { ...defaultQueryState(), page: 2 },
       router: hydratedRouter(),
+      preview: null,
     });
 
     expect(pushStateSpy).toHaveBeenCalledWith(
       null,
       "",
       expect.stringContaining("page=2"),
+    );
+  });
+
+  it("dispatches URL_HYDRATE with preview id from query string", () => {
+    pushStateSpy.mockRestore();
+    setUrl("/assets?preview=abc-def-0000-1111-222233334444");
+    pushStateSpy = vi.spyOn(window.history, "pushState");
+
+    const dispatch = vi.fn();
+    renderHook(() =>
+      useAssetsQuerySync(defaultQueryState(), unhydratedRouter(), null, dispatch),
+    );
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "URL_HYDRATE",
+      payload: {
+        queryState: {},
+        previewAssetId: "abc-def-0000-1111-222233334444",
+      },
+    });
+  });
+
+  it("uses replaceState when preview id changes after hydration", () => {
+    const dispatch = vi.fn();
+    pushStateSpy.mockClear();
+    replaceStateSpy.mockClear();
+
+    const { rerender } = renderHook(
+      ({ preview }) =>
+        useAssetsQuerySync(defaultQueryState(), hydratedRouter(), preview, dispatch),
+      {
+        initialProps: { preview: null as string | null },
+      },
+    );
+
+    rerender({ preview: "id-1" });
+
+    expect(replaceStateSpy).toHaveBeenCalledWith(
+      null,
+      "",
+      expect.stringContaining("preview=id-1"),
     );
   });
 
@@ -148,7 +193,7 @@ describe("useAssetsQuerySync", () => {
     replaceStateSpy.mockClear();
 
     renderHook(() =>
-      useAssetsQuerySync(defaultQueryState(), hydratedRouter(), dispatch),
+      useAssetsQuerySync(defaultQueryState(), hydratedRouter(), null, dispatch),
     );
 
     expect(pushStateSpy).not.toHaveBeenCalled();
@@ -158,7 +203,7 @@ describe("useAssetsQuerySync", () => {
   it("re-hydrates on popstate event", () => {
     const dispatch = vi.fn();
     renderHook(() =>
-      useAssetsQuerySync(defaultQueryState(), hydratedRouter(), dispatch),
+      useAssetsQuerySync(defaultQueryState(), hydratedRouter(), null, dispatch),
     );
 
     // Clear mount dispatches
@@ -175,6 +220,7 @@ describe("useAssetsQuerySync", () => {
       type: "URL_HYDRATE",
       payload: {
         queryState: expect.objectContaining({ page: 5 }),
+        previewAssetId: null,
       },
     });
   });
@@ -184,7 +230,7 @@ describe("useAssetsQuerySync", () => {
     const removeEventSpy = vi.spyOn(window, "removeEventListener");
 
     const { unmount } = renderHook(() =>
-      useAssetsQuerySync(defaultQueryState(), hydratedRouter(), dispatch),
+      useAssetsQuerySync(defaultQueryState(), hydratedRouter(), null, dispatch),
     );
 
     unmount();

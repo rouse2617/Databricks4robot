@@ -430,25 +430,55 @@ export default function AnalyticsPage() {
     setError(null);
     setQueryErrors({});
 
-    // Use allSettled so one slow/failing endpoint doesn't blank out the whole
-    // page. Required endpoints (status + tables) drive the top-level error;
-    // optional query endpoints are degraded into per-panel error messages.
-    Promise.allSettled([
-      lakehouseApi.status(),
-      lakehouseApi.tables(),
-      lakehouseApi.syncStatus(),
-      lakehouseApi.trainingAssets(),
-      lakehouseApi.recomputeCandidates(),
-      lakehouseApi.tagTimeline(),
-      lakehouseApi.qualityDistribution(),
-      lakehouseApi.customerReplay(),
-    ])
-      .then(([statusRes, tablesRes, syncRes, ...queryRes]) => {
+    Promise.allSettled([lakehouseApi.status(), lakehouseApi.syncStatus()])
+      .then(async ([statusRes, syncRes]) => {
+        let st: LakehouseStatus | null = null;
         if (statusRes.status === "fulfilled") {
-          setStatus(statusRes.value);
+          st = statusRes.value;
+          setStatus(st);
         } else {
           setStatus(null);
         }
+
+        if (syncRes.status === "fulfilled") {
+          setSyncStatus(syncRes.value);
+        } else {
+          setSyncStatus({ available: false } as SyncStatusResponse);
+        }
+
+        const trinoDown =
+          statusRes.status === "rejected" || !st?.enabled || !st?.healthy;
+
+        if (trinoDown) {
+          setTables([]);
+          setQueryResults({});
+          const msg =
+            statusRes.status === "rejected"
+              ? extractApiErrorMessage(statusRes.reason, "加载 Trino 湖仓查询失败")
+              : st?.error?.trim() || "trino query layer is disabled";
+          if (statusRes.status === "rejected") {
+            setError(msg);
+          } else {
+            setError(null);
+          }
+          const errMap: Partial<Record<(typeof QUERY_KEYS)[number], string>> = {};
+          for (const key of QUERY_KEYS) {
+            errMap[key] = msg;
+          }
+          setQueryErrors(errMap as Record<string, string>);
+          return;
+        }
+
+        const settled = await Promise.allSettled([
+          lakehouseApi.tables(),
+          lakehouseApi.trainingAssets(),
+          lakehouseApi.recomputeCandidates(),
+          lakehouseApi.tagTimeline(),
+          lakehouseApi.qualityDistribution(),
+          lakehouseApi.customerReplay(),
+        ]);
+
+        const [tablesRes, ...queryRes] = settled;
 
         if (tablesRes.status === "fulfilled") {
           setTables(tablesRes.value.items ?? []);
@@ -456,17 +486,7 @@ export default function AnalyticsPage() {
           setTables([]);
         }
 
-        // syncStatus has its own "available: false" fallback shape.
-        if (syncRes.status === "fulfilled") {
-          setSyncStatus(syncRes.value);
-        } else {
-          setSyncStatus({ available: false } as SyncStatusResponse);
-        }
-
-        // Top-level error only when both critical endpoints fail.
-        if (statusRes.status === "rejected" && tablesRes.status === "rejected") {
-          setError(extractApiErrorMessage(statusRes.reason, "加载 Trino 湖仓查询失败"));
-        }
+        setError(null);
 
         const successResults: Record<string, LakehouseItemsResponse> = {};
         const errors: Record<string, string> = {};

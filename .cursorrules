@@ -26,4 +26,4 @@ Examples:
 - fix(frontend): prevent duplicate request on page refresh
 - docs(api): document pagination token behavior
 
-Broader agent conventions (assumptions, scope, verification): see `CLAUDE.md` section **Agent behavior (LLM-assisted coding)**.
+Broader agent conventions: see `CLAUDE.md` sections **Agent behavior (LLM-assisted coding)** and **Recommended workflow skills (external)** (mirrored in `.cursor/rules/databricks4robot-claude.mdc`).

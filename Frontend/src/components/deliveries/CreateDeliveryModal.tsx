@@ -66,7 +66,7 @@ export default function CreateDeliveryModal({
       confirmLoading={submitting}
       okText="提交"
       cancelText="取消"
-      destroyOnClose
+      destroyOnHidden
     >
       {msgCtx}
       {assetIds.length > 0 && (

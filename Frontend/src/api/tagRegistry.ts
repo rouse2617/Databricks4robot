@@ -2,7 +2,8 @@ import { apiClient } from "./client";
 
 export interface TagRegistryItem {
   key: string;
-  type: "enum" | "string";
+  description?: string;
+  type: string;
   values?: string[];
   max_length?: number;
 }

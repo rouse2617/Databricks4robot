@@ -69,7 +69,7 @@ src/
 │   ├── AlgoProcessingPage.tsx# 算法处理（占位）
 │   ├── DeliveriesPage.tsx    # 交付管理（占位）
 │   ├── AnalyticsPage.tsx     # 数据分析（占位）
-│   ├── TagDictionaryPage.tsx # 标签字典（占位）
+│   ├── TagDictionaryPage.tsx # 标签字典（GET /tag-registry 只读）
 │   ├── SettingsPage.tsx      # 设置
 │   └── LoginPage.tsx         # 登录
 ├── App.tsx               # 路由定义（所有页面 lazy-load）

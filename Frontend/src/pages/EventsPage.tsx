@@ -2,13 +2,15 @@
 // P2-FE-2: Shows recent asset_events in a timeline/table view.
 // Fetches from /api/v1/assets/:id/events for a given asset.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, Table, Tag, Input, Space, Typography, Empty, Spin, Select } from "antd";
 import { ReloadOutlined, SearchOutlined } from "@ant-design/icons";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
+import { useNavigate } from "react-router-dom";
 import { assetsApi } from "../api/assets";
 import type { AssetEvent } from "../api/types";
+import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
 
 dayjs.extend(relativeTime);
 
@@ -26,9 +28,10 @@ function eventTypeColor(eventType: string): string {
   return "default";
 }
 
-// ─── Table columns ───
+// ─── Table columns factory (needs navigate for return-url tracking) ───
 
-const columns = [
+function buildEventColumns(navigate: ReturnType<typeof useNavigate>) {
+  return [
   {
     title: "Event Seq",
     dataIndex: "event_seq",
@@ -50,7 +53,15 @@ const columns = [
     width: 280,
     ellipsis: true,
     render: (val: string) => (
-      <a href={`/assets/${val}`} style={{ fontFamily: "monospace", fontSize: 12 }}>
+      <a
+        href={`/assets/${val}`}
+        style={{ fontFamily: "monospace", fontSize: 12 }}
+        onClick={(e) => {
+          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+          e.preventDefault();
+          navigateToAssetDetail(navigate, val);
+        }}
+      >
         {val}
       </a>
     ),
@@ -99,10 +110,13 @@ const columns = [
       new Date(b.occurred_at || b.created_at).getTime(),
   },
 ];
+}
 
 // ─── Component ───
 
 export default function EventsPage() {
+  const navigate = useNavigate();
+  const columns = useMemo(() => buildEventColumns(navigate), [navigate]);
   const [assetId, setAssetId] = useState("");
   const [events, setEvents] = useState<AssetEvent[]>([]);
   const [loading, setLoading] = useState(false);

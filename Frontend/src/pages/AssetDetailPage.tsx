@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   Tag, Button, Spin, Typography, message, Tabs, Empty,
 } from "antd";
@@ -17,6 +17,12 @@ import TagsTab from "../components/asset-detail/TagsTab";
 import DeliveryHistoryTab from "../components/asset-detail/DeliveryHistoryTab";
 import FilesTab from "../components/asset-detail/FilesTab";
 import { getAssetStateColor, getLifecycleState } from "../lib/assetPresentation";
+import {
+  consumeStoredReturnUrl,
+  clearStoredAssetDetailReturn,
+  isSafeInternalReturnUrl,
+  type AssetDetailLocationState,
+} from "../lib/assets/assetWorkbenchNavigation";
 
 const { Title, Text } = Typography;
 
@@ -49,6 +55,8 @@ function parseAlgoResults(algoResults: Record<string, string> | undefined) {
 export default function AssetDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnTo = (location.state as AssetDetailLocationState | null)?.assetsReturnTo;
   const [asset, setAsset] = useState<Asset | null>(null);
   const [loading, setLoading] = useState(true);
   const [algoEvents, setAlgoEvents] = useState<AlgoEvent[]>([]);
@@ -190,8 +198,25 @@ export default function AssetDetailPage() {
       <div className="flex items-center gap-3 mb-4">
         <Button
           icon={<ArrowLeftOutlined />}
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            if (returnTo && isSafeInternalReturnUrl(returnTo)) {
+              clearStoredAssetDetailReturn();
+              navigate(returnTo);
+              return;
+            }
+            const stored = consumeStoredReturnUrl();
+            if (stored) {
+              navigate(stored);
+              return;
+            }
+            if (typeof window !== "undefined" && window.history.length > 1) {
+              navigate(-1);
+              return;
+            }
+            navigate("/assets");
+          }}
           size="small"
+          aria-label="返回"
         />
         <Title level={4} style={{ margin: 0 }}>
           资产详情
