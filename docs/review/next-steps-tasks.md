@@ -161,7 +161,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 | **P2-T-1** | Frontend coverage 提升到 ≥ 85%（核心组件 + 业务页） | P0-T-4 守门稳定 90 天后再加码 | M | parked |
 | **P2-T-2** | Outbox chaos 测试（`testcontainers` 注入 PG / ES 故障）| Outbox MVP 跑稳 60 天后再加 | M | parked |
 | **P2-8** | **Tag 子域闭环**：补独立 tag 写接口与历史接口（`POST /api/v1/assets/{id}/tags`、`DELETE /api/v1/assets/{id}/tags/{key}`、`GET /api/v1/assets/{id}/tags/history`） | 同事务更新 `asset_tags` + 追加 `tag_upserted / tag_deleted` 到 `asset_events`；历史查询直接走统一事件流；完成后与 `use-cases.md` 的 B1 / B2 / B6 对齐，前端/SDK 不再依赖 `PATCH /assets/{id}` 承担 tag 专项职责 | M | done | `be7f699` (backend API) + `4e4e4f7` (frontend 切专用 tag API) |
-| **P2-9** | **彻底移除 `cf_*` 遗留层**：清掉 `cf_meta / cf_algo / cf_tag / cf_files / cf_process` 的运行时依赖与兼容别名，最终 drop 列 / 索引 | 分 4 步完成：1）filter / API / SDK 不再接受 `cf_*` 别名；2）seed / mock / 脚本 / 旧测试改用 typed columns + projection tables；3）确认前端、运维脚本、reindex / backfill 不再读 `cf_*`；4）出 migration 删除 `assets/mcap_files/deliveries` 上的 `cf_*` 列与相关 GIN/表达式索引，并同步 `schemas/pg-phase0.sql`、`schema-reference.md`、`sql.md` | L | todo |
+| **P2-9** | **彻底移除 `cf_*` 遗留层**：清掉 `cf_meta / cf_algo / cf_tag / cf_files / cf_process` 的运行时依赖与兼容别名，最终 drop 列 / 索引 | 分 4 步完成：1）filter / API / SDK 不再接受 `cf_*` 别名；2）seed / mock / 脚本 / 旧测试改用 typed columns + projection tables；3）确认前端、运维脚本、reindex / backfill 不再读 `cf_*`；4）出 migration 删除 `assets/mcap_files/deliveries` 上的 `cf_*` 列与相关 GIN/表达式索引，并同步 `schemas/pg-phase0.sql`、`schema-reference.md`、`sql.md` | L | done | `e067dba` (commit) |
 
 ---
 
