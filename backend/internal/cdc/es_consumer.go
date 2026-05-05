@@ -3,6 +3,7 @@ package cdc
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"data-platform/internal/elasticsearch"
 	"data-platform/internal/repository"
@@ -40,6 +41,10 @@ func (c *ESConsumer) HandleBatch(ctx context.Context, events []ChangeEvent) erro
 		return nil
 	}
 
+	CDCBatchProcessedTotal.WithLabelValues("search_projection").Add(float64(len(events)))
+
+	rebuildStart := time.Now()
+
 	var docs []elasticsearch.BulkIndexDoc
 	for _, assetID := range assetIDs {
 		doc, ok, err := c.Builder.Build(ctx, assetID)
@@ -56,9 +61,11 @@ func (c *ESConsumer) HandleBatch(ctx context.Context, events []ChangeEvent) erro
 	}
 
 	if len(docs) == 0 {
+		CDCESRebuildDurationMs.Observe(float64(time.Since(rebuildStart).Milliseconds()))
 		return nil
 	}
 	result, err := c.ES.BulkIndex(ctx, docs)
+	CDCESRebuildDurationMs.Observe(float64(time.Since(rebuildStart).Milliseconds()))
 	if err != nil {
 		return fmt.Errorf("cdc es consumer bulk index: %w", err)
 	}

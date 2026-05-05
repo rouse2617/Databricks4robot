@@ -212,7 +212,50 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 
 ---
 
-## 8. 相关文档索引
+## 8. CDC 长期同步架构落地证据（Milestone 10 验收）
+
+> 完成时间：2026-04-30。对应 spec：`.kiro/specs/longterm-sync-architecture/`。
+
+| 组件 | 状态 | 落地证据 |
+|------|------|----------|
+| `kafka-go` 依赖 | ✅ done | `backend/go.mod` 已加 `github.com/segmentio/kafka-go` |
+| `KafkaGoPoller`: `FetchMessage` + `CommitMessages`（手动 offset commit） | ✅ done | `backend/internal/cdc/kafka_poller.go` |
+| `KafkaSource`: 指数退避重试 + 优雅关闭 | ✅ done | `backend/internal/cdc/kafka_source.go` |
+| CDC metrics（`cdc_batch_processed_total`, `cdc_consumer_lag_events`, `cdc_decode_errors_total`, `cdc_es_rebuild_duration_ms`） | ✅ done | `backend/internal/cdc/metrics.go` |
+| CDC runtime 集成到 `cmd/server/main.go`（`CDC_ENABLED=true`） | ✅ done | `backend/cmd/server/main.go` `buildCDCRuntime()` |
+| Debezium connector JSON 配置 | ✅ done | `deploy/local/cdc/connectors/postgres-asset-events.json` + `postgres-current-state.json` |
+| Prometheus scrape config 更新（backend job） | ✅ done | `deploy/local/monitoring/prometheus/prometheus.yml` |
+| in-memory CDC demo 成功运行 | ✅ done | 见下方冒烟测试记录 |
+
+### Milestone 10 冒烟测试记录（2026-04-30）
+
+**命令**：
+```bash
+CDC_SOURCE_DRIVER=in-memory CDC_BRONZE_STAGING_DIR=/tmp/cdc-demo-staging go run ./cmd/cdc-demo
+```
+
+**日志输出**：
+```
+2026/04/30 19:39:13 INFO cdc-demo starting driver=in-memory bronze_topic=asset_events search_topics="[assets asset_tags asset_algo_latest mcap_files asset_events]"
+2026/04/30 19:39:13 INFO bronze sink: wrote staging file path=/tmp/cdc-demo-staging/events_1_1_1777549153161181000.jsonl events=1 min_seq=1 max_seq=1
+2026/04/30 19:39:13 INFO cdc-demo event handler=search_projection table=assets op=u key=map[]
+cdc-demo stopped
+```
+
+**Bronze staging JSONL 内容**（`/tmp/cdc-demo-staging/events_1_1_*.jsonl`）：
+```json
+{"event_id":"demo-1","event_seq":1,"event_type":"asset_created","aggregate_type":"asset","payload_schema_version":"v1","asset_id":"","mcap_file_id":"","tenant_id":"","project_id":"","event_source":"backend","publish_state":"pending","event_payload":{"asset_id":"demo-asset"},"occurred_at":"2026-04-30T00:00:00Z","created_at":"2026-04-30T00:00:00Z"}
+```
+
+**验收结论**：
+- ✅ Bronze consumer 处理 `asset_events` topic，写入 JSONL staging 文件
+- ✅ Search projection consumer 处理 `assets` topic，记录 `search_projection` 事件
+- ✅ in-memory source 正常退出（`cdc-demo stopped`）
+- ✅ `CDC_BRONZE_STAGING_DIR` 路径下生成 JSONL 文件，内容符合 bronze event schema
+
+---
+
+## 9. 相关文档索引
 
 | 主题 | 看哪一篇 |
 |------|----------|

@@ -449,6 +449,75 @@ curl "$BASE/api/v1/search/assets?q=warehouse+rain&filter=status:eq:approved&page
 数据通过 Dagster pipeline 同步：Postgres → Bronze → Silver → Gold → Elasticsearch。
 `gold_to_elasticsearch` asset 从 Gold 层 `gold_asset_search_docs` 增量同步到 Elasticsearch。
 
+## 本地监控栈（Prometheus + Grafana）
+
+### 启动监控栈
+
+监控服务集成在全栈 compose 文件中：
+
+```bash
+cd deploy/local
+docker compose -f docker-compose.all.yml up -d prometheus grafana postgres-exporter elasticsearch-exporter blackbox-exporter
+```
+
+或启动完整栈（含 backend、frontend 等）：
+
+```bash
+cd deploy/local
+docker compose -f docker-compose.all.yml up -d
+```
+
+### 访问 Grafana
+
+- 地址：http://localhost:3000
+- 默认账号：`admin` / `admin`
+- Prometheus 数据源已预配置，指向 `http://prometheus:9090`
+- Dashboard 目录：`deploy/local/monitoring/grafana/dashboards/`
+
+### 可用指标
+
+**HTTP 请求指标**（由 `internal/middleware/metrics.go` 采集）：
+- `http_request_duration_seconds` — 请求耗时 histogram（label: `method`, `path`, `status`）
+- `http_requests_total` — 请求计数 counter
+
+**Outbox Worker 指标**（由 `internal/metrics/outbox.go` 采集）：
+- `outbox_worker_pending_total` — 当前 pending 事件数
+- `outbox_worker_batch_duration_ms` — 单轮处理耗时
+- `outbox_oldest_pending_age_seconds` — 最老 pending 事件年龄
+- `outbox_es_bulk_failures_total` — ES bulk 写入失败计数
+
+**CDC 指标**（由 `internal/cdc/metrics.go` 采集，`CDC_ENABLED=true` 时生效）：
+- `cdc_batch_processed_total` — 已处理 batch 数（label: `consumer_kind`）
+- `cdc_consumer_lag_events` — 消费者 lag（label: `consumer_kind`）
+- `cdc_decode_errors_total` — Debezium 解码错误计数
+- `cdc_es_rebuild_duration_ms` — ES 重建耗时 histogram
+
+**依赖健康指标**（由 blackbox-exporter 采集）：
+- Trino HTTP 可达性
+- Iceberg REST TCP 连通性
+- Frontend HTTP 可达性
+- PgBouncer TCP 连通性
+
+### 验证 Backend Metrics 被 Scrape
+
+```bash
+# 1. 确认 backend /metrics 端点正常
+curl http://localhost:8080/metrics | head -20
+
+# 2. 在 Prometheus UI 查询 backend 指标
+open http://localhost:9090
+# 搜索: http_request_duration_seconds 或 outbox_worker_pending_total
+
+# 3. 检查 Prometheus scrape 状态
+open http://localhost:9090/targets
+# 确认 backend job 状态为 UP
+```
+
+> **注意**：Prometheus 通过 `host.docker.internal:8080` 访问宿主机上运行的 backend（`make run` 模式）。
+> 若 backend 以 docker 服务方式运行（`docker-compose.all.yml`），需将 prometheus.yml 中 backend target 改为 `backend:8080`。
+
+---
+
 ## 审计日志
 
 Phase 2 新增 `audit_events` 表，记录核心写操作的审计日志：

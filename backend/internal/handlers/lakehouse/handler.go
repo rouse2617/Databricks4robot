@@ -57,13 +57,18 @@ func (h *Handler) Status(c *gin.Context) {
 }
 
 func (h *Handler) Tables(c *gin.Context) {
-	if !h.requireTrino(c) {
+	if h.trino == nil {
+		c.JSON(200, gin.H{"items": []trinopkg.TableCount{}})
 		return
 	}
 	items, err := h.trino.Tables(c.Request.Context())
 	if err != nil {
-		httpresp.Internal(c, err.Error())
+		// Tables() now returns empty list on failure, but handle defensively.
+		c.JSON(200, gin.H{"items": []trinopkg.TableCount{}})
 		return
+	}
+	if items == nil {
+		items = []trinopkg.TableCount{}
 	}
 	c.JSON(200, gin.H{"items": items})
 }

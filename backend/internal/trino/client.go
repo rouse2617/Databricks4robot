@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -135,12 +136,14 @@ func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
 	if err != nil {
 		if !strings.Contains(err.Error(), "does not exist") {
 			outcome = "error"
-			return nil, err
+			slog.Warn("trino tables query failed, returning empty list", "err", err)
+			return []TableCount{}, nil
 		}
 		items, bestErr := c.tablesBestEffort(ctx)
 		if bestErr != nil {
 			outcome = "error"
-			return nil, bestErr
+			slog.Warn("trino tables best-effort query failed, returning empty list", "err", bestErr)
+			return []TableCount{}, nil
 		}
 		return items, nil
 	}
@@ -151,13 +154,15 @@ func (c *Client) Tables(ctx context.Context) ([]TableCount, error) {
 		var item TableCount
 		if err := rows.Scan(&item.TableName, &item.RowCount); err != nil {
 			outcome = "error"
-			return nil, err
+			slog.Warn("trino tables scan failed, returning partial results", "err", err)
+			return result, nil
 		}
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
 		outcome = "error"
-		return nil, err
+		slog.Warn("trino tables rows iteration failed, returning partial results", "err", err)
+		return result, nil
 	}
 	return result, nil
 }

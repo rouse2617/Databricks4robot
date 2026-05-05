@@ -44,6 +44,7 @@ func (c *BronzeConsumer) HandleBatch(ctx context.Context, events []ChangeEvent) 
 	if len(batch) == 0 {
 		return nil
 	}
+	CDCBatchProcessedTotal.WithLabelValues("bronze").Add(float64(len(batch)))
 	_, err := c.Sink.WriteBatch(batch)
 	return err
 }

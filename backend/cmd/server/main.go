@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -201,6 +202,8 @@ func main() {
 		slog.Warn("outbox worker disabled: requires STORAGE_BACKEND=postgres, reachable ELASTICSEARCH_URL, and successful ES ping")
 	}
 
+	cdcCtx, cdcCancel := context.WithCancel(context.Background())
+	defer cdcCancel()
 	if pgClient != nil && cfg.CDCEnabled == "true" {
 		runtimeCfg := cdc.BuildRuntimeConfig(cfg)
 		handlers := map[string]cdc.BatchHandler{}
@@ -244,6 +247,13 @@ func main() {
 		}
 		if err := cdcRuntime.Validate(); err != nil {
 			slog.Warn("cdc runtime skeleton not started", "err", err, "source_driver", cfg.CDCSourceDriver)
+		} else {
+			slog.Info("cdc runtime started", "source_driver", cfg.CDCSourceDriver)
+			go func() {
+				if err := cdcRuntime.Run(cdcCtx); err != nil && !errors.Is(err, context.Canceled) {
+					slog.Error("cdc runtime exited", "err", err)
+				}
+			}()
 		}
 	}
 

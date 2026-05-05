@@ -23,6 +23,7 @@ type DebeziumEnvelope struct {
 func DecodeDebeziumMessage(raw []byte, key map[string]any) (ChangeEvent, error) {
 	var env DebeziumEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
+		CDCDecodeErrorsTotal.Inc()
 		return ChangeEvent{}, fmt.Errorf("decode debezium message: %w", err)
 	}
 
@@ -30,6 +31,7 @@ func DecodeDebeziumMessage(raw []byte, key map[string]any) (ChangeEvent, error) 
 	switch op {
 	case OperationCreate, OperationUpdate, OperationDelete, OperationRead:
 	default:
+		CDCDecodeErrorsTotal.Inc()
 		return ChangeEvent{}, fmt.Errorf("decode debezium message: unsupported op %q", env.Payload.Op)
 	}
 
