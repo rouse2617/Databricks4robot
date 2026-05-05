@@ -1,0 +1,18 @@
+{
+  "name": "postgres-asset-events",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "postgres",
+    "database.dbname": "data4cyber",
+    "database.server.name": "data4cyber",
+    "table.include.list": "public.asset_events",
+    "topic.prefix": "data4cyber",
+    "plugin.name": "pgoutput",
+    "publication.autocreate.mode": "filtered",
+    "slot.name": "debezium_asset_events",
+    "publication.name": "debezium_asset_events_pub"
+  }
+}

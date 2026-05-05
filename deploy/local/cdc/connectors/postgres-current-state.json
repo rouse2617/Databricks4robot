@@ -1,0 +1,18 @@
+{
+  "name": "postgres-current-state",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "postgres",
+    "database.dbname": "data4cyber",
+    "database.server.name": "data4cyber",
+    "table.include.list": "public.assets,public.asset_tags,public.asset_algo_latest,public.mcap_files",
+    "topic.prefix": "data4cyber",
+    "plugin.name": "pgoutput",
+    "publication.autocreate.mode": "filtered",
+    "slot.name": "debezium_current_state",
+    "publication.name": "debezium_current_state_pub"
+  }
+}
