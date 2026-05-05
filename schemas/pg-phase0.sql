@@ -11,7 +11,6 @@
 -- 命名与 docs/review/sql.md 第 0/4 节对齐：
 --   · 1.0 当前态：mcap_files / assets / deliveries / delivery_items
 --                 / asset_tags / asset_algo_latest / asset_events / idempotency_keys
---                 （兼容列 cf_meta / cf_algo / cf_tag / cf_files / cf_process 仍保留）
 --   · 2.0+ 扩展：asset_relations / datasets / dataset_snapshots / training_runs
 --                / catalog_objects / catalog_object_versions
 --
@@ -68,11 +67,6 @@ CREATE TABLE IF NOT EXISTS mcap_files (
     -- 扩展区
     metadata            JSONB        NOT NULL DEFAULT '{}'::jsonb,
     process_state       JSONB        NOT NULL DEFAULT '{}'::jsonb,
-
-    -- Phase 0 遗留：当前代码仍在读写 cf_meta / cf_process。
-    -- Phase 1 backfill 完成后，可在 backend/migrations 里 DROP。
-    cf_meta             JSONB        NOT NULL DEFAULT '{}'::jsonb,
-    cf_process          JSONB        NOT NULL DEFAULT '{}'::jsonb,
 
     is_deleted          BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -150,14 +144,6 @@ CREATE TABLE IF NOT EXISTS assets (
     metadata                JSONB        NOT NULL DEFAULT '{}'::jsonb,
     files                   JSONB        NOT NULL DEFAULT '{}'::jsonb,
 
-    -- Phase 0 遗留：当前代码仍读写 cf_meta / cf_algo / cf_tag / cf_files。
-    -- Phase 1 双写期：cf_tag <-> asset_tags、cf_algo <-> asset_algo_latest。
-    -- backfill 完成后，由迁移脚本 DROP 这些列。
-    cf_meta                 JSONB        NOT NULL DEFAULT '{}'::jsonb,
-    cf_algo                 JSONB        NOT NULL DEFAULT '{}'::jsonb,
-    cf_tag                  JSONB        NOT NULL DEFAULT '{}'::jsonb,
-    cf_files                JSONB        NOT NULL DEFAULT '{}'::jsonb,
-
     is_deleted              BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -184,11 +170,6 @@ CREATE INDEX IF NOT EXISTS idx_assets_segment_locator
     ON assets (segment_locator) WHERE segment_locator IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_assets_metadata_gin
     ON assets USING GIN (metadata);
--- Phase 0 遗留 GIN 索引（与 cf_* 列同生命周期，Phase 1 退役时一起删）：
-CREATE INDEX IF NOT EXISTS idx_assets_cf_meta_gin ON assets USING GIN (cf_meta);
-CREATE INDEX IF NOT EXISTS idx_assets_cf_algo_gin ON assets USING GIN (cf_algo);
-CREATE INDEX IF NOT EXISTS idx_assets_cf_tag_gin  ON assets USING GIN (cf_tag);
-CREATE INDEX IF NOT EXISTS idx_assets_cf_files_gin ON assets USING GIN (cf_files);
 
 COMMENT ON TABLE assets IS
     '资产当前态。docs/review/sql.md §4.2。行业相关 facet (city/weather/...) 入 asset_tags，不进本表。';

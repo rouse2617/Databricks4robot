@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# backfill-audit.sh — 新字段空值率 + 双写一致性对账
+# backfill-audit.sh — 新字段空值率检查
 #
 # 对应任务:
 #   4.10 scripts/backfill-audit.sh
-#   4.11 新字段空值率 < 0.1%，双写一致率 100%
+#   4.11 新字段空值率 < 0.1%
 #
 # 检查项:
 #   1. 新 promoted 字段空值率 < 0.1%（lifecycle_state, asset_type,
 #      retention_tier, duration_ms, owner）
-#   2. 双写一致性：promoted 字段与 cf_meta JSONB 中对应值 100% 一致
 #
 # 前置条件:
 #   - PostgreSQL 可达（通过环境变量或默认 localhost:5432）
@@ -25,6 +24,9 @@
 #   DB_PASSWORD   — PG 密码 (默认 postgres)
 #   DB_NAME       — PG 数据库 (默认 data4cyber)
 #   NULL_THRESHOLD — 空值率阈值 (默认 0.001 即 0.1%)
+#
+# 变更历史:
+#   - 2026-05-05: 移除 cf_meta 双写一致性检查（cf_* 列已删除）
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -138,88 +140,6 @@ for i in "${!FIELDS[@]}"; do
   fi
 done
 
-# ── 2. 双写一致性检查 ────────────────────────────────────────────────────────
-
-section "2. 双写一致性 (目标 100%)"
-
-# 检查 promoted 字段与 cf_meta JSONB 中对应值是否一致
-# 仅检查 cf_meta 中有对应 key 的行
-
-# lifecycle_state vs cf_meta->>'lifecycle_state'
-INCONSISTENT=$(psql_query "
-  SELECT COUNT(*)
-  FROM assets
-  WHERE is_deleted = FALSE
-    AND cf_meta->>'lifecycle_state' IS NOT NULL
-    AND cf_meta->>'lifecycle_state' != ''
-    AND lifecycle_state != cf_meta->>'lifecycle_state';
-")
-if [ "$INCONSISTENT" = "0" ]; then
-  check_pass "lifecycle_state ↔ cf_meta.lifecycle_state: 一致 (不一致: 0)"
-else
-  check_fail "lifecycle_state ↔ cf_meta.lifecycle_state: 不一致 ${INCONSISTENT} 行"
-fi
-
-# asset_type vs cf_meta->>'asset_type'
-INCONSISTENT=$(psql_query "
-  SELECT COUNT(*)
-  FROM assets
-  WHERE is_deleted = FALSE
-    AND cf_meta->>'asset_type' IS NOT NULL
-    AND cf_meta->>'asset_type' != ''
-    AND asset_type != cf_meta->>'asset_type';
-")
-if [ "$INCONSISTENT" = "0" ]; then
-  check_pass "asset_type ↔ cf_meta.asset_type: 一致 (不一致: 0)"
-else
-  check_fail "asset_type ↔ cf_meta.asset_type: 不一致 ${INCONSISTENT} 行"
-fi
-
-# owner vs cf_meta->>'owner'
-INCONSISTENT=$(psql_query "
-  SELECT COUNT(*)
-  FROM assets
-  WHERE is_deleted = FALSE
-    AND cf_meta->>'owner' IS NOT NULL
-    AND cf_meta->>'owner' != ''
-    AND owner != cf_meta->>'owner';
-")
-if [ "$INCONSISTENT" = "0" ]; then
-  check_pass "owner ↔ cf_meta.owner: 一致 (不一致: 0)"
-else
-  check_fail "owner ↔ cf_meta.owner: 不一致 ${INCONSISTENT} 行"
-fi
-
-# retention_tier vs cf_meta->>'retention_tier'
-INCONSISTENT=$(psql_query "
-  SELECT COUNT(*)
-  FROM assets
-  WHERE is_deleted = FALSE
-    AND cf_meta->>'retention_tier' IS NOT NULL
-    AND cf_meta->>'retention_tier' != ''
-    AND retention_tier != cf_meta->>'retention_tier';
-")
-if [ "$INCONSISTENT" = "0" ]; then
-  check_pass "retention_tier ↔ cf_meta.retention_tier: 一致 (不一致: 0)"
-else
-  check_fail "retention_tier ↔ cf_meta.retention_tier: 不一致 ${INCONSISTENT} 行"
-fi
-
-# duration_ms vs cf_meta->>'duration_ms' (numeric comparison)
-INCONSISTENT=$(psql_query "
-  SELECT COUNT(*)
-  FROM assets
-  WHERE is_deleted = FALSE
-    AND cf_meta->>'duration_ms' IS NOT NULL
-    AND cf_meta->>'duration_ms' != ''
-    AND duration_ms != (cf_meta->>'duration_ms')::bigint;
-")
-if [ "$INCONSISTENT" = "0" ]; then
-  check_pass "duration_ms ↔ cf_meta.duration_ms: 一致 (不一致: 0)"
-else
-  check_fail "duration_ms ↔ cf_meta.duration_ms: 不一致 ${INCONSISTENT} 行"
-fi
-
 # ── 结果汇总 ─────────────────────────────────────────────────────────────────
 
 echo ""
@@ -233,6 +153,6 @@ if [ "$FAIL" -gt 0 ]; then
   echo -e "\n${RED}FAIL${NC} — 对账未通过，请检查上述失败项"
   exit 1
 else
-  echo -e "\n${GREEN}PASS${NC} — 新字段空值率 < 0.1%，双写一致率 100%"
+  echo -e "\n${GREEN}PASS${NC} — 新字段空值率 < 0.1%"
   exit 0
 fi
