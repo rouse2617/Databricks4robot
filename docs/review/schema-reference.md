@@ -84,7 +84,7 @@
 | 1 | `assets` / `mcap_files` | 字段提升（`asset_type / lifecycle_state / duration_ms / owner / retention_tier / expire_at`）—— 进行中 |
 | 2 | `asset_tags` | **已上线**——后端唯一 tag 写入路径 |
 | 3 | `asset_algo_latest` | **已上线**——后端唯一算法投影路径 |
-| 4 | `asset_events` | **已上线**——统一事件表（带 `event_seq` + `payload_schema_version`），Outbox Worker 消费从 2.0 开始 |
+| 4 | `asset_events` | **已上线**——统一事件表（带 `event_seq` + `payload_schema_version`），下游消费由 CDC/WAL 承担 |
 | 5 | `assets.lifecycle_state` | 与 `status` 双写中；前端列表过滤切到 `lifecycle_state` 后停写 `status` |
 
 ---

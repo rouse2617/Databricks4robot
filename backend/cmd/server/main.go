@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -63,7 +62,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	for _, dep := range []string{"postgres", "trino", "elasticsearch", "outbox_worker"} {
+	for _, dep := range []string{"postgres", "trino", "elasticsearch"} {
 		metrics.BackendDependencyUp.WithLabelValues(dep).Set(0)
 	}
 
@@ -163,45 +162,6 @@ func main() {
 		)
 	}
 
-	workerCtx, workerCancel := context.WithCancel(context.Background())
-	defer workerCancel()
-	outboxHealth := outbox.NewHealthStatus()
-	if pgClient != nil && cfg.OutboxWorkerEnabled == "true" && esClient != nil {
-		tickSec, _ := strconv.Atoi(cfg.OutboxWorkerTickSec)
-		if tickSec <= 0 {
-			tickSec = 30
-		}
-		batch, _ := strconv.Atoi(cfg.OutboxWorkerBatch)
-		if batch <= 0 {
-			batch = 100
-		}
-		retryLimit, _ := strconv.Atoi(cfg.OutboxWorkerRetryLimit)
-		if retryLimit <= 0 {
-			retryLimit = 10
-		}
-		w := &outbox.ESWorker{
-			Events: assetEventRepo,
-			Indexer: &searchindex.Builder{
-				Assets: assetRepo,
-				Tags:   assetTagRepo,
-				Algos:  algoLatestRepo,
-				Mcap:   mcapRepo,
-			},
-			ES:           esClient,
-			DLQ:          postgres.NewOutboxDLQRepo(pgClient),
-			BatchSize:    batch,
-			SinkName:     "es_assets",
-			FatalOnPanic: cfg.OutboxWorkerFatalOnPanic == "true",
-			RetryLimit:   retryLimit,
-			Health:       outboxHealth,
-		}
-		go w.Run(workerCtx, time.Duration(tickSec)*time.Second)
-		metrics.BackendDependencyUp.WithLabelValues("outbox_worker").Set(1)
-		slog.Info("outbox ES worker started", "tick_sec", tickSec, "batch", batch, "fatal_on_panic", cfg.OutboxWorkerFatalOnPanic == "true")
-	} else if cfg.OutboxWorkerEnabled == "true" {
-		slog.Warn("outbox worker disabled: requires STORAGE_BACKEND=postgres, reachable ELASTICSEARCH_URL, and successful ES ping")
-	}
-
 	cdcCtx, cdcCancel := context.WithCancel(context.Background())
 	defer cdcCancel()
 	if pgClient != nil && cfg.CDCEnabled == "true" {
@@ -257,6 +217,13 @@ func main() {
 		}
 	}
 
+	// Safety net: in local/dev environments we periodically reconcile
+	// PostgreSQL current state back into Elasticsearch. This keeps search
+	// results fresh even if CDC projection lags or misses messages.
+	if pgClient != nil && esClient != nil && cfg.Env != "production" {
+		go startLocalSearchReconciler(context.Background(), assetRepo, assetTagRepo, algoLatestRepo, mcapRepo, esClient)
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 	routes.RegisterAll(
@@ -270,7 +237,6 @@ func main() {
 		registryH.New(algoRegistry, tagRegistry),
 		searchH.New(esClient),
 		adminHandler,
-		outboxHealth,
 	)
 
 	// Start config watcher for hot-reload of registries.
@@ -287,6 +253,85 @@ func main() {
 	if err := r.Run(addr); err != nil {
 		slog.Error("server exited", "err", fmt.Errorf("listen %s: %w", addr, err))
 		os.Exit(1)
+	}
+}
+
+func startLocalSearchReconciler(
+	ctx context.Context,
+	assetRepo repository.AssetRepository,
+	assetTagRepo repository.AssetTagRepository,
+	algoLatestRepo repository.AssetAlgoLatestRepository,
+	mcapRepo repository.McapFileRepository,
+	esClient *espkg.Client,
+) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	indexer := &searchindex.Builder{
+		Assets: assetRepo,
+		Tags:   assetTagRepo,
+		Algos:  algoLatestRepo,
+		Mcap:   mcapRepo,
+	}
+
+	reconcileOnce := func() {
+		const pageSize = 200
+		page := 1
+		var docs []espkg.BulkIndexDoc
+		for {
+			assets, total, err := assetRepo.ListWithFilters(ctx, "", nil, page, pageSize, "asset_id ASC")
+			if err != nil {
+				slog.Warn("local search reconciler: list assets failed", "err", err)
+				return
+			}
+			if len(assets) == 0 {
+				break
+			}
+			for _, a := range assets {
+				if a == nil || a.AssetID == "" {
+					continue
+				}
+				doc, ok, err := indexer.Build(ctx, a.AssetID)
+				if err != nil {
+					slog.Warn("local search reconciler: build failed", "asset_id", a.AssetID, "err", err)
+					continue
+				}
+				if !ok {
+					continue
+				}
+				docs = append(docs, espkg.BulkIndexDoc{ID: a.AssetID, Doc: doc})
+				if len(docs) >= 200 {
+					if _, err := esClient.BulkIndex(ctx, docs); err != nil {
+						slog.Warn("local search reconciler: bulk index failed", "err", err)
+						return
+					}
+					docs = docs[:0]
+				}
+			}
+			if int64(page*pageSize) >= total {
+				break
+			}
+			page++
+		}
+		if len(docs) > 0 {
+			if _, err := esClient.BulkIndex(ctx, docs); err != nil {
+				slog.Warn("local search reconciler: bulk index failed", "err", err)
+				return
+			}
+		}
+	}
+
+	// Run once soon after startup, then continue periodically.
+	time.Sleep(5 * time.Second)
+	reconcileOnce()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reconcileOnce()
+		}
 	}
 }
 

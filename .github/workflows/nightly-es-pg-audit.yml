@@ -70,13 +70,12 @@ jobs:
         run: bash deploy/local/elasticsearch/init-index.sh http://localhost:9200
         working-directory: Databricks4robot
 
-      - name: Build and start backend (outbox worker enabled)
+      - name: Build and start backend
         uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
-      # Start backend with outbox worker to sync PG→ES, then wait for drain
       - name: Sync PG→ES via reindex
         env:
           DB_HOST: localhost
@@ -91,7 +90,6 @@ jobs:
           go build -o /tmp/server ./cmd/server
           ENV=test PORT=8080 STORAGE_BACKEND=postgres \
             GRACE_TOKEN=dev-token ADMIN_TOKEN=ci-admin-token \
-            OUTBOX_WORKER_ENABLED=false \
             TRINO_ENABLED=false \
             /tmp/server &
           SERVER_PID=$!

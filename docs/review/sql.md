@@ -2,7 +2,7 @@
 
 > **作用定位**：这篇文档只保留 **schema / DDL / 字段命名** 相关内容，给 `schemas/pg-phase0.sql`、仓库内历史注释和代码 review 提供一个稳定锚点。
 >
-> **主设计已合并**：架构分层、ES / Iceberg / Outbox Worker、运维、阶段计划等内容，统一收敛到 [`data-platform-design.md`](./data-platform-design.md) 与 [`schema-reference.md`](./schema-reference.md)。本文件不再重复那部分长篇设计叙事。
+> **主设计已合并**：架构分层、ES / Iceberg / CDC 同步、运维、阶段计划等内容，统一收敛到 [`data-platform-design.md`](./data-platform-design.md) 与 [`schema-reference.md`](./schema-reference.md)。本文件不再重复那部分长篇设计叙事。
 
 ---
 
@@ -12,7 +12,7 @@
 
 - **1.0 当前态**：运行时只有 PostgreSQL + Backend 在线。
 - **主写入路径**：`assets` 标量列 + `asset_tags` / `asset_algo_latest` 投影表 + `asset_events` 统一事件表。
-- **2.0 起**：才启用 Outbox Worker，把 `asset_events` 同步到 ES / Iceberg / 其他 sink。
+- **2.0 起**：启用 CDC/WAL 同步，把 `asset_events` 同步到 Iceberg（Bronze），current-state 表同步到 ES。
 
 ### 0.1 本文件与其他文档的分工
 

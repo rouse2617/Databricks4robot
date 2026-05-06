@@ -60,7 +60,7 @@ blocked → pending → running → ok
 
 ```sql
 asset_events (
-    event_seq               BIGSERIAL UNIQUE,        -- outbox 顺序号
+    event_seq               BIGSERIAL UNIQUE,        -- 事件顺序号
     event_id                UUID PRIMARY KEY,
     asset_id                UUID NOT NULL,
     event_type              TEXT NOT NULL,           -- algo_started / algo_finished / algo_failed / algo_reset / ...
@@ -69,7 +69,7 @@ asset_events (
     actor                   TEXT,
     request_id              TEXT,
     created_at              TIMESTAMPTZ NOT NULL,
-    published_at            TIMESTAMPTZ              -- outbox worker 标记发布完成
+    published_at            TIMESTAMPTZ              -- 兼容字段（历史用途；CDC-only 分支不依赖）
 );
 ```
 
@@ -83,7 +83,7 @@ asset_events (
 | `algo_reset` | `reset_algo`，`failed/ok → pending` | `algo_key`, `prev_status`, `new_status=pending` |
 | `algo_unblocked` | 上游 finish-ok 触发依赖满足，`blocked → pending` | `algo_key`, `prev_status=blocked`, `new_status=pending` |
 
-**为什么不再单独建 `asset_algo_events` 表**：算法事件、tag 事件、QA 事件、生命周期事件全部走统一 `asset_events`，下游 outbox / ES 同步 / 入湖 / 审计 / 回放只对接一个表，不需要按 event 类型扇出。完整设计见 `data-platform-design.md §5.2.7 / §5.6.2`。
+**为什么不再单独建 `asset_algo_events` 表**：算法事件、tag 事件、QA 事件、生命周期事件全部走统一 `asset_events`，下游 CDC/ES 同步 / 入湖 / 审计 / 回放只对接一个表，不需要按 event 类型扇出。完整设计见 `data-platform-design.md §5.2.7 / §5.6.2`。
 
 ### 1.4 并发安全：PK + 单调守卫，不锁 `assets`
 

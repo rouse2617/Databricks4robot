@@ -20,6 +20,10 @@ export default function CreateDeliveryModal({
   const [msg, msgCtx] = message.useMessage();
 
   const handleOk = async () => {
+    if (assetIds.length === 0) {
+      msg.error("请至少选择 1 个资产后再创建交付");
+      return;
+    }
     try {
       const values = await form.validateFields();
       setSubmitting(true);
@@ -64,6 +68,7 @@ export default function CreateDeliveryModal({
       onOk={handleOk}
       onCancel={handleCancel}
       confirmLoading={submitting}
+      okButtonProps={{ disabled: assetIds.length === 0 }}
       okText="提交"
       cancelText="取消"
       destroyOnHidden

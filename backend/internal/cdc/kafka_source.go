@@ -52,6 +52,7 @@ func (s *KafkaSource) Run(ctx context.Context, router Router) error {
 	for {
 		select {
 		case <-ctx.Done():
+			slog.Info("kafka source: context cancelled, exiting")
 			return ctx.Err()
 		default:
 		}
@@ -60,6 +61,7 @@ func (s *KafkaSource) Run(ctx context.Context, router Router) error {
 		if err != nil {
 			// Clean exit on context cancellation or deadline.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				slog.Info("kafka source: poll error (context)", "err", err)
 				return err
 			}
 			// Transient error: log and retry with exponential backoff.
@@ -85,11 +87,22 @@ func (s *KafkaSource) Run(ctx context.Context, router Router) error {
 		// Successful poll resets the retry counter.
 		retryCount = 0
 
+		if len(records) == 0 {
+			// No records this poll, continue
+			slog.Info("kafka source: no records this poll")
+			continue
+		}
+
+		slog.Info("kafka source: received records", "count", len(records))
+
 		for _, record := range records {
+			slog.Info("kafka source: decoding event", "topic", record.Topic)
 			event, err := DecodeDebeziumMessage(record.Value, record.Key)
 			if err != nil {
+				slog.Error("kafka source: decode error", "topic", record.Topic, "err", err)
 				return fmt.Errorf("kafka source decode topic %s: %w", record.Topic, err)
 			}
+			slog.Info("kafka source: dispatching event", "topic", record.Topic, "table", event.Table, "op", event.Op)
 			if err := router.HandleTopicBatch(ctx, record.Topic, []ChangeEvent{event}); err != nil {
 				return err
 			}

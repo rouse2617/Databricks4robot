@@ -18,7 +18,6 @@ import (
 	registryH "data-platform/internal/handlers/registry"
 	searchH "data-platform/internal/handlers/search"
 	"data-platform/internal/middleware"
-	"data-platform/internal/outbox"
 
 	_ "data-platform/docs/swagger" // swagger docs
 )
@@ -36,7 +35,6 @@ func RegisterAll(
 	registryHandler *registryH.Handler,
 	searchHandler *searchH.Handler,
 	adminHandler *adminH.Handler,
-	outboxHealth *outbox.HealthStatus,
 ) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
@@ -59,9 +57,6 @@ func RegisterAll(
 	}
 
 	r.GET("/healthz", healthz("backend"))
-	if outboxHealth != nil {
-		r.GET("/healthz/outbox", gin.WrapF(outboxHealth.Handler()))
-	}
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

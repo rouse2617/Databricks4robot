@@ -75,13 +75,6 @@ type Config struct {
 	CDCMcapFilesTopic       string
 	CDCBronzeStagingDir     string
 
-	// Outbox worker (in-process ES sink).
-	OutboxWorkerEnabled      string
-	OutboxWorkerTickSec      string
-	OutboxWorkerBatch        string
-	OutboxWorkerRetryLimit   string
-	OutboxWorkerFatalOnPanic string
-
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
 }
@@ -145,12 +138,6 @@ func Load() *Config {
 		CDCAssetAlgoLatestTopic: getenv("CDC_TOPIC_ASSET_ALGO_LATEST", "asset_algo_latest"),
 		CDCMcapFilesTopic:       getenv("CDC_TOPIC_MCAP_FILES", "mcap_files"),
 		CDCBronzeStagingDir:     getenv("CDC_BRONZE_STAGING_DIR", "/tmp/iceberg-staging"),
-
-		OutboxWorkerEnabled:      getenv("OUTBOX_WORKER_ENABLED", "false"),
-		OutboxWorkerTickSec:      getenv("OUTBOX_WORKER_TICK_SEC", "30"),
-		OutboxWorkerBatch:        getenv("OUTBOX_WORKER_BATCH", "100"),
-		OutboxWorkerRetryLimit:   getenv("OUTBOX_WORKER_RETRY_LIMIT", "10"),
-		OutboxWorkerFatalOnPanic: getenv("OUTBOX_WORKER_FATAL_ON_PANIC", "false"),
 
 		AdminToken: getenv("ADMIN_TOKEN", ""),
 	}

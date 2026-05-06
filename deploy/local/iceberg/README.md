@@ -157,11 +157,11 @@ cd deploy/local
 docker compose -f docker-compose.iceberg.yml down -v
 ```
 
-## Bronze MERGE (Outbox → Iceberg)
+## Bronze MERGE (CDC → Iceberg)
 
 The two-stage ingestion pipeline (§5.6.2):
 
-1. **Outbox Worker Bronze Sink** writes staging JSONL files to `/tmp/iceberg-staging/`
+1. **CDC Bronze Sink** writes staging JSONL files to `/tmp/iceberg-staging/`
 2. **PyIceberg CronJob** merges staging files into `bronze_asset_events` with event_seq dedup
 
 Run the merge manually:

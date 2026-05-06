@@ -5,6 +5,14 @@ services:
   # ── Data Layer ──────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
     ports:
       - "5432:5432"
     environment:
@@ -54,9 +62,6 @@ services:
       TRINO_CATALOG: "iceberg"
       TRINO_SCHEMA: "robot"
       ELASTICSEARCH_URL: "http://elasticsearch:9200"
-      OUTBOX_WORKER_ENABLED: "true"
-      OUTBOX_WORKER_TICK_SEC: "1"
-      OUTBOX_WORKER_BATCH: "200"
     depends_on:
       pgbouncer:
         condition: service_started

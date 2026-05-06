@@ -1,6 +1,6 @@
 # CDC / WAL Rollout Plan
 
-> 目标：把当前项目从“应用内 ES outbox worker + 本地 Iceberg 脚手架”演进到
+> 目标：把当前项目从“混合同步链路 + 本地 Iceberg 脚手架”演进到
 > “**Iceberg 走 `asset_events` CDC INSERT 流，ES 走 current-state tables CDC 流**”
 > 的长期架构，并给出**从现在到上线**的完整执行顺序、测试清单、回滚方案。
 >
@@ -52,7 +52,7 @@
 
 ### 2.2 Design consequences
 
-- `asset_events` 在迁移期允许继续被 ESWorker 更新 sink 状态字段
+- `asset_events` 持续作为事件主线，消费完全由 CDC 路径承担
 - Bronze CDC 只吃 `asset_events` 的 `INSERT`
 - ES CDC 不依赖 `asset_events`
 - ES current-state rebuild 复用现有 `searchindex.Builder`
@@ -87,7 +87,7 @@
 
 - Silver / Gold modeling
 - frontend lakehouse UI
-- replacing all existing outbox code immediately
+- replacing all legacy sync code immediately
 - removing legacy sink bookkeeping columns from `asset_events`
 
 ---
@@ -114,7 +114,7 @@ Documented / coded already:
 - real Debezium/Kafka message flow into app runtime
 - robust Kafka consumer lifecycle / batching / offset behavior
 - staging -> Bronze operational verification
-- current-state CDC shadow validation against existing ESWorker
+- current-state CDC shadow validation against baseline ES index output
 - production rollout runbook
 
 ---
@@ -283,14 +283,14 @@ Deploy the CDC stack to staging without cutting over search traffic.
 ### Tasks
 
 1. Run Debezium + bus + CDC consumers in staging
-2. Keep current ESWorker as the active ES sync path
+2. Keep CDC ES consumer as the active ES sync path
 3. Let Bronze and CDC ES consumer run in shadow mode
 4. Collect metrics and compare outputs
 
 ### Required comparisons
 
 - PG vs Bronze event count / event_seq continuity
-- current ESWorker output vs CDC ES consumer output
+- baseline ES output vs CDC ES consumer output
 - document spot checks on changed assets
 
 ### Exit criteria
@@ -331,13 +331,13 @@ Enable `asset_events` CDC -> Bronze in production, while leaving ES on the old p
 
 ### Objective
 
-Run CDC-based ES current-state sync next to the existing ESWorker.
+Run CDC-based ES current-state sync with shadow validation.
 
 ### Tasks
 
 1. Start current-state connectors
 2. Start ES CDC consumer
-3. Keep current ESWorker active
+3. Keep current CDC ES consumer active
 4. Compare outputs continuously
 
 ### What to compare
@@ -349,7 +349,7 @@ Run CDC-based ES current-state sync next to the existing ESWorker.
 
 ### Exit criteria
 
-- CDC ES output is equivalent to or better than the ESWorker output
+- CDC ES output is equivalent to or better than baseline ES output
 
 ---
 
@@ -357,13 +357,13 @@ Run CDC-based ES current-state sync next to the existing ESWorker.
 
 ### Objective
 
-Switch Elasticsearch primary sync from app-level ESWorker to CDC-based current-state sync.
+Switch Elasticsearch primary sync fully to CDC-based current-state sync.
 
 ### Tasks
 
 1. Freeze cutover window
 2. Run final PG↔ES audit
-3. Disable `OUTBOX_WORKER_ENABLED`
+3. Verify no legacy app-level sync switch remains enabled
 4. Keep reindex available
 5. Watch metrics and logs closely
 
@@ -481,7 +481,7 @@ ES remains unaffected.
 If ES CDC consumer misbehaves:
 
 - stop ES CDC consumer
-- keep current `ESWorker` active
+- keep current ES index and reindex path active
 - reindex from current-state tables if needed
 
 Bronze remains unaffected.
@@ -492,7 +492,7 @@ Worst case:
 
 - stop CDC consumers
 - keep PG as source of truth
-- keep existing app-level ESWorker
+- keep CDC offsets and reindex capabilities available
 - preserve CDC offsets and Bronze data for later resume
 
 ---

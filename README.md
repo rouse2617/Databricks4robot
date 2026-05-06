@@ -124,7 +124,7 @@ chmod +x .githooks/commit-msg
 - [x] PostgreSQL 仓储与单进程路由（含算法 `start` / `finish` / `reset`、`asset_events` 写入）
 - [x] 可选 Elasticsearch 资产搜索、可选 Trino lakehouse 查询
 - [x] 前端资产发现工作台、`sdk` 单测骨架
-- [ ] 设计文档中的 **Outbox Worker → ES/Iceberg** 异步投递（表与写侧已有，消费侧按 2.0 规划）
+- [x] CDC 驱动的异步同步主线（`asset_events` → Bronze，current-state CDC → ES）
 - [ ] 生产级身份认证（当前 Phase 0：`X-Grace-Token`）
 
 历史 Bigtable 实现仍存在于 `backend/internal/bigtable/`（测试与参考），**新功能不要依赖其扩展**。

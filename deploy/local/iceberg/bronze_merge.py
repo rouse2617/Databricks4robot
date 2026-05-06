@@ -5,7 +5,7 @@ bronze_merge.py — PyIceberg CronJob: MERGE INTO bronze with event_seq dedup.
 Design reference: data-platform-design.md §5.6.2 (two-stage ingestion)
 
 This script implements the second stage of the two-stage Iceberg ingestion:
-  1. Lists new JSONL staging files written by the Outbox Worker Bronze Sink
+  1. Lists new JSONL staging files written by the CDC Bronze Sink
   2. Reads events from staging files
   3. Performs MERGE INTO bronze.asset_events USING staging ON event_seq
      (idempotent dedup — same event_seq is never inserted twice)
@@ -221,10 +221,13 @@ def events_to_arrow(events, staging_file):
         rows["_staging_file"].append(os.path.basename(staging_file))
         rows["_merged_at"].append(now)
 
+    # Iceberg bronze table schema marks event_id/event_seq/event_type as REQUIRED.
+    # PyArrow defaults fields to nullable=True; set nullable=False for the 3 required columns
+    # to avoid append-time schema mismatch.
     schema = pa.schema([
-        ("event_id", pa.string()),
-        ("event_seq", pa.int64()),
-        ("event_type", pa.string()),
+        pa.field("event_id", pa.string(), nullable=False),
+        pa.field("event_seq", pa.int64(), nullable=False),
+        pa.field("event_type", pa.string(), nullable=False),
         ("aggregate_type", pa.string()),
         ("payload_schema_version", pa.string()),
         ("asset_id", pa.string()),
@@ -263,10 +266,18 @@ def merge_batch(table, arrow_table, existing_seqs):
     PyIceberg's append API with pre-filtered data.
     """
     import pyarrow.compute as pc
+    import pyarrow as pa
 
-    # Filter out already-existing event_seqs (dedup)
+    # Fast path: empty existing set → append everything.
+    if not existing_seqs:
+        table.append(arrow_table)
+        return arrow_table.num_rows
+
+    # Filter out already-existing event_seqs (dedup).
+    # Note: pyarrow.compute has no `array`; build value_set via pyarrow.array.
     seq_col = arrow_table.column("event_seq")
-    mask = pc.invert(pc.is_in(seq_col, value_set=pc.array(list(existing_seqs))))
+    value_set = pa.array(list(existing_seqs))
+    mask = pc.invert(pc.is_in(seq_col, value_set=value_set))
     new_events = arrow_table.filter(mask)
 
     if new_events.num_rows == 0:

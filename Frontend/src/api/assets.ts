@@ -82,7 +82,7 @@ type EventListResponse = {
 
 type AssetDeliveryListResponse = {
   items: string[];
-  total: number;
+  asset_id: string;
   page: number;
   page_size: number;
   next_token?: string;

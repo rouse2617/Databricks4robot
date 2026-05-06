@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -58,31 +59,43 @@ func NewKafkaGoPoller(brokers []string, groupID string, topics []string, pollTim
 
 func (p *KafkaGoPoller) Poll(ctx context.Context) ([]KafkaRecord, error) {
 	if len(p.readers) == 0 {
+		slog.Warn("kafka-go poller: no readers configured")
 		return nil, nil
 	}
 
 	records := make([]KafkaRecord, 0, p.maxBatch)
-	// rawMsgs tracks the kafka.Message values so we can commit them all at once.
-	rawMsgs := make([]kafka.Message, 0, p.maxBatch)
+	slog.Info("kafka-go poller: starting poll", "num_readers", len(p.readers), "topics", func() []string {
+		topics := make([]string, len(p.readers))
+		for i, r := range p.readers {
+			topics[i] = r.topic
+		}
+		return topics
+	}())
 
 	for len(records) < p.maxBatch {
 		polledAny := false
 		for _, nr := range p.readers {
 			readCtx, cancel := context.WithTimeout(ctx, p.pollTimeout)
-			msg, err := nr.reader.FetchMessage(readCtx)
+			msg, err := nr.reader.ReadMessage(readCtx)
 			cancel()
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 					if ctx.Err() != nil {
+						slog.Warn("kafka-go poller: context cancelled", "topic", nr.topic, "ctx_err", ctx.Err())
 						return nil, ctx.Err()
 					}
+					// Continue to next reader on timeout
 					continue
 				}
+				slog.Error("kafka-go poller: fetch error", "topic", nr.topic, "err", err)
 				return nil, fmt.Errorf("kafka-go poll topic %s: %w", nr.topic, err)
 			}
+
+			slog.Info("kafka-go poller: received message", "topic", msg.Topic, "offset", msg.Offset, "size", len(msg.Value))
 			polledAny = true
 			key, err := decodeKafkaKey(msg.Key)
 			if err != nil {
+				slog.Error("kafka-go poller: decode key error", "topic", msg.Topic, "err", err)
 				return nil, fmt.Errorf("kafka-go decode key topic %s: %w", msg.Topic, err)
 			}
 			records = append(records, KafkaRecord{
@@ -90,35 +103,13 @@ func (p *KafkaGoPoller) Poll(ctx context.Context) ([]KafkaRecord, error) {
 				Key:   key,
 				Value: msg.Value,
 			})
-			rawMsgs = append(rawMsgs, msg)
+			slog.Info("kafka-go poller: record added", "topic", msg.Topic, "key", key)
 			if len(records) >= p.maxBatch {
 				break
 			}
 		}
 		if !polledAny {
 			break
-		}
-	}
-
-	// Batch-commit all fetched messages before returning so offsets are only
-	// advanced after the caller has received the full batch.
-	if len(rawMsgs) > 0 {
-		// Group messages by reader so each reader commits its own messages.
-		byTopic := make(map[string][]kafka.Message, len(p.readers))
-		for _, m := range rawMsgs {
-			byTopic[m.Topic] = append(byTopic[m.Topic], m)
-		}
-		for _, nr := range p.readers {
-			msgs, ok := byTopic[nr.topic]
-			if !ok {
-				continue
-			}
-			if err := nr.reader.CommitMessages(ctx, msgs...); err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return nil, ctx.Err()
-				}
-				return nil, fmt.Errorf("kafka-go commit topic %s: %w", nr.topic, err)
-			}
 		}
 	}
 

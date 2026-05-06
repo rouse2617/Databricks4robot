@@ -14,7 +14,6 @@ import (
 	deliveryH "data-platform/internal/handlers/delivery"
 	mcapH "data-platform/internal/handlers/mcap"
 	"data-platform/internal/models"
-	"data-platform/internal/outbox"
 	"data-platform/internal/repository"
 	assetUC "data-platform/internal/usecase/asset"
 )
@@ -86,7 +85,7 @@ func TestRegisterAll(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -138,40 +137,7 @@ func TestRegisterAll(t *testing.T) {
 	}
 }
 
-func TestHealthzOutbox(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-
-	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
-	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
-	cfg := &config.Config{GraceToken: "dev-token"}
-	health := outbox.NewHealthStatus()
-
-	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, health)
-
-	// healthy by default → 200
-	req := httptest.NewRequest(http.MethodGet, "/healthz/outbox", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("/healthz/outbox expected 200, got %d", w.Code)
-	}
-	if body := w.Body.String(); body != "ok" {
-		t.Fatalf("/healthz/outbox expected body 'ok', got %q", body)
-	}
-
-	// mark unhealthy → 503
-	health.MarkUnhealthy("test failure")
-	req = httptest.NewRequest(http.MethodGet, "/healthz/outbox", nil)
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("/healthz/outbox expected 503, got %d", w.Code)
-	}
-}
-
-func TestHealthzOutbox_NilSkipped(t *testing.T) {
+func TestRemovedHealthzOutboxRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 
@@ -180,14 +146,13 @@ func TestHealthzOutbox_NilSkipped(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	// nil outboxHealth → route should not be registered
-	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz/outbox", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("/healthz/outbox with nil health expected 404, got %d", w.Code)
+		t.Fatalf("/healthz/outbox expected 404 after removal, got %d", w.Code)
 	}
 }
 
@@ -202,7 +167,7 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil)
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil)
+	RegisterAll(r, cfg, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Grace-Token", "dev-token")

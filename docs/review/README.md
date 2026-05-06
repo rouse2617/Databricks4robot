@@ -10,7 +10,7 @@
 >
 > - 主库：PostgreSQL（不再使用 Bigtable）
 > - 当前态：标量列 + `asset_tags` / `asset_algo_latest` 投影表 + `asset_events` 统一事件表 —— **1.0 已建已用**
-> - `asset_events` 同时是 outbox 起点，但 1.0 不启用下游同步链路（ES / Iceberg / Trino 均未接入在线读写）；**2.0 才启用 Outbox Worker + 下游 Sink**
+> - `asset_events` 是事件主线起点；当前分支以 **CDC/WAL** 作为下游同步机制（ES / Iceberg）
 >
 > 任何文档片段如果还在描述 "cf_algo 是主路径"、"Phase 1 切 Bigtable" 之类的形态，都属于**历史路径说明**，不是当前主架构。
 
@@ -23,7 +23,7 @@
 | 3 | [`api-guide.md`](./api-guide.md) | 全部 REST 端点的 curl 示例、错误码参考、典型工作流；含**新旧字段命名对照表**（lifecycle_state / asset_type / duration_ms） | 接 SDK / 前端 / 上下游集成 |
 | 4 | [`algo-lifecycle-and-data-model.md`](./algo-lifecycle-and-data-model.md) | 算法生命周期、状态机、依赖解锁、数据模型细节（主线：`asset_algo_latest + asset_events`） | 算法 / 后端 |
 | 5 | [`use-cases.md`](./use-cases.md) | 全部角色 × 业务域 use case 矩阵，约 65 项端点 + 关键约束 + 开发优先级 | 前端 / SDK / 后端 |
-| 6 | [`outbox-worker-design.md`](./outbox-worker-design.md) | Outbox Worker MVP 工程落地（**2.0 目标态**），并发模型、cursor 协议与验收标准 | 后端 / 数据工程 |
+| 6 | [`cdc-rollout-plan.md`](./cdc-rollout-plan.md) | CDC/WAL 同步实施方案（Bronze + ES current-state），测试、上线、回滚计划 | 后端 / 数据工程 / 运维 |
 | 7 | [`asset-events-bronze-design.md`](./asset-events-bronze-design.md) | 长期方案：`asset_events` 通过 WAL/CDC 同步到 Iceberg Bronze，ES 从 current-state tables 的 CDC 重建文档 | 后端 / 数据工程 |
 | 8 | [`cdc-rollout-plan.md`](./cdc-rollout-plan.md) | 从当前 MVP 到 CDC/WAL 长期架构的分阶段实施、测试、上线与回滚计划 | 后端 / 数据工程 / 运维 |
 | 9 | [`grace-migration-notes.md`](./grace-migration-notes.md) | **cyber-grace**（`grace_videos`）与本平台 `assets` / `mcap_files` / 算法投影的字段与幂等对照 | 集成 / 后端 / 数据工程 |
@@ -39,7 +39,7 @@
 | Bigtable / Postgres / Spanner 选型 | 1. data-platform-design §5.4 |
 | 资产概念定义 / 状态机 | 1. data-platform-design §5.1 + 4. algo-lifecycle |
 | 表 schema / 字段定义 / 索引 | 1. data-platform-design §5.2 + 2. schema-reference |
-| 数据同步机制（outbox + 30s 纯轮询，无 LISTEN/NOTIFY） | 1. data-platform-design §5.6.2 + outbox-worker-design |
+| 数据同步机制（CDC/WAL） | 1. data-platform-design §5.6.2 + cdc-rollout-plan |
 | 事件契约 / payload schema 演进 | 1. data-platform-design §5.9 |
 | 一致性语义 / 重试 / DLQ / 对账 / 回放 | 1. data-platform-design §5.10 |
 | 入湖 / ES 同步流水 | 1. data-platform-design §5.6.2 + §6 |

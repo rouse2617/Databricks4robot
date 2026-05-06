@@ -15,7 +15,7 @@ var ErrOptimisticLock = errors.New("optimistic lock conflict: version mismatch")
 
 // TxRunner runs the provided function inside a single transaction. Repos
 // dispatched within fn should be tx-aware (read tx from ctx) so that all
-// writes commit or roll back atomically. Required for outbox correctness:
+// writes commit or roll back atomically. Required for event-stream correctness:
 // a business-state write and its asset_events append must land in the same
 // transaction so consumers never see the projection without the event or
 // vice versa.
@@ -87,7 +87,7 @@ type AssetAlgoLatestRepository interface {
 }
 
 // AssetEventAppendInput captures the fields a producer can populate when
-// appending to the asset_events outbox. event_id, event_seq, occurred_at,
+// appending to asset_events. event_id, event_seq, occurred_at,
 // created_at and publish_state are assigned by the database.
 type AssetEventAppendInput struct {
 	EventType            string
@@ -117,15 +117,15 @@ type AssetEventListOptions struct {
 	Limit             int
 }
 
-// AssetEventRepository persists rows to the asset_events outbox table.
+// AssetEventRepository persists rows to the asset_events table.
 //
 // Strong invariants:
 //
 //   - Every business state mutation must Append exactly one event in the
-//     SAME transaction as the state write (outbox pattern). Consumers rely
+//     SAME transaction as the state write (transactional event pattern). Consumers rely
 //     on this for replayability and at-least-once delivery.
 //   - Append is tx-aware via context.
-//   - ListPending is consumed by the Outbox Worker; rows return in
+//   - ListPending is consumed by downstream sync consumers; rows return in
 //     ascending event_seq order.
 //   - MarkPublished / MarkFailed are consumed by the worker after ES I/O.
 type AssetEventRepository interface {
@@ -139,7 +139,7 @@ type AssetEventRepository interface {
 	// CountPending returns the number of rows still awaiting sink delivery.
 	CountPending(ctx context.Context) (int64, error)
 	// ComputeSafeHorizon returns the highest event_seq that can safely be used
-	// as a cursor checkpoint (§4.2 of outbox-worker-design.md).
+	// as a cursor checkpoint.
 	//   - If pending events exist: MIN(event_seq WHERE pending) - 1
 	//   - If no pending events:    MAX(event_seq) across all events
 	//   - If the table is empty:   0, nil
@@ -148,7 +148,6 @@ type AssetEventRepository interface {
 	//   1. Marks the given event sequences as published.
 	//   2. Computes the safe horizon (same logic as ComputeSafeHorizon).
 	//   3. Updates the outbox_sink_cursors row for sinkName to the safe horizon.
-	// See §4.2 of outbox-worker-design.md.
 	MarkPublishedAndAdvanceCursor(ctx context.Context, eventSeqs []int64, sinkName string) error
 	// OldestPendingAge returns the age of the oldest pending event as
 	// seconds since its occurred_at timestamp. Returns 0 when no pending

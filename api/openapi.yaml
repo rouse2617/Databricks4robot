@@ -363,8 +363,8 @@ paths:
       summary: Rebuild Elasticsearch `assets` index from PostgreSQL
       description: >
         Scans all non-deleted assets and bulk-indexes documents. Does not modify
-        `outbox_sink_cursors` or `asset_events.publish_state`. Uses the normal
-        `X-Grace-Token` auth path for now and requires reachable ES.
+        `asset_events` rows. Uses the normal `X-Grace-Token` auth path for now
+        and requires reachable ES.
       requestBody:
         required: false
         content:

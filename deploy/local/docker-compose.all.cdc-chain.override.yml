@@ -1,0 +1,36 @@
+services:
+  backend:
+    volumes:
+      - /tmp/iceberg-staging:/tmp/iceberg-staging
+    environment:
+      # Enable app-side CDC runtime to:
+      #  - consume Debezium topics for ES search projections
+      #  - consume Debezium asset_events topic and write Iceberg staging JSONL
+      CDC_ENABLED: "true"
+      CDC_SOURCE_DRIVER: "debezium-kafka"
+      CDC_KAFKA_BROKERS: "host.docker.internal:19092"
+      CDC_KAFKA_GROUP_ID: "data-platform-cdc-verify-1"
+      CDC_KAFKA_POLL_TIMEOUT_MS: "1000"
+      CDC_KAFKA_MAX_BATCH: "200"
+
+      # Debezium topics produced by our local CDC stack:
+      #   data4cyber.public.asset_events
+      #   data4cyber.public.assets
+      #   data4cyber.public.asset_tags
+      #   data4cyber.public.asset_algo_latest
+      #   data4cyber.public.mcap_files
+      CDC_TOPIC_ASSET_EVENTS: "data4cyber.public.asset_events"
+      CDC_TOPIC_ASSETS: "data4cyber.public.assets"
+      CDC_TOPIC_ASSET_TAGS: "data4cyber.public.asset_tags"
+      CDC_TOPIC_ASSET_ALGO_LATEST: "data4cyber.public.asset_algo_latest"
+      CDC_TOPIC_MCAP_FILES: "data4cyber.public.mcap_files"
+
+      # Staging work queue for bronze_merge.py
+      CDC_BRONZE_STAGING_DIR: "/tmp/iceberg-staging"
+
+  spark-iceberg:
+    volumes:
+      - /tmp/iceberg-staging:/tmp/iceberg-staging
+      # Bind-mount whole directory to avoid single-file mount restrictions.
+      # We'll run: python /home/iceberg/notebooks/notebooks/iceberg/bronze_merge.py
+      - ./iceberg:/home/iceberg/notebooks/notebooks/iceberg:ro

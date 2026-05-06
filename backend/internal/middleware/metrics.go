@@ -36,7 +36,7 @@ func HTTPMetrics() gin.HandlerFunc {
 
 func shouldSkipMetrics(path string) bool {
 	switch path {
-	case "/metrics", "/healthz", "/healthz/outbox":
+	case "/metrics", "/healthz":
 		return true
 	default:
 		return false

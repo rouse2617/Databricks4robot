@@ -73,9 +73,6 @@ docker-compose up -d postgres  # 重新初始化
 | `TRINO_CATALOG` | Trino Iceberg catalog | `iceberg` |
 | `TRINO_SCHEMA` | Trino Iceberg schema/namespace | `robot` |
 | `ELASTICSEARCH_URL` | Elasticsearch 连接地址 | `http://localhost:9200` |
-| `OUTBOX_WORKER_ENABLED` | 进程内 Outbox→ES worker | `false` |
-| `OUTBOX_WORKER_TICK_SEC` | Worker 轮询间隔（秒） | `30` |
-| `OUTBOX_WORKER_BATCH` | 每批最多拉取 pending 事件数 | `100` |
 | `ADMIN_TOKEN` | 预留配置；当前 `reindex` 先复用 `X-Grace-Token` | 空 |
 
 ## API 端点
@@ -133,40 +130,12 @@ docker-compose up -d postgres  # 重新初始化
 
 需要 Elasticsearch 服务运行。当 Elasticsearch 不可用时返回 503，前端降级到 Postgres 查询。
 
-**索引写入**：`OUTBOX_WORKER_ENABLED=true` 且启动时 ES 可达时，服务端会按 `asset_events` pending 行将资产投影写入 `assets` 索引；详见 `docs/review/outbox-worker-design.md`。
+**索引写入**：当前分支仅保留 CDC 路径，ES 文档由 CDC consumer 投影写入。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（当前复用 `X-Grace-Token` 认证）；支持 `dry_run`，返回 `indexed / deleted / failed / duration_ms` 汇总，不改变 outbox 游标 |
-| `GET` | `/metrics` | Prometheus 指标（`outbox_*` 等；无认证，建议内网暴露） |
-
-**告警建议（MVP）**：`outbox_worker_pending_total` 在业务低峰持续 > 1000 或 30min 单调上升 → 查 worker 日志与 ES 连通性；`outbox_worker_events_failed_mark_total` 突增 → 查 `asset_events.last_error`。
-
-### Outbox Prometheus 告警阈值建议
-
-> 设计依据: `docs/review/outbox-worker-design.md` §11.1
-
-| 指标 | 类型 | 含义 | 告警级别 | 阈值 / 条件 |
-|------|------|------|----------|-------------|
-| `outbox_worker_batch_duration_ms` | histogram | 单轮 processBatch 耗时 | P1 | P99 > 5 000 ms 持续 5 min |
-| `outbox_worker_pending_total` | gauge | 当前 pending 事件数 | WARN | > 10 000 持续 5 min |
-| `outbox_worker_pending_total` | gauge | 当前 pending 事件数 | P1 | > 100 000 持续 5 min |
-| `outbox_oldest_pending_age_seconds` | gauge | 最老 pending 事件年龄 | WARN | > 300 (5 min) |
-| `outbox_oldest_pending_age_seconds` | gauge | 最老 pending 事件年龄 | P1 | > 3 600 (1 h) |
-| `outbox_oldest_pending_age_seconds` | gauge | 最老 pending 事件年龄 | P0 | > 86 400 (24 h) |
-| `outbox_worker_retry_max` | gauge | pending 中最大 retry_count | WARN | > 5 持续 10 min |
-| `outbox_sink_lag_seq` | gauge | `MAX(event_seq) - cursor` | WARN | > 10 000 持续 5 min |
-| `outbox_es_bulk_failures_total` | counter | ES bulk 整批失败 | P1 | rate > 0.1/s |
-| `outbox_bulk_partial_failure_total` | counter | ES bulk 部分失败 | WARN | rate > 0.5/s 持续 5 min |
-| `outbox_tombstone_failure_total` | counter | DELETE doc 失败 | WARN | rate > 0 |
-| `outbox_fetch_deadlock_total` | counter | FetchPending 死锁 | WARN | rate > 0.05/s |
-| `outbox_cursor_deadlock_total` | counter | cursor 推进死锁 | WARN | rate > 0.05/s |
-
-**处置建议**:
-- `outbox_oldest_pending_age_seconds` 是最核心的 SLO 指标，持续超阈值时优先排查 ES 连通性和 worker 日志。
-- `outbox_worker_retry_max > 10` 表示有事件反复失败，查 `asset_events.last_error` 定位根因。
-- `outbox_sink_lag_seq` 持续增长说明 worker 消费速度跟不上写入，考虑增大 `OUTBOX_BATCH_SIZE` 或排查 ES 写入瓶颈。
-- 极端长 gap 恢复（ES 宕数天）后，可调用 `POST /api/v1/admin/search/reindex` 全量重建加速追平。
+| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（当前复用 `X-Grace-Token` 认证）；支持 `dry_run`，返回 `indexed / deleted / failed / duration_ms` 汇总 |
+| `GET` | `/metrics` | Prometheus 指标（无认证，建议内网暴露） |
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -480,12 +449,6 @@ docker compose -f docker-compose.all.yml up -d
 - `http_request_duration_seconds` — 请求耗时 histogram（label: `method`, `path`, `status`）
 - `http_requests_total` — 请求计数 counter
 
-**Outbox Worker 指标**（由 `internal/metrics/outbox.go` 采集）：
-- `outbox_worker_pending_total` — 当前 pending 事件数
-- `outbox_worker_batch_duration_ms` — 单轮处理耗时
-- `outbox_oldest_pending_age_seconds` — 最老 pending 事件年龄
-- `outbox_es_bulk_failures_total` — ES bulk 写入失败计数
-
 **CDC 指标**（由 `internal/cdc/metrics.go` 采集，`CDC_ENABLED=true` 时生效）：
 - `cdc_batch_processed_total` — 已处理 batch 数（label: `consumer_kind`）
 - `cdc_consumer_lag_events` — 消费者 lag（label: `consumer_kind`）
@@ -506,7 +469,7 @@ curl http://localhost:8080/metrics | head -20
 
 # 2. 在 Prometheus UI 查询 backend 指标
 open http://localhost:9090
-# 搜索: http_request_duration_seconds 或 outbox_worker_pending_total
+# 搜索: http_request_duration_seconds 或 cdc_batch_processed_total
 
 # 3. 检查 Prometheus scrape 状态
 open http://localhost:9090/targets

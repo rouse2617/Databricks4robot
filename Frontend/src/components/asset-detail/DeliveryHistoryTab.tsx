@@ -23,47 +23,54 @@ export default function DeliveryHistoryTab({ assetId }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
 
-    assetsApi
-      .listDeliveries(assetId, 1, 100)
-      .then(async (firstPage) => {
-        let ids = firstPage.items ?? [];
-        let page = firstPage.page ?? 1;
-        const pageSize = firstPage.page_size ?? 100;
-        let nextToken = firstPage.next_token ?? "";
+    const run = async () => {
+      setLoading(true);
+      try {
+        const pageSize = 100;
+        let ids: string[] = [];
+        let page = 1;
 
-        while (nextToken && !cancelled && ids.length < (firstPage.total ?? ids.length)) {
+        while (true) {
+          const res = await assetsApi.listDeliveries(assetId, page, pageSize);
+          const pageIds = res.items ?? [];
+          ids = ids.concat(pageIds);
+
+          // 后端这里是用 page/page_size 做切片，没有真正的 next_token 分页游标；
+          // 用“当前页返回数量 < pageSize”判断是否到末页更可靠。
+          if (pageIds.length < pageSize) break;
           page += 1;
-          const nextPage = await assetsApi.listDeliveries(assetId, page, pageSize);
-          ids = ids.concat(nextPage.items ?? []);
-          nextToken = nextPage.next_token ?? "";
+
+          // 安全兜底，避免后端将来改为游标分页导致潜在死循环。
+          if (page > 1000) break;
         }
 
         if (cancelled || ids.length === 0) {
           if (!cancelled) setDeliveries([]);
           return;
         }
-        const results = await Promise.allSettled(
-          ids.map((did) => deliveriesApi.get(did))
-        );
+
+        const results = await Promise.allSettled(ids.map((did) => deliveriesApi.get(did)));
         if (cancelled) return;
+
         const items = results
           .filter((r): r is PromiseFulfilledResult<Delivery> => r.status === "fulfilled")
           .map((r) => r.value);
         setDeliveries(items);
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) {
           message.error("加载交付历史失败");
           setDeliveries([]);
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    };
 
-    return () => { cancelled = true; };
+    run();
+    return () => {
+      cancelled = true;
+    };
   }, [assetId]);
 
   if (loading) {

@@ -33,6 +33,19 @@ func (e ChangeEvent) StringField(key string) string {
 		if raw, ok := source[key]; ok && raw != nil {
 			return fmt.Sprint(raw)
 		}
+
+		// Debezium's Kafka message keys are sometimes wrapped under a
+		// top-level "payload" object, e.g.:
+		// {"payload":{"asset_id":"..."}}
+		// When that happens, consumers still expect to be able to read
+		// fields like "asset_id" from the ChangeEvent.
+		if payloadRaw, ok := source["payload"]; ok && payloadRaw != nil {
+			if payloadMap, ok := payloadRaw.(map[string]any); ok {
+				if raw, ok := payloadMap[key]; ok && raw != nil {
+					return fmt.Sprint(raw)
+				}
+			}
+		}
 	}
 	return ""
 }

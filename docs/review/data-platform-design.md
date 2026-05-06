@@ -84,7 +84,7 @@
 | 阶段 | 形态 | 关键变化 |
 | --- | --- | --- |
 | 1.0 | 业务层 + PostgreSQL | 单库直连，所有业务/分析共用 PG；`asset_tags / asset_algo_latest / asset_events` 投影 + 事件表已建已用，但无下游同步 |
-| 2.0 | + Outbox Worker + Elasticsearch + Iceberg + Trino | 启用 Outbox Worker（30s 纯轮询），PG 事件流推动 ES / Iceberg 派生；检索与分析分流，PG 只承担在线业务 |
+| 2.0 | + CDC/WAL + Elasticsearch + Iceberg + Trino | 启用 CDC/WAL 驱动同步，PG 变更推动 ES / Iceberg 派生；检索与分析分流，PG 只承担在线业务 |
 | 3.0 | + 统一元数据层（Catalog 抽象） | 跨引擎对象中立注册（catalog_objects）+ 版本引用，业务表不再绑定物理路径或厂商 ID，支持上云不重构 |
 
 当前位置：**1.0**（仅 PostgreSQL 单库 + Backend，2.0 尚未启动）。
@@ -94,7 +94,7 @@
 | 主库 | PostgreSQL；`asset_tags / asset_algo_latest` 投影表 + `asset_events` 事件表**已建已用** | 同 PG，继续提升高频 JSONB 字段为标量列 |
 | 检索 | 无；列表筛选直接查 PG | 引入 Elasticsearch + 后端 `/api/v1/search/assets` |
 | 湖仓 | 无 | 引入 Iceberg REST Catalog + Trino，PG → Bronze → Silver → Gold |
-| 数据同步 | `asset_events` 已在线写入，但无下游消费 | 启用 Outbox Worker（30s 纯轮询）同步 ES / Iceberg |
+| 数据同步 | `asset_events` 已在线写入，但无下游消费 | 启用 CDC/WAL 同步 ES / Iceberg |
 | JSONB 兼容列 | `cf_meta / cf_algo / cf_tag` 保留，仅作兼容 / 回滚路径 | 投影表稳定后逐步停写 |
 | 多模态 / Catalog 抽象 | 无 | 3.0 阶段，Phase 2 之后 |
 
@@ -113,8 +113,8 @@ flowchart LR
         API --> RD
     end
 
-    PG[(PostgreSQL<br>主库 + outbox)]
-    Worker[Outbox Worker<br>Go · 30s tick]
+    PG[(PostgreSQL<br>主库)]
+    CDC[CDC/WAL Consumers]
     ES[(Elasticsearch)]
 
     subgraph Lake[Lakehouse]
@@ -127,9 +127,9 @@ flowchart LR
 
     Users --> API
     WR --> PG
-    PG -. SELECT pending .-> Worker
-    Worker -- _bulk --> ES
-    Worker -- staging parquet --> Staging
+    PG -. WAL/CDC .-> CDC
+    CDC -- _bulk --> ES
+    CDC -- staging jsonl/parquet --> Staging
     RD --> PG
     RD --> ES
     RD --> Trino
@@ -146,7 +146,7 @@ flowchart LR
 | 湖仓层 | Iceberg | 历史事实、训练集、审计回放、统计分析、重算 |
 | 查询层 | Trino | 查询 Iceberg，服务复杂分析与离线报表 |
 | 计算层（TDO） | PyIceberg + k8s CronJob | 周期性 MERGE / compact / Bronze→Silver→Gold transformation；不引入 Spark / Dagster |
-| 异步派生通道 | Outbox + Worker（Go） | PG 主库变更 → ES / 湖仓 / 向量库的事件驱动同步（30s 轮询，分钟级延迟） |
+| 异步派生通道 | CDC/WAL Consumers | PG 主库变更 → ES / 湖仓 / 向量库的事件驱动同步（分钟级延迟） |
 | 多模态层（Phase 3.x 候选） | 待定 | AI 多模态样本处理、向量 / 张量存储；3.x 启动前再选型 |
 
 设计约定：PostgreSQL 表结构先保障在线业务，再通过事件流（`asset_events` outbox）支撑 ES 与 Iceberg；任何外部数据对象都通过中立 Catalog 引用而非物理路径绑定。
