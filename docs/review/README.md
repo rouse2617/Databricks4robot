@@ -30,6 +30,7 @@
 | 10 | [`sql.md`](./sql.md) | **Schema companion**：保留 DDL/字段 section 编号，给 `schemas/pg-phase0.sql`、历史注释与 review 使用 | 后端 / DBA |
 | 11 | [`3.0-multimodal-design.md`](./3.0-multimodal-design.md) | **未来草稿**：3.x 多模态检索 / Lance 路线，未进入当前 1.0/2.0 基线 | 架构 / 算法 |
 | 12 | [`next-steps-tasks.md`](./next-steps-tasks.md) | **任务看板**：P0/P1/P2/P3 拆分 + DoD + 估时 + Phase Gate；周会用这份盯进度 | 全员 |
+| 13 | [`pure-cdc-go-live-runbook.md`](./pure-cdc-go-live-runbook.md) | **上线执行手册**：Pure CDC 单路径决策、Go/No-Go、压测/对账、告警、灰度、回滚、值班排障 | 后端 / 数据工程 / SRE / 前端联调 |
 
 ## 这份文档包覆盖了什么
 
