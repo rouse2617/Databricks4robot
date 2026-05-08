@@ -2382,7 +2382,7 @@ flowchart LR
 
 ## 9. 实施计划
 
-> **任务分解**（P0/P1、前后端、测试、DoD）→ [`next-steps-tasks.md`](./next-steps-tasks.md)。**Worker 工程** → [`outbox-worker-design.md`](./outbox-worker-design.md)。本节只给**阶段顺序**与**闸口**。
+> **任务分解**（P0/P1、前后端、测试、DoD）→ 团队 **Linear** Issue 与周会看板（仓库根目录 `CLAUDE.md` **Team process**）。**Worker 工程** → [`outbox-worker-design.md`](https://www.feishu.cn/wiki/YDQPwfT53i3lXZkoj3mcFv7An2c)。本节只给**阶段顺序**与**闸口**。
 
 **Phase 0（已达）**：单进程 Backend + PG；`asset_events` + 投影表；mutation 同事务 append。DDL：`schemas/pg-phase0.sql`。
 

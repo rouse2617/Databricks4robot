@@ -18,23 +18,22 @@
 
 | 序号 | 文档 | 内容 | 推荐读者 |
 |------|------|------|----------|
-| 1 | [`data-platform-design.md`](./data-platform-design.md) | 数据平台整体方案设计：背景 / 架构 / 核心表 / 字段 / 数据同步 / API / 部署 / 可靠性 / 监控 / 实施计划 / 风险 | **必读**，所有评审人 |
-| 2 | [`schema-reference.md`](./schema-reference.md) | PG 全表字段速查 + 上线优先级（Tier 1–5）+ 上线最小 checklist | DBA / 后端 / 数据工程 |
-| 3 | [`api-guide.md`](./api-guide.md) | 全部 REST 端点的 curl 示例、错误码参考、典型工作流；含**新旧字段命名对照表**（lifecycle_state / asset_type / duration_ms） | 接 SDK / 前端 / 上下游集成 |
-| 4 | [`algo-lifecycle-and-data-model.md`](./algo-lifecycle-and-data-model.md) | 算法生命周期、状态机、依赖解锁、数据模型细节（主线：`asset_algo_latest + asset_events`） | 算法 / 后端 |
-| 5 | [`use-cases.md`](./use-cases.md) | 全部角色 × 业务域 use case 矩阵，约 65 项端点 + 关键约束 + 开发优先级；**🟢/⚪** 标注现行路由 vs 目标态 | 前端 / SDK / 后端 |
-| 6 | [`eval-metrics-design.md`](./eval-metrics-design.md) | Eval/Metrics 专项设计：表结构、事件、API、ES/Iceberg、Phase 1.5 落地 | 后端 / 数据工程 / 算法 |
-| 7 | [`asset-events-bronze-design.md`](./asset-events-bronze-design.md) | 长期方案：`asset_events` 通过 WAL/CDC 同步到 Iceberg Bronze，ES 从 current-state tables 的 CDC 重建文档 | 后端 / 数据工程 |
-| 8 | [`cdc-rollout-plan.md`](./cdc-rollout-plan.md) | CDC/WAL 同步实施方案（Bronze + ES current-state），测试、上线、回滚计划 | 后端 / 数据工程 / 运维 |
-| 9 | [`pure-cdc-go-live-runbook.md`](./pure-cdc-go-live-runbook.md) | **上线执行手册**：Pure CDC 单路径决策、Go/No-Go、压测/对账、告警、灰度、回滚、值班排障 | 后端 / 数据工程 / SRE |
-| 10 | [`grace-migration-notes.md`](./grace-migration-notes.md) | **cyber-grace**（`grace_videos`）与本平台 `assets` / `mcap_files` / 算法投影的字段与幂等对照 | 集成 / 后端 / 数据工程 |
-| 11 | [`asset-events-thinning-plan.md`](./asset-events-thinning-plan.md) | **裁决文档**：`asset_events` 该保留什么、该砍什么、代码与文档怎么收窄 | 架构 / 后端 / 数据工程 |
-| 12 | [`sql.md`](./sql.md) | **Schema companion**：保留 DDL/字段 section 编号，给 `schemas/pg-phase0.sql`、历史注释与 review 使用 | 后端 / DBA |
-| 13 | [`query-platform-design.md`](./query-platform-design.md) | **新提案**：统一查询内核（`JSON Query IR + Planner + Executors`），承载 saved query / slice / export / scenario test | 架构 / 后端 / 前端 / SDK |
-| 14 | [`3.0-multimodal-design.md`](./3.0-multimodal-design.md) | **未来草稿**：3.x 多模态检索 / Lance 路线，未进入当前 1.0/2.0 基线 | 架构 / 算法 |
-| 15 | [`next-steps-tasks.md`](./next-steps-tasks.md) | **任务看板**：P0/P1/P2/P3 拆分 + DoD + 估时 + Phase Gate；周会用这份盯进度 | 全员 |
-| 16 | [`doc-alignment-pure-cdc-checklist.md`](./doc-alignment-pure-cdc-checklist.md) | **文档收口执行清单**：逐文件统一到 Pure CDC 口径（冲突点、替换建议、验收标准） | 架构 / 后端 / 数据工程 / SRE |
-| 17 | [`outbox-worker-design.md`](./outbox-worker-design.md) / [`outbox-test-plan.md`](./outbox-test-plan.md) | **历史方案参考**：Outbox Worker 的历史设计与测试手册；当前生产默认路径请以 Pure CDC 文档为准 | 架构 / 后端（回溯排障） |
+| 1 | [`data-platform-design.md`](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB) | 数据平台整体方案设计：背景 / 架构 / 核心表 / 字段 / 数据同步 / API / 部署 / 可靠性 / 监控 / 实施计划 / 风险 | **必读**，所有评审人 |
+| 2 | [`schema-reference.md`](https://www.feishu.cn/wiki/BUvcwpQeAiPWNtkLpKecDwkcnxd) | PG 全表字段速查 + 上线优先级（Tier 1–5）+ 上线最小 checklist | DBA / 后端 / 数据工程 |
+| 3 | [`api-guide.md`](https://www.feishu.cn/wiki/OEG4wYA48i3Kvpk0N1XccwW8nqe) | 全部 REST 端点的 curl 示例、错误码参考、典型工作流；含**新旧字段命名对照表**（lifecycle_state / asset_type / duration_ms） | 接 SDK / 前端 / 上下游集成 |
+| 4 | [`algo-lifecycle-and-data-model.md`](https://www.feishu.cn/wiki/EoYowiw4ji5BO0kxODgce1hgnPh) | 算法生命周期、状态机、依赖解锁、数据模型细节（主线：`asset_algo_latest + asset_events`） | 算法 / 后端 |
+| 5 | [`use-cases.md`](https://www.feishu.cn/wiki/RqiIwqJGAigsM9k2AZecJ4punce) | 全部角色 × 业务域 use case 矩阵，约 65 项端点 + 关键约束 + 开发优先级；**🟢/⚪** 标注现行路由 vs 目标态 | 前端 / SDK / 后端 |
+| 6 | [`eval-metrics-design.md`](https://www.feishu.cn/wiki/DOTCwUSOPiapEykJeoxcNctSnwf) | Eval/Metrics 专项设计：表结构、事件、API、ES/Iceberg、Phase 1.5 落地 | 后端 / 数据工程 / 算法 |
+| 7 | [`asset-events-bronze-design.md`](https://www.feishu.cn/wiki/CZ2cwoaGTiH9CIkror7c962In4g) | 长期方案：`asset_events` 通过 WAL/CDC 同步到 Iceberg Bronze，ES 从 current-state tables 的 CDC 重建文档 | 后端 / 数据工程 |
+| 8 | [`cdc-rollout-plan.md`](https://www.feishu.cn/wiki/FQQDwYifhi7DgBkGw7VcKkmwn0b) | CDC/WAL 同步实施方案（Bronze + ES current-state），测试、上线、回滚计划 | 后端 / 数据工程 / 运维 |
+| 9 | [`pure-cdc-go-live-runbook.md`](https://www.feishu.cn/wiki/AiCxwlDSfiOiUbkrWumcVgKXnnc) | **上线执行手册**：Pure CDC 单路径决策、Go/No-Go、压测/对账、告警、灰度、回滚、值班排障 | 后端 / 数据工程 / SRE |
+| 10 | [`grace-migration-notes.md`](https://www.feishu.cn/wiki/BrCHw7NrZiOVGik8lfCcl555nhh) | **cyber-grace**（`grace_videos`）与本平台 `assets` / `mcap_files` / 算法投影的字段与幂等对照 | 集成 / 后端 / 数据工程 |
+| 11 | [`asset-events-thinning-plan.md`](https://www.feishu.cn/wiki/HkjKwNggdiB5TBkgktXcSWmBn0c) | **裁决文档**：`asset_events` 该保留什么、该砍什么、代码与文档怎么收窄 | 架构 / 后端 / 数据工程 |
+| 12 | [`sql.md`](https://www.feishu.cn/wiki/HouqwVou0ijHUzkaiSYchivnnDh) | **Schema companion**：保留 DDL/字段 section 编号，给 `schemas/pg-phase0.sql`、历史注释与 review 使用 | 后端 / DBA |
+| 13 | [`query-platform-design.md`](https://www.feishu.cn/wiki/SLTFwOEOAi8uxDkoMzPciswfnNd) | **新提案**：统一查询内核（`JSON Query IR + Planner + Executors`），承载 saved query / slice / export / scenario test | 架构 / 后端 / 前端 / SDK |
+| 14 | [`3.0-multimodal-design.md`](https://www.feishu.cn/wiki/EkaOw77wtiX00BkwVh3cHvzsn4e) | **未来草稿**：3.x 多模态检索 / Lance 路线，未进入当前 1.0/2.0 基线 | 架构 / 算法 |
+| 15 | [`doc-alignment-pure-cdc-checklist.md`](https://www.feishu.cn/wiki/SQtawoaRyiFfUKkMw4WcSdKUnyh) | **文档收口执行清单**：逐文件统一到 Pure CDC 口径（冲突点、替换建议、验收标准） | 架构 / 后端 / 数据工程 / SRE |
+| 16 | [`outbox-worker-design.md`](https://www.feishu.cn/wiki/YDQPwfT53i3lXZkoj3mcFv7An2c) / [`outbox-test-plan.md`](https://www.feishu.cn/wiki/N3BCw4SbDirpjpkbfbAclKLInUd) | **历史方案参考**：Outbox Worker 的历史设计与测试手册；当前生产默认路径请以 Pure CDC 文档为准 | 架构 / 后端（回溯排障） |
 
 ## 这份文档包覆盖了什么
 

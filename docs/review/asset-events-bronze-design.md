@@ -6,7 +6,7 @@
 | Author | Platform |
 | Last updated | 2026-04-30 |
 | Scope | Backend sync architecture, CDC pipeline, local Iceberg/MinIO/Trino stack |
-| Related | [`data-platform-design.md`](./data-platform-design.md) · [`outbox-worker-design.md`](./outbox-worker-design.md) · [`sql.md`](./sql.md) §4.5 · [`schema-reference.md`](./schema-reference.md) · [`next-steps-tasks.md`](./next-steps-tasks.md) |
+| Related | [`data-platform-design.md`](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB) · [`outbox-worker-design.md`](https://www.feishu.cn/wiki/YDQPwfT53i3lXZkoj3mcFv7An2c) · [`sql.md`](https://www.feishu.cn/wiki/HouqwVou0ijHUzkaiSYchivnnDh) §4.5 · [`schema-reference.md`](https://www.feishu.cn/wiki/BUvcwpQeAiPWNtkLpKecDwkcnxd) |
 
 ---
 

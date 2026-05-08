@@ -16,7 +16,6 @@
 | 优先级 | 文件 | 问题类型 | 建议动作 |
 |---|---|---|---|
 | P0 | `data-platform-design.md` | 主文档仍混有 outbox 作为主链路描述 | 立即收口，避免评审口径分裂 |
-| P0 | `next-steps-tasks.md` | 任务板仍出现 outbox gate 文案 | 改成 CDC 术语，避免执行偏差 |
 | P1 | `eval-metrics-design.md` | eval 同步仍写 outbox worker | 改成 CDC sink/consumer 术语 |
 | P1 | `sql.md` / `schema-reference.md` | outbox 术语较多，易误读为运行主路径 | 保留历史字段说明，但补“运行时以 CDC 为准”注释 |
 | P2 | `outbox-test-plan.md` / `outbox-worker-design.md` | 历史文档可能被误当现行 runbook | 文档头部加“历史方案”警示，并链接 Pure CDC runbook |
@@ -46,19 +45,7 @@
 - 文档中不再出现“Outbox Worker 是当前主路径”的表述。
 - 与 `pure-cdc-go-live-runbook.md`、`cdc-rollout-plan.md` 的架构图和术语一致。
 
-## 3.2 `next-steps-tasks.md`（P0，必须同步）
-
-### 需要修正
-
-- 将 “ES + outbox + 投影 + lifecycle” 改为 “ES + CDC current-state + 投影 + lifecycle”。
-- 将 “不动 outbox cursor” 改为 “不改 consumer offset / 不触发常驻补偿任务”。
-- 将 outbox 指标条目改写为 CDC 指标条目（lag、decode errors、rebuild latency）。
-
-### 验收标准
-
-- 任务板所有“同步链路”术语与 `P0-4`（CDC 消费链路 MVP）一致。
-
-## 3.3 `eval-metrics-design.md`（P1）
+## 3.2 `eval-metrics-design.md`（P1）
 
 ### 需要修正
 
@@ -71,7 +58,7 @@
 
 - Eval/Metrics 章节与主架构统一使用 CDC 语义，无 outbox 主路径描述。
 
-## 3.4 `schema-reference.md` 与 `sql.md`（P1）
+## 3.3 `schema-reference.md` 与 `sql.md`（P1）
 
 ### 处理策略
 
@@ -83,7 +70,7 @@
 
 - 不删除历史字段说明，但不会让读者误认为其是当前主路径。
 
-## 3.5 `outbox-test-plan.md` 与 `outbox-worker-design.md`（P2）
+## 3.4 `outbox-test-plan.md` 与 `outbox-worker-design.md`（P2）
 
 ### 处理策略
 
@@ -100,7 +87,6 @@
 
 - PR-1（当天可完成，P0）  
   - `data-platform-design.md`
-  - `next-steps-tasks.md`
   - 本清单文档
 - PR-2（次日完成，P1/P2）  
   - `eval-metrics-design.md`
