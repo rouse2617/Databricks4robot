@@ -1,0 +1,242 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap");
+
+/* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind CSS directive */
+@tailwind base;
+/* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind CSS directive */
+@tailwind components;
+/* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind CSS directive */
+@tailwind utilities;
+
+/* ── data4cyber SaaS Design System ── */
+/* Generated via ui-ux-pro-max: SaaS Data Platform Dashboard */
+/* Colors: Trust Blue #2563EB + Orange CTA #F97316 + BG #F8FAFC */
+/* Typography: Inter (body) + Fira Code (data/mono) */
+
+:root {
+	/* Brand */
+	--color-primary: #2563eb;
+	--color-primary-hover: #1d4ed8;
+	--color-secondary: #3b82f6;
+	--color-cta: #f97316;
+	--color-bg: #f8fafc;
+	--color-text: #1e293b;
+	--color-text-secondary: #64748b;
+	--color-border: #e2e8f0;
+
+	/* Status — consistent everywhere */
+	--color-success: #16a34a;
+	--color-error: #dc2626;
+	--color-warning: #d97706;
+	--color-info: #2563eb;
+
+	/* Layout */
+	--sidebar-width: 220px;
+	--header-height: 0px; /* no top header in SaaS sidebar layout */
+	--content-padding: 24px;
+	--card-padding: 16px;
+	--card-radius: 8px;
+	--grid-gap: 16px;
+
+	/* Elevation (Dimensional Layering) */
+	--elevation-0: none;
+	--elevation-1: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+	--elevation-2:
+		0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+	--elevation-3:
+		0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+
+	/* Table */
+	--table-row-height: 40px;
+	--table-font-size: 13px;
+}
+
+body {
+	margin: 0;
+	font-family:
+		"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	color: var(--color-text);
+	background: var(--color-bg);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+code,
+.font-mono {
+	font-family: "Fira Code", "SF Mono", "Cascadia Code", monospace;
+}
+
+/* ── Ant Design Overrides for SaaS feel ── */
+
+/* Sidebar: darker, more professional */
+.ant-layout-sider {
+	background: #0f172a;
+}
+.ant-layout-sider .ant-menu {
+	background: transparent;
+}
+.ant-layout-sider .ant-menu-item {
+	margin: 2px 8px;
+	border-radius: 6px;
+	color: #94a3b8;
+	font-size: 13px;
+	height: 40px;
+	line-height: 40px;
+	transition: all 0.2s ease;
+}
+.ant-layout-sider .ant-menu-item:hover {
+	color: #e2e8f0;
+	background: rgba(255, 255, 255, 0.06);
+}
+.ant-layout-sider .ant-menu-item-selected {
+	background: rgba(37, 99, 235, 0.2);
+	color: #fff;
+}
+.ant-layout-sider .ant-menu-item-selected::after {
+	display: none;
+}
+
+/* Cards: subtle shadow, rounded */
+.ant-card {
+	border-radius: var(--card-radius);
+	border: 1px solid var(--color-border);
+	box-shadow: var(--elevation-1);
+	transition:
+		box-shadow 0.2s ease,
+		border-color 0.2s ease;
+}
+.ant-card:hover {
+	box-shadow: var(--elevation-2);
+}
+.ant-card-head {
+	border-bottom: 1px solid #f1f5f9;
+	font-size: 14px;
+	font-weight: 600;
+	min-height: 44px;
+	padding: 0 16px;
+}
+
+/* Tables: compact, professional */
+.ant-table {
+	font-size: var(--table-font-size);
+}
+.ant-table-thead > tr > th {
+	background: #f8fafc;
+	font-weight: 600;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: var(--color-text-secondary);
+	border-bottom: 1px solid var(--color-border);
+	padding: 10px 12px;
+}
+.ant-table-tbody > tr > td {
+	padding: 8px 12px;
+	border-bottom: 1px solid #f1f5f9;
+}
+.ant-table-tbody > tr:hover > td {
+	background: #f1f5f9;
+}
+
+/* Tags: softer, rounded */
+.ant-tag {
+	border-radius: 4px;
+	font-size: 11px;
+	line-height: 20px;
+	padding: 0 6px;
+}
+
+/* Statistic: bigger numbers */
+.ant-statistic-content-value {
+	font-family: "Inter", sans-serif;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+.ant-statistic-title {
+	font-size: 12px;
+	color: var(--color-text-secondary);
+	font-weight: 500;
+}
+
+/* Tabs: cleaner */
+.ant-tabs-tab {
+	font-size: 13px;
+	font-weight: 500;
+	padding: 8px 4px;
+}
+
+/* Buttons: consistent */
+.ant-btn-primary {
+	background: var(--color-primary);
+	border-color: var(--color-primary);
+	border-radius: 6px;
+	font-weight: 500;
+	transition: all 0.2s ease;
+}
+.ant-btn-primary:hover {
+	background: var(--color-primary-hover);
+	border-color: var(--color-primary-hover);
+}
+.ant-btn-default {
+	border-radius: 6px;
+	font-weight: 500;
+}
+
+/* Segmented control */
+.ant-segmented {
+	background: #f1f5f9;
+	border-radius: 8px;
+	padding: 2px;
+}
+.ant-segmented-item-selected {
+	background: #fff;
+	box-shadow: var(--elevation-1);
+	border-radius: 6px;
+}
+
+/* Scrollbar: subtle */
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: #cbd5e1;
+	border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: #94a3b8;
+}
+
+/* Link-like button reset for a11y-safe button interactions */
+.link-like-button {
+	background: none;
+	border: none;
+	padding: 0;
+	margin: 0;
+	color: #2563eb;
+	cursor: pointer;
+	font: inherit;
+}
+
+.link-like-button:hover {
+	text-decoration: underline;
+}
+
+.link-like-button:focus-visible {
+	outline: 2px solid #93c5fd;
+	outline-offset: 2px;
+	border-radius: 2px;
+}
+
+/* Neutral inline button reset (inherits surrounding text color) */
+.inline-button-reset {
+	background: none;
+	border: none;
+	padding: 0;
+	margin: 0;
+	color: inherit;
+	cursor: pointer;
+	font: inherit;
+}
