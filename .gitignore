@@ -53,3 +53,8 @@ Frontend/e2e/test-results/
 Frontend/e2e/report/
 Frontend/e2e/screenshots/*.png
 /e2e-screenshots/
+
+# Local Feishu wiki sync (scripts/sync_review_to_wiki_incremental.py output + state)
+.sync_tmp_docs_review_to_wiki_*/
+.sync_state_docs_review_to_wiki*.json
+.cursor_tmp_*.json
