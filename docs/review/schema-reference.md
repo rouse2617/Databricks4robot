@@ -1,6 +1,6 @@
 # Schema Reference (PostgreSQL)
 
-> **主键约定**：多数实体的主键列为 PostgreSQL `UUID`，由 Backend 应用层生成（例如 `github.com/google/uuid`）。**例外**：`assets.asset_id` 及所有引用它的外键列为 **固定 8 位** ASCII 字母数字（`TEXT` + `CHECK`；见 [`sql.md`](./sql.md) §0.3）。不要求特定 UUID 版本；列类型与序列化格式以 `schemas/pg-phase0.sql` 为准。
+> **主键约定**：多数实体的主键列为 PostgreSQL `UUID`，由 Backend 应用层生成（例如 `github.com/google/uuid`）。**例外**：`assets.asset_id` 及所有引用它的外键列为 **固定 8 位** ASCII 字母数字（`TEXT` + `CHECK`；见 [`sql.md`](https://www.feishu.cn/wiki/HouqwVou0ijHUzkaiSYchivnnDh) §0.3）。不要求特定 UUID 版本；列类型与序列化格式以 `schemas/pg-phase0.sql` 为准。
 
 ## 表清单
 

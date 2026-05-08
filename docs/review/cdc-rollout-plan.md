@@ -98,7 +98,7 @@
 
 Documented / coded already:
 
-- [asset-events-bronze-design.md](./asset-events-bronze-design.md)
+- [asset-events-bronze-design.md](https://www.feishu.cn/wiki/CZ2cwoaGTiH9CIkror7c962In4g)
 - `internal/cdc` package skeleton
 - Debezium-style message decoder
 - in-memory source adapter
@@ -162,7 +162,7 @@ Agree on the two contracts before touching prod runtime:
 ### Deliverables
 
 - this rollout plan
-- [asset-events-bronze-design.md](./asset-events-bronze-design.md)
+- [asset-events-bronze-design.md](https://www.feishu.cn/wiki/CZ2cwoaGTiH9CIkror7c962In4g)
 - final connector topic/table mapping
 
 ### Exit criteria

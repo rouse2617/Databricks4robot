@@ -90,7 +90,7 @@ Grace 将各算法状态放在 **JSONB**（如 `hand_tracking`、`deface` 等字
 
 ## 6. 相关文档（本仓库）
 
-- [`data-platform-design.md`](./data-platform-design.md) — 整体阶段与存储主线
-- [`schema-reference.md`](./schema-reference.md) — PG 表与索引
-- [`algo-lifecycle-and-data-model.md`](./algo-lifecycle-and-data-model.md) — 算法投影与事件
-- [`api-guide.md`](./api-guide.md) — HTTP 与 filter 示例
+- [`data-platform-design.md`](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB) — 整体阶段与存储主线
+- [`schema-reference.md`](https://www.feishu.cn/wiki/BUvcwpQeAiPWNtkLpKecDwkcnxd) — PG 表与索引
+- [`algo-lifecycle-and-data-model.md`](https://www.feishu.cn/wiki/EoYowiw4ji5BO0kxODgce1hgnPh) — 算法投影与事件
+- [`api-guide.md`](https://www.feishu.cn/wiki/OEG4wYA48i3Kvpk0N1XccwW8nqe) — HTTP 与 filter 示例

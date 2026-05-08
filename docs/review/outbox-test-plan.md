@@ -1,7 +1,7 @@
 # Outbox E2E / 压测执行单（历史方案）
 
 > ⚠️ **历史方案说明**：本文档用于保留 Outbox Worker 路径的历史测试方法，**不是当前生产默认链路**。  
-> 当前上线与值班执行请以 [`pure-cdc-go-live-runbook.md`](./pure-cdc-go-live-runbook.md) 和 [`cdc-rollout-plan.md`](./cdc-rollout-plan.md) 为准。
+> 当前上线与值班执行请以 [`pure-cdc-go-live-runbook.md`](https://www.feishu.cn/wiki/AiCxwlDSfiOiUbkrWumcVgKXnnc) 和 [`cdc-rollout-plan.md`](https://www.feishu.cn/wiki/FQQDwYifhi7DgBkGw7VcKkmwn0b) 为准。
 >
 > 目标：沉淀 `asset_events -> outbox worker -> Elasticsearch` 历史链路的冒烟、恢复、压测与验收口径，供回溯或兼容场景参考。
 >
@@ -41,7 +41,7 @@
 
 ### 2.3 关键设计依据
 
-- [docs/review/outbox-worker-design.md](/Users/rick/Databricks4robot/docs/review/outbox-worker-design.md)
+- [outbox-worker-design.md](https://www.feishu.cn/wiki/YDQPwfT53i3lXZkoj3mcFv7An2c)
 - `G1–G5` 目标定义见该文档开头
 - 指标阈值见该文档 `§11.1`
 

@@ -2,7 +2,7 @@
 
 > **作用定位**：这篇文档只保留 **schema / DDL / 字段命名** 相关内容，给 `schemas/pg-phase0.sql`、仓库内历史注释和代码 review 提供一个稳定锚点。
 >
-> **主设计已合并**：架构分层、ES / Iceberg / CDC 同步、运维、阶段计划等内容，统一收敛到 [`data-platform-design.md`](./data-platform-design.md) 与 [`schema-reference.md`](./schema-reference.md)。本文件不再重复那部分长篇设计叙事。
+> **主设计已合并**：架构分层、ES / Iceberg / CDC 同步、运维、阶段计划等内容，统一收敛到 [`data-platform-design.md`](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB) 与 [`schema-reference.md`](https://www.feishu.cn/wiki/BUvcwpQeAiPWNtkLpKecDwkcnxd)。本文件不再重复那部分长篇设计叙事。
 
 ---
 
@@ -18,9 +18,9 @@
 
 | 文档 | 用途 |
 |------|------|
-| [`data-platform-design.md`](./data-platform-design.md) | 架构、事件流、同步机制、部署、SLO、阶段计划 |
-| [`schema-reference.md`](./schema-reference.md) | 人类可读的字段速查、上线优先级、索引与约束摘要 |
-| [`sql.md`](./sql.md) | DDL 伴随文档：保留 section 编号，解释为什么这些表/列存在 |
+| [`data-platform-design.md`](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB) | 架构、事件流、同步机制、部署、SLO、阶段计划 |
+| [`schema-reference.md`](https://www.feishu.cn/wiki/BUvcwpQeAiPWNtkLpKecDwkcnxd) | 人类可读的字段速查、上线优先级、索引与约束摘要 |
+| [`sql.md`](https://www.feishu.cn/wiki/HouqwVou0ijHUzkaiSYchivnnDh) | DDL 伴随文档：保留 section 编号，解释为什么这些表/列存在 |
 | [`../../schemas/pg-phase0.sql`](../../schemas/pg-phase0.sql) | 当前 PG 参考 DDL，机器可读视图 |
 
 ### 0.2 表状态速览
@@ -30,7 +30,7 @@
 | `mcap_files` / `assets` / `deliveries` / `delivery_items` / `idempotency_keys` | 已上线 | 在线业务主表 |
 | `asset_tags` / `asset_algo_latest` | 已上线 | 当前态投影，服务筛选与详情回填 |
 | `asset_events` | 已上线 | 统一业务事件表；1.0 只写不消费 |
-| `outbox_sink_cursors` | 已上线 | 历史兼容表（Outbox Worker sink 水位）；当前运行时以 CDC offsets 为准；见 `backend/migrations/001_init.sql` 与 [`schema-reference.md`](./schema-reference.md) |
+| `outbox_sink_cursors` | 已上线 | 历史兼容表（Outbox Worker sink 水位）；当前运行时以 CDC offsets 为准；见 `backend/migrations/001_init.sql` 与 [`schema-reference.md`](https://www.feishu.cn/wiki/BUvcwpQeAiPWNtkLpKecDwkcnxd) |
 | `outbox_dlq` | 已上线 | 历史兼容死信表；见 `backend/migrations/010_outbox_dlq.sql` |
 | `asset_algo_events` | 遗留只读 | 历史兼容，不再新增写入 |
 | `datasets` / `dataset_snapshots` / `training_runs` | 目标表 | 训练平台真正接入时启用 |
@@ -248,7 +248,7 @@ DDL 以 `schemas/pg-phase0.sql` 与 `backend/migrations/*.sql` 为准；本节�
 ```
 
 - 写入端：状态转移由 backend usecase 显式驱动，CHECK 约束或 application-level state machine 保证非法转移被拒。
-- 详细状态语义和算法子状态机参考 [`docs/review/algo-lifecycle-and-data-model.md`](./review/algo-lifecycle-and-data-model.md)。
+- 详细状态语义和算法子状态机参考 [`algo-lifecycle-and-data-model.md`](https://www.feishu.cn/wiki/EoYowiw4ji5BO0kxODgce1hgnPh)。
 - 任何状态变更必须**同事务**追加 `asset_events(event_type='asset_lifecycle_changed', payload={from, to, reason, actor})`，否则审计链断裂。
 
 **交付汇总（last_delivered_at / delivery_count / last_delivered_to）所有权：**
@@ -732,7 +732,7 @@ PG 里的 Platform Catalog 只保留 `catalog_objects + catalog_object_versions`
 
 ### 4.13 Eval / Metrics（Phase 1.5）
 
-> 评估指标专项设计见 [`eval-metrics-design.md`](./eval-metrics-design.md)。本节给 schema companion 口径，便于 DDL 与 API 审阅对齐。
+> 评估指标专项设计见 [`eval-metrics-design.md`](https://www.feishu.cn/wiki/DOTCwUSOPiapEykJeoxcNctSnwf)。本节给 schema companion 口径，便于 DDL 与 API 审阅对齐。
 
 #### `asset_eval_results`（评估原始事实）
 
@@ -792,16 +792,16 @@ PG 里的 Platform Catalog 只保留 `catalog_objects + catalog_object_versions`
 
 ## 5. Elasticsearch 文档设计
 
-已合并到 [`data-platform-design.md` §5.6.1](./data-platform-design.md)。本文件不再重复维护 ES 文档结构、mapping 与 fallback 设计。
+已合并到 [`data-platform-design.md` §5.6.1](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB)。本文件不再重复维护 ES 文档结构、mapping 与 fallback 设计。
 
 ---
 
 ## 6. Iceberg 表映射
 
-已合并到 [`data-platform-design.md` §5.6.2 / §5.6.4](./data-platform-design.md)。本文件只保留 `datasets`、`training_runs`、`catalog_objects` 等 PG 元数据表本身，不再重复 Bronze/Silver/Gold 分层与同步阶段说明。
+已合并到 [`data-platform-design.md` §5.6.2 / §5.6.4](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB)。本文件只保留 `datasets`、`training_runs`、`catalog_objects` 等 PG 元数据表本身，不再重复 Bronze/Silver/Gold 分层与同步阶段说明。
 
 ---
 
 ## 7. 典型问题与推荐查询路径一览
 
-已合并到 [`api-guide.md`](./api-guide.md) 与 [`use-cases.md`](./use-cases.md)。查询路径的维护粒度更适合放在 API / use case 文档，而不是 schema companion。
+已合并到 [`api-guide.md`](https://www.feishu.cn/wiki/OEG4wYA48i3Kvpk0N1XccwW8nqe) 与 [`use-cases.md`](https://www.feishu.cn/wiki/RqiIwqJGAigsM9k2AZecJ4punce)。查询路径的维护粒度更适合放在 API / use case 文档，而不是 schema companion。

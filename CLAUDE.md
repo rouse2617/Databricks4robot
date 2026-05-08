@@ -14,7 +14,7 @@ Concise habits that reduce wrong assumptions, scope creep, and noisy diffs. Adap
 
 4. **Goal-driven execution** — Prefer verifiable outcomes: e.g. bugfix → reproduce (test or steps), then fix; behavior change → tests or manual checks named upfront. For multi-step work, use a short plan with a concrete verify step per step.
 
-Project-specific rules follow below (**Development Rules**, OpenAPI/schema checklist, **Definition of Done**).
+Project-specific rules follow below (**Team process**, **Development Rules**, OpenAPI/schema checklist, **Definition of Done**).
 
 ## Recommended workflow skills (external)
 
@@ -42,6 +42,58 @@ Pack overview and tool install: [README](https://github.com/addyosmani/agent-ski
 - Online store: PostgreSQL by default, Bigtable retained as an alternate backend
 - Search: Elasticsearch (`backend/internal/elasticsearch`, `/api/v1/search/assets`)
 - Lakehouse query layer: Trino over Iceberg (`backend/internal/trino`, `/api/v1/lakehouse/*`)
+
+## Team process (Data Infra 软件开发规范对齐)
+
+Human workflow expectations from **Data Infra 软件开发规范** (Feishu). This sits **on top of** repo rules below; agents should not invent org tickets but should **surface gaps** (e.g. missing Linear link, missing migration) when preparing changes.
+
+### Requirements (Linear)
+
+- **Every deliverable change** should have a **Linear Issue** (small fixes too, unless the team explicitly exempts a class of work).
+- The Issue should state **goal** and **implementation approach**; narrow changes may shorten the write-up but must stay traceable.
+
+### Pull requests and code review
+
+- **Merge**: use **Squash merge** as the default shape for `main` (one logical change per Issue when practical).
+- **PR description**: refresh before merge so it **reflects the whole PR**, not only the first commit message.
+- **Merge gate**: no merge without **human code review**; AI review is supplementary.
+- **Reviewers**: at least **one** reviewer; larger or riskier changes should target **two**.
+- **Turnaround**: reviewers should aim for a first pass within **~24 hours** when feasible; use GitHub **Approve** or **Request changes** explicitly.
+- **Depth**: correctness **and** maintainability (structure, naming, failure modes).
+- **Gemini / bot review**: every **High** severity item needs a **reply** (fix plan or explicit “won’t fix” rationale).
+
+### Dependencies and tooling
+
+- **Python** (`sdk/`, `dagster/`): **uv** + `pyproject.toml`; use `uv run …` for tools and tests.
+- **Frontend**: lockfile discipline (`package-lock.json`); **Biome** for lint (`npm run lint`).
+- **Go**: `go.mod` / `go.sum`; run `make fmt` and `make vet` in `backend/` before PR.
+
+### Deployment
+
+- Cloud-bound **services** stay **containerized** (`backend/Dockerfile`, `Frontend/Dockerfile`; local full stack via `deploy/local`).
+
+### Database and migrations
+
+- **Schema in repo**: `docs/review/sql.md`, `schemas/pg-phase0.sql`, and ordered **`backend/migrations/*.sql`** (add new files for DDL changes; keep companion docs in sync per tables in this file).
+- **Org direction** favors **Atlas**-managed migrations where the org standard applies; **this repository today** uses numbered SQL migrations and helper scripts. If Atlas is introduced, document it here and in `backend/README.md` in the same change set.
+
+### Contract and policy
+
+- **Contract-as-code**: **`api/openapi.yaml`** is the machine-readable contract; **`docs/review/api-guide.md`** is the human integration guide. **Target**: Python SDK models/clients **generated from OpenAPI** to avoid drift; until then, any hand-written `sdk/` types must **match** OpenAPI when APIs move.
+- **Policy-as-code (org)**: resource-level authorization graphs (e.g. **OpenFGA**) are the long-term org bar for microservices touching data assets. **This codebase** still uses **`X-Grace-Token`** (phase‑0); do not bypass explicit auth checks on new paths; call out cross-service or data-export surfaces for security review.
+
+### Automation
+
+- Keep **CI** green (`.github/workflows/test-integration.yml` and path-scoped workflows such as `schema-events.yml`).
+- **Conventional Commits** are enforced for contributors who enable **`.githooks/commit-msg`** (`git config core.hooksPath .githooks`). Team standard also encourages **pre-commit** for local format/lint when the repo adds a shared config.
+
+### PR submitter checklist (request review前)
+
+- [ ] Linked **Linear Issue** describes the outcome; implementation matches it.
+- [ ] Style and naming consistent; no unnecessary duplication.
+- [ ] New dependencies declared; **Postgres** changes include **`backend/migrations/`** plus companion updates required by the checklist sections below.
+- [ ] **`sdk/`** touched → `uv run ruff check src/` and `uv run pytest tests/unit/` pass locally.
+- [ ] **Security**: input validation and auth/tenant boundaries considered for new or widened paths.
 
 ## Current Architecture (Source of Truth)
 
@@ -81,7 +133,6 @@ Pack overview and tool install: [README](https://github.com/addyosmani/agent-ski
 | Tag 注册表 | `backend/config/tag_registry.yaml` | Tag 类型、枚举值 |
 | 数据模型 | `docs/review/algo-lifecycle-and-data-model.md` | 算法生命周期设计 |
 | Grace ↔ 平台迁移对照 | `docs/review/grace-migration-notes.md` | cyber-grace `grace_videos` 与本仓库资产/mcap/算法字段与幂等 |
-| 下一步任务清单 | `docs/review/next-steps-tasks.md` | P0/P1/P2/P3 任务拆分、DoD、估时、依赖、Phase Gate |
 | Schema Companion | `docs/review/sql.md` | 表结构、字段命名、DDL section 锚点 |
 | Lakehouse 查询边界（归档） | `docs/archive/research/lakehouse-query-and-tag-filtering.md` | 历史调研：Postgres / Trino / Iceberg 查询职责 |
 | 后训练平台架构（归档） | `docs/archive/research/advanced-training-data-platform-architecture.md` | 历史调研：长期架构演进 |
@@ -173,6 +224,22 @@ go test ./internal/bigtable -coverprofile=/tmp/bt.cov && go tool cover -func=/tm
 go test ./internal/postgres -coverprofile=/tmp/pg.cov && go tool cover -func=/tmp/pg.cov
 ```
 
+After **SDK** changes:
+
+```bash
+cd sdk
+uv run ruff check src/
+uv run pytest tests/unit/
+```
+
+After **Frontend** changes (also covered in CI):
+
+```bash
+cd Frontend
+npm run lint
+npm run build
+```
+
 ## Local Commands
 
 ### Backend
@@ -189,6 +256,7 @@ make bt-bootstrap
 ```bash
 cd sdk
 uv sync --dev
+uv run ruff check src/
 uv run pytest tests/unit/
 ```
 
@@ -316,8 +384,23 @@ From `backend/.env.example`:
 - [ ] 如果改了 API → 更新 `api/openapi.yaml`
 - [ ] 如果改了 API → 更新 `docs/review/api-guide.md`
 - [ ] 如果改了架构/流程 → 更新 `backend/README.md`
-- [ ] 如果改了约定/规则 → 更新 `CLAUDE.md`
+- [ ] 如果改了约定/规则 → 更新 `CLAUDE.md` **以及** `.cursor/rules/databricks4robot-claude.mdc`（保持镜像一致）
 - [ ] **Do not** add new code against `internal/bigtable` (deprecated)
 - [ ] 如果新增了算法/Tag → 更新对应 YAML 注册表
 - [ ] 如果新增或修改了事件类型 → 更新 `backend/schemas/events/` 下的 JSON Schema + `registry.json`
 - [ ] 新代码有对应的单元测试
+
+## Definition of Done (SDK / Dagster / Frontend)
+
+- [ ] **`sdk/`**：`uv run ruff check src/`、`uv run pytest tests/unit/`；若 API 形状变了，**OpenAPI 与手写 Pydantic 对齐**，或推进生成方案并注明。
+- [ ] **`dagster/`**：`uv run ruff check …` / tests（若该变更触及编排代码）按子项目惯例执行。
+- [ ] **`Frontend/`**：`npm run lint` 与 `npm run build`（CI 同门槛）。
+
+## Definition of Done (Pull requests — 人类流程)
+
+与 **Team process** 一节一致；合入 `main` 前由作者与 Reviewer 确认：
+
+- [ ] 有对应 **Linear Issue**（或团队认可的豁免记录）。
+- [ ] **PR 描述**覆盖最终 diff；合并策略为 **Squash**（除非仓库政策另有规定）。
+- [ ] 至少 **一名** Reviewer **Approve**；**High** 级别的自动化审查意见已回复。
+- [ ] CI 全绿；安全与权限相关改动已显式考虑过。

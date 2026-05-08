@@ -17,7 +17,7 @@
 
 对接时以 **`api/openapi.yaml`** 中 Asset 及相关 schema 为唯一契约来源。常用语义：
 
-- **`lifecycle_state`**：资产生命周期（状态机见 `data-platform-design.md` §5.2.4）
+- **`lifecycle_state`**：资产生命周期（状态机见《数据平台方案设计》§5.2.4）
 - **`asset_type`**：资产类型（如 `segment`）
 - **`duration_ms`**：时长（毫秒），与 `start_timestamp_ns` / `end_timestamp_ns` 一致
 - **算法投影**：`asset_algo_latest`（响应中多为 `algo_results` 等形态，见 OpenAPI）
@@ -61,7 +61,7 @@ RUN_WRITES=1 BASE=http://localhost:8080 TOKEN=dev-token bash scripts/api-guide-s
 
 ## Lakehouse / Trino 验证
 
-> Lakehouse 链路在 1.0 不可用；2.0 起由 PyIceberg CronJob 通过 outbox 增量入湖（详见 `data-platform-design.md §5.6.2 / §5.11`）。本节命令演示的是本地脚手架，仅用于 demo / 验证。
+> Lakehouse 链路在 1.0 不可用；2.0 起由 PyIceberg CronJob 通过 outbox 增量入湖（详见《数据平台方案设计》§5.6.2 / §5.11）。本节命令演示的是本地脚手架，仅用于 demo / 验证。
 
 启动 Iceberg + Trino + Catalog 服务：
 
@@ -264,7 +264,7 @@ curl "$BASE/api/v1/assets/{asset_id}" \
 > 当前状态：**已实现并进入主路径（桥接收口中）**。  
 > 现阶段 Query API 已承载工作台主查询路径：`validate -> plan -> ES recall(optional) -> PG refine`。内部仍存在部分桥接实现（例如 PG refine 继续复用旧 filter 编译），但对前端已是主接口。
 >
-> 目标形态（JSON Query IR、字段注册中心、planner、compiler/executor、多引擎路由）见：`docs/review/query-platform-design.md`。
+> 目标形态（JSON Query IR、字段注册中心、planner、compiler/executor、多引擎路由）见：《查询平台设计（Query IR / Planner / Executors）》。
 
 v1 当前范围固定为：`resource=assets`，执行路径以 `ES recall + PG refine` 为主；ES 不可用或编译不支持时回退纯 PG。
 
@@ -1064,7 +1064,7 @@ curl "$BASE/api/v1/lakehouse/sync-status" \
 
 ## 8.2 Eval / Metrics（Phase 1.5，已上线）
 
-> 详细设计见 `eval-metrics-design.md`。以下端点**已实现并可用**。
+> 详细设计见《Eval Metrics 设计（Phase 1.5）》。以下端点**已实现并可用**。
 
 端点清单：
 
