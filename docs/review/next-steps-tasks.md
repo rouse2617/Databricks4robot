@@ -229,7 +229,7 @@ P0-FE-1 / P0-FE-4 / P0-T-4 / P0-T-5（独立，可并行）
 
 ## 8. CDC 长期同步架构落地证据（Milestone 10 验收）
 
-> 完成时间：2026-04-30。对应 spec：`.kiro/specs/longterm-sync-architecture/`。
+> 完成时间：2026-04-30。验收以本段表格与对应 PR 为准（历史 Kiro spec 目录已移除）。
 
 | 组件 | 状态 | 落地证据 |
 |------|------|----------|
@@ -274,11 +274,11 @@ cdc-demo stopped
 
 | 主题 | 看哪一篇 |
 |------|----------|
-| 整体架构 / 演进路线 | [`data-platform-design.md`](./data-platform-design.md) §4 / §9 |
-| 字段速查 / 上线优先级 | [`schema-reference.md`](./schema-reference.md) |
-| API / curl / 工作流 | [`api-guide.md`](./api-guide.md) |
-| 算法生命周期 | [`algo-lifecycle-and-data-model.md`](./algo-lifecycle-and-data-model.md) |
-| 用例 × 角色矩阵 | [`use-cases.md`](./use-cases.md) |
-| CDC 工程落地 | [`cdc-rollout-plan.md`](./cdc-rollout-plan.md) |
-| Grace 迁移 | [`grace-migration-notes.md`](./grace-migration-notes.md) |
-| 3.x 多模态 | [`3.0-multimodal-design.md`](./3.0-multimodal-design.md) |
+| 整体架构 / 演进路线 | [`data-platform-design.md`](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB) §4 / §9 |
+| 字段速查 / 上线优先级 | [`schema-reference.md`](https://www.feishu.cn/wiki/BUvcwpQeAiPWNtkLpKecDwkcnxd) |
+| API / curl / 工作流 | [`api-guide.md`](https://www.feishu.cn/wiki/OEG4wYA48i3Kvpk0N1XccwW8nqe) |
+| 算法生命周期 | [`algo-lifecycle-and-data-model.md`](https://www.feishu.cn/wiki/EoYowiw4ji5BO0kxODgce1hgnPh) |
+| 用例 × 角色矩阵 | [`use-cases.md`](https://www.feishu.cn/wiki/RqiIwqJGAigsM9k2AZecJ4punce) |
+| CDC 工程落地 | [`cdc-rollout-plan.md`](https://www.feishu.cn/wiki/FQQDwYifhi7DgBkGw7VcKkmwn0b) |
+| Grace 迁移 | [`grace-migration-notes.md`](https://www.feishu.cn/wiki/BrCHw7NrZiOVGik8lfCcl555nhh) |
+| 3.x 多模态 | [`3.0-multimodal-design.md`](https://www.feishu.cn/wiki/EkaOw77wtiX00BkwVh3cHvzsn4e) |
