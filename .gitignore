@@ -47,7 +47,6 @@ backend/.env
 # OS
 .DS_Store
 Thumbs.db
-sdk/
 
 # Playwright
 Frontend/e2e/test-results/
