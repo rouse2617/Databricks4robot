@@ -1,0 +1,613 @@
+# Single local stack — use Compose profiles (Docker Compose v2+).
+#
+#   docker compose up -d
+#       Postgres :5432 (logical WAL), PgBouncer :6432, Bigtable/PubSub emulators
+#       Postgres init runs backend/migrations/*.sql (DDL only; optional demo rows: make local-dev-seed)
+#   docker compose --profile full up -d --build
+#       Adds backend :8080, frontend :5173, ES :9200, lakehouse, Grafana/Prometheus
+#   docker compose --profile lakehouse up -d
+#       MinIO :9000/:9001, Iceberg REST :8183, Spark UI :8083, Jupyter :8889, Trino :8082
+#   docker compose --profile cdc up -d
+#       Redpanda :19092, Connect REST :8084 (Debezium targets service `postgres`; run base first)
+
+services:
+  # ── Data Layer ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: data4cyber
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  bigtable-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators bigtable start --host-port=0.0.0.0:8086
+    ports:
+      - "8086:8086"
+    environment:
+      BIGTABLE_EMULATOR_HOST: "0.0.0.0:8086"
+
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
+    ports:
+      - "8085:8085"
+    environment:
+      PUBSUB_EMULATOR_HOST: "0.0.0.0:8085"
+
+  # ── Backend (Go) ────────────────────────────────────────────
+  backend:
+    profiles:
+      - full
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+      args:
+        # Faster module fetch in CN/slow networks: export GOPROXY=https://goproxy.cn,direct
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    ports:
+      - "8080:8080"
+    environment:
+      ENV: development
+      PORT: "8080"
+      STORAGE_BACKEND: postgres
+      DB_HOST: pgbouncer
+      DB_PORT: "6432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: data4cyber
+      GRACE_TOKEN: dev-token
+      CDC_ENABLED: "true"
+      CDC_SOURCE_DRIVER: "debezium-kafka"
+      CDC_KAFKA_BROKERS: "redpanda:9092"
+      CDC_KAFKA_GROUP_ID: "data-platform-cdc-full"
+      CDC_TOPIC_ASSET_EVENTS: "data4cyber.public.asset_events"
+      CDC_TOPIC_ASSETS: "data4cyber.public.assets"
+      CDC_TOPIC_ASSET_TAGS: "data4cyber.public.asset_tags"
+      CDC_TOPIC_ASSET_ALGO_LATEST: "data4cyber.public.asset_algo_latest"
+      CDC_TOPIC_MCAP_FILES: "data4cyber.public.mcap_files"
+      TRINO_ENABLED: "true"
+      TRINO_URL: "http://data-platform@trino:8080"
+      TRINO_CATALOG: "iceberg"
+      TRINO_SCHEMA: "robot"
+      ELASTICSEARCH_URL: "http://elasticsearch:9200"
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      connect:
+        condition: service_healthy
+      connect-init:
+        condition: service_completed_successfully
+      elasticsearch-init:
+        condition: service_completed_successfully
+      lakehouse-mvp-init:
+        condition: service_completed_successfully
+      trino:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        until nc -z pgbouncer 6432; do
+          echo "waiting for pgbouncer..."
+          sleep 1
+        done
+        exec ./server
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ── Frontend (React + Nginx) ────────────────────────────────
+  frontend:
+    profiles:
+      - full
+    build:
+      context: ../../Frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+        # Faster installs in CN/slow networks: export NPM_REGISTRY=https://registry.npmmirror.com
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Iceberg Stack (ADR-001: Polaris selected for prod; local uses iceberg-rest-fixture) ──
+  minio:
+    profiles:
+      - full
+      - lakehouse
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+      MINIO_DOMAIN: minio
+    volumes:
+      - iceberg-minio-data:/data
+    networks:
+      default:
+        aliases:
+          - warehouse.minio
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio-init:
+    profiles:
+      - full
+      - lakehouse
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 admin password; do
+        echo 'waiting for minio...';
+        sleep 1;
+      done;
+      mc mb --ignore-existing local/warehouse;
+      mc mb --ignore-existing local/datalake;
+      "
+    restart: "no"
+
+  iceberg-rest:
+    profiles:
+      - full
+      - lakehouse
+    image: apache/iceberg-rest-fixture:latest
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8183:8181"
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+    volumes:
+      - iceberg-rest-data:/tmp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8181/v1/config >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  spark-iceberg:
+    profiles:
+      - full
+      - lakehouse
+    image: tabulario/spark-iceberg:latest
+    depends_on:
+      iceberg-rest:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8889:8888"
+      - "8083:8080"
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+    volumes:
+      - ./iceberg/notebooks:/home/iceberg/notebooks/notebooks
+    restart: unless-stopped
+
+  lakehouse-mvp-init:
+    profiles:
+      - full
+    image: tabulario/spark-iceberg:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      iceberg-rest:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+    volumes:
+      - ./iceberg/notebooks:/home/iceberg/notebooks/notebooks
+    entrypoint:
+      - /bin/sh
+      - -lc
+    command:
+      - python /home/iceberg/notebooks/notebooks/build_lakehouse_mvp.py
+    restart: "no"
+
+  trino:
+    profiles:
+      - full
+      - lakehouse
+    image: trinodb/trino:latest
+    depends_on:
+      iceberg-rest:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/info >/dev/null 2>&1 || curl -sf http://localhost:8080/v1/info >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+    restart: unless-stopped
+
+  # ── Elasticsearch (Search) ──────────────────────────────────────
+  elasticsearch:
+    profiles:
+      - full
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    ports:
+      - "9200:9200"
+    environment:
+      discovery.type: "single-node"
+      xpack.security.enabled: "false"
+      xpack.security.http.ssl.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      network.host: "0.0.0.0"
+      network.publish_host: "127.0.0.1"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  elasticsearch-init:
+    profiles:
+      - full
+    image: curlimages/curl:8.7.1
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if curl -sf -I http://elasticsearch:9200/assets >/dev/null 2>&1; then
+          echo "Elasticsearch assets index already exists - updating mapping..."
+          curl -sf -X PUT http://elasticsearch:9200/assets/_mapping \
+            -H "Content-Type: application/json" \
+            -d '{"properties":{"owner":{"type":"keyword","fields":{"text":{"type":"text"}}},"reviewer":{"type":"keyword","fields":{"text":{"type":"text"}}}}}' || true
+          exit 0
+        fi
+        echo "Creating Elasticsearch assets index mapping..."
+        curl -sf -X PUT http://elasticsearch:9200/assets \
+          -H "Content-Type: application/json" \
+          -d "{
+          \"settings\": {
+            \"number_of_shards\": 1,
+            \"number_of_replicas\": 0
+          },
+          \"mappings\": {
+            \"properties\": {
+              \"asset_id\":           { \"type\": \"keyword\" },
+              \"mcap_file_id\":       { \"type\": \"keyword\" },
+              \"segment_locator\":    { \"type\": \"keyword\" },
+
+              \"asset_type\":         { \"type\": \"keyword\" },
+              \"lifecycle_state\":    { \"type\": \"keyword\" },
+              \"status\":             { \"type\": \"keyword\" },
+              \"is_deleted\":         { \"type\": \"boolean\" },
+              \"version\":            { \"type\": \"long\" },
+              \"retention_tier\":     { \"type\": \"keyword\" },
+              \"expire_at\":          { \"type\": \"date\" },
+
+              \"tenant_id\":          { \"type\": \"keyword\" },
+              \"project_id\":         { \"type\": \"keyword\" },
+
+              \"metadata\":           { \"type\": \"flattened\" },
+
+              \"owner\":              { \"type\": \"keyword\", \"fields\": { \"text\": { \"type\": \"text\" } } },
+              \"reviewer\":           { \"type\": \"keyword\", \"fields\": { \"text\": { \"type\": \"text\" } } },
+              \"notes\":              { \"type\": \"text\" },
+
+              \"start_timestamp_ns\": { \"type\": \"long\" },
+              \"end_timestamp_ns\":   { \"type\": \"long\" },
+              \"duration_ms\":        { \"type\": \"long\" },
+              \"recorded_at\":        { \"type\": \"date\" },
+
+              \"created_at\":         { \"type\": \"date\" },
+              \"updated_at\":         { \"type\": \"date\" },
+
+              \"delivery_count\":     { \"type\": \"integer\" },
+              \"last_delivered_at\":  { \"type\": \"date\" },
+              \"last_delivered_to\":  { \"type\": \"keyword\" },
+
+              \"parent_asset_id\":    { \"type\": \"keyword\" },
+              \"root_asset_id\":      { \"type\": \"keyword\" },
+              \"asset_level\":        { \"type\": \"integer\" },
+
+              \"mcap\": {
+                \"properties\": {
+                  \"vendor_id\":        { \"type\": \"keyword\" },
+                  \"device_id\":        { \"type\": \"keyword\" },
+                  \"camera_model\":     { \"type\": \"keyword\" },
+                  \"scene_id\":         { \"type\": \"keyword\" },
+                  \"location_id\":      { \"type\": \"keyword\" },
+                  \"environment_id\":   { \"type\": \"keyword\" },
+                  \"task_id\":          { \"type\": \"keyword\" },
+                  \"data_source\":      { \"type\": \"keyword\" },
+                  \"file_duration_ms\": { \"type\": \"long\" },
+                  \"recorded_at\":      { \"type\": \"date\" }
+                }
+              },
+
+              \"tags_flat\": { \"type\": \"flattened\" },
+
+              \"tags\": {
+                \"type\": \"nested\",
+                \"properties\": {
+                  \"key\":         { \"type\": \"keyword\" },
+                  \"value\":       { \"type\": \"keyword\" },
+                  \"value_num\":   { \"type\": \"double\" },
+                  \"value_bool\":  { \"type\": \"boolean\" },
+                  \"source_type\": { \"type\": \"keyword\" },
+                  \"source_name\": { \"type\": \"keyword\" },
+                  \"confidence\":  { \"type\": \"double\" }
+                }
+              },
+
+              \"algos\": {
+                \"type\": \"nested\",
+                \"properties\": {
+                  \"name\":         { \"type\": \"keyword\" },
+                  \"version\":      { \"type\": \"keyword\" },
+                  \"status\":       { \"type\": \"keyword\" },
+                  \"result_tag\":   { \"type\": \"keyword\" },
+                  \"result_score\": { \"type\": \"double\" },
+                  \"run_id\":       { \"type\": \"keyword\" },
+                  \"finished_at\":  { \"type\": \"date\" }
+                }
+              }
+            }
+          }
+        }" 
+        echo "Elasticsearch assets index mapping ready." 
+    restart: "no"
+
+  # ── Observability ───────────────────────────────────────────────
+  postgres-exporter:
+    profiles:
+      - full
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://postgres:postgres@postgres:5432/data4cyber?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  elasticsearch-exporter:
+    profiles:
+      - full
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:latest
+    command:
+      - "--es.uri=http://elasticsearch:9200"
+      - "--es.all"
+      - "--es.indices"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  blackbox-exporter:
+    profiles:
+      - full
+    image: quay.io/prometheus/blackbox-exporter:latest
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+    volumes:
+      - ./monitoring/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    restart: unless-stopped
+
+  prometheus:
+    profiles:
+      - full
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - backend
+      - postgres-exporter
+      - elasticsearch-exporter
+      - blackbox-exporter
+    restart: unless-stopped
+
+  grafana:
+    profiles:
+      - full
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  redpanda:
+    profiles:
+      - full
+      - cdc
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.8
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr=internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr=internal://redpanda:8082,external://localhost:18082
+    ports:
+      - "19092:19092"
+      - "18082:18082"
+      - "19644:9644"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -Eq 'Healthy: *true'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  connect:
+    profiles:
+      - full
+      - cdc
+    image: quay.io/debezium/connect:2.7
+    ports:
+      - "8084:8083"
+    environment:
+      BOOTSTRAP_SERVERS: redpanda:9092
+      GROUP_ID: cdc-connect-cluster
+      CONFIG_STORAGE_TOPIC: cdc_connect_configs
+      OFFSET_STORAGE_TOPIC: cdc_connect_offsets
+      STATUS_STORAGE_TOPIC: cdc_connect_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      PLUGIN_PATH: /kafka/connect,/debezium-plugins
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  connect-init:
+    profiles:
+      - full
+      - cdc
+    image: curlimages/curl:8.7.1
+    depends_on:
+      connect:
+        condition: service_healthy
+    volumes:
+      - ./cdc/connectors:/connectors:ro
+    entrypoint:
+      - /bin/sh
+      - -lc
+    command:
+      - |
+        set -eu
+        CONNECT_URL="http://connect:8083"
+        CONNECTOR_NAME="postgres-unified-cdc"
+        CONNECTOR_FILE="/connectors/postgres-unified-cdc.json"
+
+        until curl -sf "$${CONNECT_URL}/connectors" >/dev/null; do
+          echo "waiting for connect..."
+          sleep 2
+        done
+
+        status="$$(curl -s -o /tmp/connector.json -w '%{http_code}' "$${CONNECT_URL}/connectors/$${CONNECTOR_NAME}")"
+        if [ "$${status}" = "200" ]; then
+          echo "connector $${CONNECTOR_NAME} already exists"
+          cat /tmp/connector.json
+          exit 0
+        fi
+
+        status="$$(curl -sS -o /tmp/response.json -w '%{http_code}' \
+          -X POST "$${CONNECT_URL}/connectors" \
+          -H 'Content-Type: application/json' \
+          --data "@$${CONNECTOR_FILE}")"
+        cat /tmp/response.json
+        case "$${status}" in
+          200|201|202|409) exit 0 ;;
+          *) exit 1 ;;
+        esac
+    restart: "no"
+
+volumes:
+  pgdata:
+  iceberg-minio-data:
+  iceberg-rest-data:
+  elasticsearch-data:
+  prometheus-data:
+  grafana-data:

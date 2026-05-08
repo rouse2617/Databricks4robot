@@ -1,0 +1,56 @@
+# Go
+backend/bin/
+backend/*.exe
+backend/*.out
+backend/vendor/
+backend/server
+backend/bench
+backend/megaTest
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Node / Frontend
+Frontend/node_modules/
+Frontend/dist/
+Frontend/tsconfig.tsbuildinfo
+
+# Env files
+.env
+.env.local
+.env.*.local
+backend/.env
+!.env.example
+!backend/.env.example
+
+# GCP
+*.json
+!package.json
+!Frontend/package-lock.json
+!tsconfig*.json
+!deploy/local/cdc/connectors/*.json
+
+# IDE
+.idea/
+.vscode/
+.kiro/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+sdk/
+
+# Playwright
+Frontend/e2e/test-results/
+Frontend/e2e/report/
+Frontend/e2e/screenshots/*.png
+/e2e-screenshots/

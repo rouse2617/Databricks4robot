@@ -1,0 +1,88 @@
+# CI: Backend tests + Frontend coverage (workflow name kept for branch protection compatibility).
+name: test-integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-review-guard:
+    name: Docs review wording guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Pure CDC wording in docs/review
+        run: bash scripts/check_review_docs_pure_cdc.sh
+
+  backend:
+    name: Backend (vet + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      # Single job: there are currently no Go files with `//go:build integration`;
+      # a second job with `-tags integration` duplicated the same suite.
+      # When adding testcontainers-based tests, gate them with `//go:build integration`
+      # and split jobs again or use `go test -tags integration ./...` here only.
+      - run: go vet ./...
+      - run: go test -v -timeout 300s ./...
+
+  backend-integration:
+    name: Backend CDC integration tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Run CDC integration tests (testcontainers)
+        run: go test -tags=integration -v -timeout 600s ./internal/cdc -run TestRuntime_Run_WithElasticsearchContainer
+
+  frontend:
+    name: Frontend tests + coverage gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+      # Coverage thresholds (core components ≥ 70%) are enforced via
+      # vite.config.ts → test.coverage.thresholds. The grep check below
+      # catches threshold violations that vitest may only log as warnings.
+      - name: Run tests with coverage gate
+        run: |
+          npx vitest run --coverage 2>&1 | tee /tmp/coverage-output.txt
+          if grep -q 'does not meet.*threshold' /tmp/coverage-output.txt; then
+            echo "::error::Coverage thresholds not met — see output above"
+            exit 1
+          fi

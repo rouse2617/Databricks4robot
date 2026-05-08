@@ -1,128 +1,132 @@
-# data4cyber · MCAP 资产数据平台
+# data-platform
 
-> 面向机器人 / 自动驾驶 / CV 算法场景的**统一资产数据平台**。
-> 核心定位:**以 MCAP 为原生数据格式,以"视频片段 (segment)"为最小资产单元**,
-> 用一张 **Bigtable 宽表** 作为统一元数据底座,屏蔽底层存储/算力,
-> 让算法用户"开箱即用",所有交互只通过 SDK / Web UI。
+面向视频 / 多模态**资产元数据、算法状态、检索与交付**的单进程后端 + Web / SDK 工程骨架。
 
----
+> **架构基线与评审文档**以 [`docs/review/README.md`](docs/review/README.md) 为准（当前 **1.0：PostgreSQL + Backend**；**Bigtable 已不作为运行时存储**，`STORAGE_BACKEND=bigtable` 会启动失败）。本页只负责仓库导航与本地启动。
 
-## TL;DR(1 分钟读懂)
+## Runtime snapshot
 
-| 维度 | 结论 |
-| --- | --- |
-| **数据源** | 单一:用户回传的 MCAP 文件(GCS) |
-| **资产单元** | 一段**有效视频片段**(t_start, t_end within MCAP),主键 `asset_id` |
-| **存储底座** | **Bigtable 宽表,9 个 column family**(Phase 0 = PG 上 8 JSONB + `asset_events` 表模拟) |
-| **编排** | Dagster Assets + Ray(Pipes 协议) |
-| **检索** | OpenSearch(Tag/全文) + Vertex AI Vector Search(多模态) + BigQuery(OLAP) |
-| **UI** | 自研 React 核心页 + 嵌入 Foxglove / Dagster / Label Studio / Superset |
-| **云** | GCP 全家桶(GKE / Bigtable / GCS / Pub/Sub / BigQuery / Vertex AI) |
-| **不造的轮子** | DataHub / OpenMetadata(只偷设计模式,不 fork) |
+| 组件 | 状态 |
+|------|------|
+| 存储 | **PostgreSQL**（默认 `STORAGE_BACKEND=postgres`） |
+| 服务 | Go 单进程（`backend/cmd/server`） |
+| 检索 | 可选 **Elasticsearch**（`ELASTICSEARCH_URL`，未配置则搜索接口不可用） |
+| 分析 | 可选 **Trino / Iceberg**（lakehouse 路由与本地脚手架） |
+| Bigtable | **保留代码与测试作历史参考**，不再支持生产运行时 |
 
----
+## Repository layout
 
-## 目录导航
+| 路径 | 说明 |
+|------|------|
+| `backend/` | Go API（assets / mcap / deliveries / algo / search / lakehouse） |
+| `sdk/` | Python SDK（`grace_sdk`） |
+| `Frontend/` | React 前端 |
+| `dagster/` | Dagster 编排骨架 |
+| `deploy/local/` | Docker Compose：最小依赖、全栈、Iceberg、CDC；说明见 [`deploy/local/README.md`](deploy/local/README.md) |
+| `schemas/` | SQL / 阶段 schema |
+| `api/openapi.yaml` | HTTP 契约（与实现一致的源） |
+| `docs/review/` | **评审与设计主文档包**（整体方案、schema 速查、API 指南） |
+| `docs/archive/` | 历史调研与旧版前端规格（仅供参考） |
 
-### 📘 核心文档(按顺序读)
+各子模块细节见对应目录内的 README。
 
-| 文档 | 内容 |
-| --- | --- |
-| [01-overview.md](docs/01-overview.md) | **愿景、场景、核心概念、非目标** |
-| [02-architecture.md](docs/02-architecture.md) | **架构全景**(对齐三级能力图)+ Mermaid |
-| [03-data-model-wide-table.md](docs/03-data-model-wide-table.md) | **宽表设计**(asset_id + 9 列族) |
-| [04-mcap-and-segment.md](docs/04-mcap-and-segment.md) | **MCAP 原生 + Segment 模型** |
-| [05-ui-strategy.md](docs/05-ui-strategy.md) | **Web UI 方案**(借鉴 + 嵌入) |
-| [06-borrowed-patterns.md](docs/06-borrowed-patterns.md) | **DataHub / OpenMetadata 偷师清单** |
-| [07-tech-stack-gcp.md](docs/07-tech-stack-gcp.md) | **GCP 产品选型映射** |
-| [08-roadmap.md](docs/08-roadmap.md) | **Phase 0 / 1 / 2 演进路线** |
+## Quick start
 
-### 📜 架构决策记录(ADR)
+### 1) 本地依赖（最小：Postgres + 可选模拟器）
 
-| ADR | 决策 |
-| --- | --- |
-| [ADR-001](docs/adr/ADR-001-wide-table-with-bigtable.md) | 用 Bigtable 宽表作为统一元数据底座 |
-| [ADR-002](docs/adr/ADR-002-segment-centric-asset.md) | 资产最小单元是 segment 而非整 MCAP |
-| [ADR-003](docs/adr/ADR-003-mcap-as-primary-format.md) | MCAP 作为唯一原生数据格式 |
-| [ADR-004](docs/adr/ADR-004-no-fork-datahub-openmetadata.md) | 不 fork DataHub / OpenMetadata |
-| [ADR-005](docs/adr/ADR-005-ui-embed-strategy.md) | UI 用自研 + iframe 嵌入策略 |
-| [ADR-006](docs/adr/ADR-006-urn-identity.md) | 全平台统一 URN 标识(**外部** API) |
-| [ADR-007](docs/adr/ADR-007-write-path-and-event-contract.md) | **写入路径 & 事件契约**(权威)|
-| [ADR-008](docs/adr/ADR-008-no-databricks-as-core-platform.md) | 不把 Databricks 作为核心平台(含逐项更优解扫描) |
-| [ADR-009](docs/adr/ADR-009-phase1-migration-plan.md) | **Phase 0 → Phase 1 迁移计划**(PG → Bigtable + 索引 5 阶段 runbook) |
-
-### 🗂 Schema / 示例
-
-| 文件 | 内容 |
-| --- | --- |
-| [schemas/fields.yaml](schemas/fields.yaml) | Classification / Tag / Glossary 三层字段注册表 |
-| [schemas/column-families.yaml](schemas/column-families.yaml) | Bigtable 9 个列族定义(目标态) |
-| [schemas/pg-phase0.sql](schemas/pg-phase0.sql) | Phase 0 Postgres DDL(8 JSONB + `asset_events` 表) |
-| [diagrams/architecture.mmd](diagrams/architecture.mmd) | **目标态**架构图(Bigtable + CDC) |
-| [diagrams/phase0-runtime.mmd](diagrams/phase0-runtime.mmd) | **Phase 0 运行态**架构图(PG + Outbox + MCL) |
-
----
-
-## 项目状态
-
-- **阶段**:设计收敛 → 待 Phase 0 开工
-- **负责**:TBD
-- **最后更新**:2026-04-22
-
----
-
-## 一图总览
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    data4cyber Web UI (React)                    │
-│        自研核心页 + iframe(Foxglove/Dagster/LabelStudio)        │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-┌───────────────────────────────┴─────────────────────────────────┐
-│          grace-sdk (Python,算法用户只认这个)                   │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-      ┌─────────────────────────┼─────────────────────────┐
-      │                         │                         │
-┌─────▼──────────┐   ┌──────────▼────────┐   ┌────────────▼────────┐
-│ asset-service  │   │  mcap-gateway     │   │ cluster/transfer    │
-│ (Go)           │   │  (Go, streaming)  │   │ service (独立)      │
-└─────┬──────────┘   └──────────┬────────┘   └─────────────────────┘
-      │                         │
-      │                         │
-┌─────▼─────────────────────────▼─────────────────────────────────┐
-│    ⭐ Cloud Bigtable(asset_id 主键 + 9 列族宽表,目标态)        │
-│       cf:core | cf:time | cf:tag | cf:file |                    │
-│       cf:qa   | cf:event| cf:lineage | cf:algo | cf:emb         │
-│    Phase 0:Cloud SQL Postgres(8 JSONB 伪列族 + asset_events)   │
-└─────┬───────────────────────────────────────────────────────────┘
-      │  CDC (Pub/Sub + Dataflow)
-      │
-      ├─▶ OpenSearch      (Tag / 全文)
-      ├─▶ Vertex AI VS    (多模态 / 向量)
-      ├─▶ BigQuery        (OLAP / 审计)
-      └─▶ Dagster Assets  (编排)
-              │
-              └─▶ Ray on GKE (算力)
-
-─────────────────────────────────────────────────────────────────
-GCS:  grace-raw-mcap / grace-derived / grace-annotation
-      生命周期 → Nearline → Coldline(归档)
+```bash
+make dev-up
 ```
 
----
+默认会拉起 **PostgreSQL**（及本地 Bigtable / Pub/Sub 模拟器；后者仅在不走 GCP 时的可选依赖）。数据库会执行 `backend/migrations` 初始化。
 
-## 推荐阅读路径
+### 2) 后端配置与启动
 
-- **产品 / 管理**: [01-overview](docs/01-overview.md) → [08-roadmap](docs/08-roadmap.md)
-- **架构师**: [02-architecture](docs/02-architecture.md) → [03-data-model-wide-table](docs/03-data-model-wide-table.md) → [ADR 全部](docs/adr/)
-- **后端工程师**: [03](docs/03-data-model-wide-table.md) → [04](docs/04-mcap-and-segment.md) → [schemas/](schemas/)
-- **前端工程师**: [05-ui-strategy](docs/05-ui-strategy.md) → [06-borrowed-patterns](docs/06-borrowed-patterns.md)
-- **算法用户**: [01-overview](docs/01-overview.md)(了解 SDK 能做什么)
+```bash
+cp backend/.env.example backend/.env
+# 按需编辑 DB_*、GRACE_TOKEN、ELASTICSEARCH_URL 等
+make backend-run
+```
 
----
+等价于 `cd backend && make run-server`。详见 [`backend/README.md`](backend/README.md)。
 
-## License / 内部可见性
+### 3) 全栈（Postgres + 后端 + 前端 + Iceberg + Trino + ES + CDC）
 
-- 内部项目,暂未开源。
+```bash
+make all-up
+```
+
+- 前端: http://localhost:5173  
+- 后端: http://localhost:8080  
+- Trino: http://localhost:8082  
+- Elasticsearch: http://localhost:9200  
+- Connect REST: http://localhost:8084
+
+停止：`make all-down`。
+
+### 4) 仅 Iceberg / Trino 湖仓脚手架
+
+```bash
+make iceberg-up
+```
+
+Notebook 与示例脚本在 `deploy/local/iceberg/notebooks/`。大规模本机数据示例（可选）：
+
+```bash
+ROW_COUNT=100000 BATCH_ID=scale_100k make pg-generate-scale
+make iceberg-mvp-host
+make trino-smoke
+```
+
+### 5) 前端
+
+```bash
+make frontend-install
+make frontend-dev
+```
+
+## Environment
+
+- 后端：`backend/.env.example` → `backend/.env`
+- 前端：`Frontend/.env.example`
+
+## Commit 规范
+
+- 提交信息遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/)：`<type>[optional scope]: <description>`
+- 推荐类型：`feat`、`fix`、`docs`、`refactor`、`test`、`chore`
+- 例如：`feat(backend): add delivery retry endpoint`
+
+首次拉取仓库后，建议执行一次以下命令启用本仓库的 commit 校验 hook：
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/commit-msg
+```
+
+启用后，不符合规范的 `git commit` 会被拦截并提示修正。
+
+## 常用 Makefile 目标
+
+| 目标 | 作用 |
+|------|------|
+| `make dev-up` / `dev-down` | 单一 `deploy/local/docker-compose.yml`：默认 Postgres + PgBouncer + 模拟器；`dev-down` 会顺带关掉已启用的 profiles |
+| `make cdc-up` / `cdc-down` | 同一文件 **`--profile cdc`**（Redpanda + Connect）；需先有 **`make dev-up`** 起的 Postgres，详见 [`deploy/local/README.md`](deploy/local/README.md) |
+| `make all-up` / `all-down` | 全栈 compose（前后端、PG、ES、Iceberg/Trino、Redpanda/Debezium CDC、Prometheus、Grafana） |
+| `make backend-run` | 启动 API |
+| `make backend-test` | `go test ./...` |
+| `make test` | 后端 + SDK 单测 |
+| `make iceberg-up` / `iceberg-down` | 独立湖仓 compose |
+
+## README 模板（子模块建议）
+
+子目录 README 建议包含：What · How to Run · Config · API/Interfaces · Directory Structure · Dev Workflow · Known Limitations · Next Milestones。
+
+## Current status（高层）
+
+- [x] PostgreSQL 仓储与单进程路由（含算法 `start` / `finish` / `reset`、`asset_events` 写入）
+- [x] 可选 Elasticsearch 资产搜索、可选 Trino lakehouse 查询
+- [x] 前端资产发现工作台、`sdk` 单测骨架
+- [x] CDC 驱动的异步同步主线（`asset_events` → Bronze，current-state CDC → ES）
+- [ ] 生产级身份认证（当前 Phase 0：`X-Grace-Token`）
+
+历史 Bigtable 实现仍存在于 `backend/internal/bigtable/`（测试与参考），**新功能不要依赖其扩展**。

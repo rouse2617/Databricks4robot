@@ -1,0 +1,330 @@
+---
+description: Databricks4robot project guidance (mirrors CLAUDE.md)
+alwaysApply: true
+---
+
+# CLAUDE.md
+
+Mirror of repository root `CLAUDE.md`. When you change project conventions, update **both** files so Cursor Rules and repo docs stay aligned.
+
+Practical project guidance for coding agents working in `Databricks4robot`.
+
+## Agent behavior (LLM-assisted coding)
+
+Concise habits that reduce wrong assumptions, scope creep, and noisy diffs. Adapted from [andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills) (Karpathy-style pitfalls). **Tradeoff:** these bias toward caution over speed — trivial one-off edits do not need full ceremony.
+
+1. **Think before coding** — State assumptions explicitly. If the ask is ambiguous, spell out interpretations or ask; do not silently pick one. Say when a simpler design fits the goal.
+
+2. **Simplicity first** — Ship the minimum code that satisfies the request. No speculative features, extra configurability, or one-off abstractions. If it reads overbuilt for the problem, simplify.
+
+3. **Surgical changes** — Edit only what the task requires; match existing style and patterns. Do not refactor, reformat, or “clean up” unrelated code or comments. Remove imports/symbols only when **your** change made them unused; you may note pre-existing dead code — do not delete it unless asked.
+
+4. **Goal-driven execution** — Prefer verifiable outcomes: e.g. bugfix → reproduce (test or steps), then fix; behavior change → tests or manual checks named upfront. For multi-step work, use a short plan with a concrete verify step per step.
+
+Project-specific rules follow below (**Development Rules**, OpenAPI/schema checklist, **Definition of Done**).
+
+## Recommended workflow skills (external)
+
+Optional structured workflows from [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills). Use when the task fits; they complement **Agent behavior** above — they do **not** replace repo **Development Rules** or **Definition of Done**.
+
+| Focus | Skill | When to lean on it |
+|-------|--------|---------------------|
+| API & boundaries | [api-and-interface-design](https://github.com/addyosmani/agent-skills/blob/main/skills/api-and-interface-design/SKILL.md) | New/changed HTTP handlers, public modules, error semantics; stay aligned with `api/openapi.yaml`. |
+| Tests first | [test-driven-development](https://github.com/addyosmani/agent-skills/blob/main/skills/test-driven-development/SKILL.md) | Behavior changes in Go or SDK; red → green → refactor. |
+| Vertical slices | [incremental-implementation](https://github.com/addyosmani/agent-skills/blob/main/skills/incremental-implementation/SKILL.md) | Multi-file features; small steps, verify between commits. |
+| Debugging | [debugging-and-error-recovery](https://github.com/addyosmani/agent-skills/blob/main/skills/debugging-and-error-recovery/SKILL.md) | Failing tests or integrations (Postgres, Elasticsearch, Trino, etc.). |
+| Architecture docs | [documentation-and-adrs](https://github.com/addyosmani/agent-skills/blob/main/skills/documentation-and-adrs/SKILL.md) | Material design decisions; record **why** in ADRs / `docs/review/*` without duplicating `api-guide.md`. |
+| Frontend (`Frontend/`) | [frontend-ui-engineering](https://github.com/addyosmani/agent-skills/blob/main/skills/frontend-ui-engineering/SKILL.md) | Components, structure, responsive layout, state; treat **WCAG 2.1 AA** as the accessibility bar unless the task says otherwise. |
+
+Pack overview and tool install: [README](https://github.com/addyosmani/agent-skills/blob/main/README.md) · Cursor: [docs/cursor-setup.md](https://github.com/addyosmani/agent-skills/blob/main/docs/cursor-setup.md).
+
+## What This Repo Is
+
+`Databricks4robot` is a single-backend-process asset platform for MCAP-oriented metadata, delivery tracking, search, lakehouse analysis, and SDK/frontend integration.
+
+- Backend: Go + Gin (`backend/`)
+- SDK: Python + httpx + pydantic (`sdk/`)
+- Frontend: React + TypeScript (`Frontend/`)
+- Orchestration: Dagster (`dagster/`)
+- Online store: PostgreSQL by default, Bigtable retained as an alternate backend
+- Search: Elasticsearch (`backend/internal/elasticsearch`, `/api/v1/search/assets`)
+- Lakehouse query layer: Trino over Iceberg (`backend/internal/trino`, `/api/v1/lakehouse/*`)
+
+## Current Architecture (Source of Truth)
+
+### Backend runtime
+
+- **Single process only**: `backend/cmd/server/main.go`
+- **Router entry**: `backend/routes/routes.go`
+- **Storage backend**: PostgreSQL only. `STORAGE_BACKEND=postgres` (default).
+  - `STORAGE_BACKEND=bigtable` is **DEPRECATED**: the server fails fast at startup. The `internal/bigtable` package is kept as historical reference and is scheduled for removal; do not add new features against it.
+
+### Backend layering
+
+- `handler -> usecase -> repository`
+- Handlers: `backend/internal/handlers/{asset,mcap,delivery,registry,search,lakehouse}`
+- Usecases: `backend/internal/usecase/`
+- Repositories:
+  - Postgres (active): `backend/internal/postgres/client.go`, `backend/internal/postgres/repos.go`
+  - Bigtable (DEPRECATED, retained as reference): `backend/internal/bigtable/`
+- Optional service clients:
+  - Elasticsearch: `backend/internal/elasticsearch/client.go`
+  - Trino: `backend/internal/trino/client.go`
+
+### Data schema sources
+
+- Logical schema companion: `docs/review/sql.md`
+- OpenAPI source: `api/openapi.yaml`
+- PG schema: `schemas/pg-phase0.sql`
+
+### 文档索引
+
+| 文档 | 路径 | 内容 |
+|------|------|------|
+| API 使用指南 | `docs/review/api-guide.md` | 全部端点 curl 示例、错误码、工作流 |
+| OpenAPI 规范 | `api/openapi.yaml` | 机器可读 API 定义 |
+| 后端 README | `backend/README.md` | 架构、开发指南、测试、性能 |
+| 算法注册表 | `backend/config/algo_registry.yaml` | 算法定义、依赖、输出要求 |
+| Tag 注册表 | `backend/config/tag_registry.yaml` | Tag 类型、枚举值 |
+| 数据模型 | `docs/review/algo-lifecycle-and-data-model.md` | 算法生命周期设计 |
+| Grace ↔ 平台迁移对照 | `docs/review/grace-migration-notes.md` | cyber-grace `grace_videos` 与本仓库资产/mcap/算法字段与幂等 |
+| 下一步任务清单 | `docs/review/next-steps-tasks.md` | P0/P1/P2/P3 任务拆分、DoD、估时、依赖、Phase Gate |
+| Schema Companion | `docs/review/sql.md` | 表结构、字段命名、DDL section 锚点 |
+| Lakehouse 查询边界（归档） | `docs/archive/research/lakehouse-query-and-tag-filtering.md` | 历史调研：Postgres / Trino / Iceberg 查询职责 |
+| 后训练平台架构（归档） | `docs/archive/research/advanced-training-data-platform-architecture.md` | 历史调研：长期架构演进 |
+
+## Removed / Disabled Capabilities
+
+These are intentionally removed and should not be reintroduced unless explicitly requested:
+
+- `GCSRawBucket` capability
+- `/api/v1/mcap/upload/init`
+- `/api/v1/mcap/:id/download-url`
+- Multi-process backend split (`asset-service`, `mcap-gateway`, `delivery-service`)
+- OpenSearch runtime/code paths (Elasticsearch is the current search backend)
+- Bigtable storage backend at runtime (`STORAGE_BACKEND=bigtable` fails fast; package retained as historical reference, do not extend)
+
+## API Conventions (Must Keep)
+
+- Auth: `X-Grace-Token` (temporary phase-0 auth)
+- Request tracing: `X-Request-ID` middleware
+- Error envelope: `code`, `message`, `request_id`, `details`
+- Idempotency:
+  - `POST /api/v1/deliveries` requires `Idempotency-Key`
+- Pagination:
+  - `page`, `page_size`, `next_token` style must stay consistent
+
+## Development Rules
+
+1. **Keep interfaces stable** between handlers/usecases/repos.
+2. **Update OpenAPI when API behavior changes**.
+3. **No dead endpoints**: if route is removed, remove handler/docs/sdk usage together.
+4. **Respect source-of-truth schema docs** (`docs/review/sql.md` + `schemas/pg-phase0.sql`) for table/key/CF naming.
+5. **Prefer simple structure**:
+   - keep storage package layout as `client.go + repos.go` unless complexity requires split.
+6. **Event schema changes** — when adding or modifying event types emitted to `asset_events`:
+   - Update or create the corresponding JSON Schema in `backend/schemas/events/`.
+   - Update `backend/schemas/events/registry.json` if the current version changes.
+   - **Minor bumps** (adding optional fields): edit the existing `.v<N>.json` in place. Do NOT add new required fields.
+   - **Major bumps** (new required fields, type changes, field removals): create a new `.v<N+1>.json` file and update `registry.json`.
+   - See `backend/schemas/events/VERSIONING.md` for the full procedure.
+
+## Commit Message Convention (Required)
+
+All commits in this repository MUST follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
+
+Required header format:
+
+```text
+<type>[optional scope]: <description>
+```
+
+Allowed primary types (recommended for this repo):
+
+- `feat`: new feature
+- `fix`: bug fix
+- `docs`: documentation-only changes
+- `refactor`: code changes that neither fix a bug nor add a feature
+- `test`: adding or updating tests
+- `chore`: maintenance tasks (build, tooling, housekeeping)
+
+Rules:
+
+- Use lowercase `type` and concise, imperative `description`.
+- Keep the first line focused; add a body when context is needed.
+- For breaking changes, use either `!` (for example `feat(api)!: ...`) or a `BREAKING CHANGE:` footer.
+- Prefer adding scope when useful, such as `backend`, `frontend`, `sdk`, `docs`, or `dagster`.
+
+Examples:
+
+- `feat(backend): add lakehouse report export endpoint`
+- `fix(frontend): handle empty delivery state on first load`
+- `docs(api): clarify idempotency key requirements`
+- `refactor(sdk): simplify request retry policy`
+
+## Verification Checklist
+
+Run after backend changes:
+
+```bash
+cd backend
+make fmt
+make vet
+go test ./...
+```
+
+Storage package coverage targets:
+
+```bash
+go test ./internal/bigtable -coverprofile=/tmp/bt.cov && go tool cover -func=/tmp/bt.cov
+go test ./internal/postgres -coverprofile=/tmp/pg.cov && go tool cover -func=/tmp/pg.cov
+```
+
+## Local Commands
+
+### Backend
+
+```bash
+cd backend
+make deps
+make run
+make bt-bootstrap
+```
+
+### SDK
+
+```bash
+cd sdk
+uv sync --dev
+uv run pytest tests/unit/
+```
+
+### Frontend
+
+```bash
+cd Frontend
+npm install
+npm run dev
+```
+
+## Environment Variables (Backend)
+
+From `backend/.env.example`:
+
+- `ENV`, `PORT`, `STORAGE_BACKEND`
+- `BIGTABLE_PROJECT`, `BIGTABLE_INSTANCE`
+- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- `TRINO_ENABLED`, `TRINO_URL`, `TRINO_CATALOG`, `TRINO_SCHEMA`, `LAKEHOUSE_REPORT_PATH`
+- `ELASTICSEARCH_URL`
+- `GCS_PROJECT`, `GCS_DERIVED_BUCKET`
+- `PUBSUB_PROJECT`, `TOPIC_MCAP_FINALIZED`, `TOPIC_ASSET_EVENTS`
+- `GRACE_TOKEN`
+- `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
+- `CB_ENABLED`, `CB_WINDOW_SEC`, `CB_THRESHOLD`, `CB_COOLDOWN_SEC`
+- `LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`
+- `GOOGLE_APPLICATION_CREDENTIALS` (optional local)
+
+## 功能开发后必须更新的文件清单
+
+每次开发新功能或修改现有功能后，按以下 checklist 逐项检查并更新：
+
+### 新增 API 端点
+
+| 文件 | 说明 |
+|------|------|
+| `backend/internal/handlers/*/` | 新增 handler 方法 |
+| `backend/internal/usecase/*/` | 新增业务逻辑 |
+| `backend/internal/repository/*.go` | 接口定义（如需新仓库方法） |
+| `backend/internal/bigtable/repos.go` | Bigtable 实现 |
+| `backend/internal/postgres/repos.go` | PostgreSQL 实现 |
+| `backend/internal/elasticsearch/client.go` | 搜索客户端变更（如影响 search API） |
+| `backend/internal/trino/client.go` | 湖仓查询客户端变更（如影响 lakehouse API） |
+| `backend/routes/routes.go` | 注册路由 |
+| `backend/cmd/server/main.go` | 依赖注入接线 |
+| `api/openapi.yaml` | OpenAPI 规范 |
+| `docs/review/api-guide.md` | API 使用指南（curl 示例） |
+| `backend/README.md` | API 端点表格 |
+
+### 新增算法
+
+| 文件 | 说明 |
+|------|------|
+| `backend/config/algo_registry.yaml` | 算法定义（versions, depends_on, output） |
+| `docs/review/api-guide.md` | 可用算法表格 |
+
+不需要改代码 — 状态机和依赖链逻辑是通用的。
+
+### 新增 Tag
+
+| 文件 | 说明 |
+|------|------|
+| `backend/config/tag_registry.yaml` | Tag 定义（type, values, max_length） |
+| `docs/review/api-guide.md` | Tags 校验规则说明 |
+
+### 新增 Bigtable 表或列族
+
+> **DEPRECATED — do not add.** Bigtable is no longer a supported runtime backend.
+> If new storage requirements arise, extend `internal/postgres` and the
+> repository interfaces in `internal/repository`.
+
+### 修改 Model 字段
+
+| 文件 | 说明 |
+|------|------|
+| `backend/internal/models/*.go` | 模型定义 |
+| `backend/internal/bigtable/repos.go` | `rowToAsset()` / `Set()` 等转换函数 |
+| `backend/internal/postgres/repos.go` | SQL 查询 |
+| `api/openapi.yaml` | Schema 定义 |
+| `docs/review/api-guide.md` | 响应示例 |
+
+### 修改中间件
+
+| 文件 | 说明 |
+|------|------|
+| `backend/internal/middleware/*.go` | 中间件实现 |
+| `backend/routes/routes.go` | 中间件注册顺序 |
+| `backend/README.md` | 中间件表格 |
+
+### 修改错误码
+
+| 文件 | 说明 |
+|------|------|
+| `backend/internal/httpresp/response.go` | 错误响应函数 |
+| `api/openapi.yaml` | 错误响应 schema |
+| `docs/review/api-guide.md` | 错误码参考表 |
+
+### 新增或修改事件类型
+
+| 文件 | 说明 |
+|------|------|
+| `backend/schemas/events/<event_type>.v<N>.json` | 事件 payload JSON Schema |
+| `backend/schemas/events/registry.json` | 事件类型注册表（版本号、schema 文件引用） |
+| `backend/schemas/events/VERSIONING.md` | 版本演进规范（参考） |
+
+规则：minor bump 只加可选字段（不改 `required`）；major bump 新建 `.v<N+1>.json` 文件。
+
+### 测试相关
+
+| 场景 | 需要更新的测试文件 |
+|------|---------------------|
+| Bigtable 仓库变更 | `backend/internal/bigtable/repos_test.go` |
+| Handler 变更 | `backend/internal/handlers/*/handler_test.go` |
+| 路由变更 | `backend/routes/routes_test.go` |
+| 端到端流程变更 | `backend/internal/bigtable/e2e_test.go` |
+| 集成测试 | `backend/scripts/test_bigtable_e2e.sh` |
+
+## Definition of Done (Backend Changes)
+
+每次提交前必须满足：
+
+- [ ] `go build ./...` 编译通过
+- [ ] `go test ./...` 全部通过
+- [ ] `go vet ./...` 无警告
+- [ ] 如果改了 API → 更新 `api/openapi.yaml`
+- [ ] 如果改了 API → 更新 `docs/review/api-guide.md`
+- [ ] 如果改了架构/流程 → 更新 `backend/README.md`
+- [ ] 如果改了约定/规则 → 更新 `CLAUDE.md`
+- [ ] **Do not** add new code against `internal/bigtable` (deprecated)
+- [ ] 如果新增了算法/Tag → 更新对应 YAML 注册表
+- [ ] 如果新增或修改了事件类型 → 更新 `backend/schemas/events/` 下的 JSON Schema + `registry.json`
+- [ ] 新代码有对应的单元测试

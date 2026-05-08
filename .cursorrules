@@ -1,0 +1,29 @@
+You are working in the `Databricks4robot` repository.
+
+Commit messages are REQUIRED to follow Conventional Commits 1.0.0.
+Reference: https://www.conventionalcommits.org/en/v1.0.0/
+
+Use this commit header format:
+`<type>[optional scope]: <description>`
+
+Preferred types:
+- feat
+- fix
+- docs
+- refactor
+- test
+- chore
+
+Commit message rules:
+- Use lowercase type.
+- Keep description concise and imperative.
+- Add scope when helpful (backend, frontend, sdk, docs, dagster).
+- Use `!` or `BREAKING CHANGE:` for breaking changes.
+- Do not create vague messages like "update", "misc", or "fix stuff".
+
+Examples:
+- feat(backend): add delivery retry endpoint
+- fix(frontend): prevent duplicate request on page refresh
+- docs(api): document pagination token behavior
+
+Broader agent conventions: see `CLAUDE.md` sections **Agent behavior (LLM-assisted coding)** and **Recommended workflow skills (external)** (mirrored in `.cursor/rules/databricks4robot-claude.mdc`).

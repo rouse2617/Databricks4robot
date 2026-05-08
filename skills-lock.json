@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "lark-whiteboard": {
+      "source": "larksuite/cli",
+      "sourceType": "github",
+      "skillPath": "skills/lark-whiteboard/SKILL.md",
+      "computedHash": "762d654a4da79c65f8ba50977bd4d6b567e1f7f87706eaf70305fc3532a1e1e0"
+    }
+  }
+}
