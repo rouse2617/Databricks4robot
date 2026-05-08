@@ -1,0 +1,646 @@
+basePath: /api/v1
+definitions:
+  httpresp.ErrorBody:
+    properties:
+      code:
+        type: string
+      details:
+        additionalProperties: {}
+        type: object
+      message:
+        type: string
+      request_id:
+        type: string
+    type: object
+  models.Asset:
+    properties:
+      algo_results:
+        additionalProperties:
+          type: string
+        type: object
+      asset_id:
+        description: Identity
+        type: string
+      asset_level:
+        type: integer
+      asset_type:
+        description: ── NEW typed fields (Phase 2 — schema evolution) ────────────────────
+        type: string
+      created_at:
+        description: Timestamps / versioning
+        type: string
+      delivery_count:
+        type: integer
+      duration_ms:
+        type: integer
+      duration_sec:
+        type: number
+      end_timestamp_ns:
+        type: integer
+      env:
+        type: string
+      expire_at:
+        type: string
+      files:
+        additionalProperties:
+          type: string
+        type: object
+      files_json:
+        additionalProperties: true
+        type: object
+      last_delivered_at:
+        type: string
+      last_delivered_to:
+        type: string
+      lifecycle_meta:
+        additionalProperties: true
+        type: object
+      lifecycle_state:
+        type: string
+      mcap_file_id:
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      owner:
+        type: string
+      parent_asset_id:
+        type: string
+      parent_end_offset_ms:
+        type: integer
+      parent_start_offset_ms:
+        type: integer
+      project_id:
+        type: string
+      retention_tier:
+        type: string
+      reviewer:
+        type: string
+      root_asset_id:
+        type: string
+      segment_index:
+        type: integer
+      segment_locator:
+        description: Segment locator — deterministic SHA-1 of mcap_file_id + start_ns
+          + end_ns.
+        type: string
+      split_algo_name:
+        type: string
+      split_algo_version:
+        type: string
+      split_method:
+        type: string
+      split_reason:
+        type: string
+      split_run_id:
+        type: string
+      start_timestamp_ns:
+        description: ── Legacy fields (retained for backward compatibility) ──────────────
+        type: integer
+      status:
+        $ref: '#/definitions/models.AssetStatus'
+      storage_uri:
+        type: string
+      tags:
+        additionalProperties:
+          type: string
+        type: object
+      task:
+        type: string
+      tenant_id:
+        type: string
+      thumb_uri:
+        type: string
+      type:
+        type: string
+      updated_at:
+        type: string
+      version:
+        type: integer
+    type: object
+  models.AssetStatus:
+    enum:
+    - approved
+    - rejected
+    - superseded
+    - archived
+    type: string
+    x-enum-varnames:
+    - AssetStatusApproved
+    - AssetStatusRejected
+    - AssetStatusSuperseded
+    - AssetStatusArchived
+host: localhost:8080
+info:
+  contact: {}
+  description: Backend API for the Data Platform (asset, algo, delivery, mcap management).
+  title: Data Platform API
+  version: "1.0"
+paths:
+  /assets:
+    post:
+      consumes:
+      - application/json
+      description: Create a new asset segment from an MCAP file
+      parameters:
+      - description: Create asset request
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Asset'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Create asset
+      tags:
+      - assets
+  /assets/{id}:
+    delete:
+      description: Soft delete an asset (status = archived)
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Delete asset
+      tags:
+      - assets
+    get:
+      description: Get asset by ID
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Asset'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Get asset
+      tags:
+      - assets
+  /assets/{id}/algo/{algo_key}/finish:
+    post:
+      consumes:
+      - application/json
+      description: Mark an algorithm as ok or failed on the given asset
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Algorithm key (name@version)
+        in: path
+        name: algo_key
+        required: true
+        type: string
+      - description: Finish algo request
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Finish algorithm
+      tags:
+      - algorithms
+  /assets/{id}/algo/{algo_key}/reset:
+    post:
+      description: Reset a failed or ok algorithm back to pending state
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Algorithm key (name@version)
+        in: path
+        name: algo_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Reset algorithm
+      tags:
+      - algorithms
+  /assets/{id}/algo/{algo_key}/start:
+    post:
+      consumes:
+      - application/json
+      description: Mark an algorithm as running on the given asset
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Algorithm key (name@version)
+        in: path
+        name: algo_key
+        required: true
+        type: string
+      - description: Start algo request
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Start algorithm
+      tags:
+      - algorithms
+  /assets/{id}/events:
+    get:
+      description: List generic asset events with optional event_type/algo_key filters
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - collectionFormat: csv
+        description: Repeated event type filter; supports wildcard suffix like algo_*
+        in: query
+        items:
+          type: string
+        name: event_type
+        type: array
+      - description: Filter event_payload.algo_key
+        in: query
+        name: algo_key
+        type: string
+      - description: Fetch older events with event_seq < cursor
+        format: int64
+        in: query
+        name: cursor
+        type: integer
+      - description: Alias of cursor
+        format: int64
+        in: query
+        name: before_event_seq
+        type: integer
+      - description: Fetch events with event_seq > after_event_seq
+        format: int64
+        in: query
+        name: after_event_seq
+        type: integer
+      - description: Lower bound of occurred_at (RFC3339)
+        in: query
+        name: start_time
+        type: string
+      - description: Upper bound of occurred_at (RFC3339)
+        in: query
+        name: end_time
+        type: string
+      - default: 50
+        description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: List asset events
+      tags:
+      - assets
+  /assets/{id}/tags:
+    post:
+      consumes:
+      - application/json
+      description: Create or update one tag entry under asset_tags and append tag_upserted
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Tag upsert request
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Asset'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Upsert asset tag
+      tags:
+      - assets
+  /assets/{id}/tags/{key}:
+    delete:
+      description: Delete one tag entry under asset_tags and append tag_deleted when
+        present
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Tag key
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Asset'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Delete asset tag
+      tags:
+      - assets
+  /assets/{id}/tags/history:
+    get:
+      description: List tag-specific events sourced from asset_events
+      parameters:
+      - description: Asset ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fetch older events with event_seq < cursor
+        format: int64
+        in: query
+        name: cursor
+        type: integer
+      - description: Alias of cursor
+        format: int64
+        in: query
+        name: before_event_seq
+        type: integer
+      - description: Fetch events with event_seq > after_event_seq
+        format: int64
+        in: query
+        name: after_event_seq
+        type: integer
+      - default: 50
+        description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: List asset tag history
+      tags:
+      - assets
+  /assets:batch_get:
+    post:
+      consumes:
+      - application/json
+      description: Retrieve multiple assets by ID in a single request (max 100)
+      parameters:
+      - description: Batch get request
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Batch get assets
+      tags:
+      - assets
+  /deliveries:
+    post:
+      consumes:
+      - application/json
+      description: Create a new delivery for a set of assets
+      parameters:
+      - description: Idempotency key
+        in: header
+        name: Idempotency-Key
+        required: true
+        type: string
+      - description: Commit delivery request
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httpresp.ErrorBody'
+      security:
+      - GraceToken: []
+      summary: Commit delivery
+      tags:
+      - deliveries
+securityDefinitions:
+  GraceToken:
+    in: header
+    name: X-Grace-Token
+    type: apiKey
+swagger: "2.0"

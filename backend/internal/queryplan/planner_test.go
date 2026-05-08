@@ -1,0 +1,56 @@
+package queryplan
+
+import (
+	"testing"
+
+	"data-platform/internal/queryir"
+)
+
+func TestPGBridgePlanner_Plan(t *testing.T) {
+	planner := NewPGBridgePlanner(false)
+	plan, err := planner.Plan(queryir.QueryRequest{
+		Scope: queryir.QueryScope{Resource: "assets"},
+		Where: &queryir.QueryExpr{
+			Pred: &queryir.QueryPredicate{Field: "owner", Op: "eq", Value: "alice"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Plan() err = %v", err)
+	}
+	if plan.NormalizedQuery.SchemaVersion != "v1" {
+		t.Fatalf("unexpected normalized schema version: %q", plan.NormalizedQuery.SchemaVersion)
+	}
+	if len(plan.Steps) != 1 || plan.Steps[0].Engine != "postgres" || plan.Steps[0].Mode != "filter" {
+		t.Fatalf("unexpected steps: %+v", plan.Steps)
+	}
+}
+
+func TestPGBridgePlanner_RejectsUnsupportedScope(t *testing.T) {
+	planner := NewPGBridgePlanner(false)
+	_, err := planner.Plan(queryir.QueryRequest{
+		SchemaVersion: "v1",
+		Scope:         queryir.QueryScope{Resource: "deliveries"},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestPGBridgePlanner_PlanWithElasticsearch(t *testing.T) {
+	planner := NewPGBridgePlanner(true)
+	plan, err := planner.Plan(queryir.QueryRequest{
+		Scope: queryir.QueryScope{Resource: "assets"},
+		Facets: []queryir.QueryFacet{
+			{Field: "owner", Size: 10},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Plan() err = %v", err)
+	}
+	if !plan.UseElasticsearch {
+		t.Fatalf("expected elasticsearch plan")
+	}
+	if len(plan.Steps) != 3 {
+		t.Fatalf("unexpected steps: %+v", plan.Steps)
+	}
+}

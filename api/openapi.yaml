@@ -1,0 +1,1453 @@
+openapi: 3.1.0
+info:
+  title: data-platform API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+security:
+  - GraceToken: []
+components:
+  securitySchemes:
+    GraceToken:
+      type: apiKey
+      in: header
+      name: X-Grace-Token
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+  parameters:
+    RequestIdHeader:
+      in: header
+      name: X-Request-ID
+      schema:
+        type: string
+    IdempotencyKeyHeader:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema:
+        type: string
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+    AssetID:
+      type: string
+      minLength: 8
+      maxLength: 8
+      pattern: '^[0-9A-Za-z]{8}$'
+      description: Primary key for assets (8 alphanumeric ASCII characters).
+    McapFileID:
+      type: string
+      minLength: 8
+      maxLength: 8
+      pattern: '^[0-9A-Za-z]{8}$'
+      description: Primary key for mcap_files (same format as asset_id).
+    ActionID:
+      type: string
+      minLength: 8
+      maxLength: 8
+      pattern: '^[0-9A-Za-z]{8}$'
+      description: Primary key for actions (same format as asset_id).
+    Asset:
+      type: object
+      description: >
+        Asset resource. Documented shape matches what integrations should rely on;
+        see also docs/review/api-guide.md. Primary lifecycle and typing fields are
+        lifecycle_state, asset_type, and duration_ms.
+      properties:
+        asset_id: { $ref: '#/components/schemas/AssetID' }
+        mcap_file_id: { $ref: '#/components/schemas/McapFileID' }
+        segment_locator: { type: string, description: "Deterministic SHA-1 of mcap_file_id + start_ns + end_ns" }
+        start_timestamp_ns: { type: integer, format: int64 }
+        end_timestamp_ns: { type: integer, format: int64 }
+        lifecycle_state:
+          type: string
+          enum: [created, processing, ready, delivered, archived, superseded, failed, rejected]
+          description: "Lifecycle state; must match PostgreSQL chk_lifecycle_state and GET /api/v1/lifecycle-states."
+        asset_type:
+          type: string
+          description: "Asset type (e.g. segment, clip, frame_set, derived_asset)."
+        duration_ms:
+          type: integer
+          format: int64
+          description: "Duration in milliseconds (aligned with start_timestamp_ns / end_timestamp_ns)."
+        owner: { type: string, description: "Owner identifier" }
+        reviewer: { type: string, description: "Reviewer identifier" }
+        retention_tier:
+          type: string
+          description: "Retention policy tier (e.g. standard, long-term, archive)"
+        expire_at:
+          type: string
+          format: date-time
+          description: "Expiration timestamp for retention policy"
+          nullable: true
+        storage_uri:
+          type: string
+          description: "Primary storage URI (GCS path)"
+        thumb_uri:
+          type: string
+          description: "Thumbnail URI"
+        tenant_id:
+          type: string
+          description: "Tenant identifier (pre-positioned for multi-tenant support)"
+          nullable: true
+        project_id:
+          type: string
+          description: "Project identifier (pre-positioned for multi-tenant support)"
+          nullable: true
+        asset_level: { type: integer, description: "Hierarchy depth (0 = root segment)" }
+        parent_asset_id:
+          allOf:
+            - $ref: '#/components/schemas/AssetID'
+          nullable: true
+          description: "Parent asset id for split/derived assets"
+        root_asset_id:
+          allOf:
+            - $ref: '#/components/schemas/AssetID'
+          nullable: true
+          description: "Root ancestor asset id"
+        delivery_count: { type: integer, description: "Number of times this asset has been delivered" }
+        last_delivered_at: { type: string, format: date-time, nullable: true }
+        last_delivered_to: { type: string, description: "Last delivery customer ID", nullable: true }
+        env: { type: string, description: "Environment tag (e.g. indoor, outdoor)" }
+        task: { type: string, description: "Task identifier" }
+        version: { type: integer, format: int64 }
+        algo_results:
+          type: object
+          description: "Per-algorithm latest status / outputs (projection; map key is algo key such as algo@version:field)"
+          additionalProperties: { type: string }
+        tags:
+          type: object
+          description: "Tag key-value pairs from asset_tags projection"
+          additionalProperties: { type: string }
+        files:
+          type: object
+          description: "File references. Key = logical name, value = GCS URI"
+          additionalProperties: { type: string }
+        metadata:
+          type: object
+          description: "Structured metadata JSONB"
+          additionalProperties: true
+        lifecycle_meta:
+          type: object
+          description: "Lifecycle metadata (retention_tier, archive_after_days, etc.)"
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AssetListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Asset' }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+    Action:
+      type: object
+      description: >
+        Time-bounded annotation inside a segment asset (mcap → seg → action,
+        third layer of the business model). Actions do NOT participate in
+        lifecycle_state, deliveries, or the asset list API.
+      required: [action_id, asset_id, start_ns, end_ns, source_type, version]
+      properties:
+        action_id: { $ref: '#/components/schemas/ActionID' }
+        asset_id: { $ref: '#/components/schemas/AssetID', description: "Parent seg asset" }
+        start_ns: { type: integer, format: int64, description: "Half-open interval start (ns, same scale as assets.start_timestamp_ns)" }
+        end_ns: { type: integer, format: int64, description: "Half-open interval end (ns); end_ns >= start_ns" }
+        action_index: { type: integer, nullable: true, description: "Optional human-readable ordinal inside the seg" }
+        primary_label: { type: string, description: "Primary label used for facets / list display" }
+        labels:
+          type: array
+          items: { type: string }
+          description: "Multi-label set (GIN-indexed in PG)"
+        description: { type: string }
+        attrs:
+          type: object
+          additionalProperties: true
+          description: "Free-form payload (algo outputs, geometry, etc.)"
+        source_type:
+          type: string
+          enum: [human, algo, rule, system]
+        source_name: { type: string, description: "Algo name / annotator id", nullable: true }
+        source_version: { type: string, nullable: true }
+        run_id: { type: string, nullable: true }
+        confidence: { type: number, format: double, nullable: true }
+        external_id: { type: string, nullable: true, description: "Producer-side idempotency fingerprint; UNIQUE with (asset_id, source_name)" }
+        tenant_id: { type: string, nullable: true }
+        project_id: { type: string, nullable: true }
+        is_deleted: { type: boolean }
+        version: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ActionCreateRequest:
+      type: object
+      required: [start_ns, end_ns]
+      properties:
+        start_ns: { type: integer, format: int64 }
+        end_ns: { type: integer, format: int64 }
+        action_index: { type: integer, nullable: true }
+        primary_label: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+        description: { type: string }
+        attrs:
+          type: object
+          additionalProperties: true
+        source_type:
+          type: string
+          enum: [human, algo, rule, system]
+          default: human
+        source_name: { type: string }
+        source_version: { type: string }
+        run_id: { type: string }
+        confidence: { type: number, format: double, nullable: true }
+        external_id: { type: string }
+    ActionListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Action' }
+        asset_id: { $ref: '#/components/schemas/AssetID' }
+        total: { type: integer }
+    DeliveryCommitRequest:
+      type: object
+      required: [asset_ids, customer_id]
+      properties:
+        asset_ids:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/AssetID' }
+        customer_id: { type: string }
+        contract_id: { type: string }
+        note: { type: string }
+        owner: { type: string }
+    StartAlgoRequest:
+      type: object
+      required: [method]
+      properties:
+        method: { type: string, description: "Processing method identifier" }
+        run_id: { type: string, description: "External orchestration run ID" }
+    FinishAlgoRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, failed]
+          description: "Algo completion status"
+        output_uri:
+          type: string
+          description: "GCS URI of the output artifact (required when status=ok and algo requires URI)"
+        run_id: { type: string, description: "External orchestration run ID" }
+        reason:
+          type: string
+          description: "Failure reason (required when status=failed)"
+        result_size_bytes:
+          type: integer
+          format: int64
+          description: "Size of the result in bytes"
+        extra_fields:
+          type: object
+          additionalProperties: true
+          description: "Additional output fields required by the algo registry"
+    AlgoLifecycleResponse:
+      type: object
+      properties:
+        asset_id: { type: string }
+        algo_key: { type: string }
+        status: { type: string }
+    AlgoEvent:
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        asset_id: { $ref: '#/components/schemas/AssetID' }
+        algo_key: { type: string }
+        prev_status: { type: string, nullable: true }
+        new_status: { type: string }
+        run_id: { type: string, nullable: true }
+        reason: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+    AlgoEventListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AlgoEvent' }
+    AssetEvent:
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        event_seq: { type: integer, format: int64 }
+        event_type: { type: string }
+        payload_schema_version: { type: string }
+        asset_id: { $ref: '#/components/schemas/AssetID' }
+        mcap_file_id:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/McapFileID'
+        event_source: { type: string }
+        request_id: { type: string, nullable: true }
+        publish_state: { type: string }
+        event_payload:
+          type: object
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+        occurred_at: { type: string, format: date-time }
+    AssetEventListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AssetEvent' }
+        limit:
+          type: integer
+        next_cursor:
+          type: integer
+          format: int64
+          nullable: true
+    TagUpsertRequest:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+          description: "Registered tag key"
+        value:
+          type: string
+          description: "Tag value"
+    LakehouseReport:
+      type: object
+      description: Local Iceberg MVP report generated by the Spark lakehouse builder.
+      properties:
+        generated_at: { type: string, format: date-time }
+        sync_mode: { type: string }
+        sync_note: { type: string }
+        tables:
+          type: array
+          items:
+            type: object
+            properties:
+              table_name: { type: string }
+              row_count: { type: integer }
+        questions:
+          type: object
+          additionalProperties: true
+    LakehouseStatus:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        healthy: { type: boolean }
+        catalog: { type: string }
+        schema: { type: string }
+        error: { type: string }
+    LakehouseTableCount:
+      type: object
+      properties:
+        table_name: { type: string }
+        row_count: { type: integer, format: int64 }
+    LakehouseTableListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/LakehouseTableCount' }
+    LakehouseItemsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    SearchReindexResponse:
+      type: object
+      properties:
+        dry_run: { type: boolean }
+        total_assets: { type: integer, format: int64 }
+        indexed: { type: integer, format: int64 }
+        deleted: { type: integer, format: int64 }
+        failed: { type: integer, format: int64 }
+        duration_ms: { type: integer, format: int64 }
+        errors:
+          type: array
+          items: { type: string }
+        elasticsearch_doc_count: { type: integer, format: int64 }
+        assets_scanned: { type: integer, format: int64 }
+        documents_indexed: { type: integer, format: int64 }
+        documents_deleted: { type: integer, format: int64 }
+    SyncStatusData:
+      type: object
+      properties:
+        dagster_run_id: { type: string }
+        checked_at: { type: string, format: date-time }
+        pg_total_count: { type: integer, format: int64 }
+        iceberg_total_count: { type: integer, format: int64 }
+        count_diff_pct:
+          type: number
+          format: double
+          description: "Difference ratio in [0,1]. Example: 0.001 = 0.1%."
+        pg_status_dist:
+          type: object
+          additionalProperties: true
+        iceberg_status_dist:
+          type: object
+          additionalProperties: true
+        status_diff:
+          type: object
+          additionalProperties: true
+        is_alert: { type: boolean }
+        iceberg_max_seq: { type: integer, format: int64 }
+    SyncStatusResponse:
+      type: object
+      properties:
+        available: { type: boolean }
+        source:
+          type: string
+          enum: [realtime, sync_reconciliation]
+        message: { type: string }
+        data:
+          $ref: '#/components/schemas/SyncStatusData'
+    McapFile:
+      type: object
+      properties:
+        mcap_file_id: { $ref: '#/components/schemas/McapFileID' }
+        gcs_path: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        raw_hash_md5: { type: string }
+        ingest_state: { type: string, enum: [pending, summarized, failed] }
+        start_timestamp_ns: { type: integer, format: int64 }
+        end_timestamp_ns: { type: integer, format: int64 }
+        channel_count: { type: integer }
+        chunk_count: { type: integer }
+        owner: { type: string }
+        process_state:
+          type: object
+          additionalProperties: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+    QueryPage:
+      type: object
+      properties:
+        page: { type: integer, minimum: 1, default: 1 }
+        page_size: { type: integer, minimum: 1, maximum: 200, default: 20 }
+        offset:
+          type: integer
+          minimum: 0
+          description: "Optional bridge paging: offset for target offset/limit style. In bridge mode, offset must be a multiple of limit."
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 200
+          description: "Optional bridge paging: limit for target offset/limit style. In bridge mode, offset must be a multiple of limit."
+    QueryScope:
+      type: object
+      required: [resource]
+      properties:
+        resource:
+          type: string
+          enum: [assets]
+    QuerySelect:
+      type: object
+      properties:
+        fields:
+          type: array
+          items: { type: string }
+    QuerySort:
+      type: object
+      required: [field]
+      properties:
+        field: { type: string }
+        direction: { type: string, enum: [asc, desc] }
+    QueryFacet:
+      type: object
+      required: [field]
+      properties:
+        field: { type: string }
+        size: { type: integer, minimum: 1 }
+    QueryDebug:
+      type: object
+      properties:
+        explain: { type: boolean }
+    QueryExpr:
+      type: object
+      additionalProperties: false
+      properties:
+        and:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/QueryExpr' }
+        or:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/QueryExpr' }
+        not:
+          $ref: '#/components/schemas/QueryExpr'
+        pred:
+          $ref: '#/components/schemas/QueryPredicate'
+      oneOf:
+        - required: [and]
+        - required: [or]
+        - required: [not]
+        - required: [pred]
+    QueryPredicate:
+      type: object
+      required: [field, op]
+      properties:
+        field: { type: string }
+        op:
+          type: string
+          enum: [eq, ne, lt, gt, lte, gte, like, ilike, in, nin, contains, between]
+        value: {}
+    QueryRequest:
+      type: object
+      required: [scope]
+      properties:
+        schema_version: { type: string, default: v1 }
+        mode:
+          type: string
+          enum: [structured, keyword, semantic, similar]
+        scope: { $ref: '#/components/schemas/QueryScope' }
+        select: { $ref: '#/components/schemas/QuerySelect' }
+        where: { $ref: '#/components/schemas/QueryExpr' }
+        sort:
+          type: array
+          items: { $ref: '#/components/schemas/QuerySort' }
+        page: { $ref: '#/components/schemas/QueryPage' }
+        facets:
+          type: array
+          items: { $ref: '#/components/schemas/QueryFacet' }
+        debug: { $ref: '#/components/schemas/QueryDebug' }
+    FieldCapabilityBrief:
+      type: object
+      required: [field, engines]
+      properties:
+        field: { type: string }
+        engines:
+          type: array
+          items: { type: string }
+    DebugPlanStep:
+      type: object
+      required: [engine, mode]
+      properties:
+        engine: { type: string }
+        mode: { type: string }
+    DebugPlan:
+      type: object
+      properties:
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/DebugPlanStep' }
+    QueryFacetBucket:
+      type: object
+      properties:
+        value: { type: string }
+        count: { type: integer, format: int64 }
+    QueryValidateResponse:
+      type: object
+      properties:
+        valid: { type: boolean }
+        normalized_query: { $ref: '#/components/schemas/QueryRequest' }
+        warnings:
+          type: array
+          items: { type: string }
+        field_capabilities:
+          type: array
+          items: { $ref: '#/components/schemas/FieldCapabilityBrief' }
+        debug_plan: { $ref: '#/components/schemas/DebugPlan' }
+    QueryRunResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Asset' }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+        columns:
+          type: array
+          items: { type: string }
+        column_defs:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              type: { type: string }
+              nullable: { type: boolean }
+        offset: { type: integer }
+        limit: { type: integer }
+        facets:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: '#/components/schemas/QueryFacetBucket' }
+        warnings:
+          type: array
+          items: { type: string }
+        debug_plan: { $ref: '#/components/schemas/DebugPlan' }
+    SavedQuery:
+      type: object
+      properties:
+        saved_query_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        resource: { type: string }
+        schema_version: { type: string }
+        query_ir_json: { $ref: '#/components/schemas/QueryRequest' }
+        owner: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+paths:
+  /api/v1/queries/validate:
+    post:
+      summary: Validate Query IR request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryRequest' }
+      responses:
+        '200':
+          description: query is valid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueryValidateResponse' }
+        '400':
+          description: syntax/shape error (INVALID_ARGUMENT)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: semantic/planning error (UNSUPPORTED_FIELD/UNSUPPORTED_OPERATOR/UNPLANNABLE_QUERY)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/queries/run:
+    post:
+      summary: Execute Query IR request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryRequest' }
+      responses:
+        '200':
+          description: query result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueryRunResponse' }
+        '400':
+          description: syntax/shape error (INVALID_ARGUMENT)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: semantic/planning error (UNSUPPORTED_FIELD/UNSUPPORTED_OPERATOR/UNPLANNABLE_QUERY)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/saved-queries:
+    get:
+      summary: List saved queries
+      responses:
+        '200':
+          description: saved queries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SavedQuery' }
+    post:
+      summary: Create saved query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, query_ir_json]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                owner: { type: string }
+                query_ir_json: { $ref: '#/components/schemas/QueryRequest' }
+      responses:
+        '201':
+          description: created saved query
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedQuery' }
+  /api/v1/saved-queries/{id}:
+    get:
+      summary: Get saved query
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: saved query
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedQuery' }
+    patch:
+      summary: Update saved query
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, query_ir_json]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                owner: { type: string }
+                query_ir_json: { $ref: '#/components/schemas/QueryRequest' }
+      responses:
+        '200':
+          description: updated saved query
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedQuery' }
+    delete:
+      summary: Delete saved query
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: deleted
+  /api/v1/admin/search/reindex:
+    post:
+      summary: Rebuild Elasticsearch `assets` index from PostgreSQL
+      description: >
+        Scans all non-deleted assets and bulk-indexes documents. Does not modify
+        `asset_events` rows. Uses the normal `X-Grace-Token` auth path for now
+        and requires reachable ES.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+                  default: false
+                page_size:
+                  type: integer
+                  maximum: 500
+                  default: 200
+      responses:
+        '200':
+          description: Summary counters
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchReindexResponse' }
+        '401':
+          description: invalid or missing admin token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Elasticsearch not configured
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/lakehouse/report:
+    get:
+      summary: Get local lakehouse MVP report
+      description: Returns the latest Iceberg query report generated by `make iceberg-mvp` or `make iceberg-mvp-host`.
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LakehouseReport' }
+        '404':
+          description: report not generated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/lakehouse/status:
+    get:
+      summary: Get Trino lakehouse query status
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LakehouseStatus' }
+  /api/v1/lakehouse/tables:
+    get:
+      summary: List Iceberg MVP table row counts via Trino
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LakehouseTableListResponse' }
+        '503':
+          description: trino disabled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/lakehouse/sync-status:
+    get:
+      summary: Get realtime or reconciled PG vs Iceberg sync status
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncStatusResponse' }
+        '503':
+          description: postgres unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/lakehouse/training-assets:
+    get:
+      summary: Query training snapshot assets via Trino
+      parameters:
+        - in: query
+          name: snapshot_id
+          schema: { type: string, default: mvp_hand_tracking_quality_v1 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LakehouseItemsResponse' }
+  /api/v1/lakehouse/recompute-candidates:
+    get:
+      summary: Query historical assets that should be recomputed after an algorithm version change
+      parameters:
+        - in: query
+          name: algo_key
+          schema: { type: string, default: hand_tracking@1.2.0 }
+        - in: query
+          name: target_version
+          schema: { type: string, default: next }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LakehouseItemsResponse' }
+  /api/v1/lakehouse/tag-timeline:
+    get:
+      summary: Query tag current-state update timeline via Trino
+      parameters:
+        - in: query
+          name: tag_key
+          schema: { type: string, default: quality }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LakehouseItemsResponse' }
+  /api/v1/lakehouse/quality-distribution:
+    get:
+      summary: Query MCAP segment quality distribution via Trino
+      parameters:
+        - in: query
+          name: window
+          schema: { type: string, enum: [30d], default: 30d }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LakehouseItemsResponse' }
+  /api/v1/lakehouse/customer-replay:
+    get:
+      summary: Query customer delivery replay manifest via Trino
+      parameters:
+        - in: query
+          name: customer_id
+          schema: { type: string, default: 'urn:grace:customer:A' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LakehouseItemsResponse' }
+  /api/v1/assets:
+    post:
+      summary: Create asset
+      responses:
+        '201': { description: created }
+        '422':
+          description: invalid domain state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}:
+    get:
+      summary: Get asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    patch:
+      summary: Update asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: concurrent conflict (asset was modified between GET and PATCH)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      summary: Soft-delete asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+  /api/v1/assets/{id}/algo/{algo_key}/start:
+    post:
+      summary: Start algo processing on an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: algo_key
+          required: true
+          schema: { type: string }
+          description: "Algo key in format name@version (e.g. hand_tracking@1.2.0)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartAlgoRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoLifecycleResponse' }
+        '400':
+          description: "Invalid algo key (INVALID_ALGO_KEY)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: "Algo already running (ALGO_ALREADY_RUNNING) or invalid state transition (INVALID_STATE_TRANSITION) or concurrent conflict (CONCURRENT_CONFLICT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/algo/{algo_key}/finish:
+    post:
+      summary: Finish algo processing on an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: algo_key
+          required: true
+          schema: { type: string }
+          description: "Algo key in format name@version (e.g. hand_tracking@1.2.0)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FinishAlgoRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoLifecycleResponse' }
+        '400':
+          description: "Invalid algo key (INVALID_ALGO_KEY)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: "Invalid state transition (INVALID_STATE_TRANSITION) or concurrent conflict (CONCURRENT_CONFLICT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: "Missing required field (MISSING_REQUIRED_FIELD) or missing reason (MISSING_REASON)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/algo/{algo_key}/reset:
+    post:
+      summary: Reset algo to pending for retry
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: algo_key
+          required: true
+          schema: { type: string }
+          description: "Algo key in format name@version (e.g. hand_tracking@1.2.0)"
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoLifecycleResponse' }
+        '400':
+          description: "Invalid algo key (INVALID_ALGO_KEY)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: "Invalid state transition (INVALID_STATE_TRANSITION) or concurrent conflict (CONCURRENT_CONFLICT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/events:
+    get:
+      summary: List asset events for an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: event_type
+          schema: { type: string }
+          description: "Repeated filter; supports wildcard suffix such as algo_*"
+        - in: query
+          name: algo_key
+          schema: { type: string }
+          description: "Filter event_payload.algo_key"
+        - in: query
+          name: cursor
+          schema: { type: integer, format: int64 }
+          description: "Fetch older events with event_seq < cursor"
+        - in: query
+          name: before_event_seq
+          schema: { type: integer, format: int64 }
+          description: "Alias of cursor"
+        - in: query
+          name: after_event_seq
+          schema: { type: integer, format: int64 }
+          description: "Fetch events with event_seq > after_event_seq"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetEventListResponse' }
+        '400':
+          description: "Invalid path id or query (INVALID_ARGUMENT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/tags:
+    post:
+      summary: Create or update a single tag on an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TagUpsertRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: "Invalid tag (INVALID_TAG)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/tags/{key}:
+    delete:
+      summary: Delete a single tag from an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: key
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/tags/history:
+    get:
+      summary: List tag change history for an asset
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: cursor
+          schema: { type: integer, format: int64 }
+          description: "Fetch older events with event_seq < cursor"
+        - in: query
+          name: before_event_seq
+          schema: { type: integer, format: int64 }
+          description: "Alias of cursor"
+        - in: query
+          name: after_event_seq
+          schema: { type: integer, format: int64 }
+          description: "Fetch events with event_seq > after_event_seq"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetEventListResponse' }
+        '400':
+          description: "Invalid path id or query (INVALID_ARGUMENT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/actions:
+    post:
+      summary: Create an action (seg-internal time-bounded annotation)
+      description: >
+        Creates one row in the `actions` table. The parent asset MUST exist
+        with `asset_type=segment`. The write and the `action_upserted` event
+        emission happen in the same transaction.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Parent seg asset UUID
+          schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActionCreateRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Action' }
+        '400':
+          description: "Invalid request (INVALID_ARGUMENT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Parent seg not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: "Duplicate (asset_id, source_name, external_id) (CONCURRENT_CONFLICT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: "Parent is not a segment, or range falls outside seg (INVALID_ACTION)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      summary: List actions for a seg
+      description: >
+        Returns actions ordered by `(start_ns ASC, action_id ASC)`. Filters:
+        `at` (point-in-time, `start_ns <= at < end_ns`), `from` / `to`
+        (overlap), `label` (matches `primary_label` OR membership in `labels[]`).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: Parent seg asset UUID
+          schema: { $ref: '#/components/schemas/AssetID' }
+        - in: query
+          name: at
+          description: Point-in-time timestamp (ns); returns actions whose interval covers it
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: from
+          description: Lower bound (ns) of an overlap window
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: to
+          description: Upper bound (ns, exclusive) of an overlap window
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: label
+          description: Match primary_label OR membership in labels[]
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionListResponse' }
+        '400':
+          description: "Invalid asset_id or query (INVALID_ARGUMENT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Parent seg not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/mcap-files:
+    get:
+      summary: List MCAP files with pagination
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/McapFile' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  page_size: { type: integer }
+        '500':
+          description: internal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/mcap-files/{id}:
+    get:
+      summary: Get MCAP file by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: ok
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/mcap/upload/finalize:
+    post:
+      summary: Finalize upload
+      responses:
+        '200': { description: ok }
+  /api/v1/deliveries:
+    post:
+      summary: Commit delivery (idempotent)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryCommitRequest' }
+      responses:
+        '201': { description: created }
+        '409':
+          description: idempotency conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}:
+    get:
+      summary: Get delivery
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}/items:
+    get:
+      summary: List delivery items
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+        '500':
+          description: internal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/customers/{customer_id}/deliveries:
+    get:
+      summary: List customer deliveries
+      parameters:
+        - in: path
+          name: customer_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+      responses:
+        '200': { description: ok }
+        '500':
+          description: internal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets:batch_get:
+    post:
+      summary: Batch get assets by IDs
+      description: >
+        Retrieve multiple assets in a single request. Returns only found assets;
+        missing IDs are silently skipped. Maximum 100 IDs per request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset_ids]
+              properties:
+                asset_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Asset' }
+        '400':
+          description: invalid request (empty or >100 IDs)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
