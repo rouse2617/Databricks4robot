@@ -1,4 +1,4 @@
-"""asset-sdk: Python SDK for the data4cyber platform."""
+"""asset-sdk: Python SDK for the cyber-databrew platform."""
 
 from asset_sdk.client import AssetClientSDK
 

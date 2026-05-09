@@ -12,8 +12,8 @@ import (
 
 	_ "github.com/trinodb/trino-go-client/trino"
 
-	"data-platform/internal/config"
-	"data-platform/internal/metrics"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 )
 
 type Client struct {

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 func TestBronzeSinkContract_WritesOrderedJSONLLinesAndNoTmpResidue(t *testing.T) {

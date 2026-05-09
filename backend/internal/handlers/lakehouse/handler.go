@@ -12,10 +12,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/httpresp"
-	"data-platform/internal/metrics"
-	"data-platform/internal/postgres"
-	trinopkg "data-platform/internal/trino"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	trinopkg "github.com/CyberOrigin2077/cyber-databrew/internal/trino"
 )
 
 type Handler struct {

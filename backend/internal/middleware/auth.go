@@ -3,7 +3,7 @@ package middleware
 import (
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 )
 
 // StaticTokenAuth is a Phase 0 placeholder.

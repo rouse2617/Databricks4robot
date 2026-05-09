@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 type AssetRepo struct {
@@ -599,7 +599,7 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version`
 	err := r.c.db.Exec(ctx, q,
-		f.McapFileID, f.RawHashMD5, nullable(f.RawHashSHA256),
+		f.McapFileID, nullable(f.RawHashMD5), nullable(f.RawHashSHA256),
 		f.GCSPath, f.SizeBytes, f.FileDurationMs,
 		f.StartTimestampNs, f.EndTimestampNs,
 		f.ChannelCount, f.ChunkCount, string(f.IngestState),

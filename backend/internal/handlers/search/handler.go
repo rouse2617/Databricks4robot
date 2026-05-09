@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/elasticsearch"
-	"data-platform/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 )
 
 // Handler serves search endpoints backed by Elasticsearch.

@@ -51,7 +51,7 @@ describe("EventsPage", () => {
 			</MemoryRouter>,
 		);
 		expect(
-			screen.getByText("查看资产事件流，支持按 Asset ID 和事件类型筛选。"),
+			screen.getByText(/接口为按资产查询/, { exact: false }),
 		).toBeTruthy();
 	});
 
@@ -79,5 +79,26 @@ describe("EventsPage", () => {
 			full,
 			expect.objectContaining({ event_type: undefined, limit: 100 }),
 		);
+	});
+
+	it("reads asset_id from the URL query string on load", async () => {
+		const id = "7VBGimAO";
+		render(
+			<MemoryRouter initialEntries={[`/events?asset_id=${id}`]}>
+				<EventsPage />
+			</MemoryRouter>,
+		);
+		const input = screen.getByPlaceholderText(
+			"输入 8 位 Asset ID",
+		) as HTMLInputElement;
+		await waitFor(() => {
+			expect(input.value).toBe(id);
+		});
+		await waitFor(() => {
+			expect(listEventsMock).toHaveBeenCalledWith(
+				id,
+				expect.objectContaining({ limit: 100 }),
+			);
+		});
 	});
 });

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 type SavedQueryRepo struct {

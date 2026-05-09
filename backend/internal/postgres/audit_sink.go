@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"data-platform/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
 )
 
 // AuditSink persists audit events to the audit_events table.

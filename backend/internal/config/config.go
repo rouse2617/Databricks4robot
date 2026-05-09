@@ -136,7 +136,7 @@ func Load() *Config {
 		CDCEnabled:                 getenv("CDC_ENABLED", "false"),
 		CDCSourceDriver:            getenv("CDC_SOURCE_DRIVER", ""),
 		CDCKafkaBrokers:            getenv("CDC_KAFKA_BROKERS", "localhost:19092"),
-		CDCKafkaGroupID:            getenv("CDC_KAFKA_GROUP_ID", "data-platform-cdc"),
+		CDCKafkaGroupID:            getenv("CDC_KAFKA_GROUP_ID", "cyber-databrew-cdc"),
 		CDCKafkaPollTimeoutMs:      getenv("CDC_KAFKA_POLL_TIMEOUT_MS", "1000"),
 		CDCKafkaMaxBatch:           getenv("CDC_KAFKA_MAX_BATCH", "100"),
 		CDCMaxConsecutiveFailures:  getenv("CDC_MAX_CONSECUTIVE_FAILURES", "20"),

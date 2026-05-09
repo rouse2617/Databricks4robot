@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"data-platform/internal/config"
-	"data-platform/internal/models"
-	assetUC "data-platform/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
 type testAssetRepo struct {

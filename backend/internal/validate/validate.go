@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 // allowedStatuses is the set of valid asset statuses.

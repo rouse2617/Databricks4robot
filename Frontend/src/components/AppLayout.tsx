@@ -17,6 +17,9 @@ import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
+declare const __APP_VERSION__: string;
+declare const __APP_BUILD_REF__: string;
+
 const { Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
 
@@ -56,6 +59,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const screens = useBreakpoint();
 	const isMobile = !screens.lg;
 	const siderWidth = 220;
+	const appVersion = __APP_VERSION__ || "dev";
+	const buildRef = __APP_BUILD_REF__ || "local";
 
 	return (
 		<Layout style={{ minHeight: "100vh" }}>
@@ -112,7 +117,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 						strong
 						style={{ color: "#F1F5F9", fontSize: 15, letterSpacing: 0.5 }}
 					>
-						data4cyber
+						Cyber Databrew
 					</Typography.Text>
 				</button>
 
@@ -188,6 +193,20 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 							</div>
 						</div>
 					</Dropdown>
+					<div
+						style={{
+							color: "#64748B",
+							fontSize: 11,
+							marginTop: 8,
+							paddingLeft: 8,
+							whiteSpace: "nowrap",
+							overflow: "hidden",
+							textOverflow: "ellipsis",
+						}}
+						title={`v${appVersion} (${buildRef})`}
+					>
+						{`v${appVersion} (${buildRef})`}
+					</div>
 				</div>
 			</Sider>
 

@@ -1,0 +1,31 @@
+# Non-sensitive defaults for backend (see backend/.env.example, backend/internal/config/config.go).
+# Override per cluster with kustomize patches or `kubectl edit configmap` as needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cyber-databrew-config
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: backend
+data:
+  ENV: production
+  PORT: "8080"
+  STORAGE_BACKEND: postgres
+  # Optional services — enable when you have in-cluster or managed endpoints.
+  TRINO_ENABLED: "false"
+  TRINO_URL: "http://trino:8080"
+  TRINO_CATALOG: iceberg
+  TRINO_SCHEMA: robot
+  ELASTICSEARCH_URL: ""
+  # Default path in container; mount a real report or leave missing (lakehouse /report returns 404).
+  LAKEHOUSE_REPORT_PATH: /var/lakehouse/lakehouse_report.json
+  GCS_PROJECT: green-valley-442103
+  GCS_DERIVED_BUCKET: grace-derived-green-valley-442103
+  PUBSUB_PROJECT: green-valley-442103
+  TOPIC_MCAP_FINALIZED: gcs.mcap.finalized.v1
+  TOPIC_ASSET_EVENTS: grace-asset-events
+  LOG_LEVEL: info
+  LOG_FORMAT: json
+  CDC_ENABLED: "false"
+  RATE_LIMIT_RPS: "100"
+  CB_ENABLED: "false"

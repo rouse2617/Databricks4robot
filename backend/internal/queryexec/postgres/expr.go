@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"data-platform/internal/filter"
-	"data-platform/internal/queryir"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 type SQLClause struct {

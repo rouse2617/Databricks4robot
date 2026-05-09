@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # BuildKit cache mount speeds up repeat `npm ci` (persists tarballs across builds).
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -10,6 +9,10 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY . .
 ARG VITE_API_BASE_URL=http://localhost:8080
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ARG VITE_APP_VERSION=0.0.0
+ENV VITE_APP_VERSION=$VITE_APP_VERSION
+ARG VITE_BUILD_REF=local
+ENV VITE_BUILD_REF=$VITE_BUILD_REF
 RUN npm run build
 
 FROM nginx:alpine

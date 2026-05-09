@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"data-platform/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 )
 
 func NewKafkaSourceFromConfig(cfg *config.Config, runtimeCfg RuntimeConfig) *KafkaSource {

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 // BronzeEventWriter is the minimal capability needed to materialize Bronze

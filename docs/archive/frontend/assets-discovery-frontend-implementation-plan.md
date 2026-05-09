@@ -670,8 +670,8 @@ URL 应满足：
 
 基于现有前端封装：
 
-- [assets.ts](/Users/hrp/cyber/Databricks4robot/Frontend/src/api/assets.ts:1)
-- [types.ts](/Users/hrp/cyber/Databricks4robot/Frontend/src/api/types.ts:1)
+- [assets.ts](/Users/hrp/cyber/cyber-databrew/Frontend/src/api/assets.ts:1)
+- [types.ts](/Users/hrp/cyber/cyber-databrew/Frontend/src/api/types.ts:1)
 
 ### 10.2 第一阶段前端适配层建议
 

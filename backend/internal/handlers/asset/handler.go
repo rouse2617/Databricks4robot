@@ -9,14 +9,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/audit"
-	"data-platform/internal/filter"
-	"data-platform/internal/httpresp"
-	"data-platform/internal/id"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
-	assetUC "data-platform/internal/usecase/asset"
-	"data-platform/internal/validate"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/validate"
 )
 
 type Handler struct {

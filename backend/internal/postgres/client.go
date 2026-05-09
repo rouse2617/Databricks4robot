@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"data-platform/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 )
 
 // Client owns a connection pool and dispatches all SQL through `db`. When

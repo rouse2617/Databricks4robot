@@ -9,8 +9,8 @@ package bigtable
 import (
 	"context"
 
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 type bigtableNoopTxRunner struct{}

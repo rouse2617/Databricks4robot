@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Practical project guidance for coding agents working in `Databricks4robot`.
+Practical project guidance for coding agents working in `cyber-databrew`.
 
 ## Agent behavior (LLM-assisted coding)
 
@@ -31,9 +31,15 @@ Optional structured workflows from [addyosmani/agent-skills](https://github.com/
 
 Pack overview and tool install: [README](https://github.com/addyosmani/agent-skills/blob/main/README.md) · Cursor: [docs/cursor-setup.md](https://github.com/addyosmani/agent-skills/blob/main/docs/cursor-setup.md).
 
+## Naming: repository vs Go module
+
+- **Git repository / CI / Kubernetes / container images** use the product name **`cyber-databrew`** where external identifiers matter (URLs, workload names, image registry paths).
+- **Go backend** uses **`module github.com/CyberOrigin2077/cyber-databrew`** in `backend/go.mod`; packages import as `github.com/CyberOrigin2077/cyber-databrew/...`.
+- **Module-path changes** remain a broad refactor that can affect tooling and generated artifacts. When needed, run it as a dedicated change and verify with `go mod tidy` plus full backend tests.
+
 ## What This Repo Is
 
-`Databricks4robot` is a single-backend-process asset platform for MCAP-oriented metadata, delivery tracking, search, lakehouse analysis, and SDK/frontend integration.
+`cyber-databrew` is a single-backend-process asset platform for MCAP-oriented metadata, delivery tracking, search, lakehouse analysis, and SDK/frontend integration.
 
 - Backend: Go + Gin (`backend/`)
 - SDK: Python + httpx + pydantic (`sdk/`)
@@ -384,7 +390,7 @@ From `backend/.env.example`:
 - [ ] 如果改了 API → 更新 `api/openapi.yaml`
 - [ ] 如果改了 API → 更新 `docs/review/api-guide.md`
 - [ ] 如果改了架构/流程 → 更新 `backend/README.md`
-- [ ] 如果改了约定/规则 → 更新 `CLAUDE.md` **以及** `.cursor/rules/databricks4robot-claude.mdc`（保持镜像一致）
+- [ ] 如果改了约定/规则 → 更新 `CLAUDE.md` **以及** `.cursor/rules/cyber-databrew-claude.mdc`（保持镜像一致）
 - [ ] **Do not** add new code against `internal/bigtable` (deprecated)
 - [ ] 如果新增了算法/Tag → 更新对应 YAML 注册表
 - [ ] 如果新增或修改了事件类型 → 更新 `backend/schemas/events/` 下的 JSON Schema + `registry.json`

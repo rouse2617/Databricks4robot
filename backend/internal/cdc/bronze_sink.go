@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 // BronzeSinkConfig holds configuration for the staging parquet writer.

@@ -1,6 +1,6 @@
 package cdc
 
-import "data-platform/internal/config"
+import "github.com/CyberOrigin2077/cyber-databrew/internal/config"
 
 func BuildRuntimeConfig(cfg *config.Config) RuntimeConfig {
 	enabled := cfg.CDCEnabled == "true"

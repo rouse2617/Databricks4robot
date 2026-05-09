@@ -24,9 +24,9 @@ import (
 	"fmt"
 	"time"
 
-	"data-platform/internal/config"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 // Custom errors for algorithm lifecycle operations.

@@ -1,4 +1,4 @@
-module data-platform
+module github.com/CyberOrigin2077/cyber-databrew
 
 go 1.25.0
 
@@ -17,7 +17,6 @@ require (
 	github.com/swaggo/swag v1.16.6
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/elasticsearch v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/trinodb/trino-go-client v0.333.0
 	google.golang.org/api v0.274.0
 	gopkg.in/yaml.v3 v3.0.1

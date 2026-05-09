@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"data-platform/internal/config"
-	"data-platform/internal/id"
-	"data-platform/internal/middleware"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 var (

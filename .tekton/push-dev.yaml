@@ -1,0 +1,118 @@
+# Cyber Databrew — quick dev path: push to branch `dev` → build → push image → rollout cyber-databrew-dev.
+# No PR required. Use: git checkout -b dev && git push -u origin dev
+#
+# Coexists with deploy-dev.yaml (PR + /deploy-dev). Prefer this for solo iteration.
+#
+# yaml-language-server: $schema=https://raw.githubusercontent.com/redhat-developer/vscode-tekton/refs/heads/main/scheme/tekton.dev/v1beta1_PipelineRun.json
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: push-dev-backend-{{revision}}
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[dev]"
+    pipelinesascode.tekton.dev/on-path-change: "[backend/**, .tekton/push-dev.yaml]"
+    pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
+    pipelinesascode.tekton.dev/task: "git-clone"
+    pipelinesascode.tekton.dev/max-keep-runs: "10"
+spec:
+  serviceAccountName: tekton-builder
+  podTemplate:
+    securityContext:
+      fsGroup: 65532
+  # taskRunSpecs:
+  #   - pipelineTaskName: rollout-dev
+  #     taskServiceAccountName: tekton-deploy-dev
+  taskRunSpecs:
+    - pipelineTaskName: build-and-push
+      taskPodTemplate:
+        nodeSelector:
+          build-pool-tier: warm
+        tolerations:
+          - key: build-pool-tier
+            operator: Equal
+            value: warm
+            effect: NoSchedule
+      stepOverrides:
+        - name: build-and-push
+          resources:
+            requests:
+              cpu: "2"
+              memory: "6Gi"
+      sidecarOverrides:
+        - name: buildkitd
+          resources:
+            requests:
+              ephemeral-storage: "10Gi"
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+    - name: pac-gitauth
+      secret:
+        secretName: "{{git_auth_secret}}"
+  pipelineSpec:
+    workspaces:
+      - name: shared-workspace
+      - name: pac-gitauth
+    tasks:
+      - name: fetch-repository
+        taskRef:
+          name: git-clone
+        workspaces:
+          - name: output
+            workspace: shared-workspace
+          - name: basic-auth
+            workspace: pac-gitauth
+        params:
+          - name: url
+            value: "{{repo_url}}"
+          - name: revision
+            value: "{{revision}}"
+
+      - name: build-and-push
+        retries: 1
+        runAfter:
+          - fetch-repository
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: buildkit
+            - name: namespace
+              value: tekton-pipelines
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+        params:
+          - name: IMAGE
+            value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:{{revision}}
+          - name: DOCKERFILE
+            value: Dockerfile
+          - name: CONTEXT
+            value: backend
+          - name: CACHE_IMAGE
+            value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:buildcache
+
+      - name: rollout-dev
+        runAfter:
+          - build-and-push
+        taskSpec:
+          steps:
+            - name: kubectl-rollout
+              image: alpine/k8s:1.31.4
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+                NS="cyber-databrew-dev"
+                DEPLOY="cyber-databrew-backend"
+                CONTAINER="api"
+                IMG="us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:{{revision}}"
+                kubectl set image "deployment/${DEPLOY}" "${CONTAINER}=${IMG}" -n "${NS}"
+                kubectl rollout status "deployment/${DEPLOY}" -n "${NS}" --timeout=300s

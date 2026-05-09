@@ -1,4 +1,4 @@
-"""Dagster software-defined assets for data4cyber."""
+"""Dagster software-defined assets for cyber-databrew."""
 
 from dagster import asset, AssetIn, Output
 import dagster

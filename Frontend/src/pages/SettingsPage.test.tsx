@@ -11,9 +11,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsPage from "./SettingsPage";
 
 // Polyfill matchMedia for Ant Design's responsive observer
+function clearLocalStorage() {
+	const ls = window.localStorage;
+	if (typeof ls?.clear === "function") {
+		ls.clear();
+		return;
+	}
+	for (let i = ls.length - 1; i >= 0; i--) {
+		const k = ls.key(i);
+		if (k) ls.removeItem(k);
+	}
+}
+
 beforeEach(() => {
 	// Ensure persisted state from previous tests doesn't hide idle UI controls.
-	window.localStorage.clear();
+	clearLocalStorage();
 
 	Object.defineProperty(window, "matchMedia", {
 		writable: true,

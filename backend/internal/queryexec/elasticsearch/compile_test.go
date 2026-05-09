@@ -3,8 +3,8 @@ package elasticsearch
 import (
 	"testing"
 
-	"data-platform/internal/queryir"
-	"data-platform/internal/queryplan"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryplan"
 )
 
 func TestCompile_IncludesFacetsAndTreeQuery(t *testing.T) {

@@ -10,14 +10,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/config"
-	adminH "data-platform/internal/handlers/admin"
-	assetH "data-platform/internal/handlers/asset"
-	deliveryH "data-platform/internal/handlers/delivery"
-	mcapH "data-platform/internal/handlers/mcap"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
-	assetUC "data-platform/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
 type routeAssetRepo struct{}

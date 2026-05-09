@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cdc-connectors
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: cdc-connect
+data:
+  postgres-unified-cdc.json: |
+    {
+      "name": "postgres-unified-cdc",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "database.hostname": "postgres",
+        "database.port": "5432",
+        "database.user": "postgres",
+        "database.password": "postgres",
+        "database.dbname": "data4cyber",
+        "database.server.name": "data4cyber",
+        "database.encoding": "UTF8",
+        "table.include.list": "public.assets,public.asset_tags,public.asset_algo_latest,public.mcap_files,public.asset_events",
+        "topic.prefix": "data4cyber",
+        "snapshot.mode": "initial",
+        "plugin.name": "pgoutput",
+        "publication.autocreate.mode": "all_tables",
+        "slot.name": "debezium_unified",
+        "publication.name": "debezium_unified_pub"
+      }
+    }

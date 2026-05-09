@@ -16,10 +16,10 @@ import (
 	"fmt"
 	"time"
 
-	"data-platform/internal/config"
-	"data-platform/internal/middleware"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 // Sentinel errors surfaced to handlers.
@@ -223,8 +223,12 @@ type ListInput struct {
 	Limit     int
 }
 
-// List validates the parent seg exists then returns matching actions ordered
+// List validates the parent exists then returns matching actions ordered
 // by (start_ns ASC, action_id ASC).
+//
+// Actions are defined only on segment assets; for other asset types the API
+// returns an empty list (200) so asset-detail UIs can load without surfacing
+// an error. Create still rejects non-segment parents with ErrParentNotSeg.
 func (u *Usecase) List(ctx context.Context, in ListInput) ([]*models.Action, error) {
 	parent, err := u.assets.Get(ctx, in.AssetID)
 	if err != nil {
@@ -234,7 +238,7 @@ func (u *Usecase) List(ctx context.Context, in ListInput) ([]*models.Action, err
 		return nil, ErrSegNotFound
 	}
 	if parent.AssetType != "" && parent.AssetType != "segment" {
-		return nil, ErrParentNotSeg
+		return []*models.Action{}, nil
 	}
 	return u.actions.ListByAsset(ctx, in.AssetID, repository.ActionListOptions{
 		PointAtNs: in.PointAtNs,

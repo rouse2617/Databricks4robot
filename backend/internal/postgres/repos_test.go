@@ -2,11 +2,11 @@ package postgres
 
 import (
 	"context"
-	"data-platform/internal/config"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
 	"encoding/json"
 	"errors"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"reflect"
 	"strings"
 	"testing"

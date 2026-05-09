@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"data-platform/internal/middleware"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 )
 
 func TestLog_DefaultSink_DoesNotPanic(t *testing.T) {

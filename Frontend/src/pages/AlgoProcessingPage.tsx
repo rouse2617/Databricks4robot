@@ -93,6 +93,10 @@ export default function AlgoProcessingPage() {
 		setPageSize(newSize);
 	};
 
+	// When applying a filter, keep the UI consistent by treating the "total" as the
+	// filtered result size for the currently loaded page (this page is client-side filtered).
+	const effectiveTotal = statusFilter.length === 0 ? total : filteredAssets.length;
+
 	// Collect failed pairs from currently displayed (filtered) assets
 	const failedPairs = collectFailedPairs(filteredAssets, algorithms);
 
@@ -140,7 +144,10 @@ export default function AlgoProcessingPage() {
 						<Checkbox.Group
 							options={STATUS_OPTIONS}
 							value={statusFilter}
-							onChange={(vals) => setStatusFilter(vals as CellStatus[])}
+							onChange={(vals) => {
+								setStatusFilter(vals as CellStatus[]);
+								setPage(1);
+							}}
 						/>
 					</Space>
 					<Button
@@ -177,7 +184,7 @@ export default function AlgoProcessingPage() {
 					assets={filteredAssets}
 					algorithms={algorithms}
 					loading={loading}
-					total={total}
+					total={effectiveTotal}
 					page={page}
 					pageSize={pageSize}
 					onPageChange={handlePageChange}

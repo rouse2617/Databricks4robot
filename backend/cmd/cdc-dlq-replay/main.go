@@ -13,7 +13,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
-	"data-platform/internal/cdc"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/cdc"
 )
 
 func main() {

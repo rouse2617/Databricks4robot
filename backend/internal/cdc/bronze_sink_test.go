@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 func TestBronzeSink_Disabled(t *testing.T) {

@@ -3,8 +3,8 @@ package postgres
 import (
 	"testing"
 
-	"data-platform/internal/queryir"
-	"data-platform/internal/queryplan"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryplan"
 )
 
 func TestExecutor_Compile(t *testing.T) {

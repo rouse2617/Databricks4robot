@@ -8,6 +8,10 @@ import {
 import { authApi } from "../api/auth";
 import { UNAUTHORIZED_EVENT } from "../api/client";
 
+const DEV_ACCESS_TOKEN = import.meta.env.DEV
+	? (import.meta.env.VITE_DEV_ACCESS_TOKEN ?? "").trim()
+	: "";
+
 interface AuthContextValue {
 	isAuthenticated: boolean;
 	loading: boolean;
@@ -31,8 +35,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 			.then(() => {
 				if (!cancelled) setIsAuthenticated(true);
 			})
-			.catch(() => {
-				if (!cancelled) setIsAuthenticated(false);
+			.catch(async () => {
+				if (!DEV_ACCESS_TOKEN) {
+					if (!cancelled) setIsAuthenticated(false);
+					return;
+				}
+				try {
+					await authApi.login(DEV_ACCESS_TOKEN);
+					if (!cancelled) setIsAuthenticated(true);
+				} catch {
+					if (!cancelled) setIsAuthenticated(false);
+				}
 			})
 			.finally(() => {
 				if (!cancelled) setLoading(false);

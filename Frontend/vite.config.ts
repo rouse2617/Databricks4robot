@@ -1,8 +1,15 @@
 import { defineConfig, splitVendorChunkPlugin } from "vite";
 import react from "@vitejs/plugin-react";
 
+const appVersion = process.env.VITE_APP_VERSION || process.env.npm_package_version || "dev";
+const buildRef = process.env.VITE_BUILD_REF || "local";
+
 export default defineConfig({
   plugins: [react(), splitVendorChunkPlugin()],
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+    __APP_BUILD_REF__: JSON.stringify(buildRef),
+  },
   server: {
     proxy: {
       "/api": {
@@ -26,6 +33,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "jsdom",
+    setupFiles: ["src/setupTests.ts"],
     exclude: ["e2e/**", "node_modules/**"],
     coverage: {
       provider: "v8",

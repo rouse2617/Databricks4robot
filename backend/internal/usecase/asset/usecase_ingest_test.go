@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"data-platform/internal/config"
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 // ─── Test Helpers ───────────────────────────────────────────────────────────

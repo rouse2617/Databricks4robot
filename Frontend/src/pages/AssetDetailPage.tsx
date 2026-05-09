@@ -243,6 +243,7 @@ export default function AssetDetailPage() {
 			label: `全部事件 (${allEvents.length})`,
 			children: (
 				<AssetEventsTab
+					assetId={asset.asset_id}
 					events={allEvents}
 					loading={allEventsLoading}
 					hasMore={allEventsCursor !== null}
@@ -270,6 +271,7 @@ export default function AssetDetailPage() {
 			children: (
 				<ActionsTimelineTab
 					assetId={asset.asset_id}
+					assetType={asset.asset_type}
 					segStartNs={asset.start_timestamp_ns}
 					segEndNs={asset.end_timestamp_ns}
 				/>

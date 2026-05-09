@@ -3,7 +3,7 @@ package queryplan
 import (
 	"fmt"
 
-	"data-platform/internal/queryir"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 type Plan struct {

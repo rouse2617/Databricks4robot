@@ -13,10 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/config"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
-	assetUC "data-platform/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
 type stubAssetRepo struct {

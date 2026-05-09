@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 func TestSavedQueryRepo_ListGetCreateUpdateDelete(t *testing.T) {

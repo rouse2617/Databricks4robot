@@ -32,6 +32,8 @@ const { Text } = Typography;
 
 interface Props {
 	assetId: string;
+	/** When set and not `segment`, actions are N/A; list is empty and create is disabled. */
+	assetType?: string;
 	segStartNs?: number;
 	segEndNs?: number;
 }
@@ -48,6 +50,7 @@ function nsToRelative(ns: number, segStartNs?: number): string {
 
 export default function ActionsTimelineTab({
 	assetId,
+	assetType,
 	segStartNs,
 	segEndNs,
 }: Props) {
@@ -65,6 +68,11 @@ export default function ActionsTimelineTab({
 		ActionCreateInput & { labelsSelect?: string[]; labelsCsv?: string }
 	>();
 	const [msg, msgCtx] = message.useMessage();
+
+	const isSegmentAsset =
+		assetType === undefined ||
+		assetType === "" ||
+		assetType === "segment";
 
 	const load = useCallback(
 		(label?: string) => {
@@ -162,6 +170,7 @@ export default function ActionsTimelineTab({
 						size="small"
 						type="primary"
 						icon={<PlusOutlined />}
+						disabled={!isSegmentAsset}
 						onClick={() => setCreateOpen(true)}
 					>
 						新建 Action
@@ -170,6 +179,15 @@ export default function ActionsTimelineTab({
 			}
 		>
 			{msgCtx}
+			{!isSegmentAsset && (
+				<Alert
+					type="info"
+					showIcon
+					style={{ marginBottom: 12 }}
+					message="Action 仅适用于 segment 类型资产"
+					description={`当前资产类型为「${assetType ?? "—"}」。此处时间轴仅针对 segment；列表为空属预期。`}
+				/>
+			)}
 			{loading && items.length === 0 ? (
 				<div style={{ textAlign: "center", padding: "32px 0" }}>
 					<Spin />
@@ -178,7 +196,11 @@ export default function ActionsTimelineTab({
 				<Alert type="error" showIcon message={error} />
 			) : items.length === 0 ? (
 				<Empty
-					description="该 seg 暂无 action"
+					description={
+						isSegmentAsset
+							? "该 seg 暂无 action"
+							: "当前资产不是 segment，不包含 seg 内 Action"
+					}
 					image={Empty.PRESENTED_IMAGE_SIMPLE}
 				/>
 			) : (

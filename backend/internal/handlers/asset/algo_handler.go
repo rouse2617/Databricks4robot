@@ -5,9 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/audit"
-	"data-platform/internal/httpresp"
-	assetUC "data-platform/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
 // AlgoHandler handles algorithm lifecycle HTTP requests.

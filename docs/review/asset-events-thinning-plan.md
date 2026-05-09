@@ -112,7 +112,7 @@
 
 当前代码位置：
 
-- [backend/internal/usecase/asset/usecase.go](/Users/rick/Databricks4robot/backend/internal/usecase/asset/usecase.go)
+- [backend/internal/usecase/asset/usecase.go](/Users/rick/cyber-databrew/backend/internal/usecase/asset/usecase.go)
 
 建议收窄为：
 
@@ -191,9 +191,9 @@
 
 #### 影响文件
 
-- [backend/internal/usecase/asset/usecase.go](/Users/rick/Databricks4robot/backend/internal/usecase/asset/usecase.go)
-- [backend/internal/usecase/asset/usecase_projection_test.go](/Users/rick/Databricks4robot/backend/internal/usecase/asset/usecase_projection_test.go)
-- [backend/internal/handlers/asset/handler_test.go](/Users/rick/Databricks4robot/backend/internal/handlers/asset/handler_test.go)
+- [backend/internal/usecase/asset/usecase.go](/Users/rick/cyber-databrew/backend/internal/usecase/asset/usecase.go)
+- [backend/internal/usecase/asset/usecase_projection_test.go](/Users/rick/cyber-databrew/backend/internal/usecase/asset/usecase_projection_test.go)
+- [backend/internal/handlers/asset/handler_test.go](/Users/rick/cyber-databrew/backend/internal/handlers/asset/handler_test.go)
 
 ### 5.2 第二优先级：保持 tag / algo 专项路径只产专项事件
 
@@ -206,8 +206,8 @@
 
 相关文件：
 
-- [backend/internal/usecase/asset/usecase.go](/Users/rick/Databricks4robot/backend/internal/usecase/asset/usecase.go)
-- [backend/internal/usecase/asset/algo_usecase.go](/Users/rick/Databricks4robot/backend/internal/usecase/asset/algo_usecase.go)
+- [backend/internal/usecase/asset/usecase.go](/Users/rick/cyber-databrew/backend/internal/usecase/asset/usecase.go)
+- [backend/internal/usecase/asset/algo_usecase.go](/Users/rick/cyber-databrew/backend/internal/usecase/asset/algo_usecase.go)
 
 ### 5.3 第三优先级：未来新域默认禁止直接往 `asset_events` 写
 
@@ -249,8 +249,8 @@
 
 相关文件保持现状即可：
 
-- [backend/internal/cdc/bronze_consumer.go](/Users/rick/Databricks4robot/backend/internal/cdc/bronze_consumer.go)
-- [backend/internal/cdc/es_consumer.go](/Users/rick/Databricks4robot/backend/internal/cdc/es_consumer.go)
+- [backend/internal/cdc/bronze_consumer.go](/Users/rick/cyber-databrew/backend/internal/cdc/bronze_consumer.go)
+- [backend/internal/cdc/es_consumer.go](/Users/rick/cyber-databrew/backend/internal/cdc/es_consumer.go)
 
 ---
 

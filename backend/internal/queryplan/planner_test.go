@@ -3,7 +3,7 @@ package queryplan
 import (
 	"testing"
 
-	"data-platform/internal/queryir"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 func TestPGBridgePlanner_Plan(t *testing.T) {

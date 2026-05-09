@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run ON THE VM (e.g. GCE) to replace a tarball tree with git clone. See deploy/local/README.md.
 set -euxo pipefail
-REPO_URL="${REPO_URL:-https://github.com/rouse2617/Databricks4robot.git}"
-TARGET="${TARGET:-$HOME/Databricks4robot}"
+REPO_URL="${REPO_URL:-https://github.com/CyberOrigin2077/cyber-databrew.git}"
+TARGET="${TARGET:-$HOME/cyber-databrew}"
 
 if [ -d "$TARGET/.git" ]; then
   echo "Already a git clone at $TARGET — run: cd $TARGET && git pull && cd deploy/local && sudo docker compose --profile full up -d --build"

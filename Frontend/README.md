@@ -1,4 +1,4 @@
-# Frontend — data4cyber 数据平台
+# Frontend — Cyber Databrew 数据平台
 
 面向机器人 MCAP 视频数据的资产管理、算法处理监控、交付管理平台前端。
 
@@ -33,6 +33,7 @@ cp .env.example .env
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `VITE_API_BASE_URL` | 后端 API 地址 | `http://localhost:8080` |
+| `VITE_DEV_ACCESS_TOKEN` | 仅开发环境：自动登录并预填登录页 token | 空 |
 
 ## 页面结构
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"data-platform/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 )
 
 type recordingHandler struct {

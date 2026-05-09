@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"data-platform/internal/queryir"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 func BuildQueryIRSearchBody(req queryir.QueryRequest, includeHits bool) (map[string]any, error) {

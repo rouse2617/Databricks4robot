@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"data-platform/internal/metrics"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 )
 
 // Client wraps HTTP calls to an Elasticsearch cluster.

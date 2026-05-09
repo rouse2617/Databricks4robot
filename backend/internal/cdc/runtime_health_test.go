@@ -3,7 +3,7 @@ package cdc
 import (
 	"testing"
 
-	"data-platform/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 )
 
 func TestValidateRuntimeHealth_OK(t *testing.T) {

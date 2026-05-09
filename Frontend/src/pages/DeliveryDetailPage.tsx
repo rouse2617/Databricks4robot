@@ -39,6 +39,7 @@ export default function DeliveryDetailPage() {
 	const [delivery, setDelivery] = useState<Delivery | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [assets, setAssets] = useState<Asset[]>([]);
+	const [deliveryItems, setDeliveryItems] = useState<DeliveryItem[]>([]);
 	const [assetsLoading, setAssetsLoading] = useState(false);
 	/** Rows from GET …/items; resolved rows after assetsApi.get per item */
 	const [relatedCounts, setRelatedCounts] = useState({
@@ -71,6 +72,7 @@ export default function DeliveryDetailPage() {
 		setAssetsLoading(true);
 		try {
 			const items: DeliveryItem[] = await deliveriesApi.listItems(id);
+			setDeliveryItems(items);
 			const assetResults = await Promise.allSettled(
 				items.map((item) => assetsApi.get(item.asset_id)),
 			);
@@ -88,6 +90,7 @@ export default function DeliveryDetailPage() {
 			setAssets(resolved);
 		} catch {
 			setRelatedCounts({ itemRows: 0, resolvedAssets: 0, rejectedFetches: 0 });
+			setDeliveryItems([]);
 			setAssets([]);
 		} finally {
 			setAssetsLoading(false);
@@ -115,6 +118,13 @@ export default function DeliveryDetailPage() {
 		);
 	}
 
+	// Keep rows even when asset details cannot be fetched (e.g. soft-deleted assets).
+	const assetById = new Map(assets.map((a) => [a.asset_id, a]));
+	const assetRows = deliveryItems.map((it) => ({
+		asset_id: it.asset_id,
+		asset: assetById.get(it.asset_id) ?? null,
+	}));
+
 	const assetColumns = [
 		{
 			title: "资产 ID",
@@ -136,24 +146,44 @@ export default function DeliveryDetailPage() {
 			title: "生命周期",
 			key: "status",
 			width: 100,
-			render: (_: unknown, asset: Asset) => (
-				<Tag color={getAssetStateColor(asset)}>
-					{getLifecycleState(asset) || "—"}
-				</Tag>
-			),
+			render: (_: unknown, row: { asset: Asset | null }) =>
+				row.asset ? (
+					<Tag color={getAssetStateColor(row.asset)}>
+						{getLifecycleState(row.asset) || "—"}
+					</Tag>
+				) : (
+					<Tag color="default">未知</Tag>
+				),
 		},
 		{
 			title: "时长 (s)",
 			key: "duration",
 			width: 100,
-			render: (_: unknown, asset: Asset) => formatDurationSeconds(asset),
+			render: (_: unknown, row: { asset: Asset | null }) =>
+				row.asset ? formatDurationSeconds(row.asset) : "—",
 		},
-		{ title: "Owner", dataIndex: "owner", key: "owner", width: 120 },
+		{
+			title: "Owner",
+			key: "owner",
+			width: 120,
+			render: (_: unknown, row: { asset: Asset | null }) =>
+				row.asset?.owner ?? "—",
+		},
 		{
 			title: "更新时间",
-			dataIndex: "updated_at",
 			key: "updated_at",
 			width: 180,
+			render: (_: unknown, row: { asset: Asset | null }) =>
+				row.asset?.updated_at ?? "—",
+		},
+		{
+			title: "备注",
+			key: "note",
+			width: 200,
+			render: (_: unknown, row: { asset: Asset | null }) =>
+				row.asset ? null : (
+					<Typography.Text type="secondary">资产不存在或不可见</Typography.Text>
+				),
 		},
 	];
 
@@ -270,7 +300,7 @@ export default function DeliveryDetailPage() {
 			<Table
 				rowKey="asset_id"
 				columns={assetColumns}
-				dataSource={assets}
+				dataSource={assetRows}
 				loading={assetsLoading}
 				pagination={false}
 				size="small"

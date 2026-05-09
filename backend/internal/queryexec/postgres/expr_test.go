@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"data-platform/internal/queryir"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 func TestBuildExprWhereClause_OrAndNot(t *testing.T) {

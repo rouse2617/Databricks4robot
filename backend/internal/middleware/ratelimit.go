@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 )
 
 // RateLimiter implements a per-IP token bucket rate limiter.

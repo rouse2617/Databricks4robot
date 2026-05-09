@@ -1,0 +1,141 @@
+# Cyber Databrew — merge main → image :latest / :dev-latest → rollout prod only (cyber-databrew-prod).
+#
+#
+# AR: green-valley-442103 / rick-cyber-databrew-images. Rollout SA: see taskRunSpecs comments.
+# Remove or adjust `taskRunSpecs` if your cluster has no `build-pool-tier: warm` node pool.
+#
+# yaml-language-server: $schema=https://raw.githubusercontent.com/redhat-developer/vscode-tekton/refs/heads/main/scheme/tekton.dev/v1beta1_PipelineRun.json
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: promote-backend-{{revision}}
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[backend/**, .tekton/promote-backend.yaml]"
+    pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
+    pipelinesascode.tekton.dev/task: "git-clone"
+    pipelinesascode.tekton.dev/max-keep-runs: "5"
+spec:
+  serviceAccountName: tekton-builder
+  podTemplate:
+    securityContext:
+      fsGroup: 65532
+  # Uncomment so prod rollout uses a SA with permission in cyber-databrew-prod only.
+  # taskRunSpecs:
+  #   - pipelineTaskName: rollout-prod
+  #     taskServiceAccountName: tekton-deploy-prod
+  taskRunSpecs:
+    - pipelineTaskName: build-and-push
+      taskPodTemplate:
+        nodeSelector:
+          build-pool-tier: warm
+        tolerations:
+          - key: build-pool-tier
+            operator: Equal
+            value: warm
+            effect: NoSchedule
+      stepOverrides:
+        - name: build-and-push
+          resources:
+            requests:
+              cpu: "2"
+              memory: "6Gi"
+      sidecarOverrides:
+        - name: buildkitd
+          resources:
+            requests:
+              ephemeral-storage: "10Gi"
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+    - name: pac-gitauth
+      secret:
+        secretName: "{{git_auth_secret}}"
+  pipelineSpec:
+    workspaces:
+      - name: shared-workspace
+      - name: pac-gitauth
+    tasks:
+      - name: fetch-repository
+        taskRef:
+          name: git-clone
+        workspaces:
+          - name: output
+            workspace: shared-workspace
+          - name: basic-auth
+            workspace: pac-gitauth
+        params:
+          - name: url
+            value: "{{repo_url}}"
+          - name: revision
+            value: "{{revision}}"
+
+      - name: build-and-push
+        retries: 1
+        runAfter:
+          - fetch-repository
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: buildkit
+            - name: namespace
+              value: tekton-pipelines
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+        params:
+          - name: IMAGE
+            value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:{{revision}}
+          - name: DOCKERFILE
+            value: Dockerfile
+          - name: CONTEXT
+            value: backend
+          - name: CACHE_IMAGE
+            value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:buildcache
+
+      - name: promote
+        runAfter:
+          - build-and-push
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: retag-image
+            - name: namespace
+              value: tekton-pipelines
+        params:
+          - name: SOURCE_IMAGE
+            value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:{{revision}}
+          - name: TARGET_IMAGES
+            value: >-
+              us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:dev-latest
+              us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:latest
+
+      # Prod only (merge to main). Uses :latest tag stamped above.
+      - name: rollout-prod
+        runAfter:
+          - promote
+        taskSpec:
+          steps:
+            - name: kubectl-rollout-prod
+              image: alpine/k8s:1.31.4
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+                NS="cyber-databrew-prod"
+                DEPLOY="cyber-databrew-backend"
+                CONTAINER="api"
+                IMG="us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:latest"
+                kubectl set image "deployment/${DEPLOY}" "${CONTAINER}=${IMG}" -n "${NS}"
+                kubectl rollout status "deployment/${DEPLOY}" -n "${NS}" --timeout=300s

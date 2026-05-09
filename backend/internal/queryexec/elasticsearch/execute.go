@@ -3,8 +3,8 @@ package elasticsearch
 import (
 	"context"
 
-	corees "data-platform/internal/elasticsearch"
-	"data-platform/internal/queryir"
+	corees "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 func (e *Executor) Execute(ctx context.Context, body map[string]any) (*queryir.CompiledQuery, error) {

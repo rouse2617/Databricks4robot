@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 // Builder loads PG rows and produces ES _source-shaped maps (see deploy/local/elasticsearch/init-index.sh).

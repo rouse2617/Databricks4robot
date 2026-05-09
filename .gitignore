@@ -58,3 +58,7 @@ Frontend/e2e/screenshots/*.png
 .sync_tmp_docs_review_to_wiki_*/
 .sync_state_docs_review_to_wiki*.json
 .cursor_tmp_*.json
+
+# Local temp worktrees / nested repos
+.local/
+_tmp_cyber_iac/

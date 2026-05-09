@@ -1,11 +1,11 @@
-# Iceberg 常见使用场景与 Databricks4robot 目标表映射
+# Iceberg 常见使用场景与 cyber-databrew 目标表映射
 
 ## 1. 目的
 
 这份文档回答两个问题：
 
 1. `Apache Iceberg` 在真实工程里最常见的使用场景是什么
-2. 这些场景在当前 `Databricks4robot` 仓库里，应该落到哪些目标表
+2. 这些场景在当前 `cyber-databrew` 仓库里，应该落到哪些目标表
 
 本文不讨论在线主库设计。默认前提是：
 

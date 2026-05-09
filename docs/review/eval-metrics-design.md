@@ -1,6 +1,6 @@
 # Eval Metrics 设计（Phase 1.5）
 
-本文档定义资产评估指标（Eval / Metrics）在 `Databricks4robot` 中的目标形态、数据边界、表结构、事件契约与分阶段落地路径。
+本文档定义资产评估指标（Eval / Metrics）在 `cyber-databrew` 中的目标形态、数据边界、表结构、事件契约与分阶段落地路径。
 
 目标：在不破坏现有 `asset_tags / asset_algo_latest / asset_events` 主线的前提下，让质量评估结果成为一等公民，支持过滤、聚合、入 ES、入湖分析。
 

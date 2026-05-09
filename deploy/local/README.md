@@ -62,8 +62,8 @@ Use a normal Git remote on the VM so **`git pull` matches whatever you pushed fr
 
    ```bash
    cd ~
-   git clone <YOUR_REPO_URL> Databricks4robot
-   cd Databricks4robot
+   git clone <YOUR_REPO_URL> cyber-databrew
+   cd cyber-databrew
    ```
 
 4. **One-time on Linux** (Prometheus in Compose scrapes the backend container; the checked-in config uses `host.docker.internal` for host-run backends — see `backend/README.md`). On a VM running the **full Compose stack**, point Prometheus at the service name:
@@ -83,7 +83,7 @@ Use a normal Git remote on the VM so **`git pull` matches whatever you pushed fr
 ### Update after you push new code
 
 ```bash
-cd ~/Databricks4robot
+cd ~/cyber-databrew
 git fetch origin
 git pull --ff-only   # or: git pull --rebase origin main
 find deploy/local -name '._*' -delete 2>/dev/null || true
@@ -95,9 +95,9 @@ Rebuild is required when `backend/` or `Frontend/` (or image bases) change; conf
 
 ### Replacing an old tarball tree on the VM
 
-Use this when `~/Databricks4robot` exists **without** a `.git` directory (e.g. from `scp`/`tar`). Goal: keep **Docker named volumes** (Postgres data, ES indices, …) by default — only replace the **checkout on disk**.
+Use this when `~/cyber-databrew` exists **without** a `.git` directory (e.g. from `scp`/`tar`). Goal: keep **Docker named volumes** (Postgres data, ES indices, …) by default — only replace the **checkout on disk**.
 
-**Repository** (this project): `https://github.com/rouse2617/Databricks4robot.git` — swap if you use a fork or SSH remote.
+**Repository** (this project): `https://github.com/CyberOrigin2077/cyber-databrew.git` — swap if you use a fork or SSH remote.
 
 **Optional automation**: [`deploy/local/scripts/replace-tarball-with-git.sh`](scripts/replace-tarball-with-git.sh) performs the same flow (stop stack, backup directory, `git clone`, sed, `find`, `compose up --build`). Copy the script to the VM if the repo is not there yet, `chmod +x`, set `REPO_URL` if needed, run from `~`.
 
@@ -106,7 +106,7 @@ Or follow the manual steps:
 1. **SSH into the VM**, then stop the Compose stack **without** `-v` (so volumes stay):
 
    ```bash
-   cd ~/Databricks4robot/deploy/local
+   cd ~/cyber-databrew/deploy/local
    sudo docker compose --profile full down
    ```
 
@@ -114,9 +114,9 @@ Or follow the manual steps:
 
    ```bash
    cd ~
-   mv Databricks4robot "Databricks4robot.bak.$(date +%Y%m%d%H%M%S)"
-   git clone https://github.com/rouse2617/Databricks4robot.git Databricks4robot
-   cd Databricks4robot
+   mv cyber-databrew "cyber-databrew.bak.$(date +%Y%m%d%H%M%S)"
+   git clone https://github.com/CyberOrigin2077/cyber-databrew.git cyber-databrew
+   cd cyber-databrew
    ```
 
 3. **One-time Linux Prometheus scrape fix** (same as §First-time setup step 4):

@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"data-platform/internal/elasticsearch"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 var esConsumerEmptyAssetIDDebugCount atomic.Int32

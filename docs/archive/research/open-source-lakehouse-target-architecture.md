@@ -1,8 +1,8 @@
-# Databricks4robot 开源湖仓目标架构
+# cyber-databrew 开源湖仓目标架构
 
 ## 1. 结论
 
-基于当前仓库的数据模型和你明确提出的能力诉求，`Databricks4robot` 需要一个湖仓作为长期数据底座，但不应该一上来就把现有 `Bigtable / Postgres` 服务层推倒重来。
+基于当前仓库的数据模型和你明确提出的能力诉求，`cyber-databrew` 需要一个湖仓作为长期数据底座，但不应该一上来就把现有 `Bigtable / Postgres` 服务层推倒重来。
 
 当前仓库里已经有几个非常清晰的业务实体：
 
@@ -785,7 +785,7 @@ Bigtable 不适合单独承担的事情：
 
 结合当前仓库，你需要的不是“一个更大的在线库”，而是“一套把在线状态、历史事实、搜索投影、训练快照分层处理的数据架构”。
 
-对于 `Databricks4robot`，最合理的开源目标形态是：
+对于 `cyber-databrew`，最合理的开源目标形态是：
 
 - 服务层保留 `Backend + Postgres`
 - 在线热点或过渡兼容层保留 `Bigtable`

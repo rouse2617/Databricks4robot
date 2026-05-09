@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"data-platform/internal/filter"
-	"data-platform/internal/models"
-	"data-platform/internal/queryir"
-	assetUC "data-platform/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
 func (e *Executor) Execute(ctx context.Context, assetUsecase *assetUC.Usecase, compiled *queryir.CompiledQuery) ([]*models.Asset, int64, error) {

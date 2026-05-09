@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cdc-connect-init
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: cdc-connect
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cyber-databrew
+        app.kubernetes.io/component: cdc-connect
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: curlimages/curl:8.7.1
+          command: ["/bin/sh", "-lc"]
+          args:
+            - |
+              set -eu
+              CONNECT_URL="http://connect:8083"
+              CONNECTOR_NAME="postgres-unified-cdc"
+              CONNECTOR_FILE="/connectors/postgres-unified-cdc.json"
+
+              until curl -sf "${CONNECT_URL}/connectors" >/dev/null; do
+                echo "waiting for connect..."
+                sleep 2
+              done
+
+              status="$(curl -s -o /tmp/connector.json -w '%{http_code}' "${CONNECT_URL}/connectors/${CONNECTOR_NAME}")"
+              if [ "${status}" = "200" ]; then
+                echo "connector ${CONNECTOR_NAME} already exists"
+                cat /tmp/connector.json
+                exit 0
+              fi
+
+              status="$(curl -sS -o /tmp/response.json -w '%{http_code}' \
+                -X POST "${CONNECT_URL}/connectors" \
+                -H 'Content-Type: application/json' \
+                --data "@${CONNECTOR_FILE}")"
+              cat /tmp/response.json
+              case "${status}" in
+                200|201|202|409) exit 0 ;;
+                *) exit 1 ;;
+              esac
+          volumeMounts:
+            - name: connectors
+              mountPath: /connectors
+      volumes:
+        - name: connectors
+          configMap:
+            name: cdc-connectors

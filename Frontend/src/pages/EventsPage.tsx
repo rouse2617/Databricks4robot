@@ -4,6 +4,7 @@
 
 import { ReloadOutlined, SearchOutlined } from "@ant-design/icons";
 import {
+	Alert,
 	Button,
 	Card,
 	Empty,
@@ -18,7 +19,7 @@ import {
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../api/assets";
 import type { AssetEvent } from "../api/types";
 import { isCanonicalAssetId } from "../lib/assetId";
@@ -164,9 +165,17 @@ function buildEventColumns(
 
 // ─── Component ───
 
+function initialAssetIdFromSearch(searchParams: URLSearchParams): string {
+	const raw = searchParams.get("asset_id")?.trim() ?? "";
+	return raw && isCanonicalAssetId(raw) ? raw : "";
+}
+
 export default function EventsPage() {
 	const navigate = useNavigate();
-	const [assetId, setAssetId] = useState("");
+	const [searchParams, setSearchParams] = useSearchParams();
+	const [assetId, setAssetId] = useState(() =>
+		initialAssetIdFromSearch(searchParams),
+	);
 	const [events, setEvents] = useState<AssetEvent[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -236,13 +245,43 @@ export default function EventsPage() {
 		fetchEvents();
 	}, [fetchEvents, assetId]);
 
+	// Deep link / browser navigation: when `asset_id` appears in the URL, mirror it into the field.
+	useEffect(() => {
+		if (!searchParams.has("asset_id")) {
+			return;
+		}
+		setAssetId(initialAssetIdFromSearch(searchParams));
+	}, [searchParams]);
+
+	const onAssetIdInput = (value: string) => {
+		setAssetId(value);
+		const t = value.trim();
+		if (t && isCanonicalAssetId(t)) {
+			setSearchParams({ asset_id: t }, { replace: true });
+		} else if (!t) {
+			setSearchParams({}, { replace: true });
+		}
+	};
+
 	return (
 		<div style={{ padding: 24 }}>
 			{msgCtx}
 			<Title level={3}>事件流总览</Title>
 			<Text type="secondary" style={{ marginBottom: 16, display: "block" }}>
-				查看资产事件流，支持按 Asset ID 和事件类型筛选。
+				接口为按资产查询（GET /api/v1/assets/:id/events）。请输入 8 位 Asset
+				ID，或使用资产详情「全部事件」旁的「事件流页打开」（会自动带上
+				?asset_id）。
 			</Text>
+
+			{!assetId.trim() && (
+				<Alert
+					type="info"
+					showIcon
+					style={{ marginBottom: 16 }}
+					message="尚未选择资产"
+					description="全局「最近事件」列表尚未提供；在上方输入 Asset ID 后即可加载该资产的事件表。"
+				/>
+			)}
 
 			<Card size="small" style={{ marginBottom: 16 }}>
 				<Space wrap>
@@ -270,7 +309,7 @@ export default function EventsPage() {
 							aria-label="Asset ID"
 							placeholder="输入 8 位 Asset ID"
 							value={assetId}
-							onChange={(e) => setAssetId(e.target.value)}
+							onChange={(e) => onAssetIdInput(e.target.value)}
 							onKeyDown={(e) => {
 								if (e.key === "Enter") fetchEvents();
 							}}
@@ -352,6 +391,8 @@ export default function EventsPage() {
 				<div style={{ textAlign: "center", padding: 48 }}>
 					<Spin size="large" />
 				</div>
+			) : !assetId.trim() ? (
+				<Empty description="请输入 Asset ID 后查看该资产的事件列表" />
 			) : events.length === 0 &&
 				assetId.trim() &&
 				!isCanonicalAssetId(assetId) ? (

@@ -901,8 +901,8 @@ previewQueryKey =
 
 当前文件：
 
-- [AssetsPage.tsx](/Users/hrp/cyber/Databricks4robot/Frontend/src/pages/AssetsPage.tsx:71)
-- [AssetDetailPage.tsx](/Users/hrp/cyber/Databricks4robot/Frontend/src/pages/AssetDetailPage.tsx:56)
+- [AssetsPage.tsx](/Users/hrp/cyber/cyber-databrew/Frontend/src/pages/AssetsPage.tsx:71)
+- [AssetDetailPage.tsx](/Users/hrp/cyber/cyber-databrew/Frontend/src/pages/AssetDetailPage.tsx:56)
 
 建议演进为：
 
@@ -933,8 +933,8 @@ Frontend/src/hooks/assets/
 
 ## 16. 与文档体系的关系
 
-- 交互与信息架构：见 [assets-discovery-ux-spec.md](/Users/rick/Databricks4robot/docs/archive/frontend/assets-discovery-ux-spec.md:1)
-- 低保真页面线框：见 [assets-discovery-wireframes.md](/Users/rick/Databricks4robot/docs/archive/frontend/assets-discovery-wireframes.md:1)
+- 交互与信息架构：见 [assets-discovery-ux-spec.md](/Users/rick/cyber-databrew/docs/archive/frontend/assets-discovery-ux-spec.md:1)
+- 低保真页面线框：见 [assets-discovery-wireframes.md](/Users/rick/cyber-databrew/docs/archive/frontend/assets-discovery-wireframes.md:1)
 
 如果要继续往实现推进，下一份文档最合适的是：
 

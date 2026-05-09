@@ -7,17 +7,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/config"
-	corees "data-platform/internal/elasticsearch"
-	"data-platform/internal/filter"
-	"data-platform/internal/httpresp"
-	"data-platform/internal/models"
-	"data-platform/internal/postgres"
-	esexec "data-platform/internal/queryexec/elasticsearch"
-	pgexec "data-platform/internal/queryexec/postgres"
-	"data-platform/internal/queryir"
-	"data-platform/internal/queryplan"
-	assetUC "data-platform/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	corees "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	esexec "github.com/CyberOrigin2077/cyber-databrew/internal/queryexec/elasticsearch"
+	pgexec "github.com/CyberOrigin2077/cyber-databrew/internal/queryexec/postgres"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryplan"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
 type Handler struct {

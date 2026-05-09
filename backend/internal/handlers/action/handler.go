@@ -9,11 +9,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/httpresp"
-	"data-platform/internal/id"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
-	actionUC "data-platform/internal/usecase/action"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 )
 
 // Handler bundles the action endpoints.
@@ -154,8 +154,6 @@ func (h *Handler) List(c *gin.Context) {
 		switch {
 		case errors.Is(err, actionUC.ErrSegNotFound):
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-		case errors.Is(err, actionUC.ErrParentNotSeg):
-			httpresp.Unprocessable(c, "INVALID_ACTION", err.Error(), nil)
 		default:
 			httpresp.Internal(c, err.Error())
 		}

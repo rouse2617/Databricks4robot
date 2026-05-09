@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	espkg "data-platform/internal/elasticsearch"
-	"data-platform/internal/models"
+	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 type fakeAssetRepo struct {

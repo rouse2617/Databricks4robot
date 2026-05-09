@@ -8,10 +8,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	espkg "data-platform/internal/elasticsearch"
-	"data-platform/internal/httpresp"
-	"data-platform/internal/repository"
-	"data-platform/internal/searchindex"
+	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/searchindex"
 )
 
 // Handler serves administrative maintenance endpoints.

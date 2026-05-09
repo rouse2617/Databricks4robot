@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"data-platform/internal/config"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 // stubAssetRepo only implements Get + the no-op repo surface usecase.New touches.
@@ -195,6 +195,21 @@ func TestCreate_MissingSeg(t *testing.T) {
 	})
 	if !errors.Is(err, ErrSegNotFound) {
 		t.Fatalf("expected ErrSegNotFound, got %v", err)
+	}
+}
+
+func TestList_NonSegmentParent_ReturnsEmpty(t *testing.T) {
+	parent := newSegParent()
+	parent.AssetType = "task_demo"
+	repo := &fakeActionRepo{listResult: []*models.Action{{ActionID: "should-not-return"}}}
+	uc := New(nil, repo, &stubAssetRepo{parent: parent}, &fakeEventRepo{})
+
+	items, err := uc.List(context.Background(), ListInput{AssetID: parent.AssetID, Limit: 50})
+	if err != nil {
+		t.Fatalf("List returned error: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected empty list for non-segment asset, got %d items", len(items))
 	}
 }
 

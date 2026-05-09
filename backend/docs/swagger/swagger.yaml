@@ -133,8 +133,8 @@ definitions:
 host: localhost:8080
 info:
   contact: {}
-  description: Backend API for the Data Platform (asset, algo, delivery, mcap management).
-  title: Data Platform API
+  description: Backend API for cyber-databrew (asset, algo, delivery, mcap management).
+  title: cyber-databrew API
   version: "1.0"
 paths:
   /assets:

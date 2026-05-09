@@ -11,13 +11,13 @@ import (
 	gbt "cloud.google.com/go/bigtable"
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/config"
-	assetH "data-platform/internal/handlers/asset"
-	deliveryH "data-platform/internal/handlers/delivery"
-	mcapH "data-platform/internal/handlers/mcap"
-	queryH "data-platform/internal/handlers/query"
-	assetUC "data-platform/internal/usecase/asset"
-	"data-platform/routes"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/routes"
 )
 
 // e2eEnv holds the test server and helpers for end-to-end tests.

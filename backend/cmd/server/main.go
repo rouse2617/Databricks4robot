@@ -1,6 +1,6 @@
-// @title           Data Platform API
+// @title           cyber-databrew API
 // @version         1.0
-// @description     Backend API for the Data Platform (asset, algo, delivery, mcap management).
+// @description     Backend API for cyber-databrew (asset, algo, delivery, mcap management).
 // @host            localhost:8080
 // @BasePath        /api/v1
 // @securityDefinitions.apikey GraceToken
@@ -21,30 +21,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
-	"data-platform/internal/audit"
-	"data-platform/internal/cdc"
-	"data-platform/internal/config"
-	espkg "data-platform/internal/elasticsearch"
-	actionH "data-platform/internal/handlers/action"
-	adminH "data-platform/internal/handlers/admin"
-	assetH "data-platform/internal/handlers/asset"
-	deliveryH "data-platform/internal/handlers/delivery"
-	evalH "data-platform/internal/handlers/eval"
-	lakehouseH "data-platform/internal/handlers/lakehouse"
-	mcapH "data-platform/internal/handlers/mcap"
-	queryH "data-platform/internal/handlers/query"
-	registryH "data-platform/internal/handlers/registry"
-	searchH "data-platform/internal/handlers/search"
-	"data-platform/internal/metrics"
-	"data-platform/internal/middleware"
-	"data-platform/internal/postgres"
-	"data-platform/internal/repository"
-	"data-platform/internal/searchindex"
-	trinopkg "data-platform/internal/trino"
-	actionUC "data-platform/internal/usecase/action"
-	assetUC "data-platform/internal/usecase/asset"
-	"data-platform/internal/validate"
-	"data-platform/routes"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/cdc"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
+	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
+	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
+	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
+	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/searchindex"
+	trinopkg "github.com/CyberOrigin2077/cyber-databrew/internal/trino"
+	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
+	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/validate"
+	"github.com/CyberOrigin2077/cyber-databrew/routes"
 )
 
 func main() {

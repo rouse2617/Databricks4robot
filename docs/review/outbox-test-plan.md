@@ -27,17 +27,17 @@
 
 | 文件 | 作用 |
 |---|---|
-| [backend/internal/outbox/e2e_test.go](/Users/rick/Databricks4robot/backend/internal/outbox/e2e_test.go) | Postgres + ES testcontainers 集成测试 |
-| [backend/internal/outbox/worker_test.go](/Users/rick/Databricks4robot/backend/internal/outbox/worker_test.go) | worker 主循环、partial failure、panic/backoff |
-| [backend/internal/outbox/chaos_test.go](/Users/rick/Databricks4robot/backend/internal/outbox/chaos_test.go) | outbox chaos / 异常路径 |
+| [backend/internal/outbox/e2e_test.go](/Users/rick/cyber-databrew/backend/internal/outbox/e2e_test.go) | Postgres + ES testcontainers 集成测试 |
+| [backend/internal/outbox/worker_test.go](/Users/rick/cyber-databrew/backend/internal/outbox/worker_test.go) | worker 主循环、partial failure、panic/backoff |
+| [backend/internal/outbox/chaos_test.go](/Users/rick/cyber-databrew/backend/internal/outbox/chaos_test.go) | outbox chaos / 异常路径 |
 
 ### 2.2 仓库内已有脚本
 
 | 文件 | 作用 |
 |---|---|
-| [backend/scripts/test_outbox_e2e.sh](/Users/rick/Databricks4robot/backend/scripts/test_outbox_e2e.sh) | 本地端到端冒烟：创建 asset，等待 ES 可查 |
-| [backend/scripts/bench/outbox_perf.sh](/Users/rick/Databricks4robot/backend/scripts/bench/outbox_perf.sh) | Outbox Worker 性能压测（50 eps × 60s） |
-| [backend/scripts/verify_outbox_cutover.sh](/Users/rick/Databricks4robot/backend/scripts/verify_outbox_cutover.sh) | 校验 cutover / cursor / pending 状态 |
+| [backend/scripts/test_outbox_e2e.sh](/Users/rick/cyber-databrew/backend/scripts/test_outbox_e2e.sh) | 本地端到端冒烟：创建 asset，等待 ES 可查 |
+| [backend/scripts/bench/outbox_perf.sh](/Users/rick/cyber-databrew/backend/scripts/bench/outbox_perf.sh) | Outbox Worker 性能压测（50 eps × 60s） |
+| [backend/scripts/verify_outbox_cutover.sh](/Users/rick/cyber-databrew/backend/scripts/verify_outbox_cutover.sh) | 校验 cutover / cursor / pending 状态 |
 
 ### 2.3 关键设计依据
 
@@ -52,7 +52,7 @@
 ### 3.1 本地 docker compose
 
 ```bash
-cd /Users/rick/Databricks4robot/deploy/local
+cd /Users/rick/cyber-databrew/deploy/local
 docker compose -f docker-compose.all.yml up -d --build
 ```
 
@@ -125,14 +125,14 @@ curl -s http://localhost:8080/metrics | rg "^outbox_"
 命令：
 
 ```bash
-cd /Users/rick/Databricks4robot/backend
+cd /Users/rick/cyber-databrew/backend
 make test-integration
 ```
 
 等价命令：
 
 ```bash
-cd /Users/rick/Databricks4robot/backend
+cd /Users/rick/cyber-databrew/backend
 go test -tags=integration ./...
 ```
 
@@ -156,7 +156,7 @@ go test -tags=integration ./...
 命令：
 
 ```bash
-cd /Users/rick/Databricks4robot
+cd /Users/rick/cyber-databrew
 bash backend/scripts/test_outbox_e2e.sh
 ```
 
@@ -184,7 +184,7 @@ bash backend/scripts/test_outbox_e2e.sh
 命令：
 
 ```bash
-cd /Users/rick/Databricks4robot
+cd /Users/rick/cyber-databrew
 bash backend/scripts/bench/outbox_perf.sh
 ```
 
@@ -222,7 +222,7 @@ bash backend/scripts/bench/outbox_perf.sh
 如果你们要做“进程内 worker -> 独立 worker”切换，切换后建议补跑：
 
 ```bash
-cd /Users/rick/Databricks4robot
+cd /Users/rick/cyber-databrew
 bash backend/scripts/verify_outbox_cutover.sh
 ```
 
@@ -244,7 +244,7 @@ bash backend/scripts/verify_outbox_cutover.sh
 如果要作为 staging / nightly 的定期守门，再补跑：
 
 ```bash
-cd /Users/rick/Databricks4robot
+cd /Users/rick/cyber-databrew
 bash backend/scripts/es-pg-audit.sh
 ```
 

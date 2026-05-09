@@ -1,5 +1,5 @@
 -- =====================================================================
--- Databricks4robot · PostgreSQL Reference DDL
+-- cyber-databrew · PostgreSQL Reference DDL
 --
 -- 这个文件是 docs/review/sql.md 描述的 schema companion 的 DDL 镜像，作为：
 --   1) 新环境从零拉起时的参考脚本（idempotent，可重复执行）

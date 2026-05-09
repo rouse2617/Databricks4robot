@@ -1,0 +1,18 @@
+# ClusterIP for in-cluster and Gateway/Ingress backends.
+# HTTP on port 80 → container 8080 (api).
+apiVersion: v1
+kind: Service
+metadata:
+  name: cyber-databrew-backend
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

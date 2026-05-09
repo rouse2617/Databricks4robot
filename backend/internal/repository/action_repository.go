@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 // ActionListOptions filters the seg-scoped action list.

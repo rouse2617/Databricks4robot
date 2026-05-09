@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	corees "data-platform/internal/elasticsearch"
+	corees "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 )
 
 func TestExecute_CollectsCandidateIDsAndFacets(t *testing.T) {

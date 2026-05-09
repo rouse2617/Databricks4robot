@@ -1,10 +1,13 @@
 import { Button, Card, Empty, Tag, Timeline, Typography } from "antd";
 import dayjs from "dayjs";
+import { Link } from "react-router-dom";
 import type { AssetEvent } from "../../api/types";
 
 const { Text } = Typography;
 
 interface Props {
+	/** When set, shows a shortcut to the global events page scoped to this asset. */
+	assetId?: string;
 	events: AssetEvent[];
 	loading?: boolean;
 	hasMore?: boolean;
@@ -72,6 +75,7 @@ function summarizeEvent(event: AssetEvent): string {
 }
 
 export default function AssetEventsTab({
+	assetId,
 	events,
 	loading = false,
 	hasMore = false,
@@ -79,12 +83,30 @@ export default function AssetEventsTab({
 }: Props) {
 	if (events.length === 0) {
 		return (
-			<Empty description="暂无事件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+			<Card size="small" title="全部事件">
+				<Empty description="暂无事件" image={Empty.PRESENTED_IMAGE_SIMPLE}>
+					{assetId ? (
+						<Link to={`/events?asset_id=${encodeURIComponent(assetId)}`}>
+							在事件流页查看（表格视图）
+						</Link>
+					) : null}
+				</Empty>
+			</Card>
 		);
 	}
 
 	return (
-		<Card size="small" title="全部事件">
+		<Card
+			size="small"
+			title="全部事件"
+			extra={
+				assetId ? (
+					<Link to={`/events?asset_id=${encodeURIComponent(assetId)}`}>
+						事件流页打开
+					</Link>
+				) : null
+			}
+		>
 			<Timeline
 				items={events.map((event) => ({
 					color: event.event_type.includes("failed")

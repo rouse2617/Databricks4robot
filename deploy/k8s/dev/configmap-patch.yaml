@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cyber-databrew-config
+data:
+  ELASTICSEARCH_URL: "http://elasticsearch:9200"
+  CDC_ENABLED: "true"
+  CDC_SOURCE_DRIVER: "debezium-kafka"
+  CDC_KAFKA_BROKERS: "redpanda:9092"
+  CDC_KAFKA_GROUP_ID: "cyber-databrew-cdc-dev"
+  CDC_TOPIC_ASSET_EVENTS: "data4cyber.public.asset_events"
+  CDC_TOPIC_ASSETS: "data4cyber.public.assets"
+  CDC_TOPIC_ASSET_TAGS: "data4cyber.public.asset_tags"
+  CDC_TOPIC_ASSET_ALGO_LATEST: "data4cyber.public.asset_algo_latest"
+  CDC_TOPIC_MCAP_FILES: "data4cyber.public.mcap_files"

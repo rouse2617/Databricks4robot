@@ -91,7 +91,13 @@ export default function CreateDeliveryModal({
 			okButtonProps={{ disabled: effectiveAssetIds.length === 0 }}
 			okText="提交"
 			cancelText="取消"
-			destroyOnHidden
+			maskClosable={!submitting}
+			keyboard={!submitting}
+			destroyOnClose
+			afterClose={() => {
+				form.resetFields();
+				setManualAssetIdsText("");
+			}}
 		>
 			{msgCtx}
 			{assetIds.length > 0 ? (

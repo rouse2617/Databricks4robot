@@ -1,7 +1,7 @@
 # Pure CDC 上线 Runbook（生产基线）
 
 > 目标读者：后端、数据工程、SRE、前端联调同学  
-> 适用范围：Databricks4robot 从本地联调到预发/生产上线  
+> 适用范围：cyber-databrew 从本地联调到预发/生产上线  
 > 决策结论：**搜索与湖仓链路统一采用 Pure CDC 驱动，不保留定时全量 Reconciler 作为常驻路径**
 
 ---

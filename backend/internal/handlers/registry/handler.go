@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/config"
-	"data-platform/internal/lifecycle"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/lifecycle"
 )
 
 type Handler struct {

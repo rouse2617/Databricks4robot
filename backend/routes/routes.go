@@ -9,20 +9,20 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	"data-platform/internal/config"
-	actionH "data-platform/internal/handlers/action"
-	adminH "data-platform/internal/handlers/admin"
-	assetH "data-platform/internal/handlers/asset"
-	deliveryH "data-platform/internal/handlers/delivery"
-	evalH "data-platform/internal/handlers/eval"
-	lakehouseH "data-platform/internal/handlers/lakehouse"
-	mcapH "data-platform/internal/handlers/mcap"
-	queryH "data-platform/internal/handlers/query"
-	registryH "data-platform/internal/handlers/registry"
-	searchH "data-platform/internal/handlers/search"
-	"data-platform/internal/middleware"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
+	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
+	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
+	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
+	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 
-	_ "data-platform/docs/swagger" // swagger docs
+	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
 )
 
 // RegisterAll wires up all API domains in a single process.

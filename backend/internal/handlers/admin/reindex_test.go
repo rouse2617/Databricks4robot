@@ -12,9 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	espkg "data-platform/internal/elasticsearch"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 type reindexAssetRepo struct {

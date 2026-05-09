@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"data-platform/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 // ErrDuplicateAssetID is returned when inserting an asset whose asset_id already exists.

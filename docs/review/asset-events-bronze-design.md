@@ -228,7 +228,7 @@ A generic sink would either:
 
 The repository already has a correct document builder:
 
-- [backend/internal/searchindex/builder.go](/Users/rick/Databricks4robot-longterm-sync/backend/internal/searchindex/builder.go)
+- [backend/internal/searchindex/builder.go](/Users/rick/cyber-databrew/backend/internal/searchindex/builder.go)
 
 So the lighter and safer design is:
 
@@ -397,7 +397,7 @@ It does not:
 
 The repository already contains a correct current-state document assembler:
 
-- [backend/internal/searchindex/builder.go](/Users/rick/Databricks4robot-longterm-sync/backend/internal/searchindex/builder.go)
+- [backend/internal/searchindex/builder.go](/Users/rick/cyber-databrew/backend/internal/searchindex/builder.go)
 
 Using a Go consumer to call that builder:
 

@@ -90,7 +90,7 @@ services:
       CDC_ENABLED: "true"
       CDC_SOURCE_DRIVER: "debezium-kafka"
       CDC_KAFKA_BROKERS: "redpanda:9092"
-      CDC_KAFKA_GROUP_ID: "data-platform-cdc-full"
+      CDC_KAFKA_GROUP_ID: "cyber-databrew-cdc-full"
       CDC_TOPIC_ASSET_EVENTS: "data4cyber.public.asset_events"
       CDC_TOPIC_ASSETS: "data4cyber.public.assets"
       CDC_TOPIC_ASSET_TAGS: "data4cyber.public.asset_tags"

@@ -10,8 +10,8 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"data-platform/internal/cdc"
-	"data-platform/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/cdc"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 )
 
 type loggingHandler struct {

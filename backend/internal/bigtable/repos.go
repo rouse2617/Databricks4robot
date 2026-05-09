@@ -12,8 +12,8 @@ import (
 
 	"cloud.google.com/go/bigtable"
 
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 // AssetRepo provides read/write access to the `assets` Bigtable table.

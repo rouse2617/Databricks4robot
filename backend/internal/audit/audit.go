@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"data-platform/internal/middleware"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 )
 
 // Sink is the storage-agnostic interface used to persist audit events.

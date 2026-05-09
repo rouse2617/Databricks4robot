@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	espkg "data-platform/internal/elasticsearch"
+	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcElasticsearch "github.com/testcontainers/testcontainers-go/modules/elasticsearch"

@@ -2,6 +2,10 @@ import { Button, Card, Form, Input, message } from "antd";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
+const DEV_ACCESS_TOKEN = import.meta.env.DEV
+	? (import.meta.env.VITE_DEV_ACCESS_TOKEN ?? "").trim()
+	: "";
+
 export default function LoginPage() {
 	const { login } = useAuth();
 	const navigate = useNavigate();
@@ -24,8 +28,12 @@ export default function LoginPage() {
 	return (
 		<div className="min-h-screen flex items-center justify-center bg-gray-100">
 			{msgCtx}
-			<Card title="data4cyber Platform" className="w-96 shadow-lg">
-				<Form layout="vertical" onFinish={onFinish}>
+			<Card title="Cyber Databrew Platform" className="w-96 shadow-lg">
+				<Form
+					layout="vertical"
+					onFinish={onFinish}
+					initialValues={{ token: DEV_ACCESS_TOKEN }}
+				>
 					<Form.Item
 						name="token"
 						label="Access Token"

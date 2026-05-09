@@ -1,8 +1,8 @@
 package elasticsearch
 
 import (
-	"data-platform/internal/elasticsearch"
-	"data-platform/internal/queryplan"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryplan"
 )
 
 type Executor struct {

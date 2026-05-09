@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"data-platform/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 )
 
 // ValidateRuntimeHealth validates deploy-time wiring for CDC to fail fast with

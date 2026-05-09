@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"data-platform/internal/metrics"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 )
 
 func HTTPMetrics() gin.HandlerFunc {

@@ -93,7 +93,7 @@ make local-dev-seed       # 可选：插入与本仓库一致的演示 MCAP/资�
 | `CDC_ENABLED` | 是否启用 CDC runtime | `false` |
 | `CDC_SOURCE_DRIVER` | CDC source (`debezium-kafka` / `in-memory`) | 空 |
 | `CDC_KAFKA_BROKERS` | Kafka broker 列表 | `localhost:19092` |
-| `CDC_KAFKA_GROUP_ID` | Kafka consumer group | `data-platform-cdc` |
+| `CDC_KAFKA_GROUP_ID` | Kafka consumer group | `cyber-databrew-cdc` |
 | `CDC_TOPIC_ACTIONS` | actions 表 CDC topic | `actions` |
 | `CDC_MAX_CONSECUTIVE_FAILURES` | 连续失败阈值（超过后 fail-fast） | `20` |
 | `CDC_DLQ_ENABLED` | 是否启用失败记录 DLQ | `true` |

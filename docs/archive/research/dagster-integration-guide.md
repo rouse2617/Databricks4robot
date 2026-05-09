@@ -1,6 +1,6 @@
 # Dagster 接入方案
 
-本文档描述如何将 Dagster 与 Databricks4robot 数据平台对接，
+本文档描述如何将 Dagster 与 cyber-databrew 数据平台对接，
 让 Dagster 作为算法调度层，通过 `grace_sdk` 调用 Backend API 管理 segment 的算法生命周期。
 
 ## 前提
@@ -541,7 +541,7 @@ defs = dg.Definitions(
 
 ```bash
 # 终端 1：启动你的 Backend
-cd Databricks4robot/backend
+cd cyber-databrew/backend
 STORAGE_BACKEND=postgres go run cmd/server/main.go
 
 # 终端 2：启动 Dagster

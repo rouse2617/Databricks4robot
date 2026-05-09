@@ -12,9 +12,9 @@ import (
 	"testing/quick"
 	"time"
 
-	"data-platform/internal/config"
-	"data-platform/internal/models"
-	"data-platform/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 // ─── Mock Repositories ──────────────────────────────────────────────────────

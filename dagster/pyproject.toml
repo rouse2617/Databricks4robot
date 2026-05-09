@@ -1,7 +1,7 @@
 [project]
 name = "data-platform-dagster"
 version = "0.0.1"
-description = "Dagster pipeline jobs for data4cyber"
+description = "Dagster pipeline jobs for cyber-databrew"
 requires-python = ">=3.10"
 dependencies = [
     "dagster>=1.8",

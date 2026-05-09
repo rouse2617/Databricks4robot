@@ -1,7 +1,7 @@
 [project]
 name = "asset-sdk"
 dynamic = ["version"]
-description = "Python SDK for the data4cyber platform"
+description = "Python SDK for the cyber-databrew platform"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
