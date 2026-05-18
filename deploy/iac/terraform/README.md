@@ -15,9 +15,7 @@ source or copied into K8s manifests.
 
 ```
 deploy/iac/terraform/
-├── gateway-domain/        # Cloudflare DNS + GCP Cert Manager (live)
 ├── service-identity/      # GSA + IAM + Workload Identity (skeleton)
-├── gcp-data/              # GCS / Pub/Sub / etc. (skeleton)
 └── <future>/              # gke-cluster, gateway-ingress, ...
 ```
 
@@ -46,8 +44,7 @@ Within each stack:
   - dev → `gs://terraform_staging_state_store/terraform/staging/cyber-databrew/<stack>/`
   - prod → `gs://terraform_production_state_store/terraform/prod/cyber-databrew/<stack>/`
 - **Secrets are not in tfvars.** Use Secret Manager + a `data` source
-  with optional `TF_VAR_*` override (see `gateway-domain` for the
-  pattern).
+  with optional `TF_VAR_*` override.
 - **Existing live resources** are taken over via per-env `import.sh`.
 - **Names are stable.** Changing `name_prefix` or any `*_name` variable
   forces resource recreation; treat them as immutable once apply'd.
@@ -75,10 +72,8 @@ After this, every commit auto-runs the hooks against staged files.
 
 ## Order of apply (dev bootstrap)
 
-1. `gateway-domain/` — DNS + certs (already done).
-2. `service-identity/` — GSA + IAM + WI bindings consumed by K8s SAs.
-3. `gcp-data/` — buckets / topics referenced by the backend.
-4. (Future) `gke-cluster/`, `gateway-ingress/`.
+1. `service-identity/` — GSA + IAM + WI bindings consumed by K8s SAs.
+2. (Future) `gke-cluster/`, `gateway-ingress/`.
 
 ## What is **not** here
 

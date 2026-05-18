@@ -124,11 +124,6 @@ Run the repository script that follows the same sequence as `cyber-iac`:
 
 The script is idempotent. If cert is still `PROVISIONING`, add/verify the Cloudflare records it prints and rerun.
 
-If you want Cloudflare records managed as code (instead of manual/UI edits), use:
-
-- `deploy/iac/terraform/gateway-domain/`
-- Run env config from `deploy/iac/terraform/gateway-domain/environments/dev/`
-
 ### Manual flow (equivalent)
 
 ### 1) (Optional) Create frontend IAP OAuth secret in namespace

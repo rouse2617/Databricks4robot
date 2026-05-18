@@ -9,8 +9,6 @@ PipelineRun on matching git events.
 
 | File | Trigger | Purpose |
 |---|---|---|
-| `plan-gcp-data.yaml` ✅ | PR `deploy/iac/terraform/gcp-data/**` | `terraform plan` → PR comment |
-| `plan-gateway-domain.yaml` (TODO) | PR `deploy/iac/terraform/gateway-domain/**` | same |
 | `plan-service-identity.yaml` (TODO) | PR `deploy/iac/terraform/service-identity/**` | same |
 | `apply-*-iac.yaml` (TODO) | merge → main | `terraform apply` |
 | `build-backend.yaml` (TODO) | PR `backend/**` | BuildKit → `:<sha>` + `:pr-N` |
@@ -31,7 +29,7 @@ PipelineRun on matching git events.
   `cyber-databrew-iac-dev` (and `-prod`) with:
   - `roles/storage.objectAdmin` on `terraform_staging_state_store`
   - project-level roles needed by each stack (storage.admin for buckets,
-    compute.admin for gateway, iam.serviceAccountAdmin for service-identity)
+    iam.serviceAccountAdmin for service-identity)
 - GitHub App installation on the repo so PAC can receive webhooks
 
 ## Feishu (Lark) — PAC completion notify
