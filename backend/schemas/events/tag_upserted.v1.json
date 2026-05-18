@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/tag_upserted.v1.json",
+  "title": "tag_upserted.v1",
+  "description": "Emitted when a tag is created or updated for an asset.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "tag_key",
+    "tag_value",
+    "tag_type",
+    "source_type"
+  ],
+  "properties": {
+    "tag_key": {
+      "type": "string",
+      "description": "Tag key."
+    },
+    "tag_value": {
+      "type": "string",
+      "description": "Tag value."
+    },
+    "tag_type": {
+      "type": "string",
+      "description": "Tag type from registry."
+    },
+    "source_type": {
+      "type": "string",
+      "description": "Tag source type (for example, manual/algo)."
+    }
+  }
+}

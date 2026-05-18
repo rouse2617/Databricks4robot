@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/action_upserted.v1.json",
+  "title": "action_upserted.v1",
+  "description": "Emitted when an `actions` row is created or modified. Written same-tx with the `actions` insert/update so consumers can rebuild the seg ES doc `actions[]` nested field deterministically. See docs/review/data-platform-design.md §5.2.15.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "action_id",
+    "asset_id",
+    "start_ns",
+    "end_ns",
+    "source_type"
+  ],
+  "properties": {
+    "action_id": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z]{8}$",
+      "description": "Action identifier (8-char alphanumeric, primary key of `actions`)."
+    },
+    "asset_id": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z]{8}$",
+      "description": "Parent seg asset identifier. MUST reference assets.asset_id with asset_type='segment'."
+    },
+    "start_ns": {
+      "type": "integer",
+      "description": "Half-open interval start (ns relative to mcap origin, same scale as assets.start_timestamp_ns)."
+    },
+    "end_ns": {
+      "type": "integer",
+      "description": "Half-open interval end (ns). end_ns >= start_ns."
+    },
+    "action_index": {
+      "type": ["integer", "null"],
+      "description": "Optional human-readable ordinal inside the seg."
+    },
+    "primary_label": {
+      "type": ["string", "null"],
+      "description": "Primary label used for facets / list display."
+    },
+    "labels": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Multi-label set (GIN-indexed in PG, mirrored to seg ES doc)."
+    },
+    "source_type": {
+      "type": "string",
+      "enum": ["human", "algo", "rule", "system"]
+    },
+    "source_name": {
+      "type": ["string", "null"],
+      "description": "Algo name / annotator id."
+    },
+    "source_version": {
+      "type": ["string", "null"]
+    },
+    "run_id": {
+      "type": ["string", "null"]
+    },
+    "confidence": {
+      "type": ["number", "null"]
+    },
+    "external_id": {
+      "type": ["string", "null"],
+      "description": "Producer-side idempotency fingerprint."
+    },
+    "version": {
+      "type": "integer",
+      "description": "Optimistic-lock version of the actions row after the write."
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/mcap_upload_finalized.v1.json",
+  "title": "mcap_upload_finalized.v1",
+  "description": "Emitted when an MCAP upload is finalized and ingest state advances.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "mcap_file_id",
+    "ingest_state"
+  ],
+  "properties": {
+    "mcap_file_id": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z]{8}$",
+      "description": "MCAP file identifier (8-char alphanumeric)."
+    },
+    "ingest_state": {
+      "type": "string",
+      "description": "Ingest state after finalize step."
+    }
+  }
+}

@@ -1,0 +1,60 @@
+# 2026/04/28 23:37:27.842353 [TestProperty6_DualWriteConsistency] [rapid] draw owner: ""
+# 2026/04/28 23:37:27.842357 [TestProperty6_DualWriteConsistency] [rapid] draw reviewer: ""
+# 2026/04/28 23:37:27.842358 [TestProperty6_DualWriteConsistency] [rapid] draw duration_ms: 0
+# 2026/04/28 23:37:27.842359 [TestProperty6_DualWriteConsistency] [rapid] draw delivery_count: 0
+# 2026/04/28 23:37:27.842360 [TestProperty6_DualWriteConsistency] [rapid] draw last_delivered_to: ""
+# 2026/04/28 23:37:27.842360 [TestProperty6_DualWriteConsistency] [rapid] draw retention_tier: ""
+# 2026/04/28 23:37:27.842361 [TestProperty6_DualWriteConsistency] [rapid] draw lifecycle_state: "created"
+# 2026/04/28 23:37:27.842362 [TestProperty6_DualWriteConsistency] [rapid] draw asset_type: "segment"
+# 2026/04/28 23:37:27.842364 [TestProperty6_DualWriteConsistency] [rapid] draw id: "00000000"
+# 2026/04/28 23:37:27.842372 [TestProperty6_DualWriteConsistency] cf_meta owner mismatch: got=<nil> want=
+# 
+v0.4.8#11459953673484545107
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0

@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/algo_failed.v1.json",
+  "title": "algo_failed.v1",
+  "description": "Emitted when an algorithm run finishes with failure (new_status=failed).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "algo_key",
+    "algo_name",
+    "algo_version",
+    "prev_status",
+    "new_status",
+    "reason"
+  ],
+  "properties": {
+    "algo_key": {
+      "type": "string",
+      "description": "Versioned algorithm key (<name>@<version>)."
+    },
+    "algo_name": {
+      "type": "string"
+    },
+    "algo_version": {
+      "type": "string"
+    },
+    "prev_status": {
+      "type": "string",
+      "enum": ["running"]
+    },
+    "new_status": {
+      "type": "string",
+      "enum": ["failed"]
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Non-empty failure reason."
+    },
+    "failure_mode": {
+      "type": "string",
+      "description": "Inferred failure classification (timeout|algo_error|sensor_fault|env_mismatch|low_quality|annotation_drift|unknown)."
+    }
+  }
+}

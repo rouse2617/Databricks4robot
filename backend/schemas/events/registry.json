@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Asset event type registry. Each entry pins the current payload schema version that producers MUST emit. See VERSIONING.md.",
+  "events": {
+    "action_upserted": {
+      "current_version": "v1",
+      "schema_file": "action_upserted.v1.json",
+      "description": "Emitted when a row in `actions` is created or modified. Same-tx with the actions write."
+    },
+    "action_deleted": {
+      "current_version": "v1",
+      "schema_file": "action_deleted.v1.json",
+      "description": "Emitted when an `actions` row is soft-deleted. Same-tx with the actions write."
+    },
+    "asset_created": {
+      "current_version": "v1",
+      "schema_file": "asset_created.v1.json",
+      "description": "Emitted when an asset row is created. Same-tx with assets insert."
+    },
+    "asset_updated": {
+      "current_version": "v1",
+      "schema_file": "asset_updated.v1.json",
+      "description": "Emitted when mutable asset fields are updated. Same-tx with assets update."
+    },
+    "asset_lifecycle_changed": {
+      "current_version": "v1",
+      "schema_file": "asset_lifecycle_changed.v1.json",
+      "description": "Emitted when lifecycle/status fields change on an asset."
+    },
+    "tag_upserted": {
+      "current_version": "v1",
+      "schema_file": "tag_upserted.v1.json",
+      "description": "Emitted when a tag is created or updated on an asset."
+    },
+    "tag_deleted": {
+      "current_version": "v1",
+      "schema_file": "tag_deleted.v1.json",
+      "description": "Emitted when a tag is deleted from an asset."
+    },
+    "algo_started": {
+      "current_version": "v1",
+      "schema_file": "algo_started.v1.json",
+      "description": "Emitted when an algorithm transitions to running."
+    },
+    "algo_finished": {
+      "current_version": "v1",
+      "schema_file": "algo_finished.v1.json",
+      "description": "Emitted when an algorithm run finishes with status ok."
+    },
+    "algo_failed": {
+      "current_version": "v1",
+      "schema_file": "algo_failed.v1.json",
+      "description": "Emitted when an algorithm run finishes with status failed."
+    },
+    "algo_reset": {
+      "current_version": "v1",
+      "schema_file": "algo_reset.v1.json",
+      "description": "Emitted when an algorithm state is reset to pending."
+    },
+    "algo_unblocked": {
+      "current_version": "v1",
+      "schema_file": "algo_unblocked.v1.json",
+      "description": "Emitted when a blocked algorithm becomes pending."
+    },
+    "eval_result_reported": {
+      "current_version": "v1",
+      "schema_file": "eval_result_reported.v1.json",
+      "description": "Emitted after eval result persistence succeeds."
+    },
+    "delivery_committed": {
+      "current_version": "v1",
+      "schema_file": "delivery_committed.v1.json",
+      "description": "Emitted when delivery commit writes complete for an asset."
+    },
+    "mcap_file_created": {
+      "current_version": "v1",
+      "schema_file": "mcap_file_created.v1.json",
+      "description": "Emitted when an MCAP file metadata row is created."
+    },
+    "mcap_upload_finalized": {
+      "current_version": "v1",
+      "schema_file": "mcap_upload_finalized.v1.json",
+      "description": "Emitted when MCAP upload finalization updates ingest state."
+    }
+  }
+}

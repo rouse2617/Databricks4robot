@@ -1,0 +1,23 @@
+tags:
+  priority:
+    description: "处理优先级"
+    type: enum
+    values: ["critical", "high", "medium", "low"]
+  quality:
+    description: "数据质量评级"
+    type: enum
+    values: ["excellent", "good", "acceptable", "poor", "unusable"]
+  scene:
+    description: "采集场景"
+    type: enum
+    values: ["indoor", "outdoor", "warehouse", "office", "factory"]
+  task:
+    description: "采集任务标识"
+    type: string
+  batch:
+    description: "采集批次号"
+    type: string
+  notes:
+    description: "自由备注"
+    type: string
+    max_length: 500

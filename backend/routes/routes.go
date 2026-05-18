@@ -1,0 +1,318 @@
+package routes
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	promhttp "github.com/prometheus/client_golang/prometheus/promhttp"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
+	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
+	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
+	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
+	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
+
+	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
+)
+
+// RegisterAll wires up all API domains in a single process.
+// This is the default local/prod runtime mode for the current project.
+// pgPing is a function that pings the PostgreSQL database (e.g. pgClient.Ping).
+// When nil, the readyz endpoint reports PG as unhealthy.
+func RegisterAll(
+	r *gin.Engine,
+	cfg *config.Config,
+	pgPing func(context.Context) error,
+	assetHandler *assetH.Handler,
+	mcapHandler *mcapH.Handler,
+	deliveryHandler *deliveryH.Handler,
+	algoHandler *assetH.AlgoHandler,
+	lakehouseHandler *lakehouseH.Handler,
+	registryHandler *registryH.Handler,
+	searchHandler *searchH.Handler,
+	adminHandler *adminH.Handler,
+	purgeHandler *adminH.PurgeHandler,
+	evalHandler *evalH.Handler,
+	actionHandler *actionH.Handler,
+	queryHandler *queryH.Handler,
+) {
+	r.Use(middleware.RequestID())
+	r.Use(middleware.HTTPMetrics())
+	r.Use(middleware.RequestGuard(2048))
+	r.Use(middleware.StructuredLogger())
+
+	// Rate limiting (disabled by default, set RATE_LIMIT_RPS to enable).
+	if rl := middleware.RateLimitFromConfig(cfg.RateLimitRPS, cfg.RateLimitBurst); rl != nil {
+		r.Use(rl.Middleware())
+	}
+
+	// Circuit breaker scoped to API routes only — infrastructure endpoints
+	// (/healthz, /readyz, /metrics) must remain reachable when CB is open.
+	var cbMiddleware gin.HandlerFunc
+	if cb := middleware.NewCircuitBreaker(
+		cfg.CBEnabled == "true",
+		atoi(cfg.CBWindowSec, 60),
+		atoi(cfg.CBThreshold, 10),
+		atoi(cfg.CBCooldownSec, 30),
+	); cb != nil {
+		cbMiddleware = cb.Middleware()
+	}
+
+	r.GET("/healthz", healthz("backend"))
+
+	r.GET("/readyz", readyz(pgPing, cfg))
+	r.GET("/version", version())
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	auth := middleware.StaticTokenAuth(cfg.GraceToken)
+	adminAuth := middleware.AdminTokenAuth(cfg.AdminToken, cfg.GraceToken)
+	secureSessionCookie := cfg.Env == "production"
+
+	authPublic := r.Group("/api/v1/auth")
+	{
+		authPublic.POST("/login", func(c *gin.Context) {
+			var req struct {
+				Token string `json:"token"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+				return
+			}
+			token := strings.TrimSpace(req.Token)
+			if token == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+				return
+			}
+			if token != cfg.GraceToken {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+				return
+			}
+			c.SetCookie("grace_session", token, 86400, "/", "", secureSessionCookie, true)
+			c.JSON(http.StatusOK, gin.H{"authenticated": true})
+		})
+
+		authProtected := authPublic.Group("", auth)
+		authProtected.GET("/me", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"authenticated": true})
+		})
+		authProtected.POST("/logout", func(c *gin.Context) {
+			c.SetCookie("grace_session", "", -1, "/", "", secureSessionCookie, true)
+			c.JSON(http.StatusOK, gin.H{"authenticated": false})
+		})
+	}
+
+	api := r.Group("/api/v1", auth)
+	if cbMiddleware != nil {
+		api.Use(cbMiddleware)
+	}
+	{
+		assets := api.Group("/assets")
+		assets.POST("", assetHandler.Create)
+		assets.GET("/:id", assetHandler.Get)
+		assets.PATCH("/:id", assetHandler.Update)
+		assets.DELETE("/:id", assetHandler.Delete)
+		assets.GET("/:id/deliveries", assetHandler.ListDeliveries)
+		assets.GET("/:id/mcap-locator", assetHandler.McapLocator)
+		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
+		assets.GET("/:id/events", assetHandler.ListEvents)
+		assets.GET("/:id/lineage", assetHandler.GetLineage)
+		assets.GET("/:id/timeline", assetHandler.Timeline)
+		assets.POST("/:id/tags", assetHandler.UpsertTag)
+		assets.DELETE("/:id/tags/:key", assetHandler.DeleteTag)
+		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
+
+		// Batch operations (custom method syntax: POST /assets:batch_get)
+		api.POST("/assets:batch_get", assetHandler.BatchGet)
+
+		// Global event stream — no asset_id required.
+		api.GET("/events", assetHandler.ListGlobalEvents)
+
+		// Algorithm lifecycle routes
+		if algoHandler != nil {
+			assets.GET("/:id/algo", algoHandler.ListCurrent)
+			assets.POST("/:id/algo/:algo_key/start", algoHandler.Start)
+			assets.POST("/:id/algo/:algo_key/finish", algoHandler.Finish)
+			assets.POST("/:id/algo/:algo_key/reset", algoHandler.Reset)
+		}
+
+		api.POST("/mcap/upload/finalize", mcapHandler.FinalizeUpload)
+		api.GET("/mcap/:id/messages", mcapHandler.IterMessages)
+
+		mcapFiles := api.Group("/mcap-files")
+		mcapFiles.POST("", mcapHandler.CreateFile)
+		mcapFiles.GET("", mcapHandler.ListFiles)
+		mcapFiles.GET("/:id", mcapHandler.GetFile)
+		mcapFiles.GET("/:id/bytes", mcapHandler.Bytes)
+		mcapFiles.HEAD("/:id/bytes", mcapHandler.Bytes)
+
+		api.POST("/deliveries", deliveryHandler.Commit)
+		api.GET("/deliveries", deliveryHandler.List)
+		api.GET("/deliveries/:id", deliveryHandler.Get)
+		api.GET("/deliveries/:id/items", deliveryHandler.ListItems)
+		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
+
+		// Registry endpoints (read-only, from YAML config)
+		api.GET("/algo-registry", registryHandler.AlgoRegistry)
+		api.GET("/tag-registry", registryHandler.TagRegistry)
+		api.GET("/metric-registry", registryHandler.MetricRegistry)
+		api.GET("/action-label-registry", registryHandler.ActionLabelRegistry)
+		api.GET("/lifecycle-states", registryHandler.LifecycleStates)
+
+		// Search endpoints (Elasticsearch-backed)
+		if searchHandler != nil {
+			api.GET("/search/sync-status", searchHandler.SyncStatus)
+			api.GET("/search/sync-progress", searchHandler.SyncProgress)
+		}
+
+		if lakehouseHandler != nil {
+			api.GET("/lakehouse/report", lakehouseHandler.Report)
+			api.GET("/lakehouse/status", lakehouseHandler.Status)
+			api.GET("/lakehouse/sync-status", lakehouseHandler.SyncStatus)
+			api.GET("/lakehouse/sync-progress", lakehouseHandler.BronzeSyncProgress)
+			api.GET("/lakehouse/failure-clusters", lakehouseHandler.FailureClusters)
+			api.GET("/lakehouse/overview", lakehouseHandler.Overview)
+			api.GET("/lakehouse/asset-growth", lakehouseHandler.AssetGrowth)
+			api.GET("/lakehouse/tables", lakehouseHandler.Tables)
+			api.GET("/lakehouse/event-daily", lakehouseHandler.EventDaily)
+			api.GET("/lakehouse/event-type-share", lakehouseHandler.EventTypeShare)
+			api.GET("/lakehouse/quality-distribution", lakehouseHandler.QualityDistribution)
+			api.GET("/lakehouse/customer-replay", lakehouseHandler.CustomerReplay)
+		}
+
+		if adminHandler != nil {
+			admin := api.Group("/admin", adminAuth)
+			admin.POST("/search/reindex", adminHandler.SearchReindex)
+			admin.POST("/search/reindex-jobs", adminHandler.SearchReindexCreateJob)
+			admin.GET("/search/reindex-jobs", adminHandler.SearchReindexListJobs)
+			admin.GET("/search/reindex-jobs/:id", adminHandler.SearchReindexGetJob)
+			admin.POST("/search/reindex-jobs/:id/stop", adminHandler.SearchReindexStopJob)
+			admin.POST("/search/reindex-jobs/:id/resume", adminHandler.SearchReindexResumeJob)
+			admin.POST("/search/reindex-jobs/:id/abandon", adminHandler.SearchReindexAbandonJob)
+			admin.GET("/search/outbox-stats", adminHandler.SearchOutboxStats)
+			admin.GET("/search/audit", adminHandler.SearchAudit)
+		}
+
+		// Internal admin (hard delete). Guarded by adminAuth (ADMIN_TOKEN
+		// when configured, otherwise falls back to GraceToken). Path
+		// namespace separates these from the public /assets API.
+		if purgeHandler != nil {
+			internal := api.Group("/internal", adminAuth)
+			internal.DELETE("/assets/:id", purgeHandler.DeleteAssetHard)
+			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
+		}
+
+		// Actions (mcap → seg → action 第三层; docs/review/data-platform-design.md §5.2.15)
+		if actionHandler != nil {
+			assets.POST("/:id/actions", actionHandler.Create)
+			assets.GET("/:id/actions", actionHandler.List)
+			assets.PATCH("/:id/actions/:action_id", actionHandler.Patch)
+			assets.DELETE("/:id/actions/:action_id", actionHandler.Delete)
+		}
+
+		// Eval / Metrics (Phase 1.5)
+		if evalHandler != nil {
+			assets.POST("/:id/eval-results", evalHandler.ReportEvalResult)
+			assets.GET("/:id/eval-results", evalHandler.ListEvalResults)
+			assets.GET("/:id/metrics", evalHandler.ListMetrics)
+			api.GET("/metrics/registry", evalHandler.GetRegistry)
+			api.POST("/metrics:search", evalHandler.SearchByMetrics)
+		}
+
+		if queryHandler != nil {
+			api.POST("/queries/validate", queryHandler.Validate)
+			api.POST("/queries/run", queryHandler.Run)
+			api.GET("/saved-queries", queryHandler.ListSavedQueries)
+			api.POST("/saved-queries", queryHandler.CreateSavedQuery)
+			api.GET("/saved-queries/:id", queryHandler.GetSavedQuery)
+			api.PATCH("/saved-queries/:id", queryHandler.UpdateSavedQuery)
+			api.DELETE("/saved-queries/:id", queryHandler.DeleteSavedQuery)
+		}
+	}
+
+	// Internal (service-to-service). Guarded by adminAuth when ADMIN_TOKEN
+	// is set, otherwise by GraceToken.
+	r.POST("/internal/commit-segments", adminAuth, assetHandler.CommitSegments)
+}
+
+func healthz(service string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": service})
+	}
+}
+
+func readyz(pgPing func(context.Context) error, cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		checks := gin.H{}
+		healthy := true
+
+		// PG readiness — reuse the existing connection pool.
+		if pgPing != nil {
+			if err := pgPing(ctx); err != nil {
+				checks["pg"] = gin.H{"status": "unhealthy", "error": err.Error()}
+				healthy = false
+			} else {
+				checks["pg"] = gin.H{"status": "healthy"}
+			}
+		} else {
+			checks["pg"] = gin.H{"status": "unhealthy", "error": "not configured"}
+			healthy = false
+		}
+
+		if cfg.LakehouseBackend != "" && cfg.LakehouseBackend != "none" {
+			checks["lakehouse"] = gin.H{
+				"status":  "configured",
+				"backend": cfg.LakehouseBackend,
+				"project": cfg.LakehouseBQProject,
+				"dataset": cfg.LakehouseBQDataset,
+			}
+		}
+
+		status := http.StatusOK
+		if !healthy {
+			status = http.StatusServiceUnavailable
+		}
+		c.JSON(status, gin.H{"status": gin.H{"healthy": healthy}, "checks": checks})
+	}
+}
+
+var (
+	buildVersion = "dev"
+	buildCommit  = "unknown"
+	buildTime    = "unknown"
+)
+
+func version() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"version": buildVersion,
+			"commit":  buildCommit,
+			"time":    buildTime,
+			"service": "cyber-databrew-backend",
+		})
+	}
+}
+
+func atoi(s string, fallback int) int {
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
+}

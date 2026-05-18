@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/mcap_file_created.v1.json",
+  "title": "mcap_file_created.v1",
+  "description": "Emitted when an MCAP file metadata row is created.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "mcap_file_id",
+    "ingest_state"
+  ],
+  "properties": {
+    "mcap_file_id": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z]{8}$",
+      "description": "MCAP file identifier (8-char alphanumeric)."
+    },
+    "ingest_state": {
+      "type": "string",
+      "description": "Ingest state after file creation."
+    },
+    "gcs_path": {
+      "type": "string"
+    },
+    "size_bytes": {
+      "type": "integer"
+    },
+    "owner": {
+      "type": "string"
+    }
+  }
+}

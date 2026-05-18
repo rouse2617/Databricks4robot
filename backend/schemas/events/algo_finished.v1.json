@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/algo_finished.v1.json",
+  "title": "algo_finished.v1",
+  "description": "Emitted when an algorithm run finishes successfully (new_status=ok).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "algo_key",
+    "algo_name",
+    "algo_version",
+    "prev_status",
+    "new_status"
+  ],
+  "properties": {
+    "algo_key": {
+      "type": "string",
+      "description": "Versioned algorithm key (<name>@<version>)."
+    },
+    "algo_name": {
+      "type": "string"
+    },
+    "algo_version": {
+      "type": "string"
+    },
+    "prev_status": {
+      "type": "string",
+      "enum": ["running"]
+    },
+    "new_status": {
+      "type": "string",
+      "enum": ["ok"]
+    },
+    "run_id": {
+      "type": "string"
+    }
+  }
+}

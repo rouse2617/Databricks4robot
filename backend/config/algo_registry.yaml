@@ -1,0 +1,49 @@
+algorithms:
+  hand_tracking:
+    description: "手部追踪"
+    versions: ["1.0.0", "1.2.0"]
+    depends_on: []
+    output:
+      required_fields: ["output_uri", "type"]
+      uri_required: true
+      report_size: true
+  head_tracking:
+    description: "头部追踪"
+    versions: ["1.0.0"]
+    depends_on: []
+    output:
+      required_fields: ["output_uri", "type"]
+      uri_required: true
+      report_size: true
+  body_tracking:
+    description: "身体追踪"
+    versions: ["1.0.0"]
+    depends_on: []
+    output:
+      required_fields: ["output_uri", "type"]
+      uri_required: true
+      report_size: true
+  deface:
+    description: "去人脸"
+    versions: ["2.0.0"]
+    depends_on: []
+    output:
+      required_fields: ["output_uri", "width", "height", "fps", "source_stream", "eye"]
+      uri_required: true
+      report_size: true
+  action_annotation:
+    description: "自动动作标注"
+    versions: ["1.0.0"]
+    depends_on: ["hand_tracking@1.2.0", "head_tracking@1.0.0", "body_tracking@1.0.0"]
+    output:
+      required_fields: ["output_uri"]
+      uri_required: true
+      report_size: true
+  env_analysis:
+    description: "AI 场景分析"
+    versions: ["1.0.0"]
+    depends_on: []
+    output:
+      required_fields: []
+      uri_required: false
+      report_size: false
