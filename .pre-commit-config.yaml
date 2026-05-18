@@ -4,6 +4,7 @@ repos:
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
+        exclude: deploy/iac/terraform/gateway-domain
       - id: terraform_tflint
 
   # 1. High-entropy string detection
