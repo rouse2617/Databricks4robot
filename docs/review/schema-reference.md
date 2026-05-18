@@ -550,7 +550,7 @@ API 幂等保护。`expires_at` 由 lifecycle job 清理（`response_json` 可�
 
 ## outbox_sink_cursors
 
-历史兼容表：曾用于 Outbox Worker 各 sink 的消费进度。  
+历史兼容表：曾用于 Outbox Worker 各 sink 的消费进度。
 当前运行时同步主路径以 Pure CDC 为准，消费位点由 CDC offsets / consumer group 管理。
 
 | 字段 | 类型 | 必填 | 说明 |

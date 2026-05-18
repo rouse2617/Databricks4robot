@@ -310,7 +310,7 @@ curl "$BASE/api/v1/assets/{asset_id}" \
 
 ### 1.3.1 Query IR（v1）
 
-> 当前状态：**已实现并进入主路径（桥接收口中）**。  
+> 当前状态：**已实现并进入主路径（桥接收口中）**。
 > 现阶段 Query API 已承载工作台主查询路径：`validate -> plan -> ES recall(optional) -> PG refine`。内部仍存在部分桥接实现（例如 PG refine 继续复用旧 filter 编译），但对前端已是主接口。
 >
 > 目标形态（JSON Query IR、字段注册中心、planner、compiler/executor、多引擎路由）见：《查询平台设计（Query IR / Planner / Executors）》。
@@ -674,7 +674,7 @@ for algo in hand_tracking@1.2.0 head_tracking@1.0.0 body_tracking@1.0.0; do
   curl -X POST "$BASE/api/v1/assets/{id}/algo/$algo/start" \
     -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
     -d '{"method":"k8s_job"}'
-  
+
   curl -X POST "$BASE/api/v1/assets/{id}/algo/$algo/finish" \
     -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
     -d "{\"status\":\"ok\",\"output_uri\":\"gs://b/$algo.mcap\",\"result_size_bytes\":100,\"extra_fields\":{\"type\":\"v1\"}}"
@@ -1038,7 +1038,7 @@ curl "$BASE/api/v1/tag-registry" \
 ## 7. Elasticsearch 检索 (Search)
 
 ### 7.1 全文检索资产
-`GET /api/v1/search/assets` 已从正式查询主路径下线。  
+`GET /api/v1/search/assets` 已从正式查询主路径下线。
 全文、keyword、semantic、similar、facet 统一通过 Query API 进入：
 
 - `POST /api/v1/queries/validate`

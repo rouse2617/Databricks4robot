@@ -15,4 +15,3 @@ if [[ -n "$TOPIC_OVERRIDE" ]]; then
 fi
 
 go "${ARGS[@]}"
-

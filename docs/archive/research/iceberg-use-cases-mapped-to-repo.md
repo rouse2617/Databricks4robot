@@ -487,17 +487,17 @@
 
 ## 10. 参考资料
 
-- Iceberg multi-engine support  
+- Iceberg multi-engine support
   https://iceberg.apache.org/multi-engine-support/
-- Iceberg evolution  
+- Iceberg evolution
   https://iceberg.apache.org/docs/latest/docs/evolution/
-- Iceberg Spark writes  
+- Iceberg Spark writes
   https://iceberg.apache.org/docs/latest/docs/spark-writes/
-- Iceberg Spark structured streaming  
+- Iceberg Spark structured streaming
   https://iceberg.apache.org/docs/latest/docs/spark-structured-streaming/
-- Iceberg maintenance  
+- Iceberg maintenance
   https://iceberg.apache.org/docs/1.10.1/docs/maintenance/
-- Snowflake Iceberg tables  
+- Snowflake Iceberg tables
   https://docs.snowflake.com/en/user-guide/tables-iceberg
-- Athena with Iceberg  
+- Athena with Iceberg
   https://docs.aws.amazon.com/athena/latest/ug/querying-iceberg.html

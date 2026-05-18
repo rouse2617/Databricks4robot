@@ -367,4 +367,3 @@ client.assets.finish_algo(
 - 联邦检索（BigQuery over PG + ES + 向量库）—— 2.0 内 PG + ES 即可。
 
 ---
-

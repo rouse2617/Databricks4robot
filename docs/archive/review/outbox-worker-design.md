@@ -1,6 +1,6 @@
 # Outbox Worker MVP 设计（历史方案）
 
-> ⚠️ **历史方案说明**：本文档描述 Outbox Worker 路径，当前不作为生产默认主链路。  
+> ⚠️ **历史方案说明**：本文档描述 Outbox Worker 路径，当前不作为生产默认主链路。
 > 当前生产与上线口径统一采用 Pure CDC（WAL + Debezium/Kafka + CDC consumers），请优先参考 [`pure-cdc-go-live-runbook.md`](https://www.feishu.cn/wiki/AiCxwlDSfiOiUbkrWumcVgKXnnc) 与 [`cdc-rollout-plan.md`](https://www.feishu.cn/wiki/FQQDwYifhi7DgBkGw7VcKkmwn0b)。
 >
 > 下文保留的并发模型、cursor 协议与验收标准用于历史回溯、兼容排障与迁移对照。

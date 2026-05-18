@@ -1,7 +1,7 @@
 # 查询平台设计（Query IR / Planner / Executors）
 
-> **状态**：提案 / 部分实现（桥接态）  
-> **目标版本**：作为 1.0 之后的统一查询内核，为后续 `saved query / slice / export / scenario test / 多引擎检索` 提供底盘。  
+> **状态**：提案 / 部分实现（桥接态）
+> **目标版本**：作为 1.0 之后的统一查询内核，为后续 `saved query / slice / export / scenario test / 多引擎检索` 提供底盘。
 > **适用前提**：当前项目尚未正式上线，允许废弃现有 `backend/internal/filter` 的 `field:op:value` 方案，不做兼容包袱。
 
 ---
@@ -169,7 +169,7 @@ Planner 不写 SQL，Compiler 不决定业务语义。
 
 ## 3. Query IR v1
 
-> **实现注记（当前）**：本章定义的是目标协议；当前代码已切到树形 `where` 协议，但整体仍处于桥接执行阶段（`Query IR -> 旧 filter/sort -> PG`，分页仍为 `page/page_size`）。  
+> **实现注记（当前）**：本章定义的是目标协议；当前代码已切到树形 `where` 协议，但整体仍处于桥接执行阶段（`Query IR -> 旧 filter/sort -> PG`，分页仍为 `page/page_size`）。
 > 上线前策略：不做双轨长期兼容，直接收敛到唯一目标协议，并删除桥接协议与转换代码。
 
 ### 3.1 选择 JSON，而不是文本 DSL
@@ -593,7 +593,7 @@ backend/internal/queryexec/
 
 ## 7. API 设计
 
-> **实现注记（当前）**：`/queries/validate` 与 `/queries/run` 已存在，但返回体目前仍是桥接期最小集合。  
+> **实现注记（当前）**：`/queries/validate` 与 `/queries/run` 已存在，但返回体目前仍是桥接期最小集合。
 > `normalized_query / field_capabilities / debug_plan / facets` 以阶段任务为准逐步补齐。
 
 ### 7.1 核心端点

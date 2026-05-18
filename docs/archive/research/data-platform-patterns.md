@@ -89,7 +89,7 @@ type Asset struct {
 // 张三写的
 {"priority": "high", "scene": "indoor"}
 
-// 李四写的  
+// 李四写的
 {"Priority": "HIGH", "Scene": "室内", "prio": "1"}
 
 // 王五写的
@@ -245,21 +245,21 @@ cf_meta = cf_meta || jsonb_build_object(
 
 def ingest_mcap(mcap_file_id: str):
     mcap = client.mcap.get(mcap_file_id)
-    
+
     # 幂等检查：已经 summarized 就跳过
     if mcap.cf_process.get("ingest_state") == "summarized":
         context.log.info(f"mcap {mcap_file_id} already ingested, skipping")
         return
-    
+
     # 幂等检查：正在处理中（另一个 job 在跑）
     if mcap.cf_process.get("ingest_state") == "running":
         context.log.warning(f"mcap {mcap_file_id} ingest already running, skipping")
         return
-    
+
     # 标记为 running（乐观锁防并发）
     client.mcap.update_process_state(mcap_file_id, "ingest_state", "running",
                                       expected_version=mcap.version)
-    
+
     try:
         segments = parse_and_split(mcap)
         for seg in segments:
@@ -272,7 +272,7 @@ def ingest_mcap(mcap_file_id: str):
                 context.log.info(f"segment at {seg.start_ns} already exists, skipping")
                 continue
             client.assets.create(seg)
-        
+
         client.mcap.update_process_state(mcap_file_id, "ingest_state", "summarized")
     except Exception as e:
         client.mcap.update_process_state(mcap_file_id, "ingest_state", "failed",

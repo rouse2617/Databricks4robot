@@ -120,7 +120,7 @@
 
 ## 第一阶段入库字段（V1）
 
-> 目标：上传后秒级可查询，避免实时扫 MCAP 正文。  
+> 目标：上传后秒级可查询，避免实时扫 MCAP 正文。
 > **仓库真源**：`docs/review/sql.md` §4.1、`schemas/pg-phase0.sql` 中 `mcap_files` 定义；API 层 `McapFile.gcs_path` 入库列名为 **`mcap_uri`**（见 `backend/internal/postgres/repos.go`）。
 
 ### 与现有 `mcap_files` 列对齐（避免重复设计）
@@ -386,4 +386,3 @@ LIMIT 1;
 2. **通道级**：写入 **`mcap_files.metadata.channels`** JSON 数组（**不新建** `mcap_channels` 表）；各 topic **平等一条**
 3. **Chunk 偏移**：写入 **GCS 旁路 JSON**（`{mcap_uri}.chunks.json`，~477 KB/文件），PG 仅存 URI 指针（`metadata.chunk_index_uri`）；播放器和在线 API 通过 HTTP GET 直接消费，实现「时间戳 → 精准 Range Read」的毫秒级定位
 4. 消息级 / 帧级索引进入后续阶段，落 Iceberg；标签表随后续目标在 Iceberg 展开
-

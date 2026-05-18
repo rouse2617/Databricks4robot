@@ -1,5 +1,5 @@
 # Cyber Databrew — backend image (see backend/Dockerfile, build context = repo root with Dockerfile in backend/).
-# PR → BuildKit → AR cyber-databrew-backend; tags :<sha>, :pr-<N>
+# PR → BuildKit → AR cyber-databrew-backend; tags :<sha>, :pr-<N>-<sha>
 #
 # Image registry (green-valley / rick-cyber-databrew-images).
 # If you fork CI to another project, search-replace project + repo id below.
@@ -116,4 +116,4 @@ spec:
           - name: SOURCE_IMAGE
             value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:{{revision}}
           - name: TARGET_IMAGES
-            value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:pr-{{pull_request_number}}
+            value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:pr-{{pull_request_number}}-{{revision}}

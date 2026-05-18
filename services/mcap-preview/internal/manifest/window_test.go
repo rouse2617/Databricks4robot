@@ -48,4 +48,3 @@ func testInfoWithStats(start, end uint64) *mcap.Info {
 		},
 	}
 }
-

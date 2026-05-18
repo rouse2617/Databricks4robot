@@ -5,7 +5,7 @@
 ```md
 ## 进度更新—<YYYY-MM-DD>：<本次交付标题>
 
-拆出子 issue **<SUB-ISSUE-ID>（已 Done）** 记录本轮完整交付：  
+拆出子 issue **<SUB-ISSUE-ID>（已 Done）** 记录本轮完整交付：
 <SUB-ISSUE-URL>
 
 ### 交付要点

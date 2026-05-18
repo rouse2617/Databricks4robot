@@ -267,10 +267,9 @@ payload 关键字段：
 
 ## 11. 关键风险
 
-- **R-eval-1**：metric key 无约束扩张导致 ES mapping 爆炸。  
+- **R-eval-1**：metric key 无约束扩张导致 ES mapping 爆炸。
   对策：registry 白名单 + 未注册 key 仅入 `result_payload`。
-- **R-eval-2**：不同 eval 版本互相覆盖。  
+- **R-eval-2**：不同 eval 版本互相覆盖。
   对策：`asset_metrics` 主键纳入 `eval_version`。
-- **R-eval-3**：指标直接绑定生命周期导致隐式规则失控。  
+- **R-eval-3**：指标直接绑定生命周期导致隐式规则失控。
   对策：指标与状态机解耦，必须通过显式 quality/QA 规则落地。
-

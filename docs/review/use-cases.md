@@ -350,34 +350,34 @@ flowchart LR
 
 ### Phase 1 MVP（必备，上线前）
 
-🟢 A1 / A3 / A4 / **A5（queries/run）** / A6 / A10  
-🟢 B1 / B2 / B4 / B5 / B6  
-🟢 C1 / C2 / C4 / C5  
-🟢 D2a–D2c / D4 / D7  
-🟢 E1 / E2 / E3 / E4 / **E8（customers/deliveries）**  
-🟢 G1（同 A10）  
-🟢 **F0 / F-sync / F-re**  
-🟢 **Ev1–Ev5**  
-🟢 K1 / K3 / K5 / K6  
-🟢 L1 / L2 / L4 / L8  
-🟢 M1 / M2 / M3  
+🟢 A1 / A3 / A4 / **A5（queries/run）** / A6 / A10
+🟢 B1 / B2 / B4 / B5 / B6
+🟢 C1 / C2 / C4 / C5
+🟢 D2a–D2c / D4 / D7
+🟢 E1 / E2 / E3 / E4 / **E8（customers/deliveries）**
+🟢 G1（同 A10）
+🟢 **F0 / F-sync / F-re**
+🟢 **Ev1–Ev5**
+🟢 K1 / K3 / K5 / K6
+🟢 L1 / L2 / L4 / L8
+🟢 M1 / M2 / M3
 
 ### Phase 1.5（上线后立刻补）
 
-⚪ A2 / A7–A9 / A11  
-⚪ B3  
-⚪ **⚪ D1 / D3 / D5–D6 / D8–D9**  
-⚪ E5–E7  
-⚪ F3–F4  
-⚪ G2–G4  
-⚪ M4–M7  
+⚪ A2 / A7–A9 / A11
+⚪ B3
+⚪ **⚪ D1 / D3 / D5–D6 / D8–D9**
+⚪ E5–E7
+⚪ F3–F4
+⚪ G2–G4
+⚪ M4–M7
 
 ### Phase 2（数据集 / 训练域上线时）
 
-⚪ H1–H9 · ⚪ I1–I5 · ⚪ J1 / J3 / J4  
-K2 / K4  
-⚪ L3 / L5 / L6 / L9  
-M4  
+⚪ H1–H9 · ⚪ I1–I5 · ⚪ J1 / J3 / J4
+K2 / K4
+⚪ L3 / L5 / L6 / L9
+M4
 
 ### Phase 3+（候选）
 

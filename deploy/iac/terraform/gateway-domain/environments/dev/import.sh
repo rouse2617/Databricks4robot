@@ -81,7 +81,7 @@ lookup_record_id() {
   # $1 = full record name, $2 = type
   cf_api "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?name=$1&type=$2" \
     | python3 -c 'import json,sys
-d=json.load(sys.stdin); 
+d=json.load(sys.stdin);
 print(d["result"][0]["id"] if d["result"] else "")'
 }
 

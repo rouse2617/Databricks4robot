@@ -602,17 +602,17 @@ flowchart LR
 
 官方文档：
 
-- RisingWave PostgreSQL CDC pipeline  
+- RisingWave PostgreSQL CDC pipeline
   https://docs.risingwave.com/get-started/recipes/cdc-postgres
-- RisingWave Source / Table / MV / Sink  
+- RisingWave Source / Table / MV / Sink
   https://docs.risingwave.com/get-started/source-table-mv-sink
-- RisingWave data delivery overview  
+- RisingWave data delivery overview
   https://docs.risingwave.com/delivery/overview
-- RisingWave Iceberg overview  
+- RisingWave Iceberg overview
   https://docs.risingwave.com/iceberg/overview
-- RisingWave lakehouse ingestion recipe  
+- RisingWave lakehouse ingestion recipe
   https://docs.risingwave.com/get-started/recipes/lakehouse-ingestion
-- Apache Iceberg Spark writes  
+- Apache Iceberg Spark writes
   https://iceberg.apache.org/docs/latest/docs/spark-writes/
 
 仓库内现状：

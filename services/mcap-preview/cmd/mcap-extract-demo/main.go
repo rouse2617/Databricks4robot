@@ -103,4 +103,3 @@ func main() {
 	}
 	fmt.Printf("topic=%s frames=%d codecs=%v out=%s\n", *topic, count, codecCount, *out)
 }
-

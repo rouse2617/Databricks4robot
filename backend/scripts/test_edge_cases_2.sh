@@ -167,7 +167,7 @@ assert_code 409 "start blocked algo → 409"
 for DEP_KEY in "hand_tracking@1.2.0" "head_tracking@1.0.0" "body_tracking@1.0.0"; do
   echo -e "  ${YELLOW}→${NC} 完成依赖: ${DEP_KEY}"
   call POST "/api/v1/assets/${ASSET_ID}/algo/${DEP_KEY}/start" -d '{"method":"test"}'
-  
+
   # 根据 algo 类型构造 finish body
   case "$DEP_KEY" in
     hand_tracking@1.2.0)
@@ -249,13 +249,13 @@ CYCLE_FAIL=0
 for i in $(seq 1 10); do
   call POST "/api/v1/assets/${ASSET_ID}/algo/${ALGO}/start" -d "{\"method\":\"cycle-${i}\"}"
   [ "$RESP_CODE" != "200" ] && { CYCLE_FAIL=$((CYCLE_FAIL+1)); continue; }
-  
+
   call POST "/api/v1/assets/${ASSET_ID}/algo/${ALGO}/finish" -d '{"status":"ok"}'
   [ "$RESP_CODE" != "200" ] && { CYCLE_FAIL=$((CYCLE_FAIL+1)); continue; }
-  
+
   call POST "/api/v1/assets/${ASSET_ID}/algo/${ALGO}/reset"
   [ "$RESP_CODE" != "200" ] && { CYCLE_FAIL=$((CYCLE_FAIL+1)); continue; }
-  
+
   CYCLE_OK=$((CYCLE_OK+1))
 done
 

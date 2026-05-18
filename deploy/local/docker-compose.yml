@@ -375,8 +375,8 @@ services:
               }
             }
           }
-        }" 
-        echo "Elasticsearch assets index mapping ready." 
+        }"
+        echo "Elasticsearch assets index mapping ready."
     restart: "no"
 
   # ── Observability ───────────────────────────────────────────────

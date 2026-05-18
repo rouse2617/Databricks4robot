@@ -333,7 +333,7 @@ DDL 以 `schemas/pg-phase0.sql` 与 `backend/migrations/*.sql` 为准；本节�
 
 ### 4.4 asset_algo_latest（Asset 算法最新状态投影）
 
-- 每个 asset + algo 保留一行最新状态  
+- 每个 asset + algo 保留一行最新状态
 - **主键**：PRIMARY KEY (asset_id, algo_name)
 
 | 字段名         | 类型              | 必填 | 说明              | 同步目标      |
@@ -590,7 +590,7 @@ DDL 以 `schemas/pg-phase0.sql` 与 `backend/migrations/*.sql` 为准；本节�
 | created_at   | TIMESTAMPTZ | 是   | 创建时间            | ES / Iceberg  |
 | updated_at   | TIMESTAMPTZ | 是   | 更新时间            | ES / Iceberg  |
 
-**设计说明**  
+**设计说明**
 - 训练记录是审计证据，必须自包含记录当时使用的 catalog/namespace/object/version，不依赖可变的 catalog_objects FK。
 - “某次训练用了哪些 asset”：查 training_runs -> dataset_snapshots 的 Catalog 引用和 manifest，再查 Iceberg 明细表。
 

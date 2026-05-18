@@ -1,7 +1,7 @@
 # Cyber Databrew — 渐进式开发路线图（v2）
 
-> 版本：2026-05-14 v2  
-> 基准：P0-implementation-plan.md v2 + product-review v4 + 已上线链路现状  
+> 版本：2026-05-14 v2
+> 基准：P0-implementation-plan.md v2 + product-review v4 + 已上线链路现状
 > 原则：每个 phase 独立可交付、不依赖后续 phase 的未完成功能
 > 评审对齐：详见 [`product-review-2026-05-14.md`](./product-review-2026-05-14.md)
 
@@ -42,7 +42,7 @@ Failure Mining  → 日常体验完备化  → 规模化支撑       → 数据�
 
 ## 部署基线（Tekton PAC，必须遵循）
 
-> 目标：把“代码提交→部署”统一收敛到 PAC，不依赖本地 `gcloud run deploy` 做最终闭环。  
+> 目标：把“代码提交→部署”统一收敛到 PAC，不依赖本地 `gcloud run deploy` 做最终闭环。
 > 权威来源：`.tekton/*.yaml` 与 `.tekton/README.md`；若与本文冲突，以 YAML 为准。
 
 ### 触发矩阵（当前生效）
@@ -64,17 +64,17 @@ Failure Mining  → 日常体验完备化  → 规模化支撑       → 数据�
 
 ### Agent / 开发者标准动作
 
-1. 先读本次改动对应的 `.tekton/*.yaml`，确认会触发哪条流水线。  
-2. 提交并 `git push` 到目标分支（dev: 非 `main`；prod: `main`）。  
-3. 观察 `tekton-pipelines` 命名空间中的 PipelineRun：  
-   - `kubectl get pipelinerun -n tekton-pipelines`  
-   - 失败时看失败 TaskRun（典型是 `build-and-push` 或 `deploy-cloudrun-*`）。  
+1. 先读本次改动对应的 `.tekton/*.yaml`，确认会触发哪条流水线。
+2. 提交并 `git push` 到目标分支（dev: 非 `main`；prod: `main`）。
+3. 观察 `tekton-pipelines` 命名空间中的 PipelineRun：
+   - `kubectl get pipelinerun -n tekton-pipelines`
+   - 失败时看失败 TaskRun（典型是 `build-and-push` 或 `deploy-cloudrun-*`）。
 4. 以 Cloud Run revision + API 验证结果作为“部署成功”证据。
 
 ### IAM / Secret 前置（简）
 
-- ServiceAccount：`tekton-builder`（当前 PipelineRun 使用）。  
-- 必需权限：Artifact Registry push、Cloud Run deploy、`iam.serviceAccounts.actAs`。  
+- ServiceAccount：`tekton-builder`（当前 PipelineRun 使用）。
+- 必需权限：Artifact Registry push、Cloud Run deploy、`iam.serviceAccounts.actAs`。
 - 飞书通知 Secret：`tekton-pipelines/feishu-open-notify`（可选；缺失时通知 task 会 `SKIP` 且不阻塞部署）。
 
 ---

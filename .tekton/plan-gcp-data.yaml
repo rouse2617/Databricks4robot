@@ -23,7 +23,7 @@ spec:
   # TODO: replace with cyber-databrew-specific IaC SA once provisioned in
   # cyber-iac. Needs: roles/storage.objectAdmin on terraform_staging_state_store
   # + roles/storage.admin on the project (for bucket lifecycle).
-  serviceAccountName: cyber-databrew-iac-dev
+  serviceAccountName: tekton-builder
   podTemplate:
     securityContext:
       fsGroup: 65532
