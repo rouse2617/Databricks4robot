@@ -1,0 +1,19 @@
+# GKE Gateway default health check uses GET /. The Go backend returns 404 for / but
+# 200 on /healthz, so the NEG was UNHEALTHY and the URL map served fault injection
+# ("fault filter abort"). See deploy/k8s/README.md (gateway section).
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: cyber-databrew-dev-api-lb-healthcheck
+  namespace: cyber-databrew-dev
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        portSpecification: USE_SERVING_PORT
+        requestPath: /healthz
+  targetRef:
+    group: ""
+    kind: Service
+    name: cyber-databrew-backend

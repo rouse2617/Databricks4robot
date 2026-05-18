@@ -1,0 +1,120 @@
+# CI: Nightly PG↔ES consistency audit
+# Task: 5.3 CI nightly 对账 job
+#
+# Runs the es-pg-audit.sh script against a docker-compose environment
+# to verify PG↔ES consistency rate > 99.9%.
+#
+# Schedule: nightly at 03:00 UTC, also available as manual trigger.
+name: nightly-es-pg-audit
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  es-pg-audit:
+    name: PG↔ES consistency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cyber_databrew_dev
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          xpack.security.http.ssl.enabled: "false"
+          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client jq
+
+      - name: Run PG migrations
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for f in backend/migrations/*.sql; do
+            echo "Applying $f ..."
+            psql -h localhost -p 5432 -U postgres -d cyber_databrew_dev -f "$f"
+          done
+
+      - name: Initialize ES index
+        run: bash deploy/local/elasticsearch/init-index.sh http://localhost:9200
+
+      - name: Build and start backend
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Sync PG→ES via reindex
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: cyber_databrew_dev
+          ELASTICSEARCH_URL: http://localhost:9200
+          ADMIN_TOKEN: ci-admin-token
+        run: |
+          cd backend
+          go build -o /tmp/server ./cmd/server
+          ENV=test PORT=8080 STORAGE_BACKEND=postgres \
+            GRACE_TOKEN=dev-token ADMIN_TOKEN=ci-admin-token \
+            LAKEHOUSE_BACKEND=none \
+            /tmp/server &
+          SERVER_PID=$!
+          sleep 5
+
+          # Trigger full reindex to populate ES from PG seed data
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8080/api/v1/admin/search/reindex \
+            -H "X-Admin-Token: ci-admin-token" \
+            -H "Content-Type: application/json" \
+            -d '{"rebuild_index": false, "dry_run": false}' || echo "000")
+          echo "Reindex response: $HTTP_CODE"
+
+          # Wait for ES to refresh
+          sleep 3
+          curl -sf -X POST http://localhost:9200/assets/_refresh
+
+          kill $SERVER_PID || true
+          wait $SERVER_PID 2>/dev/null || true
+
+      - name: Run PG↔ES audit
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: cyber_databrew_dev
+          ELASTICSEARCH_URL: http://localhost:9200
+        run: bash backend/scripts/es-pg-audit.sh

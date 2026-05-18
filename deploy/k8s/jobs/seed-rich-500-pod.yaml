@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: seed-rich-500
+  namespace: cyber-databrew-dev
+  labels:
+    app: seed-rich
+spec:
+  restartPolicy: Never
+  containers:
+    - name: seeder
+      image: python:3.11-slim
+      imagePullPolicy: IfNotPresent
+      env:
+        - name: GRACE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cyber-databrew-secrets
+              key: GRACE_TOKEN
+      volumeMounts:
+        - name: seed-script
+          mountPath: /scripts
+          readOnly: true
+      command:
+        - /bin/sh
+        - -lc
+        - >
+          python -m pip install --no-cache-dir httpx &&
+          python -u /scripts/seed_rich_dataset.py
+          --base "http://cyber-databrew-backend.cyber-databrew-dev.svc.cluster.local"
+          --token "$GRACE_TOKEN"
+          --total 500
+          --workers 20
+          --sample-output /tmp/seed_rich_sample_500_pod.json
+  volumes:
+    - name: seed-script
+      configMap:
+        name: seed-rich-script
+        defaultMode: 0555

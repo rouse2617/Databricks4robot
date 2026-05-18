@@ -1,0 +1,65 @@
+# Cyber Databrew — API server (backend/cmd/server, Gin).
+# Routes: GET /healthz (no auth), API under /api/v1 with X-Grace-Token — see backend/routes/routes.go
+#
+# Namespaces: deploy/k8s/namespaces.yaml
+#
+# Apply order:
+#   1. Namespace (once): kubectl apply -f deploy/k8s/namespaces.yaml
+#   2. Secret from secret.example.yaml → secret.local.yaml (never commit); apply:
+#        kubectl apply -n cyber-databrew-dev -f deploy/k8s/base/secret.local.yaml
+#   3. Base manifests:
+#        ./deploy/k8s/apply-base.sh
+#        # or: kubectl apply -n cyber-databrew-dev -k deploy/k8s/base/
+#
+# Env keys match backend/.env.example / backend/internal/config/config.go (ConfigMap + Secret).
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cyber-databrew-backend
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: cyber-databrew
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cyber-databrew
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cyber-databrew
+        app.kubernetes.io/component: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      # Optional Workload Identity: create GCP SA + bind iam.workloadIdentityUser, then set:
+      # serviceAccountName: cyber-databrew-backend
+      containers:
+        - name: api
+          image: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:dev-latest
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: cyber-databrew-config
+            - secretRef:
+                name: cyber-databrew-secrets
+          # Readiness/liveness use the same contract as backend/routes/routes_test.go (GET /healthz → 200)
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20

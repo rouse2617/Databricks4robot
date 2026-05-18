@@ -1,0 +1,20 @@
+project_id = "green-valley-442103"
+
+iceberg_buckets = {
+  "cyber-databrew-iceberg-warehouse-prod" = {
+    location = "US-CENTRAL1"
+    labels = {
+      env  = "prod"
+      role = "iceberg-warehouse"
+    }
+  }
+  "cyber-databrew-iceberg-datalake-prod" = {
+    location = "US-CENTRAL1"
+    labels = {
+      env  = "prod"
+      role = "iceberg-datalake"
+    }
+  }
+}
+
+pubsub_topics = []

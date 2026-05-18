@@ -1,0 +1,120 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/redhat-developer/vscode-tekton/refs/heads/main/scheme/tekton.dev/v1beta1_PipelineRun.json
+#
+# PR-time `terraform plan` for the gcp-data stack (dev env). Plan output is
+# posted as a PR comment so reviewers can see bucket / topic diffs before
+# merge. Mirrors the pattern from CyberOrigin2077/tekton-playground:
+#   .tekton/plan-dagster-iac.yaml
+#
+# Once this works, copy this file to:
+#   .tekton/plan-gateway-domain.yaml  (workingDir: gateway-domain/environments/dev)
+#   .tekton/plan-service-identity.yaml (workingDir: service-identity/environments/dev)
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: plan-gcp-data-{{revision}}
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-path-change: "[deploy/iac/terraform/gcp-data/**, .tekton/plan-gcp-data.yaml, .tekton/apply-gcp-data.yaml]"
+    pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
+    pipelinesascode.tekton.dev/task: "git-clone"
+    pipelinesascode.tekton.dev/max-keep-runs: "5"
+spec:
+  # TODO: replace with cyber-databrew-specific IaC SA once provisioned in
+  # cyber-iac. Needs: roles/storage.objectAdmin on terraform_staging_state_store
+  # + roles/storage.admin on the project (for bucket lifecycle).
+  serviceAccountName: cyber-databrew-iac-dev
+  podTemplate:
+    securityContext:
+      fsGroup: 65532
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 512Mi
+    - name: pac-gitauth
+      secret:
+        secretName: "{{git_auth_secret}}"
+  pipelineSpec:
+    workspaces:
+      - name: shared-workspace
+      - name: pac-gitauth
+    tasks:
+      - name: fetch-repository
+        taskRef:
+          name: git-clone
+        workspaces:
+          - name: output
+            workspace: shared-workspace
+          - name: basic-auth
+            workspace: pac-gitauth
+        params:
+          - name: url
+            value: "{{repo_url}}"
+          - name: revision
+            value: "{{revision}}"
+
+      - name: terraform-plan
+        runAfter:
+          - fetch-repository
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+        taskSpec:
+          workspaces:
+            - name: source
+          volumes:
+            - name: git-credentials
+              secret:
+                secretName: "{{git_auth_secret}}"
+          steps:
+            - name: plan
+              image: hashicorp/terraform:1.14.0
+              workingDir: $(workspaces.source.path)/deploy/iac/terraform/gcp-data/environments/dev
+              env:
+                - name: TF_IN_AUTOMATION
+                  value: "1"
+              script: |
+                #!/usr/bin/env sh
+                set -eu
+                echo "==> terraform init"
+                terraform init -input=false
+
+                echo "==> terraform plan"
+                set +e
+                terraform plan -input=false -no-color \
+                  > $(workspaces.source.path)/plan.txt 2>&1
+                PLAN_EXIT=$?
+                set -e
+                cat $(workspaces.source.path)/plan.txt
+                exit $PLAN_EXIT
+
+            - name: comment-plan
+              image: alpine:3.21
+              volumeMounts:
+                - name: git-credentials
+                  mountPath: /git-credentials
+                  readOnly: true
+              script: |
+                #!/usr/bin/env sh
+                set -eu
+                apk add --no-cache curl jq
+
+                GITHUB_TOKEN=$(cat /git-credentials/git-provider-token)
+                SHORT_SHA=$(echo "{{revision}}" | cut -c1-7)
+
+                BODY=$(cat "$(workspaces.source.path)/plan.txt" | \
+                  jq -Rs --arg sha "${SHORT_SHA}" \
+                  '"<details>\n<summary>Terraform Plan (gcp-data) — " + $sha + "</summary>\n\n```hcl\n" + . + "\n```\n</details>"')
+
+                echo "==> Posting plan comment to PR #{{pull_request_number}}"
+                curl --fail --show-error --silent \
+                  -X POST \
+                  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"body\": ${BODY}}" \
+                  "https://api.github.com/repos/{{repo_owner}}/{{repo_name}}/issues/{{pull_request_number}}/comments"
+                echo "==> Done"

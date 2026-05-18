@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cyber-databrew-prometheus-config
+  labels:
+    app.kubernetes.io/name: cyber-databrew-monitoring
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 60s
+      evaluation_interval: 60s
+
+    scrape_configs:
+      - job_name: prometheus
+        metrics_path: /ops/prometheus/metrics
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      - job_name: backend
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["cyber-databrew-backend.cyber-databrew-dev.svc.cluster.local:80"]
+
+      # prometheus-community/elasticsearch-exporter (see elasticsearch-exporter.yaml)
+      - job_name: elasticsearch
+        scrape_interval: 60s
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - cyber-databrew-elasticsearch-exporter.cyber-databrew-dev.svc.cluster.local:9114

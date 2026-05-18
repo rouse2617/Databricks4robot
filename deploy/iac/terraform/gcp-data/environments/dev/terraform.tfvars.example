@@ -1,0 +1,16 @@
+project_id = "green-valley-442103"
+
+# Existing bucket created on 2026-05-09; imported into this stack.
+derived_bucket_name                  = "cyber-databrew-dev"
+bucket_location                      = "US-CENTRAL1"
+bucket_storage_class                 = "STANDARD"
+bucket_soft_delete_retention_seconds = 604800
+
+bucket_labels = {}
+
+iceberg_buckets = {}
+
+pubsub_topics = [
+  # "mcap-finalized-dev",
+  # "asset-events-dev",
+]

@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cyber-databrew-grafana
+  labels:
+    app.kubernetes.io/name: cyber-databrew-monitoring
+    app.kubernetes.io/component: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cyber-databrew-monitoring
+      app.kubernetes.io/component: grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cyber-databrew-monitoring
+        app.kubernetes.io/component: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: admin
+            - name: GF_SERVER_ROOT_URL
+              value: "%(protocol)s://%(domain)s/ops/grafana/"
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: grafana-datasource
+              mountPath: /etc/grafana/provisioning/datasources/prometheus.yaml
+              subPath: prometheus.yaml
+            - name: grafana-dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml
+              subPath: dashboards.yaml
+            - name: grafana-dashboards
+              mountPath: /var/lib/grafana/dashboards
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+      volumes:
+        - name: grafana-datasource
+          configMap:
+            name: cyber-databrew-grafana-datasource
+        - name: grafana-dashboard-provider
+          configMap:
+            name: cyber-databrew-grafana-dashboard-provider
+        - name: grafana-dashboards
+          configMap:
+            name: cyber-databrew-grafana-dashboards
+        - name: grafana-data
+          emptyDir: {}

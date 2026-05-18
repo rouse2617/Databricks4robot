@@ -1,0 +1,18 @@
+# kubectl apply -f deploy/k8s/namespaces.yaml
+# Dev: PR /deploy-dev rollouts. Prod: merge→main promote rollouts.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cyber-databrew-prod
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: prod

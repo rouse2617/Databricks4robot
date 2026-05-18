@@ -1,0 +1,31 @@
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: cyber-databrew-grafana-lb-healthcheck
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        portSpecification: USE_SERVING_PORT
+        requestPath: /api/health
+  targetRef:
+    group: ""
+    kind: Service
+    name: cyber-databrew-grafana
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: cyber-databrew-prometheus-lb-healthcheck
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        portSpecification: USE_SERVING_PORT
+        requestPath: /ops/prometheus/-/healthy
+  targetRef:
+    group: ""
+    kind: Service
+    name: cyber-databrew-prometheus

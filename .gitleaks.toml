@@ -1,0 +1,6 @@
+# .gitleaks.toml
+[allowlist]
+description = "Ignore the secrets baseline file"
+paths = [
+    '''.secrets.baseline'''
+]

@@ -1,0 +1,19 @@
+# GKE Gateway default health check uses GET /. The Go service returns 404
+# for / but 200 on /healthz, so we pin the LB health check to /healthz on
+# the serving port — same pattern as deploy/k8s/gateway/backend-healthcheck-policy.yaml.
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: mcap-preview-dev-lb-healthcheck
+  namespace: cyber-databrew-dev
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        portSpecification: USE_SERVING_PORT
+        requestPath: /healthz
+  targetRef:
+    group: ""
+    kind: Service
+    name: mcap-preview

@@ -1,0 +1,17 @@
+# Pipelines-as-Code Repository CR for cyber-databrew.
+#
+# Registers this GitHub repo with the PAC controller running in the
+# `pipelines-as-code` namespace; without this resource the controller drops
+# inbound webhook payloads silently and nothing under `.tekton/` ever fires.
+#
+# Apply once per cluster:
+#   kubectl apply -f deploy/k8s/tekton/repository.yaml
+#
+# Mirrors the pattern used by cyber-video-pipeline / tekton-playground.
+apiVersion: pipelinesascode.tekton.dev/v1alpha1
+kind: Repository
+metadata:
+  name: cyber-databrew
+  namespace: tekton-pipelines
+spec:
+  url: https://github.com/CyberOrigin2077/cyber-databrew

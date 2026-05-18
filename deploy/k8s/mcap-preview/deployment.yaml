@@ -1,0 +1,63 @@
+# mcap-preview — preview/streaming microservice for MCAP video segments.
+# Routes: GET /healthz (no auth), GET /api/v1/preview/assets/:id/manifest (X-Grace-Token).
+# Calls upstream cyber-databrew-backend for asset MCAP locator, then reads MCAP summary
+# from GCS via page-cached Range reads.
+#
+# Apply order:
+#   1. Namespace exists (cyber-databrew-dev) — see deploy/k8s/namespaces.yaml
+#   2. kubectl apply -n cyber-databrew-dev -k deploy/k8s/mcap-preview/
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcap-preview
+  labels:
+    app.kubernetes.io/name: mcap-preview
+    app.kubernetes.io/component: preview
+    app.kubernetes.io/part-of: cyber-databrew
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcap-preview
+      app.kubernetes.io/component: preview
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcap-preview
+        app.kubernetes.io/component: preview
+    spec:
+      # Workload Identity: bind serviceAccountName once a GSA with GCS read
+      # is provisioned. For now relies on node default credentials in dev.
+      containers:
+        - name: api
+          image: us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/mcap-preview:dev-latest
+          ports:
+            - containerPort: 8090
+              name: http
+          envFrom:
+            - configMapRef:
+                name: mcap-preview-config
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          # Guarantee CPU headroom for ffmpeg transcoding (HEVC→H264). Node is 4 vCPU;
+          # leave ~0.5 vCPU for kube-system. Memory needs to absorb several
+          # concurrent ffmpeg invocations (each ~250 MB resident incl. MCAP page
+          # cache) when the user browses multiple assets in rapid succession —
+          # transcodes detach from the request and continue in the background.
+          resources:
+            requests:
+              cpu: "3000m"
+              memory: "1Gi"
+            limits:
+              cpu: "3500m"
+              memory: "2Gi"

@@ -1,0 +1,16 @@
+# kubectl apply -n cyber-databrew-dev -k deploy/k8s/mcap-preview/
+#
+# Includes the in-cluster workload (Deployment + Service + ConfigMap) plus
+# the Gateway-API plumbing that exposes the service as
+# https://api-cyber-databrew-dev.cyberorigin.ai/api/v1/preview/...
+# behind the same developer gateway used by the cyber-databrew backend.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - route.yaml
+  - backend-backend-policy.yaml
+  - backend-healthcheck-policy.yaml
+  - reference-grant.yaml

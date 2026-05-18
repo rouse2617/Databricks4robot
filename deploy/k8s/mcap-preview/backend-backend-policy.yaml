@@ -1,0 +1,22 @@
+# Match cyber-databrew-backend's GCPBackendPolicy: same IAP/OAuth client,
+# same target-ref pattern, but pointing at mcap-preview's Service. We keep
+# IAP disabled in dev to mirror the existing backend behaviour; flip to
+# `enabled: true` in an environment overlay when the OAuth client is wired.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: mcap-preview-dev-backend-policy
+  namespace: cyber-databrew-dev
+spec:
+  default:
+    iap:
+      enabled: false
+    # Preview transcode streams fragmented MP4 to the browser as ffmpeg
+    # produces it. Long assets (≤225s in dev) need a window comfortably
+    # larger than the default GCP backend service timeout of 30s, which
+    # was killing in-flight HTTP/2 streams at the 30s mark.
+    timeoutSec: 600
+  targetRef:
+    group: ""
+    kind: Service
+    name: mcap-preview

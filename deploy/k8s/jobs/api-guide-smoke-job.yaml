@@ -1,0 +1,41 @@
+# Oneshot Job: run scripts/api-guide-smoke.sh inside the cluster against the ClusterIP
+# Service (no IAP). Refresh ConfigMap after editing the script:
+#   kubectl -n cyber-databrew-dev create configmap api-guide-smoke-script \
+#     --from-file=smoke.sh=scripts/api-guide-smoke.sh -o yaml --dry-run=client | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: api-guide-smoke
+  namespace: cyber-databrew-dev
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: smoke
+          image: alpine:3.19
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              apk add --no-cache bash curl python3 >/dev/null
+              exec bash /smoke/smoke.sh
+          env:
+            - name: BASE
+              value: "http://cyber-databrew-backend.cyber-databrew-dev.svc.cluster.local"
+            - name: TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-databrew-secrets
+                  key: GRACE_TOKEN
+          volumeMounts:
+            - name: smoke
+              mountPath: /smoke
+              readOnly: true
+      volumes:
+        - name: smoke
+          configMap:
+            name: api-guide-smoke-script
+            defaultMode: 0555

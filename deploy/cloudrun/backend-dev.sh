@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Docker push: ensure docker-credential-gcloud is on PATH (same directory as gcloud), e.g.
+#   PATH="$(dirname "$(which gcloud)"):$PATH"
+# Cloud Run already uses Secret Manager for DB_PASSWORD / ELASTICSEARCH_PASSWORD: pass
+#   DB_PASSWORD_SECRET / ELASTICSEARCH_PASSWORD_SECRET
+# when merging k8s env would overwrite those bindings or disable OUTBOX.
+#
+# K8s ConfigMap often sets ENV=development, ELASTICSEARCH_URL=http://elasticsearch:9200, OUTBOX_*=false.
+# By default APPLY_CLOUDRUN_ENV_FIX=true fixes ENV, Elasticsearch URL, and OUTBOX after merge.
+# Disable with APPLY_CLOUDRUN_ENV_FIX=false or tune CLOUDRUN_* variables below.
+
+PROJECT_ID="${PROJECT_ID:-green-valley-442103}"
+REGION="${REGION:-us-central1}"
+SERVICE_NAME="${SERVICE_NAME:-cyber-databrew-backend-dev}"
+IMAGE="${IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest}"
+
+USE_CLOUD_BUILD="${USE_CLOUD_BUILD:-false}"
+USE_EXISTING_IMAGE="${USE_EXISTING_IMAGE:-false}"
+SOURCE_K8S_ENV="${SOURCE_K8S_ENV:-true}"
+K8S_NAMESPACE="${K8S_NAMESPACE:-cyber-databrew-dev}"
+K8S_CONFIGMAP_NAME="${K8S_CONFIGMAP_NAME:-cyber-databrew-config}"
+K8S_SECRET_NAME="${K8S_SECRET_NAME:-cyber-databrew-secrets}"
+ENV_FILE="${ENV_FILE:-}"
+
+CPU="${CPU:-1}"
+MEMORY="${MEMORY:-512Mi}"
+MIN_INSTANCES="${MIN_INSTANCES:-0}"
+MAX_INSTANCES="${MAX_INSTANCES:-5}"
+TIMEOUT="${TIMEOUT:-60}"
+CPU_THROTTLING="${CPU_THROTTLING:-false}"
+ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-true}"
+
+VPC_CONNECTOR="${VPC_CONNECTOR:-}"
+VPC_EGRESS="${VPC_EGRESS:-private-ranges-only}"
+
+# Optional overrides for Cloud Run reachability.
+DB_HOST_OVERRIDE="${DB_HOST_OVERRIDE:-}"
+DB_PORT_OVERRIDE="${DB_PORT_OVERRIDE:-}"
+DB_USER_OVERRIDE="${DB_USER_OVERRIDE:-}"
+DB_PASSWORD_OVERRIDE="${DB_PASSWORD_OVERRIDE:-}"
+DB_PASSWORD_SECRET="${DB_PASSWORD_SECRET:-}"
+DB_PASSWORD_SECRET_VERSION="${DB_PASSWORD_SECRET_VERSION:-latest}"
+DB_NAME_OVERRIDE="${DB_NAME_OVERRIDE:-}"
+GRACE_TOKEN_OVERRIDE="${GRACE_TOKEN_OVERRIDE:-}"
+LAKEHOUSE_BACKEND_OVERRIDE="${LAKEHOUSE_BACKEND_OVERRIDE:-}"
+LAKEHOUSE_BQ_PROJECT_OVERRIDE="${LAKEHOUSE_BQ_PROJECT_OVERRIDE:-}"
+LAKEHOUSE_BQ_DATASET_OVERRIDE="${LAKEHOUSE_BQ_DATASET_OVERRIDE:-}"
+PUBSUB_PROJECT_OVERRIDE="${PUBSUB_PROJECT_OVERRIDE:-}"
+TOPIC_ASSET_EVENTS_OVERRIDE="${TOPIC_ASSET_EVENTS_OVERRIDE:-}"
+OUTBOX_ES_SUBSCRIPTION_OVERRIDE="${OUTBOX_ES_SUBSCRIPTION_OVERRIDE:-}"
+ELASTICSEARCH_URL_OVERRIDE="${ELASTICSEARCH_URL_OVERRIDE:-}"
+ELASTICSEARCH_PASSWORD_SECRET="${ELASTICSEARCH_PASSWORD_SECRET:-}"
+ELASTICSEARCH_PASSWORD_SECRET_VERSION="${ELASTICSEARCH_PASSWORD_SECRET_VERSION:-latest}"
+ELASTICSEARCH_PASSWORD_OVERRIDE="${ELASTICSEARCH_PASSWORD_OVERRIDE:-}"
+
+# After merging Kubernetes ConfigMap/Secret, values are often meant for in-cluster pods (Service DNS),
+# not Cloud Run. When APPLY_CLOUDRUN_ENV_FIX=true (default), we rewrite known footguns unless you
+# disable the fix or set explicit CLOUDRUN_* overrides.
+APPLY_CLOUDRUN_ENV_FIX="${APPLY_CLOUDRUN_ENV_FIX:-true}"
+# Set to false to keep OUTBOX_* exactly as merged from K8s (still patches ENV/ELASTICSEARCH_URL unless disabled).
+CLOUDRUN_PATCH_OUTBOX="${CLOUDRUN_PATCH_OUTBOX:-true}"
+CLOUDRUN_ENV="${CLOUDRUN_ENV:-production}"
+# VPC-reachable Elasticsearch for Cloud Run (override per environment).
+CLOUDRUN_ELASTICSEARCH_URL="${CLOUDRUN_ELASTICSEARCH_URL:-http://10.2.0.10:9200}"
+CLOUDRUN_OUTBOX_RELAY_ENABLED="${CLOUDRUN_OUTBOX_RELAY_ENABLED:-true}"
+CLOUDRUN_OUTBOX_ES_SUBSCRIBER_ENABLED="${CLOUDRUN_OUTBOX_ES_SUBSCRIBER_ENABLED:-true}"
+CLOUDRUN_OUTBOX_TRANSPORT="${CLOUDRUN_OUTBOX_TRANSPORT:-internal}"
+CLOUDRUN_OUTBOX_RELAY_PARALLEL_KEYS="${CLOUDRUN_OUTBOX_RELAY_PARALLEL_KEYS:-8}"
+CLOUDRUN_OUTBOX_INTERNAL_SUBSCRIBER_WORKERS="${CLOUDRUN_OUTBOX_INTERNAL_SUBSCRIBER_WORKERS:-16}"
+# Relay ClaimPendingSafe limit per flush (backend default 200).
+CLOUDRUN_OUTBOX_RELAY_BATCH_SIZE="${CLOUDRUN_OUTBOX_RELAY_BATCH_SIZE:-500}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BACKEND_DIR="${REPO_ROOT}/backend"
+CLOUDBUILD_CFG="${REPO_ROOT}/deploy/cloudrun/backend-cloudbuild.yaml"
+
+upsert_env() {
+  local key="$1"
+  local value="$2"
+  local file="$3"
+  if grep -q "^${key}=" "$file"; then
+    awk -F= -v k="$key" -v v="$value" 'BEGIN{OFS="="} $1==k{$0=k"="v} {print}' "$file" > "${file}.tmp"
+    mv "${file}.tmp" "$file"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$file"
+  fi
+}
+
+remove_env() {
+  local key="$1"
+  local file="$2"
+  awk -F= -v k="$key" '$1!=k{print}' "$file" > "${file}.tmp"
+  mv "${file}.tmp" "$file"
+}
+
+# True if ELASTICSEARCH_URL points at in-cluster DNS / headless names Cloud Run cannot resolve.
+_elasticsearch_url_is_in_cluster() {
+  local u="$1"
+  [[ -n "${u}" ]] || return 1
+  case "${u}" in
+  *://elasticsearch:* | *://elasticsearch/* | *://elasticsearch.* | *elasticsearch.*.svc* | *\.svc\.cluster\.local*)
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+# Normalize ENV / Elasticsearch / Outbox after K8s merge so Cloud Run does not inherit dev-cluster-only settings.
+apply_cloudrun_env_fix() {
+  local f="$1"
+  [[ "${APPLY_CLOUDRUN_ENV_FIX}" == "true" ]] || return 0
+
+  upsert_env "ENV" "${CLOUDRUN_ENV}" "${f}"
+
+  local es_current
+  es_current="$(awk -F= '$1=="ELASTICSEARCH_URL"{print $2}' "${f}" | tail -n 1 || true)"
+  if _elasticsearch_url_is_in_cluster "${es_current}"; then
+    echo "INFO: ELASTICSEARCH_URL from merged env looks in-cluster (${es_current})."
+    echo "      Replacing with CLOUDRUN_ELASTICSEARCH_URL=${CLOUDRUN_ELASTICSEARCH_URL}"
+    upsert_env "ELASTICSEARCH_URL" "${CLOUDRUN_ELASTICSEARCH_URL}" "${f}"
+  fi
+
+  if [[ "${CLOUDRUN_PATCH_OUTBOX}" == "true" ]]; then
+    upsert_env "OUTBOX_RELAY_ENABLED" "${CLOUDRUN_OUTBOX_RELAY_ENABLED}" "${f}"
+    upsert_env "OUTBOX_ES_SUBSCRIBER_ENABLED" "${CLOUDRUN_OUTBOX_ES_SUBSCRIBER_ENABLED}" "${f}"
+    upsert_env "OUTBOX_TRANSPORT" "${CLOUDRUN_OUTBOX_TRANSPORT}" "${f}"
+    upsert_env "OUTBOX_RELAY_PARALLEL_KEYS" "${CLOUDRUN_OUTBOX_RELAY_PARALLEL_KEYS}" "${f}"
+    upsert_env "OUTBOX_INTERNAL_SUBSCRIBER_WORKERS" "${CLOUDRUN_OUTBOX_INTERNAL_SUBSCRIBER_WORKERS}" "${f}"
+    echo "INFO: Patched OUTBOX_* for Cloud Run (CLOUDRUN_PATCH_OUTBOX=false to keep K8s values)."
+  fi
+  upsert_env "OUTBOX_RELAY_BATCH_SIZE" "${CLOUDRUN_OUTBOX_RELAY_BATCH_SIZE}" "${f}"
+
+  # Drop any historical Trino keys merged from K8s so Cloud Run env stays clean.
+  remove_env "TRINO_ENABLED" "${f}"
+  remove_env "TRINO_URL" "${f}"
+  remove_env "TRINO_CATALOG" "${f}"
+  remove_env "TRINO_SCHEMA" "${f}"
+}
+
+if [[ "${USE_EXISTING_IMAGE}" != "true" ]]; then
+  echo "Building backend image: ${IMAGE}"
+  if [[ "${USE_CLOUD_BUILD}" == "true" ]]; then
+    gcloud builds submit \
+      --project "${PROJECT_ID}" \
+      --config "${CLOUDBUILD_CFG}" \
+      --substitutions "_IMAGE=${IMAGE}" \
+      "${REPO_ROOT}"
+  else
+    docker build \
+      --platform linux/amd64 \
+      -f "${BACKEND_DIR}/Dockerfile" \
+      -t "${IMAGE}" \
+      "${BACKEND_DIR}"
+    docker push "${IMAGE}"
+  fi
+else
+  echo "Skipping build and reusing image: ${IMAGE}"
+fi
+
+ENV_KV_FILE="$(mktemp)"
+ENV_VARS_FILE="$(mktemp)"
+trap 'rm -f "${ENV_KV_FILE}" "${ENV_VARS_FILE}"' EXIT
+
+if [[ "${SOURCE_K8S_ENV}" == "true" ]]; then
+  echo "Loading env from k8s namespace ${K8S_NAMESPACE} (${K8S_CONFIGMAP_NAME}, ${K8S_SECRET_NAME})"
+  kubectl -n "${K8S_NAMESPACE}" get configmap "${K8S_CONFIGMAP_NAME}" \
+    -o go-template='{{range $k,$v := .data}}{{printf "%s=%s\n" $k $v}}{{end}}' > "${ENV_KV_FILE}"
+
+  while IFS= read -r key; do
+    [[ -z "${key}" ]] && continue
+    value_b64="$(kubectl -n "${K8S_NAMESPACE}" get secret "${K8S_SECRET_NAME}" -o "jsonpath={.data.${key}}")"
+    value="$(printf '%s' "${value_b64}" | base64 --decode)"
+    printf '%s=%s\n' "${key}" "${value}" >> "${ENV_KV_FILE}"
+  done < <(kubectl -n "${K8S_NAMESPACE}" get secret "${K8S_SECRET_NAME}" -o go-template='{{range $k,$v := .data}}{{printf "%s\n" $k}}{{end}}')
+fi
+
+if [[ -n "${ENV_FILE}" ]]; then
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "ERROR: ENV_FILE does not exist: ${ENV_FILE}" >&2
+    exit 1
+  fi
+  echo "Merging env values from file: ${ENV_FILE}"
+  printf '\n' >> "${ENV_KV_FILE}"
+  sed -e 's/\r$//' "${ENV_FILE}" >> "${ENV_KV_FILE}"
+  printf '\n' >> "${ENV_KV_FILE}"
+fi
+
+# Cloud Run defaults and explicit safety toggles.
+remove_env "PORT" "${ENV_KV_FILE}"
+# Do not blank ELASTICSEARCH_URL when ELASTICSEARCH_URL_OVERRIDE is empty (K8s-sourced value).
+
+secret_args=()
+remove_es_password_secret=false
+if [[ -n "${ELASTICSEARCH_PASSWORD_SECRET}" ]]; then
+  remove_env "ELASTICSEARCH_PASSWORD" "${ENV_KV_FILE}"
+  secret_args+=(--set-secrets "ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD_SECRET}:${ELASTICSEARCH_PASSWORD_SECRET_VERSION}")
+elif [[ -n "${ELASTICSEARCH_PASSWORD_OVERRIDE}" ]]; then
+  # Prefer explicit non-secret override and clear any prior secret binding when possible.
+  remove_es_password_secret=true
+else
+  # ES is configured without HTTP auth; clear plain env and prior secret refs.
+  remove_env "ELASTICSEARCH_PASSWORD" "${ENV_KV_FILE}"
+  remove_es_password_secret=true
+fi
+
+if [[ -n "${DB_PASSWORD_SECRET}" ]]; then
+  remove_env "DB_PASSWORD" "${ENV_KV_FILE}"
+  secret_args+=(--set-secrets "DB_PASSWORD=${DB_PASSWORD_SECRET}:${DB_PASSWORD_SECRET_VERSION}")
+fi
+
+[[ -n "${DB_HOST_OVERRIDE}" ]] && upsert_env "DB_HOST" "${DB_HOST_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${DB_PORT_OVERRIDE}" ]] && upsert_env "DB_PORT" "${DB_PORT_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${DB_USER_OVERRIDE}" ]] && upsert_env "DB_USER" "${DB_USER_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${DB_PASSWORD_OVERRIDE}" ]] && upsert_env "DB_PASSWORD" "${DB_PASSWORD_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${DB_NAME_OVERRIDE}" ]] && upsert_env "DB_NAME" "${DB_NAME_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${GRACE_TOKEN_OVERRIDE}" ]] && upsert_env "GRACE_TOKEN" "${GRACE_TOKEN_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${LAKEHOUSE_BACKEND_OVERRIDE}" ]] && upsert_env "LAKEHOUSE_BACKEND" "${LAKEHOUSE_BACKEND_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${LAKEHOUSE_BQ_PROJECT_OVERRIDE}" ]] && upsert_env "LAKEHOUSE_BQ_PROJECT" "${LAKEHOUSE_BQ_PROJECT_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${LAKEHOUSE_BQ_DATASET_OVERRIDE}" ]] && upsert_env "LAKEHOUSE_BQ_DATASET" "${LAKEHOUSE_BQ_DATASET_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${PUBSUB_PROJECT_OVERRIDE}" ]] && upsert_env "PUBSUB_PROJECT" "${PUBSUB_PROJECT_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${TOPIC_ASSET_EVENTS_OVERRIDE}" ]] && upsert_env "TOPIC_ASSET_EVENTS" "${TOPIC_ASSET_EVENTS_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${OUTBOX_ES_SUBSCRIPTION_OVERRIDE}" ]] && upsert_env "OUTBOX_ES_SUBSCRIPTION" "${OUTBOX_ES_SUBSCRIPTION_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${ELASTICSEARCH_URL_OVERRIDE}" ]] && upsert_env "ELASTICSEARCH_URL" "${ELASTICSEARCH_URL_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${ELASTICSEARCH_PASSWORD_OVERRIDE}" ]] && upsert_env "ELASTICSEARCH_PASSWORD" "${ELASTICSEARCH_PASSWORD_OVERRIDE}" "${ENV_KV_FILE}"
+
+apply_cloudrun_env_fix "${ENV_KV_FILE}"
+
+effective_db_host="$(awk -F= '$1=="DB_HOST"{print $2}' "${ENV_KV_FILE}" | tail -n 1 || true)"
+if [[ "${effective_db_host}" == "postgres" ]]; then
+  echo "WARNING: DB_HOST=postgres comes from in-cluster DNS and is usually unreachable from Cloud Run."
+  echo "         Set DB_HOST_OVERRIDE (and likely VPC_CONNECTOR) to a reachable PostgreSQL endpoint."
+  if [[ -z "${DB_HOST_OVERRIDE}" ]]; then
+    postgres_pod_ip="$(kubectl -n "${K8S_NAMESPACE}" get pod -l app.kubernetes.io/component=postgres -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)"
+    if [[ -n "${postgres_pod_ip}" ]]; then
+      echo "INFO: Auto-detected PostgreSQL pod IP for Cloud Run fallback: ${postgres_pod_ip}"
+      upsert_env "DB_HOST" "${postgres_pod_ip}" "${ENV_KV_FILE}"
+    else
+      echo "WARNING: Could not detect PostgreSQL pod IP automatically."
+    fi
+  fi
+fi
+
+python3 - "${ENV_KV_FILE}" "${ENV_VARS_FILE}" <<'PY'
+import json
+import sys
+
+src, dst = sys.argv[1], sys.argv[2]
+data = {}
+with open(src, "r", encoding="utf-8") as f:
+    for raw in f:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        data[k] = v
+with open(dst, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+PY
+
+echo "Deploying ${SERVICE_NAME} to Cloud Run (${REGION}, ${PROJECT_ID})"
+deploy_args=(
+  run deploy "${SERVICE_NAME}"
+  --quiet
+  --project "${PROJECT_ID}"
+  --region "${REGION}"
+  --platform managed
+  --image "${IMAGE}"
+  --port 8080
+  --min-instances "${MIN_INSTANCES}"
+  --max-instances "${MAX_INSTANCES}"
+  --cpu "${CPU}"
+  --memory "${MEMORY}"
+  --timeout "${TIMEOUT}"
+  --env-vars-file "${ENV_VARS_FILE}"
+)
+if [[ "${CPU_THROTTLING}" == "true" ]]; then
+  deploy_args+=(--cpu-throttling)
+else
+  deploy_args+=(--no-cpu-throttling)
+fi
+if [[ ${#secret_args[@]} -gt 0 ]]; then
+  deploy_args+=("${secret_args[@]}")
+fi
+if [[ "${remove_es_password_secret}" == "true" && ${#secret_args[@]} -eq 0 ]]; then
+  deploy_args+=(--remove-secrets "ELASTICSEARCH_PASSWORD")
+fi
+
+if [[ "${ALLOW_UNAUTHENTICATED}" == "true" ]]; then
+  deploy_args+=(--allow-unauthenticated)
+else
+  deploy_args+=(--no-allow-unauthenticated)
+fi
+
+if [[ -n "${VPC_CONNECTOR}" ]]; then
+  deploy_args+=(--vpc-connector "${VPC_CONNECTOR}" --vpc-egress "${VPC_EGRESS}")
+fi
+
+gcloud "${deploy_args[@]}"
+
+echo "Deployment complete."
+gcloud run services describe "${SERVICE_NAME}" \
+  --project "${PROJECT_ID}" \
+  --region "${REGION}" \
+  --platform managed \
+  --format='value(status.url)'

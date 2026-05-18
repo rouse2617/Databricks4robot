@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - prometheus-configmap.yaml
+  - prometheus-deployment.yaml
+  - prometheus-service.yaml
+  - elasticsearch-exporter.yaml
+  - backend-policy.yaml
+  - healthcheck-policy.yaml
+  - grafana-datasource-configmap.yaml
+  - grafana-dashboard-provider-configmap.yaml
+  - grafana-deployment.yaml
+  - grafana-service.yaml
+  - reference-grant.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: cyber-databrew-grafana-dashboards
+    files:
+      - dashboards/backend-observability.json
+      - dashboards/lakehouse-observability.json
+      - dashboards/local-observability.json
+      - dashboards/outbox-observability.json
+      - dashboards/search-observability.json
+      - dashboards/elasticsearch-cluster.json
