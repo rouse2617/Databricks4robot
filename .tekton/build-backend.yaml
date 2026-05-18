@@ -94,7 +94,7 @@ spec:
           - name: IMAGE
             value: us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:{{revision}}
           - name: DOCKERFILE
-            value: Dockerfile
+            value: backend/Dockerfile
           - name: CONTEXT
             value: backend
           - name: CACHE_IMAGE

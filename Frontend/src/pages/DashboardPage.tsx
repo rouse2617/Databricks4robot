@@ -1497,7 +1497,9 @@ export default function DashboardPage() {
 							{failureClustersErr ? (
 								<TableEmptyState summary={failureClustersErr} />
 							) : failureClusters.length === 0 ? (
-								<TableEmptyState summary={`近 ${windowDays} 天暂无算法失败数据`} />
+								<TableEmptyState
+									summary={`近 ${windowDays} 天暂无算法失败数据`}
+								/>
 							) : (
 								<LazyECharts
 									style={{ height: 300 }}
@@ -1540,7 +1542,8 @@ export default function DashboardPage() {
 				<div style={{ marginBottom: 16 }}>
 					<Text type="secondary" style={{ fontSize: 13, lineHeight: 1.55 }}>
 						MVP 示例筛选：训练 / 重算 / 交付为接口默认参数抽样，每表最多 100
-						行； Quality 分布为近 {windowDays} 天新建资产（与上方时间范围开关联动）。
+						行； Quality 分布为近 {windowDays}{" "}
+						天新建资产（与上方时间范围开关联动）。
 					</Text>
 				</div>
 

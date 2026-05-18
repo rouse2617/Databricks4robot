@@ -13,7 +13,7 @@ import {
 	Switch,
 	Typography,
 } from "antd";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FilterChip } from "../../lib/assets/assetsDiscoveryTypes";
 
 const { Text } = Typography;
@@ -710,24 +710,20 @@ export default function AssetsFacetSidebar({
 		},
 	];
 
-	const horizontalItems = useMemo(
-		() =>
-			items.map((item) => {
-				const groupKey = item.key as string;
-				const isExpanded = expandedGroups.includes(groupKey);
-				const activeCount = activeFilters.filter((chip) =>
-					GROUP_FIELDS[item.key]?.includes(chip.field),
-				).length;
+	const horizontalItems = items.map((item) => {
+		const groupKey = item.key as string;
+		const isExpanded = expandedGroups.includes(groupKey);
+		const activeCount = activeFilters.filter((chip) =>
+			GROUP_FIELDS[item.key]?.includes(chip.field),
+		).length;
 
-				return {
-					...item,
-					groupKey,
-					isExpanded,
-					activeCount,
-				};
-			}),
-		[activeFilters, expandedGroups, items],
-	);
+		return {
+			...item,
+			groupKey,
+			isExpanded,
+			activeCount,
+		};
+	});
 
 	if (layout === "horizontal") {
 		const expandedGroupCount = horizontalItems.filter(

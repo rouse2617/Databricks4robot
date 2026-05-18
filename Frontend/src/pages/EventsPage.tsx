@@ -262,7 +262,7 @@ export default function EventsPage() {
 		} finally {
 			setLoadingMore(false);
 		}
-	}, [nextCursor, loadingMore, eventTypeFilter]);
+	}, [nextCursor, loadingMore, eventTypeFilter, msgApi]);
 
 	useEffect(() => {
 		if (!assetId.trim()) {

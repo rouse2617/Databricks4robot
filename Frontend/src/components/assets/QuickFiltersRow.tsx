@@ -94,7 +94,11 @@ export default function QuickFiltersRow({
 						type={isActive ? "primary" : "default"}
 						style={
 							isActive
-								? { background: def.color, borderColor: def.color, boxShadow: "none" }
+								? {
+										background: def.color,
+										borderColor: def.color,
+										boxShadow: "none",
+									}
 								: { color: "#4b5563" }
 						}
 						onClick={() => {

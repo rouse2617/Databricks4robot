@@ -306,14 +306,21 @@ export default function AssetsCardView({
 						const isSelected = selectedIds.has(asset.asset_id);
 
 						return (
+							/* biome-ignore lint/a11y/useSemanticElements: card row needs nested interactive controls (checkbox and mcap button). */
 							<div
 								key={asset.asset_id}
 								className={`assets-card-row ${isSelected ? "assets-card-row-selected" : ""}`}
 								data-asset-id={asset.asset_id}
 								tabIndex={0}
 								role="button"
-								aria-selected={isSelected}
+								aria-pressed={isSelected}
 								onClick={() => onRowClick(asset.asset_id)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" || e.key === " ") {
+										e.preventDefault();
+										onRowClick(asset.asset_id);
+									}
+								}}
 								style={{
 									borderRadius: 10,
 									overflow: "hidden",

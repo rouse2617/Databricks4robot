@@ -7,7 +7,7 @@ terraform {
       version = "~> 7.29.0"
     }
     cloudflare = {
-      source  = "cloudflare/cloudflare"
+      source = "cloudflare/cloudflare"
       # Must stay on v5: module uses `cloudflare_dns_record`; lock file pins 5.x.
       version = "~> 5.0"
     }
