@@ -187,6 +187,11 @@ export const assetsApi = {
 	get: (id: string) =>
 		apiClient.get<Asset>(`/assets/${id}`).then((r) => r.data),
 
+	batchGet: (assetIds: string[]) =>
+		apiClient
+			.post<{ items: Asset[] }>("/assets:batch_get", { asset_ids: assetIds })
+			.then((r) => r.data.items ?? []),
+
 	getPreviewManifest: (id: string) =>
 		apiClient
 			.get<PreviewManifestResponse>(`/preview/assets/${id}/manifest`)

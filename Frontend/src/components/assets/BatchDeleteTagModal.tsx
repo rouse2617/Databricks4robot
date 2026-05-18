@@ -16,6 +16,17 @@ export interface BatchDeleteTagModalProps {
 	onComplete: (result: BatchTagResult) => void;
 }
 
+const BATCH_GET_LIMIT = 100;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+	if (size <= 0 || items.length === 0) return [items];
+	const chunks: T[][] = [];
+	for (let i = 0; i < items.length; i += size) {
+		chunks.push(items.slice(i, i + size));
+	}
+	return chunks;
+}
+
 /** Run async tasks with concurrency limit */
 async function runWithConcurrency<T>(
 	tasks: (() => Promise<T>)[],
@@ -81,11 +92,31 @@ export default function BatchDeleteTagModal({
 		setProgress(0);
 
 		let success = 0;
-		const skipped = 0;
+		let skipped = 0;
 		let failed = 0;
 		let completed = 0;
+		let targetAssetIDs = assetIds;
 
-		const tasks = assetIds.map((assetId) => async () => {
+		try {
+			const chunks = chunkArray(assetIds, BATCH_GET_LIMIT);
+			const hasTag = new Set<string>();
+			for (const chunk of chunks) {
+				const assets = await assetsApi.batchGet(chunk);
+				for (const asset of assets) {
+					if (asset.tags?.[selectedKey] !== undefined) {
+						hasTag.add(asset.asset_id);
+					}
+				}
+			}
+			targetAssetIDs = assetIds.filter((assetID) => hasTag.has(assetID));
+			skipped = assetIds.length - targetAssetIDs.length;
+			completed = skipped;
+			setProgress(Math.round((completed / assetIds.length) * 100));
+		} catch {
+			// If prefetch fails, continue with best-effort per-asset deletion.
+		}
+
+		const tasks = targetAssetIDs.map((assetId) => async () => {
 			try {
 				await assetsApi.deleteTag(assetId, selectedKey);
 				success++;

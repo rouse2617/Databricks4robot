@@ -32,6 +32,17 @@ export interface BatchTagModalProps {
 	onComplete: (result: BatchTagResult) => void;
 }
 
+const BATCH_GET_LIMIT = 100;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+	if (size <= 0 || items.length === 0) return [items];
+	const chunks: T[][] = [];
+	for (let i = 0; i < items.length; i += size) {
+		chunks.push(items.slice(i, i + size));
+	}
+	return chunks;
+}
+
 /** Run async tasks with concurrency limit */
 async function runWithConcurrency<T>(
 	tasks: (() => Promise<T>)[],
@@ -115,24 +126,37 @@ export default function BatchTagModal({
 		let skipped = 0;
 		let failed = 0;
 		let completed = 0;
+		let targetAssetIDs = assetIds;
+		const trimmedTagValue = tagValue.trim();
 
-		const tasks = assetIds.map((assetId) => async () => {
-			try {
-				// Skip strategy: check if tag already exists
-				if (strategy === "skip") {
-					const asset = await assetsApi.get(assetId);
-					if (
-						asset.tags &&
-						asset.tags[selectedKey] !== undefined &&
-						asset.tags[selectedKey] !== ""
-					) {
-						skipped++;
-						return;
+		try {
+			if (strategy === "skip") {
+				const chunks = chunkArray(assetIds, BATCH_GET_LIMIT);
+				const existing = new Set<string>();
+				for (const chunk of chunks) {
+					const assets = await assetsApi.batchGet(chunk);
+					for (const asset of assets) {
+						if (asset.tags?.[selectedKey]) {
+							existing.add(asset.asset_id);
+						}
 					}
 				}
+				targetAssetIDs = assetIds.filter((assetID) => !existing.has(assetID));
+				skipped = assetIds.length - targetAssetIDs.length;
+				completed = skipped;
+				setCompleted(completed);
+				setProgress(Math.round((completed / assetIds.length) * 100));
+			}
+		} catch {
+			// Batch prefetch failure should not block overwrite execution path.
+			// Fall back to per-asset upsert.
+		}
+
+		const tasks = targetAssetIDs.map((assetId) => async () => {
+			try {
 				await assetsApi.upsertTag(assetId, {
 					key: selectedKey,
-					value: tagValue.trim(),
+					value: trimmedTagValue,
 				});
 				success++;
 			} catch {

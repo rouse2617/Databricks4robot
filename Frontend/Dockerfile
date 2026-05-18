@@ -18,5 +18,8 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# nginx official entrypoint will envsubst templates under /etc/nginx/templates/*.template
+ENV BACKEND_UPSTREAM_HOST=cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app
+ENV MCAP_PREVIEW_UPSTREAM_HOST=mcap-preview-dev-wtttm6suaq-uc.a.run.app
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80

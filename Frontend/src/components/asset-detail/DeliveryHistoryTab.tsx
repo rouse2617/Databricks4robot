@@ -50,17 +50,31 @@ export default function DeliveryHistoryTab({ assetId }: Props) {
 					return;
 				}
 
-				const results = await Promise.allSettled(
-					ids.map((did) => deliveriesApi.get(did)),
-				);
+				// Avoid N+1 HTTP calls: fetch deliveries by pages and select target IDs in-memory.
+				const wanted = new Set(ids);
+				const byID = new Map<string, Delivery>();
+				let deliveryPage = 1;
+				while (wanted.size > 0) {
+					const res = await deliveriesApi.list({
+						page: deliveryPage,
+						page_size: pageSize,
+					});
+					const pageItems = res.items ?? [];
+					for (const item of pageItems) {
+						if (wanted.has(item.delivery_id)) {
+							byID.set(item.delivery_id, item);
+							wanted.delete(item.delivery_id);
+						}
+					}
+					if (pageItems.length < pageSize) break;
+					deliveryPage += 1;
+					if (deliveryPage > 1000) break;
+				}
 				if (cancelled) return;
 
-				const items = results
-					.filter(
-						(r): r is PromiseFulfilledResult<Delivery> =>
-							r.status === "fulfilled",
-					)
-					.map((r) => r.value);
+				const items = ids
+					.map((id) => byID.get(id))
+					.filter((item): item is Delivery => !!item);
 				setDeliveries(items);
 			} catch {
 				if (!cancelled) {

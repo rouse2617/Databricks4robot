@@ -8,7 +8,7 @@
 # 2026/04/28 23:37:27.842362 [TestProperty6_DualWriteConsistency] [rapid] draw asset_type: "segment"
 # 2026/04/28 23:37:27.842364 [TestProperty6_DualWriteConsistency] [rapid] draw id: "00000000"
 # 2026/04/28 23:37:27.842372 [TestProperty6_DualWriteConsistency] cf_meta owner mismatch: got=<nil> want=
-# 
+#
 v0.4.8#11459953673484545107
 0x0
 0x0
