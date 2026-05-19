@@ -34,6 +34,7 @@ deploy/cloudrun/backend.env.runtime
 
 # GCP
 *.json
+!.commitlintrc.json
 !package.json
 !Frontend/package-lock.json
 !tsconfig*.json

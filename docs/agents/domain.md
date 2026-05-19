@@ -2,6 +2,12 @@
 
 How engineering skills should consume domain documentation in **cyber-databrew**.
 
+## Sync with `openspec/config.yaml`
+
+`openspec/config.yaml` → `context:` injects stack, module map, and off-limits into OpenSpec planning. **When modules, tech stack, or off-limits change**, update **both** this file (glossary / pointers) and `config.yaml` `context` + `verification` so agents do not see conflicting facts.
+
+Keep `context` as a **summary**; deep API/field detail stays in `docs/review/*`, not duplicated in config.
+
 ## Before exploring, read these
 
 - **`CONTEXT.md`** at the repo root (create via `/grill-with-docs` when terms crystallise; file may not exist yet).
