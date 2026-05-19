@@ -79,7 +79,8 @@ func RegisterAll(
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	auth := middleware.StaticTokenAuth(cfg.GraceToken)
-	adminAuth := middleware.AdminTokenAuth(cfg.AdminToken, cfg.GraceToken)
+	adminAuth := middleware.AdminTokenAuth(cfg.AdminToken, cfg.GraceToken, cfg.Env)
+	adminRoutesEnabled := cfg.AdminRoutesEnabled()
 	secureSessionCookie := cfg.Env == "production"
 
 	authPublic := r.Group("/api/v1/auth")
@@ -193,7 +194,7 @@ func RegisterAll(
 			api.GET("/lakehouse/customer-replay", lakehouseHandler.CustomerReplay)
 		}
 
-		if adminHandler != nil {
+		if adminRoutesEnabled && adminHandler != nil {
 			admin := api.Group("/admin", adminAuth)
 			admin.POST("/search/reindex", adminHandler.SearchReindex)
 			admin.POST("/search/reindex-jobs", adminHandler.SearchReindexCreateJob)
@@ -206,10 +207,8 @@ func RegisterAll(
 			admin.GET("/search/audit", adminHandler.SearchAudit)
 		}
 
-		// Internal admin (hard delete). Guarded by adminAuth (ADMIN_TOKEN
-		// when configured, otherwise falls back to GraceToken). Path
-		// namespace separates these from the public /assets API.
-		if purgeHandler != nil {
+		// Internal admin (hard delete). Requires ADMIN_TOKEN in production.
+		if adminRoutesEnabled && purgeHandler != nil {
 			internal := api.Group("/internal", adminAuth)
 			internal.DELETE("/assets/:id", purgeHandler.DeleteAssetHard)
 			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
@@ -243,9 +242,10 @@ func RegisterAll(
 		}
 	}
 
-	// Internal (service-to-service). Guarded by adminAuth when ADMIN_TOKEN
-	// is set, otherwise by GraceToken.
-	r.POST("/internal/commit-segments", adminAuth, assetHandler.CommitSegments)
+	// Internal (service-to-service). Disabled in production when ADMIN_TOKEN is unset.
+	if adminRoutesEnabled {
+		r.POST("/internal/commit-segments", adminAuth, assetHandler.CommitSegments)
+	}
 }
 
 func healthz(service string) gin.HandlerFunc {

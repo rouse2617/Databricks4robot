@@ -293,14 +293,14 @@ func TestBuildWhereClause_AlgoStatusWithOtherFilters(t *testing.T) {
 		t.Fatalf("BuildWhereClause combined: %v", err)
 	}
 
-	if !strings.Contains(wc.SQL, "status = $1") {
-		t.Fatalf("expected status = $1 in SQL, got %q", wc.SQL)
+	if !strings.Contains(wc.SQL, "lifecycle_state IN ($1, $2, $3, $4)") {
+		t.Fatalf("expected lifecycle_state IN for approved status, got %q", wc.SQL)
 	}
-	if !strings.Contains(wc.SQL, "EXISTS (SELECT 1 FROM asset_algo_latest al WHERE al.asset_id = assets.asset_id AND al.status = $2)") {
+	if !strings.Contains(wc.SQL, "EXISTS (SELECT 1 FROM asset_algo_latest al WHERE al.asset_id = assets.asset_id AND al.status = $5)") {
 		t.Fatalf("expected algo_status array containment in SQL, got %q", wc.SQL)
 	}
-	if len(wc.Args) != 2 {
-		t.Fatalf("expected 2 args, got %d", len(wc.Args))
+	if len(wc.Args) != 5 {
+		t.Fatalf("expected 5 args, got %d", len(wc.Args))
 	}
 }
 

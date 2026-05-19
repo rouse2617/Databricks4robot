@@ -46,7 +46,7 @@ var exactFieldSpecs = map[string]fieldSpec{
 	"asset_id":           {Canonical: "asset_id", StorageField: "asset_id", IsJSONB: false},
 	"mcap_file_id":       {Canonical: "mcap_file_id", StorageField: "mcap_file_id", IsJSONB: false},
 	"start_timestamp_ns": {Canonical: "start_timestamp_ns", StorageField: "start_timestamp_ns", IsJSONB: false},
-	"status":             {Canonical: "status", StorageField: "status", IsJSONB: false},
+	"status":             {Canonical: "status", StorageField: "lifecycle_state", IsJSONB: false},
 	"created_at":         {Canonical: "created_at", StorageField: "created_at", IsJSONB: false},
 	"updated_at":         {Canonical: "updated_at", StorageField: "updated_at", IsJSONB: false},
 	"version":            {Canonical: "version", StorageField: "version", IsJSONB: false},

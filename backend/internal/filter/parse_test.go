@@ -474,8 +474,8 @@ func TestParseFilter_WhitelistedPlainField(t *testing.T) {
 	if f.Field != "status" {
 		t.Fatalf("expected Field status, got %q", f.Field)
 	}
-	if f.StorageField != "status" {
-		t.Fatalf("expected StorageField status, got %q", f.StorageField)
+	if f.StorageField != "lifecycle_state" {
+		t.Fatalf("expected StorageField lifecycle_state, got %q", f.StorageField)
 	}
 }
 

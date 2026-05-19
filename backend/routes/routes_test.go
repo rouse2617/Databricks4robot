@@ -196,6 +196,35 @@ func TestRemovedHealthzOutboxRoute(t *testing.T) {
 	}
 }
 
+func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
+	mcapHandler := mcapH.New(&routeMcapRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	adminHandler := adminH.New(&routeAssetRepo{}, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
+	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
+
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
+	req.Header.Set("X-Grace-Token", "dev-token")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unmounted admin route in production, got %d", w.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/internal/commit-segments", nil)
+	req.Header.Set("X-Grace-Token", "dev-token")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unmounted internal route in production, got %d", w.Code)
+	}
+}
+
 func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

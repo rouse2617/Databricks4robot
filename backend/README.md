@@ -89,7 +89,7 @@ make local-dev-seed       # 可选：插入与本仓库一致的演示 MCAP/资�
 | `OUTBOX_ES_SUBSCRIBER_ENABLED` | 本进程订阅 Pub/Sub 并写 ES | `false` |
 | `OUTBOX_ES_SUBSCRIPTION` | 订阅短名（与 `PUBSUB_PROJECT` 同项目） | 空 |
 
-| `ADMIN_TOKEN` | 预留配置；当前 `reindex` 先复用 `X-Grace-Token` | 空 |
+| `ADMIN_TOKEN` | Admin/internal 路由（硬删、reindex 等）；**生产必填**，未设置则不挂载这些路由 | 空 |
 
 ## API 端点
 

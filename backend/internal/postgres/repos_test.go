@@ -214,7 +214,7 @@ func TestAssetRepo(t *testing.T) {
 	// Get now scans 39 columns (including algo_inputs_uris/annot_inputs_uris JSONB)
 	db.queryRow = &fakeRow{values: []any{
 		"a1", "m1", int64(10), int64(20), (*string)(nil),
-		"approved", "ready", "segment", int64(1200),
+		"ready", "segment", int64(1200),
 		"o", "r", int(0), (*time.Time)(nil), "",
 		"", (*time.Time)(nil), "", "", int(0),
 		(*string)(nil), (*string)(nil),
@@ -263,7 +263,7 @@ func TestAssetRepo(t *testing.T) {
 
 	rows := &fakeRows{data: [][]any{
 		{"a1", "m1", int64(10), int64(20), (*string)(nil),
-			"approved", "ready", "segment", int64(0),
+			"ready", "segment", int64(0),
 			"", "", int(0), (*time.Time)(nil), "",
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
@@ -528,14 +528,14 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 	// DATA returns 2 rows (31 columns each — includes metadata/files/algo/annot JSONB)
 	db.rows = &fakeRows{data: [][]any{
 		{"a1", "m1", int64(10), int64(20), (*string)(nil),
-			"approved", "ready", "segment", int64(0),
+			"ready", "segment", int64(0),
 			"", "", int(0), (*time.Time)(nil), "",
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 		{"a2", "m1", int64(20), int64(30), (*string)(nil),
-			"approved", "ready", "segment", int64(0),
+			"ready", "segment", int64(0),
 			"", "", int(0), (*time.Time)(nil), "",
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
@@ -566,7 +566,7 @@ func TestListWithFilters_WithWhereSQL(t *testing.T) {
 	db.queryRow = &fakeRow{values: []any{int64(1)}}
 	db.rows = &fakeRows{data: [][]any{
 		{"a1", "m1", int64(10), int64(20), (*string)(nil),
-			"approved", "ready", "segment", int64(0),
+			"ready", "segment", int64(0),
 			"", "", int(0), (*time.Time)(nil), "",
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
@@ -574,7 +574,7 @@ func TestListWithFilters_WithWhereSQL(t *testing.T) {
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 
-	assets, total, err := repo.ListWithFilters(ctx, "status = $1", []interface{}{"approved"}, 1, 10, filter.OrderByClause{SQL: "created_at DESC"})
+	assets, total, err := repo.ListWithFilters(ctx, "lifecycle_state = $1", []interface{}{"ready"}, 1, 10, filter.OrderByClause{SQL: "created_at DESC"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -690,40 +690,41 @@ func TestProperty6_RealColumnConsistency(t *testing.T) {
 		}
 		capturedArgs := capDB.lastArgs
 
-		// Set() now passes 30 positional args.
-		if len(capturedArgs) < 30 {
-			t.Fatalf("expected 30 args, got %d", len(capturedArgs))
+		// Set() now passes 29 positional args (no assets.status column).
+		if len(capturedArgs) < 29 {
+			t.Fatalf("expected 29 args, got %d", len(capturedArgs))
 		}
 
-		// owner (arg index 9)
-		if got := capturedArgs[9]; got != a.Owner {
-			t.Fatalf("owner mismatch: real=%v want=%v", got, a.Owner)
+		// lifecycle_state (arg index 5)
+		if got := capturedArgs[5]; got != a.LifecycleState {
+			t.Fatalf("lifecycle_state mismatch: real=%v want=%v", got, a.LifecycleState)
 		}
 
-		// reviewer (arg index 10)
-		if got := capturedArgs[10]; got != a.Reviewer {
-			t.Fatalf("reviewer mismatch: real=%v want=%v", got, a.Reviewer)
-		}
-
-		// delivery_count (arg index 11)
-		if got := capturedArgs[11]; got != a.DeliveryCount {
-			t.Fatalf("delivery_count mismatch: real=%v want=%v", got, a.DeliveryCount)
-		}
-
-		// last_delivered_to (arg index 13)
-		if got := capturedArgs[13]; got != a.LastDeliveredTo {
-			t.Fatalf("last_delivered_to mismatch: real=%v want=%v", got, a.LastDeliveredTo)
-		}
-
-		// asset_type (arg index 7)
-		if got := capturedArgs[7]; got != a.AssetType {
+		// asset_type (arg index 6)
+		if got := capturedArgs[6]; got != a.AssetType {
 			t.Fatalf("asset_type mismatch: real=%v want=%v", got, a.AssetType)
 		}
 
-		// status (arg index 5) and lifecycle_state (arg index 6) mapping
-		if got := capturedArgs[5]; got != string(a.Status) {
-			t.Fatalf("status mismatch: real=%v want=%v", got, a.Status)
+		// owner (arg index 8)
+		if got := capturedArgs[8]; got != a.Owner {
+			t.Fatalf("owner mismatch: real=%v want=%v", got, a.Owner)
 		}
+
+		// reviewer (arg index 9)
+		if got := capturedArgs[9]; got != a.Reviewer {
+			t.Fatalf("reviewer mismatch: real=%v want=%v", got, a.Reviewer)
+		}
+
+		// delivery_count (arg index 10)
+		if got := capturedArgs[10]; got != a.DeliveryCount {
+			t.Fatalf("delivery_count mismatch: real=%v want=%v", got, a.DeliveryCount)
+		}
+
+		// last_delivered_to (arg index 12)
+		if got := capturedArgs[12]; got != a.LastDeliveredTo {
+			t.Fatalf("last_delivered_to mismatch: real=%v want=%v", got, a.LastDeliveredTo)
+		}
+
 		expectedStatus := LifecycleStateToStatus(a.LifecycleState)
 		if string(a.Status) != expectedStatus {
 			t.Fatalf("status/lifecycle mismatch: status=%v expected=%v for lifecycle=%v", a.Status, expectedStatus, a.LifecycleState)
@@ -812,7 +813,6 @@ func TestDualWrite_OptimisticLockConflict(t *testing.T) {
 // ---------------------------------------------------------------------------
 func buildAssetRow(
 	assetID string,
-	status string,
 	lifecycleState string,
 	assetType string,
 	durationMs int64,
@@ -829,7 +829,7 @@ func buildAssetRow(
 ) []any {
 	return []any{
 		assetID, "m1", int64(100), int64(200), (*string)(nil),
-		status, lifecycleState, assetType, durationMs,
+		lifecycleState, assetType, durationMs,
 		owner, reviewer, deliveryCount, lastDeliveredAt, lastDeliveredTo,
 		retentionTier, expireAt, storageURI, thumbURI, assetLevel,
 		(*string)(nil), (*string)(nil),
@@ -848,8 +848,7 @@ func TestGet_PopulatesBothOldAndNewFields(t *testing.T) {
 
 	row := buildAssetRow(
 		"get-1",
-		"approved",   // status
-		"ready",      // lifecycle_state
+		"ready", // lifecycle_state
 		"clip",       // asset_type
 		int64(12500), // duration_ms
 		"alice",      // owner
@@ -943,7 +942,7 @@ func TestGet_DurationSecComputedFromDurationMs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			row := buildAssetRow(
-				"dur-"+tc.name, "approved", "ready", "segment", tc.durationMs,
+				"dur-"+tc.name, "ready", "segment", tc.durationMs,
 				"", "", 0, nil, "", "", nil, "", "", 0,
 			)
 			db := &fakeDB{queryRow: &fakeRow{values: row}}
@@ -970,7 +969,7 @@ func TestGet_SegTypeMirrorsAssetType(t *testing.T) {
 	for _, at := range assetTypes {
 		t.Run(at, func(t *testing.T) {
 			row := buildAssetRow(
-				"seg-"+at, "approved", "ready", at, int64(1000),
+				"seg-"+at, "ready", at, int64(1000),
 				"", "", 0, nil, "", "", nil, "", "", 0,
 			)
 			db := &fakeDB{queryRow: &fakeRow{values: row}}
@@ -996,7 +995,7 @@ func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 	// List queries return 31 columns (includes metadata/files/algo/annot JSONB)
 	row := []any{
 		"lf-1", "m1", int64(100), int64(200), (*string)(nil),
-		"approved", "delivered", "frame_set", int64(5000),
+		"delivered", "frame_set", int64(5000),
 		"dave", "carol", int(1), (*time.Time)(nil), "partner",
 		"warm", (*time.Time)(nil), "", "", int(0),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
@@ -1053,7 +1052,7 @@ func TestListByMcapFile_PopulatesBothOldAndNewFields(t *testing.T) {
 	// List queries return 31 columns (includes metadata/files/algo/annot JSONB)
 	row := []any{
 		"lm-1", "m1", int64(100), int64(200), (*string)(nil),
-		"rejected", "rejected", "segment", int64(7500),
+		"rejected", "segment", int64(7500),
 		"frank", "eve", int(0), (*time.Time)(nil), "",
 		"cold", (*time.Time)(nil), "gs://s/data", "gs://s/thumb", int(1),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),

@@ -58,7 +58,7 @@ type Asset struct {
 	EndTimestampNs   int64       `json:"end_timestamp_ns"`
 	DurationSec      float64     `json:"duration_sec"`
 	Reviewer         string      `json:"reviewer"`
-	Status           AssetStatus `json:"status"`
+	Status           AssetStatus `json:"status"` // API-only; derived from lifecycle_state (not stored in PostgreSQL)
 	Owner            string      `json:"owner"`
 	SegType          string      `json:"type,omitempty"`
 	Env              string      `json:"env,omitempty"`
@@ -112,7 +112,13 @@ type Asset struct {
 //
 //   - DurationSec = float64(DurationMs) / 1000.0
 //   - SegType mirrors AssetType
+//   - Status derived from lifecycle_state (API-only; not stored in PostgreSQL)
 func (a *Asset) SyncLegacyFields() {
+	if a.LifecycleState != "" {
+		a.Status = AssetStatus(LifecycleToStatus(a.LifecycleState))
+	} else if a.Status != "" {
+		a.LifecycleState = StatusToLifecycle(string(a.Status))
+	}
 	a.DurationSec = float64(a.DurationMs) / 1000.0
 	a.SegType = a.AssetType
 	if a.Metadata != nil {

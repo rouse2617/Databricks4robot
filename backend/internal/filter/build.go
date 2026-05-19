@@ -65,6 +65,10 @@ func buildCondition(f Filter, paramIdx int) (string, []interface{}, int, error) 
 		return buildActionCondition(f, paramIdx)
 	}
 
+	if f.Field == "status" {
+		return buildStatusCondition(f, paramIdx)
+	}
+
 	colExpr := resolveColumnExpr(f)
 
 	switch f.Op {

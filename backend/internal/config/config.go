@@ -196,6 +196,15 @@ func Load() *Config {
 	}
 }
 
+// AdminRoutesEnabled reports whether privileged admin/internal HTTP routes are mounted.
+// In production, ADMIN_TOKEN must be set; dev may fall back to GRACE_TOKEN when unset.
+func (c *Config) AdminRoutesEnabled() bool {
+	if c.AdminToken != "" {
+		return true
+	}
+	return c.Env != "production"
+}
+
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

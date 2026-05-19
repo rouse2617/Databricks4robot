@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
@@ -29,10 +31,16 @@ func StaticTokenAuth(token string) gin.HandlerFunc {
 }
 
 // AdminTokenAuth checks for an admin-specific token via X-Admin-Token header.
-// When adminToken is empty, it falls back to StaticTokenAuth with graceToken
-// for backward compatibility.
-func AdminTokenAuth(adminToken, graceToken string) gin.HandlerFunc {
+// When adminToken is empty, non-production environments fall back to graceToken;
+// production must configure ADMIN_TOKEN (routes should also be unmounted).
+func AdminTokenAuth(adminToken, graceToken, env string) gin.HandlerFunc {
 	if adminToken == "" {
+		if env == "production" {
+			return func(c *gin.Context) {
+				httpresp.Error(c, http.StatusForbidden, httpresp.CodeUnauthorized, "admin routes require ADMIN_TOKEN in production", nil)
+				c.Abort()
+			}
+		}
 		return StaticTokenAuth(graceToken)
 	}
 	return func(c *gin.Context) {

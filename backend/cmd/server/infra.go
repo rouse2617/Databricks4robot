@@ -36,6 +36,9 @@ func setupInfra() *infra {
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	if cfg.Env == "production" && cfg.AdminToken == "" {
+		slog.Warn("ADMIN_TOKEN unset: admin and internal privileged routes are not mounted in production")
+	}
 
 	ctx := context.Background()
 	for _, dep := range []string{"postgres", "lakehouse", "elasticsearch"} {

@@ -32,10 +32,14 @@ func prepAssetForWrite(a *models.Asset) {
 	a.Version++
 	a.SegmentLocator = models.ComputeSegmentLocator(a.McapFileID, a.StartTimestampNs, a.EndTimestampNs)
 
-	// LifecycleState is the authoritative field. Status is derived for API compat.
+	// lifecycle_state is authoritative in PostgreSQL; status is API-only (SyncLegacyFields).
 	if a.LifecycleState == "" && a.Status != "" {
 		a.LifecycleState = StatusToLifecycleState(string(a.Status))
 	}
+	if a.LifecycleState == "" {
+		a.LifecycleState = string(LifecycleReady)
+	}
+	a.SyncLegacyFields()
 	// SegType mirrors AssetType for API compat.
 	if a.AssetType != "" && a.SegType == "" {
 		a.SegType = a.AssetType
@@ -104,7 +108,7 @@ func bindAssetJSONAndRefs(a *models.Asset) (metadataJSON, filesStructJSON, algoI
 func (r *AssetRepo) Get(ctx context.Context, assetID string) (*models.Asset, error) {
 	const q = `
 SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  COALESCE(status, ''), COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
+  COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
   COALESCE(owner, ''), COALESCE(reviewer, ''), COALESCE(delivery_count, 0), last_delivered_at, COALESCE(last_delivered_to, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id,
@@ -117,7 +121,6 @@ FROM assets
 WHERE asset_id = $1 AND is_deleted = FALSE`
 	var (
 		a               models.Asset
-		status          string
 		lifecycleState  string
 		segLoc          *string
 		parentID        *string
@@ -139,7 +142,7 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 	)
 	err := r.c.db.QueryRow(ctx, q, assetID).Scan(
 		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
-		&status, &lifecycleState, &a.AssetType, &a.DurationMs,
+		&lifecycleState, &a.AssetType, &a.DurationMs,
 		&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 		&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 		&parentID, &rootID,
@@ -155,7 +158,6 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 		}
 		return nil, fmt.Errorf("postgres AssetRepo.Get: %w", err)
 	}
-	a.Status = models.AssetStatus(status)
 	a.LifecycleState = lifecycleState
 	if segLoc != nil {
 		a.SegmentLocator = *segLoc
@@ -218,7 +220,7 @@ WHERE asset_id = $1 AND is_deleted = FALSE`
 func (r *AssetRepo) GetAll(ctx context.Context, assetID string) (*models.Asset, error) {
 	const q = `
 SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  COALESCE(status, ''), COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
+  COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
   COALESCE(owner, ''), COALESCE(reviewer, ''), COALESCE(delivery_count, 0), last_delivered_at, COALESCE(last_delivered_to, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id,
@@ -236,7 +238,6 @@ WHERE asset_id = $1`
 func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.Asset, error) {
 	var (
 		a               models.Asset
-		status          string
 		lifecycleState  string
 		segLoc          *string
 		parentID        *string
@@ -258,7 +259,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 	)
 	err := row.Scan(
 		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
-		&status, &lifecycleState, &a.AssetType, &a.DurationMs,
+		&lifecycleState, &a.AssetType, &a.DurationMs,
 		&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 		&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 		&parentID, &rootID,
@@ -274,7 +275,6 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		}
 		return nil, fmt.Errorf("postgres AssetRepo.scanOneAsset: %w", err)
 	}
-	a.Status = models.AssetStatus(status)
 	a.LifecycleState = lifecycleState
 	if segLoc != nil {
 		a.SegmentLocator = *segLoc
@@ -346,7 +346,7 @@ func (r *AssetRepo) Set(ctx context.Context, a *models.Asset) error {
 	const q = `
 INSERT INTO assets(
   asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  status, lifecycle_state, asset_type, duration_ms,
+  lifecycle_state, asset_type, duration_ms,
   owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
   retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
   parent_asset_id, root_asset_id, metadata, files, algo_inputs_uris, annot_inputs_uris,
@@ -355,20 +355,19 @@ INSERT INTO assets(
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
-  $6,$7,$8,$9,
-  $10,$11,$12,$13,$14,
-  $15,$16,$17,$18,$19,
-  $20,$21,$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,
-  $26,$27,
+  $6,$7,$8,
+  $9,$10,$11,$12,$13,
+  $14,$15,$16,$17,$18,
+  $19,$20,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,
+  $25,$26,
   FALSE,
-  $28,$29,$30
+  $27,$28,$29
 )
 ON CONFLICT (asset_id) DO UPDATE SET
   mcap_file_id=EXCLUDED.mcap_file_id,
   start_timestamp_ns=EXCLUDED.start_timestamp_ns,
   end_timestamp_ns=EXCLUDED.end_timestamp_ns,
   segment_locator=EXCLUDED.segment_locator,
-  status=EXCLUDED.status,
   lifecycle_state=EXCLUDED.lifecycle_state,
   asset_type=EXCLUDED.asset_type,
   duration_ms=EXCLUDED.duration_ms,
@@ -399,7 +398,7 @@ WHERE assets.version = EXCLUDED.version - 1`
 	db := dbFromCtx(ctx, r.c.db)
 	rowsAffected, err := db.ExecResult(ctx, q,
 		a.AssetID, a.McapFileID, a.StartTimestampNs, a.EndTimestampNs, a.SegmentLocator,
-		string(a.Status), a.LifecycleState, a.AssetType, a.DurationMs,
+		a.LifecycleState, a.AssetType, a.DurationMs,
 		a.Owner, a.Reviewer, a.DeliveryCount, a.LastDeliveredAt, a.LastDeliveredTo,
 		a.RetentionTier, a.ExpireAt, a.StorageURI, a.ThumbURI, a.AssetLevel,
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
@@ -422,7 +421,7 @@ func (r *AssetRepo) InsertNew(ctx context.Context, a *models.Asset) error {
 	const q = `
 INSERT INTO assets(
   asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  status, lifecycle_state, asset_type, duration_ms,
+  lifecycle_state, asset_type, duration_ms,
   owner, reviewer, delivery_count, last_delivered_at, last_delivered_to,
   retention_tier, expire_at, storage_uri, thumb_uri, asset_level,
   parent_asset_id, root_asset_id, metadata, files, algo_inputs_uris, annot_inputs_uris,
@@ -431,13 +430,13 @@ INSERT INTO assets(
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
-  $6,$7,$8,$9,
-  $10,$11,$12,$13,$14,
-  $15,$16,$17,$18,$19,
-  $20,$21,$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,
-  $26,$27,
+  $6,$7,$8,
+  $9,$10,$11,$12,$13,
+  $14,$15,$16,$17,$18,
+  $19,$20,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,
+  $25,$26,
   FALSE,
-  $28,$29,$30
+  $27,$28,$29
 )`
 
 	metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON, parentAssetID, rootAssetID, tenantID, projectID := bindAssetJSONAndRefs(a)
@@ -445,7 +444,7 @@ INSERT INTO assets(
 	db := dbFromCtx(ctx, r.c.db)
 	err := db.Exec(ctx, q,
 		a.AssetID, a.McapFileID, a.StartTimestampNs, a.EndTimestampNs, a.SegmentLocator,
-		string(a.Status), a.LifecycleState, a.AssetType, a.DurationMs,
+		a.LifecycleState, a.AssetType, a.DurationMs,
 		a.Owner, a.Reviewer, a.DeliveryCount, a.LastDeliveredAt, a.LastDeliveredTo,
 		a.RetentionTier, a.ExpireAt, a.StorageURI, a.ThumbURI, a.AssetLevel,
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
@@ -463,7 +462,7 @@ INSERT INTO assets(
 }
 
 func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
-	const q = `UPDATE assets SET is_deleted=TRUE, status='archived', lifecycle_state='archived', updated_at=now() WHERE asset_id=$1`
+	const q = `UPDATE assets SET is_deleted=TRUE, lifecycle_state='archived', updated_at=now() WHERE asset_id=$1`
 	db := dbFromCtx(ctx, r.c.db)
 	err := db.Exec(ctx, q, assetID)
 	if err != nil {
@@ -475,7 +474,7 @@ func (r *AssetRepo) SoftDelete(ctx context.Context, assetID string) error {
 func (r *AssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error) {
 	const q = `
 SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  COALESCE(status, ''), COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
+  COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
   COALESCE(owner, ''), COALESCE(reviewer, ''), COALESCE(delivery_count, 0), last_delivered_at, COALESCE(last_delivered_to, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id, tenant_id, project_id,
@@ -493,7 +492,6 @@ ORDER BY start_timestamp_ns`
 	for rows.Next() {
 		var (
 			a               models.Asset
-			status          string
 			lifecycleState  string
 			segLoc          *string
 			parentID        *string
@@ -507,7 +505,7 @@ ORDER BY start_timestamp_ns`
 		)
 		if err := rows.Scan(
 			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
-			&status, &lifecycleState, &a.AssetType, &a.DurationMs,
+			&lifecycleState, &a.AssetType, &a.DurationMs,
 			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 			&parentID, &rootID, &tenantID, &projectID,
@@ -516,7 +514,6 @@ ORDER BY start_timestamp_ns`
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListByMcapFile scan: %w", err)
 		}
-		a.Status = models.AssetStatus(status)
 		a.LifecycleState = lifecycleState
 		if segLoc != nil {
 			a.SegmentLocator = *segLoc
@@ -2169,7 +2166,7 @@ func (r *AssetRepo) listWithFiltersData(ctx context.Context, whereSQL string, wh
 	allArgs := append(append([]interface{}{}, whereArgs...), orderBy.Args...)
 	dataSQL := fmt.Sprintf(
 		`SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
-  COALESCE(status, ''), COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
+  COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
   COALESCE(owner, ''), COALESCE(reviewer, ''), COALESCE(delivery_count, 0), last_delivered_at, COALESCE(last_delivered_to, ''),
   COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id, tenant_id, project_id,
@@ -2190,7 +2187,6 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 	for rows.Next() {
 		var (
 			a               models.Asset
-			status          string
 			lifecycleState  string
 			segLoc          *string
 			parentID        *string
@@ -2204,7 +2200,7 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		)
 		if err := rows.Scan(
 			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
-			&status, &lifecycleState, &a.AssetType, &a.DurationMs,
+			&lifecycleState, &a.AssetType, &a.DurationMs,
 			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 			&parentID, &rootID, &tenantID, &projectID,
@@ -2213,7 +2209,6 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
 		}
-		a.Status = models.AssetStatus(status)
 		a.LifecycleState = lifecycleState
 		if segLoc != nil {
 			a.SegmentLocator = *segLoc
