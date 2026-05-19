@@ -63,6 +63,8 @@ The system SHALL {behavior description}.
 
 ## CI enforcement
 
+**Scope:** `openspec-gate` and `commitlint` run only when the PR **head branch** contains a Linear id (`CYB-123` / `DAT-456`), e.g. `feat/CYB-58-*`. They **do not** run on migration or refactor branches such as `refactor/cyber-databrew-repo-migration` (exempt by design).
+
 The `openspec-gate` workflow validates:
 - PR includes an OpenSpec change-id (branch name or PR body)
 - `openspec/changes/{id}/` directory exists

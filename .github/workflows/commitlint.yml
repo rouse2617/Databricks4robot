@@ -14,17 +14,36 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check branch scope (PR)
+        if: github.event_name == 'pull_request'
+        id: scope
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const head = context.payload.pull_request.head.ref || '';
+            const featureBranch = /(CYB|DAT)-[0-9]+/.test(head);
+            core.setOutput('applies', featureBranch.toString());
+            if (!featureBranch) {
+              core.info(`Commitlint skipped: branch "${head}" is not a CYB/DAT feature branch.`);
+            }
+
       - uses: actions/setup-node@v4
+        if: github.event_name == 'push' || steps.scope.outputs.applies == 'true'
         with:
           node-version: "20"
 
       - name: Install commitlint
+        if: github.event_name == 'push' || steps.scope.outputs.applies == 'true'
         run: npm install -g @commitlint/cli @commitlint/config-conventional
 
       - name: Validate PR commits
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.scope.outputs.applies == 'true'
         run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
 
       - name: Validate push commit
         if: github.event_name == 'push'
         run: npx commitlint --last --verbose
+
+      - name: Skip (non-feature PR branch)
+        if: github.event_name == 'pull_request' && steps.scope.outputs.applies != 'true'
+        run: echo "Commitlint skipped for non CYB/DAT feature branch."
