@@ -6,9 +6,9 @@ import (
 	"context"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
@@ -40,11 +40,28 @@ SELECT EXISTS (
 		t.Fatal("assets.status column still exists; migration 025 must run before this test")
 	}
 
+	assetID, err := id.GenerateAssetID()
+	if err != nil {
+		t.Fatalf("GenerateAssetID: %v", err)
+	}
+	mcapFileID, err := id.GenerateMcapFileID()
+	if err != nil {
+		t.Fatalf("GenerateMcapFileID: %v", err)
+	}
+	mcapRepo := NewMcapFileRepo(client)
+	if err := mcapRepo.Set(ctx, &models.McapFile{
+		McapFileID:  mcapFileID,
+		GCSPath:     "gs://smoke/test.mcap",
+		IngestState: models.IngestStatePending,
+		Owner:       "smoke",
+	}); err != nil {
+		t.Fatalf("mcap Set: %v", err)
+	}
+
 	repo := NewAssetRepo(client)
-	assetID := "fresh-db-smoke-" + time.Now().UTC().Format("150405")
 	a := &models.Asset{
 		AssetID:          assetID,
-		McapFileID:       "mcap-smoke",
+		McapFileID:       mcapFileID,
 		StartTimestampNs: 1,
 		EndTimestampNs:   2,
 		LifecycleState:   string(LifecycleReady),
