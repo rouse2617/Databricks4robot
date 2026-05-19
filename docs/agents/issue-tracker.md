@@ -7,7 +7,8 @@ Use the **Linear MCP** (`user-linear`) in Cursor, or the Linear web UI / `gh` is
 ## Conventions
 
 - **Create an issue**: `save_issue` with `title`, `team`, and `description` (Markdown). Link the GitHub PR in the description when one exists.
-- **Read an issue**: `get_issue` with issue ID or identifier (e.g. `DAT-123`).
+- **Read an issue**: `get_issue` with issue ID or identifier (e.g. `CYB-978`).
+- **Issue ID prefix**: `CYB-` (Cyberorigin / DataBrew team). Branch and OpenSpec dirs use the same id: `fix/CYB-978-slug`.
 - **List / search**: `list_issues` with filters (team, state, assignee, labels).
 - **Update**: `save_issue` with `id` plus fields to change (`state`, `labels`, `description`, etc.).
 - **Comments**: `save_comment` / `list_comments` on the issue.

@@ -1,0 +1,10 @@
+# Off-limits zones — require 2 reviewers for changes to these paths
+# See docs/agents/AI-RULES.md "Off-limits zones"
+
+backend/internal/middleware/auth*   @CyberOrigin2077/core-reviewers
+backend/internal/outbox/            @CyberOrigin2077/core-reviewers
+backend/migrations/                 @CyberOrigin2077/core-reviewers
+schemas/pg-phase0.sql               @CyberOrigin2077/core-reviewers
+
+# Credential and environment files
+.env*                               @CyberOrigin2077/core-reviewers
