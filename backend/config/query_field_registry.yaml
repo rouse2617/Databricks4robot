@@ -1,0 +1,44 @@
+schema_version: 1
+resources:
+  assets:
+    fields:
+      - field: _fulltext
+        filter_engines: [postgres, elasticsearch]
+      - field: asset_id
+        filter_engines: [postgres]
+        sort_engines: [postgres]
+      - field: owner
+        filter_engines: [postgres, elasticsearch]
+        sort_engines: [postgres, elasticsearch]
+        facet_engines: [elasticsearch]
+      - field: reviewer
+        filter_engines: [postgres, elasticsearch]
+        sort_engines: [postgres]
+      - field: created_at
+        filter_engines: [postgres]
+        sort_engines: [postgres]
+      - field: updated_at
+        filter_engines: [postgres, elasticsearch]
+        sort_engines: [postgres, elasticsearch]
+      - field: lifecycle_state
+        filter_engines: [postgres, elasticsearch]
+        facet_engines: [elasticsearch]
+      - field: asset_type
+        filter_engines: [postgres, elasticsearch]
+        facet_engines: [elasticsearch]
+      - field: delivery_count
+        filter_engines: [postgres]
+        sort_engines: [postgres]
+      - field: tag.priority
+        filter_engines: [postgres, elasticsearch]
+        facet_engines: [elasticsearch]
+      - field: tag.quality
+        filter_engines: [postgres, elasticsearch]
+        facet_engines: [elasticsearch]
+      - field: mcap.vendor_id
+        filter_engines: [postgres, elasticsearch]
+        facet_engines: [elasticsearch]
+      - field: algo_status
+        filter_engines: [postgres]
+      - field: action.label
+        filter_engines: [postgres]

@@ -1,0 +1,44 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cyber-databrew-dev-api-route
+  namespace: developer-gateway
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: developer-gateway
+      namespace: developer-gateway
+  hostnames:
+    - api-cyber-databrew-dev.cyberorigin.ai
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ops/grafana
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cyber-databrew-grafana
+          namespace: cyber-databrew-dev
+          port: 3000
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ops/prometheus
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cyber-databrew-prometheus
+          namespace: cyber-databrew-dev
+          port: 9090
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cyber-databrew-backend
+          namespace: cyber-databrew-dev
+          port: 80

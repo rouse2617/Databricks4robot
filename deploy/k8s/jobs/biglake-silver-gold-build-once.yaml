@@ -1,0 +1,271 @@
+# One-off Job: build Silver/Gold tables from Bronze in BigLake Iceberg catalog.
+#
+# Input:
+#   robot.bronze_asset_events
+#
+# Outputs:
+#   robot.silver_asset_events_current   -- latest event per asset_id
+#   robot.gold_asset_event_daily        -- daily count by event_type (from Silver)
+#
+# Run:
+#   kubectl apply -f deploy/k8s/jobs/biglake-silver-gold-build-once.yaml -n cyber-databrew-dev
+# Watch:
+#   kubectl logs -n cyber-databrew-dev job/biglake-silver-gold-build-once -f
+# Cleanup:
+#   kubectl delete -f deploy/k8s/jobs/biglake-silver-gold-build-once.yaml -n cyber-databrew-dev
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: biglake-silver-gold-build-script
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: biglake-silver-gold
+data:
+  build.py: |
+    import os
+    from collections import defaultdict
+
+    import google.auth
+    import google.auth.transport.requests
+    import pyarrow as pa
+    from pyiceberg.catalog import load_catalog
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import LongType, NestedField, StringType, TimestamptzType
+
+    PROJECT = "green-valley-442103"
+    BUCKET = "cyber-databrew-iceberg-warehouse-prod"
+    NS = "robot"
+    BRONZE = f"{NS}.bronze_asset_events"
+    SILVER = f"{NS}.silver_asset_events_current"
+    GOLD = f"{NS}.gold_asset_event_daily"
+
+    token = os.environ.get("ACCESS_TOKEN", "").strip()
+    if not token:
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        creds.refresh(google.auth.transport.requests.Request())
+        token = creds.token
+
+    catalog = load_catalog(
+        "biglake",
+        **{
+            "type": "rest",
+            "uri": "https://biglake.googleapis.com/iceberg/v1/restcatalog",
+            "warehouse": f"gs://{BUCKET}",
+            "token": token,
+            "header.x-goog-user-project": PROJECT,
+            "py-io-impl": "pyiceberg.io.fsspec.FsspecFileIO",
+            "gcs.project-id": PROJECT,
+            "gcs.oauth2.token": token,
+        },
+    )
+
+    bronze = catalog.load_table(BRONZE)
+    bronze_rows = bronze.scan(
+        selected_fields=(
+            "asset_id",
+            "event_seq",
+            "event_type",
+            "occurred_at",
+            "created_at",
+            "tenant_id",
+            "project_id",
+            "event_source",
+            "publish_state",
+        )
+    ).to_arrow().to_pylist()
+    print(f"BRONZE_ROWS {len(bronze_rows)}")
+
+    # Silver principle: one current row per asset_id, chosen by max(event_seq).
+    latest_by_asset = {}
+    for r in bronze_rows:
+        asset_id = r.get("asset_id")
+        if not asset_id:
+            continue
+        seq = int(r.get("event_seq") or 0)
+        prev = latest_by_asset.get(asset_id)
+        if prev is None or seq > prev["last_event_seq"]:
+            latest_by_asset[asset_id] = {
+                "asset_id": asset_id,
+                "last_event_seq": seq,
+                "last_event_type": r.get("event_type"),
+                "last_occurred_at": r.get("occurred_at"),
+                "last_created_at": r.get("created_at"),
+                "tenant_id": r.get("tenant_id"),
+                "project_id": r.get("project_id"),
+                "event_source": r.get("event_source"),
+                "publish_state": r.get("publish_state"),
+            }
+
+    silver_rows = sorted(
+        latest_by_asset.values(),
+        key=lambda x: (x["last_event_seq"], x["asset_id"]),
+    )
+    print(f"SILVER_ROWS {len(silver_rows)}")
+
+    silver_schema = Schema(
+        NestedField(1, "asset_id", StringType(), required=True),
+        NestedField(2, "last_event_seq", LongType(), required=True),
+        NestedField(3, "last_event_type", StringType(), required=False),
+        NestedField(4, "last_occurred_at", TimestamptzType(), required=False),
+        NestedField(5, "last_created_at", TimestamptzType(), required=False),
+        NestedField(6, "tenant_id", StringType(), required=False),
+        NestedField(7, "project_id", StringType(), required=False),
+        NestedField(8, "event_source", StringType(), required=False),
+        NestedField(9, "publish_state", StringType(), required=False),
+    )
+
+    # Rebuild table for deterministic snapshot in this one-shot pipeline.
+    try:
+        catalog.drop_table(SILVER)
+        print(f"SILVER_DROPPED {SILVER}")
+    except Exception:
+        pass
+    silver_tbl = catalog.create_table(
+        SILVER,
+        schema=silver_schema,
+        properties={
+            "format-version": "2",
+            "write.format.default": "parquet",
+            "write.parquet.compression-codec": "zstd",
+        },
+    )
+
+    if silver_rows:
+        silver_arrow_schema = pa.schema(
+            [
+                pa.field("asset_id", pa.string(), nullable=False),
+                pa.field("last_event_seq", pa.int64(), nullable=False),
+                pa.field("last_event_type", pa.string(), nullable=True),
+                pa.field("last_occurred_at", pa.timestamp("us", tz="UTC"), nullable=True),
+                pa.field("last_created_at", pa.timestamp("us", tz="UTC"), nullable=True),
+                pa.field("tenant_id", pa.string(), nullable=True),
+                pa.field("project_id", pa.string(), nullable=True),
+                pa.field("event_source", pa.string(), nullable=True),
+                pa.field("publish_state", pa.string(), nullable=True),
+            ]
+        )
+        silver_arrow = pa.table(
+            {
+                "asset_id": [r["asset_id"] for r in silver_rows],
+                "last_event_seq": [r["last_event_seq"] for r in silver_rows],
+                "last_event_type": [r["last_event_type"] for r in silver_rows],
+                "last_occurred_at": [r["last_occurred_at"] for r in silver_rows],
+                "last_created_at": [r["last_created_at"] for r in silver_rows],
+                "tenant_id": [r["tenant_id"] for r in silver_rows],
+                "project_id": [r["project_id"] for r in silver_rows],
+                "event_source": [r["event_source"] for r in silver_rows],
+                "publish_state": [r["publish_state"] for r in silver_rows],
+            },
+            schema=silver_arrow_schema,
+        )
+        silver_tbl.append(silver_arrow)
+
+    # Gold principle: aggregate on Silver current-state to avoid double counting.
+    agg = defaultdict(int)
+    for r in silver_rows:
+        ts = r["last_occurred_at"] or r["last_created_at"]
+        if ts is None:
+            continue
+        event_date = ts.date().isoformat()
+        event_type = r["last_event_type"] or "unknown"
+        agg[(event_date, event_type)] += 1
+
+    gold_rows = [
+        {"event_date": k[0], "event_type": k[1], "asset_count": v}
+        for k, v in sorted(agg.items(), key=lambda x: (x[0][0], x[0][1]))
+    ]
+    print(f"GOLD_ROWS {len(gold_rows)}")
+
+    gold_schema = Schema(
+        NestedField(1, "event_date", StringType(), required=True),
+        NestedField(2, "event_type", StringType(), required=True),
+        NestedField(3, "asset_count", LongType(), required=True),
+    )
+
+    try:
+        catalog.drop_table(GOLD)
+        print(f"GOLD_DROPPED {GOLD}")
+    except Exception:
+        pass
+    gold_tbl = catalog.create_table(
+        GOLD,
+        schema=gold_schema,
+        properties={
+            "format-version": "2",
+            "write.format.default": "parquet",
+            "write.parquet.compression-codec": "zstd",
+        },
+    )
+
+    if gold_rows:
+        gold_arrow_schema = pa.schema(
+            [
+                pa.field("event_date", pa.string(), nullable=False),
+                pa.field("event_type", pa.string(), nullable=False),
+                pa.field("asset_count", pa.int64(), nullable=False),
+            ]
+        )
+        gold_arrow = pa.table(
+            {
+                "event_date": [r["event_date"] for r in gold_rows],
+                "event_type": [r["event_type"] for r in gold_rows],
+                "asset_count": [r["asset_count"] for r in gold_rows],
+            },
+            schema=gold_arrow_schema,
+        )
+        gold_tbl.append(gold_arrow)
+
+    print("BUILD_DONE")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: biglake-silver-gold-build-once
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: biglake-silver-gold
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cyber-databrew
+        app.kubernetes.io/component: biglake-silver-gold
+    spec:
+      restartPolicy: Never
+      serviceAccountName: cyber-databrew-dev-biglake-smoke
+      containers:
+        - name: build
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: biglake-user-token
+                  key: ACCESS_TOKEN
+                  optional: true
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              memory: "2Gi"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              pip install --no-cache-dir --quiet "pyiceberg[pyarrow,gcsfs]" google-auth requests
+              python /scripts/build.py
+      volumes:
+        - name: script
+          configMap:
+            name: biglake-silver-gold-build-script
+            defaultMode: 0444

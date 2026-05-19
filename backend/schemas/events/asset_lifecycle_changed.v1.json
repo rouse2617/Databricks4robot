@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/asset_lifecycle_changed.v1.json",
+  "title": "asset_lifecycle_changed.v1",
+  "description": "Emitted when asset lifecycle-related status fields change.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "prev_status",
+    "new_status",
+    "prev_lifecycle_state",
+    "new_lifecycle_state"
+  ],
+  "properties": {
+    "prev_status": {
+      "type": "string",
+      "description": "Previous asset status."
+    },
+    "new_status": {
+      "type": "string",
+      "description": "New asset status."
+    },
+    "prev_lifecycle_state": {
+      "type": "string"
+    },
+    "new_lifecycle_state": {
+      "type": "string"
+    }
+  }
+}

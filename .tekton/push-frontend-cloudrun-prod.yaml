@@ -1,0 +1,268 @@
+## Push to `main` → build frontend image → deploy prod Cloud Run (when the service exists).
+##
+## If `cyber-databrew-frontend-prod` does not exist yet, the PipelineRun still succeeds after push
+## to Artifact Registry; deploy is skipped until you create the Cloud Run service.
+## Backend mirror: `push-backend-cloudrun-prod.yaml`.
+##
+## yaml-language-server: $schema=https://raw.githubusercontent.com/redhat-developer/vscode-tekton/refs/heads/main/scheme/tekton.dev/v1beta1_PipelineRun.json
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: push-frontend-cloudrun-prod-{{revision}}
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[push]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main,refs/heads/main]"
+    pipelinesascode.tekton.dev/on-path-change: "[Frontend/**, deploy/cloudrun/**, .tekton/push-frontend-cloudrun-prod.yaml]"
+    pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
+    pipelinesascode.tekton.dev/task: "git-clone"
+    pipelinesascode.tekton.dev/max-keep-runs: "8"
+spec:
+  serviceAccountName: tekton-builder
+  podTemplate:
+    securityContext:
+      fsGroup: 65532
+  taskRunSpecs:
+    - pipelineTaskName: build-and-push
+      taskPodTemplate:
+        nodeSelector:
+          build-pool-tier: warm
+        tolerations:
+          - key: build-pool-tier
+            operator: Equal
+            value: warm
+            effect: NoSchedule
+      stepOverrides:
+        - name: build-and-push
+          resources:
+            requests:
+              cpu: "2"
+              memory: "6Gi"
+      sidecarOverrides:
+        - name: buildkitd
+          resources:
+            requests:
+              ephemeral-storage: "10Gi"
+  timeouts:
+    pipeline: 3h0m0s
+    tasks: 2h30m0s
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+    - name: pac-gitauth
+      secret:
+        secretName: "{{git_auth_secret}}"
+  pipelineSpec:
+    workspaces:
+      - name: shared-workspace
+      - name: pac-gitauth
+    tasks:
+      - name: fetch-repository
+        taskRef:
+          name: git-clone
+        workspaces:
+          - name: output
+            workspace: shared-workspace
+          - name: basic-auth
+            workspace: pac-gitauth
+        params:
+          - name: url
+            value: "{{repo_url}}"
+          - name: revision
+            value: "{{revision}}"
+
+      - name: build-and-push
+        retries: 1
+        runAfter:
+          - fetch-repository
+        taskRef:
+          resolver: cluster
+          params:
+            - name: kind
+              value: task
+            - name: name
+              value: buildkit
+            - name: namespace
+              value: tekton-pipelines
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+        params:
+          - name: IMAGE
+            value: us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/cyber-databrew-frontend:{{revision}}
+          - name: DOCKERFILE
+            value: deploy/cloudrun/frontend-cloudrun.Dockerfile
+          - name: CONTEXT
+            value: .
+          - name: CACHE_IMAGE
+            value: us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/cyber-databrew-frontend:buildcache
+
+      - name: deploy-cloudrun-prod
+        runAfter:
+          - build-and-push
+        taskSpec:
+          steps:
+            - name: gcloud-run-deploy
+              image: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+              script: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+                PROJECT_ID="green-valley-442103"
+                REGION="us-central1"
+                SERVICE="cyber-databrew-frontend-prod"
+                IMAGE="us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/cyber-databrew-frontend:{{revision}}"
+
+                if ! gcloud run services describe "${SERVICE}" \
+                  --project "${PROJECT_ID}" \
+                  --region "${REGION}" \
+                  >/dev/null 2>&1; then
+                  echo "SKIP: Cloud Run service '${SERVICE}' not found; image pushed to Artifact Registry only."
+                  exit 0
+                fi
+
+                gcloud run deploy "${SERVICE}" \
+                  --project "${PROJECT_ID}" \
+                  --region "${REGION}" \
+                  --platform managed \
+                  --image "${IMAGE}" \
+                  --port 80 \
+                  --allow-unauthenticated \
+                  --min-instances 0 \
+                  --max-instances 10 \
+                  --cpu 1 \
+                  --memory 512Mi \
+                  --timeout 60
+    finally:
+      - name: notify-feishu-open
+        params:
+          - name: pipeline-label
+            value: "push-frontend-cloudrun-prod"
+          - name: notify-deploy-line
+            value: "Cloud Run：若 cyber-databrew-frontend-prod 已存在则本次 gcloud run deploy 已成功；若服务尚不存在则 deploy 会 skip（仅推镜像），以 Tekton gcloud 步骤日志为准。"
+          - name: tasks-status
+            value: $(tasks.status)
+          - name: pipelinerun-name
+            value: $(context.pipelineRun.name)
+        taskSpec:
+          params:
+            - name: pipeline-label
+            - name: notify-deploy-line
+            - name: tasks-status
+            - name: pipelinerun-name
+          steps:
+            - name: send
+              image: docker.io/library/python:3.12-alpine
+              env:
+                - name: PAC_NOTIFY_LABEL
+                  value: $(params.pipeline-label)
+                - name: PAC_TASKS_STATUS
+                  value: $(params.tasks-status)
+                - name: PAC_PIPELINE_RUN_NAME
+                  value: $(params.pipelinerun-name)
+                - name: PAC_NOTIFY_DEPLOY_LINE
+                  value: $(params.notify-deploy-line)
+                - name: FEISHU_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: feishu-open-notify
+                      key: webhook_url
+                      optional: true
+                - name: FEISHU_APP_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: feishu-open-notify
+                      key: app_id
+                      optional: true
+                - name: FEISHU_APP_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: feishu-open-notify
+                      key: app_secret
+                      optional: true
+                - name: FEISHU_CHAT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: feishu-open-notify
+                      key: chat_id
+                      optional: true
+              script: |
+                #!/bin/sh
+                set +e
+                if [ -n "${FEISHU_WEBHOOK_URL:-}" ]; then
+                  :
+                elif [ -n "${FEISHU_APP_ID:-}" ] && [ -n "${FEISHU_APP_SECRET:-}" ] && [ -n "${FEISHU_CHAT_ID:-}" ]; then
+                  :
+                else
+                  echo "SKIP: feishu-open-notify: set webhook_url or (app_id + app_secret + chat_id)."
+                  exit 0
+                fi
+                python3 <<'PY'
+                import json
+                import os
+                import urllib.request
+
+                def post_json(url, body, extra_headers=None):
+                    data = json.dumps(body).encode()
+                    req = urllib.request.Request(url, data=data, method="POST")
+                    req.add_header("Content-Type", "application/json")
+                    if extra_headers:
+                        for k, v in extra_headers.items():
+                            req.add_header(k, v)
+                    with urllib.request.urlopen(req, timeout=60) as r:
+                        return json.load(r)
+
+                label = os.environ["PAC_NOTIFY_LABEL"]
+                status = os.environ["PAC_TASKS_STATUS"]
+                prn = os.environ["PAC_PIPELINE_RUN_NAME"]
+                log = "https://tekton.cyberorigin.ai/#/namespaces/tekton-pipelines/pipelineruns/" + prn
+                extra = (os.environ.get("PAC_NOTIFY_DEPLOY_LINE") or "").strip()
+                parts = [
+                    f"【cyber-databrew PAC】{label}",
+                    f"状态(aggregate): {status}",
+                ]
+                if extra:
+                    parts.append(extra)
+                parts.append(f"PipelineRun: {prn}")
+                parts.append(f"日志: {log}")
+                text = "\n".join(parts)
+
+                webhook = (os.environ.get("FEISHU_WEBHOOK_URL") or "").strip()
+                if webhook:
+                    body = post_json(
+                        webhook,
+                        {"msg_type": "text", "content": {"text": text}},
+                    )
+                    code = body.get("code")
+                    if code is not None and code != 0:
+                        print("feishu webhook error:", body)
+                    raise SystemExit(0)
+
+                tok_body = post_json(
+                    "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+                    {
+                        "app_id": os.environ["FEISHU_APP_ID"],
+                        "app_secret": os.environ["FEISHU_APP_SECRET"],
+                    },
+                )
+                tok = tok_body.get("tenant_access_token")
+                if not tok:
+                    print("feishu token error:", tok_body)
+                    raise SystemExit(0)
+                payload = {
+                    "receive_id": os.environ["FEISHU_CHAT_ID"],
+                    "msg_type": "text",
+                    "content": json.dumps({"text": text}),
+                }
+                msg_body = post_json(
+                    "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
+                    payload,
+                    {"Authorization": "Bearer " + tok},
+                )
+                if msg_body.get("code") != 0:
+                    print("feishu message error:", msg_body)
+                PY
+                exit 0

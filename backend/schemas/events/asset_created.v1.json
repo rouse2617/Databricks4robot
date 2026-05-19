@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/asset_created.v1.json",
+  "title": "asset_created.v1",
+  "description": "Emitted when a new asset row is created. Written in the same transaction as the assets insert.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "asset_id",
+    "mcap_file_id",
+    "segment_locator",
+    "lifecycle_state",
+    "asset_type",
+    "owner",
+    "reviewer"
+  ],
+  "properties": {
+    "asset_id": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z]{8}$",
+      "description": "Asset identifier (8-char alphanumeric)."
+    },
+    "mcap_file_id": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z]{8}$",
+      "description": "Parent MCAP file identifier (8-char alphanumeric)."
+    },
+    "segment_locator": {
+      "type": "string",
+      "description": "Deterministic segment locator for the asset."
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "description": "Lifecycle state at creation."
+    },
+    "asset_type": {
+      "type": "string",
+      "description": "Asset type (for example, segment)."
+    },
+    "owner": {
+      "type": "string"
+    },
+    "reviewer": {
+      "type": "string"
+    }
+  }
+}

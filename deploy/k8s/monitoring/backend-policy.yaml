@@ -1,0 +1,25 @@
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cyber-databrew-grafana-backend-policy
+spec:
+  default:
+    iap:
+      enabled: false
+  targetRef:
+    group: ""
+    kind: Service
+    name: cyber-databrew-grafana
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cyber-databrew-prometheus-backend-policy
+spec:
+  default:
+    iap:
+      enabled: false
+  targetRef:
+    group: ""
+    kind: Service
+    name: cyber-databrew-prometheus

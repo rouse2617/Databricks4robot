@@ -1,0 +1,20 @@
+# Allow HTTPRoutes in the developer-gateway namespace to back-reference the
+# mcap-preview Service that lives in cyber-databrew-dev. The existing
+# `allow-developer-gateway-http-routes` ReferenceGrant under
+# deploy/k8s/gateway/ enumerates the cyber-databrew-{frontend,backend}
+# Services; we add a sibling grant here rather than mutating that file so
+# the gateway/ kustomize base remains untouched.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-developer-gateway-mcap-preview
+  namespace: cyber-databrew-dev
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: developer-gateway
+  to:
+    - group: ""
+      kind: Service
+      name: mcap-preview

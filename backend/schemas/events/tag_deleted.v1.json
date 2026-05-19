@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/tag_deleted.v1.json",
+  "title": "tag_deleted.v1",
+  "description": "Emitted when a tag is deleted from an asset.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "tag_key",
+    "tag_value",
+    "tag_type",
+    "source_type"
+  ],
+  "properties": {
+    "tag_key": {
+      "type": "string",
+      "description": "Deleted tag key."
+    },
+    "tag_value": {
+      "type": "string",
+      "description": "Deleted tag value."
+    },
+    "tag_type": {
+      "type": "string",
+      "description": "Tag type from registry."
+    },
+    "source_type": {
+      "type": "string",
+      "description": "Tag source type recorded at deletion time."
+    }
+  }
+}

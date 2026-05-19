@@ -1,0 +1,32 @@
+primary_labels:
+  - pickup
+  - place
+  - push
+  - pull
+  - rotate
+  - inspect
+  - clean
+  - adjust
+
+labels:
+  - pickup
+  - place
+  - push
+  - pull
+  - rotate
+  - inspect
+  - clean
+  - adjust
+  - left_hand
+  - right_hand
+  - both_hands
+  - tool
+  - object
+  - shelf
+  - table
+  - floor
+  - success
+  - failed
+  - retry
+  - safety
+  - urgent

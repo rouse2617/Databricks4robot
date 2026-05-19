@@ -1,0 +1,2 @@
+# Ignore the baseline file entirely
+.secrets.baseline

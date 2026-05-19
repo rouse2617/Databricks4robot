@@ -1,0 +1,348 @@
+# One-off Job: backfill PostgreSQL asset_events into Iceberg Bronze table.
+#
+# Source:
+#   PostgreSQL table asset_events (from cyber-databrew-secrets)
+#
+# Target:
+#   robot.bronze_asset_events (BigLake Iceberg REST catalog on
+#   gs://cyber-databrew-iceberg-warehouse-prod)
+#
+# Auth:
+#   - Preferred: Workload Identity via KSA `cyber-databrew-dev-biglake-smoke`
+#   - Temporary fallback: Secret `biglake-user-token` with key ACCESS_TOKEN
+#
+# Run:
+#   kubectl apply -f deploy/k8s/jobs/biglake-bronze-asset-events-backfill-once.yaml -n cyber-databrew-dev
+# Watch:
+#   kubectl logs -n cyber-databrew-dev job/biglake-bronze-asset-events-backfill-once -f
+# Cleanup:
+#   kubectl delete -f deploy/k8s/jobs/biglake-bronze-asset-events-backfill-once.yaml -n cyber-databrew-dev
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cyber-databrew-dev-biglake-smoke
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: biglake-backfill
+  annotations:
+    iam.gke.io/gcp-service-account: cyber-databrew-dev@green-valley-442103.iam.gserviceaccount.com
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: biglake-bronze-asset-events-backfill-script
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: biglake-backfill
+data:
+  backfill.py: |
+    import json
+    import os
+    import time
+    from datetime import datetime, timezone
+
+    import google.auth
+    import google.auth.transport.requests
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import psycopg2
+    from pyiceberg.catalog import load_catalog
+
+    PROJECT = "green-valley-442103"
+    BUCKET = "cyber-databrew-iceberg-warehouse-prod"
+    NAMESPACE = "robot"
+    TABLE = "bronze_asset_events"
+    BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5000"))
+    SHARD_COUNT = int(os.getenv("SHARD_COUNT", "1"))
+    SHARD_INDEX = int(os.getenv("SHARD_INDEX", "0"))
+    UPPER_SEQ_RAW = os.getenv("UPPER_SEQ", "").strip()
+    UPPER_SEQ = int(UPPER_SEQ_RAW) if UPPER_SEQ_RAW else None
+
+    DB_HOST = os.environ["DB_HOST"]
+    DB_PORT = int(os.getenv("DB_PORT", "5432"))
+    DB_USER = os.environ["DB_USER"]
+    DB_PASSWORD = os.environ["DB_PASSWORD"]
+    DB_NAME = os.environ["DB_NAME"]
+    DB_SSLMODE = os.getenv("DB_SSLMODE", "prefer")
+
+    token = os.environ.get("ACCESS_TOKEN", "").strip()
+    if not token:
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        creds.refresh(google.auth.transport.requests.Request())
+        token = creds.token
+
+    catalog = load_catalog(
+        "biglake",
+        **{
+            "type": "rest",
+            "uri": "https://biglake.googleapis.com/iceberg/v1/restcatalog",
+            "warehouse": f"gs://{BUCKET}",
+            "token": token,
+            "header.x-goog-user-project": PROJECT,
+            "py-io-impl": "pyiceberg.io.fsspec.FsspecFileIO",
+            "gcs.project-id": PROJECT,
+            "gcs.oauth2.token": token,
+        },
+    )
+
+    table = catalog.load_table(f"{NAMESPACE}.{TABLE}")
+    seq_arr = table.scan(selected_fields=("event_seq",)).to_arrow()["event_seq"]
+    bronze_max_seq = int(pc.max(seq_arr).as_py()) if len(seq_arr) else 0
+
+    conn = psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        dbname=DB_NAME,
+        sslmode=DB_SSLMODE,
+    )
+    # Named cursor requires transaction scope (autocommit must be false).
+    conn.autocommit = False
+    cur = conn.cursor(name=f"asset_events_backfill_s{SHARD_INDEX}")
+    cur.itersize = BATCH_SIZE
+    sql = """
+        SELECT
+          event_id::text,
+          event_seq,
+          event_type,
+          payload_schema_version,
+          aggregate_type,
+          asset_id,
+          mcap_file_id,
+          tenant_id,
+          project_id,
+          event_source,
+          actor_type,
+          actor_id,
+          request_id,
+          idempotency_key,
+          run_id,
+          occurred_at,
+          created_at,
+          publish_state,
+          published_at,
+          retry_count,
+          last_error,
+          event_payload
+        FROM asset_events
+        WHERE event_seq > %s
+          AND (%s::bigint IS NULL OR event_seq <= %s::bigint)
+          AND MOD(event_seq, %s::bigint) = %s::bigint
+        ORDER BY event_seq ASC
+        """
+    cur.execute(sql, (bronze_max_seq, UPPER_SEQ, UPPER_SEQ, SHARD_COUNT, SHARD_INDEX))
+
+    required_schema = pa.schema(
+        [
+            pa.field("event_id", pa.string(), nullable=False),
+            pa.field("event_seq", pa.int64(), nullable=False),
+            pa.field("event_type", pa.string(), nullable=False),
+            pa.field("payload_schema_version", pa.string(), nullable=False),
+            pa.field("aggregate_type", pa.string(), nullable=False),
+            pa.field("asset_id", pa.string(), nullable=True),
+            pa.field("mcap_file_id", pa.string(), nullable=True),
+            pa.field("tenant_id", pa.string(), nullable=True),
+            pa.field("project_id", pa.string(), nullable=True),
+            pa.field("event_source", pa.string(), nullable=False),
+            pa.field("actor_type", pa.string(), nullable=True),
+            pa.field("actor_id", pa.string(), nullable=True),
+            pa.field("request_id", pa.string(), nullable=True),
+            pa.field("idempotency_key", pa.string(), nullable=True),
+            pa.field("run_id", pa.string(), nullable=True),
+            pa.field("occurred_at", pa.timestamp("us", tz="UTC"), nullable=False),
+            pa.field("created_at", pa.timestamp("us", tz="UTC"), nullable=False),
+            pa.field("publish_state", pa.string(), nullable=False),
+            pa.field("published_at", pa.timestamp("us", tz="UTC"), nullable=True),
+            pa.field("retry_count", pa.int64(), nullable=False),
+            pa.field("last_error", pa.string(), nullable=True),
+            pa.field("event_payload", pa.string(), nullable=False),
+            pa.field("_ingested_at", pa.timestamp("us", tz="UTC"), nullable=True),
+            pa.field("_source_file", pa.string(), nullable=True),
+        ]
+    )
+
+    total = 0
+    batch_index = 0
+    now = datetime.now(timezone.utc)
+    print(
+        f"BACKFILL_START shard={SHARD_INDEX}/{SHARD_COUNT} "
+        f"batch_size={BATCH_SIZE} bronze_max_seq={bronze_max_seq} upper_seq={UPPER_SEQ}"
+    )
+
+    while True:
+        rows = cur.fetchmany(BATCH_SIZE)
+        if not rows:
+            break
+        batch_index += 1
+
+        cols = {name: [] for name in required_schema.names}
+        for r in rows:
+            (
+                event_id,
+                event_seq,
+                event_type,
+                payload_schema_version,
+                aggregate_type,
+                asset_id,
+                mcap_file_id,
+                tenant_id,
+                project_id,
+                event_source,
+                actor_type,
+                actor_id,
+                request_id,
+                idempotency_key,
+                run_id,
+                occurred_at,
+                created_at,
+                publish_state,
+                published_at,
+                retry_count,
+                last_error,
+                event_payload,
+            ) = r
+
+            cols["event_id"].append(str(event_id))
+            cols["event_seq"].append(int(event_seq))
+            cols["event_type"].append(event_type)
+            cols["payload_schema_version"].append(payload_schema_version or "v1")
+            cols["aggregate_type"].append(aggregate_type or "asset")
+            cols["asset_id"].append(asset_id)
+            cols["mcap_file_id"].append(mcap_file_id)
+            cols["tenant_id"].append(tenant_id)
+            cols["project_id"].append(project_id)
+            cols["event_source"].append(event_source or "backend")
+            cols["actor_type"].append(actor_type)
+            cols["actor_id"].append(actor_id)
+            cols["request_id"].append(request_id)
+            cols["idempotency_key"].append(idempotency_key)
+            cols["run_id"].append(run_id)
+            cols["occurred_at"].append(occurred_at)
+            cols["created_at"].append(created_at)
+            cols["publish_state"].append(publish_state or "pending")
+            cols["published_at"].append(published_at)
+            cols["retry_count"].append(int(retry_count or 0))
+            cols["last_error"].append(last_error)
+
+            if isinstance(event_payload, (dict, list)):
+                cols["event_payload"].append(json.dumps(event_payload, ensure_ascii=False))
+            elif event_payload is None:
+                cols["event_payload"].append("{}")
+            else:
+                cols["event_payload"].append(str(event_payload))
+
+            cols["_ingested_at"].append(now)
+            cols["_source_file"].append("pg_asset_events_backfill_once")
+
+        arrow_table = pa.table(cols, schema=required_schema)
+        # Concurrent Iceberg writers can conflict on commit; retry with backoff.
+        for attempt in range(1, 6):
+            try:
+                table.append(arrow_table)
+                break
+            except Exception as e:
+                if attempt == 5:
+                    raise
+                sleep_s = min(8, 2**attempt)
+                print(
+                    f"APPEND_RETRY shard={SHARD_INDEX} attempt={attempt} "
+                    f"sleep={sleep_s}s err={e}"
+                )
+                time.sleep(sleep_s)
+                table = catalog.load_table(f"{NAMESPACE}.{TABLE}")
+        total += len(rows)
+        print(
+            f"BATCH_OK shard={SHARD_INDEX} index={batch_index} rows={len(rows)} total={total} "
+            f"min_seq={cols['event_seq'][0]} max_seq={cols['event_seq'][-1]}"
+        )
+
+    cur.close()
+    conn.close()
+    print(f"BACKFILL_DONE shard={SHARD_INDEX} total_rows={total}")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: biglake-bronze-asset-events-backfill-once
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: biglake-backfill
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cyber-databrew
+        app.kubernetes.io/component: biglake-backfill
+    spec:
+      restartPolicy: Never
+      serviceAccountName: cyber-databrew-dev-biglake-smoke
+      containers:
+        - name: backfill
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: biglake-user-token
+                  key: ACCESS_TOKEN
+                  optional: true
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-databrew-secrets
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-databrew-secrets
+                  key: DB_PORT
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-databrew-secrets
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-databrew-secrets
+                  key: DB_PASSWORD
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: cyber-databrew-secrets
+                  key: DB_NAME
+            - name: BATCH_SIZE
+              value: "5000"
+            - name: SHARD_COUNT
+              value: "1"
+            - name: SHARD_INDEX
+              value: "0"
+            - name: UPPER_SEQ
+              value: ""
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              memory: "2Gi"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              pip install --no-cache-dir --quiet "pyiceberg[pyarrow,gcsfs]" google-auth requests psycopg2-binary
+              python /scripts/backfill.py
+      volumes:
+        - name: script
+          configMap:
+            name: biglake-bronze-asset-events-backfill-script
+            defaultMode: 0444

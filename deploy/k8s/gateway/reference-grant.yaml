@@ -1,0 +1,17 @@
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-developer-gateway-http-routes
+  namespace: cyber-databrew-dev
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: developer-gateway
+  to:
+    - group: ""
+      kind: Service
+      name: cyber-databrew-frontend
+    - group: ""
+      kind: Service
+      name: cyber-databrew-backend

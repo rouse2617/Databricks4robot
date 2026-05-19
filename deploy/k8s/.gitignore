@@ -1,0 +1,3 @@
+# Local filled secrets (never commit)
+secret.local.yaml
+**/secret.local.yaml

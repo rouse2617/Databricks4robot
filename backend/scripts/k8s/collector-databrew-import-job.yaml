@@ -1,0 +1,60 @@
+# One-shot Job: read MCAP rows from collector-db (private IP) and POST to Databrew API.
+# Prereqs:
+#   1) ConfigMap `collector-databrew-import-script` (see run_collector_import_in_cluster.sh)
+#   2) Secret `collector-databrew-import-env` with stringData keys:
+#        COLLECTOR_PG_DSN   e.g. postgresql://postgres:PASSWORD@10.159.176.3:5432/postgres?sslmode=disable
+#        DATABREW_BASE_URL  e.g. https://cyber-databrew-backend-dev-....run.app
+#        GRACE_TOKEN        e.g. dev-token
+#      Optional:
+#        IMPORT_BATCH       (default collector-postgres-k8s-job)
+#        IMPORT_REVIEWER    (default collector-import)
+#        IMPORT_OWNER       (default collector-import)
+#        IMPORT_MAX_VIDEOS  (empty = no limit)
+#        IMPORT_MAX_SEGMENTS (empty = no limit)
+#        IMPORT_VIDEOS_ONLY (set to "1" to skip assets)
+#        IMPORT_ASSETS_ONLY (set to "1" to skip POST /mcap-files; segment assets only)
+#        IMPORT_MCAP_WORKERS / IMPORT_ASSET_WORKERS (optional, default 8 each in script)
+#
+# Collector remains read-only (script only runs SELECT).
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: collector-databrew-import
+  namespace: cyber-databrew-dev
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: importer
+          configMap:
+            name: collector-databrew-import-script
+      containers:
+        - name: import
+          image: python:3.12-slim-bookworm
+          volumeMounts:
+            - name: importer
+              mountPath: /importer
+          envFrom:
+            - secretRef:
+                name: collector-databrew-import-env
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              pip install --no-cache-dir --disable-pip-version-check -r /importer/requirements-collector-import.txt
+              EXTRA=()
+              if [[ -n "${IMPORT_MAX_VIDEOS:-}" ]]; then EXTRA+=(--max-videos "$IMPORT_MAX_VIDEOS"); fi
+              if [[ -n "${IMPORT_MAX_SEGMENTS:-}" ]]; then EXTRA+=(--max-segments "$IMPORT_MAX_SEGMENTS"); fi
+              if [[ -n "${IMPORT_MCAP_WORKERS:-}" ]]; then EXTRA+=(--mcap-workers "$IMPORT_MCAP_WORKERS"); fi
+              if [[ -n "${IMPORT_ASSET_WORKERS:-}" ]]; then EXTRA+=(--asset-workers "$IMPORT_ASSET_WORKERS"); fi
+              if [[ "${IMPORT_VIDEOS_ONLY:-}" == "1" ]]; then EXTRA+=(--videos-only); fi
+              if [[ "${IMPORT_ASSETS_ONLY:-}" == "1" ]]; then EXTRA+=(--assets-only); fi
+              exec python3 /importer/import_collector_postgres_to_databrew.py \
+                --import-batch "${IMPORT_BATCH:-collector-postgres-k8s-job}" \
+                --reviewer "${IMPORT_REVIEWER:-collector-import}" \
+                --owner "${IMPORT_OWNER:-collector-import}" \
+                "${EXTRA[@]}"

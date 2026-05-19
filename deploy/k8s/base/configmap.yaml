@@ -1,0 +1,45 @@
+# Non-sensitive defaults for backend (see backend/.env.example, backend/internal/config/config.go).
+# Override per cluster with kustomize patches or `kubectl edit configmap` as needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cyber-databrew-config
+  labels:
+    app.kubernetes.io/name: cyber-databrew
+    app.kubernetes.io/component: backend
+data:
+  ENV: production
+  PORT: "8080"
+  STORAGE_BACKEND: postgres
+  # Optional services — enable when you have in-cluster or managed endpoints.
+  LAKEHOUSE_BACKEND: "none"
+  # LAKEHOUSE_BQ_PROJECT: ""
+  # LAKEHOUSE_BQ_CATALOG: iceberg
+  # LAKEHOUSE_BQ_DATASET: lakehouse_bronze
+  ELASTICSEARCH_URL: ""
+  # Default path in container; mount a real report or leave missing (lakehouse /report returns 404).
+  LAKEHOUSE_REPORT_PATH: /var/lakehouse/lakehouse_report.json
+  GCS_PROJECT: green-valley-442103
+  GCS_DERIVED_BUCKET: grace-derived-green-valley-442103
+  PUBSUB_PROJECT: green-valley-442103
+  TOPIC_MCAP_FINALIZED: gcs.mcap.finalized.v1
+  TOPIC_ASSET_EVENTS: cyber-databrew-asset-events
+  LOG_LEVEL: info
+  LOG_FORMAT: json
+  OUTBOX_TRANSPORT: internal
+  OUTBOX_RELAY_ENABLED: "true"
+  OUTBOX_ES_SUBSCRIBER_ENABLED: "true"
+  OUTBOX_RELAY_BATCH_SIZE: "500"
+  OUTBOX_RELAY_INTERVAL_MS: "500"
+  OUTBOX_RELAY_SAFETY_LAG_SEC: "2"
+  OUTBOX_RELAY_LEASE_SEC: "30"
+  OUTBOX_RELAY_MAX_RETRIES: "20"
+  OUTBOX_PROGRESS_LOG_INTERVAL_SEC: "60"
+  OUTBOX_RELAY_PARALLEL_KEYS: "8"
+  OUTBOX_INTERNAL_SUBSCRIBER_WORKERS: "16"
+  OUTBOX_INTERNAL_BUS_BUFFER: "1024"
+  OUTBOX_INTERNAL_SUBSCRIBER_BATCH_SIZE: "500"
+  OUTBOX_INTERNAL_SUBSCRIBER_BATCH_WAIT_MS: "200"
+  # Rate limit disabled by default; set >0 to enable per-IP token bucket.
+  RATE_LIMIT_RPS: "0"
+  CB_ENABLED: "false"

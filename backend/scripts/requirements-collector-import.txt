@@ -1,0 +1,2 @@
+# Optional: only needed for --pg-dsn (in-cluster streaming from collector-db).
+psycopg2-binary>=2.9.9,<3

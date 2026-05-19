@@ -1,0 +1,169 @@
+project_name: cyber-databrew
+version: "1.0"
+
+modules:
+  - asset-management
+  - delivery
+  - lakehouse
+  - search
+
+conventions:
+  change_id_format: "CYB-{issue_id}-{slug}"
+  branch_naming:
+    bug: "fix/CYB-{id}-{slug}"
+    feature: "feat/CYB-{id}-{slug}"
+    hotfix: "hotfix/CYB-{id}-{slug}"
+  branch_naming_legacy:
+    note: "DAT-{id} accepted by CI for legacy branches only"
+  required_files:
+    bug:
+      - proposal.md
+      - tasks.md
+      - "specs/*/spec.md"
+    feature:
+      - proposal.md
+      - design.md
+      - tasks.md
+      - "specs/*/spec.md"
+
+# SDK/agent verification (keep in sync with docs/agents/AI-RULES.md verification tiers)
+verification:
+  sdk:
+    tier_s: "cd sdk && uv run ruff check src/"
+    tier_m: "cd sdk && uv run pytest <touched-modules>"
+    tier_l: "cd sdk && uv run pytest tests/unit/"
+
+# ── 每次 AI 规划请求自动注入的上下文 ──
+# Maintenance: summary stack + module map; glossary/ADRs → docs/agents/domain.md
+context: |
+  ## Project: cyber-databrew
+  Glossary and ADR pointers: docs/agents/domain.md (and CONTEXT.md when present).
+  Do not treat this block as the only source for field-level API detail — use docs/review/api-guide.md.
+  MCAP-oriented data asset management platform: asset CRUD, tagging, algorithm lifecycle
+  tracking, delivery management, BigQuery lakehouse analytics, Elasticsearch-powered
+  search, and metrics evaluation.
+
+  ### Tech stack
+  - Backend: Go 1.25, Gin framework, module github.com/CyberOrigin2077/cyber-databrew
+    - Dependencies: pgx/v5 (Postgres), BigQuery, Pub/Sub, GCS, Prometheus, swaggo/swag
+  - Frontend: React 19 + TypeScript + Vite, Ant Design 5, react-router-dom v7
+    - Lint: Biome; Test: Vitest + Playwright (e2e)
+  - SDK: Python asset-sdk (httpx + Pydantic v2), hatchling build, pytest
+  - Storage: PostgreSQL (primary, pgx/v5), Elasticsearch (search index),
+    BigQuery (lakehouse analytical queries), GCS (optional derived artifacts)
+  - Deployment: Cloud Run on GCP (us-central1); Docker multi-stage builds (Go → scratch)
+    - deploy/cloudrun/backend-dev.sh, deploy/cloudrun/frontend-dev.sh
+  - Auth: X-Grace-Token header (Phase 0 static token); session cookie (grace_session)
+
+  ### Architecture
+  - Backend: layered — handlers → usecase → repository → postgres/es
+    ```
+    cmd/server/main.go          → entry point, wires infra + handlers
+    routes/routes.go             → Gin router, middleware, all API groups
+    internal/handlers/{domain}/  → HTTP handlers (asset, delivery, mcap, lakehouse,
+                                    search, admin, eval, action, query, registry)
+    internal/usecase/{domain}/   → business logic (asset, action, admin)
+    internal/repository/         → data access (PG + ES queries)
+    internal/middleware/         → RequestID, HTTPMetrics, RequestGuard,
+                                    StructuredLogger, RateLimit, CircuitBreaker,
+                                    StaticTokenAuth, AdminTokenAuth
+    internal/models/             → shared domain types
+    internal/elasticsearch/      → ES client
+    internal/postgres/           → PG client (pgxpool)
+    internal/lakehouse/          → BigQuery querier interface
+    internal/outbox/             → outbox relay (PG → ES sync)
+    ```
+  - Frontend: component tree — pages → feature components → common components → hooks → api client
+    ```
+    src/App.tsx                   → BrowserRouter + lazy routes + AuthProvider
+    src/pages/                    → 15 page components (Dashboard, Assets, AssetDetail,
+                                    McapFiles, AlgoProcessing, Deliveries, DeliveryDetail,
+                                    RegistryCenter, MetricsSearch, Settings, Events,
+                                    Login, SavedQueries, TagDictionary)
+    src/components/assets/        → asset list: filters, cards, bulk actions, export,
+                                    preview player, columns config, saved views (~30 files)
+    src/components/asset-detail/  → asset detail tabs: Overview, Tags, Files, Events,
+                                    Algo, Actions, Eval, Delivery, Lineage (13 files)
+    src/components/algo-matrix/   → algorithm status grid (3 files)
+    src/components/common/        → shared: AssetIdLink, PageError, PageLoading
+    src/components/deliveries/    → delivery views
+    src/components/mcap/          → MCAP file components
+    src/components/analytics/     → analytics components
+    src/api/                      → API client modules (assets, deliveries, mcapFiles,
+                                    lakehouse, search, actions, eval, query, admin,
+                                    registry, auth, algoRegistry, tagRegistry)
+    src/hooks/                    → useAuth, asset hooks
+    ```
+  - SDK: thin API client wrapping backend endpoints
+    ```
+    sdk/src/asset_sdk/client.py    → AssetClientSDK (httpx, base_url + token)
+    sdk/src/asset_sdk/assets.py    → AssetClient (CRUD, list, batch)
+    sdk/src/asset_sdk/actions.py   → ActionClient
+    sdk/src/asset_sdk/mcap.py      → McapClient
+    sdk/src/asset_sdk/delivery.py  → DeliveryClient
+    sdk/src/asset_sdk/types/       → Pydantic models (asset, action)
+    ```
+
+  ### API surface (all under /api/v1, auth required unless noted)
+  - /assets (CRUD, batch_get, tags, algo lifecycle, events, lineage, timeline, actions,
+    eval-results, metrics, deliveries sub-resource, mcap-locator, foxglove-source)
+  - /mcap-files (CRUD, bytes streaming), /mcap/upload/finalize, /mcap/:id/messages
+  - /deliveries (commit, list, get, items, by customer)
+  - /lakehouse/* (report, status, sync, failure-clusters, overview, tables, event-daily, etc.)
+  - /search/sync-status, /search/sync-progress
+  - /admin/search/* (reindex, outbox-stats, audit) — requires AdminTokenAuth
+  - /internal/* (hard delete, batch delete, commit-segments) — service-to-service
+  - /auth/login, /auth/me, /auth/logout
+  - /queries/validate, /queries/run, /saved-queries (CRUD)
+  - /algo-registry, /tag-registry, /metric-registry, /action-label-registry, /lifecycle-states
+  - /metrics/registry, /metrics:search
+  - /events (global event stream)
+  - Infra (no auth): /healthz, /readyz, /version, /metrics, /swagger/*
+
+  ### Module → code mapping
+  - asset-management → handlers/asset, usecase/asset, components/assets,
+    components/asset-detail, sdk/assets.py
+  - delivery → handlers/delivery, pages/DeliveriesPage, components/deliveries,
+    sdk/delivery.py
+  - lakehouse → handlers/lakehouse + handlers/query, pages/SavedQueriesPage,
+    src/api/lakehouse.ts
+  - search → handlers/search, internal/elasticsearch, internal/searchindex,
+    src/api/search.ts
+
+  ### Off-limits (require explicit user approval)
+  - backend/internal/middleware/auth* (StaticTokenAuth, AdminTokenAuth)
+  - backend/internal/outbox/ (PG → ES relay)
+  - backend/migrations/ (SQL migration files)
+  - schemas/pg-phase0.sql (base schema)
+  - .env* / any credential files
+
+# ── 每类制品的质量规则（AI 写 OpenSpec 时自动遵循） ──
+rules:
+  proposal:
+    - "Include Why (≤3 sentences), What Changes (New/Modified Capabilities), Impact, Scope (In/Out), Success Criteria"
+    - "Impact must list affected code paths using real directory names (e.g. internal/handlers/asset, src/components/assets)"
+    - "What Changes must describe behavior, not implementation (no API paths or SQL)"
+    - "Map Capabilities to spec module names: asset-management, delivery, lakehouse, search"
+  specs:
+    - "Every Requirement must include Priority (P0/P1/P2) and Rationale"
+    - "Every Requirement must use 'The system SHALL' or 'MUST' for normative language"
+    - "Use Given/When/Then (Gherkin) format for all Scenarios"
+    - "Each Requirement must have ≥1 happy-path Scenario; ≥1 error-path Scenario for complex behavior"
+    - "Specs describe system behavior only — no API paths, field names, or SQL"
+  design:
+    - "Every architecture decision must include Approach, Alternative, and Rationale"
+    - "Include Architecture Context (constraints: Go 1.25, Gin, React 19, Ant Design, PG primary) + Goals/Non-Goals"
+    - "Include Affected Modules list with real paths (e.g. internal/handlers/asset, src/pages/AssetsPage)"
+    - "Include rollback path when touching data or API contracts"
+    - "Use Mermaid or ASCII diagrams for data flow"
+  tasks:
+    - "Implementation tasks must map 1:1 to spec Scenarios"
+    - "Deploy verification section is required (never omit)"
+    - "Each checkbox must tag target: [backend], [Frontend], or [sdk]"
+    - "Task granularity: each checkbox = 10–30 minutes of work"
+    - "Order tasks by dependency"
+    - "Add context-files.md listing must-read repo paths (or ## Context files in tasks.md)"
+  context_files:
+    - "One path per line in context-files.md; optional # reason comment"
+    - "Include proposal Impact paths, design Affected Modules, and files to read before coding"
+    - "Agents must read listed paths before implementation (curated context)"

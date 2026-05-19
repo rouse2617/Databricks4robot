@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/delivery_committed.v1.json",
+  "title": "delivery_committed.v1",
+  "description": "Emitted when a delivery is committed for one or more assets.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "delivery_id",
+    "customer_id",
+    "status",
+    "asset_count",
+    "delivered_at"
+  ],
+  "properties": {
+    "delivery_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Delivery identifier."
+    },
+    "customer_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "asset_count": {
+      "type": "integer"
+    },
+    "delivered_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

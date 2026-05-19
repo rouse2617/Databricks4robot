@@ -1,0 +1,80 @@
+metrics:
+  - key: good_frames_ratio
+    display_name: 优质帧占比
+    metric_type: ratio
+    metric_unit: ""
+    target_type: segment
+    higher_is_better: true
+    default_aggregation: avg
+    queryable: true
+    description: 有效手部数据帧 / 总帧数
+
+  - key: hand_good_frames
+    display_name: 有效手部帧数
+    metric_type: count
+    metric_unit: frames
+    target_type: segment
+    higher_is_better: true
+    default_aggregation: sum
+    queryable: true
+    description: 手部追踪结果有效的帧数
+
+  - key: total_good_frames
+    display_name: 总优质帧数
+    metric_type: count
+    metric_unit: frames
+    target_type: segment
+    higher_is_better: true
+    default_aggregation: sum
+    queryable: true
+    description: 所有评估维度均合格的帧数
+
+  - key: total_video_frames
+    display_name: 总视频帧数
+    metric_type: count
+    metric_unit: frames
+    target_type: segment
+    higher_is_better: false
+    default_aggregation: sum
+    queryable: true
+    description: 视频总帧数
+
+  - key: weighted_avg_convex_hull_volume
+    display_name: 凸包体积加权均值
+    metric_type: score
+    metric_unit: ""
+    target_type: segment
+    higher_is_better: true
+    default_aggregation: avg
+    queryable: true
+    description: 手部动作空间覆盖度指标
+
+  - key: qc_score
+    display_name: QC 综合评分
+    metric_type: score
+    metric_unit: ""
+    target_type: segment
+    higher_is_better: true
+    default_aggregation: avg
+    queryable: true
+    description: 综合质量评分 (0-1)
+
+  - key: blur_ratio
+    display_name: 模糊帧占比
+    metric_type: ratio
+    metric_unit: ""
+    target_type: segment
+    higher_is_better: false
+    default_aggregation: avg
+    queryable: true
+    description: 检测到模糊的帧占比
+
+  - key: occlusion_ratio
+    display_name: 遮挡帧占比
+    metric_type: ratio
+    metric_unit: ""
+    target_type: segment
+    higher_is_better: false
+    default_aggregation: avg
+    queryable: true
+    description: 检测到手部遮挡的帧占比

@@ -1,0 +1,228 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Pending",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1
+    },
+    {
+      "type": "stat",
+      "title": "Pending Events",
+      "id": 2,
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "sum(outbox_pending_events)", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "textMode": "value" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1000 }, { "color": "red", "value": 10000 }] } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pending Trend by Transport",
+      "id": 3,
+      "gridPos": { "h": 5, "w": 18, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "sum by (transport) (outbox_pending_events)", "legendFormat": "{{transport}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "row",
+      "title": "Throughput",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "id": 4
+    },
+    {
+      "type": "timeseries",
+      "title": "Published Events Rate",
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "sum by (ordering_key_kind) (rate(outbox_relay_published_total[1m]))", "legendFormat": "{{ordering_key_kind}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Subscriber Handle Count Rate",
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "sum by (op) (rate(outbox_subscriber_handle_duration_seconds_count[1m]))", "legendFormat": "{{op}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "row",
+      "title": "Latency",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "id": 7
+    },
+    {
+      "type": "timeseries",
+      "title": "Event Lag p95",
+      "id": 8,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(outbox_event_lag_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Relay Flush Duration p50/p95",
+      "id": 9,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le) (rate(outbox_relay_flush_duration_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(outbox_relay_flush_duration_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Subscriber Handle Duration p95",
+      "id": 10,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, op) (rate(outbox_subscriber_handle_duration_seconds_bucket[5m])))", "legendFormat": "{{op}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "row",
+      "title": "Errors",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "id": 11
+    },
+    {
+      "type": "timeseries",
+      "title": "ES Error Rate by Kind",
+      "id": 12,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "sum by (kind) (rate(outbox_subscriber_es_errors_total[5m]))", "legendFormat": "{{kind}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "stat",
+      "title": "ES Conflict Errors (5m rate)",
+      "id": 13,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "sum(rate(outbox_subscriber_es_errors_total{kind=\"conflict\"}[5m]))", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "textMode": "value" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 0.1 }, { "color": "red", "value": 1 }] } }, "overrides": [] }
+    },
+    {
+      "type": "row",
+      "title": "Bus + ES Pressure",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "id": 14
+    },
+    {
+      "type": "timeseries",
+      "title": "Internal Bus Depth + Parallel Keys",
+      "id": 15,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "outbox_internal_bus_depth", "legendFormat": "bus_depth", "refId": "A" },
+        { "editorMode": "code", "expr": "outbox_relay_parallel_keys", "legendFormat": "parallel_keys", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Subscriber Batch Size p50/p95",
+      "id": 16,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le) (rate(outbox_subscriber_batch_size_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le) (rate(outbox_subscriber_batch_size_bucket[5m])))", "legendFormat": "p95", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "ES Indexing Rate / Avg Index RT",
+      "id": 17,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_indexing_index_total[1m]))", "legendFormat": "index_ops_s", "refId": "A" },
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_indexing_index_time_seconds_total[1m])) / clamp_min(sum(rate(elasticsearch_indices_indexing_index_total[1m])), 1)", "legendFormat": "avg_index_rt_s", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "row",
+      "title": "Query Run",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "id": 18
+    },
+    {
+      "type": "timeseries",
+      "title": "Query Run Latency p50/p95 by Outcome",
+      "id": 19,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "histogram_quantile(0.50, sum by (le, outcome) (rate(backend_query_run_duration_seconds_bucket[5m])))", "legendFormat": "{{outcome}} p50", "refId": "A" },
+        { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, outcome) (rate(backend_query_run_duration_seconds_bucket[5m])))", "legendFormat": "{{outcome}} p95", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Query Run Phase p95",
+      "id": 20,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "histogram_quantile(0.95, sum by (le, phase, outcome) (rate(backend_query_run_phase_duration_seconds_bucket[5m])))", "legendFormat": "{{phase}} {{outcome}} p95", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Query Run Outcome Rate",
+      "id": 21,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "sum by (outcome) (rate(backend_query_run_requests_total[5m]))", "legendFormat": "{{outcome}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["monitoring", "outbox"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Outbox Observability",
+  "uid": "outbox-observability",
+  "version": 3,
+  "weekStart": ""
+}

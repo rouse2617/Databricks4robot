@@ -1,0 +1,104 @@
+# CI: Validate event JSON Schema files on PR
+# Task: 7.2 — Event schema CI guard
+name: schema-events
+
+on:
+  pull_request:
+    paths:
+      - 'backend/schemas/events/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate event schemas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for diff
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install ajv-cli
+        run: npm install -g ajv-cli ajv-formats
+
+      # ── 1. Validate each schema file is valid JSON Schema ──────────
+      - name: Validate JSON Schema syntax
+        run: |
+          echo "Validating event schema files..."
+          errors=0
+          for f in backend/schemas/events/*.v*.json; do
+            echo "  checking $f"
+            if ! python3 -c "import json, sys; json.load(open(sys.argv[1]))" "$f"; then
+              echo "::error file=$f::Invalid JSON"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::$errors schema file(s) have invalid JSON"
+            exit 1
+          fi
+          echo "All schema files are valid JSON."
+
+      # ── 2. Validate registry.json references ───────────────────────
+      - name: Validate registry references
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys, os
+
+          registry_path = "backend/schemas/events/registry.json"
+          with open(registry_path) as f:
+              registry = json.load(f)
+
+          errors = 0
+          for event_type, meta in registry.get("events", {}).items():
+              schema_file = meta.get("schema_file", "")
+              full_path = os.path.join("backend/schemas/events", schema_file)
+              if not os.path.isfile(full_path):
+                  print(f"::error file={registry_path}::Registry references missing file: {schema_file}")
+                  errors += 1
+
+          if errors:
+              sys.exit(1)
+          print("All registry references are valid.")
+          PYEOF
+
+      # ── 3. Backward compatibility: no new required fields ──────────
+      - name: Check backward compatibility (no new required fields)
+        run: |
+          # Compare changed schema files against base branch.
+          # For each modified schema, ensure no NEW entries in "required".
+          base_ref="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "$base_ref" HEAD -- 'backend/schemas/events/*.v*.json' || true)
+          if [ -z "$changed" ]; then
+            echo "No schema files changed — skipping compat check."
+            exit 0
+          fi
+
+          errors=0
+          for f in $changed; do
+            # Skip newly added files (no base version to compare).
+            if ! git show "$base_ref:$f" > /dev/null 2>&1; then
+              echo "  $f is new — skipping compat check"
+              continue
+            fi
+
+            base_required=$(git show "$base_ref:$f" | python3 -c "import json,sys; print('\n'.join(json.load(sys.stdin).get('required',[])))" 2>/dev/null || true)
+            head_required=$(python3 -c "import json,sys; print('\n'.join(json.load(open(sys.argv[1])).get('required',[])))" "$f" 2>/dev/null || true)
+
+            # Find fields in head that are not in base (new required fields).
+            new_required=$(comm -23 <(echo "$head_required" | sort) <(echo "$base_required" | sort))
+            if [ -n "$new_required" ]; then
+              echo "::error file=$f::Backward-incompatible change: new required field(s): $new_required. Use a major version bump instead."
+              errors=$((errors + 1))
+            fi
+          done
+
+          if [ "$errors" -gt 0 ]; then
+            exit 1
+          fi
+          echo "Backward compatibility check passed."

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/eval_result_reported.v1.json",
+  "title": "eval_result_reported.v1",
+  "description": "Emitted after an eval result write succeeds. Carries key metadata for downstream indexing and audit.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "eval_result_id",
+    "eval_name",
+    "eval_version",
+    "status",
+    "metric_keys"
+  ],
+  "properties": {
+    "eval_result_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Primary key of asset_eval_results."
+    },
+    "eval_name": {
+      "type": "string"
+    },
+    "eval_version": {
+      "type": "string"
+    },
+    "parameter_version": {
+      "type": ["string", "null"]
+    },
+    "run_id": {
+      "type": ["string", "null"]
+    },
+    "status": {
+      "type": "string"
+    },
+    "metric_keys": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Queryable metric keys projected from result_payload."
+    }
+  }
+}

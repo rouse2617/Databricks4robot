@@ -1,0 +1,5 @@
+pyiceberg[pyarrow,gcsfs]
+pyarrow
+google-auth
+google-cloud-bigquery
+psycopg2-binary

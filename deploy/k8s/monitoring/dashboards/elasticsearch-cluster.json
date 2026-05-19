@@ -1,0 +1,190 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    { "type": "row", "title": "Cluster Health", "id": 1, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+    {
+      "type": "stat",
+      "title": "Cluster Green",
+      "id": 2,
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "max(elasticsearch_cluster_health_status{color=\"green\"})", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "textMode": "value" },
+      "fieldConfig": { "defaults": { "mappings": [{ "type": "value", "options": { "0": { "text": "NOT GREEN", "color": "red" }, "1": { "text": "GREEN", "color": "green" } } }] }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Data Nodes",
+      "id": 3,
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "max(elasticsearch_cluster_health_number_of_data_nodes)", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "textMode": "value" },
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Shards State",
+      "id": 4,
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "max(elasticsearch_cluster_health_active_shards)", "legendFormat": "active", "refId": "A" },
+        { "editorMode": "code", "expr": "max(elasticsearch_cluster_health_relocating_shards)", "legendFormat": "relocating", "refId": "B" },
+        { "editorMode": "code", "expr": "max(elasticsearch_cluster_health_initializing_shards)", "legendFormat": "initializing", "refId": "C" },
+        { "editorMode": "code", "expr": "max(elasticsearch_cluster_health_unassigned_shards)", "legendFormat": "unassigned", "refId": "D" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    { "type": "row", "title": "Node Health", "id": 5, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 } },
+    {
+      "type": "timeseries",
+      "title": "CPU / Memory / Disk Used %",
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "avg(elasticsearch_process_cpu_percent)", "legendFormat": "cpu_percent", "refId": "A" },
+        { "editorMode": "code", "expr": "avg(elasticsearch_os_mem_used_percent)", "legendFormat": "mem_used_percent", "refId": "B" },
+        { "editorMode": "code", "expr": "avg(elasticsearch_filesystem_data_used_percent)", "legendFormat": "disk_used_percent", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Thread Pool Queue / Rejected",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "sum by (type) (elasticsearch_thread_pool_queue_count{type=~\"write|search\"})", "legendFormat": "queue_{{type}}", "refId": "A" },
+        { "editorMode": "code", "expr": "sum by (type) (rate(elasticsearch_thread_pool_rejected_count{type=~\"write|search\"}[5m]))", "legendFormat": "rejected_{{type}}", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    { "type": "row", "title": "JVM", "id": 8, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 } },
+    {
+      "type": "timeseries",
+      "title": "Heap Usage %",
+      "id": 9,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "100 * sum(elasticsearch_jvm_memory_used_bytes{area=\"heap\"}) / clamp_min(sum(elasticsearch_jvm_memory_max_bytes{area=\"heap\"}), 1)", "legendFormat": "heap_used_percent", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 }] } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "GC Time Rate",
+      "id": 10,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "sum by (gc) (rate(elasticsearch_jvm_gc_collection_seconds_sum[5m]))", "legendFormat": "{{gc}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Old Pool Used Bytes",
+      "id": 11,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "editorMode": "code", "expr": "sum(elasticsearch_jvm_memory_pool_used_bytes{pool=\"old\"})", "legendFormat": "old_pool_used", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+
+    { "type": "row", "title": "Search", "id": 12, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 } },
+    {
+      "type": "timeseries",
+      "title": "Search QPS / In-flight",
+      "id": 13,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_search_query_total[1m]))", "legendFormat": "query_qps", "refId": "A" },
+        { "editorMode": "code", "expr": "sum(elasticsearch_indices_search_query_current)", "legendFormat": "query_current", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Average Query / Fetch RT",
+      "id": 14,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_search_query_time_seconds[1m])) / clamp_min(sum(rate(elasticsearch_indices_search_query_total[1m])), 1)", "legendFormat": "query_rt_s", "refId": "A" },
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_search_fetch_time_seconds[1m])) / clamp_min(sum(rate(elasticsearch_indices_search_fetch_total[1m])), 1)", "legendFormat": "fetch_rt_s", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    { "type": "row", "title": "Indexing", "id": 15, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 } },
+    {
+      "type": "timeseries",
+      "title": "Index Rate / Average Index RT",
+      "id": 16,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_indexing_index_total[1m]))", "legendFormat": "index_ops_s", "refId": "A" },
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_indexing_index_time_seconds_total[1m])) / clamp_min(sum(rate(elasticsearch_indices_indexing_index_total[1m])), 1)", "legendFormat": "index_rt_s", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Refresh / Merge / Flush Time Rate",
+      "id": 17,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_refresh_time_seconds_total[5m]))", "legendFormat": "refresh_time_rate_s", "refId": "A" },
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_merges_total_time_seconds_total[5m]))", "legendFormat": "merge_time_rate_s", "refId": "B" },
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_flush_total_time_seconds[5m]))", "legendFormat": "flush_time_rate_s", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Merge Current / Throttled Time",
+      "id": 18,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "editorMode": "code", "expr": "sum(elasticsearch_indices_merges_current)", "legendFormat": "merges_current", "refId": "A" },
+        { "editorMode": "code", "expr": "sum(rate(elasticsearch_indices_merges_total_throttled_time_seconds_total[5m]))", "legendFormat": "merge_throttled_rate_s", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["elasticsearch", "monitoring"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Elasticsearch Cluster",
+  "uid": "elasticsearch-cluster",
+  "version": 2,
+  "weekStart": ""
+}

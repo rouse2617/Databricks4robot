@@ -1,0 +1,13 @@
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cyber-databrew-dev-api-backend-policy
+  namespace: cyber-databrew-dev
+spec:
+  default:
+    iap:
+      enabled: false
+  targetRef:
+    group: ""
+    kind: Service
+    name: cyber-databrew-backend

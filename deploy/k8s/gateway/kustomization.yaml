@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - frontend-route.yaml
+  - backend-route.yaml
+  - reference-grant.yaml
+  - frontend-backend-policy.yaml
+  - backend-backend-policy.yaml
+  - backend-healthcheck-policy.yaml

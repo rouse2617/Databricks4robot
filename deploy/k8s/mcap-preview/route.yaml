@@ -1,0 +1,31 @@
+# HTTPRoute for the preview service. Shares the cyber-databrew dev hostname
+# with the main backend; the gateway dispatches by path prefix
+# (/api/v1/preview/...). The cyber-databrew-backend HTTPRoute keeps everything
+# else.
+#
+# Mirrors deploy/k8s/gateway/backend-route.yaml; only the name, path match,
+# and backendRefs differ.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcap-preview-dev-route
+  namespace: developer-gateway
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: developer-gateway
+      namespace: developer-gateway
+  hostnames:
+    - api-cyber-databrew-dev.cyberorigin.ai
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1/preview/
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: mcap-preview
+          namespace: cyber-databrew-dev
+          port: 8090

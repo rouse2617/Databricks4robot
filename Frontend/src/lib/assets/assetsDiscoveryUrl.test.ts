@@ -1,0 +1,405 @@
+import { describe, expect, it } from "vitest";
+import {
+	DEFAULT_COLUMNS,
+	type FilterChip,
+	type QueryState,
+} from "./assetsDiscoveryTypes";
+import {
+	parsePreviewAssetIdFromUrl,
+	parsePreviewSourceIdFromUrl,
+	parsePreviewTopicFromUrl,
+	parseQueryStateFromUrl,
+	serializeQueryStateToUrl,
+} from "./assetsDiscoveryUrl";
+
+// ─── Helpers ───
+
+function defaultQueryState(): QueryState {
+	return {
+		searchMode: "structured",
+		queryText: "",
+		activeFilters: [],
+		sort: "-updated_at",
+		page: 1,
+		pageSize: 20,
+		viewMode: "table",
+		selectedColumns: [...DEFAULT_COLUMNS],
+	};
+}
+
+function chip(
+	field: string,
+	op: string,
+	value: string | string[],
+	source: FilterChip["source"] = "facet",
+): FilterChip {
+	const v = Array.isArray(value) ? value.join(",") : value;
+	return { id: `${field}_${op}_${v}`, field, op, value, source };
+}
+
+// ─── serializeQueryStateToUrl ───
+
+describe("serializeQueryStateToUrl", () => {
+	it("returns empty params for default state", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		expect(sp.toString()).toBe("preview_layout_version=2");
+	});
+
+	it("includes mode when not default", () => {
+		const state = { ...defaultQueryState(), searchMode: "keyword" as const };
+		const sp = serializeQueryStateToUrl(state);
+		expect(sp.get("mode")).toBe("keyword");
+	});
+
+	it("omits mode when default (structured)", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		expect(sp.has("mode")).toBe(false);
+	});
+
+	it("includes q when queryText is non-empty", () => {
+		const state = { ...defaultQueryState(), queryText: "env:warehouse" };
+		const sp = serializeQueryStateToUrl(state);
+		expect(sp.get("q")).toBe("env:warehouse");
+	});
+
+	it("omits q when queryText is empty", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		expect(sp.has("q")).toBe(false);
+	});
+
+	it("serializes filter chips as repeatable params", () => {
+		const state = {
+			...defaultQueryState(),
+			activeFilters: [
+				chip("status", "eq", "approved"),
+				chip("env", "eq", "warehouse"),
+			],
+		};
+		const sp = serializeQueryStateToUrl(state);
+		const filters = sp.getAll("filter");
+		expect(filters).toHaveLength(2);
+		expect(filters).toContain("status:eq:approved");
+		expect(filters).toContain("env:eq:warehouse");
+	});
+
+	it("serializes array filter values with comma", () => {
+		const state = {
+			...defaultQueryState(),
+			activeFilters: [chip("duration_ms", "between", ["10", "200"])],
+		};
+		const sp = serializeQueryStateToUrl(state);
+		expect(sp.getAll("filter")).toEqual(["duration_ms:between:10,200"]);
+	});
+
+	it("includes sort when not default", () => {
+		const state = { ...defaultQueryState(), sort: "created_at" };
+		const sp = serializeQueryStateToUrl(state);
+		expect(sp.get("sort")).toBe("created_at");
+	});
+
+	it("omits sort when default (-updated_at)", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		expect(sp.has("sort")).toBe(false);
+	});
+
+	it("includes page when not 1", () => {
+		const state = { ...defaultQueryState(), page: 3 };
+		const sp = serializeQueryStateToUrl(state);
+		expect(sp.get("page")).toBe("3");
+	});
+
+	it("omits page when 1", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		expect(sp.has("page")).toBe(false);
+	});
+
+	it("includes page_size when not 20", () => {
+		const state = { ...defaultQueryState(), pageSize: 50 };
+		const sp = serializeQueryStateToUrl(state);
+		expect(sp.get("page_size")).toBe("50");
+	});
+
+	it("omits page_size when 20", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		expect(sp.has("page_size")).toBe(false);
+	});
+
+	it("includes view when not table", () => {
+		const state = { ...defaultQueryState(), viewMode: "compact" as const };
+		const sp = serializeQueryStateToUrl(state);
+		expect(sp.get("view")).toBe("compact");
+	});
+
+	it("omits view when table", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		expect(sp.has("view")).toBe(false);
+	});
+
+	it("includes columns when different from default", () => {
+		const state = {
+			...defaultQueryState(),
+			selectedColumns: ["asset_id", "env"],
+		};
+		const sp = serializeQueryStateToUrl(state);
+		expect(sp.get("columns")).toBe("asset_id,env");
+	});
+
+	it("omits columns when matching default", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		expect(sp.has("columns")).toBe(false);
+	});
+
+	it("includes preview when second arg is a non-empty id", () => {
+		const state = defaultQueryState();
+		const sp = serializeQueryStateToUrl(state, "abc-123");
+		expect(sp.get("preview")).toBe("abc-123");
+	});
+
+	it("includes preview_topic when third arg is provided", () => {
+		const state = defaultQueryState();
+		const sp = serializeQueryStateToUrl(
+			state,
+			"abc-123",
+			null,
+			"/camera/front/image_raw/compressed",
+		);
+		expect(sp.get("preview_topic")).toBe("/camera/front/image_raw/compressed");
+	});
+
+	it("includes preview_source when third arg is provided", () => {
+		const state = defaultQueryState();
+		const sp = serializeQueryStateToUrl(state, "abc-123", "live_topic_0");
+		expect(sp.get("preview_source")).toBe("live_topic_0");
+	});
+
+	it("omits preview when second arg is null or undefined", () => {
+		expect(
+			serializeQueryStateToUrl(defaultQueryState(), null).has("preview"),
+		).toBe(false);
+		expect(
+			serializeQueryStateToUrl(defaultQueryState(), undefined).has("preview"),
+		).toBe(false);
+	});
+});
+
+// ─── parseQueryStateFromUrl ───
+
+describe("parseQueryStateFromUrl", () => {
+	it("returns empty object for empty params", () => {
+		const result = parseQueryStateFromUrl(new URLSearchParams());
+		expect(result).toEqual({});
+	});
+
+	it("parses mode", () => {
+		const sp = new URLSearchParams("mode=keyword");
+		expect(parseQueryStateFromUrl(sp).searchMode).toBe("keyword");
+	});
+
+	it("parses q", () => {
+		const sp = new URLSearchParams("q=env:warehouse");
+		expect(parseQueryStateFromUrl(sp).queryText).toBe("env:warehouse");
+	});
+
+	it("parses repeatable filter params", () => {
+		const sp = new URLSearchParams();
+		sp.append("filter", "status:eq:approved");
+		sp.append("filter", "env:eq:warehouse");
+		const result = parseQueryStateFromUrl(sp);
+		expect(result.activeFilters).toHaveLength(2);
+		expect(result.activeFilters?.[0].field).toBe("status");
+		expect(result.activeFilters?.[0].op).toBe("eq");
+		expect(result.activeFilters?.[0].value).toBe("approved");
+		expect(result.activeFilters?.[1].field).toBe("env");
+		expect(result.activeFilters?.[1].value).toBe("warehouse");
+	});
+
+	it("drops _fulltext filters in keyword mode", () => {
+		const sp = new URLSearchParams(
+			"mode=keyword&q=rebuild-test&filter=_fulltext:ilike:rebuild-test&filter=status:eq:approved",
+		);
+		const result = parseQueryStateFromUrl(sp);
+		expect(result.searchMode).toBe("keyword");
+		expect(result.activeFilters).toHaveLength(1);
+		expect(result.activeFilters?.[0].field).toBe("status");
+	});
+
+	it("parses filter with array value (comma-separated)", () => {
+		const sp = new URLSearchParams("filter=duration_ms:between:10,200");
+		const result = parseQueryStateFromUrl(sp);
+		expect(result.activeFilters).toHaveLength(1);
+		expect(result.activeFilters?.[0].value).toEqual(["10", "200"]);
+	});
+
+	it("parses sort", () => {
+		const sp = new URLSearchParams("sort=created_at");
+		expect(parseQueryStateFromUrl(sp).sort).toBe("created_at");
+	});
+
+	it("parses page as number", () => {
+		const sp = new URLSearchParams("page=5");
+		expect(parseQueryStateFromUrl(sp).page).toBe(5);
+	});
+
+	it("ignores invalid page values", () => {
+		const sp = new URLSearchParams("page=abc");
+		expect(parseQueryStateFromUrl(sp).page).toBeUndefined();
+	});
+
+	it("ignores non-positive page values", () => {
+		const sp = new URLSearchParams("page=0");
+		expect(parseQueryStateFromUrl(sp).page).toBeUndefined();
+	});
+
+	it("parses page_size as number", () => {
+		const sp = new URLSearchParams("page_size=50");
+		expect(parseQueryStateFromUrl(sp).pageSize).toBe(50);
+	});
+
+	it("parses view", () => {
+		const sp = new URLSearchParams("view=compact");
+		expect(parseQueryStateFromUrl(sp).viewMode).toBe("compact");
+	});
+
+	it("parses columns as comma-separated", () => {
+		const sp = new URLSearchParams("columns=asset_id,env,duration");
+		expect(parseQueryStateFromUrl(sp).selectedColumns).toEqual([
+			"asset_id",
+			"env",
+			"duration",
+		]);
+	});
+
+	it("ignores unknown params gracefully", () => {
+		const sp = new URLSearchParams("foo=bar&baz=qux&page=2");
+		const result = parseQueryStateFromUrl(sp);
+		expect(result.page).toBe(2);
+		expect((result as Record<string, unknown>).foo).toBeUndefined();
+		expect((result as Record<string, unknown>).baz).toBeUndefined();
+	});
+
+	it("handles malformed filter params gracefully", () => {
+		const sp = new URLSearchParams();
+		sp.append("filter", "badformat");
+		sp.append("filter", "also:bad");
+		sp.append("filter", "status:eq:approved");
+		const result = parseQueryStateFromUrl(sp);
+		// Only the valid one is parsed
+		expect(result.activeFilters).toHaveLength(1);
+		expect(result.activeFilters?.[0].field).toBe("status");
+	});
+
+	it("handles filter value containing colons", () => {
+		const sp = new URLSearchParams("filter=tag.notes:ilike:foo:bar:baz");
+		const result = parseQueryStateFromUrl(sp);
+		expect(result.activeFilters).toHaveLength(1);
+		expect(result.activeFilters?.[0].field).toBe("tag.notes");
+		expect(result.activeFilters?.[0].op).toBe("ilike");
+		expect(result.activeFilters?.[0].value).toBe("foo:bar:baz");
+	});
+});
+
+// ─── parsePreviewAssetIdFromUrl ───
+
+describe("parsePreviewAssetIdFromUrl", () => {
+	it("parses preview id", () => {
+		const sp = new URLSearchParams("preview=uuid-one");
+		expect(parsePreviewAssetIdFromUrl(sp)).toBe("uuid-one");
+	});
+
+	it("returns null for missing or blank preview", () => {
+		expect(parsePreviewAssetIdFromUrl(new URLSearchParams())).toBeNull();
+		expect(
+			parsePreviewAssetIdFromUrl(new URLSearchParams("preview=")),
+		).toBeNull();
+		expect(
+			parsePreviewAssetIdFromUrl(new URLSearchParams("preview=  ")),
+		).toBeNull();
+	});
+
+	it("falls back to ds.asset_id when preview is missing", () => {
+		const sp = new URLSearchParams("ds.asset_id=asset-from-ds");
+		expect(parsePreviewAssetIdFromUrl(sp)).toBe("asset-from-ds");
+	});
+});
+
+describe("parsePreviewTopicFromUrl", () => {
+	it("parses preview topic", () => {
+		const sp = new URLSearchParams("preview_topic=%2Fcamera%2Ffront");
+		expect(parsePreviewTopicFromUrl(sp)).toBe("/camera/front");
+	});
+
+	it("returns null for missing or blank topic", () => {
+		expect(parsePreviewTopicFromUrl(new URLSearchParams())).toBeNull();
+		expect(
+			parsePreviewTopicFromUrl(new URLSearchParams("preview_topic=")),
+		).toBeNull();
+	});
+});
+
+describe("parsePreviewSourceIdFromUrl", () => {
+	it("parses preview source id", () => {
+		const sp = new URLSearchParams("preview_source=live_topic_0");
+		expect(parsePreviewSourceIdFromUrl(sp)).toBe("live_topic_0");
+	});
+
+	it("returns null for missing or blank source", () => {
+		expect(parsePreviewSourceIdFromUrl(new URLSearchParams())).toBeNull();
+		expect(
+			parsePreviewSourceIdFromUrl(new URLSearchParams("preview_source=")),
+		).toBeNull();
+	});
+});
+
+// ─── Roundtrip: serialize → parse ───
+
+describe("roundtrip serialize → parse", () => {
+	it("roundtrips a complex state", () => {
+		const state: QueryState = {
+			searchMode: "keyword",
+			queryText: "env:warehouse algo_status:failed",
+			activeFilters: [
+				chip("tag.priority", "eq", "high"),
+				chip("status", "eq", "approved"),
+			],
+			sort: "created_at",
+			page: 3,
+			pageSize: 50,
+			viewMode: "compact",
+			selectedColumns: ["asset_id", "env", "duration"],
+		};
+
+		const sp = serializeQueryStateToUrl(state);
+		const parsed = parseQueryStateFromUrl(sp);
+
+		expect(parsed.searchMode).toBe("keyword");
+		expect(parsed.queryText).toBe("env:warehouse algo_status:failed");
+		expect(parsed.activeFilters).toHaveLength(2);
+		expect(parsed.activeFilters?.[0].field).toBe("tag.priority");
+		expect(parsed.activeFilters?.[1].field).toBe("status");
+		expect(parsed.sort).toBe("created_at");
+		expect(parsed.page).toBe(3);
+		expect(parsed.pageSize).toBe(50);
+		expect(parsed.viewMode).toBe("compact");
+		expect(parsed.selectedColumns).toEqual(["asset_id", "env", "duration"]);
+	});
+
+	it("roundtrips default state to empty", () => {
+		const sp = serializeQueryStateToUrl(defaultQueryState());
+		const parsed = parseQueryStateFromUrl(sp);
+		expect(parsed).toEqual({});
+	});
+
+	it("serializes preview time and ds params compatibly", () => {
+		const sp = serializeQueryStateToUrl(
+			defaultQueryState(),
+			"asset-1",
+			"live_topic_0",
+			"/camera/front",
+			12.5,
+			{ ds: "remote-file", dsParams: { zeta: "2", asset_id: "asset-1" } },
+		);
+		expect(sp.toString()).toBe(
+			"ds=remote-file&ds.asset_id=asset-1&ds.zeta=2&preview=asset-1&preview_layout_version=2&preview_source=live_topic_0&preview_time=12.5&preview_topic=%2Fcamera%2Ffront&time=12.5",
+		);
+	});
+});

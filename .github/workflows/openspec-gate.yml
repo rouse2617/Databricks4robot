@@ -1,0 +1,62 @@
+name: OpenSpec Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  openspec-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check exempt label and branch scope
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const labelExempt = ['docs-only', 'infra-ci-only', 'hotfix-approved'];
+            const head = context.payload.pull_request.head.ref || '';
+            const featureBranch = /(CYB|DAT)-[0-9]+/.test(head);
+            const isExempt = labelExempt.some(l => labels.includes(l));
+            const applies = featureBranch && !isExempt;
+            core.setOutput('exempt', isExempt.toString());
+            core.setOutput('applies', applies.toString());
+            if (!featureBranch) {
+              core.info(`OpenSpec gate skipped: branch "${head}" is not a CYB/DAT feature branch (e.g. feat/CYB-123-*).`);
+            }
+
+      - name: Get changed files
+        if: steps.gate.outputs.applies == 'true'
+        id: files
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "$FILES" > /tmp/changed_files.txt
+
+      - name: Validate OpenSpec change
+        if: steps.gate.outputs.applies == 'true'
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          bash scripts/validate_openspec_change.sh "$BRANCH" "$(cat /tmp/changed_files.txt)"
+
+      - name: Setup Node (OpenSpec CLI validate)
+        if: steps.gate.outputs.applies == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: OpenSpec CLI validate change deltas
+        if: steps.gate.outputs.applies == 'true'
+        env:
+          OPENSPEC_TELEMETRY: "0"
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          bash scripts/openspec_validate_ci.sh "$BRANCH" "$(cat /tmp/changed_files.txt)"
+
+      - name: Skip (exempt label or non-feature branch)
+        if: steps.gate.outputs.applies != 'true'
+        run: |
+          echo "OpenSpec gate skipped (exempt label and/or not a fix|feat|hotfix/CYB-* branch)."
