@@ -38,7 +38,8 @@ Skip a step = invalid completion.
 | Backend regression | **§6.2** L1 or L2 per risk — curl output or `api-guide-smoke.sh` summary | Single `healthz` only when L2 required |
 | OpenSpec tasks done | Re-read `tasks.md` checkboxes vs actual work | Tests pass |
 
-Full tier table: [`AI-RULES.md`](../../AI-RULES.md#verification-tiers).  
+Full tier table: [`AI-RULES.md`](../../AI-RULES.md#verification-tiers).
+
 Fixed regression lists: [`deploy-verification.md`](../../deploy-verification.md#六固定回归清单团队基线) **§6.1–6.3**.
 
 ---
