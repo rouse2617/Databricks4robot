@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/foxglove/mcap/go/mcap"
@@ -108,7 +109,7 @@ func Build(rs io.ReadSeeker, loc Locator, stats *gcsrs.Stats) (*Response, error)
 		ChunksInWindow:       chunksInWindow(info, wStart, wEnd),
 		Stats:                map[string]interface{}{},
 	}
-	resp.Sources, resp.RecommendedSourceID = buildPreviewSources(loc.AssetID, resp.CandidateVideoTopics)
+	resp.Sources, resp.RecommendedSourceID = buildPreviewSources(loc.AssetID, resp.CandidateVideoTopics, rs)
 	if len(resp.ChunksInWindow) == 0 && info.Statistics != nil &&
 		(info.Statistics.MessageStartTime != 0 || info.Statistics.MessageEndTime != 0) {
 		// Empty intersection is usually a unit mismatch from upstream
@@ -131,25 +132,47 @@ func Build(rs io.ReadSeeker, loc Locator, stats *gcsrs.Stats) (*Response, error)
 	return resp, nil
 }
 
-func buildPreviewSources(assetID string, topics []CandidateVideoTopic) ([]PreviewSource, string) {
-	sources := make([]PreviewSource, 0, len(topics))
+func buildPreviewSources(assetID string, topics []CandidateVideoTopic, rs io.ReadSeeker) ([]PreviewSource, string) {
+	// Assign live_topic_N from a stable ordering. MCAP channel maps iterate in
+	// random order; without sorting, the same preview_source id can point at
+	// different cameras across manifest requests.
+	sorted := append([]CandidateVideoTopic(nil), topics...)
+	sort.Slice(sorted, func(i, j int) bool {
+		si := topicPreferenceScore(sorted[i].Topic)
+		sj := topicPreferenceScore(sorted[j].Topic)
+		if si != sj {
+			return si > sj
+		}
+		return sorted[i].Topic < sorted[j].Topic
+	})
+
+	sources := make([]PreviewSource, 0, len(sorted))
 	bestID := ""
 	bestScore := -1
-	for i, t := range topics {
+	sourceIndex := 0
+	for _, t := range sorted {
 		if !isSupportedVideoSchema(t.SchemaName) {
 			continue
 		}
 		if strings.Contains(strings.ToLower(t.Topic), "timestamp_map") {
 			continue
 		}
+		codec := ""
+		if rs != nil {
+			if c, ok := DetectTopicCodec(rs, t.Topic); ok {
+				codec = c
+			}
+		}
 		// Only live segment sources are emitted here; file-based preview_mp4
 		// is asset-domain metadata and should be merged by API gateway/UI layer.
 		base := fmt.Sprintf("/api/v1/preview/assets/%s/segment.mp4", url.PathEscape(assetID))
 		topicEscaped := url.QueryEscape(t.Topic)
-		sourceID := fmt.Sprintf("live_topic_%d", i)
+		sourceID := fmt.Sprintf("live_topic_%d", sourceIndex)
+		sourceIndex++
 		sources = append(sources, PreviewSource{
 			ID:    sourceID,
 			Kind:  "live",
+			Codec: codec,
 			Topic: t.Topic,
 			URL:   fmt.Sprintf("%s?topic=%s", base, topicEscaped),
 		})
@@ -183,8 +206,8 @@ func topicPreferenceScore(topic string) int {
 }
 
 func candidateVideoTopics(info *mcap.Info) []CandidateVideoTopic {
-	out := make([]CandidateVideoTopic, 0, len(info.Channels))
-	for id, ch := range info.Channels {
+	rows := make([]*mcap.Channel, 0, len(info.Channels))
+	for _, ch := range info.Channels {
 		schemaName := ""
 		if s := info.Schemas[ch.SchemaID]; s != nil {
 			schemaName = s.Name
@@ -192,9 +215,17 @@ func candidateVideoTopics(info *mcap.Info) []CandidateVideoTopic {
 		if !looksLikeVideoOrImage(schemaName) {
 			continue
 		}
-		// Message count in window requires a message scan, which the
-		// skeleton intentionally avoids; report 0 for now.
-		_ = id
+		rows = append(rows, ch)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Topic < rows[j].Topic
+	})
+	out := make([]CandidateVideoTopic, 0, len(rows))
+	for _, ch := range rows {
+		schemaName := ""
+		if s := info.Schemas[ch.SchemaID]; s != nil {
+			schemaName = s.Name
+		}
 		out = append(out, CandidateVideoTopic{
 			Topic:              ch.Topic,
 			SchemaName:         schemaName,

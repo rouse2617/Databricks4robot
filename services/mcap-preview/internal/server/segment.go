@@ -249,7 +249,7 @@ func pickTopic(rs io.ReadSeeker, hint string) (string, error) {
 			if !strings.Contains(strings.ToLower(s.Name), "compressedvideo") {
 				return "", fmt.Errorf("requested topic %q is not a supported video schema", hint)
 			}
-			if codec, ok := detectTopicCodec(rs, hint); ok && codec == "h264" {
+			if codec, ok := manifest.DetectTopicCodec(rs, hint); ok && codec == "h264" {
 				return hint, nil
 			}
 			break
@@ -284,7 +284,7 @@ func pickTopic(rs io.ReadSeeker, hint string) (string, error) {
 			continue
 		}
 		score := topicPreferenceScore(ch.Topic)
-		if codec, ok := detectTopicCodec(rs, ch.Topic); ok && codec == "h264" {
+		if codec, ok := manifest.DetectTopicCodec(rs, ch.Topic); ok && codec == "h264" {
 			if score > bestH264Score || (score == bestH264Score && (bestH264Topic == "" || ch.Topic < bestH264Topic)) {
 				bestH264Topic = ch.Topic
 				bestH264Score = score
@@ -302,46 +302,6 @@ func pickTopic(rs io.ReadSeeker, hint string) (string, error) {
 		return bestTopic, nil
 	}
 	return "", errors.New("no foxglove.CompressedVideo channel found")
-}
-
-func detectTopicCodec(rs io.ReadSeeker, topic string) (string, bool) {
-	if _, err := rs.Seek(0, io.SeekStart); err != nil {
-		return "", false
-	}
-	r, err := mcap.NewReader(rs)
-	if err != nil {
-		return "", false
-	}
-	defer r.Close()
-	it, err := r.Messages(mcap.WithTopics([]string{topic}))
-	if err != nil {
-		return "", false
-	}
-	var msg mcap.Message
-	for i := 0; i < 24; i++ {
-		_, ch, m, err := it.NextInto(&msg)
-		if err != nil || m == nil {
-			return "", false
-		}
-		if ch == nil || ch.Topic != topic {
-			continue
-		}
-		annexB, format, derr := remux.DecodeFoxgloveCompressedVideo(m.Data)
-		if derr != nil {
-			continue
-		}
-		if codec, ok := normalizeCodec(format); ok {
-			return codec, true
-		}
-		annexB = remux.NormalizeToAnnexB(annexB)
-		if _, _, _, ok := remux.ExtractVPSPPSHEVC(annexB); ok {
-			return "h265", true
-		}
-		if _, _, ok := remux.ExtractSPSPPS(annexB); ok {
-			return "h264", true
-		}
-	}
-	return "", false
 }
 
 func topicPreferenceScore(topic string) int {
@@ -457,7 +417,7 @@ func streamSegments(
 		}
 	}
 	isH265 := false
-	if codec, ok := detectTopicCodec(rs, topic); ok && codec == "h265" {
+	if codec, ok := manifest.DetectTopicCodec(rs, topic); ok && codec == "h265" {
 		isH265 = true
 	}
 	if clipSeconds > 0 {
@@ -588,7 +548,7 @@ func streamSegments(
 			}
 			continue
 		}
-		codec, ok := normalizeCodec(format)
+		codec, ok := manifest.NormalizeCodec(format)
 		if !ok && strings.TrimSpace(format) != "" {
 			if !headerWritten {
 				httpresp.Error(c, http.StatusUnsupportedMediaType,
@@ -1168,18 +1128,6 @@ func transcodeWindowToWriter(
 		return errors.New("no frames written to ffmpeg")
 	}
 	return nil
-}
-
-func normalizeCodec(format string) (string, bool) {
-	f := strings.ToLower(strings.TrimSpace(format))
-	switch f {
-	case "h264", "avc", "avc1":
-		return "h264", true
-	case "h265", "hevc", "hev1", "hvc1":
-		return "h265", true
-	default:
-		return "", false
-	}
 }
 
 // nsToTicks converts a positive nanosecond delta to 90 kHz ticks.

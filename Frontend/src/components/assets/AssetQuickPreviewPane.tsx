@@ -618,6 +618,8 @@ export default function AssetQuickPreviewPane({
 							{activeAssetId && previewManifest?.sources?.length ? (
 								<Select
 									size="small"
+									showSearch
+									optionFilterProp="label"
 									placeholder="预览源"
 									value={
 										previewSourceId ??

@@ -4,6 +4,7 @@ import type { Asset } from "../../api/types";
 import {
 	buildPlaceholderPreviewManifest,
 	buildPreviewManifestFromSources,
+	resolvedPreviewSourceId,
 } from "./useAssetPreview";
 
 function makeAsset(overrides: Partial<Asset>): Asset {
@@ -93,6 +94,89 @@ describe("buildPreviewManifestFromSources", () => {
 		expect(m.previewVideoUrl).toContain(
 			"topic=%2Fcamera%2Ffront%2Fimage_raw%2Fcompressed",
 		);
+	});
+
+	it("uses manifest source url and codec label", () => {
+		const m = buildPreviewManifestFromSources(
+			makeAsset({ lifecycle_state: "ready", asset_id: "abc123" }),
+			{
+				asset_id: "abc123",
+				recommended_source_id: "live_topic_0",
+				sources: [
+					{
+						id: "live_topic_0",
+						kind: "live",
+						codec: "h265",
+						topic: "/camera/front",
+						url: "/api/v1/preview/assets/abc123/segment.mp4?topic=%2Fcamera%2Ffront",
+					},
+				],
+			},
+			{
+				asset_id: "abc123",
+				source_id: "remote-file",
+				ds: "remote-file",
+				ds_params: { url: "/api/v1/mcap-files/m1/bytes" },
+			},
+		);
+		expect(m.sources?.[0]?.label).toContain("HEVC");
+		expect(m.previewVideoUrl).toContain("topic=%2Fcamera%2Ffront");
+	});
+
+	it("adds start_ns and end_ns from foxglove hints", () => {
+		const m = buildPreviewManifestFromSources(
+			makeAsset({ lifecycle_state: "ready", asset_id: "abc123" }),
+			null,
+			{
+				asset_id: "abc123",
+				source_id: "remote-file",
+				ds: "remote-file",
+				ds_params: { url: "/api/v1/mcap-files/m1/bytes" },
+				hints: {
+					window: {
+						start_timestamp_ns: 1_000_000_000,
+						end_timestamp_ns: 2_000_000_000,
+					},
+				},
+			},
+		);
+		expect(m.previewVideoUrl).toContain("start_ns=1000000000");
+		expect(m.previewVideoUrl).toContain("end_ns=2000000000");
+	});
+
+	it("pickPreviewSourceId ignores unknown requested id", () => {
+		const pm = {
+			asset_id: "abc123",
+			recommended_source_id: "live_topic_3",
+			sources: [
+				{
+					id: "live_topic_1",
+					kind: "live",
+					topic: "/camera/side",
+					url: "/api/v1/preview/assets/abc123/segment.mp4?topic=%2Fcamera%2Fside",
+				},
+				{
+					id: "live_topic_3",
+					kind: "live",
+					topic: "/camera/front",
+					url: "/api/v1/preview/assets/abc123/segment.mp4?topic=%2Fcamera%2Ffront",
+				},
+			],
+		};
+		const m = buildPreviewManifestFromSources(
+			makeAsset({ lifecycle_state: "ready", asset_id: "abc123" }),
+			pm,
+			{
+				asset_id: "abc123",
+				source_id: "remote-file",
+				ds: "remote-file",
+				ds_params: { url: "/api/v1/mcap-files/m1/bytes" },
+			},
+			{ previewSourceId: "live_topic_2" },
+		);
+		expect(m.activeSourceId).toBe("live_topic_3");
+		expect(m.previewVideoUrl).toContain("topic=%2Fcamera%2Ffront");
+		expect(resolvedPreviewSourceId(m)).toBe("live_topic_3");
 	});
 
 	it("falls back to placeholder when foxglove source is missing", () => {

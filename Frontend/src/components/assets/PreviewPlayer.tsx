@@ -1,23 +1,13 @@
 import { Alert, Typography } from "antd";
 import { useState } from "react";
 import type { PreviewManifest } from "../../lib/assets/assetsDiscoveryTypes";
+import { buildPreviewErrorMessage } from "../../lib/assets/previewErrors";
 
 const { Text } = Typography;
 
 interface PreviewPlayerProps {
 	manifest: PreviewManifest | null;
 	compact?: boolean;
-}
-
-function buildUserFacingError(detail: string): string {
-	const lowered = detail.toLowerCase();
-	if (
-		lowered.includes("storage.objects.get") ||
-		(lowered.includes("403") && lowered.includes("gcs"))
-	) {
-		return "当前环境暂时无法读取预览文件，请联系管理员检查对象存储权限。";
-	}
-	return "当前资产暂时无法预览，请稍后重试或联系管理员。";
 }
 
 // Single source of preview video: the mcap-preview service produces a fragmented
@@ -43,7 +33,7 @@ export default function PreviewPlayer({
 	const errorDetail =
 		errorState && url && errorState.url === url ? errorState.detail : null;
 	const userFacingError = errorDetail
-		? buildUserFacingError(errorDetail)
+		? buildPreviewErrorMessage(errorDetail)
 		: null;
 
 	if (!manifest) {

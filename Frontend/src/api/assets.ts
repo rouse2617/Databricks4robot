@@ -197,6 +197,13 @@ export const assetsApi = {
 			.get<PreviewManifestResponse>(`/preview/assets/${id}/manifest`)
 			.then((r) => r.data),
 
+	prewarmPreview: (id: string, params?: { topic?: string }) =>
+		apiClient.post<{ status: string }>(
+			`/preview/assets/${encodeURIComponent(id)}/prewarm`,
+			null,
+			{ params: params?.topic ? { topic: params.topic } : undefined },
+		),
+
 	getFoxgloveSource: (id: string) =>
 		apiClient
 			.get<FoxgloveSourceResponse>(`/assets/${id}/foxglove-source`)

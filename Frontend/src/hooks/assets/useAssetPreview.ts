@@ -1,13 +1,16 @@
 // ─── useAssetPreview — Preview fetch hook ───
-// Thin wrapper that encapsulates the preview-fetch side-effect.
-// The actual preview fetch logic already lives inside useAssetsDiscoveryReducer's
-// useEffect. This hook re-exports the buildPlaceholderPreviewManifest helper and
-// provides a standalone hook for contexts that need preview fetching outside the
-// full discovery reducer (e.g. detail page).
+// `fetchPreviewBundle` is the single entry point: it loads asset + foxglove
+// source + mcap-preview manifest in parallel and assembles the UI-facing
+// `PreviewManifest`. Both the discovery reducer and the detail page call it
+// directly; `useAssetPreview` is a thin standalone hook for callers that just
+// want "load preview for assetId" with React lifecycle handling.
 // Validates: Requirements R7
 
 import { useEffect, useRef } from "react";
-import type { FoxgloveSourceResponse } from "../../api/assets";
+import type {
+	FoxgloveSourceResponse,
+	PreviewManifestResponse,
+} from "../../api/assets";
 import { assetsApi } from "../../api/assets";
 import type { Asset } from "../../api/types";
 import type { AssetsDiscoveryAction } from "../../lib/assets/assetsDiscoveryActions";
@@ -17,80 +20,37 @@ import type {
 	PreviewMode,
 	PreviewSourceOption,
 } from "../../lib/assets/assetsDiscoveryTypes";
+import { buildPreviewErrorMessage } from "../../lib/assets/previewErrors";
+import {
+	activePreviewSource,
+	buildSegmentPreviewUrl,
+	enrichSegmentPreviewUrl,
+	formatPreviewCodecLabel,
+	isHevcPreviewCodec,
+	parseWindowNsFromHints,
+} from "../../lib/assets/previewSegmentUrl";
 
 // ─── Helpers ───
 
 export interface PreviewManifestOptions {
-	previewTopic?: string; // kept for compatibility with existing callers
-	previewSourceId?: string; // kept for compatibility with existing callers
+	// Topic override; mostly used by legacy callers — modern flows pass
+	// `previewSourceId` and let manifest resolution pick the topic.
+	previewTopic?: string;
+	// Requested manifest source id; falls back to recommended/first when
+	// missing or invalid (see `pickPreviewSourceId`).
+	previewSourceId?: string;
 }
 
-function readCookieValue(name: string): string | null {
-	if (typeof document === "undefined" || !document.cookie) {
-		return null;
-	}
-	for (const part of document.cookie.split(";")) {
-		const [k, ...rest] = part.trim().split("=");
-		if (k !== name) continue;
-		const raw = rest.join("=");
-		if (!raw) return null;
-		try {
-			return decodeURIComponent(raw);
-		} catch {
-			return raw;
-		}
-	}
-	return null;
-}
-
-function buildSegmentPreviewUrl(
-	assetId: string,
-	opts?: PreviewManifestOptions,
-): string {
-	const path = `/api/v1/preview/assets/${encodeURIComponent(assetId)}/segment.mp4`;
-	const q = new URLSearchParams();
-	if (opts?.previewTopic) {
-		q.set("topic", opts.previewTopic);
-	}
-	const graceToken = readCookieValue("grace_session");
-	if (graceToken) {
-		// <video> cannot set X-Grace-Token; backend supports query fallback.
-		q.set("grace_token", graceToken);
-	}
-	const qs = q.toString();
-	return qs ? `${path}?${qs}` : path;
-}
+export { buildPreviewErrorMessage };
 
 /**
- * Reads `hints.window.start_timestamp_ns` / `end_timestamp_ns`.
- * Contract: nanoseconds MUST use the **same epoch as MCAP record `log_time`**
- * (POSIX time from epoch is usual). Segment-relative timestamps will break overlap
- * with indexed chunk spans in the embedded player until data is migrated.
+ * Reads `hints.window.start_timestamp_ns` / `end_timestamp_ns` (seconds for UI).
  */
-function parseWindowSecFromHints(
-	foxgloveSource?: FoxgloveSourceResponse | null,
-): { windowStartSec: number | null; windowEndSec: number | null } {
-	const hints = foxgloveSource?.hints;
-	if (!hints || typeof hints !== "object") {
-		return { windowStartSec: null, windowEndSec: null };
-	}
-	const windowValue = (hints as Record<string, unknown>).window;
-	if (!windowValue || typeof windowValue !== "object") {
-		return { windowStartSec: null, windowEndSec: null };
-	}
-	const win = windowValue as Record<string, unknown>;
-	const startNsRaw = win.start_timestamp_ns;
-	const endNsRaw = win.end_timestamp_ns;
-	const parseNs = (v: unknown): number | null => {
-		if (typeof v === "number" && Number.isFinite(v)) return v;
-		if (typeof v === "string" && v.trim().length > 0) {
-			const n = Number(v);
-			if (Number.isFinite(n)) return n;
-		}
-		return null;
-	};
-	const startNs = parseNs(startNsRaw);
-	const endNs = parseNs(endNsRaw);
+function parseWindowSecFromHints(foxgloveSource?: FoxgloveSourceResponse | null): {
+	windowStartSec: number | null;
+	windowEndSec: number | null;
+} {
+	const { startNs, endNs } = parseWindowNsFromHints(foxgloveSource);
 	return {
 		windowStartSec: startNs != null ? startNs / 1_000_000_000 : null,
 		windowEndSec: endNs != null ? endNs / 1_000_000_000 : null,
@@ -117,9 +77,59 @@ export function buildPlaceholderPreviewManifest(
 	};
 }
 
+/** Resolved active source id from a built preview manifest. */
+export function resolvedPreviewSourceId(
+	manifest: PreviewManifest,
+): string | null {
+	return (
+		manifest.activeSourceId ??
+		manifest.recommendedSourceId ??
+		manifest.sources?.[0]?.id ??
+		null
+	);
+}
+
+/** Pick a manifest source id that exists, else recommended, else first. */
+export function pickPreviewSourceId(
+	sourceOptions: PreviewSourceOption[],
+	previewManifest: PreviewManifestResponse | null | undefined,
+	requestedId?: string | null,
+): string | null {
+	const validIds = new Set(sourceOptions.map((s) => s.id));
+	const requested = requestedId?.trim() || null;
+	if (requested && validIds.has(requested)) {
+		return requested;
+	}
+	const recommended = previewManifest?.recommended_source_id ?? null;
+	if (recommended && validIds.has(recommended)) {
+		return recommended;
+	}
+	return sourceOptions[0]?.id ?? null;
+}
+
+function mapManifestSources(
+	pm: PreviewManifestResponse | null | undefined,
+): PreviewSourceOption[] {
+	return (pm?.sources ?? []).map((s) => {
+		const codecLabel = formatPreviewCodecLabel(s.codec);
+		const label = s.topic
+			? codecLabel
+				? `视频 (${codecLabel}): ${s.topic}`
+				: `视频: ${s.topic}`
+			: s.id;
+		return {
+			id: s.id,
+			label,
+			kind: s.kind,
+			codec: s.codec,
+			topic: s.topic,
+		};
+	});
+}
+
 export function buildPreviewManifestFromSources(
 	asset: Asset,
-	previewManifest: unknown,
+	previewManifest: PreviewManifestResponse | null | undefined,
 	foxgloveSource?: FoxgloveSourceResponse | null,
 	opts?: PreviewManifestOptions,
 ): PreviewManifest {
@@ -128,32 +138,23 @@ export function buildPreviewManifestFromSources(
 		const sourceParams = foxgloveSource.ds_params ?? {};
 		const { windowStartSec, windowEndSec } =
 			parseWindowSecFromHints(foxgloveSource);
-		const pm = (previewManifest ?? {}) as {
-			sources?: Array<{
-				id: string;
-				kind: string;
-				codec?: string;
-				topic?: string;
-				url?: string;
-			}>;
-			recommended_source_id?: string;
-		};
-		const sourceOptions: PreviewSourceOption[] = (pm.sources ?? []).map(
-			(s) => ({
-				id: s.id,
-				label: s.topic ? `视频: ${s.topic}` : s.id,
-				kind: s.kind,
-				codec: s.codec,
-				topic: s.topic,
-			}),
+		const { startNs, endNs } = parseWindowNsFromHints(foxgloveSource);
+		const sourceOptions = mapManifestSources(previewManifest);
+		const selectedSourceId = pickPreviewSourceId(
+			sourceOptions,
+			previewManifest,
+			opts?.previewSourceId,
 		);
-		const selectedSourceId =
-			opts?.previewSourceId ??
-			pm.recommended_source_id ??
-			sourceOptions[0]?.id ??
+		const selectedManifestSource =
+			(previewManifest?.sources ?? []).find((s) => s.id === selectedSourceId) ??
 			null;
-		const selectedSource =
-			(pm.sources ?? []).find((s) => s.id === selectedSourceId) ?? null;
+		const topic =
+			opts?.previewTopic ??
+			selectedManifestSource?.topic ??
+			undefined;
+		const baseVideoUrl =
+			selectedManifestSource?.url ??
+			buildSegmentPreviewUrl(asset.asset_id, { topic, startNs, endNs });
 		const dsParams = {
 			...sourceParams,
 			asset_id: asset.asset_id,
@@ -162,8 +163,11 @@ export function buildPreviewManifestFromSources(
 			...fallback,
 			availability: "ready",
 			mode: "mcap",
-			previewVideoUrl:
-				selectedSource?.url ?? buildSegmentPreviewUrl(asset.asset_id, opts),
+			previewVideoUrl: enrichSegmentPreviewUrl(baseVideoUrl, {
+				topic,
+				startNs,
+				endNs,
+			}),
 			mcapUrl: sourceParams.url,
 			sourceId: foxgloveSource.source_id,
 			ds: foxgloveSource.ds,
@@ -171,11 +175,53 @@ export function buildPreviewManifestFromSources(
 			windowStartSec,
 			windowEndSec,
 			sources: sourceOptions,
-			recommendedSourceId: pm.recommended_source_id ?? undefined,
+			recommendedSourceId: previewManifest?.recommended_source_id ?? undefined,
 			activeSourceId: selectedSourceId,
 		};
 	}
 	return fallback;
+}
+
+/** Fire-and-forget HEVC transcode prewarm when the active source needs it. */
+export async function maybePrewarmPreview(
+	assetId: string,
+	manifest: PreviewManifest,
+): Promise<void> {
+	const active = activePreviewSource(manifest);
+	if (!isHevcPreviewCodec(active?.codec)) {
+		return;
+	}
+	await assetsApi
+		.prewarmPreview(assetId, active?.topic ? { topic: active.topic } : undefined)
+		.catch(() => {
+			// Best-effort; playback still works without prewarm.
+		});
+}
+
+export async function fetchPreviewBundle(
+	assetId: string,
+	opts?: PreviewManifestOptions,
+): Promise<{
+	asset: Asset;
+	foxgloveSource: FoxgloveSourceResponse | null;
+	previewManifest: PreviewManifestResponse | null;
+	manifest: PreviewManifest;
+}> {
+	const [asset, foxgloveSource, previewManifest] = await Promise.all([
+		assetsApi.get(assetId),
+		assetsApi.getFoxgloveSource(assetId).catch(() => null),
+		assetsApi.getPreviewManifest(assetId).catch(() => null),
+	]);
+	const manifest = buildPreviewManifestFromSources(
+		asset,
+		previewManifest,
+		foxgloveSource,
+		opts,
+	);
+	if (manifest.mode === "mcap") {
+		await maybePrewarmPreview(assetId, manifest);
+	}
+	return { asset, foxgloveSource, previewManifest, manifest };
 }
 
 // ─── Hook ───
@@ -196,6 +242,7 @@ export function buildPreviewManifestFromSources(
 export function useAssetPreview(
 	activeAssetId: string | null,
 	dispatch: React.Dispatch<AssetsDiscoveryAction>,
+	opts?: PreviewManifestOptions,
 ): void {
 	const prevIdRef = useRef<string | null>(null);
 
@@ -213,18 +260,12 @@ export function useAssetPreview(
 			dispatch({ type: "PREVIEW_LOADING" });
 
 			try {
-				const asset = await assetsApi.get(activeAssetId);
+				const { asset, manifest } = await fetchPreviewBundle(
+					activeAssetId,
+					opts,
+				);
 
 				if (cancelled) return;
-
-				const foxgloveSource = await assetsApi
-					.getFoxgloveSource(activeAssetId)
-					.catch(() => null);
-				const manifest = buildPreviewManifestFromSources(
-					asset,
-					null,
-					foxgloveSource,
-				);
 
 				dispatch({
 					type: "RECEIVE_PREVIEW_SUCCESS",
@@ -241,5 +282,5 @@ export function useAssetPreview(
 		return () => {
 			cancelled = true;
 		};
-	}, [activeAssetId, dispatch]);
+	}, [activeAssetId, dispatch, opts?.previewSourceId, opts?.previewTopic]);
 }

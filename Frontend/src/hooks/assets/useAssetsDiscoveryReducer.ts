@@ -3,7 +3,6 @@
 // Validates: Requirements R13
 
 import { useEffect, useMemo, useReducer, useRef } from "react";
-import { assetsApi } from "../../api/assets";
 import {
 	type QueryExpr,
 	type QueryFacetBucket,
@@ -17,7 +16,7 @@ import type { AssetsDiscoveryAction } from "../../lib/assets/assetsDiscoveryActi
 import { assetsDiscoveryReducer } from "../../lib/assets/assetsDiscoveryReducer";
 import type { AssetsDiscoveryState } from "../../lib/assets/assetsDiscoveryTypes";
 import { defaultAssetsDiscoveryState } from "../../lib/assets/assetsDiscoveryTypes";
-import { buildPreviewManifestFromSources } from "./useAssetPreview";
+import { fetchPreviewBundle } from "./useAssetPreview";
 
 // ─── Helpers ───
 
@@ -419,22 +418,12 @@ export function useAssetsDiscoveryReducer(): [
 			dispatch({ type: "PREVIEW_LOADING" });
 
 			try {
-				const [asset, foxgloveSource] = await Promise.all([
-					assetsApi.get(activeId),
-					assetsApi.getFoxgloveSource(activeId).catch(() => null),
-				]);
+				const { asset, manifest } = await fetchPreviewBundle(activeId, {
+					previewSourceId: state.previewState.activeSourceId ?? undefined,
+					previewTopic: state.previewState.activeTopic ?? undefined,
+				});
 
 				if (cancelled) return;
-
-				const manifest = buildPreviewManifestFromSources(
-					asset,
-					null,
-					foxgloveSource,
-					{
-						previewSourceId: state.previewState.activeSourceId ?? undefined,
-						previewTopic: state.previewState.activeTopic ?? undefined,
-					},
-				);
 
 				dispatch({
 					type: "RECEIVE_PREVIEW_SUCCESS",

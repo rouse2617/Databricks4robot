@@ -138,7 +138,7 @@ func prewarmHandler(cfg Config) gin.HandlerFunc {
 		if loc.Window.EndTimestampNs > 0 {
 			endNs = uint64(loc.Window.EndTimestampNs)
 		}
-		if codec, ok := detectTopicCodec(rs, topic); ok && codec == "h265" {
+		if codec, ok := manifest.DetectTopicCodec(rs, topic); ok && codec == "h265" {
 			key := previewMP4Cache.key(assetID, topic, fmt.Sprintf("%d", startNs), fmt.Sprintf("%d", endNs), "h265-to-h264-v2")
 			mcapURI := loc.Mcap.McapURI
 			go func() {

@@ -1,8 +1,8 @@
 # mcap-preview
 
-Standalone Go service that will eventually stream MCAP video segments on
-demand. This iteration ships the **skeleton** plus the read-only **manifest**
-endpoint — no remux, no video bytes yet.
+Standalone Go service that streams MCAP video as fragmented MP4 for browser
+`<video>` preview. It also exposes a read-only **manifest** (topics, chunks,
+codec hints) and **prewarm** for HEVC assets.
 
 ## Architecture
 
@@ -101,8 +101,9 @@ Behaviour:
 1. Validate asset id; resolve `mcap-locator` upstream as in `manifest`.
 2. Open the MCAP via the page-cached GCS reader.
 3. On the first message, decode the `foxglove.CompressedVideo` payload to
-   read its `format` field. Only `h264` is accepted; anything else returns
-   `415 UNSUPPORTED_PREVIEW_CODEC`.
+   read its `format` field. **H.264** is remuxed in-process; **HEVC/H.265**
+   is transcoded to H.264 (cached on disk, with optional `POST .../prewarm`).
+   Other codecs return `415 UNSUPPORTED_PREVIEW_CODEC`.
 4. Extract SPS/PPS from the in-band Annex-B NALUs of the first IDR. If
    neither is present return `422 PREVIEW_NO_SPS_PPS`.
 5. Remux subsequent samples into fMP4 fragments (~1s each) and flush after

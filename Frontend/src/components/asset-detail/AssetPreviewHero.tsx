@@ -14,6 +14,8 @@ import {
 	Card,
 	Descriptions,
 	Divider,
+	Select,
+	Spin,
 	Tag,
 	Tooltip,
 	Typography,
@@ -38,6 +40,9 @@ const { Text } = Typography;
 export interface AssetPreviewHeroProps {
 	asset: Asset;
 	previewManifest: PreviewManifest | null;
+	previewSourceId?: string | null;
+	onPreviewSourceChange?: (sourceId: string | null) => void;
+	previewSourceLoading?: boolean;
 }
 
 // ─── Color Maps ───
@@ -112,13 +117,27 @@ function AlgoSummaryInline({ asset }: { asset: Asset }) {
 
 function PreviewMediaPanel({
 	manifest,
+	previewSourceId,
+	onPreviewSourceChange,
+	previewSourceLoading,
 }: {
 	manifest: PreviewManifest | null;
 	asset: Asset;
+	previewSourceId?: string | null;
+	onPreviewSourceChange?: (sourceId: string | null) => void;
+	previewSourceLoading?: boolean;
 }) {
 	const availability = manifest?.availability ?? "missing";
 	const badge = AVAILABILITY_BADGE[availability];
 	if (manifest?.mode === "mcap") {
+		const sourceOptions = manifest.sources ?? [];
+		const preferredSourceId =
+			previewSourceId ?? manifest.activeSourceId ?? undefined;
+		const selectedSourceId = sourceOptions.some((s) => s.id === preferredSourceId)
+			? preferredSourceId
+			: sourceOptions.some((s) => s.id === manifest.recommendedSourceId)
+				? manifest.recommendedSourceId
+				: (sourceOptions[0]?.id ?? undefined);
 		return (
 			<div
 				style={{
@@ -130,7 +149,26 @@ function PreviewMediaPanel({
 					minHeight: 200,
 				}}
 			>
-				<PreviewPlayer manifest={manifest} />
+				{sourceOptions.length > 0 ? (
+					<Select
+						size="small"
+						showSearch
+						optionFilterProp="label"
+						placeholder="预览源"
+						value={selectedSourceId}
+						loading={previewSourceLoading}
+						disabled={previewSourceLoading}
+						onChange={(value) => onPreviewSourceChange?.(value ?? null)}
+						options={sourceOptions.map((s) => ({
+							value: s.id,
+							label: s.label,
+						}))}
+						style={{ marginBottom: 8, width: "100%" }}
+					/>
+				) : null}
+				<Spin spinning={!!previewSourceLoading} style={{ width: "100%" }}>
+					<PreviewPlayer manifest={manifest} />
+				</Spin>
 				<div style={{ marginTop: 8, textAlign: "center" }}>
 					<Badge
 						status={badge.status}
@@ -305,6 +343,9 @@ function AssetSummaryPanel({ asset }: { asset: Asset }) {
 export default function AssetPreviewHero({
 	asset,
 	previewManifest,
+	previewSourceId,
+	onPreviewSourceChange,
+	previewSourceLoading,
 }: AssetPreviewHeroProps) {
 	return (
 		<Card
@@ -319,7 +360,13 @@ export default function AssetPreviewHero({
 					gap: 0,
 				}}
 			>
-				<PreviewMediaPanel manifest={previewManifest} asset={asset} />
+				<PreviewMediaPanel
+					manifest={previewManifest}
+					asset={asset}
+					previewSourceId={previewSourceId}
+					onPreviewSourceChange={onPreviewSourceChange}
+					previewSourceLoading={previewSourceLoading}
+				/>
 				<AssetSummaryPanel asset={asset} />
 			</div>
 		</Card>
