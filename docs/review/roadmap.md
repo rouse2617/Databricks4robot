@@ -55,7 +55,7 @@ Failure Mining  → 日常体验完备化  → 规模化支撑       → 数据�
 | Dev GKE push（legacy） | `.tekton/push-dev.yaml` | **已关闭** | 曾 push `dev` 分支 rollout GKE；现用手动 `/deploy-dev` 或 Cloud Run 路径 |
 | Prod 后端（main） | `.tekton/push-backend-cloudrun-prod.yaml` | `push` 到 `main`，路径命中 `backend/**` / `deploy/cloudrun/**` / 该 YAML | build + push；若 `cyber-databrew-backend-prod` 存在则 deploy，否则仅推镜像 |
 | Prod 前端（main） | `.tekton/push-frontend-cloudrun-prod.yaml` | `push` 到 `main`，路径命中 `Frontend/**` / `deploy/cloudrun/**` / 该 YAML | build + push；若 `cyber-databrew-frontend-prod` 存在则 deploy，否则仅推镜像 |
-| PR 评论触发（仅后端 dev） | `.tekton/deploy-cloudrun-dev.yaml` | PR 指向 `main`，评论精确 `/deploy-cloudrun-dev`，且路径命中 `backend/**`/`deploy/cloudrun/**` | build + deploy `cyber-databrew-backend-dev` |
+| PR 评论触发（仅后端 dev） | `.tekton/deploy-cloudrun-dev.yaml` | PR 指向 `main` 或 `dev`，评论 `/deploy-cloudrun-dev`，路径命中 `backend/**` 等 | build + deploy `cyber-databrew-backend-dev` |
 
 ### 关键约束（避免误触发）
 
