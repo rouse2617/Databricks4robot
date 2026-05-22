@@ -7,6 +7,7 @@
 - [x] Delivery List `customer_id` filter + commit FK guard
 - [x] Tests
 - [x] Deploy dev + API smoke (before commit approval)
+- [x] API contract sync: `api/openapi.yaml`, `api-guide.md`, `api-guide-smoke.sh`, spec delta (SDK deferred)
 
 ## Dev verification (2026-05-22)
 

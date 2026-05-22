@@ -283,6 +283,115 @@ components:
           items: { $ref: '#/components/schemas/Action' }
         asset_id: { $ref: '#/components/schemas/AssetID' }
         total: { type: integer }
+    CustomerID:
+      type: string
+      pattern: '^[a-z][a-z0-9_-]{2,31}$'
+      minLength: 3
+      maxLength: 32
+      description: Stable customer slug (lowercase letter first).
+    Customer:
+      type: object
+      required: [customer_id, display_name, status, sla_tier, created_at, updated_at, row_version]
+      properties:
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        display_name: { type: string }
+        legal_name: { type: string }
+        status:
+          type: string
+          enum: [active, trial, suspended, offboarded]
+        region: { type: string }
+        sla_tier:
+          type: string
+          enum: [standard, premium, enterprise]
+        account_owner: { type: string }
+        compliance_tags:
+          type: array
+          items: {}
+        exclude_tags:
+          type: array
+          items: {}
+        metadata:
+          type: object
+          additionalProperties: true
+        extra:
+          type: object
+          additionalProperties: true
+        onboarded_at: { type: string, format: date-time, nullable: true }
+        offboarded_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        row_version: { type: integer, format: int64 }
+    CustomerCreateRequest:
+      type: object
+      required: [customer_id, display_name]
+      properties:
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        display_name: { type: string }
+        legal_name: { type: string }
+        status:
+          type: string
+          enum: [active, trial, suspended, offboarded]
+        region: { type: string }
+        sla_tier:
+          type: string
+          enum: [standard, premium, enterprise]
+        account_owner: { type: string }
+        compliance_tags:
+          type: array
+          items: {}
+        exclude_tags:
+          type: array
+          items: {}
+        metadata:
+          type: object
+          additionalProperties: true
+    CustomerPatchRequest:
+      type: object
+      properties:
+        display_name: { type: string }
+        legal_name: { type: string }
+        status:
+          type: string
+          enum: [active, trial, suspended, offboarded]
+        region: { type: string }
+        sla_tier:
+          type: string
+          enum: [standard, premium, enterprise]
+        account_owner: { type: string }
+        compliance_tags:
+          type: array
+          items: {}
+        exclude_tags:
+          type: array
+          items: {}
+        metadata:
+          type: object
+          additionalProperties: true
+    Delivery:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        status: { type: string }
+        delivered_at: { type: string, format: date-time, nullable: true }
+        contract_id: { type: string }
+        note: { type: string }
+        asset_count: { type: integer }
+        owner: { type: string }
+        delivery_type: { type: string }
+        item_count: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+    DeliveryListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Delivery' }
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        page_size: { type: integer }
     DeliveryCommitRequest:
       type: object
       required: [asset_ids, customer_id]
@@ -291,10 +400,28 @@ components:
           type: array
           minItems: 1
           items: { $ref: '#/components/schemas/AssetID' }
-        customer_id: { type: string }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
         contract_id: { type: string }
         note: { type: string }
         owner: { type: string }
+    DeliveryCommitResponse:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        asset_count: { type: integer }
+        delivered_at: { type: string, format: date-time }
+        status: { type: string }
+    CustomerDeliveryIDsResponse:
+      type: object
+      properties:
+        delivery_ids:
+          type: array
+          items: { type: string, format: uuid }
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+        next_token: { type: string }
     StartAlgoRequest:
       type: object
       required: [method]
@@ -1623,6 +1750,175 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/LakehouseItemsResponse' }
+  /api/v1/customers:
+    post:
+      summary: Create customer
+      tags: [customers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerCreateRequest' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        '400':
+          description: invalid argument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: customer_id already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/customers/{customer_id}:
+    get:
+      summary: Get customer
+      tags: [customers]
+      parameters:
+        - in: path
+          name: customer_id
+          required: true
+          schema: { $ref: '#/components/schemas/CustomerID' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    patch:
+      summary: Update customer
+      tags: [customers]
+      parameters:
+        - in: path
+          name: customer_id
+          required: true
+          schema: { $ref: '#/components/schemas/CustomerID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerPatchRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: optimistic lock conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/customers/{customer_id}/deliveries:
+    get:
+      summary: List delivery IDs for customer
+      tags: [customers, deliveries]
+      parameters:
+        - in: path
+          name: customer_id
+          required: true
+          schema: { $ref: '#/components/schemas/CustomerID' }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerDeliveryIDsResponse' }
+  /api/v1/deliveries:
+    get:
+      summary: List deliveries
+      tags: [deliveries]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: customer_id
+          schema: { $ref: '#/components/schemas/CustomerID' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryListResponse' }
+    post:
+      summary: Commit delivery
+      tags: [deliveries]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryCommitRequest' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryCommitResponse' }
+        '400':
+          description: invalid argument or missing idempotency key
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: idempotency conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: customer not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}:
+    get:
+      summary: Get delivery
+      tags: [deliveries]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Delivery' }
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/assets:
     post:
       summary: Create asset

@@ -1,10 +1,10 @@
 # Decisions — CYB-1014
 
-## 2026-05-22 — API contract files deferred (process gap)
+## 2026-05-22 — API contract follow-up (feat/CYB-1014-api-contract)
 
-- **Context**: Backend handlers and migration shipped; OpenAPI / api-guide / SDK not updated in the same PR.
-- **Decision**: Track follow-up issue/PR for contract sync; repo rule updated in `docs/agents/AI-RULES.md` § API contract sync so future CYB work cannot repeat.
-- **Rationale**: Handler-only merge left SDK and external consumers without a single source of truth.
+- **Context**: Initial backend merge omitted OpenAPI / api-guide / SDK.
+- **Decision**: Same CYB-1014 change dir; added paths/schemas in `api/openapi.yaml`, api-guide §2.8, smoke hooks, `specs/customer-management/spec.md`. **SDK deferred** per team choice (not required for this issue).
+- **Rationale**: Align with `docs/agents/AI-RULES.md` § API contract sync minimum (OpenAPI + api-guide + smoke).
 
 ## 2026-05-22 — Touch `backend/migrations/` (off-limits exception)
 

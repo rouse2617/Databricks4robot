@@ -35,7 +35,17 @@ func ValidateCustomerID(id string) error {
 	return nil
 }
 
-// POST /api/v1/customers
+// Create registers a new customer.
+// @Summary      Create customer
+// @Tags         customers
+// @Accept       json
+// @Produce      json
+// @Param        body body object true "Create customer request"
+// @Success      201 {object} models.Customer
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      409 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /customers [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
 		CustomerID     string                 `json:"customer_id" binding:"required"`
@@ -93,7 +103,15 @@ func (h *Handler) Create(c *gin.Context) {
 	c.JSON(201, out)
 }
 
-// GET /api/v1/customers/:customer_id
+// Get returns one customer by id.
+// @Summary      Get customer
+// @Tags         customers
+// @Produce      json
+// @Param        customer_id path string true "Customer ID"
+// @Success      200 {object} models.Customer
+// @Failure      404 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /customers/{customer_id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	customerID := strings.TrimSpace(c.Param("customer_id"))
 	if customerID == "" {
@@ -112,7 +130,18 @@ func (h *Handler) Get(c *gin.Context) {
 	c.JSON(200, cust)
 }
 
-// PATCH /api/v1/customers/:customer_id
+// Update patches customer fields.
+// @Summary      Update customer
+// @Tags         customers
+// @Accept       json
+// @Produce      json
+// @Param        customer_id path string true "Customer ID"
+// @Param        body body object true "Patch customer request"
+// @Success      200 {object} models.Customer
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      409 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /customers/{customer_id} [patch]
 func (h *Handler) Update(c *gin.Context) {
 	customerID := strings.TrimSpace(c.Param("customer_id"))
 	if customerID == "" {

@@ -10,6 +10,7 @@
 - `mcap_file_id`：固定 8 位字母数字（`[0-9A-Za-z]{8}`），示例统一用 `mcap0001`
 - `delivery_id` / `event_id` / `eval_result_id`：UUID
 - `action_id`：固定 8 位字母数字（`[0-9A-Za-z]{8}`）
+- `customer_id`：客户 slug，`^[a-z][a-z0-9_-]{2,31}$`（小写字母开头），示例 `acme_corp`
 
 > 下文所有请求/响应示例默认遵循上述格式，避免将非法 ID 复制到真实请求中触发 `400 INVALID_ARGUMENT`。
 
@@ -779,7 +780,61 @@ curl "$BASE/api/v1/lookup?at=1700000000000000000" -H "X-Grace-Token: $TOKEN"
 | 422 | `INVALID_ACTION` | seg 不是 `asset_type='segment'`，或时间窗超出 seg 范围 |
 | 500 | `INTERNAL_ERROR` | 罕见；若 `message` 为 `actions schema mismatch: run migration 018_actions_id_to_short_id.sql`，表示数据库 `actions.action_id` 列仍未迁移到 8 位短 id 语义，请对齐 `schemas/pg-phase0.sql` 并执行 `backend/migrations/018_actions_id_to_short_id.sql` |
 
+## 2.8 客户管理 (Customers)
+
+客户主数据表 `customers`；`deliveries.customer_id` 为外键。创建客户时 `customer_id` 须满足 slug 规则（见文首 ID 约定）。
+
+### 2.8.1 创建客户
+
+```bash
+curl -X POST "$BASE/api/v1/customers" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_id": "acme_corp",
+    "display_name": "Acme Robotics",
+    "legal_name": "Acme Robotics Ltd",
+    "status": "active",
+    "region": "us-west",
+    "sla_tier": "standard",
+    "account_owner": "team-a"
+  }'
+```
+
+响应 `201`：完整 `Customer` 对象（含 `row_version`、`created_at` 等）。
+
+| 状态 | code | 触发 |
+|------|------|------|
+| 400 | `INVALID_ARGUMENT` | body 非法或 `customer_id` 不符合 slug |
+| 409 | `INVALID_ARGUMENT` | `customer_id` 已存在 |
+
+### 2.8.2 获取客户
+
+```bash
+curl "$BASE/api/v1/customers/acme_corp" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+| 状态 | code | 触发 |
+|------|------|------|
+| 404 | `CUSTOMER_NOT_FOUND` | 无此客户 |
+
+### 2.8.3 更新客户
+
+```bash
+curl -X PATCH "$BASE/api/v1/customers/acme_corp" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"display_name": "Acme Robotics (US)", "sla_tier": "premium"}'
+```
+
+仅发送需修改字段。`409` `CONCURRENT_CONFLICT` 表示乐观锁冲突。
+
+---
+
 ## 3. 交付管理 (Deliveries)
+
+交付前 **`customer_id` 必须在 `customers` 表中存在**（迁移 `029` 已为历史 `deliveries` 回填占位行）。不存在 → `422` `customer not found`。
 
 ### 3.1 创建交付
 
@@ -790,7 +845,7 @@ curl -X POST "$BASE/api/v1/deliveries" \
   -H "Idempotency-Key: unique-key-12345" \
   -d '{
     "asset_ids": ["aset0001", "aset0002"],
-    "customer_id": "customer-001",
+    "customer_id": "acme_corp",
     "contract_id": "contract-001",
     "note": "Q1 delivery batch",
     "owner": "team-a"
@@ -847,6 +902,10 @@ curl "$BASE/api/v1/deliveries?page=1&page_size=20" \
 # 按状态过滤
 curl "$BASE/api/v1/deliveries?page=1&page_size=20&status=delivered" \
   -H "X-Grace-Token: $TOKEN"
+
+# 按客户过滤（CYB-1014）
+curl "$BASE/api/v1/deliveries?page=1&page_size=20&customer_id=acme_corp" \
+  -H "X-Grace-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -855,7 +914,7 @@ curl "$BASE/api/v1/deliveries?page=1&page_size=20&status=delivered" \
   "items": [
     {
       "delivery_id": "cccccccc-3333-4000-8000-000000000001",
-      "customer_id": "customer-001",
+      "customer_id": "acme_corp",
       "contract_id": "contract-001",
       "status": "delivered",
       "owner": "team-a",

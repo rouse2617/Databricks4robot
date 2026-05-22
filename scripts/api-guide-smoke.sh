@@ -119,6 +119,17 @@ post "queries run (structured)" "/api/v1/queries/run" '{"schema_version":"v1","m
 post "queries run (keyword)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"keyword","scope":{"resource":"assets"},"where":{"pred":{"field":"_fulltext","op":"ilike","value":"warehouse"}},"page":{"page":1,"page_size":5}}' >/dev/null
 get "deliveries list" "/api/v1/deliveries?page=1&page_size=5"
 get "mcap-files list" "/api/v1/mcap-files?page=1&page_size=5"
+
+echo ""
+echo "--- § customers (CYB-1014) ---"
+if [[ "${RUN_WRITES:-0}" == "1" ]]; then
+	CUST_ID="smoke$(python3 -c "import secrets,string; print(''.join(secrets.choice(string.ascii_lowercase+string.digits) for _ in range(8)))")"
+	post "POST customers" "/api/v1/customers" "{\"customer_id\":\"${CUST_ID}\",\"display_name\":\"api-guide smoke\"}" >/dev/null
+	get "GET customers/{id}" "/api/v1/customers/${CUST_ID}"
+	get "deliveries by customer_id" "/api/v1/deliveries?page=1&page_size=5&customer_id=${CUST_ID}"
+else
+	echo "  skip customer write smoke — set RUN_WRITES=1 to exercise POST/GET /customers"
+fi
 get "metrics registry" "/api/v1/metrics/registry"
 
 echo ""
