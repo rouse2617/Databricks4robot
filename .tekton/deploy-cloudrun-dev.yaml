@@ -1,10 +1,9 @@
 ## Cyber Databrew — PR comment /deploy-cloudrun-dev → build backend image → deploy Cloud Run dev service.
 ##
-## Automatic path (same image/service): `push-backend-cloudrun-dev.yaml` on push to non-`main` when
-## `backend/**`, `deploy/cloudrun/**`, or that file changes (PAC CEL).
+## Push auto-deploy is OFF (`push-backend-cloudrun-dev.yaml` uses `on-cel-expression: false`).
 ##
-## Trigger:
-##   - Open PR targeting main
+## Trigger (manual):
+##   - Open PR targeting `main` or `dev`
 ##   - Comment exactly: /deploy-cloudrun-dev
 ##
 ## Required IAM for `tekton-builder` SA:
@@ -23,7 +22,7 @@ metadata:
   annotations:
     pipelinesascode.tekton.dev/on-comment: "^(/deploy-cloudrun-dev)$"
     pipelinesascode.tekton.dev/on-event: "[pull_request]"
-    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main, dev]"
     pipelinesascode.tekton.dev/on-path-change: "[backend/**, deploy/cloudrun/**, .tekton/deploy-cloudrun-dev.yaml]"
     pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
     pipelinesascode.tekton.dev/task: "git-clone"

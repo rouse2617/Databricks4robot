@@ -1,8 +1,8 @@
-## Cyber Databrew — push any branch except `main` → build → deploy Cloud Run **dev**.
+## Cyber Databrew — build → deploy Cloud Run **dev** (PipelineRun template).
 ##
-## `main` is handled by `push-frontend-cloudrun-prod.yaml` (prod path + optional deploy).
-## Backend mirror: `push-backend-cloudrun-dev.yaml` / `push-backend-cloudrun-prod.yaml`.
-## Matching uses PAC CEL (`on-cel-expression`), which overrides `on-event` / `on-target-branch` / `on-path-change`.
+## **Auto-deploy on `git push` is DISABLED** (same policy as backend). Manual: PR `/deploy-cloudrun-dev`
+## (backend only today) or local `deploy/cloudrun/frontend-dev.sh` per `docs/agents/deploy-before-commit.md`.
+## `main` prod: `push-frontend-cloudrun-prod.yaml`.
 ## Verify: tekton-builder granted roles/run.admin + iam.serviceAccountUser on default compute SA (PAC deploy).
 ##
 ## yaml-language-server: $schema=https://raw.githubusercontent.com/redhat-developer/vscode-tekton/refs/heads/main/scheme/tekton.dev/v1beta1_PipelineRun.json
@@ -11,16 +11,7 @@ kind: PipelineRun
 metadata:
   name: push-frontend-cloudrun-dev-{{revision}}
   annotations:
-    pipelinesascode.tekton.dev/on-cel-expression: |
-      event == "push"
-      && target_branch != "main"
-      && target_branch != "refs/heads/main"
-      && !target_branch.startsWith("refs/tags/")
-      && (
-        "Frontend/**".pathChanged()
-        || "deploy/cloudrun/**".pathChanged()
-        || ".tekton/push-frontend-cloudrun-dev.yaml".pathChanged()
-      )
+    pipelinesascode.tekton.dev/on-cel-expression: "false"
     pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
     pipelinesascode.tekton.dev/task: "git-clone"
     pipelinesascode.tekton.dev/max-keep-runs: "8"

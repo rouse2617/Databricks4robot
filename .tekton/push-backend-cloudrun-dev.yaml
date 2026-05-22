@@ -1,7 +1,12 @@
-## Cyber Databrew — push any branch except `main` → build backend image → deploy Cloud Run **dev**.
+## Cyber Databrew — build backend image → deploy Cloud Run **dev** (PipelineRun template).
 ##
-## Same trigger shape as `push-frontend-cloudrun-dev.yaml` (PAC CEL + pathChanged).
-## `main` is handled by `push-backend-cloudrun-prod.yaml`.
+## **Auto-deploy on `git push` is DISABLED** (team policy). PAC will not start this pipeline from push events.
+## Manual options:
+##   1. PR comment `/deploy-cloudrun-dev` → `deploy-cloudrun-dev.yaml` (PR → `main` or `dev`)
+##   2. Local: `docs/agents/deploy-before-commit.md` → `bash deploy/cloudrun/backend-dev.sh`
+##   3. Re-enable push trigger: set `on-cel-expression` below to the block in git history (pre-2026-05-22)
+##
+## `main` prod path: `push-backend-cloudrun-prod.yaml` (still push-triggered on `main`).
 ##
 ## Deploy flags mirror live `cyber-databrew-backend-dev` (gcloud describe, us-central1):
 ## 512Mi, concurrency 80, no CPU throttling, startup CPU boost, VPC connector `cr-central-conn`
@@ -14,16 +19,7 @@ kind: PipelineRun
 metadata:
   name: push-backend-cloudrun-dev-{{revision}}
   annotations:
-    pipelinesascode.tekton.dev/on-cel-expression: |
-      event == "push"
-      && target_branch != "main"
-      && target_branch != "refs/heads/main"
-      && !target_branch.startsWith("refs/tags/")
-      && (
-        "backend/**".pathChanged()
-        || "deploy/cloudrun/**".pathChanged()
-        || ".tekton/push-backend-cloudrun-dev.yaml".pathChanged()
-      )
+    pipelinesascode.tekton.dev/on-cel-expression: "false"
     pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
     pipelinesascode.tekton.dev/task: "git-clone"
     pipelinesascode.tekton.dev/max-keep-runs: "8"

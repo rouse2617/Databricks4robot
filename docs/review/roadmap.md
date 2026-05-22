@@ -49,18 +49,20 @@ Failure Mining  → 日常体验完备化  → 规模化支撑       → 数据�
 
 | 场景 | 定义文件 | 触发条件（简写） | 结果 |
 |---|---|---|---|
-| Dev 后端自动部署 | `.tekton/push-backend-cloudrun-dev.yaml` | `push` 且分支非 `main`，路径命中 `backend/**` or `deploy/cloudrun/**` or 该 YAML | build + push backend 镜像，deploy `cyber-databrew-backend-dev` |
-| Dev 前端自动部署 | `.tekton/push-frontend-cloudrun-dev.yaml` | `push` 且分支非 `main`，路径命中 `Frontend/**` or `deploy/cloudrun/**` or 该 YAML | build + push frontend 镜像，deploy `cyber-databrew-frontend-dev` |
+| Dev 后端 **手动** 部署 | `.tekton/deploy-cloudrun-dev.yaml` | PR → `main`/`dev`，评论 `/deploy-cloudrun-dev`，路径命中 `backend/**` 等 | build + deploy `cyber-databrew-backend-dev` |
+| Dev 后端 push 自动 | `.tekton/push-backend-cloudrun-dev.yaml` | **已关闭**（`on-cel-expression: false`） | 仅保留 Pipeline 定义；改用评论或本地 deploy |
+| Dev 前端 push 自动 | `.tekton/push-frontend-cloudrun-dev.yaml` | **已关闭** | 本地 `frontend-dev.sh` 或后续加前端评论流水线 |
+| Dev GKE push（legacy） | `.tekton/push-dev.yaml` | **已关闭** | 曾 push `dev` 分支 rollout GKE；现用手动 `/deploy-dev` 或 Cloud Run 路径 |
 | Prod 后端（main） | `.tekton/push-backend-cloudrun-prod.yaml` | `push` 到 `main`，路径命中 `backend/**` / `deploy/cloudrun/**` / 该 YAML | build + push；若 `cyber-databrew-backend-prod` 存在则 deploy，否则仅推镜像 |
 | Prod 前端（main） | `.tekton/push-frontend-cloudrun-prod.yaml` | `push` 到 `main`，路径命中 `Frontend/**` / `deploy/cloudrun/**` / 该 YAML | build + push；若 `cyber-databrew-frontend-prod` 存在则 deploy，否则仅推镜像 |
 | PR 评论触发（仅后端 dev） | `.tekton/deploy-cloudrun-dev.yaml` | PR 指向 `main`，评论精确 `/deploy-cloudrun-dev`，且路径命中 `backend/**`/`deploy/cloudrun/**` | build + deploy `cyber-databrew-backend-dev` |
 
 ### 关键约束（避免误触发）
 
-1. 修改 `deploy/cloudrun/**` 时，通常会**同时触发后端 + 前端 dev** 两条流水线。
-2. 只想部署后端时，尽量只改 `backend/**` 或后端 `.tekton` 文件；避免顺手改 `deploy/cloudrun/**`。
-3. 只想部署前端时，改动应落在 `Frontend/**`（目录大小写必须是大写 `F`）。
-4. PAC 闭环是“`git push` → PipelineRun”；本地 deploy 只能用于临时验证，不作为团队交付基线。
+1. **`git push` 到 `dev` / feature 分支不会自动部署 Cloud Run dev**（2026-05 起）。
+2. 部署 dev 后端：**PR 评论** `/deploy-cloudrun-dev`，或 Agent/开发者按 `docs/agents/deploy-before-commit.md` 本地 build + `backend-dev.sh`。
+3. Prod 仍可在 **`main` push** 时由 `push-*-cloudrun-prod.yaml` 自动 build（及 deploy，若服务存在）。
+4. 修改 `.tekton/*.yaml` 本身不会触发 deploy（push 触发已关）；合并后 PAC 重新加载定义即可。
 
 ### Agent / 开发者标准动作
 

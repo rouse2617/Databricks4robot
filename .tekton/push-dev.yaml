@@ -1,7 +1,7 @@
-# Cyber Databrew — quick dev path: push to branch `dev` → build → push image → rollout cyber-databrew-dev.
-# No PR required. Use: git checkout -b dev && git push -u origin dev
+# Cyber Databrew — build → push image → rollout GKE cyber-databrew-dev (PipelineRun template).
 #
-# Coexists with deploy-dev.yaml (PR + /deploy-dev). Prefer this for solo iteration.
+# **Auto-deploy on push to `dev` is DISABLED.** Manual: PR comment `/deploy-dev` (deploy-dev.yaml)
+# or local Cloud Run path in docs/agents/deploy-before-commit.md.
 #
 # yaml-language-server: $schema=https://raw.githubusercontent.com/redhat-developer/vscode-tekton/refs/heads/main/scheme/tekton.dev/v1beta1_PipelineRun.json
 apiVersion: tekton.dev/v1beta1
@@ -9,9 +9,7 @@ kind: PipelineRun
 metadata:
   name: push-dev-backend-{{revision}}
   annotations:
-    pipelinesascode.tekton.dev/on-event: "[push]"
-    pipelinesascode.tekton.dev/on-target-branch: "[dev]"
-    pipelinesascode.tekton.dev/on-path-change: "[backend/**, .tekton/push-dev.yaml]"
+    pipelinesascode.tekton.dev/on-cel-expression: "false"
     pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
     pipelinesascode.tekton.dev/task: "git-clone"
     pipelinesascode.tekton.dev/max-keep-runs: "10"

@@ -12,10 +12,10 @@ PipelineRun on matching git events.
 | `plan-service-identity.yaml` (TODO) | PR `deploy/iac/terraform/service-identity/**` | same |
 | `apply-*-iac.yaml` (TODO) | merge → main | `terraform apply` |
 | `build-backend.yaml` (TODO) | PR `backend/**` | BuildKit → `:<sha>` + `:pr-N` |
-| `deploy-cloudrun-dev.yaml` ✅ | PR comment `/deploy-cloudrun-dev` (PR → `main`) | BuildKit → deploy `cyber-databrew-backend-dev` on Cloud Run |
-| `push-backend-cloudrun-dev.yaml` ✅ | push **non-`main`** (CEL) + `backend/**` etc. | BuildKit → deploy `cyber-databrew-backend-dev` (flags match live dev: VPC, 512Mi, …) |
+| `deploy-cloudrun-dev.yaml` ✅ | PR comment `/deploy-cloudrun-dev` (PR → `main` or `dev`) | BuildKit → deploy `cyber-databrew-backend-dev` on Cloud Run (**manual**) |
+| `push-backend-cloudrun-dev.yaml` | ~~push auto~~ **disabled** (`on-cel-expression: false`) | Template only; use comment deploy or local `backend-dev.sh` |
 | `push-backend-cloudrun-prod.yaml` ✅ | push **`main`** + paths | BuildKit → deploy `cyber-databrew-backend-prod` **if** service exists (same runtime shape as dev deploy; tune after prod exists) |
-| `push-frontend-cloudrun-dev.yaml` ✅ | push **non-`main`** (CEL) + `Frontend/**` etc. | BuildKit → deploy `cyber-databrew-frontend-dev` (Cloud Run) |
+| `push-frontend-cloudrun-dev.yaml` | ~~push auto~~ **disabled** | Template only; local `frontend-dev.sh` when needed |
 | `push-frontend-cloudrun-prod.yaml` ✅ | push **`main`** + paths | BuildKit → deploy `cyber-databrew-frontend-prod` **if** service exists; else image-only |
 | `promote-backend.yaml` (TODO) | merge → main | retag `:dev-latest` + `:latest`, kubectl patch |
 | `build-frontend.yaml` (TODO) | PR `Frontend/**` | same as backend |

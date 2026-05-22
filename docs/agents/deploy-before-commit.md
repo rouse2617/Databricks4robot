@@ -123,7 +123,7 @@ gcloud run services describe cyber-databrew-frontend-dev \
 | frontend-dev | cyber-databrew-frontend:`<sha>` | cyber-databrew-frontend-dev-00xxx-xyz | https://… |
 ```
 
-**Tekton note:** CI push pipelines already tag images with `{{revision}}` (git commit). Local deploys should use the same `SHA` convention so dev matches CI.
+**Tekton / dev deploy policy:** Push to `dev` or feature branches **does not** auto-deploy Cloud Run (see `.tekton/push-*-cloudrun-dev.yaml`, `on-cel-expression: false`). Use **local** build + `backend-dev.sh` / `frontend-dev.sh` (this doc), or open a PR to `main`/`dev` and comment **`/deploy-cloudrun-dev`** on the PR. Prod `main` push pipelines are unchanged. Tag images with git `SHA` in both paths.
 
 ### Rollback (dev)
 
