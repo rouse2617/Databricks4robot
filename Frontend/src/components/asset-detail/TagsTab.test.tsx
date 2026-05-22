@@ -24,6 +24,6 @@ describe("TagsTab", () => {
 
 	it("renders add tag button", () => {
 		render(<TagsTab assetId="a1" tags={{}} onUpdate={vi.fn()} />);
-		expect(screen.getByText("新增标签")).toBeTruthy();
+		expect(screen.getByText("添加标签")).toBeTruthy();
 	});
 });

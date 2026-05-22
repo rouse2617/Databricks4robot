@@ -58,7 +58,7 @@ func (m *mockDeliveryRepoForAsset) ListByAsset(_ context.Context, _ string) ([]s
 func (m *mockDeliveryRepoForAsset) ListItems(context.Context, string) ([]*models.DeliveryItem, error) {
 	return []*models.DeliveryItem{}, nil
 }
-func (m *mockDeliveryRepoForAsset) List(_ context.Context, _, _ int, _ string) ([]*models.Delivery, int64, error) {
+func (m *mockDeliveryRepoForAsset) List(_ context.Context, _, _ int, _ string, _ string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
 }
 
@@ -722,7 +722,10 @@ func TestUpsertTagAndDeleteTag(t *testing.T) {
 	r.POST("/assets/:id/tags", h.UpsertTag)
 	r.DELETE("/assets/:id/tags/:key", h.DeleteTag)
 
-	w := doReq(t, r, http.MethodPost, "/assets/aaaaaaaa/tags", map[string]any{"key": "quality", "value": "good"})
+	w := doReq(t, r, http.MethodPost, "/assets/aaaaaaaa/tags", map[string]any{
+		"key": "quality", "value": "good",
+		"source_type": "human", "source_name": "tester",
+	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 from upsert tag, got %d", w.Code)
 	}
@@ -882,16 +885,20 @@ func newHandlerAssetTagRepo() *handlerAssetTagRepo {
 
 func tagRowKey(assetID, tagKey string) string { return assetID + "|" + tagKey }
 
-func (m *handlerAssetTagRepo) Upsert(_ context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error {
+func (m *handlerAssetTagRepo) Upsert(_ context.Context, in repository.AssetTagUpsertInput) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.rows[tagRowKey(assetID, tagKey)] = &models.AssetTag{
-		AssetID:    assetID,
-		TagKey:     tagKey,
-		TagValue:   tagValue,
-		TagType:    tagType,
-		SourceType: sourceType,
-		UpdatedAt:  time.Now().UTC(),
+	m.rows[tagRowKey(in.AssetID, in.TagKey)] = &models.AssetTag{
+		AssetID:       in.AssetID,
+		TagKey:        in.TagKey,
+		TagValue:      in.TagValue,
+		TagType:       in.TagType,
+		SourceType:    in.SourceType,
+		SourceName:    in.SourceName,
+		SourceVersion: in.SourceVersion,
+		RunID:         in.RunID,
+		AppliedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 	return nil
 }
@@ -909,10 +916,16 @@ func (m *handlerAssetTagRepo) ListByAsset(_ context.Context, assetID string) ([]
 	return out, nil
 }
 
-func (m *handlerAssetTagRepo) Delete(_ context.Context, assetID, tagKey string) error {
+func (m *handlerAssetTagRepo) Delete(_ context.Context, assetID, tagKey, sourceType string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.rows, tagRowKey(assetID, tagKey))
+	if sourceType == "" {
+		delete(m.rows, tagRowKey(assetID, tagKey))
+		return nil
+	}
+	if row, ok := m.rows[tagRowKey(assetID, tagKey)]; ok && row.SourceType == sourceType {
+		delete(m.rows, tagRowKey(assetID, tagKey))
+	}
 	return nil
 }
 

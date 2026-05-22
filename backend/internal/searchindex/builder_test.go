@@ -7,6 +7,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 // ── stub repositories ────────────────────────────────────────────────────────
@@ -36,13 +37,13 @@ type stubTagRepo struct {
 	tags []*models.AssetTag
 }
 
-func (s *stubTagRepo) Upsert(context.Context, string, string, string, string, string) error {
+func (s *stubTagRepo) Upsert(context.Context, repository.AssetTagUpsertInput) error {
 	return nil
 }
 func (s *stubTagRepo) ListByAsset(_ context.Context, _ string) ([]*models.AssetTag, error) {
 	return s.tags, nil
 }
-func (s *stubTagRepo) Delete(context.Context, string, string) error { return nil }
+func (s *stubTagRepo) Delete(context.Context, string, string, string) error { return nil }
 
 type stubAlgoRepo struct {
 	algos []*models.AssetAlgoLatest

@@ -8,6 +8,18 @@ export interface PaginatedResponse<T> {
 }
 
 // ─── Asset ───
+/** One row of `asset_tags`. Multi-source enabled by CYB-1015. */
+export interface AssetTagDetail {
+	tag_key: string;
+	tag_value: string;
+	tag_type?: string;
+	source_type: string;
+	source_name?: string;
+	source_version?: string;
+	run_id?: string;
+	applied_at?: string;
+}
+
 export interface Asset {
 	asset_id: string;
 	mcap_file_id: string;
@@ -29,6 +41,7 @@ export interface Asset {
 	delivery_count: number;
 	algo_results: Record<string, string>;
 	tags: Record<string, string>;
+	tags_detailed?: AssetTagDetail[];
 	files: Record<string, string>;
 	thumb_uri?: string;
 	storage_uri?: string;

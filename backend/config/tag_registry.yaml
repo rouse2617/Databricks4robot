@@ -1,3 +1,41 @@
+# Tag registry — governs `asset_tags` writes.
+#
+# Two sections:
+#
+#   tag_sources[]  → who may write each source; identity required fields;
+#                    whether assertions are immutable once written.
+#   tags{}         → which tag keys are known + per-key value rules.
+#
+# See docs/review/unified-asset-catalog/design/asset-tagging.md §5 for the
+# full design including propagation rules (P1.5 — not enforced here).
+
+tag_sources:
+  - source: human
+    description: "人工标注 / 运营手工"
+    requires_source_name: true            # must record labeler / ops user_id
+    immutable: false
+
+  - source: algo_sdk
+    description: "算法 worker 通过 SDK 写入"
+    requires_source_name: true            # algo name
+    requires_source_version: true         # algo version
+    immutable: true                       # algorithm assertions are append-only
+
+  - source: rule_engine
+    description: "规则引擎派生"
+    requires_source_name: true            # rule name
+    requires_source_version: true         # rule version
+    immutable: false                      # rule may recompute
+
+  - source: system
+    description: "平台自动 / 运营配置"
+    immutable: false
+
+  - source: compliance
+    description: "合规审查"
+    requires_source_name: true            # reviewer / policy id
+    immutable: true                       # compliance assertions cannot be rewritten
+
 tags:
   priority:
     description: "处理优先级"

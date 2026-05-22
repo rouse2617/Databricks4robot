@@ -7,6 +7,8 @@ const (
 	CodeInvalidFilter          = "INVALID_FILTER"
 	CodeInvalidState           = "INVALID_STATE"
 	CodeInvalidTag             = "INVALID_TAG"
+	CodeTagSourceInvalid       = "TAG_SOURCE_INVALID"
+	CodeTagImmutable           = "TAG_IMMUTABLE"
 	CodeAssetNotFound          = "ASSET_NOT_FOUND"
 	CodeAssetNotPreviewable    = "ASSET_NOT_PREVIEWABLE"
 	CodeMcapFileNotFound       = "MCAP_FILE_NOT_FOUND"

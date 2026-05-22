@@ -6,6 +6,10 @@ import (
 )
 
 // AssetTag represents a row in the asset_tags projection table.
+//
+// As of CYB-1015 multiple rows may share the same (asset_id, tag_key) as
+// long as (source_type, source_version) differs. AppliedAt is the moment
+// the source declared this assertion; CreatedAt is the row's first insert.
 type AssetTag struct {
 	AssetID       string    `json:"asset_id"`
 	TagKey        string    `json:"tag_key"`
@@ -17,6 +21,7 @@ type AssetTag struct {
 	RunID         string    `json:"run_id,omitempty"`
 	TenantID      string    `json:"tenant_id,omitempty"`
 	ProjectID     string    `json:"project_id,omitempty"`
+	AppliedAt     time.Time `json:"applied_at"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

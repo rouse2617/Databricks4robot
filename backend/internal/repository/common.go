@@ -65,12 +65,34 @@ type IdempotencyRepository interface {
 	Save(ctx context.Context, rec *IdempotencyRecord) error
 }
 
+// AssetTagUpsertInput captures the full identity + payload of a single
+// `asset_tags` write. As of CYB-1015 the row identity is
+// (asset_id, tag_key, tag_value, source_type, source_version) — multiple
+// sources may coexist on the same (asset_id, tag_key).
+type AssetTagUpsertInput struct {
+	AssetID       string
+	TagKey        string
+	TagValue      string
+	TagType       string
+	SourceType    string
+	SourceName    string
+	SourceVersion string
+	RunID         string
+	TenantID      string
+	ProjectID     string
+}
+
 // AssetTagRepository defines persistence operations for the asset_tags
 // projection table.
 type AssetTagRepository interface {
-	Upsert(ctx context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error
+	// Upsert inserts or refreshes a single tag assertion. Idempotent on
+	// (asset_id, tag_key, tag_value, source_type, source_version).
+	Upsert(ctx context.Context, in AssetTagUpsertInput) error
 	ListByAsset(ctx context.Context, assetID string) ([]*models.AssetTag, error)
-	Delete(ctx context.Context, assetID, tagKey string) error
+	// Delete removes tag rows for (assetID, tagKey). When sourceType is the
+	// empty string all sources for the key are removed; otherwise only the
+	// matching source is deleted.
+	Delete(ctx context.Context, assetID, tagKey, sourceType string) error
 }
 
 // AssetAlgoLatestRepository is the source-of-truth store for per-algorithm
