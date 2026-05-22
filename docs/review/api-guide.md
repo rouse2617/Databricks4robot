@@ -446,7 +446,41 @@ curl "$BASE/api/v1/assets/{asset_id}/deliveries?page=1&page_size=20" \
 }
 ```
 
-### 1.7 获取资产 MCAP 定位（用于预览/流式读取）
+### 1.7 获取资产溯源（版本历史 + 血缘）
+
+`GET /api/v1/assets/{asset_id}/provenance`
+
+返回同一 `logical_asset_id` 下的全部修订版本、`version_promoted` 时间线，以及与 `GET /assets/{id}/lineage` 相同结构的上下游血缘快照。
+
+```bash
+curl "$BASE/api/v1/assets/{asset_id}/provenance" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`（节选）：
+```json
+{
+  "asset_id": "bbbbbbbb",
+  "logical_asset_id": "aaaaaaaa",
+  "revisions": [
+    {"asset_id": "aaaaaaaa", "revision": 1, "is_current": false, "created_at": "2026-05-20T10:00:00Z"},
+    {"asset_id": "bbbbbbbb", "revision": 2, "is_current": true, "created_at": "2026-05-21T10:00:00Z"}
+  ],
+  "version_history": [
+    {"version": 1, "asset_id": "aaaaaaaa", "promoted_at": "2026-05-20T10:00:00Z"},
+    {"version": 2, "asset_id": "bbbbbbbb", "promoted_at": "2026-05-21T10:00:00Z", "by_run_id": "run-99", "reason": "algo rerun"}
+  ],
+  "lineage": {
+    "asset_id": "bbbbbbbb",
+    "upstream": {"mcap_file_id": "z7zyx6sl"},
+    "downstream": {"algo_results": [], "deliveries": [], "eval_results": []}
+  }
+}
+```
+
+错误：`404` + `ASSET_NOT_FOUND`（资产不存在）；`400` + `INVALID_ARGUMENT`（非法 `asset_id`）。
+
+### 1.8 获取资产 MCAP 定位（用于预览/流式读取）
 
 `GET /api/v1/assets/{asset_id}/mcap-locator`
 

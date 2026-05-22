@@ -37,6 +37,10 @@ func (r *testAssetRepo) ListByMcapFile(_ context.Context, _ string) ([]*models.A
 	return nil, nil
 }
 
+func (r *testAssetRepo) ListByLogicalAssetID(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
+
 func (r *testAssetRepo) WriteSegmentIndex(_ context.Context, _ *models.Asset) error {
 	return nil
 }

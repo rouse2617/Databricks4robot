@@ -262,115 +262,47 @@ func (h *Handler) GetLineage(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "valid asset_id is required", nil)
 		return
 	}
-
 	if h.pg == nil {
 		httpresp.Error(c, http.StatusServiceUnavailable, "PG_DISABLED", "postgres not available", nil)
 		return
 	}
+	body, _ := h.buildLineageResponse(c.Request.Context(), assetID)
+	c.JSON(200, body)
+}
 
-	type algoEntry struct {
-		AlgoName    string `json:"algo_name"`
-		AlgoVersion string `json:"algo_version"`
-		Status      string `json:"status"`
-		RunID       string `json:"run_id,omitempty"`
-		OutputURI   string `json:"output_uri,omitempty"`
+// GetProvenance returns version history, revisions, and structural lineage for an asset.
+// @Summary      Get asset provenance
+// @Description  Version timeline and revision list for the logical asset family, plus lineage snapshot
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/provenance [get]
+func (h *Handler) GetProvenance(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
 	}
-	type deliveryEntry struct {
-		DeliveryID  string `json:"delivery_id"`
-		CustomerID  string `json:"customer_id"`
-		DeliveredAt string `json:"delivered_at,omitempty"`
-	}
-	type evalEntry struct {
-		EvalName    string  `json:"eval_name"`
-		MetricKey   string  `json:"metric_key"`
-		MetricValue float64 `json:"metric_value,omitempty"`
-	}
-
-	ctx := c.Request.Context()
-
-	// Upstream: MCAP file
-	var mcapFileID, mcapURI, ingestState string
-	err := h.pg.QueryRow(ctx, `
-		SELECT mcap_file_id, COALESCE(storage_uri,''), COALESCE(ingest_state,'')
-		FROM mcap_files
-		WHERE mcap_file_id = (SELECT mcap_file_id FROM assets WHERE asset_id = $1)
-	`, assetID).Scan(&mcapFileID, &mcapURI, &ingestState)
-	upstream := gin.H{}
-	if err == nil && mcapFileID != "" {
-		upstream["mcap_file_id"] = mcapFileID
-		upstream["mcap_uri"] = mcapURI
-		upstream["ingest_state"] = ingestState
-	}
-
-	// Downstream: algo results
-	algoRows, _ := h.pg.Query(ctx, `
-		SELECT algo_name, algo_version, status, COALESCE(run_id,''), COALESCE(output_uri,'')
-		FROM asset_algo_latest
-		WHERE asset_id = $1
-		ORDER BY algo_name
-	`, assetID)
-	algos := []algoEntry{}
-	if algoRows != nil {
-		defer algoRows.Close()
-		for algoRows.Next() {
-			var a algoEntry
-			if err := algoRows.Scan(&a.AlgoName, &a.AlgoVersion, &a.Status, &a.RunID, &a.OutputURI); err == nil {
-				algos = append(algos, a)
-			}
+	res, err := h.uc.GetProvenance(c.Request.Context(), assetID)
+	if err != nil {
+		if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
 		}
+		httpresp.Internal(c, err.Error())
+		return
 	}
-
-	// Downstream: deliveries
-	delRows, _ := h.pg.Query(ctx, `
-		SELECT d.delivery_id, d.customer_id, d.delivered_at
-		FROM delivery_items di
-		JOIN deliveries d ON d.delivery_id = di.delivery_id
-		WHERE di.asset_id = $1
-		ORDER BY d.delivered_at DESC
-		LIMIT 20
-	`, assetID)
-	deliveries := []deliveryEntry{}
-	if delRows != nil {
-		defer delRows.Close()
-		for delRows.Next() {
-			var d deliveryEntry
-			var deliveredAt *time.Time
-			if err := delRows.Scan(&d.DeliveryID, &d.CustomerID, &deliveredAt); err == nil {
-				if deliveredAt != nil {
-					d.DeliveredAt = deliveredAt.Format(time.RFC3339)
-				}
-				deliveries = append(deliveries, d)
-			}
-		}
-	}
-
-	// Downstream: eval results
-	evalRows, _ := h.pg.Query(ctx, `
-		SELECT eval_name, metric_key, COALESCE(metric_value,0)
-		FROM asset_eval_results
-		WHERE asset_id = $1
-		ORDER BY created_at DESC
-		LIMIT 20
-	`, assetID)
-	evals := []evalEntry{}
-	if evalRows != nil {
-		defer evalRows.Close()
-		for evalRows.Next() {
-			var e evalEntry
-			if err := evalRows.Scan(&e.EvalName, &e.MetricKey, &e.MetricValue); err == nil {
-				evals = append(evals, e)
-			}
-		}
-	}
-
+	lineage, _ := h.buildLineageResponse(c.Request.Context(), assetID)
 	c.JSON(200, gin.H{
-		"asset_id": assetID,
-		"upstream": upstream,
-		"downstream": gin.H{
-			"algo_results": algos,
-			"deliveries":   deliveries,
-			"eval_results": evals,
-		},
+		"asset_id":         res.AssetID,
+		"logical_asset_id": res.LogicalAssetID,
+		"revisions":        res.Revisions,
+		"version_history":  res.VersionHistory,
+		"lineage":          lineage,
 	})
 }
 

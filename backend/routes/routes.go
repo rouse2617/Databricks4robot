@@ -133,6 +133,7 @@ func RegisterAll(
 		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
 		assets.GET("/:id/events", assetHandler.ListEvents)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
+		assets.GET("/:id/provenance", assetHandler.GetProvenance)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
 		assets.POST("/:id/tags", assetHandler.UpsertTag)
 		assets.DELETE("/:id/tags/:key", assetHandler.DeleteTag)

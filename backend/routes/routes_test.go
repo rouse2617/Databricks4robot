@@ -36,6 +36,9 @@ func (r *routeAssetRepo) SoftDelete(context.Context, string) error       { retur
 func (r *routeAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return []*models.Asset{}, nil
 }
+func (r *routeAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *routeAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
 func (r *routeAssetRepo) ListWithFilters(context.Context, string, []interface{}, int, int, filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil

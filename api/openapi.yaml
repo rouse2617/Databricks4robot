@@ -510,6 +510,35 @@ components:
           type: integer
           format: int64
           nullable: true
+    VersionHistoryEntry:
+      type: object
+      properties:
+        version: { type: integer, format: int64 }
+        asset_id: { type: string }
+        promoted_at: { type: string, format: date-time }
+        by_run_id: { type: string }
+        reason: { type: string }
+    RevisionSummary:
+      type: object
+      properties:
+        asset_id: { type: string }
+        revision: { type: integer, format: int64 }
+        is_current: { type: boolean }
+        created_at: { type: string, format: date-time }
+    AssetProvenanceResponse:
+      type: object
+      properties:
+        asset_id: { type: string }
+        logical_asset_id: { type: string }
+        revisions:
+          type: array
+          items: { $ref: '#/components/schemas/RevisionSummary' }
+        version_history:
+          type: array
+          items: { $ref: '#/components/schemas/VersionHistoryEntry' }
+        lineage:
+          type: object
+          additionalProperties: true
     TagUpsertRequest:
       type: object
       required: [key, value]
@@ -2267,6 +2296,33 @@ paths:
               schema: { $ref: '#/components/schemas/AssetEventListResponse' }
         '400':
           description: "Invalid path id or query (INVALID_ARGUMENT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/provenance:
+    get:
+      summary: Get asset provenance (version history + lineage)
+      description: |
+        Returns revision list and version_history for the asset logical family,
+        plus the same structural lineage snapshot as GET /assets/{id}/lineage.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetProvenanceResponse' }
+        '400':
+          description: "Invalid path id (INVALID_ARGUMENT)"
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

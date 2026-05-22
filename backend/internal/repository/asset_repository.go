@@ -35,6 +35,8 @@ type AssetRepository interface {
 	Set(ctx context.Context, a *models.Asset) error
 	SoftDelete(ctx context.Context, assetID string) error
 	ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error)
+	// ListByLogicalAssetID returns non-deleted revisions for a logical asset family.
+	ListByLogicalAssetID(ctx context.Context, logicalAssetID string) ([]*models.Asset, error)
 	WriteSegmentIndex(ctx context.Context, a *models.Asset) error
 
 	// ListWithFilters queries assets using a parameterized WHERE clause.

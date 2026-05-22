@@ -28,6 +28,9 @@ func (s *stubAssetRepo) SoftDelete(context.Context, string) error       { return
 func (s *stubAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return nil, nil
 }
+func (s *stubAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (s *stubAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
 func (s *stubAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil

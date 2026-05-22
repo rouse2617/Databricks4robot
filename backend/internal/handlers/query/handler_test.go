@@ -39,6 +39,9 @@ func (r *stubAssetRepo) SoftDelete(context.Context, string) error              {
 func (r *stubAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return nil, nil
 }
+func (r *stubAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *stubAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
 
 func (r *stubAssetRepo) ListWithFilters(_ context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error) {

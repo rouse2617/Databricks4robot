@@ -161,6 +161,8 @@ type AssetEventRepository interface {
 	// ordered by event_seq (outbox relay publishing horizon).
 	ListPendingSafe(ctx context.Context, safetyLag time.Duration, limit int) ([]*models.AssetEvent, error)
 	ListByAsset(ctx context.Context, assetID string, opts AssetEventListOptions) ([]*models.AssetEvent, error)
+	// ListVersionPromotedByLogical returns version_promoted events for all revisions in a family.
+	ListVersionPromotedByLogical(ctx context.Context, logicalAssetID string) ([]*models.AssetEvent, error)
 	// ListGlobal returns recent events across all assets, ordered by event_seq DESC.
 	// Used by the global events page (/events) for operational visibility.
 	ListGlobal(ctx context.Context, opts AssetEventListOptions) ([]*models.AssetEvent, error)

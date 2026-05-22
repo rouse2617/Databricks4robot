@@ -95,6 +95,9 @@ func (m *mockAssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) (
 	}
 	return nil, nil
 }
+func (m *mockAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (m *mockAssetRepo) WriteSegmentIndex(ctx context.Context, a *models.Asset) error {
 	if m.writeSegIndexFn != nil {
 		return m.writeSegIndexFn(ctx, a)
@@ -1054,6 +1057,10 @@ func (m *handlerAssetEventRepo) ListBetweenSeq(context.Context, int64, int64, in
 
 func (m *handlerAssetEventRepo) PublishStateCounts(context.Context) (map[string]int64, error) {
 	return map[string]int64{}, nil
+}
+
+func (m *handlerAssetEventRepo) ListVersionPromotedByLogical(context.Context, string) ([]*models.AssetEvent, error) {
+	return nil, nil
 }
 
 func (m *handlerAssetEventRepo) ListByAsset(_ context.Context, assetID string, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {

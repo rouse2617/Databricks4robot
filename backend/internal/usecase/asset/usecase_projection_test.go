@@ -119,6 +119,9 @@ func (r *readModelAssetRepo) SoftDelete(context.Context, string) error { return 
 func (r *readModelAssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error) {
 	return r.listByMcapFileFn(ctx, mcapFileID)
 }
+func (r *readModelAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *readModelAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
 func (r *readModelAssetRepo) ListWithFilters(ctx context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return r.listWithFiltersFn(ctx, whereSQL, args, page, pageSize, orderBy)

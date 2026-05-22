@@ -139,6 +139,7 @@ LIST_RAW=$(curl -sS --max-time 20 -X POST "${API_HDR[@]}" "${BASE}/api/v1/querie
 AID=$(echo "$LIST_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['items'][0]['asset_id'])" 2>/dev/null || echo "")
 if [[ -n "$AID" ]]; then
 	get "asset by id" "/api/v1/assets/${AID}"
+	get "asset provenance" "/api/v1/assets/${AID}/provenance"
 else
 	echo "  skip GET asset/{id} — could not parse list"
 fi

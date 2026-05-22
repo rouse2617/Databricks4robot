@@ -32,6 +32,9 @@ func (r *stubAssetRepo) SoftDelete(context.Context, string) error       { return
 func (r *stubAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return nil, nil
 }
+func (r *stubAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *stubAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
 func (r *stubAssetRepo) ListWithFilters(context.Context, string, []interface{}, int, int, filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
@@ -103,6 +106,9 @@ func (r *fakeEventRepo) ListPendingSafe(context.Context, time.Duration, int) ([]
 	return nil, nil
 }
 func (r *fakeEventRepo) ListByAsset(context.Context, string, repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
+	return nil, nil
+}
+func (r *fakeEventRepo) ListVersionPromotedByLogical(context.Context, string) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
 

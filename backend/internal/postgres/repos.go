@@ -510,6 +510,89 @@ ORDER BY start_timestamp_ns`
 	return out, nil
 }
 
+func (r *AssetRepo) ListByLogicalAssetID(ctx context.Context, logicalAssetID string) ([]*models.Asset, error) {
+	const q = `
+SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_locator,
+  COALESCE(lifecycle_state, ''), COALESCE(asset_type, ''), COALESCE(duration_ms, 0),
+  COALESCE(owner, ''), COALESCE(reviewer, ''), COALESCE(delivery_count, 0), last_delivered_at, COALESCE(last_delivered_to, ''),
+  COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
+  parent_asset_id, root_asset_id, tenant_id, project_id,
+  metadata, files, algo_inputs_uris, annot_inputs_uris,
+  logical_asset_id, revision, is_current,
+  created_at, updated_at, version
+FROM assets
+WHERE logical_asset_id = $1 AND is_deleted = FALSE
+ORDER BY revision ASC NULLS LAST, created_at ASC`
+	rows, err := r.c.db.Query(ctx, q, logicalAssetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.ListByLogicalAssetID: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.Asset
+	for rows.Next() {
+		var (
+			a               models.Asset
+			lifecycleState  string
+			segLoc          *string
+			parentID        *string
+			rootID          *string
+			tenantID        *string
+			projectID       *string
+			metadataBytes   []byte
+			filesBytes      []byte
+			algoInputsURIs  []byte
+			annotInputsURIs []byte
+			logicalID       *string
+			revision        *int64
+			isCurrent       *bool
+		)
+		if err := rows.Scan(
+			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
+			&lifecycleState, &a.AssetType, &a.DurationMs,
+			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
+			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
+			&parentID, &rootID, &tenantID, &projectID,
+			&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
+			&logicalID, &revision, &isCurrent,
+			&a.CreatedAt, &a.UpdatedAt, &a.Version,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.ListByLogicalAssetID scan: %w", err)
+		}
+		finishAssetVersionFields(&a, logicalID, revision, isCurrent)
+		a.LifecycleState = lifecycleState
+		if segLoc != nil {
+			a.SegmentLocator = *segLoc
+		}
+		if parentID != nil {
+			a.ParentAssetID = *parentID
+		}
+		if rootID != nil {
+			a.RootAssetID = *rootID
+		}
+		if tenantID != nil {
+			a.TenantID = *tenantID
+		}
+		if projectID != nil {
+			a.ProjectID = *projectID
+		}
+		if len(metadataBytes) > 0 {
+			_ = json.Unmarshal(metadataBytes, &a.Metadata)
+		}
+		if len(filesBytes) > 0 {
+			_ = json.Unmarshal(filesBytes, &a.FilesJSON)
+		}
+		if len(algoInputsURIs) > 0 {
+			_ = json.Unmarshal(algoInputsURIs, &a.AlgoInputsURIs)
+		}
+		if len(annotInputsURIs) > 0 {
+			_ = json.Unmarshal(annotInputsURIs, &a.AnnotInputsURIs)
+		}
+		a.SyncLegacyFields()
+		out = append(out, &a)
+	}
+	return out, nil
+}
+
 // No-op for postgres mode: query path uses table indexes directly.
 func (r *AssetRepo) WriteSegmentIndex(ctx context.Context, a *models.Asset) error {
 	_ = ctx
@@ -2027,6 +2110,44 @@ LIMIT ` + limitParam
 			&e.OccurredAt, &e.CreatedAt, &e.PublishedAt,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetEventRepo.ListByAsset scan: %w", err)
+		}
+		out = append(out, &e)
+	}
+	return out, nil
+}
+
+func (r *AssetEventRepo) ListVersionPromotedByLogical(ctx context.Context, logicalAssetID string) ([]*models.AssetEvent, error) {
+	const q = `
+SELECT ae.event_id, ae.event_seq, ae.event_type, ae.aggregate_type, ae.payload_schema_version,
+  COALESCE(ae.asset_id::text, ''), COALESCE(ae.mcap_file_id::text, ''),
+  COALESCE(ae.tenant_id, ''), COALESCE(ae.project_id, ''),
+  ae.event_source, ae.publish_state, ae.event_payload,
+  ae.retry_count, COALESCE(ae.last_error, ''),
+  ae.occurred_at, ae.created_at, ae.published_at
+FROM asset_events ae
+JOIN assets a ON a.asset_id = ae.asset_id
+WHERE a.logical_asset_id = $1
+  AND a.is_deleted = FALSE
+  AND ae.event_type = 'version_promoted'
+ORDER BY a.revision ASC NULLS LAST, ae.event_seq ASC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, logicalAssetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetEventRepo.ListVersionPromotedByLogical: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.AssetEvent
+	for rows.Next() {
+		var e models.AssetEvent
+		if err := rows.Scan(
+			&e.EventID, &e.EventSeq, &e.EventType, &e.AggregateType, &e.PayloadSchemaVersion,
+			&e.AssetID, &e.McapFileID,
+			&e.TenantID, &e.ProjectID,
+			&e.EventSource, &e.PublishState, &e.EventPayload,
+			&e.RetryCount, &e.LastError,
+			&e.OccurredAt, &e.CreatedAt, &e.PublishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetEventRepo.ListVersionPromotedByLogical scan: %w", err)
 		}
 		out = append(out, &e)
 	}

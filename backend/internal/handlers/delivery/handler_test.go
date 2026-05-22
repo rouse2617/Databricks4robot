@@ -90,6 +90,9 @@ func (m *mockAssetEventRepo) ListPendingSafe(context.Context, time.Duration, int
 func (m *mockAssetEventRepo) ListByAsset(context.Context, string, repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
+func (m *mockAssetEventRepo) ListVersionPromotedByLogical(context.Context, string) ([]*models.AssetEvent, error) {
+	return nil, nil
+}
 
 func (m *mockAssetEventRepo) ListGlobal(_ context.Context, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil
