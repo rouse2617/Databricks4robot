@@ -44,9 +44,9 @@ type DeliveryRepository interface {
 	ListByAsset(ctx context.Context, assetID string) ([]string, error)
 	ListItems(ctx context.Context, deliveryID string) ([]*models.DeliveryItem, error)
 
-	// List returns a paginated list of deliveries, optionally filtered by status.
-	// status may be empty to return all deliveries.
-	List(ctx context.Context, page, pageSize int, status string) ([]*models.Delivery, int64, error)
+	// List returns a paginated list of deliveries, optionally filtered by status and customer_id.
+	// Empty status or customerID means no filter on that dimension.
+	List(ctx context.Context, page, pageSize int, status, customerID string) ([]*models.Delivery, int64, error)
 }
 
 // IdempotencyRecord stores one idempotent request result.

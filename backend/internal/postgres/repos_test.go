@@ -2226,7 +2226,7 @@ func TestDeliveryRepo_List_ReadsNewColumns(t *testing.T) {
 	}
 	repo := &DeliveryRepo{c: &Client{db: db}}
 
-	deliveries, total, err := repo.List(ctx, 1, 20, "")
+	deliveries, total, err := repo.List(ctx, 1, 20, "", "")
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
 	}

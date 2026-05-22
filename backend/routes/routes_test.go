@@ -73,7 +73,7 @@ func (r *routeDeliveryRepo) ListByAsset(context.Context, string) ([]string, erro
 func (r *routeDeliveryRepo) ListItems(context.Context, string) ([]*models.DeliveryItem, error) {
 	return []*models.DeliveryItem{{DeliveryID: "d1", AssetID: "aaaaaaaa"}}, nil
 }
-func (r *routeDeliveryRepo) List(context.Context, int, int, string) ([]*models.Delivery, int64, error) {
+func (r *routeDeliveryRepo) List(context.Context, int, int, string, string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
 }
 
@@ -90,10 +90,10 @@ func TestRegisterAll(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -183,10 +183,10 @@ func TestRemovedHealthzOutboxRoute(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz/outbox", nil)
 	w := httptest.NewRecorder()
@@ -202,11 +202,11 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	adminHandler := adminH.New(&routeAssetRepo{}, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Grace-Token", "dev-token")
@@ -232,11 +232,11 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	assetRepo := &routeAssetRepo{}
 	assetHandler := assetH.New(assetUC.New(assetRepo), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Grace-Token", "dev-token")
@@ -253,7 +253,7 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	cfg := &config.Config{GraceToken: "dev-token"}
 	// Pass nil actionHandler: routes only register when handler is non-nil,
 	// so verify both PATCH and DELETE paths are wired by exercising a real
@@ -261,7 +261,7 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 	// validation rather than 404 page-not-found, which is what we want to
 	// confirm the route is registered.
 	actionHandler := actionH.New(nil)
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil)
 
 	want := map[string]bool{
 		"PATCH /api/v1/assets/:id/actions/:action_id":  false,
@@ -286,10 +286,10 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"dev-token"}`))
 	req.Header.Set("Content-Type", "application/json")

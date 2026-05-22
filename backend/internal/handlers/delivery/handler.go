@@ -22,17 +22,18 @@ import (
 )
 
 type Handler struct {
-	repo      repository.DeliveryRepository
-	idemRepo  repository.IdempotencyRepository
-	eventRepo repository.AssetEventRepository
+	repo         repository.DeliveryRepository
+	idemRepo     repository.IdempotencyRepository
+	customerRepo repository.CustomerRepository
+	eventRepo    repository.AssetEventRepository
 }
 
-func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepository, eventRepo ...repository.AssetEventRepository) *Handler {
+func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepository, customerRepo repository.CustomerRepository, eventRepo ...repository.AssetEventRepository) *Handler {
 	var evt repository.AssetEventRepository
 	if len(eventRepo) > 0 {
 		evt = eventRepo[0]
 	}
-	return &Handler{repo: repo, idemRepo: idemRepo, eventRepo: evt}
+	return &Handler{repo: repo, idemRepo: idemRepo, customerRepo: customerRepo, eventRepo: evt}
 }
 
 func (h *Handler) appendDeliveryEvents(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string) error {
@@ -116,6 +117,22 @@ func (h *Handler) Commit(c *gin.Context) {
 			return
 		}
 	}
+	req.CustomerID = strings.TrimSpace(req.CustomerID)
+	if req.CustomerID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "customer_id is required", nil)
+		return
+	}
+	if h.customerRepo != nil {
+		ok, err := h.customerRepo.Exists(c.Request.Context(), req.CustomerID)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		if !ok {
+			httpresp.Unprocessable(c, httpresp.CodeInvalidArgument, "customer not found", map[string]any{"customer_id": req.CustomerID})
+			return
+		}
+	}
 	idemKey := c.GetHeader("Idempotency-Key")
 	if idemKey == "" {
 		httpresp.BadRequest(c, httpresp.CodeMissingIdempotencyKey, "Idempotency-Key header is required", nil)
@@ -177,8 +194,9 @@ func (h *Handler) Commit(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	page, pageSize := handlers.ParsePageParams(c.Query("page"), c.Query("page_size"))
 	status := c.Query("status")
+	customerID := strings.TrimSpace(c.Query("customer_id"))
 
-	items, total, err := h.repo.List(c.Request.Context(), page, pageSize, status)
+	items, total, err := h.repo.List(c.Request.Context(), page, pageSize, status, customerID)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return

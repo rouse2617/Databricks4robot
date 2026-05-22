@@ -1055,7 +1055,7 @@ WHERE asset_id = $2
 	return nil
 }
 
-func (r *DeliveryRepo) List(ctx context.Context, page, pageSize int, status string) ([]*models.Delivery, int64, error) {
+func (r *DeliveryRepo) List(ctx context.Context, page, pageSize int, status, customerID string) ([]*models.Delivery, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -1067,9 +1067,16 @@ func (r *DeliveryRepo) List(ctx context.Context, page, pageSize int, status stri
 	// Count query
 	countSQL := "SELECT COUNT(*) FROM deliveries WHERE is_deleted = FALSE"
 	var countArgs []interface{}
+	paramIdx := 1
 	if status != "" {
-		countSQL += " AND status = $1"
+		countSQL += fmt.Sprintf(" AND status = $%d", paramIdx)
 		countArgs = append(countArgs, status)
+		paramIdx++
+	}
+	if customerID != "" {
+		countSQL += fmt.Sprintf(" AND customer_id = $%d", paramIdx)
+		countArgs = append(countArgs, customerID)
+		paramIdx++
 	}
 	var total int64
 	if err := r.c.db.QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
@@ -1084,13 +1091,18 @@ func (r *DeliveryRepo) List(ctx context.Context, page, pageSize int, status stri
   created_at, updated_at, version
 FROM deliveries WHERE is_deleted = FALSE`
 	var dataArgs []interface{}
-	paramIdx := 1
+	dataParamIdx := 1
 	if status != "" {
-		dataSQL += fmt.Sprintf(" AND status = $%d", paramIdx)
+		dataSQL += fmt.Sprintf(" AND status = $%d", dataParamIdx)
 		dataArgs = append(dataArgs, status)
-		paramIdx++
+		dataParamIdx++
 	}
-	dataSQL += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	if customerID != "" {
+		dataSQL += fmt.Sprintf(" AND customer_id = $%d", dataParamIdx)
+		dataArgs = append(dataArgs, customerID)
+		dataParamIdx++
+	}
+	dataSQL += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", dataParamIdx, dataParamIdx+1)
 	dataArgs = append(dataArgs, pageSize, offset)
 
 	rows, err := r.c.db.Query(ctx, dataSQL, dataArgs...)

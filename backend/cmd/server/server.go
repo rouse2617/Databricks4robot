@@ -35,6 +35,7 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		core.asset,
 		core.mcap,
 		core.delivery,
+		core.customer,
 		core.algo,
 		lakehouseH.New(cfg.LakehouseReportPath, inf.lake, inf.pg).
 			WithBronzeCheckpoint(postgres.NewLakehouseBronzeCheckpointRepo(inf.pg)),

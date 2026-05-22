@@ -16,6 +16,7 @@ import (
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
@@ -39,6 +40,7 @@ func RegisterAll(
 	assetHandler *assetH.Handler,
 	mcapHandler *mcapH.Handler,
 	deliveryHandler *deliveryH.Handler,
+	customerHandler *customerH.Handler,
 	algoHandler *assetH.AlgoHandler,
 	lakehouseHandler *lakehouseH.Handler,
 	registryHandler *registryH.Handler,
@@ -159,6 +161,12 @@ func RegisterAll(
 		mcapFiles.GET("/:id", mcapHandler.GetFile)
 		mcapFiles.GET("/:id/bytes", mcapHandler.Bytes)
 		mcapFiles.HEAD("/:id/bytes", mcapHandler.Bytes)
+
+		if customerHandler != nil {
+			api.POST("/customers", customerHandler.Create)
+			api.GET("/customers/:customer_id", customerHandler.Get)
+			api.PATCH("/customers/:customer_id", customerHandler.Update)
+		}
 
 		api.POST("/deliveries", deliveryHandler.Commit)
 		api.GET("/deliveries", deliveryHandler.List)

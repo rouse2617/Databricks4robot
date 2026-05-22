@@ -3,6 +3,7 @@ package main
 import (
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
@@ -23,6 +24,7 @@ func setupCore(inf *infra) *coreHandlers {
 	assetEventRepo := postgres.NewAssetEventRepo(pg)
 	mcapRepo := postgres.NewMcapFileRepo(pg)
 	deliveryRepo := postgres.NewDeliveryRepo(pg)
+	customerRepo := postgres.NewCustomerRepo(pg)
 	evalRepo := postgres.NewEvalRepo(pg)
 	actionRepo := postgres.NewActionRepo(pg)
 	savedQueryRepo := postgres.NewSavedQueryRepo(pg)
@@ -45,7 +47,8 @@ func setupCore(inf *infra) *coreHandlers {
 		mcapHandler.SetBytesSource(inf.mcapBytesSource)
 	}
 
-	deliveryHandler := deliveryH.New(deliveryRepo, idempotencyRepo, assetEventRepo)
+	deliveryHandler := deliveryH.New(deliveryRepo, idempotencyRepo, customerRepo, assetEventRepo)
+	customerHandler := customerH.New(customerRepo)
 	evalHandler := evalH.New(evalRepo, inf.metricRegistry, assetEventRepo)
 	actionHandler := actionH.New(actionUC.NewWithLabelRegistry(pg, actionRepo, assetRepo, assetEventRepo, inf.actionLabelReg))
 
@@ -59,6 +62,7 @@ func setupCore(inf *infra) *coreHandlers {
 		algo:     algoHandler,
 		mcap:     mcapHandler,
 		delivery: deliveryHandler,
+		customer: customerHandler,
 		eval:     evalHandler,
 		action:   actionHandler,
 		query:    queryHandler,

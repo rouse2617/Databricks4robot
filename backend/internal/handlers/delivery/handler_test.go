@@ -58,7 +58,7 @@ func (m *mockDeliveryRepo) ListItems(ctx context.Context, deliveryID string) ([]
 	}
 	return []*models.DeliveryItem{}, nil
 }
-func (m *mockDeliveryRepo) List(_ context.Context, _, _ int, _ string) ([]*models.Delivery, int64, error) {
+func (m *mockDeliveryRepo) List(_ context.Context, _, _ int, _, _ string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
 }
 
@@ -161,7 +161,7 @@ func TestCommit(t *testing.T) {
 	)
 	repo := &mockDeliveryRepo{}
 	idem := &mockIdemRepo{}
-	h := New(repo, idem)
+	h := New(repo, idem, nil)
 	r := setupDeliveryRouter(http.MethodPost, "/deliveries", h.Commit)
 
 	w := doDeliveryReq(t, r, http.MethodPost, "/deliveries", map[string]any{"x": 1}, nil)
@@ -272,7 +272,7 @@ func TestGetAndListByCustomer(t *testing.T) {
 		getFn: func(context.Context, string) (*models.Delivery, error) { return nil, nil },
 	}
 	idem := &mockIdemRepo{}
-	h := New(repo, idem)
+	h := New(repo, idem, nil)
 
 	r := setupDeliveryRouter(http.MethodGet, "/deliveries/:id", h.Get)
 
@@ -332,7 +332,7 @@ func TestListItems(t *testing.T) {
 			}, nil
 		},
 	}
-	h := New(repo, &mockIdemRepo{})
+	h := New(repo, &mockIdemRepo{}, nil)
 	r := setupDeliveryRouter(http.MethodGet, "/deliveries/:id/items", h.ListItems)
 
 	// invalid UUID → 400
@@ -410,7 +410,7 @@ func TestCommit_AppendsAssetEvents(t *testing.T) {
 			return nil
 		},
 	}
-	h := New(repo, idem, eventRepo)
+	h := New(repo, idem, nil, eventRepo)
 	r := setupDeliveryRouter(http.MethodPost, "/deliveries", h.Commit)
 
 	w := doDeliveryReq(t, r, http.MethodPost, "/deliveries", map[string]any{
