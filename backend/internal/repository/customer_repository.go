@@ -16,4 +16,5 @@ type CustomerRepository interface {
 	Get(ctx context.Context, customerID string) (*models.Customer, error)
 	Update(ctx context.Context, c *models.Customer) error
 	Exists(ctx context.Context, customerID string) (bool, error)
+	List(ctx context.Context, status, slaTier, region string, limit int, cursor string) ([]*models.Customer, error)
 }

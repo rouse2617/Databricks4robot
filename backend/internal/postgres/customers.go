@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -136,6 +137,71 @@ func (r *CustomerRepo) Exists(ctx context.Context, customerID string) (bool, err
 		return false, fmt.Errorf("postgres CustomerRepo.Exists: %w", err)
 	}
 	return ok, nil
+}
+
+func (r *CustomerRepo) List(ctx context.Context, status, slaTier, region string, limit int, cursor string) ([]*models.Customer, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	args := []interface{}{}
+	where := []string{}
+	argIdx := 1
+
+	if status != "" {
+		where = append(where, fmt.Sprintf("status = $%d", argIdx))
+		args = append(args, status)
+		argIdx++
+	}
+	if slaTier != "" {
+		where = append(where, fmt.Sprintf("sla_tier = $%d", argIdx))
+		args = append(args, slaTier)
+		argIdx++
+	}
+	if region != "" {
+		where = append(where, fmt.Sprintf("region = $%d", argIdx))
+		args = append(args, region)
+		argIdx++
+	}
+	if cursor != "" {
+		where = append(where, fmt.Sprintf("customer_id > $%d", argIdx))
+		args = append(args, cursor)
+		argIdx++
+	}
+
+	q := `SELECT customer_id, display_name, COALESCE(legal_name, ''), status, COALESCE(region, ''),
+	  sla_tier, COALESCE(account_owner, ''),
+	  compliance_tags, exclude_tags, metadata, extra,
+	  onboarded_at, offboarded_at, created_at, updated_at, row_version
+	FROM customers`
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY customer_id ASC"
+	args = append(args, limit)
+	q += fmt.Sprintf(" LIMIT $%d", argIdx)
+
+	rows, err := r.c.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres CustomerRepo.List: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*models.Customer
+	for rows.Next() {
+		var c models.Customer
+		var complianceJSON, excludeJSON, metadataJSON, extraJSON []byte
+		if err := rows.Scan(
+			&c.CustomerID, &c.DisplayName, &c.LegalName, &c.Status, &c.Region,
+			&c.SLATier, &c.AccountOwner,
+			&complianceJSON, &excludeJSON, &metadataJSON, &extraJSON,
+			&c.OnboardedAt, &c.OffboardedAt, &c.CreatedAt, &c.UpdatedAt, &c.RowVersion,
+		); err != nil {
+			return nil, fmt.Errorf("postgres CustomerRepo.List scan: %w", err)
+		}
+		decodeCustomerJSON(&c, complianceJSON, excludeJSON, metadataJSON, extraJSON)
+		result = append(result, &c)
+	}
+	return result, nil
 }
 
 func customerJSONFields(c *models.Customer) (compliance, exclude, metadata, extra []byte) {
