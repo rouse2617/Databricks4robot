@@ -35,6 +35,20 @@ func NewEngine(
 }
 
 func (e *Engine) Check(ctx context.Context, customerID string, assetIDs []string) ([]Violation, error) {
+	return e.checkRules(ctx, customerID, assetIDs, "block")
+}
+
+// CheckAll evaluates ALL active rules (block, warn, tag_only) and returns
+// violations for every rule whose predicate matches. Used by the C2 commit
+// handler to distinguish hard blocks from soft warnings.
+func (e *Engine) CheckAll(ctx context.Context, customerID string, assetIDs []string) ([]Violation, error) {
+	return e.checkRules(ctx, customerID, assetIDs, "")
+}
+
+// checkRules is the shared implementation. When filterMode is non-empty only
+// rules with that enforce_mode are evaluated; when empty all active rules are
+// evaluated.
+func (e *Engine) checkRules(ctx context.Context, customerID string, assetIDs []string, filterMode string) ([]Violation, error) {
 	if e.rules == nil {
 		return nil, nil
 	}
@@ -56,7 +70,7 @@ func (e *Engine) Check(ctx context.Context, customerID string, assetIDs []string
 	}
 	var compiled []compiledRule
 	for _, r := range rules {
-		if r.EnforceMode != "block" {
+		if filterMode != "" && r.EnforceMode != filterMode {
 			continue
 		}
 		dsl, err := ParseQueryDSL(r.QueryDSL)

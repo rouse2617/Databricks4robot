@@ -1313,6 +1313,66 @@ ORDER BY delivered_at DESC NULLS LAST, created_at DESC`
 	return out, nil
 }
 
+// Update persists changes to an existing delivery using optimistic locking.
+// Returns repository.ErrOptimisticLock when expectedRowVersion does not match.
+func (r *DeliveryRepo) Update(ctx context.Context, d *models.Delivery, expectedRowVersion int64) error {
+	db := dbFromCtx(ctx, r.c.db)
+	now := time.Now().UTC()
+	d.UpdatedAt = now
+	d.Version = expectedRowVersion + 1
+
+	// Sync legacy fields (same logic as Set).
+	if d.ItemCount == 0 && d.AssetCount > 0 {
+		d.ItemCount = int64(d.AssetCount)
+	} else if d.AssetCount == 0 && d.ItemCount > 0 {
+		d.AssetCount = int(d.ItemCount)
+	}
+	if d.DeliveredBy == "" && d.Owner != "" {
+		d.DeliveredBy = d.Owner
+	} else if d.Owner == "" && d.DeliveredBy != "" {
+		d.Owner = d.DeliveredBy
+	}
+	if d.Metadata == nil {
+		d.Metadata = map[string]interface{}{}
+	}
+	if d.Note != "" {
+		d.Metadata["note"] = d.Note
+	}
+	metadataJSON, _ := json.Marshal(d.Metadata)
+
+	var tenantID, projectID interface{}
+	if d.TenantID != "" {
+		tenantID = d.TenantID
+	}
+	if d.ProjectID != "" {
+		projectID = d.ProjectID
+	}
+
+	const q = `
+UPDATE deliveries SET
+  customer_id=$1, status=$2, delivered_at=$3,
+  contract_id=$4, delivery_type=$5, requested_by=$6, approved_by=$7, delivered_by=$8,
+  manifest_uri=$9, replay_manifest_uri=$10, item_count=$11, total_size_bytes=$12,
+  completed_at=$13, metadata=$14::jsonb, tenant_id=$15, project_id=$16,
+  updated_at=$17, version=$18
+WHERE delivery_id=$19 AND version=$20 AND is_deleted=FALSE`
+	rowsAffected, err := db.ExecResult(ctx, q,
+		d.CustomerID, string(d.Status), d.DeliveredAt,
+		d.ContractID, d.DeliveryType, d.RequestedBy, d.ApprovedBy, d.DeliveredBy,
+		d.ManifestURI, d.ReplayManifestURI, d.ItemCount, d.TotalSizeBytes,
+		d.CompletedAt, metadataJSON, tenantID, projectID,
+		d.UpdatedAt, d.Version,
+		d.DeliveryID, expectedRowVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres DeliveryRepo.Update: %w", err)
+	}
+	if rowsAffected == 0 {
+		return repository.ErrOptimisticLock
+	}
+	return nil
+}
+
 type IdempotencyRepo struct {
 	c *Client
 }

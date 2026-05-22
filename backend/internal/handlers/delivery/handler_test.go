@@ -65,6 +65,9 @@ func (m *mockDeliveryRepo) List(_ context.Context, _, _ int, _, _ string) ([]*mo
 func (m *mockDeliveryRepo) WithTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
 }
+func (m *mockDeliveryRepo) Update(_ context.Context, _ *models.Delivery, _ int64) error {
+	return nil
+}
 
 type mockIdemRepo struct {
 	getFn  func(ctx context.Context, scope, key string) (*repository.IdempotencyRecord, error)

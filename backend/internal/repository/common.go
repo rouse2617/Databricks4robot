@@ -47,6 +47,10 @@ type DeliveryRepository interface {
 	// List returns a paginated list of deliveries, optionally filtered by status and customer_id.
 	// Empty status or customerID means no filter on that dimension.
 	List(ctx context.Context, page, pageSize int, status, customerID string) ([]*models.Delivery, int64, error)
+
+	// Update persists changes to an existing delivery using optimistic locking.
+	// Returns ErrOptimisticLock when expectedRowVersion does not match the current version.
+	Update(ctx context.Context, d *models.Delivery, expectedRowVersion int64) error
 }
 
 // IdempotencyRecord stores one idempotent request result.

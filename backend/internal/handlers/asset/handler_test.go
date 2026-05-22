@@ -61,6 +61,9 @@ func (m *mockDeliveryRepoForAsset) ListItems(context.Context, string) ([]*models
 func (m *mockDeliveryRepoForAsset) List(_ context.Context, _, _ int, _ string, _ string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
 }
+func (m *mockDeliveryRepoForAsset) Update(_ context.Context, _ *models.Delivery, _ int64) error {
+	return nil
+}
 
 func (m *mockAssetRepo) InsertNew(ctx context.Context, a *models.Asset) error {
 	if m.insertNewFn != nil {

@@ -79,6 +79,9 @@ func (r *routeDeliveryRepo) ListItems(context.Context, string) ([]*models.Delive
 func (r *routeDeliveryRepo) List(context.Context, int, int, string, string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
 }
+func (r *routeDeliveryRepo) Update(_ context.Context, _ *models.Delivery, _ int64) error {
+	return nil
+}
 
 type routeIdemRepo struct{}
 

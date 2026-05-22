@@ -304,6 +304,266 @@ func (h *Handler) ListByCustomer(c *gin.Context) {
 	})
 }
 
+// ─── C2 (two-step) delivery workflow ────────────────────────────────────────
+
+// HandleDraft creates a new delivery in "pending" status without running
+// the rule engine. Items are added later via HandleAddItems, then committed
+// via HandleCommitC2.
+func (h *Handler) HandleDraft(c *gin.Context) {
+	var req struct {
+		CustomerID string   `json:"customer_id" binding:"required"`
+		AssetIDs   []string `json:"asset_ids"`
+		ContractID string   `json:"contract_id"`
+		Note       string   `json:"note"`
+		Owner      string   `json:"owner"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	req.CustomerID = strings.TrimSpace(req.CustomerID)
+	if req.CustomerID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "customer_id is required", nil)
+		return
+	}
+	if h.customerRepo != nil {
+		ok, err := h.customerRepo.Exists(c.Request.Context(), req.CustomerID)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		if !ok {
+			httpresp.Unprocessable(c, httpresp.CodeInvalidArgument, "customer not found", map[string]any{"customer_id": req.CustomerID})
+			return
+		}
+	}
+	for _, raw := range req.AssetIDs {
+		if !id.ValidateAssetID(raw) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset_ids must be 8 alphanumeric characters", map[string]any{"asset_id": raw})
+			return
+		}
+	}
+
+	now := time.Now()
+	requestedBy := c.GetHeader("X-Request-ID") // fallback; prefer body field
+	if requestedBy == "" {
+		requestedBy = req.Owner
+	}
+	d := &models.Delivery{
+		DeliveryID:  uuid.NewString(),
+		CustomerID:  req.CustomerID,
+		Status:      models.DeliveryStatusPending,
+		ContractID:  req.ContractID,
+		Note:        req.Note,
+		Owner:       req.Owner,
+		RequestedBy: requestedBy,
+		AssetCount:  len(req.AssetIDs),
+		CreatedAt:   now,
+	}
+
+	if err := h.commitDelivery(c.Request.Context(), d, req.AssetIDs, c.GetHeader("X-Request-ID")); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	audit.Log(c.Request.Context(), "delivery.draft", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id": req.CustomerID,
+		"asset_count": len(req.AssetIDs),
+	})
+	c.JSON(http.StatusCreated, gin.H{
+		"delivery_id": d.DeliveryID,
+		"customer_id": d.CustomerID,
+		"status":      d.Status,
+		"asset_count": d.AssetCount,
+		"created_at":  d.CreatedAt,
+	})
+}
+
+// HandleAddItems batch-adds asset items to a pending delivery.
+func (h *Handler) HandleAddItems(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+	var req struct {
+		AssetIDs []string `json:"asset_ids" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	for _, raw := range req.AssetIDs {
+		if !id.ValidateAssetID(raw) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset_ids must be 8 alphanumeric characters", map[string]any{"asset_id": raw})
+			return
+		}
+	}
+
+	d, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+	if d.Status != models.DeliveryStatusPending {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only add items to pending deliveries",
+			map[string]any{"current_status": d.Status})
+		return
+	}
+
+	// Append items via WriteIndexes (idempotent ON CONFLICT).
+	for _, assetID := range req.AssetIDs {
+		if err := h.repo.WriteIndexes(c.Request.Context(), assetID, d); err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+	}
+
+	// Refresh delivery to reflect new item count.
+	d.AssetCount += len(req.AssetIDs)
+	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"delivery_id": d.DeliveryID,
+		"customer_id": d.CustomerID,
+		"status":      d.Status,
+		"asset_count": d.AssetCount,
+		"version":     d.Version,
+	})
+}
+
+// HandleCommitC2 commits a pending delivery after re-running the rule engine.
+// Enforce modes: block → reject violations; warn/tag_only → commit with warnings.
+func (h *Handler) HandleCommitC2(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+	var req struct {
+		ExpectedRevision int64  `json:"expected_revision"`
+		ApprovedBy       string `json:"approved_by"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+
+	d, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+	if d.Status != models.DeliveryStatusPending {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only commit pending deliveries",
+			map[string]any{"current_status": d.Status})
+		return
+	}
+	if d.Version != req.ExpectedRevision {
+		httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
+			"delivery has been modified since you last read it",
+			map[string]any{"expected_revision": req.ExpectedRevision, "current_version": d.Version})
+		return
+	}
+
+	// Collect asset IDs from delivery_items for rule evaluation.
+	items, err := h.repo.ListItems(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	var assetIDs []string
+	for _, item := range items {
+		assetIDs = append(assetIDs, item.AssetID)
+	}
+
+	// Run rule engine at commit time.
+	var warnings []deliveryrules.Violation
+	if h.ruleEngine != nil && len(assetIDs) > 0 {
+		violations, err := h.ruleEngine.CheckAll(c.Request.Context(), d.CustomerID, assetIDs)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		if len(violations) > 0 {
+			// Check if any violation has enforce_mode "block".
+			hasBlock := false
+			for _, v := range violations {
+				if v.EnforceMode == "block" {
+					hasBlock = true
+					break
+				}
+			}
+			if hasBlock {
+				httpresp.Unprocessable(c, httpresp.CodeDeliveryRuleFailed,
+					"one or more assets failed delivery rules",
+					map[string]any{"violations": violations},
+				)
+				return
+			}
+			// warn / tag_only → commit with warnings
+			warnings = violations
+		}
+	}
+
+	now := time.Now()
+	d.Status = models.DeliveryStatusDelivered
+	d.DeliveredAt = &now
+	d.CompletedAt = &now
+	d.ApprovedBy = req.ApprovedBy
+
+	if err := h.repo.Update(c.Request.Context(), d, req.ExpectedRevision); err != nil {
+		if err == repository.ErrOptimisticLock {
+			httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
+				"delivery has been modified concurrently",
+				map[string]any{"expected_revision": req.ExpectedRevision})
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	// Write indexes for all asset items (delivery_count, last_delivered_at, etc.)
+	for _, assetID := range assetIDs {
+		if err := h.repo.WriteIndexes(c.Request.Context(), assetID, d); err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+	}
+
+	audit.Log(c.Request.Context(), "delivery.commit_c2", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id": d.CustomerID,
+		"asset_count": len(assetIDs),
+	})
+
+	body := gin.H{
+		"delivery_id":  d.DeliveryID,
+		"customer_id":  d.CustomerID,
+		"status":       d.Status,
+		"delivered_at": d.DeliveredAt,
+		"approved_by":  d.ApprovedBy,
+		"asset_count":  d.AssetCount,
+		"version":      d.Version,
+	}
+	if len(warnings) > 0 {
+		body["warnings"] = warnings
+	}
+	c.JSON(http.StatusOK, body)
+}
+
 func paginateIDs(ids []string, page, pageSize int) ([]string, string) {
 	if len(ids) == 0 {
 		return []string{}, ""

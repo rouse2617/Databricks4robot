@@ -33,6 +33,7 @@ const (
 	DeliveryStatusAccepted  DeliveryStatus = "accepted"
 	DeliveryStatusRejected  DeliveryStatus = "rejected"
 	DeliveryStatusRecalled  DeliveryStatus = "recalled"
+	DeliveryStatusCancelled DeliveryStatus = "cancelled"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────

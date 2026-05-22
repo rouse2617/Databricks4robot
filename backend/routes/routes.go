@@ -195,6 +195,11 @@ func RegisterAll(
 		api.GET("/deliveries/:id/items", deliveryHandler.ListItems)
 		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
 
+		// C2 (two-step) delivery workflow: draft → add items → commit
+		api.POST("/deliveries/draft", deliveryHandler.HandleDraft)
+		api.POST("/deliveries/:id/items", deliveryHandler.HandleAddItems)
+		api.POST("/deliveries/:id/commit", deliveryHandler.HandleCommitC2)
+
 		// Registry endpoints (read-only, from YAML config)
 		api.GET("/algo-registry", registryHandler.AlgoRegistry)
 		api.GET("/tag-registry", registryHandler.TagRegistry)
