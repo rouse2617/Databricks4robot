@@ -377,6 +377,73 @@ components:
         metadata:
           type: object
           additionalProperties: true
+    DeliveryRuleQueryDSL:
+      type: object
+      required: [where]
+      properties:
+        where:
+          type: array
+          items:
+            type: object
+            required: [field, op]
+            properties:
+              field: { type: string }
+              op: { type: string }
+              value: {}
+        asset_types:
+          type: array
+          items: { type: string }
+    DeliveryRule:
+      type: object
+      properties:
+        rule_id: { type: string, format: uuid }
+        name: { type: string }
+        owner: { type: string }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        query_dsl: { $ref: '#/components/schemas/DeliveryRuleQueryDSL' }
+        dsl_version: { type: string }
+        enforce_mode:
+          type: string
+          enum: [block, warn, tag_only]
+        rating_scope:
+          type: string
+          enum: [current, logical]
+        is_active: { type: boolean }
+        version: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DeliveryRuleCreateRequest:
+      type: object
+      required: [name, owner, query_dsl]
+      properties:
+        name: { type: string }
+        owner: { type: string }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        query_dsl: { $ref: '#/components/schemas/DeliveryRuleQueryDSL' }
+        dsl_version: { type: string, default: v1 }
+        enforce_mode:
+          type: string
+          enum: [block, warn, tag_only]
+          default: block
+        rating_scope:
+          type: string
+          enum: [current, logical]
+          default: current
+        is_active: { type: boolean, default: true }
+    DeliveryRuleListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryRule' }
+    DeliveryRuleViolation:
+      type: object
+      properties:
+        asset_id: { type: string }
+        rule_id: { type: string }
+        rule_name: { type: string }
+        enforce_mode: { type: string }
+        reason: { type: string }
     AlgoRunCreateRequest:
       type: object
       required: [algo_name, algo_version, triggered_by]
@@ -2053,6 +2120,44 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/delivery-rules:
+    post:
+      summary: Create delivery rule
+      tags: [delivery-rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryRuleCreateRequest' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryRule' }
+        '400':
+          description: invalid argument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: customer not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      summary: List delivery rules
+      tags: [delivery-rules]
+      parameters:
+        - in: query
+          name: customer_id
+          schema: { $ref: '#/components/schemas/CustomerID' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryRuleListResponse' }
   /api/v1/customers/{customer_id}/deliveries:
     get:
       summary: List delivery IDs for customer
@@ -2124,7 +2229,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '422':
-          description: customer not found
+          description: customer not found or delivery rule failed
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

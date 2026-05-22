@@ -1,11 +1,13 @@
 package main
 
 import (
+	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
@@ -27,6 +29,7 @@ func setupCore(inf *infra) *coreHandlers {
 	mcapRepo := postgres.NewMcapFileRepo(pg)
 	deliveryRepo := postgres.NewDeliveryRepo(pg)
 	customerRepo := postgres.NewCustomerRepo(pg)
+	deliveryRuleRepo := postgres.NewDeliveryRuleRepo(pg)
 	algoRunRepo := postgres.NewAlgoRunRepo(pg)
 	evalRepo := postgres.NewEvalRepo(pg)
 	actionRepo := postgres.NewActionRepo(pg)
@@ -52,7 +55,9 @@ func setupCore(inf *infra) *coreHandlers {
 	}
 
 	deliveryHandler := deliveryH.New(deliveryRepo, idempotencyRepo, customerRepo, assetEventRepo)
+	deliveryHandler.SetRuleEngine(deliveryrules.NewEngine(deliveryRuleRepo, assetRepo, assetTagRepo, customerRepo))
 	customerHandler := customerH.New(customerRepo)
+	deliveryRuleHandler := deliveryruleH.New(deliveryRuleRepo, customerRepo)
 	algoRunHandler := algorunH.New(algorunUC.New(algoRunRepo))
 	evalHandler := evalH.New(evalRepo, inf.metricRegistry, assetEventRepo)
 	actionHandler := actionH.New(actionUC.NewWithLabelRegistry(pg, actionRepo, assetRepo, assetEventRepo, inf.actionLabelReg))
@@ -63,11 +68,12 @@ func setupCore(inf *infra) *coreHandlers {
 	}
 
 	return &coreHandlers{
-		asset:    assetHandler,
-		algo:     algoHandler,
-		mcap:     mcapHandler,
-		delivery: deliveryHandler,
-		customer: customerHandler,
+		asset:         assetHandler,
+		algo:          algoHandler,
+		mcap:          mcapHandler,
+		delivery:      deliveryHandler,
+		customer:      customerHandler,
+		deliveryRule:  deliveryRuleHandler,
 		algoRun:  algoRunHandler,
 		eval:     evalHandler,
 		action:   actionHandler,

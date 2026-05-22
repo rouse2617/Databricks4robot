@@ -939,9 +939,45 @@ curl -X PATCH "$BASE/api/v1/customers/acme_corp" \
 
 ---
 
+## 2.9 交付规则 (`delivery-rules`，CYB-1020)
+
+客户专属或全局（`customer_id` 省略）的 `query_dsl` 规则；`enforce_mode=block` 时在 **`POST /deliveries`** 提交前校验。`customers.exclude_tags` 同样会拦截（虚拟规则 `customer.exclude_tags`）。
+
+### 2.9.1 创建规则
+
+```bash
+curl -X POST "$BASE/api/v1/delivery-rules" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "cust_no_pii",
+    "owner": "ops@databrew",
+    "customer_id": "acme_corp",
+    "enforce_mode": "block",
+    "query_dsl": {
+      "where": [{"field": "tag.compliance.pii", "op": "eq", "value": "true"}]
+    }
+  }'
+```
+
+响应 `201`：`DeliveryRule`（含 `rule_id` UUID）。
+
+### 2.9.2 列出规则
+
+```bash
+curl "$BASE/api/v1/delivery-rules?customer_id=acme_corp" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+### 2.9.3 与交付联动
+
+当资产命中 block 规则时，`POST /deliveries` 返回 **`422`**、`code`: **`DELIVERY_RULE_FAILED`**，`details.violations` 列出 `asset_id`、`rule_id`、`rule_name`、`reason`。
+
+---
+
 ## 3. 交付管理 (Deliveries)
 
-交付前 **`customer_id` 必须在 `customers` 表中存在**（迁移 `029` 已为历史 `deliveries` 回填占位行）。不存在 → `422` `customer not found`。
+交付前 **`customer_id` 必须在 `customers` 表中存在**（迁移 `029` 已为历史 `deliveries` 回填占位行）。不存在 → `422` `customer not found`。命中 **§2.9** 规则 → `422` `DELIVERY_RULE_FAILED`。
 
 ### 3.1 创建交付
 
@@ -972,6 +1008,10 @@ curl -X POST "$BASE/api/v1/deliveries" \
 - 缺少 key → `400`
 
 `asset_ids` 中的每一项须为合法 **资产 `asset_id`**（8 位字母数字）；非法格式 → `400`（避免写入 `delivery_items` 时数据库报错）。
+
+| 状态 | code | 触发 |
+|------|------|------|
+| 422 | `DELIVERY_RULE_FAILED` | 资产命中 block 规则或 `exclude_tags`（见 `details.violations`） |
 
 ### 3.2 获取交付详情
 

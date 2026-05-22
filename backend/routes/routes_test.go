@@ -96,7 +96,7 @@ func TestRegisterAll(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -189,7 +189,7 @@ func TestRemovedHealthzOutboxRoute(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz/outbox", nil)
 	w := httptest.NewRecorder()
@@ -209,7 +209,7 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	adminHandler := adminH.New(&routeAssetRepo{}, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Grace-Token", "dev-token")
@@ -239,7 +239,7 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{GraceToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Grace-Token", "dev-token")
@@ -264,7 +264,7 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 	// validation rather than 404 page-not-found, which is what we want to
 	// confirm the route is registered.
 	actionHandler := actionH.New(nil)
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil)
 
 	want := map[string]bool{
 		"PATCH /api/v1/assets/:id/actions/:action_id":  false,
@@ -292,7 +292,7 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"dev-token"}`))
 	req.Header.Set("Content-Type", "application/json")
