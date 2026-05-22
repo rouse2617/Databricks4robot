@@ -51,6 +51,15 @@ func (s *stubCustomerRepo) Exists(_ context.Context, id string) (bool, error) {
 	return ok, nil
 }
 
+func (s *stubCustomerRepo) List(_ context.Context, _, _, _ string, _ int, _ string) ([]*models.Customer, error) {
+	var out []*models.Customer
+	for _, c := range s.byID {
+		cp := *c
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
 func TestValidateCustomerID(t *testing.T) {
 	if err := ValidateCustomerID("cust_alpha"); err != nil {
 		t.Fatalf("expected valid slug: %v", err)

@@ -65,6 +65,31 @@ func (m *memAlgoRunRepo) Finish(_ context.Context, runID string, patch repositor
 	return nil
 }
 
+func (m *memAlgoRunRepo) Cancel(_ context.Context, runID, reason string, finishedAt time.Time) error {
+	r, ok := m.byID[runID]
+	if !ok {
+		return repository.ErrAlgoRunNotFound
+	}
+	if r.Status == models.AlgoRunStatusOK || r.Status == models.AlgoRunStatusFailed || r.Status == "cancelled" {
+		return repository.ErrAlgoRunBadState
+	}
+	r.Status = "cancelled"
+	return nil
+}
+
+func (m *memAlgoRunRepo) List(_ context.Context, _ repository.AlgoRunListFilter) ([]*models.AlgoRun, error) {
+	var out []*models.AlgoRun
+	for _, r := range m.byID {
+		cp := *r
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+func (m *memAlgoRunRepo) GetAffectedAssets(_ context.Context, _ string) ([]*repository.AffectedAsset, error) {
+	return nil, nil
+}
+
 func TestAlgoRunLifecycle(t *testing.T) {
 	repo := newMemAlgoRunRepo()
 	uc := algorunUC.New(repo)
