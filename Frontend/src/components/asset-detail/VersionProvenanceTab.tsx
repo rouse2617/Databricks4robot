@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { assetsApi } from "../../api/assets";
 import type { Asset, AssetProvenance, VersionHistoryEntry } from "../../api/types";
 import LogicalAssetId from "./LogicalAssetId";
+import RunIdLink from "./RunIdLink";
 import { formatDateTime } from "../../lib/dateTime";
 
 const { Text, Title } = Typography;
@@ -252,11 +253,9 @@ export default function VersionProvenanceTab({
 											</div>
 										) : null}
 										{node.byRunId ? (
-											<div>
-												触发 run:{" "}
-												<Text code className="text-xs">
-													{node.byRunId}
-												</Text>
+											<div className="flex flex-wrap items-center gap-1">
+												<Text type="secondary">触发 run:</Text>
+												<RunIdLink runId={node.byRunId} />
 											</div>
 										) : null}
 									</div>
