@@ -91,6 +91,12 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 	doc["created_at"] = a.CreatedAt.UTC().Format(time.RFC3339Nano)
 	doc["updated_at"] = a.UpdatedAt.UTC().Format(time.RFC3339Nano)
 
+	if a.LogicalAssetID != "" {
+		doc["logical_asset_id"] = a.LogicalAssetID
+		doc["revision"] = a.Revision
+		doc["is_current"] = a.IsCurrent
+	}
+
 	notes := ""
 	if v, exists := meta["notes"]; exists {
 		switch t := v.(type) {

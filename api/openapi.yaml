@@ -948,6 +948,11 @@ components:
         resource:
           type: string
           enum: [assets]
+        include_history:
+          type: boolean
+          description: >
+            When true, asset queries return all revisions. Default false — only
+            current revisions (is_current=true or legacy NULL is_current).
     QuerySelect:
       type: object
       properties:
@@ -1103,6 +1108,13 @@ paths:
   /api/v1/queries/validate:
     post:
       summary: Validate Query IR request
+      parameters:
+        - name: include_history
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Same as scope.include_history on run — include non-current revisions when validating.
       requestBody:
         required: true
         content:
@@ -1127,6 +1139,15 @@ paths:
   /api/v1/queries/run:
     post:
       summary: Execute Query IR request
+      parameters:
+        - name: include_history
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: >
+            When true, include non-current asset revisions in results. Same as
+            scope.include_history in the JSON body.
       requestBody:
         required: true
         content:

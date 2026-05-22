@@ -43,6 +43,12 @@ func New(assetUsecase *assetUC.Usecase, fieldRegistry *config.QueryFieldRegistry
 	}
 }
 
+func applyIncludeHistoryQueryParam(c *gin.Context, req *queryir.QueryRequest) {
+	if c.Query("include_history") == "true" {
+		req.Scope.IncludeHistory = true
+	}
+}
+
 // Validate validates and compiles query IR without executing it.
 func (h *Handler) Validate(c *gin.Context) {
 	var req queryir.QueryRequest
@@ -50,6 +56,7 @@ func (h *Handler) Validate(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	applyIncludeHistoryQueryParam(c, &req)
 	compiled, err := h.compileAndValidate(c.Request.Context(), req)
 	if err != nil {
 		writeQueryError(c, err)
@@ -80,6 +87,7 @@ func (h *Handler) Run(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	applyIncludeHistoryQueryParam(c, &req)
 	compileStarted := time.Now()
 	plan, compiled, err := h.compileForRun(c.Request.Context(), req)
 	if err != nil {

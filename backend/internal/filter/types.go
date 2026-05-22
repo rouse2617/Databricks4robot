@@ -23,6 +23,9 @@ type FieldMeta struct {
 var SearchableFields = map[string]FieldMeta{
 	"_fulltext":          {Type: "string"},
 	"asset_id":           {Type: "string"},
+	"logical_asset_id":   {Type: "string"},
+	"revision":           {Type: "numeric"},
+	"is_current":         {Type: "enum", Values: []string{"true", "false"}},
 	"mcap_file_id":       {Type: "string"},
 	"owner":              {Type: "string"},
 	"reviewer":           {Type: "string"},

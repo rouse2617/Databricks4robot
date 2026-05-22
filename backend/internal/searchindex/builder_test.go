@@ -125,6 +125,32 @@ func TestBuild_LifecycleStateFallsBackToStatus(t *testing.T) {
 	}
 }
 
+func TestBuild_VersionFieldsWhenLogicalAssetSet(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:        "newrev01",
+			LogicalAssetID: "logical1",
+			Revision:       2,
+			IsCurrent:      true,
+			McapFileID:     "m-1",
+			AssetType:      "clip",
+			LifecycleState: "ready",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "newrev01")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	if doc["logical_asset_id"] != "logical1" || doc["revision"] != int64(2) || doc["is_current"] != true {
+		t.Fatalf("version fields: %#v", doc)
+	}
+}
+
 func TestBuild_NilAssetReturnsNotOk(t *testing.T) {
 	b := &Builder{
 		Assets: &stubAssetRepo{asset: nil},

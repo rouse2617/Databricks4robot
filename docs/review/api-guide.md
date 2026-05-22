@@ -324,6 +324,7 @@ v1 当前范围固定为：`resource=assets`，执行路径以 `ES recall + PG r
 - `pred / and / or / not` 当前都可执行；每个节点必须四选一（不能在同一节点同时出现）
 - `mode` 支持：`structured` / `keyword` / `semantic` / `similar`
 - 分页仍使用 `page / page_size`；`offset/limit` 目前仅作为 bridge 语义，要求 `offset % limit == 0`
+- **资产多版本（CYB-1016）**：默认只返回当前修订（`is_current=true`，或迁移前 `is_current` 为 NULL 的旧行）。需要历史修订时传 query `?include_history=true` 或 body `scope.include_history: true`。显式过滤可用 `logical_asset_id`、`revision`、`is_current` 字段（PG + ES）。
 
 ```bash
 # 仅校验（不执行）
@@ -356,6 +357,19 @@ curl -sS -X POST "$BASE/api/v1/queries/run" \
     },
     "sort": [{"field": "created_at", "direction": "desc"}],
     "page": {"page": 1, "page_size": 20, "offset": 0, "limit": 20}
+  }'
+
+# 含历史修订（多版本资产族的全部 revision 行）
+curl -sS -X POST "$BASE/api/v1/queries/run?include_history=true" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schema_version": "v1",
+    "scope": {"resource": "assets", "include_history": true},
+    "where": {
+      "pred": { "field": "logical_asset_id", "op": "eq", "value": "aaaaaaaa" }
+    },
+    "page": {"page": 1, "page_size": 20}
   }'
 
 # keyword / semantic / similar 也统一从 Query API 进入

@@ -52,6 +52,13 @@ func (e *Executor) buildListParams(compiled *queryir.CompiledQuery) (whereSQL st
 		}
 		args = append(args, candidateArgs...)
 	}
+	if queryir.ApplyCurrentOnlyFilter(compiled.NormalizedQuery) {
+		if whereSQL == "" {
+			whereSQL = queryir.CurrentRevisionOnlySQL
+		} else {
+			whereSQL = fmt.Sprintf("%s AND %s", queryir.CurrentRevisionOnlySQL, whereSQL)
+		}
+	}
 	orderByClause, _, err := filter.ResolveSortBy(compiled.SortBy, len(args)+1)
 	if err != nil {
 		return "", nil, filter.OrderByClause{}, false, err

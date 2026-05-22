@@ -107,5 +107,16 @@ func (u *Usecase) finalizePromoteVersion(ctx context.Context, a *models.Asset, i
 	if in.PromoteReason != "" {
 		payload["reason"] = in.PromoteReason
 	}
-	return u.appendAssetEvent(ctx, "version_promoted", a, payload)
+	if err := u.appendAssetEvent(ctx, "version_promoted", a, payload); err != nil {
+		return err
+	}
+	if in.PriorAssetID != "" {
+		prior := &models.Asset{AssetID: in.PriorAssetID, LogicalAssetID: in.LogicalAssetID, IsCurrent: false}
+		return u.appendAssetEvent(ctx, "asset_updated", prior, map[string]any{
+			"reason":           "version_demoted",
+			"is_current":       false,
+			"logical_asset_id": in.LogicalAssetID,
+		})
+	}
+	return nil
 }

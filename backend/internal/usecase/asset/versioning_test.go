@@ -76,6 +76,15 @@ func (r *versionedAssetRepo) InsertRevisionOf(_ context.Context, newID, priorID,
 	return nil
 }
 
+func hasEventForAsset(events []*models.AssetEvent, eventType, assetID string) bool {
+	for _, e := range events {
+		if e.EventType == eventType && e.AssetID == assetID {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCreate_FirstVersionSetsLogicalFields(t *testing.T) {
 	assetRepo := &versionedAssetRepo{readModelAssetRepo: &readModelAssetRepo{}}
 	logicalRepo := newMockLogicalAssetRepo()
@@ -137,6 +146,9 @@ func TestCreate_PromoteVersion(t *testing.T) {
 	}
 	if !hasEventType(eventRepo.events, "version_promoted") {
 		t.Fatal("expected version_promoted event")
+	}
+	if !hasEventForAsset(eventRepo.events, "asset_updated", "cccccccc") {
+		t.Fatal("expected asset_updated for demoted prior revision")
 	}
 	if len(assetRepo.relations) != 1 {
 		t.Fatalf("expected revision_of relation, got %v", assetRepo.relations)

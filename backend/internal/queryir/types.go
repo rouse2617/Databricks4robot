@@ -14,7 +14,8 @@ type QueryRequest struct {
 }
 
 type QueryScope struct {
-	Resource string `json:"resource"`
+	Resource       string `json:"resource"`
+	IncludeHistory bool   `json:"include_history,omitempty"`
 }
 
 type QuerySelect struct {

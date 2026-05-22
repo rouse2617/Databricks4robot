@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,6 +169,9 @@ func TestRun_UsesTreeWhereAndReturnsDebugPlan(t *testing.T) {
 	if repo.lastWhereSQL == "" {
 		t.Fatalf("expected whereSQL to be populated")
 	}
+	if !strings.Contains(repo.lastWhereSQL, "is_current") {
+		t.Fatalf("expected default current-only SQL, got %q", repo.lastWhereSQL)
+	}
 	if len(repo.lastArgs) != 1 || repo.lastArgs[0] != "alice" {
 		t.Fatalf("unexpected repo args: %#v", repo.lastArgs)
 	}
@@ -190,6 +194,34 @@ func TestRun_UsesTreeWhereAndReturnsDebugPlan(t *testing.T) {
 	}
 	if len(resp.DebugPlan.Steps) != 1 || resp.DebugPlan.Steps[0].Engine != "postgres" {
 		t.Fatalf("unexpected debug plan: %+v", resp.DebugPlan)
+	}
+}
+
+func TestRun_IncludeHistorySkipsCurrentOnlySQL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &stubAssetRepo{}
+	h := New(assetUC.New(repo), nil, nil, nil)
+	r := gin.New()
+	r.POST("/queries/run", h.Run)
+
+	body := map[string]any{
+		"schema_version": "v1",
+		"scope":          map[string]any{"resource": "assets"},
+		"where": map[string]any{
+			"pred": map[string]any{"field": "owner", "op": "eq", "value": "alice"},
+		},
+		"page": map[string]any{"page": 1, "page_size": 10},
+	}
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/queries/run?include_history=true", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(repo.lastWhereSQL, "is_current") {
+		t.Fatalf("include_history should not add current-only filter, got %q", repo.lastWhereSQL)
 	}
 }
 
