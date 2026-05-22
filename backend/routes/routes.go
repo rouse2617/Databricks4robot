@@ -16,6 +16,7 @@ import (
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
@@ -41,6 +42,7 @@ func RegisterAll(
 	mcapHandler *mcapH.Handler,
 	deliveryHandler *deliveryH.Handler,
 	customerHandler *customerH.Handler,
+	algoRunHandler *algorunH.Handler,
 	algoHandler *assetH.AlgoHandler,
 	lakehouseHandler *lakehouseH.Handler,
 	registryHandler *registryH.Handler,
@@ -167,6 +169,13 @@ func RegisterAll(
 			api.POST("/customers", customerHandler.Create)
 			api.GET("/customers/:customer_id", customerHandler.Get)
 			api.PATCH("/customers/:customer_id", customerHandler.Update)
+		}
+
+		if algoRunHandler != nil {
+			api.POST("/algo-runs", algoRunHandler.Create)
+			api.GET("/algo-runs/:run_id", algoRunHandler.Get)
+			api.POST("/algo-runs/:run_id/start", algoRunHandler.Start)
+			api.POST("/algo-runs/:run_id/finish", algoRunHandler.Finish)
 		}
 
 		api.POST("/deliveries", deliveryHandler.Commit)

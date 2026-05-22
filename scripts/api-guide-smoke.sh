@@ -122,6 +122,18 @@ get "deliveries list" "/api/v1/deliveries?page=1&page_size=5"
 get "mcap-files list" "/api/v1/mcap-files?page=1&page_size=5"
 
 echo ""
+echo "--- § algo-runs (CYB-1018) ---"
+if [[ "${RUN_WRITES:-0}" == "1" ]]; then
+	RUN_ID=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print(''.join(secrets.choice(a) for _ in range(16)))")
+	post "POST algo-runs" "/api/v1/algo-runs" "{\"run_id\":\"${RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\"}" >/dev/null
+	get "GET algo-runs/{id}" "/api/v1/algo-runs/${RUN_ID}"
+	post "POST algo-runs start" "/api/v1/algo-runs/${RUN_ID}/start" "{}" >/dev/null
+	post "POST algo-runs finish" "/api/v1/algo-runs/${RUN_ID}/finish" "{\"status\":\"ok\",\"assets_processed\":1,\"assets_succeeded\":1,\"assets_failed\":0}" >/dev/null
+else
+	echo "  skip algo-runs write smoke — set RUN_WRITES=1 to exercise POST/GET /algo-runs"
+fi
+
+echo ""
 echo "--- § customers (CYB-1014) ---"
 if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	CUST_ID="smoke$(python3 -c "import secrets,string; print(''.join(secrets.choice(string.ascii_lowercase+string.digits) for _ in range(8)))")"
