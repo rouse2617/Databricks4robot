@@ -169,6 +169,7 @@ func RegisterAll(
 
 		if customerHandler != nil {
 			api.POST("/customers", customerHandler.Create)
+			api.GET("/customers", customerHandler.List)
 			api.GET("/customers/:customer_id", customerHandler.Get)
 			api.PATCH("/customers/:customer_id", customerHandler.Update)
 		}

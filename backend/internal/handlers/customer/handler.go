@@ -2,7 +2,9 @@ package customer
 
 import (
 	"errors"
+	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -213,4 +215,50 @@ func (h *Handler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(200, out)
+}
+
+// List returns customers with optional filters and cursor pagination.
+// @Summary      List customers
+// @Tags         customers
+// @Produce      json
+// @Param        status    query string false "Filter by status"
+// @Param        sla_tier  query string false "Filter by SLA tier"
+// @Param        region    query string false "Filter by region"
+// @Param        limit     query int    false "Page size (default 50, max 200)"
+// @Param        cursor    query string false "Cursor: customer_id to start after"
+// @Success      200 {object} object
+// @Security     GraceToken
+// @Router       /customers [get]
+func (h *Handler) List(c *gin.Context) {
+	status := strings.TrimSpace(c.Query("status"))
+	slaTier := strings.TrimSpace(c.Query("sla_tier"))
+	region := strings.TrimSpace(c.Query("region"))
+	cursor := strings.TrimSpace(c.Query("cursor"))
+
+	limit := 50
+	if s := c.Query("limit"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 && v <= 200 {
+			limit = v
+		}
+	}
+
+	items, err := h.repo.List(c.Request.Context(), status, slaTier, region, limit, cursor)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []*models.Customer{}
+	}
+
+	nextCursor := ""
+	if len(items) == limit {
+		nextCursor = items[len(items)-1].CustomerID
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"items":       items,
+		"limit":       limit,
+		"next_cursor": nextCursor,
+	})
 }
