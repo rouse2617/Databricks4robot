@@ -396,60 +396,70 @@ export default function AssetDetailPage() {
 			{msgCtx}
 
 			{/* Header */}
-			<div className="flex flex-wrap items-center gap-3 mb-4">
-				<Button
-					icon={<ArrowLeftOutlined />}
-					onClick={() => {
-						if (returnTo && isSafeInternalReturnUrl(returnTo)) {
-							clearStoredAssetDetailReturn();
-							navigate(returnTo);
-							return;
+			<div className="mb-4">
+				{/* Primary row: navigation + identity + version control */}
+				<div className="flex items-center gap-3">
+					<Button
+						icon={<ArrowLeftOutlined />}
+						onClick={() => {
+							if (returnTo && isSafeInternalReturnUrl(returnTo)) {
+								clearStoredAssetDetailReturn();
+								navigate(returnTo);
+								return;
+							}
+							const stored = consumeStoredReturnUrl();
+							if (stored) {
+								navigate(stored);
+								return;
+							}
+							if (typeof window !== "undefined" && window.history.length > 1) {
+								navigate(-1);
+								return;
+							}
+							navigate("/assets");
+						}}
+						size="small"
+						aria-label="返回"
+					/>
+					<Title level={4} style={{ margin: 0 }}>
+						资产详情
+					</Title>
+					<Tag color={getAssetStateColor(asset)}>
+						{getLifecycleState(asset) || "—"}
+					</Tag>
+					<div className="flex-1" />
+					<VersionControl
+						assetId={asset.asset_id}
+						revisions={provenance?.revisions ?? []}
+						loading={loading && !provenance}
+						onSelect={(nextId) =>
+							navigate(`/assets/${nextId}`, {
+								state: location.state,
+								replace: false,
+							})
 						}
-						const stored = consumeStoredReturnUrl();
-						if (stored) {
-							navigate(stored);
-							return;
-						}
-						if (typeof window !== "undefined" && window.history.length > 1) {
-							navigate(-1);
-							return;
-						}
-						navigate("/assets");
-					}}
-					size="small"
-					aria-label="返回"
-				/>
-				<Title level={4} style={{ margin: 0 }}>
-					资产详情
-				</Title>
-				<Tag color={getAssetStateColor(asset)}>
-					{getLifecycleState(asset) || "—"}
-				</Tag>
-				<VersionControl
-					assetId={asset.asset_id}
-					revisions={provenance?.revisions ?? []}
-					loading={loading && !provenance}
-					onSelect={(nextId) =>
-						navigate(`/assets/${nextId}`, {
-							state: location.state,
-							replace: false,
-						})
-					}
-				/>
-				<Text type="secondary" className="text-xs font-mono">
-					{asset.asset_id}
-				</Text>
-				{(() => {
-					const logicalId =
-						provenance?.logical_asset_id ?? asset.logical_asset_id;
-					const showLogical =
-						logicalId &&
-						((provenance?.revisions.length ?? 0) > 1 ||
-							logicalId !== asset.asset_id);
-					return showLogical ? (
-						<LogicalAssetId logicalAssetId={logicalId} />
-					) : null;
-				})()}
+					/>
+				</div>
+				{/* Secondary row: identifiers (less prominent) */}
+				<div className="flex items-center gap-3 mt-1.5 ml-10">
+					<Text type="secondary" className="text-xs font-mono">
+						{asset.asset_id}
+					</Text>
+					{(() => {
+						const logicalId =
+							provenance?.logical_asset_id ?? asset.logical_asset_id;
+						const showLogical =
+							logicalId &&
+							((provenance?.revisions.length ?? 0) > 1 ||
+								logicalId !== asset.asset_id);
+						return showLogical ? (
+							<>
+								<span className="text-[#E2E8F0]">|</span>
+								<LogicalAssetId logicalAssetId={logicalId} />
+							</>
+						) : null;
+					})()}
+				</div>
 			</div>
 
 			{provenance && provenance.revisions.length > 1 ? (
