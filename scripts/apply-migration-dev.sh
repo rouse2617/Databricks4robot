@@ -41,7 +41,9 @@ case "$MIGRATION" in
 esac
 
 BASENAME="$(basename "$MIGRATION" .sql)"
-POD="${POD_PREFIX}-${BASENAME}"
+# K8s names: lowercase RFC 1123 (no underscores).
+POD_SUFFIX="$(echo "$BASENAME" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+POD="${POD_PREFIX}-${POD_SUFFIX}"
 
 cleanup() {
   kubectl -n "$NAMESPACE" delete pod "$POD" --ignore-not-found=true >/dev/null 2>&1 || true

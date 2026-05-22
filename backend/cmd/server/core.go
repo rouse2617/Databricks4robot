@@ -2,6 +2,7 @@ package main
 
 import (
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
+	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
@@ -10,6 +11,7 @@ import (
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
+	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
@@ -25,12 +27,14 @@ func setupCore(inf *infra) *coreHandlers {
 	mcapRepo := postgres.NewMcapFileRepo(pg)
 	deliveryRepo := postgres.NewDeliveryRepo(pg)
 	customerRepo := postgres.NewCustomerRepo(pg)
+	algoRunRepo := postgres.NewAlgoRunRepo(pg)
 	evalRepo := postgres.NewEvalRepo(pg)
 	actionRepo := postgres.NewActionRepo(pg)
 	savedQueryRepo := postgres.NewSavedQueryRepo(pg)
 	idempotencyRepo := postgres.NewIdempotencyRepo(pg)
 
 	algoUC := assetUC.NewAlgoUsecase(pg, assetRepo, algoLatestRepo, assetEventRepo, inf.algoRegistry)
+	algoUC.SetAlgoRunRepo(algoRunRepo)
 	assetUsecase := assetUC.NewWithProjections(pg, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, inf.tagRegistry, inf.algoRegistry)
 	assetUsecase.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
 
@@ -49,6 +53,7 @@ func setupCore(inf *infra) *coreHandlers {
 
 	deliveryHandler := deliveryH.New(deliveryRepo, idempotencyRepo, customerRepo, assetEventRepo)
 	customerHandler := customerH.New(customerRepo)
+	algoRunHandler := algorunH.New(algorunUC.New(algoRunRepo))
 	evalHandler := evalH.New(evalRepo, inf.metricRegistry, assetEventRepo)
 	actionHandler := actionH.New(actionUC.NewWithLabelRegistry(pg, actionRepo, assetRepo, assetEventRepo, inf.actionLabelReg))
 
@@ -63,6 +68,7 @@ func setupCore(inf *infra) *coreHandlers {
 		mcap:     mcapHandler,
 		delivery: deliveryHandler,
 		customer: customerHandler,
+		algoRun:  algoRunHandler,
 		eval:     evalHandler,
 		action:   actionHandler,
 		query:    queryHandler,

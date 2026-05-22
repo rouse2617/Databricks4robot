@@ -45,6 +45,12 @@ components:
       maxLength: 8
       pattern: '^[0-9A-Za-z]{8}$'
       description: Primary key for assets (8 alphanumeric ASCII characters).
+    RunID:
+      type: string
+      minLength: 16
+      maxLength: 16
+      pattern: '^[0-9A-Za-z]{16}$'
+      description: Primary key for algo_runs (16 alphanumeric ASCII characters).
     McapFileID:
       type: string
       minLength: 8
@@ -371,6 +377,69 @@ components:
         metadata:
           type: object
           additionalProperties: true
+    AlgoRunCreateRequest:
+      type: object
+      required: [algo_name, algo_version, triggered_by]
+      properties:
+        run_id: { $ref: '#/components/schemas/RunID' }
+        algo_name: { type: string }
+        algo_version: { type: string }
+        algo_kind:
+          type: string
+          enum: [processing, split, qa, enrichment]
+        triggered_by: { type: string }
+        input_filter:
+          type: object
+          additionalProperties: true
+        input_asset_ids:
+          type: array
+          items: { type: string }
+        params:
+          type: object
+          additionalProperties: true
+        code_commit: { type: string }
+        image_digest: { type: string }
+    AlgoRunFinishRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, failed]
+        assets_processed: { type: integer }
+        assets_succeeded: { type: integer }
+        assets_failed: { type: integer }
+        actions_created: { type: integer }
+        metrics_written: { type: integer }
+        outputs:
+          type: object
+          additionalProperties: true
+        cpu_seconds: { type: integer, format: int64 }
+        gpu_seconds: { type: integer, format: int64 }
+        cost_usd_micros: { type: integer, format: int64 }
+        error_class: { type: string }
+        error_message: { type: string }
+    AlgoRun:
+      type: object
+      properties:
+        run_id: { $ref: '#/components/schemas/RunID' }
+        algo_name: { type: string }
+        algo_version: { type: string }
+        algo_kind: { type: string }
+        triggered_by: { type: string }
+        status: { type: string }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        duration_ns: { type: integer, format: int64, nullable: true }
+        params:
+          type: object
+          additionalProperties: true
+        outputs:
+          type: object
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        row_version: { type: integer, format: int64 }
     Delivery:
       type: object
       properties:
@@ -1830,6 +1899,86 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/LakehouseItemsResponse' }
+  /api/v1/algo-runs:
+    post:
+      summary: Create algo run
+      tags: [algo-runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlgoRunCreateRequest' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoRun' }
+        '400':
+          description: invalid argument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: run_id already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/algo-runs/{run_id}:
+    get:
+      summary: Get algo run
+      tags: [algo-runs]
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: '#/components/schemas/RunID' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoRun' }
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/algo-runs/{run_id}/start:
+    post:
+      summary: Start algo run
+      tags: [algo-runs]
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: '#/components/schemas/RunID' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoRun' }
+  /api/v1/algo-runs/{run_id}/finish:
+    post:
+      summary: Finish algo run
+      tags: [algo-runs]
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: '#/components/schemas/RunID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlgoRunFinishRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoRun' }
   /api/v1/customers:
     post:
       summary: Create customer

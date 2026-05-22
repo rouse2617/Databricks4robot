@@ -75,4 +75,9 @@ apply_if_missing \
   "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'saved_queries')" \
   "$MIGRATIONS/018_add_saved_queries.sql"
 
+# algo_runs table (031, CYB-1018)
+apply_if_missing \
+  "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'algo_runs')" \
+  "$MIGRATIONS/031_algo_runs.sql"
+
 echo "ensure_migrations: done"

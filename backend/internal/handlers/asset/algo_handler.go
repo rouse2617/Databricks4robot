@@ -161,6 +161,8 @@ func (h *AlgoHandler) mapError(c *gin.Context, err error) {
 		httpresp.Unprocessable(c, httpresp.CodeMissingRequiredField, err.Error(), nil)
 	case errors.Is(err, assetUC.ErrMissingReason):
 		httpresp.Unprocessable(c, httpresp.CodeMissingReason, err.Error(), nil)
+	case errors.Is(err, assetUC.ErrRunNotFound):
+		httpresp.BadRequest(c, httpresp.CodeAlgoRunNotFound, err.Error(), nil)
 	default:
 		httpresp.Internal(c, err.Error())
 	}

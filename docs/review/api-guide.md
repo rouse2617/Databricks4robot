@@ -11,6 +11,7 @@
 - `delivery_id` / `event_id` / `eval_result_id`：UUID
 - `action_id`：固定 8 位字母数字（`[0-9A-Za-z]{8}`）
 - `customer_id`：客户 slug，`^[a-z][a-z0-9_-]{2,31}$`（小写字母开头），示例 `acme_corp`
+- `run_id`：算法运行 ID，固定 16 位字母数字（`[0-9A-Za-z]{16}`），须先 `POST /api/v1/algo-runs` 登记后再写入 `asset_algo_latest` / per-asset algo API
 
 > 下文所有请求/响应示例默认遵循上述格式，避免将非法 ID 复制到真实请求中触发 `400 INVALID_ARGUMENT`。
 
@@ -524,6 +525,40 @@ curl "$BASE/api/v1/assets/{asset_id}/mcap-locator" \
 > **不**返回视频字节本身。该接口**不在** cyber-databrew 后端进程内，部署见 `deploy/k8s/mcap-preview/`。
 
 ## 2. 算法生命周期 (Algo Lifecycle)
+
+### 2.0 算法运行登记 (`algo_runs`，CYB-1018)
+
+Worker 在批量跑算法前先登记 run，再在 per-asset `start`/`finish` 里带上同一 `run_id`（16 位）。
+
+```bash
+RUN_ID="R001abc123def456"
+
+curl -X POST "$BASE/api/v1/algo-runs" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"run_id\": \"$RUN_ID\",
+    \"algo_name\": \"hand_track\",
+    \"algo_version\": \"2.0\",
+    \"algo_kind\": \"processing\",
+    \"triggered_by\": \"manual:ops\",
+    \"params\": {\"confidence_threshold\": 0.8}
+  }"
+
+curl -X POST "$BASE/api/v1/algo-runs/$RUN_ID/start" \
+  -H "X-Grace-Token: $TOKEN"
+
+# ... per-asset algo start/finish with same run_id ...
+
+curl -X POST "$BASE/api/v1/algo-runs/$RUN_ID/finish" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "ok", "assets_processed": 10, "assets_succeeded": 9, "assets_failed": 1}'
+
+curl "$BASE/api/v1/algo-runs/$RUN_ID" -H "X-Grace-Token: $TOKEN"
+```
+
+Per-asset `finish` 在 `run_id` 为 16 位且已登记时，同事务追加 `algo_run_applied` 事件。
 
 ### 状态机
 
