@@ -8,4 +8,4 @@
 - [x] Promote: re-index prior revision via `asset_updated` event
 - [x] Unit tests (builder, query filter, handler)
 - [x] API contract: OpenAPI, api-guide, smoke script
-- [ ] Dev: manual deploy + ES reindex + smoke (post-merge / deploy window)
+- [x] Dev: manual deploy + smoke（revision `00148-rv6`；ES 全量 reindex 待 ADMIN_TOKEN）
