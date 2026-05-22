@@ -131,6 +131,31 @@ Agent 在 dev 上应完成：
 
 ## 二、后端 API 改动
 
+### 2.0 Canonical dev API（固定入口 — Agent 必用）
+
+**不要猜 URL。** 部署后验收 backend 时，默认使用 **Cloud Run dev**（`cyber-databrew-backend-dev`），不要用 `api-cyber-databrew-dev.cyberorigin.ai` 除非文档明确写了 Gateway 已切到同一 revision。
+
+| 脚本 | 用途 |
+|------|------|
+| [`scripts/dev-backend-env.sh`](../../scripts/dev-backend-env.sh) | `source` 后得到 `BASE`、`GRACE_TOKEN`、`CLOUDRUN_ID_TOKEN`、`API_HDR` |
+| [`scripts/apply-migration-dev.sh`](../../scripts/apply-migration-dev.sh) | 对 dev PG 应用 `backend/migrations/*.sql`（GKE 工具 pod，可重复） |
+| [`scripts/smoke-customers-dev.sh`](../../scripts/smoke-customers-dev.sh) | CYB-1014 类 customers/delivery 契约 smoke（需 `ASSET_ID`） |
+| [`scripts/api-guide-smoke.sh`](../../scripts/api-guide-smoke.sh) | 全站 L2 契约回归（`source dev-backend-env.sh` 后设 `BASE`/`TOKEN`） |
+
+```bash
+# 1) 有 schema 变更时：先迁移，再 deploy backend
+bash scripts/apply-migration-dev.sh backend/migrations/029_customers.sql
+
+# 2) build / push / deploy（见 deploy-before-commit.md）
+
+# 3) smoke
+source scripts/dev-backend-env.sh
+echo "BASE=$BASE"
+bash scripts/smoke-customers-dev.sh   # 或 api-guide-smoke.sh
+```
+
+**顺序：** migration → deploy image → smoke against **new revision**（`gcloud run services describe … --format='value(status.latestReadyRevisionName)'`）。
+
 ### 2.1 推荐环境
 
 部署 backend dev（在已 build/push 镜像后）：
@@ -141,7 +166,7 @@ USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
   bash deploy/cloudrun/backend-dev.sh
 ```
 
-记下 dev **BASE URL**（Cloud Run 或 Gateway + IAP，与团队一致）。
+`BASE` 用 `source scripts/dev-backend-env.sh` 解析，不要手抄 URL。
 
 ### 2.2 验证维度
 
@@ -150,19 +175,13 @@ USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
 - 对照 OpenSpec / api-guide：方法、路径、请求体、状态码、响应字段。
 - 至少：**happy path** + **1 个错误 path**（400/404/409 等）。
 
-示例（本地或 dev，替换 `BASE` 与 `TOKEN`）：
+示例（dev Cloud Run）：
 
 ```bash
-export BASE="https://<backend-dev-url>"
-export TOKEN="<GRACE_TOKEN>"
-export IAP_TOKEN="<若 Gateway 需要>"
-
-# 健康检查
-curl -sfS "$BASE/healthz"
+source scripts/dev-backend-env.sh
 
 # 本次新增/修改的接口（按实际填写）
-curl -sfS -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"...": "..."}' "$BASE/api/v1/..."
+curl -sfS "${API_HDR[@]}" -d '{"...": "..."}' "$BASE/api/v1/..."
 ```
 
 #### B. 其它接口回归（你提到的「每次跑完其它接口也要复测」）

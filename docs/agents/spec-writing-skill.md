@@ -269,6 +269,7 @@ docs/agents/deploy-verification.md               # §6 回归范围
 | AI-RULES 步骤 | 本文对应章节 |
 |---------------|-------------|
 | Step 4 — 创建 OpenSpec change | §1.1 ~ 1.5 全部适用 |
+| Step 4 — **OpenSpec checkpoint** | 制品写完后 **停下**，等用户确认「OpenSpec OK」再写运行时代码 |
 | Bug fix | §1.1 proposal + §1.2 delta + §1.4 tasks（跳过 §1.3 design） |
 | Feature | §1.1 ~ 1.5 全部必须 |
 | Hotfix（跳过 OpenSpec gate） | 事后补 §1.2 delta（T+2 内回填） |
@@ -284,5 +285,5 @@ docs/agents/deploy-verification.md               # §6 回归范围
 | 没有 Scenario 或只有 happy-path | 边界 case 在实现阶段才被发现 | 每个 Requirement 配 happy-path + error-path Scenario |
 | 没有 Priority | 审查者不知道哪些是硬性要求 | P0=不实现就不能上线，P1=应有，P2=锦上添花 |
 | tasks.md 只有代码任务 | 验证缺失，合并后才发现问题 | Deploy verification 不可省略 |
-| AI 生成后不审核就实现 | 意图漂移未被发现 | 生成后先跑 §二 的自检清单 |
+| AI 生成后不审核就实现 | 意图漂移未被发现 | 生成后先跑 §二 的自检清单，**等用户确认 OpenSpec** 再实现 |
 | design.md 没有 Alternative | 决策不可审计 | 每条决策必须有对比方案 + 理由 |
