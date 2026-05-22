@@ -57,6 +57,7 @@ func defaultLifecycleMeta() map[string]interface{} {
 
 type Usecase struct {
 	repo           repository.AssetRepository
+	logicalRepo    repository.LogicalAssetRepository
 	tagRegistry    *config.TagRegistry
 	algoRegistry   *config.AlgoRegistry
 	tx             repository.TxRunner
@@ -101,6 +102,11 @@ func NewWithProjections(
 		algoLatestRepo: algoLatestRepo,
 		eventRepo:      eventRepo,
 	}
+}
+
+// SetLogicalAssetRepo wires logical_assets persistence (CYB-1013).
+func (u *Usecase) SetLogicalAssetRepo(r repository.LogicalAssetRepository) {
+	u.logicalRepo = r
 }
 
 func (u *Usecase) withMutationTx(ctx context.Context, fn func(context.Context) error) error {
@@ -181,37 +187,51 @@ func (u *Usecase) upsertTagProjection(ctx context.Context, a *models.Asset, tags
 	return nil
 }
 
-func (u *Usecase) persistNewAsset(ctx context.Context, a *models.Asset, tags map[string]string) error {
+func (u *Usecase) persistNewAsset(ctx context.Context, a *models.Asset, tags map[string]string, promoteLogicalID string) error {
 	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
-		if err := u.repo.InsertNew(txCtx, a); err != nil {
-			return err
+		if promoteLogicalID != "" {
+			promoteIn, err := u.preparePromoteVersion(txCtx, a, promoteLogicalID)
+			if err != nil {
+				return err
+			}
+			if err := u.finalizePromoteVersion(txCtx, a, promoteIn); err != nil {
+				return err
+			}
+		} else {
+			if err := u.seedFirstVersion(txCtx, a); err != nil {
+				return err
+			}
+			if err := u.repo.InsertNew(txCtx, a); err != nil {
+				return err
+			}
+			if err := u.appendAssetEvent(txCtx, "asset_created", a, map[string]any{
+				"asset_id":         a.AssetID,
+				"mcap_file_id":     a.McapFileID,
+				"segment_locator":  a.SegmentLocator,
+				"lifecycle_state":  a.LifecycleState,
+				"asset_type":       a.AssetType,
+				"logical_asset_id": a.LogicalAssetID,
+				"revision":         a.Revision,
+				"owner":            a.Owner,
+				"reviewer":         a.Reviewer,
+			}); err != nil {
+				return err
+			}
 		}
 		if err := u.seedInitialAlgoProjection(txCtx, a); err != nil {
-			return err
-		}
-		if err := u.appendAssetEvent(txCtx, "asset_created", a, map[string]any{
-			"asset_id":        a.AssetID,
-			"mcap_file_id":    a.McapFileID,
-			"segment_locator": a.SegmentLocator,
-			"lifecycle_state": a.LifecycleState,
-			"asset_type":      a.AssetType,
-			"owner":           a.Owner,
-			"reviewer":        a.Reviewer,
-		}); err != nil {
 			return err
 		}
 		return u.upsertTagProjection(txCtx, a, tags, "manual")
 	}); err != nil {
 		return err
 	}
-	// Secondary index write is best-effort for now.
 	return u.repo.WriteSegmentIndex(ctx, a)
 }
 
 const maxAssetIDAllocationAttempts = 32
 
 // allocateNewAssetID assigns a random 8-char asset_id and persists the new asset, retrying on id collision.
-func (u *Usecase) allocateNewAssetID(ctx context.Context, a *models.Asset, tags map[string]string) error {
+func (u *Usecase) allocateNewAssetID(ctx context.Context, a *models.Asset, tags map[string]string, promoteLogicalID string) error {
 	for range maxAssetIDAllocationAttempts {
 		gid, err := id.GenerateAssetID()
 		if err != nil {
@@ -220,7 +240,7 @@ func (u *Usecase) allocateNewAssetID(ctx context.Context, a *models.Asset, tags 
 		a.AssetID = gid
 		a.Version = 0
 		a.CreatedAt = time.Time{}
-		if err := u.persistNewAsset(ctx, a, tags); err != nil {
+		if err := u.persistNewAsset(ctx, a, tags, promoteLogicalID); err != nil {
 			if errors.Is(err, repository.ErrDuplicateAssetID) {
 				continue
 			}
@@ -349,6 +369,7 @@ func (u *Usecase) hydrateAssetsReadModels(ctx context.Context, items []*models.A
 
 type CreateInput struct {
 	AssetID             string
+	LogicalAssetID      string
 	McapFileID          string
 	StartTimestampNs    int64
 	EndTimestampNs      int64
@@ -623,6 +644,10 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	if in.AssetID != "" && !id.ValidateAssetID(in.AssetID) {
 		return nil, ErrInvalidAssetID
 	}
+	promoteLogicalID := strings.TrimSpace(in.LogicalAssetID)
+	if promoteLogicalID != "" && !id.ValidateAssetID(promoteLogicalID) {
+		return nil, ErrInvalidAssetID
+	}
 	tags := in.Tags
 	if tags == nil {
 		tags = map[string]string{}
@@ -721,12 +746,12 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 		}
 	}
 	if in.AssetID == "" {
-		if err := u.allocateNewAssetID(ctx, a, tags); err != nil {
+		if err := u.allocateNewAssetID(ctx, a, tags, promoteLogicalID); err != nil {
 			return nil, mapCreateDBError(err)
 		}
 		return a, nil
 	}
-	if err := u.persistNewAsset(ctx, a, tags); err != nil {
+	if err := u.persistNewAsset(ctx, a, tags, promoteLogicalID); err != nil {
 		if errors.Is(err, repository.ErrDuplicateAssetID) {
 			return nil, ErrAssetIDTaken
 		}
@@ -928,7 +953,7 @@ func (u *Usecase) CommitSegments(ctx context.Context, in CommitSegmentsInput) ([
 			initAlgoStates(a, u.algoRegistry)
 			a.Files["raw_mcap"] = in.McapFileID
 		}
-		if err := u.allocateNewAssetID(ctx, a, a.Tags); err != nil {
+		if err := u.allocateNewAssetID(ctx, a, a.Tags, ""); err != nil {
 			return created, err
 		}
 		created = append(created, a.AssetID)

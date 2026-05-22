@@ -23,6 +23,43 @@ var _ repository.AssetRepository = (*AssetRepo)(nil)
 
 func NewAssetRepo(c *Client) *AssetRepo { return &AssetRepo{c: c} }
 
+const assetVersionSelectCols = `logical_asset_id, revision, is_current,`
+
+func finishAssetVersionFields(a *models.Asset, logicalID *string, revision *int64, isCurrent *bool) {
+	if logicalID != nil {
+		a.LogicalAssetID = *logicalID
+	}
+	if revision != nil {
+		a.Revision = *revision
+	}
+	if isCurrent != nil {
+		a.IsCurrent = *isCurrent
+	}
+}
+
+func assetVersionInsertArgs(a *models.Asset) (logicalID interface{}, revision interface{}, isCurrent interface{}) {
+	if a.LogicalAssetID != "" {
+		logicalID = a.LogicalAssetID
+	}
+	if a.Revision > 0 {
+		revision = a.Revision
+	}
+	if a.LogicalAssetID != "" {
+		isCurrent = a.IsCurrent
+	}
+	return logicalID, revision, isCurrent
+}
+
+// InsertRevisionOf records new revision -> prior revision (parent=new, child=prior per PRD).
+func (r *AssetRepo) InsertRevisionOf(ctx context.Context, newAssetID, priorAssetID, runID string) error {
+	const q = `
+INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id)
+VALUES ($1, $2, 'revision_of', NULLIF($3, ''))
+ON CONFLICT (parent_asset_id, child_asset_id, relation_type) DO NOTHING`
+	db := dbFromCtx(ctx, r.c.db)
+	return db.Exec(ctx, q, newAssetID, priorAssetID, runID)
+}
+
 func prepAssetForWrite(a *models.Asset) {
 	now := time.Now().UTC()
 	if a.CreatedAt.IsZero() {
@@ -116,102 +153,11 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   segment_index, parent_start_offset_ms, parent_end_offset_ms,
   tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
+  ` + assetVersionSelectCols + `
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1 AND is_deleted = FALSE`
-	var (
-		a               models.Asset
-		lifecycleState  string
-		segLoc          *string
-		parentID        *string
-		rootID          *string
-		tenantID        *string
-		projectID       *string
-		segIndex        *int
-		parentStartOff  *int64
-		parentEndOff    *int64
-		splitMethod     *string
-		splitAlgoName   *string
-		splitAlgoVer    *string
-		splitRunID      *string
-		splitReason     *string
-		metadataBytes   []byte
-		filesBytes      []byte
-		algoInputsURIs  []byte
-		annotInputsURIs []byte
-	)
-	err := r.c.db.QueryRow(ctx, q, assetID).Scan(
-		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
-		&lifecycleState, &a.AssetType, &a.DurationMs,
-		&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
-		&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
-		&parentID, &rootID,
-		&splitMethod, &splitAlgoName, &splitAlgoVer, &splitRunID, &splitReason,
-		&segIndex, &parentStartOff, &parentEndOff,
-		&tenantID, &projectID,
-		&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
-		&a.CreatedAt, &a.UpdatedAt, &a.Version,
-	)
-	if err != nil {
-		if errors.Is(err, errNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("postgres AssetRepo.Get: %w", err)
-	}
-	a.LifecycleState = lifecycleState
-	if segLoc != nil {
-		a.SegmentLocator = *segLoc
-	}
-	if parentID != nil {
-		a.ParentAssetID = *parentID
-	}
-	if rootID != nil {
-		a.RootAssetID = *rootID
-	}
-	if tenantID != nil {
-		a.TenantID = *tenantID
-	}
-	if projectID != nil {
-		a.ProjectID = *projectID
-	}
-	if segIndex != nil {
-		a.SegmentIndex = segIndex
-	}
-	if parentStartOff != nil {
-		a.ParentStartOffsetMs = parentStartOff
-	}
-	if parentEndOff != nil {
-		a.ParentEndOffsetMs = parentEndOff
-	}
-	if splitMethod != nil {
-		a.SplitMethod = *splitMethod
-	}
-	if splitAlgoName != nil {
-		a.SplitAlgoName = *splitAlgoName
-	}
-	if splitAlgoVer != nil {
-		a.SplitAlgoVersion = *splitAlgoVer
-	}
-	if splitRunID != nil {
-		a.SplitRunID = *splitRunID
-	}
-	if splitReason != nil {
-		a.SplitReason = *splitReason
-	}
-	if len(metadataBytes) > 0 {
-		_ = json.Unmarshal(metadataBytes, &a.Metadata)
-	}
-	if len(filesBytes) > 0 {
-		_ = json.Unmarshal(filesBytes, &a.FilesJSON)
-	}
-	if len(algoInputsURIs) > 0 {
-		_ = json.Unmarshal(algoInputsURIs, &a.AlgoInputsURIs)
-	}
-	if len(annotInputsURIs) > 0 {
-		_ = json.Unmarshal(annotInputsURIs, &a.AnnotInputsURIs)
-	}
-	a.SyncLegacyFields()
-	return &a, nil
+	return r.scanOneAsset(ctx, r.c.db.QueryRow(ctx, q, assetID))
 }
 
 // GetAll returns an asset regardless of is_deleted status.
@@ -228,6 +174,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   segment_index, parent_start_offset_ms, parent_end_offset_ms,
   tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
+  ` + assetVersionSelectCols + `
   created_at, updated_at, version
 FROM assets
 WHERE asset_id = $1`
@@ -256,6 +203,9 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		filesBytes      []byte
 		algoInputsURIs  []byte
 		annotInputsURIs []byte
+		logicalID       *string
+		revision        *int64
+		isCurrent       *bool
 	)
 	err := row.Scan(
 		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
@@ -267,6 +217,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		&segIndex, &parentStartOff, &parentEndOff,
 		&tenantID, &projectID,
 		&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
+		&logicalID, &revision, &isCurrent,
 		&a.CreatedAt, &a.UpdatedAt, &a.Version,
 	)
 	if err != nil {
@@ -327,6 +278,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 	if len(annotInputsURIs) > 0 {
 		_ = json.Unmarshal(annotInputsURIs, &a.AnnotInputsURIs)
 	}
+	finishAssetVersionFields(&a, logicalID, revision, isCurrent)
 	a.SyncLegacyFields()
 	return &a, nil
 }
@@ -427,6 +379,7 @@ INSERT INTO assets(
   parent_asset_id, root_asset_id, metadata, files, algo_inputs_uris, annot_inputs_uris,
   tenant_id, project_id,
   is_deleted,
+  logical_asset_id, revision, is_current,
   created_at, updated_at, version
 ) VALUES (
   $1,$2,$3,$4,$5,
@@ -436,10 +389,12 @@ INSERT INTO assets(
   $19,$20,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,
   $25,$26,
   FALSE,
-  $27,$28,$29
+  $27,$28,$29,
+  $30,$31,$32
 )`
 
 	metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON, parentAssetID, rootAssetID, tenantID, projectID := bindAssetJSONAndRefs(a)
+	logicalID, revision, isCurrent := assetVersionInsertArgs(a)
 
 	db := dbFromCtx(ctx, r.c.db)
 	err := db.Exec(ctx, q,
@@ -449,6 +404,7 @@ INSERT INTO assets(
 		a.RetentionTier, a.ExpireAt, a.StorageURI, a.ThumbURI, a.AssetLevel,
 		parentAssetID, rootAssetID, metadataJSON, filesStructJSON, algoInputsURIsJSON, annotInputsURIsJSON,
 		tenantID, projectID,
+		logicalID, revision, isCurrent,
 		a.CreatedAt, a.UpdatedAt, a.Version,
 	)
 	if err != nil {
@@ -479,6 +435,7 @@ SELECT asset_id, mcap_file_id, start_timestamp_ns, end_timestamp_ns, segment_loc
   COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id, tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
+  logical_asset_id, revision, is_current,
   created_at, updated_at, version
 FROM assets
 WHERE mcap_file_id = $1 AND is_deleted = FALSE
@@ -502,6 +459,9 @@ ORDER BY start_timestamp_ns`
 			filesBytes      []byte
 			algoInputsURIs  []byte
 			annotInputsURIs []byte
+			logicalID       *string
+			revision        *int64
+			isCurrent       *bool
 		)
 		if err := rows.Scan(
 			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
@@ -510,10 +470,12 @@ ORDER BY start_timestamp_ns`
 			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 			&parentID, &rootID, &tenantID, &projectID,
 			&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
+			&logicalID, &revision, &isCurrent,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListByMcapFile scan: %w", err)
 		}
+		finishAssetVersionFields(&a, logicalID, revision, isCurrent)
 		a.LifecycleState = lifecycleState
 		if segLoc != nil {
 			a.SegmentLocator = *segLoc
@@ -2171,6 +2133,7 @@ func (r *AssetRepo) listWithFiltersData(ctx context.Context, whereSQL string, wh
   COALESCE(retention_tier, ''), expire_at, COALESCE(storage_uri, ''), COALESCE(thumb_uri, ''), COALESCE(asset_level, 0),
   parent_asset_id, root_asset_id, tenant_id, project_id,
   metadata, files, algo_inputs_uris, annot_inputs_uris,
+  logical_asset_id, revision, is_current,
   created_at, updated_at, version
 FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		baseWhere, orderBySQL, len(allArgs)+1, len(allArgs)+2,
@@ -2197,6 +2160,9 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			filesBytes      []byte
 			algoInputsURIs  []byte
 			annotInputsURIs []byte
+			logicalID       *string
+			revision        *int64
+			isCurrent       *bool
 		)
 		if err := rows.Scan(
 			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
@@ -2205,10 +2171,12 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
 			&parentID, &rootID, &tenantID, &projectID,
 			&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
+			&logicalID, &revision, &isCurrent,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
 		}
+		finishAssetVersionFields(&a, logicalID, revision, isCurrent)
 		a.LifecycleState = lifecycleState
 		if segLoc != nil {
 			a.SegmentLocator = *segLoc

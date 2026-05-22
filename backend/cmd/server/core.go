@@ -30,6 +30,7 @@ func setupCore(inf *infra) *coreHandlers {
 
 	algoUC := assetUC.NewAlgoUsecase(pg, assetRepo, algoLatestRepo, assetEventRepo, inf.algoRegistry)
 	assetUsecase := assetUC.NewWithProjections(pg, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, inf.tagRegistry, inf.algoRegistry)
+	assetUsecase.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
 
 	assetHandler := assetH.New(assetUsecase, deliveryRepo)
 	assetHandler.SetMcapRepo(mcapRepo)

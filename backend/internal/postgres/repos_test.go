@@ -222,6 +222,7 @@ func TestAssetRepo(t *testing.T) {
 		(*int)(nil), (*int64)(nil), (*int64)(nil),
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+		(*string)(nil), (*int64)(nil), (*bool)(nil),
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
 	}}
 	got, err := repo.Get(ctx, "a1")
@@ -268,6 +269,7 @@ func TestAssetRepo(t *testing.T) {
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 	db.rows = rows
@@ -533,6 +535,7 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 		{"a2", "m1", int64(20), int64(30), (*string)(nil),
 			"ready", "segment", int64(0),
@@ -540,6 +543,7 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(2)},
 	}}
 
@@ -571,6 +575,7 @@ func TestListWithFilters_WithWhereSQL(t *testing.T) {
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 
@@ -837,6 +842,7 @@ func buildAssetRow(
 		(*int)(nil), (*int64)(nil), (*int64)(nil),
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+		(*string)(nil), (*int64)(nil), (*bool)(nil), // logical_asset_id, revision, is_current
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -848,7 +854,7 @@ func TestGet_PopulatesBothOldAndNewFields(t *testing.T) {
 
 	row := buildAssetRow(
 		"get-1",
-		"ready", // lifecycle_state
+		"ready",      // lifecycle_state
 		"clip",       // asset_type
 		int64(12500), // duration_ms
 		"alice",      // owner
@@ -1000,6 +1006,7 @@ func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 		"warm", (*time.Time)(nil), "", "", int(0),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+		(*string)(nil), (*int64)(nil), (*bool)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1057,6 +1064,7 @@ func TestListByMcapFile_PopulatesBothOldAndNewFields(t *testing.T) {
 		"cold", (*time.Time)(nil), "gs://s/data", "gs://s/thumb", int(1),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+		(*string)(nil), (*int64)(nil), (*bool)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
