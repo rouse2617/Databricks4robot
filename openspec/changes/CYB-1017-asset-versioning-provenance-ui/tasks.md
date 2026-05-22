@@ -8,4 +8,5 @@
 - [x] P0 UI polish: VersionControl, VersionHistoryBanner, Overview revision fields (see design doc)
 - [x] P1 Tab「版本与溯源」: timeline, diff vs prev, lineage summary
 - [x] Deploy frontend dev `214432a` → revision `cyber-databrew-frontend-dev-00183-gpf` (2026-05-22)
+- [x] Deploy frontend dev `a084082` → revision `cyber-databrew-frontend-dev-00184-g2l` (aligned with HEAD)
 - [x] `go test` (backend); frontend build needs `npm install` locally
