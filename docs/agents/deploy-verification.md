@@ -210,13 +210,23 @@ curl -sfS "${API_HDR[@]}" -d '{"...": "..."}' "$BASE/api/v1/..."
 - 写接口：是否产生脏数据；必要时用测试 asset id，避免污染共享数据。
 - Outbox / ES 同步：若涉及 `asset_events`，按 [`docs/review/`](../review/README.md) 相关说明做延迟一致性 spot-check（如适用）。
 
-### 2.3 SDK / OpenAPI 联动
+### 2.3 API 契约同步（与 backend 同 PR — 强制）
 
-若改了 `api/openapi.yaml`：
+**新增或修改 HTTP API 时**（不仅限于先改 OpenAPI），必须按 [`AI-RULES.md` § API contract sync](AI-RULES.md#api-contract-sync-mandatory) 逐项完成，不得「先合 handler 再补文档」。
 
-- [ ] `docs/review/api-guide.md` 已同步
-- [ ] `cd sdk && uv run ruff check src/ && uv run pytest tests/unit/`（CI 目标）
-- [ ] 用 sdk 或 curl 调一次新字段（dev）
+| 必做 | 文件 |
+|------|------|
+| OpenAPI | `api/openapi.yaml` |
+| 人工 curl 文档 | `docs/review/api-guide.md` |
+| Dev smoke | `scripts/api-guide-smoke.sh` 或 `scripts/smoke-*-dev.sh` |
+| SDK（公开 REST） | `sdk/src/asset_sdk/*.py` + `client.py` |
+| 行为 spec | `openspec/changes/CYB-*/specs/*/spec.md` |
+
+验证：
+
+- [ ] `cd sdk && uv run ruff check src/ && uv run pytest tests/unit/`（若 SDK 有改动）
+- [ ] `source scripts/dev-backend-env.sh` + smoke 脚本 PASS
+- [ ] PR 描述列出已更新的契约文件
 
 ---
 

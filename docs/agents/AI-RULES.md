@@ -15,7 +15,7 @@ On **every** user message that involves this repo, do the following **before** e
 3. **Linear** — Ensure a Linear Issue exists (`CYB-xxx` in this workspace). Create or link via MCP if the user did not provide one.
 4. **OpenSpec (write artifacts, then stop)** — For any runtime change, create or use `openspec/changes/CYB-{id}-{slug}/` **before** writing application code. Follow [`spec-writing-skill.md`](spec-writing-skill.md) for artifact quality (proposal, tasks, spec delta; feature path also `design.md`). **Checkpoint:** When `proposal.md` + `tasks.md` (+ `design.md` if feature) are ready, **stop** and ask the user to confirm OpenSpec is OK (e.g. 「OpenSpec OK，继续」). **Do not** edit `backend/`, `Frontend/`, `sdk/`, or `dagster/` until they approve. Record their approval in `decisions.md` or a short Linear comment if useful.
 5. **Branch** — Use `fix/CYB-{id}-*`, `feat/CYB-{id}-*`, or `hotfix/CYB-{id}-*` as appropriate (`DAT-*` accepted by CI for legacy). **Always branch from latest `dev`** (`git fetch origin dev && git checkout -b feat/CYB-{id}-… origin/dev`) so parallel CYB work does not conflict. Create the branch when starting OpenSpec or immediately after the OpenSpec checkpoint passes.
-6. **After each code change** — Run verification at the **tier** matching diff scope (see [Verification tiers](#verification-tiers)); log non-obvious choices in `decisions.md` when required. **Bugs:** follow [`systematic-debugging`](skills/systematic-debugging/SKILL.md) before speculative fixes.
+6. **After each code change** — Run verification at the **tier** matching diff scope (see [Verification tiers](#verification-tiers)); log non-obvious choices in `decisions.md` when required. **Any new or changed HTTP API** (route, handler, request/response, query param, status code) MUST complete [API contract sync](#api-contract-sync-mandatory) in the **same PR** as `backend/` — not a follow-up. **Bugs:** follow [`systematic-debugging`](skills/systematic-debugging/SKILL.md) before speculative fixes.
 7. **Before commit/push** — Follow [`deploy-before-commit.md`](deploy-before-commit.md) and [`deploy-verification.md`](deploy-verification.md) (canonical dev scripts in **§2.0**). **If the diff touches `Frontend/`:** deploy frontend dev → Agent **must** run **Chrome DevTools MCP**. **Backend/sdk-only:** `source scripts/dev-backend-env.sh` + targeted smoke (e.g. `scripts/smoke-customers-dev.sh`); apply migrations with `scripts/apply-migration-dev.sh` **before** deploying backend when schema changes.
 8. **PR** — Fill `.github/pull_request_template.md` completely when opening a PR.
 
@@ -39,6 +39,38 @@ Do **not** ask the user to confirm that you will follow this workflow. Do **not*
 - Runtime paths: `backend/`, `Frontend/`, `sdk/`, `dagster/` — see `docs/agents/spec-driven-workflow.md`
 - Commit format: Conventional Commits — `type(scope): description`
 - Full step tables: `docs/agents/WORKFLOWS.md`
+- **New/changed HTTP API** → [API contract sync](#api-contract-sync-mandatory) (same PR, no exceptions except documented hotfix backfill)
+
+## API contract sync (mandatory)
+
+**Trigger:** You add or change anything exposed over HTTP — new `routes.go` registration, handler method, JSON body/query/path param, response shape, status code, or auth/idempotency header requirement.
+
+**Do not** merge backend-only handler work and “document SDK later”. CYB-1014-style gaps (handler shipped, OpenAPI/api-guide/SDK empty) are **process failures**.
+
+Sync these artifacts in the **same change / PR** (check off in `tasks.md`):
+
+| # | File / area | Required when | What to update |
+|---|-------------|---------------|----------------|
+| 1 | [`api/openapi.yaml`](../../api/openapi.yaml) | Always | `paths`, `components/schemas`, parameters, request/response bodies, error envelope |
+| 2 | [`docs/review/api-guide.md`](../../docs/review/api-guide.md) | Always | Section with `curl` examples, headers (`X-Grace-Token`, `Idempotency-Key` if any), success + ≥1 error path, field validation notes |
+| 3 | [`sdk/src/asset_sdk/`](../../sdk/src/asset_sdk/) | New/changed **public** REST surface | Resource client module (e.g. `customers.py`), methods mirroring api-guide; wire on [`client.py`](../../sdk/src/asset_sdk/client.py) / [`__init__.py`](../../sdk/src/asset_sdk/__init__.py) exports |
+| 4 | [`sdk/tests/unit/`](../../sdk/tests/unit/) | SDK client added/changed | Unit tests for new client methods (mock HTTP) |
+| 5 | [`scripts/api-guide-smoke.sh`](../../scripts/api-guide-smoke.sh) **or** `scripts/smoke-<feature>-dev.sh` | Always | At least happy path + one error path for **each new endpoint**; use `source scripts/dev-backend-env.sh` for dev |
+| 6 | `backend/internal/handlers/*/*.go` | Handlers use Swagger generation elsewhere | `@Summary` / `@Router` / `@Param` blocks consistent with asset handlers (keep OpenAPI as source of truth if drift) |
+| 7 | `openspec/changes/CYB-*/specs/*/spec.md` | Always (runtime feature) | Behavior delta (Given/When/Then) — **not** field-level API paste |
+| 8 | `Frontend/src/api/` or feature hooks | UI calls the new API | Typed client / hook + types aligned with OpenAPI |
+
+**Also sync when applicable (not HTTP, but same discipline):**
+
+| Change | Also update |
+|--------|-------------|
+| `asset_events` event type / payload | `backend/schemas/events/*.json` + `registry.json` |
+| Postgres DDL | `backend/migrations/` (approved) + `docs/review/sql.md` |
+| Preview / gateway-only paths | `docs/review/api-guide.md` + OpenAPI if externally consumed |
+
+**Verification before commit:** Tier **L** when OpenAPI or public API changes; run `cd sdk && uv run pytest tests/unit/` if SDK touched; run targeted smoke (`api-guide-smoke.sh` or feature script). PR template must list which rows above were updated.
+
+**Out of scope declaration:** If an issue explicitly defers SDK or Frontend (e.g. “backend-only spike”), record it in `decisions.md` **and** Linear — still require rows **1, 2, 5, 7** minimum.
 
 ## Off-limits zones (require explicit approval to touch)
 
@@ -81,7 +113,7 @@ Avoid running full `build` on every one-line fix. After each **accepted** code e
 |------|------|---------|----------|-----|
 | **S — small** | ≤2 files, no router/handler/middleware/OpenAPI, no shared types | `make fmt && make vet` | `npm run lint` | `ruff check` on touched paths |
 | **M — medium** | Default for most PRs; new/changed logic; >2 files or tests exist for package | Tier S + `go test` packages touched (`go test ./internal/foo/...`) | Tier S + `npm run test -- --run` (related tests if known) | Tier S + `pytest` for touched modules |
-| **L — large** | Cross-module; UI routes; API contract; build/config; before PR / deploy | Tier M + `go test ./...` | Tier M + `npm run build` | Tier M + full `pytest tests/unit/` |
+| **L — large** | Cross-module; UI routes; **any API contract sync**; build/config; before PR / deploy | Tier M + `go test ./...` | Tier M + `npm run build` | Tier M + full `pytest tests/unit/` |
 
 **Always Tier L before:** opening PR, deploy verification, or touching off-limits-adjacent code.
 
@@ -145,6 +177,7 @@ Full commands by tier — see [Verification tiers](#verification-tiers).
 
 - Do NOT ask users to run a ritual prompt like "prepare environment per project standards"
 - Do NOT write runtime code before OpenSpec change exists (except `hotfix-approved` with documented backfill)
+- Do NOT ship new/changed HTTP handlers without [API contract sync](#api-contract-sync-mandatory) (OpenAPI + api-guide + smoke minimum)
 - Do NOT commit without deployment verification (deploy-before-commit rule)
 - Do NOT ask the user to「浏览器点一遍」when the diff touches `Frontend/` and Chrome DevTools MCP is available — run MCP yourself on dev
 - Do NOT introduce new dependencies without declaring them

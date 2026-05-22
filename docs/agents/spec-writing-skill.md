@@ -194,10 +194,11 @@ backend returned for the selected filter.
 使用 `openspec/changes/README.md` 中的模板，额外注意：
 
 1. **Implementation 任务和 Scenario 1:1 对齐** — 每个 Given/When/Then 至少 1 个 checkbox
-2. **Deploy verification 章节不可省略** — 针对性验证应写明 Scenario 名
-3. **标注代码路径** — 每个 checkbox 标注 `[backend]` / `[Frontend]` / `[sdk]`
-4. **任务粒度** — 一个 checkbox ≈ 10–30 分钟
-5. **`context-files.md` 或 `## Context files`** — 列出实现前必读路径（见 1.4a）
+2. **API contract sync 章节** — 若 change 含新/改 HTTP API，复制 `openspec/changes/README.md` 中 API contract 清单，与 [`AI-RULES.md` § API contract sync](AI-RULES.md#api-contract-sync-mandatory) 同步完成
+3. **Deploy verification 章节不可省略** — 针对性验证应写明 Scenario 名
+4. **标注代码路径** — 每个 checkbox 标注 `[backend]` / `[Frontend]` / `[sdk]`
+5. **任务粒度** — 一个 checkbox ≈ 10–30 分钟
+6. **`context-files.md` 或 `## Context files`** — 列出实现前必读路径（见 1.4a）
 
 ---
 
@@ -259,6 +260,7 @@ docs/agents/deploy-verification.md               # §6 回归范围
 ### tasks.md
 - [ ] Implementation 任务和 spec delta Scenario 1:1 对齐
 - [ ] 每个 checkbox 标注了代码路径 `[backend]` / `[Frontend]` / `[sdk]`
+- [ ] 含 HTTP API 时 **API contract sync** 清单齐全（OpenAPI、api-guide、smoke；SDK/Frontend 按范围）
 - [ ] Deploy verification 章节完整填入
 - [ ] 有 `context-files.md` 或 `tasks.md` 内 `## Context files`（跨模块 / 多文件变更时）
 

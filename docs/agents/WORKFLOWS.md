@@ -22,7 +22,7 @@ Three paths depending on change type. Follow the matching path strictly — **wi
 | 2 | Create OpenSpec change | `proposal.md` + `tasks.md` + at least 1 spec delta |
 | 3 | **OpenSpec checkpoint** | User confirms OpenSpec OK → then branch + code ([`AI-RULES.md`](AI-RULES.md) step 4) |
 | 4 | Branch: `fix/CYB-{id}-*` | Name must contain Linear ID |
-| 5 | Code + local verify | After every accepted change: verification tier S/M/L per [`AI-RULES.md`](AI-RULES.md) |
+| 5 | Code + local verify | Tier per AI-RULES; **new/changed HTTP API** → [API contract sync](AI-RULES.md#api-contract-sync-mandatory) same PR |
 | 6 | Push + create PR (fill template completely) | Linear ID + OpenSpec change-id + test evidence |
 | 7 | CI passes | openspec-gate + commitlint + test-integration + pre-commit |
 | 8 | Deploy verification | `apply-migration-dev.sh` (if migration) → build → push → dev; smoke via [`deploy-verification.md`](deploy-verification.md) §2.0 |
@@ -41,7 +41,7 @@ Three paths depending on change type. Follow the matching path strictly — **wi
 | 3 | **OpenSpec checkpoint** | User confirms OpenSpec OK (required even if `spec-approved` label exists) |
 | 4 | **Spec Review** (optional, before or after checkpoint) | Label `needs-spec-review` → reviewer confirms → `spec-approved` |
 | 5 | Branch: `feat/CYB-{id}-*` | — |
-| 6 | Code (split into sub-PRs if > 200 lines) | Each step: verification tier per AI-RULES |
+| 6 | Code (split into sub-PRs if > 200 lines) | Each step: verification tier per AI-RULES; API changes include contract files |
 | 7 | Push + create PR | Same as above + spec delta scope description |
 | 8 | CI passes | Same + openapi-diff (if API changed) |
 | 9 | Deploy verification | Same as Bug §2.0 scripts |

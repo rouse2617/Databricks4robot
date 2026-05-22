@@ -79,6 +79,16 @@ backend/internal/handlers/asset/handler.go
 - [ ] [backend] …
 - [ ] [Frontend] …
 
+## API contract sync (mandatory if HTTP API added/changed — same PR)
+See [`docs/agents/AI-RULES.md` § API contract sync](../../docs/agents/AI-RULES.md#api-contract-sync-mandatory).
+
+- [ ] `api/openapi.yaml` — paths + schemas
+- [ ] `docs/review/api-guide.md` — curl + errors
+- [ ] `sdk/src/asset_sdk/` + `client.py` (+ `sdk/tests/unit/` if SDK touched)
+- [ ] `scripts/api-guide-smoke.sh` or `scripts/smoke-<feature>-dev.sh`
+- [ ] `openspec/changes/CYB-{id}-*/specs/*/spec.md` — behavior delta
+- [ ] [Frontend] `src/api/` or hooks — only if UI calls the API
+
 ## Local verification (Tier S/M/L per AI-RULES)
 - [ ] …
 

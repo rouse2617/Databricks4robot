@@ -585,6 +585,7 @@ https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app/<page>
 
 ### 契约纪律
 
+- **新/改 API → 完整契约同步**（OpenAPI、api-guide、smoke、SDK 等）— 清单见 [`docs/agents/AI-RULES.md` § API contract sync](../agents/AI-RULES.md#api-contract-sync-mandatory)
 - **新/改 API → 同步 `api/openapi.yaml`**。SDK types 未自动生成前，手写类型需与 OpenAPI 一致
 - **修改 `asset_events` 的事件类型 → 同步 `backend/schemas/events/` JSON Schema + `registry.json`**
   - 加可选字段：直接改现有 `.vN.json`；加必填字段：新建 `.vN+1.json`

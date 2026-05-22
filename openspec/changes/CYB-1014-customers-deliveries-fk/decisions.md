@@ -1,5 +1,11 @@
 # Decisions — CYB-1014
 
+## 2026-05-22 — API contract files deferred (process gap)
+
+- **Context**: Backend handlers and migration shipped; OpenAPI / api-guide / SDK not updated in the same PR.
+- **Decision**: Track follow-up issue/PR for contract sync; repo rule updated in `docs/agents/AI-RULES.md` § API contract sync so future CYB work cannot repeat.
+- **Rationale**: Handler-only merge left SDK and external consumers without a single source of truth.
+
 ## 2026-05-22 — Touch `backend/migrations/` (off-limits exception)
 
 - **Context**: CYB-1014 requires DDL + backfill; same pattern as CYB-1013.
