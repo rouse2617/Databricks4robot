@@ -3,6 +3,7 @@ import { Button, Descriptions, message, Popover } from "antd";
 import dayjs from "dayjs";
 import { type ReactNode, useState } from "react";
 import { assetsApi } from "../../api/assets";
+import RunIdLink from "../asset-detail/RunIdLink";
 
 interface AlgoDetail {
 	status?: string;
@@ -76,7 +77,7 @@ export default function AlgoStatusPopover({
 					{formatTime(detail.finished_at)}
 				</Descriptions.Item>
 				<Descriptions.Item label="Run ID">
-					{detail.run_id || "—"}
+					<RunIdLink runId={detail.run_id} />
 				</Descriptions.Item>
 				<Descriptions.Item label="输出路径">
 					{detail.output_uri ? (

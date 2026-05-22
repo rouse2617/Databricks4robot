@@ -26,6 +26,7 @@ import { type AlgoRegistryItem, algoRegistryApi } from "../../api/algoRegistry";
 import { assetsApi } from "../../api/assets";
 import type { AlgoEvent, AlgoStatus } from "../../api/types";
 import { extractApiErrorMessage } from "../../lib/apiError";
+import RunIdLink from "./RunIdLink";
 
 const { Text } = Typography;
 
@@ -155,6 +156,14 @@ export default function AlgoTab({
 								</Tag>
 							);
 						},
+					},
+					{
+						title: "来自 run",
+						key: "run_id",
+						width: 140,
+						render: (_: unknown, r: AlgoInfo) => (
+							<RunIdLink runId={r.run_id} showLabel={false} />
+						),
 					},
 					{
 						title: "开始时间",
