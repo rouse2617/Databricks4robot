@@ -179,15 +179,17 @@ DataBrew **「管资产 → 跑算法 → 打标签 → 卖给客户」** 主链
 | 设计里有 | 现网 | 严重程度 | 说明 |
 |---------|------|---------|------|
 | `logical_assets` 表 | 没有 | 高 | 需要新建 |
-| `algo_runs` 表 | 没有 | 高 | 需要新建 + 改 API |
-| `customers` 表 | 没有（交付单上客户 ID 只是字符串）| 高 | 需要新建 + 关联交付单 |
-| `delivery_rules` 表 | 没有 | 中 | 交付校验会受影响 |
-| 资产版本三字段 | 没有 | 高 | 需要改表 + 改搜索 + 改 API |
+| `algo_runs` 表 | ✅ 已完成 (CYB-1018) | — | 已建表 + ingest API |
+| `customers` 表 | ✅ 已完成 (CYB-1014) | — | 已建表 + 交付单 FK 关联 |
+| `delivery_rules` 表 | ✅ 已完成 (CYB-1020) | — | 已建表 + pre-delivery check engine |
+| 资产版本三字段 | ✅ 已完成 (CYB-1013) | — | 已改表 + 改搜索 + 改 API |
 | `asset_tags` 支持多来源 | 主键设计不对 | 高 | 需要改表结构（破坏性）|
 | 写入校验逻辑 | 没有 | 高 | 需要开发 |
-| 搜索索引含版本字段 | 没有 | 高 | 需要改搜索同步 |
+| 搜索索引含版本字段 | ✅ 已完成 (CYB-1016) | — | 搜索同步已含版本字段 |
+| 版本 UI + provenance API | ✅ 已完成 (CYB-1017) | — | provenance tab + version dropdown |
+| UI/UX 对比度与设计 token | ✅ 已完成 (CYB-1032) | — | WCAG 对比度修复 + design tokens |
 
-**结论**：不是小修小补，大致 **3–4 周**量级。工程量见 [schema.md §17.6](./schema.md#176-总工程量)。
+**结论**：核心链路（asset versioning、customers、algo_runs、delivery_rules、search index、provenance API、UI/UX）已落地。剩余 `logical_assets` 表、`asset_tags` 多来源改造、写入校验逻辑仍待开发。工程量见 [schema.md §17.6](./schema.md#176-总工程量)。
 
 ---
 
