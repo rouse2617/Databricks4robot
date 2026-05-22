@@ -1,5 +1,6 @@
 import {
 	ArrowLeftOutlined,
+	BranchesOutlined,
 	FileOutlined,
 	LinkOutlined,
 	SendOutlined,
@@ -37,6 +38,7 @@ import AssetPreviewHero from "../components/asset-detail/AssetPreviewHero";
 import LogicalAssetId from "../components/asset-detail/LogicalAssetId";
 import VersionControl from "../components/asset-detail/VersionControl";
 import VersionHistoryBanner from "../components/asset-detail/VersionHistoryBanner";
+import VersionProvenanceTab from "../components/asset-detail/VersionProvenanceTab";
 import DeliveryHistoryTab from "../components/asset-detail/DeliveryHistoryTab";
 import EvalMetricsTab from "../components/asset-detail/EvalMetricsTab";
 import FilesTab from "../components/asset-detail/FilesTab";
@@ -111,6 +113,7 @@ export default function AssetDetailPage() {
 	> | null>(null);
 	const [provenance, setProvenance] = useState<AssetProvenance | null>(null);
 	const [didInitialLoad, setDidInitialLoad] = useState(false);
+	const [activeTab, setActiveTab] = useState("overview");
 
 	const jumpToPreviewTime = useCallback(
 		(eventTimeIso: string) => {
@@ -133,6 +136,10 @@ export default function AssetDetailPage() {
 		},
 		[id, msg, navigate, returnTo],
 	);
+
+	useEffect(() => {
+		setActiveTab("overview");
+	}, [id]);
 
 	const loadAsset = useCallback(
 		(options?: { background?: boolean }) => {
@@ -288,6 +295,31 @@ export default function AssetDetailPage() {
 			label: "概览",
 			children: <OverviewTab asset={asset} />,
 		},
+		...(provenance
+			? [
+					{
+						key: "versions",
+						label: (
+							<span>
+								<BranchesOutlined /> 版本与溯源
+							</span>
+						),
+						children: (
+							<VersionProvenanceTab
+								provenance={provenance}
+								currentAsset={asset}
+								onViewRevision={(nextId) =>
+									navigate(`/assets/${nextId}`, {
+										state: location.state,
+										replace: false,
+									})
+								}
+								onOpenLineageTab={() => setActiveTab("lineage")}
+							/>
+						),
+					},
+				]
+			: []),
 		{
 			key: "algo",
 			label: `算法处理 (${algoList.length})`,
@@ -480,7 +512,8 @@ export default function AssetDetailPage() {
 
 			{/* Tabs */}
 			<Tabs
-				defaultActiveKey="overview"
+				activeKey={activeTab}
+				onChange={setActiveTab}
 				items={tabItems}
 				size="small"
 				style={{ marginTop: -8 }}
