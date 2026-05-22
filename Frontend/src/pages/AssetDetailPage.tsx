@@ -23,11 +23,20 @@ import {
 	type EvalResultItem,
 	evalApi,
 } from "../api/eval";
-import type { AlgoEvent, AlgoStatus, Asset, AssetEvent } from "../api/types";
+import type {
+	AlgoEvent,
+	AlgoStatus,
+	Asset,
+	AssetEvent,
+	AssetProvenance,
+} from "../api/types";
 import ActionsTimelineTab from "../components/asset-detail/ActionsTimelineTab";
 import AlgoTab from "../components/asset-detail/AlgoTab";
 import AssetEventsTab from "../components/asset-detail/AssetEventsTab";
 import AssetPreviewHero from "../components/asset-detail/AssetPreviewHero";
+import LogicalAssetId from "../components/asset-detail/LogicalAssetId";
+import VersionControl from "../components/asset-detail/VersionControl";
+import VersionHistoryBanner from "../components/asset-detail/VersionHistoryBanner";
 import DeliveryHistoryTab from "../components/asset-detail/DeliveryHistoryTab";
 import EvalMetricsTab from "../components/asset-detail/EvalMetricsTab";
 import FilesTab from "../components/asset-detail/FilesTab";
@@ -100,6 +109,7 @@ export default function AssetDetailPage() {
 	const [previewManifest, setPreviewManifest] = useState<ReturnType<
 		typeof buildPreviewManifestFromSources
 	> | null>(null);
+	const [provenance, setProvenance] = useState<AssetProvenance | null>(null);
 	const [didInitialLoad, setDidInitialLoad] = useState(false);
 
 	const jumpToPreviewTime = useCallback(
@@ -136,9 +146,11 @@ export default function AssetDetailPage() {
 				.get(id)
 				.then(async (nextAsset) => {
 					setAsset(nextAsset);
-					const foxgloveSource = await assetsApi
-						.getFoxgloveSource(id)
-						.catch(() => null);
+					const [foxgloveSource, prov] = await Promise.all([
+						assetsApi.getFoxgloveSource(id).catch(() => null),
+						assetsApi.getProvenance(id).catch(() => null),
+					]);
+					setProvenance(prov);
 					setPreviewManifest(
 						buildPreviewManifestFromSources(nextAsset, null, foxgloveSource),
 					);
@@ -233,6 +245,7 @@ export default function AssetDetailPage() {
 		setEvalResults([]);
 		setAssetMetrics([]);
 		setPreviewManifest(null);
+		setProvenance(null);
 		refresh();
 	}, [refresh]);
 
@@ -383,7 +396,7 @@ export default function AssetDetailPage() {
 			{msgCtx}
 
 			{/* Header */}
-			<div className="flex items-center gap-3 mb-4">
+			<div className="flex flex-wrap items-center gap-3 mb-4">
 				<Button
 					icon={<ArrowLeftOutlined />}
 					onClick={() => {
@@ -412,10 +425,45 @@ export default function AssetDetailPage() {
 				<Tag color={getAssetStateColor(asset)}>
 					{getLifecycleState(asset) || "—"}
 				</Tag>
+				<VersionControl
+					assetId={asset.asset_id}
+					revisions={provenance?.revisions ?? []}
+					loading={loading && !provenance}
+					onSelect={(nextId) =>
+						navigate(`/assets/${nextId}`, {
+							state: location.state,
+							replace: false,
+						})
+					}
+				/>
 				<Text type="secondary" className="text-xs font-mono">
 					{asset.asset_id}
 				</Text>
+				{(() => {
+					const logicalId =
+						provenance?.logical_asset_id ?? asset.logical_asset_id;
+					const showLogical =
+						logicalId &&
+						((provenance?.revisions.length ?? 0) > 1 ||
+							logicalId !== asset.asset_id);
+					return showLogical ? (
+						<LogicalAssetId logicalAssetId={logicalId} />
+					) : null;
+				})()}
 			</div>
+
+			{provenance && provenance.revisions.length > 1 ? (
+				<VersionHistoryBanner
+					revisions={provenance.revisions}
+					currentAssetId={asset.asset_id}
+					onJumpToCurrent={(nextId) =>
+						navigate(`/assets/${nextId}`, {
+							state: location.state,
+							replace: false,
+						})
+					}
+				/>
+			) : null}
 
 			{/* Preview Hero */}
 			<AssetPreviewHero asset={asset} previewManifest={previewManifest} />

@@ -5,7 +5,13 @@ import {
 	type QuerySort,
 	queryApi,
 } from "./query";
-import type { AlgoEvent, Asset, AssetEvent, PaginatedResponse } from "./types";
+import type {
+	AlgoEvent,
+	Asset,
+	AssetEvent,
+	AssetProvenance,
+	PaginatedResponse,
+} from "./types";
 
 export type { Asset };
 
@@ -329,5 +335,9 @@ export const assetsApi = {
 					eval_results?: Array<Record<string, unknown>>;
 				};
 			}>(`/assets/${assetId}/lineage`)
+			.then((r) => r.data),
+	getProvenance: (assetId: string) =>
+		apiClient
+			.get<AssetProvenance>(`/assets/${assetId}/provenance`)
 			.then((r) => r.data),
 };

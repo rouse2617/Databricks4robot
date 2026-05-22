@@ -53,6 +53,36 @@ export interface Asset {
 	created_at: string;
 	updated_at: string;
 	version: number;
+	logical_asset_id?: string;
+	revision?: number;
+	is_current?: boolean;
+}
+
+export interface RevisionSummary {
+	asset_id: string;
+	revision: number;
+	is_current: boolean;
+	created_at: string;
+}
+
+export interface VersionHistoryEntry {
+	version: number;
+	asset_id?: string;
+	promoted_at: string;
+	by_run_id?: string;
+	reason?: string;
+}
+
+export interface AssetProvenance {
+	asset_id: string;
+	logical_asset_id?: string;
+	revisions: RevisionSummary[];
+	version_history: VersionHistoryEntry[];
+	lineage: {
+		asset_id: string;
+		upstream: Record<string, unknown>;
+		downstream: Record<string, unknown>;
+	};
 }
 
 // ─── MCAP File ───
