@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -66,9 +67,7 @@ INSERT INTO algo_runs (
 	return nil
 }
 
-func (r *AlgoRunRepo) Get(ctx context.Context, runID string) (*models.AlgoRun, error) {
-	const q = `
-SELECT
+const algoRunSelectCols = `
   run_id, algo_name, algo_version, algo_kind, triggered_by, status,
   started_at, finished_at, duration_ns,
   input_filter, input_asset_ids, params,
@@ -77,23 +76,27 @@ SELECT
   actions_created, metrics_written, outputs,
   cpu_seconds, gpu_seconds, cost_usd_micros,
   error_class, error_message, tenant_id, project_id,
-  created_at, updated_at, row_version
-FROM algo_runs WHERE run_id = $1`
+  external_runtime, external_url,
+  created_at, updated_at, row_version`
+
+func (r *AlgoRunRepo) scanAlgoRun(ctx context.Context, row rowScanner) (*models.AlgoRun, error) {
 	var (
-		run           models.AlgoRun
-		inputFilter   []byte
-		params        []byte
-		outputs       []byte
-		codeCommit    *string
-		imageDigest   *string
-		pipelineName  *string
-		pipelineVer   *string
-		errorClass    *string
-		errorMessage  *string
-		tenantID      *string
-		projectID     *string
+		run             models.AlgoRun
+		inputFilter     []byte
+		params          []byte
+		outputs         []byte
+		codeCommit      *string
+		imageDigest     *string
+		pipelineName    *string
+		pipelineVer     *string
+		errorClass      *string
+		errorMessage    *string
+		tenantID        *string
+		projectID       *string
+		externalRuntime *string
+		externalUrl     *string
 	)
-	err := r.c.db.QueryRow(ctx, q, runID).Scan(
+	err := row.Scan(
 		&run.RunID, &run.AlgoName, &run.AlgoVersion, &run.AlgoKind, &run.TriggeredBy, &run.Status,
 		&run.StartedAt, &run.FinishedAt, &run.DurationNs,
 		&inputFilter, &run.InputAssetIDs, &params,
@@ -102,13 +105,14 @@ FROM algo_runs WHERE run_id = $1`
 		&run.ActionsCreated, &run.MetricsWritten, &outputs,
 		&run.CPUSeconds, &run.GPUSeconds, &run.CostUSDMicros,
 		&errorClass, &errorMessage, &tenantID, &projectID,
+		&externalRuntime, &externalUrl,
 		&run.CreatedAt, &run.UpdatedAt, &run.RowVersion,
 	)
 	if err != nil {
 		if errors.Is(err, errNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("postgres AlgoRunRepo.Get: %w", err)
+		return nil, fmt.Errorf("postgres AlgoRunRepo.scan: %w", err)
 	}
 	decodeAlgoRunJSON(&run, inputFilter, params, outputs)
 	run.CodeCommit = derefStr(codeCommit)
@@ -119,7 +123,13 @@ FROM algo_runs WHERE run_id = $1`
 	run.ErrorMessage = derefStr(errorMessage)
 	run.TenantID = derefStr(tenantID)
 	run.ProjectID = derefStr(projectID)
+	run.ExternalRuntime = externalRuntime
+	run.ExternalUrl = externalUrl
 	return &run, nil
+}
+
+func (r *AlgoRunRepo) Get(ctx context.Context, runID string) (*models.AlgoRun, error) {
+	return r.scanAlgoRun(ctx, r.c.db.QueryRow(ctx, "SELECT "+algoRunSelectCols+" FROM algo_runs WHERE run_id = $1", runID))
 }
 
 func (r *AlgoRunRepo) Exists(ctx context.Context, runID string) (bool, error) {
@@ -211,6 +221,130 @@ WHERE run_id = $1 AND status = $16`
 		return repository.ErrAlgoRunBadState
 	}
 	return nil
+}
+
+// List returns algo_runs matching the given filter, ordered by created_at DESC
+// with keyset pagination on run_id cursor.
+func (r *AlgoRunRepo) List(ctx context.Context, filter repository.AlgoRunListFilter) ([]*models.AlgoRun, error) {
+	where := []string{"1=1"}
+	args := []any{}
+	idx := 1
+
+	if filter.AlgoName != "" {
+		where = append(where, fmt.Sprintf("algo_name = $%d", idx))
+		args = append(args, filter.AlgoName)
+		idx++
+	}
+	if filter.Status != "" {
+		where = append(where, fmt.Sprintf("status = $%d", idx))
+		args = append(args, filter.Status)
+		idx++
+	}
+	if filter.StartedAfter != nil {
+		where = append(where, fmt.Sprintf("started_at >= $%d", idx))
+		args = append(args, *filter.StartedAfter)
+		idx++
+	}
+	if filter.StartedBefore != nil {
+		where = append(where, fmt.Sprintf("started_at <= $%d", idx))
+		args = append(args, *filter.StartedBefore)
+		idx++
+	}
+	if filter.Cursor != "" {
+		where = append(where, fmt.Sprintf("created_at < (SELECT created_at FROM algo_runs WHERE run_id = $%d)", idx))
+		args = append(args, filter.Cursor)
+		idx++
+	}
+
+	limit := filter.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	args = append(args, limit)
+
+	q := fmt.Sprintf("SELECT %s FROM algo_runs WHERE %s ORDER BY created_at DESC LIMIT $%d",
+		algoRunSelectCols, strings.Join(where, " AND "), idx)
+
+	rows, err := r.c.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AlgoRunRepo.List: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*models.AlgoRun
+	for rows.Next() {
+		run, err := r.scanAlgoRun(ctx, rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, run)
+	}
+	return out, nil
+}
+
+// Cancel transitions a pending/running run to cancelled with a reason.
+func (r *AlgoRunRepo) Cancel(ctx context.Context, runID, reason string, finishedAt time.Time) error {
+	const q = `
+UPDATE algo_runs SET
+  status = $2,
+  finished_at = $3,
+  error_class = 'cancelled',
+  error_message = $4,
+  updated_at = $5,
+  row_version = row_version + 1
+WHERE run_id = $1 AND status IN ($6, $7)`
+	rows, err := r.c.db.ExecResult(ctx, q,
+		runID, models.AlgoRunStatusCancelled, finishedAt, reason,
+		time.Now().UTC(), models.AlgoRunStatusPending, models.AlgoRunStatusRunning,
+	)
+	if err != nil {
+		return fmt.Errorf("postgres AlgoRunRepo.Cancel: %w", err)
+	}
+	if rows == 0 {
+		cur, gerr := r.Get(ctx, runID)
+		if gerr != nil {
+			return gerr
+		}
+		if cur == nil {
+			return repository.ErrAlgoRunNotFound
+		}
+		if cur.Status == models.AlgoRunStatusCancelled {
+			return nil // already cancelled, idempotent
+		}
+		return repository.ErrAlgoRunBadState
+	}
+	return nil
+}
+
+// GetAffectedAssets returns all assets in asset_algo_latest that were processed
+// by the given run_id.
+func (r *AlgoRunRepo) GetAffectedAssets(ctx context.Context, runID string) ([]*repository.AffectedAsset, error) {
+	const q = `
+SELECT asset_id, algo_name, algo_version, status,
+  COALESCE(result_tag, ''), result_score, COALESCE(run_id, ''),
+  updated_at
+FROM asset_algo_latest
+WHERE run_id = $1
+ORDER BY asset_id`
+	rows, err := r.c.db.Query(ctx, q, runID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AlgoRunRepo.GetAffectedAssets: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*repository.AffectedAsset
+	for rows.Next() {
+		var a repository.AffectedAsset
+		if err := rows.Scan(
+			&a.AssetID, &a.AlgoName, &a.AlgoVersion, &a.Status,
+			&a.ResultTag, &a.ResultScore, &a.RunID,
+			&a.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AlgoRunRepo.GetAffectedAssets scan: %w", err)
+		}
+		out = append(out, &a)
+	}
+	return out, nil
 }
 
 func algoRunJSONFields(run *models.AlgoRun) (inputFilter, params, outputs []byte) {

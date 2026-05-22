@@ -42,6 +42,8 @@ type AlgoRun struct {
 	ErrorMessage    string                 `json:"error_message,omitempty"`
 	TenantID        string                 `json:"tenant_id,omitempty"`
 	ProjectID       string                 `json:"project_id,omitempty"`
+	ExternalRuntime *string                `json:"external_runtime,omitempty"`
+	ExternalUrl     *string                `json:"external_url,omitempty"`
 	CreatedAt       time.Time              `json:"created_at"`
 	UpdatedAt       time.Time              `json:"updated_at"`
 	RowVersion      int64                  `json:"row_version"`

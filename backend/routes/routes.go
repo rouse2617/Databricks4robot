@@ -180,9 +180,12 @@ func RegisterAll(
 
 		if algoRunHandler != nil {
 			api.POST("/algo-runs", algoRunHandler.Create)
+			api.GET("/algo-runs", algoRunHandler.List)
 			api.GET("/algo-runs/:run_id", algoRunHandler.Get)
 			api.POST("/algo-runs/:run_id/start", algoRunHandler.Start)
 			api.POST("/algo-runs/:run_id/finish", algoRunHandler.Finish)
+			api.POST("/algo-runs/:run_id/cancel", algoRunHandler.Cancel)
+			api.GET("/algo-runs/:run_id/affected-assets", algoRunHandler.GetAffectedAssets)
 		}
 
 		api.POST("/deliveries", deliveryHandler.Commit)

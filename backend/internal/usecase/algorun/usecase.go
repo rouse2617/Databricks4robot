@@ -46,6 +46,16 @@ type CreateInput struct {
 	ProjectID       string                 `json:"project_id"`
 }
 
+// ListFilter carries query params for the list endpoint.
+type ListFilter struct {
+	AlgoName      string
+	Status        string
+	StartedAfter  *time.Time
+	StartedBefore *time.Time
+	Limit         int
+	Cursor        string
+}
+
 // FinishInput is the body for POST /algo-runs/{id}/finish.
 type FinishInput struct {
 	Status          string                 `json:"status"`
@@ -196,4 +206,49 @@ func (u *Usecase) Exists(ctx context.Context, runID string) (bool, error) {
 		return false, ErrInvalidRunID
 	}
 	return u.repo.Exists(ctx, runID)
+}
+
+// List returns algo_runs matching the given filter.
+func (u *Usecase) List(ctx context.Context, f ListFilter) ([]*models.AlgoRun, error) {
+	if f.Limit <= 0 || f.Limit > 200 {
+		f.Limit = 50
+	}
+	return u.repo.List(ctx, repository.AlgoRunListFilter{
+		AlgoName:      strings.TrimSpace(f.AlgoName),
+		Status:        strings.TrimSpace(f.Status),
+		StartedAfter:  f.StartedAfter,
+		StartedBefore: f.StartedBefore,
+		Limit:         f.Limit,
+		Cursor:        strings.TrimSpace(f.Cursor),
+	})
+}
+
+// Cancel transitions a pending/running run to cancelled.
+func (u *Usecase) Cancel(ctx context.Context, runID, reason string) (*models.AlgoRun, error) {
+	if !id.ValidateRunID(runID) {
+		return nil, ErrInvalidRunID
+	}
+	if strings.TrimSpace(reason) == "" {
+		return nil, fmt.Errorf("%w: cancel reason", ErrMissingField)
+	}
+	if err := u.repo.Cancel(ctx, runID, reason, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	return u.Get(ctx, runID)
+}
+
+// GetAffectedAssets returns assets processed by this run.
+func (u *Usecase) GetAffectedAssets(ctx context.Context, runID string) ([]*repository.AffectedAsset, error) {
+	if !id.ValidateRunID(runID) {
+		return nil, ErrInvalidRunID
+	}
+	// Verify the run exists.
+	exists, err := u.Exists(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrRunNotFound
+	}
+	return u.repo.GetAffectedAssets(ctx, runID)
 }

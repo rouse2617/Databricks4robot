@@ -32,6 +32,28 @@ type AlgoRunFinishPatch struct {
 	FinishedAt      time.Time
 }
 
+// AlgoRunListFilter controls list query for algo_runs.
+type AlgoRunListFilter struct {
+	AlgoName      string
+	Status        string
+	StartedAfter  *time.Time
+	StartedBefore *time.Time
+	Limit         int
+	Cursor        string // run_id cursor for keyset pagination
+}
+
+// AffectedAsset represents a single asset processed by an algo run.
+type AffectedAsset struct {
+	AssetID     string  `json:"asset_id"`
+	AlgoName    string  `json:"algo_name"`
+	AlgoVersion string  `json:"algo_version"`
+	Status      string  `json:"status"`
+	ResultTag   string  `json:"result_tag,omitempty"`
+	ResultScore *float64 `json:"result_score,omitempty"`
+	RunID       string  `json:"run_id,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 // AlgoRunRepository persists algo_runs rows.
 type AlgoRunRepository interface {
 	Insert(ctx context.Context, run *models.AlgoRun) error
@@ -39,4 +61,7 @@ type AlgoRunRepository interface {
 	Exists(ctx context.Context, runID string) (bool, error)
 	Start(ctx context.Context, runID string, startedAt time.Time) error
 	Finish(ctx context.Context, runID string, patch AlgoRunFinishPatch) error
+	List(ctx context.Context, filter AlgoRunListFilter) ([]*models.AlgoRun, error)
+	Cancel(ctx context.Context, runID, reason string, finishedAt time.Time) error
+	GetAffectedAssets(ctx context.Context, runID string) ([]*AffectedAsset, error)
 }
