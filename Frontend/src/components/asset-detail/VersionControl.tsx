@@ -35,7 +35,7 @@ export default function VersionControl({
 		const rev = current?.revision ?? 1;
 		return (
 			<span
-				className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md bg-[#F1F5FD] text-[#64748B] text-xs"
+				className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md bg-primary-light text-text-secondary text-xs"
 				aria-label="资产版本"
 			>
 				<BranchesOutlined className="text-[11px]" />
@@ -57,12 +57,12 @@ export default function VersionControl({
 						<div
 							className="w-2.5 h-2.5 rounded-full border-2 shrink-0"
 							style={{
-								borderColor: r.asset_id === assetId ? "#2563EB" : r.is_current ? "#059669" : "#CBD5E1",
-								background: r.asset_id === assetId ? "#2563EB" : r.is_current ? "#059669" : "#fff",
+								borderColor: r.asset_id === assetId ? "#2563eb" : r.is_current ? "#16a34a" : "#cbd5e1",
+								background: r.asset_id === assetId ? "#2563eb" : r.is_current ? "#16a34a" : "#fff",
 							}}
 						/>
 						{idx < sorted.length - 1 && (
-							<div className="w-px h-6 bg-[#E2E8F0] mt-1" />
+							<div className="w-px h-6 bg-border mt-1" />
 						)}
 					</div>
 					{/* Content */}
@@ -73,8 +73,8 @@ export default function VersionControl({
 							</Text>
 							{r.is_current ? (
 								<Tag
+									color="success"
 									className="m-0 text-[10px] leading-[16px] px-1.5"
-									style={{ color: "#059669", background: "#ECFDF5", borderColor: "#A7F3D0" }}
 								>
 									<CheckCircleFilled className="mr-0.5" />
 									当前
@@ -95,7 +95,7 @@ export default function VersionControl({
 							>
 								{r.asset_id}
 							</Text>
-							<span className="text-[#CBD5E1]">·</span>
+							<span className="text-border">·</span>
 							<Text type="secondary" className="text-xs">
 								{formatShortDateTime(r.created_at)}
 							</Text>
@@ -126,11 +126,11 @@ export default function VersionControl({
 		>
 			<button
 				type="button"
-				className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[#E2E8F0] bg-white text-sm text-[#1E293B] hover:border-[#2563EB] hover:text-[#2563EB] hover:shadow-sm transition-all cursor-pointer"
+				className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border bg-white text-sm text-text hover:border-primary hover:text-primary hover:shadow-sm transition-all cursor-pointer"
 				aria-label="资产版本"
-				aria-haspopup="listbox"
+				aria-haspopup="menu"
 			>
-				<BranchesOutlined className="text-[#64748B] text-xs" />
+				<BranchesOutlined className="text-text-secondary text-xs" />
 				<Text type="secondary" className="text-xs">
 					版本
 				</Text>
@@ -139,12 +139,12 @@ export default function VersionControl({
 				</Text>
 				{sorted.length > 2 && (
 					<Tooltip title={`共 ${sorted.length} 个版本`}>
-						<span className="text-[10px] text-[#94A3B8] bg-[#F1F5FD] px-1 rounded">
+						<span className="text-[10px] text-text-secondary bg-primary-light px-1 rounded">
 							{sorted.length}
 						</span>
 					</Tooltip>
 				)}
-				<DownOutlined className="text-[10px] text-[#64748B] ml-0.5" />
+				<DownOutlined className="text-[10px] text-text-secondary ml-0.5" />
 			</button>
 		</Dropdown>
 	);

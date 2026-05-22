@@ -129,7 +129,7 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 						<RobotOutlined /> 算法处理
 					</Text>
 					{data.downstream.algo_results.length === 0 ? (
-						<div style={{ color: "#999", marginTop: 4, fontSize: 12 }}>
+						<div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
 							暂无算法结果
 						</div>
 					) : (
@@ -170,7 +170,7 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 						<SendOutlined /> 交付记录
 					</Text>
 					{data.downstream.deliveries.length === 0 ? (
-						<div style={{ color: "#999", marginTop: 4, fontSize: 12 }}>
+						<div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
 							暂无交付记录
 						</div>
 					) : (
@@ -205,7 +205,7 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 						<FundOutlined /> 评测结果
 					</Text>
 					{data.downstream.eval_results.length === 0 ? (
-						<div style={{ color: "#999", marginTop: 4, fontSize: 12 }}>
+						<div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
 							暂无评测结果
 						</div>
 					) : (

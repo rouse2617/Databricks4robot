@@ -189,29 +189,20 @@ export default function VersionProvenanceTab({
 			<Title level={5} style={{ marginTop: 0, marginBottom: 12 }}>
 				版本链
 			</Title>
-			<div className="mb-6">
+			<ol className="list-none m-0 p-0 mb-6" role="list" aria-label="版本链">
 				{nodes.map((node, index) => {
 					const isViewing = node.assetId === currentAsset.asset_id;
 					const isLast = index === nodes.length - 1;
 					return (
-						<div key={`${node.version}-${node.assetId}`} className="flex gap-3">
+						<li key={`${node.version}-${node.assetId}`} className="flex gap-3">
 							<div className="flex flex-col items-center w-3 shrink-0 pt-1">
 								<span
-									className="rounded-full shrink-0"
-									style={{
-										width: 10,
-										height: 10,
-										background: node.isCurrent ? "#2563EB" : "transparent",
-										border: node.isCurrent
-											? "none"
-											: "2px solid #94A3B8",
-									}}
+									className={`rounded-full shrink-0 w-2.5 h-2.5 ${node.isCurrent ? "bg-primary" : "border-2 border-text-secondary"}`}
 									aria-hidden
 								/>
 								{!isLast ? (
 									<span
-										className="flex-1 w-0.5 min-h-[24px] mt-1"
-										style={{ background: "#E2E8F0" }}
+										className="flex-1 w-0.5 min-h-[24px] mt-1 bg-border"
 										aria-hidden
 									/>
 								) : null}
@@ -237,7 +228,6 @@ export default function VersionProvenanceTab({
 										<Button
 											type="link"
 											size="small"
-											className="p-0 h-auto"
 											onClick={() => onViewRevision(node.assetId)}
 										>
 											查看此版
@@ -245,7 +235,7 @@ export default function VersionProvenanceTab({
 									) : null}
 								</div>
 								{node.version > 1 && (node.reason || node.byRunId) ? (
-									<div className="mt-1 text-xs text-[#64748B]">
+									<div className="mt-1 text-xs text-text-secondary">
 										{node.reason ? (
 											<div>
 												升级原因:{" "}
@@ -261,10 +251,10 @@ export default function VersionProvenanceTab({
 									</div>
 								) : null}
 							</div>
-						</div>
+						</li>
 					);
 				})}
-			</div>
+			</ol>
 
 			{(currentAsset.revision ?? 1) > 1 ? (
 				<>
@@ -292,7 +282,7 @@ export default function VersionProvenanceTab({
 										<Text strong className="text-xs">
 											{row.label}
 										</Text>
-										<div className="font-mono text-xs text-[#64748B]">
+										<div className="font-mono text-xs text-text-secondary">
 											{row.prevVal} → {row.currVal}
 										</div>
 									</li>
@@ -332,7 +322,6 @@ export default function VersionProvenanceTab({
 							type="link"
 							size="small"
 							icon={<LinkOutlined />}
-							className="p-0 h-auto"
 							onClick={onOpenLineageTab}
 						>
 							在「血缘」Tab 查看完整

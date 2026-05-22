@@ -322,7 +322,7 @@ export default function AssetDetailPage() {
 			: []),
 		{
 			key: "algo",
-			label: `算法处理 (${algoList.length})`,
+			label: algoEventsLoading ? "算法处理 (...)" : `算法处理 (${algoList.length})`,
 			children: (
 				<AlgoTab
 					assetId={asset.asset_id}
@@ -340,7 +340,7 @@ export default function AssetDetailPage() {
 		},
 		{
 			key: "events",
-			label: `全部事件 (${allEvents.length})`,
+			label: allEventsLoading ? "全部事件 (...)" : `全部事件 (${allEvents.length})`,
 			children: (
 				<AssetEventsTab
 					assetId={asset.asset_id}
@@ -356,7 +356,7 @@ export default function AssetDetailPage() {
 		},
 		{
 			key: "eval-metrics",
-			label: `评测与指标 (${assetMetrics.length})`,
+			label: evalLoading ? "评测与指标 (...)" : `评测与指标 (${assetMetrics.length})`,
 			children: (
 				<EvalMetricsTab
 					loading={evalLoading}
@@ -453,7 +453,7 @@ export default function AssetDetailPage() {
 						size="small"
 						aria-label="返回"
 					/>
-					<Title level={4} style={{ margin: 0 }}>
+					<Title level={1} style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>
 						资产详情
 					</Title>
 					<Tag color={getAssetStateColor(asset)}>
@@ -486,7 +486,7 @@ export default function AssetDetailPage() {
 								logicalId !== asset.asset_id);
 						return showLogical ? (
 							<>
-								<span className="text-[#E2E8F0]">|</span>
+								<span className="text-border">|</span>
 								<LogicalAssetId logicalAssetId={logicalId} />
 							</>
 						) : null;

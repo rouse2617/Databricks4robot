@@ -180,7 +180,7 @@ export default function CmdKSearch() {
 			<div style={{ padding: "12px 16px 0 16px" }}>
 				<Input
 					ref={inputRef}
-					prefix={<SearchOutlined style={{ color: "#999" }} />}
+					prefix={<SearchOutlined style={{ color: "#64748b" }} />}
 					placeholder="搜索资产、MCAP、交付…  (8位ID精确匹配)"
 					value={query}
 					onChange={(e) => setQuery(e.target.value)}
@@ -201,7 +201,7 @@ export default function CmdKSearch() {
 						style={{
 							textAlign: "center",
 							padding: 20,
-							color: "#999",
+							color: "#64748b",
 							fontSize: 13,
 						}}
 					>
@@ -213,7 +213,7 @@ export default function CmdKSearch() {
 						style={{
 							textAlign: "center",
 							padding: 20,
-							color: "#999",
+							color: "#64748b",
 							fontSize: 13,
 						}}
 					>
@@ -226,7 +226,7 @@ export default function CmdKSearch() {
 							<div
 								style={{
 									padding: "8px 16px 4px 16px",
-									color: "#999",
+									color: "#64748b",
 									fontSize: 11,
 									fontWeight: 600,
 									textTransform: "uppercase",

@@ -44,7 +44,7 @@ export default function SavedViewSelector({
 							<span>{v.name}</span>
 							{!v.builtin && (
 								<DeleteOutlined
-									style={{ color: "#999", fontSize: 11, marginLeft: 8 }}
+									style={{ color: "#64748b", fontSize: 11, marginLeft: 8 }}
 									onClick={(e) => {
 										e.stopPropagation();
 										onDeleteView(v.id);
