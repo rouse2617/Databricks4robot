@@ -22,6 +22,8 @@ var (
 	ErrInvalidRange       = errors.New("end_timestamp_ns must be greater than start_timestamp_ns")
 	ErrMcapFileIDRequired = errors.New("mcap_file_id is required")
 	ErrInvalidTag         = errors.New("invalid tag")
+	ErrTagSourceInvalid   = errors.New("invalid tag source")
+	ErrTagImmutable       = errors.New("tag source is immutable")
 	ErrInvalidAssetID     = errors.New("asset id must be 8 alphanumeric characters")
 	ErrAssetIDTaken       = errors.New("asset id already exists")
 	ErrInvalidMcapFileID  = errors.New("mcap_file_id must be exactly 8 alphanumeric characters")
@@ -149,6 +151,20 @@ func (u *Usecase) validateTags(tags map[string]string) error {
 	return nil
 }
 
+// validateTagSource enforces tag_registry tag_sources[] identity contracts
+// for a single tag write (requires_source_name / requires_source_version).
+// Unknown sources return ErrTagSourceInvalid only when the registry has any
+// tag_sources configured (back-compat for environments without the block).
+func (u *Usecase) validateTagSource(sourceType, sourceName, sourceVersion string) error {
+	if u.tagRegistry == nil {
+		return nil
+	}
+	if err := u.tagRegistry.ValidateSource(sourceType, sourceName, sourceVersion); err != nil {
+		return fmt.Errorf("%w: %s", ErrTagSourceInvalid, err.Error())
+	}
+	return nil
+}
+
 func (u *Usecase) appendAssetEvent(ctx context.Context, eventType string, a *models.Asset, payload map[string]any) error {
 	if u.eventRepo == nil || a == nil {
 		return nil
@@ -166,22 +182,73 @@ func (u *Usecase) appendAssetEvent(ctx context.Context, eventType string, a *mod
 	})
 }
 
-func (u *Usecase) upsertTagProjection(ctx context.Context, a *models.Asset, tags map[string]string, sourceType string) error {
+// tagSource captures the per-write identity of a tag assertion. Empty fields
+// other than SourceType are allowed when the registry does not require them.
+type tagSource struct {
+	SourceType    string
+	SourceName    string
+	SourceVersion string
+	RunID         string
+}
+
+func defaultTagSource() tagSource { return tagSource{SourceType: "system"} }
+
+func (u *Usecase) upsertTagProjection(ctx context.Context, a *models.Asset, tags map[string]string, src tagSource) error {
 	if u.tagRepo == nil || a == nil {
 		return nil
 	}
 	for k, v := range tags {
 		tagType := u.tagTypeFor(k)
-		if err := u.tagRepo.Upsert(ctx, a.AssetID, k, v, tagType, sourceType); err != nil {
+		if err := u.assertNotImmutable(ctx, a.AssetID, k, src); err != nil {
+			return err
+		}
+		if err := u.tagRepo.Upsert(ctx, repository.AssetTagUpsertInput{
+			AssetID:       a.AssetID,
+			TagKey:        k,
+			TagValue:      v,
+			TagType:       tagType,
+			SourceType:    src.SourceType,
+			SourceName:    src.SourceName,
+			SourceVersion: src.SourceVersion,
+			RunID:         src.RunID,
+			TenantID:      a.TenantID,
+			ProjectID:     a.ProjectID,
+		}); err != nil {
 			return err
 		}
 		if err := u.appendAssetEvent(ctx, "tag_upserted", a, map[string]any{
-			"tag_key":     k,
-			"tag_value":   v,
-			"tag_type":    tagType,
-			"source_type": sourceType,
+			"tag_key":        k,
+			"tag_value":      v,
+			"tag_type":       tagType,
+			"source_type":    src.SourceType,
+			"source_name":    src.SourceName,
+			"source_version": src.SourceVersion,
+			"run_id":         src.RunID,
 		}); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// assertNotImmutable rejects any attempt to rewrite an existing assertion
+// from a source flagged `immutable: true` in tag_registry.yaml.
+func (u *Usecase) assertNotImmutable(ctx context.Context, assetID, tagKey string, src tagSource) error {
+	if u.tagRegistry == nil || u.tagRepo == nil {
+		return nil
+	}
+	def, ok := u.tagRegistry.SourceDef(src.SourceType)
+	if !ok || !def.Immutable {
+		return nil
+	}
+	existing, err := u.tagRepo.ListByAsset(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	for _, row := range existing {
+		if row.TagKey == tagKey && row.SourceType == src.SourceType &&
+			row.SourceVersion == src.SourceVersion {
+			return fmt.Errorf("%w: %s/%s on %s", ErrTagImmutable, src.SourceType, tagKey, assetID)
 		}
 	}
 	return nil
@@ -221,7 +288,7 @@ func (u *Usecase) persistNewAsset(ctx context.Context, a *models.Asset, tags map
 		if err := u.seedInitialAlgoProjection(txCtx, a); err != nil {
 			return err
 		}
-		return u.upsertTagProjection(txCtx, a, tags, "manual")
+		return u.upsertTagProjection(txCtx, a, tags, defaultTagSource())
 	}); err != nil {
 		return err
 	}
@@ -295,10 +362,22 @@ func (u *Usecase) hydrateTags(ctx context.Context, a *models.Asset) error {
 	if err != nil {
 		return err
 	}
+	// Flat map is last-applied-wins per key for backward compatibility.
+	// tags_detailed is the source of truth for multi-source assertions.
 	a.Tags = map[string]string{}
+	latestApplied := map[string]time.Time{}
+	detailed := make([]models.AssetTag, 0, len(rows))
 	for _, row := range rows {
-		a.Tags[row.TagKey] = row.TagValue
+		if row == nil {
+			continue
+		}
+		detailed = append(detailed, *row)
+		if t, seen := latestApplied[row.TagKey]; !seen || row.AppliedAt.After(t) {
+			a.Tags[row.TagKey] = row.TagValue
+			latestApplied[row.TagKey] = row.AppliedAt
+		}
 	}
+	a.TagsDetailed = detailed
 	return nil
 }
 
@@ -432,6 +511,12 @@ type ListEventsResult struct {
 type UpsertTagInput struct {
 	Key   string
 	Value string
+	// Source identity (CYB-1015). When SourceType is empty the handler must
+	// default it (typically to "human" on UI flows, "system" elsewhere).
+	SourceType    string
+	SourceName    string
+	SourceVersion string
+	RunID         string
 }
 
 type CommitSegmentsInput struct {
@@ -825,7 +910,7 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 				return err
 			}
 		}
-		return u.upsertTagProjection(txCtx, a, in.Tags, "manual")
+		return u.upsertTagProjection(txCtx, a, in.Tags, defaultTagSource())
 	}); err != nil {
 		return nil, err
 	}
@@ -836,6 +921,18 @@ func (u *Usecase) UpsertTag(ctx context.Context, assetID string, in UpsertTagInp
 	if err := u.validateTags(map[string]string{in.Key: in.Value}); err != nil {
 		return nil, err
 	}
+	src := tagSource{
+		SourceType:    in.SourceType,
+		SourceName:    in.SourceName,
+		SourceVersion: in.SourceVersion,
+		RunID:         in.RunID,
+	}
+	if src.SourceType == "" {
+		src.SourceType = "human"
+	}
+	if err := u.validateTagSource(src.SourceType, src.SourceName, src.SourceVersion); err != nil {
+		return nil, err
+	}
 
 	a, err := u.repo.Get(ctx, assetID)
 	if err != nil {
@@ -846,14 +943,17 @@ func (u *Usecase) UpsertTag(ctx context.Context, assetID string, in UpsertTagInp
 	}
 
 	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
-		return u.upsertTagProjection(txCtx, a, map[string]string{in.Key: in.Value}, "manual")
+		return u.upsertTagProjection(txCtx, a, map[string]string{in.Key: in.Value}, src)
 	}); err != nil {
 		return nil, err
 	}
 	return u.Get(ctx, assetID)
 }
 
-func (u *Usecase) findTag(ctx context.Context, assetID, tagKey string) (*models.AssetTag, error) {
+// findTagsForDelete returns the tag rows that will be removed by DeleteTag.
+// When sourceType is empty all rows for the key are returned, matching the
+// repo Delete behavior.
+func (u *Usecase) findTagsForDelete(ctx context.Context, assetID, tagKey, sourceType string) ([]*models.AssetTag, error) {
 	if u.tagRepo == nil {
 		return nil, nil
 	}
@@ -861,15 +961,23 @@ func (u *Usecase) findTag(ctx context.Context, assetID, tagKey string) (*models.
 	if err != nil {
 		return nil, err
 	}
+	var out []*models.AssetTag
 	for _, row := range rows {
-		if row.TagKey == tagKey {
-			return row, nil
+		if row.TagKey != tagKey {
+			continue
 		}
+		if sourceType != "" && row.SourceType != sourceType {
+			continue
+		}
+		out = append(out, row)
 	}
-	return nil, nil
+	return out, nil
 }
 
-func (u *Usecase) DeleteTag(ctx context.Context, assetID, tagKey string) (*models.Asset, error) {
+// DeleteTag removes tag rows for (assetID, tagKey). When sourceType is the
+// empty string all sources for the key are removed; otherwise only the
+// matching source is deleted.
+func (u *Usecase) DeleteTag(ctx context.Context, assetID, tagKey, sourceType string) (*models.Asset, error) {
 	a, err := u.repo.Get(ctx, assetID)
 	if err != nil {
 		return nil, err
@@ -879,22 +987,30 @@ func (u *Usecase) DeleteTag(ctx context.Context, assetID, tagKey string) (*model
 	}
 
 	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
-		existing, err := u.findTag(txCtx, assetID, tagKey)
+		victims, err := u.findTagsForDelete(txCtx, assetID, tagKey, sourceType)
 		if err != nil {
 			return err
 		}
-		if existing == nil {
+		if len(victims) == 0 {
 			return nil
 		}
-		if err := u.tagRepo.Delete(txCtx, assetID, tagKey); err != nil {
+		if err := u.tagRepo.Delete(txCtx, assetID, tagKey, sourceType); err != nil {
 			return err
 		}
-		return u.appendAssetEvent(txCtx, "tag_deleted", a, map[string]any{
-			"tag_key":     existing.TagKey,
-			"tag_value":   existing.TagValue,
-			"tag_type":    existing.TagType,
-			"source_type": "manual",
-		})
+		for _, v := range victims {
+			if err := u.appendAssetEvent(txCtx, "tag_deleted", a, map[string]any{
+				"tag_key":        v.TagKey,
+				"tag_value":      v.TagValue,
+				"tag_type":       v.TagType,
+				"source_type":    v.SourceType,
+				"source_name":    v.SourceName,
+				"source_version": v.SourceVersion,
+				"run_id":         v.RunID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		return nil, err
 	}

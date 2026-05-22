@@ -1136,7 +1136,7 @@ func TestAssetTagRepo_Upsert_Success(t *testing.T) {
 	db := &fakeDB{}
 	repo := &AssetTagRepo{c: &Client{db: db}}
 
-	err := repo.Upsert(ctx, "a1", "quality", "good", "string", "human")
+	err := repo.Upsert(ctx, repository.AssetTagUpsertInput{AssetID: "a1", TagKey: "quality", TagValue: "good", TagType: "string", SourceType: "human", SourceName: "tester"})
 	if err != nil {
 		t.Fatalf("Upsert err: %v", err)
 	}
@@ -1147,7 +1147,7 @@ func TestAssetTagRepo_Upsert_TagInsertError(t *testing.T) {
 	db := &fakeDB{execErr: errors.New("tag insert fail")}
 	repo := &AssetTagRepo{c: &Client{db: db}}
 
-	err := repo.Upsert(ctx, "a1", "quality", "good", "string", "human")
+	err := repo.Upsert(ctx, repository.AssetTagUpsertInput{AssetID: "a1", TagKey: "quality", TagValue: "good", TagType: "string", SourceType: "human", SourceName: "tester"})
 	if err == nil || !strings.Contains(err.Error(), "asset_tags") {
 		t.Fatalf("expected asset_tags error, got %v", err)
 	}
@@ -1165,7 +1165,7 @@ func TestProperty8_TagUpsertConsistency(t *testing.T) {
 		tracker := &execTracker{fakeDB: &fakeDB{}}
 		repo := &AssetTagRepo{c: &Client{db: tracker}}
 
-		err := repo.Upsert(context.Background(), assetID, tagKey, tagValue, tagType, sourceType)
+		err := repo.Upsert(context.Background(), repository.AssetTagUpsertInput{AssetID: assetID, TagKey: tagKey, TagValue: tagValue, TagType: tagType, SourceType: sourceType, SourceName: "tester"})
 		if err != nil {
 			t.Fatalf("Upsert failed: %v", err)
 		}

@@ -69,8 +69,11 @@ type Asset struct {
 	DeliveryCount   int        `json:"delivery_count"`
 
 	AlgoResults map[string]string `json:"algo_results,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-	Files       map[string]string `json:"files,omitempty"`
+	// Tags is the flat last-write-wins map kept for backward compatibility.
+	// Source of truth for multi-source assertions is TagsDetailed (CYB-1015).
+	Tags         map[string]string `json:"tags,omitempty"`
+	TagsDetailed []AssetTag        `json:"tags_detailed,omitempty"`
+	Files        map[string]string `json:"files,omitempty"`
 
 	LifecycleMeta map[string]interface{} `json:"lifecycle_meta,omitempty"`
 

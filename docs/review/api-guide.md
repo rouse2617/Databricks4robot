@@ -598,28 +598,52 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/reset" \
 
 只有 `ok` 或 `failed` 状态可以重置。
 
-### 2.4 标签管理
+### 2.4 标签管理（多来源 — CYB-1015）
+
+同一 `(asset_id, tag_key)` 上允许 `human` / `algo_sdk` / `rule_engine` / `system` / `compliance` 多源共存；身份字段由 `backend/config/tag_registry.yaml` `tag_sources[]` 治理。资产响应里：
+
+- `tags`：扁平 `key→value` map（按 `applied_at` 取最新一行；保留兼容旧消费者）
+- `tags_detailed[]`：多源真值，每行带 `source_type / source_name / source_version / run_id / applied_at`
 
 ```bash
-# 新增 / 更新单个标签
+# 1) human 写入 — 必须带 source_name
 curl -X POST "$BASE/api/v1/assets/{asset_id}/tags" \
   -H "X-Grace-Token: $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"key":"quality","value":"good"}'
+  -d '{"key":"quality","value":"good","source_type":"human","source_name":"labeler_007"}'
 
-# 删除单个标签
+# 2) rule_engine 写入 — 必须带 source_name + source_version
+curl -X POST "$BASE/api/v1/assets/{asset_id}/tags" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"quality","value":"good","source_type":"rule_engine","source_name":"qc_check","source_version":"1.0"}'
+
+# 3) 只删 human 那行（rule_engine 行保留）
+curl -X DELETE "$BASE/api/v1/assets/{asset_id}/tags/quality?source_type=human" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 4) 不带 source_type 时删掉该 key 下所有来源
 curl -X DELETE "$BASE/api/v1/assets/{asset_id}/tags/quality" \
   -H "X-Grace-Token: $TOKEN"
 
-# 查询标签变更历史
+# 5) 查询标签变更历史
 curl "$BASE/api/v1/assets/{asset_id}/tags/history?limit=20" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
+错误路径：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `422` | `INVALID_TAG` | key 未在 `tags{}` 注册 / enum 值不合法 |
+| `422` | `TAG_SOURCE_INVALID` | `source_type` 未在 `tag_sources[]` 注册，或缺 `requires_source_name` / `requires_source_version` 要求的字段 |
+| `409` | `TAG_IMMUTABLE` | 对 `immutable: true` 来源（`algo_sdk` / `compliance`）的已有 `(key, source_type, source_version)` 再次写入 |
+| `404` | `ASSET_NOT_FOUND` | asset_id 不存在 |
+
 说明：
-- `POST /tags` 走 `tag_registry` 校验，未注册 key 或非法 enum value 返回 `422 INVALID_TAG`。
-- `DELETE /tags/{key}` 对不存在 key 按幂等成功处理，但不会伪造 `tag_deleted` 事件。
-- `GET /tags/history` 返回的仍是统一 `asset_events` 形状，只是固定过滤 `tag_upserted / tag_deleted`。
+- `source_type` 缺省时按 `human` 处理（UI 流的默认）。
+- `DELETE /tags/{key}` 对不存在的 key 按幂等成功处理，但不会伪造 `tag_deleted` 事件。
+- `GET /tags/history` 仍是统一 `asset_events` 形状，过滤 `tag_upserted / tag_deleted`；event payload 含 `source_name` / `source_version` / `run_id`。
 
 ### 2.5 查询资产事件 / 算法事件子集
 

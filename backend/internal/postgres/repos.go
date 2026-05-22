@@ -1286,17 +1286,32 @@ type AssetTagRepo struct {
 func NewAssetTagRepo(c *Client) *AssetTagRepo { return &AssetTagRepo{c: c} }
 
 // Upsert inserts or updates a tag in the asset_tags table.
-func (r *AssetTagRepo) Upsert(ctx context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error {
+func (r *AssetTagRepo) Upsert(ctx context.Context, in repository.AssetTagUpsertInput) error {
 	const tagQ = `
-INSERT INTO asset_tags (asset_id, tag_key, tag_value, tag_type, source_type, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
-ON CONFLICT (asset_id, tag_key) DO UPDATE SET
-  tag_value   = EXCLUDED.tag_value,
-  tag_type    = EXCLUDED.tag_type,
-  source_type = EXCLUDED.source_type,
-  updated_at  = now()`
+INSERT INTO asset_tags (
+    asset_id, tag_key, tag_value, tag_type,
+    source_type, source_name, source_version, run_id,
+    tenant_id, project_id,
+    applied_at, created_at, updated_at
+) VALUES (
+    $1, $2, $3, $4,
+    $5, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''),
+    NULLIF($9, ''), NULLIF($10, ''),
+    now(), now(), now()
+)
+ON CONFLICT ON CONSTRAINT uq_asset_tags_identity DO UPDATE SET
+    tag_type   = EXCLUDED.tag_type,
+    run_id     = EXCLUDED.run_id,
+    tenant_id  = EXCLUDED.tenant_id,
+    project_id = EXCLUDED.project_id,
+    applied_at = now(),
+    updated_at = now()`
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, tagQ, assetID, tagKey, tagValue, tagType, sourceType); err != nil {
+	if err := db.Exec(ctx, tagQ,
+		in.AssetID, in.TagKey, in.TagValue, in.TagType,
+		in.SourceType, in.SourceName, in.SourceVersion, in.RunID,
+		in.TenantID, in.ProjectID,
+	); err != nil {
 		return fmt.Errorf("postgres AssetTagRepo.Upsert asset_tags: %w", err)
 	}
 	return nil
@@ -1310,10 +1325,10 @@ func (r *AssetTagRepo) ListByAsset(ctx context.Context, assetID string) ([]*mode
 SELECT asset_id, tag_key, tag_value, tag_type, source_type,
   COALESCE(source_name, ''), COALESCE(source_version, ''),
   COALESCE(run_id, ''), COALESCE(tenant_id, ''), COALESCE(project_id, ''),
-  created_at, updated_at
+  applied_at, created_at, updated_at
 FROM asset_tags
 WHERE asset_id = $1
-ORDER BY tag_key`
+ORDER BY tag_key, source_type, COALESCE(source_version,''), applied_at DESC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q, assetID)
 	if err != nil {
@@ -1327,7 +1342,7 @@ ORDER BY tag_key`
 			&t.AssetID, &t.TagKey, &t.TagValue, &t.TagType, &t.SourceType,
 			&t.SourceName, &t.SourceVersion,
 			&t.RunID, &t.TenantID, &t.ProjectID,
-			&t.CreatedAt, &t.UpdatedAt,
+			&t.AppliedAt, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetTagRepo.ListByAsset scan: %w", err)
 		}
@@ -1336,11 +1351,20 @@ ORDER BY tag_key`
 	return out, nil
 }
 
-// Delete removes a tag from the asset_tags table.
-func (r *AssetTagRepo) Delete(ctx context.Context, assetID, tagKey string) error {
-	const delQ = `DELETE FROM asset_tags WHERE asset_id = $1 AND tag_key = $2`
+// Delete removes tag rows for (assetID, tagKey). When sourceType is the
+// empty string all sources for the key are removed; otherwise only the
+// matching source is deleted.
+func (r *AssetTagRepo) Delete(ctx context.Context, assetID, tagKey, sourceType string) error {
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, delQ, assetID, tagKey); err != nil {
+	if sourceType == "" {
+		const delQ = `DELETE FROM asset_tags WHERE asset_id = $1 AND tag_key = $2`
+		if err := db.Exec(ctx, delQ, assetID, tagKey); err != nil {
+			return fmt.Errorf("postgres AssetTagRepo.Delete asset_tags: %w", err)
+		}
+		return nil
+	}
+	const delQ = `DELETE FROM asset_tags WHERE asset_id = $1 AND tag_key = $2 AND source_type = $3`
+	if err := db.Exec(ctx, delQ, assetID, tagKey, sourceType); err != nil {
 		return fmt.Errorf("postgres AssetTagRepo.Delete asset_tags: %w", err)
 	}
 	return nil

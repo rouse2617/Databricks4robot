@@ -449,16 +449,24 @@ func (h *Handler) UpsertTag(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Key   string `json:"key" binding:"required" label:"标签 Key"`
-		Value string `json:"value" binding:"required" label:"标签值"`
+		Key           string `json:"key" binding:"required" label:"标签 Key"`
+		Value         string `json:"value" binding:"required" label:"标签值"`
+		SourceType    string `json:"source_type"`
+		SourceName    string `json:"source_name"`
+		SourceVersion string `json:"source_version"`
+		RunID         string `json:"run_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
 	a, err := h.uc.UpsertTag(c.Request.Context(), assetID, assetUC.UpsertTagInput{
-		Key:   req.Key,
-		Value: req.Value,
+		Key:           req.Key,
+		Value:         req.Value,
+		SourceType:    req.SourceType,
+		SourceName:    req.SourceName,
+		SourceVersion: req.SourceVersion,
+		RunID:         req.RunID,
 	})
 	if err != nil {
 		switch {
@@ -466,6 +474,10 @@ func (h *Handler) UpsertTag(c *gin.Context) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 		case errors.Is(err, assetUC.ErrInvalidTag):
 			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
+		case errors.Is(err, assetUC.ErrTagSourceInvalid):
+			httpresp.Unprocessable(c, httpresp.CodeTagSourceInvalid, err.Error(), nil)
+		case errors.Is(err, assetUC.ErrTagImmutable):
+			httpresp.Conflict(c, httpresp.CodeTagImmutable, err.Error(), nil)
 		default:
 			httpresp.Internal(c, err.Error())
 		}
@@ -491,7 +503,7 @@ func (h *Handler) DeleteTag(c *gin.Context) {
 	if !ok {
 		return
 	}
-	a, err := h.uc.DeleteTag(c.Request.Context(), assetID, c.Param("key"))
+	a, err := h.uc.DeleteTag(c.Request.Context(), assetID, c.Param("key"), c.Query("source_type"))
 	if err != nil {
 		if errors.Is(err, assetUC.ErrNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())

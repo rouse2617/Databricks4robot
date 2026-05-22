@@ -50,13 +50,13 @@ func (r *reindexAssetRepo) ListWithFilters(_ context.Context, _ string, _ []inte
 
 type reindexTagRepo struct{}
 
-func (r *reindexTagRepo) Upsert(context.Context, string, string, string, string, string) error {
+func (r *reindexTagRepo) Upsert(context.Context, repository.AssetTagUpsertInput) error {
 	return nil
 }
 func (r *reindexTagRepo) ListByAsset(context.Context, string) ([]*models.AssetTag, error) {
 	return []*models.AssetTag{}, nil
 }
-func (r *reindexTagRepo) Delete(context.Context, string, string) error { return nil }
+func (r *reindexTagRepo) Delete(context.Context, string, string, string) error { return nil }
 
 type reindexAlgoRepo struct{}
 

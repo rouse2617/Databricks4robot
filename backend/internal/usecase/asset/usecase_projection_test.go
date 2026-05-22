@@ -3,6 +3,7 @@ package asset
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -26,31 +27,57 @@ func newMockAssetTagRepo() *mockAssetTagRepo {
 	return &mockAssetTagRepo{rows: map[string]*models.AssetTag{}}
 }
 
+// tagRowKey for the mock uses the legacy (asset_id, tag_key) shape so older
+// assertions still work. Multi-source assertions use tagRowKeyFull below.
 func tagRowKey(assetID, tagKey string) string { return assetID + "|" + tagKey }
 
-func (m *mockAssetTagRepo) Upsert(_ context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error {
-	m.rows[tagRowKey(assetID, tagKey)] = &models.AssetTag{
-		AssetID:    assetID,
-		TagKey:     tagKey,
-		TagValue:   tagValue,
-		TagType:    tagType,
-		SourceType: sourceType,
+func tagRowKeyFull(assetID, tagKey, sourceType, sourceVersion string) string {
+	if sourceType == "" {
+		return tagRowKey(assetID, tagKey)
 	}
+	return assetID + "|" + tagKey + "|" + sourceType + "|" + sourceVersion
+}
+
+func (m *mockAssetTagRepo) Upsert(_ context.Context, in repository.AssetTagUpsertInput) error {
+	row := &models.AssetTag{
+		AssetID:       in.AssetID,
+		TagKey:        in.TagKey,
+		TagValue:      in.TagValue,
+		TagType:       in.TagType,
+		SourceType:    in.SourceType,
+		SourceName:    in.SourceName,
+		SourceVersion: in.SourceVersion,
+		RunID:         in.RunID,
+		AppliedAt:     time.Now().UTC(),
+	}
+	m.rows[tagRowKey(in.AssetID, in.TagKey)] = row
+	m.rows[tagRowKeyFull(in.AssetID, in.TagKey, in.SourceType, in.SourceVersion)] = row
 	return nil
 }
 
 func (m *mockAssetTagRepo) ListByAsset(_ context.Context, assetID string) ([]*models.AssetTag, error) {
 	out := []*models.AssetTag{}
+	seen := map[*models.AssetTag]bool{}
 	for _, row := range m.rows {
-		if row.AssetID == assetID {
-			out = append(out, row)
+		if row.AssetID != assetID || seen[row] {
+			continue
 		}
+		seen[row] = true
+		out = append(out, row)
 	}
 	return out, nil
 }
 
-func (m *mockAssetTagRepo) Delete(_ context.Context, assetID, tagKey string) error {
-	delete(m.rows, tagRowKey(assetID, tagKey))
+func (m *mockAssetTagRepo) Delete(_ context.Context, assetID, tagKey, sourceType string) error {
+	for k, row := range m.rows {
+		if row.AssetID != assetID || row.TagKey != tagKey {
+			continue
+		}
+		if sourceType != "" && row.SourceType != sourceType {
+			continue
+		}
+		delete(m.rows, k)
+	}
 	return nil
 }
 
@@ -136,8 +163,10 @@ func TestUpsertTag_WritesProjectionAndEvent(t *testing.T) {
 	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, buildTestTagRegistry(t), nil)
 
 	a, err := uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
-		Key:   "quality",
-		Value: "good",
+		Key:        "quality",
+		Value:      "good",
+		SourceType: "human",
+		SourceName: "tester",
 	})
 	if err != nil {
 		t.Fatalf("UpsertTag failed: %v", err)
@@ -249,11 +278,11 @@ func TestDeleteTag_RemovesProjectionAndAppendsEvent(t *testing.T) {
 	repo := newMockAssetRepo()
 	repo.assets["a1"] = &models.Asset{AssetID: "a1", McapFileID: "m1"}
 	tagRepo := newMockAssetTagRepo()
-	_ = tagRepo.Upsert(context.Background(), "a1", "quality", "good", "enum", "manual")
+	_ = tagRepo.Upsert(context.Background(), repository.AssetTagUpsertInput{AssetID: "a1", TagKey: "quality", TagValue: "good", TagType: "enum", SourceType: "human", SourceName: "test"})
 	eventRepo := newMockAssetEventRepo()
 	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, nil, nil)
 
-	a, err := uc.DeleteTag(context.Background(), "a1", "quality")
+	a, err := uc.DeleteTag(context.Background(), "a1", "quality", "")
 	if err != nil {
 		t.Fatalf("DeleteTag failed: %v", err)
 	}
@@ -275,7 +304,7 @@ func TestDeleteTag_MissingIsIdempotent(t *testing.T) {
 	eventRepo := newMockAssetEventRepo()
 	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, nil, nil)
 
-	a, err := uc.DeleteTag(context.Background(), "a1", "missing")
+	a, err := uc.DeleteTag(context.Background(), "a1", "missing", "")
 	if err != nil {
 		t.Fatalf("DeleteTag failed: %v", err)
 	}
@@ -294,7 +323,7 @@ func TestGet_HydratesTagsAndAlgoResultsFromProjections(t *testing.T) {
 		},
 	}
 	tagRepo := newMockAssetTagRepo()
-	tagRepo.Upsert(context.Background(), "a1", "quality", "good", "string", "manual")
+	tagRepo.Upsert(context.Background(), repository.AssetTagUpsertInput{AssetID: "a1", TagKey: "quality", TagValue: "good", TagType: "string", SourceType: "system"})
 	algoRepo := newMockAlgoLatestRepo()
 	now := time.Now().UTC()
 	_ = algoRepo.Upsert(context.Background(), &models.AssetAlgoLatest{
@@ -334,8 +363,8 @@ func TestListWithFilters_HydratesProjectionData(t *testing.T) {
 		},
 	}
 	tagRepo := newMockAssetTagRepo()
-	tagRepo.Upsert(context.Background(), "a1", "quality", "good", "string", "manual")
-	tagRepo.Upsert(context.Background(), "a2", "quality", "poor", "string", "manual")
+	tagRepo.Upsert(context.Background(), repository.AssetTagUpsertInput{AssetID: "a1", TagKey: "quality", TagValue: "good", TagType: "string", SourceType: "system"})
+	tagRepo.Upsert(context.Background(), repository.AssetTagUpsertInput{AssetID: "a2", TagKey: "quality", TagValue: "poor", TagType: "string", SourceType: "system"})
 
 	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, nil, nil, nil)
 
@@ -472,5 +501,109 @@ func TestListTagHistory_FiltersTagEventsOnly(t *testing.T) {
 		if item.EventType != "tag_upserted" && item.EventType != "tag_deleted" {
 			t.Fatalf("unexpected event type in tag history: %s", item.EventType)
 		}
+	}
+}
+
+func TestUpsertTag_MultiSourceCoexists(t *testing.T) {
+	repo := newMockAssetRepo()
+	repo.assets["a1"] = &models.Asset{AssetID: "a1", McapFileID: "m1"}
+	tagRepo := newMockAssetTagRepo()
+	eventRepo := newMockAssetEventRepo()
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, eventRepo, buildTestTagRegistry(t), nil)
+
+	if _, err := uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
+		Key: "quality", Value: "good",
+		SourceType: "human", SourceName: "labeler_007",
+	}); err != nil {
+		t.Fatalf("human upsert: %v", err)
+	}
+	if _, err := uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
+		Key: "quality", Value: "good",
+		SourceType: "rule_engine", SourceName: "qc_check", SourceVersion: "1.0",
+	}); err != nil {
+		t.Fatalf("rule_engine upsert: %v", err)
+	}
+
+	rows, _ := tagRepo.ListByAsset(context.Background(), "a1")
+	sources := map[string]bool{}
+	for _, r := range rows {
+		if r.TagKey == "quality" {
+			sources[r.SourceType] = true
+		}
+	}
+	if !sources["human"] || !sources["rule_engine"] {
+		t.Fatalf("expected both human and rule_engine sources, got %v", sources)
+	}
+}
+
+func TestUpsertTag_RejectsMissingSourceName(t *testing.T) {
+	repo := newMockAssetRepo()
+	repo.assets["a1"] = &models.Asset{AssetID: "a1", McapFileID: "m1"}
+	uc := NewWithProjections(noopTxRunner{}, repo, newMockAssetTagRepo(), nil, newMockAssetEventRepo(), buildTestTagRegistry(t), nil)
+
+	_, err := uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
+		Key: "quality", Value: "good",
+		SourceType: "human", // missing source_name
+	})
+	if err == nil {
+		t.Fatalf("expected ErrTagSourceInvalid, got nil")
+	}
+	if !errors.Is(err, ErrTagSourceInvalid) {
+		t.Fatalf("expected ErrTagSourceInvalid, got %v", err)
+	}
+}
+
+func TestUpsertTag_ImmutableSourceCannotBeRewritten(t *testing.T) {
+	repo := newMockAssetRepo()
+	repo.assets["a1"] = &models.Asset{AssetID: "a1", McapFileID: "m1"}
+	uc := NewWithProjections(noopTxRunner{}, repo, newMockAssetTagRepo(), nil, newMockAssetEventRepo(), buildTestTagRegistry(t), nil)
+
+	if _, err := uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
+		Key: "quality", Value: "good",
+		SourceType: "algo_sdk", SourceName: "hand_track", SourceVersion: "2.0",
+	}); err != nil {
+		t.Fatalf("first algo upsert: %v", err)
+	}
+	_, err := uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
+		Key: "quality", Value: "acceptable",
+		SourceType: "algo_sdk", SourceName: "hand_track", SourceVersion: "2.0",
+	})
+	if err == nil || !errors.Is(err, ErrTagImmutable) {
+		t.Fatalf("expected ErrTagImmutable on second write, got %v", err)
+	}
+}
+
+func TestDeleteTag_SourceScopedRemovesOnlyMatching(t *testing.T) {
+	repo := newMockAssetRepo()
+	repo.assets["a1"] = &models.Asset{AssetID: "a1", McapFileID: "m1"}
+	tagRepo := newMockAssetTagRepo()
+	uc := NewWithProjections(noopTxRunner{}, repo, tagRepo, nil, newMockAssetEventRepo(), buildTestTagRegistry(t), nil)
+
+	_, _ = uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
+		Key: "quality", Value: "good",
+		SourceType: "human", SourceName: "alice",
+	})
+	_, _ = uc.UpsertTag(context.Background(), "a1", UpsertTagInput{
+		Key: "quality", Value: "good",
+		SourceType: "rule_engine", SourceName: "qc", SourceVersion: "1.0",
+	})
+
+	if _, err := uc.DeleteTag(context.Background(), "a1", "quality", "human"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	rows, _ := tagRepo.ListByAsset(context.Background(), "a1")
+	for _, r := range rows {
+		if r.SourceType == "human" {
+			t.Fatalf("expected human row removed, still present: %#v", r)
+		}
+	}
+	hasRule := false
+	for _, r := range rows {
+		if r.SourceType == "rule_engine" {
+			hasRule = true
+		}
+	}
+	if !hasRule {
+		t.Fatalf("expected rule_engine row to remain")
 	}
 }

@@ -181,6 +181,29 @@ EOF
 EOF
 )
 	post "POST assets" "/api/v1/assets" "$ASSET_JSON" >/dev/null
+
+	echo ""
+	echo "--- §2.4 multi-source tags (CYB-1015) ---"
+	NEW_AID=$(curl -sS --max-time 20 -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" -d '{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"page":{"page":1,"page_size":1}}' \
+		| python3 -c "import sys,json;d=json.load(sys.stdin);print(d['items'][0]['asset_id'])" 2>/dev/null || echo "")
+	if [[ -n "$NEW_AID" ]]; then
+		# human upsert (requires source_name)
+		post "POST tags human"      "/api/v1/assets/${NEW_AID}/tags" '{"key":"quality","value":"good","source_type":"human","source_name":"smoke"}' >/dev/null
+		# rule_engine upsert (requires source_name + source_version)
+		post "POST tags rule_engine" "/api/v1/assets/${NEW_AID}/tags" '{"key":"quality","value":"good","source_type":"rule_engine","source_name":"qc","source_version":"1.0"}' >/dev/null
+		# human upsert missing source_name → 422 TAG_SOURCE_INVALID
+		raw=$(curl -sS --max-time 25 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "${BASE}/api/v1/assets/${NEW_AID}/tags" -d '{"key":"quality","value":"good","source_type":"human"}' || echo $'\n000')
+		code="${raw##*$'\n'}"
+		if [[ "$code" == "422" ]]; then ok "POST tags human (no source_name) → 422"; else bad "POST tags human (no source_name) → expected 422 got $code"; fi
+		# source-scoped delete (only human row)
+		raw=$(curl -sS --max-time 25 -w "\n%{http_code}" -X DELETE "${API_HDR[@]}" "${BASE}/api/v1/assets/${NEW_AID}/tags/quality?source_type=human" || echo $'\n000')
+		code="${raw##*$'\n'}"
+		if [[ "$code" == "200" ]]; then ok "DELETE tags?source_type=human"; else bad "DELETE tags?source_type=human got $code"; fi
+		# detail surface
+		get "GET asset tags_detailed" "/api/v1/assets/${NEW_AID}"
+	else
+		echo "  skip multi-source tags smoke — no asset id available"
+	fi
 fi
 
 echo ""
