@@ -561,6 +561,7 @@ func (h *Handler) ListTagHistory(c *gin.Context) {
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
 		AssetID             string                 `json:"asset_id" label:"资产ID"`
+		LogicalAssetID      string                 `json:"logical_asset_id" label:"逻辑资产ID"`
 		McapFileID          string                 `json:"mcap_file_id" binding:"required" label:"MCAP文件ID"`
 		StartTimestampNs    int64                  `json:"start_timestamp_ns" binding:"required,gt=0" label:"起始时间戳"`
 		EndTimestampNs      int64                  `json:"end_timestamp_ns" binding:"required,gt=0" label:"结束时间戳"`
@@ -605,6 +606,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	a, err := h.uc.Create(c.Request.Context(), assetUC.CreateInput{
 		AssetID:             req.AssetID,
+		LogicalAssetID:      req.LogicalAssetID,
 		McapFileID:          req.McapFileID,
 		StartTimestampNs:    req.StartTimestampNs,
 		EndTimestampNs:      req.EndTimestampNs,
@@ -645,6 +647,8 @@ func (h *Handler) Create(c *gin.Context) {
 			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
 		case errors.Is(err, assetUC.ErrInvalidTag):
 			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
+		case errors.Is(err, assetUC.ErrLogicalAssetNotFound), errors.Is(err, assetUC.ErrLogicalAssetTypeMismatch):
+			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
 		case errors.Is(err, assetUC.ErrInvalidMcapFileID), errors.Is(err, assetUC.ErrMcapFileNotFound):
 			httpresp.Unprocessable(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 		case errors.Is(err, assetUC.ErrInvalidAssetID):
