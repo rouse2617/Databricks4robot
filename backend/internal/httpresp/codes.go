@@ -26,6 +26,7 @@ const (
 	CodeMissingIdempotencyKey  = "MISSING_IDEMPOTENCY_KEY"
 	CodeIdempotencyConflict    = "IDEMPOTENCY_CONFLICT"
 	CodeDeliveryNotFound       = "DELIVERY_NOT_FOUND"
+	CodeDeliveryRuleFailed     = "DELIVERY_RULE_FAILED"
 	CodeRateLimited            = "RATE_LIMITED"
 	CodeServiceUnavailable     = "SERVICE_UNAVAILABLE"
 	CodeUnsupportedField       = "UNSUPPORTED_FIELD"

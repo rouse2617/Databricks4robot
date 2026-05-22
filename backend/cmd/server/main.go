@@ -11,6 +11,7 @@ import (
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
@@ -65,8 +66,9 @@ type coreHandlers struct {
 	asset    *assetH.Handler
 	algo     *assetH.AlgoHandler
 	mcap     *mcapH.Handler
-	delivery *deliveryH.Handler
-	customer *customerH.Handler
+	delivery     *deliveryH.Handler
+	customer     *customerH.Handler
+	deliveryRule *deliveryruleH.Handler
 	algoRun  *algorunH.Handler
 	eval     *evalH.Handler
 	action   *actionH.Handler

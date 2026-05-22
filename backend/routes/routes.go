@@ -19,6 +19,7 @@ import (
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
@@ -42,6 +43,7 @@ func RegisterAll(
 	mcapHandler *mcapH.Handler,
 	deliveryHandler *deliveryH.Handler,
 	customerHandler *customerH.Handler,
+	deliveryRuleHandler *deliveryruleH.Handler,
 	algoRunHandler *algorunH.Handler,
 	algoHandler *assetH.AlgoHandler,
 	lakehouseHandler *lakehouseH.Handler,
@@ -169,6 +171,11 @@ func RegisterAll(
 			api.POST("/customers", customerHandler.Create)
 			api.GET("/customers/:customer_id", customerHandler.Get)
 			api.PATCH("/customers/:customer_id", customerHandler.Update)
+		}
+
+		if deliveryRuleHandler != nil {
+			api.POST("/delivery-rules", deliveryRuleHandler.Create)
+			api.GET("/delivery-rules", deliveryRuleHandler.List)
 		}
 
 		if algoRunHandler != nil {

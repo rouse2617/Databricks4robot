@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/handlers"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
@@ -26,6 +27,7 @@ type Handler struct {
 	idemRepo     repository.IdempotencyRepository
 	customerRepo repository.CustomerRepository
 	eventRepo    repository.AssetEventRepository
+	ruleEngine   *deliveryrules.Engine
 }
 
 func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepository, customerRepo repository.CustomerRepository, eventRepo ...repository.AssetEventRepository) *Handler {
@@ -34,6 +36,11 @@ func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepo
 		evt = eventRepo[0]
 	}
 	return &Handler{repo: repo, idemRepo: idemRepo, customerRepo: customerRepo, eventRepo: evt}
+}
+
+// SetRuleEngine enables pre-delivery compliance checks (CYB-1020).
+func (h *Handler) SetRuleEngine(e *deliveryrules.Engine) {
+	h.ruleEngine = e
 }
 
 func (h *Handler) appendDeliveryEvents(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string) error {
@@ -133,6 +140,21 @@ func (h *Handler) Commit(c *gin.Context) {
 			return
 		}
 	}
+	if h.ruleEngine != nil {
+		violations, err := h.ruleEngine.Check(c.Request.Context(), req.CustomerID, req.AssetIDs)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		if len(violations) > 0 {
+			httpresp.Unprocessable(c, httpresp.CodeDeliveryRuleFailed,
+				"one or more assets failed delivery rules",
+				map[string]any{"violations": violations},
+			)
+			return
+		}
+	}
+
 	idemKey := c.GetHeader("Idempotency-Key")
 	if idemKey == "" {
 		httpresp.BadRequest(c, httpresp.CodeMissingIdempotencyKey, "Idempotency-Key header is required", nil)
