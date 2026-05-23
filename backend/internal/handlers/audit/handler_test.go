@@ -15,17 +15,41 @@ import (
 )
 
 type fakeAuditQuerier struct {
-	querySQL  string
-	queryArgs []any
-	rows      auditRows
-	err       error
-	called    bool
+	querySQL   string
+	queryArgs  []any
+	querySQLs  []string
+	queryArgss [][]any
+	rows       auditRows
+	err        error
+	results    []fakeAuditQueryResult
+	called     bool
+}
+
+type fakeAuditQueryResult struct {
+	rows auditRows
+	err  error
 }
 
 func (q *fakeAuditQuerier) Query(_ context.Context, sql string, args ...any) (auditRows, error) {
 	q.called = true
 	q.querySQL = sql
 	q.queryArgs = args
+	q.querySQLs = append(q.querySQLs, sql)
+	q.queryArgss = append(q.queryArgss, args)
+	if len(q.results) > 0 {
+		idx := len(q.querySQLs) - 1
+		if idx >= len(q.results) {
+			return &fakeAuditRows{}, nil
+		}
+		result := q.results[idx]
+		if result.err != nil {
+			return nil, result.err
+		}
+		if result.rows == nil {
+			return &fakeAuditRows{}, nil
+		}
+		return result.rows, nil
+	}
 	if q.err != nil {
 		return nil, q.err
 	}
@@ -39,6 +63,7 @@ type fakeAuditRows struct {
 	data   [][]any
 	idx    int
 	closed bool
+	err    error
 }
 
 func (r *fakeAuditRows) Next() bool {
@@ -67,6 +92,8 @@ func (r *fakeAuditRows) Scan(dest ...any) error {
 
 func (r *fakeAuditRows) Close() { r.closed = true }
 
+func (r *fakeAuditRows) Err() error { return r.err }
+
 func assignAuditValue(dst any, src any) error {
 	dv := reflect.ValueOf(dst)
 	if dv.Kind() != reflect.Ptr || dv.IsNil() {
@@ -89,6 +116,7 @@ func setupAuditRouter(h *Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.GET("/audit/search", h.HandleAuditSearch)
+	r.GET("/audit/lineage-search", h.HandleLineageSearch)
 	return r
 }
 
@@ -224,6 +252,225 @@ func TestHandleAuditSearchNotConfigured(t *testing.T) {
 	r := setupAuditRouter(&Handler{})
 
 	w := doAuditSearchReq(r, "/audit/search")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleLineageSearchValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "missing asset_id", path: "/audit/lineage-search"},
+		{name: "invalid direction", path: "/audit/lineage-search?asset_id=asset001&direction=sideways"},
+		{name: "invalid depth integer", path: "/audit/lineage-search?asset_id=asset001&depth=abc"},
+		{name: "invalid depth zero", path: "/audit/lineage-search?asset_id=asset001&depth=0"},
+		{name: "unsupported relation type", path: "/audit/lineage-search?asset_id=asset001&relation_types=unknown"},
+		{name: "empty relation type", path: "/audit/lineage-search?asset_id=asset001&relation_types=derived_from,"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := &fakeAuditQuerier{}
+			r := setupAuditRouter(&Handler{db: q})
+
+			w := doAuditSearchReq(r, tt.path)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+			}
+			var body struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if body.Code != "INVALID_ARGUMENT" {
+				t.Fatalf("expected INVALID_ARGUMENT, got %q", body.Code)
+			}
+			if q.called {
+				t.Fatal("did not expect database query for invalid request")
+			}
+		})
+	}
+}
+
+func TestHandleLineageSearchDownstreamSuccess(t *testing.T) {
+	created := time.Date(2026, 5, 23, 13, 0, 0, 0, time.UTC)
+	rows := &fakeAuditRows{data: [][]any{
+		{"asset-root", "asset-child", "derived_from", "algo", "hand_track", "2.0.0", "run0000000000001", created, "asset-child", 1},
+		{"asset-child", "asset-grandchild", "split_from", "", "", "", "", created.Add(time.Second), "asset-grandchild", 2},
+	}}
+	q := &fakeAuditQuerier{rows: rows}
+	r := setupAuditRouter(&Handler{db: q})
+
+	w := doAuditSearchReq(r, "/audit/lineage-search?asset_id=asset-root&direction=downstream&depth=2&relation_types=derived_from,split_from,split_from")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if !rows.closed {
+		t.Fatal("expected rows to be closed")
+	}
+	for _, want := range []string{
+		"WITH RECURSIVE rec AS",
+		"ar.parent_asset_id = $1",
+		"ar.relation_type = ANY($3::text[])",
+		"NOT ar.child_asset_id = ANY(r.path)",
+		"ORDER BY depth ASC, related_asset_id ASC",
+	} {
+		if !strings.Contains(q.querySQL, want) {
+			t.Fatalf("query missing %q:\n%s", want, q.querySQL)
+		}
+	}
+	if got, want := q.queryArgs[0], "asset-root"; got != want {
+		t.Fatalf("asset arg: got %#v want %#v", got, want)
+	}
+	if got, want := q.queryArgs[1], 2; got != want {
+		t.Fatalf("depth arg: got %#v want %#v", got, want)
+	}
+	if got, want := q.queryArgs[2], []string{"derived_from", "split_from"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("relation_types arg: got %#v want %#v", got, want)
+	}
+
+	var body struct {
+		AssetID       string        `json:"asset_id"`
+		Direction     string        `json:"direction"`
+		Depth         int           `json:"depth"`
+		RelationTypes []string      `json:"relation_types"`
+		Nodes         []lineageNode `json:"nodes"`
+		Count         int           `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.AssetID != "asset-root" || body.Direction != "downstream" || body.Depth != 2 {
+		t.Fatalf("unexpected envelope: %+v", body)
+	}
+	if !reflect.DeepEqual(body.RelationTypes, []string{"derived_from", "split_from"}) {
+		t.Fatalf("unexpected relation_types: %#v", body.RelationTypes)
+	}
+	if body.Count != 2 || len(body.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got count=%d len=%d", body.Count, len(body.Nodes))
+	}
+	if body.Nodes[0].AssetID != "asset-child" || body.Nodes[0].RelationType != "derived_from" || body.Nodes[0].Direction != "downstream" || body.Nodes[0].Depth != 1 {
+		t.Fatalf("unexpected first node: %+v", body.Nodes[0])
+	}
+	if body.Nodes[0].ParentAssetID != "asset-root" || body.Nodes[0].ChildAssetID != "asset-child" || body.Nodes[0].RunID != "run0000000000001" {
+		t.Fatalf("unexpected first edge metadata: %+v", body.Nodes[0])
+	}
+}
+
+func TestHandleLineageSearchBothDirectionsAndDefaults(t *testing.T) {
+	created := time.Date(2026, 5, 23, 13, 30, 0, 0, time.UTC)
+	upstreamRows := &fakeAuditRows{data: [][]any{
+		{"asset-parent", "asset-mid", "contains", "", "", "", "", created, "asset-parent", 1},
+	}}
+	downstreamRows := &fakeAuditRows{data: [][]any{
+		{"asset-mid", "asset-child", "split_from", "", "", "", "", created, "asset-child", 1},
+	}}
+	q := &fakeAuditQuerier{results: []fakeAuditQueryResult{
+		{rows: upstreamRows},
+		{rows: downstreamRows},
+	}}
+	r := setupAuditRouter(&Handler{db: q})
+
+	w := doAuditSearchReq(r, "/audit/lineage-search?asset_id=asset-mid")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if got, want := len(q.querySQLs), 2; got != want {
+		t.Fatalf("expected %d queries, got %d", want, got)
+	}
+	if !strings.Contains(q.querySQLs[0], "ar.child_asset_id = $1") {
+		t.Fatalf("expected upstream query to start from child_asset_id:\n%s", q.querySQLs[0])
+	}
+	if !strings.Contains(q.querySQLs[1], "ar.parent_asset_id = $1") {
+		t.Fatalf("expected downstream query to start from parent_asset_id:\n%s", q.querySQLs[1])
+	}
+	if got, want := q.queryArgss[0][2], defaultLineageRelationTypes; !reflect.DeepEqual(got, want) {
+		t.Fatalf("default relation types: got %#v want %#v", got, want)
+	}
+
+	var body struct {
+		Direction     string        `json:"direction"`
+		Depth         int           `json:"depth"`
+		RelationTypes []string      `json:"relation_types"`
+		Nodes         []lineageNode `json:"nodes"`
+		Count         int           `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Direction != "both" || body.Depth != 10 {
+		t.Fatalf("unexpected defaults: %+v", body)
+	}
+	if !reflect.DeepEqual(body.RelationTypes, defaultLineageRelationTypes) {
+		t.Fatalf("unexpected relation_types: %#v", body.RelationTypes)
+	}
+	if body.Count != 2 || body.Nodes[0].Direction != "upstream" || body.Nodes[1].Direction != "downstream" {
+		t.Fatalf("unexpected nodes: %+v", body.Nodes)
+	}
+}
+
+func TestHandleLineageSearchEmptyNodesArray(t *testing.T) {
+	q := &fakeAuditQuerier{}
+	r := setupAuditRouter(&Handler{db: q})
+
+	w := doAuditSearchReq(r, "/audit/lineage-search?asset_id=asset-empty&direction=upstream")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Nodes []lineageNode `json:"nodes"`
+		Count int           `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Nodes == nil {
+		t.Fatal("expected nodes to be an empty array, got null")
+	}
+	if body.Count != 0 || len(body.Nodes) != 0 {
+		t.Fatalf("unexpected response: %+v", body)
+	}
+}
+
+func TestHandleLineageSearchDatabaseErrors(t *testing.T) {
+	t.Run("query error", func(t *testing.T) {
+		q := &fakeAuditQuerier{err: errors.New("boom")}
+		r := setupAuditRouter(&Handler{db: q})
+
+		w := doAuditSearchReq(r, "/audit/lineage-search?asset_id=asset001")
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("scan error", func(t *testing.T) {
+		q := &fakeAuditQuerier{rows: &fakeAuditRows{data: [][]any{{"too-few-columns"}}}}
+		r := setupAuditRouter(&Handler{db: q})
+
+		w := doAuditSearchReq(r, "/audit/lineage-search?asset_id=asset001&direction=downstream")
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("row iteration error", func(t *testing.T) {
+		q := &fakeAuditQuerier{rows: &fakeAuditRows{err: errors.New("rows failed")}}
+		r := setupAuditRouter(&Handler{db: q})
+
+		w := doAuditSearchReq(r, "/audit/lineage-search?asset_id=asset001&direction=downstream")
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+}
+
+func TestHandleLineageSearchNotConfigured(t *testing.T) {
+	r := setupAuditRouter(&Handler{})
+
+	w := doAuditSearchReq(r, "/audit/lineage-search?asset_id=asset001")
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
 	}

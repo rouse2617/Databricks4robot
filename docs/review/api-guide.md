@@ -876,6 +876,78 @@ curl "$BASE/api/v1/audit/search?actor=alice&time_from=2026-05-01T00:00:00Z&time_
 - `event_type` 与 `run_id` 为精确匹配。
 - `limit` 默认 `50`，最大 `200`；超过最大值会按 `200` 执行。
 
+### 2.5.2 合规血缘搜索（CYB-1098）
+
+`GET /api/v1/audit/lineage-search` 在 `asset_relations` 上做只读递归查询，适合合规审计时追踪某个资产的上游来源或下游影响面。默认 `direction=both`、`depth=10`，最大深度为 `50`。
+
+方向语义：
+- `upstream`: 从 `child_asset_id` 往 `parent_asset_id` 查。
+- `downstream`: 从 `parent_asset_id` 往 `child_asset_id` 查。
+- `both`: 先查 upstream，再查 downstream，并在响应中用 `nodes[].direction` 区分。
+
+默认关系类型为依赖/结构血缘：`split_from`, `contains`, `derived_from`, `merged_from`, `sampled_from`。如需更窄范围，可传 `relation_types=derived_from,split_from`；`revision_of` 只在显式请求时包含。
+
+```bash
+# 查某个资产的上下游血缘，允许空结果
+curl "$BASE/api/v1/audit/lineage-search?asset_id=b9a5a281&direction=both&depth=3" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 只查 derived/split 关系的下游影响面
+curl "$BASE/api/v1/audit/lineage-search?asset_id=b9a5a281&direction=downstream&relation_types=derived_from,split_from" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`:
+```json
+{
+  "asset_id": "b9a5a281",
+  "direction": "downstream",
+  "depth": 3,
+  "relation_types": ["derived_from", "split_from"],
+  "nodes": [
+    {
+      "asset_id": "clip001",
+      "parent_asset_id": "b9a5a281",
+      "child_asset_id": "clip001",
+      "relation_type": "derived_from",
+      "direction": "downstream",
+      "depth": 1,
+      "method": "algo",
+      "algo_name": "hand_track",
+      "algo_version": "2.0.0",
+      "run_id": "run1234567890123",
+      "created_at": "2026-05-23T10:00:00Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+空结果仍返回 `200`，并保持 `nodes: []`:
+```json
+{
+  "asset_id": "asset-without-relations",
+  "direction": "both",
+  "depth": 10,
+  "relation_types": ["split_from", "contains", "derived_from", "merged_from", "sampled_from"],
+  "nodes": [],
+  "count": 0
+}
+```
+
+错误路径：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `400` | `INVALID_ARGUMENT` | 缺少 `asset_id` / `direction` 不是 `upstream,downstream,both` / `depth` 非正整数 / `relation_types` 包含不支持的值 |
+| `500` | `INTERNAL` | 数据库查询或扫描失败 |
+| `503` | `SERVICE_UNAVAILABLE` | audit lineage 存储未配置 |
+
+说明：
+- 递归查询带 path 防环，并受 `depth` 限制，避免环形关系导致重复遍历。
+- 响应中的 `parent_asset_id` / `child_asset_id` 是命中的 `asset_relations` 原始边，`asset_id` 是本次 traversal 到达的相关资产。
+- 当前接口只读，不写 `asset_events` 或其它审计副作用表。
+
 ### 2.6 依赖链自动 Unblock
 
 `action_annotation@1.0.0` 依赖三个算法。当所有依赖都完成（status=ok）后，系统自动将 `action_annotation` 从 `blocked` 变为 `pending`。

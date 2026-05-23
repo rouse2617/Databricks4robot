@@ -251,10 +251,34 @@ LIMIT ` + limitParam
 // lineageNode represents one node in a lineage graph returned by
 // HandleLineageSearch.
 type lineageNode struct {
-	AssetID      string `json:"asset_id"`
-	RelationType string `json:"relation_type,omitempty"`
-	Direction    string `json:"direction"` // "upstream" or "downstream"
-	Depth        int    `json:"depth"`
+	AssetID       string    `json:"asset_id"`
+	ParentAssetID string    `json:"parent_asset_id"`
+	ChildAssetID  string    `json:"child_asset_id"`
+	RelationType  string    `json:"relation_type"`
+	Direction     string    `json:"direction"` // "upstream" or "downstream"
+	Depth         int       `json:"depth"`
+	Method        string    `json:"method,omitempty"`
+	AlgoName      string    `json:"algo_name,omitempty"`
+	AlgoVersion   string    `json:"algo_version,omitempty"`
+	RunID         string    `json:"run_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+var defaultLineageRelationTypes = []string{
+	"split_from",
+	"contains",
+	"derived_from",
+	"merged_from",
+	"sampled_from",
+}
+
+var supportedLineageRelationTypes = map[string]struct{}{
+	"split_from":   {},
+	"contains":     {},
+	"derived_from": {},
+	"merged_from":  {},
+	"sampled_from": {},
+	"revision_of":  {},
 }
 
 // HandleLineageSearch uses a recursive CTE on asset_relations to trace lineage
@@ -264,6 +288,7 @@ type lineageNode struct {
 //   - asset_id (required): starting asset ID
 //   - direction: "upstream", "downstream", or "both" (default "both")
 //   - depth: max recursion depth (default 10, max 50)
+//   - relation_types: comma-separated relation types (default dependency types)
 //
 // @Summary      Lineage search
 // @Description  Recursive CTE-based lineage trace upstream/downstream/both
@@ -272,6 +297,7 @@ type lineageNode struct {
 // @Param        asset_id  query string true  "Starting asset ID"
 // @Param        direction query string false "upstream | downstream | both" default(both)
 // @Param        depth     query int    false "Max recursion depth" default(10)
+// @Param        relation_types query string false "Comma-separated relation types"
 // @Success      200 {object} object
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
@@ -312,61 +338,135 @@ func (h *Handler) HandleLineageSearch(c *gin.Context) {
 		depth = v
 	}
 
+	relationTypes, err := parseLineageRelationTypes(c.Query("relation_types"))
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+
 	// Run separate recursive CTEs for each direction; merge in Go.
 	var nodes []lineageNode
 	ctx := c.Request.Context()
 
-	runDirection := func(dir string) {
-		var startCol, joinCol string
+	runDirection := func(dir string) error {
+		var startCol, relatedCol string
 		if dir == "upstream" {
-			startCol, joinCol = "child_asset_id", "parent_asset_id"
+			startCol, relatedCol = "child_asset_id", "parent_asset_id"
 		} else {
-			startCol, joinCol = "parent_asset_id", "child_asset_id"
+			startCol, relatedCol = "parent_asset_id", "child_asset_id"
 		}
 		q := fmt.Sprintf(`WITH RECURSIVE rec AS (
-	SELECT %s AS related_asset_id, 1 AS depth
-	FROM asset_relations
-	WHERE %s = $1 AND relation_type = 'revision_of'
+	SELECT
+	  ar.parent_asset_id,
+	  ar.child_asset_id,
+	  ar.relation_type,
+	  COALESCE(ar.method, '') AS method,
+	  COALESCE(ar.algo_name, '') AS algo_name,
+	  COALESCE(ar.algo_version, '') AS algo_version,
+	  COALESCE(ar.run_id, '') AS run_id,
+	  ar.created_at,
+	  ar.%s AS related_asset_id,
+	  1 AS depth,
+	  ARRAY[$1, ar.%s]::text[] AS path
+	FROM asset_relations ar
+	WHERE ar.%s = $1 AND ar.relation_type = ANY($3::text[])
 	UNION ALL
-	SELECT ar.%s, r.depth + 1
+	SELECT
+	  ar.parent_asset_id,
+	  ar.child_asset_id,
+	  ar.relation_type,
+	  COALESCE(ar.method, '') AS method,
+	  COALESCE(ar.algo_name, '') AS algo_name,
+	  COALESCE(ar.algo_version, '') AS algo_version,
+	  COALESCE(ar.run_id, '') AS run_id,
+	  ar.created_at,
+	  ar.%s AS related_asset_id,
+	  r.depth + 1 AS depth,
+	  r.path || ar.%s
 	FROM asset_relations ar
 	JOIN rec r ON ar.%s = r.related_asset_id
-	WHERE ar.relation_type = 'revision_of' AND r.depth < $2
+	WHERE ar.relation_type = ANY($3::text[])
+	  AND r.depth < $2
+	  AND NOT ar.%s = ANY(r.path)
 )
-SELECT DISTINCT related_asset_id, depth
+SELECT parent_asset_id, child_asset_id, relation_type, method, algo_name,
+       algo_version, run_id, created_at, related_asset_id, depth
 FROM rec
-ORDER BY depth ASC, related_asset_id ASC`, joinCol, startCol, joinCol, startCol)
+ORDER BY depth ASC, related_asset_id ASC, relation_type ASC, parent_asset_id ASC, child_asset_id ASC`, relatedCol, relatedCol, startCol, relatedCol, relatedCol, startCol, relatedCol)
 
-		rows, err := h.db.Query(ctx, q, assetID, depth)
+		rows, err := h.db.Query(ctx, q, assetID, depth, relationTypes)
 		if err != nil {
-			return
+			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var n lineageNode
 			n.Direction = dir
-			if err := rows.Scan(&n.AssetID, &n.Depth); err != nil {
-				continue
+			if err := rows.Scan(
+				&n.ParentAssetID, &n.ChildAssetID, &n.RelationType, &n.Method,
+				&n.AlgoName, &n.AlgoVersion, &n.RunID, &n.CreatedAt,
+				&n.AssetID, &n.Depth,
+			); err != nil {
+				return err
 			}
 			nodes = append(nodes, n)
 		}
+		if rowsWithErr, ok := rows.(interface{ Err() error }); ok {
+			if err := rowsWithErr.Err(); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	if direction == "upstream" || direction == "both" {
-		runDirection("upstream")
+		if err := runDirection("upstream"); err != nil {
+			httpresp.Internal(c, "database query failed: "+err.Error())
+			return
+		}
 	}
 	if direction == "downstream" || direction == "both" {
-		runDirection("downstream")
+		if err := runDirection("downstream"); err != nil {
+			httpresp.Internal(c, "database query failed: "+err.Error())
+			return
+		}
 	}
 	if nodes == nil {
 		nodes = []lineageNode{}
 	}
 
 	c.JSON(200, gin.H{
-		"asset_id":  assetID,
-		"direction": direction,
-		"depth":     depth,
-		"nodes":     nodes,
-		"count":     len(nodes),
+		"asset_id":       assetID,
+		"direction":      direction,
+		"depth":          depth,
+		"relation_types": relationTypes,
+		"nodes":          nodes,
+		"count":          len(nodes),
 	})
+}
+
+func parseLineageRelationTypes(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		out := make([]string, len(defaultLineageRelationTypes))
+		copy(out, defaultLineageRelationTypes)
+		return out, nil
+	}
+
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, part := range strings.Split(raw, ",") {
+		relationType := strings.ToLower(strings.TrimSpace(part))
+		if relationType == "" {
+			return nil, fmt.Errorf("relation_types must be a comma-separated list of supported relation types")
+		}
+		if _, ok := supportedLineageRelationTypes[relationType]; !ok {
+			return nil, fmt.Errorf("unsupported relation_type %q", relationType)
+		}
+		if _, ok := seen[relationType]; ok {
+			continue
+		}
+		seen[relationType] = struct{}{}
+		out = append(out, relationType)
+	}
+	return out, nil
 }

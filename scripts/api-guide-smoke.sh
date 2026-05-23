@@ -228,6 +228,16 @@ echo "--- §2.5.1 audit search (CYB-1097) ---"
 get "audit search latest" "/api/v1/audit/search?limit=5"
 expect_code_get "audit search invalid time_from -> 400" "/api/v1/audit/search?time_from=not-rfc3339" "400" >/dev/null
 
+echo ""
+echo "--- §2.5.2 audit lineage search (CYB-1098) ---"
+if [[ -n "${AID:-}" ]]; then
+	get "audit lineage search by asset" "/api/v1/audit/lineage-search?asset_id=${AID}&direction=both&depth=2"
+else
+	echo "  skip audit lineage success — could not parse asset id from list"
+fi
+LINEAGE_AID="${AID:-asset001}"
+expect_code_get "audit lineage invalid direction -> 400" "/api/v1/audit/lineage-search?asset_id=${LINEAGE_AID}&direction=sideways" "400" >/dev/null
+
 if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	echo ""
 	echo "--- RUN_WRITES=1 — §1.1 mcap-files + assets (unique ids) ---"

@@ -812,6 +812,58 @@ components:
           type: integer
           format: int64
           nullable: true
+    AuditLineageNode:
+      type: object
+      required: [asset_id, parent_asset_id, child_asset_id, relation_type, direction, depth, created_at]
+      properties:
+        asset_id:
+          type: string
+          description: Related asset reached by this traversal step.
+        parent_asset_id:
+          type: string
+          description: "asset_relations.parent_asset_id for the matched edge."
+        child_asset_id:
+          type: string
+          description: "asset_relations.child_asset_id for the matched edge."
+        relation_type:
+          type: string
+          enum: [split_from, contains, derived_from, merged_from, sampled_from, revision_of]
+        direction:
+          type: string
+          enum: [upstream, downstream]
+        depth:
+          type: integer
+          minimum: 1
+        method: { type: string }
+        algo_name: { type: string }
+        algo_version: { type: string }
+        run_id: { type: string }
+        created_at: { type: string, format: date-time }
+    AuditLineageSearchResponse:
+      type: object
+      required: [asset_id, direction, depth, relation_types, nodes, count]
+      properties:
+        asset_id:
+          type: string
+          description: Starting asset id supplied by the client.
+        direction:
+          type: string
+          enum: [upstream, downstream, both]
+        depth:
+          type: integer
+          minimum: 1
+          maximum: 50
+        relation_types:
+          type: array
+          items:
+            type: string
+            enum: [split_from, contains, derived_from, merged_from, sampled_from, revision_of]
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/AuditLineageNode' }
+        count:
+          type: integer
+          minimum: 0
     VersionHistoryEntry:
       type: object
       properties:
@@ -3073,6 +3125,62 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '503':
           description: "Audit search storage is not configured (SERVICE_UNAVAILABLE)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/audit/lineage-search:
+    get:
+      summary: Search asset lineage for compliance audit
+      description: |
+        Traverses `asset_relations` with a bounded recursive CTE. `upstream`
+        walks from `child_asset_id` to `parent_asset_id`; `downstream` walks
+        from `parent_asset_id` to `child_asset_id`; `both` runs both traversals.
+        By default the endpoint follows dependency/structural relation types:
+        `split_from`, `contains`, `derived_from`, `merged_from`, and
+        `sampled_from`.
+      parameters:
+        - in: query
+          name: asset_id
+          required: true
+          schema: { type: string }
+          description: Starting asset id.
+        - in: query
+          name: direction
+          schema:
+            type: string
+            enum: [upstream, downstream, both]
+            default: both
+        - in: query
+          name: depth
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+          description: Maximum recursive traversal depth. Values over 50 are capped to 50.
+        - in: query
+          name: relation_types
+          schema: { type: string }
+          description: Comma-separated subset of supported relation types.
+          example: derived_from,split_from
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditLineageSearchResponse' }
+        '400':
+          description: "Invalid lineage search filter (INVALID_ARGUMENT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: "Database query failed"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: "Audit lineage storage is not configured (SERVICE_UNAVAILABLE)"
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
