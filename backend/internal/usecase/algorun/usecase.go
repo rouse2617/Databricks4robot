@@ -2,6 +2,7 @@ package algorun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,14 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+)
+
+// Event types for algo_run outbox events (aggregate_type="algo_run").
+const (
+	eventAlgoRunCreated  = "algo_run_created"
+	eventAlgoRunStarted  = "algo_run_started"
+	eventAlgoRunFinished = "algo_run_finished"
+	eventAlgoRunCancelled = "algo_run_cancelled"
 )
 
 var (
@@ -74,11 +83,35 @@ type FinishInput struct {
 
 // Usecase implements algo_runs lifecycle.
 type Usecase struct {
-	repo repository.AlgoRunRepository
+	repo     repository.AlgoRunRepository
+	eventRepo repository.AssetEventRepository // optional; nil disables outbox events
 }
 
 func New(repo repository.AlgoRunRepository) *Usecase {
 	return &Usecase{repo: repo}
+}
+
+// SetEventRepo enables outbox event emission for algo_run state transitions.
+func (u *Usecase) SetEventRepo(r repository.AssetEventRepository) {
+	u.eventRepo = r
+}
+
+// emitAlgoRunEvent appends an algo_run outbox event. Errors are logged but
+// not returned so they never block the primary state mutation.
+func (u *Usecase) emitAlgoRunEvent(ctx context.Context, eventType, runID string, payload map[string]any) {
+	if u.eventRepo == nil {
+		return
+	}
+	data, _ := json.Marshal(payload)
+	if err := u.eventRepo.Append(ctx, repository.AssetEventAppendInput{
+		EventType:     eventType,
+		AggregateType: "algo_run",
+		AssetID:       runID, // run_id carried in the asset_id column for routing
+		EventPayload:  data,
+	}); err != nil {
+		// Best-effort: log but don't fail the state transition.
+		_ = err
+	}
 }
 
 func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.AlgoRun, error) {
@@ -137,6 +170,11 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.AlgoRun, 
 		}
 		return nil, err
 	}
+	u.emitAlgoRunEvent(ctx, eventAlgoRunCreated, runID, map[string]any{
+		"run_id":     runID,
+		"algo_name":  algoName,
+		"status":     models.AlgoRunStatusPending,
+	})
 	return u.repo.Get(ctx, runID)
 }
 
@@ -162,6 +200,11 @@ func (u *Usecase) Start(ctx context.Context, runID string) (*models.AlgoRun, err
 	if err := u.repo.Start(ctx, runID, now); err != nil {
 		return nil, err
 	}
+	u.emitAlgoRunEvent(ctx, eventAlgoRunStarted, runID, map[string]any{
+		"run_id":     runID,
+		"status":     models.AlgoRunStatusRunning,
+		"started_at": now.Format(time.RFC3339Nano),
+	})
 	return u.Get(ctx, runID)
 }
 
@@ -195,6 +238,13 @@ func (u *Usecase) Finish(ctx context.Context, runID string, in FinishInput) (*mo
 	if err := u.repo.Finish(ctx, runID, patch); err != nil {
 		return nil, err
 	}
+	u.emitAlgoRunEvent(ctx, eventAlgoRunFinished, runID, map[string]any{
+		"run_id":       runID,
+		"status":       status,
+		"finished_at":  now.Format(time.RFC3339Nano),
+		"error_class":  patch.ErrorClass,
+		"error_message": patch.ErrorMessage,
+	})
 	return u.Get(ctx, runID)
 }
 
@@ -231,9 +281,16 @@ func (u *Usecase) Cancel(ctx context.Context, runID, reason string) (*models.Alg
 	if strings.TrimSpace(reason) == "" {
 		return nil, fmt.Errorf("%w: cancel reason", ErrMissingField)
 	}
-	if err := u.repo.Cancel(ctx, runID, reason, time.Now().UTC()); err != nil {
+	now := time.Now().UTC()
+	if err := u.repo.Cancel(ctx, runID, reason, now); err != nil {
 		return nil, err
 	}
+	u.emitAlgoRunEvent(ctx, eventAlgoRunCancelled, runID, map[string]any{
+		"run_id":        runID,
+		"status":        models.AlgoRunStatusCancelled,
+		"finished_at":   now.Format(time.RFC3339Nano),
+		"error_message": reason,
+	})
 	return u.Get(ctx, runID)
 }
 
