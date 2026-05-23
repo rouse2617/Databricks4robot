@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
@@ -75,6 +77,172 @@ func (u *Usecase) preparePromoteVersion(ctx context.Context, a *models.Asset, lo
 		NewRevision:    next,
 		PromoteReason:  a.SplitReason,
 		RunID:          a.SplitRunID,
+	}, nil
+}
+
+// PromoteInput holds parameters for the B-route promote endpoint.
+type PromoteInput struct {
+	LogicalAssetID string
+	RevisionOf     string // optional: explicit prior asset id
+	Owner          string
+}
+
+// Promote creates a new revision of an asset within a logical asset family (B-route).
+// It clones the source asset's metadata into a new asset entry, increments the revision,
+// demotes the prior current asset, and writes a version_promoted event.
+func (u *Usecase) Promote(ctx context.Context, sourceAssetID string, in PromoteInput) (*models.Asset, error) {
+	source, err := u.repo.Get(ctx, sourceAssetID)
+	if err != nil {
+		return nil, err
+	}
+	if source == nil {
+		return nil, ErrNotFound
+	}
+
+	logicalID := in.LogicalAssetID
+	if logicalID == "" {
+		// Default to source's own logical_asset_id if not provided.
+		logicalID = source.LogicalAssetID
+	}
+	if logicalID == "" {
+		return nil, fmt.Errorf("logical_asset_id is required")
+	}
+
+	// Clone source asset into a new asset entry.
+	newAsset := &models.Asset{
+		McapFileID:          source.McapFileID,
+		StartTimestampNs:    source.StartTimestampNs,
+		EndTimestampNs:      source.EndTimestampNs,
+		DurationMs:          source.DurationMs,
+		AssetType:           source.AssetType,
+		Owner:               in.Owner,
+		Reviewer:            source.Reviewer,
+		RetentionTier:       source.RetentionTier,
+		ExpireAt:            source.ExpireAt,
+		StorageURI:          source.StorageURI,
+		ThumbURI:            source.ThumbURI,
+		AssetLevel:          source.AssetLevel,
+		ParentAssetID:       source.ParentAssetID,
+		RootAssetID:         source.RootAssetID,
+		TenantID:            source.TenantID,
+		ProjectID:           source.ProjectID,
+		Metadata:            source.Metadata,
+		FilesJSON:           source.FilesJSON,
+		AlgoInputsURIs:      source.AlgoInputsURIs,
+		AnnotInputsURIs:     source.AnnotInputsURIs,
+		SplitMethod:         source.SplitMethod,
+		SplitAlgoName:       source.SplitAlgoName,
+		SplitAlgoVersion:    source.SplitAlgoVersion,
+		SegmentIndex:        source.SegmentIndex,
+		ParentStartOffsetMs: source.ParentStartOffsetMs,
+		ParentEndOffsetMs:   source.ParentEndOffsetMs,
+		Tags:                map[string]string{},
+		AlgoResults:         map[string]string{},
+		Files:               map[string]string{},
+		LifecycleMeta:       defaultLifecycleMeta(),
+	}
+	if newAsset.Owner == "" {
+		newAsset.Owner = source.Owner
+	}
+	// Copy files.
+	if source.Files != nil {
+		for k, v := range source.Files {
+			newAsset.Files[k] = v
+		}
+	}
+	// Copy algo results.
+	if source.AlgoResults != nil {
+		for k, v := range source.AlgoResults {
+			newAsset.AlgoResults[k] = v
+		}
+	}
+	if newAsset.LifecycleState == "" {
+		newAsset.LifecycleState = "ready"
+	}
+
+	// Allocate a new asset ID and persist via the versioning flow.
+	var result *models.Asset
+	err = u.withMutationTx(ctx, func(txCtx context.Context) error {
+		promoteIn, err := u.preparePromoteVersion(txCtx, newAsset, logicalID)
+		if err != nil {
+			return err
+		}
+		// Override prior asset if revision_of is explicitly provided.
+		if in.RevisionOf != "" {
+			promoteIn.PriorAssetID = in.RevisionOf
+		}
+
+		// Allocate a new asset ID with retry on collision.
+		for range maxAssetIDAllocationAttempts {
+			gid, gidErr := id.GenerateAssetID()
+			if gidErr != nil {
+				return gidErr
+			}
+			newAsset.AssetID = gid
+			newAsset.Version = 0
+			newAsset.CreatedAt = time.Time{}
+
+			finalizeErr := u.finalizePromoteVersion(txCtx, newAsset, promoteIn)
+			if finalizeErr != nil {
+				if errors.Is(finalizeErr, repository.ErrDuplicateAssetID) {
+					continue
+				}
+				return finalizeErr
+			}
+			result = newAsset
+			return nil
+		}
+		return fmt.Errorf("exhausted asset id allocation attempts (%d)", maxAssetIDAllocationAttempts)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// CurrentAssetResponse holds the response for GET /logical-assets/{id}/current.
+type CurrentAssetResponse struct {
+	AssetID        string `json:"asset_id"`
+	Revision       int64  `json:"revision"`
+	LogicalAssetID string `json:"logical_asset_id"`
+	AssetType      string `json:"asset_type"`
+	Owner          string `json:"owner"`
+	LifecycleState string `json:"lifecycle_state"`
+}
+
+// GetCurrentForLogical returns the current revision for a logical asset.
+func (u *Usecase) GetCurrentForLogical(ctx context.Context, logicalAssetID string) (*CurrentAssetResponse, error) {
+	if u.logicalRepo == nil {
+		return nil, fmt.Errorf("logical asset repository not configured")
+	}
+	la, err := u.logicalRepo.Get(ctx, logicalAssetID)
+	if err != nil {
+		return nil, err
+	}
+	if la == nil {
+		return nil, ErrLogicalAssetNotFound
+	}
+	assetID, err := u.logicalRepo.CurrentAssetID(ctx, logicalAssetID)
+	if err != nil {
+		return nil, err
+	}
+	if assetID == "" {
+		return nil, ErrNotFound
+	}
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, ErrNotFound
+	}
+	return &CurrentAssetResponse{
+		AssetID:        a.AssetID,
+		Revision:       a.Revision,
+		LogicalAssetID: logicalAssetID,
+		AssetType:      a.AssetType,
+		Owner:          a.Owner,
+		LifecycleState: a.LifecycleState,
 	}, nil
 }
 

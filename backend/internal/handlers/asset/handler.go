@@ -808,6 +808,89 @@ func (h *Handler) BatchGet(c *gin.Context) {
 	c.JSON(200, gin.H{"items": items})
 }
 
+// PromoteRevision creates a new revision of an asset (B-route promote).
+// @Summary      Promote asset revision
+// @Description  Create a new revision of an asset within a logical asset family
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        id   path string true "Source Asset ID"
+// @Param        body body object true "Promote request"
+// @Success      201 {object} models.Asset
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      422 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/revisions [post]
+func (h *Handler) PromoteRevision(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		LogicalAssetID string `json:"logical_asset_id"`
+		RevisionOf     string `json:"revision_of"`
+		Owner          string `json:"owner"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	a, err := h.uc.Promote(c.Request.Context(), assetID, assetUC.PromoteInput{
+		LogicalAssetID: req.LogicalAssetID,
+		RevisionOf:     req.RevisionOf,
+		Owner:          req.Owner,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, assetUC.ErrNotFound):
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+		case errors.Is(err, assetUC.ErrLogicalAssetNotFound):
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+		case errors.Is(err, assetUC.ErrLogicalAssetTypeMismatch):
+			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
+		default:
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(201, a)
+}
+
+// GetCurrentForLogical returns the current revision for a logical asset.
+// @Summary      Get current logical asset
+// @Description  Get the current revision for a logical asset
+// @Tags         logical-assets
+// @Produce      json
+// @Param        id path string true "Logical Asset ID"
+// @Success      200 {object} asset.CurrentAssetResponse
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /logical-assets/{id}/current [get]
+func (h *Handler) GetCurrentForLogical(c *gin.Context) {
+	logicalAssetID := strings.TrimSpace(c.Param("id"))
+	if logicalAssetID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "logical_asset_id is required", nil)
+		return
+	}
+	res, err := h.uc.GetCurrentForLogical(c.Request.Context(), logicalAssetID)
+	if err != nil {
+		switch {
+		case errors.Is(err, assetUC.ErrLogicalAssetNotFound):
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "logical asset not found")
+		case errors.Is(err, assetUC.ErrNotFound):
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "no current revision found")
+		default:
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(200, res)
+}
+
 func paginateAssets(items []*models.Asset, page, pageSize int) []*models.Asset {
 	if len(items) == 0 {
 		return []*models.Asset{}
