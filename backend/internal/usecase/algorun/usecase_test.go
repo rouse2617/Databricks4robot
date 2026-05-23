@@ -77,13 +77,13 @@ func (m *memAlgoRunRepo) Cancel(_ context.Context, runID, reason string, finishe
 	return nil
 }
 
-func (m *memAlgoRunRepo) List(_ context.Context, _ repository.AlgoRunListFilter) ([]*models.AlgoRun, error) {
+func (m *memAlgoRunRepo) List(_ context.Context, _ repository.AlgoRunListFilter) ([]*models.AlgoRun, int64, error) {
 	var out []*models.AlgoRun
 	for _, r := range m.byID {
 		cp := *r
 		out = append(out, &cp)
 	}
-	return out, nil
+	return out, int64(len(out)), nil
 }
 
 func (m *memAlgoRunRepo) GetAffectedAssets(_ context.Context, _ string) ([]*repository.AffectedAsset, error) {
@@ -121,5 +121,24 @@ func TestAlgoRunLifecycle(t *testing.T) {
 	})
 	if err != nil || finished.Status != models.AlgoRunStatusOK {
 		t.Fatalf("finish: err=%v status=%s", err, finished.Status)
+	}
+}
+
+func TestCreate_DuplicateRunIDReturnsConflict(t *testing.T) {
+	repo := newMemAlgoRunRepo()
+	uc := algorunUC.New(repo)
+	ctx := context.Background()
+
+	in := algorunUC.CreateInput{
+		RunID:       "R001abc123def456",
+		AlgoName:    "hand_track",
+		AlgoVersion: "2.0",
+		TriggeredBy: "manual:ops",
+	}
+	if _, err := uc.Create(ctx, in); err != nil {
+		t.Fatalf("first create err=%v", err)
+	}
+	if _, err := uc.Create(ctx, in); err != repository.ErrDuplicateRunID {
+		t.Fatalf("second create err=%v, want ErrDuplicateRunID", err)
 	}
 }

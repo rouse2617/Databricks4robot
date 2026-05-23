@@ -1197,38 +1197,54 @@ FROM deliveries WHERE delivery_id=$1 AND is_deleted=FALSE`
 	return &d, nil
 }
 
-func (r *DeliveryRepo) WriteIndexes(ctx context.Context, assetID string, d *models.Delivery) error {
+func (r *DeliveryRepo) AddItems(ctx context.Context, deliveryID string, assetIDs []string) error {
 	db := dbFromCtx(ctx, r.c.db)
-	deliveredAt := d.CreatedAt
-	if d.DeliveredAt != nil {
-		deliveredAt = *d.DeliveredAt
+	for _, assetID := range assetIDs {
+		const q = `
+INSERT INTO delivery_items(delivery_id, asset_id, created_at)
+VALUES ($1,$2,now())
+ON CONFLICT (delivery_id, asset_id) DO NOTHING`
+		if err := db.Exec(ctx, q, deliveryID, assetID); err != nil {
+			return fmt.Errorf("postgres DeliveryRepo.AddItems: %w", err)
+		}
 	}
+	return nil
+}
+
+func (r *DeliveryRepo) RefreshAssetDeliveryIndex(ctx context.Context, assetID string) error {
+	db := dbFromCtx(ctx, r.c.db)
 	const q = `
-WITH inserted AS (
-  INSERT INTO delivery_items(delivery_id, asset_id, created_at)
-  VALUES ($1,$2,now())
-  ON CONFLICT (delivery_id, asset_id) DO NOTHING
-  RETURNING 1
+WITH delivery_stats AS (
+  SELECT
+    COUNT(*)::int AS delivery_count,
+    MAX(d.delivered_at) AS last_delivered_at
+  FROM delivery_items di
+  JOIN deliveries d ON d.delivery_id = di.delivery_id
+  WHERE di.asset_id = $1
+    AND d.is_deleted = FALSE
+    AND d.status IN ('delivered', 'accepted', 'archived')
+), last_delivery AS (
+  SELECT d.customer_id
+  FROM delivery_items di
+  JOIN deliveries d ON d.delivery_id = di.delivery_id
+  WHERE di.asset_id = $1
+    AND d.is_deleted = FALSE
+    AND d.status IN ('delivered', 'accepted', 'archived')
+  ORDER BY d.delivered_at DESC NULLS LAST, d.updated_at DESC
+  LIMIT 1
 )
 UPDATE assets
 SET
-  delivery_count = delivery_count + 1,
-  last_delivered_at = CASE
-    WHEN last_delivered_at IS NULL OR last_delivered_at < $3 THEN $3
-    ELSE last_delivered_at
-  END,
-  last_delivered_to = CASE
-    WHEN $4 <> '' THEN $4
-    ELSE last_delivered_to
-  END,
+  delivery_count = COALESCE((SELECT delivery_count FROM delivery_stats), 0),
+  last_delivered_at = (SELECT last_delivered_at FROM delivery_stats),
+  last_delivered_to = COALESCE((SELECT customer_id FROM last_delivery), ''),
   updated_at = now(),
   version = version + 1
-WHERE asset_id = $2
-  AND is_deleted = FALSE
-  AND EXISTS (SELECT 1 FROM inserted)`
-	err := db.Exec(ctx, q, d.DeliveryID, assetID, deliveredAt, d.CustomerID)
+WHERE asset_id = $1
+  AND is_deleted = FALSE`
+	err := db.Exec(ctx, q, assetID)
 	if err != nil {
-		return fmt.Errorf("postgres DeliveryRepo.WriteIndexes: %w", err)
+		return fmt.Errorf("postgres DeliveryRepo.RefreshAssetDeliveryIndex: %w", err)
 	}
 	return nil
 }
@@ -1481,8 +1497,9 @@ func (r *IdempotencyRepo) Get(ctx context.Context, scope, key string) (*reposito
 SELECT scope, idem_key, request_hash, status_code, response_json, created_at
 FROM idempotency_keys
 WHERE scope=$1 AND idem_key=$2`
+	db := dbFromCtx(ctx, r.c.db)
 	rec := &repository.IdempotencyRecord{}
-	err := r.c.db.QueryRow(ctx, q, scope, key).Scan(
+	err := db.QueryRow(ctx, q, scope, key).Scan(
 		&rec.Scope, &rec.Key, &rec.RequestHash, &rec.StatusCode, &rec.Response, &rec.CreatedAt,
 	)
 	if err != nil {
@@ -1506,7 +1523,8 @@ ON CONFLICT (scope, idem_key) DO UPDATE SET
   status_code=EXCLUDED.status_code,
   response_json=EXCLUDED.response_json,
   created_at=EXCLUDED.created_at`
-	err := r.c.db.Exec(ctx, q, rec.Scope, rec.Key, rec.RequestHash, rec.StatusCode, rec.Response, rec.CreatedAt)
+	db := dbFromCtx(ctx, r.c.db)
+	err := db.Exec(ctx, q, rec.Scope, rec.Key, rec.RequestHash, rec.StatusCode, rec.Response, rec.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("postgres IdempotencyRepo.Save: %w", err)
 	}

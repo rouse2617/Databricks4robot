@@ -39,7 +39,8 @@ type McapFileRepository interface {
 type DeliveryRepository interface {
 	Set(ctx context.Context, d *models.Delivery) error
 	Get(ctx context.Context, deliveryID string) (*models.Delivery, error)
-	WriteIndexes(ctx context.Context, assetID string, d *models.Delivery) error
+	AddItems(ctx context.Context, deliveryID string, assetIDs []string) error
+	RefreshAssetDeliveryIndex(ctx context.Context, assetID string) error
 	ListByCustomer(ctx context.Context, customerID string) ([]string, error)
 	ListByAsset(ctx context.Context, assetID string) ([]string, error)
 	ListItems(ctx context.Context, deliveryID string) ([]*models.DeliveryItem, error)

@@ -24,7 +24,10 @@ func TestValidateTransition_Pending(t *testing.T) {
 }
 
 func TestValidateTransition_Archived(t *testing.T) {
-	// CYB-1052: delivered -> archived and accepted -> archived are valid
+	// CYB-1052 / CYB-1123: delivered -> accepted -> archived is valid
+	if err := ValidateTransition(DeliveryStatusDelivered, DeliveryStatusAccepted); err != nil {
+		t.Fatalf("expected accepted from delivered, got %v", err)
+	}
 	if err := ValidateTransition(DeliveryStatusDelivered, DeliveryStatusArchived); err != nil {
 		t.Fatalf("expected archived from delivered, got %v", err)
 	}
@@ -43,5 +46,8 @@ func TestValidateTransition_Disallowed(t *testing.T) {
 	}
 	if err := ValidateTransition(DeliveryStatusCancelled, DeliveryStatusDelivered); err == nil {
 		t.Fatal("expected error for cancelled->delivered")
+	}
+	if err := ValidateTransition(DeliveryStatusAccepted, DeliveryStatusDelivered); err == nil {
+		t.Fatal("expected error for accepted->delivered")
 	}
 }

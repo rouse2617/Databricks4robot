@@ -377,6 +377,14 @@ components:
         metadata:
           type: object
           additionalProperties: true
+    CustomerListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Customer' }
+        limit: { type: integer }
+        next_cursor: { type: string }
     DeliveryRuleQueryDSL:
       type: object
       required: [where]
@@ -507,6 +515,31 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         row_version: { type: integer, format: int64 }
+    AlgoRunListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AlgoRun' }
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        page_size: { type: integer }
+    AlgoRunCancelRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+    AffectedAsset:
+      type: object
+      properties:
+        asset_id: { $ref: '#/components/schemas/AssetID' }
+        algo_name: { type: string }
+        algo_version: { type: string }
+        status: { type: string }
+        result_tag: { type: string }
+        result_score: { type: number, format: double, nullable: true }
+        run_id: { $ref: '#/components/schemas/RunID' }
+        updated_at: { type: string, format: date-time }
     Delivery:
       type: object
       properties:
@@ -552,6 +585,105 @@ components:
         asset_count: { type: integer }
         delivered_at: { type: string, format: date-time }
         status: { type: string }
+    DeliveryItemsRequest:
+      type: object
+      required: [asset_ids]
+      properties:
+        asset_ids:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/AssetID' }
+    DeliveryItemsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryItem' }
+    DeliveryDraftRequest:
+      type: object
+      required: [customer_id]
+      properties:
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        asset_ids:
+          type: array
+          items: { $ref: '#/components/schemas/AssetID' }
+        contract_id: { type: string }
+        note: { type: string }
+        owner: { type: string }
+    DeliveryDraftResponse:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        status: { type: string }
+        asset_count: { type: integer }
+        created_at: { type: string, format: date-time }
+    DeliveryAddItemsResponse:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        status: { type: string }
+        asset_count: { type: integer }
+        version: { type: integer, format: int64 }
+    DeliveryCommitC2Request:
+      type: object
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64 }
+        approved_by: { type: string }
+    DeliveryCommitC2Response:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        status: { type: string }
+        delivered_at: { type: string, format: date-time }
+        approved_by: { type: string }
+        asset_count: { type: integer }
+        version: { type: integer, format: int64 }
+        warnings:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryRuleViolation' }
+    DeliveryCancelRequest:
+      type: object
+      properties:
+        cancelled_by: { type: string }
+        cancel_reason: { type: string }
+    DeliveryCancelResponse:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        status: { type: string }
+        cancelled_at: { type: string, format: date-time }
+        cancelled_by: { type: string }
+        cancel_reason: { type: string }
+    DeliveryRetryResponse:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        customer_id: { $ref: '#/components/schemas/CustomerID' }
+        status: { type: string }
+        asset_count: { type: integer }
+        original_delivery: { type: string, format: uuid }
+    DeliveryAckRequest:
+      type: object
+      required: [acknowledged_by]
+      properties:
+        acknowledged_by: { type: string }
+    DeliveryAckResponse:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted] }
+        acknowledged_at: { type: string, format: date-time }
+        acknowledged_by: { type: string }
+    DeliveryItem:
+      type: object
+      properties:
+        delivery_id: { type: string, format: uuid }
+        asset_id: { $ref: '#/components/schemas/AssetID' }
+        created_at: { type: string, format: date-time }
     CustomerDeliveryIDsResponse:
       type: object
       properties:
@@ -1967,6 +2099,34 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/LakehouseItemsResponse' }
   /api/v1/algo-runs:
+    get:
+      summary: List algo runs
+      tags: [algo-runs]
+      parameters:
+        - in: query
+          name: algo_name
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending, running, ok, failed, cancelled] }
+        - in: query
+          name: started_after
+          schema: { type: string, format: date-time }
+        - in: query
+          name: started_before
+          schema: { type: string, format: date-time }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoRunListResponse' }
     post:
       summary: Create algo run
       tags: [algo-runs]
@@ -2046,7 +2206,84 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AlgoRun' }
+  /api/v1/algo-runs/{run_id}/cancel:
+    post:
+      summary: Cancel algo run
+      tags: [algo-runs]
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: '#/components/schemas/RunID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlgoRunCancelRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlgoRun' }
+        '400':
+          description: invalid argument or invalid state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/algo-runs/{run_id}/affected-assets:
+    get:
+      summary: List affected assets for algo run
+      tags: [algo-runs]
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: '#/components/schemas/RunID' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AffectedAsset' }
+        '404':
+          description: run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/customers:
+    get:
+      summary: List customers
+      tags: [customers]
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: sla_tier
+          schema: { type: string }
+        - in: query
+          name: region
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerListResponse' }
     post:
       summary: Create customer
       tags: [customers]
@@ -2250,6 +2487,200 @@ paths:
               schema: { $ref: '#/components/schemas/Delivery' }
         '404':
           description: not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}/items:
+    get:
+      summary: List delivery items
+      tags: [deliveries]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryItemsResponse' }
+        '404':
+          description: delivery not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    post:
+      summary: Add items to pending delivery
+      tags: [deliveries]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryItemsRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryAddItemsResponse' }
+        '404':
+          description: delivery not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: invalid state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/draft:
+    post:
+      summary: Create draft delivery
+      tags: [deliveries]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryDraftRequest' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryDraftResponse' }
+        '400':
+          description: invalid argument
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: customer not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}/commit:
+    post:
+      summary: Commit pending delivery (C2)
+      tags: [deliveries]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryCommitC2Request' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryCommitC2Response' }
+        '404':
+          description: delivery not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: revision conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: invalid state or delivery rule failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}/cancel:
+    post:
+      summary: Cancel delivery
+      tags: [deliveries]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryCancelRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryCancelResponse' }
+        '404':
+          description: delivery not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: invalid state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}/retry:
+    post:
+      summary: Retry failed or cancelled delivery
+      tags: [deliveries]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryRetryResponse' }
+        '404':
+          description: delivery not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: invalid state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/deliveries/{id}/ack:
+    post:
+      summary: Acknowledge delivered delivery
+      tags: [deliveries]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryAckRequest' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryAckResponse' }
+        '404':
+          description: delivery not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422':
+          description: invalid state
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

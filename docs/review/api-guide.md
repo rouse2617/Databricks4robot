@@ -560,6 +560,56 @@ curl "$BASE/api/v1/algo-runs/$RUN_ID" -H "X-Grace-Token: $TOKEN"
 
 Per-asset `finish` 在 `run_id` 为 16 位且已登记时，同事务追加 `algo_run_applied` 事件。
 
+### 2.0.1 列表 / 取消 / 影响资产（CYB-1123）
+
+列表分页统一为 `page/page_size`，响应为 `{items,total,page,page_size}`。
+
+```bash
+curl "$BASE/api/v1/algo-runs?page=1&page_size=20&algo_name=hand_track&status=running" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`：
+```json
+{
+  "items": [],
+  "total": 0,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+重复 `run_id` 创建返回 `409`（不再吞冲突返回旧记录）：
+
+```bash
+curl -X POST "$BASE/api/v1/algo-runs" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"run_id\": \"$RUN_ID\",
+    \"algo_name\": \"hand_track\",
+    \"algo_version\": \"2.0\",
+    \"algo_kind\": \"processing\",
+    \"triggered_by\": \"manual:ops\"
+  }"
+```
+
+可取消 `pending/running` run：
+
+```bash
+curl -X POST "$BASE/api/v1/algo-runs/$RUN_ID/cancel" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"operator stop"}'
+```
+
+查看该 run 影响过的资产：
+
+```bash
+curl "$BASE/api/v1/algo-runs/$RUN_ID/affected-assets" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
 ### 状态机
 
 ```
@@ -937,6 +987,24 @@ curl -X PATCH "$BASE/api/v1/customers/acme_corp" \
 
 仅发送需修改字段。`409` `CONCURRENT_CONFLICT` 表示乐观锁冲突。
 
+### 2.8.4 列出客户
+
+`GET /api/v1/customers` 使用 cursor 分页（`limit` + `cursor`）：
+
+```bash
+curl "$BASE/api/v1/customers?status=active&sla_tier=premium&region=us-west&limit=20" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`：
+```json
+{
+  "items": [],
+  "limit": 20,
+  "next_cursor": ""
+}
+```
+
 ---
 
 ## 2.9 交付规则 (`delivery-rules`，CYB-1020)
@@ -1013,6 +1081,41 @@ curl -X POST "$BASE/api/v1/deliveries" \
 |------|------|------|
 | 422 | `DELIVERY_RULE_FAILED` | 资产命中 block 规则或 `exclude_tags`（见 `details.violations`） |
 
+### 3.1.1 C2 两阶段交付（draft → items → commit）
+
+```bash
+# 1) 创建草稿（pending）
+curl -X POST "$BASE/api/v1/deliveries/draft" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "customer_id": "acme_corp",
+    "asset_ids": ["aset0001"],
+    "note": "batch draft"
+  }'
+```
+
+```bash
+# 2) 向 pending 草稿追加资产
+curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/items" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"asset_ids":["aset0002","aset0003"]}'
+```
+
+```bash
+# 3) 提交草稿（expected_revision 做并发保护）
+curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/commit" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"expected_revision":1,"approved_by":"ops@databrew"}'
+```
+
+语义说明（CYB-1123）：
+- `draft` / `retry` 仅创建 `delivery_items`，不会提前计入资产 `delivery_count/last_delivered_*`
+- 只有最终 `commit`（或一次式 `POST /deliveries`）才会刷新“已交付”索引与事件
+- `commit` 时若 `expected_revision` 不匹配返回 `409 CONCURRENT_CONFLICT`
+
 ### 3.2 获取交付详情
 
 ```bash
@@ -1076,6 +1179,38 @@ curl "$BASE/api/v1/deliveries?page=1&page_size=20&customer_id=acme_corp" \
   "page_size": 20
 }
 ```
+
+### 3.5 取消 / 重试 / 客户确认（CYB-1104/1105/1106）
+
+```bash
+# 取消：允许 pending / delivered / accepted
+curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/cancel" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"cancelled_by":"ops@databrew","cancel_reason":"customer revoked"}'
+```
+
+```bash
+# 重试：仅允许 failed / cancelled，返回一个新的 pending delivery
+curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/retry" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+```bash
+# 客户确认：delivered -> accepted
+curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/ack" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"acknowledged_by":"customer.ops"}'
+```
+
+错误路径：
+
+| 状态 | code | 触发 |
+|------|------|------|
+| 404 | `DELIVERY_NOT_FOUND` | delivery 不存在 |
+| 422 | `INVALID_STATE` | 状态不允许该操作（如对 pending 执行 ack） |
+| 422 | `INVALID_STATE_TRANSITION` | 状态机禁止的跃迁 |
 
 ## 4. 批量创建片段 (内部接口)
 

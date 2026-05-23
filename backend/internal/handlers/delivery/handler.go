@@ -73,13 +73,76 @@ func (h *Handler) appendDeliveryEvents(ctx context.Context, d *models.Delivery, 
 	return nil
 }
 
-func (h *Handler) commitDelivery(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string) error {
+func (h *Handler) createDeliveryWithItems(ctx context.Context, d *models.Delivery, assetIDs []string) error {
 	writeFn := func(txCtx context.Context) error {
 		if err := h.repo.Set(txCtx, d); err != nil {
 			return err
 		}
+		if err := h.repo.AddItems(txCtx, d.DeliveryID, assetIDs); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if txRunner, ok := h.repo.(repository.TxRunner); ok {
+		return txRunner.WithTx(ctx, writeFn)
+	}
+	return writeFn(ctx)
+}
+
+func (h *Handler) commitDeliveryIndexesAndEvents(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string) error {
+	writeFn := func(txCtx context.Context) error {
 		for _, assetID := range assetIDs {
-			if err := h.repo.WriteIndexes(txCtx, assetID, d); err != nil {
+			if err := h.repo.RefreshAssetDeliveryIndex(txCtx, assetID); err != nil {
+				return err
+			}
+		}
+		return h.appendDeliveryEvents(txCtx, d, assetIDs, requestID)
+	}
+
+	if txRunner, ok := h.repo.(repository.TxRunner); ok {
+		return txRunner.WithTx(ctx, writeFn)
+	}
+	return writeFn(ctx)
+}
+
+// commitDeliveryFull runs Set + AddItems + RefreshAssetDeliveryIndex + events + idempotency
+// in a single transaction so that either all writes land or none do. The idempotency record
+// is included in the same tx to prevent duplicates on retry after partial failure.
+func (h *Handler) commitDeliveryFull(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string, idemRec *repository.IdempotencyRecord) error {
+	writeFn := func(txCtx context.Context) error {
+		if err := h.repo.Set(txCtx, d); err != nil {
+			return err
+		}
+		if err := h.repo.AddItems(txCtx, d.DeliveryID, assetIDs); err != nil {
+			return err
+		}
+		for _, assetID := range assetIDs {
+			if err := h.repo.RefreshAssetDeliveryIndex(txCtx, assetID); err != nil {
+				return err
+			}
+		}
+		if err := h.appendDeliveryEvents(txCtx, d, assetIDs, requestID); err != nil {
+			return err
+		}
+		return h.idemRepo.Save(txCtx, idemRec)
+	}
+
+	if txRunner, ok := h.repo.(repository.TxRunner); ok {
+		return txRunner.WithTx(ctx, writeFn)
+	}
+	return writeFn(ctx)
+}
+
+// commitC2Full runs Update + RefreshAssetDeliveryIndex + events in a single
+// transaction for consistent C2 commit semantics.
+func (h *Handler) commitC2Full(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string, expectedRevision int64) error {
+	writeFn := func(txCtx context.Context) error {
+		if err := h.repo.Update(txCtx, d, expectedRevision); err != nil {
+			return err
+		}
+		for _, assetID := range assetIDs {
+			if err := h.repo.RefreshAssetDeliveryIndex(txCtx, assetID); err != nil {
 				return err
 			}
 		}
@@ -185,11 +248,6 @@ func (h *Handler) Commit(c *gin.Context) {
 		CreatedAt:   now,
 	}
 
-	if err := h.commitDelivery(c.Request.Context(), d, req.AssetIDs, c.GetHeader("X-Request-ID")); err != nil {
-		httpresp.Internal(c, err.Error())
-		return
-	}
-
 	body := gin.H{
 		"delivery_id":  d.DeliveryID,
 		"customer_id":  d.CustomerID,
@@ -197,18 +255,20 @@ func (h *Handler) Commit(c *gin.Context) {
 		"delivered_at": d.DeliveredAt,
 		"status":       d.Status,
 	}
+	respBytes, _ := json.Marshal(body)
+	idemRec := &repository.IdempotencyRecord{
+		Scope: "deliveries_commit", Key: idemKey, RequestHash: hash, StatusCode: http.StatusCreated, Response: respBytes,
+	}
+	if err := h.commitDeliveryFull(c.Request.Context(), d, req.AssetIDs, c.GetHeader("X-Request-ID"), idemRec); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
 	audit.Log(c.Request.Context(), "delivery.commit", "delivery", []string{d.DeliveryID}, map[string]any{
 		"customer_id": req.CustomerID,
 		"asset_ids":   req.AssetIDs,
 		"asset_count": len(req.AssetIDs),
 	})
-	respBytes, _ := json.Marshal(body)
-	if err := h.idemRepo.Save(c.Request.Context(), &repository.IdempotencyRecord{
-		Scope: "deliveries_commit", Key: idemKey, RequestHash: hash, StatusCode: http.StatusCreated, Response: respBytes,
-	}); err != nil {
-		httpresp.Internal(c, err.Error())
-		return
-	}
 	c.JSON(http.StatusCreated, body)
 }
 
@@ -361,7 +421,7 @@ func (h *Handler) HandleDraft(c *gin.Context) {
 		CreatedAt:   now,
 	}
 
-	if err := h.commitDelivery(c.Request.Context(), d, req.AssetIDs, c.GetHeader("X-Request-ID")); err != nil {
+	if err := h.createDeliveryWithItems(c.Request.Context(), d, req.AssetIDs); err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -416,12 +476,9 @@ func (h *Handler) HandleAddItems(c *gin.Context) {
 		return
 	}
 
-	// Append items via WriteIndexes (idempotent ON CONFLICT).
-	for _, assetID := range req.AssetIDs {
-		if err := h.repo.WriteIndexes(c.Request.Context(), assetID, d); err != nil {
-			httpresp.Internal(c, err.Error())
-			return
-		}
+	if err := h.repo.AddItems(c.Request.Context(), deliveryID, req.AssetIDs); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
 	}
 
 	// Refresh delivery to reflect new item count.
@@ -525,7 +582,7 @@ func (h *Handler) HandleCommitC2(c *gin.Context) {
 	d.CompletedAt = &now
 	d.ApprovedBy = req.ApprovedBy
 
-	if err := h.repo.Update(c.Request.Context(), d, req.ExpectedRevision); err != nil {
+	if err := h.commitC2Full(c.Request.Context(), d, assetIDs, c.GetHeader("X-Request-ID"), req.ExpectedRevision); err != nil {
 		if err == repository.ErrOptimisticLock {
 			httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
 				"delivery has been modified concurrently",
@@ -534,14 +591,6 @@ func (h *Handler) HandleCommitC2(c *gin.Context) {
 		}
 		httpresp.Internal(c, err.Error())
 		return
-	}
-
-	// Write indexes for all asset items (delivery_count, last_delivered_at, etc.)
-	for _, assetID := range assetIDs {
-		if err := h.repo.WriteIndexes(c.Request.Context(), assetID, d); err != nil {
-			httpresp.Internal(c, err.Error())
-			return
-		}
 	}
 
 	audit.Log(c.Request.Context(), "delivery.commit_c2", "delivery", []string{d.DeliveryID}, map[string]any{
@@ -593,20 +642,18 @@ func (h *Handler) HandleCancel(c *gin.Context) {
 		return
 	}
 
-	// Validate allowed statuses: pending or delivered.
-	if d.Status != models.DeliveryStatusPending && d.Status != models.DeliveryStatusDelivered {
+	// Validate allowed statuses: pending, delivered, or accepted.
+	if d.Status != models.DeliveryStatusPending && d.Status != models.DeliveryStatusDelivered && d.Status != models.DeliveryStatusAccepted {
 		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
-			"can only cancel pending or delivered deliveries",
+			"can only cancel pending, delivered, or accepted deliveries",
 			map[string]any{"current_status": d.Status})
 		return
 	}
+	previousStatus := d.Status
 
-	// Use state machine for pending→cancelled transition.
-	if d.Status == models.DeliveryStatusPending {
-		if err := models.ValidateTransition(d.Status, models.DeliveryStatusCancelled); err != nil {
-			httpresp.Unprocessable(c, httpresp.CodeInvalidStateTransition, err.Error(), nil)
-			return
-		}
+	if err := models.ValidateTransition(d.Status, models.DeliveryStatusCancelled); err != nil {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidStateTransition, err.Error(), nil)
+		return
 	}
 
 	now := time.Now()
@@ -618,6 +665,19 @@ func (h *Handler) HandleCancel(c *gin.Context) {
 	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
 		httpresp.Internal(c, err.Error())
 		return
+	}
+	if previousStatus != models.DeliveryStatusPending {
+		items, err := h.repo.ListItems(c.Request.Context(), deliveryID)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		for _, item := range items {
+			if err := h.repo.RefreshAssetDeliveryIndex(c.Request.Context(), item.AssetID); err != nil {
+				httpresp.Internal(c, err.Error())
+				return
+			}
+		}
 	}
 
 	audit.Log(c.Request.Context(), "delivery.cancel", "delivery", []string{d.DeliveryID}, map[string]any{
@@ -686,7 +746,7 @@ func (h *Handler) HandleRetry(c *gin.Context) {
 		assetIDs = append(assetIDs, item.AssetID)
 	}
 
-	if err := h.commitDelivery(c.Request.Context(), d, assetIDs, c.GetHeader("X-Request-ID")); err != nil {
+	if err := h.createDeliveryWithItems(c.Request.Context(), d, assetIDs); err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -746,6 +806,11 @@ func (h *Handler) HandleAck(c *gin.Context) {
 	}
 
 	now := time.Now()
+	if err := models.ValidateTransition(d.Status, models.DeliveryStatusAccepted); err != nil {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidStateTransition, err.Error(), nil)
+		return
+	}
+	d.Status = models.DeliveryStatusAccepted
 	d.AcknowledgedAt = &now
 	d.AcknowledgedBy = req.AcknowledgedBy
 

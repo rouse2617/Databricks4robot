@@ -61,8 +61,8 @@ type ListFilter struct {
 	Status        string
 	StartedAfter  *time.Time
 	StartedBefore *time.Time
-	Limit         int
-	Cursor        string
+	Page          int
+	PageSize      int
 }
 
 // FinishInput is the body for POST /algo-runs/{id}/finish.
@@ -159,15 +159,6 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.AlgoRun, 
 		RowVersion:      1,
 	}
 	if err := u.repo.Insert(ctx, run); err != nil {
-		if errors.Is(err, repository.ErrDuplicateRunID) {
-			existing, gerr := u.repo.Get(ctx, runID)
-			if gerr != nil {
-				return nil, gerr
-			}
-			if existing != nil {
-				return existing, nil
-			}
-		}
 		return nil, err
 	}
 	u.emitAlgoRunEvent(ctx, eventAlgoRunCreated, runID, map[string]any{
@@ -259,17 +250,20 @@ func (u *Usecase) Exists(ctx context.Context, runID string) (bool, error) {
 }
 
 // List returns algo_runs matching the given filter.
-func (u *Usecase) List(ctx context.Context, f ListFilter) ([]*models.AlgoRun, error) {
-	if f.Limit <= 0 || f.Limit > 200 {
-		f.Limit = 50
+func (u *Usecase) List(ctx context.Context, f ListFilter) ([]*models.AlgoRun, int64, error) {
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PageSize <= 0 || f.PageSize > 200 {
+		f.PageSize = 50
 	}
 	return u.repo.List(ctx, repository.AlgoRunListFilter{
 		AlgoName:      strings.TrimSpace(f.AlgoName),
 		Status:        strings.TrimSpace(f.Status),
 		StartedAfter:  f.StartedAfter,
 		StartedBefore: f.StartedBefore,
-		Limit:         f.Limit,
-		Cursor:        strings.TrimSpace(f.Cursor),
+		Page:          f.Page,
+		PageSize:      f.PageSize,
 	})
 }
 

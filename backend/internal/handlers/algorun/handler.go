@@ -122,20 +122,26 @@ func (h *Handler) Get(c *gin.Context) {
 // @Param        status query string false "Filter by status"
 // @Param        started_after query string false "RFC3339 lower bound on started_at"
 // @Param        started_before query string false "RFC3339 upper bound on started_at"
-// @Param        limit query int false "Max results (default 50, max 200)"
-// @Param        cursor query string false "Keyset cursor (run_id)"
-// @Success      200 {array} models.AlgoRun
+// @Param        page query int false "Page number (default 1)"
+// @Param        page_size query int false "Page size (default 50, max 200)"
+// @Success      200 {object} object
 // @Security     GraceToken
 // @Router       /algo-runs [get]
 func (h *Handler) List(c *gin.Context) {
 	f := algorunUC.ListFilter{
 		AlgoName: c.Query("algo_name"),
 		Status:   c.Query("status"),
-		Cursor:   c.Query("cursor"),
+		Page:     1,
+		PageSize: 50,
 	}
-	if v := c.Query("limit"); v != "" {
+	if v := c.Query("page"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
-			f.Limit = n
+			f.Page = n
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			f.PageSize = n
 		}
 	}
 	if v := c.Query("started_after"); v != "" {
@@ -148,7 +154,7 @@ func (h *Handler) List(c *gin.Context) {
 			f.StartedBefore = &t
 		}
 	}
-	runs, err := h.uc.List(c.Request.Context(), f)
+	runs, total, err := h.uc.List(c.Request.Context(), f)
 	if err != nil {
 		mapAlgoRunErr(c, err)
 		return
@@ -156,10 +162,11 @@ func (h *Handler) List(c *gin.Context) {
 	if runs == nil {
 		runs = []*models.AlgoRun{} //nolint:staticcheck // ensure JSON []
 	}
-	// Paginated response format expected by frontend
 	c.JSON(200, gin.H{
-		"items": runs,
-		"total": len(runs),
+		"items":     runs,
+		"total":     total,
+		"page":      f.Page,
+		"page_size": f.PageSize,
 	})
 }
 

@@ -38,8 +38,8 @@ type AlgoRunListFilter struct {
 	Status        string
 	StartedAfter  *time.Time
 	StartedBefore *time.Time
-	Limit         int
-	Cursor        string // run_id cursor for keyset pagination
+	Page          int
+	PageSize      int
 }
 
 // AffectedAsset represents a single asset processed by an algo run.
@@ -61,7 +61,7 @@ type AlgoRunRepository interface {
 	Exists(ctx context.Context, runID string) (bool, error)
 	Start(ctx context.Context, runID string, startedAt time.Time) error
 	Finish(ctx context.Context, runID string, patch AlgoRunFinishPatch) error
-	List(ctx context.Context, filter AlgoRunListFilter) ([]*models.AlgoRun, error)
+	List(ctx context.Context, filter AlgoRunListFilter) ([]*models.AlgoRun, int64, error)
 	Cancel(ctx context.Context, runID, reason string, finishedAt time.Time) error
 	GetAffectedAssets(ctx context.Context, runID string) ([]*AffectedAsset, error)
 }

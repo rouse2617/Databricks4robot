@@ -401,12 +401,12 @@ func TestDeliveryRepo(t *testing.T) {
 		t.Fatalf("delivered_by not read: %s", got.DeliveredBy)
 	}
 
-	if err := repo.WriteIndexes(ctx, "a1", &models.Delivery{DeliveryID: "d1"}); err != nil {
-		t.Fatalf("write indexes err: %v", err)
+	if err := repo.AddItems(ctx, "d1", []string{"a1"}); err != nil {
+		t.Fatalf("add items err: %v", err)
 	}
 	db.execErr = errors.New("e")
-	if err := repo.WriteIndexes(ctx, "a1", &models.Delivery{DeliveryID: "d1"}); err == nil {
-		t.Fatalf("expected write indexes error")
+	if err := repo.AddItems(ctx, "d1", []string{"a1"}); err == nil {
+		t.Fatalf("expected add items error")
 	}
 	db.execErr = nil
 
@@ -2258,36 +2258,51 @@ func TestDeliveryRepo_List_ReadsNewColumns(t *testing.T) {
 	}
 }
 
-func TestDeliveryRepo_WriteIndexes_UsesDeliveryTimestampAndCustomer(t *testing.T) {
+func TestDeliveryRepo_AddItems_InsertsDeliveryItems(t *testing.T) {
 	ctx := context.Background()
 	db := &fakeDB{}
 	repo := &DeliveryRepo{c: &Client{db: db}}
 
-	deliveredAt := mustTime(t, "2026-05-08T03:31:57Z")
-	d := &models.Delivery{
-		DeliveryID:  "d1",
-		CustomerID:  "seed_customer",
-		CreatedAt:   mustTime(t, "2026-05-08T03:30:00Z"),
-		DeliveredAt: &deliveredAt,
+	if err := repo.AddItems(ctx, "d1", []string{"a1b2c3d4", "b2c3d4e5"}); err != nil {
+		t.Fatalf("AddItems() error: %v", err)
 	}
+	if len(db.execSQLs) != 2 {
+		t.Fatalf("expected two execs, got %d", len(db.execSQLs))
+	}
+	sql := db.execSQLs[0]
+	if !strings.Contains(sql, "INSERT INTO delivery_items") {
+		t.Fatalf("expected AddItems SQL to insert into delivery_items")
+	}
+	if len(db.execArgs) != 2 || len(db.execArgs[0]) != 2 {
+		t.Fatalf("expected 2 args per insert, got %v", db.execArgs)
+	}
+	if got := db.execArgs[0][0]; got != "d1" {
+		t.Fatalf("expected delivery_id arg d1, got %v", got)
+	}
+	if got := db.execArgs[0][1]; got != "a1b2c3d4" {
+		t.Fatalf("expected asset_id arg a1b2c3d4, got %v", got)
+	}
+}
 
-	if err := repo.WriteIndexes(ctx, "a1b2c3d4", d); err != nil {
-		t.Fatalf("WriteIndexes() error: %v", err)
+func TestDeliveryRepo_RefreshAssetDeliveryIndex_RecomputesCounters(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &DeliveryRepo{c: &Client{db: db}}
+
+	if err := repo.RefreshAssetDeliveryIndex(ctx, "a1b2c3d4"); err != nil {
+		t.Fatalf("RefreshAssetDeliveryIndex() error: %v", err)
 	}
 	if len(db.execSQLs) != 1 {
 		t.Fatalf("expected exactly one exec, got %d", len(db.execSQLs))
 	}
 	sql := db.execSQLs[0]
-	if !strings.Contains(sql, "UPDATE assets") || !strings.Contains(sql, "delivery_count = delivery_count + 1") {
-		t.Fatalf("expected WriteIndexes SQL to update assets delivery counters")
+	if !strings.Contains(sql, "FROM delivery_items di") || !strings.Contains(sql, "delivery_count = COALESCE") {
+		t.Fatalf("expected refresh SQL to recompute delivery counters, got %s", sql)
 	}
-	if len(db.execArgs) != 1 || len(db.execArgs[0]) != 4 {
-		t.Fatalf("expected 4 args, got %v", db.execArgs)
+	if len(db.execArgs) != 1 || len(db.execArgs[0]) != 1 {
+		t.Fatalf("expected one arg, got %v", db.execArgs)
 	}
-	if got := db.execArgs[0][2]; got != deliveredAt {
-		t.Fatalf("expected delivered_at arg=%v, got %v", deliveredAt, got)
-	}
-	if got := db.execArgs[0][3]; got != "seed_customer" {
-		t.Fatalf("expected customer arg seed_customer, got %v", got)
+	if got := db.execArgs[0][0]; got != "a1b2c3d4" {
+		t.Fatalf("expected asset_id arg a1b2c3d4, got %v", got)
 	}
 }

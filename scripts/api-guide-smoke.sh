@@ -80,6 +80,22 @@ post() {
 	echo "$RESP_BODY"
 }
 
+expect_code_post() {
+	local name="$1" path="$2" data="$3" expected="$4"
+	local raw code body
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "$BASE$path" -d "$data" 2>/dev/null) || raw=$'\n000'
+	code=$(echo "$raw" | tail -n1)
+	body=$(echo "$raw" | sed '$d')
+	RESP_CODE="$code"
+	RESP_BODY="$body"
+	if [[ "$code" == "$expected" ]]; then
+		ok "$name"
+	else
+		bad "$name (expected ${expected})"
+	fi
+	echo "$body"
+}
+
 echo "=== api-guide smoke === BASE=$BASE"
 if [[ "$BASE" == https://* ]] && [[ -z "${IAP_TOKEN:-}" ]]; then
 	echo "  NOTE: HTTPS BASE without IAP_TOKEN — if the host uses IAP, expect 302/401; set IAP_TOKEN (OIDC, audience = IAP OAuth client ID)."
@@ -122,12 +138,15 @@ get "deliveries list" "/api/v1/deliveries?page=1&page_size=5"
 get "mcap-files list" "/api/v1/mcap-files?page=1&page_size=5"
 
 echo ""
-echo "--- § algo-runs (CYB-1018) ---"
+echo "--- § algo-runs (CYB-1018/CYB-1123) ---"
+get "GET algo-runs list (page/page_size)" "/api/v1/algo-runs?page=1&page_size=5"
 if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	RUN_ID=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print(''.join(secrets.choice(a) for _ in range(16)))")
 	post "POST algo-runs" "/api/v1/algo-runs" "{\"run_id\":\"${RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\"}" >/dev/null
+	expect_code_post "POST algo-runs duplicate run_id -> 409" "/api/v1/algo-runs" "{\"run_id\":\"${RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\"}" "409" >/dev/null
 	get "GET algo-runs/{id}" "/api/v1/algo-runs/${RUN_ID}"
 	post "POST algo-runs start" "/api/v1/algo-runs/${RUN_ID}/start" "{}" >/dev/null
+	get "GET algo-runs affected-assets" "/api/v1/algo-runs/${RUN_ID}/affected-assets"
 	post "POST algo-runs finish" "/api/v1/algo-runs/${RUN_ID}/finish" "{\"status\":\"ok\",\"assets_processed\":1,\"assets_succeeded\":1,\"assets_failed\":0}" >/dev/null
 else
 	echo "  skip algo-runs write smoke — set RUN_WRITES=1 to exercise POST/GET /algo-runs"
@@ -135,6 +154,7 @@ fi
 
 echo ""
 echo "--- § customers (CYB-1014) ---"
+get "GET customers list" "/api/v1/customers?limit=5"
 if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	CUST_ID="smoke$(python3 -c "import secrets,string; print(''.join(secrets.choice(string.ascii_lowercase+string.digits) for _ in range(8)))")"
 	post "POST customers" "/api/v1/customers" "{\"customer_id\":\"${CUST_ID}\",\"display_name\":\"api-guide smoke\"}" >/dev/null
@@ -216,6 +236,30 @@ EOF
 		get "GET asset tags_detailed" "/api/v1/assets/${NEW_AID}"
 	else
 		echo "  skip multi-source tags smoke — no asset id available"
+	fi
+
+	if [[ -n "${CUST_ID:-}" && -n "${NEW_AID:-}" ]]; then
+		echo ""
+		echo "--- §3 delivery C2 + ack (CYB-1123) ---"
+		DRAFT_RAW=$(post "POST deliveries/draft" "/api/v1/deliveries/draft" "{\"customer_id\":\"${CUST_ID}\",\"asset_ids\":[\"${NEW_AID}\"],\"note\":\"smoke draft\"}")
+		DRAFT_ID=$(echo "$DRAFT_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('delivery_id',''))" 2>/dev/null || echo "")
+		if [[ -n "$DRAFT_ID" ]]; then
+			ITEMS_RAW=$(post "POST deliveries/{id}/items" "/api/v1/deliveries/${DRAFT_ID}/items" "{\"asset_ids\":[\"${NEW_AID}\"]}")
+			EXPECTED_REV=$(echo "$ITEMS_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('version',''))" 2>/dev/null || echo "")
+			if [[ -n "$EXPECTED_REV" ]]; then
+				COMMIT_RAW=$(post "POST deliveries/{id}/commit" "/api/v1/deliveries/${DRAFT_ID}/commit" "{\"expected_revision\":${EXPECTED_REV},\"approved_by\":\"api-guide-smoke\"}")
+				COMMIT_ID=$(echo "$COMMIT_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('delivery_id',''))" 2>/dev/null || echo "")
+				if [[ -n "$COMMIT_ID" ]]; then
+					post "POST deliveries/{id}/ack" "/api/v1/deliveries/${COMMIT_ID}/ack" '{"acknowledged_by":"api-guide-smoke"}' >/dev/null
+				else
+					echo "  WARN delivery commit smoke skipped ack: missing delivery_id"
+				fi
+			else
+				echo "  WARN delivery commit smoke skipped: missing expected revision from add-items"
+			fi
+		else
+			echo "  WARN delivery draft smoke skipped: missing delivery_id"
+		fi
 	fi
 fi
 

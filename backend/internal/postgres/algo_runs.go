@@ -223,9 +223,8 @@ WHERE run_id = $1 AND status = $16`
 	return nil
 }
 
-// List returns algo_runs matching the given filter, ordered by created_at DESC
-// with keyset pagination on run_id cursor.
-func (r *AlgoRunRepo) List(ctx context.Context, filter repository.AlgoRunListFilter) ([]*models.AlgoRun, error) {
+// List returns algo_runs matching the given filter, ordered by created_at DESC.
+func (r *AlgoRunRepo) List(ctx context.Context, filter repository.AlgoRunListFilter) ([]*models.AlgoRun, int64, error) {
 	where := []string{"1=1"}
 	args := []any{}
 	idx := 1
@@ -250,24 +249,30 @@ func (r *AlgoRunRepo) List(ctx context.Context, filter repository.AlgoRunListFil
 		args = append(args, *filter.StartedBefore)
 		idx++
 	}
-	if filter.Cursor != "" {
-		where = append(where, fmt.Sprintf("created_at < (SELECT created_at FROM algo_runs WHERE run_id = $%d)", idx))
-		args = append(args, filter.Cursor)
-		idx++
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := filter.PageSize
+	if pageSize <= 0 || pageSize > 200 {
+		pageSize = 50
+	}
+	offset := (page - 1) * pageSize
+
+	countQ := fmt.Sprintf("SELECT COUNT(*) FROM algo_runs WHERE %s", strings.Join(where, " AND "))
+	var total int64
+	if err := r.c.db.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("postgres AlgoRunRepo.List count: %w", err)
 	}
 
-	limit := filter.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	args = append(args, limit)
+	args = append(args, pageSize, offset)
 
-	q := fmt.Sprintf("SELECT %s FROM algo_runs WHERE %s ORDER BY created_at DESC LIMIT $%d",
-		algoRunSelectCols, strings.Join(where, " AND "), idx)
+	q := fmt.Sprintf("SELECT %s FROM algo_runs WHERE %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
+		algoRunSelectCols, strings.Join(where, " AND "), idx, idx+1)
 
 	rows, err := r.c.db.Query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("postgres AlgoRunRepo.List: %w", err)
+		return nil, 0, fmt.Errorf("postgres AlgoRunRepo.List: %w", err)
 	}
 	defer rows.Close()
 
@@ -275,11 +280,11 @@ func (r *AlgoRunRepo) List(ctx context.Context, filter repository.AlgoRunListFil
 	for rows.Next() {
 		run, err := r.scanAlgoRun(ctx, rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, run)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // Cancel transitions a pending/running run to cancelled with a reason.

@@ -20,7 +20,9 @@ import (
 type mockDeliveryRepo struct {
 	setFn            func(ctx context.Context, d *models.Delivery) error
 	getFn            func(ctx context.Context, deliveryID string) (*models.Delivery, error)
-	writeIndexesFn   func(ctx context.Context, assetID string, d *models.Delivery) error
+	addItemsFn       func(ctx context.Context, deliveryID string, assetIDs []string) error
+	refreshAssetFn   func(ctx context.Context, assetID string) error
+	updateFn         func(ctx context.Context, d *models.Delivery, expectedRowVersion int64) error
 	listByCustomerFn func(ctx context.Context, customerID string) ([]string, error)
 	listItemsFn      func(ctx context.Context, deliveryID string) ([]*models.DeliveryItem, error)
 }
@@ -37,9 +39,15 @@ func (m *mockDeliveryRepo) Get(ctx context.Context, deliveryID string) (*models.
 	}
 	return nil, nil
 }
-func (m *mockDeliveryRepo) WriteIndexes(ctx context.Context, assetID string, d *models.Delivery) error {
-	if m.writeIndexesFn != nil {
-		return m.writeIndexesFn(ctx, assetID, d)
+func (m *mockDeliveryRepo) AddItems(ctx context.Context, deliveryID string, assetIDs []string) error {
+	if m.addItemsFn != nil {
+		return m.addItemsFn(ctx, deliveryID, assetIDs)
+	}
+	return nil
+}
+func (m *mockDeliveryRepo) RefreshAssetDeliveryIndex(ctx context.Context, assetID string) error {
+	if m.refreshAssetFn != nil {
+		return m.refreshAssetFn(ctx, assetID)
 	}
 	return nil
 }
@@ -65,7 +73,10 @@ func (m *mockDeliveryRepo) List(_ context.Context, _, _ int, _, _ string) ([]*mo
 func (m *mockDeliveryRepo) WithTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
 }
-func (m *mockDeliveryRepo) Update(_ context.Context, _ *models.Delivery, _ int64) error {
+func (m *mockDeliveryRepo) Update(ctx context.Context, d *models.Delivery, expectedRowVersion int64) error {
+	if m.updateFn != nil {
+		return m.updateFn(ctx, d, expectedRowVersion)
+	}
 	return nil
 }
 
@@ -246,7 +257,7 @@ func TestCommit(t *testing.T) {
 	saved := false
 	repo.setFn = nil
 	idem.saveFn = func(context.Context, *repository.IdempotencyRecord) error { saved = true; return nil }
-	repo.writeIndexesFn = func(context.Context, string, *models.Delivery) error { return errors.New("idx partial") }
+	repo.refreshAssetFn = func(context.Context, string) error { return errors.New("idx partial") }
 	w = doDeliveryReq(t, r, http.MethodPost, "/deliveries", map[string]any{
 		"asset_ids":   []string{assetA, assetB},
 		"customer_id": "c1",
@@ -259,7 +270,7 @@ func TestCommit(t *testing.T) {
 	}
 
 	// Fresh commit success
-	repo.writeIndexesFn = nil
+	repo.refreshAssetFn = nil
 	w = doDeliveryReq(t, r, http.MethodPost, "/deliveries", map[string]any{
 		"asset_ids":   []string{assetA, assetB},
 		"customer_id": "c1",
@@ -428,5 +439,116 @@ func TestCommit_AppendsAssetEvents(t *testing.T) {
 	}
 	if appended != 1 {
 		t.Fatalf("expected 1 appended event, got %d", appended)
+	}
+}
+
+func TestHandleAck_TransitionsToAccepted(t *testing.T) {
+	validUUID := "33333333-3333-4333-8333-333333333333"
+	var updated *models.Delivery
+	repo := &mockDeliveryRepo{
+		getFn: func(context.Context, string) (*models.Delivery, error) {
+			return &models.Delivery{
+				DeliveryID: validUUID,
+				Status:     models.DeliveryStatusDelivered,
+				Version:    3,
+			}, nil
+		},
+		updateFn: func(_ context.Context, d *models.Delivery, expectedRowVersion int64) error {
+			if expectedRowVersion != 3 {
+				t.Fatalf("expected row version 3, got %d", expectedRowVersion)
+			}
+			cp := *d
+			updated = &cp
+			return nil
+		},
+	}
+	h := New(repo, &mockIdemRepo{}, nil)
+	r := setupDeliveryRouter(http.MethodPost, "/deliveries/:id/ack", h.HandleAck)
+
+	w := doDeliveryReq(t, r, http.MethodPost, "/deliveries/"+validUUID+"/ack", map[string]any{
+		"acknowledged_by": "ops-user",
+	}, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if updated == nil {
+		t.Fatal("expected update to be called")
+	}
+	if updated.Status != models.DeliveryStatusAccepted {
+		t.Fatalf("expected status accepted, got %s", updated.Status)
+	}
+	if updated.AcknowledgedBy != "ops-user" {
+		t.Fatalf("expected acknowledged_by to be set, got %q", updated.AcknowledgedBy)
+	}
+	if updated.AcknowledgedAt == nil {
+		t.Fatal("expected acknowledged_at to be set")
+	}
+}
+
+func TestHandleCancel_RefreshesAssetIndexesForDeliveredDelivery(t *testing.T) {
+	validUUID := "44444444-4444-4444-8444-444444444444"
+	refreshed := map[string]int{}
+	repo := &mockDeliveryRepo{
+		getFn: func(context.Context, string) (*models.Delivery, error) {
+			return &models.Delivery{
+				DeliveryID: validUUID,
+				Status:     models.DeliveryStatusDelivered,
+				Version:    4,
+			}, nil
+		},
+		listItemsFn: func(context.Context, string) ([]*models.DeliveryItem, error) {
+			return []*models.DeliveryItem{
+				{DeliveryID: validUUID, AssetID: "aa111111"},
+				{DeliveryID: validUUID, AssetID: "bb222222"},
+			}, nil
+		},
+		refreshAssetFn: func(_ context.Context, assetID string) error {
+			refreshed[assetID]++
+			return nil
+		},
+	}
+	h := New(repo, &mockIdemRepo{}, nil)
+	r := setupDeliveryRouter(http.MethodPost, "/deliveries/:id/cancel", h.HandleCancel)
+
+	w := doDeliveryReq(t, r, http.MethodPost, "/deliveries/"+validUUID+"/cancel", map[string]any{
+		"cancelled_by":  "ops-user",
+		"cancel_reason": "customer revoked",
+	}, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if refreshed["aa111111"] != 1 || refreshed["bb222222"] != 1 {
+		t.Fatalf("expected asset indexes refreshed once each, got %#v", refreshed)
+	}
+}
+
+func TestHandleCancel_PendingDoesNotRefreshAssetIndexes(t *testing.T) {
+	validUUID := "55555555-5555-4555-8555-555555555555"
+	refreshed := 0
+	repo := &mockDeliveryRepo{
+		getFn: func(context.Context, string) (*models.Delivery, error) {
+			return &models.Delivery{
+				DeliveryID: validUUID,
+				Status:     models.DeliveryStatusPending,
+				Version:    2,
+			}, nil
+		},
+		refreshAssetFn: func(_ context.Context, assetID string) error {
+			refreshed++
+			return nil
+		},
+	}
+	h := New(repo, &mockIdemRepo{}, nil)
+	r := setupDeliveryRouter(http.MethodPost, "/deliveries/:id/cancel", h.HandleCancel)
+
+	w := doDeliveryReq(t, r, http.MethodPost, "/deliveries/"+validUUID+"/cancel", map[string]any{
+		"cancelled_by":  "ops-user",
+		"cancel_reason": "operator stop",
+	}, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if refreshed != 0 {
+		t.Fatalf("expected no asset index refresh for pending cancellation, got %d", refreshed)
 	}
 }

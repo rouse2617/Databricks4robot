@@ -43,7 +43,10 @@ func (m *mockDeliveryRepoForAsset) Set(context.Context, *models.Delivery) error 
 func (m *mockDeliveryRepoForAsset) Get(context.Context, string) (*models.Delivery, error) {
 	return nil, nil
 }
-func (m *mockDeliveryRepoForAsset) WriteIndexes(context.Context, string, *models.Delivery) error {
+func (m *mockDeliveryRepoForAsset) AddItems(context.Context, string, []string) error {
+	return nil
+}
+func (m *mockDeliveryRepoForAsset) RefreshAssetDeliveryIndex(context.Context, string) error {
 	return nil
 }
 func (m *mockDeliveryRepoForAsset) ListByCustomer(context.Context, string) ([]string, error) {
