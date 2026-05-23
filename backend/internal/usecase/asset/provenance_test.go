@@ -38,6 +38,9 @@ func (m *provenanceAssetRepo) ListByLogicalAssetID(_ context.Context, logicalID 
 	return nil, nil
 }
 func (m *provenanceAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (m *provenanceAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (m *provenanceAssetRepo) ListWithFilters(context.Context, string, []interface{}, int, int, filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }

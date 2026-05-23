@@ -147,6 +147,10 @@ func RegisterAll(
 		// Logical asset endpoints
 		api.GET("/logical-assets/:id/current", assetHandler.GetCurrentForLogical)
 
+		// Usage stats (CYB-1095/1096)
+		assets.POST("/:id/view", assetHandler.RecordView)
+		assets.POST("/:id/favorite", assetHandler.ToggleFavorite)
+
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)
 

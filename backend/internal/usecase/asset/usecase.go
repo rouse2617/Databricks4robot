@@ -28,6 +28,7 @@ var (
 	ErrAssetIDTaken       = errors.New("asset id already exists")
 	ErrInvalidMcapFileID  = errors.New("mcap_file_id must be exactly 8 alphanumeric characters")
 	ErrMcapFileNotFound   = errors.New("mcap_file_id does not exist")
+	ErrCustomerNotFound   = errors.New("customer not found for customer.* tag namespace") // CYB-1070
 )
 
 func mapCreateDBError(err error) error {
@@ -66,6 +67,8 @@ type Usecase struct {
 	tagRepo        repository.AssetTagRepository
 	algoLatestRepo repository.AssetAlgoLatestRepository
 	eventRepo      repository.AssetEventRepository
+	customerRepo   repository.CustomerRepository  // CYB-1070: customer.* namespace lint
+	usageStatsRepo repository.AssetUsageStatRepository // CYB-1095/1096: usage stats
 }
 
 func New(repo repository.AssetRepository) *Usecase {
@@ -111,6 +114,16 @@ func (u *Usecase) SetLogicalAssetRepo(r repository.LogicalAssetRepository) {
 	u.logicalRepo = r
 }
 
+// SetCustomerRepo wires customer persistence for customer.* namespace lint (CYB-1070).
+func (u *Usecase) SetCustomerRepo(r repository.CustomerRepository) {
+	u.customerRepo = r
+}
+
+// SetUsageStatsRepo wires usage stats persistence for view/favorite counters (CYB-1095/1096).
+func (u *Usecase) SetUsageStatsRepo(r repository.AssetUsageStatRepository) {
+	u.usageStatsRepo = r
+}
+
 func (u *Usecase) withMutationTx(ctx context.Context, fn func(context.Context) error) error {
 	if u.tx == nil {
 		return fn(ctx)
@@ -146,6 +159,59 @@ func (u *Usecase) validateTags(tags map[string]string) error {
 	for k, v := range tags {
 		if err := u.tagRegistry.Validate(k, v); err != nil {
 			return fmt.Errorf("%w: %s", ErrInvalidTag, err.Error())
+		}
+	}
+	return nil
+}
+
+// validateCustomerNamespace checks that tags with key prefix "customer." reference
+// an existing customer (CYB-1070). The customer ID is extracted from the tag
+// value (e.g. key="customer.id", value="cust_abc").
+func (u *Usecase) validateCustomerNamespace(ctx context.Context, tags map[string]string) error {
+	if u.customerRepo == nil {
+		return nil
+	}
+	for k, v := range tags {
+		if !strings.HasPrefix(k, "customer.") {
+			continue
+		}
+		// For customer.id tags the value IS the customer ID.
+		// For other customer.* tags, the value may also be a customer ID.
+		exists, err := u.customerRepo.Exists(ctx, v)
+		if err != nil {
+			return fmt.Errorf("customer namespace check: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: customer %q not found for tag %q", ErrCustomerNotFound, v, k)
+		}
+	}
+	return nil
+}
+
+// propagateTagToDescendants applies a tag to all descendant assets when the
+// tag registry declares propagation=descendants (CYB-1068).
+func (u *Usecase) propagateTagToDescendants(ctx context.Context, assetID, tagKey, tagValue, tagType string, src tagSource) error {
+	if u.tagRegistry == nil || !u.tagRegistry.ShouldPropagate(tagKey) {
+		return nil
+	}
+	descendants, err := u.repo.ListDescendants(ctx, assetID)
+	if err != nil {
+		return fmt.Errorf("tag propagation: %w", err)
+	}
+	for _, desc := range descendants {
+		if err := u.tagRepo.Upsert(ctx, repository.AssetTagUpsertInput{
+			AssetID:       desc.AssetID,
+			TagKey:        tagKey,
+			TagValue:      tagValue,
+			TagType:       tagType,
+			SourceType:    src.SourceType,
+			SourceName:    src.SourceName,
+			SourceVersion: src.SourceVersion,
+			RunID:         src.RunID,
+			TenantID:      desc.TenantID,
+			ProjectID:     desc.ProjectID,
+		}); err != nil {
+			return fmt.Errorf("tag propagation to %s: %w", desc.AssetID, err)
 		}
 	}
 	return nil
@@ -225,6 +291,10 @@ func (u *Usecase) upsertTagProjection(ctx context.Context, a *models.Asset, tags
 			"source_version": src.SourceVersion,
 			"run_id":         src.RunID,
 		}); err != nil {
+			return err
+		}
+		// CYB-1068: propagate to descendants when tag declares propagation=descendants.
+		if err := u.propagateTagToDescendants(ctx, a.AssetID, k, v, tagType, src); err != nil {
 			return err
 		}
 	}
@@ -740,6 +810,10 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	if err := u.validateTags(tags); err != nil {
 		return nil, err
 	}
+	// CYB-1070: customer.* namespace lint.
+	if err := u.validateCustomerNamespace(ctx, tags); err != nil {
+		return nil, err
+	}
 	assetType := strings.TrimSpace(in.AssetType)
 	segType := strings.TrimSpace(in.SegType)
 	if assetType == "" {
@@ -880,6 +954,10 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 	if err := u.validateTags(in.Tags); err != nil {
 		return nil, err
 	}
+	// CYB-1070: customer.* namespace lint.
+	if err := u.validateCustomerNamespace(ctx, in.Tags); err != nil {
+		return nil, err
+	}
 	for k, v := range in.Tags {
 		if a.Tags == nil {
 			a.Tags = map[string]string{}
@@ -919,6 +997,10 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 
 func (u *Usecase) UpsertTag(ctx context.Context, assetID string, in UpsertTagInput) (*models.Asset, error) {
 	if err := u.validateTags(map[string]string{in.Key: in.Value}); err != nil {
+		return nil, err
+	}
+	// CYB-1070: customer.* namespace lint — verify the customer exists.
+	if err := u.validateCustomerNamespace(ctx, map[string]string{in.Key: in.Value}); err != nil {
 		return nil, err
 	}
 	src := tagSource{
@@ -1092,4 +1174,36 @@ func initAlgoStates(a *models.Asset, reg *config.AlgoRegistry) {
 			}
 		}
 	}
+}
+
+// RecordAssetView increments view_count and updates last_viewed_at in
+// asset_usage_stats (CYB-1095). Verifies the asset exists first.
+func (u *Usecase) RecordAssetView(ctx context.Context, assetID string) error {
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if a == nil {
+		return ErrNotFound
+	}
+	if u.usageStatsRepo == nil {
+		return nil
+	}
+	return u.usageStatsRepo.RecordView(ctx, assetID)
+}
+
+// ToggleFavorite flips the favorite state for an asset and returns the new
+// favorite_count (CYB-1096). Verifies the asset exists first.
+func (u *Usecase) ToggleFavorite(ctx context.Context, assetID string) (int, error) {
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return 0, err
+	}
+	if a == nil {
+		return 0, ErrNotFound
+	}
+	if u.usageStatsRepo == nil {
+		return 0, fmt.Errorf("usage stats repository not configured")
+	}
+	return u.usageStatsRepo.ToggleFavorite(ctx, assetID)
 }

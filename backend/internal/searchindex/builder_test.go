@@ -32,6 +32,9 @@ func (s *stubAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models
 	return nil, nil
 }
 func (s *stubAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (s *stubAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (s *stubAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }

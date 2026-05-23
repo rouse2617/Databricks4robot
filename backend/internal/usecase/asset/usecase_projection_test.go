@@ -123,6 +123,9 @@ func (r *readModelAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*m
 	return nil, nil
 }
 func (r *readModelAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (r *readModelAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *readModelAssetRepo) ListWithFilters(ctx context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return r.listWithFiltersFn(ctx, whereSQL, args, page, pageSize, orderBy)
 }

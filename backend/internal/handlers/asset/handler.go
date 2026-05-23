@@ -410,6 +410,8 @@ func (h *Handler) UpsertTag(c *gin.Context) {
 			httpresp.Unprocessable(c, httpresp.CodeTagSourceInvalid, err.Error(), nil)
 		case errors.Is(err, assetUC.ErrTagImmutable):
 			httpresp.Conflict(c, httpresp.CodeTagImmutable, err.Error(), nil)
+		case errors.Is(err, assetUC.ErrCustomerNotFound):
+			httpresp.Unprocessable(c, httpresp.CodeCustomerNotFound, err.Error(), nil)
 		default:
 			httpresp.Internal(c, err.Error())
 		}
@@ -904,4 +906,59 @@ func paginateAssets(items []*models.Asset, page, pageSize int) []*models.Asset {
 		end = len(items)
 	}
 	return items[start:end]
+}
+
+// RecordView increments view_count and updates last_viewed_at for an asset (CYB-1095).
+// @Summary      Record asset view
+// @Description  Increment view counter and update last_viewed_at in asset_usage_stats
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/view [post]
+func (h *Handler) RecordView(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	if err := h.uc.RecordAssetView(c.Request.Context(), assetID); err != nil {
+		if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"asset_id": assetID, "viewed": true})
+}
+
+// ToggleFavorite flips the favorite state for an asset (CYB-1096).
+// @Summary      Toggle asset favorite
+// @Description  Toggle favorite and update favorite_count in asset_usage_stats
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/favorite [post]
+func (h *Handler) ToggleFavorite(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	newCount, err := h.uc.ToggleFavorite(c.Request.Context(), assetID)
+	if err != nil {
+		if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"asset_id": assetID, "favorite_count": newCount, "is_favorited": newCount > 0})
 }

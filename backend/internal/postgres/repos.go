@@ -600,6 +600,101 @@ func (r *AssetRepo) WriteSegmentIndex(ctx context.Context, a *models.Asset) erro
 	return nil
 }
 
+// ListDescendants returns all non-deleted descendant assets reachable via
+// asset_relations parent→child edges using a recursive CTE (CYB-1068).
+func (r *AssetRepo) ListDescendants(ctx context.Context, assetID string) ([]*models.Asset, error) {
+	const q = `
+WITH RECURSIVE descendants AS (
+    SELECT child_asset_id
+    FROM asset_relations
+    WHERE parent_asset_id = $1
+    UNION
+    SELECT ar.child_asset_id
+    FROM asset_relations ar
+    JOIN descendants d ON ar.parent_asset_id = d.child_asset_id
+)
+SELECT a.asset_id, a.mcap_file_id, a.start_timestamp_ns, a.end_timestamp_ns, a.segment_locator,
+  COALESCE(a.lifecycle_state, ''), COALESCE(a.asset_type, ''), COALESCE(a.duration_ms, 0),
+  COALESCE(a.owner, ''), COALESCE(a.reviewer, ''), COALESCE(a.delivery_count, 0), a.last_delivered_at, COALESCE(a.last_delivered_to, ''),
+  COALESCE(a.retention_tier, ''), a.expire_at, COALESCE(a.storage_uri, ''), COALESCE(a.thumb_uri, ''), COALESCE(a.asset_level, 0),
+  a.parent_asset_id, a.root_asset_id, a.tenant_id, a.project_id,
+  a.metadata, a.files, a.algo_inputs_uris, a.annot_inputs_uris,
+  a.logical_asset_id, a.revision, a.is_current,
+  a.created_at, a.updated_at, a.version
+FROM assets a
+JOIN descendants d ON a.asset_id = d.child_asset_id
+WHERE a.is_deleted = FALSE`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.ListDescendants: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.Asset
+	for rows.Next() {
+		var (
+			a               models.Asset
+			lifecycleState  string
+			segLoc          *string
+			parentID        *string
+			rootID          *string
+			tenantID        *string
+			projectID       *string
+			metadataBytes   []byte
+			filesBytes      []byte
+			algoInputsURIs  []byte
+			annotInputsURIs []byte
+			logicalID       *string
+			revision        *int64
+			isCurrent       *bool
+		)
+		if err := rows.Scan(
+			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
+			&lifecycleState, &a.AssetType, &a.DurationMs,
+			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
+			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
+			&parentID, &rootID, &tenantID, &projectID,
+			&metadataBytes, &filesBytes, &algoInputsURIs, &annotInputsURIs,
+			&logicalID, &revision, &isCurrent,
+			&a.CreatedAt, &a.UpdatedAt, &a.Version,
+		); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.ListDescendants scan: %w", err)
+		}
+		finishAssetVersionFields(&a, logicalID, revision, isCurrent)
+		a.LifecycleState = lifecycleState
+		if segLoc != nil {
+			a.SegmentLocator = *segLoc
+		}
+		if parentID != nil {
+			a.ParentAssetID = *parentID
+		}
+		if rootID != nil {
+			a.RootAssetID = *rootID
+		}
+		if tenantID != nil {
+			a.TenantID = *tenantID
+		}
+		if projectID != nil {
+			a.ProjectID = *projectID
+		}
+		if len(metadataBytes) > 0 {
+			_ = json.Unmarshal(metadataBytes, &a.Metadata)
+		}
+		if len(filesBytes) > 0 {
+			_ = json.Unmarshal(filesBytes, &a.FilesJSON)
+		}
+		if len(algoInputsURIs) > 0 {
+			_ = json.Unmarshal(algoInputsURIs, &a.AlgoInputsURIs)
+		}
+		if len(annotInputsURIs) > 0 {
+			_ = json.Unmarshal(annotInputsURIs, &a.AnnotInputsURIs)
+		}
+		a.SyncLegacyFields()
+		out = append(out, &a)
+	}
+	return out, nil
+}
+
 type McapFileRepo struct {
 	c *Client
 }

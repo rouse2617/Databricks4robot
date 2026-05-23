@@ -7,7 +7,12 @@
 #   tags{}         → which tag keys are known + per-key value rules.
 #
 # See docs/review/unified-asset-catalog/design/asset-tagging.md §5 for the
-# full design including propagation rules (P1.5 — not enforced here).
+# full design including propagation rules (P1.5 — enforced CYB-1068).
+#
+# Per-key propagation:
+#   none (default) — tag applies only to the target asset.
+#   descendants    — tag is automatically propagated to all descendant assets
+#                    via asset_relations parent→child edges.
 
 tag_sources:
   - source: human
@@ -59,3 +64,11 @@ tags:
     description: "自由备注"
     type: string
     max_length: 500
+  compliance.status:
+    description: "合规审查状态"
+    type: enum
+    values: ["pending", "approved", "rejected", "needs_review"]
+    propagation: descendants
+  customer.id:
+    description: "客户标识 (CYB-1070: namespace lint — customer must exist)"
+    type: string
