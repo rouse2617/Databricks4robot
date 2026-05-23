@@ -30,6 +30,7 @@ type DeliveryStatus string
 const (
 	DeliveryStatusPending   DeliveryStatus = "pending"
 	DeliveryStatusDelivered DeliveryStatus = "delivered"
+	DeliveryStatusFailed    DeliveryStatus = "failed"
 	DeliveryStatusAccepted  DeliveryStatus = "accepted"
 	DeliveryStatusRejected  DeliveryStatus = "rejected"
 	DeliveryStatusRecalled  DeliveryStatus = "recalled"
@@ -247,6 +248,15 @@ type Delivery struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Version   int64     `json:"version"`
+
+	// Cancel fields (CYB-1104)
+	CancelledAt  *time.Time `json:"cancelled_at,omitempty"`
+	CancelledBy  string     `json:"cancelled_by,omitempty"`
+	CancelReason string     `json:"cancel_reason,omitempty"`
+
+	// Acknowledgment fields (CYB-1106)
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy string     `json:"acknowledged_by,omitempty"`
 }
 
 // DeliveryItem is used only in API request/response bodies.

@@ -15,7 +15,8 @@ var validTransitions = map[DeliveryStatus]map[DeliveryStatus]bool{
 		DeliveryStatusCancelled: true, // cancel draft
 	},
 	DeliveryStatusDelivered: {
-		DeliveryStatusArchived: true, // archive after delivery
+		DeliveryStatusArchived:  true, // archive after delivery
+		DeliveryStatusCancelled: true, // cancel delivered delivery (CYB-1104)
 	},
 	DeliveryStatusAccepted: {
 		DeliveryStatusArchived: true, // archive after acceptance

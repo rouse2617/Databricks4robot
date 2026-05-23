@@ -564,6 +564,209 @@ func (h *Handler) HandleCommitC2(c *gin.Context) {
 	c.JSON(http.StatusOK, body)
 }
 
+// ─── Delivery operations: cancel / retry / ack ──────────────────────────────
+
+// HandleCancel cancels a pending or delivered delivery (CYB-1104).
+// POST /api/v1/deliveries/:id/cancel
+func (h *Handler) HandleCancel(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+	var req struct {
+		CancelledBy  string `json:"cancelled_by"`
+		CancelReason string `json:"cancel_reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+
+	d, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+
+	// Validate allowed statuses: pending or delivered.
+	if d.Status != models.DeliveryStatusPending && d.Status != models.DeliveryStatusDelivered {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only cancel pending or delivered deliveries",
+			map[string]any{"current_status": d.Status})
+		return
+	}
+
+	// Use state machine for pending→cancelled transition.
+	if d.Status == models.DeliveryStatusPending {
+		if err := models.ValidateTransition(d.Status, models.DeliveryStatusCancelled); err != nil {
+			httpresp.Unprocessable(c, httpresp.CodeInvalidStateTransition, err.Error(), nil)
+			return
+		}
+	}
+
+	now := time.Now()
+	d.Status = models.DeliveryStatusCancelled
+	d.CancelledAt = &now
+	d.CancelledBy = req.CancelledBy
+	d.CancelReason = req.CancelReason
+
+	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	audit.Log(c.Request.Context(), "delivery.cancel", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id":   d.CustomerID,
+		"cancelled_by":  req.CancelledBy,
+		"cancel_reason": req.CancelReason,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"delivery_id":   d.DeliveryID,
+		"status":        d.Status,
+		"cancelled_at":  d.CancelledAt,
+		"cancelled_by":  d.CancelledBy,
+		"cancel_reason": d.CancelReason,
+	})
+}
+
+// HandleRetry creates a new delivery from a failed or cancelled one (CYB-1105).
+// POST /api/v1/deliveries/:id/retry
+func (h *Handler) HandleRetry(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+
+	old, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if old == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+
+	// Only allow retry from failed or cancelled deliveries.
+	if old.Status != models.DeliveryStatusFailed && old.Status != models.DeliveryStatusCancelled {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only retry failed or cancelled deliveries",
+			map[string]any{"current_status": old.Status})
+		return
+	}
+
+	// Fetch items from old delivery.
+	items, err := h.repo.ListItems(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	now := time.Now()
+	d := &models.Delivery{
+		DeliveryID:  uuid.NewString(),
+		CustomerID:  old.CustomerID,
+		Status:      models.DeliveryStatusPending,
+		ContractID:  old.ContractID,
+		Note:        old.Note,
+		Owner:       old.Owner,
+		AssetCount:  len(items),
+		CreatedAt:   now,
+	}
+
+	var assetIDs []string
+	for _, item := range items {
+		assetIDs = append(assetIDs, item.AssetID)
+	}
+
+	if err := h.commitDelivery(c.Request.Context(), d, assetIDs, c.GetHeader("X-Request-ID")); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	// Reference the original delivery for traceability.
+	audit.Log(c.Request.Context(), "delivery.retry", "delivery", []string{d.DeliveryID, old.DeliveryID}, map[string]any{
+		"customer_id":      d.CustomerID,
+		"original_delivery": old.DeliveryID,
+		"asset_count":      d.AssetCount,
+	})
+
+	c.JSON(http.StatusCreated, gin.H{
+		"delivery_id":      d.DeliveryID,
+		"customer_id":      d.CustomerID,
+		"status":           d.Status,
+		"asset_count":      d.AssetCount,
+		"original_delivery": old.DeliveryID,
+	})
+}
+
+// HandleAck acknowledges a delivered delivery (CYB-1106).
+// POST /api/v1/deliveries/:id/ack
+func (h *Handler) HandleAck(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+	var req struct {
+		AcknowledgedBy string `json:"acknowledged_by"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	req.AcknowledgedBy = strings.TrimSpace(req.AcknowledgedBy)
+	if req.AcknowledgedBy == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "acknowledged_by is required", nil)
+		return
+	}
+
+	d, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+
+	if d.Status != models.DeliveryStatusDelivered {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only acknowledge delivered deliveries",
+			map[string]any{"current_status": d.Status})
+		return
+	}
+
+	now := time.Now()
+	d.AcknowledgedAt = &now
+	d.AcknowledgedBy = req.AcknowledgedBy
+
+	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	audit.Log(c.Request.Context(), "delivery.ack", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id":     d.CustomerID,
+		"acknowledged_by": req.AcknowledgedBy,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"delivery_id":      d.DeliveryID,
+		"status":           d.Status,
+		"acknowledged_at":  d.AcknowledgedAt,
+		"acknowledged_by":  d.AcknowledgedBy,
+	})
+}
+
 func paginateIDs(ids []string, page, pageSize int) ([]string, string) {
 	if len(ids) == 0 {
 		return []string{}, ""

@@ -208,6 +208,11 @@ func RegisterAll(
 		api.POST("/deliveries/:id/items", deliveryHandler.HandleAddItems)
 		api.POST("/deliveries/:id/commit", deliveryHandler.HandleCommitC2)
 
+		// Delivery operations (CYB-1104~1106)
+		api.POST("/deliveries/:id/cancel", deliveryHandler.HandleCancel)
+		api.POST("/deliveries/:id/retry", deliveryHandler.HandleRetry)
+		api.POST("/deliveries/:id/ack", deliveryHandler.HandleAck)
+
 		// Registry endpoints (read-only, from YAML config)
 		api.GET("/algo-registry", registryHandler.AlgoRegistry)
 		api.GET("/tag-registry", registryHandler.TagRegistry)
