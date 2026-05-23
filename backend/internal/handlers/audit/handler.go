@@ -267,72 +267,51 @@ func (h *Handler) HandleLineageSearch(c *gin.Context) {
 		depth = v
 	}
 
-	// Build the recursive CTE query using one or two branches.
-	// upstream: child_asset_id = asset_id  → follow parent_asset_id
-	// downstream: parent_asset_id = asset_id → follow child_asset_id
-	var branches []string
-	paramIdx := 0
-	args := make([]interface{}, 0)
-
-	if direction == "upstream" || direction == "both" {
-		paramIdx++
-		args = append(args, assetID)
-		branches = append(branches, fmt.Sprintf(`
-    SELECT parent_asset_id AS related_asset_id, 'upstream'::text AS direction, 1 AS depth
-    FROM asset_relations
-    WHERE child_asset_id = $%d
-      AND relation_type = 'revision_of'
-    UNION
-    SELECT ar.parent_asset_id, 'upstream'::text, r.depth + 1
-    FROM asset_relations ar
-    JOIN rec r ON ar.child_asset_id = r.related_asset_id AND r.direction = 'upstream'
-    WHERE ar.relation_type = 'revision_of'
-      AND r.depth < $%d`, paramIdx, paramIdx+1))
-	}
-
-	if direction == "downstream" || direction == "both" {
-		paramIdx++
-		args = append(args, assetID)
-		branches = append(branches, fmt.Sprintf(`
-    SELECT child_asset_id AS related_asset_id, 'downstream'::text AS direction, 1 AS depth
-    FROM asset_relations
-    WHERE parent_asset_id = $%d
-      AND relation_type = 'revision_of'
-    UNION
-    SELECT ar.child_asset_id, 'downstream'::text, r.depth + 1
-    FROM asset_relations ar
-    JOIN rec r ON ar.parent_asset_id = r.related_asset_id AND r.direction = 'downstream'
-    WHERE ar.relation_type = 'revision_of'
-      AND r.depth < $%d`, paramIdx, paramIdx+1))
-	}
-
-	paramIdx++
-	args = append(args, depth)
-
-	branchUnion := strings.Join(branches, "\n    UNION\n")
-
-	q := fmt.Sprintf(`WITH RECURSIVE rec AS (
-%s
-)
-SELECT DISTINCT related_asset_id, direction, depth
-FROM rec
-ORDER BY depth ASC, related_asset_id ASC`, branchUnion)
-
-	rows, err := h.pg.Query(c.Request.Context(), q, args...)
-	if err != nil {
-		httpresp.Internal(c, "lineage query failed: "+err.Error())
-		return
-	}
-	defer rows.Close()
-
+	// Run separate recursive CTEs for each direction; merge in Go.
 	var nodes []lineageNode
-	for rows.Next() {
-		var n lineageNode
-		if err := rows.Scan(&n.AssetID, &n.Direction, &n.Depth); err != nil {
-			httpresp.Internal(c, "scan failed: "+err.Error())
+	ctx := c.Request.Context()
+
+	runDirection := func(dir string) {
+		var startCol, joinCol string
+		if dir == "upstream" {
+			startCol, joinCol = "child_asset_id", "parent_asset_id"
+		} else {
+			startCol, joinCol = "parent_asset_id", "child_asset_id"
+		}
+		q := fmt.Sprintf(`WITH RECURSIVE rec AS (
+	SELECT %s AS related_asset_id, 1 AS depth
+	FROM asset_relations
+	WHERE %s = $1 AND relation_type = 'revision_of'
+	UNION ALL
+	SELECT ar.%s, r.depth + 1
+	FROM asset_relations ar
+	JOIN rec r ON ar.%s = r.related_asset_id
+	WHERE ar.relation_type = 'revision_of' AND r.depth < $2
+)
+SELECT DISTINCT related_asset_id, depth
+FROM rec
+ORDER BY depth ASC, related_asset_id ASC`, joinCol, startCol, joinCol, startCol)
+
+		rows, err := h.pg.Query(ctx, q, assetID, depth)
+		if err != nil {
 			return
 		}
-		nodes = append(nodes, n)
+		defer rows.Close()
+		for rows.Next() {
+			var n lineageNode
+			n.Direction = dir
+			if err := rows.Scan(&n.AssetID, &n.Depth); err != nil {
+				continue
+			}
+			nodes = append(nodes, n)
+		}
+	}
+
+	if direction == "upstream" || direction == "both" {
+		runDirection("upstream")
+	}
+	if direction == "downstream" || direction == "both" {
+		runDirection("downstream")
 	}
 	if nodes == nil {
 		nodes = []lineageNode{}
