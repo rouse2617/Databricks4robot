@@ -142,6 +142,10 @@ func RegisterAll(
 		assets.POST("/:id/tags", assetHandler.UpsertTag)
 		assets.DELETE("/:id/tags/:key", assetHandler.DeleteTag)
 		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
+		assets.POST("/:id/revisions", assetHandler.PromoteRevision)
+
+		// Logical asset endpoints
+		api.GET("/logical-assets/:id/current", assetHandler.GetCurrentForLogical)
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)
