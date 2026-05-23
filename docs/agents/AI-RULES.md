@@ -15,7 +15,7 @@ On **every** user message that involves this repo, do the following **before** e
 3. **Linear** — Ensure a Linear Issue exists (`CYB-xxx` in this workspace). Create or link via MCP if the user did not provide one.
 4. **OpenSpec (write artifacts, then stop)** — For any runtime change, create or use `openspec/changes/CYB-{id}-{slug}/` **before** writing application code. Follow [`spec-writing-skill.md`](spec-writing-skill.md) for artifact quality (proposal, tasks, spec delta; feature path also `design.md`). **Checkpoint:** When `proposal.md` + `tasks.md` (+ `design.md` if feature) are ready, **stop** and ask the user to confirm OpenSpec is OK (e.g. 「OpenSpec OK，继续」). **Do not** edit `backend/`, `Frontend/`, `sdk/`, or `dagster/` until they approve. Record their approval in `decisions.md` or a short Linear comment if useful.
 5. **Branch** — Use `fix/CYB-{id}-*`, `feat/CYB-{id}-*`, or `hotfix/CYB-{id}-*` as appropriate (`DAT-*` accepted by CI for legacy). **Always branch from latest `dev`** (`git fetch origin dev && git checkout -b feat/CYB-{id}-… origin/dev`) so parallel CYB work does not conflict. Create the branch when starting OpenSpec or immediately after the OpenSpec checkpoint passes.
-6. **After each code change** — Run verification at the **tier** matching diff scope (see [Verification tiers](#verification-tiers)); log non-obvious choices in `decisions.md` when required. **Any new or changed HTTP API** (route, handler, request/response, query param, status code) MUST complete [API contract sync](#api-contract-sync-mandatory) in the **same PR** as `backend/` — not a follow-up. **Bugs:** follow [`systematic-debugging`](skills/systematic-debugging/SKILL.md) before speculative fixes.
+6. **After each code change** — Run verification at the **tier** matching diff scope (see [Verification tiers](#verification-tiers)); log non-obvious choices in `decisions.md` when required. **Any new or changed HTTP API** (route, handler, request/response, query param, status code) MUST complete [API contract sync](#api-contract-sync-mandatory) in the **same PR** as `backend/` — not a follow-up. **Bugs:** follow [`systematic-debugging`](skills/systematic-debugging/SKILL.md) before speculative fixes. **New interface methods:** when adding methods to a repository/usecase interface, ALWAYS update ALL test mocks (`*_test.go`) that implement that interface in the SAME commit — do not defer test mock updates.
 7. **Before commit/push** — Follow [`deploy-before-commit.md`](deploy-before-commit.md) and [`deploy-verification.md`](deploy-verification.md) (canonical dev scripts in **§2.0**). **Dev is manual deploy** — `git push` does not roll Cloud Run; use local `deploy/cloudrun/*-dev.sh` or PR comment `/deploy-cloudrun-dev`. **If the diff touches `Frontend/`:** deploy frontend dev → Agent **must** run **Chrome DevTools MCP**. **Backend/sdk-only:** `source scripts/dev-backend-env.sh` + targeted smoke; `scripts/apply-migration-dev.sh` **before** backend deploy when schema changes.
 8. **PR** — Fill `.github/pull_request_template.md` completely when opening a PR.
 
@@ -118,6 +118,25 @@ Avoid running full `build` on every one-line fix. After each **accepted** code e
 **Always Tier L before:** opening PR, deploy verification, or touching off-limits-adjacent code.
 
 **Upgrade triggers (bump one tier):** changed `go.mod` / `package.json` deps; renamed exported symbols; modified `App.tsx` routes or shared `components/common/*`; any edit under `openspec/specs/` (baseline behavior — treat as **Tier L**).
+
+## API contract first (mandatory for new endpoints)
+
+When implementing a **new HTTP endpoint** (not modifying an existing one), follow this order:
+
+1. **Define the response shape** in `api/openapi.yaml` AND `Frontend/src/api/types.ts` (or the relevant API module) — BEFORE writing handler code.
+2. **Verify shape alignment** — the backend handler's `c.JSON()` response MUST match the TypeScript type the frontend expects (e.g. `{items: [...], total: N}` vs bare array).
+3. **Then implement** the handler, usecase, and frontend consumption.
+
+**Why:** Mismatched response shapes (e.g. backend returns `[{...}]`, frontend expects `{items: [...]}`) cause silent failures that only surface during live testing. Defining the contract first prevents this class of bug entirely.
+
+## Migration check before deploy (mandatory)
+
+When a PR includes a new migration file (`backend/migrations/*.sql`):
+
+1. **Apply migration to dev** using `bash scripts/apply-migration-dev.sh "$(pwd)/backend/migrations/NNN_name.sql"` BEFORE deploying the backend image.
+2. **Verify migration applied** — run a smoke query that touches the new columns/tables.
+
+**Why:** Deploying code that references new columns before the migration is applied causes runtime 500 errors on every request that touches those columns.
 
 ## Decision log (audit trail)
 

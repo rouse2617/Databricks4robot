@@ -4,6 +4,7 @@ Applies to **all AI agents** (Cursor, Codex, Claude Code, etc.) when changing ru
 
 When you finish implementing a change targeting Backend / Frontend / SDK / Dagster, you MUST NOT run `git commit` or `git push` until the following sequence has completed and the user has explicitly approved:
 
+0. **Apply migrations** — If the diff includes new files under `backend/migrations/*.sql`, apply them to dev BEFORE building/deploying: `bash scripts/apply-migration-dev.sh "$(pwd)/backend/migrations/NNN_name.sql"`. Verify the migration succeeded before proceeding.
 1. **Build image LOCALLY** with `docker build` — NOT Cloud Build (`gcloud builds submit`). The repo has no `.gcloudignore`, so Cloud Build uploads a large tarball and is slow; local `docker build` is preferred. Use `--platform=linux/amd64` on ARM Macs (Cloud Run is amd64).
    - **Tag with git SHA** (immutable) **and** push `cloudrun-dev-latest` (mutable convenience). See [Image tags and revision record](#image-tags-and-revision-record) below — do **not** push only `:cloudrun-dev-latest` without a SHA tag.
    - Backend / Frontend build commands: same section below.
