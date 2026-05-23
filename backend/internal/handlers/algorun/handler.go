@@ -156,7 +156,11 @@ func (h *Handler) List(c *gin.Context) {
 	if runs == nil {
 		runs = []*models.AlgoRun{} //nolint:staticcheck // ensure JSON []
 	}
-	c.JSON(200, runs)
+	// Paginated response format expected by frontend
+	c.JSON(200, gin.H{
+		"items": runs,
+		"total": len(runs),
+	})
 }
 
 // Cancel cancels a pending or running algo run.
