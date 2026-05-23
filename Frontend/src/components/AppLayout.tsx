@@ -4,6 +4,7 @@ import {
 	DatabaseOutlined,
 	FileOutlined,
 	FundProjectionScreenOutlined,
+	HistoryOutlined,
 	LogoutOutlined,
 	RobotOutlined,
 	SendOutlined,
@@ -31,6 +32,7 @@ const menuItems = [
 	{ key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
 	{ type: "divider" as const },
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
+	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
 	{
@@ -50,6 +52,7 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/events")) return "/events";
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
+	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	if (pathname.startsWith("/algo")) return "/algo";
 	return "/assets";
 }

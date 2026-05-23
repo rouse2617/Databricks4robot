@@ -12,6 +12,8 @@ const AssetsPage = lazy(() => import("./pages/AssetsPage"));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage"));
 const McapFilesPage = lazy(() => import("./pages/McapFilesPage"));
 const AlgoProcessingPage = lazy(() => import("./pages/AlgoProcessingPage"));
+const AlgoRunsPage = lazy(() => import("./pages/AlgoRunsPage"));
+const AlgoRunDetailPage = lazy(() => import("./pages/AlgoRunDetailPage"));
 const DeliveriesPage = lazy(() => import("./pages/DeliveriesPage"));
 const DeliveryDetailPage = lazy(() => import("./pages/DeliveryDetailPage"));
 const RegistryCenterPage = lazy(() => import("./pages/RegistryCenterPage"));
@@ -46,6 +48,8 @@ function ProtectedRoutes() {
 						<Route path="/assets/:id" element={<AssetDetailPage />} />
 						<Route path="/mcap-files" element={<McapFilesPage />} />
 						<Route path="/algo" element={<AlgoProcessingPage />} />
+						<Route path="/algo-runs" element={<AlgoRunsPage />} />
+						<Route path="/algo-runs/:run_id" element={<AlgoRunDetailPage />} />
 						<Route path="/deliveries" element={<DeliveriesPage />} />
 						<Route path="/deliveries/:id" element={<DeliveryDetailPage />} />
 						<Route
