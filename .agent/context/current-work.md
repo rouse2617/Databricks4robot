@@ -6,9 +6,9 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## Active issue
 
-- **Linear:** CYB-1124
-- **Title:** fix(api): harden delivery C2/index atomicity and algo-runs pagination follow-up
-- **Branch:** `fix/CYB-1124-delivery-algoruns-followup`
+- **Linear:** CYB-1097
+- **Title:** D-04: feat(api): GET /audit/search cross-asset
+- **Branch:** `feat/CYB-1097-audit-search`
 - **Worktree:** `/Users/hrp/cyber/cyber-databrew`
 
 ## Scope
@@ -21,8 +21,8 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## OpenSpec
 
-- **Change dir:** `openspec/changes/CYB-1124-delivery-algoruns-followup`
-- **OpenSpec OK:** Approved in chat ("开始") on 2026-05-23
+- **Change dir:** `openspec/changes/CYB-1097-audit-search`
+- **OpenSpec OK:** Approved in chat ("ok") on 2026-05-23
 
 ## Off-limits (require explicit approval in chat)
 
@@ -33,21 +33,20 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## API contract sync
 
-Existing HTTP APIs are behaviorally corrected. Update docs/smoke and OpenAPI only where response/error semantics need clarification.
+New public HTTP API contract for `GET /api/v1/audit/search`; must sync OpenAPI, api-guide, smoke, and spec delta in the same change.
 
 ## Deploy status
 
 - **Required:** Yes (backend runtime)
-- **Dev deployed:** Yes — backend image `us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:a15de1f-cyb1124`
-- **Revision:** `cyber-databrew-backend-dev-00164-vhr`
+- **Dev deployed:** Yes — backend image `us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:b29c594-cyb1097`
+- **Revision:** `cyber-databrew-backend-dev-00165-hk8`
 - **URL:** `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
-- **Verified:** Yes — targeted algo-runs pagination, delivery duplicate add-items/idempotency, and delivery cancel/index smoke passed on dev. `api-guide-smoke.sh RUN_WRITES=1` passed business checks with only root `/healthz` returning Cloud Run 404.
+- **Verified:** Yes — targeted audit search success and validation errors passed on dev. `api-guide-smoke.sh` passed CYB-1097 checks; only root `/healthz` returned Cloud Run 404.
 
 ## Decisions to sync
 
-- CYB-1124 split from completed CYB-1123 to preserve audit trail.
-- SDK out of scope unless public SDK-callable shapes change.
-- Local backend Tier L passed: targeted gofmt, `go vet ./...`, `go test ./...`.
+- Complete and harden the existing `/audit/search` skeleton instead of adding a duplicate endpoint.
+- SDK and Frontend are out of scope unless the user expands CYB-1097.
 
 ---
 

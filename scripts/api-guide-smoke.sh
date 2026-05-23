@@ -62,6 +62,22 @@ warn_get() {
 	if [[ "$RESP_CODE" =~ ^2 ]]; then ok "$name"; else echo "  WARN $name (HTTP ${RESP_CODE}) — optional / needs full Iceberg MVP"; fi
 }
 
+expect_code_get() {
+	local name="$1" path="$2" expected="$3"
+	local raw code body
+	raw=$(curl -sS --max-time 25 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}${path}" 2>/dev/null) || raw=$'\n000'
+	code=$(echo "$raw" | tail -n1)
+	body=$(echo "$raw" | sed '$d')
+	RESP_CODE="$code"
+	RESP_BODY="$body"
+	if [[ "$code" == "$expected" ]]; then
+		ok "$name"
+	else
+		bad "$name (expected ${expected})"
+	fi
+	echo "$body"
+}
+
 get_report_or_skip() {
 	local raw
 	raw=$(curl -sS --max-time 25 -w "\n%{http_code}" "${API_HDR[@]}" "${BASE}/api/v1/lakehouse/report" 2>/dev/null) || raw=$'\n000'
@@ -206,6 +222,11 @@ if [[ -n "$AID" ]]; then
 else
 	echo "  skip GET asset/{id} — could not parse list"
 fi
+
+echo ""
+echo "--- §2.5.1 audit search (CYB-1097) ---"
+get "audit search latest" "/api/v1/audit/search?limit=5"
+expect_code_get "audit search invalid time_from -> 400" "/api/v1/audit/search?time_from=not-rfc3339" "400" >/dev/null
 
 if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	echo ""

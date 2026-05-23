@@ -822,6 +822,60 @@ curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analy
 - 已软删除的资产返回 `404 ASSET_NOT_FOUND`。
 - `GET /assets/{id}/timeline` 与 `GET /assets/{id}/events` 完全同形，仅作为时间线命名别名保留给客户端。
 
+### 2.5.1 跨资产审计搜索（CYB-1097）
+
+`GET /api/v1/audit/search` 在 `asset_events` 上做跨资产只读搜索，适合排查某个 actor、event type、run id 或时间窗口内的资产事件。结果按 `event_seq` 降序返回；`cursor` 语义为继续取 `event_seq < cursor` 的更老事件。
+
+```bash
+# 最新 50 条审计事件
+curl "$BASE/api/v1/audit/search?limit=50" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 按事件类型 + run_id 搜索
+curl "$BASE/api/v1/audit/search?event_type=algo_finished&run_id=run1234567890123&limit=20" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 按 actor + 时间窗口搜索
+curl "$BASE/api/v1/audit/search?actor=alice&time_from=2026-05-01T00:00:00Z&time_to=2026-05-23T23:59:59Z" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`:
+```json
+{
+  "items": [
+    {
+      "event_id": "550e8400-e29b-41d4-a716-446655440000",
+      "event_seq": 12345,
+      "event_type": "algo_finished",
+      "aggregate_type": "asset",
+      "asset_id": "b9a5a281",
+      "mcap_file_id": "mcap0001",
+      "event_source": "backend",
+      "actor_type": "user",
+      "actor_id": "alice",
+      "run_id": "run1234567890123",
+      "occurred_at": "2026-05-23T10:00:00Z",
+      "created_at": "2026-05-23T10:00:00Z"
+    }
+  ],
+  "limit": 20,
+  "next_cursor": 12345
+}
+```
+
+错误路径：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `400` | `INVALID_ARGUMENT` | `limit <= 0` / 非整数 `limit` / 非 int64 `cursor` / 非 RFC3339 `time_from` 或 `time_to` / `time_from > time_to` |
+| `503` | `SERVICE_UNAVAILABLE` | audit search 存储未配置 |
+
+说明：
+- `actor` 当前匹配 `asset_events.actor_id`，大小写不敏感且支持包含匹配。
+- `event_type` 与 `run_id` 为精确匹配。
+- `limit` 默认 `50`，最大 `200`；超过最大值会按 `200` 执行。
+
 ### 2.6 依赖链自动 Unblock
 
 `action_annotation@1.0.0` 依赖三个算法。当所有依赖都完成（status=ok）后，系统自动将 `action_annotation` 从 `blocked` 变为 `pending`。

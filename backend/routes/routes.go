@@ -15,9 +15,9 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
-	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
@@ -138,7 +138,7 @@ func RegisterAll(
 		assets.GET("/:id/mcap-locator", assetHandler.McapLocator)
 		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
 		assets.GET("/:id/events", assetHandler.ListEvents)
-			assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
+		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
 		assets.GET("/:id/provenance", assetHandler.GetProvenance)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
@@ -162,8 +162,10 @@ func RegisterAll(
 		api.GET("/events", assetHandler.ListGlobalEvents)
 
 		// Audit / discovery layer (CYB-1097/1098)
-		api.GET("/audit/search", auditHandler.HandleAuditSearch)
-		api.GET("/audit/lineage-search", auditHandler.HandleLineageSearch)
+		if auditHandler != nil {
+			api.GET("/audit/search", auditHandler.HandleAuditSearch)
+			api.GET("/audit/lineage-search", auditHandler.HandleLineageSearch)
+		}
 
 		// Algorithm lifecycle routes
 		if algoHandler != nil {

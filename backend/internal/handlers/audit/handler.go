@@ -1,7 +1,9 @@
 package audit
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -15,32 +17,56 @@ import (
 // Handler serves audit / discovery-layer endpoints backed by asset_events and
 // asset_relations tables.
 type Handler struct {
+	db auditQuerier
+}
+
+type auditRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Close()
+}
+
+type auditQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (auditRows, error)
+}
+
+type postgresQuerier struct {
 	pg *postgres.Client
+}
+
+func (q postgresQuerier) Query(ctx context.Context, sql string, args ...any) (auditRows, error) {
+	if q.pg == nil {
+		return nil, fmt.Errorf("postgres client is not configured")
+	}
+	return q.pg.Query(ctx, sql, args...)
 }
 
 // New creates a new audit Handler.
 func New(pg *postgres.Client) *Handler {
-	return &Handler{pg: pg}
+	if pg == nil {
+		return &Handler{}
+	}
+	return &Handler{db: postgresQuerier{pg: pg}}
 }
 
 // auditEventRow mirrors a subset of asset_events columns for cross-asset search
 // responses. It includes the actor fields that the asset_events table stores at
 // the row level (actor_type, actor_id).
 type auditEventRow struct {
-	EventID              string    `json:"event_id"`
-	EventSeq             int64     `json:"event_seq"`
-	EventType            string    `json:"event_type"`
-	AggregateType        string    `json:"aggregate_type"`
-	AssetID              string    `json:"asset_id,omitempty"`
-	McapFileID           string    `json:"mcap_file_id,omitempty"`
-	TenantID             string    `json:"tenant_id,omitempty"`
-	ProjectID            string    `json:"project_id,omitempty"`
-	EventSource          string    `json:"event_source"`
-	ActorType            string    `json:"actor_type,omitempty"`
-	ActorID              string    `json:"actor_id,omitempty"`
-	RunID                string    `json:"run_id,omitempty"`
-	OccurredAt           time.Time `json:"occurred_at"`
-	CreatedAt            time.Time `json:"created_at"`
+	EventID       string    `json:"event_id"`
+	EventSeq      int64     `json:"event_seq"`
+	EventType     string    `json:"event_type"`
+	AggregateType string    `json:"aggregate_type"`
+	AssetID       string    `json:"asset_id,omitempty"`
+	McapFileID    string    `json:"mcap_file_id,omitempty"`
+	TenantID      string    `json:"tenant_id,omitempty"`
+	ProjectID     string    `json:"project_id,omitempty"`
+	EventSource   string    `json:"event_source"`
+	ActorType     string    `json:"actor_type,omitempty"`
+	ActorID       string    `json:"actor_id,omitempty"`
+	RunID         string    `json:"run_id,omitempty"`
+	OccurredAt    time.Time `json:"occurred_at"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // HandleAuditSearch returns paginated asset_events rows across all assets,
@@ -71,6 +97,10 @@ type auditEventRow struct {
 // @Security     GraceToken
 // @Router       /audit/search [get]
 func (h *Handler) HandleAuditSearch(c *gin.Context) {
+	if h == nil || h.db == nil {
+		httpresp.Error(c, http.StatusServiceUnavailable, httpresp.CodeServiceUnavailable, "audit search is not configured", nil)
+		return
+	}
 	actor := strings.TrimSpace(c.Query("actor"))
 	timeFromStr := strings.TrimSpace(c.Query("time_from"))
 	timeToStr := strings.TrimSpace(c.Query("time_to"))
@@ -114,26 +144,34 @@ func (h *Handler) HandleAuditSearch(c *gin.Context) {
 		where = append(where, fmt.Sprintf("run_id = $%d", paramIdx))
 	}
 
+	var timeFrom *time.Time
 	if timeFromStr != "" {
 		t, err := time.Parse(time.RFC3339, timeFromStr)
 		if err != nil {
 			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid time_from: must be RFC3339", map[string]any{"error": err.Error()})
 			return
 		}
+		timeFrom = &t
 		paramIdx++
 		args = append(args, t)
 		where = append(where, fmt.Sprintf("occurred_at >= $%d", paramIdx))
 	}
 
+	var timeTo *time.Time
 	if timeToStr != "" {
 		t, err := time.Parse(time.RFC3339, timeToStr)
 		if err != nil {
 			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid time_to: must be RFC3339", map[string]any{"error": err.Error()})
 			return
 		}
+		timeTo = &t
 		paramIdx++
 		args = append(args, t)
 		where = append(where, fmt.Sprintf("occurred_at <= $%d", paramIdx))
+	}
+	if timeFrom != nil && timeTo != nil && timeFrom.After(*timeTo) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "time_from must be before or equal to time_to", nil)
+		return
 	}
 
 	if cursorStr != "" {
@@ -167,7 +205,7 @@ FROM asset_events
 ORDER BY event_seq DESC
 LIMIT ` + limitParam
 
-	rows, err := h.pg.Query(c.Request.Context(), q, args...)
+	rows, err := h.db.Query(c.Request.Context(), q, args...)
 	if err != nil {
 		httpresp.Internal(c, "database query failed: "+err.Error())
 		return
@@ -195,6 +233,9 @@ LIMIT ` + limitParam
 	if len(items) > limit {
 		nextCursor = &items[limit-1].EventSeq
 		items = items[:limit]
+	}
+	if items == nil {
+		items = []auditEventRow{}
 	}
 
 	resp := gin.H{
@@ -237,6 +278,10 @@ type lineageNode struct {
 // @Security     GraceToken
 // @Router       /audit/lineage-search [get]
 func (h *Handler) HandleLineageSearch(c *gin.Context) {
+	if h == nil || h.db == nil {
+		httpresp.Error(c, http.StatusServiceUnavailable, httpresp.CodeServiceUnavailable, "audit lineage search is not configured", nil)
+		return
+	}
 	assetID := strings.TrimSpace(c.Query("asset_id"))
 	if assetID == "" {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset_id is required", nil)
@@ -292,7 +337,7 @@ SELECT DISTINCT related_asset_id, depth
 FROM rec
 ORDER BY depth ASC, related_asset_id ASC`, joinCol, startCol, joinCol, startCol)
 
-		rows, err := h.pg.Query(ctx, q, assetID, depth)
+		rows, err := h.db.Query(ctx, q, assetID, depth)
 		if err != nil {
 			return
 		}
@@ -325,4 +370,3 @@ ORDER BY depth ASC, related_asset_id ASC`, joinCol, startCol, joinCol, startCol)
 		"count":     len(nodes),
 	})
 }
-

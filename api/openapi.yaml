@@ -780,6 +780,38 @@ components:
           type: integer
           format: int64
           nullable: true
+    AuditSearchEvent:
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        event_seq: { type: integer, format: int64 }
+        event_type: { type: string }
+        aggregate_type: { type: string }
+        asset_id: { type: string }
+        mcap_file_id: { type: string }
+        tenant_id: { type: string }
+        project_id: { type: string }
+        event_source: { type: string }
+        actor_type: { type: string }
+        actor_id: { type: string }
+        run_id: { type: string }
+        occurred_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    AuditSearchResponse:
+      type: object
+      required: [items, limit]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AuditSearchEvent' }
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 200
+        next_cursor:
+          type: integer
+          format: int64
+          nullable: true
     VersionHistoryEntry:
       type: object
       properties:
@@ -2991,6 +3023,56 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: "Asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/audit/search:
+    get:
+      summary: Search audit events across assets
+      description: |
+        Searches `asset_events` across assets. Results are ordered by
+        `event_seq DESC`; `cursor` fetches older rows with `event_seq < cursor`.
+      parameters:
+        - in: query
+          name: actor
+          schema: { type: string }
+          description: "Case-insensitive match on actor_id."
+        - in: query
+          name: event_type
+          schema: { type: string }
+          description: "Exact event_type match."
+        - in: query
+          name: run_id
+          schema: { type: string }
+          description: "Exact run_id match."
+        - in: query
+          name: time_from
+          schema: { type: string, format: date-time }
+          description: "Inclusive occurred_at lower bound (RFC3339)."
+        - in: query
+          name: time_to
+          schema: { type: string, format: date-time }
+          description: "Inclusive occurred_at upper bound (RFC3339)."
+        - in: query
+          name: cursor
+          schema: { type: integer, format: int64 }
+          description: "Fetch older events with event_seq < cursor."
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditSearchResponse' }
+        '400':
+          description: "Invalid query filter (INVALID_ARGUMENT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: "Audit search storage is not configured (SERVICE_UNAVAILABLE)"
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
