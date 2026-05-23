@@ -6,23 +6,23 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## Active issue
 
-- **Linear:** CYB-1115
-- **Title:** feat(governance): Agent Runtime Guardrails
-- **Branch:** `feat/CYB-1115-agent-runtime-guardrails`
-- **Worktree:** `/Users/hrp/cyber/cyber-databrew-cyb-1115-agent-runtime-guardrails`
+- **Linear:** CYB-1124
+- **Title:** fix(api): harden delivery C2/index atomicity and algo-runs pagination follow-up
+- **Branch:** `fix/CYB-1124-delivery-algoruns-followup`
+- **Worktree:** `/Users/hrp/cyber/cyber-databrew`
 
 ## Scope
 
-- [x] docs/infra/governance only
-- [ ] backend
+- [ ] docs/infra/governance only
+- [x] backend
 - [ ] Frontend
 - [ ] sdk
 - [ ] dagster
 
 ## OpenSpec
 
-- **Change dir:** _(none — docs-only governance)_
-- **OpenSpec OK:** N/A
+- **Change dir:** `openspec/changes/CYB-1124-delivery-algoruns-followup`
+- **OpenSpec OK:** Approved in chat ("开始") on 2026-05-23
 
 ## Off-limits (require explicit approval in chat)
 
@@ -33,17 +33,21 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## API contract sync
 
-_Not applicable for this issue._
+Existing HTTP APIs are behaviorally corrected. Update docs/smoke and OpenAPI only where response/error semantics need clarification.
 
 ## Deploy status
 
-- **Required:** No (docs/scripts only)
-- **Dev deployed:** N/A
-- **Verified:** N/A
+- **Required:** Yes (backend runtime)
+- **Dev deployed:** Yes — backend image `us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:a15de1f-cyb1124`
+- **Revision:** `cyber-databrew-backend-dev-00164-vhr`
+- **URL:** `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+- **Verified:** Yes — targeted algo-runs pagination, delivery duplicate add-items/idempotency, and delivery cancel/index smoke passed on dev. `api-guide-smoke.sh RUN_WRITES=1` passed business checks with only root `/healthz` returning Cloud Run 404.
 
 ## Decisions to sync
 
-Record non-obvious choices in Linear CYB-1115 or a future `openspec/changes/CYB-1115-*/decisions.md` if scope expands.
+- CYB-1124 split from completed CYB-1123 to preserve audit trail.
+- SDK out of scope unless public SDK-callable shapes change.
+- Local backend Tier L passed: targeted gofmt, `go vet ./...`, `go test ./...`.
 
 ---
 

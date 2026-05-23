@@ -1492,6 +1492,15 @@ var _ repository.IdempotencyRepository = (*IdempotencyRepo)(nil)
 
 func NewIdempotencyRepo(c *Client) *IdempotencyRepo { return &IdempotencyRepo{c: c} }
 
+func (r *IdempotencyRepo) Lock(ctx context.Context, scope, key string) error {
+	const q = `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, scope, key); err != nil {
+		return fmt.Errorf("postgres IdempotencyRepo.Lock: %w", err)
+	}
+	return nil
+}
+
 func (r *IdempotencyRepo) Get(ctx context.Context, scope, key string) (*repository.IdempotencyRecord, error) {
 	const q = `
 SELECT scope, idem_key, request_hash, status_code, response_json, created_at

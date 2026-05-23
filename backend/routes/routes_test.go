@@ -69,7 +69,7 @@ func (r *routeDeliveryRepo) Set(context.Context, *models.Delivery) error { retur
 func (r *routeDeliveryRepo) Get(context.Context, string) (*models.Delivery, error) {
 	return &models.Delivery{DeliveryID: "d1"}, nil
 }
-func (r *routeDeliveryRepo) AddItems(context.Context, string, []string) error { return nil }
+func (r *routeDeliveryRepo) AddItems(context.Context, string, []string) error        { return nil }
 func (r *routeDeliveryRepo) RefreshAssetDeliveryIndex(context.Context, string) error { return nil }
 func (r *routeDeliveryRepo) ListByCustomer(context.Context, string) ([]string, error) {
 	return []string{"d1"}, nil
@@ -89,6 +89,7 @@ func (r *routeDeliveryRepo) Update(_ context.Context, _ *models.Delivery, _ int6
 
 type routeIdemRepo struct{}
 
+func (r *routeIdemRepo) Lock(context.Context, string, string) error { return nil }
 func (r *routeIdemRepo) Get(context.Context, string, string) (*repository.IdempotencyRecord, error) {
 	return nil, nil
 }

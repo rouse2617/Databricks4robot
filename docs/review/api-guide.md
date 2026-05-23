@@ -562,7 +562,7 @@ Per-asset `finish` 在 `run_id` 为 16 位且已登记时，同事务追加 `alg
 
 ### 2.0.1 列表 / 取消 / 影响资产（CYB-1123）
 
-列表分页统一为 `page/page_size`，响应为 `{items,total,page,page_size}`。
+列表分页统一为 `page/page_size`，响应为 `{items,total,page,page_size}`。非法或超限分页参数会按服务端默认值归一化，响应中的 `page/page_size` 表示实际生效的分页值。
 
 ```bash
 curl "$BASE/api/v1/algo-runs?page=1&page_size=20&algo_name=hand_track&status=running" \
@@ -1071,8 +1071,8 @@ curl -X POST "$BASE/api/v1/deliveries" \
 > 注：当前实现会在创建时同步执行交付逻辑，所以 `status` 直接为 `delivered`，不经过 `pending` 中间态。
 
 `Idempotency-Key` header 是必须的:
-- 相同 key + 相同 body → 返回之前的结果 (`201`)
-- 相同 key + 不同 body → `409` 冲突
+- 相同 key + 相同 body → 返回之前的结果 (`201`)，不会创建第二条 delivery
+- 相同 key + 不同 body → `409` 冲突，且在写入 delivery 副作用前拒绝
 - 缺少 key → `400`
 
 `asset_ids` 中的每一项须为合法 **资产 `asset_id`**（8 位字母数字）；非法格式 → `400`（避免写入 `delivery_items` 时数据库报错）。
@@ -1114,6 +1114,7 @@ curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/commit" \
 语义说明（CYB-1123）：
 - `draft` / `retry` 仅创建 `delivery_items`，不会提前计入资产 `delivery_count/last_delivered_*`
 - 只有最终 `commit`（或一次式 `POST /deliveries`）才会刷新“已交付”索引与事件
+- 向 pending 草稿重复追加已存在资产时，`asset_count` 按实际唯一 `delivery_items` 计算，不因重复请求膨胀
 - `commit` 时若 `expected_revision` 不匹配返回 `409 CONCURRENT_CONFLICT`
 
 ### 3.2 获取交付详情

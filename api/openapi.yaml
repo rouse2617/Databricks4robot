@@ -624,7 +624,9 @@ components:
         delivery_id: { type: string, format: uuid }
         customer_id: { $ref: '#/components/schemas/CustomerID' }
         status: { type: string }
-        asset_count: { type: integer }
+        asset_count:
+          type: integer
+          description: Count of unique persisted delivery items after insertion.
         version: { type: integer, format: int64 }
     DeliveryCommitC2Request:
       type: object
@@ -2117,9 +2119,11 @@ paths:
           schema: { type: string, format: date-time }
         - in: query
           name: page
+          description: Invalid values are normalized to the effective default.
           schema: { type: integer, minimum: 1, default: 1 }
         - in: query
           name: page_size
+          description: Invalid or oversized values are normalized to the effective default.
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
       responses:
         '200':
@@ -2512,6 +2516,7 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
     post:
       summary: Add items to pending delivery
+      description: Adds unique delivery items; duplicate existing items do not increase asset_count.
       tags: [deliveries]
       parameters:
         - in: path

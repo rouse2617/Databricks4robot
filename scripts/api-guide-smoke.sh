@@ -80,6 +80,24 @@ post() {
 	echo "$RESP_BODY"
 }
 
+post_json() {
+	local name="$1" path="$2" data="$3"
+	local raw
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "$BASE$path" -d "$data" 2>/dev/null) || raw=$'\n000'
+	RESP_CODE=$(echo "$raw" | tail -n1)
+	RESP_BODY=$(echo "$raw" | sed '$d')
+	if [[ "$RESP_CODE" =~ ^2 ]]; then
+		PASS=$((PASS + 1))
+		echo "  OK  $name" >&2
+	else
+		FAIL=$((FAIL + 1))
+		echo "  FAIL $name (HTTP ${RESP_CODE})" >&2
+		echo "$RESP_BODY" | head -c 400 >&2
+		echo >&2
+	fi
+	echo "$RESP_BODY"
+}
+
 expect_code_post() {
 	local name="$1" path="$2" data="$3" expected="$4"
 	local raw code body
@@ -94,6 +112,19 @@ expect_code_post() {
 		bad "$name (expected ${expected})"
 	fi
 	echo "$body"
+}
+
+expect_json_number() {
+	local name="$1" body="$2" field="$3" expected="$4"
+	local got
+	got=$(echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('${field}', ''))" 2>/dev/null || echo "")
+	if [[ "$got" == "$expected" ]]; then
+		ok "$name"
+	else
+		RESP_CODE="json"
+		RESP_BODY="$body"
+		bad "$name expected ${field}=${expected}, got ${got:-<empty>}"
+	fi
 }
 
 echo "=== api-guide smoke === BASE=$BASE"
@@ -240,14 +271,15 @@ EOF
 
 	if [[ -n "${CUST_ID:-}" && -n "${NEW_AID:-}" ]]; then
 		echo ""
-		echo "--- §3 delivery C2 + ack (CYB-1123) ---"
-		DRAFT_RAW=$(post "POST deliveries/draft" "/api/v1/deliveries/draft" "{\"customer_id\":\"${CUST_ID}\",\"asset_ids\":[\"${NEW_AID}\"],\"note\":\"smoke draft\"}")
+		echo "--- §3 delivery C2 + idempotency (CYB-1123/CYB-1124) ---"
+		DRAFT_RAW=$(post_json "POST deliveries/draft" "/api/v1/deliveries/draft" "{\"customer_id\":\"${CUST_ID}\",\"asset_ids\":[\"${NEW_AID}\"],\"note\":\"smoke draft\"}")
 		DRAFT_ID=$(echo "$DRAFT_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('delivery_id',''))" 2>/dev/null || echo "")
 		if [[ -n "$DRAFT_ID" ]]; then
-			ITEMS_RAW=$(post "POST deliveries/{id}/items" "/api/v1/deliveries/${DRAFT_ID}/items" "{\"asset_ids\":[\"${NEW_AID}\"]}")
+			ITEMS_RAW=$(post_json "POST deliveries/{id}/items duplicate does not inflate count" "/api/v1/deliveries/${DRAFT_ID}/items" "{\"asset_ids\":[\"${NEW_AID}\"]}")
+			expect_json_number "delivery add-items duplicate asset_count stays 1" "$ITEMS_RAW" "asset_count" "1"
 			EXPECTED_REV=$(echo "$ITEMS_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('version',''))" 2>/dev/null || echo "")
 			if [[ -n "$EXPECTED_REV" ]]; then
-				COMMIT_RAW=$(post "POST deliveries/{id}/commit" "/api/v1/deliveries/${DRAFT_ID}/commit" "{\"expected_revision\":${EXPECTED_REV},\"approved_by\":\"api-guide-smoke\"}")
+				COMMIT_RAW=$(post_json "POST deliveries/{id}/commit" "/api/v1/deliveries/${DRAFT_ID}/commit" "{\"expected_revision\":${EXPECTED_REV},\"approved_by\":\"api-guide-smoke\"}")
 				COMMIT_ID=$(echo "$COMMIT_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('delivery_id',''))" 2>/dev/null || echo "")
 				if [[ -n "$COMMIT_ID" ]]; then
 					post "POST deliveries/{id}/ack" "/api/v1/deliveries/${COMMIT_ID}/ack" '{"acknowledged_by":"api-guide-smoke"}' >/dev/null
@@ -260,6 +292,17 @@ EOF
 		else
 			echo "  WARN delivery draft smoke skipped: missing delivery_id"
 		fi
+		IDEM_KEY="smoke-$(python3 -c "import secrets,string; print(''.join(secrets.choice(string.ascii_lowercase+string.digits) for _ in range(10)))")"
+		DELIVERY_JSON_1="{\"customer_id\":\"${CUST_ID}\",\"asset_ids\":[\"${NEW_AID}\"],\"note\":\"idempotency smoke 1\"}"
+		DELIVERY_JSON_2="{\"customer_id\":\"${CUST_ID}\",\"asset_ids\":[\"${NEW_AID}\"],\"note\":\"idempotency smoke 2\"}"
+		raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X POST "${API_HDR[@]}" -H "Idempotency-Key: ${IDEM_KEY}" "$BASE/api/v1/deliveries" -d "$DELIVERY_JSON_1" 2>/dev/null || echo $'\n000')
+		RESP_CODE=$(echo "$raw" | tail -n1)
+		RESP_BODY=$(echo "$raw" | sed '$d')
+		if [[ "$RESP_CODE" =~ ^2 ]]; then ok "POST deliveries idempotency seed"; else bad "POST deliveries idempotency seed"; fi
+		raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X POST "${API_HDR[@]}" -H "Idempotency-Key: ${IDEM_KEY}" "$BASE/api/v1/deliveries" -d "$DELIVERY_JSON_2" 2>/dev/null || echo $'\n000')
+		RESP_CODE=$(echo "$raw" | tail -n1)
+		RESP_BODY=$(echo "$raw" | sed '$d')
+		if [[ "$RESP_CODE" == "409" ]]; then ok "POST deliveries same idem key different payload -> 409"; else bad "POST deliveries same idem key different payload expected 409"; fi
 	fi
 fi
 

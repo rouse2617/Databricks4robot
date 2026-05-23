@@ -431,6 +431,13 @@ func TestIdempotencyRepo(t *testing.T) {
 	db := &fakeDB{}
 	repo := &IdempotencyRepo{c: &Client{db: db}}
 
+	if err := repo.Lock(ctx, "s", "k"); err != nil {
+		t.Fatalf("lock err: %v", err)
+	}
+	if len(db.execSQLs) != 1 || !strings.Contains(db.execSQLs[0], "pg_advisory_xact_lock") {
+		t.Fatalf("expected advisory lock SQL, got %#v", db.execSQLs)
+	}
+
 	if got, err := repo.Get(ctx, "s", "k"); err != nil || got != nil {
 		t.Fatalf("expected nil,nil not found")
 	}

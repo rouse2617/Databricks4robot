@@ -17,6 +17,8 @@ var ErrOptimisticLock = errors.New("optimistic lock conflict: version mismatch")
 // connected database does not currently satisfy (usually missed migrations).
 var ErrSchemaMismatch = errors.New("database schema mismatch")
 
+var ErrIdempotencyConflict = errors.New("idempotency key conflict")
+
 // TxRunner runs the provided function inside a single transaction. Repos
 // dispatched within fn should be tx-aware (read tx from ctx) so that all
 // writes commit or roll back atomically. Required for event-stream correctness:
@@ -66,6 +68,7 @@ type IdempotencyRecord struct {
 
 // IdempotencyRepository persists idempotency keys/results.
 type IdempotencyRepository interface {
+	Lock(ctx context.Context, scope, key string) error
 	Get(ctx context.Context, scope, key string) (*IdempotencyRecord, error)
 	Save(ctx context.Context, rec *IdempotencyRecord) error
 }

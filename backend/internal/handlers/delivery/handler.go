@@ -74,6 +74,9 @@ func (h *Handler) appendDeliveryEvents(ctx context.Context, d *models.Delivery, 
 }
 
 func (h *Handler) createDeliveryWithItems(ctx context.Context, d *models.Delivery, assetIDs []string) error {
+	assetIDs = uniqueAssetIDs(assetIDs)
+	d.AssetCount = len(assetIDs)
+	d.ItemCount = int64(len(assetIDs))
 	writeFn := func(txCtx context.Context) error {
 		if err := h.repo.Set(txCtx, d); err != nil {
 			return err
@@ -106,11 +109,30 @@ func (h *Handler) commitDeliveryIndexesAndEvents(ctx context.Context, d *models.
 	return writeFn(ctx)
 }
 
-// commitDeliveryFull runs Set + AddItems + RefreshAssetDeliveryIndex + events + idempotency
+// commitDeliveryFull runs idempotency lock + recheck + Set + AddItems +
+// RefreshAssetDeliveryIndex + events + idempotency
 // in a single transaction so that either all writes land or none do. The idempotency record
 // is included in the same tx to prevent duplicates on retry after partial failure.
-func (h *Handler) commitDeliveryFull(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string, idemRec *repository.IdempotencyRecord) error {
+func (h *Handler) commitDeliveryFull(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string, idemRec *repository.IdempotencyRecord) (*repository.IdempotencyRecord, error) {
+	assetIDs = uniqueAssetIDs(assetIDs)
+	d.AssetCount = len(assetIDs)
+	d.ItemCount = int64(len(assetIDs))
+	var replay *repository.IdempotencyRecord
 	writeFn := func(txCtx context.Context) error {
+		if err := h.idemRepo.Lock(txCtx, idemRec.Scope, idemRec.Key); err != nil {
+			return err
+		}
+		rec, err := h.idemRepo.Get(txCtx, idemRec.Scope, idemRec.Key)
+		if err != nil {
+			return err
+		}
+		if rec != nil {
+			if rec.RequestHash != idemRec.RequestHash {
+				return repository.ErrIdempotencyConflict
+			}
+			replay = rec
+			return nil
+		}
 		if err := h.repo.Set(txCtx, d); err != nil {
 			return err
 		}
@@ -129,9 +151,11 @@ func (h *Handler) commitDeliveryFull(ctx context.Context, d *models.Delivery, as
 	}
 
 	if txRunner, ok := h.repo.(repository.TxRunner); ok {
-		return txRunner.WithTx(ctx, writeFn)
+		err := txRunner.WithTx(ctx, writeFn)
+		return replay, err
 	}
-	return writeFn(ctx)
+	err := writeFn(ctx)
+	return replay, err
 }
 
 // commitC2Full runs Update + RefreshAssetDeliveryIndex + events in a single
@@ -235,6 +259,7 @@ func (h *Handler) Commit(c *gin.Context) {
 		return
 	}
 
+	req.AssetIDs = uniqueAssetIDs(req.AssetIDs)
 	now := time.Now()
 	d := &models.Delivery{
 		DeliveryID:  uuid.NewString(),
@@ -259,8 +284,19 @@ func (h *Handler) Commit(c *gin.Context) {
 	idemRec := &repository.IdempotencyRecord{
 		Scope: "deliveries_commit", Key: idemKey, RequestHash: hash, StatusCode: http.StatusCreated, Response: respBytes,
 	}
-	if err := h.commitDeliveryFull(c.Request.Context(), d, req.AssetIDs, c.GetHeader("X-Request-ID"), idemRec); err != nil {
+	replay, err := h.commitDeliveryFull(c.Request.Context(), d, req.AssetIDs, c.GetHeader("X-Request-ID"), idemRec)
+	if err != nil {
+		if err == repository.ErrIdempotencyConflict {
+			httpresp.Conflict(c, httpresp.CodeIdempotencyConflict, "same idempotency key used with different payload", nil)
+			return
+		}
 		httpresp.Internal(c, err.Error())
+		return
+	}
+	if replay != nil {
+		var body map[string]any
+		_ = json.Unmarshal(replay.Response, &body)
+		c.JSON(replay.StatusCode, body)
 		return
 	}
 
@@ -476,14 +512,35 @@ func (h *Handler) HandleAddItems(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.AddItems(c.Request.Context(), deliveryID, req.AssetIDs); err != nil {
-		httpresp.Internal(c, err.Error())
-		return
+	req.AssetIDs = uniqueAssetIDs(req.AssetIDs)
+	if txRunner, ok := h.repo.(repository.TxRunner); ok {
+		err = txRunner.WithTx(c.Request.Context(), func(txCtx context.Context) error {
+			if err := h.repo.AddItems(txCtx, deliveryID, req.AssetIDs); err != nil {
+				return err
+			}
+			items, err := h.repo.ListItems(txCtx, deliveryID)
+			if err != nil {
+				return err
+			}
+			d.AssetCount = len(items)
+			d.ItemCount = int64(len(items))
+			return h.repo.Update(txCtx, d, d.Version)
+		})
+	} else {
+		if err := h.repo.AddItems(c.Request.Context(), deliveryID, req.AssetIDs); err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		items, err := h.repo.ListItems(c.Request.Context(), deliveryID)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		d.AssetCount = len(items)
+		d.ItemCount = int64(len(items))
+		err = h.repo.Update(c.Request.Context(), d, d.Version)
 	}
-
-	// Refresh delivery to reflect new item count.
-	d.AssetCount += len(req.AssetIDs)
-	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
+	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -662,22 +719,33 @@ func (h *Handler) HandleCancel(c *gin.Context) {
 	d.CancelledBy = req.CancelledBy
 	d.CancelReason = req.CancelReason
 
-	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
-		httpresp.Internal(c, err.Error())
-		return
-	}
+	var items []*models.DeliveryItem
 	if previousStatus != models.DeliveryStatusPending {
-		items, err := h.repo.ListItems(c.Request.Context(), deliveryID)
+		items, err = h.repo.ListItems(c.Request.Context(), deliveryID)
 		if err != nil {
 			httpresp.Internal(c, err.Error())
 			return
 		}
+	}
+	writeFn := func(txCtx context.Context) error {
+		if err := h.repo.Update(txCtx, d, d.Version); err != nil {
+			return err
+		}
 		for _, item := range items {
-			if err := h.repo.RefreshAssetDeliveryIndex(c.Request.Context(), item.AssetID); err != nil {
-				httpresp.Internal(c, err.Error())
-				return
+			if err := h.repo.RefreshAssetDeliveryIndex(txCtx, item.AssetID); err != nil {
+				return err
 			}
 		}
+		return nil
+	}
+	if txRunner, ok := h.repo.(repository.TxRunner); ok {
+		err = txRunner.WithTx(c.Request.Context(), writeFn)
+	} else {
+		err = writeFn(c.Request.Context())
+	}
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
 	}
 
 	audit.Log(c.Request.Context(), "delivery.cancel", "delivery", []string{d.DeliveryID}, map[string]any{
@@ -731,14 +799,14 @@ func (h *Handler) HandleRetry(c *gin.Context) {
 
 	now := time.Now()
 	d := &models.Delivery{
-		DeliveryID:  uuid.NewString(),
-		CustomerID:  old.CustomerID,
-		Status:      models.DeliveryStatusPending,
-		ContractID:  old.ContractID,
-		Note:        old.Note,
-		Owner:       old.Owner,
-		AssetCount:  len(items),
-		CreatedAt:   now,
+		DeliveryID: uuid.NewString(),
+		CustomerID: old.CustomerID,
+		Status:     models.DeliveryStatusPending,
+		ContractID: old.ContractID,
+		Note:       old.Note,
+		Owner:      old.Owner,
+		AssetCount: len(items),
+		CreatedAt:  now,
 	}
 
 	var assetIDs []string
@@ -753,16 +821,16 @@ func (h *Handler) HandleRetry(c *gin.Context) {
 
 	// Reference the original delivery for traceability.
 	audit.Log(c.Request.Context(), "delivery.retry", "delivery", []string{d.DeliveryID, old.DeliveryID}, map[string]any{
-		"customer_id":      d.CustomerID,
+		"customer_id":       d.CustomerID,
 		"original_delivery": old.DeliveryID,
-		"asset_count":      d.AssetCount,
+		"asset_count":       d.AssetCount,
 	})
 
 	c.JSON(http.StatusCreated, gin.H{
-		"delivery_id":      d.DeliveryID,
-		"customer_id":      d.CustomerID,
-		"status":           d.Status,
-		"asset_count":      d.AssetCount,
+		"delivery_id":       d.DeliveryID,
+		"customer_id":       d.CustomerID,
+		"status":            d.Status,
+		"asset_count":       d.AssetCount,
 		"original_delivery": old.DeliveryID,
 	})
 }
@@ -825,10 +893,10 @@ func (h *Handler) HandleAck(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, gin.H{
-		"delivery_id":      d.DeliveryID,
-		"status":           d.Status,
-		"acknowledged_at":  d.AcknowledgedAt,
-		"acknowledged_by":  d.AcknowledgedBy,
+		"delivery_id":     d.DeliveryID,
+		"status":          d.Status,
+		"acknowledged_at": d.AcknowledgedAt,
+		"acknowledged_by": d.AcknowledgedBy,
 	})
 }
 
@@ -855,4 +923,20 @@ func hashDeliveryRequest(v any) string {
 	b, _ := json.Marshal(v)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+func uniqueAssetIDs(assetIDs []string) []string {
+	if len(assetIDs) < 2 {
+		return assetIDs
+	}
+	seen := make(map[string]struct{}, len(assetIDs))
+	out := make([]string, 0, len(assetIDs))
+	for _, assetID := range assetIDs {
+		if _, ok := seen[assetID]; ok {
+			continue
+		}
+		seen[assetID] = struct{}{}
+		out = append(out, assetID)
+	}
+	return out
 }

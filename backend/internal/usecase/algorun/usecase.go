@@ -15,9 +15,9 @@ import (
 
 // Event types for algo_run outbox events (aggregate_type="algo_run").
 const (
-	eventAlgoRunCreated  = "algo_run_created"
-	eventAlgoRunStarted  = "algo_run_started"
-	eventAlgoRunFinished = "algo_run_finished"
+	eventAlgoRunCreated   = "algo_run_created"
+	eventAlgoRunStarted   = "algo_run_started"
+	eventAlgoRunFinished  = "algo_run_finished"
 	eventAlgoRunCancelled = "algo_run_cancelled"
 )
 
@@ -31,10 +31,10 @@ var (
 )
 
 var allowedAlgoKinds = map[string]struct{}{
-	"processing":  {},
-	"split":       {},
-	"qa":          {},
-	"enrichment":  {},
+	"processing": {},
+	"split":      {},
+	"qa":         {},
+	"enrichment": {},
 }
 
 // CreateInput is the body for POST /algo-runs.
@@ -83,7 +83,7 @@ type FinishInput struct {
 
 // Usecase implements algo_runs lifecycle.
 type Usecase struct {
-	repo     repository.AlgoRunRepository
+	repo      repository.AlgoRunRepository
 	eventRepo repository.AssetEventRepository // optional; nil disables outbox events
 }
 
@@ -162,9 +162,9 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.AlgoRun, 
 		return nil, err
 	}
 	u.emitAlgoRunEvent(ctx, eventAlgoRunCreated, runID, map[string]any{
-		"run_id":     runID,
-		"algo_name":  algoName,
-		"status":     models.AlgoRunStatusPending,
+		"run_id":    runID,
+		"algo_name": algoName,
+		"status":    models.AlgoRunStatusPending,
 	})
 	return u.repo.Get(ctx, runID)
 }
@@ -230,10 +230,10 @@ func (u *Usecase) Finish(ctx context.Context, runID string, in FinishInput) (*mo
 		return nil, err
 	}
 	u.emitAlgoRunEvent(ctx, eventAlgoRunFinished, runID, map[string]any{
-		"run_id":       runID,
-		"status":       status,
-		"finished_at":  now.Format(time.RFC3339Nano),
-		"error_class":  patch.ErrorClass,
+		"run_id":        runID,
+		"status":        status,
+		"finished_at":   now.Format(time.RFC3339Nano),
+		"error_class":   patch.ErrorClass,
 		"error_message": patch.ErrorMessage,
 	})
 	return u.Get(ctx, runID)
@@ -251,12 +251,7 @@ func (u *Usecase) Exists(ctx context.Context, runID string) (bool, error) {
 
 // List returns algo_runs matching the given filter.
 func (u *Usecase) List(ctx context.Context, f ListFilter) ([]*models.AlgoRun, int64, error) {
-	if f.Page < 1 {
-		f.Page = 1
-	}
-	if f.PageSize <= 0 || f.PageSize > 200 {
-		f.PageSize = 50
-	}
+	f = NormalizeListFilter(f)
 	return u.repo.List(ctx, repository.AlgoRunListFilter{
 		AlgoName:      strings.TrimSpace(f.AlgoName),
 		Status:        strings.TrimSpace(f.Status),
@@ -265,6 +260,16 @@ func (u *Usecase) List(ctx context.Context, f ListFilter) ([]*models.AlgoRun, in
 		Page:          f.Page,
 		PageSize:      f.PageSize,
 	})
+}
+
+func NormalizeListFilter(f ListFilter) ListFilter {
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PageSize <= 0 || f.PageSize > 200 {
+		f.PageSize = 50
+	}
+	return f
 }
 
 // Cancel transitions a pending/running run to cancelled.

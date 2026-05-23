@@ -154,6 +154,7 @@ func (h *Handler) List(c *gin.Context) {
 			f.StartedBefore = &t
 		}
 	}
+	f = algorunUC.NormalizeListFilter(f)
 	runs, total, err := h.uc.List(c.Request.Context(), f)
 	if err != nil {
 		mapAlgoRunErr(c, err)

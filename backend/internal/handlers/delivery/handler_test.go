@@ -18,6 +18,7 @@ import (
 )
 
 type mockDeliveryRepo struct {
+	withTxCalled     bool
 	setFn            func(ctx context.Context, d *models.Delivery) error
 	getFn            func(ctx context.Context, deliveryID string) (*models.Delivery, error)
 	addItemsFn       func(ctx context.Context, deliveryID string, assetIDs []string) error
@@ -71,6 +72,7 @@ func (m *mockDeliveryRepo) List(_ context.Context, _, _ int, _, _ string) ([]*mo
 }
 
 func (m *mockDeliveryRepo) WithTx(ctx context.Context, fn func(context.Context) error) error {
+	m.withTxCalled = true
 	return fn(ctx)
 }
 func (m *mockDeliveryRepo) Update(ctx context.Context, d *models.Delivery, expectedRowVersion int64) error {
@@ -81,6 +83,7 @@ func (m *mockDeliveryRepo) Update(ctx context.Context, d *models.Delivery, expec
 }
 
 type mockIdemRepo struct {
+	lockFn func(ctx context.Context, scope, key string) error
 	getFn  func(ctx context.Context, scope, key string) (*repository.IdempotencyRecord, error)
 	saveFn func(ctx context.Context, rec *repository.IdempotencyRecord) error
 }
@@ -137,6 +140,12 @@ func (m *mockIdemRepo) Get(ctx context.Context, scope, key string) (*repository.
 		return m.getFn(ctx, scope, key)
 	}
 	return nil, nil
+}
+func (m *mockIdemRepo) Lock(ctx context.Context, scope, key string) error {
+	if m.lockFn != nil {
+		return m.lockFn(ctx, scope, key)
+	}
+	return nil
 }
 func (m *mockIdemRepo) Save(ctx context.Context, rec *repository.IdempotencyRecord) error {
 	if m.saveFn != nil {
@@ -280,6 +289,133 @@ func TestCommit(t *testing.T) {
 	}
 	if !saved {
 		t.Fatalf("expected idempotency save")
+	}
+}
+
+func TestCommit_RechecksIdempotencyInsideTransaction(t *testing.T) {
+	const assetID = "aa111111"
+	getCalls := 0
+	setCalled := false
+	repo := &mockDeliveryRepo{
+		setFn: func(context.Context, *models.Delivery) error {
+			setCalled = true
+			return nil
+		},
+	}
+	idem := &mockIdemRepo{
+		getFn: func(context.Context, string, string) (*repository.IdempotencyRecord, error) {
+			getCalls++
+			if getCalls == 1 {
+				return nil, nil
+			}
+			return &repository.IdempotencyRecord{
+				RequestHash: "different",
+				StatusCode:  http.StatusCreated,
+				Response:    json.RawMessage(`{"delivery_id":"other"}`),
+			}, nil
+		},
+	}
+	h := New(repo, idem, nil)
+	r := setupDeliveryRouter(http.MethodPost, "/deliveries", h.Commit)
+
+	w := doDeliveryReq(t, r, http.MethodPost, "/deliveries", map[string]any{
+		"asset_ids":   []string{assetID},
+		"customer_id": "c1",
+	}, map[string]string{"Idempotency-Key": "k-race"})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 after second idempotency check, got %d body=%s", w.Code, w.Body.String())
+	}
+	if setCalled {
+		t.Fatal("did not expect delivery side effects after idempotency conflict")
+	}
+	if getCalls < 2 {
+		t.Fatalf("expected idempotency to be checked before and inside transaction, got %d call(s)", getCalls)
+	}
+}
+
+func TestHandleAddItems_DuplicateDoesNotInflateAssetCount(t *testing.T) {
+	validUUID := "66666666-6666-4666-8666-666666666666"
+	var updated *models.Delivery
+	repo := &mockDeliveryRepo{
+		getFn: func(context.Context, string) (*models.Delivery, error) {
+			return &models.Delivery{
+				DeliveryID: validUUID,
+				Status:     models.DeliveryStatusPending,
+				AssetCount: 1,
+				ItemCount:  1,
+				Version:    2,
+			}, nil
+		},
+		listItemsFn: func(context.Context, string) ([]*models.DeliveryItem, error) {
+			return []*models.DeliveryItem{{DeliveryID: validUUID, AssetID: "aa111111"}}, nil
+		},
+		updateFn: func(_ context.Context, d *models.Delivery, expectedRowVersion int64) error {
+			if expectedRowVersion != 2 {
+				t.Fatalf("expected version 2, got %d", expectedRowVersion)
+			}
+			cp := *d
+			updated = &cp
+			return nil
+		},
+	}
+	h := New(repo, &mockIdemRepo{}, nil)
+	r := setupDeliveryRouter(http.MethodPost, "/deliveries/:id/items", h.HandleAddItems)
+
+	w := doDeliveryReq(t, r, http.MethodPost, "/deliveries/"+validUUID+"/items", map[string]any{
+		"asset_ids": []string{"aa111111"},
+	}, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if updated == nil {
+		t.Fatal("expected update")
+	}
+	if updated.AssetCount != 1 || updated.ItemCount != 1 {
+		t.Fatalf("expected count to remain 1/1, got %d/%d", updated.AssetCount, updated.ItemCount)
+	}
+	var body struct {
+		AssetCount int `json:"asset_count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.AssetCount != 1 {
+		t.Fatalf("expected response asset_count=1, got %d", body.AssetCount)
+	}
+}
+
+func TestHandleCancel_DoesNotUpdateWhenRefreshFails(t *testing.T) {
+	validUUID := "77777777-7777-4777-8777-777777777777"
+	repo := &mockDeliveryRepo{
+		getFn: func(context.Context, string) (*models.Delivery, error) {
+			return &models.Delivery{
+				DeliveryID: validUUID,
+				Status:     models.DeliveryStatusDelivered,
+				Version:    4,
+			}, nil
+		},
+		listItemsFn: func(context.Context, string) ([]*models.DeliveryItem, error) {
+			return []*models.DeliveryItem{{DeliveryID: validUUID, AssetID: "aa111111"}}, nil
+		},
+		updateFn: func(context.Context, *models.Delivery, int64) error {
+			return nil
+		},
+		refreshAssetFn: func(context.Context, string) error {
+			return errors.New("refresh failed")
+		},
+	}
+	h := New(repo, &mockIdemRepo{}, nil)
+	r := setupDeliveryRouter(http.MethodPost, "/deliveries/:id/cancel", h.HandleCancel)
+
+	w := doDeliveryReq(t, r, http.MethodPost, "/deliveries/"+validUUID+"/cancel", map[string]any{
+		"cancelled_by":  "ops-user",
+		"cancel_reason": "customer revoked",
+	}, nil)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+	}
+	if !repo.withTxCalled {
+		t.Fatal("expected cancel update and index refresh to run in one transaction")
 	}
 }
 
