@@ -1,0 +1,9 @@
+---
+description: AI agent entry point — link to docs/agents/AI-RULES.md
+globs:
+alwaysApply: true
+---
+
+All project rules live in `docs/agents/AI-RULES.md`. Read it on every task.
+
+Compact recovery: after context compaction, re-read `docs/agents/AI-RULES.md` before continuing.

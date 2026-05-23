@@ -12,3 +12,5 @@ All project rules, workflows, skills, and MCP policies live under **`docs/agents
 Tool entry map (Cursor vs Codex vs others): [`docs/agents/TOOL-ENTRY.md`](docs/agents/TOOL-ENTRY.md)
 
 Apply **Automatic behavior** without asking the user to "prepare environment" or "follow the workflow".
+
+**Compact recovery:** After context compaction, re-read `docs/agents/AI-RULES.md` before continuing development work.
