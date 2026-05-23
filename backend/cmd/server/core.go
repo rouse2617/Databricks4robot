@@ -58,7 +58,9 @@ func setupCore(inf *infra) *coreHandlers {
 	deliveryHandler.SetRuleEngine(deliveryrules.NewEngine(deliveryRuleRepo, assetRepo, assetTagRepo, customerRepo))
 	customerHandler := customerH.New(customerRepo)
 	deliveryRuleHandler := deliveryruleH.New(deliveryRuleRepo, customerRepo)
-	algoRunHandler := algorunH.New(algorunUC.New(algoRunRepo))
+	algoRunUC := algorunUC.New(algoRunRepo)
+	algoRunUC.SetEventRepo(assetEventRepo)
+	algoRunHandler := algorunH.New(algoRunUC)
 	evalHandler := evalH.New(evalRepo, inf.metricRegistry, assetEventRepo)
 	actionHandler := actionH.New(actionUC.NewWithLabelRegistry(pg, actionRepo, assetRepo, assetEventRepo, inf.actionLabelReg))
 

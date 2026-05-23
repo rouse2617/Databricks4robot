@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/lifecycle"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/outbox"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/searchindex"
@@ -237,6 +239,53 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		}()
 	}
 
+	// AlgoRun ES subscriber — syncs algo_runs to a separate ES index.
+	// Runs alongside the asset ESSubscriber when outbox is enabled.
+	if pg != nil && es != nil && cfg.OutboxESSubscriberEnabled == "true" {
+		algoRunES := espkg.New(cfg.ElasticsearchURL, "algo_runs", cfg.ElasticsearchUsername, cfg.ElasticsearchPassword)
+		var algoRunSub outbox.EventSubscriber
+		switch outboxTransport {
+		case "internal":
+			w, _ := strconv.Atoi(cfg.OutboxInternalSubscriberWorkers)
+			var err error
+			algoRunSub, err = outbox.NewInternalSubscriber(getInMemoryBus(), w)
+			if err != nil {
+				slog.Error("algo_run internal subscriber init failed", "err", err)
+				os.Exit(1)
+			}
+		case "pubsub":
+			var err error
+			algoRunSub, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OutboxESSubscription)
+			if err != nil {
+				slog.Error("algo_run pubsub subscriber init failed", "err", err)
+				os.Exit(1)
+			}
+		case "kafka":
+			brokers := splitCSV(cfg.OutboxKafkaBrokers)
+			topic := resolveKafkaTopic()
+			groupID := strings.TrimSpace(cfg.OutboxKafkaGroupID)
+			var err error
+			algoRunSub, err = outbox.NewKafkaSubscriber(brokers, topic, groupID)
+			if err != nil {
+				slog.Error("algo_run kafka subscriber init failed", "err", err)
+				os.Exit(1)
+			}
+		}
+		algoRunESSub := &outbox.AlgoRunESSubscriber{
+			Subscriber: algoRunSub,
+			ES:         algoRunES,
+			Builder: &searchindex.AlgoRunBuilder{
+				Runs: postgres.NewAlgoRunRepo(pg),
+			},
+		}
+		slog.Info("algo_run es subscriber starting", "transport", outboxTransport, "index", "algo_runs")
+		go func() {
+			if err := algoRunESSub.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("algo_run es subscriber exited", "err", err)
+			}
+		}()
+	}
+
 	if cfg.OutboxRelayEnabled == "true" || cfg.OutboxESSubscriberEnabled == "true" {
 		go startOutboxPendingMetrics(outboxCtx, outboxTransport, assetEventRepo)
 	}
@@ -251,6 +300,22 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 			postgres.NewActionRepo(pg),
 			es,
 		)
+	}
+
+	// ── Retention job: archive expired assets ──
+	if pg != nil && strings.EqualFold(strings.TrimSpace(os.Getenv("RETENTION_ENABLED")), "true") {
+		retentionJob := &lifecycle.RetentionJob{
+			Assets:   postgres.NewAssetRepo(pg),
+			Events:   assetEventRepo,
+			TxRunner: pg,
+			Config:   lifecycle.DefaultRetentionConfig(),
+		}
+		slog.Info("retention job starting", "interval", retentionJob.Config.Interval, "batch_size", retentionJob.Config.BatchSize)
+		go func() {
+			if err := retentionJob.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("retention job exited", "err", err)
+			}
+		}()
 	}
 
 	// ── Config watcher for hot-reload of registries ──
