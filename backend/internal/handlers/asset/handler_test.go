@@ -113,6 +113,9 @@ func (m *mockAssetRepo) ListWithFilters(ctx context.Context, whereSQL string, ar
 	}
 	return []*models.Asset{}, 0, nil
 }
+func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (m *mockAssetRepo) MergeCfAlgo(_ context.Context, _ string, _ int64, _ map[string]interface{}, _ map[string]interface{}) (int64, error) {
 	return 0, nil
 }

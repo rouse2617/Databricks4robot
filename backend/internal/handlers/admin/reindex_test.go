@@ -39,6 +39,9 @@ func (r *reindexAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*mod
 	return nil, nil
 }
 func (r *reindexAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (r *reindexAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *reindexAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	start := (page - 1) * pageSize
 	if start >= len(r.list) {

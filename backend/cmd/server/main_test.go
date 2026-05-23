@@ -45,6 +45,10 @@ func (r *testAssetRepo) WriteSegmentIndex(_ context.Context, _ *models.Asset) er
 	return nil
 }
 
+func (r *testAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
+
 func (r *testAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }

@@ -44,4 +44,9 @@ type AssetRepository interface {
 	// Returns matching assets and total count for pagination.
 	ListWithFilters(ctx context.Context, whereSQL string, args []interface{},
 		page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error)
+
+	// ListDescendants returns all non-deleted descendant assets reachable via
+	// asset_relations parent→child edges (recursive CTE). Used by the tag
+	// propagator (CYB-1068) to apply tags to the full descendant tree.
+	ListDescendants(ctx context.Context, assetID string) ([]*models.Asset, error)
 }

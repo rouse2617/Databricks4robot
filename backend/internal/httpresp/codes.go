@@ -32,4 +32,5 @@ const (
 	CodeUnsupportedField       = "UNSUPPORTED_FIELD"
 	CodeUnsupportedOperator    = "UNSUPPORTED_OPERATOR"
 	CodeUnplannableQuery       = "UNPLANNABLE_QUERY"
+	CodeCustomerNotFound       = "CUSTOMER_NOT_FOUND" // CYB-1070
 )

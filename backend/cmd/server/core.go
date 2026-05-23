@@ -36,10 +36,14 @@ func setupCore(inf *infra) *coreHandlers {
 	savedQueryRepo := postgres.NewSavedQueryRepo(pg)
 	idempotencyRepo := postgres.NewIdempotencyRepo(pg)
 
+	usageStatsRepo := postgres.NewUsageStatsRepo(pg)
+
 	algoUC := assetUC.NewAlgoUsecase(pg, assetRepo, algoLatestRepo, assetEventRepo, inf.algoRegistry)
 	algoUC.SetAlgoRunRepo(algoRunRepo)
 	assetUsecase := assetUC.NewWithProjections(pg, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, inf.tagRegistry, inf.algoRegistry)
 	assetUsecase.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
+	assetUsecase.SetCustomerRepo(customerRepo)     // CYB-1070: customer.* namespace lint
+	assetUsecase.SetUsageStatsRepo(usageStatsRepo) // CYB-1095/1096: usage stats
 
 	assetHandler := assetH.New(assetUsecase, deliveryRepo)
 	assetHandler.SetMcapRepo(mcapRepo)

@@ -14,12 +14,13 @@ type TagDef struct {
 	Type        string   `yaml:"type"`       // "enum" or "string"
 	Values      []string `yaml:"values"`     // allowed values for enum type
 	MaxLength   int      `yaml:"max_length"` // max length for string type (0 = unlimited)
+	Propagation string   `yaml:"propagation"` // "none" (default) or "descendants" (CYB-1068)
 }
 
 // TagSourceDef governs which sources are allowed to write into asset_tags,
 // what identity fields they must provide, and whether their assertions are
-// immutable. Land scope for CYB-1015 — propagation/writable_by ACL is P1.5
-// and deliberately not enforced here.
+// immutable. Land scope for CYB-1015 — writable_by ACL is P1.5 and
+// deliberately not enforced here. Propagation is enforced since CYB-1068.
 type TagSourceDef struct {
 	Source                string `yaml:"source"`
 	Description           string `yaml:"description"`
@@ -180,4 +181,13 @@ func (r *TagRegistry) SourceDef(sourceType string) (TagSourceDef, bool) {
 	defer r.mu.RUnlock()
 	def, ok := r.sources[sourceType]
 	return def, ok
+}
+
+// ShouldPropagate returns true when the given tag key is registered with
+// propagation=descendants (CYB-1068). Unregistered keys return false.
+func (r *TagRegistry) ShouldPropagate(key string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	def, ok := r.tags[key]
+	return ok && def.Propagation == "descendants"
 }

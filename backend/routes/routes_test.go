@@ -40,6 +40,9 @@ func (r *routeAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*model
 	return nil, nil
 }
 func (r *routeAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (r *routeAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *routeAssetRepo) ListWithFilters(context.Context, string, []interface{}, int, int, filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }

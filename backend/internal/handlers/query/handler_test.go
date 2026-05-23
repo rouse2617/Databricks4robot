@@ -43,6 +43,9 @@ func (r *stubAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models
 	return nil, nil
 }
 func (r *stubAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (r *stubAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 
 func (r *stubAssetRepo) ListWithFilters(_ context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error) {
 	r.lastWhereSQL = whereSQL

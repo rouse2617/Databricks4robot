@@ -202,3 +202,15 @@ type OutboxDLQRepository interface {
 	// Count returns rows currently stored in outbox_dlq (archived failures).
 	Count(ctx context.Context) (int64, error)
 }
+
+// AssetUsageStatRepository persists per-asset engagement counters (CYB-1094).
+type AssetUsageStatRepository interface {
+	// RecordView increments view_count and sets last_viewed_at (CYB-1095).
+	// Idempotent on asset_id — upserts when no row exists.
+	RecordView(ctx context.Context, assetID string) error
+	// ToggleFavorite increments or decrements favorite_count and returns the
+	// new count (CYB-1096). Returns (newCount, nil).
+	ToggleFavorite(ctx context.Context, assetID string) (int, error)
+	// GetByAsset returns the usage stats for a given asset, or nil when no row exists.
+	GetByAsset(ctx context.Context, assetID string) (*models.AssetUsageStat, error)
+}
