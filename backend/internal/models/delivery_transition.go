@@ -14,9 +14,15 @@ var validTransitions = map[DeliveryStatus]map[DeliveryStatus]bool{
 		DeliveryStatusDelivered: true, // C2 commit
 		DeliveryStatusCancelled: true, // cancel draft
 	},
+	DeliveryStatusDelivered: {
+		DeliveryStatusArchived: true, // archive after delivery
+	},
+	DeliveryStatusAccepted: {
+		DeliveryStatusArchived: true, // archive after acceptance
+	},
 }
 
-// ValidateTransition returns nil when from→to is a legal delivery state change,
+// ValidateTransition returns nil when from->to is a legal delivery state change,
 // or an error describing the violation.
 func ValidateTransition(from, to DeliveryStatus) error {
 	targets, ok := validTransitions[from]

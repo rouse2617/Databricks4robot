@@ -65,8 +65,8 @@ func (e *Engine) checkRules(ctx context.Context, customerID string, assetIDs []s
 	}
 
 	type compiledRule struct {
-		id, name, mode string
-		dsl            *QueryDSL
+		id, name, mode, scope string
+		dsl                   *QueryDSL
 	}
 	var compiled []compiledRule
 	for _, r := range rules {
@@ -78,7 +78,7 @@ func (e *Engine) checkRules(ctx context.Context, customerID string, assetIDs []s
 			return nil, fmt.Errorf("rule %s: %w", r.RuleID, err)
 		}
 		compiled = append(compiled, compiledRule{
-			id: r.RuleID, name: r.Name, mode: r.EnforceMode, dsl: dsl,
+			id: r.RuleID, name: r.Name, mode: r.EnforceMode, scope: r.RatingScope, dsl: dsl,
 		})
 	}
 
@@ -88,8 +88,31 @@ func (e *Engine) checkRules(ctx context.Context, customerID string, assetIDs []s
 		if err != nil {
 			return nil, err
 		}
+
+		// CYB-1051: lazy-load the logical-all snapshot only when needed.
+		var logicalSnap *AssetSnapshot
+		getLogicalSnap := func() (AssetSnapshot, error) {
+			if logicalSnap != nil {
+				return *logicalSnap, nil
+			}
+			ls, err := e.loadSnapshotLogicalAll(ctx, snap)
+			if err != nil {
+				return AssetSnapshot{}, err
+			}
+			logicalSnap = &ls
+			return ls, nil
+		}
+
 		for _, cr := range compiled {
-			hit, err := Matches(snap, cr.dsl)
+			activeSnap := snap
+			if cr.scope == "logical_all" {
+				ls, err := getLogicalSnap()
+				if err != nil {
+					return nil, err
+				}
+				activeSnap = ls
+			}
+			hit, err := Matches(activeSnap, cr.dsl)
 			if err != nil {
 				return nil, err
 			}
@@ -127,6 +150,52 @@ func (e *Engine) loadSnapshot(ctx context.Context, assetID string) (AssetSnapsho
 		}
 	}
 	return BuildSnapshot(a, tags), nil
+}
+
+// loadSnapshotLogicalAll builds a snapshot that aggregates tags from ALL
+// revisions of the same logical_asset_id (CYB-1051). Asset-type and
+// lifecycle-state are taken from the current revision's snapshot (base).
+func (e *Engine) loadSnapshotLogicalAll(ctx context.Context, base AssetSnapshot) (AssetSnapshot, error) {
+	if e.assets == nil || base.AssetType == "" {
+		return base, nil
+	}
+	a, err := e.assets.Get(ctx, base.AssetID)
+	if err != nil {
+		return AssetSnapshot{}, err
+	}
+	if a == nil || a.LogicalAssetID == "" {
+		return base, nil
+	}
+	revisions, err := e.assets.ListByLogicalAssetID(ctx, a.LogicalAssetID)
+	if err != nil {
+		return AssetSnapshot{}, err
+	}
+	merged := map[string][]string{}
+	for k, vs := range base.TagsByKey {
+		merged[k] = append(merged[k], vs...)
+	}
+	seen := map[string]bool{base.AssetID: true}
+	for _, rev := range revisions {
+		if seen[rev.AssetID] {
+			continue
+		}
+		seen[rev.AssetID] = true
+		if e.tags != nil {
+			revTags, err := e.tags.ListByAsset(ctx, rev.AssetID)
+			if err != nil {
+				return AssetSnapshot{}, err
+			}
+			for _, t := range revTags {
+				merged[t.TagKey] = append(merged[t.TagKey], t.TagValue)
+			}
+		}
+	}
+	return AssetSnapshot{
+		AssetID:        base.AssetID,
+		AssetType:      base.AssetType,
+		LifecycleState: base.LifecycleState,
+		TagsByKey:      merged,
+	}, nil
 }
 
 // MatchExcludeTagsForAsset checks customer.exclude_tags against loaded tags.
