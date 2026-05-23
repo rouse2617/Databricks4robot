@@ -1,8 +1,11 @@
 package asset
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -961,4 +964,250 @@ func (h *Handler) ToggleFavorite(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"asset_id": assetID, "favorite_count": newCount, "is_favorited": newCount > 0})
+}
+
+// sseEvent represents one event in the SSE stream.
+type sseEvent struct {
+	EventID    string          `json:"event_id"`
+	EventSeq   int64           `json:"event_seq"`
+	EventType  string          `json:"event_type"`
+	AssetID    string          `json:"asset_id,omitempty"`
+	Payload    json.RawMessage `json:"event_payload"`
+	OccurredAt time.Time       `json:"occurred_at"`
+}
+
+// HandleEventsStream streams asset events as Server-Sent Events (CYB-1099).
+// Supports Last-Event-ID header for reconnection — the client sends the last
+// event_seq it received and the server replays from that point onward.
+//
+// @Summary      Stream asset events (SSE)
+// @Description  SSE endpoint that polls asset_events for new rows belonging to this asset.
+//               Supports Last-Event-ID for reconnection (value must be an event_seq integer).
+// @Tags         assets
+// @Produce      text/event-stream
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /assets/{id}/events/stream [get]
+func (h *Handler) HandleEventsStream(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+
+	// SSE headers.
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	// Parse Last-Event-ID header for reconnection: the value is the last
+	// event_seq the client has seen.
+	lastEventIDStr := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	var afterSeq *int64
+	if lastEventIDStr != "" {
+		v, err := strconv.ParseInt(lastEventIDStr, 10, 64)
+		if err == nil {
+			afterSeq = &v
+		}
+	}
+
+	c.Stream(func(w io.Writer) bool {
+		// Wait for new events by polling.
+		events := h.pollAssetEvents(c.Request.Context(), assetID, afterSeq)
+		if events == nil {
+			// Context cancelled or query failed — stop streaming.
+			return false
+		}
+
+		for _, ev := range events {
+			payloadJSON, _ := json.Marshal(ev.Payload)
+			if payloadJSON == nil {
+				payloadJSON = []byte("{}")
+			}
+
+			// SSE format: "id: <event_seq>\nevent: <event_type>\ndata: <json>\n\n"
+			line := fmt.Sprintf("id: %d\nevent: %s\ndata: {\"event_id\":%q,\"event_seq\":%d,\"event_type\":%q,\"asset_id\":%q,\"event_payload\":%s,\"occurred_at\":%q}\n\n",
+				ev.EventSeq, ev.EventType,
+				ev.EventID, ev.EventSeq, ev.EventType, ev.AssetID,
+				string(payloadJSON),
+				ev.OccurredAt.Format(time.RFC3339Nano),
+			)
+
+			if _, err := io.WriteString(w, line); err != nil {
+				return false
+			}
+
+			// Update the cursor so subsequent polls skip past this event.
+			afterSeq = &ev.EventSeq
+		}
+
+		// Send keepalive comment every poll cycle.
+		if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+			return false
+		}
+
+		return true
+	})
+}
+
+// pollAssetEvents queries asset_events for rows with event_seq > afterSeq
+// belonging to the given asset. Returns nil when the context is cancelled or
+// the query fails.
+func (h *Handler) pollAssetEvents(ctx context.Context, assetID string, afterSeq *int64) []sseEvent {
+	if h.pg == nil {
+		time.Sleep(5 * time.Second)
+		return []sseEvent{}
+	}
+
+	args := []interface{}{assetID}
+	where := "asset_id = $1"
+
+	if afterSeq != nil {
+		args = append(args, *afterSeq)
+		where = fmt.Sprintf("asset_id = $1 AND event_seq > $%d", len(args))
+	}
+
+	q := `SELECT event_id, event_seq, event_type,
+  COALESCE(asset_id::text, ''),
+  event_payload,
+  occurred_at
+FROM asset_events
+WHERE ` + where + `
+ORDER BY event_seq ASC
+LIMIT 50`
+
+	rows, err := h.pg.Query(ctx, q, args...)
+	if err != nil {
+		// If context cancelled, return nil to signal stop.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
+		// On transient error, sleep and return empty (don't kill the stream).
+		time.Sleep(5 * time.Second)
+		return []sseEvent{}
+	}
+	defer rows.Close()
+
+	var events []sseEvent
+	for rows.Next() {
+		var ev sseEvent
+		if err := rows.Scan(
+			&ev.EventID, &ev.EventSeq, &ev.EventType,
+			&ev.AssetID,
+			&ev.Payload,
+			&ev.OccurredAt,
+		); err != nil {
+			return []sseEvent{}
+		}
+		events = append(events, ev)
+	}
+
+	// If no new events, sleep before polling again.
+	if len(events) == 0 {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	return events
+}
+
+// ratingsHistoryEntry represents one revision's rating data for the
+// ratings-history endpoint.
+type ratingsHistoryEntry struct {
+	AssetID        string                 `json:"asset_id"`
+	Revision       int64                  `json:"revision"`
+	AlgoName       string                 `json:"algo_name,omitempty"`
+	AlgoVersion    string                 `json:"algo_version,omitempty"`
+	ResultTag      string                 `json:"result_tag,omitempty"`
+	ResultScore    *float64               `json:"result_score,omitempty"`
+	ResultSummary  map[string]interface{} `json:"result_summary,omitempty"`
+	FinishedAt     *time.Time             `json:"finished_at,omitempty"`
+	LifecycleState string                 `json:"lifecycle_state"`
+	CreatedAt      time.Time              `json:"created_at"`
+}
+
+// HandleRatingsHistory returns all revisions of a logical asset with their
+// associated algorithm rating fields over time (CYB-1100).
+//
+// @Summary      Get ratings history for a logical asset
+// @Description  Query all revisions of a logical asset, return rating fields over time
+// @Tags         logical-assets
+// @Produce      json
+// @Param        id path string true "Logical Asset ID"
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     GraceToken
+// @Router       /logical-assets/{id}/ratings-history [get]
+func (h *Handler) HandleRatingsHistory(c *gin.Context) {
+	logicalAssetID := strings.TrimSpace(c.Param("id"))
+	if logicalAssetID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "logical_asset_id is required", nil)
+		return
+	}
+	if h.pg == nil {
+		httpresp.Error(c, http.StatusServiceUnavailable, "PG_DISABLED", "postgres not available", nil)
+		return
+	}
+
+	const q = `
+SELECT a.asset_id, COALESCE(a.revision, 0),
+  COALESCE(al.algo_name, ''), COALESCE(al.algo_version, ''),
+  COALESCE(al.result_tag, ''), al.result_score, al.result_summary,
+  al.finished_at,
+  COALESCE(a.lifecycle_state, ''),
+  a.created_at
+FROM assets a
+LEFT JOIN asset_algo_latest al ON al.asset_id = a.asset_id
+WHERE a.logical_asset_id = $1
+  AND a.is_deleted = FALSE
+ORDER BY a.revision ASC NULLS LAST, al.algo_name ASC NULLS LAST, a.created_at ASC`
+
+	rows, err := h.pg.Query(c.Request.Context(), q, logicalAssetID)
+	if err != nil {
+		httpresp.Internal(c, "database query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var entries []ratingsHistoryEntry
+	for rows.Next() {
+		var e ratingsHistoryEntry
+		var summaryBytes []byte
+
+		if err := rows.Scan(
+			&e.AssetID, &e.Revision,
+			&e.AlgoName, &e.AlgoVersion,
+			&e.ResultTag, &e.ResultScore, &summaryBytes,
+			&e.FinishedAt,
+			&e.LifecycleState,
+			&e.CreatedAt,
+		); err != nil {
+			httpresp.Internal(c, "scan failed: "+err.Error())
+			return
+		}
+
+		if len(summaryBytes) > 0 {
+			_ = json.Unmarshal(summaryBytes, &e.ResultSummary)
+		}
+
+		entries = append(entries, e)
+	}
+	if entries == nil {
+		entries = []ratingsHistoryEntry{}
+	}
+
+	c.JSON(200, gin.H{
+		"logical_asset_id": logicalAssetID,
+		"items":            entries,
+		"count":            len(entries),
+	})
 }

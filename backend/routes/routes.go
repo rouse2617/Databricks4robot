@@ -16,6 +16,7 @@ import (
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
@@ -46,6 +47,7 @@ func RegisterAll(
 	deliveryRuleHandler *deliveryruleH.Handler,
 	algoRunHandler *algorunH.Handler,
 	algoHandler *assetH.AlgoHandler,
+	auditHandler *auditH.Handler,
 	lakehouseHandler *lakehouseH.Handler,
 	registryHandler *registryH.Handler,
 	searchHandler *searchH.Handler,
@@ -136,6 +138,7 @@ func RegisterAll(
 		assets.GET("/:id/mcap-locator", assetHandler.McapLocator)
 		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
 		assets.GET("/:id/events", assetHandler.ListEvents)
+			assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
 		assets.GET("/:id/provenance", assetHandler.GetProvenance)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
@@ -146,6 +149,7 @@ func RegisterAll(
 
 		// Logical asset endpoints
 		api.GET("/logical-assets/:id/current", assetHandler.GetCurrentForLogical)
+		api.GET("/logical-assets/:id/ratings-history", assetHandler.HandleRatingsHistory)
 
 		// Usage stats (CYB-1095/1096)
 		assets.POST("/:id/view", assetHandler.RecordView)
@@ -156,6 +160,10 @@ func RegisterAll(
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)
+
+		// Audit / discovery layer (CYB-1097/1098)
+		api.GET("/audit/search", auditHandler.HandleAuditSearch)
+		api.GET("/audit/lineage-search", auditHandler.HandleLineageSearch)
 
 		// Algorithm lifecycle routes
 		if algoHandler != nil {
