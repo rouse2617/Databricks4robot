@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,86 @@ type mockAssetRepo struct {
 	listByMcapFileFn  func(ctx context.Context, mcapFileID string) ([]*models.Asset, error)
 	writeSegIndexFn   func(ctx context.Context, a *models.Asset) error
 	listWithFiltersFn func(ctx context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error)
+}
+
+type fakeAssetSQLQuerier struct {
+	querySQL  string
+	queryArgs []any
+	rows      assetSQLRows
+	err       error
+	called    bool
+}
+
+func (q *fakeAssetSQLQuerier) Query(_ context.Context, sql string, args ...any) (assetSQLRows, error) {
+	q.called = true
+	q.querySQL = sql
+	q.queryArgs = args
+	if q.err != nil {
+		return nil, q.err
+	}
+	if q.rows == nil {
+		return &fakeAssetSQLRows{}, nil
+	}
+	return q.rows, nil
+}
+
+type fakeAssetSQLRows struct {
+	data   [][]any
+	idx    int
+	closed bool
+	err    error
+}
+
+func (r *fakeAssetSQLRows) Next() bool {
+	if r.idx >= len(r.data) {
+		return false
+	}
+	r.idx++
+	return true
+}
+
+func (r *fakeAssetSQLRows) Scan(dest ...any) error {
+	if r.idx == 0 || r.idx > len(r.data) {
+		return errors.New("scan called before next")
+	}
+	cur := r.data[r.idx-1]
+	if len(dest) != len(cur) {
+		return fmt.Errorf("scan length mismatch: got %d dest, %d values", len(dest), len(cur))
+	}
+	for i := range dest {
+		if err := assignAssetSQLValue(dest[i], cur[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *fakeAssetSQLRows) Close() { r.closed = true }
+
+func (r *fakeAssetSQLRows) Err() error { return r.err }
+
+func assignAssetSQLValue(dst any, src any) error {
+	dv := reflect.ValueOf(dst)
+	if dv.Kind() != reflect.Ptr || dv.IsNil() {
+		return errors.New("dest must be pointer")
+	}
+	elem := dv.Elem()
+	if src == nil {
+		elem.Set(reflect.Zero(elem.Type()))
+		return nil
+	}
+	sv := reflect.ValueOf(src)
+	if sv.Type().AssignableTo(elem.Type()) {
+		elem.Set(sv)
+		return nil
+	}
+	if elem.Kind() == reflect.Ptr && sv.Type().AssignableTo(elem.Type().Elem()) {
+		ptr := reflect.New(elem.Type().Elem())
+		ptr.Elem().Set(sv)
+		elem.Set(ptr)
+		return nil
+	}
+	return fmt.Errorf("type mismatch: cannot assign %T to %s", src, elem.Type())
 }
 
 // mockDeliveryRepoForAsset implements repository.DeliveryRepository for asset handler tests.
@@ -296,6 +377,186 @@ func TestCreate(t *testing.T) {
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422 for missing mcap_file FK violation, got %d", w.Code)
 	}
+}
+
+func TestHandleRatingsHistoryValidationAndNotConfigured(t *testing.T) {
+	q := &fakeAssetSQLQuerier{}
+	h := &Handler{pgq: q}
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/not-valid/ratings-history", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+	if q.called {
+		t.Fatal("did not expect query for invalid id")
+	}
+
+	r = setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", (&Handler{}).HandleRatingsHistory)
+	w = doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRatingsHistoryMissingLogicalAsset(t *testing.T) {
+	q := &fakeAssetSQLQuerier{}
+	h := &Handler{pgq: q}
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(q.querySQL, "asset_metrics") || strings.Contains(q.querySQL, "asset_algo_latest") {
+		t.Fatalf("unexpected ratings-history query:\n%s", q.querySQL)
+	}
+	if got, want := q.queryArgs[0], "aaaaaaaa"; got != want {
+		t.Fatalf("logical id arg: got %#v want %#v", got, want)
+	}
+}
+
+func TestHandleRatingsHistoryNoRatings(t *testing.T) {
+	created := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
+	rows := &fakeAssetSQLRows{data: [][]any{
+		ratingsHistoryRow("asset001", int64(1), true, "ready", created, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
+	}}
+	q := &fakeAssetSQLQuerier{rows: rows}
+	h := &Handler{pgq: q}
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if !rows.closed {
+		t.Fatal("expected rows to be closed")
+	}
+	var body struct {
+		LogicalAssetID string                   `json:"logical_asset_id"`
+		Items          []ratingsHistoryRevision `json:"items"`
+		Count          int                      `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.LogicalAssetID != "aaaaaaaa" || body.Count != 1 || len(body.Items) != 1 {
+		t.Fatalf("unexpected envelope: %+v", body)
+	}
+	if body.Items[0].AssetID != "asset001" || !body.Items[0].IsCurrent || body.Items[0].Revision != 1 {
+		t.Fatalf("unexpected revision: %+v", body.Items[0])
+	}
+	if body.Items[0].Ratings == nil || len(body.Items[0].Ratings) != 0 {
+		t.Fatalf("expected empty ratings array, got %#v", body.Items[0].Ratings)
+	}
+}
+
+func TestHandleRatingsHistoryGroupsAndSortsMetricRows(t *testing.T) {
+	t1 := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Hour)
+	score45 := 4.5
+	score40 := 4.0
+	conf := 0.99
+	runID := "run0000000000001"
+	sourceName := "reviewer_a"
+	unit := "stars"
+	rows := &fakeAssetSQLRows{data: [][]any{
+		ratingsHistoryRow("asset001", int64(1), false, "ready", t1,
+			"rating.quality_score", "float", unit, score45, nil, nil, nil,
+			"asset", "", "manual_rating", "v1", nil, runID, "human", sourceName, conf, t1.Add(10*time.Minute), t1.Add(10*time.Minute)),
+		ratingsHistoryRow("asset002", int64(2), true, "ready", t2,
+			"rating.action_completeness", "float", nil, score40, nil, nil, nil,
+			"asset", "", "manual_rating", "v1", nil, nil, "human", "reviewer_b", nil, t2.Add(10*time.Minute), t2.Add(10*time.Minute)),
+		ratingsHistoryRow("asset002", int64(2), true, "ready", t2,
+			"rating.label_correctness", "float", nil, score45, nil, nil, nil,
+			"asset", "", "manual_rating", "v1", nil, nil, "human", "reviewer_a", nil, t2.Add(20*time.Minute), t2.Add(20*time.Minute)),
+	}}
+	q := &fakeAssetSQLQuerier{rows: rows}
+	h := &Handler{pgq: q}
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	for _, want := range []string{
+		"m.metric_key LIKE 'rating.%'",
+		"ORDER BY a.revision ASC NULLS LAST",
+		"m.metric_key ASC NULLS LAST",
+		"m.source_type ASC NULLS LAST",
+		"m.source_name ASC NULLS LAST",
+		"m.recorded_at ASC NULLS LAST",
+	} {
+		if !strings.Contains(q.querySQL, want) {
+			t.Fatalf("query missing %q:\n%s", want, q.querySQL)
+		}
+	}
+
+	var body struct {
+		Items []ratingsHistoryRevision `json:"items"`
+		Count int                      `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Count != 2 || len(body.Items) != 2 {
+		t.Fatalf("expected 2 revision items, got %+v", body)
+	}
+	if body.Items[0].AssetID != "asset001" || body.Items[0].Revision != 1 || len(body.Items[0].Ratings) != 1 {
+		t.Fatalf("unexpected first revision: %+v", body.Items[0])
+	}
+	if body.Items[1].AssetID != "asset002" || body.Items[1].Revision != 2 || !body.Items[1].IsCurrent || len(body.Items[1].Ratings) != 2 {
+		t.Fatalf("unexpected second revision: %+v", body.Items[1])
+	}
+	firstRating := body.Items[0].Ratings[0]
+	if firstRating.MetricKey != "rating.quality_score" || firstRating.MetricValue == nil || *firstRating.MetricValue != score45 {
+		t.Fatalf("unexpected first rating: %+v", firstRating)
+	}
+	if firstRating.MetricUnit == nil || *firstRating.MetricUnit != unit || firstRating.RunID == nil || *firstRating.RunID != runID {
+		t.Fatalf("unexpected optional fields: %+v", firstRating)
+	}
+	if body.Items[1].Ratings[0].MetricKey != "rating.action_completeness" || body.Items[1].Ratings[1].MetricKey != "rating.label_correctness" {
+		t.Fatalf("unexpected rating order/grouping: %+v", body.Items[1].Ratings)
+	}
+}
+
+func TestHandleRatingsHistoryDatabaseErrors(t *testing.T) {
+	t.Run("query error", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{err: errors.New("boom")}
+		h := &Handler{pgq: q}
+		r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+		w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("scan error", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{rows: &fakeAssetSQLRows{data: [][]any{{"too-few-columns"}}}}
+		h := &Handler{pgq: q}
+		r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+		w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("row iteration error", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{rows: &fakeAssetSQLRows{err: errors.New("rows failed")}}
+		h := &Handler{pgq: q}
+		r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+		w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+}
+
+func ratingsHistoryRow(values ...any) []any {
+	return values
 }
 
 func TestUpdateDeleteAndCommitSegments(t *testing.T) {

@@ -893,6 +893,77 @@ components:
         lineage:
           type: object
           additionalProperties: true
+    LogicalAssetRatingMetric:
+      type: object
+      required: [metric_key, metric_type, target_type, target_id, eval_name, eval_version, source_type, recorded_at, updated_at]
+      properties:
+        metric_key:
+          type: string
+          description: Rating metric key in the `rating.*` namespace.
+          example: rating.quality_score
+        metric_type:
+          type: string
+          example: float
+        metric_unit:
+          type: string
+          nullable: true
+        metric_value:
+          type: number
+          format: double
+          nullable: true
+        metric_value_int:
+          type: integer
+          format: int64
+          nullable: true
+        metric_value_text:
+          type: string
+          nullable: true
+        metric_value_bool:
+          type: boolean
+          nullable: true
+        target_type: { type: string }
+        target_id: { type: string }
+        eval_name: { type: string }
+        eval_version: { type: string }
+        parameter_version:
+          type: string
+          nullable: true
+        run_id:
+          type: string
+          nullable: true
+        source_type: { type: string }
+        source_name:
+          type: string
+          nullable: true
+        confidence:
+          type: number
+          format: double
+          nullable: true
+        recorded_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LogicalAssetRatingsHistoryRevision:
+      type: object
+      required: [asset_id, revision, is_current, lifecycle_state, created_at, ratings]
+      properties:
+        asset_id: { type: string }
+        revision: { type: integer, format: int64 }
+        is_current: { type: boolean }
+        lifecycle_state: { type: string }
+        created_at: { type: string, format: date-time }
+        ratings:
+          type: array
+          items: { $ref: '#/components/schemas/LogicalAssetRatingMetric' }
+    LogicalAssetRatingsHistoryResponse:
+      type: object
+      required: [logical_asset_id, items, count]
+      properties:
+        logical_asset_id: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/LogicalAssetRatingsHistoryRevision' }
+        count:
+          type: integer
+          minimum: 0
     TagUpsertRequest:
       type: object
       required: [key, value]
@@ -3181,6 +3252,48 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '503':
           description: "Audit lineage storage is not configured (SERVICE_UNAVAILABLE)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/logical-assets/{id}/ratings-history:
+    get:
+      summary: Get ratings history for a logical asset
+      description: |
+        Returns non-deleted revisions for a logical asset family with rating
+        metric rows from `asset_metrics` where `metric_key` starts with
+        `rating.`. Revisions without rating rows are included with
+        `ratings: []`.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9A-Za-z]{8}$'
+          description: Logical asset id.
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogicalAssetRatingsHistoryResponse' }
+        '400':
+          description: "Invalid logical asset id (INVALID_ARGUMENT)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: "Logical asset not found (ASSET_NOT_FOUND)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: "Database query failed"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: "Postgres is not configured (PG_DISABLED)"
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

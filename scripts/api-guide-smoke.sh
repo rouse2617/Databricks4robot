@@ -214,14 +214,21 @@ get "metrics registry" "/api/v1/metrics/registry"
 
 echo ""
 echo "--- optional GET asset by id (first from list) ---"
-LIST_RAW=$(curl -sS --max-time 20 -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" -d '{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"page":{"page":1,"page_size":1}}' || true)
+LIST_RAW=$(curl -sS --max-time 20 -X POST "${API_HDR[@]}" "${BASE}/api/v1/queries/run" -d '{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"page":{"page":1,"page_size":5}}' || true)
 AID=$(echo "$LIST_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['items'][0]['asset_id'])" 2>/dev/null || echo "")
+LAID=$(echo "$LIST_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((i.get('logical_asset_id') for i in d.get('items', []) if i.get('logical_asset_id')), ''))" 2>/dev/null || echo "")
 if [[ -n "$AID" ]]; then
 	get "asset by id" "/api/v1/assets/${AID}"
 	get "asset provenance" "/api/v1/assets/${AID}/provenance"
 else
 	echo "  skip GET asset/{id} — could not parse list"
 fi
+if [[ -n "$LAID" ]]; then
+	get "logical asset ratings history" "/api/v1/logical-assets/${LAID}/ratings-history"
+else
+	echo "  skip logical-assets ratings-history — could not parse logical_asset_id"
+fi
+expect_code_get "logical asset ratings history invalid id -> 400" "/api/v1/logical-assets/not-valid/ratings-history" "400" >/dev/null
 
 echo ""
 echo "--- §2.5.1 audit search (CYB-1097) ---"

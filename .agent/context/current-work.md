@@ -6,10 +6,10 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## Active issue
 
-- **Linear:** CYB-1098
-- **Title:** D-05: feat(api): GET /audit/lineage-search compliance
-- **Branch:** `feat/CYB-1098-lineage-search`
-- **Worktree:** `/Users/hrp/cyber/cyber-databrew-CYB-1098`
+- **Linear:** CYB-1100
+- **Title:** D-07: feat(api): GET /logical-assets/{id}/ratings-history
+- **Branch:** `feat/CYB-1100-ratings-history`
+- **Worktree:** `/Users/hrp/cyber/cyber-databrew-CYB-1100`
 
 ## Scope
 
@@ -21,7 +21,7 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## OpenSpec
 
-- **Change dir:** `openspec/changes/CYB-1098-lineage-search`
+- **Change dir:** `openspec/changes/CYB-1100-ratings-history`
 - **OpenSpec OK:** Approved in chat ("可以的") on 2026-05-23
 
 ## Off-limits (require explicit approval in chat)
@@ -33,21 +33,21 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## API contract sync
 
-New public HTTP API contract for `GET /api/v1/audit/lineage-search`; must sync OpenAPI, api-guide, smoke, and spec delta in the same change.
+New public HTTP API contract for `GET /api/v1/logical-assets/{id}/ratings-history`; must sync OpenAPI, api-guide, smoke, and spec delta in the same change.
 
 ## Deploy status
 
-- **Required:** Yes (backend runtime)
-- **Dev deployed:** Yes — backend image `us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:ed7886c-cyb1098`
-- **Revision:** `cyber-databrew-backend-dev-00166-tck`
+- **Required:** Yes before commit.
+- **Dev deployed:** Yes — backend image `us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:519257b-cyb1100`
+- **Revision:** `cyber-databrew-backend-dev-00168-fxp`
 - **URL:** `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
-- **Verified:** Yes — targeted lineage success, empty result, invalid direction, and invalid depth passed on dev. A complex dev fixture (`run=z646d`, source `247HX7ab`) verified default dependency traversal, depth limiting, cycle bounding, relation type filtering, explicit `revision_of`, upstream multi-parent traversal, and `both` direction behavior through the deployed API. `api-guide-smoke.sh` passed the CYB-1098 lineage success check; only root `/healthz` returned Cloud Run 404, matching the known non-business smoke issue.
+- **Verified:** Yes — targeted ratings-history success, no-ratings, non-rating metric exclusion, invalid id 400, and missing logical id 404 passed on dev. `api-guide-smoke.sh` passed CYB-1100 endpoint checks; only root `/healthz` returned Cloud Run 404.
 
 ## Decisions to sync
 
-- Complete and harden the existing `/audit/lineage-search` skeleton instead of adding a duplicate endpoint.
-- Trace dependency/structural `asset_relations` relation types by default and return relation metadata.
-- SDK and Frontend are out of scope unless the user expands CYB-1098.
+- Complete and harden the existing `/logical-assets/{id}/ratings-history` route/handler skeleton instead of adding a duplicate endpoint.
+- CYB-1100 ratings source is `asset_metrics` `rating.*` rows; `asset_algo_latest` remains algorithm state unless scope changes.
+- SDK and Frontend are out of scope unless the user expands CYB-1100.
 
 ---
 

@@ -30,6 +30,28 @@ type Handler struct {
 	deliveryRepo repository.DeliveryRepository
 	mcapRepo     repository.McapFileRepository
 	pg           *postgres.Client
+	pgq          assetSQLQuerier
+}
+
+type assetSQLRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Close()
+}
+
+type assetSQLQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (assetSQLRows, error)
+}
+
+type assetPostgresQuerier struct {
+	pg *postgres.Client
+}
+
+func (q assetPostgresQuerier) Query(ctx context.Context, sql string, args ...any) (assetSQLRows, error) {
+	if q.pg == nil {
+		return nil, fmt.Errorf("postgres client is not configured")
+	}
+	return q.pg.Query(ctx, sql, args...)
 }
 
 func New(uc *assetUC.Usecase, deliveryRepo repository.DeliveryRepository) *Handler {
@@ -47,6 +69,7 @@ func (h *Handler) SetMcapRepo(repo repository.McapFileRepository) {
 // queries (e.g. /assets/:id/lineage).
 func (h *Handler) SetPG(pg *postgres.Client) {
 	h.pg = pg
+	h.pgq = assetPostgresQuerier{pg: pg}
 }
 
 // Get returns a single asset by ID.
@@ -982,7 +1005,9 @@ type sseEvent struct {
 //
 // @Summary      Stream asset events (SSE)
 // @Description  SSE endpoint that polls asset_events for new rows belonging to this asset.
-//               Supports Last-Event-ID for reconnection (value must be an event_seq integer).
+//
+//	Supports Last-Event-ID for reconnection (value must be an event_seq integer).
+//
 // @Tags         assets
 // @Produce      text/event-stream
 // @Param        id path string true "Asset ID"
@@ -1118,23 +1143,40 @@ LIMIT 50`
 	return events
 }
 
-// ratingsHistoryEntry represents one revision's rating data for the
-// ratings-history endpoint.
-type ratingsHistoryEntry struct {
+// ratingsHistoryRevision represents one logical asset revision and its rating
+// metrics for the ratings-history endpoint.
+type ratingsHistoryRevision struct {
 	AssetID        string                 `json:"asset_id"`
 	Revision       int64                  `json:"revision"`
-	AlgoName       string                 `json:"algo_name,omitempty"`
-	AlgoVersion    string                 `json:"algo_version,omitempty"`
-	ResultTag      string                 `json:"result_tag,omitempty"`
-	ResultScore    *float64               `json:"result_score,omitempty"`
-	ResultSummary  map[string]interface{} `json:"result_summary,omitempty"`
-	FinishedAt     *time.Time             `json:"finished_at,omitempty"`
+	IsCurrent      bool                   `json:"is_current"`
 	LifecycleState string                 `json:"lifecycle_state"`
 	CreatedAt      time.Time              `json:"created_at"`
+	Ratings        []ratingsHistoryMetric `json:"ratings"`
+}
+
+type ratingsHistoryMetric struct {
+	MetricKey        string    `json:"metric_key"`
+	MetricType       string    `json:"metric_type"`
+	MetricUnit       *string   `json:"metric_unit,omitempty"`
+	MetricValue      *float64  `json:"metric_value,omitempty"`
+	MetricValueInt   *int64    `json:"metric_value_int,omitempty"`
+	MetricValueText  *string   `json:"metric_value_text,omitempty"`
+	MetricValueBool  *bool     `json:"metric_value_bool,omitempty"`
+	TargetType       string    `json:"target_type"`
+	TargetID         string    `json:"target_id"`
+	EvalName         string    `json:"eval_name"`
+	EvalVersion      string    `json:"eval_version"`
+	ParameterVersion *string   `json:"parameter_version,omitempty"`
+	RunID            *string   `json:"run_id,omitempty"`
+	SourceType       string    `json:"source_type"`
+	SourceName       *string   `json:"source_name,omitempty"`
+	Confidence       *float64  `json:"confidence,omitempty"`
+	RecordedAt       time.Time `json:"recorded_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // HandleRatingsHistory returns all revisions of a logical asset with their
-// associated algorithm rating fields over time (CYB-1100).
+// associated rating.* metric rows over time (CYB-1100).
 //
 // @Summary      Get ratings history for a logical asset
 // @Description  Query all revisions of a logical asset, return rating fields over time
@@ -1153,61 +1195,150 @@ func (h *Handler) HandleRatingsHistory(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "logical_asset_id is required", nil)
 		return
 	}
-	if h.pg == nil {
+	if !id.ValidateAssetID(logicalAssetID) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "logical_asset_id must be an 8-character alphanumeric id", nil)
+		return
+	}
+	if h == nil || h.pgq == nil {
 		httpresp.Error(c, http.StatusServiceUnavailable, "PG_DISABLED", "postgres not available", nil)
 		return
 	}
 
 	const q = `
-SELECT a.asset_id, COALESCE(a.revision, 0),
-  COALESCE(al.algo_name, ''), COALESCE(al.algo_version, ''),
-  COALESCE(al.result_tag, ''), al.result_score, al.result_summary,
-  al.finished_at,
-  COALESCE(a.lifecycle_state, ''),
-  a.created_at
+SELECT a.asset_id,
+       COALESCE(a.revision, 0) AS revision,
+       COALESCE(a.is_current, FALSE) AS is_current,
+       COALESCE(a.lifecycle_state, '') AS lifecycle_state,
+       a.created_at,
+       m.metric_key,
+       m.metric_type,
+       m.metric_unit,
+       m.metric_value,
+       m.metric_value_int,
+       m.metric_value_text,
+       m.metric_value_bool,
+       m.target_type,
+       m.target_id,
+       m.eval_name,
+       m.eval_version,
+       m.parameter_version,
+       m.run_id,
+       m.source_type,
+       m.source_name,
+       m.confidence,
+       m.recorded_at,
+       m.updated_at
 FROM assets a
-LEFT JOIN asset_algo_latest al ON al.asset_id = a.asset_id
+LEFT JOIN asset_metrics m ON m.asset_id = a.asset_id
+  AND m.metric_key LIKE 'rating.%'
 WHERE a.logical_asset_id = $1
   AND a.is_deleted = FALSE
-ORDER BY a.revision ASC NULLS LAST, al.algo_name ASC NULLS LAST, a.created_at ASC`
+ORDER BY a.revision ASC NULLS LAST,
+         a.created_at ASC,
+         m.metric_key ASC NULLS LAST,
+         m.source_type ASC NULLS LAST,
+         m.source_name ASC NULLS LAST,
+         m.recorded_at ASC NULLS LAST`
 
-	rows, err := h.pg.Query(c.Request.Context(), q, logicalAssetID)
+	rows, err := h.pgq.Query(c.Request.Context(), q, logicalAssetID)
 	if err != nil {
 		httpresp.Internal(c, "database query failed: "+err.Error())
 		return
 	}
 	defer rows.Close()
 
-	var entries []ratingsHistoryEntry
+	items := make([]ratingsHistoryRevision, 0)
+	itemIndexByAssetID := make(map[string]int)
 	for rows.Next() {
-		var e ratingsHistoryEntry
-		var summaryBytes []byte
+		var (
+			assetID        string
+			revision       int64
+			isCurrent      bool
+			lifecycleState string
+			createdAt      time.Time
+			metric         ratingsHistoryMetric
+			metricKey      *string
+			metricType     *string
+			targetType     *string
+			targetID       *string
+			evalName       *string
+			evalVersion    *string
+			sourceType     *string
+			recordedAt     *time.Time
+			updatedAt      *time.Time
+		)
 
 		if err := rows.Scan(
-			&e.AssetID, &e.Revision,
-			&e.AlgoName, &e.AlgoVersion,
-			&e.ResultTag, &e.ResultScore, &summaryBytes,
-			&e.FinishedAt,
-			&e.LifecycleState,
-			&e.CreatedAt,
+			&assetID, &revision, &isCurrent, &lifecycleState, &createdAt,
+			&metricKey, &metricType, &metric.MetricUnit,
+			&metric.MetricValue, &metric.MetricValueInt, &metric.MetricValueText, &metric.MetricValueBool,
+			&targetType, &targetID, &evalName, &evalVersion,
+			&metric.ParameterVersion, &metric.RunID,
+			&sourceType, &metric.SourceName, &metric.Confidence,
+			&recordedAt, &updatedAt,
 		); err != nil {
 			httpresp.Internal(c, "scan failed: "+err.Error())
 			return
 		}
 
-		if len(summaryBytes) > 0 {
-			_ = json.Unmarshal(summaryBytes, &e.ResultSummary)
+		itemIndex, ok := itemIndexByAssetID[assetID]
+		if !ok {
+			items = append(items, ratingsHistoryRevision{
+				AssetID:        assetID,
+				Revision:       revision,
+				IsCurrent:      isCurrent,
+				LifecycleState: lifecycleState,
+				CreatedAt:      createdAt,
+				Ratings:        []ratingsHistoryMetric{},
+			})
+			itemIndex = len(items) - 1
+			itemIndexByAssetID[assetID] = itemIndex
 		}
 
-		entries = append(entries, e)
+		if metricKey == nil {
+			continue
+		}
+		metric.MetricKey = *metricKey
+		if metricType != nil {
+			metric.MetricType = *metricType
+		}
+		if targetType != nil {
+			metric.TargetType = *targetType
+		}
+		if targetID != nil {
+			metric.TargetID = *targetID
+		}
+		if evalName != nil {
+			metric.EvalName = *evalName
+		}
+		if evalVersion != nil {
+			metric.EvalVersion = *evalVersion
+		}
+		if sourceType != nil {
+			metric.SourceType = *sourceType
+		}
+		if recordedAt != nil {
+			metric.RecordedAt = *recordedAt
+		}
+		if updatedAt != nil {
+			metric.UpdatedAt = *updatedAt
+		}
+		items[itemIndex].Ratings = append(items[itemIndex].Ratings, metric)
 	}
-	if entries == nil {
-		entries = []ratingsHistoryEntry{}
+	if rowsWithErr, ok := rows.(interface{ Err() error }); ok {
+		if err := rowsWithErr.Err(); err != nil {
+			httpresp.Internal(c, "database query failed: "+err.Error())
+			return
+		}
+	}
+	if len(items) == 0 {
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "logical asset not found")
+		return
 	}
 
 	c.JSON(200, gin.H{
 		"logical_asset_id": logicalAssetID,
-		"items":            entries,
-		"count":            len(entries),
+		"items":            items,
+		"count":            len(items),
 	})
 }

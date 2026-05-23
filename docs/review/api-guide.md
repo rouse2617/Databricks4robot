@@ -481,7 +481,74 @@ curl "$BASE/api/v1/assets/{asset_id}/provenance" \
 
 错误：`404` + `ASSET_NOT_FOUND`（资产不存在）；`400` + `INVALID_ARGUMENT`（非法 `asset_id`）。
 
-### 1.8 获取资产 MCAP 定位（用于预览/流式读取）
+### 1.8 查询 logical asset 评分历史（CYB-1100）
+
+`GET /api/v1/logical-assets/{logical_asset_id}/ratings-history`
+
+返回同一 logical asset 下所有未删除 revision 的 `rating.*` 评分指标。评分来源是 `asset_metrics`，只包含 `metric_key` 以 `rating.` 开头的行；没有评分的 revision 仍会返回，`ratings: []`。如果 logical asset 不存在或所有 revision 都已删除，返回 `404 ASSET_NOT_FOUND`。
+
+```bash
+curl "$BASE/api/v1/logical-assets/aaaaaaaa/ratings-history" \
+  -H "X-Grace-Token: $TOKEN"
+```
+
+响应 `200`:
+```json
+{
+  "logical_asset_id": "aaaaaaaa",
+  "items": [
+    {
+      "asset_id": "aaaaaaaa",
+      "revision": 1,
+      "is_current": false,
+      "lifecycle_state": "ready",
+      "created_at": "2026-05-20T10:00:00Z",
+      "ratings": [
+        {
+          "metric_key": "rating.quality_score",
+          "metric_type": "float",
+          "metric_unit": "stars",
+          "metric_value": 4.5,
+          "target_type": "asset",
+          "target_id": "",
+          "eval_name": "manual_rating",
+          "eval_version": "v1",
+          "run_id": "run1234567890123",
+          "source_type": "human",
+          "source_name": "reviewer_a",
+          "confidence": 0.99,
+          "recorded_at": "2026-05-20T10:15:00Z",
+          "updated_at": "2026-05-20T10:15:00Z"
+        }
+      ]
+    },
+    {
+      "asset_id": "bbbbbbbb",
+      "revision": 2,
+      "is_current": true,
+      "lifecycle_state": "ready",
+      "created_at": "2026-05-21T10:00:00Z",
+      "ratings": []
+    }
+  ],
+  "count": 2
+}
+```
+
+错误路径：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `400` | `INVALID_ARGUMENT` | `logical_asset_id` 不是 8 位 ASCII 字母数字 ID |
+| `404` | `ASSET_NOT_FOUND` | logical asset 不存在，或没有未删除 revision |
+| `503` | `PG_DISABLED` | Postgres 未配置 |
+
+说明：
+- 排序稳定：revision 按 `revision ASC, created_at ASC`；同一 revision 内 ratings 按 `metric_key, source_type, source_name, recorded_at` 升序。
+- 本接口不返回 `asset_algo_latest.result_score/result_tag`；算法状态仍走算法/资产详情相关接口。
+- `asset_metrics` 主键语义决定本接口展示每个 revision 当前保留的评分指标行，不是原始评审事件日志。
+
+### 1.9 获取资产 MCAP 定位（用于预览/流式读取）
 
 `GET /api/v1/assets/{asset_id}/mcap-locator`
 
