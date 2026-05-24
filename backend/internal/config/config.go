@@ -114,6 +114,14 @@ type Config struct {
 	// poll cycle + ES bulk window.
 	OutboxESCheckpointIdleAfterSec string
 
+	// Optional OpenLineage emitter (Pub/Sub asset_events -> Marquez/OpenLineage endpoint).
+	OpenLineageEmitterEnabled string
+	OpenLineageEndpoint       string
+	OpenLineageSubscription   string
+	OpenLineageNamespace      string
+	OpenLineageProducer       string
+	OpenLineageTimeoutMs      string
+
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
 }
@@ -191,6 +199,13 @@ func Load() *Config {
 		OutboxRelayParallelKeys:             getenv("OUTBOX_RELAY_PARALLEL_KEYS", "8"),
 		OutboxESCheckpointShards:            getenv("OUTBOX_ES_CHECKPOINT_SHARDS", "16"),
 		OutboxESCheckpointIdleAfterSec:      getenv("OUTBOX_ES_CHECKPOINT_IDLE_AFTER_SEC", "300"),
+
+		OpenLineageEmitterEnabled: getenv("OPENLINEAGE_EMITTER_ENABLED", "false"),
+		OpenLineageEndpoint:       getenv("OPENLINEAGE_ENDPOINT", ""),
+		OpenLineageSubscription:   getenv("OPENLINEAGE_SUBSCRIPTION", ""),
+		OpenLineageNamespace:      getenv("OPENLINEAGE_NAMESPACE", "cyber-databrew"),
+		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", "cyber-databrew"),
+		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", "5000"),
 
 		AdminToken: getenv("ADMIN_TOKEN", ""),
 	}

@@ -14,6 +14,7 @@ import (
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lifecycle"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/openlineage"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/outbox"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/searchindex"
@@ -288,6 +289,39 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 
 	if cfg.OutboxRelayEnabled == "true" || cfg.OutboxESSubscriberEnabled == "true" {
 		go startOutboxPendingMetrics(outboxCtx, outboxTransport, assetEventRepo)
+	}
+
+	if cfg.OpenLineageEmitterEnabled == "true" {
+		if strings.TrimSpace(cfg.PubSubProject) == "" || strings.TrimSpace(cfg.OpenLineageSubscription) == "" {
+			slog.Error("openlineage emitter requires PUBSUB_PROJECT and OPENLINEAGE_SUBSCRIPTION")
+			os.Exit(1)
+		}
+		timeoutMs, _ := strconv.Atoi(cfg.OpenLineageTimeoutMs)
+		emitter, err := openlineage.NewEmitter(cfg.OpenLineageEndpoint, time.Duration(timeoutMs)*time.Millisecond)
+		if err != nil {
+			slog.Error("openlineage emitter init failed", "err", err)
+			os.Exit(1)
+		}
+		lineageSub, err := outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OpenLineageSubscription)
+		if err != nil {
+			slog.Error("openlineage pubsub subscriber init failed", "err", err)
+			os.Exit(1)
+		}
+		defer func() { _ = lineageSub.Close() }()
+		subscriber := &openlineage.Subscriber{
+			Source: lineageSub,
+			Builder: openlineage.Builder{
+				Namespace: cfg.OpenLineageNamespace,
+				Producer:  cfg.OpenLineageProducer,
+			},
+			Emitter: emitter,
+		}
+		slog.Info("openlineage emitter starting", "subscription", cfg.OpenLineageSubscription, "endpoint", cfg.OpenLineageEndpoint)
+		go func() {
+			if err := subscriber.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("openlineage emitter exited", "err", err)
+			}
+		}()
 	}
 
 	// Dev safety net: periodic ES reconciliation when outbox subscriber is off.
