@@ -32,8 +32,10 @@ const DeliveryHistoryTab = lazy(() => import("../components/asset-detail/Deliver
 const EvalMetricsTab = lazy(() => import("../components/asset-detail/EvalMetricsTab"));
 const FilesTab = lazy(() => import("../components/asset-detail/FilesTab"));
 const LineageTab = lazy(() => import("../components/asset-detail/LineageTab"));
-const OverviewTab = lazy(() => import("../components/asset-detail/OverviewTab"));
+import OverviewTab from "../components/asset-detail/OverviewTab";
 const TagsTab = lazy(() => import("../components/asset-detail/TagsTab"));
+
+const TAB_FALLBACK = <div style={{ padding: 24, textAlign: "center" }}>加载中...</div>;
 import { buildPreviewManifestFromSources } from "../hooks/assets/useAssetPreview";
 import { extractApiErrorMessage } from "../lib/apiError";
 import {
@@ -273,12 +275,12 @@ export default function AssetDetailPage() {
 		{
 			key: "overview",
 			label: "概览",
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}><OverviewTab asset={asset} /></Suspense>,
+			children: <OverviewTab asset={asset} />,
 		},
 		{
 			key: "algo",
 			label: algoEventsLoading ? "算法处理 (...)" : `算法处理 (${algoList.length})`,
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
+			children: <Suspense fallback={TAB_FALLBACK}>
 				<AlgoTab
 					assetId={asset.asset_id}
 					algoList={algoList}
@@ -296,7 +298,7 @@ export default function AssetDetailPage() {
 		{
 			key: "events",
 			label: allEventsLoading ? "全部事件 (...)" : `全部事件 (${allEvents.length})`,
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
+			children: <Suspense fallback={TAB_FALLBACK}>
 				<AssetEventsTab
 					assetId={asset.asset_id}
 					events={allEvents}
@@ -312,7 +314,7 @@ export default function AssetDetailPage() {
 		{
 			key: "eval-metrics",
 			label: evalLoading ? "评测与指标 (...)" : `评测与指标 (${assetMetrics.length})`,
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
+			children: <Suspense fallback={TAB_FALLBACK}>
 				<EvalMetricsTab
 					loading={evalLoading}
 					evalResults={evalResults}
@@ -324,7 +326,7 @@ export default function AssetDetailPage() {
 		{
 			key: "actions",
 			label: "Action 时间轴",
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
+			children: <Suspense fallback={TAB_FALLBACK}>
 				<ActionsTimelineTab
 					assetId={asset.asset_id}
 					assetType={asset.asset_type}
@@ -340,7 +342,7 @@ export default function AssetDetailPage() {
 					<TagOutlined /> 标签
 				</span>
 			),
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
+			children: <Suspense fallback={TAB_FALLBACK}>
 				<TagsTab
 					assetId={asset.asset_id}
 					tags={asset.tags ?? {}}
@@ -355,7 +357,7 @@ export default function AssetDetailPage() {
 					<SendOutlined /> 交付历史
 				</span>
 			),
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}><DeliveryHistoryTab assetId={asset.asset_id} /></Suspense>,
+			children: <Suspense fallback={TAB_FALLBACK}><DeliveryHistoryTab assetId={asset.asset_id} /></Suspense>,
 		},
 		{
 			key: "lineage",
@@ -364,7 +366,7 @@ export default function AssetDetailPage() {
 					<LinkOutlined /> 血缘
 				</span>
 			),
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}><LineageTab assetId={asset.asset_id} /></Suspense>,
+			children: <Suspense fallback={TAB_FALLBACK}><LineageTab assetId={asset.asset_id} /></Suspense>,
 		},
 		{
 			key: "files",
@@ -373,7 +375,7 @@ export default function AssetDetailPage() {
 					<FileOutlined /> 文件
 				</span>
 			),
-			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}><FilesTab files={asset.files ?? {}} /></Suspense>,
+			children: <Suspense fallback={TAB_FALLBACK}><FilesTab files={asset.files ?? {}} /></Suspense>,
 		},
 	];
 
