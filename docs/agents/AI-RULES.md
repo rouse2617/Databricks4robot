@@ -192,6 +192,40 @@ Full commands by tier — see [Verification tiers](#verification-tiers).
 | Frontend | `npm run lint` | + `npm run test -- --run` | + `npm run build` |
 | SDK | `uv run ruff check src/` | + `pytest` touched | + `pytest tests/unit/` |
 
+## Development pitfalls (lessons learned)
+
+Field incidents that should inform future development. Add to this section when a preventable mistake repeats.
+
+### P1. Verify diff, not commit message
+After editing code (especially tab-heavy Go like switch/struct blocks), run `git diff` before committing. The `default` branch in a `switch` can be silently missing if the edit tool fails on tab indentation — and the commit message may claim it's there.
+
+**Check:** `git diff --stat` and spot-check the actual line changes, not just "build passes".
+
+### P2. Use valid test payloads against DB constraints
+When testing API behavior on dev, ensure the payload satisfies DB CHECK constraints (e.g. `chk_lifecycle_state`). An invalid value like `"active"` produces a DB error that masks the real issue (e.g. validator not rejecting unknown types).
+
+**Check:** Before curl/writing a test, look up valid values from the model layer or migration — don't guess.
+
+### P3. Confirm SHA before docker build
+`docker build` uses the working tree, but the SHA tag should match the current HEAD. An incorrect tag (e.g. stale `93d2bc7` instead of current `c8c175c`) means the deployed Cloud Run revision runs stale code.
+
+**Check:** `echo "HEAD: $(git rev-parse --short HEAD)"` before `docker build`.
+
+### P4. Worktree-aware PR merge
+When the base branch is checked out in another worktree, `gh pr merge` fails locally. Use `gh pr merge --auto` to let GitHub's API handle the merge, avoiding the worktree conflict entirely.
+
+**Check:** If you get "already used by worktree", retry with `--auto`.
+
+### P5. Deploy verification must assert the specific change
+Generic L1 smoke (health + list) doesn't prove the behavioral change works. After deploying, immediately curl with a known-bad payload that should hit the new code path.
+
+**Check:** For each runtime change, write one curl command (happy path + one error path) that proves the new behavior is active on the deployed revision. Include the command and expected response in the PR.
+
+### P6. Python edit scripts: verify line count
+When using Python scripts as an edit-tool workaround (Go tab indentation), the off-by-one in line deletion is silent — it can leave a stale line or omit a needed one. After the script runs, read the affected function top-to-bottom.
+
+**Check:** `sed -n 'start,endp' file.go` on the edited region and visually confirm.
+
 ## What NOT to do
 
 - Do NOT ask users to run a ritual prompt like "prepare environment per project standards"
