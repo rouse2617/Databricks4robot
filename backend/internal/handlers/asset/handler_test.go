@@ -1440,3 +1440,13 @@ func buildTestTagRegistryForAsset(t *testing.T) *config.TagRegistry {
 	}
 	return reg
 }
+
+func TestHandleRatingsHistoryNoPG(t *testing.T) {
+	h := New(nil, nil)
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/abc12345/ratings-history", nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+}
