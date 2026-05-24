@@ -81,6 +81,7 @@ export interface SearchSyncStatusResponse {
 		| "local_reconcile"
 		| "manual";
 	env?: string;
+	admin_search_enabled?: boolean;
 }
 
 /** GET /search/sync-progress — runtime PG→ES sync progress snapshot. */

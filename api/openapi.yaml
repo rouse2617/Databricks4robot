@@ -1321,6 +1321,7 @@ components:
           type: string
           enum: [unavailable, outbox_es_subscriber, local_reconcile, manual]
         env: { type: string }
+        admin_search_enabled: { type: boolean }
     SearchSyncProgressResponse:
       type: object
       required:

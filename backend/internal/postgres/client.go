@@ -29,6 +29,7 @@ type rowScanner interface {
 type rowsScanner interface {
 	Next() bool
 	Scan(dest ...any) error
+	Err() error
 	Close()
 }
 
@@ -201,6 +202,7 @@ func (c *Client) QueryRow(ctx context.Context, sql string, args ...any) interfac
 func (c *Client) Query(ctx context.Context, sql string, args ...any) (interface {
 	Next() bool
 	Scan(dest ...any) error
+	Err() error
 	Close()
 }, error) {
 	return c.db.Query(ctx, sql, args...)

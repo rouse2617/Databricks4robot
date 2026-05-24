@@ -26,6 +26,8 @@ export interface DescribedApiError {
 	code?: string;
 	/** Backend `request_id` for support / log lookup. */
 	requestId?: string;
+	/** Backend `details` object for field-specific UI handling. */
+	details?: unknown;
 	/** HTTP status code, when the request reached the server. */
 	status?: number;
 	/** True when the request never reached the server (network / timeout). */
@@ -57,6 +59,7 @@ export function describeApiError(
 				message,
 				code: envelope?.code,
 				requestId: envelope?.request_id,
+				details: envelope?.details,
 				status: err.response.status,
 				isNetwork: false,
 			};

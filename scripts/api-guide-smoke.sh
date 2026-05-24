@@ -178,6 +178,7 @@ get "tag-registry" "/api/v1/tag-registry"
 
 echo ""
 echo "--- § 资产 / 搜索 / 交付 / mcap-files ---"
+get "search sync status" "/api/v1/search/sync-status"
 post "queries run (structured)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"page":{"page":1,"page_size":5}}' >/dev/null
 post "queries run (include_history)" "/api/v1/queries/run?include_history=true" '{"schema_version":"v1","scope":{"resource":"assets","include_history":true},"page":{"page":1,"page_size":5}}' >/dev/null
 post "queries run (keyword)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"keyword","scope":{"resource":"assets"},"where":{"pred":{"field":"_fulltext","op":"ilike","value":"warehouse"}},"page":{"page":1,"page_size":5}}' >/dev/null

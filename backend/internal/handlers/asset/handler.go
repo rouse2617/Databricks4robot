@@ -36,6 +36,7 @@ type Handler struct {
 type assetSQLRows interface {
 	Next() bool
 	Scan(dest ...any) error
+	Err() error
 	Close()
 }
 
@@ -69,7 +70,11 @@ func (h *Handler) SetMcapRepo(repo repository.McapFileRepository) {
 // queries (e.g. /assets/:id/lineage).
 func (h *Handler) SetPG(pg *postgres.Client) {
 	h.pg = pg
-	h.pgq = assetPostgresQuerier{pg: pg}
+	if pg == nil {
+		h.pgq = nil
+	} else {
+		h.pgq = assetPostgresQuerier{pg: pg}
+	}
 }
 
 // Get returns a single asset by ID.
@@ -1356,11 +1361,9 @@ ORDER BY a.revision ASC NULLS LAST,
 		}
 		items[itemIndex].Ratings = append(items[itemIndex].Ratings, metric)
 	}
-	if rowsWithErr, ok := rows.(interface{ Err() error }); ok {
-		if err := rowsWithErr.Err(); err != nil {
-			httpresp.Internal(c, "database query failed: "+err.Error())
-			return
-		}
+	if err := rows.Err(); err != nil {
+		httpresp.Internal(c, "row iteration error: "+err.Error())
+		return
 	}
 	if len(items) == 0 {
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "logical asset not found")

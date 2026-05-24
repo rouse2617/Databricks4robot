@@ -475,3 +475,21 @@ func TestHandleLineageSearchNotConfigured(t *testing.T) {
 		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
 	}
 }
+
+func TestHandleAuditSearchRowsErr(t *testing.T) {
+	occurred := time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC)
+	created := occurred.Add(time.Second)
+	rows := &fakeAuditRows{
+		data: [][]any{
+			{"evt-100", int64(100), "algo_finished", "asset", "asset001", "mcap0001", "tenant1", "project1", "backend", "user", "alice", "run0000000000001", occurred, created},
+		},
+		err: errors.New("connection reset by peer"),
+	}
+	q := &fakeAuditQuerier{rows: rows}
+	r := setupAuditRouter(&Handler{db: q})
+
+	w := doAuditSearchReq(r, "/audit/search")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+	}
+}
