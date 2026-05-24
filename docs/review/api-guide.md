@@ -107,12 +107,14 @@ curl "$BASE/api/v1/lakehouse/status" \
   -H "X-Grace-Token: $TOKEN"
 ```
 
-查看 Iceberg MVP 表行数：
+查看 Iceberg 表行数：
 
 ```bash
 curl "$BASE/api/v1/lakehouse/tables" \
   -H "X-Grace-Token: $TOKEN"
 ```
+
+响应至少包含 `bronze_asset_events`；当 Silver export job 已执行并创建外部表时，还会包含 `silver_asset_events_current`。Silver 表语义为每个 `asset_id` 保留 `last_event_seq` 最大的一行，适合下游审计分析避免直接读取 Bronze 重试重复行。未启用 lakehouse 或 Bronze 不可读时返回 `503`；Silver 尚未创建时 `/lakehouse/tables` 仍返回 `200`，只是不包含 Silver 行。
 
 Lakehouse dashboard 读模型接口：
 

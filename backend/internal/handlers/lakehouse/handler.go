@@ -454,15 +454,26 @@ func (h *Handler) AssetGrowth(c *gin.Context) {
 }
 
 // Tables returns row counts for lakehouse Iceberg tables visible to BigQuery.
-// Currently only bronze_asset_events is materialized; Silver/Gold join in
-// later when their external tables exist.
+// Bronze is required for the endpoint; Silver is included when its external
+// table has been materialized.
 func (h *Handler) Tables(c *gin.Context) {
-	rows, err := h.lake.Query(c.Request.Context(),
-		`SELECT 'bronze_asset_events' AS table_name, COUNT(*) AS row_count FROM bronze_asset_events`,
-	)
+	items, err := h.lakehouseTableCount(c.Request.Context(), "bronze_asset_events")
 	if err != nil {
 		h.lakehouseFail(c, err)
 		return
+	}
+	if silverItems, err := h.lakehouseTableCount(c.Request.Context(), "silver_asset_events_current"); err == nil {
+		items = append(items, silverItems...)
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (h *Handler) lakehouseTableCount(ctx context.Context, tableName string) ([]gin.H, error) {
+	rows, err := h.lake.Query(ctx,
+		fmt.Sprintf(`SELECT '%s' AS table_name, COUNT(*) AS row_count FROM %s`, tableName, tableName),
+	)
+	if err != nil {
+		return nil, err
 	}
 	items := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
@@ -471,7 +482,7 @@ func (h *Handler) Tables(c *gin.Context) {
 			"row_count":  asInt64(r["row_count"]),
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	return items, nil
 }
 
 // EventDaily aggregates Bronze events by day × event_type over the last N
