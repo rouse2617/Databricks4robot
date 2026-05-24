@@ -1828,7 +1828,8 @@ curl "$BASE/api/v1/search/sync-status" \
   "outbox_relay_enabled": true,
   "outbox_es_subscriber_enabled": true,
   "search_index_mode": "outbox_es_subscriber",
-  "env": "development"
+  "env": "development",
+  "admin_search_enabled": true
 }
 ```
 
@@ -1837,6 +1838,22 @@ curl "$BASE/api/v1/search/sync-status" \
 - `search_index_mode` 枚举：`unavailable` / `outbox_es_subscriber` / `local_reconcile` / `manual`。
 - `outbox_relay_enabled` 表示是否启用 PG `asset_events` 到 Pub/Sub 的 relay。
 - `outbox_es_subscriber_enabled` 表示当前进程是否启用 Pub/Sub 到 Elasticsearch 的订阅消费。
+- `admin_search_enabled` 表示当前环境是否开放搜索管理接口（重建索引、任务历史、PG↔ES 对账）。
+
+#### OpenLineage / Marquez emitter（CYB-1109）
+
+OpenLineage emitter 默认关闭，不新增 HTTP API。启用后它从独立 Pub/Sub subscription 消费 `asset_events`，把包含 `asset_id` 的事件映射为 OpenLineage JSON，并 `POST` 到 Marquez/OpenLineage endpoint。handler 成功返回 2xx 时 ACK；endpoint 非 2xx 或网络错误时返回错误给 Pub/Sub subscriber，消息会 NACK 并按订阅策略重试。
+
+配置：
+
+| 环境变量 | 默认 | 说明 |
+|----------|------|------|
+| `OPENLINEAGE_EMITTER_ENABLED` | `false` | `true` 时启动 emitter |
+| `OPENLINEAGE_ENDPOINT` | 空 | Marquez/OpenLineage HTTP endpoint |
+| `OPENLINEAGE_SUBSCRIPTION` | 空 | 独立 Pub/Sub subscription，避免与 ES consumer 竞争 |
+| `OPENLINEAGE_NAMESPACE` | `cyber-databrew` | OpenLineage job/dataset namespace 前缀 |
+| `OPENLINEAGE_PRODUCER` | `cyber-databrew` | OpenLineage `producer` |
+| `OPENLINEAGE_TIMEOUT_MS` | `5000` | 单次 POST timeout |
 
 #### 同步进度（PG / ES 与 Outbox）
 

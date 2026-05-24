@@ -1,12 +1,78 @@
-import { Form, Input, Modal, message } from "antd";
+import { Alert, Form, Input, Modal, message } from "antd";
 import { useState } from "react";
 import { deliveriesApi } from "../../api/deliveries";
+import { describeApiError } from "../../lib/apiError";
 
 export interface CreateDeliveryModalProps {
 	open: boolean;
 	assetIds: string[];
 	onClose: () => void;
 	onSuccess: (deliveryId: string) => void;
+}
+
+interface SubmitErrorState {
+	message: string;
+	description?: string;
+}
+
+function isFormValidationError(err: unknown): boolean {
+	return typeof err === "object" && err !== null && "errorFields" in err;
+}
+
+function detailValue(details: unknown, key: string): string | undefined {
+	if (typeof details !== "object" || details === null) return undefined;
+	const value = (details as Record<string, unknown>)[key];
+	return typeof value === "string" ? value : undefined;
+}
+
+function getAssetIdsError(
+	messageText: string,
+	details: unknown,
+): string | null {
+	const assetId = detailValue(details, "asset_id");
+	if (
+		messageText.includes("asset_ids must be 8 alphanumeric characters") ||
+		messageText.includes("asset_id must be 8 alphanumeric characters")
+	) {
+		return assetId
+			? `资产 ID「${assetId}」格式不正确；请改成 8 位字母或数字。`
+			: "资产 ID 格式不正确；请改成 8 位字母或数字。";
+	}
+	if (messageText.toLowerCase().includes("asset") && assetId) {
+		return `请检查资产 ID「${assetId}」是否存在且可交付。`;
+	}
+	return null;
+}
+
+function buildSubmitError(err: unknown): {
+	submitError: SubmitErrorState;
+	assetIdsError: string | null;
+} {
+	const apiError = describeApiError(err, "创建交付失败");
+	const assetIdsError = getAssetIdsError(apiError.message, apiError.details);
+	const requestText = apiError.requestId
+		? `请求 ID：${apiError.requestId}`
+		: undefined;
+
+	if (apiError.status === 409) {
+		return {
+			submitError: {
+				message: "该交付已存在",
+				description: requestText
+					? `请刷新列表确认是否已创建。${requestText}`
+					: "请刷新列表确认是否已创建。",
+			},
+			assetIdsError: null,
+		};
+	}
+
+	return {
+		submitError: {
+			message: assetIdsError ?? apiError.message,
+			description: requestText,
+		},
+		assetIdsError,
+	};
 }
 
 export default function CreateDeliveryModal({
@@ -19,6 +85,10 @@ export default function CreateDeliveryModal({
 	const [submitting, setSubmitting] = useState(false);
 	const [msg, msgCtx] = message.useMessage();
 	const [manualAssetIdsText, setManualAssetIdsText] = useState("");
+	const [submitError, setSubmitError] = useState<SubmitErrorState | null>(null);
+	const [manualAssetIdsError, setManualAssetIdsError] = useState<string | null>(
+		null,
+	);
 
 	const parsedManualAssetIds = manualAssetIdsText
 		.split(/[\n,]/)
@@ -29,8 +99,13 @@ export default function CreateDeliveryModal({
 		assetIds.length > 0 ? assetIds : dedupedManualAssetIds;
 
 	const handleOk = async () => {
+		setSubmitError(null);
+		setManualAssetIdsError(null);
 		if (effectiveAssetIds.length === 0) {
-			msg.error("请至少选择 1 个资产后再创建交付");
+			const nextError = "请至少选择 1 个资产后再创建交付。";
+			setManualAssetIdsError(nextError);
+			setSubmitError({ message: nextError });
+			msg.error(nextError);
 			return;
 		}
 		try {
@@ -52,23 +127,17 @@ export default function CreateDeliveryModal({
 			msg.success("交付创建成功");
 			form.resetFields();
 			setManualAssetIdsText("");
+			setSubmitError(null);
+			setManualAssetIdsError(null);
 			onSuccess(delivery.delivery_id);
 		} catch (err: unknown) {
-			if (
-				typeof err === "object" &&
-				err !== null &&
-				"response" in err &&
-				(err as { response?: { status?: number } }).response?.status === 409
-			) {
-				msg.error("该交付已存在（幂等冲突）");
-			} else if (
-				typeof err === "object" &&
-				err !== null &&
-				"errorFields" in err
-			) {
+			if (isFormValidationError(err)) {
 				// form validation error — do nothing
 			} else {
-				msg.error("创建交付失败");
+				const next = buildSubmitError(err);
+				setSubmitError(next.submitError);
+				setManualAssetIdsError(next.assetIdsError);
+				msg.error(next.submitError.message);
 			}
 		} finally {
 			setSubmitting(false);
@@ -78,6 +147,8 @@ export default function CreateDeliveryModal({
 	const handleCancel = () => {
 		form.resetFields();
 		setManualAssetIdsText("");
+		setSubmitError(null);
+		setManualAssetIdsError(null);
 		onClose();
 	};
 
@@ -93,10 +164,12 @@ export default function CreateDeliveryModal({
 			cancelText="取消"
 			maskClosable={!submitting}
 			keyboard={!submitting}
-			destroyOnClose
+			destroyOnHidden
 			afterClose={() => {
 				form.resetFields();
 				setManualAssetIdsText("");
+				setSubmitError(null);
+				setManualAssetIdsError(null);
 			}}
 		>
 			{msgCtx}
@@ -127,13 +200,36 @@ export default function CreateDeliveryModal({
 					当前未选择资产，请手动填写 asset_ids（逗号或换行分隔）
 				</div>
 			)}
+			{submitError && (
+				<Alert
+					type="error"
+					showIcon
+					style={{ marginBottom: 16 }}
+					message={submitError.message}
+					description={submitError.description}
+				/>
+			)}
 			<Form form={form} layout="vertical">
 				{assetIds.length === 0 && (
-					<Form.Item label="资产 IDs（必填）" required>
+					<Form.Item
+						label="资产 IDs（必填）"
+						htmlFor="delivery-asset-ids"
+						required
+						validateStatus={manualAssetIdsError ? "error" : undefined}
+						help={
+							manualAssetIdsError ??
+							"每行或逗号分隔；资产 ID 应为 8 位字母或数字。"
+						}
+					>
 						<Input.TextArea
+							id="delivery-asset-ids"
 							rows={4}
 							value={manualAssetIdsText}
-							onChange={(e) => setManualAssetIdsText(e.target.value)}
+							onChange={(e) => {
+								setManualAssetIdsText(e.target.value);
+								setManualAssetIdsError(null);
+								setSubmitError(null);
+							}}
 							placeholder={"例如：\n7VBGimAO,Ab12Cd34\nXy98LmN0"}
 						/>
 					</Form.Item>
@@ -143,7 +239,10 @@ export default function CreateDeliveryModal({
 					label="客户 ID"
 					rules={[{ required: true, message: "请输入客户 ID" }]}
 				>
-					<Input placeholder="请输入客户 ID" />
+					<Input
+						placeholder="请输入客户 ID"
+						onChange={() => setSubmitError(null)}
+					/>
 				</Form.Item>
 				<Form.Item name="contract_id" label="合同号">
 					<Input placeholder="可选" />

@@ -84,4 +84,15 @@ describe("AssetPreviewHero", () => {
 		expect(container.querySelector("video")).toBeNull();
 		expect(screen.getAllByText("暂无预览").length).toBeGreaterThan(0);
 	});
+
+	it("labels delivery_count as completed deliveries", () => {
+		render(
+			<AssetPreviewHero
+				asset={makeAsset({ delivery_count: 2 })}
+				previewManifest={null}
+			/>,
+		);
+		expect(screen.getByText("已完成交付")).toBeTruthy();
+		expect(screen.queryByText("Deliveries")).toBeNull();
+	});
 });
