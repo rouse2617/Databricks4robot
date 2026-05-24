@@ -1835,6 +1835,7 @@ curl "$BASE/api/v1/search/sync-status" \
 - `search_index_mode` 枚举：`unavailable` / `outbox_es_subscriber` / `local_reconcile` / `manual`。
 - `outbox_relay_enabled` 表示是否启用 PG `asset_events` 到 Pub/Sub 的 relay。
 - `outbox_es_subscriber_enabled` 表示当前进程是否启用 Pub/Sub 到 Elasticsearch 的订阅消费。
+- Pub/Sub EventSource 使用 `OUTBOX_TRANSPORT=pubsub`、`PUBSUB_PROJECT` 和 `OUTBOX_ES_SUBSCRIPTION`。消息 handler 成功时 ACK，handler 返回错误时 NACK，由 Pub/Sub 按订阅策略重试；缺少 project 或 subscription 时启动阶段会记录清晰配置错误并不启动该 subscriber。
 
 #### 同步进度（PG / ES 与 Outbox）
 
