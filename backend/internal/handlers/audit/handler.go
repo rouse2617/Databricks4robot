@@ -23,6 +23,7 @@ type Handler struct {
 type auditRows interface {
 	Next() bool
 	Scan(dest ...any) error
+	Err() error
 	Close()
 }
 
@@ -227,6 +228,11 @@ LIMIT ` + limitParam
 			return
 		}
 		items = append(items, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		httpresp.Internal(c, "row iteration error: "+err.Error())
+		return
 	}
 
 	var nextCursor *int64

@@ -33,6 +33,23 @@ import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
 
 const { Title } = Typography;
 
+function translateResultWarning(warning: string): string {
+	const normalized = warning.toLowerCase();
+	if (
+		normalized.includes("elasticsearch unavailable") &&
+		normalized.includes("postgres-only")
+	) {
+		return "搜索索引暂不可用，已改用数据库查询；当前筛选仍已执行，但结果可能更慢。";
+	}
+	if (
+		normalized.includes("elasticsearch unavailable") &&
+		normalized.includes("postgres count")
+	) {
+		return "搜索索引暂不可用，数量统计已改用数据库结果。";
+	}
+	return warning;
+}
+
 export default function AssetsPage() {
 	const navigate = useNavigate();
 	const [state, dispatch] = useAssetsDiscoveryReducer();
@@ -99,6 +116,13 @@ export default function AssetsPage() {
 	const previewAsset = state.previewState.summary;
 	const previewManifest = state.previewState.manifest;
 	const resultWarnings = state.resultsState.warnings ?? [];
+	const visibleResultWarnings = resultWarnings.map(translateResultWarning);
+	const hasSearchFallbackWarning = resultWarnings.some((w) =>
+		w.toLowerCase().includes("elasticsearch unavailable"),
+	);
+	const hasAlgoStatusWarning = resultWarnings.some((w) =>
+		w.includes("algo_status"),
+	);
 
 	return (
 		<div ref={containerRef}>
@@ -297,11 +321,13 @@ export default function AssetsPage() {
 					showIcon
 					style={{ marginBottom: 8 }}
 					message={
-						resultWarnings.some((w) => w.includes("algo_status"))
-							? "⚠️ algo_status 筛选仅在当前页生效"
-							: "部分筛选可能未完全生效"
+						hasSearchFallbackWarning
+							? "搜索已降级为数据库查询"
+							: hasAlgoStatusWarning
+								? "⚠️ algo_status 筛选仅在当前页生效"
+								: "部分筛选可能未完全生效"
 					}
-					description={resultWarnings.join("；")}
+					description={visibleResultWarnings.join("；")}
 				/>
 			)}
 

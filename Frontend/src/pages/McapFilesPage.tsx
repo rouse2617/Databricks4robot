@@ -56,6 +56,7 @@ export default function McapFilesPage() {
 	const [page, setPage] = useState(Number(searchParams.get("page")) || 1);
 	const [stateFilter, setStateFilter] = useState("");
 	const [ownerFilter, setOwnerFilter] = useState("");
+	const [debouncedOwnerFilter, setDebouncedOwnerFilter] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [selectedFile, setSelectedFile] = useState<McapFile | null>(null);
@@ -67,6 +68,13 @@ export default function McapFilesPage() {
 		}
 	}, [page, searchParams]);
 
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setDebouncedOwnerFilter(ownerFilter.trim());
+		}, 300);
+		return () => window.clearTimeout(timer);
+	}, [ownerFilter]);
+
 	const load = useCallback(
 		async (p = page) => {
 			setLoading(true);
@@ -76,7 +84,7 @@ export default function McapFilesPage() {
 					page: p,
 					page_size: 20,
 					ingest_state: stateFilter || undefined,
-					owner: ownerFilter || undefined,
+					owner: debouncedOwnerFilter || undefined,
 				});
 				setFiles(data.items ?? []);
 				setTotal(data.total ?? 0);
@@ -88,8 +96,12 @@ export default function McapFilesPage() {
 				setLoading(false);
 			}
 		},
-		[page, stateFilter, ownerFilter],
+		[page, stateFilter, debouncedOwnerFilter],
 	);
+
+	useEffect(() => {
+		setPage(1);
+	}, [stateFilter, debouncedOwnerFilter]);
 
 	useEffect(() => {
 		load(page);
@@ -236,12 +248,12 @@ export default function McapFilesPage() {
 						value={ownerFilter}
 						onChange={(e) => setOwnerFilter(e.target.value)}
 						onPressEnter={() => {
+							setDebouncedOwnerFilter(ownerFilter.trim());
 							setPage(1);
-							load(1);
 						}}
 						onBlur={() => {
+							setDebouncedOwnerFilter(ownerFilter.trim());
 							setPage(1);
-							load(1);
 						}}
 						style={{ width: 140 }}
 						allowClear

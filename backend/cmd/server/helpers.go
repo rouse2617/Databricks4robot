@@ -23,11 +23,24 @@ import (
 // ── Helpers (unchanged) ──
 
 func buildSearchSyncInfo(cfg *config.Config, esClient *espkg.Client, outboxRelayStarted, outboxESSubscriberStarted bool) searchH.SyncInfo {
+	mode := "unavailable"
+	if esClient != nil {
+		switch {
+		case outboxESSubscriberStarted:
+			mode = "outbox_es_subscriber"
+		case cfg.Env != "production":
+			mode = "local_reconcile"
+		default:
+			mode = "manual"
+		}
+	}
 	info := searchH.SyncInfo{
 		ElasticsearchOK:           esClient != nil,
 		OutboxRelayEnabled:        outboxRelayStarted,
 		OutboxESSubscriberEnabled: outboxESSubscriberStarted,
+		SearchIndexMode:           mode,
 		Env:                       cfg.Env,
+		AdminSearchEnabled:        cfg.AdminRoutesEnabled() && esClient != nil,
 	}
 	return info
 }

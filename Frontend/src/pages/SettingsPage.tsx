@@ -23,6 +23,7 @@ import {
 	type ReindexJob,
 	type SearchAuditResult,
 } from "../api/admin";
+import { type SearchSyncStatusResponse, searchApi } from "../api/search";
 import BronzeSyncStatusAlert from "../components/assets/BronzeSyncStatusAlert";
 import SearchSyncStatusAlert from "../components/assets/SearchSyncStatusAlert";
 import { useAuth } from "../hooks/useAuth";
@@ -80,8 +81,14 @@ export default function SettingsPage() {
 	const [history, setHistory] = useState<ReindexJob[]>([]);
 	const [historyLoading, setHistoryLoading] = useState(false);
 	const [historyError, setHistoryError] = useState<string | null>(null);
+	const [searchStatus, setSearchStatus] =
+		useState<SearchSyncStatusResponse | null>(null);
+	const [searchStatusLoaded, setSearchStatusLoaded] = useState(false);
+
+	const adminSearchEnabled = searchStatus?.admin_search_enabled === true;
 
 	const loadHistory = useCallback(async () => {
+		if (!adminSearchEnabled) return;
 		setHistoryLoading(true);
 		setHistoryError(null);
 		try {
@@ -105,17 +112,37 @@ export default function SettingsPage() {
 		} finally {
 			setHistoryLoading(false);
 		}
-	}, [phase]);
+	}, [adminSearchEnabled, phase]);
 
 	useEffect(() => {
-		loadHistory();
-	}, [loadHistory]);
+		let cancelled = false;
+		searchApi
+			.fetchSyncStatus()
+			.then((status) => {
+				if (cancelled) return;
+				setSearchStatus(status);
+			})
+			.catch(() => {
+				if (!cancelled) setSearchStatus(null);
+			})
+			.finally(() => {
+				if (!cancelled) setSearchStatusLoaded(true);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	useEffect(() => {
+		if (adminSearchEnabled) loadHistory();
+	}, [adminSearchEnabled, loadHistory]);
+
+	useEffect(() => {
+		if (!adminSearchEnabled) return;
 		if (phase === "done" || phase === "error" || phase === "paused") {
 			loadHistory();
 		}
-	}, [phase, loadHistory]);
+	}, [adminSearchEnabled, phase, loadHistory]);
 
 	useEffect(() => {
 		if (typeof window === "undefined") return;
@@ -184,6 +211,7 @@ export default function SettingsPage() {
 	}, [phase, runJob, pollJobId]);
 
 	const handleOpenConfirm = async () => {
+		if (!adminSearchEnabled) return;
 		setConfirmOpen(true);
 		setAuditError(null);
 		setAuditResult(null);
@@ -195,7 +223,12 @@ export default function SettingsPage() {
 		}
 	};
 
+	const handleCloseConfirm = () => {
+		setConfirmOpen(false);
+	};
+
 	const handleReindexSubmit = async () => {
+		if (!adminSearchEnabled) return;
 		setConfirmLoading(true);
 		setError(null);
 		try {
@@ -289,287 +322,330 @@ export default function SettingsPage() {
 					文档数的对账。若关键词结果明显滞后，可在下方「重建 ES
 					索引」做全量修复。
 				</Text>
-				<SearchSyncStatusAlert />
+				<SearchSyncStatusAlert adminSearchEnabled={adminSearchEnabled} />
 				<BronzeSyncStatusAlert />
 			</Card>
 
-			{/* Task 8.3: Rebuild ES Index */}
-			<Card
-				title={
-					<span>
-						<ThunderboltOutlined style={{ marginRight: 8 }} />
-						重建 ES 索引
-					</span>
-				}
-				size="small"
-				data-testid="reindex-card"
-			>
-				<Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
-					当 Elasticsearch 索引与 PostgreSQL
-					数据不一致时，可手动触发全量重建。点击下方按钮会先做一次 PG↔ES
-					对账，再二次确认是否执行。
-				</Text>
+			{searchStatusLoaded && !adminSearchEnabled && (
+				<Alert
+					type="info"
+					showIcon
+					style={{ marginBottom: 16 }}
+					message="搜索管理工具未启用"
+					description="当前环境未开放 ES 重建与对账管理接口；搜索状态仍可查看。"
+				/>
+			)}
 
-				{error && (
-					<Alert
-						type="error"
-						showIcon
-						message={error}
-						style={{ marginBottom: 12 }}
-						closable
-						onClose={() => setError(null)}
-					/>
-				)}
-
-				{runJob &&
-					(phase === "reindexing" ||
-						phase === "paused" ||
-						phase === "done" ||
-						phase === "error") && (
-						<div style={{ marginBottom: 12 }}>
-							<Progress
-								percent={Number(runJob.progress_pct.toFixed(1))}
-								status={phase === "error" ? "exception" : "active"}
-							/>
-							<div style={{ marginTop: 8 }}>
-								<Text type="secondary">
-									状态：{runJob.status} · 扫描 {runJob.assets_scanned}/
-									{runJob.total_assets || "?"}· 索引 {runJob.documents_indexed}{" "}
-									· 删除 {runJob.documents_deleted} · 失败 {runJob.failed}
-								</Text>
-							</div>
-						</div>
-					)}
-
-				{/* Actual reindex result */}
-				{runJob && phase === "done" && (
-					<Alert
-						type="success"
-						showIcon
-						message="索引重建完成"
-						description={
-							<div>
-								<p>总资产数：{runJob.total_assets}</p>
-								<p>成功索引：{runJob.documents_indexed}</p>
-								<p>删除文档：{runJob.documents_deleted}</p>
-								<p>失败：{runJob.failed}</p>
-							</div>
+			{adminSearchEnabled && (
+				<>
+					<Card
+						title={
+							<span>
+								<ThunderboltOutlined style={{ marginRight: 8 }} />
+								重建 ES 索引
+							</span>
 						}
-						style={{ marginBottom: 12 }}
-					/>
-				)}
-
-				<Space>
-					{phase === "idle" && (
-						<Button
-							type="primary"
-							danger
-							onClick={handleOpenConfirm}
-							data-testid="reindex-open-confirm-btn"
+						size="small"
+						data-testid="reindex-card"
+					>
+						<Text
+							type="secondary"
+							style={{ display: "block", marginBottom: 12 }}
 						>
-							重建 ES 索引
-						</Button>
-					)}
-					{phase === "reindexing" && (
-						<Button onClick={handleStop} data-testid="reindex-stop-btn">
-							停止任务
-						</Button>
-					)}
-					{runJob &&
-						(phase === "paused" ||
-							(phase === "error" && runJob.status === "failed")) && (
-							<Button
-								type="primary"
-								onClick={handleResume}
-								data-testid="reindex-resume-btn"
-							>
-								断点续开
-							</Button>
-						)}
-					{(phase === "done" || phase === "error" || phase === "paused") && (
-						<Button onClick={handleReset}>重置</Button>
-					)}
-				</Space>
+							当 Elasticsearch 索引与 PostgreSQL
+							数据不一致时，可手动触发全量重建。点击下方按钮会先做一次 PG↔ES
+							对账，再二次确认是否执行。
+						</Text>
 
-				<Modal
-					title={
-						<span>
-							<ExclamationCircleOutlined
-								style={{
-									color: "var(--color-warning, #faad14)",
-									marginRight: 8,
-								}}
-							/>
-							确认重建 ES 索引
-						</span>
-					}
-					open={confirmOpen}
-					okText="确认重建"
-					cancelText="取消"
-					okButtonProps={{
-						danger: true,
-						disabled: !auditResult,
-					}}
-					confirmLoading={confirmLoading}
-					onOk={handleReindexSubmit}
-					onCancel={() => setConfirmOpen(false)}
-					destroyOnClose
-				>
-					<div>
-						{auditError && (
+						{error && (
 							<Alert
 								type="error"
-								message={auditError}
+								showIcon
+								message={error}
+								style={{ marginBottom: 12 }}
+								closable
+								onClose={() => setError(null)}
+							/>
+						)}
+
+						{runJob &&
+							(phase === "reindexing" ||
+								phase === "paused" ||
+								phase === "done" ||
+								phase === "error") && (
+								<div style={{ marginBottom: 12 }}>
+									<Progress
+										percent={Number(runJob.progress_pct.toFixed(1))}
+										status={phase === "error" ? "exception" : "active"}
+									/>
+									<div style={{ marginTop: 8 }}>
+										<Text type="secondary">
+											状态：{runJob.status} · 扫描 {runJob.assets_scanned}/
+											{runJob.total_assets || "?"}· 索引{" "}
+											{runJob.documents_indexed} · 删除{" "}
+											{runJob.documents_deleted} · 失败 {runJob.failed}
+										</Text>
+									</div>
+								</div>
+							)}
+
+						{/* Actual reindex result */}
+						{runJob && phase === "done" && (
+							<Alert
+								type="success"
+								showIcon
+								message="索引重建完成"
+								description={
+									<div>
+										<p>总资产数：{runJob.total_assets}</p>
+										<p>成功索引：{runJob.documents_indexed}</p>
+										<p>删除文档：{runJob.documents_deleted}</p>
+										<p>失败：{runJob.failed}</p>
+									</div>
+								}
 								style={{ marginBottom: 12 }}
 							/>
 						)}
-						{!auditResult && !auditError && <p>正在查询 PG↔ES 对账数据...</p>}
-						{auditResult && (
-							<Descriptions
-								column={1}
-								size="small"
-								style={{ marginBottom: 12 }}
-							>
-								<Descriptions.Item label="PG 资产数">
-									<strong>{auditResult.pg_assets.toLocaleString()}</strong>
-								</Descriptions.Item>
-								<Descriptions.Item label="ES 文档数">
-									<strong>
-										{auditResult.elasticsearch_docs.toLocaleString()}
-									</strong>
-								</Descriptions.Item>
-								<Descriptions.Item label="缺失（PG 有 ES 无）">
-									<Text type="warning">
-										{auditResult.missing_in_elasticsearch.toLocaleString()}
-									</Text>
-								</Descriptions.Item>
-								<Descriptions.Item label="孤儿（ES 有 PG 无）">
-									<Text type="warning">
-										{auditResult.orphan_in_elasticsearch.toLocaleString()}
-									</Text>
-								</Descriptions.Item>
-								<Descriptions.Item label="一致性">
-									{(auditResult.consistency * 100).toFixed(2)}%
-								</Descriptions.Item>
-							</Descriptions>
-						)}
-						<p>
-							重建会从 PG 全量扫描资产并写入 ES，
-							以异步任务执行，可在运行中停止并断点续开。
-						</p>
-						<p>确定继续？</p>
-					</div>
-				</Modal>
-			</Card>
 
-			<Card
-				title={
-					<span>
-						<ThunderboltOutlined style={{ marginRight: 8 }} />
-						重建任务历史
-					</span>
-				}
-				size="small"
-				style={{ marginTop: 16 }}
-				data-testid="reindex-history-card"
-				extra={
-					<Button size="small" onClick={loadHistory} loading={historyLoading}>
-						刷新
-					</Button>
-				}
-			>
-				{historyError && (
-					<Alert
-						type="error"
-						message={historyError}
-						style={{ marginBottom: 12 }}
-						closable
-					/>
-				)}
-				<Table<ReindexJob>
-					rowKey="id"
-					size="small"
-					loading={historyLoading}
-					dataSource={history}
-					pagination={false}
-					locale={{ emptyText: "暂无重建任务" }}
-					columns={[
-						{
-							title: "任务 ID",
-							dataIndex: "id",
-							width: 220,
-							render: (v: string) => (
-								<Tooltip title={v}>
-									<code style={{ fontSize: 12 }}>{v.slice(0, 12)}…</code>
-								</Tooltip>
-							),
-						},
-						{
-							title: "类型",
-							dataIndex: "dry_run",
-							width: 80,
-							render: (dry: boolean) =>
-								dry ? (
-									<Tag color="blue">Dry Run</Tag>
-								) : (
-									<Tag color="purple">重建</Tag>
-								),
-						},
-						{
-							title: "状态",
-							dataIndex: "status",
-							width: 100,
-							render: (s: ReindexJob["status"]) => {
-								const map: Record<ReindexJob["status"], string> = {
-									queued: "default",
-									running: "processing",
-									paused: "warning",
-									succeeded: "success",
-									failed: "error",
-								};
-								return <Tag color={map[s]}>{s}</Tag>;
-							},
-						},
-						{
-							title: "进度",
-							dataIndex: "progress_pct",
-							width: 140,
-							render: (p: number, row) => (
-								<Tooltip
-									title={`扫描 ${row.assets_scanned}/${row.total_assets} · 写入 ${row.documents_indexed} · 失败 ${row.failed}`}
+						<Space>
+							{phase === "idle" && (
+								<Button
+									type="primary"
+									danger
+									onClick={handleOpenConfirm}
+									data-testid="reindex-open-confirm-btn"
 								>
-									<Progress percent={Math.round(p * 10) / 10} size="small" />
-								</Tooltip>
-							),
-						},
-						{
-							title: "创建时间",
-							dataIndex: "created_at",
-							width: 170,
-							render: (v: string) => new Date(v).toLocaleString(),
-						},
-						{
-							title: "更新时间",
-							dataIndex: "updated_at",
-							width: 170,
-							render: (v: string) => new Date(v).toLocaleString(),
-						},
-						{
-							title: "错误样本",
-							dataIndex: "error_samples",
-							render: (samples?: string[]) => {
-								if (!samples || samples.length === 0)
-									return <Text type="secondary">—</Text>;
-								return (
-									<Tooltip title={samples.join("\n")}>
-										<Text type="danger">{samples.length} 条</Text>
-									</Tooltip>
-								);
-							},
-						},
-					]}
-				/>
-			</Card>
+									重建 ES 索引
+								</Button>
+							)}
+							{phase === "reindexing" && (
+								<Button onClick={handleStop} data-testid="reindex-stop-btn">
+									停止任务
+								</Button>
+							)}
+							{runJob &&
+								(phase === "paused" ||
+									(phase === "error" && runJob.status === "failed")) && (
+									<Button
+										type="primary"
+										onClick={handleResume}
+										data-testid="reindex-resume-btn"
+									>
+										断点续开
+									</Button>
+								)}
+							{(phase === "done" ||
+								phase === "error" ||
+								phase === "paused") && (
+								<Button onClick={handleReset}>重置</Button>
+							)}
+						</Space>
+
+						{confirmOpen && (
+							<Modal
+								title={
+									<span>
+										<ExclamationCircleOutlined
+											style={{
+												color: "var(--color-warning, #faad14)",
+												marginRight: 8,
+											}}
+										/>
+										确认重建 ES 索引
+									</span>
+								}
+								open={confirmOpen}
+								okText="确认重建"
+								cancelText="取消"
+								okButtonProps={{
+									danger: true,
+									disabled: !auditResult,
+								}}
+								confirmLoading={confirmLoading}
+								onOk={handleReindexSubmit}
+								onCancel={handleCloseConfirm}
+								footer={(_, { OkBtn }) => (
+									<>
+										<Button
+											onClick={handleCloseConfirm}
+											data-testid="reindex-cancel-btn"
+										>
+											取消
+										</Button>
+										<OkBtn />
+									</>
+								)}
+								destroyOnHidden
+							>
+								<div>
+									{auditError && (
+										<Alert
+											type="error"
+											message={auditError}
+											style={{ marginBottom: 12 }}
+										/>
+									)}
+									{!auditResult && !auditError && (
+										<p>正在查询 PG↔ES 对账数据...</p>
+									)}
+									{auditResult && (
+										<Descriptions
+											column={1}
+											size="small"
+											style={{ marginBottom: 12 }}
+										>
+											<Descriptions.Item label="PG 资产数">
+												<strong>
+													{auditResult.pg_assets.toLocaleString()}
+												</strong>
+											</Descriptions.Item>
+											<Descriptions.Item label="ES 文档数">
+												<strong>
+													{auditResult.elasticsearch_docs.toLocaleString()}
+												</strong>
+											</Descriptions.Item>
+											<Descriptions.Item label="缺失（PG 有 ES 无）">
+												<Text type="warning">
+													{auditResult.missing_in_elasticsearch.toLocaleString()}
+												</Text>
+											</Descriptions.Item>
+											<Descriptions.Item label="孤儿（ES 有 PG 无）">
+												<Text type="warning">
+													{auditResult.orphan_in_elasticsearch.toLocaleString()}
+												</Text>
+											</Descriptions.Item>
+											<Descriptions.Item label="一致性">
+												{(auditResult.consistency * 100).toFixed(2)}%
+											</Descriptions.Item>
+										</Descriptions>
+									)}
+									<p>
+										重建会从 PG 全量扫描资产并写入 ES，
+										以异步任务执行，可在运行中停止并断点续开。
+									</p>
+									<p>确定继续？</p>
+								</div>
+							</Modal>
+						)}
+					</Card>
+
+					<Card
+						title={
+							<span>
+								<ThunderboltOutlined style={{ marginRight: 8 }} />
+								重建任务历史
+							</span>
+						}
+						size="small"
+						style={{ marginTop: 16 }}
+						data-testid="reindex-history-card"
+						extra={
+							<Button
+								size="small"
+								onClick={loadHistory}
+								loading={historyLoading}
+							>
+								刷新
+							</Button>
+						}
+					>
+						{historyError && (
+							<Alert
+								type="error"
+								message={historyError}
+								style={{ marginBottom: 12 }}
+								closable
+							/>
+						)}
+						<Table<ReindexJob>
+							rowKey="id"
+							size="small"
+							loading={historyLoading}
+							dataSource={history}
+							pagination={false}
+							locale={{ emptyText: "暂无重建任务" }}
+							columns={[
+								{
+									title: "任务 ID",
+									dataIndex: "id",
+									width: 220,
+									render: (v: string) => (
+										<Tooltip title={v}>
+											<code style={{ fontSize: 12 }}>{v.slice(0, 12)}…</code>
+										</Tooltip>
+									),
+								},
+								{
+									title: "类型",
+									dataIndex: "dry_run",
+									width: 80,
+									render: (dry: boolean) =>
+										dry ? (
+											<Tag color="blue">Dry Run</Tag>
+										) : (
+											<Tag color="purple">重建</Tag>
+										),
+								},
+								{
+									title: "状态",
+									dataIndex: "status",
+									width: 100,
+									render: (s: ReindexJob["status"]) => {
+										const map: Record<ReindexJob["status"], string> = {
+											queued: "default",
+											running: "processing",
+											paused: "warning",
+											succeeded: "success",
+											failed: "error",
+										};
+										return <Tag color={map[s]}>{s}</Tag>;
+									},
+								},
+								{
+									title: "进度",
+									dataIndex: "progress_pct",
+									width: 140,
+									render: (p: number, row) => (
+										<Tooltip
+											title={`扫描 ${row.assets_scanned}/${row.total_assets} · 写入 ${row.documents_indexed} · 失败 ${row.failed}`}
+										>
+											<Progress
+												percent={Math.round(p * 10) / 10}
+												size="small"
+											/>
+										</Tooltip>
+									),
+								},
+								{
+									title: "创建时间",
+									dataIndex: "created_at",
+									width: 170,
+									render: (v: string) => new Date(v).toLocaleString(),
+								},
+								{
+									title: "更新时间",
+									dataIndex: "updated_at",
+									width: 170,
+									render: (v: string) => new Date(v).toLocaleString(),
+								},
+								{
+									title: "错误样本",
+									dataIndex: "error_samples",
+									render: (samples?: string[]) => {
+										if (!samples || samples.length === 0)
+											return <Text type="secondary">—</Text>;
+										return (
+											<Tooltip title={samples.join("\n")}>
+												<Text type="danger">{samples.length} 条</Text>
+											</Tooltip>
+										);
+									},
+								},
+							]}
+						/>
+					</Card>
+				</>
+			)}
 		</div>
 	);
 }

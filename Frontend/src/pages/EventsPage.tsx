@@ -265,12 +265,9 @@ export default function EventsPage() {
 	}, [nextCursor, loadingMore, eventTypeFilter, msgApi]);
 
 	useEffect(() => {
-		if (!assetId.trim()) {
-			setLoading(true);
-			setEvents([]);
-			setNextCursor(undefined);
-			setError(null);
-			fetchEvents();
+		const trimmed = assetId.trim();
+		if (trimmed && !isCanonicalAssetId(trimmed)) {
+			setLoading(false);
 			return;
 		}
 		setEvents([]);
