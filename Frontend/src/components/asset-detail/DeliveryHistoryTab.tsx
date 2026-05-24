@@ -27,55 +27,14 @@ export default function DeliveryHistoryTab({ assetId }: Props) {
 		const run = async () => {
 			setLoading(true);
 			try {
-				const pageSize = 100;
-				let ids: string[] = [];
-				let page = 1;
-
-				while (true) {
-					const res = await assetsApi.listDeliveries(assetId, page, pageSize);
-					const pageIds = res.items ?? [];
-					ids = ids.concat(pageIds);
-
-					// 后端这里是用 page/page_size 做切片，没有真正的 next_token 分页游标；
-					// 用“当前页返回数量 < pageSize”判断是否到末页更可靠。
-					if (pageIds.length < pageSize) break;
-					page += 1;
-
-					// 安全兜底，避免后端将来改为游标分页导致潜在死循环。
-					if (page > 1000) break;
-				}
-
-				if (cancelled || ids.length === 0) {
+				const res = await assetsApi.listDeliveries(assetId, 1, 100);
+				const ids = res.items ?? [];
+				if (ids.length === 0) {
 					if (!cancelled) setDeliveries([]);
 					return;
 				}
-
-				// Avoid N+1 HTTP calls: fetch deliveries by pages and select target IDs in-memory.
-				const wanted = new Set(ids);
-				const byID = new Map<string, Delivery>();
-				let deliveryPage = 1;
-				while (wanted.size > 0) {
-					const res = await deliveriesApi.list({
-						page: deliveryPage,
-						page_size: pageSize,
-					});
-					const pageItems = res.items ?? [];
-					for (const item of pageItems) {
-						if (wanted.has(item.delivery_id)) {
-							byID.set(item.delivery_id, item);
-							wanted.delete(item.delivery_id);
-						}
-					}
-					if (pageItems.length < pageSize) break;
-					deliveryPage += 1;
-					if (deliveryPage > 1000) break;
-				}
-				if (cancelled) return;
-
-				const items = ids
-					.map((id) => byID.get(id))
-					.filter((item): item is Delivery => !!item);
-				setDeliveries(items);
+				const items = await Promise.all(ids.map((id) => deliveriesApi.get(id)));
+				if (!cancelled) setDeliveries(items);
 			} catch {
 				if (!cancelled) {
 					message.error("加载交付历史失败");

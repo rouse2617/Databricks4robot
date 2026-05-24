@@ -20,6 +20,7 @@ func TestHandler_SyncStatus_WithCallback(t *testing.T) {
 			OutboxESSubscriberEnabled: true,
 			SearchIndexMode:           "outbox_es_subscriber",
 			Env:                       "development",
+			AdminSearchEnabled:        true,
 		}
 	}, nil)
 	r := gin.New()
@@ -32,6 +33,9 @@ func TestHandler_SyncStatus_WithCallback(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 	if !strings.Contains(w.Body.String(), `"search_index_mode":"outbox_es_subscriber"`) {
+		t.Fatalf("body %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"admin_search_enabled":true`) {
 		t.Fatalf("body %s", w.Body.String())
 	}
 }

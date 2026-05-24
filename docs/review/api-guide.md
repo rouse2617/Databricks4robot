@@ -1687,7 +1687,8 @@ curl "$BASE/api/v1/search/sync-status" \
   "outbox_relay_enabled": true,
   "outbox_es_subscriber_enabled": true,
   "search_index_mode": "outbox_es_subscriber",
-  "env": "development"
+  "env": "development",
+  "admin_search_enabled": true
 }
 ```
 
@@ -1696,6 +1697,7 @@ curl "$BASE/api/v1/search/sync-status" \
 - `search_index_mode` 枚举：`unavailable` / `outbox_es_subscriber` / `local_reconcile` / `manual`。
 - `outbox_relay_enabled` 表示是否启用 PG `asset_events` 到 Pub/Sub 的 relay。
 - `outbox_es_subscriber_enabled` 表示当前进程是否启用 Pub/Sub 到 Elasticsearch 的订阅消费。
+- `admin_search_enabled` 表示当前环境是否开放搜索管理接口（重建索引、任务历史、PG↔ES 对账）。
 
 #### 同步进度（PG / ES 与 Outbox）
 

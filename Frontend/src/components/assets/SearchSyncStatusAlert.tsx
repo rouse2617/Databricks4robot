@@ -12,7 +12,13 @@ const { Text } = Typography;
 /**
  * Search index sync status and PG↔ES audit (settings page; formerly on assets discovery).
  */
-export default function SearchSyncStatusAlert() {
+interface Props {
+	adminSearchEnabled?: boolean;
+}
+
+export default function SearchSyncStatusAlert({
+	adminSearchEnabled = false,
+}: Props) {
 	const [status, setStatus] = useState<SearchSyncStatusResponse | null>(null);
 	const [progress, setProgress] = useState<SearchSyncProgressResponse | null>(
 		null,
@@ -163,11 +169,11 @@ export default function SearchSyncStatusAlert() {
 		}
 	};
 
-	const auditAction = (
+	const auditAction = adminSearchEnabled ? (
 		<Button size="small" onClick={() => void runAudit()} loading={auditLoading}>
 			PG↔ES 对账
 		</Button>
-	);
+	) : null;
 
 	if (!status.elasticsearch_ok) {
 		return (
