@@ -1584,3 +1584,210 @@ func TestHandleRatingsHistoryNoPG(t *testing.T) {
 		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
 	}
 }
+
+// ─── buildLineageResponse tests ────────────────────────────────────────────
+
+func TestBuildLineageResponse_nilDB(t *testing.T) {
+	h := New(nil, nil)
+	// pg and pgq both nil → early return with empty skeleton
+	res, err := h.buildLineageResponse(context.Background(), "aa111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.AssetID != "aa111111" {
+		t.Fatalf("expected asset_id aa111111, got %s", res.AssetID)
+	}
+	if len(res.Downstream["algo_results"].([]any)) != 0 {
+		t.Fatal("expected empty algo_results")
+	}
+	if len(res.Downstream["deliveries"].([]any)) != 0 {
+		t.Fatal("expected empty deliveries")
+	}
+	if len(res.Downstream["eval_results"].([]any)) != 0 {
+		t.Fatal("expected empty eval_results")
+	}
+}
+
+func TestBuildLineageResponse_happyPath(t *testing.T) {
+	now := time.Now()
+	algoRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"algo-a", "v1", "ok", "run-111", "s3://output/a"},
+			{"algo-b", "v2", "ok", "run-222", "s3://output/b"},
+		},
+	}
+	delRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"del-111", "c1", &now},
+		},
+	}
+	evalRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"eval-1", "accuracy", float64(0.95)},
+		},
+	}
+
+	q := &fakeAssetSQLQuerier{
+		queries: []assetSQLQueryResult{
+			{rows: algoRows},
+			{rows: delRows},
+			{rows: evalRows},
+		},
+	}
+
+	h := New(nil, nil)
+	h.pgq = q
+
+	res, err := h.buildLineageResponse(context.Background(), "aa111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Round-trip through JSON to read response fields concretely.
+	b, _ := json.Marshal(res)
+	var body map[string]any
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+
+	ds := body["downstream"].(map[string]any)
+
+	algos := ds["algo_results"].([]any)
+	if len(algos) != 2 {
+		t.Fatalf("expected 2 algo results, got %d", len(algos))
+	}
+	a0 := algos[0].(map[string]any)
+	if a0["algo_name"] != "algo-a" || a0["run_id"] != "run-111" {
+		t.Fatalf("unexpected algo[0]: %v", a0)
+	}
+
+	dels := ds["deliveries"].([]any)
+	if len(dels) != 1 {
+		t.Fatalf("expected 1 delivery, got %d", len(dels))
+	}
+	d0 := dels[0].(map[string]any)
+	if d0["delivery_id"] != "del-111" || d0["customer_id"] != "c1" {
+		t.Fatalf("unexpected delivery[0]: %v", d0)
+	}
+	if _, ok := d0["delivered_at"]; !ok {
+		t.Fatal("expected delivered_at for non-nil timestamp")
+	}
+
+	evals := ds["eval_results"].([]any)
+	if len(evals) != 1 {
+		t.Fatalf("expected 1 eval result, got %d", len(evals))
+	}
+	e0 := evals[0].(map[string]any)
+	if e0["eval_name"] != "eval-1" || e0["metric_value"] != float64(0.95) {
+		t.Fatalf("unexpected eval[0]: %v", e0)
+	}
+
+	up := body["upstream"].(map[string]any)
+	if len(up) != 0 {
+		t.Fatal("expected empty upstream when pg is nil")
+	}
+}
+
+func TestBuildLineageResponse_algoRowsErr(t *testing.T) {
+	algoRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"algo-a", "v1", "ok", "run-111", "s3://output/a"},
+		},
+		err: fmt.Errorf("connection lost"),
+	}
+	delRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"del-111", "c1", nil},
+		},
+	}
+	evalRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"eval-1", "accuracy", float64(0.92)},
+		},
+	}
+
+	q := &fakeAssetSQLQuerier{
+		queries: []assetSQLQueryResult{
+			{rows: algoRows},
+			{rows: delRows},
+			{rows: evalRows},
+		},
+	}
+
+	h := New(nil, nil)
+	h.pgq = q
+
+	res, err := h.buildLineageResponse(context.Background(), "aa111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b, _ := json.Marshal(res)
+	var body map[string]any
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	ds := body["downstream"].(map[string]any)
+
+	// Algo row scanned before the error should still appear
+	algos := ds["algo_results"].([]any)
+	if len(algos) != 1 {
+		t.Fatalf("expected 1 scanned algo result despite rows.Err, got %d", len(algos))
+	}
+	a0 := algos[0].(map[string]any)
+	if a0["algo_name"] != "algo-a" {
+		t.Fatalf("expected algo-a, got %v", a0)
+	}
+
+	dels := ds["deliveries"].([]any)
+	if len(dels) != 1 {
+		t.Fatalf("expected 1 delivery, got %d", len(dels))
+	}
+	evals := ds["eval_results"].([]any)
+	if len(evals) != 1 {
+		t.Fatalf("expected 1 eval result, got %d", len(evals))
+	}
+}
+
+func TestBuildLineageResponse_scanErrorLogged(t *testing.T) {
+	algoRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"algo-a", "v1", "ok", "run-111", "s3://output/a"},
+			{"broken-row"},
+		},
+	}
+	delRows := &fakeAssetSQLRows{data: [][]any{}}
+	evalRows := &fakeAssetSQLRows{data: [][]any{}}
+
+	q := &fakeAssetSQLQuerier{
+		queries: []assetSQLQueryResult{
+			{rows: algoRows},
+			{rows: delRows},
+			{rows: evalRows},
+		},
+	}
+
+	h := New(nil, nil)
+	h.pgq = q
+
+	res, err := h.buildLineageResponse(context.Background(), "aa111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b, _ := json.Marshal(res)
+	var body map[string]any
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	ds := body["downstream"].(map[string]any)
+
+	algos := ds["algo_results"].([]any)
+	if len(algos) != 1 {
+		t.Fatalf("expected 1 valid algo result (broken row skipped), got %d", len(algos))
+	}
+	a0 := algos[0].(map[string]any)
+	if a0["algo_name"] != "algo-a" {
+		t.Fatalf("expected algo-a, got %v", a0)
+	}
+}

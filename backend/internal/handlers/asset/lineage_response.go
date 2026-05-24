@@ -2,6 +2,7 @@ package asset
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +22,7 @@ func (h *Handler) buildLineageResponse(ctx context.Context, assetID string) (lin
 		"eval_results": []any{},
 	}}
 
-	if h.pg == nil {
+	if h.pg == nil && h.pgq == nil {
 		return out, nil
 	}
 
@@ -43,21 +44,23 @@ func (h *Handler) buildLineageResponse(ctx context.Context, assetID string) (lin
 		MetricValue float64 `json:"metric_value,omitempty"`
 	}
 
-	var mcapFileID, mcapURI, ingestState string
-	err := h.pg.QueryRow(ctx, `
-		SELECT mcap_file_id, COALESCE(storage_uri,''), COALESCE(ingest_state,'')
-		FROM mcap_files
-		WHERE mcap_file_id = (SELECT mcap_file_id FROM assets WHERE asset_id = $1)
-	`, assetID).Scan(&mcapFileID, &mcapURI, &ingestState)
-	if err == nil && mcapFileID != "" {
-		out.Upstream = gin.H{
-			"mcap_file_id": mcapFileID,
-			"mcap_uri":     mcapURI,
-			"ingest_state": ingestState,
+	if h.pg != nil {
+		var mcapFileID, mcapURI, ingestState string
+		err := h.pg.QueryRow(ctx, `
+			SELECT mcap_file_id, COALESCE(storage_uri,''), COALESCE(ingest_state,'')
+			FROM mcap_files
+			WHERE mcap_file_id = (SELECT mcap_file_id FROM assets WHERE asset_id = $1)
+		`, assetID).Scan(&mcapFileID, &mcapURI, &ingestState)
+		if err == nil && mcapFileID != "" {
+			out.Upstream = gin.H{
+				"mcap_file_id": mcapFileID,
+				"mcap_uri":     mcapURI,
+				"ingest_state": ingestState,
+			}
 		}
 	}
 
-	algoRows, _ := h.pg.Query(ctx, `
+	algoRows, _ := h.pgq.Query(ctx, `
 		SELECT algo_name, algo_version, status, COALESCE(run_id,''), COALESCE(output_uri,'')
 		FROM asset_algo_latest
 		WHERE asset_id = $1
@@ -68,13 +71,18 @@ func (h *Handler) buildLineageResponse(ctx context.Context, assetID string) (lin
 		defer algoRows.Close()
 		for algoRows.Next() {
 			var a algoEntry
-			if err := algoRows.Scan(&a.AlgoName, &a.AlgoVersion, &a.Status, &a.RunID, &a.OutputURI); err == nil {
+			if err := algoRows.Scan(&a.AlgoName, &a.AlgoVersion, &a.Status, &a.RunID, &a.OutputURI); err != nil {
+				slog.Warn("lineage: scan algo row", "asset_id", assetID, "error", err)
+			} else {
 				algos = append(algos, a)
 			}
 		}
+		if err := algoRows.Err(); err != nil {
+			slog.Warn("lineage: iterate algo results", "asset_id", assetID, "error", err)
+		}
 	}
 
-	delRows, _ := h.pg.Query(ctx, `
+	delRows, _ := h.pgq.Query(ctx, `
 		SELECT d.delivery_id, d.customer_id, d.delivered_at
 		FROM delivery_items di
 		JOIN deliveries d ON d.delivery_id = di.delivery_id
@@ -88,16 +96,21 @@ func (h *Handler) buildLineageResponse(ctx context.Context, assetID string) (lin
 		for delRows.Next() {
 			var d deliveryEntry
 			var deliveredAt *time.Time
-			if err := delRows.Scan(&d.DeliveryID, &d.CustomerID, &deliveredAt); err == nil {
+			if err := delRows.Scan(&d.DeliveryID, &d.CustomerID, &deliveredAt); err != nil {
+				slog.Warn("lineage: scan delivery row", "asset_id", assetID, "error", err)
+			} else {
 				if deliveredAt != nil {
 					d.DeliveredAt = deliveredAt.Format(time.RFC3339)
 				}
 				deliveries = append(deliveries, d)
 			}
 		}
+		if err := delRows.Err(); err != nil {
+			slog.Warn("lineage: iterate delivery results", "asset_id", assetID, "error", err)
+		}
 	}
 
-	evalRows, _ := h.pg.Query(ctx, `
+	evalRows, _ := h.pgq.Query(ctx, `
 		SELECT eval_name, metric_key, COALESCE(metric_value,0)
 		FROM asset_eval_results
 		WHERE asset_id = $1
@@ -109,9 +122,14 @@ func (h *Handler) buildLineageResponse(ctx context.Context, assetID string) (lin
 		defer evalRows.Close()
 		for evalRows.Next() {
 			var e evalEntry
-			if err := evalRows.Scan(&e.EvalName, &e.MetricKey, &e.MetricValue); err == nil {
+			if err := evalRows.Scan(&e.EvalName, &e.MetricKey, &e.MetricValue); err != nil {
+				slog.Warn("lineage: scan eval row", "asset_id", assetID, "error", err)
+			} else {
 				evals = append(evals, e)
 			}
+		}
+		if err := evalRows.Err(); err != nil {
+			slog.Warn("lineage: iterate eval results", "asset_id", assetID, "error", err)
 		}
 	}
 
