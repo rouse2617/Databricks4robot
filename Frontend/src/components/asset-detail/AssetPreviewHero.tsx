@@ -291,7 +291,7 @@ function AssetSummaryPanel({ asset }: { asset: Asset }) {
 				<Descriptions.Item label="Algo">
 					<AlgoSummaryInline asset={asset} />
 				</Descriptions.Item>
-				<Descriptions.Item label="Deliveries">
+				<Descriptions.Item label="已完成交付">
 					{asset.delivery_count ?? 0}
 				</Descriptions.Item>
 				<Descriptions.Item label="Files">{fileCount}</Descriptions.Item>

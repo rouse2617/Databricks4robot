@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
@@ -89,5 +90,53 @@ func TestNewAssetUsecaseInitializesAlgoStateForAllBackends(t *testing.T) {
 	}
 	if got := asset.Files["raw_mcap"]; got != "mcap-001" {
 		t.Fatalf("raw_mcap should be initialized, got %q", got)
+	}
+}
+
+func TestBuildSearchSyncInfoReportsOutboxSubscriberMode(t *testing.T) {
+	cfg := &config.Config{Env: "production"}
+	info := buildSearchSyncInfo(cfg, espkg.New("http://example.invalid", "", "", ""), true, true)
+
+	if info.SearchIndexMode != "outbox_es_subscriber" {
+		t.Fatalf("expected outbox_es_subscriber mode, got %q", info.SearchIndexMode)
+	}
+	if !info.ElasticsearchOK || !info.OutboxESSubscriberEnabled {
+		t.Fatalf("expected ES and outbox subscriber to be marked healthy: %+v", info)
+	}
+}
+
+func TestBuildSearchSyncInfoReportsFallbackModes(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		es   *espkg.Client
+		want string
+	}{
+		{
+			name: "no elasticsearch",
+			cfg:  &config.Config{Env: "production"},
+			want: "unavailable",
+		},
+		{
+			name: "dev local reconcile",
+			cfg:  &config.Config{Env: "development"},
+			es:   espkg.New("http://example.invalid", "", "", ""),
+			want: "local_reconcile",
+		},
+		{
+			name: "production manual",
+			cfg:  &config.Config{Env: "production"},
+			es:   espkg.New("http://example.invalid", "", "", ""),
+			want: "manual",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := buildSearchSyncInfo(tt.cfg, tt.es, false, false)
+			if info.SearchIndexMode != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, info.SearchIndexMode)
+			}
+		})
 	}
 }

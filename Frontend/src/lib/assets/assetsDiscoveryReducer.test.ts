@@ -72,6 +72,17 @@ describe("query-changing actions reset page to 1 and set isStale", () => {
 		expect(result.resultsState.isStale).toBe(true);
 	});
 
+	it("CLEAR_ALL_FILTERS clears committed query and search draft", () => {
+		const s = freshState();
+		s.queryState.queryText = "no-such-asset";
+		s.searchUiState.draftText = "no-such-asset";
+		const result = assetsDiscoveryReducer(s, {
+			type: "CLEAR_ALL_FILTERS",
+		});
+		expect(result.queryState.queryText).toBe("");
+		expect(result.searchUiState.draftText).toBe("");
+	});
+
 	it("SET_SORT resets page and marks stale", () => {
 		const result = assetsDiscoveryReducer(stateOnPage3, {
 			type: "SET_SORT",
