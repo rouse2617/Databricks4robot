@@ -46,7 +46,17 @@ func (e *Engine) CheckAll(ctx context.Context, customerID string, assetIDs []str
 }
 
 // ListActiveForCustomer returns all active delivery rules for a customer.
-func (e *Engine) ListActiveForCustomer(ctx context.Context, customerID string) ([]*models.DeliveryRule, error) {
+func (e *Engine) 	// ListActiveForCustomer returns all active rules for a customer.
+	// This method is used by the DeliveryEligibilityProjector to get rule rating scopes.
+		// ListActiveForCustomer returns all active rules for a customer.
+	// This method is used by the DeliveryEligibilityProjector to get rule rating scopes.
+		// ListActiveForCustomer returns all active rules for a customer.
+	// This method is used by the DeliveryEligibilityProjector to get rule rating scopes.
+		// ListActiveForCustomer returns all active rules for a customer.
+	// This method is used by the DeliveryEligibilityProjector to get rule rating scopes.
+		// ListActiveForCustomer returns all active rules for a customer.
+	// This method is used by the DeliveryEligibilityProjector to get rule rating scopes.
+	ListActiveForCustomer(ctx context.Context, customerID string) ([]*models.DeliveryRule, error) {
 	if e.rules == nil {
 		return nil, nil
 	}
