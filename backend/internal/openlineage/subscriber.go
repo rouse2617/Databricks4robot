@@ -26,7 +26,8 @@ func (s *Subscriber) Run(ctx context.Context) error {
 func (s *Subscriber) HandleData(ctx context.Context, data []byte) error {
 	var ev models.AssetEvent
 	if err := json.Unmarshal(data, &ev); err != nil {
-		return err
+		slog.Error("openlineage subscriber: failed to unmarshal event, skipping malformed message", "err", err)
+		return nil
 	}
 	event, ok, err := s.Builder.Build(ev)
 	if err != nil {

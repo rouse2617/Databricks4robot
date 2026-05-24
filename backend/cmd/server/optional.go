@@ -307,7 +307,6 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 			slog.Error("openlineage pubsub subscriber init failed", "err", err)
 			os.Exit(1)
 		}
-		defer func() { _ = lineageSub.Close() }()
 		subscriber := &openlineage.Subscriber{
 			Source: lineageSub,
 			Builder: openlineage.Builder{
@@ -318,6 +317,7 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		}
 		slog.Info("openlineage emitter starting", "subscription", cfg.OpenLineageSubscription, "endpoint", cfg.OpenLineageEndpoint)
 		go func() {
+			defer func() { _ = lineageSub.Close() }()
 			if err := subscriber.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
 				slog.Error("openlineage emitter exited", "err", err)
 			}

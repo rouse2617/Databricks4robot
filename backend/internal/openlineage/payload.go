@@ -144,10 +144,11 @@ func eventTime(ev models.AssetEvent) time.Time {
 }
 
 func stringFromMap(m map[string]any, key string) string {
-	if v, ok := m[key]; ok {
-		return strings.TrimSpace(fmt.Sprint(v))
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
 	}
-	return ""
+	return strings.TrimSpace(fmt.Sprint(v))
 }
 
 func joinNameVersion(name, version string) string {
