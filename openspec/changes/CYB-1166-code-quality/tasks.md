@@ -26,8 +26,8 @@
 - [x] `cd backend && go test ./...` — all packages pass
 
 ## Deploy verification (runtime changes: asset_validator default, projector log)
-- [ ] Build + push with git SHA tag and `cloudrun-dev-latest`
-- [ ] L1 smoke on dev
+- [x] Build + push with git SHA tag and `cloudrun-dev-latest`
+- [x] L1 smoke on dev — 28/29 passed
 
 ## PR
-- [ ] PR template filled; Linear `CYB-1166` linked
+- [x] PR template filled; Linear `CYB-1166` linked

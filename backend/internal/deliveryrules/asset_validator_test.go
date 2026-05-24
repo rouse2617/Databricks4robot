@@ -308,6 +308,19 @@ func TestValidateCreate_getterError(t *testing.T) {
 	}
 }
 
+// ─── unknown asset type ─────────────────────────────────────────────────────
+
+func TestValidateCreate_unknownAssetType(t *testing.T) {
+	v := NewAssetWriteValidator(&mockParentGetter{infos: map[string]*ParentInfo{
+		"parent001": {AssetType: "segment"},
+	}})
+	err := v.ValidateCreate(context.Background(), assetWithParent("bogus_type", "parent001"))
+	var hv *HierarchyViolation
+	if !errors.As(err, &hv) || hv.Invariant != "L0" {
+		t.Fatalf("expected L0 violation for unknown type, got %v", err)
+	}
+}
+
 // ─── ParentInfo builder (repo-backed) ───────────────────────────────────────
 
 func TestAssetRepoParentGetter_nilAsset(t *testing.T) {

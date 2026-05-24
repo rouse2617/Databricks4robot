@@ -95,8 +95,13 @@ func (v *AssetWriteValidator) ValidateCreate(ctx context.Context, a *models.Asse
 		return v.checkAction(parent)
 	case "derived_asset":
 		return v.checkDerived(parent)
+	default:
+		return &HierarchyViolation{
+			Invariant: "L0",
+			AssetType: a.AssetType,
+			Expected:  fmt.Sprintf("unknown asset type %q", a.AssetType),
+		}
 	}
-	return nil
 }
 
 // ValidateUpdate checks invariants that apply to updates.
