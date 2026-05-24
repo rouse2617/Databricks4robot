@@ -122,6 +122,9 @@ type Config struct {
 	OpenLineageProducer       string
 	OpenLineageTimeoutMs      string
 
+	// DeliveryEligibilityProjector automatically manages delivery_ready:* tags.
+	DeliveryEligibilityProjectorEnabled string
+
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
 }
@@ -206,6 +209,9 @@ func Load() *Config {
 		OpenLineageNamespace:      getenv("OPENLINEAGE_NAMESPACE", "cyber-databrew"),
 		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", "cyber-databrew"),
 		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", "5000"),
+
+		// DeliveryEligibilityProjector automatically tags assets eligible for delivery.
+		DeliveryEligibilityProjectorEnabled: getenv("DELIVERY_ELIGIBILITY_PROJECTOR_ENABLED", "false"),
 
 		AdminToken: getenv("ADMIN_TOKEN", ""),
 	}

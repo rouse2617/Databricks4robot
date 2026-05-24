@@ -109,6 +109,8 @@ func (r *fakeRows) Scan(dest ...any) error {
 
 func (r *fakeRows) Close() { r.closed = true }
 
+func (r *fakeRows) Err() error { return nil }
+
 func assign(dst any, src any) error {
 	dv := reflect.ValueOf(dst)
 	if dv.Kind() != reflect.Ptr || dv.IsNil() {

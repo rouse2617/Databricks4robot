@@ -45,6 +45,14 @@ func (e *Engine) CheckAll(ctx context.Context, customerID string, assetIDs []str
 	return e.checkRules(ctx, customerID, assetIDs, "")
 }
 
+// ListActiveForCustomer returns all active delivery rules for a customer.
+func (e *Engine) ListActiveForCustomer(ctx context.Context, customerID string) ([]*models.DeliveryRule, error) {
+	if e.rules == nil {
+		return nil, nil
+	}
+	return e.rules.ListActiveForCustomer(ctx, customerID)
+}
+
 // checkRules is the shared implementation. When filterMode is non-empty only
 // rules with that enforce_mode are evaluated; when empty all active rules are
 // evaluated.
