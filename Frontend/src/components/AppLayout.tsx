@@ -3,8 +3,8 @@ import {
 	DashboardOutlined,
 	DatabaseOutlined,
 	FileOutlined,
+		HistoryOutlined,
 	FundProjectionScreenOutlined,
-	HistoryOutlined,
 	LogoutOutlined,
 	RobotOutlined,
 	SendOutlined,
@@ -31,8 +31,8 @@ const menuItems = [
 	{ key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
 	{ key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
 	{ type: "divider" as const },
-	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
+		{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
 	{
@@ -52,8 +52,7 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/events")) return "/events";
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
-	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
-	if (pathname.startsWith("/algo")) return "/algo";
+		if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	return "/assets";
 }
 
@@ -74,62 +73,32 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 					breakpoint="lg"
 					collapsedWidth={isMobile ? 0 : 80}
 					collapsible
-					style={{
-						overflow: "auto",
-						height: "100vh",
-						position: isMobile ? "sticky" : "fixed",
-						left: 0,
-						top: 0,
-						bottom: 0,
-						background: "#0F172A",
-						display: "flex",
-						flexDirection: "column",
-					}}
+					className="app-sider"
+					style={{ position: isMobile ? "sticky" : "fixed" }}
 				>
 					{/* Logo */}
 					<button
 						type="button"
 						onClick={() => navigate("/dashboard")}
 						aria-label="Cyber Databrew · 返回概览"
-						style={{
-							height: 56,
-							display: "flex",
-							alignItems: "center",
-							padding: "0 20px",
-							cursor: "pointer",
-							borderBottom: "1px solid rgba(255,255,255,0.06)",
-							width: "100%",
-							background: "transparent",
-							border: "none",
-							textAlign: "left",
-						}}
+						className="app-logo"
 					>
 						<div
 							aria-hidden="true"
-							style={{
-								width: 28,
-								height: 28,
-								borderRadius: 6,
-								background: "var(--color-primary)",
-								display: "flex",
-								alignItems: "center",
-								justifyContent: "center",
-								marginRight: 10,
-								flexShrink: 0,
-							}}
+							className="app-logo-icon"
 						>
 							<DatabaseOutlined style={{ color: "#fff", fontSize: 14 }} />
 						</div>
 						<Typography.Text
 							strong
-							style={{ color: "#F1F5F9", fontSize: 15, letterSpacing: 0.5 }}
+							className="app-logo-text"
 						>
 							Cyber Databrew
 						</Typography.Text>
 					</button>
 
 					{/* Navigation */}
-					<div style={{ flex: 1, paddingTop: 8 }}>
+					<div className="app-nav-wrapper">
 						<Menu
 							mode="inline"
 							theme="dark"
@@ -141,12 +110,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 					</div>
 
 					{/* User section */}
-					<div
-						style={{
-							padding: "12px 16px",
-							borderTop: "1px solid rgba(255,255,255,0.06)",
-						}}
-					>
+					<div className="app-user-section">
 						<Dropdown
 							menu={{
 								items: [
@@ -164,52 +128,24 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 							placement="topRight"
 							trigger={["click"]}
 						>
-							<div
-								style={{
-									display: "flex",
-									alignItems: "center",
-									gap: 10,
-									padding: "8px 8px",
-									borderRadius: 6,
-									cursor: "pointer",
-									transition: "background 0.2s",
-								}}
-								className="hover:bg-white/5"
-							>
+							<div className="app-user-card hover:bg-white/5">
 								<Avatar
 									size={32}
 									icon={<UserOutlined />}
 									style={{ background: "#334155", flexShrink: 0 }}
 								/>
-								<div style={{ overflow: "hidden" }}>
-									<div
-										style={{
-											color: "#E2E8F0",
-											fontSize: 13,
-											fontWeight: 500,
-											lineHeight: 1.3,
-										}}
-									>
+								<div className="app-user-text-wrapper">
+									<div className="app-user-name">
 										管理员
 									</div>
-									<div
-										style={{ color: "#64748B", fontSize: 11, lineHeight: 1.3 }}
-									>
+									<div className="app-user-role">
 										Phase 0
 									</div>
 								</div>
 							</div>
 						</Dropdown>
 						<div
-							style={{
-								color: "#64748B",
-								fontSize: 11,
-								marginTop: 8,
-								paddingLeft: 8,
-								whiteSpace: "nowrap",
-								overflow: "hidden",
-								textOverflow: "ellipsis",
-							}}
+							className="app-version"
 							title={versionLabel}
 						>
 							{versionLabel}
