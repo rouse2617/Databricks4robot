@@ -67,9 +67,15 @@ describe("EventsPage", () => {
 			"输入 Asset ID 筛选",
 		) as HTMLInputElement;
 
+		await waitFor(() => {
+			expect(listGlobalEventsMock).toHaveBeenCalledTimes(1);
+		});
+		listGlobalEventsMock.mockClear();
+
 		fireEvent.change(input, { target: { value: "partial" } });
 		await waitFor(() => {
 			expect(listEventsMock).not.toHaveBeenCalled();
+			expect(listGlobalEventsMock).not.toHaveBeenCalled();
 		});
 
 		const full = "7VBGimAO";

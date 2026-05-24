@@ -189,11 +189,17 @@ export function assetsDiscoveryReducer(
 			});
 
 		case "CLEAR_ALL_FILTERS":
-			return withQueryReset(state, {
-				...state.queryState,
-				activeFilters: [],
-				queryText: "",
-			});
+			return {
+				...withQueryReset(state, {
+					...state.queryState,
+					activeFilters: [],
+					queryText: "",
+				}),
+				searchUiState: {
+					...state.searchUiState,
+					draftText: "",
+				},
+			};
 
 		case "SET_SORT":
 			return withQueryReset(state, {
