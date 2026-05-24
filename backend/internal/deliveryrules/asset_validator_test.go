@@ -33,7 +33,7 @@ func assetWithParent(assetType, parentID string) *models.Asset {
 }
 
 func parentInfo(assetType string) *ParentInfo {
-	return &ParentInfo{AssetType: assetType, LifecycleState: "active", McapFileID: "mcap0001"}
+	return &ParentInfo{AssetType: assetType}
 }
 
 var nilValidator = NewAssetWriteValidator(nil) // validates nothing when no getter

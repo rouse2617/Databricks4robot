@@ -26,11 +26,7 @@ func (v *HierarchyViolation) Error() string {
 
 // ParentInfo holds metadata needed for hierarchy validation.
 type ParentInfo struct {
-	AssetType      string
-	LifecycleState string
-	McapFileID     string
-	LogicalAssetID string
-	IsCurrent      bool
+	AssetType string
 }
 
 // ParentGetter abstracts parent asset lookup for testability.
@@ -204,11 +200,5 @@ func (g *AssetRepoParentGetter) GetParentInfo(ctx context.Context, parentAssetID
 	if a == nil {
 		return nil, nil
 	}
-	return &ParentInfo{
-		AssetType:      a.AssetType,
-		LifecycleState: a.LifecycleState,
-		McapFileID:     a.McapFileID,
-		LogicalAssetID: a.LogicalAssetID,
-		IsCurrent:      a.IsCurrent,
-	}, nil
+		return &ParentInfo{AssetType: a.AssetType}, nil
 }

@@ -30,7 +30,7 @@ func NewEmitter(endpoint string, timeout time.Duration) (*Emitter, error) {
 }
 
 func (e *Emitter) Emit(ctx context.Context, event *Event) error {
-	if e == nil || strings.TrimSpace(e.Endpoint) == "" {
+	if e == nil || e.Endpoint == "" {
 		return fmt.Errorf("openlineage emitter: incomplete wiring")
 	}
 	if event == nil {
@@ -40,16 +40,12 @@ func (e *Emitter) Emit(ctx context.Context, event *Event) error {
 	if err != nil {
 		return fmt.Errorf("openlineage emitter: marshal event: %w", err)
 	}
-	client := e.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.Endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("openlineage emitter: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := e.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("openlineage emitter: post event: %w", err)
 	}

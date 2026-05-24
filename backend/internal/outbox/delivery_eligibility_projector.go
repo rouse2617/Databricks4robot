@@ -99,7 +99,9 @@ func (p *DeliveryEligibilityProjector) handleEvent(ctx context.Context, data []b
 	customerID := ""
 	if asset.ProjectID != "" {
 		c, err := p.Customers.Get(ctx, asset.ProjectID)
-		if err == nil && c != nil {
+		if err != nil {
+			slog.Warn("delivery eligibility projector: customer lookup failed", "asset_id", assetID, "project_id", asset.ProjectID, "err", err)
+		} else if c != nil {
 			customerID = c.CustomerID
 		}
 	}
