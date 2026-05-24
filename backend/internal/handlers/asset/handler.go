@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/handlers"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
@@ -619,6 +620,17 @@ func (h *Handler) Create(c *gin.Context) {
 		LastDeliveredTo:     req.LastDeliveredTo,
 	})
 	if err != nil {
+		// CYB-1164: hierarchy violation check before sentinel switch.
+		var hv *deliveryrules.HierarchyViolation
+		if errors.As(err, &hv) {
+			httpresp.Unprocessable(c, httpresp.CodeHierarchyViolation, hv.Error(), map[string]any{
+				"invariant":  hv.Invariant,
+				"asset_type": hv.AssetType,
+				"parent_id":  hv.ParentID,
+				"expected":   hv.Expected,
+			})
+			return
+		}
 		switch {
 		case errors.Is(err, assetUC.ErrMcapFileIDRequired), errors.Is(err, assetUC.ErrInvalidRange):
 			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)

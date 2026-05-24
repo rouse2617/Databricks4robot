@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
@@ -69,6 +70,7 @@ type Usecase struct {
 	eventRepo      repository.AssetEventRepository
 	customerRepo   repository.CustomerRepository  // CYB-1070: customer.* namespace lint
 	usageStatsRepo repository.AssetUsageStatRepository // CYB-1095/1096: usage stats
+	validator      *deliveryrules.AssetWriteValidator // CYB-1164: hierarchy invariants
 }
 
 func New(repo repository.AssetRepository) *Usecase {
@@ -122,6 +124,11 @@ func (u *Usecase) SetCustomerRepo(r repository.CustomerRepository) {
 // SetUsageStatsRepo wires usage stats persistence for view/favorite counters (CYB-1095/1096).
 func (u *Usecase) SetUsageStatsRepo(r repository.AssetUsageStatRepository) {
 	u.usageStatsRepo = r
+}
+
+// SetValidator wires the asset hierarchy validator (CYB-1164).
+func (u *Usecase) SetValidator(v *deliveryrules.AssetWriteValidator) {
+	u.validator = v
 }
 
 func (u *Usecase) withMutationTx(ctx context.Context, fn func(context.Context) error) error {
@@ -902,6 +909,12 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 		// Write raw_mcap reference to files.
 		if _, ok := a.Files["raw_mcap"]; !ok {
 			a.Files["raw_mcap"] = in.McapFileID
+		}
+	}
+	// CYB-1164: validate hierarchy invariants before persisting.
+	if u.validator != nil {
+		if err := u.validator.ValidateCreate(ctx, a); err != nil {
+			return nil, err
 		}
 	}
 	if in.AssetID == "" {

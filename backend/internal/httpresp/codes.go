@@ -33,4 +33,5 @@ const (
 	CodeUnsupportedOperator    = "UNSUPPORTED_OPERATOR"
 	CodeUnplannableQuery       = "UNPLANNABLE_QUERY"
 	CodeCustomerNotFound       = "CUSTOMER_NOT_FOUND" // CYB-1070
+	CodeHierarchyViolation     = "ASSET_HIERARCHY_VIOLATION" // CYB-1164
 )

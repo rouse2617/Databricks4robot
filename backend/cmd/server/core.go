@@ -43,6 +43,10 @@ func setupCore(inf *infra) *coreHandlers {
 	assetUsecase := assetUC.NewWithProjections(pg, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, inf.tagRegistry, inf.algoRegistry)
 	assetUsecase.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
 	assetUsecase.SetCustomerRepo(customerRepo)     // CYB-1070: customer.* namespace lint
+	// CYB-1164: asset hierarchy validator.
+	assetUsecase.SetValidator(deliveryrules.NewAssetWriteValidator(
+		deliveryrules.NewAssetRepoParentGetter(assetRepo),
+	))
 	assetUsecase.SetUsageStatsRepo(usageStatsRepo) // CYB-1095/1096: usage stats
 
 	assetHandler := assetH.New(assetUsecase, deliveryRepo)
