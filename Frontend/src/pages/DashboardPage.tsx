@@ -1219,6 +1219,38 @@ export default function DashboardPage() {
 
 	const failing = Object.entries(errors).filter(([, m]) => !!m);
 
+	const growthOption = useMemo(() => buildGrowthOption(growth), [growth]);
+	const stackedOption = useMemo(() => buildStackedOption(daily), [daily]);
+	const failureClusterOption = useMemo(
+		() => ({
+			tooltip: {
+				trigger: "item",
+				formatter: "{b}: {c} ({d}%)",
+			},
+			legend: {
+				type: "scroll",
+				orient: "vertical",
+				right: 10,
+			},
+			series: [
+				{
+					type: "pie",
+					radius: ["40%", "70%"],
+					center: ["40%", "50%"],
+					data: failureClusters.map((fc) => ({
+						name:
+							FAILURE_MODE_LABELS[fc.failure_mode] ?? fc.failure_mode,
+						value: fc.affected_assets,
+					})),
+					emphasis: {
+						itemStyle: { shadowBlur: 10 },
+					},
+				},
+			],
+		}),
+		[failureClusters],
+	);
+
 	if (!pageReady) return <PageLoading />;
 
 	return (
@@ -1261,6 +1293,7 @@ export default function DashboardPage() {
 					<Radio.Button value={60}>近 60 天</Radio.Button>
 					<Radio.Button value={90}>近 90 天</Radio.Button>
 				</Radio.Group>
+					{rangeBusy && <Spin size="small" style={{ marginLeft: 12 }} />}
 			</div>
 
 			{failing.length > 0 && (
@@ -1295,7 +1328,7 @@ export default function DashboardPage() {
 				/>
 			)}
 
-			<Spin spinning={rangeBusy} tip="正在刷新图表与业务表…">
+			<div>
 				<Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
 					<Col xs={24} sm={12} lg={4} style={{ display: "flex" }}>
 						<KpiCard
@@ -1424,7 +1457,7 @@ export default function DashboardPage() {
 						>
 							{growth.length > 0 ? (
 								<LazyECharts
-									option={buildGrowthOption(growth)}
+									option={growthOption}
 									style={{ height: 340, width: "100%" }}
 								/>
 							) : (
@@ -1445,7 +1478,7 @@ export default function DashboardPage() {
 						>
 							{daily.length > 0 ? (
 								<LazyECharts
-									option={buildStackedOption(daily)}
+									option={stackedOption}
 									style={{ height: 340, width: "100%" }}
 								/>
 							) : (
@@ -1503,33 +1536,7 @@ export default function DashboardPage() {
 							) : (
 								<LazyECharts
 									style={{ height: 300 }}
-									option={{
-										tooltip: {
-											trigger: "item",
-											formatter: "{b}: {c} ({d}%)",
-										},
-										legend: {
-											type: "scroll",
-											orient: "vertical",
-											right: 10,
-										},
-										series: [
-											{
-												type: "pie",
-												radius: ["40%", "70%"],
-												center: ["40%", "50%"],
-												data: failureClusters.map((fc) => ({
-													name:
-														FAILURE_MODE_LABELS[fc.failure_mode] ??
-														fc.failure_mode,
-													value: fc.affected_assets,
-												})),
-												emphasis: {
-													itemStyle: { shadowBlur: 10 },
-												},
-											},
-										],
-									}}
+									option={failureClusterOption}
 								/>
 							)}
 						</Card>
@@ -1722,7 +1729,7 @@ export default function DashboardPage() {
 						</Card>
 					</Col>
 				</Row>
-			</Spin>
+			</div>
 		</div>
 	);
 }

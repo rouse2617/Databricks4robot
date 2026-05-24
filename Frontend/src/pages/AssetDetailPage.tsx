@@ -1,6 +1,5 @@
 import {
 	ArrowLeftOutlined,
-	BranchesOutlined,
 	FileOutlined,
 	LinkOutlined,
 	SendOutlined,
@@ -16,7 +15,7 @@ import {
 	Tag,
 	Typography,
 } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { assetsApi } from "../api/assets";
 import {
@@ -24,27 +23,17 @@ import {
 	type EvalResultItem,
 	evalApi,
 } from "../api/eval";
-import type {
-	AlgoEvent,
-	AlgoStatus,
-	Asset,
-	AssetEvent,
-	AssetProvenance,
-} from "../api/types";
-import ActionsTimelineTab from "../components/asset-detail/ActionsTimelineTab";
-import AlgoTab from "../components/asset-detail/AlgoTab";
-import AssetEventsTab from "../components/asset-detail/AssetEventsTab";
+import type { AlgoEvent, AlgoStatus, Asset, AssetEvent } from "../api/types";
 import AssetPreviewHero from "../components/asset-detail/AssetPreviewHero";
-import LogicalAssetId from "../components/asset-detail/LogicalAssetId";
-import VersionControl from "../components/asset-detail/VersionControl";
-import VersionHistoryBanner from "../components/asset-detail/VersionHistoryBanner";
-import VersionProvenanceTab from "../components/asset-detail/VersionProvenanceTab";
-import DeliveryHistoryTab from "../components/asset-detail/DeliveryHistoryTab";
-import EvalMetricsTab from "../components/asset-detail/EvalMetricsTab";
-import FilesTab from "../components/asset-detail/FilesTab";
-import LineageTab from "../components/asset-detail/LineageTab";
-import OverviewTab from "../components/asset-detail/OverviewTab";
-import TagsTab from "../components/asset-detail/TagsTab";
+const ActionsTimelineTab = lazy(() => import("../components/asset-detail/ActionsTimelineTab"));
+const AlgoTab = lazy(() => import("../components/asset-detail/AlgoTab"));
+const AssetEventsTab = lazy(() => import("../components/asset-detail/AssetEventsTab"));
+const DeliveryHistoryTab = lazy(() => import("../components/asset-detail/DeliveryHistoryTab"));
+const EvalMetricsTab = lazy(() => import("../components/asset-detail/EvalMetricsTab"));
+const FilesTab = lazy(() => import("../components/asset-detail/FilesTab"));
+const LineageTab = lazy(() => import("../components/asset-detail/LineageTab"));
+const OverviewTab = lazy(() => import("../components/asset-detail/OverviewTab"));
+const TagsTab = lazy(() => import("../components/asset-detail/TagsTab"));
 import { buildPreviewManifestFromSources } from "../hooks/assets/useAssetPreview";
 import { extractApiErrorMessage } from "../lib/apiError";
 import {
@@ -111,9 +100,7 @@ export default function AssetDetailPage() {
 	const [previewManifest, setPreviewManifest] = useState<ReturnType<
 		typeof buildPreviewManifestFromSources
 	> | null>(null);
-	const [provenance, setProvenance] = useState<AssetProvenance | null>(null);
 	const [didInitialLoad, setDidInitialLoad] = useState(false);
-	const [activeTab, setActiveTab] = useState("overview");
 
 	const jumpToPreviewTime = useCallback(
 		(eventTimeIso: string) => {
@@ -137,10 +124,6 @@ export default function AssetDetailPage() {
 		[id, msg, navigate, returnTo],
 	);
 
-	useEffect(() => {
-		setActiveTab("overview");
-	}, [id]);
-
 	const loadAsset = useCallback(
 		(options?: { background?: boolean }) => {
 			if (!id) return;
@@ -153,11 +136,9 @@ export default function AssetDetailPage() {
 				.get(id)
 				.then(async (nextAsset) => {
 					setAsset(nextAsset);
-					const [foxgloveSource, prov] = await Promise.all([
-						assetsApi.getFoxgloveSource(id).catch(() => null),
-						assetsApi.getProvenance(id).catch(() => null),
-					]);
-					setProvenance(prov);
+					const foxgloveSource = await assetsApi
+						.getFoxgloveSource(id)
+						.catch(() => null);
 					setPreviewManifest(
 						buildPreviewManifestFromSources(nextAsset, null, foxgloveSource),
 					);
@@ -252,7 +233,6 @@ export default function AssetDetailPage() {
 		setEvalResults([]);
 		setAssetMetrics([]);
 		setPreviewManifest(null);
-		setProvenance(null);
 		refresh();
 	}, [refresh]);
 
@@ -293,37 +273,12 @@ export default function AssetDetailPage() {
 		{
 			key: "overview",
 			label: "概览",
-			children: <OverviewTab asset={asset} />,
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}><OverviewTab asset={asset} /></Suspense>,
 		},
-		...(provenance
-			? [
-					{
-						key: "versions",
-						label: (
-							<span>
-								<BranchesOutlined /> 版本与溯源
-							</span>
-						),
-						children: (
-							<VersionProvenanceTab
-								provenance={provenance}
-								currentAsset={asset}
-								onViewRevision={(nextId) =>
-									navigate(`/assets/${nextId}`, {
-										state: location.state,
-										replace: false,
-									})
-								}
-								onOpenLineageTab={() => setActiveTab("lineage")}
-							/>
-						),
-					},
-				]
-			: []),
 		{
 			key: "algo",
 			label: algoEventsLoading ? "算法处理 (...)" : `算法处理 (${algoList.length})`,
-			children: (
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
 				<AlgoTab
 					assetId={asset.asset_id}
 					algoList={algoList}
@@ -336,12 +291,12 @@ export default function AssetDetailPage() {
 					onRefresh={refresh}
 					onJumpToPreviewTime={jumpToPreviewTime}
 				/>
-			),
+			</Suspense>,
 		},
 		{
 			key: "events",
 			label: allEventsLoading ? "全部事件 (...)" : `全部事件 (${allEvents.length})`,
-			children: (
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
 				<AssetEventsTab
 					assetId={asset.asset_id}
 					events={allEvents}
@@ -352,31 +307,31 @@ export default function AssetDetailPage() {
 					}}
 					onJumpToPreviewTime={jumpToPreviewTime}
 				/>
-			),
+			</Suspense>,
 		},
 		{
 			key: "eval-metrics",
 			label: evalLoading ? "评测与指标 (...)" : `评测与指标 (${assetMetrics.length})`,
-			children: (
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
 				<EvalMetricsTab
 					loading={evalLoading}
 					evalResults={evalResults}
 					metrics={assetMetrics}
 					onRefresh={refresh}
 				/>
-			),
+			</Suspense>,
 		},
 		{
 			key: "actions",
 			label: "Action 时间轴",
-			children: (
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
 				<ActionsTimelineTab
 					assetId={asset.asset_id}
 					assetType={asset.asset_type}
 					segStartNs={asset.start_timestamp_ns}
 					segEndNs={asset.end_timestamp_ns}
 				/>
-			),
+			</Suspense>,
 		},
 		{
 			key: "tags",
@@ -385,14 +340,13 @@ export default function AssetDetailPage() {
 					<TagOutlined /> 标签
 				</span>
 			),
-			children: (
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}>
 				<TagsTab
 					assetId={asset.asset_id}
 					tags={asset.tags ?? {}}
-					tagsDetailed={asset.tags_detailed ?? []}
 					onUpdate={refreshAfterTagUpdate}
 				/>
-			),
+			</Suspense>,
 		},
 		{
 			key: "deliveries",
@@ -401,7 +355,7 @@ export default function AssetDetailPage() {
 					<SendOutlined /> 交付历史
 				</span>
 			),
-			children: <DeliveryHistoryTab assetId={asset.asset_id} />,
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}><DeliveryHistoryTab assetId={asset.asset_id} /></Suspense>,
 		},
 		{
 			key: "lineage",
@@ -410,7 +364,7 @@ export default function AssetDetailPage() {
 					<LinkOutlined /> 血缘
 				</span>
 			),
-			children: <LineageTab assetId={asset.asset_id} />,
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}><LineageTab assetId={asset.asset_id} /></Suspense>,
 		},
 		{
 			key: "files",
@@ -419,7 +373,7 @@ export default function AssetDetailPage() {
 					<FileOutlined /> 文件
 				</span>
 			),
-			children: <FilesTab files={asset.files ?? {}} />,
+			children: <Suspense fallback={<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>}><FilesTab files={asset.files ?? {}} /></Suspense>,
 		},
 	];
 
@@ -428,92 +382,46 @@ export default function AssetDetailPage() {
 			{msgCtx}
 
 			{/* Header */}
-			<div className="mb-4">
-				{/* Primary row: navigation + identity + version control */}
-				<div className="flex items-center gap-3">
-					<Button
-						icon={<ArrowLeftOutlined />}
-						onClick={() => {
-							if (returnTo && isSafeInternalReturnUrl(returnTo)) {
-								clearStoredAssetDetailReturn();
-								navigate(returnTo);
-								return;
-							}
-							const stored = consumeStoredReturnUrl();
-							if (stored) {
-								navigate(stored);
-								return;
-							}
-							if (typeof window !== "undefined" && window.history.length > 1) {
-								navigate(-1);
-								return;
-							}
-							navigate("/assets");
-						}}
-						size="small"
-						aria-label="返回"
-					/>
-					<Title level={1} style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>
-						资产详情
-					</Title>
-					<Tag color={getAssetStateColor(asset)}>
-						{getLifecycleState(asset) || "—"}
-					</Tag>
-					<div className="flex-1" />
-					<VersionControl
-						assetId={asset.asset_id}
-						revisions={provenance?.revisions ?? []}
-						loading={loading && !provenance}
-						onSelect={(nextId) =>
-							navigate(`/assets/${nextId}`, {
-								state: location.state,
-								replace: false,
-							})
+			<div className="flex items-center gap-3 mb-4">
+				<Button
+					icon={<ArrowLeftOutlined />}
+					onClick={() => {
+						if (returnTo && isSafeInternalReturnUrl(returnTo)) {
+							clearStoredAssetDetailReturn();
+							navigate(returnTo);
+							return;
 						}
-					/>
-				</div>
-				{/* Secondary row: identifiers (less prominent) */}
-				<div className="flex items-center gap-3 mt-1.5 ml-10">
-					<Text type="secondary" className="text-xs font-mono">
-						{asset.asset_id}
-					</Text>
-					{(() => {
-						const logicalId =
-							provenance?.logical_asset_id ?? asset.logical_asset_id;
-						const showLogical =
-							logicalId &&
-							((provenance?.revisions.length ?? 0) > 1 ||
-								logicalId !== asset.asset_id);
-						return showLogical ? (
-							<>
-								<span className="text-border">|</span>
-								<LogicalAssetId logicalAssetId={logicalId} />
-							</>
-						) : null;
-					})()}
-				</div>
-			</div>
-
-			{provenance && provenance.revisions.length > 1 ? (
-				<VersionHistoryBanner
-					revisions={provenance.revisions}
-					currentAssetId={asset.asset_id}
-					onJumpToCurrent={(nextId) =>
-						navigate(`/assets/${nextId}`, {
-							state: location.state,
-							replace: false,
-						})
-					}
+						const stored = consumeStoredReturnUrl();
+						if (stored) {
+							navigate(stored);
+							return;
+						}
+						if (typeof window !== "undefined" && window.history.length > 1) {
+							navigate(-1);
+							return;
+						}
+						navigate("/assets");
+					}}
+					size="small"
+					aria-label="返回"
 				/>
-			) : null}
+				<Title level={4} style={{ margin: 0 }}>
+					资产详情
+				</Title>
+				<Tag color={getAssetStateColor(asset)}>
+					{getLifecycleState(asset) || "—"}
+				</Tag>
+				<Text type="secondary" className="text-xs font-mono">
+					{asset.asset_id}
+				</Text>
+			</div>
 
 			{/* Preview Hero */}
 			<AssetPreviewHero asset={asset} previewManifest={previewManifest} />
 
 			{/* Tabs */}
 			<Tabs
-				activeKey={activeTab}
-				onChange={setActiveTab}
+				defaultActiveKey="overview"
 				items={tabItems}
 				size="small"
 				style={{ marginTop: -8 }}

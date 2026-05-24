@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button, Card, Form, Input, message } from "antd";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
@@ -10,6 +11,7 @@ export default function LoginPage() {
 	const { login } = useAuth();
 	const navigate = useNavigate();
 	const [msg, msgCtx] = message.useMessage();
+	const [submitting, setSubmitting] = useState(false);
 
 	const onFinish = async ({ token }: { token: string }) => {
 		const trimmed = token.trim();
@@ -17,11 +19,14 @@ export default function LoginPage() {
 			msg.error("Token is required");
 			return;
 		}
+		setSubmitting(true);
 		try {
 			await login(trimmed);
 			navigate("/dashboard");
 		} catch {
 			msg.error("登录失败，请检查 token");
+		} finally {
+			setSubmitting(false);
 		}
 	};
 
@@ -41,7 +46,7 @@ export default function LoginPage() {
 					>
 						<Input.Password placeholder="Enter your GRACE_TOKEN" size="large" />
 					</Form.Item>
-					<Button type="primary" htmlType="submit" block size="large">
+					<Button type="primary" htmlType="submit" block size="large" loading={submitting} disabled={submitting}>
 						Sign In
 					</Button>
 				</Form>
