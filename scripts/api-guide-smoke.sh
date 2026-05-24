@@ -363,6 +363,45 @@ EOF
 		RESP_CODE=$(echo "$raw" | tail -n1)
 		RESP_BODY=$(echo "$raw" | sed '$d')
 		if [[ "$RESP_CODE" == "409" ]]; then ok "POST deliveries same idem key different payload -> 409"; else bad "POST deliveries same idem key different payload expected 409"; fi
+		# §3.5 delivery cancel/retry (CYB-1135)
+		echo ""
+		echo "--- §3.5 delivery cancel/retry (CYB-1135) ---"
+		CANCEL_DRAFT_RAW=$(post_json "POST deliveries/draft for cancel smoke" "/api/v1/deliveries/draft" "{\"customer_id\":\"${CUST_ID}\",\"asset_ids\":[\"${NEW_AID}\"],\"note\":\"smoke cancel test\"}")
+		CANCEL_DRAFT_ID=$(echo "$CANCEL_DRAFT_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('delivery_id',''))" 2>/dev/null || echo "")
+		if [[ -n "$CANCEL_DRAFT_ID" ]]; then
+			CANCEL_ITEMS_RAW=$(post_json "POST deliveries/{id}/items for cancel smoke" "/api/v1/deliveries/${CANCEL_DRAFT_ID}/items" "{\"asset_ids\":[\"${NEW_AID}\"]}")
+			CANCEL_REV=$(echo "$CANCEL_ITEMS_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('version',''))" 2>/dev/null || echo "")
+			if [[ -n "$CANCEL_REV" ]]; then
+				CANCEL_COMMIT_RAW=$(post_json "POST deliveries/{id}/commit for cancel smoke" "/api/v1/deliveries/${CANCEL_DRAFT_ID}/commit" "{\"expected_revision\":${CANCEL_REV},\"approved_by\":\"api-guide-smoke\"}")
+				CANCEL_COMMIT_ID=$(echo "$CANCEL_COMMIT_RAW" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('delivery_id',''))" 2>/dev/null || echo "")
+				if [[ -n "$CANCEL_COMMIT_ID" ]]; then
+					# Happy: cancel delivered
+					CANCEL_OUT=$(expect_code_post "POST deliveries/{id}/cancel delivered" "/api/v1/deliveries/${CANCEL_COMMIT_ID}/cancel" '{"cancelled_by":"api-guide-smoke","cancel_reason":"smoke test"}' "200")
+					cancel_status=$(echo "$CANCEL_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('status',''))" 2>/dev/null || echo "")
+					if [[ "$cancel_status" == "cancelled" ]]; then ok "cancel delivered → status=cancelled"; else bad "cancel delivered expected status=cancelled, got ${cancel_status:-<empty>}"; fi
+
+					# Happy: retry cancelled
+					RETRY_OUT=$(expect_code_post "POST deliveries/{id}/retry cancelled" "/api/v1/deliveries/${CANCEL_COMMIT_ID}/retry" '{}' "201")
+					retry_status=$(echo "$RETRY_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('status',''))" 2>/dev/null || echo "")
+					RETRY_ID=$(echo "$RETRY_OUT" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('delivery_id',''))" 2>/dev/null || echo "")
+					if [[ "$retry_status" == "pending" ]]; then ok "retry cancelled → status=pending"; else bad "retry cancelled expected status=pending, got ${retry_status:-<empty>}"; fi
+
+					# Error: ack pending → 422
+					if [[ -n "${RETRY_ID:-}" ]]; then
+						expect_code_post "POST deliveries/{id}/ack pending → 422" "/api/v1/deliveries/${RETRY_ID}/ack" '{"acknowledged_by":"api-guide-smoke"}' "422"
+					fi
+				else
+					echo "  WARN cancel/retry smoke skipped: missing commit delivery_id"
+				fi
+			else
+				echo "  WARN cancel/retry smoke skipped: missing expected revision"
+			fi
+		else
+			echo "  WARN cancel/retry smoke skipped: missing draft_id"
+		fi
+
+		# Error: cancel non-existent delivery → 404
+		expect_code_post "POST deliveries/{id}/cancel non-existent → 404" "/api/v1/deliveries/00000000-0000-0000-0000-000000000000/cancel" '{"cancelled_by":"test","cancel_reason":"test"}' "404"
 	fi
 fi
 

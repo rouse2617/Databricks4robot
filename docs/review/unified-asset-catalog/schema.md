@@ -981,19 +981,19 @@ FROM asset_relations;
 
 > ⚠️ **rev.12 第二轮 review 修订**：原估算「3-5 天 / ~1 周」**严重低估**。下表是按完整 GAP 矩阵（README §3.5）覆盖的诚实估算。
 
-| # | 改造 | 复杂度 | 工时估 |
-|---|------|------|--------|
-| 1 | AssetWriter B 路由：INSERT new asset + UPDATE old is_current + UPDATE logical_assets 计数（含原子切 `is_current` 事务）| 中 | 1 天 |
-| 2 | **AssetWriteValidator 实现 L1-L7 不变式**（每次 INSERT/UPDATE 多 1-3 SELECT 查 parent 元数据；含批量 INSERT 时 share parent 查询的优化）| 中 | **3 天** |
-| 3 | **algo API per-asset → per-run 翻转**：新建 `POST /algo-runs` / `POST /algo-runs/{id}/finish`；废弃或并存 `POST /assets/:id/algo/:algo/start`（见 [algo-runs.md §11](./design/algo-runs.md)）；重写 `algo_handler.go` / `algo_usecase.go` | 高 | **5 天** |
-| 4 | AlgoRunWriter：run_id 写入 4 张子表（asset_algo_latest / actions / asset_eval_results / asset_tags）+ asset_events.system_metadata JSONB | 中 | 1 天 |
-| 5 | **ES builder.go 改造**：新增 `logical_asset_id` / `revision` / `is_current` 投影；rebuild ES 索引；应用 IR1（点查走 PG，列表走 ES 接受 1-3s 滞后）| 中 | **3 天** |
-| 6 | **`mcap_files` 同事务化**：重写 `McapFileRepo.Set` + `AssetRepo.InsertNew`，让 `POST /mcap-files/upload/finalize` 在一个 `withMutationTx` 里同时写 `assets` + `mcap_files` + `asset_events`（FK 约束才生效）| 中 | 2 天 |
-| 7 | **asset_tags 多源破坏性 migration**：DROP PK + surrogate id + 5 列 UNIQUE；修 `AssetTagRepo.Upsert`（补 source_name / source_version / run_id 字段写入）| 中 | 2 天 |
-| 8 | CustomerRepo + delivery customer_id FK 校验 | 低 | 0.5 天 |
-| 9 | **delivery 状态机 + C2 commit 协议**：`draft → resolving → ready_to_commit → committed`；含 expected_revision 校验、delivery_rules 校验、409 冲突解决（见 [customers-and-deliveries §4.2 + §5](./design/customers-and-deliveries.md)）；同时保留 `POST /deliveries` 旧路径作降级 | 高 | **5 天** |
-| 10 | 集成测试 + 回归 + 性能验证（含 AssetWriteValidator 在批量场景下的 N+1 评估）| 中 | **3-5 天** |
-| **小计** | | | **25-30 天 ≈ 3-4 周** |
+| # | 改造 | 复杂度 | 工时估 | 状态 |
+|---|------|------|--------|------|
+| 1 | AssetWriter B 路由：INSERT new asset + UPDATE old is_current + UPDATE logical_assets 计数（含原子切 `is_current` 事务）| 中 | 1 天 | ✅ 已完成 |
+| 2 | **AssetWriteValidator 实现 L1-L7 不变式**（每次 INSERT/UPDATE 多 1-3 SELECT 查 parent 元数据；含批量 INSERT 时 share parent 查询的优化）| 中 | **3 天** | ❌ 待开发 |
+| 3 | **algo API per-asset → per-run 翻转**：新建 `POST /algo-runs` / `POST /algo-runs/{id}/finish`；废弃或并存 `POST /assets/:id/algo/:algo/start`（见 [algo-runs.md §11](./design/algo-runs.md)）；重写 `algo_handler.go` / `algo_usecase.go` | 高 | **5 天** | ✅ 已完成（新旧并存） |
+| 4 | AlgoRunWriter：run_id 写入 4 张子表（asset_algo_latest / actions / asset_eval_results / asset_tags）+ asset_events.system_metadata JSONB | 中 | 1 天 | ⚠️ 部分（asset_tags 缺 run_id 列）|
+| 5 | **ES builder.go 改造**：新增 `logical_asset_id` / `revision` / `is_current` 投影；rebuild ES 索引；应用 IR1（点查走 PG，列表走 ES 接受 1-3s 滞后）| 中 | **3 天** | ✅ 已完成 |
+| 6 | **`mcap_files` 同事务化**：重写 `McapFileRepo.Set` + `AssetRepo.InsertNew`，让 `POST /mcap-files/upload/finalize` 在一个 `withMutationTx` 里同时写 `assets` + `mcap_files` + `asset_events`（FK 约束才生效）| 中 | 2 天 | ❌ 待开发 |
+| 7 | **asset_tags 多源破坏性 migration**：DROP PK + surrogate id + 5 列 UNIQUE；修 `AssetTagRepo.Upsert`（补 source_name / source_version / run_id 字段写入）| 中 | 2 天 | ✅ 已完成（030 migration） |
+| 8 | CustomerRepo + delivery customer_id FK 校验 | 低 | 0.5 天 | ✅ 已完成（029 migration） |
+| 9 | **delivery 状态机 + C2 commit 协议**：`draft → resolving → ready_to_commit → committed`；含 expected_revision 校验、delivery_rules 校验、409 冲突解决（见 [customers-and-deliveries §4.2 + §5](./design/customers-and-deliveries.md)）；同时保留 `POST /deliveries` 旧路径作降级 | 高 | **5 天** | ✅ 已完成（状态名：pending→delivered）|
+| 10 | 集成测试 + 回归 + 性能验证（含 AssetWriteValidator 在批量场景下的 N+1 评估）| 中 | **3-5 天** | ❌ 待开发 |
+| **小计** | | | **25-30 天 ≈ 3-4 周** | **已完成约 70%（~18 天），剩余约 8-10 天** |
 
 ### 17.6 总工程量
 

@@ -178,18 +178,18 @@ DataBrew **「管资产 → 跑算法 → 打标签 → 卖给客户」** 主链
 
 | 设计里有 | 现网 | 严重程度 | 说明 |
 |---------|------|---------|------|
-| `logical_assets` 表 | 没有 | 高 | 需要新建 |
-| `algo_runs` 表 | ✅ 已完成 (CYB-1018) | — | 已建表 + ingest API |
+| `logical_assets` 表 | ✅ 已完成 (CYB-1013) | — | 028 migration + 全链路（model/repo/handler/ES/search）已上线 |
+| `algo_runs` 表 | ✅ 已完成 (CYB-1018) | — | 已建表 + per-run API（`POST /algo-runs`）|
 | `customers` 表 | ✅ 已完成 (CYB-1014) | — | 已建表 + 交付单 FK 关联 |
-| `delivery_rules` 表 | ✅ 已完成 (CYB-1020) | — | 已建表 + pre-delivery check engine |
+| `delivery_rules` 表 | ✅ 已完成 (CYB-1020) | — | 已建表 + pre-delivery check engine（含 enforce_mode/dsl_version/rating_scope）|
 | 资产版本三字段 | ✅ 已完成 (CYB-1013) | — | 已改表 + 改搜索 + 改 API |
-| `asset_tags` 支持多来源 | 主键设计不对 | 高 | 需要改表结构（破坏性）|
-| 写入校验逻辑 | 没有 | 高 | 需要开发 |
+| `asset_tags` 支持多来源 | ✅ 已完成 (CYB-1015) | — | 030 migration：DROP 旧 PK + surrogate id + 5 列 UNIQUE |
+| 写入校验逻辑 | **未完成** | 高 | AssetWriteValidator（L1-L7 不变式）待开发 |
 | 搜索索引含版本字段 | ✅ 已完成 (CYB-1016) | — | 搜索同步已含版本字段 |
 | 版本 UI + provenance API | ✅ 已完成 (CYB-1017) | — | provenance tab + version dropdown |
 | UI/UX 对比度与设计 token | ✅ 已完成 (CYB-1032) | — | WCAG 对比度修复 + design tokens |
 
-**结论**：核心链路（asset versioning、customers、algo_runs、delivery_rules、search index、provenance API、UI/UX）已落地。剩余 `logical_assets` 表、`asset_tags` 多来源改造、写入校验逻辑仍待开发。工程量见 [schema.md §17.6](./schema.md#176-总工程量)。
+**结论**：核心链路（asset versioning、logical_assets、customers、algo_runs、delivery_rules、asset_tags 多源、search index、provenance API、UI/UX）已落地。剩余**写入校验逻辑**（AssetWriteValidator，约 3 天）、**mcap_files 同事务化**（约 2 天）、**集成测试框架**（约 3-5 天）仍待开发。整体进度约 **70%**，剩余工程量约 **8-10 天**。
 
 ---
 
@@ -258,7 +258,7 @@ docs/review/unified-asset-catalog/
 >
 > 核心设计：**补客户表和算法跑次表、资产支持多版本、原始 MCAP 进资产主表**。
 >
-> 现网大约完成一半，按本文落地大约还需 **3–4 周**。
+> 现网约完成 70%（含 asset versioning、logical_assets、algo_runs、customers、delivery C2 协议、asset_tags 多源、search index 等），剩余约 8-10 天（见 §3.1 结论）。
 
 ---
 
