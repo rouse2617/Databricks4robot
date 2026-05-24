@@ -39,7 +39,7 @@
 | 13 | `deliveries / delivery_items` | 交付 | customer_id 加 外键 |
 | 14 | `delivery_rules` | 资格规则 | |
 
-> 计数口径（物理表）：前 12 行各 1 张 + `deliveries/delivery_items` 2 张 + `delivery_rules` 1 张 = **15 张 P1 物理表**。  
+> 计数口径（物理表）：前 12 行各 1 张 + `deliveries/delivery_items` 2 张 + `delivery_rules` 1 张 = **15 张 P1 物理表**。
 > 若按逻辑模块口径，则是 13 组（把交付三件套视作 1 组）。
 
 VIEW + trigger:

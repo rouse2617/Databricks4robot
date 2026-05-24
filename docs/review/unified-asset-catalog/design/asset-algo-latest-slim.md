@@ -121,10 +121,10 @@ SELECT
   r.completed_at AS finished_at,
   r.method,
   -- output_uri 改为查实际产物 asset
-  (SELECT a.storage_uri FROM assets a 
+  (SELECT a.storage_uri FROM assets a
     JOIN asset_relations ar ON ar.parent_asset_id = a.asset_id
-    WHERE ar.child_asset_id = aal.asset_id 
-      AND ar.metadata->>'run_id' = aal.run_id 
+    WHERE ar.child_asset_id = aal.asset_id
+      AND ar.metadata->>'run_id' = aal.run_id
     LIMIT 1) AS output_uri,
   r.run_inputs,
   aal.is_pinned,

@@ -517,7 +517,7 @@ WHERE ar.relation_type = 'derived_from'
 > 「clipX 这条版本链每一版是哪个算法版本跑出来的？」（场景 A 的回看）
 
 ```sql
-SELECT 
+SELECT
   a.revision,
   a.asset_id,
   a.is_current,
@@ -525,8 +525,8 @@ SELECT
   ar.metadata->>'run_id'        AS run_id,
   a.created_at
 FROM assets a
-LEFT JOIN asset_relations ar 
-  ON ar.parent_asset_id = a.asset_id 
+LEFT JOIN asset_relations ar
+  ON ar.parent_asset_id = a.asset_id
   AND ar.relation_type = 'derived_from'
 WHERE a.logical_asset_id = 'L_clipX'
 ORDER BY a.revision;
@@ -557,7 +557,7 @@ WHERE ar.relation_type = 'derived_from'
 > 「segment_A 上 hand_track 和 action_detector 各自跑出了什么？」（场景 B 的对比）
 
 ```sql
-SELECT 
+SELECT
   ar.metadata->>'algo_name'    AS algo,
   ar.metadata->>'algo_version' AS version,
   ar.parent_asset_id           AS produced_asset,

@@ -138,19 +138,19 @@ raw_mcap → segment → clip / frame / task / action(L2) → action(L3)
 ## 2. Solution（五条主线）
 
 > 主线编号对应 §1.7 缺口对照表。每条主线列出**核心机制 + 解决的缺口 + 详见章节**；
-> 完整 schema 见 `schema-entity-aspect.md`，完整 API 见 §11。  
+> 完整 schema 见 `schema-entity-aspect.md`，完整 API 见 §11。
 > **共享 schema 提示**：同一张 PG 表可被多主线协作使用（例：`asset_relations` 用 typed enum 同时承载结构血缘和版本血缘）——这是 Entity-Aspect 模式的工程红利，不是冗余。
 
 ### 主线 1 — 统一实体（Entity-Aspect 模式）
 
-**核心：** `assets` 瘦身为 **9 列 Entity 壳** + 3 张通用 Aspect 表（lineage 含时间维度 / content / governance）+ P1.5 高频信号独立表（`asset_usage_stats`）+ 现有专用 Aspect（mcap_files / actions / asset_tags / asset_algo_latest / metrics / eval_results）。多算法并发写不同 Aspect **零行锁竞争**；新字段 = 新 Aspect，不改主表。  
-**解决：** U5（资产模型割裂）/ E1（主表过胖）  
+**核心：** `assets` 瘦身为 **9 列 Entity 壳** + 3 张通用 Aspect 表（lineage 含时间维度 / content / governance）+ P1.5 高频信号独立表（`asset_usage_stats`）+ 现有专用 Aspect（mcap_files / actions / asset_tags / asset_algo_latest / metrics / eval_results）。多算法并发写不同 Aspect **零行锁竞争**；新字段 = 新 Aspect，不改主表。
+**解决：** U5（资产模型割裂）/ E1（主表过胖）
 **详见：** §3.8 + `schema-entity-aspect.md`
 
 ### 主线 2 — 结构血缘（横向）
 
-**核心：** 固定 `raw_mcap → segment → {clip / frame / task / action(L2)}`，`task → action(L3)`；`asset_relations` typed 边（`split_from / contains / merged_from / derived_from / sampled_from / validated_by / revision_of`）；写入契约强制写关系边。  
-**解决：** U3（追溯不完整）/ E2（层级未 enforce）  
+**核心：** 固定 `raw_mcap → segment → {clip / frame / task / action(L2)}`，`task → action(L3)`；`asset_relations` typed 边（`split_from / contains / merged_from / derived_from / sampled_from / validated_by / revision_of`）；写入契约强制写关系边。
+**解决：** U3（追溯不完整）/ E2（层级未 enforce）
 **详见：** §3.1 / §3.6 / §3.7
 
 ### 主线 3 — 非结构性血缘（处理 + 版本）
@@ -169,7 +169,7 @@ raw_mcap → segment → clip / frame / task / action(L2) → action(L3)
 - GCS `assets/<logical>/r<n>-<uuid4>/` 不可覆盖路径
 - `GET /api/v1/logical-assets/{logical_id}/current` HTTP URL 给客户/SDK 跟随当前版本（rev.11 决策：不引入自定义 URI scheme）
 
-**解决：** U1（检索曾跑过某版本）/ U2（版本迭代无显式建模）  
+**解决：** U1（检索曾跑过某版本）/ U2（版本迭代无显式建模）
 **详见：** §4 全章
 
 ### 主线 4 — 标签 + 资产级 facet + 交付资格
@@ -182,7 +182,7 @@ raw_mcap → segment → clip / frame / task / action(L2) → action(L3)
 - **Amundsen 风格发现层信号**（view / download / trending_score / favorited_count）由 P1.5 独立 Aspect `asset_usage_stats` 承载（与 `asset_governance` 拆开，避免高频写阻塞低频治理写）
 - `delivery_rules` 一等实体（DSL + commit C2 校验）
 
-**解决：** U1（按 label / action / metric 检索）/ U4（标签可扩展）  
+**解决：** U1（按 label / action / metric 检索）/ U4（标签可扩展）
 **详见：** §7 / §3.8.4 / §9.2 / §11.5
 
 ### 主线 5 — 全量审计 + Actions Framework
@@ -200,7 +200,7 @@ raw_mcap → segment → clip / frame / task / action(L2) → action(L3)
 
 事件源可插拔：**P1/P1.5 走 PG events polling**，P2 可切已有 **GCP Pub/Sub**（不引入 Kafka 集群）。
 
-**解决：** E3（副作用编排散落）  
+**解决：** E3（副作用编排散落）
 **详见：** §4.9 / §4.11
 
 ---
@@ -2855,7 +2855,7 @@ raw_mcap
 ## 14. Out of Scope
 
 - OpenMetadata / DataHub 集群部署
-- **Kafka MCL**（DataHub 用 Kafka 做 MCE/MCL；我们用 PG `asset_events` + Actions Framework polling 起步；P2 若需要跨服务订阅，走已有的 GCP Pub/Sub，**不引入 Kafka 集群**） 
+- **Kafka MCL**（DataHub 用 Kafka 做 MCE/MCL；我们用 PG `asset_events` + Actions Framework polling 起步；P2 若需要跨服务订阅，走已有的 GCP Pub/Sub，**不引入 Kafka 集群**）
 - **Pegasus PDL / Avro Schema-First 工具链**（继续用 Go struct + JSON Schema codegen）
 - Gravitino 作为 L1 主血缘库
 - Neo4j / PG AGE 图数据库（用 `asset_relations` + recursive CTE + 湖仓足够）
@@ -3397,6 +3397,3 @@ WAVE 4: 交付
   - `docs/review/eval-metrics-design.md`（V1 三表分工对齐）
 - 设计讨论全程：本仓库 `agent-transcripts/`（CYB-983）
 - Layers SOP（待沉淀）：`docs/review/schema-model-layers.md`
-
-
-

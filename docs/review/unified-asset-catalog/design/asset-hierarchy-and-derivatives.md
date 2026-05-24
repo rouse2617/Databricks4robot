@@ -138,7 +138,7 @@ gs://<bucket>/assets/<logical_asset_id>/r<revision>-<uuid4>/<filename>
 
 ### 3.0 表关系总览（ER 图）
 
-> **范围**：本专题只画 5 张核心表（assets / logical_assets / mcap_files / actions / asset_relations）。交付、标签、算法跑次等其他表去看 [`../schema.md`](../schema.md)。  
+> **范围**：本专题只画 5 张核心表（assets / logical_assets / mcap_files / actions / asset_relations）。交付、标签、算法跑次等其他表去看 [`../schema.md`](../schema.md)。
 > **注意**：图画的是 **PRD 第 12 版的目标设计**（北极星），**不是当前生产数据库的真实结构**。现网 `actions` 和 `mcap_files` 还有些字段/约束没改到位，迁移清单见 [`../README.md` §3.1](../README.md#31-文档-vs-现网差在哪)。照着图写查询前先核对一下现网真实表结构。
 
 ```mermaid
@@ -204,8 +204,8 @@ erDiagram
 | `asset_relations.parent_asset_id` | 边表 | **关系的主语**（新东西/容器/新版）| clip 是主语，seg 是宾语 |
 | `asset_relations.child_asset_id` | 边表 | **关系的宾语**（来源/被包含者/旧版）| `(clip_xyz, split_from, seg_001)` |
 
-读边：**`parent_asset_id` {relation_type} `child_asset_id`** → 「主语 是什么关系 宾语」  
-例：`(clip_pqr, derived_from, seg_001)` = clip_pqr 从 seg_001 **算法派生**而来。  
+读边：**`parent_asset_id` {relation_type} `child_asset_id`** → 「主语 是什么关系 宾语」
+例：`(clip_pqr, derived_from, seg_001)` = clip_pqr 从 seg_001 **算法派生**而来。
 同时 `clip_pqr.parent_asset_id = seg_001`（树形上也挂在 segment 下）。**两字段语义不同，名字相似。**
 
 **何时只写 `parent_asset_id`，何时还要写 `asset_relations`：**
@@ -587,5 +587,3 @@ raw_mcap 创建时**同事务**建 mcap_files 行；mcap_files.mcap_file_id 必�
 | M1-M3 物化不变式                                    | rev.5 初版                                |
 | `frame_kind='set'` + `frame_count` 不拆 frame 集合 | rev.7 设计                                |
 | `asset_eval_results` 不是 asset_relations 边      | rev.9 §3.6.1 决策                         |
-
-

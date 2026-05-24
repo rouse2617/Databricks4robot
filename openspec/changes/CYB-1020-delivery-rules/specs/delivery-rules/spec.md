@@ -2,7 +2,7 @@
 
 ## ADDED: Pre-delivery rule check
 
-**Priority**: P1  
+**Priority**: P1
 **Rationale**: Prevent non-compliant assets entering a delivery for a customer.
 
 ### Scenario: Block PII asset on commit
