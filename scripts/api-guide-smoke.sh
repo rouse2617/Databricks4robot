@@ -163,6 +163,19 @@ echo ""
 echo "--- § Lakehouse / Trino 验证 ---"
 get "lakehouse/status" "/api/v1/lakehouse/status"
 get "lakehouse/tables" "/api/v1/lakehouse/tables"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items', []); assert isinstance(items, list); assert all('table_name' in i and 'row_count' in i for i in items)" 2>/dev/null; then
+		ok "lakehouse/tables response shape"
+		if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if any(i.get('table_name') == 'silver_asset_events_current' for i in d.get('items', [])) else 1)" 2>/dev/null; then
+			ok "lakehouse/tables silver_asset_events_current visible"
+		else
+			echo "  OK  lakehouse/tables silver_asset_events_current absent — tolerated until Silver export job has run"
+			PASS=$((PASS + 1))
+		fi
+	else
+		bad "lakehouse/tables response shape"
+	fi
+fi
 get_report_or_skip
 warn_get "lakehouse/training-assets" "/api/v1/lakehouse/training-assets?snapshot_id=mvp_hand_tracking_quality_v1"
 warn_get "lakehouse/recompute-candidates" "/api/v1/lakehouse/recompute-candidates?algo_key=hand_tracking@1.2.0&target_version=1.3.0"

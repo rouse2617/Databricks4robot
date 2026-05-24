@@ -1,9 +1,158 @@
 package lakehouse
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
+
+	lakehouseport "github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
 )
+
+type fakeLakehouseQuerier struct {
+	rowsByTable map[string][]lakehouseport.Row
+	errByTable  map[string]error
+	queries     []string
+}
+
+func (f *fakeLakehouseQuerier) Status(context.Context) lakehouseport.Status {
+	return lakehouseport.Status{Enabled: true, Healthy: true, Backend: "fake"}
+}
+
+func (f *fakeLakehouseQuerier) Query(_ context.Context, sql string) ([]lakehouseport.Row, error) {
+	f.queries = append(f.queries, sql)
+	tableName := ""
+	switch {
+	case strings.Contains(sql, "silver_asset_events_current"):
+		tableName = "silver_asset_events_current"
+	case strings.Contains(sql, "bronze_asset_events"):
+		tableName = "bronze_asset_events"
+	}
+	if err := f.errByTable[tableName]; err != nil {
+		return nil, err
+	}
+	return f.rowsByTable[tableName], nil
+}
+
+func (f *fakeLakehouseQuerier) Close() {}
+
+func TestTablesIncludesSilverWhenAvailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	lake := &fakeLakehouseQuerier{
+		rowsByTable: map[string][]lakehouseport.Row{
+			"bronze_asset_events": {
+				{"table_name": "bronze_asset_events", "row_count": int64(10)},
+			},
+			"silver_asset_events_current": {
+				{"table_name": "silver_asset_events_current", "row_count": int64(7)},
+			},
+		},
+	}
+	h := New("", lake, nil)
+	r := gin.New()
+	r.GET("/lakehouse/tables", h.Tables)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/lakehouse/tables", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			TableName string `json:"table_name"`
+			RowCount  int64  `json:"row_count"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected bronze and silver rows, got %+v", resp.Items)
+	}
+	if resp.Items[0].TableName != "bronze_asset_events" || resp.Items[0].RowCount != 10 {
+		t.Fatalf("unexpected bronze row: %+v", resp.Items[0])
+	}
+	if resp.Items[1].TableName != "silver_asset_events_current" || resp.Items[1].RowCount != 7 {
+		t.Fatalf("unexpected silver row: %+v", resp.Items[1])
+	}
+}
+
+func TestTablesToleratesMissingSilver(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	lake := &fakeLakehouseQuerier{
+		rowsByTable: map[string][]lakehouseport.Row{
+			"bronze_asset_events": {
+				{"table_name": "bronze_asset_events", "row_count": int64(10)},
+			},
+		},
+		errByTable: map[string]error{
+			"silver_asset_events_current": errors.New("not found: silver_asset_events_current"),
+		},
+	}
+	h := New("", lake, nil)
+	r := gin.New()
+	r.GET("/lakehouse/tables", h.Tables)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/lakehouse/tables", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []struct {
+			TableName string `json:"table_name"`
+			RowCount  int64  `json:"row_count"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].TableName != "bronze_asset_events" {
+		t.Fatalf("expected only bronze row, got %+v", resp.Items)
+	}
+}
+
+func TestTablesFailsWhenBronzeUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	lake := &fakeLakehouseQuerier{
+		errByTable: map[string]error{
+			"bronze_asset_events": lakehouseport.ErrLakehouseDisabled,
+		},
+	}
+	h := New("", lake, nil)
+	r := gin.New()
+	r.GET("/lakehouse/tables", h.Tables)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/lakehouse/tables", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestLakehouseTableCountShapesRows(t *testing.T) {
+	lake := &fakeLakehouseQuerier{
+		rowsByTable: map[string][]lakehouseport.Row{
+			"silver_asset_events_current": {
+				{"table_name": "silver_asset_events_current", "row_count": float64(12)},
+			},
+		},
+	}
+	h := New("", lake, nil)
+	items, err := h.lakehouseTableCount(context.Background(), "silver_asset_events_current")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 || items[0]["table_name"] != "silver_asset_events_current" || items[0]["row_count"] != int64(12) {
+		t.Fatalf("unexpected shaped rows: %+v", items)
+	}
+}
 
 func TestParseDaysQuery(t *testing.T) {
 	tests := []struct {

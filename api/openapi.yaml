@@ -1039,6 +1039,10 @@ components:
         error: { type: string }
     LakehouseTableCount:
       type: object
+      description: >
+        Lakehouse table row count. `table_name` may include Bronze tables
+        such as `bronze_asset_events` and, when materialized, Silver tables
+        such as `silver_asset_events_current`.
       properties:
         table_name: { type: string }
         row_count: { type: integer, format: int64 }
@@ -2048,7 +2052,12 @@ paths:
               schema: { $ref: '#/components/schemas/LakehouseStatus' }
   /api/v1/lakehouse/tables:
     get:
-      summary: List Iceberg MVP table row counts via BigQuery
+      summary: List Iceberg table row counts via BigQuery
+      description: >
+        Returns visible lakehouse asset-event tables. Bronze is required for a
+        successful response; `silver_asset_events_current` is included when the
+        Silver export path has materialized that table. Missing Silver is
+        tolerated so environments without the Silver job remain debuggable.
       responses:
         '200':
           description: ok
