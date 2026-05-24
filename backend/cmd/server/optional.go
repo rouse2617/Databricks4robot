@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
@@ -324,16 +325,64 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 		}()
 	}
 
-	// Dev safety net: periodic ES reconciliation when outbox subscriber is off.
-	if pg != nil && es != nil && cfg.Env != "production" && !outboxESSubscriberStarted {
-		go startLocalSearchReconciler(outboxCtx,
+	// ── DeliveryEligibilityProjector — automatic delivery readiness tagging ──
+	if pg != nil && cfg.DeliveryEligibilityProjectorEnabled == "true" {
+		// Build projector components.
+		engine := deliveryrules.NewEngine(
+			postgres.NewDeliveryRuleRepo(pg),
 			postgres.NewAssetRepo(pg),
 			postgres.NewAssetTagRepo(pg),
-			postgres.NewAssetAlgoLatestRepo(pg),
-			postgres.NewMcapFileRepo(pg),
-			postgres.NewActionRepo(pg),
-			es,
+			postgres.NewCustomerRepo(pg),
 		)
+		var subscriber outbox.EventSubscriber
+		switch outboxTransport {
+		case "internal":
+			w, _ := strconv.Atoi(cfg.OutboxInternalSubscriberWorkers)
+			var err error
+			subscriber, err = outbox.NewInternalSubscriber(getInMemoryBus(), w)
+			if err != nil {
+				slog.Error("delivery eligibility projector internal subscriber init failed", "err", err)
+				os.Exit(1)
+			}
+		case "pubsub":
+			if strings.TrimSpace(cfg.PubSubProject) == "" || strings.TrimSpace(cfg.OutboxESSubscription) == "" {
+				slog.Error("delivery eligibility projector pubsub transport requires PUBSUB_PROJECT and OUTBOX_ES_SUBSCRIPTION")
+				os.Exit(1)
+			}
+			var err error
+			subscriber, err = outbox.NewPubSubSubscriber(ctx, cfg.PubSubProject, cfg.OutboxESSubscription)
+			if err != nil {
+				slog.Error("delivery eligibility projector pubsub subscriber init failed", "err", err)
+				os.Exit(1)
+			}
+		case "kafka":
+			brokers := splitCSV(cfg.OutboxKafkaBrokers)
+			topic := resolveKafkaTopic()
+			groupID := strings.TrimSpace(cfg.OutboxKafkaGroupID)
+			var err error
+			subscriber, err = outbox.NewKafkaSubscriber(brokers, topic, groupID)
+			if err != nil {
+				slog.Error("delivery eligibility projector kafka subscriber init failed", "err", err, "topic", topic, "group_id", groupID)
+				os.Exit(1)
+			}
+		default:
+			slog.Error("invalid OUTBOX_TRANSPORT for delivery eligibility projector", "value", outboxTransport, "allowed", "internal|pubsub|kafka")
+			os.Exit(1)
+		}
+		projector := outbox.NewDeliveryEligibilityProjector(
+			subscriber,
+			engine,
+			postgres.NewAssetTagRepo(pg),
+			postgres.NewAssetRepo(pg),
+			postgres.NewCustomerRepo(pg),
+		)
+		slog.Info("delivery eligibility projector starting", "transport", outboxTransport)
+		go func() {
+			defer func() { _ = subscriber.Close() }()
+			if err := projector.Run(outboxCtx); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("delivery eligibility projector exited", "err", err)
+			}
+		}()
 	}
 
 	// ── Retention job: archive expired assets ──
