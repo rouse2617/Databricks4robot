@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -38,15 +39,36 @@ type mockAssetRepo struct {
 type fakeAssetSQLQuerier struct {
 	querySQL  string
 	queryArgs []any
+	allArgs   [][]any
 	rows      assetSQLRows
 	err       error
 	called    bool
+	calls     int
+	queries   []assetSQLQueryResult
+}
+
+type assetSQLQueryResult struct {
+	rows assetSQLRows
+	err  error
 }
 
 func (q *fakeAssetSQLQuerier) Query(_ context.Context, sql string, args ...any) (assetSQLRows, error) {
 	q.called = true
+	q.calls++
 	q.querySQL = sql
 	q.queryArgs = args
+	q.allArgs = append(q.allArgs, append([]any(nil), args...))
+	if len(q.queries) > 0 {
+		res := q.queries[0]
+		q.queries = q.queries[1:]
+		if res.err != nil {
+			return nil, res.err
+		}
+		if res.rows == nil {
+			return &fakeAssetSQLRows{}, nil
+		}
+		return res.rows, nil
+	}
 	if q.err != nil {
 		return nil, q.err
 	}
@@ -970,6 +992,118 @@ func TestAssetListEvents(t *testing.T) {
 	if len(resp.Items) != 1 || resp.Items[0].EventType != "algo_started" {
 		t.Fatalf("unexpected follow-up response: %+v", resp)
 	}
+}
+
+func TestAssetEventsStream(t *testing.T) {
+	const testAssetID = "11111111"
+	occurredAt := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
+
+	makeHandler := func(assetExists bool, q *fakeAssetSQLQuerier) *Handler {
+		assetRepo := &mockAssetRepo{}
+		if assetExists {
+			assetRepo.getFn = func(context.Context, string) (*models.Asset, error) {
+				return &models.Asset{AssetID: testAssetID, Version: 1}, nil
+			}
+		} else {
+			assetRepo.getFn = func(context.Context, string) (*models.Asset, error) { return nil, nil }
+		}
+		h := New(assetUC.New(assetRepo), &mockDeliveryRepoForAsset{})
+		h.pgq = q
+		return h
+	}
+
+	t.Run("streams first batch and resumes after Last-Event-ID", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{
+			queries: []assetSQLQueryResult{
+				{
+					rows: &fakeAssetSQLRows{data: [][]any{{
+						"event-11",
+						int64(11),
+						"asset_updated",
+						testAssetID,
+						json.RawMessage(`{"field":"status"}`),
+						occurredAt,
+					}}},
+				},
+				{err: context.Canceled},
+			},
+		}
+		h := makeHandler(true, q)
+		r := setupAssetRouter(http.MethodGet, "/assets/:id/events/stream", h.HandleEventsStream)
+		srv := httptest.NewServer(r)
+		defer srv.Close()
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/assets/"+testAssetID+"/events/stream", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Last-Event-ID", "10")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("stream request: %v", err)
+		}
+		defer resp.Body.Close()
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read stream: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(bodyBytes))
+		}
+		if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/event-stream") {
+			t.Fatalf("expected text/event-stream content type, got %q", got)
+		}
+		body := string(bodyBytes)
+		for _, want := range []string{
+			"id: 11\n",
+			"event: asset_updated\n",
+			`"event_seq":11`,
+			`"event_payload":{"field":"status"}`,
+			": keepalive\n\n",
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("expected stream body to contain %q, got %s", want, body)
+			}
+		}
+		if !q.called || len(q.allArgs) == 0 || len(q.allArgs[0]) != 2 || q.allArgs[0][0] != testAssetID || q.allArgs[0][1] != int64(10) {
+			t.Fatalf("expected first SQL query with asset id and after seq, got called=%v args=%#v", q.called, q.allArgs)
+		}
+		if !strings.Contains(q.querySQL, "event_seq > $2") || !strings.Contains(q.querySQL, "ORDER BY event_seq ASC") || !strings.Contains(q.querySQL, "LIMIT 50") {
+			t.Fatalf("unexpected stream query: %s", q.querySQL)
+		}
+	})
+
+	t.Run("rejects malformed Last-Event-ID before opening stream", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{}
+		h := makeHandler(true, q)
+		r := setupAssetRouter(http.MethodGet, "/assets/:id/events/stream", h.HandleEventsStream)
+
+		req := httptest.NewRequest(http.MethodGet, "/assets/"+testAssetID+"/events/stream", nil)
+		req.Header.Set("Last-Event-ID", "not-a-number")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+		}
+		if q.called {
+			t.Fatalf("expected no stream query for malformed Last-Event-ID")
+		}
+	})
+
+	t.Run("rejects missing asset before opening stream", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{}
+		h := makeHandler(false, q)
+		r := setupAssetRouter(http.MethodGet, "/assets/:id/events/stream", h.HandleEventsStream)
+
+		w := doReq(t, r, http.MethodGet, "/assets/22222222/events/stream", nil)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d body=%s", w.Code, w.Body.String())
+		}
+		if q.called {
+			t.Fatalf("expected no stream query for missing asset")
+		}
+	})
 }
 
 func TestUpsertTagAndDeleteTag(t *testing.T) {

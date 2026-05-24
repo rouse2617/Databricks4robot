@@ -999,6 +999,8 @@ type sseEvent struct {
 	OccurredAt time.Time       `json:"occurred_at"`
 }
 
+var assetEventStreamPollInterval = 5 * time.Second
+
 // HandleEventsStream streams asset events as Server-Sent Events (CYB-1099).
 // Supports Last-Event-ID header for reconnection — the client sends the last
 // event_seq it received and the server replays from that point onward.
@@ -1023,22 +1025,33 @@ func (h *Handler) HandleEventsStream(c *gin.Context) {
 		return
 	}
 
+	lastEventIDStr := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	var afterSeq *int64
+	if lastEventIDStr != "" {
+		v, err := strconv.ParseInt(lastEventIDStr, 10, 64)
+		if err != nil || v < 0 {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid Last-Event-ID", map[string]any{
+				"error": "Last-Event-ID must be a non-negative event_seq integer",
+			})
+			return
+		}
+		afterSeq = &v
+	}
+
+	if _, err := h.uc.GetAll(c.Request.Context(), assetID); err != nil {
+		if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
 	// SSE headers.
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
-
-	// Parse Last-Event-ID header for reconnection: the value is the last
-	// event_seq the client has seen.
-	lastEventIDStr := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
-	var afterSeq *int64
-	if lastEventIDStr != "" {
-		v, err := strconv.ParseInt(lastEventIDStr, 10, 64)
-		if err == nil {
-			afterSeq = &v
-		}
-	}
 
 	c.Stream(func(w io.Writer) bool {
 		// Wait for new events by polling.
@@ -1083,8 +1096,10 @@ func (h *Handler) HandleEventsStream(c *gin.Context) {
 // belonging to the given asset. Returns nil when the context is cancelled or
 // the query fails.
 func (h *Handler) pollAssetEvents(ctx context.Context, assetID string, afterSeq *int64) []sseEvent {
-	if h.pg == nil {
-		time.Sleep(5 * time.Second)
+	if h.pgq == nil {
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
 		return []sseEvent{}
 	}
 
@@ -1105,14 +1120,16 @@ WHERE ` + where + `
 ORDER BY event_seq ASC
 LIMIT 50`
 
-	rows, err := h.pg.Query(ctx, q, args...)
+	rows, err := h.pgq.Query(ctx, q, args...)
 	if err != nil {
 		// If context cancelled, return nil to signal stop.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil
 		}
 		// On transient error, sleep and return empty (don't kill the stream).
-		time.Sleep(5 * time.Second)
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
 		return []sseEvent{}
 	}
 	defer rows.Close()
@@ -1130,17 +1147,31 @@ LIMIT 50`
 		}
 		events = append(events, ev)
 	}
+	if rowsWithErr, ok := rows.(interface{ Err() error }); ok {
+		if err := rowsWithErr.Err(); err != nil {
+			return []sseEvent{}
+		}
+	}
 
 	// If no new events, sleep before polling again.
 	if len(events) == 0 {
-		select {
-		case <-ctx.Done():
+		if !sleepAssetEventStreamPoll(ctx) {
 			return nil
-		case <-time.After(5 * time.Second):
 		}
 	}
 
 	return events
+}
+
+func sleepAssetEventStreamPoll(ctx context.Context) bool {
+	timer := time.NewTimer(assetEventStreamPollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // ratingsHistoryRevision represents one logical asset revision and its rating

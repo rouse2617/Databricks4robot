@@ -889,6 +889,36 @@ curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analy
 - 已软删除的资产返回 `404 ASSET_NOT_FOUND`。
 - `GET /assets/{id}/timeline` 与 `GET /assets/{id}/events` 完全同形，仅作为时间线命名别名保留给客户端。
 
+### 2.5.0 资产事件 SSE stream（CYB-1099）
+
+`GET /api/v1/assets/{asset_id}/events/stream` 为单个资产打开 `text/event-stream`。服务端按 `event_seq` 升序发送事件；客户端断线重连时可把最后收到的 `event_seq` 放到 `Last-Event-ID` header，服务端只发送 `event_seq > Last-Event-ID` 的事件。
+
+```bash
+# 首次订阅
+curl -N "$BASE/api/v1/assets/{asset_id}/events/stream" \
+  -H "X-Grace-Token: $TOKEN"
+
+# 断线后从 event_seq=12345 之后恢复
+curl -N "$BASE/api/v1/assets/{asset_id}/events/stream" \
+  -H "X-Grace-Token: $TOKEN" \
+  -H "Last-Event-ID: 12345"
+```
+
+SSE frame:
+
+```text
+id: 12346
+event: asset_updated
+data: {"event_id":"550e8400-e29b-41d4-a716-446655440000","event_seq":12346,"event_type":"asset_updated","asset_id":"b9a5a281","event_payload":{"field":"status"},"occurred_at":"2026-05-23T10:00:00Z"}
+```
+
+错误路径：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `400` | `INVALID_ARGUMENT` | 非法 `{asset_id}` 或 `Last-Event-ID` 不是非负整数 |
+| `404` | `ASSET_NOT_FOUND` | 资产不存在或已软删除 |
+
 ### 2.5.1 跨资产审计搜索（CYB-1097）
 
 `GET /api/v1/audit/search` 在 `asset_events` 上做跨资产只读搜索，适合排查某个 actor、event type、run id 或时间窗口内的资产事件。结果按 `event_seq` 降序返回；`cursor` 语义为继续取 `event_seq < cursor` 的更老事件。
