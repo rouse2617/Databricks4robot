@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,6 +29,25 @@ type Handler struct {
 	customerRepo repository.CustomerRepository
 	eventRepo    repository.AssetEventRepository
 	ruleEngine   *deliveryrules.Engine
+}
+
+
+// withTx runs fn within a transaction if the repo supports it.
+func (h *Handler) withTx(ctx context.Context, fn func(context.Context) error) error {
+	if txRunner, ok := h.repo.(repository.TxRunner); ok {
+		return txRunner.WithTx(ctx, fn)
+	}
+	return fn(ctx)
+}
+
+// withTxRequired is like withTx but returns an error when the repo
+// does not support transactions.
+func (h *Handler) withTxRequired(ctx context.Context, fn func(context.Context) error) error {
+	txRunner, ok := h.repo.(repository.TxRunner)
+	if !ok {
+		return fmt.Errorf("delivery repository does not support transactions")
+	}
+	return txRunner.WithTx(ctx, fn)
 }
 
 func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepository, customerRepo repository.CustomerRepository, eventRepo ...repository.AssetEventRepository) *Handler {
@@ -87,10 +107,7 @@ func (h *Handler) createDeliveryWithItems(ctx context.Context, d *models.Deliver
 		return nil
 	}
 
-	if txRunner, ok := h.repo.(repository.TxRunner); ok {
-		return txRunner.WithTx(ctx, writeFn)
-	}
-	return writeFn(ctx)
+	return h.withTx(ctx, writeFn)
 }
 
 func (h *Handler) commitDeliveryIndexesAndEvents(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string) error {
@@ -103,10 +120,7 @@ func (h *Handler) commitDeliveryIndexesAndEvents(ctx context.Context, d *models.
 		return h.appendDeliveryEvents(txCtx, d, assetIDs, requestID)
 	}
 
-	if txRunner, ok := h.repo.(repository.TxRunner); ok {
-		return txRunner.WithTx(ctx, writeFn)
-	}
-	return writeFn(ctx)
+	return h.withTx(ctx, writeFn)
 }
 
 // commitDeliveryFull runs idempotency lock + recheck + Set + AddItems +
@@ -150,11 +164,7 @@ func (h *Handler) commitDeliveryFull(ctx context.Context, d *models.Delivery, as
 		return h.idemRepo.Save(txCtx, idemRec)
 	}
 
-	if txRunner, ok := h.repo.(repository.TxRunner); ok {
-		err := txRunner.WithTx(ctx, writeFn)
-		return replay, err
-	}
-	err := writeFn(ctx)
+	err := h.withTx(ctx, writeFn)
 	return replay, err
 }
 
@@ -173,10 +183,7 @@ func (h *Handler) commitC2Full(ctx context.Context, d *models.Delivery, assetIDs
 		return h.appendDeliveryEvents(txCtx, d, assetIDs, requestID)
 	}
 
-	if txRunner, ok := h.repo.(repository.TxRunner); ok {
-		return txRunner.WithTx(ctx, writeFn)
-	}
-	return writeFn(ctx)
+	return h.withTx(ctx, writeFn)
 }
 
 // Commit creates a new delivery.
@@ -514,12 +521,7 @@ func (h *Handler) HandleAddItems(c *gin.Context) {
 	}
 
 	req.AssetIDs = uniqueAssetIDs(req.AssetIDs)
-	txRunner, ok := h.repo.(repository.TxRunner)
-	if !ok {
-		httpresp.Internal(c, "delivery repository does not support transactions")
-		return
-	}
-	err = txRunner.WithTx(c.Request.Context(), func(txCtx context.Context) error {
+	err = h.withTxRequired(c.Request.Context(), func(txCtx context.Context) error {
 		if err := h.repo.AddItems(txCtx, deliveryID, req.AssetIDs); err != nil {
 			return err
 		}
@@ -734,12 +736,7 @@ func (h *Handler) HandleCancel(c *gin.Context) {
 		}
 		return nil
 	}
-	txRunner, ok := h.repo.(repository.TxRunner)
-	if !ok {
-		httpresp.Internal(c, "delivery repository does not support transactions")
-		return
-	}
-	err = txRunner.WithTx(c.Request.Context(), writeFn)
+	err = h.withTxRequired(c.Request.Context(), writeFn)
 	if err != nil {
 		if !writeDeliveryError(c, err) {
 			httpresp.Internal(c, err.Error())

@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,9 @@ import (
 // algo.→cf_algo.) are no longer needed because ResolveField handles all
 // prefix routing directly via prefixedFieldSpecs.
 var FieldAliasMap = map[string]string{}
+
+// ErrUnknownField is returned when a filter field is not in the whitelist.
+var ErrUnknownField = errors.New("filter: unknown field")
 
 // FieldMeta describes a searchable field's type and allowed values.
 type FieldMeta struct {
@@ -82,7 +86,7 @@ func ValidateFieldWhitelist(field string) error {
 	if _, ok := SearchableFields[field]; ok {
 		return nil
 	}
-	return fmt.Errorf("filter: unknown field %q", field)
+	return fmt.Errorf("%w %q", ErrUnknownField, field)
 }
 
 // VirtualFieldHandler defines how a virtual field is resolved for both

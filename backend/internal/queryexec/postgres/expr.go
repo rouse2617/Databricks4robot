@@ -122,7 +122,7 @@ func buildFulltextClause(pred queryir.QueryPredicate, startParam int) (*SQLClaus
 	switch op {
 	case "ilike", "like", "eq":
 	default:
-		return nil, startParam, fmt.Errorf("unsupported operator %q", pred.Op)
+		return nil, startParam, fmt.Errorf("%w %q", queryir.ErrUnsupportedOperator, pred.Op)
 	}
 	value := fmt.Sprint(pred.Value)
 	if strings.TrimSpace(value) == "" {

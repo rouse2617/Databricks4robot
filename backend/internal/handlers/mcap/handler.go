@@ -76,6 +76,20 @@ func (h *Handler) appendMcapEvent(ctx context.Context, eventType, mcapFileID, re
 	})
 }
 
+func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestID string) error {
+	return h.withTx(ctx, func(txCtx context.Context) error {
+		if err := h.repo.Set(txCtx, f); err != nil {
+			return err
+		}
+		return h.appendMcapEvent(txCtx, "mcap_file_created", f.McapFileID, requestID, map[string]any{
+			"mcap_file_id": f.McapFileID,
+			"ingest_state": f.IngestState,
+			"gcs_path":     f.GCSPath,
+			"size_bytes":   f.SizeBytes,
+		})
+	})
+}
+
 // maxMcapFileIDRetries is the maximum number of attempts to allocate a unique
 // auto-generated mcap_file_id before giving up.
 const maxMcapFileIDRetries = 16
@@ -162,17 +176,7 @@ func (h *Handler) CreateFile(c *gin.Context) {
 
 	autoID := req.McapFileID == ""
 	if !autoID {
-		err := h.withTx(c.Request.Context(), func(txCtx context.Context) error {
-			if err := h.repo.Set(txCtx, f); err != nil {
-				return err
-			}
-			return h.appendMcapEvent(txCtx, "mcap_file_created", f.McapFileID, c.GetHeader("X-Request-ID"), map[string]any{
-				"mcap_file_id": f.McapFileID,
-				"ingest_state": f.IngestState,
-				"gcs_path":     f.GCSPath,
-				"size_bytes":   f.SizeBytes,
-			})
-		})
+		err := h.createFileTx(c.Request.Context(), f, c.GetHeader("X-Request-ID"))
 		if err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -193,17 +197,7 @@ func (h *Handler) CreateFile(c *gin.Context) {
 			return
 		}
 		f.McapFileID = gid
-		err := h.withTx(c.Request.Context(), func(txCtx context.Context) error {
-			if err := h.repo.Set(txCtx, f); err != nil {
-				return err
-			}
-			return h.appendMcapEvent(txCtx, "mcap_file_created", f.McapFileID, c.GetHeader("X-Request-ID"), map[string]any{
-				"mcap_file_id": f.McapFileID,
-				"ingest_state": f.IngestState,
-				"gcs_path":     f.GCSPath,
-				"size_bytes":   f.SizeBytes,
-			})
-		})
+		err := h.createFileTx(c.Request.Context(), f, c.GetHeader("X-Request-ID"))
 		if err == nil {
 			c.JSON(http.StatusCreated, f)
 			return

@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -383,26 +384,16 @@ func (h *Handler) fieldCapabilitiesFor(resource string, fallback []queryir.Field
 	return out
 }
 
-func writeQueryError(c *gin.Context, err error) {
-	msg := err.Error()
+func writeQueryError(c *gin.Context, err error) bool {
 	switch {
-	case strings.Contains(msg, "unknown field"):
-		httpresp.Unprocessable(c, httpresp.CodeUnsupportedField, msg, nil)
-	case strings.Contains(msg, "unsupported operator"):
-		httpresp.Unprocessable(c, httpresp.CodeUnsupportedOperator, msg, nil)
-	case strings.Contains(msg, "unplannable"):
-		httpresp.Unprocessable(c, httpresp.CodeUnplannableQuery, msg, nil)
-	case strings.Contains(msg, "unsupported scope.resource"),
-		strings.Contains(msg, "unsupported schema_version"),
-		strings.Contains(msg, "sort[0].field is required"),
-		strings.Contains(msg, "unsupported sort direction"),
-		strings.Contains(msg, "missing field in predicate"),
-		strings.Contains(msg, "missing operator in predicate"),
-		strings.Contains(msg, "invalid where expression"):
-		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
+	case errors.Is(err, filter.ErrUnknownField):
+		httpresp.Unprocessable(c, httpresp.CodeUnsupportedField, err.Error(), nil)
+	case errors.Is(err, queryir.ErrUnsupportedOperator):
+		httpresp.Unprocessable(c, httpresp.CodeUnsupportedOperator, err.Error(), nil)
 	default:
-		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 	}
+	return true
 }
 
 func (h *Handler) ListSavedQueries(c *gin.Context) {
