@@ -15,6 +15,7 @@ When you finish implementing a change targeting Backend / Frontend / SDK / Dagst
    - **Diff 含 `Frontend/`**：部署 frontend dev → Agent **必须**用 **Chrome DevTools MCP** 验收（截图 + console），不得默认让用户点浏览器。
    - **仅 backend / sdk 等（无 `Frontend/`）**：部署对应服务 + API smoke/curl；**不需要** Chrome DevTools MCP。
 5. **Wait for user approval** — explicitly ask "确认部署 OK，可以 commit 吗？" (or equivalent). User must answer affirmatively.
+6. **Pre-commit hook check (local)** — After user approves but BEFORE `git add`/`git commit`, run `pre-commit run --all-files` locally to catch trailing whitespace, YAML/JSON validation, secrets leakage, and other pre-commit issues. If any hook fails (excluding infra-only hooks like `tflint` that require tools not installed locally), fix the issue immediately. **Do not push commits that would fail CI pre-commit checks.**
 
 Only after step 5 may you run `git add` / `git commit` / `git push`.
 
