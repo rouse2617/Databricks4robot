@@ -54,7 +54,6 @@ func (h *Handler) Bytes(c *gin.Context) {
 			return
 		}
 		return
-		return
 	}
 	if size < 0 {
 		httpresp.Internal(c, "invalid object size")
@@ -82,7 +81,6 @@ func (h *Handler) Bytes(c *gin.Context) {
 				httpresp.Internal(c, fmt.Sprintf("gcs read failed: %v", err))
 				return
 			}
-			return
 			return
 		}
 		defer func() { _ = rc.Close() }()
@@ -121,7 +119,6 @@ func (h *Handler) Bytes(c *gin.Context) {
 			httpresp.Internal(c, fmt.Sprintf("gcs range read failed: %v", err))
 			return
 		}
-		return
 		return
 	}
 	defer func() { _ = rc.Close() }()
