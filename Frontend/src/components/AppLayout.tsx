@@ -53,6 +53,7 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
 		if (pathname.startsWith("/algo-runs")) return "/algo-runs";
+		if (pathname.startsWith("/algo")) return "/algo";
 	return "/assets";
 }
 
