@@ -417,10 +417,8 @@ ORDER BY depth ASC, related_asset_id ASC, relation_type ASC, parent_asset_id ASC
 			}
 			nodes = append(nodes, n)
 		}
-		if rowsWithErr, ok := rows.(interface{ Err() error }); ok {
-			if err := rowsWithErr.Err(); err != nil {
-				return err
-			}
+		if err := rows.Err(); err != nil {
+			return err
 		}
 		return nil
 	}

@@ -1133,10 +1133,8 @@ LIMIT 50`
 		}
 		events = append(events, ev)
 	}
-	if rowsWithErr, ok := rows.(interface{ Err() error }); ok {
-		if err := rowsWithErr.Err(); err != nil {
-			return []sseEvent{}
-		}
+	if err := rows.Err(); err != nil {
+		return []sseEvent{}
 	}
 
 	// If no new events, sleep before polling again.
