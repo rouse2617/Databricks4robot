@@ -29,6 +29,37 @@ pip install --extra-index-url \
 python -c "from cyber_databrew_sdk import CyberDatabrewClient; print('OK')"
 ```
 
+### 版本管理
+
+SDK 版本由 git 自动管理（`hatch-vcs`）：
+
+| 场景 | 版本号示例 | 方式 |
+|------|-----------|------|
+| Dev（无 tag） | `0.0.1.dev120` | git commit 数自动递增，每次 `make publish` 出新版 |
+| Release | `0.1.0` | 打 tag `sdk/v0.1.0` 后自动变成正式版 |
+
+查看当前版本：
+
+```bash
+pip show cyber-databrew-sdk
+# 或
+python -c "from cyber_databrew_sdk import _version; print(_version.__version__)"
+```
+
+### 升级 SDK
+
+```bash
+# 升级到最新版
+pip install --upgrade --extra-index-url \
+  https://us-central1-python.pkg.dev/green-valley-442103/python-packages/simple/ \
+  cyber-databrew-sdk
+
+# 安装指定版本
+pip install --extra-index-url \
+  https://us-central1-python.pkg.dev/green-valley-442103/python-packages/simple/ \
+  'cyber-databrew-sdk==0.0.1.dev120'
+```
+
 ---
 
 ## 配置
