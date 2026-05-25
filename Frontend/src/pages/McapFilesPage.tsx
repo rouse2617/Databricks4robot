@@ -62,13 +62,6 @@ export default function McapFilesPage() {
 	const [selectedFile, setSelectedFile] = useState<McapFile | null>(null);
 
 	useEffect(() => {
-		const nextPage = Number(searchParams.get("page")) || 1;
-		if (nextPage !== page) {
-			setPage(nextPage);
-		}
-	}, [page, searchParams]);
-
-	useEffect(() => {
 		const timer = window.setTimeout(() => {
 			setDebouncedOwnerFilter(ownerFilter.trim());
 		}, 300);
