@@ -105,7 +105,7 @@ For K8s (not Cloud Run): the `secret.example.yaml` key name doesn't affect the r
 Let me simplify: rename the env var name that Go/Python reads. The actual provisioning of that env var value (Cloud Run UI, K8s Secret, etc.) is handled separately.
 
 So:
-- Go: `getenv("DATABREW_TOKEN", "dev-token")` 
+- Go: `getenv("DATABREW_TOKEN", "dev-token")`
 - Python: `os.environ.get("DATABREW_TOKEN", "")`
 - Deploy scripts: `DATABREW_TOKEN=...`
 - K8s pod templates: env var name in containers

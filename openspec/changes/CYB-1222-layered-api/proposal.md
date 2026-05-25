@@ -18,7 +18,7 @@
 
 ## Scope
 - **In scope**: 4 个 endpoint 的 handler + usecase + routes 注册
-- **Out of scope**: 
+- **Out of scope**:
   - `POST /api/v1/assets/{id}/materialize`（§4.4 物化升级，独立 feature）
   - `raw_mcap` 的 layered API（raw_mcap 通过 upload/finalize 创建）
   - `derived_asset` 的 layered API（需要 multi-source 聚合，独立 feature）
