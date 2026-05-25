@@ -267,6 +267,7 @@ func (h *Handler) Commit(c *gin.Context) {
 		CustomerID:  req.CustomerID,
 		Status:      models.DeliveryStatusDelivered,
 		DeliveredAt: &now,
+		CompletedAt: &now,
 		ContractID:  req.ContractID,
 		Note:        req.Note,
 		Owner:       req.Owner,
@@ -683,6 +684,11 @@ func (h *Handler) HandleCancel(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	req.CancelledBy = strings.TrimSpace(req.CancelledBy)
+	if req.CancelledBy == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "cancelled_by is required", nil)
+		return
+	}
 
 	d, err := h.repo.Get(c.Request.Context(), deliveryID)
 	if err != nil {
@@ -733,12 +739,17 @@ func (h *Handler) HandleCancel(c *gin.Context) {
 		}
 		return nil
 	}
-	if txRunner, ok := h.repo.(repository.TxRunner); ok {
-		err = txRunner.WithTx(c.Request.Context(), writeFn)
-	} else {
-		err = writeFn(c.Request.Context())
+	txRunner, ok := h.repo.(repository.TxRunner)
+	if !ok {
+		httpresp.Internal(c, "delivery repository does not support transactions")
+		return
 	}
+	err = txRunner.WithTx(c.Request.Context(), writeFn)
 	if err != nil {
+		if errors.Is(err, repository.ErrOptimisticLock) {
+			httpresp.Conflict(c, httpresp.CodeConcurrentConflict, "delivery was modified concurrently", nil)
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -878,6 +889,10 @@ func (h *Handler) HandleAck(c *gin.Context) {
 	d.AcknowledgedBy = req.AcknowledgedBy
 
 	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
+		if errors.Is(err, repository.ErrOptimisticLock) {
+			httpresp.Conflict(c, httpresp.CodeConcurrentConflict, "delivery was modified concurrently", nil)
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
