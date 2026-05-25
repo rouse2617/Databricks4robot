@@ -44,7 +44,7 @@ var SearchableFields = map[string]FieldMeta{
 	"updated_at":         {Type: "timestamp"},
 	"delivery_count":     {Type: "numeric"},
 	"lifecycle_state":    {Type: "enum", Values: []string{"created", "processing", "ready", "rejected", "delivered", "archived", "superseded"}},
-	"asset_type":         {Type: "enum", Values: []string{"segment", "clip", "frame_set", "derived_asset"}},
+	"asset_type":         {Type: "enum", Values: []string{"raw_mcap", "segment", "clip", "frame", "action", "task", "derived_asset"}},
 	"expire_at":          {Type: "timestamp"},
 	"retention_tier":     {Type: "string"},
 	"last_delivered_to":  {Type: "string"},
