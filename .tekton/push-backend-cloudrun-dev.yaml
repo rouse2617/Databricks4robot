@@ -1,7 +1,7 @@
 ## Cyber Databrew — push any branch except `main` → build backend image → deploy Cloud Run **dev**.
 ##
 ## Same trigger shape as `push-frontend-cloudrun-dev.yaml` (PAC CEL + pathChanged).
-## `main` is handled by `push-backend-cloudrun-prod.yaml`.
+## Prod Cloud Run: PR comment `/deploy-cloudrun-prod-backend` on a PR targeting `main` (not on push).
 ##
 ## Deploy flags mirror live `cyber-databrew-backend-dev` (gcloud describe, us-central1):
 ## 512Mi, concurrency 80, no CPU throttling, startup CPU boost, VPC connector `cr-central-conn`

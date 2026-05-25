@@ -1,118 +1,73 @@
-# Tekton Pipelines-as-Code
+# Tekton Pipelines-as-Code (Cloud Run)
 
-Mirrors the pattern from
-[CyberOrigin2077/tekton-playground](https://github.com/CyberOrigin2077/tekton-playground).
-PAC (`pipelines-as-code` namespace) reads this directory and fires a
-PipelineRun on matching git events.
+PAC (`pipelines-as-code` namespace) reads this directory and starts PipelineRuns on matching git events.
 
-## Pipeline matrix (target end state)
+**GKE deploy pipelines removed** (`promote-backend`, `push-dev`, `deploy-dev`). Runtime deploy is **Cloud Run only**.
+
+## Pipeline matrix
 
 | File | Trigger | Purpose |
-|---|---|---|
-| `plan-service-identity.yaml` (TODO) | PR `deploy/iac/terraform/service-identity/**` | same |
-| `apply-*-iac.yaml` (TODO) | merge → main | `terraform apply` |
-| `build-backend.yaml` (TODO) | PR `backend/**` | BuildKit → `:<sha>` + `:pr-N` |
-| `deploy-cloudrun-dev.yaml` ✅ | PR comment `/deploy-cloudrun-dev` (PR → `main`) | BuildKit → deploy `cyber-databrew-backend-dev` on Cloud Run |
-| `push-backend-cloudrun-dev.yaml` ✅ | push **non-`main`** (CEL) + `backend/**` etc. | BuildKit → deploy `cyber-databrew-backend-dev` (flags match live dev: VPC, 512Mi, …) |
-| `push-backend-cloudrun-prod.yaml` ✅ | push **`main`** + paths | BuildKit → deploy `cyber-databrew-backend-prod` **if** service exists (same runtime shape as dev deploy; tune after prod exists) |
-| `push-frontend-cloudrun-dev.yaml` ✅ | push **non-`main`** (CEL) + `Frontend/**` etc. | BuildKit → deploy `cyber-databrew-frontend-dev` (Cloud Run) |
-| `push-frontend-cloudrun-prod.yaml` ✅ | push **`main`** + paths | BuildKit → deploy `cyber-databrew-frontend-prod` **if** service exists; else image-only |
-| `promote-backend.yaml` (TODO) | merge → main | retag `:dev-latest` + `:latest`, kubectl patch |
-| `build-frontend.yaml` (TODO) | PR `Frontend/**` | same as backend |
-| `promote-frontend.yaml` (TODO) | merge → main | same as backend |
+|------|---------|---------|
+| `build-backend.yaml` | PR → `main`, `backend/**` | BuildKit → image `:<sha>` + `:pr-N` (no deploy) |
+| `deploy-cloudrun-dev.yaml` | PR comment **`/deploy-cloudrun-dev`** (PR → `main`) | Build + deploy `cyber-databrew-backend-dev` |
+| `push-backend-cloudrun-dev.yaml` | **push** non-`main` + `backend/**` etc. | Build + deploy backend **dev** |
+| `push-frontend-cloudrun-dev.yaml` | **push** non-`main` + `Frontend/**` etc. | Build + deploy frontend **dev** |
+| `push-backend-cloudrun-prod.yaml` | PR comment **`/deploy-cloudrun-prod-backend`** (PR → `main`) | Build + deploy `cyber-databrew-backend-prod` (manual; **not** on merge) |
+| `push-frontend-cloudrun-prod.yaml` | PR comment **`/deploy-cloudrun-prod-frontend`** (PR → `main`) | Build + deploy `cyber-databrew-frontend-prod` (manual; **not** on merge) |
+
+### Typical flow
+
+1. Work on `fix/CYB-xxx-*` → push triggers **dev** Cloud Run deploy (if paths match).
+2. Open PR to `main` → GitHub Actions CI; optional **`/deploy-cloudrun-dev`** on the PR for dev.
+3. Merge PR → **no** automatic prod build/deploy.
+4. When ready for prod → comment on **that PR** (open or **closed/merged**):
+
+   ```
+   /deploy-cloudrun-prod-backend
+   /deploy-cloudrun-prod-frontend
+   ```
+
+   Merge 后 GitHub bot 会在 PR 里留言提醒；飞书 A 群也会收到带上述命令的合并通知。
 
 ## Prerequisites
 
-- PAC controller (`pipelines-as-code` ns) ✅ already running on the cluster
-- Reusable tasks in `tekton-pipelines` ns ✅ (`buildkit`, `retag-image`, `git-clone`)
-- IaC ServiceAccount **TODO**: ask `cyber-iac` to provision
-  `cyber-databrew-iac-dev` (and `-prod`) with:
-  - `roles/storage.objectAdmin` on `terraform_staging_state_store`
-  - project-level roles needed by each stack (storage.admin for buckets,
-    iam.serviceAccountAdmin for service-identity)
-- GitHub App installation on the repo so PAC can receive webhooks
+- PAC controller + GitHub App webhook on this repo
+- Cluster tasks: `git-clone`, `buildkit` in `tekton-pipelines`
+- `tekton-builder` SA: Artifact Registry push + Cloud Run deploy roles
 
-## Feishu (Lark) — PAC completion notify
+## Feishu notifications
 
-Several Cloud Run PAC pipelines end with a `finally` task `notify-feishu-open`.
+### GitHub Actions (repo Secrets)
 
-If the Kubernetes Secret is missing or incomplete, the task prints `SKIP` and exits 0
-so the PipelineRun still succeeds.
+Shared script: `.github/scripts/feishu-notify.sh` (`FEISHU_ROUTE_BRANCH` + `FEISHU_MESSAGE`).
 
-### Option A — Custom bot webhook (simplest)
+| Workflow | When | Webhook route |
+|----------|------|----------------|
+| `notify-feishu.yml` | Every **push** | branch name → main / other |
+| `notify-feishu-ci.yml` | **CI failure** → **A 群**；**CI success** 仅 `main` → A 群 | 含 PR 关联与日志链接 |
+| `notify-feishu-pr.yml` | PR **opened/reopened/synchronize/merged** (target `main`) → **A 群** | see workflow |
 
-In the target Feishu group, add a **custom bot** and copy the **Webhook URL** (one long
-HTTPS URL, often containing `/open-apis/bot/v2/hook/...`). That URL is the credential:
-anyone with it can post to the chat, so store it only in the cluster Secret.
+Legacy `FEISHU_BOT_WEBHOOK` is fallback if branch-specific secret is unset.
 
-Create (or update) in namespace `tekton-pipelines`:
+### Tekton PAC (`feishu-open-notify` in `tekton-pipelines`)
 
-| Key | Meaning |
-|-----|---------|
-| `webhook_url` | Full webhook URL from the group custom bot settings |
+Pipelines with `finally: notify-feishu-open` post deploy result to **one** cluster Secret (`webhook_url` or app IM keys). Point this at your **prod / deploy** group (e.g. main 群) if you only want deploy outcomes there.
 
-Example (replace the URL; do not commit real values):
+Pipelines with Feishu notify: `deploy-cloudrun-dev.yaml`, `push-backend-cloudrun-dev.yaml`, `push-frontend-cloudrun-dev.yaml`, `push-backend-cloudrun-prod.yaml`, `push-frontend-cloudrun-prod.yaml`.
 
-```bash
-kubectl create secret generic feishu-open-notify -n tekton-pipelines \
-  --from-literal=webhook_url='https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx' \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
+### Optional follow-ups
 
-You do **not** need a separate “bot id” in the Secret when using this path: the hook
-URL already identifies the bot and chat.
+| Event | Status |
+|-------|--------|
+| Tekton PAC **started** (queued) | Not implemented — needs PAC/check integration |
+| PR closed without merge | Skipped intentionally (reduce noise) |
 
-### Option B — Open Platform app (tenant token + IM)
+## Image tags
 
-Uses `tenant_access_token` then `POST /open-apis/im/v1/messages` with
-`receive_id_type=chat_id`.
+| Tag | Set by |
+|-----|--------|
+| `:<sha>` / `{{revision}}` | Every build |
+| `:pr-{n}` | PR build (`build-backend.yaml`) |
+| `:buildcache` | BuildKit cache |
 
-| Key | Meaning |
-|-----|---------|
-| `app_id` | Feishu app ID from the developer console |
-| `app_secret` | App secret (treat as credential; rotate if leaked) |
-| `chat_id` | Group chat ID for `receive_id_type=chat_id` (often `oc_...`) |
-
-Example (replace placeholders; do not commit real values):
-
-```bash
-kubectl create secret generic feishu-open-notify -n tekton-pipelines \
-  --from-literal=app_id='YOUR_APP_ID' \
-  --from-literal=app_secret='YOUR_APP_SECRET' \
-  --from-literal=chat_id='oc_xxxxxxxx' \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-If **both** `webhook_url` and the three app keys are present, **`webhook_url` wins**.
-
-### App setup (Option B only, high level)
-
-1. In the Feishu Open Platform, create a **custom bot / enterprise app** and enable
-   **bot** capabilities as required by your tenant policy.
-2. Grant API scopes needed to **send messages to chats** the bot is in (e.g. message
-   send / IM scopes; exact names depend on the console version).
-3. **Publish / install** the app to your tenant and **add the bot to the target group**.
-4. Obtain the group `chat_id` (`oc_...`) for the Secret above.
-
-Pipelines that include this notifier: `push-backend-cloudrun-dev.yaml`,
-`push-backend-cloudrun-prod.yaml`, `push-frontend-cloudrun-dev.yaml`,
-`push-frontend-cloudrun-prod.yaml`, `deploy-cloudrun-dev.yaml`. Each passes a fixed
-`pipeline-label` in the message body so you can tell which definition fired.
-
-Each definition also sets `notify-deploy-line`: a short Chinese line that spells out
-what **aggregate `Succeeded`** means for **Cloud Run** in that pipeline (service
-name, region, and prod “service may not exist yet” behavior). The Feishu text is
-**not** a second webhook: it is one message that includes both pipeline status and
-deploy semantics.
-
-## Tag taxonomy (when build pipelines land)
-
-| Tag | Set by | Retention |
-|---|---|---|
-| `:<sha>` | every build | recent 5 / 30 days |
-| `:pr-{n}` | PR build | recent 5 / 30 days |
-| `:dev-latest` | merge to main | permanent |
-| `:latest` | merge to main | permanent |
-| `:prod-latest` / `:prod-prev-N` | prod promote | permanent |
-
-Reference: tekton-playground `docs/implementation-guide.md §3`.
+Prod deploy uses `:<revision>` from the PR commit you commented on—not `:latest` from merge.

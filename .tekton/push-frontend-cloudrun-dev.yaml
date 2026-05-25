@@ -1,6 +1,6 @@
 ## Cyber Databrew — push any branch except `main` → build → deploy Cloud Run **dev**.
 ##
-## `main` is handled by `push-frontend-cloudrun-prod.yaml` (prod path + optional deploy).
+## Prod Cloud Run: PR comment `/deploy-cloudrun-prod-frontend` on a PR targeting `main` (not on push).
 ## Backend mirror: `push-backend-cloudrun-dev.yaml` / `push-backend-cloudrun-prod.yaml`.
 ## Matching uses PAC CEL (`on-cel-expression`), which overrides `on-event` / `on-target-branch` / `on-path-change`.
 ## Verify: tekton-builder granted roles/run.admin + iam.serviceAccountUser on default compute SA (PAC deploy).

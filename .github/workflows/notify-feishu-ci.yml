@@ -1,0 +1,74 @@
+# Feishu when core CI workflows finish. Failures → A 群; success → A 群 only on main.
+name: Feishu CI Notifications
+
+on:
+  workflow_run:
+    workflows:
+      - Pre-commit checks
+      - test-integration
+      - Commitlint
+      - OpenSpec Gate
+    types:
+      - completed
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify Feishu
+        env:
+          FEISHU_BOT_WEBHOOK_MAIN: ${{ secrets.FEISHU_BOT_WEBHOOK_MAIN }}
+          FEISHU_BOT_WEBHOOK_BRANCH: ${{ secrets.FEISHU_BOT_WEBHOOK_BRANCH }}
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_URL: ${{ github.event.workflow_run.html_url }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          PR_URL: ${{ github.event.workflow_run.pull_requests[0].url }}
+        run: |
+          set -euo pipefail
+
+          case "${CONCLUSION}" in
+            success)
+              if [ "${HEAD_BRANCH}" != "main" ]; then
+                echo "SKIP: CI success on non-main branch."
+                exit 0
+              fi
+              TITLE="【CI 成功 · main】"
+              HINT="main 分支检查已通过。"
+              ;;
+            failure)
+              TITLE="【CI 失败 · 需处理】"
+              HINT="请打开下方链接查看失败 job，修复后重新 push。"
+              ;;
+            *)
+              echo "SKIP: conclusion=${CONCLUSION}"
+              exit 0
+              ;;
+          esac
+
+          PR_LINE="（非 PR 触发）"
+          if [ -n "${PR_NUMBER}" ]; then
+            PR_LINE="PR #${PR_NUMBER}：${PR_URL}"
+          fi
+
+          EVENT_LABEL="${RUN_EVENT}"
+          if [ "${RUN_EVENT}" = "pull_request" ]; then
+            EVENT_LABEL="pull_request（PR 检查）"
+          elif [ "${RUN_EVENT}" = "push" ]; then
+            EVENT_LABEL="push（推送检查）"
+          fi
+
+          # 失败一律通知 A 群；成功仅 main 通知 A 群
+          export FEISHU_ROUTE_BRANCH="main"
+          export FEISHU_MESSAGE="$(printf '%s\n\n仓库：%s\n分支：%s\n关联：%s\n检查项：%s\n触发方式：%s\n结果：%s\n操作人：%s\n\n说明：%s\n\n日志：%s\n' \
+            "${TITLE}" "${REPO}" "${HEAD_BRANCH}" "${PR_LINE}" "${WORKFLOW_NAME}" \
+            "${EVENT_LABEL}" "${CONCLUSION}" "${ACTOR}" "${HINT}" "${WORKFLOW_URL}")"
+
+          bash .github/scripts/feishu-notify.sh

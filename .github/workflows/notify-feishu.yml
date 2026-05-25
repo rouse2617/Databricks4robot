@@ -1,3 +1,5 @@
+# Git push → Feishu custom bot (branch-routed).
+# Secrets: FEISHU_BOT_WEBHOOK_MAIN (main), FEISHU_BOT_WEBHOOK_BRANCH (other), legacy FEISHU_BOT_WEBHOOK fallback.
 name: Feishu Push Notifications
 
 on:
@@ -9,26 +11,19 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+
       - name: Send push message to Feishu bot
         env:
+          FEISHU_BOT_WEBHOOK_MAIN: ${{ secrets.FEISHU_BOT_WEBHOOK_MAIN }}
+          FEISHU_BOT_WEBHOOK_BRANCH: ${{ secrets.FEISHU_BOT_WEBHOOK_BRANCH }}
           FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+          FEISHU_ROUTE_BRANCH: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
           PUSHER: ${{ github.actor }}
           COMMIT_URL: ${{ github.event.head_commit.url }}
         run: |
           set -euo pipefail
-          if [ -z "${FEISHU_BOT_WEBHOOK:-}" ]; then
-            echo "FEISHU_BOT_WEBHOOK is empty, skip sending."
-            exit 0
-          fi
-
-          text="$(printf '【Git Push 通知】\n仓库：%s\n分支：%s\n提交人：%s\n链接：%s\n' \
-            "${REPO}" "${BRANCH}" "${PUSHER}" "${COMMIT_URL}")"
-          payload="$(jq -nc --arg text "$text" '{msg_type:"text", content:{text:$text}}')"
-
-          curl --fail --show-error --silent \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "$payload" \
-            "${FEISHU_BOT_WEBHOOK}"
+          export FEISHU_MESSAGE="$(printf '【Git Push 通知】\n仓库：%s\n分支：%s\n提交人：%s\n链接：%s\n' \
+            "${REPO}" "${FEISHU_ROUTE_BRANCH}" "${PUSHER}" "${COMMIT_URL}")"
+          bash .github/scripts/feishu-notify.sh

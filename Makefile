@@ -1,4 +1,4 @@
-.PHONY: all dev-up dev-down all-up all-down all-reset-volumes all-logs local-migrate local-dev-seed pg-generate-scale pg-generate-rich iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test test-full smoke smoke-local api-guide-smoke api-guide-smoke-incluster scenario-tags-bulk frontend-test build clean seed-rich verify-rich-seed test-e2e-rich
+.PHONY: all dev-up dev-down all-up all-down all-reset-volumes all-logs local-migrate local-dev-seed pg-generate-scale pg-generate-rich iceberg-up iceberg-down iceberg-logs iceberg-mvp iceberg-mvp-host test test-full smoke smoke-local api-guide-smoke api-guide-smoke-incluster scenario-tags-bulk frontend-test build clean seed-rich verify-rich-seed test-e2e-rich ci-local ci-local-full
 
 # ── Local infra ──────────────────────────────────────────
 dev-up:
@@ -143,6 +143,13 @@ test-e2e-rich: seed-rich verify-rich-seed backend-test
 # ── Dagster ───────────────────────────────────────────────
 dagster-dev:
 	cd dagster && uv run dagster dev -f definitions.py
+
+# ── Local CI (before push; mirrors GitHub pre-commit + commitlint) ─
+ci-local:
+	bash scripts/ci-local.sh
+
+ci-local-full:
+	bash scripts/ci-local.sh --full
 
 # ── Combined ──────────────────────────────────────────────
 test: backend-test sdk-test

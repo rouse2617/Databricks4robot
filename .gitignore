@@ -20,6 +20,7 @@ dist/
 
 # Node / Frontend
 Frontend/node_modules/
+tools/commitlint/node_modules/
 Frontend/dist/
 Frontend/tsconfig.tsbuildinfo
 
@@ -37,6 +38,7 @@ deploy/cloudrun/backend.env.runtime
 !.commitlintrc.json
 !package.json
 !Frontend/package-lock.json
+!tools/commitlint/package-lock.json
 !tsconfig*.json
 !deploy/local/cdc/connectors/*.json
 !deploy/k8s/monitoring/dashboards/*.json

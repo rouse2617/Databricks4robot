@@ -14,7 +14,7 @@ metadata:
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
-    pipelinesascode.tekton.dev/on-path-change: "[backend/**, .tekton/build-backend.yaml, .tekton/promote-backend.yaml, .tekton/deploy-dev.yaml, .tekton/push-dev.yaml]"
+    pipelinesascode.tekton.dev/on-path-change: "[backend/**, .tekton/build-backend.yaml]"
     pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
     pipelinesascode.tekton.dev/task: "git-clone"
     pipelinesascode.tekton.dev/max-keep-runs: "3"

@@ -1,7 +1,7 @@
 ## Cyber Databrew — PR comment /deploy-cloudrun-dev → build backend image → deploy Cloud Run dev service.
 ##
-## Automatic path (same image/service): `push-backend-cloudrun-dev.yaml` on push to non-`main` when
-## `backend/**`, `deploy/cloudrun/**`, or that file changes (PAC CEL).
+## Automatic dev path: `push-backend-cloudrun-dev.yaml` on push to non-`main` when paths match (PAC CEL).
+## Prod is manual only: `/deploy-cloudrun-prod-backend` on a PR targeting `main` (see `push-backend-cloudrun-prod.yaml`).
 ##
 ## Trigger:
 ##   - Open PR targeting main

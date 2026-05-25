@@ -51,8 +51,8 @@ Failure Mining  → 日常体验完备化  → 规模化支撑       → 数据�
 |---|---|---|---|
 | Dev 后端自动部署 | `.tekton/push-backend-cloudrun-dev.yaml` | `push` 且分支非 `main`，路径命中 `backend/**` or `deploy/cloudrun/**` or 该 YAML | build + push backend 镜像，deploy `cyber-databrew-backend-dev` |
 | Dev 前端自动部署 | `.tekton/push-frontend-cloudrun-dev.yaml` | `push` 且分支非 `main`，路径命中 `Frontend/**` or `deploy/cloudrun/**` or 该 YAML | build + push frontend 镜像，deploy `cyber-databrew-frontend-dev` |
-| Prod 后端（main） | `.tekton/push-backend-cloudrun-prod.yaml` | `push` 到 `main`，路径命中 `backend/**` / `deploy/cloudrun/**` / 该 YAML | build + push；若 `cyber-databrew-backend-prod` 存在则 deploy，否则仅推镜像 |
-| Prod 前端（main） | `.tekton/push-frontend-cloudrun-prod.yaml` | `push` 到 `main`，路径命中 `Frontend/**` / `deploy/cloudrun/**` / 该 YAML | build + push；若 `cyber-databrew-frontend-prod` 存在则 deploy，否则仅推镜像 |
+| Prod 后端 | `.tekton/push-backend-cloudrun-prod.yaml` | PR 评论 **`/deploy-cloudrun-prod-backend`**（PR → `main`） | build + push；若 `cyber-databrew-backend-prod` 存在则 deploy，否则仅推镜像 |
+| Prod 前端 | `.tekton/push-frontend-cloudrun-prod.yaml` | PR 评论 **`/deploy-cloudrun-prod-frontend`**（PR → `main`） | build + push；若 `cyber-databrew-frontend-prod` 存在则 deploy，否则仅推镜像 |
 | PR 评论触发（仅后端 dev） | `.tekton/deploy-cloudrun-dev.yaml` | PR 指向 `main`，评论精确 `/deploy-cloudrun-dev`，且路径命中 `backend/**`/`deploy/cloudrun/**` | build + deploy `cyber-databrew-backend-dev` |
 
 ### 关键约束（避免误触发）
@@ -60,12 +60,12 @@ Failure Mining  → 日常体验完备化  → 规模化支撑       → 数据�
 1. 修改 `deploy/cloudrun/**` 时，通常会**同时触发后端 + 前端 dev** 两条流水线。
 2. 只想部署后端时，尽量只改 `backend/**` 或后端 `.tekton` 文件；避免顺手改 `deploy/cloudrun/**`。
 3. 只想部署前端时，改动应落在 `Frontend/**`（目录大小写必须是大写 `F`）。
-4. PAC 闭环是“`git push` → PipelineRun”；本地 deploy 只能用于临时验证，不作为团队交付基线。
+4. Dev：PAC 闭环为 `git push` → PipelineRun；**Prod**：在 PR（→ `main`）评论 `/deploy-cloudrun-prod-*` → PipelineRun（merge 不自动触发）。本地 deploy 仅作临时验证，不作为团队交付基线。
 
 ### Agent / 开发者标准动作
 
 1. 先读本次改动对应的 `.tekton/*.yaml`，确认会触发哪条流水线。
-2. 提交并 `git push` 到目标分支（dev: 非 `main`；prod: `main`）。
+2. Dev：提交并 `git push` 到非 `main` 分支（路径命中则自动部署 dev）。Prod：merge 后在本 PR 评论 `/deploy-cloudrun-prod-backend` 和/或 `/deploy-cloudrun-prod-frontend`（见上表）。
 3. 观察 `tekton-pipelines` 命名空间中的 PipelineRun：
    - `kubectl get pipelinerun -n tekton-pipelines`
    - 失败时看失败 TaskRun（典型是 `build-and-push` 或 `deploy-cloudrun-*`）。
