@@ -99,11 +99,9 @@ func (h *Handler) Get(c *gin.Context) {
 	// matching the API contract: "assets still accessible via GET after soft delete".
 	a, err := h.uc.GetAll(c.Request.Context(), assetID)
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(200, a)
@@ -278,11 +276,9 @@ func (h *Handler) ListEvents(c *gin.Context) {
 		Limit:             q.limit,
 	})
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	writeEventList(c, res, q.limit)
@@ -325,11 +321,9 @@ func (h *Handler) GetProvenance(c *gin.Context) {
 	}
 	res, err := h.uc.GetProvenance(c.Request.Context(), assetID)
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	lineage, err := h.buildLineageResponse(c.Request.Context(), assetID)
@@ -440,18 +434,7 @@ func (h *Handler) UpsertTag(c *gin.Context) {
 		RunID:         req.RunID,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrNotFound):
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-		case errors.Is(err, assetUC.ErrInvalidTag):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrTagSourceInvalid):
-			httpresp.Unprocessable(c, httpresp.CodeTagSourceInvalid, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrTagImmutable):
-			httpresp.Conflict(c, httpresp.CodeTagImmutable, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrCustomerNotFound):
-			httpresp.Unprocessable(c, httpresp.CodeCustomerNotFound, err.Error(), nil)
-		default:
+		if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -478,11 +461,9 @@ func (h *Handler) DeleteTag(c *gin.Context) {
 	}
 	a, err := h.uc.DeleteTag(c.Request.Context(), assetID, c.Param("key"), c.Query("source_type"))
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(200, a)
@@ -520,11 +501,9 @@ func (h *Handler) ListTagHistory(c *gin.Context) {
 		Limit:          q.limit,
 	})
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	writeEventList(c, res, q.limit)
@@ -638,20 +617,7 @@ func (h *Handler) Create(c *gin.Context) {
 			})
 			return
 		}
-		switch {
-		case errors.Is(err, assetUC.ErrMcapFileIDRequired), errors.Is(err, assetUC.ErrInvalidRange):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrInvalidTag):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrLogicalAssetNotFound), errors.Is(err, assetUC.ErrLogicalAssetTypeMismatch):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrInvalidMcapFileID), errors.Is(err, assetUC.ErrMcapFileNotFound):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidArgument, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrInvalidAssetID):
-			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrAssetIDTaken):
-			httpresp.Conflict(c, httpresp.CodeDuplicateAssetID, err.Error(), nil)
-		default:
+		if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -684,15 +650,7 @@ func (h *Handler) Update(c *gin.Context) {
 		Tags:           req.Tags,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrNotFound):
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-		case errors.Is(err, assetUC.ErrInvalidTag):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
-		case errors.Is(err, repository.ErrOptimisticLock):
-			httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
-				"asset was modified concurrently; reload and retry", nil)
-		default:
+		if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -719,11 +677,9 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 	if err := h.uc.Delete(c.Request.Context(), assetID); err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	audit.Log(c.Request.Context(), "asset.delete", "asset", []string{assetID}, nil)
@@ -750,10 +706,9 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 		Owner:      req.Owner,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrMcapFileIDRequired), errors.Is(err, assetUC.ErrInvalidRange):
+		if errors.Is(err, assetUC.ErrMcapFileIDRequired) || errors.Is(err, assetUC.ErrInvalidRange) {
 			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), map[string]any{"partial": created})
-		default:
+		} else if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -916,14 +871,7 @@ func (h *Handler) PromoteRevision(c *gin.Context) {
 		Owner:          req.Owner,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrNotFound):
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-		case errors.Is(err, assetUC.ErrLogicalAssetNotFound):
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-		case errors.Is(err, assetUC.ErrLogicalAssetTypeMismatch):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
-		default:
+		if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -951,12 +899,11 @@ func (h *Handler) GetCurrentForLogical(c *gin.Context) {
 	}
 	res, err := h.uc.GetCurrentForLogical(c.Request.Context(), logicalAssetID)
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrLogicalAssetNotFound):
+		if errors.Is(err, assetUC.ErrLogicalAssetNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "logical asset not found")
-		case errors.Is(err, assetUC.ErrNotFound):
+		} else if errors.Is(err, assetUC.ErrNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "no current revision found")
-		default:
+		} else if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -996,11 +943,9 @@ func (h *Handler) RecordView(c *gin.Context) {
 		return
 	}
 	if err := h.uc.RecordAssetView(c.Request.Context(), assetID); err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(200, gin.H{"asset_id": assetID, "viewed": true})
@@ -1024,11 +969,9 @@ func (h *Handler) ToggleFavorite(c *gin.Context) {
 	}
 	newCount, err := h.uc.ToggleFavorite(c.Request.Context(), assetID)
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(200, gin.H{"asset_id": assetID, "favorite_count": newCount, "is_favorited": newCount > 0})
@@ -1084,11 +1027,9 @@ func (h *Handler) HandleEventsStream(c *gin.Context) {
 	}
 
 	if _, err := h.uc.GetAll(c.Request.Context(), assetID); err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 
