@@ -22,7 +22,7 @@
 | `backend/` | Go API（assets / mcap / deliveries / algo / search / lakehouse / admin） |
 | `services/mcap-preview/` | MCAP 预览服务（独立 Go 服务，HEVC/H.264 转码 + fMP4 流式） |
 | `Frontend/` | React + TypeScript 前端（card view / facets / preview pane / dashboard） |
-| `sdk/` | Python SDK（`asset_sdk`，httpx + pydantic，CRUD 已完成，OpenAPI 类型生成待迭代）；见 [`sdk/README.md`](sdk/README.md) |
+| `sdk/` | Python SDK（`cyber_databrew_sdk`，httpx + pydantic，CRUD 已完成，OpenAPI 类型生成待迭代）；见 [`sdk/README.md`](sdk/README.md) |
 | `deploy/local/` | Docker Compose：最小依赖、全栈、Iceberg；说明见 [`deploy/local/README.md`](deploy/local/README.md) |
 | `deploy/k8s/` | Kubernetes 清单（backend / frontend / mcap-preview / monitoring / gateway）；说明见 [`deploy/k8s/README.md`](deploy/k8s/README.md) |
 | `deploy/cloudrun/` | Cloud Run 部署脚本与配置 |

@@ -96,12 +96,12 @@ context: |
     ```
   - SDK: thin API client wrapping backend endpoints
     ```
-    sdk/src/asset_sdk/client.py    → AssetClientSDK (httpx, base_url + token)
-    sdk/src/asset_sdk/assets.py    → AssetClient (CRUD, list, batch)
-    sdk/src/asset_sdk/actions.py   → ActionClient
-    sdk/src/asset_sdk/mcap.py      → McapClient
-    sdk/src/asset_sdk/delivery.py  → DeliveryClient
-    sdk/src/asset_sdk/types/       → Pydantic models (asset, action)
+    sdk/src/cyber_databrew_sdk/client.py    → AssetClientSDK (httpx, base_url + token)
+    sdk/src/cyber_databrew_sdk/assets.py    → AssetClient (CRUD, list, batch)
+    sdk/src/cyber_databrew_sdk/actions.py   → ActionClient
+    sdk/src/cyber_databrew_sdk/mcap.py      → McapClient
+    sdk/src/cyber_databrew_sdk/delivery.py  → DeliveryClient
+    sdk/src/cyber_databrew_sdk/types/       → Pydantic models (asset, action)
     ```
 
   ### API surface (all under /api/v1, auth required unless noted)

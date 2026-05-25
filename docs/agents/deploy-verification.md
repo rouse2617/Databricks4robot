@@ -219,7 +219,7 @@ curl -sfS "${API_HDR[@]}" -d '{"...": "..."}' "$BASE/api/v1/..."
 | OpenAPI | `api/openapi.yaml` |
 | 人工 curl 文档 | `docs/review/api-guide.md` |
 | Dev smoke | `scripts/api-guide-smoke.sh` 或 `scripts/smoke-*-dev.sh` |
-| SDK（公开 REST） | `sdk/src/asset_sdk/*.py` + `client.py` |
+| SDK（公开 REST） | `sdk/src/cyber_databrew_sdk/*.py` + `client.py` |
 | 行为 spec | `openspec/changes/CYB-*/specs/*/spec.md` |
 
 验证：

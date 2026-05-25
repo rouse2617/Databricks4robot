@@ -191,17 +191,4 @@ clean:
 	cd backend && make clean
 	cd Frontend && rm -rf dist node_modules
 
-# ── SDK type generation ───────────────────────────────────
-sdk-generate:
-	cd sdk && uv run datamodel-codegen --input ../api/openapi.yaml --output src/asset_sdk/types/generated.py --target-python-version 3.10 --snake-case-field --use-schema-description --field-constraints
-	@echo "SDK types regenerated from api/openapi.yaml → sdk/src/asset_sdk/types/generated.py"
-	cd sdk && uv run ruff format src/asset_sdk/types/generated.py --quiet
-	@echo "SDK types formatted."
-
-sdk-check-generated:
-	@echo "Checking SDK types match OpenAPI..."
-	@cp sdk/src/asset_sdk/types/generated.py sdk/.generated-before.py
-	@$(MAKE) sdk-generate
-	@diff -q sdk/src/asset_sdk/types/generated.py sdk/.generated-before.py || { echo "SDK types OUT OF SYNC with api/openapi.yaml. Run 'make sdk-generate'."; rm -f sdk/.generated-before.py; exit 1; }
-	@rm -f sdk/.generated-before.py
-	@echo "SDK types match OpenAPI."
+# SDK codegen lives in sdk/Makefile (sdk-generate / sdk-check-generated)

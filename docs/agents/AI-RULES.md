@@ -53,7 +53,7 @@ Sync these artifacts in the **same change / PR** (check off in `tasks.md`):
 |---|-------------|---------------|----------------|
 | 1 | [`api/openapi.yaml`](../../api/openapi.yaml) | Always | `paths`, `components/schemas`, parameters, request/response bodies, error envelope |
 | 2 | [`docs/review/api-guide.md`](../../docs/review/api-guide.md) | Always | Section with `curl` examples, headers (`X-Grace-Token`, `Idempotency-Key` if any), success + ≥1 error path, field validation notes |
-| 3 | [`sdk/src/asset_sdk/`](../../sdk/src/asset_sdk/) | New/changed **public** REST surface | Resource client module (e.g. `customers.py`), methods mirroring api-guide; wire on [`client.py`](../../sdk/src/asset_sdk/client.py) / [`__init__.py`](../../sdk/src/asset_sdk/__init__.py) exports |
+| 3 | [`sdk/src/cyber_databrew_sdk/`](../../sdk/src/cyber_databrew_sdk/) | New/changed **public** REST surface | Resource client module (e.g. `customers.py`), methods mirroring api-guide; wire on [`client.py`](../../sdk/src/cyber_databrew_sdk/client.py) / [`__init__.py`](../../sdk/src/cyber_databrew_sdk/__init__.py) exports |
 | 4 | [`sdk/tests/unit/`](../../sdk/tests/unit/) | SDK client added/changed | Unit tests for new client methods (mock HTTP) |
 | 5 | [`scripts/api-guide-smoke.sh`](../../scripts/api-guide-smoke.sh) **or** `scripts/smoke-<feature>-dev.sh` | Always | At least happy path + one error path for **each new endpoint**; use `source scripts/dev-backend-env.sh` for dev |
 | 6 | `backend/internal/handlers/*/*.go` | Handlers use Swagger generation elsewhere | `@Summary` / `@Router` / `@Param` blocks consistent with asset handlers (keep OpenAPI as source of truth if drift) |
