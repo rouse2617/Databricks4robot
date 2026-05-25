@@ -91,13 +91,10 @@ func (h *Handler) Create(c *gin.Context) {
 		case errors.Is(err, actionUC.ErrInvalidRange),
 			errors.Is(err, actionUC.ErrInvalidSourceType):
 			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
-		case errors.Is(err, repository.ErrOptimisticLock):
-			httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
-				"action with the same external_id already exists", nil)
 		case errors.Is(err, repository.ErrSchemaMismatch):
 			httpresp.Internal(c, "actions schema mismatch: run migration 018_actions_id_to_short_id.sql")
 		default:
-			httpresp.Internal(c, err.Error())
+			mapActionMutationError(c, err)
 		}
 		return
 	}
@@ -179,6 +176,8 @@ func mapActionMutationError(c *gin.Context, err error) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 	case errors.Is(err, repository.ErrOptimisticLock):
 		httpresp.Conflict(c, httpresp.CodeConcurrentConflict, "version conflict; reload and retry", nil)
+	case errors.Is(err, repository.ErrSchemaMismatch):
+		httpresp.Internal(c, "schema mismatch; check migration status")
 	default:
 		httpresp.Internal(c, err.Error())
 	}
