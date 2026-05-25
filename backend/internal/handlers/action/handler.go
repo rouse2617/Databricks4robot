@@ -162,7 +162,7 @@ func requirePathActionID(c *gin.Context) (string, bool) {
 	return raw, true
 }
 
-func mapActionMutationError(c *gin.Context, err error) bool {
+func mapActionMutationError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, actionUC.ErrSegNotFound),
 		errors.Is(err, actionUC.ErrActionNotFound):
@@ -180,9 +180,7 @@ func mapActionMutationError(c *gin.Context, err error) bool {
 		httpresp.Internal(c, "schema mismatch; check migration status")
 	default:
 		httpresp.Internal(c, err.Error())
-		return false
 	}
-	return true
 }
 
 // Patch handles PATCH /assets/:id/actions/:action_id with a partial body.

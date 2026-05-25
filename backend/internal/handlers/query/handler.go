@@ -384,7 +384,7 @@ func (h *Handler) fieldCapabilitiesFor(resource string, fallback []queryir.Field
 	return out
 }
 
-func writeQueryError(c *gin.Context, err error) bool {
+func writeQueryError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, filter.ErrUnknownField):
 		httpresp.Unprocessable(c, httpresp.CodeUnsupportedField, err.Error(), nil)
@@ -393,7 +393,6 @@ func writeQueryError(c *gin.Context, err error) bool {
 	default:
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 	}
-	return true
 }
 
 func (h *Handler) ListSavedQueries(c *gin.Context) {
