@@ -1,0 +1,106 @@
+"""Central registry of all API endpoint path templates.
+
+Every endpoint path in the SDK is defined here — not scattered across
+managers. This gives us a single source of truth that can be overridden
+by any ConfigSource (env, file, remote).
+
+Key: logical endpoint name (``{domain}_{action}``)
+Value: URL path template (uses ``str.format`` for parameter substitution)
+"""
+
+ENDPOINTS: dict[str, str] = {
+    # ── Assets ────────────────────────────────────────────────────────
+    "asset_get": "/api/v1/assets/{asset_id}",
+    "asset_list": "/api/v1/assets",
+    "asset_create": "/api/v1/assets",
+    "asset_update": "/api/v1/assets/{asset_id}",
+    "asset_delete": "/api/v1/assets/{asset_id}",
+    "asset_batch_get": "/api/v1/assets:batch_get",
+    "asset_tags_list": "/api/v1/assets/{asset_id}/tags",
+    "asset_tags_set": "/api/v1/assets/{asset_id}/tags",
+    "asset_tags_get": "/api/v1/assets/{asset_id}/tags/{key}",
+    "asset_tags_delete": "/api/v1/assets/{asset_id}/tags/{key}",
+    "asset_tags_history": "/api/v1/assets/{asset_id}/tags/history",
+    "asset_lineage": "/api/v1/assets/{asset_id}/lineage",
+    "asset_provenance": "/api/v1/assets/{asset_id}/provenance",
+    "asset_timeline": "/api/v1/assets/{asset_id}/timeline",
+    "asset_mcap_locator": "/api/v1/assets/{asset_id}/mcap-locator",
+    "asset_foxglove_source": "/api/v1/assets/{asset_id}/foxglove-source",
+    "asset_deliveries": "/api/v1/assets/{asset_id}/deliveries",
+    "asset_events": "/api/v1/assets/{asset_id}/events",
+    "asset_record_view": "/api/v1/assets/{asset_id}/view",
+    "asset_set_favorite": "/api/v1/assets/{asset_id}/favorite",
+    "asset_revisions": "/api/v1/assets/{asset_id}/revisions",
+    # ── Storage / MCAP ────────────────────────────────────────────────
+    "storage_files_list": "/api/v1/mcap-files",
+    "storage_file_info": "/api/v1/mcap-files/{mcap_id}",
+    "storage_mcap_download": "/api/v1/mcap-files/{mcap_file_id}/bytes",
+    "storage_upload_finalize": "/api/v1/mcap/upload/finalize",
+    "storage_mcap_messages": "/api/v1/mcap/{mcap_id}/messages",
+    # ── Delivery ──────────────────────────────────────────────────────
+    "delivery_get": "/api/v1/deliveries/{delivery_id}",
+    "delivery_list": "/api/v1/deliveries",
+    "delivery_create": "/api/v1/deliveries",
+    "delivery_draft": "/api/v1/deliveries/draft",
+    "delivery_commit": "/api/v1/deliveries/{delivery_id}/commit",
+    "delivery_cancel": "/api/v1/deliveries/{delivery_id}/cancel",
+    "delivery_retry": "/api/v1/deliveries/{delivery_id}/retry",
+    "delivery_ack": "/api/v1/deliveries/{delivery_id}/ack",
+    "delivery_items_list": "/api/v1/deliveries/{delivery_id}/items",
+    "delivery_items_add": "/api/v1/deliveries/{delivery_id}/items",
+    "delivery_customer_list": "/api/v1/customers/{customer_id}/deliveries",
+    "delivery_rules_list": "/api/v1/delivery-rules",
+    "delivery_rules_create": "/api/v1/delivery-rules",
+    # ── Algo Runs ─────────────────────────────────────────────────────
+    "algo_run_get": "/api/v1/algo-runs/{run_id}",
+    "algo_run_list": "/api/v1/algo-runs",
+    "algo_run_create": "/api/v1/algo-runs",
+    "algo_run_start": "/api/v1/algo-runs/{run_id}/start",
+    "algo_run_finish": "/api/v1/algo-runs/{run_id}/finish",
+    "algo_run_cancel": "/api/v1/algo-runs/{run_id}/cancel",
+    "algo_run_affected_assets": "/api/v1/algo-runs/{run_id}/affected-assets",
+    # ── Search ────────────────────────────────────────────────────────
+    "search_sync_status": "/api/v1/search/sync-status",
+    "search_sync_progress": "/api/v1/search/sync-progress",
+    # ── Queries ───────────────────────────────────────────────────────
+    "query_validate": "/api/v1/queries/validate",
+    "query_run": "/api/v1/queries/run",
+    "query_saved_list": "/api/v1/saved-queries",
+    "query_saved_get": "/api/v1/saved-queries/{query_id}",
+    "query_saved_create": "/api/v1/saved-queries",
+    "query_saved_update": "/api/v1/saved-queries/{query_id}",
+    "query_saved_delete": "/api/v1/saved-queries/{query_id}",
+    # ── Customers ─────────────────────────────────────────────────────
+    "customer_list": "/api/v1/customers",
+    "customer_get": "/api/v1/customers/{customer_id}",
+    "customer_create": "/api/v1/customers",
+    "customer_update": "/api/v1/customers/{customer_id}",
+    # ── Lakehouse ─────────────────────────────────────────────────────
+    "lakehouse_report": "/api/v1/lakehouse/report",
+    "lakehouse_status": "/api/v1/lakehouse/status",
+    "lakehouse_tables": "/api/v1/lakehouse/tables",
+    "lakehouse_overview": "/api/v1/lakehouse/overview",
+    "lakehouse_event_daily": "/api/v1/lakehouse/event-daily",
+    "lakehouse_event_type_share": "/api/v1/lakehouse/event-type-share",
+    "lakehouse_asset_growth": "/api/v1/lakehouse/asset-growth",
+    "lakehouse_sync_status": "/api/v1/lakehouse/sync-status",
+    "lakehouse_sync_progress": "/api/v1/lakehouse/sync-progress",
+    "lakehouse_failure_clusters": "/api/v1/lakehouse/failure-clusters",
+    "lakehouse_quality_distribution": "/api/v1/lakehouse/quality-distribution",
+    "lakehouse_customer_replay": "/api/v1/lakehouse/customer-replay",
+    # ── Events ────────────────────────────────────────────────────────
+    "event_list": "/api/v1/events",
+    "event_list_asset": "/api/v1/assets/{asset_id}/events",
+    "event_stream_asset": "/api/v1/assets/{asset_id}/events/stream",
+    # ── Registry ──────────────────────────────────────────────────────
+    "registry_algos": "/api/v1/algo-registry",
+    "registry_tags": "/api/v1/tag-registry",
+    "registry_metrics": "/api/v1/metric-registry",
+    "registry_action_labels": "/api/v1/action-label-registry",
+    "registry_lifecycle_states": "/api/v1/lifecycle-states",
+    # ── Audit ─────────────────────────────────────────────────────────
+    "audit_search": "/api/v1/audit/search",
+    "audit_lineage_search": "/api/v1/audit/lineage-search",
+    # ── SDK Config (bootstrap discovery) ──────────────────────────────
+    "sdk_config": "/api/v1/sdk-config",
+}
