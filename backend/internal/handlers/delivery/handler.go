@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -533,11 +532,10 @@ func (h *Handler) HandleAddItems(c *gin.Context) {
 		return h.repo.Update(txCtx, d, d.Version)
 	})
 	if err != nil {
-		if errors.Is(err, repository.ErrOptimisticLock) {
-			httpresp.Conflict(c, httpresp.CodeConcurrentConflict, "delivery was modified concurrently", nil)
+		if !writeDeliveryError(c, err) {
+			httpresp.Internal(c, err.Error())
 			return
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 
@@ -636,13 +634,10 @@ func (h *Handler) HandleCommitC2(c *gin.Context) {
 	d.ApprovedBy = req.ApprovedBy
 
 	if err := h.commitC2Full(c.Request.Context(), d, assetIDs, c.GetHeader("X-Request-ID"), req.ExpectedRevision); err != nil {
-		if err == repository.ErrOptimisticLock {
-			httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
-				"delivery has been modified concurrently",
-				map[string]any{"expected_revision": req.ExpectedRevision})
+		if !writeDeliveryError(c, err) {
+			httpresp.Internal(c, err.Error())
 			return
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 
@@ -746,11 +741,10 @@ func (h *Handler) HandleCancel(c *gin.Context) {
 	}
 	err = txRunner.WithTx(c.Request.Context(), writeFn)
 	if err != nil {
-		if errors.Is(err, repository.ErrOptimisticLock) {
-			httpresp.Conflict(c, httpresp.CodeConcurrentConflict, "delivery was modified concurrently", nil)
+		if !writeDeliveryError(c, err) {
+			httpresp.Internal(c, err.Error())
 			return
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 
@@ -889,11 +883,10 @@ func (h *Handler) HandleAck(c *gin.Context) {
 	d.AcknowledgedBy = req.AcknowledgedBy
 
 	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
-		if errors.Is(err, repository.ErrOptimisticLock) {
-			httpresp.Conflict(c, httpresp.CodeConcurrentConflict, "delivery was modified concurrently", nil)
+		if !writeDeliveryError(c, err) {
+			httpresp.Internal(c, err.Error())
 			return
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 
