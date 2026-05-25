@@ -13,7 +13,7 @@ Fix 5 remaining bugs in `backend/internal/handlers/delivery/handler.go`:
 ## Fixes
 
 ### Bug 1: HandleCancel non-TxRunner fallback
-- Remove non-TxRunner fallback, always use `h.repo.(repository.TxRunner)` 
+- Remove non-TxRunner fallback, always use `h.repo.(repository.TxRunner)`
 - Match the pattern from CYB-1199 HandleAddItems fix
 
 ### Bug 2: HandleCancel missing cancelled_by validation
