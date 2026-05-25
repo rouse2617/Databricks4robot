@@ -226,6 +226,11 @@ When using Python scripts as an edit-tool workaround (Go tab indentation), the o
 
 **Check:** `sed -n 'start,endp' file.go` on the edited region and visually confirm.
 
+### P7. Files must end with exactly one newline (no trailing blank lines)
+The `end-of-file-fixer` pre-commit hook fails when a file has trailing blank lines after the final newline. Python's `__init__.py`, Go files, and any tracked file are subject to this check. This has failed CI repeatedly.
+
+**Check:** `pre-commit run end-of-file-fixer --all-files` before committing, or manually verify the file ends with a single `\n` (no extra blank lines). When using the Edit/Write tools, ensure the last line of content is not followed by an empty line.
+
 ## What NOT to do
 
 - Do NOT ask users to run a ritual prompt like "prepare environment per project standards"
