@@ -195,6 +195,7 @@ export default function McapFilesPage() {
 			title: "Owner",
 			dataIndex: "owner",
 			width: 100,
+			ellipsis: true,
 			render: (v: string) => v || "—",
 		},
 		{
@@ -237,6 +238,7 @@ export default function McapFilesPage() {
 				</Title>
 				<Space>
 					<Input
+						id="mcap-owner-filter"
 						placeholder="搜索 Owner"
 						value={ownerFilter}
 						onChange={(e) => setOwnerFilter(e.target.value)}
@@ -252,6 +254,7 @@ export default function McapFilesPage() {
 						allowClear
 					/>
 					<Select
+						id="mcap-state-filter"
 						value={stateFilter}
 						onChange={(v) => {
 							setStateFilter(v);

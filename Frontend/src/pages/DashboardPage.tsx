@@ -494,7 +494,7 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 			top: 6,
 			textStyle: { fontSize: 12, color: "#64748b" },
 		},
-		grid: { left: 56, right: 52, top: 48, bottom: 68 },
+		grid: { left: 64, right: 52, top: 48, bottom: 68 },
 		toolbox: {
 			right: 8,
 			top: 4,
@@ -540,13 +540,27 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 				type: "value",
 				name: "新增",
 				splitLine: { lineStyle: { type: "dashed" as const, color: "#f1f5f9" } },
-				axisLabel: { fontSize: 11 },
+				axisLabel: {
+					fontSize: 11,
+					formatter: (value: number) => {
+						if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M";
+						if (value >= 1_000) return (value / 1_000).toFixed(0) + "k";
+						return value.toString();
+					},
+				},
 			},
 			{
 				type: "value",
 				name: "累计",
 				splitLine: { show: false },
-				axisLabel: { fontSize: 11 },
+				axisLabel: {
+					fontSize: 11,
+					formatter: (value: number) => {
+						if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M";
+						if (value >= 1_000) return (value / 1_000).toFixed(0) + "k";
+						return value.toString();
+					},
+				},
 			},
 		],
 		series: [
@@ -613,7 +627,7 @@ function buildStackedOption(daily: DailyEventPoint[]) {
 			type: "scroll",
 			textStyle: { fontSize: 12, color: "#64748b" },
 		},
-		grid: { left: 52, right: 12, top: 48, bottom: 68 },
+		grid: { left: 64, right: 12, top: 48, bottom: 68 },
 		toolbox: {
 			right: 8,
 			top: 4,
@@ -654,7 +668,14 @@ function buildStackedOption(daily: DailyEventPoint[]) {
 		yAxis: {
 			type: "value",
 			splitLine: { lineStyle: { type: "dashed" as const, color: "#f1f5f9" } },
-			axisLabel: { fontSize: 11 },
+			axisLabel: {
+				fontSize: 11,
+				formatter: (value: number) => {
+					if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M";
+					if (value >= 1_000) return (value / 1_000).toFixed(0) + "k";
+					return value.toString();
+				},
+			},
 		},
 		series: types.map((t, i) => ({
 			name: t,
@@ -1283,6 +1304,7 @@ export default function DashboardPage() {
 					</Text>
 				</div>
 				<Radio.Group
+					id="dashboard-time-range"
 					value={windowDays}
 					onChange={(e) => setWindowDays(e.target.value)}
 					optionType="button"
