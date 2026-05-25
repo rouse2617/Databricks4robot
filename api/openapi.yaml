@@ -2709,6 +2709,22 @@ paths:
       responses:
         '200':
           description: Finalized
+  /api/v1/mcap-files/{id}/finalize:
+    post:
+      tags: [MCAPFiles]
+      summary: Finalize MCAP upload (RESTful)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/McapFileID' }
+      responses:
+        '200':
+          description: Finalized
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/mcap/{id}/messages:
     get:
       tags: [MCAPFiles]

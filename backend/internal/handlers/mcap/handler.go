@@ -218,18 +218,22 @@ func (h *Handler) CreateFile(c *gin.Context) {
 	httpresp.Internal(c, "failed to allocate unique mcap_file_id")
 }
 
-// POST /api/v1/mcap/upload/finalize
+// POST /api/v1/mcap/upload/finalize and POST /api/v1/mcap-files/:id/finalize
 // Called by SDK after GCS PUT completes. Triggers async summary (indexer-worker).
 func (h *Handler) FinalizeUpload(c *gin.Context) {
-	var req struct {
-		McapFileID string `json:"mcap_file_id" binding:"required"`
+	mcapFileID := strings.TrimSpace(c.Param("id"))
+	if mcapFileID == "" {
+		// Fallback: read from body (old route /mcap/upload/finalize)
+		var req struct {
+			McapFileID string `json:"mcap_file_id" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			httpresp.BadRequest(c, "INVALID_ARGUMENT", "invalid request body", map[string]any{"error": err.Error()})
+			return
+		}
+		mcapFileID = strings.TrimSpace(req.McapFileID)
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpresp.BadRequest(c, "INVALID_ARGUMENT", "invalid request body", map[string]any{"error": err.Error()})
-		return
-	}
-	req.McapFileID = strings.TrimSpace(req.McapFileID)
-	if req.McapFileID == "" || !id.ValidateMcapFileID(req.McapFileID) {
+	if mcapFileID == "" || !id.ValidateMcapFileID(mcapFileID) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "mcap_file_id must be exactly 8 alphanumeric characters", nil)
 		return
 	}
@@ -237,11 +241,11 @@ func (h *Handler) FinalizeUpload(c *gin.Context) {
 	// Phase 0: flip state to summarized immediately (no real footer parse yet).
 	// Phase 0.5: this triggers Pub/Sub → indexer-worker → real MCAP footer parse.
 	if err := h.withTx(c.Request.Context(), func(txCtx context.Context) error {
-		if err := h.repo.UpdateIngestState(txCtx, req.McapFileID, models.IngestStateSummarized); err != nil {
+		if err := h.repo.UpdateIngestState(txCtx, mcapFileID, models.IngestStateSummarized); err != nil {
 			return err
 		}
-		return h.appendMcapEvent(txCtx, "mcap_upload_finalized", req.McapFileID, c.GetHeader("X-Request-ID"), map[string]any{
-			"mcap_file_id": req.McapFileID,
+		return h.appendMcapEvent(txCtx, "mcap_upload_finalized", mcapFileID, c.GetHeader("X-Request-ID"), map[string]any{
+			"mcap_file_id": mcapFileID,
 			"ingest_state": models.IngestStateSummarized,
 		})
 	}); err != nil {
@@ -250,7 +254,7 @@ func (h *Handler) FinalizeUpload(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"mcap_file_id": req.McapFileID,
+		"mcap_file_id": mcapFileID,
 		"ingest_state": models.IngestStateSummarized,
 	})
 }

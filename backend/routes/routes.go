@@ -180,6 +180,7 @@ func RegisterAll(
 
 		mcapFiles := api.Group("/mcap-files")
 		mcapFiles.POST("", mcapHandler.CreateFile)
+		mcapFiles.POST("/:id/finalize", mcapHandler.FinalizeUpload)
 		mcapFiles.GET("", mcapHandler.ListFiles)
 		mcapFiles.GET("/:id", mcapHandler.GetFile)
 		mcapFiles.GET("/:id/bytes", mcapHandler.Bytes)
