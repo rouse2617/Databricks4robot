@@ -2509,9 +2509,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeliveryDraftResponse' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/DeliveryAddItemsResponse' }
   /api/v1/deliveries/{id}/commit:
     post:
       tags: [Deliveries]
