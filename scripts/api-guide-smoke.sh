@@ -405,6 +405,36 @@ EOF
 	fi
 fi
 
+# ── Layered child-asset creation (CYB-1222) ──────────────────────────────
+echo "=== 1.10 Layered child-asset creation ==="
+
+# Error path: non-existent parent
+expect_code_post "POST /assets/{id}/clips non-existent parent → 404" "/api/v1/assets/zzzzzzzz/clips" \
+	'{"start_timestamp_ns":1700000000000000000,"end_timestamp_ns":1700000000100000000,"split_method":"manual"}' "404"
+expect_code_post "POST /assets/{id}/tasks non-existent parent → 404" "/api/v1/assets/zzzzzzzz/tasks" \
+	'{"start_timestamp_ns":1700000000000000000,"end_timestamp_ns":1700000000100000000,"split_method":"manual"}' "404"
+expect_code_post "POST /assets/{id}/frames non-existent parent → 404" "/api/v1/assets/zzzzzzzz/frames" \
+	'{"start_timestamp_ns":1700000000000000000,"end_timestamp_ns":1700000000100000000,"split_method":"manual"}' "404"
+
+if [[ "${RUN_WRITES:-0}" == "1" ]]; then
+	# Look up a segment to use as parent.
+	SEG_ID=$(echo '{"schema_version":"v1","scope":{"resource":"assets"},"select":{"fields":["asset_id"]},"where":{"and":[{"pred":{"field":"asset_type","op":"eq","value":"segment"}}]},"sort":[{"field":"created_at","direction":"desc"}],"page":{"page":1,"page_size":1}}' \
+		| post_json "layered find segment parent" "/api/v1/queries/run" | python3 -c "import sys,json; items=json.load(sys.stdin).get('items',[]); print(items[0]['asset_id'] if items else '')" 2>/dev/null || true)
+
+	if [[ -n "$SEG_ID" ]]; then
+		post "POST /assets/{id}/clips (happy)" "/api/v1/assets/${SEG_ID}/clips" \
+			'{"start_timestamp_ns":1700000000000000000,"end_timestamp_ns":1700000000100000000,"split_method":"manual"}' >/dev/null
+		post "POST /assets/{id}/frames (happy)" "/api/v1/assets/${SEG_ID}/frames" \
+			'{"start_timestamp_ns":1700000000000000000,"end_timestamp_ns":1700000000100000000,"split_method":"manual"}' >/dev/null
+		post "POST /assets/{id}/tasks (happy)" "/api/v1/assets/${SEG_ID}/tasks" \
+			'{"start_timestamp_ns":1700000000000000000,"end_timestamp_ns":1700000000100000000,"split_method":"algo:hand_track@2.0","split_run_id":"R001"}' >/dev/null
+	else
+		echo "  WARN layered happy-path skipped: no segment found"
+	fi
+else
+	echo "  skip layered write smoke — set RUN_WRITES=1 to exercise POST /assets/{id}/{clips,frames,tasks}"
+fi
+
 echo ""
 echo "=== done: ${PASS} passed, ${FAIL} failed ==="
 [[ "$FAIL" -eq 0 ]]

@@ -83,7 +83,7 @@ func TestValidateCreate_L1_segmentOnRawMcapOK(t *testing.T) {
 	}
 }
 
-// ─── L2: clip/frame/task parent must be segment ──────────────────────────────
+// ─── L2: clip/frame parent must be segment; L5: task parent must be segment or task ─
 
 func TestValidateCreate_L2_clipParentMustBeSegment(t *testing.T) {
 	v := NewAssetWriteValidator(&mockParentGetter{infos: map[string]*ParentInfo{
@@ -117,14 +117,24 @@ func TestValidateCreate_L2_frameParentMustBeSegment(t *testing.T) {
 	}
 }
 
-func TestValidateCreate_L2_taskParentMustBeSegment(t *testing.T) {
+func TestValidateCreate_L5_taskParentInvalid(t *testing.T) {
 	v := NewAssetWriteValidator(&mockParentGetter{infos: map[string]*ParentInfo{
 		"raw001": parentInfo("raw_mcap"),
 	}})
 	err := v.ValidateCreate(context.Background(), assetWithParent("task", "raw001"))
 	var hv *HierarchyViolation
-	if !errors.As(err, &hv) || hv.Invariant != "L2" {
-		t.Fatalf("expected L2 violation, got %v", err)
+	if !errors.As(err, &hv) || hv.Invariant != "L5" {
+		t.Fatalf("expected L5 violation, got %v", err)
+	}
+}
+
+func TestValidateCreate_L5_taskOnTaskOK(t *testing.T) {
+	v := NewAssetWriteValidator(&mockParentGetter{infos: map[string]*ParentInfo{
+		"task001": parentInfo("task"),
+	}})
+	err := v.ValidateCreate(context.Background(), assetWithParent("task", "task001"))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 }
 

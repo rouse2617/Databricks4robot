@@ -1545,6 +1545,31 @@ components:
       properties:
         authenticated: { type: boolean }
 
+    # ── Layered child-asset creation (CYB-1222) ─────────────────────────────
+    ChildAssetCreateRequest:
+      type: object
+      required: [start_timestamp_ns, end_timestamp_ns]
+      properties:
+        start_timestamp_ns:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Start timestamp in nanoseconds
+        end_timestamp_ns:
+          type: integer
+          format: int64
+          minimum: 1
+          description: End timestamp in nanoseconds
+        split_method:
+          type: string
+          description: "Split method. When unset or manual/rule:* → edge is split_from; algo:* → edge is derived_from"
+        split_run_id:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional metadata for the new child asset
+
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────
   /healthz:
@@ -1928,6 +1953,84 @@ paths:
       responses:
         '200':
           description: Revision promoted
+
+  # ── Layered child-asset creation (CYB-1222) ──────────────────────────────
+  /api/v1/assets/{id}/clips:
+    post:
+      tags: [Assets]
+      summary: Create clip asset under a segment parent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChildAssetCreateRequest' }
+      responses:
+        '201':
+          description: Clip asset created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '422':
+          description: Hierarchy violation or invalid domain state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/frames:
+    post:
+      tags: [Assets]
+      summary: Create frame asset under a segment parent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChildAssetCreateRequest' }
+      responses:
+        '201':
+          description: Frame asset created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '422':
+          description: Hierarchy violation or invalid domain state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/tasks:
+    post:
+      tags: [Assets]
+      summary: Create task asset under a segment or task parent
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChildAssetCreateRequest' }
+      responses:
+        '201':
+          description: Task asset created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '422':
+          description: Hierarchy violation or invalid domain state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   /api/v1/logical-assets/{id}/current:
     get:
       tags: [Assets]

@@ -90,7 +90,7 @@ func (v *AssetWriteValidator) ValidateCreate(ctx context.Context, a *models.Asse
 	case "clip", "frame":
 		return v.checkChildOfSegment(a.AssetType, parent)
 	case "task":
-		return v.checkChildOfSegment(a.AssetType, parent)
+		return v.checkTask(parent)
 	case "action":
 		return v.checkAction(parent)
 	case "derived_asset":
@@ -158,6 +158,21 @@ func (v *AssetWriteValidator) checkAction(parent *ParentInfo) error {
 			AssetType:  "action",
 			ParentType: parent.AssetType,
 			Expected:   "action parent must be segment (L2) or task (L3)",
+		}
+	}
+}
+
+// L5: task can be child of segment (L2) or task (L5).
+func (v *AssetWriteValidator) checkTask(parent *ParentInfo) error {
+	switch parent.AssetType {
+	case "segment", "task":
+		return nil
+	default:
+		return &HierarchyViolation{
+			Invariant:  "L5",
+			AssetType:  "task",
+			ParentType: parent.AssetType,
+			Expected:   "task parent must be segment (L2) or task (L5)",
 		}
 	}
 }

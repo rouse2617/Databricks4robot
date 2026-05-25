@@ -148,6 +148,13 @@ func RegisterAll(
 		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
 		assets.POST("/:id/revisions", assetHandler.PromoteRevision)
 
+		// Layered child-asset creation (CYB-1222)
+		// NOTE: /:id/actions is NOT registered here — the existing data-platform
+		// actionHandler.Create owns that route (see block near endpoint 284).
+		assets.POST("/:id/clips", assetHandler.CreateClip)
+		assets.POST("/:id/frames", assetHandler.CreateFrame)
+		assets.POST("/:id/tasks", assetHandler.CreateTask)
+
 		// Logical asset endpoints
 		api.GET("/logical-assets/:id/current", assetHandler.GetCurrentForLogical)
 		api.GET("/logical-assets/:id/ratings-history", assetHandler.HandleRatingsHistory)

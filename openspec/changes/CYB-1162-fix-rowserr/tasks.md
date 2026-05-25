@@ -20,7 +20,7 @@
 - [x] `cd backend && go test ./internal/handlers/asset/ -run TestBuildLineageResponse -v`
 
 ## Deploy verification (before commit — runtime only)
-- [ ] Build + push with git SHA tag and `cloudrun-dev-latest` per `docs/agents/deploy-before-commit.md`
+- [x] Build + push with git SHA tag and `cloudrun-dev-latest` per `docs/agents/deploy-before-commit.md`
 
 ### Backend (if `backend/` changed)
 - [ ] L1 smoke (`healthz`, core APIs) on dev

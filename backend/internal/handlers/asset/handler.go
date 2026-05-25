@@ -625,6 +625,70 @@ func (h *Handler) Create(c *gin.Context) {
 	c.JSON(201, a)
 }
 
+// createChildAssetRequest is the shared request body for all layered endpoints.
+type createChildAssetRequest struct {
+	StartTimestampNs int64                  `json:"start_timestamp_ns" binding:"required,gt=0" label:"start_timestamp_ns"`
+	EndTimestampNs   int64                  `json:"end_timestamp_ns" binding:"required,gt=0" label:"end_timestamp_ns"`
+	SplitMethod      string                 `json:"split_method"`
+	SplitRunID       string                 `json:"split_run_id"`
+	Metadata         map[string]interface{} `json:"metadata"`
+}
+
+// createChildAsset is the shared handler logic for all layered endpoints.
+func (h *Handler) createChildAsset(c *gin.Context, assetType string) {
+	parentID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	var req createChildAssetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if valErr := validate.ValidateStruct(&req); valErr != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, valErr.Error(), nil)
+		return
+	}
+	a, err := h.uc.CreateChildAsset(c.Request.Context(), assetUC.CreateChildAssetInput{
+		AssetType:        assetType,
+		ParentAssetID:    parentID,
+		StartTimestampNs: req.StartTimestampNs,
+		EndTimestampNs:   req.EndTimestampNs,
+		SplitMethod:      req.SplitMethod,
+		SplitRunID:       req.SplitRunID,
+		Metadata:         req.Metadata,
+	})
+	if err != nil {
+		var hv *deliveryrules.HierarchyViolation
+		if errors.As(err, &hv) {
+			httpresp.Unprocessable(c, httpresp.CodeHierarchyViolation, hv.Error(), map[string]any{
+				"invariant":  hv.Invariant,
+				"asset_type": hv.AssetType,
+				"parent_id":  hv.ParentID,
+				"expected":   hv.Expected,
+			})
+			return
+		}
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(201, a)
+}
+
+// POST /api/v1/assets/:id/clips
+func (h *Handler) CreateClip(c *gin.Context) { h.createChildAsset(c, "clip") }
+
+// POST /api/v1/assets/:id/actions
+func (h *Handler) CreateAction(c *gin.Context) { h.createChildAsset(c, "action") }
+
+// POST /api/v1/assets/:id/frames
+func (h *Handler) CreateFrame(c *gin.Context) { h.createChildAsset(c, "frame") }
+
+// POST /api/v1/assets/:id/tasks
+func (h *Handler) CreateTask(c *gin.Context) { h.createChildAsset(c, "task") }
+
 // PATCH /api/v1/assets/:id
 func (h *Handler) Update(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)

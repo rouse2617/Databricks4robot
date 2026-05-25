@@ -50,6 +50,16 @@ func assetVersionInsertArgs(a *models.Asset) (logicalID interface{}, revision in
 	return logicalID, revision, isCurrent
 }
 
+// InsertRelation inserts a generic asset_relations edge (parent→child direction).
+func (r *AssetRepo) InsertRelation(ctx context.Context, parentAssetID, childAssetID, relationType, runID string) error {
+	const q = `
+INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id)
+VALUES ($1, $2, $3, NULLIF($4, ''))
+ON CONFLICT (parent_asset_id, child_asset_id, relation_type) DO NOTHING`
+	db := dbFromCtx(ctx, r.c.db)
+	return db.Exec(ctx, q, parentAssetID, childAssetID, relationType, runID)
+}
+
 // InsertRevisionOf records new revision -> prior revision (parent=new, child=prior per PRD).
 func (r *AssetRepo) InsertRevisionOf(ctx context.Context, newAssetID, priorAssetID, runID string) error {
 	const q = `

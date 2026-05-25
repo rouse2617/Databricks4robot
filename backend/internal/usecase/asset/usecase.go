@@ -932,6 +932,126 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	return a, nil
 }
 
+// CreateChildAssetInput carries the fields needed for layered child-asset creation.
+type CreateChildAssetInput struct {
+	AssetType        string
+	ParentAssetID    string
+	StartTimestampNs int64
+	EndTimestampNs   int64
+	Metadata         map[string]interface{}
+	SplitMethod      string
+	SplitRunID       string
+}
+
+// splitMethodToRelation maps split_method to asset_relations.relation_type per
+// the decision table in §3.2.1 of the hierarchy-and-derivatives design doc.
+//
+//	algo:*  → derived_from
+//	manual / rule:* / ""  → split_from
+func splitMethodToRelation(splitMethod string) string {
+	if strings.HasPrefix(splitMethod, "algo:") {
+		return "derived_from"
+	}
+	return "split_from"
+}
+
+// CreateChildAsset creates a child asset under a parent with automatic
+// asset_relations edge insertion. This is the usecase behind the layered API
+// (POST /assets/:id/{clips,actions,frames,tasks}).
+func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput) (*models.Asset, error) {
+	if in.EndTimestampNs <= in.StartTimestampNs {
+		return nil, ErrInvalidRange
+	}
+	if in.ParentAssetID == "" {
+		return nil, ErrNotFound
+	}
+
+	// Verify parent exists before proceeding.
+	parent, err := u.repo.Get(ctx, in.ParentAssetID)
+	if err != nil {
+		return nil, err
+	}
+	if parent == nil {
+		return nil, ErrNotFound
+	}
+
+	// Build the asset model with a zero ID; InsertNew + prepAssetForWrite will
+	// allocate timestamps and derive duration.
+	// Inherit identity fields (McapFileID, SegmentLocator, RootAssetID) and
+	// tenant/project scope from the parent — the DB CHECK constraints require these.
+	a := &models.Asset{
+		AssetType:        in.AssetType,
+		ParentAssetID:    in.ParentAssetID,
+		McapFileID:       parent.McapFileID,
+		SegmentLocator:   parent.SegmentLocator,
+		RootAssetID:      parent.RootAssetID,
+		StartTimestampNs: in.StartTimestampNs,
+		EndTimestampNs:   in.EndTimestampNs,
+		DurationMs:       (in.EndTimestampNs - in.StartTimestampNs) / 1_000_000,
+		SplitMethod:      in.SplitMethod,
+		SplitRunID:       in.SplitRunID,
+		Metadata:         in.Metadata,
+		LifecycleMeta:    defaultLifecycleMeta(),
+		RetentionTier:    parent.RetentionTier,
+		TenantID:         parent.TenantID,
+		ProjectID:        parent.ProjectID,
+		Files:            map[string]string{},
+		Tags:             map[string]string{},
+		AlgoResults:      map[string]string{},
+	}
+
+	// CYB-1164: validate hierarchy invariants before persisting.
+	if u.validator != nil {
+		if err := u.validator.ValidateCreate(ctx, a); err != nil {
+			return nil, err
+		}
+	}
+
+	relationType := splitMethodToRelation(in.SplitMethod)
+
+	for range maxAssetIDAllocationAttempts {
+		gid, err := id.GenerateAssetID()
+		if err != nil {
+			return nil, err
+		}
+		a.AssetID = gid
+		a.Version = 0
+		a.CreatedAt = time.Time{}
+
+		err = u.withMutationTx(ctx, func(txCtx context.Context) error {
+			if err := u.seedFirstVersion(txCtx, a); err != nil {
+				return err
+			}
+			if err := u.repo.InsertNew(txCtx, a); err != nil {
+				return err
+			}
+			if relRepo, ok := u.repo.(repository.AssetRelationWriter); ok {
+				if err := relRepo.InsertRelation(txCtx, a.AssetID, in.ParentAssetID, relationType, in.SplitRunID); err != nil {
+					return err
+				}
+			}
+			if err := u.appendAssetEvent(txCtx, "asset_created", a, map[string]any{
+				"asset_id":        a.AssetID,
+				"asset_type":      a.AssetType,
+				"parent_asset_id": in.ParentAssetID,
+				"relation_type":   relationType,
+			}); err != nil {
+				return err
+			}
+			return u.seedInitialAlgoProjection(txCtx, a)
+		})
+
+		if err != nil {
+			if errors.Is(err, repository.ErrDuplicateAssetID) {
+				continue
+			}
+			return nil, mapCreateDBError(err)
+		}
+		return u.Get(ctx, a.AssetID)
+	}
+	return nil, fmt.Errorf("exhausted asset id allocation attempts (%d)", maxAssetIDAllocationAttempts)
+}
+
 func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*models.Asset, error) {
 	a, err := u.repo.Get(ctx, assetID)
 	if err != nil {

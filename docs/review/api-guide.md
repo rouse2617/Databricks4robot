@@ -593,6 +593,68 @@ curl "$BASE/api/v1/assets/{asset_id}/mcap-locator" \
 > 然后通过 GCS Range 读取仅解析 MCAP 摘要/索引，返回候选视频 topic 与窗口内 chunk 列表，
 > **不**返回视频字节本身。该接口**不在** cyber-databrew 后端进程内，部署见 `deploy/k8s/mcap-preview/`。
 
+## 1.10 分层子资产创建（CYB-1222）
+
+分层 API 在父资产下创建子资产，自动写 `asset_relations` 边和 `asset_events`。
+
+### 请求结构
+
+```json
+{
+  "start_timestamp_ns": 1700000000000000000,
+  "end_timestamp_ns":   1700000000100000000,
+  "split_method":       "manual",
+  "split_run_id":       "",
+  "metadata":           {}
+}
+```
+
+`split_method` 决定边类型：
+| 值 | relation_type |
+|---|---|
+| `algo:*` | `derived_from` |
+| 空 / `manual` / `rule:*` | `split_from` |
+
+### 端点列表
+
+| 端点 | 父类型 | 产物 asset_type | 说明 |
+|---|---|---|---|
+| `POST /api/v1/assets/:id/clips` | segment | clip | 从 segment 切 clip |
+| `POST /api/v1/assets/:id/frames` | segment | frame | 从 segment 采样 frame |
+| `POST /api/v1/assets/:id/tasks` | segment, task | task | 从 segment 创建 task，或创建 subtask |
+
+> **注意**：`POST /api/v1/assets/:id/actions` 路由已被现有的 data-platform action 端点占用 (handlers/action)，暂不注册分层 action 端点。
+
+### curl 示例
+
+```bash
+# 在 segment seg_001 下创建 clip
+curl -s -X POST "http://localhost:8080/api/v1/assets/seg_001/clips" \
+  -H "X-Databrew-Token: $DATABREW_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_timestamp_ns": 1700000000000000000,
+    "end_timestamp_ns": 1700000000100000000,
+    "split_method": "manual"
+  }'
+
+# 在 task task_001 下创建 subtask
+curl -s -X POST "http://localhost:8080/api/v1/assets/task_001/tasks" \
+  -H "X-Databrew-Token: $DATABREW_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_timestamp_ns": 1700000000000000000,
+    "end_timestamp_ns": 1700000000200000000,
+    "split_method": "algo:hand_track@2.0",
+    "split_run_id": "R001"
+  }'
+```
+
+### 错误响应
+
+- `422 ASSET_HIERARCHY_VIOLATION`：父资产类型不允许创建该子类型（如 task 下创建 clip）
+- `404 ASSET_NOT_FOUND`：父资产不存在
+
 ## 2. 算法生命周期 (Algo Lifecycle)
 
 ### 2.0 算法运行登记 (`algo_runs`，CYB-1018)

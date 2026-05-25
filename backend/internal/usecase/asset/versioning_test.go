@@ -76,6 +76,11 @@ func (r *versionedAssetRepo) InsertRevisionOf(_ context.Context, newID, priorID,
 	return nil
 }
 
+func (r *versionedAssetRepo) InsertRelation(_ context.Context, parentID, childID, relType, _ string) error {
+	r.relations = append(r.relations, parentID+"->"+childID+":"+relType)
+	return nil
+}
+
 func hasEventForAsset(events []*models.AssetEvent, eventType, assetID string) bool {
 	for _, e := range events {
 		if e.EventType == eventType && e.AssetID == assetID {
