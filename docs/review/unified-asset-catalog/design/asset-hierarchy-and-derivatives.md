@@ -66,6 +66,7 @@ flowchart TB
   segment --> action_l2
   segment --> frame
   segment --> task
+  task -->|subtask| task
   task --> action_l3
   derived -.->|"merged_from（多父，见 asset_relations）"| segment
 
@@ -88,7 +89,7 @@ flowchart TB
 - **虚线 = 多爹关系（特殊情况）**。只有 `derived_asset` 这一种类型允许「多个爹」——比如把 3 个 segment 的数据融合成一个聚合产物。一个字段装不下 3 个 ID，所以走另一张表 `asset_relations`（边表）记录多对多关系，类型标 `merged_from`。
 - **两条硬规矩**（违反时写入会被服务端拒绝，返回 HTTP 422 错误）：
   - segment 下面**不能**再挂 segment（不允许 segment 嵌套 segment，时间窗就一层）
-  - task 下面**只能**挂 action，**不能**挂 clip / frame / 别的 task（task 是动作组的容器，不是时间窗）
+  - task 下面**只能**挂 action 或子 task，**不能**挂 clip / frame（task 是动作组的容器，不是时间窗）
 - **action 可以挂两处**：直接挂 segment 下（叫 L2 action）或挂 task 下（叫 L3 action），二选一。L3 规则写「父=task」**不是**禁止 action 挂 segment，是说「**如果**它挂 task 下，那一定要满足 task 时间窗内」这种细节约束。
 
 **层级不变式（L1-L7）：**
@@ -98,10 +99,10 @@ flowchart TB
 | #      | 规则                                                      | 违反                           |
 | ------ | ------------------------------------------------------- | ---------------------------- |
 | **L1** | segment 父类型必须 = `raw_mcap`                              | 422                          |
-| **L2** | clip / frame / task / action(L2) 父类型必须 = `segment`      | 422                          |
+| **L2** | clip / frame / task(L2) / action(L2) 父类型必须 = `segment`；task(L3) 父类型必须 = `task` | 422                          |
 | **L3** | **若** action 挂 task 下（L3 形态），则父类型必须 = `task` 且时间窗 ⊆ task 时间窗 ⊆ 祖先 segment  | 422 |
 | **L4** | 禁止 `segment → segment`（无递归切分）                           | 422                          |
-| **L5** | 禁止 task 下挂 clip / frame / task                          | 422                          |
+| **L5** | 禁止 task 下挂 clip / frame（允许子 task 递归嵌套）                          | 422                          |
 | **L6** | 子资产 `mcap_file_id` 必继承根 segment                         | 422（derived_asset 例外，可 NULL） |
 | **L7** | 有父或多父时必须写 `parent_asset_id` 或 `asset_relations` + event | 422                          |
 

@@ -85,6 +85,7 @@ flowchart TB
     segment -->|切分| action_l2
     segment -->|切分| frame
     segment -->|切分| task_asset
+    task_asset -->|切分| task_asset
     task_asset --> action_l3
     derived_asset -->|合并自| sources
     mechanisms["版本 / 生命周期 / 标签 / 交付"]
