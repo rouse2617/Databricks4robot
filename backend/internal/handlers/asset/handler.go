@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -298,7 +299,10 @@ func (h *Handler) GetLineage(c *gin.Context) {
 		httpresp.Error(c, http.StatusServiceUnavailable, "PG_DISABLED", "postgres not available", nil)
 		return
 	}
-	body, _ := h.buildLineageResponse(c.Request.Context(), assetID)
+	body, err := h.buildLineageResponse(c.Request.Context(), assetID)
+	if err != nil {
+		slog.Warn("lineage response partial", "asset_id", assetID, "error", err)
+	}
 	c.JSON(200, body)
 }
 
@@ -328,7 +332,10 @@ func (h *Handler) GetProvenance(c *gin.Context) {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	lineage, _ := h.buildLineageResponse(c.Request.Context(), assetID)
+	lineage, err := h.buildLineageResponse(c.Request.Context(), assetID)
+	if err != nil {
+		slog.Warn("provenance lineage partial", "asset_id", assetID, "error", err)
+	}
 	c.JSON(200, gin.H{
 		"asset_id":         res.AssetID,
 		"logical_asset_id": res.LogicalAssetID,
@@ -756,7 +763,10 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 
 // GET /api/v1/assets/:id/deliveries
 func (h *Handler) ListDeliveries(c *gin.Context) {
-	assetID := c.Param("id")
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
 	page, pageSize := handlers.ParsePageParams(c.Query("page"), c.Query("page_size"))
 
 	ids, err := h.deliveryRepo.ListByAsset(c.Request.Context(), assetID)
@@ -771,14 +781,21 @@ func (h *Handler) ListDeliveries(c *gin.Context) {
 	// Paginate the delivery ID list.
 	start := (page - 1) * pageSize
 	var items []string
+	end := 0
 	if start >= len(ids) {
 		items = []string{}
 	} else {
-		end := start + pageSize
+		end = start + pageSize
 		if end > len(ids) {
 			end = len(ids)
 		}
 		items = ids[start:end]
+	}
+
+	// Compute next_token based on whether there are more pages.
+	var nextToken string
+	if end < len(ids) {
+		nextToken = strconv.Itoa(page + 1)
 	}
 
 	c.JSON(200, gin.H{
@@ -786,7 +803,7 @@ func (h *Handler) ListDeliveries(c *gin.Context) {
 		"asset_id":   assetID,
 		"page":       page,
 		"page_size":  pageSize,
-		"next_token": "",
+		"next_token": nextToken,
 	})
 }
 
@@ -843,6 +860,17 @@ func (h *Handler) BatchGet(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset_ids exceeds maximum of 100", nil)
 		return
 	}
+
+	// Deduplicate asset IDs to avoid duplicate items in response.
+	seen := make(map[string]struct{}, len(req.AssetIDs))
+	deduped := make([]string, 0, len(req.AssetIDs))
+	for _, id := range req.AssetIDs {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			deduped = append(deduped, id)
+		}
+	}
+	req.AssetIDs = deduped
 
 	result, err := h.uc.BatchGet(c.Request.Context(), req.AssetIDs)
 	if err != nil {

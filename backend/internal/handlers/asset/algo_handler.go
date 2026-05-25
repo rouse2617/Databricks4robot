@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/handlers"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
@@ -36,7 +37,10 @@ func NewAlgoHandler(uc *assetUC.AlgoUsecase) *AlgoHandler {
 // @Security     GraceToken
 // @Router       /assets/{id}/algo/{algo_key}/start [post]
 func (h *AlgoHandler) Start(c *gin.Context) {
-	assetID := c.Param("id")
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
 	algoKey := c.Param("algo_key")
 
 	var req struct {
@@ -76,7 +80,10 @@ func (h *AlgoHandler) Start(c *gin.Context) {
 // @Security     GraceToken
 // @Router       /assets/{id}/algo/{algo_key}/finish [post]
 func (h *AlgoHandler) Finish(c *gin.Context) {
-	assetID := c.Param("id")
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
 	algoKey := c.Param("algo_key")
 
 	var req struct {
