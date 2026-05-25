@@ -11,13 +11,17 @@ Python SDK for the [cyber-databrew](https://github.com/CyberOrigin2077/cyber-dat
 - Python 3.11+
 - `gcloud` 已登录并有权限访问 `green-valley-442103` 项目
 
-### 安装命令
+### 安装命令（算法工程师用）
 
 ```bash
+# 建一个项目用的虚拟环境（如果还没有）
+python3 -m venv .venv
+source .venv/bin/activate
+
 # 仅首次：安装 Artifact Registry 认证插件
 pip install keyrings.google-artifactregistry-auth
 
-# 安装 SDK（以后每次都用这条）
+# 安装 SDK
 pip install --extra-index-url \
   https://us-central1-python.pkg.dev/green-valley-442103/python-packages/simple/ \
   cyber-databrew-sdk
@@ -27,6 +31,23 @@ pip install --extra-index-url \
 
 ```bash
 python -c "from cyber_databrew_sdk import CyberDatabrewClient; print('OK')"
+```
+
+### 查看版本 / 升级
+
+```bash
+# 查看当前安装版本
+pip show cyber-databrew-sdk
+
+# 升级到最新版
+pip install --upgrade --extra-index-url \
+  https://us-central1-python.pkg.dev/green-valley-442103/python-packages/simple/ \
+  cyber-databrew-sdk
+
+# 安装指定版本
+pip install --extra-index-url \
+  https://us-central1-python.pkg.dev/green-valley-442103/python-packages/simple/ \
+  'cyber-databrew-sdk==0.0.1.dev120'
 ```
 
 ### 版本管理
@@ -46,19 +67,6 @@ pip show cyber-databrew-sdk
 python -c "from cyber_databrew_sdk import _version; print(_version.__version__)"
 ```
 
-### 升级 SDK
-
-```bash
-# 升级到最新版
-pip install --upgrade --extra-index-url \
-  https://us-central1-python.pkg.dev/green-valley-442103/python-packages/simple/ \
-  cyber-databrew-sdk
-
-# 安装指定版本
-pip install --extra-index-url \
-  https://us-central1-python.pkg.dev/green-valley-442103/python-packages/simple/ \
-  'cyber-databrew-sdk==0.0.1.dev120'
-```
 
 ---
 
