@@ -26,7 +26,7 @@ BASE="${BASE%/}"
 if [[ -z "${DATABREW_TOKEN:-}" ]]; then
   DATABREW_TOKEN="$(gcloud run services describe "$SERVICE" \
     --region="$REGION" --project="$PROJECT" --format=json \
-    | python3 -c "import sys,json; svc=json.load(sys.stdin); envs={e['name']:e.get('value','') for e in svc['spec']['template']['spec']['containers'][0].get('env',[])}; print(envs.get('DATABREW_TOKEN',''))")"
+    | python3 -c "import sys,json; svc=json.load(sys.stdin); envs={e['name']:e.get('value','') for e in svc['spec']['template']['spec']['containers'][0].get('env',[])}; print(envs.get('DATABREW_TOKEN','') or envs.get('GRACE_TOKEN',''))")"
 fi
 
 if [[ -z "${CLOUDRUN_ID_TOKEN:-}" ]]; then
