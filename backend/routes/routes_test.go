@@ -102,7 +102,7 @@ func TestRegisterAll(t *testing.T) {
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
-	cfg := &config.Config{GraceToken: "dev-token"}
+	cfg := &config.Config{DatabrewToken: "dev-token"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -125,9 +125,9 @@ func TestRegisterAll(t *testing.T) {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
 
-	// protected route with X-Grace-Token
+	// protected route with X-Databrew-Token
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/mcap-files", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	req.Header.Set("X-Request-ID", "rid-1")
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -178,9 +178,9 @@ func TestRegisterAll(t *testing.T) {
 		t.Fatalf("blank token expected 400, got %d", w.Code)
 	}
 
-	// internal route now requires auth (ADMIN_TOKEN or GraceToken fallback)
+	// internal route now requires auth (ADMIN_TOKEN or DatabrewToken fallback)
 	req = httptest.NewRequest(http.MethodPost, "/internal/commit-segments", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -195,7 +195,7 @@ func TestRemovedHealthzOutboxRoute(t *testing.T) {
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
-	cfg := &config.Config{GraceToken: "dev-token"}
+	cfg := &config.Config{DatabrewToken: "dev-token"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -215,12 +215,12 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	adminHandler := adminH.New(&routeAssetRepo{}, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
-	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
+	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -228,7 +228,7 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/internal/commit-segments", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -236,7 +236,7 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	}
 }
 
-func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
+func TestAdminReindex_UsesDatabrewTokenAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 
@@ -245,12 +245,12 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
 	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
-	cfg := &config.Config{GraceToken: "dev-token"}
+	cfg := &config.Config{DatabrewToken: "dev-token"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusServiceUnavailable {
@@ -265,7 +265,7 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
-	cfg := &config.Config{GraceToken: "dev-token"}
+	cfg := &config.Config{DatabrewToken: "dev-token"}
 	// Pass nil actionHandler: routes only register when handler is non-nil,
 	// so verify both PATCH and DELETE paths are wired by exercising a real
 	// handler. Use a handler with a no-op usecase: the call will fail body
@@ -298,7 +298,7 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
-	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
+	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 

@@ -7,8 +7,8 @@ import (
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
-	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
+	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
@@ -63,17 +63,17 @@ type coreRepos struct {
 
 // coreHandlers groups all HTTP handlers that form the main API surface.
 type coreHandlers struct {
-	asset    *assetH.Handler
-	algo     *assetH.AlgoHandler
-	mcap     *mcapH.Handler
+	asset        *assetH.Handler
+	algo         *assetH.AlgoHandler
+	mcap         *mcapH.Handler
 	delivery     *deliveryH.Handler
 	customer     *customerH.Handler
 	deliveryRule *deliveryruleH.Handler
-	algoRun  *algorunH.Handler
-	eval     *evalH.Handler
-	action   *actionH.Handler
-	query    *queryH.Handler
-	assetUC  *assetUC.Usecase
+	algoRun      *algorunH.Handler
+	eval         *evalH.Handler
+	action       *actionH.Handler
+	query        *queryH.Handler
+	assetUC      *assetUC.Usecase
 }
 
 // optional holds components that are not required for the core API to function.

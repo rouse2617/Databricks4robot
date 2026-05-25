@@ -68,9 +68,9 @@ type Usecase struct {
 	tagRepo        repository.AssetTagRepository
 	algoLatestRepo repository.AssetAlgoLatestRepository
 	eventRepo      repository.AssetEventRepository
-	customerRepo   repository.CustomerRepository  // CYB-1070: customer.* namespace lint
+	customerRepo   repository.CustomerRepository       // CYB-1070: customer.* namespace lint
 	usageStatsRepo repository.AssetUsageStatRepository // CYB-1095/1096: usage stats
-	validator      *deliveryrules.AssetWriteValidator // CYB-1164: hierarchy invariants
+	validator      *deliveryrules.AssetWriteValidator  // CYB-1164: hierarchy invariants
 }
 
 func New(repo repository.AssetRepository) *Usecase {

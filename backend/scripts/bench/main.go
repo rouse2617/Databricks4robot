@@ -113,7 +113,7 @@ func doReq(method, path string, body interface{}) (int, []byte, time.Duration, e
 		return 0, nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Grace-Token", *token)
+	req.Header.Set("X-Databrew-Token", *token)
 
 	start := time.Now()
 	resp, err := httpClient.Do(req)

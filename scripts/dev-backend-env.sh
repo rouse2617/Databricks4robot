@@ -5,7 +5,7 @@
 #   source scripts/dev-backend-env.sh
 #   curl -sfS "${API_HDR[@]}" "${BASE}/api/v1/customers"
 #
-# Optional overrides: GCP_PROJECT, GCP_REGION, BACKEND_SERVICE, GRACE_TOKEN, BASE
+# Optional overrides: GCP_PROJECT, GCP_REGION, BACKEND_SERVICE, DATABREW_TOKEN, BASE
 set -euo pipefail
 
 PROJECT="${GCP_PROJECT:-green-valley-442103}"
@@ -23,20 +23,20 @@ if [[ -z "${BASE:-}" ]]; then
 fi
 BASE="${BASE%/}"
 
-if [[ -z "${GRACE_TOKEN:-}" ]]; then
-  GRACE_TOKEN="$(gcloud run services describe "$SERVICE" \
+if [[ -z "${DATABREW_TOKEN:-}" ]]; then
+  DATABREW_TOKEN="$(gcloud run services describe "$SERVICE" \
     --region="$REGION" --project="$PROJECT" --format=json \
-    | python3 -c "import sys,json; svc=json.load(sys.stdin); envs={e['name']:e.get('value','') for e in svc['spec']['template']['spec']['containers'][0].get('env',[])}; print(envs.get('GRACE_TOKEN',''))")"
+    | python3 -c "import sys,json; svc=json.load(sys.stdin); envs={e['name']:e.get('value','') for e in svc['spec']['template']['spec']['containers'][0].get('env',[])}; print(envs.get('DATABREW_TOKEN',''))")"
 fi
 
 if [[ -z "${CLOUDRUN_ID_TOKEN:-}" ]]; then
   CLOUDRUN_ID_TOKEN="$(gcloud auth print-identity-token 2>/dev/null || true)"
 fi
 
-export BASE GRACE_TOKEN CLOUDRUN_ID_TOKEN
-export TOKEN="${TOKEN:-$GRACE_TOKEN}"
+export BASE DATABREW_TOKEN CLOUDRUN_ID_TOKEN
+export TOKEN="${TOKEN:-$DATABREW_TOKEN}"
 
-API_HDR=( -H "X-Grace-Token: ${GRACE_TOKEN}" -H "Content-Type: application/json" )
+API_HDR=( -H "X-Databrew-Token: ${DATABREW_TOKEN}" -H "Content-Type: application/json" )
 if [[ -n "${CLOUDRUN_ID_TOKEN}" ]]; then
   API_HDR+=( -H "Authorization: Bearer ${CLOUDRUN_ID_TOKEN}" )
 fi

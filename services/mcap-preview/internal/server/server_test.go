@@ -129,7 +129,7 @@ func TestManifest_HappyPath(t *testing.T) {
 	mcapBytes := buildFixtureMCAP(t)
 
 	upstream := fakeUpstream(t, func(t *testing.T, id string, r *http.Request) (int, string) {
-		if got := r.Header.Get("X-Grace-Token"); got != "tok" {
+		if got := r.Header.Get("X-Databrew-Token"); got != "tok" {
 			t.Fatalf("upstream did not see token: %q", got)
 		}
 		if id != "abc123" {
@@ -154,12 +154,12 @@ func TestManifest_HappyPath(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP:              openMCAP,
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/manifest", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -206,7 +206,7 @@ func TestManifest_UpstreamNotFoundPropagates(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			t.Fatal("OpenMCAP should not be called when upstream returns 404")
 			return nil, nil, nil, nil
@@ -214,7 +214,7 @@ func TestManifest_UpstreamNotFoundPropagates(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/manifest", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != 404 {
@@ -233,7 +233,7 @@ func TestManifest_UpstreamServiceUnavailablePropagates(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			t.Fatal("OpenMCAP should not be called when upstream returns 503")
 			return nil, nil, nil, nil
@@ -241,7 +241,7 @@ func TestManifest_UpstreamServiceUnavailablePropagates(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/manifest", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != 503 {
@@ -263,7 +263,7 @@ func TestManifest_UpstreamInvalidRangePropagates(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			t.Fatal("OpenMCAP should not be called when upstream returns 416")
 			return nil, nil, nil, nil
@@ -271,7 +271,7 @@ func TestManifest_UpstreamInvalidRangePropagates(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/manifest", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != 416 {
@@ -304,7 +304,7 @@ func TestManifest_BadAssetIDIs400(t *testing.T) {
 	}})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/bad%20id/manifest", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())

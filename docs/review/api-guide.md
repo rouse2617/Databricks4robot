@@ -31,7 +31,7 @@ Query API 的筛选 / 排序字段名与注册中心一致，见 §1.3。
 ## 基础信息
 
 - 基础 URL: `http://localhost:8080`（本地开发）
-- 认证: `/api/v1/*` 默认需要 `X-Grace-Token`；也支持先走 `POST /api/v1/auth/login` 写入 `grace_session` cookie，再访问受保护接口
+- 认证: `/api/v1/*` 默认需要 `X-Databrew-Token`；也支持先走 `POST /api/v1/auth/login` 写入 `databrew_session` cookie，再访问受保护接口
 - 响应格式: JSON
 - 请求 ID: 每个响应包含 `X-Request-ID` header
 
@@ -67,17 +67,17 @@ BASE=http://localhost:8080 TOKEN=dev-token bash scripts/api-guide-smoke.sh
 RUN_WRITES=1 BASE=http://localhost:8080 TOKEN=dev-token bash scripts/api-guide-smoke.sh
 ```
 
-**HTTPS dev 网关（API 无 IAP）**：`https://api-cyber-databrew-dev.cyberorigin.ai` 当前仅要求 **`X-Grace-Token`**（`TOKEN` 环境变量），无需额外 IAP Bearer。
+**HTTPS dev 网关（API 无 IAP）**：`https://api-cyber-databrew-dev.cyberorigin.ai` 当前仅要求 **`X-Databrew-Token`**（`TOKEN` 环境变量），无需额外 IAP Bearer。
 
 ```bash
 export BASE=https://api-cyber-databrew-dev.cyberorigin.ai
-export TOKEN='<部署环境 GRACE_TOKEN>'
+export TOKEN='<部署环境 DATABREW_TOKEN>'
 bash scripts/api-guide-smoke.sh
 ```
 
 说明：若未来重新启用 IAP，可通过 `IAP_TOKEN` 环境变量向脚本注入 Bearer，流程见 [IAP 程序化认证](https://cloud.google.com/iap/docs/authentication-howto)。
 
-**GKE 集群内冒烟（绕过 IAP，推荐用于验证 dev 后端）**：对 `cyber-databrew-dev` 命名空间内的 `Service/cyber-databrew-backend` 执行同一脚本；`GRACE_TOKEN` 来自 Secret **`cyber-databrew-secrets`**。一键：
+**GKE 集群内冒烟（绕过 IAP，推荐用于验证 dev 后端）**：对 `cyber-databrew-dev` 命名空间内的 `Service/cyber-databrew-backend` 执行同一脚本；`DATABREW_TOKEN` 来自 Secret **`cyber-databrew-secrets`**。一键：
 
 ```bash
 bash scripts/api-guide-smoke-incluster.sh
@@ -104,14 +104,14 @@ make iceberg-mvp
 
 ```bash
 curl "$BASE/api/v1/lakehouse/status" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 查看 Iceberg 表行数：
 
 ```bash
 curl "$BASE/api/v1/lakehouse/tables" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应至少包含 `bronze_asset_events`；当 Silver export job 已执行并创建外部表时，还会包含 `silver_asset_events_current`。Silver 表语义为每个 `asset_id` 保留 `last_event_seq` 最大的一行，适合下游审计分析避免直接读取 Bronze 重试重复行。未启用 lakehouse 或 Bronze 不可读时返回 `503`；Silver 尚未创建时 `/lakehouse/tables` 仍返回 `200`，只是不包含 Silver 行。
@@ -121,19 +121,19 @@ Lakehouse dashboard 读模型接口：
 ```bash
 # 总览：Bronze/Silver/Gold 行数、Gold 最新日期，以及业务侧资产/新增/新鲜度
 curl "$BASE/api/v1/lakehouse/overview" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 最近 N 天（默认 30，最大 180）每日新增资产与累计资产（Gold asset_created）
 curl "$BASE/api/v1/lakehouse/asset-growth?days=30" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 最近 N 天（默认 30）每日事件统计
 curl "$BASE/api/v1/lakehouse/event-daily?days=30" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 某日事件类型占比（date=latest 或 YYYY-MM-DD）
 curl "$BASE/api/v1/lakehouse/event-type-share?date=latest" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 五类湖仓查询（当 BigQuery 中对应 Iceberg 表尚未建表或 `LAKEHOUSE_BQ_DATASET` 与仓库不一致时，这些接口仍返回 **HTTP 200**，`items` 为空并带 `note` 说明原因，避免前端按 500 处理）：
@@ -141,31 +141,31 @@ curl "$BASE/api/v1/lakehouse/event-type-share?date=latest" \
 ```bash
 # 某次训练当时用了哪些 asset？
 curl "$BASE/api/v1/lakehouse/training-assets?snapshot_id=mvp_hand_tracking_quality_v1" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 某个算法版本变更后，哪些历史 asset 要重算？
 curl "$BASE/api/v1/lakehouse/recompute-candidates?algo_key=hand_tracking@1.2.0&target_version=1.3.0" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 某个 tag 是什么时候被算法追加的？
 curl "$BASE/api/v1/lakehouse/tag-timeline?tag_key=quality" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 近 7/30/60/90 天资产质量分布（window 可选：7d/30d/60d/90d；默认 30d）
 # 数据源：Lakehouse Silver 当前态表（口径与 PG `NOT is_deleted` 保持一致）
 curl "$BASE/api/v1/lakehouse/quality-distribution?window=30d" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 某个客户交付过的数据是否能完整回放？
 curl "$BASE/api/v1/lakehouse/customer-replay?customer_id=urn:grace:customer:A" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 兼容的静态报告接口仍然保留：
 
 ```bash
 curl "$BASE/api/v1/lakehouse/report" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 注意：上述 Lakehouse 接口在 1.0 阶段未上线；2.0 起 BigQuery 负责查询 BigLake-managed Iceberg 表，入湖由 Cloud Run Job + PyIceberg 完成。
@@ -187,7 +187,7 @@ curl "$BASE/api/v1/lakehouse/report" \
 MCAP_ID="mcap0001"
 
 curl -X POST "$BASE/api/v1/mcap-files" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{
     \"mcap_file_id\": \"$MCAP_ID\",
@@ -213,7 +213,7 @@ curl -X POST "$BASE/api/v1/mcap-files" \
 
 ```bash
 curl -X POST "$BASE/api/v1/assets" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{
     \"mcap_file_id\": \"$MCAP_ID\",
@@ -293,7 +293,7 @@ Tags 校验规则:
 
 ```bash
 curl "$BASE/api/v1/assets/{asset_id}" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`: 完整 Asset JSON（与 OpenAPI Asset schema 一致；与创建响应同一形状）
@@ -332,7 +332,7 @@ v1 当前范围固定为：`resource=assets`，执行路径以 `ES recall + PG r
 ```bash
 # 仅校验（不执行）
 curl -sS -X POST "$BASE/api/v1/queries/validate" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "schema_version": "v1",
@@ -349,7 +349,7 @@ curl -sS -X POST "$BASE/api/v1/queries/validate" \
 
 # 校验 + 执行（structured）
 curl -sS -X POST "$BASE/api/v1/queries/run" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "schema_version": "v1",
@@ -364,7 +364,7 @@ curl -sS -X POST "$BASE/api/v1/queries/run" \
 
 # 含历史修订（多版本资产族的全部 revision 行）
 curl -sS -X POST "$BASE/api/v1/queries/run?include_history=true" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "schema_version": "v1",
@@ -377,7 +377,7 @@ curl -sS -X POST "$BASE/api/v1/queries/run?include_history=true" \
 
 # keyword / semantic / similar 也统一从 Query API 进入
 curl -sS -X POST "$BASE/api/v1/queries/run" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "schema_version": "v1",
@@ -404,7 +404,7 @@ curl -sS -X POST "$BASE/api/v1/queries/run" \
 
 ```bash
 curl -X PATCH "$BASE/api/v1/assets/{asset_id}" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "reviewer": "bob",
@@ -421,7 +421,7 @@ curl -X PATCH "$BASE/api/v1/assets/{asset_id}" \
 
 ```bash
 curl -X DELETE "$BASE/api/v1/assets/{asset_id}" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -435,7 +435,7 @@ curl -X DELETE "$BASE/api/v1/assets/{asset_id}" \
 
 ```bash
 curl "$BASE/api/v1/assets/{asset_id}/deliveries?page=1&page_size=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -457,7 +457,7 @@ curl "$BASE/api/v1/assets/{asset_id}/deliveries?page=1&page_size=20" \
 
 ```bash
 curl "$BASE/api/v1/assets/{asset_id}/provenance" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`（节选）：
@@ -491,7 +491,7 @@ curl "$BASE/api/v1/assets/{asset_id}/provenance" \
 
 ```bash
 curl "$BASE/api/v1/logical-assets/aaaaaaaa/ratings-history" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -558,7 +558,7 @@ curl "$BASE/api/v1/logical-assets/aaaaaaaa/ratings-history" \
 
 ```bash
 curl "$BASE/api/v1/assets/{asset_id}/mcap-locator" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`：
@@ -603,7 +603,7 @@ Worker 在批量跑算法前先登记 run，再在 per-asset `start`/`finish` �
 RUN_ID="R001abc123def456"
 
 curl -X POST "$BASE/api/v1/algo-runs" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{
     \"run_id\": \"$RUN_ID\",
@@ -615,16 +615,16 @@ curl -X POST "$BASE/api/v1/algo-runs" \
   }"
 
 curl -X POST "$BASE/api/v1/algo-runs/$RUN_ID/start" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # ... per-asset algo start/finish with same run_id ...
 
 curl -X POST "$BASE/api/v1/algo-runs/$RUN_ID/finish" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"status": "ok", "assets_processed": 10, "assets_succeeded": 9, "assets_failed": 1}'
 
-curl "$BASE/api/v1/algo-runs/$RUN_ID" -H "X-Grace-Token: $TOKEN"
+curl "$BASE/api/v1/algo-runs/$RUN_ID" -H "X-Databrew-Token: $TOKEN"
 ```
 
 Per-asset `finish` 在 `run_id` 为 16 位且已登记时，同事务追加 `algo_run_applied` 事件。
@@ -635,7 +635,7 @@ Per-asset `finish` 在 `run_id` 为 16 位且已登记时，同事务追加 `alg
 
 ```bash
 curl "$BASE/api/v1/algo-runs?page=1&page_size=20&algo_name=hand_track&status=running" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`：
@@ -652,7 +652,7 @@ curl "$BASE/api/v1/algo-runs?page=1&page_size=20&algo_name=hand_track&status=run
 
 ```bash
 curl -X POST "$BASE/api/v1/algo-runs" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{
     \"run_id\": \"$RUN_ID\",
@@ -667,7 +667,7 @@ curl -X POST "$BASE/api/v1/algo-runs" \
 
 ```bash
 curl -X POST "$BASE/api/v1/algo-runs/$RUN_ID/cancel" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"reason":"operator stop"}'
 ```
@@ -676,7 +676,7 @@ curl -X POST "$BASE/api/v1/algo-runs/$RUN_ID/cancel" \
 
 ```bash
 curl "$BASE/api/v1/algo-runs/$RUN_ID/affected-assets" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 ### 状态机
@@ -708,7 +708,7 @@ blocked ──→ pending ──→ running ──→ ok ──→ (reset) ─�
 
 ```bash
 curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/start" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "method": "k8s_job",
@@ -732,7 +732,7 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/start" \
 成功完成（无额外字段要求的算法）:
 ```bash
 curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/finish" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"status": "ok"}'
 ```
@@ -740,7 +740,7 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/finish" \
 成功完成（需要 output 的算法）:
 ```bash
 curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/hand_tracking@1.2.0/finish" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "status": "ok",
@@ -756,7 +756,7 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/hand_tracking@1.2.0/finish" \
 失败完成:
 ```bash
 curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/finish" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "status": "failed",
@@ -776,7 +776,7 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/finish" \
 
 ```bash
 curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/reset" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -796,27 +796,27 @@ curl -X POST "$BASE/api/v1/assets/{asset_id}/algo/env_analysis@1.0.0/reset" \
 ```bash
 # 1) human 写入 — 必须带 source_name
 curl -X POST "$BASE/api/v1/assets/{asset_id}/tags" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"key":"quality","value":"good","source_type":"human","source_name":"labeler_007"}'
 
 # 2) rule_engine 写入 — 必须带 source_name + source_version
 curl -X POST "$BASE/api/v1/assets/{asset_id}/tags" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"key":"quality","value":"good","source_type":"rule_engine","source_name":"qc_check","source_version":"1.0"}'
 
 # 3) 只删 human 那行（rule_engine 行保留）
 curl -X DELETE "$BASE/api/v1/assets/{asset_id}/tags/quality?source_type=human" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 4) 不带 source_type 时删掉该 key 下所有来源
 curl -X DELETE "$BASE/api/v1/assets/{asset_id}/tags/quality" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 5) 查询标签变更历史
 curl "$BASE/api/v1/assets/{asset_id}/tags/history?limit=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 错误路径：
@@ -838,19 +838,19 @@ curl "$BASE/api/v1/assets/{asset_id}/tags/history?limit=20" \
 ```bash
 # 查询资产完整事件时间线（最新在前）
 curl "$BASE/api/v1/assets/{asset_id}/events?limit=50" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # timeline 别名端点（语义与 /events 一致）
 curl "$BASE/api/v1/assets/{asset_id}/timeline?limit=50" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 只看算法事件
 curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&limit=50" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 按算法过滤，并用 cursor 继续翻下一页
 curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analysis@1.0.0&cursor=12345&limit=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 说明：`{asset_id}` 须为 **8 位字母数字**（与创建响应中的 `asset_id` 同格式）；非法格式返回 `400`（`INVALID_ARGUMENT`），资产不存在返回 `404`（`ASSET_NOT_FOUND`）。`GET /tags/history` 同理。
@@ -898,11 +898,11 @@ curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analy
 ```bash
 # 首次订阅
 curl -N "$BASE/api/v1/assets/{asset_id}/events/stream" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 断线后从 event_seq=12345 之后恢复
 curl -N "$BASE/api/v1/assets/{asset_id}/events/stream" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Last-Event-ID: 12345"
 ```
 
@@ -928,15 +928,15 @@ data: {"event_id":"550e8400-e29b-41d4-a716-446655440000","event_seq":12346,"even
 ```bash
 # 最新 50 条审计事件
 curl "$BASE/api/v1/audit/search?limit=50" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 按事件类型 + run_id 搜索
 curl "$BASE/api/v1/audit/search?event_type=algo_finished&run_id=run1234567890123&limit=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 按 actor + 时间窗口搜索
 curl "$BASE/api/v1/audit/search?actor=alice&time_from=2026-05-01T00:00:00Z&time_to=2026-05-23T23:59:59Z" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -989,11 +989,11 @@ curl "$BASE/api/v1/audit/search?actor=alice&time_from=2026-05-01T00:00:00Z&time_
 ```bash
 # 查某个资产的上下游血缘，允许空结果
 curl "$BASE/api/v1/audit/lineage-search?asset_id=b9a5a281&direction=both&depth=3" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 只查 derived/split 关系的下游影响面
 curl "$BASE/api/v1/audit/lineage-search?asset_id=b9a5a281&direction=downstream&relation_types=derived_from,split_from" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -1055,17 +1055,17 @@ curl "$BASE/api/v1/audit/lineage-search?asset_id=b9a5a281&direction=downstream&r
 # 1. 完成三个依赖
 for algo in hand_tracking@1.2.0 head_tracking@1.0.0 body_tracking@1.0.0; do
   curl -X POST "$BASE/api/v1/assets/{id}/algo/$algo/start" \
-    -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+    -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
     -d '{"method":"k8s_job"}'
 
   curl -X POST "$BASE/api/v1/assets/{id}/algo/$algo/finish" \
-    -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+    -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
     -d "{\"status\":\"ok\",\"output_uri\":\"gs://b/$algo.mcap\",\"result_size_bytes\":100,\"extra_fields\":{\"type\":\"v1\"}}"
 done
 
 # 2. action_annotation 自动变为 pending，现在可以启动了
 curl -X POST "$BASE/api/v1/assets/{id}/algo/action_annotation@1.0.0/start" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"method":"k8s_job"}'
 ```
 
@@ -1090,7 +1090,7 @@ curl -X POST "$BASE/api/v1/assets/{id}/algo/action_annotation@1.0.0/start" \
 
 ```bash
 curl -X POST "$BASE/api/v1/assets/{asset_id}/actions" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "start_ns": 1640056114776298435,
     "end_ns":   1640056115776298435,
@@ -1111,12 +1111,12 @@ PATCH 是部分更新——未传字段保持不变。`expected_version` 可选�
 ```bash
 # 改 label / labels / description / 时间窗；同事务追加 action_upserted
 curl -X PATCH "$BASE/api/v1/assets/{asset_id}/actions/{action_id}" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"primary_label":"pickup_left","end_ns":2100000000,"expected_version":1}'
 
 # 软删（同事务追加 action_deleted）
 curl -X DELETE "$BASE/api/v1/assets/{asset_id}/actions/{action_id}?expected_version=2" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 错误映射：父 seg 或 action 不存在 → `404 ASSET_NOT_FOUND`；版本冲突 → `409 CONCURRENT_CONFLICT`；父非 segment / 时间窗超出 seg / label 不在注册表 → `422 INVALID_ACTION`；非法 source_type / `end_ns < start_ns` → `400 INVALID_ARGUMENT`。
@@ -1125,21 +1125,21 @@ curl -X DELETE "$BASE/api/v1/assets/{asset_id}/actions/{action_id}?expected_vers
 
 ```bash
 # 列出 seg 的所有 action（默认按 start_ns 排序）
-curl "$BASE/api/v1/assets/{asset_id}/actions" -H "X-Grace-Token: $TOKEN"
+curl "$BASE/api/v1/assets/{asset_id}/actions" -H "X-Databrew-Token: $TOKEN"
 
 # 时间戳点查：哪些 action 覆盖时间点 t
-curl "$BASE/api/v1/assets/{asset_id}/actions?at=1500000000" -H "X-Grace-Token: $TOKEN"
+curl "$BASE/api/v1/assets/{asset_id}/actions?at=1500000000" -H "X-Databrew-Token: $TOKEN"
 
 # 区间查：与 [from,to] 重叠的 action
 curl "$BASE/api/v1/assets/{asset_id}/actions?from=0&to=5000000000&label=pickup" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 ### 2.7.4 平台级反查："含某 action 的 seg"（待上线）
 
 ```bash
 curl "$BASE/api/v1/actions?label=overtake&from=&to=&page=1&page_size=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 主路径走 ES（seg 文档 `actions[]` nested 字段，CDC 反向投影）；PG 兜底走 `(primary_label)` 索引。
@@ -1148,7 +1148,7 @@ curl "$BASE/api/v1/actions?label=overtake&from=&to=&page=1&page_size=20" \
 
 ```bash
 # 返回该绝对时间戳落在哪条 seg + 该时间点上的所有 action
-curl "$BASE/api/v1/lookup?at=1700000000000000000" -H "X-Grace-Token: $TOKEN"
+curl "$BASE/api/v1/lookup?at=1700000000000000000" -H "X-Databrew-Token: $TOKEN"
 ```
 
 ### 2.7.6 错误码
@@ -1170,7 +1170,7 @@ curl "$BASE/api/v1/lookup?at=1700000000000000000" -H "X-Grace-Token: $TOKEN"
 
 ```bash
 curl -X POST "$BASE/api/v1/customers" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "customer_id": "acme_corp",
@@ -1194,7 +1194,7 @@ curl -X POST "$BASE/api/v1/customers" \
 
 ```bash
 curl "$BASE/api/v1/customers/acme_corp" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 | 状态 | code | 触发 |
@@ -1205,7 +1205,7 @@ curl "$BASE/api/v1/customers/acme_corp" \
 
 ```bash
 curl -X PATCH "$BASE/api/v1/customers/acme_corp" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"display_name": "Acme Robotics (US)", "sla_tier": "premium"}'
 ```
@@ -1218,7 +1218,7 @@ curl -X PATCH "$BASE/api/v1/customers/acme_corp" \
 
 ```bash
 curl "$BASE/api/v1/customers?status=active&sla_tier=premium&region=us-west&limit=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`：
@@ -1240,7 +1240,7 @@ curl "$BASE/api/v1/customers?status=active&sla_tier=premium&region=us-west&limit
 
 ```bash
 curl -X POST "$BASE/api/v1/delivery-rules" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "cust_no_pii",
@@ -1259,7 +1259,7 @@ curl -X POST "$BASE/api/v1/delivery-rules" \
 
 ```bash
 curl "$BASE/api/v1/delivery-rules?customer_id=acme_corp" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 ### 2.9.3 与交付联动
@@ -1276,7 +1276,7 @@ curl "$BASE/api/v1/delivery-rules?customer_id=acme_corp" \
 
 ```bash
 curl -X POST "$BASE/api/v1/deliveries" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-key-12345" \
   -d '{
@@ -1311,7 +1311,7 @@ curl -X POST "$BASE/api/v1/deliveries" \
 ```bash
 # 1) 创建草稿（pending）
 curl -X POST "$BASE/api/v1/deliveries/draft" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "customer_id": "acme_corp",
@@ -1323,7 +1323,7 @@ curl -X POST "$BASE/api/v1/deliveries/draft" \
 ```bash
 # 2) 向 pending 草稿追加资产
 curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/items" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"asset_ids":["aset0002","aset0003"]}'
 ```
@@ -1331,7 +1331,7 @@ curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/items" \
 ```bash
 # 3) 提交草稿（expected_revision 做并发保护）
 curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/commit" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"expected_revision":1,"approved_by":"ops@databrew"}'
 ```
@@ -1346,14 +1346,14 @@ curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/commit" \
 
 ```bash
 curl "$BASE/api/v1/deliveries/{delivery_id}" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 ### 3.3 按客户查询交付
 
 ```bash
 curl "$BASE/api/v1/customers/{customer_id}/deliveries?page=1&page_size=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`：
@@ -1373,15 +1373,15 @@ curl "$BASE/api/v1/customers/{customer_id}/deliveries?page=1&page_size=20" \
 ```bash
 # 基础分页
 curl "$BASE/api/v1/deliveries?page=1&page_size=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 按状态过滤
 curl "$BASE/api/v1/deliveries?page=1&page_size=20&status=delivered" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 
 # 按客户过滤（CYB-1014）
 curl "$BASE/api/v1/deliveries?page=1&page_size=20&customer_id=acme_corp" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -1411,7 +1411,7 @@ curl "$BASE/api/v1/deliveries?page=1&page_size=20&customer_id=acme_corp" \
 ```bash
 # 取消：允许 pending / delivered / accepted
 curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/cancel" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"cancelled_by":"ops@databrew","cancel_reason":"customer revoked"}'
 ```
@@ -1419,13 +1419,13 @@ curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/cancel" \
 ```bash
 # 重试：仅允许 failed / cancelled，返回一个新的 pending delivery
 curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/retry" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 ```bash
 # 客户确认：delivered -> accepted
 curl -X POST "$BASE/api/v1/deliveries/{delivery_id}/ack" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"acknowledged_by":"customer.ops"}'
 ```
@@ -1459,7 +1459,7 @@ curl -X POST "$BASE/internal/commit-segments" \
 {"created": ["aset0001", "aset0002"], "count": 2}
 ```
 
-注意：`POST /internal/commit-segments` 在 Phase 0 **未**挂在 `/api/v1` 的 `X-Grace-Token` 中间件上（见 `backend/routes/routes.go` 中 Internal 路由注释）。文档里其余 **`/api/v1/*`** 示例仍需 `X-Grace-Token` 或有效 `grace_session` cookie。
+注意：`POST /internal/commit-segments` 在 Phase 0 **未**挂在 `/api/v1` 的 `X-Databrew-Token` 中间件上（见 `backend/routes/routes.go` 中 Internal 路由注释）。文档里其余 **`/api/v1/*`** 示例仍需 `X-Databrew-Token` 或有效 `databrew_session` cookie。
 
 ## 5. MCAP 文件管理
 
@@ -1467,7 +1467,7 @@ curl -X POST "$BASE/internal/commit-segments" \
 
 ```bash
 curl -X POST "$BASE/api/v1/mcap-files" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "mcap_file_id": "mcap0001",
@@ -1499,7 +1499,7 @@ curl -X POST "$BASE/api/v1/mcap-files" \
 
 ```bash
 curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -1529,7 +1529,7 @@ curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
 
 ```bash
 curl "$BASE/api/v1/mcap-files/{mcap_file_id}" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应中时间字段说明：
@@ -1547,7 +1547,7 @@ curl "$BASE/api/v1/mcap-files/{mcap_file_id}" \
 
 ```bash
 curl "$BASE/api/v1/algo-registry" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -1574,7 +1574,7 @@ curl "$BASE/api/v1/algo-registry" \
 
 ```bash
 curl "$BASE/api/v1/lifecycle-states" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`：`items` 为写入 `assets.lifecycle_state` 时允许的取值（与 `migrations/009_lifecycle_state_check.sql` 一致）。
@@ -1585,7 +1585,7 @@ curl "$BASE/api/v1/lifecycle-states" \
 
 ```bash
 curl "$BASE/api/v1/tag-registry" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`（`items` 按 `key` 字母序；每项含 YAML 中的 `description`，便于前端字典页展示）:
@@ -1622,7 +1622,7 @@ curl "$BASE/api/v1/tag-registry" \
 
 当 **`assets` 索引尚不存在** 时，清空索引步骤会对 `_delete_by_query` 的 **404** 视为「已删除 0 条」，从而允许首次全量写入。
 
-当前先复用 **`X-Grace-Token`**；不再额外要求 `X-Admin-Token`。
+当前先复用 **`X-Databrew-Token`**；不再额外要求 `X-Admin-Token`。
 
 #### 7.2.0 只读：Outbox / DLQ 行数统计
 
@@ -1630,7 +1630,7 @@ curl "$BASE/api/v1/tag-registry" \
 
 ```bash
 curl -sS "$BASE/api/v1/admin/search/outbox-stats" \
-  -H "X-Grace-Token: $TOKEN" | jq .
+  -H "X-Databrew-Token: $TOKEN" | jq .
 ```
 
 响应示例：
@@ -1653,7 +1653,7 @@ curl -sS "$BASE/api/v1/admin/search/outbox-stats" \
 
 ```bash
 curl -sS -X POST "$BASE/api/v1/admin/search/reindex" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"dry_run": true, "page_size": 200}' | jq .
 ```
@@ -1687,7 +1687,7 @@ curl -sS -X POST "$BASE/api/v1/admin/search/reindex" \
 
 ```bash
 curl -sS -X POST "$BASE/api/v1/admin/search/reindex-jobs" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"dry_run": false, "page_size": 200}' | jq .
 ```
@@ -1709,7 +1709,7 @@ curl -sS -X POST "$BASE/api/v1/admin/search/reindex-jobs" \
 
 ```bash
 curl -sS "$BASE/api/v1/admin/search/reindex-jobs/$JOB_ID" \
-  -H "X-Grace-Token: $TOKEN" | jq .
+  -H "X-Databrew-Token: $TOKEN" | jq .
 ```
 
 关键字段：
@@ -1723,26 +1723,26 @@ curl -sS "$BASE/api/v1/admin/search/reindex-jobs/$JOB_ID" \
 
 ```bash
 curl -sS -X POST "$BASE/api/v1/admin/search/reindex-jobs/$JOB_ID/stop" \
-  -H "X-Grace-Token: $TOKEN" | jq .
+  -H "X-Databrew-Token: $TOKEN" | jq .
 ```
 
 **断点续开：**
 
 ```bash
 curl -sS -X POST "$BASE/api/v1/admin/search/reindex-jobs/$JOB_ID/resume" \
-  -H "X-Grace-Token: $TOKEN" | jq .
+  -H "X-Databrew-Token: $TOKEN" | jq .
 ```
 
 ### 7.2.3 Internal：硬删除 assets / mcap_files
 
 > ⚠️ 这是**物理删除**接口，与公共 `DELETE /api/v1/assets/:id`（soft delete）行为不同。仅在导入失控、需要彻底清理时使用。
-> 鉴权同样走 `X-Grace-Token`；CDC 会自动把删除事件传播到 Elasticsearch，不需要再单独 reindex。
+> 鉴权同样走 `X-Databrew-Token`；CDC 会自动把删除事件传播到 Elasticsearch，不需要再单独 reindex。
 
 **点删除**：
 
 ```bash
 curl -sS -X DELETE "$BASE/api/v1/internal/assets/$ASSET_ID" \
-  -H "X-Grace-Token: $TOKEN" | jq .
+  -H "X-Databrew-Token: $TOKEN" | jq .
 ```
 
 ```json
@@ -1774,7 +1774,7 @@ curl -sS -X DELETE "$BASE/api/v1/internal/assets/$ASSET_ID" \
 ```bash
 # 按 import_batch 标签
 curl -sS -X POST "$BASE/api/v1/internal/assets:batch_delete" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "import_batch": "collector-2026-05-11",
     "include_mcap_files": true,
@@ -1783,7 +1783,7 @@ curl -sS -X POST "$BASE/api/v1/internal/assets:batch_delete" \
 
 # 或按显式列表
 curl -sS -X POST "$BASE/api/v1/internal/assets:batch_delete" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "asset_ids": ["AbCd1234", "EfGh5678"],
     "dry_run": true
@@ -1834,7 +1834,7 @@ curl -sS -X POST "$BASE/api/v1/internal/assets:batch_delete" \
 | HTTP | code | 触发条件 |
 |---|---|---|
 | 400 | `INVALID_ARGUMENT` | `asset_ids` 和 `import_batch` 都给了或都没给；body 不是合法 JSON。 |
-| 401 | `UNAUTHORIZED` | `X-Grace-Token` 缺失或不匹配。 |
+| 401 | `UNAUTHORIZED` | `X-Databrew-Token` 缺失或不匹配。 |
 | 500 | `INTERNAL_ERROR` | 删除 mcap_files 时仍有 `assets` 行引用（说明 `asset_ids` 未覆盖全部使用方）。 |
 
 ### 7.3 Prometheus 指标
@@ -1847,7 +1847,7 @@ curl -sS -X POST "$BASE/api/v1/internal/assets:batch_delete" \
 
 ```bash
 curl "$BASE/api/v1/search/sync-status" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -1890,7 +1890,7 @@ OpenLineage emitter 默认关闭，不新增 HTTP API。启用后它从独立 Pu
 
 ```bash
 curl "$BASE/api/v1/search/sync-progress" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应中与 Outbox 相关的字段含义（避免把「pending 总数」误判成积压卡死）：
@@ -1961,7 +1961,7 @@ curl "$BASE/api/v1/search/sync-progress" \
 
 ```bash
 curl "$BASE/api/v1/lakehouse/sync-status" \
-  -H "X-Grace-Token: $TOKEN"
+  -H "X-Databrew-Token: $TOKEN"
 ```
 
 响应 `200`:
@@ -2007,7 +2007,7 @@ curl "$BASE/api/v1/lakehouse/sync-status" \
 ASSET_ID="b9a5a281"
 
 curl -X POST "$BASE/api/v1/assets/$ASSET_ID/eval-results" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "target_type": "segment",
@@ -2033,7 +2033,7 @@ curl -X POST "$BASE/api/v1/assets/$ASSET_ID/eval-results" \
 
 ```bash
 curl -X POST "$BASE/api/v1/metrics:search" \
-  -H "X-Grace-Token: $TOKEN" \
+  -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "filters": {
@@ -2081,23 +2081,23 @@ curl -X POST "$BASE/api/v1/metrics:search" \
 ```bash
 # 1. MCAP 文件上传后，创建资产
 ASSET=$(curl -s -X POST "$BASE/api/v1/assets" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"mcap_file_id":"mcap0001","start_timestamp_ns":1700000000000000000,"end_timestamp_ns":1700000060000000000,"reviewer":"alice"}')
 ASSET_ID=$(echo $ASSET | python3 -c "import sys,json; print(json.load(sys.stdin)['asset_id'])")
 
 # 2. 外部算法 worker 触发处理
 curl -X POST "$BASE/api/v1/assets/$ASSET_ID/algo/env_analysis@1.0.0/start" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"method":"k8s_job","run_id":"run-001"}'
 
 # 3. 算法完成回调
 curl -X POST "$BASE/api/v1/assets/$ASSET_ID/algo/env_analysis@1.0.0/finish" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"status":"ok","run_id":"run-001"}'
 
 # 4. 交付给客户
 curl -X POST "$BASE/api/v1/deliveries" \
-  -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -H "Idempotency-Key: delivery-$(date +%s)" \
   -d "{\"asset_ids\":[\"$ASSET_ID\"],\"customer_id\":\"cust-001\"}"
 ```

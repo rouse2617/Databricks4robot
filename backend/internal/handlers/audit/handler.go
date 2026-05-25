@@ -95,7 +95,7 @@ type auditEventRow struct {
 // @Success      200 {object} object
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /audit/search [get]
 func (h *Handler) HandleAuditSearch(c *gin.Context) {
 	if h == nil || h.db == nil {
@@ -307,7 +307,7 @@ var supportedLineageRelationTypes = map[string]struct{}{
 // @Success      200 {object} object
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /audit/lineage-search [get]
 func (h *Handler) HandleLineageSearch(c *gin.Context) {
 	if h == nil || h.db == nil {

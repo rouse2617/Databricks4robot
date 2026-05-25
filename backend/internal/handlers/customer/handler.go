@@ -46,7 +46,7 @@ func ValidateCustomerID(id string) error {
 // @Success      201 {object} models.Customer
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /customers [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
@@ -112,7 +112,7 @@ func (h *Handler) Create(c *gin.Context) {
 // @Param        customer_id path string true "Customer ID"
 // @Success      200 {object} models.Customer
 // @Failure      404 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /customers/{customer_id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	customerID := strings.TrimSpace(c.Param("customer_id"))
@@ -142,7 +142,7 @@ func (h *Handler) Get(c *gin.Context) {
 // @Success      200 {object} models.Customer
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /customers/{customer_id} [patch]
 func (h *Handler) Update(c *gin.Context) {
 	customerID := strings.TrimSpace(c.Param("customer_id"))
@@ -227,7 +227,7 @@ func (h *Handler) Update(c *gin.Context) {
 // @Param        limit     query int    false "Page size (default 50, max 200)"
 // @Param        cursor    query string false "Cursor: customer_id to start after"
 // @Success      200 {object} object
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /customers [get]
 func (h *Handler) List(c *gin.Context) {
 	status := strings.TrimSpace(c.Query("status"))

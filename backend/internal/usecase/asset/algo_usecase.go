@@ -46,12 +46,12 @@ var (
 // Event types appended to asset_events. Names align with
 // data-platform-design.md §5.2.7 typical event types.
 const (
-	eventAlgoStarted   = "algo_started"
-	eventAlgoFinished  = "algo_finished" // status = ok
-	eventAlgoFailed    = "algo_failed"
-	eventAlgoReset     = "algo_reset"
-	eventAlgoUnblocked   = "algo_unblocked"
-	eventAlgoRunApplied  = "algo_run_applied"
+	eventAlgoStarted    = "algo_started"
+	eventAlgoFinished   = "algo_finished" // status = ok
+	eventAlgoFailed     = "algo_failed"
+	eventAlgoReset      = "algo_reset"
+	eventAlgoUnblocked  = "algo_unblocked"
+	eventAlgoRunApplied = "algo_run_applied"
 )
 
 // algoEventTypes lists every event_type produced by AlgoUsecase. Used by

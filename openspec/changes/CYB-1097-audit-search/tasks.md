@@ -49,7 +49,7 @@
 - `GET /api/v1/audit/search?limit=5` on Cloud Run dev returned `200`, `limit=5`, `items_len=5`, and `next_cursor`.
 - `GET /api/v1/audit/search?time_from=not-rfc3339` returned `400 INVALID_ARGUMENT`.
 - `GET /api/v1/audit/search?cursor=not-int` returned `400 INVALID_ARGUMENT`.
-- `BASE="$BASE" TOKEN="$GRACE_TOKEN" IAP_TOKEN="$CLOUDRUN_ID_TOKEN" bash scripts/api-guide-smoke.sh` returned `19 passed, 1 failed`; the only failure was Cloud Run root `/healthz` returning Google 404. The CYB-1097 audit search checks passed.
+- `BASE="$BASE" TOKEN="$DATABREW_TOKEN" IAP_TOKEN="$CLOUDRUN_ID_TOKEN" bash scripts/api-guide-smoke.sh` returned `19 passed, 1 failed`; the only failure was Cloud Run root `/healthz` returning Google 404. The CYB-1097 audit search checks passed.
 
 ## PR
 - [ ] PR template filled with Linear `CYB-1097`, OpenSpec change id, tests, and deploy evidence.

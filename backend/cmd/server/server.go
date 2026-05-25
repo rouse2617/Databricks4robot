@@ -40,7 +40,7 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		core.deliveryRule,
 		core.algoRun,
 		core.algo,
-			auditH.New(inf.pg),
+		auditH.New(inf.pg),
 		lakehouseH.New(cfg.LakehouseReportPath, inf.lake, inf.pg).
 			WithBronzeCheckpoint(postgres.NewLakehouseBronzeCheckpointRepo(inf.pg)),
 		registryH.New(inf.algoRegistry, inf.tagRegistry, inf.metricRegistry, inf.actionLabelReg),

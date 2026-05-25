@@ -15,7 +15,7 @@ const TOKEN = __ENV.TOKEN || "dev-token";
 function writeHeaders() {
 	return {
 		headers: {
-			"X-Grace-Token": TOKEN,
+			"X-Databrew-Token": TOKEN,
 			"Content-Type": "application/json",
 			"X-Request-ID": `k6-write-${__VU}-${__ITER}`,
 		},

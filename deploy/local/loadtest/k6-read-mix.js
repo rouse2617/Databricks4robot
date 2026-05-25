@@ -8,7 +8,7 @@
  *
  * Env:
  *   BASE           — default http://localhost:8080
- *   TOKEN          — X-Grace-Token (default dev-token)
+ *   TOKEN          — X-Databrew-Token (default dev-token)
  *   VUS            — peak virtual users (default 10, max 200)
  *   RAMP_UP        — ramp-up stage duration (default 30s)
  *   SOAK_DURATION  — steady soak at VUS (default 10m)
@@ -28,7 +28,7 @@ const RAMP_DOWN = __ENV.RAMP_DOWN || "60s";
 function authHeaders() {
 	return {
 		headers: {
-			"X-Grace-Token": TOKEN,
+			"X-Databrew-Token": TOKEN,
 			"X-Request-ID": `k6-${__VU}-${__ITER}`,
 		},
 	};

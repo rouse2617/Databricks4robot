@@ -44,7 +44,7 @@ export default function LoginPage() {
 						label="Access Token"
 						rules={[{ required: true, message: "Please enter your token" }]}
 					>
-						<Input.Password placeholder="Enter your GRACE_TOKEN" size="large" />
+						<Input.Password placeholder="Enter your DATABREW_TOKEN" size="large" />
 					</Form.Item>
 					<Button type="primary" htmlType="submit" block size="large" loading={submitting} disabled={submitting}>
 						Sign In

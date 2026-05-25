@@ -12,8 +12,8 @@ import (
 )
 
 type provenanceAssetRepo struct {
-	asset       *models.Asset
-	byLogical   []*models.Asset
+	asset     *models.Asset
+	byLogical []*models.Asset
 }
 
 func (m *provenanceAssetRepo) Get(ctx context.Context, assetID string) (*models.Asset, error) {
@@ -27,7 +27,7 @@ func (m *provenanceAssetRepo) GetAll(_ context.Context, assetID string) (*models
 }
 func (m *provenanceAssetRepo) InsertNew(context.Context, *models.Asset) error { return nil }
 func (m *provenanceAssetRepo) Set(context.Context, *models.Asset) error       { return nil }
-func (m *provenanceAssetRepo) SoftDelete(context.Context, string) error        { return nil }
+func (m *provenanceAssetRepo) SoftDelete(context.Context, string) error       { return nil }
 func (m *provenanceAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return nil, nil
 }
@@ -75,7 +75,7 @@ func (m *provenanceEventRepo) CountPending(context.Context) (int64, error) { ret
 func (m *provenanceEventRepo) CountPendingClaimable(context.Context, time.Duration) (int64, error) {
 	return 0, nil
 }
-func (m *provenanceEventRepo) CountProcessing(context.Context) (int64, error) { return 0, nil }
+func (m *provenanceEventRepo) CountProcessing(context.Context) (int64, error)    { return 0, nil }
 func (m *provenanceEventRepo) OldestPendingAge(context.Context) (float64, error) { return 0, nil }
 func (m *provenanceEventRepo) PublishStateCounts(context.Context) (map[string]int64, error) {
 	return nil, nil

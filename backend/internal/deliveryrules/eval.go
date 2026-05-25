@@ -10,10 +10,10 @@ import (
 
 // AssetSnapshot is the in-memory view used for rule matching.
 type AssetSnapshot struct {
-	AssetID         string
-	AssetType       string
-	LifecycleState  string
-	TagsByKey       map[string][]string // tag_key -> values from all sources
+	AssetID        string
+	AssetType      string
+	LifecycleState string
+	TagsByKey      map[string][]string // tag_key -> values from all sources
 }
 
 func BuildSnapshot(a *models.Asset, tags []*models.AssetTag) AssetSnapshot {

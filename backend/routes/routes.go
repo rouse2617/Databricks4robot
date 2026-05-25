@@ -87,8 +87,8 @@ func RegisterAll(
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	auth := middleware.StaticTokenAuth(cfg.GraceToken)
-	adminAuth := middleware.AdminTokenAuth(cfg.AdminToken, cfg.GraceToken, cfg.Env)
+	auth := middleware.StaticTokenAuth(cfg.DatabrewToken)
+	adminAuth := middleware.AdminTokenAuth(cfg.AdminToken, cfg.DatabrewToken, cfg.Env)
 	adminRoutesEnabled := cfg.AdminRoutesEnabled()
 	secureSessionCookie := cfg.Env == "production"
 
@@ -107,11 +107,11 @@ func RegisterAll(
 				c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
 				return
 			}
-			if token != cfg.GraceToken {
+			if token != cfg.DatabrewToken {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 				return
 			}
-			c.SetCookie("grace_session", token, 86400, "/", "", secureSessionCookie, true)
+			c.SetCookie("databrew_session", token, 86400, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{"authenticated": true})
 		})
 
@@ -120,7 +120,7 @@ func RegisterAll(
 			c.JSON(http.StatusOK, gin.H{"authenticated": true})
 		})
 		authProtected.POST("/logout", func(c *gin.Context) {
-			c.SetCookie("grace_session", "", -1, "/", "", secureSessionCookie, true)
+			c.SetCookie("databrew_session", "", -1, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{"authenticated": false})
 		})
 	}

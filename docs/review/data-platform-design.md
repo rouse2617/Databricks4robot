@@ -785,7 +785,7 @@ sequenceDiagram
     participant Cron as PyIceberg (k8s CronJob)
     participant Lake as Iceberg 湖仓
 
-    Client->>API: PATCH /assets/{id} (X-Grace-Token, Idempotency-Key, body)
+    Client->>API: PATCH /assets/{id} (X-Databrew-Token, Idempotency-Key, body)
     API->>API: 鉴权 / 限流 / 解析参数 / 注入 X-Request-ID
     API->>UC: UpdateAsset(ctx, dto)
 
@@ -939,7 +939,7 @@ sequenceDiagram
     participant PG as PostgreSQL
     participant ES as Elasticsearch (2.0)
 
-    FE->>API: GET /assets/{id} (X-Grace-Token)
+    FE->>API: GET /assets/{id} (X-Databrew-Token)
     API->>API: 鉴权 / 注入 X-Request-ID
     API->>UC: GetAsset(ctx, id)
 
@@ -1495,7 +1495,7 @@ API 设计约定：
 
 | 维度 | 约定 |
 | --- | --- |
-| Auth | `X-Grace-Token`（短期），后续切 OIDC / mTLS |
+| Auth | `X-Databrew-Token`（短期），后续切 OIDC / mTLS |
 | Tracing | `X-Request-ID` 中间件，全链路串联 |
 | Idempotency | `POST /api/v1/deliveries` 必须带 `Idempotency-Key` |
 | 乐观锁 | `PATCH /api/v1/assets/{id}` 冲突返回 `409 CONCURRENT_CONFLICT`，客户端重试 |

@@ -28,7 +28,7 @@ test.describe("Assets page happy-path", () => {
     // Set auth token in localStorage before navigating (simulates login)
     await page.goto(BASE_URL);
     await page.evaluate((token) => {
-      localStorage.setItem("grace_token", token);
+      localStorage.setItem("databrew_token", token);
     }, AUTH_TOKEN);
   });
 

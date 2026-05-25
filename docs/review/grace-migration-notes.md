@@ -13,7 +13,7 @@
 | **资产粒度** | **`grace_videos`**：以**视频/采集条**为核心实体 | **`assets` + `mcap_files`**：以 **MCAP 文件 + segment/clip 等资产**为核心 |
 | **Schema 来源** | GORM 模型 + 启动自动迁移 | `backend/migrations/*.sql` |
 | **算法工序态** | **`process_info` JSONB**（hand_tracking、deface…） | **`asset_algo_latest` + `asset_events`**（含 `algo_started` / `algo_finished` 等） |
-| **HTTP** | `/grace/videos` 等，**Basic/JWT** | `/api/v1/*`，**`X-Grace-Token`**（Phase 0） |
+| **HTTP** | `/grace/videos` 等，**Basic/JWT** | `/api/v1/*`，**`X-Databrew-Token`**（Phase 0） |
 | **列表过滤** | `filter=key:op:value` | `filter=field:op:value`（见 `api-guide`） |
 
 **原则**：Grace 仍是当前 many 团队的管理面事实源；数据平台侧若承接同一条业务数据，应用**明确的映射表或同步任务**维护 `grace_video.id`（或 `raw_hash_md5`）与 `asset_id` / `mcap_file_id` 的关系，避免两套库各自“隐式对应”。
@@ -77,7 +77,7 @@ Grace 将各算法状态放在 **JSONB**（如 `hand_tracking`、`deface` 等字
 
 ## 4. API 与集成注意点
 
-- **鉴权不同**：集成服务需同时处理 Grace 的 Basic/JWT 与本平台的 **`X-Grace-Token`**（或未来 OIDC）。
+- **鉴权不同**：集成服务需同时处理 Grace 的 Basic/JWT 与本平台的 **`X-Databrew-Token`**（或未来 OIDC）。
 - **Filter 语法**形似（`field:op:value`），**具体字段名不全相同**；迁移脚本不要直接拼接 Grace 的 filter 字符串到本平台 without 映射层。
 - **交付 / QC**：Grace 有 `deliveries`、质检等独立模块；本平台也有 **`deliveries`**，**ID 与语义不要默认相同**，需集成规范。
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Full PG → Elasticsearch assets reindex via backend admin API.
-# Requires: reachable backend, X-Grace-Token, Elasticsearch configured on the server.
+# Requires: reachable backend, X-Databrew-Token, Elasticsearch configured on the server.
 #
 # Usage:
 #   BASE=https://cyber-databrew-backend-dev-....run.app TOKEN=dev-token ./backend/scripts/search_reindex.sh
@@ -13,11 +13,11 @@ PAGE_SIZE="${PAGE_SIZE:-200}"
 
 echo "=== GET outbox-stats (read-only) ==="
 curl -sS "${BASE}/api/v1/admin/search/outbox-stats" \
-  -H "X-Grace-Token: ${TOKEN}" | jq .
+  -H "X-Databrew-Token: ${TOKEN}" | jq .
 
 echo "=== POST reindex dry_run ==="
 curl -sS -X POST "${BASE}/api/v1/admin/search/reindex" \
-  -H "X-Grace-Token: ${TOKEN}" \
+  -H "X-Databrew-Token: ${TOKEN}" \
   -H "Content-Type: application/json" \
   -d "{\"dry_run\":true,\"page_size\":${PAGE_SIZE}}" | jq .
 
@@ -34,10 +34,10 @@ fi
 
 echo "=== POST reindex dry_run=false ==="
 curl -sS -X POST "${BASE}/api/v1/admin/search/reindex" \
-  -H "X-Grace-Token: ${TOKEN}" \
+  -H "X-Databrew-Token: ${TOKEN}" \
   -H "Content-Type: application/json" \
   -d "{\"dry_run\":false,\"page_size\":${PAGE_SIZE}}" | jq .
 
 echo "=== GET sync-progress (optional) ==="
 curl -sS "${BASE}/api/v1/search/sync-progress" \
-  -H "X-Grace-Token: ${TOKEN}" | jq . || true
+  -H "X-Databrew-Token: ${TOKEN}" | jq . || true

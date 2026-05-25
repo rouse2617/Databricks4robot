@@ -21,10 +21,10 @@ class AuthProvider(Protocol):
     def get_headers(self) -> dict[str, str]: ...
 
 
-class GraceTokenAuth:
-    """Primary auth: inject X-Grace-Token header.
+class DatabrewTokenAuth:
+    """Primary auth: inject X-Databrew-Token header.
 
-    Token defaults from CYBER_DATABREW_TOKEN, then GRACE_TOKEN
+    Token defaults from CYBER_DATABREW_TOKEN, then DATABREW_TOKEN
     environment variable.
     """
 
@@ -32,11 +32,11 @@ class GraceTokenAuth:
         self._token = (
             token
             or os.environ.get("CYBER_DATABREW_TOKEN")
-            or os.environ.get("GRACE_TOKEN", "")
+            or os.environ.get("DATABREW_TOKEN", "")
         )
 
     def get_headers(self) -> dict[str, str]:
-        return {"X-Grace-Token": self._token}
+        return {"X-Databrew-Token": self._token}
 
 
 class EmailAuth:

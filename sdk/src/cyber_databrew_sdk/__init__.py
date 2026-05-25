@@ -2,7 +2,7 @@
 
 import warnings
 
-from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, EmailAuth, GraceTokenAuth
+from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, EmailAuth, DatabrewTokenAuth
 from cyber_databrew_sdk.client import CyberDatabrew, CyberDatabrewClient
 from cyber_databrew_sdk.config import ConfigManager
 from cyber_databrew_sdk.exceptions import (
@@ -31,8 +31,8 @@ __all__ = [
     "CyberDatabrewError",
     "DataCurationClient",
     "EmailAuth",
-    "GraceClient",
-    "GraceTokenAuth",
+    "DatabrewClient",
+    "DatabrewTokenAuth",
     "NotFoundError",
     "RateLimitError",
     "ServerError",
@@ -47,7 +47,7 @@ import typing as _t
 
 
 def __getattr__(name: str) -> _t.Any:
-    if name in ("AssetClientSDK", "GraceClient", "DataCurationClient"):
+    if name in ("AssetClientSDK", "DatabrewClient", "DataCurationClient"):
         warnings.warn(
             f"{name} is deprecated, use CyberDatabrewClient instead",
             DeprecationWarning,

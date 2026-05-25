@@ -53,7 +53,7 @@ context: |
     BigQuery (lakehouse analytical queries), GCS (optional derived artifacts)
   - Deployment: Cloud Run on GCP (us-central1); Docker multi-stage builds (Go → scratch)
     - deploy/cloudrun/backend-dev.sh, deploy/cloudrun/frontend-dev.sh
-  - Auth: X-Grace-Token header (Phase 0 static token); session cookie (grace_session)
+  - Auth: X-Databrew-Token header (Phase 0 static token); session cookie (databrew_session)
 
   ### Architecture
   - Backend: layered — handlers → usecase → repository → postgres/es

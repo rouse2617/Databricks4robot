@@ -72,7 +72,7 @@ make local-dev-seed       # 可选：插入与本仓库一致的演示 MCAP/资�
 |------|------|--------|
 | `STORAGE_BACKEND` | 存储后端 | `postgres` |
 | `PORT` | 监听端口 | `8080` |
-| `GRACE_TOKEN` | API 认证 token (Phase 0) | `dev-token` |
+| `DATABREW_TOKEN` | API 认证 token (Phase 0) | `dev-token` |
 | `DB_HOST/PORT/USER/PASSWORD/NAME` | PostgreSQL 连接 (postgres 模式) | localhost:5432 |
 | `LAKEHOUSE_REPORT_PATH` | 本地 Lakehouse MVP 报告路径 | `../deploy/local/iceberg/notebooks/lakehouse_report.json` |
 | `LAKEHOUSE_BACKEND` | 湖仓查询后端 (`bigquery` / `none`) | `bigquery` |
@@ -169,7 +169,7 @@ make local-dev-seed       # 可选：插入与本仓库一致的演示 MCAP/资�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（当前复用 `X-Grace-Token` 认证）；支持 `dry_run`，返回 `indexed / deleted / failed / duration_ms` 汇总 |
+| `POST` | `/api/v1/admin/search/reindex` | 全量从 PG 重建 ES 文档（当前复用 `X-Databrew-Token` 认证）；支持 `dry_run`，返回 `indexed / deleted / failed / duration_ms` 汇总 |
 | `POST` | `/api/v1/admin/search/reindex-jobs` | 创建异步重建任务（支持 `dry_run`）；立即返回 job |
 | `GET` | `/api/v1/admin/search/reindex-jobs` | 最近重建任务列表（用于前端恢复状态） |
 | `GET` | `/api/v1/admin/search/reindex-jobs/:id` | 查询单个任务进度与计数 |
@@ -200,7 +200,7 @@ make local-dev-seed       # 可选：插入与本仓库一致的演示 MCAP/资�
 
 ### 认证
 
-所有 `/api/v1/*` 端点需要 `X-Grace-Token` 或 `Authorization: Bearer <token>` header。
+所有 `/api/v1/*` 端点需要 `X-Databrew-Token` 或 `Authorization: Bearer <token>` header。
 
 ### Query Workbench 查询协议
 

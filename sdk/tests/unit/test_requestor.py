@@ -24,7 +24,7 @@ from cyber_databrew_sdk.exceptions import (
 def requestor():
     return APIRequestor(
         base_url="http://test",
-        auth_headers={"X-Grace-Token": "t"},
+        auth_headers={"X-Databrew-Token": "t"},
         timeout=30.0,
     )
 
@@ -37,7 +37,7 @@ class TestRequestorSuccess:
         )
         result = requestor.request("GET", "/api/v1/test")
         assert result == {"key": "value"}
-        assert route.calls.last.request.headers["X-Grace-Token"] == "t"
+        assert route.calls.last.request.headers["X-Databrew-Token"] == "t"
 
     @respx.mock
     def test_post_with_body(self, requestor):

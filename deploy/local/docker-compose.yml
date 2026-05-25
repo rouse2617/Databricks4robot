@@ -76,7 +76,7 @@ services:
       DB_USER: postgres
       DB_PASSWORD: postgres
       DB_NAME: cyber_databrew_dev
-      GRACE_TOKEN: dev-token
+      DATABREW_TOKEN: dev-token
       LAKEHOUSE_BACKEND: "bigquery"
       LAKEHOUSE_BQ_PROJECT: ""
       LAKEHOUSE_BQ_CATALOG: "iceberg"

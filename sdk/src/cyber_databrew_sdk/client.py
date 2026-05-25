@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 
 from cyber_databrew_sdk._requestor import APIRequestor
-from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, EmailAuth, GraceTokenAuth
+from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, EmailAuth, DatabrewTokenAuth
 from cyber_databrew_sdk.config import ConfigManager
 
 _logger = logging.getLogger(__name__)
@@ -83,8 +83,8 @@ class CyberDatabrewClient:
         """Initialize the client.
 
         Args:
-            token: Grace token for X-Grace-Token header.
-                   Defaults to CYBER_DATABREW_TOKEN, then GRACE_TOKEN env var.
+            token: Databrew token for X-Databrew-Token header.
+                   Defaults to CYBER_DATABREW_TOKEN, then DATABREW_TOKEN env var.
             email: User email for X-User-Email header (audit-only).
                    Defaults to CYBER_DATABREW_EMAIL env var.
             auth: Custom AuthProvider (overrides token+email default).
@@ -104,7 +104,7 @@ class CyberDatabrewClient:
         else:
             # Build auth headers for remote config fetch
             if auth is None:
-                auth = CompositeAuth(GraceTokenAuth(token), EmailAuth(email))
+                auth = CompositeAuth(DatabrewTokenAuth(token), EmailAuth(email))
             auth_headers = auth.get_headers()
 
             self._config = ConfigManager.load(
@@ -121,10 +121,10 @@ class CyberDatabrewClient:
             auth_headers = auth.get_headers()
         else:
             auth_headers = {}
-            t = token or os.environ.get("CYBER_DATABREW_TOKEN") or os.environ.get("GRACE_TOKEN")
+            t = token or os.environ.get("CYBER_DATABREW_TOKEN") or os.environ.get("DATABREW_TOKEN")
             e = email or os.environ.get("CYBER_DATABREW_EMAIL")
             if t:
-                auth_headers["X-Grace-Token"] = t
+                auth_headers["X-Databrew-Token"] = t
             if e:
                 auth_headers["X-User-Email"] = e
 

@@ -1,36 +1,36 @@
-"""Tests for auth providers: GraceTokenAuth, EmailAuth, CompositeAuth."""
+"""Tests for auth providers: DatabrewTokenAuth, EmailAuth, CompositeAuth."""
 
 from __future__ import annotations
 
-from cyber_databrew_sdk.auth import CompositeAuth, EmailAuth, GraceTokenAuth
+from cyber_databrew_sdk.auth import CompositeAuth, EmailAuth, DatabrewTokenAuth
 
 
-class TestGraceTokenAuth:
+class TestDatabrewTokenAuth:
     def test_explicit_token(self):
-        auth = GraceTokenAuth("my-token")
-        assert auth.get_headers() == {"X-Grace-Token": "my-token"}
+        auth = DatabrewTokenAuth("my-token")
+        assert auth.get_headers() == {"X-Databrew-Token": "my-token"}
 
     def test_empty_token(self):
-        auth = GraceTokenAuth("")
-        assert auth.get_headers()["X-Grace-Token"] == ""
+        auth = DatabrewTokenAuth("")
+        assert auth.get_headers()["X-Databrew-Token"] == ""
 
     def test_defaults_from_env(self, monkeypatch):
         monkeypatch.delenv("CYBER_DATABREW_TOKEN", raising=False)
-        monkeypatch.delenv("GRACE_TOKEN", raising=False)
-        auth = GraceTokenAuth()
-        assert auth.get_headers()["X-Grace-Token"] == ""
+        monkeypatch.delenv("DATABREW_TOKEN", raising=False)
+        auth = DatabrewTokenAuth()
+        assert auth.get_headers()["X-Databrew-Token"] == ""
 
     def test_env_cyber_databrew_token(self, monkeypatch):
         monkeypatch.setenv("CYBER_DATABREW_TOKEN", "env-token")
-        monkeypatch.delenv("GRACE_TOKEN", raising=False)
-        auth = GraceTokenAuth()
-        assert auth.get_headers()["X-Grace-Token"] == "env-token"
+        monkeypatch.delenv("DATABREW_TOKEN", raising=False)
+        auth = DatabrewTokenAuth()
+        assert auth.get_headers()["X-Databrew-Token"] == "env-token"
 
-    def test_env_grace_token_fallback(self, monkeypatch):
+    def test_env_databrew_token_fallback(self, monkeypatch):
         monkeypatch.delenv("CYBER_DATABREW_TOKEN", raising=False)
-        monkeypatch.setenv("GRACE_TOKEN", "grace-fallback")
-        auth = GraceTokenAuth()
-        assert auth.get_headers()["X-Grace-Token"] == "grace-fallback"
+        monkeypatch.setenv("DATABREW_TOKEN", "databrew-fallback")
+        auth = DatabrewTokenAuth()
+        assert auth.get_headers()["X-Databrew-Token"] == "databrew-fallback"
 
 
 class TestEmailAuth:
@@ -55,16 +55,16 @@ class TestEmailAuth:
 
 class TestCompositeAuth:
     def test_single_provider(self):
-        auth = CompositeAuth(GraceTokenAuth("t1"))
-        assert auth.get_headers() == {"X-Grace-Token": "t1"}
+        auth = CompositeAuth(DatabrewTokenAuth("t1"))
+        assert auth.get_headers() == {"X-Databrew-Token": "t1"}
 
     def test_multiple_providers(self):
         auth = CompositeAuth(
-            GraceTokenAuth("token-123"),
+            DatabrewTokenAuth("token-123"),
             EmailAuth("user@example.com"),
         )
         headers = auth.get_headers()
-        assert headers["X-Grace-Token"] == "token-123"
+        assert headers["X-Databrew-Token"] == "token-123"
         assert headers["X-User-Email"] == "user@example.com"
 
     def test_later_overrides_earlier(self):
@@ -81,11 +81,11 @@ class TestCompositeAuth:
 
     def test_empty_values_filtered(self):
         auth = CompositeAuth(
-            GraceTokenAuth(""),
+            DatabrewTokenAuth(""),
             EmailAuth("real@example.com"),
         )
         headers = auth.get_headers()
-        assert "X-Grace-Token" not in headers
+        assert "X-Databrew-Token" not in headers
         assert headers["X-User-Email"] == "real@example.com"
 
     def test_empty_providers(self):

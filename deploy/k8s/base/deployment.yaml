@@ -1,5 +1,5 @@
 # Cyber Databrew — API server (backend/cmd/server, Gin).
-# Routes: GET /healthz (no auth), API under /api/v1 with X-Grace-Token — see backend/routes/routes.go
+# Routes: GET /healthz (no auth), API under /api/v1 with X-Databrew-Token — see backend/routes/routes.go
 #
 # Namespaces: deploy/k8s/namespaces.yaml
 #

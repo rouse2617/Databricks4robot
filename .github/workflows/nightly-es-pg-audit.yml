@@ -88,7 +88,7 @@ jobs:
           cd backend
           go build -o /tmp/server ./cmd/server
           ENV=test PORT=8080 STORAGE_BACKEND=postgres \
-            GRACE_TOKEN=dev-token ADMIN_TOKEN=ci-admin-token \
+            DATABREW_TOKEN=dev-token ADMIN_TOKEN=ci-admin-token \
             LAKEHOUSE_BACKEND=none \
             /tmp/server &
           SERVER_PID=$!

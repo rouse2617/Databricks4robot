@@ -85,7 +85,7 @@ class ConfigManager:
 
         Args:
             base_url: API base URL (highest priority override).
-            token: Grace token override.
+            token: Databrew token override.
             email: User email override.
             timeout: Request timeout override.
             endpoint_overrides: Individual endpoint path overrides.
@@ -109,11 +109,11 @@ class ConfigManager:
             t = token
             e = email
             if t is None:
-                t = os.environ.get("CYBER_DATABREW_TOKEN") or os.environ.get("GRACE_TOKEN")
+                t = os.environ.get("CYBER_DATABREW_TOKEN") or os.environ.get("DATABREW_TOKEN")
             if e is None:
                 e = os.environ.get("CYBER_DATABREW_EMAIL")
             if t:
-                auth_headers["X-Grace-Token"] = t
+                auth_headers["X-Databrew-Token"] = t
             if e:
                 auth_headers["X-User-Email"] = e
 

@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Namespace: `kubectl apply -f deploy/k8s/namespaces.yaml`
-- Secret **`cyber-databrew-secrets`** in the target namespace (DB + `GRACE_TOKEN`). Copy `base/secret.example.yaml` to `base/secret.local.yaml`, replace placeholders, apply. `secret.local.yaml` is gitignored.
+- Secret **`cyber-databrew-secrets`** in the target namespace (DB + `DATABREW_TOKEN`). Copy `base/secret.example.yaml` to `base/secret.local.yaml`, replace placeholders, apply. `secret.local.yaml` is gitignored.
 
 ## Apply ConfigMap + Deployment + Service
 
@@ -57,7 +57,7 @@ Use these values in `deploy/k8s/base/secret.local.yaml` for the dev stack:
 - `DB_USER=postgres`
 - `DB_PASSWORD=postgres`
 - `DB_NAME=cyber_databrew_dev`
-- `GRACE_TOKEN=<your-dev-token>`
+- `DATABREW_TOKEN=<your-dev-token>`
 
 > Note: Postgres schema migrations are not auto-applied by `apply-dev-stack.sh`.
 > After Postgres is up, run your migration workflow against `svc/postgres` (for example via `kubectl port-forward` + `backend/scripts/ensure_migrations.sh` / your preferred migration command).

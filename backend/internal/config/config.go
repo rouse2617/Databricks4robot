@@ -32,7 +32,7 @@ type Config struct {
 	TopicAssetEvents   string
 
 	// Auth (Phase 0 static token; Phase 0.5 → OIDC)
-	GraceToken string
+	DatabrewToken string
 
 	// Logging
 	LogLevel  string // debug, info, warn, error
@@ -157,7 +157,7 @@ func Load() *Config {
 		TopicMcapFinalized: getenv("TOPIC_MCAP_FINALIZED", "gcs.mcap.finalized.v1"),
 		TopicAssetEvents:   getenv("TOPIC_ASSET_EVENTS", "cyber-databrew-asset-events"),
 
-		GraceToken: getenv("GRACE_TOKEN", "dev-token"),
+		DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
@@ -218,7 +218,7 @@ func Load() *Config {
 }
 
 // AdminRoutesEnabled reports whether privileged admin/internal HTTP routes are mounted.
-// In production, ADMIN_TOKEN must be set; dev may fall back to GRACE_TOKEN when unset.
+// In production, ADMIN_TOKEN must be set; dev may fall back to DATABREW_TOKEN when unset.
 func (c *Config) AdminRoutesEnabled() bool {
 	if c.AdminToken != "" {
 		return true

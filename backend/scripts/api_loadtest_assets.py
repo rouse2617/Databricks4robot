@@ -31,7 +31,7 @@ import uuid
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="POST assets via API for load / CDC testing.")
     p.add_argument("--base-url", default="http://localhost:8080", help="API origin (no trailing slash)")
-    p.add_argument("--token", default="dev-token", help="X-Grace-Token header")
+    p.add_argument("--token", default="dev-token", help="X-Databrew-Token header")
     p.add_argument("--batch-marker", default="api100k", help="metadata.loadtest_batch value")
     p.add_argument("--count", type=int, default=100_000, help="number of assets to create")
     p.add_argument("--concurrency", type=int, default=48, help="async HTTP concurrency")
@@ -48,7 +48,7 @@ async def _main() -> int:
 
     args = _parse_args()
     base = args.base_url.rstrip("/")
-    headers = {"X-Grace-Token": args.token, "Content-Type": "application/json"}
+    headers = {"X-Databrew-Token": args.token, "Content-Type": "application/json"}
 
     mcap_id = str(uuid.uuid4())
     # mcap_files enforces unique raw_hash_md5 locally — derive from this run's id.

@@ -8,7 +8,7 @@ TOKEN="${TOKEN:-dev-token}"
 N="${N:-200}"
 C="${C:-20}"
 
-hdr=( -H "X-Grace-Token: ${TOKEN}" -H "X-Request-ID: ab-mix-$$" )
+hdr=( -H "X-Databrew-Token: ${TOKEN}" -H "X-Request-ID: ab-mix-$$" )
 
 run_ab() {
 	local name="$1"

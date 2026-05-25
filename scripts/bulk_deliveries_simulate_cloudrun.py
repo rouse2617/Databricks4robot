@@ -6,7 +6,7 @@ Streams asset IDs via POST /api/v1/queries/run (page_size fixed), splits into
 variable-size chunks (waves / customers / contracts / notes / owners), and
 commits each chunk with POST /api/v1/deliveries + Idempotency-Key.
 
-  export GRACE_TOKEN=...
+  export DATABREW_TOKEN=...
   python3 scripts/bulk_deliveries_simulate_cloudrun.py [--max-assets 0] [--dry-run]
 
 --max-assets 0 means no cap (all pages until empty). Use a positive cap for smoke tests.
@@ -70,7 +70,7 @@ def http_json(
 ) -> tuple[int, Any]:
     data = None
     headers = {
-        "X-Grace-Token": token,
+        "X-Databrew-Token": token,
         "Accept": "application/json",
     }
     if extra_headers:
@@ -179,14 +179,14 @@ def main() -> int:
     ap.add_argument("--max-chunk", type=int, default=95)
     ap.add_argument("--sleep", type=float, default=0.05, help="Seconds between commits")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--token", default="", help="X-Grace-Token (else env GRACE_TOKEN)")
+    ap.add_argument("--token", default="", help="X-Databrew-Token (else env DATABREW_TOKEN)")
     args = ap.parse_args()
 
     base = args.base.rstrip("/")
 
-    token = (args.token or "").strip() or __import__("os").environ.get("GRACE_TOKEN", "").strip()
+    token = (args.token or "").strip() or __import__("os").environ.get("DATABREW_TOKEN", "").strip()
     if not token:
-        print("ERROR: set GRACE_TOKEN or pass --token", file=sys.stderr)
+        print("ERROR: set DATABREW_TOKEN or pass --token", file=sys.stderr)
         return 2
 
     lo = max(1, min(args.min_chunk, args.max_chunk))

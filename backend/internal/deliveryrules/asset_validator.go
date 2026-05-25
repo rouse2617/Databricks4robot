@@ -11,11 +11,11 @@ import (
 
 // HierarchyViolation is returned when an asset write violates a hierarchy invariant.
 type HierarchyViolation struct {
-	Invariant string // e.g. "L1"
-	AssetType string
-	ParentID  string
+	Invariant  string // e.g. "L1"
+	AssetType  string
+	ParentID   string
 	ParentType string
-	Expected  string
+	Expected   string
 }
 
 func (v *HierarchyViolation) Error() string {
@@ -205,5 +205,5 @@ func (g *AssetRepoParentGetter) GetParentInfo(ctx context.Context, parentAssetID
 	if a == nil {
 		return nil, nil
 	}
-		return &ParentInfo{AssetType: a.AssetType}, nil
+	return &ParentInfo{AssetType: a.AssetType}, nil
 }

@@ -1,5 +1,5 @@
 # mcap-preview — preview/streaming microservice for MCAP video segments.
-# Routes: GET /healthz (no auth), GET /api/v1/preview/assets/:id/manifest (X-Grace-Token).
+# Routes: GET /healthz (no auth), GET /api/v1/preview/assets/:id/manifest (X-Databrew-Token).
 # Calls upstream cyber-databrew-backend for asset MCAP locator, then reads MCAP summary
 # from GCS via page-cached Range reads.
 #

@@ -6,7 +6,7 @@ servers:
   - url: http://localhost:8080
     description: Local development
 security:
-  - GraceToken: []
+  - DatabrewToken: []
 tags:
   - name: Auth
     description: Authentication endpoints (token-based login, session cookies)
@@ -50,10 +50,10 @@ tags:
     description: Health check, readiness, metrics, version info
 components:
   securitySchemes:
-    GraceToken:
+    DatabrewToken:
       type: apiKey
       in: header
-      name: X-Grace-Token
+      name: X-Databrew-Token
     AdminToken:
       type: apiKey
       in: header
@@ -3098,7 +3098,7 @@ paths:
       tags: [Admin]
       summary: Trigger ES reindex
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       requestBody:
         content:
@@ -3115,7 +3115,7 @@ paths:
       tags: [Admin]
       summary: Create a reindex job
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       responses:
         '201':
@@ -3127,7 +3127,7 @@ paths:
       tags: [Admin]
       summary: List reindex jobs
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       responses:
         '200':
@@ -3140,7 +3140,7 @@ paths:
       tags: [Admin]
       summary: Get reindex job
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       parameters:
         - in: path
@@ -3158,7 +3158,7 @@ paths:
       tags: [Admin]
       summary: Stop a reindex job
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       parameters:
         - in: path
@@ -3173,7 +3173,7 @@ paths:
       tags: [Admin]
       summary: Resume a reindex job
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       parameters:
         - in: path
@@ -3188,7 +3188,7 @@ paths:
       tags: [Admin]
       summary: Abandon a reindex job
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       parameters:
         - in: path
@@ -3203,7 +3203,7 @@ paths:
       tags: [Admin]
       summary: Get outbox stats
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       responses:
         '200':
@@ -3216,7 +3216,7 @@ paths:
       tags: [Admin]
       summary: Search index audit (PG vs ES consistency)
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       responses:
         '200':
@@ -3231,7 +3231,7 @@ paths:
       tags: [Internal]
       summary: Hard-delete asset (purge)
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       parameters:
         - in: path
@@ -3246,7 +3246,7 @@ paths:
       tags: [Internal]
       summary: Batch hard-delete assets
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       requestBody:
         required: true
@@ -3264,7 +3264,7 @@ paths:
       tags: [Internal]
       summary: "Internal: commit segments for an MCAP file"
       security:
-        - GraceToken: []
+        - DatabrewToken: []
         - AdminToken: []
       requestBody:
         required: true

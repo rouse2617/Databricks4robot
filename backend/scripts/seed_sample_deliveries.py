@@ -27,7 +27,7 @@ TOKEN = "dev-token"
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="POST sample deliveries for UI testing")
     p.add_argument("--base", default=BASE, help="API base URL")
-    p.add_argument("--token", default=TOKEN, help="X-Grace-Token")
+    p.add_argument("--token", default=TOKEN, help="X-Databrew-Token")
     p.add_argument(
         "--sample-json",
         default="/tmp/seed_rich_sample.json",
@@ -56,7 +56,7 @@ def main() -> None:
 
     url = f"{args.base.rstrip('/')}/api/v1/deliveries"
     headers = {
-        "X-Grace-Token": args.token,
+        "X-Databrew-Token": args.token,
         "Content-Type": "application/json",
     }
 

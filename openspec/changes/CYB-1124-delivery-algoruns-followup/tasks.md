@@ -60,7 +60,7 @@ Existing HTTP APIs are behaviorally corrected. No new endpoints are introduced.
 
 ### Dev verification evidence — 2026-05-23
 - `GET /api/v1/algo-runs?page=-1&page_size=999` on Cloud Run dev returned `{"page":1,"page_size":50,"total":4,"items_len":4}`.
-- `RUN_WRITES=1 BASE="$BASE" TOKEN="$GRACE_TOKEN" IAP_TOKEN="$CLOUDRUN_ID_TOKEN" bash scripts/api-guide-smoke.sh` returned `37 passed, 1 failed`; the only failure was Cloud Run root `/healthz` returning Google 404. Business endpoints passed, including duplicate delivery C2 add-items count (`asset_count=1`) and same idempotency key with different payload returning `409`.
+- `RUN_WRITES=1 BASE="$BASE" TOKEN="$DATABREW_TOKEN" IAP_TOKEN="$CLOUDRUN_ID_TOKEN" bash scripts/api-guide-smoke.sh` returned `37 passed, 1 failed`; the only failure was Cloud Run root `/healthz` returning Google 404. Business endpoints passed, including duplicate delivery C2 add-items count (`asset_count=1`) and same idempotency key with different payload returning `409`.
 - Targeted delivery cancel/index smoke on Cloud Run dev created a draft, committed it, verified asset `delivery_count=1`, cancelled it, then verified asset `delivery_count=0` for delivery `d35357df-ded9-43a3-9b1c-9f644fb4a596`.
 
 ## PR

@@ -157,7 +157,7 @@ frontend-test:
 # Requires backend on :8080; optional SEG_ASSET_ID for GET .../actions smoke.
 smoke-local:
 	bash backend/scripts/ensure_migrations.sh
-	GRACE_TOKEN=$${GRACE_TOKEN:-dev-token} SEG_ASSET_ID=$${SEG_ASSET_ID:-} bash backend/scripts/smoke_actions_api.sh
+	DATABREW_TOKEN=$${DATABREW_TOKEN:-dev-token} SEG_ASSET_ID=$${SEG_ASSET_ID:-} bash backend/scripts/smoke_actions_api.sh
 
 smoke:
 	@echo "Use: make smoke-local (needs Postgres + backend). See backend/scripts/smoke_actions_api.sh"

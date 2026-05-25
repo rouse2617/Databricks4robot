@@ -42,7 +42,7 @@ func setupCore(inf *infra) *coreHandlers {
 	algoUC.SetAlgoRunRepo(algoRunRepo)
 	assetUsecase := assetUC.NewWithProjections(pg, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, inf.tagRegistry, inf.algoRegistry)
 	assetUsecase.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
-	assetUsecase.SetCustomerRepo(customerRepo)     // CYB-1070: customer.* namespace lint
+	assetUsecase.SetCustomerRepo(customerRepo) // CYB-1070: customer.* namespace lint
 	// CYB-1164: asset hierarchy validator.
 	assetUsecase.SetValidator(deliveryrules.NewAssetWriteValidator(
 		deliveryrules.NewAssetRepoParentGetter(assetRepo),
@@ -78,16 +78,16 @@ func setupCore(inf *infra) *coreHandlers {
 	}
 
 	return &coreHandlers{
-		asset:         assetHandler,
-		algo:          algoHandler,
-		mcap:          mcapHandler,
-		delivery:      deliveryHandler,
-		customer:      customerHandler,
-		deliveryRule:  deliveryRuleHandler,
-		algoRun:  algoRunHandler,
-		eval:     evalHandler,
-		action:   actionHandler,
-		query:    queryHandler,
-		assetUC:  assetUsecase,
+		asset:        assetHandler,
+		algo:         algoHandler,
+		mcap:         mcapHandler,
+		delivery:     deliveryHandler,
+		customer:     customerHandler,
+		deliveryRule: deliveryRuleHandler,
+		algoRun:      algoRunHandler,
+		eval:         evalHandler,
+		action:       actionHandler,
+		query:        queryHandler,
+		assetUC:      assetUsecase,
 	}
 }

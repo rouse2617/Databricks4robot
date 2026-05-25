@@ -87,7 +87,7 @@ git checkout main   # 或你们约定的工作分支
 
 ```bash
 make dev-up
-cp backend/.env.example backend/.env   # 编辑 DB_*、GRACE_TOKEN 等
+cp backend/.env.example backend/.env   # 编辑 DB_*、DATABREW_TOKEN 等
 make backend-run                       # 另开终端: make frontend-dev
 ```
 
@@ -320,7 +320,7 @@ make dev-up
 
 ```bash
 cp backend/.env.example backend/.env
-# 按需编辑 DB_*、GRACE_TOKEN、ELASTICSEARCH_URL 等
+# 按需编辑 DB_*、DATABREW_TOKEN、ELASTICSEARCH_URL 等
 make backend-run
 ```
 
@@ -405,4 +405,4 @@ chmod +x .githooks/commit-msg
 - [x] 前端资产发现工作台（card view / facets / preview pane / dashboard）
 - [x] MCAP 预览服务（HEVC/H.264 转码 + fMP4 流式播放）
 - [x] Outbox CDC 同步主线（`asset_events` → relay → Pub/Sub → ES）
-- [ ] 生产级身份认证（当前 Phase 0：`X-Grace-Token`）
+- [ ] 生产级身份认证（当前 Phase 0：`X-Databrew-Token`）

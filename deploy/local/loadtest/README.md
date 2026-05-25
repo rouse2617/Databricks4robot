@@ -9,7 +9,7 @@ Use these against the API behind **`docker compose --profile full`** (backend on
 
 ## Auth
 
-All `/api/v1/*` routes need header **`X-Grace-Token`** (Compose default: `dev-token`).
+All `/api/v1/*` routes need header **`X-Databrew-Token`** (Compose default: `dev-token`).
 
 ```bash
 export BASE=http://localhost:8080

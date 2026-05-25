@@ -18,7 +18,7 @@ call() {
   local method="$1" path="$2"; shift 2
   local raw
   raw=$(curl -s --max-time 30 -w "\n%{http_code}" \
-    -X "$method" -H "Content-Type: application/json" -H "X-Grace-Token: ${TOKEN}" \
+    -X "$method" -H "Content-Type: application/json" -H "X-Databrew-Token: ${TOKEN}" \
     "${BASE_URL}${path}" "$@" 2>/dev/null || echo -e "\nTIMEOUT")
   RESP_BODY=$(echo "$raw" | sed '$d')
   RESP_CODE=$(echo "$raw" | tail -1)
@@ -29,7 +29,7 @@ call_raw() {
   local method="$1" path="$2"; shift 2
   local raw
   raw=$(curl -s --max-time 15 -w "\n%{http_code}" \
-    -X "$method" -H "X-Grace-Token: ${TOKEN}" \
+    -X "$method" -H "X-Databrew-Token: ${TOKEN}" \
     "${BASE_URL}${path}" "$@" 2>/dev/null || echo -e "\nTIMEOUT")
   RESP_BODY=$(echo "$raw" | sed '$d')
   RESP_CODE=$(echo "$raw" | tail -1)
@@ -438,7 +438,7 @@ NO_CT_ASSET=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(json.load(s
 
 # 8.2 错误的 Content-Type
 RAW=$(curl -s --max-time 10 -w "\n%{http_code}" \
-  -X POST -H "Content-Type: text/plain" -H "X-Grace-Token: ${TOKEN}" \
+  -X POST -H "Content-Type: text/plain" -H "X-Databrew-Token: ${TOKEN}" \
   "${BASE_URL}/api/v1/assets" \
   -d '{"mcap_file_id":"wrong-ct","start_timestamp_ns":1,"end_timestamp_ns":2,"reviewer":"t"}' 2>/dev/null)
 RESP_CODE=$(echo "$RAW" | tail -1)
@@ -476,7 +476,7 @@ fi
 # 9.3 SQL 注入尝试 (通过 filter) — Bigtable 模式不受 SQL 注入影响
 # 注意: 这可能触发 ListWithFilters 全表扫描，给短超时
 RAW=$(curl -s --max-time 5 -w "\n%{http_code}" \
-  -X GET -H "Content-Type: application/json" -H "X-Grace-Token: ${TOKEN}" \
+  -X GET -H "Content-Type: application/json" -H "X-Databrew-Token: ${TOKEN}" \
   "${BASE_URL}/api/v1/assets?filter=status:eq:approved'%20OR%201=1--" 2>/dev/null || echo -e "\nTIMEOUT")
 RESP_CODE=$(echo "$RAW" | tail -1)
 RESP_BODY=$(echo "$RAW" | sed '$d')

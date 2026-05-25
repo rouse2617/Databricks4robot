@@ -12,12 +12,12 @@ import (
 // Replace with OIDC/JWT in Phase 0.5.
 func StaticTokenAuth(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		got := c.GetHeader("X-Grace-Token")
+		got := c.GetHeader("X-Databrew-Token")
 		if got == "" {
 			got = c.GetHeader("Authorization")
 		}
 		if got == "" {
-			if cookie, err := c.Cookie("grace_session"); err == nil {
+			if cookie, err := c.Cookie("databrew_session"); err == nil {
 				got = cookie
 			}
 		}
@@ -31,9 +31,9 @@ func StaticTokenAuth(token string) gin.HandlerFunc {
 }
 
 // AdminTokenAuth checks for an admin-specific token via X-Admin-Token header.
-// When adminToken is empty, non-production environments fall back to graceToken;
+// When adminToken is empty, non-production environments fall back to databrewToken;
 // production must configure ADMIN_TOKEN (routes should also be unmounted).
-func AdminTokenAuth(adminToken, graceToken, env string) gin.HandlerFunc {
+func AdminTokenAuth(adminToken, databrewToken, env string) gin.HandlerFunc {
 	if adminToken == "" {
 		if env == "production" {
 			return func(c *gin.Context) {
@@ -41,7 +41,7 @@ func AdminTokenAuth(adminToken, graceToken, env string) gin.HandlerFunc {
 				c.Abort()
 			}
 		}
-		return StaticTokenAuth(graceToken)
+		return StaticTokenAuth(databrewToken)
 	}
 	return func(c *gin.Context) {
 		got := c.GetHeader("X-Admin-Token")

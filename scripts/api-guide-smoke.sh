@@ -6,7 +6,7 @@
 #
 # HTTPS + Google IAP (e.g. dev Gateway): also set IAP_TOKEN to an OIDC JWT whose
 # audience is the IAP OAuth 2.0 client ID (same value as GCPBackendPolicy iap.clientID).
-#   BASE=https://api-cyber-databrew-dev.cyberorigin.ai TOKEN=<GRACE_TOKEN> \
+#   BASE=https://api-cyber-databrew-dev.cyberorigin.ai TOKEN=<DATABREW_TOKEN> \
 #   IAP_TOKEN="$(gcloud auth print-identity-token --impersonate-service-account=... \
 #     --audiences=XXXX.apps.googleusercontent.com)" \
 #   bash scripts/api-guide-smoke.sh
@@ -20,7 +20,7 @@ declare -a API_HDR=()
 declare -a HEALTH_HDR=()
 
 refresh_headers() {
-	API_HDR=( -H "X-Grace-Token: ${TOKEN}" -H "Content-Type: application/json" )
+	API_HDR=( -H "X-Databrew-Token: ${TOKEN}" -H "Content-Type: application/json" )
 	HEALTH_HDR=()
 	if [[ -n "${IAP_TOKEN:-}" ]]; then
 		API_HDR+=( -H "Authorization: Bearer ${IAP_TOKEN}" )
@@ -149,7 +149,7 @@ if [[ "$BASE" == https://* ]] && [[ -z "${IAP_TOKEN:-}" ]]; then
 fi
 echo ""
 
-echo "--- health (no X-Grace-Token; IAP Bearer optional) ---"
+echo "--- health (no X-Databrew-Token; IAP Bearer optional) ---"
 if [[ -n "${IAP_TOKEN:-}" ]]; then
 	raw=$(curl -sS --max-time 15 -w "\n%{http_code}" -H "Authorization: Bearer ${IAP_TOKEN}" "${BASE}/healthz" 2>/dev/null) || raw=$'\n000'
 else

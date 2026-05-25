@@ -62,8 +62,8 @@ var previewMP4Cache = newPreviewCache("/tmp/mcap-preview-cache", 30*time.Minute)
 // segmentHandler handles GET /api/v1/preview/assets/:id/segment.mp4.
 //
 // It re-uses fetchLocator from the manifest handler; the same upstream call
-// shape applies (X-Grace-Token forwarded, 4xx/5xx propagated). For media
-// elements we additionally accept ?grace_token= because <video> tags cannot
+// shape applies (X-Databrew-Token forwarded, 4xx/5xx propagated). For media
+// elements we additionally accept ?databrew_token= because <video> tags cannot
 // send custom headers.
 func segmentHandler(cfg Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -72,9 +72,9 @@ func segmentHandler(cfg Config) gin.HandlerFunc {
 			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid asset id", nil)
 			return
 		}
-		token := extractGraceToken(c)
+		token := extractDatabrewToken(c)
 		if token == "" {
-			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "missing X-Grace-Token (or ?grace_token=, grace_session cookie)")
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "missing X-Databrew-Token (or ?databrew_token=, databrew_session cookie)")
 			return
 		}
 		if cfg.UpstreamBaseURL == "" || cfg.OpenMCAP == nil {

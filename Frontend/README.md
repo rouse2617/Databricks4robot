@@ -55,7 +55,7 @@ cp .env.example .env
 ```
 src/
 ├── api/                  # API 客户端
-│   ├── client.ts         #   axios 实例，自动注入 X-Grace-Token
+│   ├── client.ts         #   axios 实例，自动注入 X-Databrew-Token
 │   ├── assets.ts         #   资产 CRUD + 算法生命周期接口
 │   └── types.ts          #   TypeScript 类型定义（对齐后端 model）
 ├── components/

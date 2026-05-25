@@ -29,7 +29,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: cyber-databrew-secrets
-                  key: GRACE_TOKEN
+                  key: DATABREW_TOKEN
           volumeMounts:
             - name: smoke
               mountPath: /smoke

@@ -5,7 +5,7 @@ set -euo pipefail
 
 BASE="${BASE:-http://localhost:8080}"
 TOKEN="${TOKEN:-dev-token}"
-HDR=( -H "X-Grace-Token: ${TOKEN}" -H "Content-Type: application/json" )
+HDR=( -H "X-Databrew-Token: ${TOKEN}" -H "Content-Type: application/json" )
 PASS=0
 FAIL=0
 DOC_NOTE=()
@@ -208,10 +208,10 @@ raw=$(curl -sS --max-time 25 -w "\n%{http_code}" -X POST -H "Content-Type: appli
 c=$(code_of "$raw")
 if [[ "$c" =~ ^2 ]]; then
 	ok "POST /internal/commit-segments without token"
-	note "api-guide §4 example omits X-Grace-Token but §4 note says auth required — inconsistent."
+	note "api-guide §4 example omits X-Databrew-Token but §4 note says auth required — inconsistent."
 elif [[ "$c" == "401" || "$c" == "403" ]]; then
 	ok "POST /internal/commit-segments without token → $c (auth required)"
-	note "api-guide §4 curl example should add -H X-Grace-Token to match §4 note."
+	note "api-guide §4 curl example should add -H X-Databrew-Token to match §4 note."
 else
 	# 404 mcap / 422 validation still informative
 	ok "POST /internal/commit-segments without token → $c (expected non-2xx for bad mcap)"

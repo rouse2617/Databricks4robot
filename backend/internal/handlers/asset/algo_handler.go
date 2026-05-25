@@ -34,7 +34,7 @@ func NewAlgoHandler(uc *assetUC.AlgoUsecase) *AlgoHandler {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/algo/{algo_key}/start [post]
 func (h *AlgoHandler) Start(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -77,7 +77,7 @@ func (h *AlgoHandler) Start(c *gin.Context) {
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
 // @Failure      422 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/algo/{algo_key}/finish [post]
 func (h *AlgoHandler) Finish(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -125,7 +125,7 @@ func (h *AlgoHandler) Finish(c *gin.Context) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/algo/{algo_key}/reset [post]
 func (h *AlgoHandler) Reset(c *gin.Context) {
 	assetID := c.Param("id")

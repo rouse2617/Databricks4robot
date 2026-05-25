@@ -32,7 +32,7 @@ func New(uc *algorunUC.Usecase) *Handler {
 // @Success      201 {object} models.AlgoRun
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /algo-runs [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req algorunUC.CreateInput
@@ -56,7 +56,7 @@ func (h *Handler) Create(c *gin.Context) {
 // @Success      200 {object} models.AlgoRun
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /algo-runs/{run_id}/start [post]
 func (h *Handler) Start(c *gin.Context) {
 	runID := strings.TrimSpace(c.Param("run_id"))
@@ -78,7 +78,7 @@ func (h *Handler) Start(c *gin.Context) {
 // @Success      200 {object} models.AlgoRun
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /algo-runs/{run_id}/finish [post]
 func (h *Handler) Finish(c *gin.Context) {
 	runID := strings.TrimSpace(c.Param("run_id"))
@@ -102,7 +102,7 @@ func (h *Handler) Finish(c *gin.Context) {
 // @Param        run_id path string true "Run ID"
 // @Success      200 {object} models.AlgoRun
 // @Failure      404 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /algo-runs/{run_id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	runID := strings.TrimSpace(c.Param("run_id"))
@@ -125,7 +125,7 @@ func (h *Handler) Get(c *gin.Context) {
 // @Param        page query int false "Page number (default 1)"
 // @Param        page_size query int false "Page size (default 50, max 200)"
 // @Success      200 {object} object
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /algo-runs [get]
 func (h *Handler) List(c *gin.Context) {
 	f := algorunUC.ListFilter{
@@ -181,7 +181,7 @@ func (h *Handler) List(c *gin.Context) {
 // @Success      200 {object} models.AlgoRun
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /algo-runs/{run_id}/cancel [post]
 func (h *Handler) Cancel(c *gin.Context) {
 	runID := strings.TrimSpace(c.Param("run_id"))
@@ -205,7 +205,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 // @Param        run_id path string true "Run ID"
 // @Success      200 {array} repository.AffectedAsset
 // @Failure      404 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /algo-runs/{run_id}/affected-assets [get]
 func (h *Handler) GetAffectedAssets(c *gin.Context) {
 	runID := strings.TrimSpace(c.Param("run_id"))

@@ -92,7 +92,7 @@ class TestRemoteFetch:
         )
         cfg = ConfigManager.load(
             base_url="http://test",
-            auth_headers={"X-Grace-Token": "t"},
+            auth_headers={"X-Databrew-Token": "t"},
         )
         assert cfg.resolve("asset_list") == "/api/v2/assets"
         assert cfg.timeout == 60.0
@@ -104,7 +104,7 @@ class TestRemoteFetch:
         )
         cfg = ConfigManager.load(
             base_url="http://test",
-            auth_headers={"X-Grace-Token": "t"},
+            auth_headers={"X-Databrew-Token": "t"},
         )
         assert cfg.resolve("asset_list") == "/api/v1/assets"
         assert cfg.timeout == 30.0

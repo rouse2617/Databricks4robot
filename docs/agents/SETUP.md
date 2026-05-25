@@ -74,5 +74,5 @@
 | Credential | When |
 |------------|------|
 | `LINEAR_API_KEY` | Before creating/querying Linear issues |
-| `GRACE_TOKEN` | Backend local API debug only |
+| `DATABREW_TOKEN` | Backend local API debug only |
 | GCP | Deploy verification only |

@@ -4,7 +4,7 @@
 #   2) Secret `collector-databrew-import-env` with stringData keys:
 #        COLLECTOR_PG_DSN   e.g. postgresql://postgres:PASSWORD@10.159.176.3:5432/postgres?sslmode=disable
 #        DATABREW_BASE_URL  e.g. https://cyber-databrew-backend-dev-....run.app
-#        GRACE_TOKEN        e.g. dev-token
+#        DATABREW_TOKEN        e.g. dev-token
 #      Optional:
 #        IMPORT_BATCH       (default collector-postgres-k8s-job)
 #        IMPORT_REVIEWER    (default collector-import)

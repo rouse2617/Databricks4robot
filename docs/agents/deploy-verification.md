@@ -137,7 +137,7 @@ Agent 在 dev 上应完成：
 
 | 脚本 | 用途 |
 |------|------|
-| [`scripts/dev-backend-env.sh`](../../scripts/dev-backend-env.sh) | `source` 后得到 `BASE`、`GRACE_TOKEN`、`CLOUDRUN_ID_TOKEN`、`API_HDR` |
+| [`scripts/dev-backend-env.sh`](../../scripts/dev-backend-env.sh) | `source` 后得到 `BASE`、`DATABREW_TOKEN`、`CLOUDRUN_ID_TOKEN`、`API_HDR` |
 | [`scripts/apply-migration-dev.sh`](../../scripts/apply-migration-dev.sh) | 对 dev PG 应用 `backend/migrations/*.sql`（GKE 工具 pod，可重复） |
 | [`scripts/smoke-customers-dev.sh`](../../scripts/smoke-customers-dev.sh) | CYB-1014 类 customers/delivery 契约 smoke（需 `ASSET_ID`） |
 | [`scripts/api-guide-smoke.sh`](../../scripts/api-guide-smoke.sh) | 全站 L2 契约回归（`source dev-backend-env.sh` 后设 `BASE`/`TOKEN`） |
@@ -191,7 +191,7 @@ curl -sfS "${API_HDR[@]}" -d '{"...": "..."}' "$BASE/api/v1/..."
 | 层级 | 何时跑 | 命令 / 脚本 |
 |------|--------|-------------|
 | **L0 必跑** | 任意 backend 改动 | `cd backend && go test ./...`（CI 也会跑） |
-| **L1 核心 smoke** | 改动 handler/router/middleware/公共 model | `make smoke-local` 或 `GRACE_TOKEN=... bash backend/scripts/smoke_actions_api.sh` |
+| **L1 核心 smoke** | 改动 handler/router/middleware/公共 model | `make smoke-local` 或 `DATABREW_TOKEN=... bash backend/scripts/smoke_actions_api.sh` |
 | **L2 契约 smoke** | 改动 API 契约、auth、资产 CRUD、检索 | `BASE=... TOKEN=... bash scripts/api-guide-smoke.sh`（对齐 [`docs/review/api-guide.md`](../review/api-guide.md)） |
 | **L3 集群内 smoke** | 改动仅在线上 Gateway/IAP 下才暴露的问题 | `make api-guide-smoke-incluster`（GKE dev） |
 
@@ -296,7 +296,7 @@ curl -sfS "${API_HDR[@]}" -d '{"...": "..."}' "$BASE/api/v1/..."
 ```bash
 export FRONTEND_DEV_URL="https://<frontend-cloud-run-dev>"
 export BASE="https://<backend-cloud-run-dev>"
-export TOKEN="<GRACE_TOKEN>"
+export TOKEN="<DATABREW_TOKEN>"
 export IAP_TOKEN="<若 Gateway/IAP 需要>"
 ```
 
@@ -351,7 +351,7 @@ export IAP_TOKEN="<若 Gateway/IAP 需要>"
 
 ```bash
 export BASE="https://<backend-dev-url>"
-export TOKEN="<GRACE_TOKEN>"
+export TOKEN="<DATABREW_TOKEN>"
 # 可选: IAP_TOKEN=… 见 scripts/api-guide-smoke.sh 头部注释
 bash scripts/api-guide-smoke.sh
 # 期望: 末尾 0 failed（WARN 项在 PR 说明）

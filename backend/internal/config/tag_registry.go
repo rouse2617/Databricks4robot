@@ -11,9 +11,9 @@ import (
 // TagDef defines a single tag's registration info.
 type TagDef struct {
 	Description string   `yaml:"description"`
-	Type        string   `yaml:"type"`       // "enum" or "string"
-	Values      []string `yaml:"values"`     // allowed values for enum type
-	MaxLength   int      `yaml:"max_length"` // max length for string type (0 = unlimited)
+	Type        string   `yaml:"type"`        // "enum" or "string"
+	Values      []string `yaml:"values"`      // allowed values for enum type
+	MaxLength   int      `yaml:"max_length"`  // max length for string type (0 = unlimited)
 	Propagation string   `yaml:"propagation"` // "none" (default) or "descendants" (CYB-1068)
 }
 
@@ -39,8 +39,8 @@ type TagRegistry struct {
 
 // tagRegistryFile is the top-level YAML structure.
 type tagRegistryFile struct {
-	Tags        map[string]TagDef `yaml:"tags"`
-	TagSources  []TagSourceDef    `yaml:"tag_sources"`
+	Tags       map[string]TagDef `yaml:"tags"`
+	TagSources []TagSourceDef    `yaml:"tag_sources"`
 }
 
 // LoadTagRegistry loads the tag registry from a YAML file.

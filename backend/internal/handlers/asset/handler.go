@@ -88,7 +88,7 @@ func (h *Handler) SetPG(pg *postgres.Client) {
 // @Success      200 {object} models.Asset
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -239,7 +239,7 @@ func writeEventList(c *gin.Context, res *assetUC.ListEventsResult, limit int) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/events [get]
 func (h *Handler) ListEvents(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -312,7 +312,7 @@ func (h *Handler) GetLineage(c *gin.Context) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/provenance [get]
 func (h *Handler) GetProvenance(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -406,7 +406,7 @@ func (h *Handler) ListGlobalEvents(c *gin.Context) {
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      422 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/tags [post]
 func (h *Handler) UpsertTag(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -452,7 +452,7 @@ func (h *Handler) UpsertTag(c *gin.Context) {
 // @Success      200 {object} models.Asset
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/tags/{key} [delete]
 func (h *Handler) DeleteTag(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -483,7 +483,7 @@ func (h *Handler) DeleteTag(c *gin.Context) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/tags/history [get]
 func (h *Handler) ListTagHistory(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -520,7 +520,7 @@ func (h *Handler) ListTagHistory(c *gin.Context) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      422 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
@@ -669,7 +669,7 @@ func (h *Handler) Update(c *gin.Context) {
 // @Param        id path string true "Asset ID"
 // @Success      200 {object} object
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -797,7 +797,7 @@ func parseBoundedInt(raw string, fallback, min, max int) (int, error) {
 // @Success      200 {object} object
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets:batch_get [post]
 func (h *Handler) BatchGet(c *gin.Context) {
 	var req struct {
@@ -849,7 +849,7 @@ func (h *Handler) BatchGet(c *gin.Context) {
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      422 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/revisions [post]
 func (h *Handler) PromoteRevision(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -889,7 +889,7 @@ func (h *Handler) PromoteRevision(c *gin.Context) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /logical-assets/{id}/current [get]
 func (h *Handler) GetCurrentForLogical(c *gin.Context) {
 	logicalAssetID := strings.TrimSpace(c.Param("id"))
@@ -935,7 +935,7 @@ func paginateAssets(items []*models.Asset, page, pageSize int) []*models.Asset {
 // @Success      200 {object} object
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/view [post]
 func (h *Handler) RecordView(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -960,7 +960,7 @@ func (h *Handler) RecordView(c *gin.Context) {
 // @Success      200 {object} object
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/favorite [post]
 func (h *Handler) ToggleFavorite(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -1005,7 +1005,7 @@ var assetEventStreamPollInterval = 5 * time.Second
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/events/stream [get]
 func (h *Handler) HandleEventsStream(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -1202,7 +1202,7 @@ type ratingsHistoryMetric struct {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /logical-assets/{id}/ratings-history [get]
 func (h *Handler) HandleRatingsHistory(c *gin.Context) {
 	logicalAssetID := strings.TrimSpace(c.Param("id"))

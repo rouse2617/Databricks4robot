@@ -66,12 +66,14 @@ type stubCustomerRepo struct {
 	customers map[string]*models.Customer
 }
 
-func (s *stubCustomerRepo) Insert(_ context.Context, c *models.Customer) error                { return nil }
+func (s *stubCustomerRepo) Insert(_ context.Context, c *models.Customer) error { return nil }
 func (s *stubCustomerRepo) Get(_ context.Context, customerID string) (*models.Customer, error) {
 	return s.customers[customerID], nil
 }
-func (s *stubCustomerRepo) Update(_ context.Context, c *models.Customer) error                { return nil }
-func (s *stubCustomerRepo) Exists(_ context.Context, customerID string) (bool, error)          { return false, nil }
+func (s *stubCustomerRepo) Update(_ context.Context, c *models.Customer) error { return nil }
+func (s *stubCustomerRepo) Exists(_ context.Context, customerID string) (bool, error) {
+	return false, nil
+}
 func (s *stubCustomerRepo) List(_ context.Context, status, slaTier, region string, limit int, cursor string) ([]*models.Customer, error) {
 	return nil, nil
 }
@@ -95,8 +97,10 @@ func (s *stubRuleRepo) List(_ context.Context, customerID string) ([]*models.Del
 
 type stubSubscriber struct{}
 
-func (s *stubSubscriber) Receive(_ context.Context, _ func(context.Context, []byte) error) error { return nil }
-func (s *stubSubscriber) Close() error                                                           { return nil }
+func (s *stubSubscriber) Receive(_ context.Context, _ func(context.Context, []byte) error) error {
+	return nil
+}
+func (s *stubSubscriber) Close() error { return nil }
 
 // ---------------- helpers ----------------
 

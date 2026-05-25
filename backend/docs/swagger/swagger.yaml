@@ -169,7 +169,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Create asset
       tags:
       - assets
@@ -194,7 +194,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Delete asset
       tags:
       - assets
@@ -222,7 +222,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Get asset
       tags:
       - assets
@@ -272,7 +272,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Finish algorithm
       tags:
       - algorithms
@@ -310,7 +310,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Reset algorithm
       tags:
       - algorithms
@@ -356,7 +356,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Start algorithm
       tags:
       - algorithms
@@ -428,7 +428,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: List asset events
       tags:
       - assets
@@ -473,7 +473,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Upsert asset tag
       tags:
       - assets
@@ -508,7 +508,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Delete asset tag
       tags:
       - assets
@@ -561,7 +561,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: List asset tag history
       tags:
       - assets
@@ -593,7 +593,7 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Batch get assets
       tags:
       - assets
@@ -634,13 +634,13 @@ paths:
           schema:
             $ref: '#/definitions/httpresp.ErrorBody'
       security:
-      - GraceToken: []
+      - DatabrewToken: []
       summary: Commit delivery
       tags:
       - deliveries
 securityDefinitions:
-  GraceToken:
+  DatabrewToken:
     in: header
-    name: X-Grace-Token
+    name: X-Databrew-Token
     type: apiKey
 swagger: "2.0"

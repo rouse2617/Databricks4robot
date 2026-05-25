@@ -37,7 +37,7 @@ class EnvSource:
     Mappings::
 
         CYBER_DATABREW_BASE_URL   → base_url
-        CYBER_DATABREW_TOKEN      → token (also GRACE_TOKEN)
+        CYBER_DATABREW_TOKEN      → token (also DATABREW_TOKEN)
         CYBER_DATABREW_EMAIL      → email
         CYBER_DATABREW_TIMEOUT    → timeout (float)
     """
@@ -54,7 +54,7 @@ class EnvSource:
         if base_url:
             data["base_url"] = base_url
 
-        token = os.environ.get(f"{self._prefix}_TOKEN") or os.environ.get("GRACE_TOKEN")
+        token = os.environ.get(f"{self._prefix}_TOKEN") or os.environ.get("DATABREW_TOKEN")
         if token:
             data["token"] = token
 

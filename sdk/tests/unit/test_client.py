@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from cyber_databrew_sdk import CyberDatabrewClient
-from cyber_databrew_sdk.auth import GraceTokenAuth
+from cyber_databrew_sdk.auth import DatabrewTokenAuth
 from cyber_databrew_sdk.managers.assets import AssetManager
 from cyber_databrew_sdk.managers.audit import AuditManager
 
@@ -21,13 +21,13 @@ class TestClientConstructor:
     def test_default_auth(self, mock_http_client):
         client = CyberDatabrewClient(token="t", email="e@x.com", http_client=mock_http_client)
         headers = client._requestor._auth_headers
-        assert headers["X-Grace-Token"] == "t"
+        assert headers["X-Databrew-Token"] == "t"
         assert headers["X-User-Email"] == "e@x.com"
 
     def test_custom_auth_overrides_default(self, mock_http_client):
-        custom = GraceTokenAuth("custom")
+        custom = DatabrewTokenAuth("custom")
         client = CyberDatabrewClient(token="default", auth=custom, http_client=mock_http_client)
-        assert client._requestor._auth_headers["X-Grace-Token"] == "custom"
+        assert client._requestor._auth_headers["X-Databrew-Token"] == "custom"
 
     def test_custom_base_url(self, mock_http_client):
         client = CyberDatabrewClient(base_url="https://api.example.com", http_client=mock_http_client)
@@ -61,7 +61,7 @@ class TestClientConstructor:
         monkeypatch.setenv("CYBER_DATABREW_BASE_URL", "http://env.url")
         client = CyberDatabrewClient(http_client=mock_http_client)
         h = client._requestor._auth_headers
-        assert h["X-Grace-Token"] == "env-token"
+        assert h["X-Databrew-Token"] == "env-token"
         assert h["X-User-Email"] == "env@x.com"
         assert client._requestor._base_url == "http://env.url"
 

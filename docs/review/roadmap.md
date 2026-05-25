@@ -302,7 +302,7 @@ P2 解决"不止一个团队在用"时的问题——权限、多租户、SDK �
 
 | 子项 | 描述 |
 |------|------|
-| Middleware 解析 | `X-Grace-Token` → 查 token→tenant 映射表（简单方案，等 OIDC 后再切） |
+| Middleware 解析 | `X-Databrew-Token` → 查 token→tenant 映射表（简单方案，等 OIDC 后再切） |
 | Repository 过滤 | 所有 `SELECT` 追加 `AND tenant_id = $ctxTenant` |
 | 写路径约束 | `INSERT/UPDATE/DELETE` + outbox 事件写入同样强制 tenant 绑定，禁止跨租户写入 |
 | 存量数据迁移 | 所有 `tenant_id IS NULL` 的行 → 单次 migration 写入 `'default'` |
@@ -548,7 +548,7 @@ BigQuery 聚合：对比两个版本的 quality 分布 / failure_rate / avg_metr
 1. 本地 build + lint + test（质量门禁全部通过）
 2. 运行部署脚本（后端/前端 → Cloud Run dev）
 3. 在线 smoke test
-   后端：curl -H "X-Grace-Token: dev-token" "<endpoint>"
+   后端：curl -H "X-Databrew-Token: dev-token" "<endpoint>"
    前端：Chrome MCP 浏览器走查（navigate → snapshot → 交互验证）
 4. 你确认 OK
 5. git commit + push（Tekton CI 自动再部署一次，覆盖即可）
@@ -572,7 +572,7 @@ BigQuery 聚合：对比两个版本的 quality 分布 / failure_rate / avg_metr
 
 ```
 # 后端 dev
-curl -s -H "X-Grace-Token: dev-token" \
+curl -s -H "X-Databrew-Token: dev-token" \
   "https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app/api/v1/<path>"
 
 # 前端 dev
@@ -601,7 +601,7 @@ https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app/<page>
 
 ### 安全红线
 
-- 仍然用 `X-Grace-Token`（Phase 0），**禁止**新增 bypass auth 的公开端点
+- 仍然用 `X-Databrew-Token`（Phase 0），**禁止**新增 bypass auth 的公开端点
 - 内部端点放 `/internal/*`，管理端点放 `/admin/*`
 - Idempotency-Key：`POST /deliveries` 和 `POST /deliveries/batch` 共享 namespace
 - 错误响应统一信封：`{ "code": "...", "message": "...", "request_id": "...", "details": {...} }`
@@ -619,7 +619,7 @@ dev 环境 URL：
 ```
 前端：https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app
 后端：https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app
-鉴权：X-Grace-Token: <dev GRACE_TOKEN>
+鉴权：X-Databrew-Token: <dev DATABREW_TOKEN>
 ```
 
 #### 标准验证流程（单页面）
@@ -641,7 +641,7 @@ dev 环境 URL：
 | **P0-T3** Dashboard 饼图 | 1. navigate → `/dashboard` 2. take_snapshot → 确认"近 7 天失败模式分布"卡片出现 3. 检查：有数据时饼图展示；无数据时 Empty state 不报红 4. list_console_messages → 无 JS error |
 | **P0-T4** 算法矩阵按钮 | 1. navigate → `/algo` 2. take_snapshot → 确认"重试当前页失败"按钮文案正确 3. 通过筛选调到有失败行的页面 → 按钮应显示计数且可点击 4. click 按钮 → 确认弹窗出现 |
 | **P0-T6** 事件流默认加载 | 1. navigate → `/events` 2. take_snapshot → 确认无"请先输入 Asset ID"提示，直接展示事件列表 3. 确认"加载更多"按钮存在 4. click → 追加数据，无重复 5. 输入 Asset ID → 确认可切换为单资产视图书签 |
-| **P0-T1/T2** 后端 | 用 curl 验证（无法用浏览器直测）：`curl -H "X-Grace-Token: $token" "$BACKEND/api/v1/lakehouse/failure-clusters?days=7"` → 返回 JSON 含 `items[]` |
+| **P0-T1/T2** 后端 | 用 curl 验证（无法用浏览器直测）：`curl -H "X-Databrew-Token: $token" "$BACKEND/api/v1/lakehouse/failure-clusters?days=7"` → 返回 JSON 含 `items[]` |
 
 #### P1 验证脚本
 

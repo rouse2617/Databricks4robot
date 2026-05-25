@@ -31,6 +31,6 @@ const (
 	CodeServiceUnavailable     = "SERVICE_UNAVAILABLE"
 	CodeUnsupportedField       = "UNSUPPORTED_FIELD"
 	CodeUnsupportedOperator    = "UNSUPPORTED_OPERATOR"
-	CodeCustomerNotFound       = "CUSTOMER_NOT_FOUND" // CYB-1070
+	CodeCustomerNotFound       = "CUSTOMER_NOT_FOUND"        // CYB-1070
 	CodeHierarchyViolation     = "ASSET_HIERARCHY_VIOLATION" // CYB-1164
 )

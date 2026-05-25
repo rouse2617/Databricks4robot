@@ -141,9 +141,9 @@ func (j *RetentionJob) emitRetentionEvent(ctx context.Context, assetID, prevStat
 		return nil
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"reason":      "retention_expired",
-		"prev_state":  prevState,
-		"new_state":   "archived",
+		"reason":     "retention_expired",
+		"prev_state": prevState,
+		"new_state":  "archived",
 	})
 	return j.Events.Append(ctx, repository.AssetEventAppendInput{
 		EventType:    "lifecycle_archived",

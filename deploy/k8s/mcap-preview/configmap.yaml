@@ -10,7 +10,7 @@ metadata:
 data:
   PORT: "8090"
   UPSTREAM_BASE_URL: "http://cyber-databrew-backend:80"
-  GRACE_TOKEN_PASSTHROUGH: "true"
+  DATABREW_TOKEN_PASSTHROUGH: "true"
   GCS_PAGE_SIZE_BYTES: "1048576"
   GCS_PAGE_CACHE_BYTES: "67108864"
   LOG_LEVEL: info

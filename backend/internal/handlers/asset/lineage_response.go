@@ -10,9 +10,9 @@ import (
 
 // lineageResponse is the JSON shape for GET /assets/{id}/lineage and provenance.lineage.
 type lineageResponse struct {
-	AssetID    string         `json:"asset_id"`
-	Upstream   gin.H          `json:"upstream"`
-	Downstream gin.H          `json:"downstream"`
+	AssetID    string `json:"asset_id"`
+	Upstream   gin.H  `json:"upstream"`
+	Downstream gin.H  `json:"downstream"`
 }
 
 func (h *Handler) buildLineageResponse(ctx context.Context, assetID string) (lineageResponse, error) {

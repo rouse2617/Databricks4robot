@@ -31,7 +31,6 @@ type Handler struct {
 	ruleEngine   *deliveryrules.Engine
 }
 
-
 // withTx runs fn within a transaction if the repo supports it.
 func (h *Handler) withTx(ctx context.Context, fn func(context.Context) error) error {
 	if txRunner, ok := h.repo.(repository.TxRunner); ok {
@@ -198,7 +197,7 @@ func (h *Handler) commitC2Full(ctx context.Context, d *models.Delivery, assetIDs
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /deliveries [post]
 func (h *Handler) Commit(c *gin.Context) {
 	var req struct {

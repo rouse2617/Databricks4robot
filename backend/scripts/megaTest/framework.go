@@ -60,7 +60,7 @@ func doReq(method, path string, body interface{}, headers map[string]string) (in
 		return 0, nil, 0
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Grace-Token", *token)
+	req.Header.Set("X-Databrew-Token", *token)
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
