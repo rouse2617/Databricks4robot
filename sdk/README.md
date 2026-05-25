@@ -1,66 +1,77 @@
-# SDK
+# cyber-databrew-sdk
 
-Python SDK for consuming backend APIs (`assets`, `mcap`, `delivery`).
+Python SDK for the [cyber-databrew](https://github.com/CyberOrigin2077/cyber-databrew) data platform.
 
-## What
-
-- `AssetClientSDK` as the main entrypoint
-- Resource clients:
-  - `AssetClient`
-  - `McapClient`
-  - `DeliveryClient`
-- Pydantic models in `src/asset_sdk/types/`
-
-## How to Run
+## Install
 
 ```bash
-uv sync --dev
-uv run pytest tests/unit/
+# 一次性配置（有 gcloud 认证即可）：
+pip install keyrings.google-artifactregistry-auth
+
+# 安装 SDK：
+pip install --extra-index-url \
+  https://us-central1-python.pkg.dev/green-valley-442103/python-packages/simple/ \
+  cyber-databrew-sdk
 ```
 
-## Config
-
-Environment variables used by default:
-
-- `GRACE_BASE_URL` (default: `http://localhost:8080`)
-- `GRACE_TOKEN`
-
-Or pass them explicitly to `AssetClientSDK(...)`.
-
-## API / Interfaces
-
-Minimal usage:
+## Quick Start
 
 ```python
-from asset_sdk import AssetClientSDK
+from cyber_databrew_sdk import CyberDatabrewClient
 
-with AssetClientSDK(base_url="http://localhost:8080", token="dev-token") as client:
-    asset = client.assets.get("asset-id")
+client = CyberDatabrewClient(
+    base_url="https://your-backend-url.run.app",
+    token="g-your-token",
+)
+
+# List assets
+assets = client.assets.list(page_size=20)
+
+# Get asset detail
+asset = client.assets.get("asset-id")
+
+# Create delivery
+delivery = client.deliveries.create(
+    customer_id="cust-1",
+    items=[{"asset_id": "asset-1", "mcap_file_id": "file-1"}],
+)
 ```
 
-## Directory Structure
+## Config Priority
 
-- `src/asset_sdk/client.py`: top-level client
-- `src/asset_sdk/assets.py`: asset APIs
-- `src/asset_sdk/mcap.py`: finalize/message APIs
-- `src/asset_sdk/delivery.py`: delivery APIs
-- `tests/unit/`: unit tests (respx + httpx mock)
+`CyberDatabrewClient` resolves configuration from multiple sources (highest priority first):
 
-## Development Workflow
+1. Constructor args: `CyberDatabrewClient(base_url=..., token=...)`
+2. Environment vars: `CYBER_DATABREW_BASE_URL`, `CYBER_DATABREW_TOKEN`, `CYBER_DATABREW_EMAIL`
+3. Config file: `~/.cyber-databrew/config.yaml`
+4. Remote fetch: `GET /api/v1/sdk-config` (backend endpoint)
+5. Built-in defaults
+
+## Managers
+
+| Manager | Description |
+|---------|------------|
+| `client.assets` | Asset CRUD, tags, lineage, provenance, timeline |
+| `client.storage` | MCAP file list, download, upload |
+| `client.delivery` | Delivery create, commit, cancel, ack |
+| `client.algo_runs` | Algorithm run lifecycle |
+| `client.search` | Sync status / progress |
+| `client.queries` | Query IR validate, run, saved queries |
+| `client.customers` | Customer CRUD |
+| `client.lakehouse` | Lakehouse report, tables, overview |
+| `client.events` | Asset / global event list, SSE stream |
+| `client.registry` | Algo, tag, metric, lifecycle registries |
+| `client.audit` | Audit search, lineage search |
+
+## Development
 
 ```bash
-uv run pytest tests/unit/
-uv run ruff check src/
-uv run ruff format src/
+cd sdk
+uv sync --dev
+make validate    # lint → mypy → test → build → smoke
+make publish     # publish to Artifact Registry
 ```
 
-## Known Limitations
+## License
 
-- Integration tests are not fully wired yet
-- Some APIs are placeholder responses until backend logic is expanded
-
-## Next Milestones
-
-- Add integration tests against local backend
-- Generate typed models from OpenAPI
-- Add pagination/filter helpers in client APIs
+Internal — CyberOrigin
