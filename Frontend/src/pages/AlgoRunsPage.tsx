@@ -120,7 +120,7 @@ export default function AlgoRunsPage() {
 		{
 			title: "耗时",
 			key: "duration",
-			width: 100,
+			width: 140,
 			render: (_: unknown, record: AlgoRun) => {
 				if (!record.started_at || !record.finished_at) return "—";
 				const sec = dayjs(record.finished_at).diff(
@@ -163,6 +163,7 @@ export default function AlgoRunsPage() {
 			{/* Toolbar: filters + refresh */}
 			<Space style={{ marginBottom: 12 }} wrap>
 				<Select
+					id="algo-name-filter"
 					value={algoName}
 					onChange={(v) => {
 						setAlgoName(v);
@@ -175,6 +176,7 @@ export default function AlgoRunsPage() {
 					optionFilterProp="label"
 				/>
 				<Select
+					id="algo-status-filter"
 					value={status}
 					onChange={(v) => {
 						setStatus(v);
@@ -185,6 +187,7 @@ export default function AlgoRunsPage() {
 					placeholder="状态过滤"
 				/>
 				<RangePicker
+					id="algo-date-range"
 					value={dateRange}
 					onChange={(dates) => {
 						setDateRange(dates as [dayjs.Dayjs | null, dayjs.Dayjs | null]);

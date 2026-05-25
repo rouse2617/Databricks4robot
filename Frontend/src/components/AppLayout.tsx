@@ -13,7 +13,7 @@ import {
 	UserOutlined,
 } from "@ant-design/icons";
 import { Avatar, Dropdown, Grid, Layout, Menu, Typography } from "antd";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { getAppVersionLabel } from "../lib/appVersion";
@@ -65,6 +65,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const isMobile = !screens.lg;
 	const siderWidth = 220;
 	const versionLabel = getAppVersionLabel();
+
+	// Scroll to top on route change — react-router v7 does not auto-reset
+	useEffect(() => {
+		window.scrollTo(0, 0);
+	}, [location.pathname]);
 
 	return (
 		<>
