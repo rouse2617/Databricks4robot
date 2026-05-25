@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from uuid import uuid4
 
 import httpx
 
@@ -13,11 +14,24 @@ class DeliveryClient:
     def __init__(self, http: httpx.Client) -> None:
         self._http = http
 
-    def commit(self, asset_ids: list[str], customer_id: str, *, note: Optional[str] = None) -> dict:
-        """Create a delivery record for a set of assets."""
+    def commit(
+        self,
+        asset_ids: list[str],
+        customer_id: str,
+        *,
+        note: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
+        """Create a delivery record for a set of assets.
+
+        The backend requires an Idempotency-Key header for this endpoint.
+        If not provided, a UUID is generated automatically.
+        """
+        key = idempotency_key or str(uuid4())
         r = self._http.post(
             self._base,
             json={"asset_ids": asset_ids, "customer_id": customer_id, "note": note},
+            headers={"Idempotency-Key": key},
         )
         r.raise_for_status()
         return r.json()

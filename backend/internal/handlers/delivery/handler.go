@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -441,9 +442,9 @@ func (h *Handler) HandleDraft(c *gin.Context) {
 	}
 
 	now := time.Now()
-	requestedBy := c.GetHeader("X-Request-ID") // fallback; prefer body field
+	requestedBy := strings.TrimSpace(req.Owner)
 	if requestedBy == "" {
-		requestedBy = req.Owner
+		requestedBy = c.GetHeader("X-Request-ID")
 	}
 	d := &models.Delivery{
 		DeliveryID:  uuid.NewString(),
@@ -513,34 +514,28 @@ func (h *Handler) HandleAddItems(c *gin.Context) {
 	}
 
 	req.AssetIDs = uniqueAssetIDs(req.AssetIDs)
-	if txRunner, ok := h.repo.(repository.TxRunner); ok {
-		err = txRunner.WithTx(c.Request.Context(), func(txCtx context.Context) error {
-			if err := h.repo.AddItems(txCtx, deliveryID, req.AssetIDs); err != nil {
-				return err
-			}
-			items, err := h.repo.ListItems(txCtx, deliveryID)
-			if err != nil {
-				return err
-			}
-			d.AssetCount = len(items)
-			d.ItemCount = int64(len(items))
-			return h.repo.Update(txCtx, d, d.Version)
-		})
-	} else {
-		if err := h.repo.AddItems(c.Request.Context(), deliveryID, req.AssetIDs); err != nil {
-			httpresp.Internal(c, err.Error())
-			return
+	txRunner, ok := h.repo.(repository.TxRunner)
+	if !ok {
+		httpresp.Internal(c, "delivery repository does not support transactions")
+		return
+	}
+	err = txRunner.WithTx(c.Request.Context(), func(txCtx context.Context) error {
+		if err := h.repo.AddItems(txCtx, deliveryID, req.AssetIDs); err != nil {
+			return err
 		}
-		items, err := h.repo.ListItems(c.Request.Context(), deliveryID)
+		items, err := h.repo.ListItems(txCtx, deliveryID)
 		if err != nil {
-			httpresp.Internal(c, err.Error())
-			return
+			return err
 		}
 		d.AssetCount = len(items)
 		d.ItemCount = int64(len(items))
-		err = h.repo.Update(c.Request.Context(), d, d.Version)
-	}
+		return h.repo.Update(txCtx, d, d.Version)
+	})
 	if err != nil {
+		if errors.Is(err, repository.ErrOptimisticLock) {
+			httpresp.Conflict(c, httpresp.CodeConcurrentConflict, "delivery was modified concurrently", nil)
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
