@@ -48,6 +48,27 @@ publish: validate
 		dist/*.whl dist/*.tar.gz
 	@echo "=== Published ==="
 
+# ──────────────────────────────────────────────────────────────────
+# OpenAPI codegen — generate Pydantic models from api/openapi.yaml
+# ──────────────────────────────────────────────────────────────────
+.PHONY: sdk-generate sdk-check-generated
+
+SDK_OPENAPI = ../api/openapi.yaml
+SDK_GENERATED = src/cyber_databrew_sdk/_generated/models.py
+
+sdk-generate:
+	uv run datamodel-codegen \
+		--input $(SDK_OPENAPI) \
+		--input-file-type openapi \
+		--output $(SDK_GENERATED)
+
+sdk-check-generated: sdk-generate
+	@git diff --quiet $(SDK_GENERATED) || { \
+		echo "ERROR: $(SDK_GENERATED) is out of date. Run 'make sdk-generate' and commit the result."; \
+		exit 1; \
+	}
+	@echo "Generated models are up to date."
+
 clean:
 	rm -rf dist/ build/ *.egg-info
 	rm -rf /tmp/sdk-smoke-venv

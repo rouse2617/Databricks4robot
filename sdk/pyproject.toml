@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 yaml = ["pyyaml>=6.0"]
+otel = ["opentelemetry-api>=1.28"]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -58,6 +59,13 @@ fixable = ["ALL"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/cyber_databrew_sdk/_version.py" = ["RUF022"]
+"src/cyber_databrew_sdk/_generated/*" = ["ALL"]
+
+[tool.mypy]
+exclude = [
+    "src/cyber_databrew_sdk/_generated/",
+    "src/cyber_databrew_sdk/_version.py",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["cyber_databrew_sdk"]

@@ -61,6 +61,7 @@ func RegisterAll(
 	r.Use(middleware.HTTPMetrics())
 	r.Use(middleware.RequestGuard(2048))
 	r.Use(middleware.StructuredLogger())
+	r.Use(middleware.UserEmail())
 
 	// Rate limiting (disabled by default, set RATE_LIMIT_RPS to enable).
 	if rl := middleware.RateLimitFromConfig(cfg.RateLimitRPS, cfg.RateLimitBurst); rl != nil {

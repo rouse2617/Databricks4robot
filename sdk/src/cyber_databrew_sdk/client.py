@@ -78,6 +78,7 @@ class CyberDatabrewClient:
         timeout: float | None = None,
         http_client: httpx.Client | None = None,
         config: ConfigManager | None = None,
+        enable_tracing: bool = True,
     ) -> None:
         """Initialize the client.
 
@@ -133,6 +134,7 @@ class CyberDatabrewClient:
             auth_headers=auth_headers,
             timeout=self._config.timeout,
             http_client=http_client,
+            enable_tracing=enable_tracing,
         )
 
     # ------------------------------------------------------------------

@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 
 import httpx
 
+from cyber_databrew_sdk._tracing import instrument_requestor
 from cyber_databrew_sdk.exceptions import (
     APIConnectionError,
     map_status_to_error,
@@ -42,10 +43,16 @@ class APIRequestor:
         auth_headers: dict[str, str],
         timeout: float,
         http_client: httpx.Client | None = None,
+        enable_tracing: bool = True,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._auth_headers = auth_headers
         self._client = http_client or httpx.Client(timeout=timeout)
+        self._enable_tracing = enable_tracing
+
+        # Instrument with OpenTelemetry if available
+        if enable_tracing:
+            instrument_requestor(self._client)
 
     def close(self) -> None:
         self._client.close()
