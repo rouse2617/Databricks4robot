@@ -1,5 +1,6 @@
 """cyber-databrew Python SDK."""
 
+import typing as _t
 import warnings
 
 from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, EmailAuth, DatabrewTokenAuth
@@ -17,6 +18,9 @@ from cyber_databrew_sdk.exceptions import (
     ValidationError,
 )
 
+# Backward-compat alias (direct, no DeprecationWarning)
+GraceTokenAuth = DatabrewTokenAuth
+
 __all__ = [
     "APIConnectionError",
     "AssetClientSDK",
@@ -30,6 +34,7 @@ __all__ = [
     "CyberDatabrewClient",
     "CyberDatabrewError",
     "DataCurationClient",
+    "DatabrewTokenAuth",
     "EmailAuth",
     "DatabrewClient",
     "DatabrewTokenAuth",
@@ -42,8 +47,6 @@ __all__ = [
 # Backward-compat aliases for asset_sdk users — resolved via __getattr__
 # with DeprecationWarning. Direct references (e.g. from cyber_databrew_sdk
 # import AssetClientSDK) still work via PEP 562 module __getattr__.
-
-import typing as _t
 
 
 def __getattr__(name: str) -> _t.Any:

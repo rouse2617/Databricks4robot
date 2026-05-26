@@ -157,7 +157,7 @@ func Load() *Config {
 		TopicMcapFinalized: getenv("TOPIC_MCAP_FINALIZED", "gcs.mcap.finalized.v1"),
 		TopicAssetEvents:   getenv("TOPIC_ASSET_EVENTS", "cyber-databrew-asset-events"),
 
-		DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
+			DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
@@ -216,6 +216,7 @@ func Load() *Config {
 		AdminToken: getenv("ADMIN_TOKEN", ""),
 	}
 }
+
 
 // AdminRoutesEnabled reports whether privileged admin/internal HTTP routes are mounted.
 // In production, ADMIN_TOKEN must be set; dev may fall back to DATABREW_TOKEN when unset.
