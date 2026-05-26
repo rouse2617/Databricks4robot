@@ -34,7 +34,7 @@ SELECT
   COALESCE(m.metadata, '{}'::jsonb), '{}'::jsonb,
   m.tenant_id, m.project_id,
   0, 0,
-  FALSE, NULL, 0, FALSE,
+  FALSE, NULL, 1, TRUE,
   m.created_at, m.created_at, 1
 FROM mcap_files m
 WHERE NOT EXISTS (
