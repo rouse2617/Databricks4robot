@@ -90,7 +90,8 @@ export default function TagsTab({
 		const out: Record<string, AssetTagDetail[]> = {};
 		for (const row of localDetailed) {
 			if (!row?.tag_key) continue;
-			(out[row.tag_key] ||= []).push(row);
+			if (!out[row.tag_key]) out[row.tag_key] = [];
+			out[row.tag_key].push(row);
 		}
 		// Fall back to flat map for keys that have no detailed row (older
 		// data path or environments that did not populate tags_detailed).

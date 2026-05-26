@@ -41,7 +41,7 @@ export default function VersionControl({
 	if (!current || sorted.length <= 1) {
 		const rev = current?.revision ?? 1;
 		return (
-			<span
+			<fieldset
 				className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md bg-primary-light text-text-secondary text-xs"
 				aria-label="资产版本"
 			>
@@ -53,7 +53,7 @@ export default function VersionControl({
 				>
 					仅一版
 				</Tag>
-			</span>
+			</fieldset>
 		);
 	}
 

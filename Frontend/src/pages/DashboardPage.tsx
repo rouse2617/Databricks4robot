@@ -729,6 +729,16 @@ function computeWindowStats(
 	};
 }
 
+const FAILURE_MODE_LABELS: Record<string, string> = {
+	timeout: "超时",
+	algo_error: "算法异常",
+	sensor_fault: "传感器故障",
+	env_mismatch: "环境不匹配",
+	low_quality: "数据质量低",
+	annotation_drift: "标注偏移",
+	unknown: "未知",
+};
+
 export default function DashboardPage() {
 	const versionLabel = getAppVersionLabel();
 	const [windowDays, setWindowDays] = useState<7 | 30 | 60 | 90>(30);
@@ -1228,21 +1238,10 @@ export default function DashboardPage() {
 		fontWeight: 600,
 	};
 
-const FAILURE_MODE_LABELS: Record<string, string> = {
-		timeout: "超时",
-		algo_error: "算法异常",
-		sensor_fault: "传感器故障",
-		env_mismatch: "环境不匹配",
-		low_quality: "数据质量低",
-		annotation_drift: "标注偏移",
-		unknown: "未知",
-	};
-
 	const failing = Object.entries(errors).filter(([, m]) => !!m);
 
 	const growthOption = useMemo(() => buildGrowthOption(growth), [growth]);
 	const stackedOption = useMemo(() => buildStackedOption(daily), [daily]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: FAILURE_MODE_LABELS is module-level const, stable reference
 	const failureClusterOption = useMemo(
 		() => ({
 			tooltip: {
