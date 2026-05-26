@@ -22,6 +22,7 @@ type Handler struct {
 	repo      repository.McapFileRepository
 	tx        repository.TxRunner
 	eventRepo repository.AssetEventRepository
+	assetRepo repository.AssetRepository // CYB-1217: 1:1 raw_mcap asset creation
 	bytesSrc  BytesSource
 	nowFn     func() time.Time
 }
@@ -42,6 +43,12 @@ func (h *Handler) SetTxRunner(tx repository.TxRunner) {
 // SetEventRepo wires optional asset_events appends for MCAP mutations.
 func (h *Handler) SetEventRepo(eventRepo repository.AssetEventRepository) {
 	h.eventRepo = eventRepo
+}
+
+// SetAssetRepo wires an asset repository so CreateFile can insert a
+// placeholder raw_mcap asset in the same transaction (CYB-1217: 1:1).
+func (h *Handler) SetAssetRepo(assetRepo repository.AssetRepository) {
+	h.assetRepo = assetRepo
 }
 
 // SetBytesSource wires a byte source for GET /mcap-files/:id/bytes.
@@ -80,6 +87,33 @@ func (h *Handler) createFileTx(ctx context.Context, f *models.McapFile, requestI
 	return h.withTx(ctx, func(txCtx context.Context) error {
 		if err := h.repo.Set(txCtx, f); err != nil {
 			return err
+		}
+		// CYB-1217: create placeholder raw_mcap asset with same ID (1:1
+		// extension). The asset will be updated later via POST /api/v1/assets.
+		if h.assetRepo != nil {
+			now := h.nowFn()
+			placeholder := &models.Asset{
+				AssetID:          f.McapFileID,
+				McapFileID:       f.McapFileID,
+				StartTimestampNs: f.StartTimestampNs,
+				EndTimestampNs:   f.EndTimestampNs,
+				DurationMs:       f.FileDurationMs,
+				Owner:            f.Owner,
+				AssetType:        "raw_mcap",
+				LifecycleState:   "created",
+				RetentionTier:    f.RetentionTier,
+				ExpireAt:         f.ExpireAt,
+				TenantID:         f.TenantID,
+				ProjectID:        f.ProjectID,
+				Metadata:         map[string]interface{}{},
+				Files:            map[string]string{},
+				CreatedAt:        now,
+				UpdatedAt:        now,
+				Version:          1,
+			}
+			if err := h.assetRepo.InsertNew(txCtx, placeholder); err != nil {
+				return err
+			}
 		}
 		return h.appendMcapEvent(txCtx, "mcap_file_created", f.McapFileID, requestID, map[string]any{
 			"mcap_file_id": f.McapFileID,
