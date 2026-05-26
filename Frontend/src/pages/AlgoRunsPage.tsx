@@ -1,10 +1,18 @@
 import { ReloadOutlined } from "@ant-design/icons";
-import { Button, DatePicker, Select, Space, Table, Tag, Typography } from "antd";
+import {
+	Button,
+	DatePicker,
+	Select,
+	Space,
+	Table,
+	Tag,
+	Typography,
+} from "antd";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { type AlgoRegistryItem, algoRegistryApi } from "../api/algoRegistry";
 import { type AlgoRun, algoRunsApi } from "../api/algoRuns";
-import { algoRegistryApi, type AlgoRegistryItem } from "../api/algoRegistry";
 import { formatDateTime } from "../lib/dateTime";
 
 const { Title } = Typography;
@@ -35,12 +43,17 @@ export default function AlgoRunsPage() {
 	const [pageSize, setPageSize] = useState(20);
 	const [status, setStatus] = useState("");
 	const [algoName, setAlgoName] = useState("");
-	const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([null, null]);
+	const [dateRange, setDateRange] = useState<
+		[dayjs.Dayjs | null, dayjs.Dayjs | null]
+	>([null, null]);
 	const [loading, setLoading] = useState(false);
 	const [registry, setRegistry] = useState<AlgoRegistryItem[]>([]);
 
 	useEffect(() => {
-		algoRegistryApi.list().then(setRegistry).catch(() => {});
+		algoRegistryApi
+			.list()
+			.then(setRegistry)
+			.catch(() => {});
 	}, []);
 
 	const fetchData = useCallback(async () => {
@@ -98,7 +111,9 @@ export default function AlgoRunsPage() {
 			key: "algo_name",
 			width: 180,
 			render: (name: string, record: AlgoRun) => (
-				<code className="text-xs">{name}@{record.algo_version}</code>
+				<code className="text-xs">
+					{name}@{record.algo_version}
+				</code>
 			),
 		},
 		{

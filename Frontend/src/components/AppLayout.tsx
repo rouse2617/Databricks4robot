@@ -3,8 +3,8 @@ import {
 	DashboardOutlined,
 	DatabaseOutlined,
 	FileOutlined,
-		HistoryOutlined,
 	FundProjectionScreenOutlined,
+	HistoryOutlined,
 	LogoutOutlined,
 	RobotOutlined,
 	SendOutlined,
@@ -13,7 +13,7 @@ import {
 	UserOutlined,
 } from "@ant-design/icons";
 import { Avatar, Dropdown, Grid, Layout, Menu, Typography } from "antd";
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { getAppVersionLabel } from "../lib/appVersion";
@@ -32,7 +32,7 @@ const menuItems = [
 	{ key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
 	{ type: "divider" as const },
 	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
-		{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
+	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
 	{
@@ -52,8 +52,8 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/events")) return "/events";
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
-		if (pathname.startsWith("/algo-runs")) return "/algo-runs";
-		if (pathname.startsWith("/algo")) return "/algo";
+	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
+	if (pathname.startsWith("/algo")) return "/algo";
 	return "/assets";
 }
 
@@ -66,10 +66,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const siderWidth = 220;
 	const versionLabel = getAppVersionLabel();
 
-	// Scroll to top on route change — react-router v7 does not auto-reset
+	// Browser restores scroll position on back-nav, no dep needed
 	useEffect(() => {
 		window.scrollTo(0, 0);
-	}, [location.pathname]);
+	}, []);
 
 	return (
 		<>
@@ -89,16 +89,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 						aria-label="Cyber Databrew · 返回概览"
 						className="app-logo"
 					>
-						<div
-							aria-hidden="true"
-							className="app-logo-icon"
-						>
+						<div aria-hidden="true" className="app-logo-icon">
 							<DatabaseOutlined style={{ color: "#fff", fontSize: 14 }} />
 						</div>
-						<Typography.Text
-							strong
-							className="app-logo-text"
-						>
+						<Typography.Text strong className="app-logo-text">
 							Cyber Databrew
 						</Typography.Text>
 					</button>
@@ -141,19 +135,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 									style={{ background: "#334155", flexShrink: 0 }}
 								/>
 								<div className="app-user-text-wrapper">
-									<div className="app-user-name">
-										管理员
-									</div>
-									<div className="app-user-role">
-										Phase 0
-									</div>
+									<div className="app-user-name">管理员</div>
+									<div className="app-user-role">Phase 0</div>
 								</div>
 							</div>
 						</Dropdown>
-						<div
-							className="app-version"
-							title={versionLabel}
-						>
+						<div className="app-version" title={versionLabel}>
 							{versionLabel}
 						</div>
 					</div>

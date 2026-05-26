@@ -1,6 +1,11 @@
-import { BranchesOutlined, CheckCircleFilled, DownOutlined, HistoryOutlined } from "@ant-design/icons";
-import { Dropdown, Skeleton, Tag, Tooltip, Typography } from "antd";
+import {
+	BranchesOutlined,
+	CheckCircleFilled,
+	DownOutlined,
+	HistoryOutlined,
+} from "@ant-design/icons";
 import type { MenuProps } from "antd";
+import { Dropdown, Skeleton, Tag, Tooltip, Typography } from "antd";
 import type { RevisionSummary } from "../../api/types";
 import { formatShortDateTime } from "../../lib/dateTime";
 
@@ -25,7 +30,9 @@ export default function VersionControl({
 	loading = false,
 }: VersionControlProps) {
 	if (loading) {
-		return <Skeleton.Input active size="small" style={{ width: 180, height: 32 }} />;
+		return (
+			<Skeleton.Input active size="small" style={{ width: 180, height: 32 }} />
+		);
 	}
 
 	const sorted = [...revisions].sort((a, b) => b.revision - a.revision);
@@ -40,7 +47,10 @@ export default function VersionControl({
 			>
 				<BranchesOutlined className="text-[11px]" />
 				<span>v{rev}</span>
-				<Tag color="default" className="m-0 text-[10px] leading-[16px] px-1 border-0 bg-transparent">
+				<Tag
+					color="default"
+					className="m-0 text-[10px] leading-[16px] px-1 border-0 bg-transparent"
+				>
 					仅一版
 				</Tag>
 			</span>
@@ -57,8 +67,18 @@ export default function VersionControl({
 						<div
 							className="w-2.5 h-2.5 rounded-full border-2 shrink-0"
 							style={{
-								borderColor: r.asset_id === assetId ? "#2563eb" : r.is_current ? "#16a34a" : "#cbd5e1",
-								background: r.asset_id === assetId ? "#2563eb" : r.is_current ? "#16a34a" : "#fff",
+								borderColor:
+									r.asset_id === assetId
+										? "#2563eb"
+										: r.is_current
+											? "#16a34a"
+											: "#cbd5e1",
+								background:
+									r.asset_id === assetId
+										? "#2563eb"
+										: r.is_current
+											? "#16a34a"
+											: "#fff",
 							}}
 						/>
 						{idx < sorted.length - 1 && (
@@ -81,7 +101,10 @@ export default function VersionControl({
 								</Tag>
 							) : null}
 							{r.asset_id === assetId && !r.is_current ? (
-								<Tag color="default" className="m-0 text-[10px] leading-[16px] px-1.5">
+								<Tag
+									color="default"
+									className="m-0 text-[10px] leading-[16px] px-1.5"
+								>
 									<HistoryOutlined className="mr-0.5" />
 									查看中
 								</Tag>

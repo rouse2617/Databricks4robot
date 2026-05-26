@@ -63,7 +63,9 @@ export interface ActionListParams {
 export const actionsApi = {
 	list: (assetId: string, params: ActionListParams = {}) =>
 		apiClient
-			.get<ActionListResponse>(`/assets/${assetId}/action-annotations`, { params })
+			.get<ActionListResponse>(`/assets/${assetId}/action-annotations`, {
+				params,
+			})
 			.then((r) => r.data),
 
 	create: (assetId: string, payload: ActionCreateInput) =>

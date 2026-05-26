@@ -1,7 +1,15 @@
 import { CopyOutlined, LinkOutlined } from "@ant-design/icons";
-import { Button, Descriptions, Popover, Spin, Tag, Typography, message } from "antd";
+import {
+	Button,
+	Descriptions,
+	message,
+	Popover,
+	Spin,
+	Tag,
+	Typography,
+} from "antd";
 import { useCallback, useState } from "react";
-import { algoRunsApi, type AlgoRun } from "../../api/algoRuns";
+import { type AlgoRun, algoRunsApi } from "../../api/algoRuns";
 import { formatDateTime } from "../../lib/dateTime";
 import { formatRunIdShort, isRegisteredRunId } from "../../lib/runId";
 
@@ -31,18 +39,6 @@ export default function RunIdLink({
 	const [loadError, setLoadError] = useState<string | null>(null);
 
 	const id = runId?.trim() ?? "";
-	if (!id) {
-		return <Text type="secondary">—</Text>;
-	}
-
-	if (!isRegisteredRunId(id)) {
-		return (
-			<Text code className="text-xs">
-				{id}
-			</Text>
-		);
-	}
-
 	const fetchRun = useCallback(async () => {
 		setLoading(true);
 		setLoadError(null);
@@ -56,6 +52,18 @@ export default function RunIdLink({
 			setLoading(false);
 		}
 	}, [id]);
+
+	if (!id) {
+		return <Text type="secondary">—</Text>;
+	}
+
+	if (!isRegisteredRunId(id)) {
+		return (
+			<Text code className="text-xs">
+				{id}
+			</Text>
+		);
+	}
 
 	const handleOpenChange = (next: boolean) => {
 		setOpen(next);

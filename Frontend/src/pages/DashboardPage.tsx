@@ -543,8 +543,8 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 				axisLabel: {
 					fontSize: 11,
 					formatter: (value: number) => {
-						if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M";
-						if (value >= 1_000) return (value / 1_000).toFixed(0) + "k";
+						if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+						if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
 						return value.toString();
 					},
 				},
@@ -556,8 +556,8 @@ function buildGrowthOption(points: AssetGrowthPoint[]) {
 				axisLabel: {
 					fontSize: 11,
 					formatter: (value: number) => {
-						if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M";
-						if (value >= 1_000) return (value / 1_000).toFixed(0) + "k";
+						if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+						if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
 						return value.toString();
 					},
 				},
@@ -671,8 +671,8 @@ function buildStackedOption(daily: DailyEventPoint[]) {
 			axisLabel: {
 				fontSize: 11,
 				formatter: (value: number) => {
-					if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M";
-					if (value >= 1_000) return (value / 1_000).toFixed(0) + "k";
+					if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+					if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
 					return value.toString();
 				},
 			},
@@ -1228,7 +1228,7 @@ export default function DashboardPage() {
 		fontWeight: 600,
 	};
 
-	const FAILURE_MODE_LABELS: Record<string, string> = {
+const FAILURE_MODE_LABELS: Record<string, string> = {
 		timeout: "超时",
 		algo_error: "算法异常",
 		sensor_fault: "传感器故障",
@@ -1242,6 +1242,7 @@ export default function DashboardPage() {
 
 	const growthOption = useMemo(() => buildGrowthOption(growth), [growth]);
 	const stackedOption = useMemo(() => buildStackedOption(daily), [daily]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: FAILURE_MODE_LABELS is module-level const, stable reference
 	const failureClusterOption = useMemo(
 		() => ({
 			tooltip: {
@@ -1259,8 +1260,7 @@ export default function DashboardPage() {
 					radius: ["40%", "70%"],
 					center: ["40%", "50%"],
 					data: failureClusters.map((fc) => ({
-						name:
-							FAILURE_MODE_LABELS[fc.failure_mode] ?? fc.failure_mode,
+						name: FAILURE_MODE_LABELS[fc.failure_mode] ?? fc.failure_mode,
 						value: fc.affected_assets,
 					})),
 					emphasis: {
@@ -1315,7 +1315,7 @@ export default function DashboardPage() {
 					<Radio.Button value={60}>近 60 天</Radio.Button>
 					<Radio.Button value={90}>近 90 天</Radio.Button>
 				</Radio.Group>
-					{rangeBusy && <Spin size="small" style={{ marginLeft: 12 }} />}
+				{rangeBusy && <Spin size="small" style={{ marginLeft: 12 }} />}
 			</div>
 
 			{failing.length > 0 && (

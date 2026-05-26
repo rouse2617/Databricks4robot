@@ -226,7 +226,8 @@ export const assetsApi = {
 			source_version?: string;
 			run_id?: string;
 		},
-	) => apiClient.post<Asset>(`/assets/${assetId}/tags`, body).then((r) => r.data),
+	) =>
+		apiClient.post<Asset>(`/assets/${assetId}/tags`, body).then((r) => r.data),
 
 	deleteTag: (assetId: string, key: string, sourceType?: string) =>
 		apiClient

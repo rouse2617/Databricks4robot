@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { Button, Card, Form, Input, message } from "antd";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
@@ -44,9 +44,19 @@ export default function LoginPage() {
 						label="Access Token"
 						rules={[{ required: true, message: "Please enter your token" }]}
 					>
-						<Input.Password placeholder="Enter your DATABREW_TOKEN" size="large" />
+						<Input.Password
+							placeholder="Enter your DATABREW_TOKEN"
+							size="large"
+						/>
 					</Form.Item>
-					<Button type="primary" htmlType="submit" block size="large" loading={submitting} disabled={submitting}>
+					<Button
+						type="primary"
+						htmlType="submit"
+						block
+						size="large"
+						loading={submitting}
+						disabled={submitting}
+					>
 						Sign In
 					</Button>
 				</Form>

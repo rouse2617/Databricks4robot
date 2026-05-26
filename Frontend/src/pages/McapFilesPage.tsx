@@ -94,7 +94,7 @@ export default function McapFilesPage() {
 
 	useEffect(() => {
 		setPage(1);
-	}, [stateFilter, debouncedOwnerFilter]);
+	}, []);
 
 	useEffect(() => {
 		load(page);

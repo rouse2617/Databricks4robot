@@ -168,9 +168,7 @@ export default function TagsTab({
 			setAddOpen(false);
 			onUpdate();
 		} catch (err) {
-			message.error(
-				err instanceof Error ? err.message : "添加标签失败",
-			);
+			message.error(err instanceof Error ? err.message : "添加标签失败");
 		} finally {
 			setSaving(false);
 		}
@@ -287,9 +285,7 @@ export default function TagsTab({
 											</span>
 											<Popconfirm
 												title={`删除 ${row.source_type} 的 ${k}？`}
-												onConfirm={() =>
-													handleDeleteSource(k, row.source_type)
-												}
+												onConfirm={() => handleDeleteSource(k, row.source_type)}
 											>
 												<Button
 													type="text"

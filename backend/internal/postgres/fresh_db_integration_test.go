@@ -48,6 +48,24 @@ SELECT EXISTS (
 	if err != nil {
 		t.Fatalf("GenerateMcapFileID: %v", err)
 	}
+
+	// After migration 038 (fk_mcap_asset), mcap_files is a 1:1 extension of
+	// raw_mcap assets: mcap_file_id must reference an existing asset_id.
+	// Create a placeholder raw_mcap asset first, then the mcap_file row.
+	repo := NewAssetRepo(client)
+	placeholder := &models.Asset{
+		AssetID:          mcapFileID,
+		McapFileID:       mcapFileID,
+		StartTimestampNs: 1,
+		EndTimestampNs:   2,
+		LifecycleState:   string(LifecycleReady),
+		AssetType:        "raw_mcap",
+		Owner:            "smoke",
+	}
+	if err := repo.InsertNew(ctx, placeholder); err != nil {
+		t.Fatalf("InsertNew placeholder raw_mcap: %v", err)
+	}
+
 	mcapRepo := NewMcapFileRepo(client)
 	if err := mcapRepo.Set(ctx, &models.McapFile{
 		McapFileID:  mcapFileID,
@@ -58,7 +76,6 @@ SELECT EXISTS (
 		t.Fatalf("mcap Set: %v", err)
 	}
 
-	repo := NewAssetRepo(client)
 	a := &models.Asset{
 		AssetID:          assetID,
 		McapFileID:       mcapFileID,

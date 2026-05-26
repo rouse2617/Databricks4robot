@@ -21,7 +21,7 @@ import {
 import dayjs from "dayjs";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { algoRunsApi, type AlgoRun } from "../api/algoRuns";
+import { type AlgoRun, algoRunsApi } from "../api/algoRuns";
 import { formatDateTime } from "../lib/dateTime";
 
 const { Title, Text } = Typography;
@@ -117,7 +117,9 @@ export default function AlgoRunDetailPage() {
 			color: "gray",
 			children: (
 				<div>
-					<Text strong className="text-xs">创建</Text>
+					<Text strong className="text-xs">
+						创建
+					</Text>
 					<Text type="secondary" className="text-xs ml-2">
 						{formatDateTime(run.created_at)}
 					</Text>
@@ -130,7 +132,9 @@ export default function AlgoRunDetailPage() {
 			color: "blue",
 			children: (
 				<div>
-					<Text strong className="text-xs">开始运行</Text>
+					<Text strong className="text-xs">
+						开始运行
+					</Text>
 					<Text type="secondary" className="text-xs ml-2">
 						{formatDateTime(run.started_at)}
 					</Text>
@@ -140,11 +144,20 @@ export default function AlgoRunDetailPage() {
 	}
 	if (run.finished_at) {
 		timelineItems.push({
-			color: run.status === "ok" ? "green" : run.status === "failed" ? "red" : "gray",
+			color:
+				run.status === "ok"
+					? "green"
+					: run.status === "failed"
+						? "red"
+						: "gray",
 			children: (
 				<div>
 					<Text strong className="text-xs">
-						{run.status === "ok" ? "完成" : run.status === "failed" ? "失败" : "结束"}
+						{run.status === "ok"
+							? "完成"
+							: run.status === "failed"
+								? "失败"
+								: "结束"}
 					</Text>
 					<Text type="secondary" className="text-xs ml-2">
 						{formatDateTime(run.finished_at)}
@@ -181,11 +194,7 @@ export default function AlgoRunDetailPage() {
 				>
 					{STATUS_LABEL[run.status] ?? run.status}
 				</Tag>
-				<Button
-					icon={<ReloadOutlined />}
-					size="small"
-					onClick={fetchRun}
-				>
+				<Button icon={<ReloadOutlined />} size="small" onClick={fetchRun}>
 					刷新
 				</Button>
 				{run.external_url && (
@@ -209,17 +218,17 @@ export default function AlgoRunDetailPage() {
 				style={{ marginBottom: 24 }}
 			>
 				<Descriptions.Item label="Run ID">
-					<Text code className="text-xs">{run.run_id}</Text>
+					<Text code className="text-xs">
+						{run.run_id}
+					</Text>
 				</Descriptions.Item>
 				<Descriptions.Item label="算法">
-					<code className="text-xs">{run.algo_name}@{run.algo_version}</code>
+					<code className="text-xs">
+						{run.algo_name}@{run.algo_version}
+					</code>
 				</Descriptions.Item>
-				<Descriptions.Item label="算法类型">
-					{run.algo_kind}
-				</Descriptions.Item>
-				<Descriptions.Item label="触发方">
-					{run.triggered_by}
-				</Descriptions.Item>
+				<Descriptions.Item label="算法类型">{run.algo_kind}</Descriptions.Item>
+				<Descriptions.Item label="触发方">{run.triggered_by}</Descriptions.Item>
 				<Descriptions.Item label="状态">
 					<Tag
 						color={STATUS_COLOR[run.status] ?? "default"}

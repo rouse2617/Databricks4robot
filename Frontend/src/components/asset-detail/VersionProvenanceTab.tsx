@@ -7,10 +7,14 @@ import {
 import { Button, Card, Descriptions, Empty, Spin, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { assetsApi } from "../../api/assets";
-import type { Asset, AssetProvenance, VersionHistoryEntry } from "../../api/types";
+import type {
+	Asset,
+	AssetProvenance,
+	VersionHistoryEntry,
+} from "../../api/types";
+import { formatDateTime } from "../../lib/dateTime";
 import LogicalAssetId from "./LogicalAssetId";
 import RunIdLink from "./RunIdLink";
-import { formatDateTime } from "../../lib/dateTime";
 
 const { Text, Title } = Typography;
 
@@ -139,8 +143,9 @@ export default function VersionProvenanceTab({
 	}, [prevAsset, currentAsset]);
 
 	const lineage = provenance.lineage;
-	const upstreamMcap =
-		(lineage?.upstream as { mcap_file_id?: string } | undefined)?.mcap_file_id;
+	const upstreamMcap = (
+		lineage?.upstream as { mcap_file_id?: string } | undefined
+	)?.mcap_file_id;
 	const downstream = lineage?.downstream as
 		| {
 				algo_results?: unknown[];
@@ -158,18 +163,14 @@ export default function VersionProvenanceTab({
 		<div className="max-w-3xl py-1">
 			<Card size="small" className="mb-4">
 				<Descriptions column={1} size="small" colon={false}>
-					<Descriptions.Item
-						label={<Text type="secondary">逻辑资产 ID</Text>}
-					>
+					<Descriptions.Item label={<Text type="secondary">逻辑资产 ID</Text>}>
 						{logicalId ? (
 							<LogicalAssetId logicalAssetId={logicalId} showLabel={false} />
 						) : (
 							"—"
 						)}
 					</Descriptions.Item>
-					<Descriptions.Item
-						label={<Text type="secondary">当前有效版本</Text>}
-					>
+					<Descriptions.Item label={<Text type="secondary">当前有效版本</Text>}>
 						{currentRev ? (
 							<span>
 								<Tag color="blue" className="mr-2">
@@ -189,7 +190,7 @@ export default function VersionProvenanceTab({
 			<Title level={5} style={{ marginTop: 0, marginBottom: 12 }}>
 				版本链
 			</Title>
-			<ol className="list-none m-0 p-0 mb-6" role="list" aria-label="版本链">
+			<ol className="list-none m-0 p-0 mb-6" aria-label="版本链">
 				{nodes.map((node, index) => {
 					const isViewing = node.assetId === currentAsset.asset_id;
 					const isLast = index === nodes.length - 1;
@@ -238,8 +239,7 @@ export default function VersionProvenanceTab({
 									<div className="mt-1 text-xs text-text-secondary">
 										{node.reason ? (
 											<div>
-												升级原因:{" "}
-												<Text className="text-xs">{node.reason}</Text>
+												升级原因: <Text className="text-xs">{node.reason}</Text>
 											</div>
 										) : null}
 										{node.byRunId ? (
@@ -309,13 +309,9 @@ export default function VersionProvenanceTab({
 						)}
 					</div>
 					<div>
-						<RobotOutlined /> 下游:{" "}
-						<Text>
-							{algoCount} 个算法
-						</Text>
+						<RobotOutlined /> 下游: <Text>{algoCount} 个算法</Text>
 						<Text type="secondary"> · </Text>
-						<SendOutlined />{" "}
-						<Text>{deliveryCount} 交付</Text>
+						<SendOutlined /> <Text>{deliveryCount} 交付</Text>
 					</div>
 					{onOpenLineageTab ? (
 						<Button

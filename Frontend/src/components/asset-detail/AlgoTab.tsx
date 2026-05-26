@@ -345,7 +345,10 @@ export default function AlgoTab({
 				</div>
 				<div>
 					<label htmlFor="algo-run-id-input" className="block text-sm mb-1">
-						Run ID <Text type="secondary" className="text-xs">（可选，关联已有运行记录）</Text>
+						Run ID{" "}
+						<Text type="secondary" className="text-xs">
+							（可选，关联已有运行记录）
+						</Text>
 					</label>
 					<Input
 						id="algo-run-id-input"

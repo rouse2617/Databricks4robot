@@ -58,7 +58,9 @@ export default function OverviewTab({ asset }: Props) {
 					{asset.expire_at ? dayjs(asset.expire_at).fromNow() : "—"}
 				</Descriptions.Item>
 				<Descriptions.Item label="逻辑资产 ID">
-					<code className="text-xs">{asset.logical_asset_id ?? asset.asset_id}</code>
+					<code className="text-xs">
+						{asset.logical_asset_id ?? asset.asset_id}
+					</code>
 				</Descriptions.Item>
 				<Descriptions.Item label="资产版本 (revision)">
 					{asset.revision ?? "—"}
