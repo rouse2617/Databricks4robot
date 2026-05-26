@@ -58,6 +58,7 @@ func setupCore(inf *infra) *coreHandlers {
 	mcapHandler := mcapH.New(mcapRepo)
 	mcapHandler.SetTxRunner(pg)
 	mcapHandler.SetEventRepo(assetEventRepo)
+	mcapHandler.SetAssetRepo(assetRepo)
 	if inf.mcapBytesSource != nil {
 		mcapHandler.SetBytesSource(inf.mcapBytesSource)
 	}
