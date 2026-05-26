@@ -903,7 +903,7 @@ ON CONFLICT (mcap_file_id) DO UPDATE SET
   process_state=EXCLUDED.process_state,
   updated_at=EXCLUDED.updated_at,
   version=EXCLUDED.version`
-	err := r.c.db.Exec(ctx, q,
+	err := dbFromCtx(ctx, r.c.db).Exec(ctx, q,
 		f.McapFileID, nullable(f.RawHashMD5), nullable(f.RawHashSHA256),
 		f.GCSPath, f.SizeBytes, f.FileDurationMs,
 		f.StartTimestampNs, f.EndTimestampNs,
