@@ -37,6 +37,7 @@ type Action struct {
 	RunID         string   `json:"run_id,omitempty"`
 	Confidence    *float64 `json:"confidence,omitempty"`
 	ExternalID    string   `json:"external_id,omitempty"`
+	TaskID        string   `json:"task_id,omitempty"`
 
 	TenantID  string `json:"tenant_id,omitempty"`
 	ProjectID string `json:"project_id,omitempty"`
