@@ -31,7 +31,7 @@ const actionSelectCols = `action_id::text, asset_id::text,
   COALESCE(description, ''), COALESCE(attrs, '{}'::jsonb),
   COALESCE(source_type, 'human'), COALESCE(source_name, ''), COALESCE(source_version, ''),
   COALESCE(run_id, ''), confidence, COALESCE(external_id, ''),
-  COALESCE(tenant_id, ''), COALESCE(project_id, ''),
+  COALESCE(task_id, ''), COALESCE(tenant_id, ''), COALESCE(project_id, ''),
   is_deleted, version, created_at, updated_at`
 
 const actionIDSchemaMismatchHint = "actions.action_id column is incompatible with 8-char short IDs; run migration 018_actions_id_to_short_id.sql"
@@ -121,12 +121,12 @@ INSERT INTO actions (
   action_id, asset_id, start_ns, end_ns, action_index,
   primary_label, labels, description, attrs,
   source_type, source_name, source_version, run_id, confidence, external_id,
-  tenant_id, project_id
+  task_id, tenant_id, project_id
 ) VALUES (
   $1, $2, $3, $4, $5,
   $6, $7::text[], $8, $9::jsonb,
   $10, $11, $12, $13, $14, $15,
-  $16, $17
+  $16, $17, $18
 )
 RETURNING action_id::text, version, created_at, updated_at`
 
@@ -136,7 +136,7 @@ RETURNING action_id::text, version, created_at, updated_at`
 		nullable(a.PrimaryLabel), labels, nullable(a.Description), attrsJSON,
 		a.SourceType, nullable(a.SourceName), nullable(a.SourceVersion),
 		nullable(a.RunID), a.Confidence, nullable(a.ExternalID),
-		nullable(a.TenantID), nullable(a.ProjectID),
+		nullable(a.TaskID), nullable(a.TenantID), nullable(a.ProjectID),
 	)
 	if err := row.Scan(&a.ActionID, &a.Version, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		var pgErr *pgconn.PgError
