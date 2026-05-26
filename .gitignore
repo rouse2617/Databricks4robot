@@ -33,6 +33,9 @@ backend/.env
 !backend/.env.example
 deploy/cloudrun/backend.env.runtime
 
+# OpenSpec design artifact screenshots (do not commit deploy-verify images)
+openspec/changes/**/*.png
+
 # GCP
 *.json
 !.commitlintrc.json
