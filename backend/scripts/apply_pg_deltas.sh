@@ -14,7 +14,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIGRATIONS="$(cd "${SCRIPT_DIR}/../migrations" && pwd)"
 ARCHIVE="${MIGRATIONS}/archive"
-DB_URL="${DATABASE_URL:-postgresql://postgres:postgres@127.0.0.1:5432/cyber_databrew_dev}"
+PGHOST="${PGHOST:-127.0.0.1}"
+PGPORT="${PGPORT:-5432}"
+PGUSER="${PGUSER:-postgres}"
+PGPASSWORD="${PGPASSWORD:-postgres}"
+PGDATABASE="${PGDATABASE:-cyber_databrew_dev}"
+DB_URL="${DATABASE_URL:-postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}}"
 
 apply_one() {
   local f="$1"

@@ -62,6 +62,7 @@ CREATE TABLE actions (
     source_version text,
     run_id text,
     confidence double precision,
+    is_deleted boolean NOT NULL DEFAULT false,
     external_id text,
     tenant_id text,
     project_id text,
@@ -314,6 +315,7 @@ CREATE TABLE assets (
     segment_locator character(40),
     asset_type text DEFAULT 'segment'::text NOT NULL,
     lifecycle_state text DEFAULT 'created'::text NOT NULL,
+    is_deleted boolean DEFAULT false,
     duration_ms bigint DEFAULT 0 NOT NULL,
     owner text DEFAULT ''::text NOT NULL,
     reviewer text DEFAULT ''::text NOT NULL,
@@ -391,6 +393,7 @@ CREATE TABLE deliveries (
     customer_id text NOT NULL,
     status character varying(16) DEFAULT 'pending'::character varying NOT NULL,
     delivered_at timestamp with time zone,
+    is_deleted boolean DEFAULT false,
     contract_id text,
     delivery_type text DEFAULT 'asset_set'::text NOT NULL,
     requested_by text,
@@ -478,6 +481,7 @@ CREATE TABLE logical_assets (
 CREATE TABLE mcap_files (
     mcap_file_id text NOT NULL,
     raw_hash_md5 character varying(32),
+    is_deleted boolean DEFAULT false,
     mcap_uri text DEFAULT ''::text NOT NULL,
     size_bytes bigint DEFAULT 0 NOT NULL,
     file_duration_ms bigint DEFAULT 0 NOT NULL,
@@ -905,3 +909,21 @@ ALTER TABLE ONLY asset_eval_results
 
 ALTER TABLE ONLY mcap_files
     ADD CONSTRAINT fk_mcap_asset FOREIGN KEY (mcap_file_id) REFERENCES assets(asset_id) DEFERRABLE INITIALLY DEFERRED;
+
+-- Partial indexes suppressed by Cloud SQL \restrict (is_deleted column)
+CREATE INDEX idx_assets_lifecycle ON assets (lifecycle_state) WHERE is_deleted = FALSE;
+CREATE INDEX idx_assets_asset_type ON assets (asset_type) WHERE is_deleted = FALSE;
+CREATE INDEX idx_assets_tenant_project ON assets (tenant_id, project_id) WHERE is_deleted = FALSE;
+CREATE INDEX idx_assets_active_updated_at ON assets (updated_at DESC) WHERE is_deleted = FALSE;
+CREATE INDEX idx_assets_active_lifecycle_updated_at ON assets (lifecycle_state, updated_at DESC) WHERE is_deleted = FALSE;
+CREATE UNIQUE INDEX uq_mcap_files_hash_md5 ON mcap_files (raw_hash_md5) WHERE raw_hash_md5 IS NOT NULL AND is_deleted = FALSE;
+CREATE INDEX idx_mcap_files_tenant_project ON mcap_files (tenant_id, project_id) WHERE is_deleted = FALSE;
+CREATE INDEX idx_mcap_files_ingest_state ON mcap_files (ingest_state) WHERE is_deleted = FALSE;
+CREATE INDEX idx_mcap_files_summary_index_pending ON mcap_files (summary_index_state, created_at) WHERE is_deleted = FALSE AND summary_index_state <> 'done';
+CREATE INDEX idx_deliveries_tenant_project ON deliveries (tenant_id, project_id) WHERE is_deleted = FALSE;
+CREATE UNIQUE INDEX uq_assets_current_per_logical ON assets (logical_asset_id) WHERE is_current = TRUE AND is_deleted = FALSE;
+CREATE INDEX idx_actions_asset_start ON actions (asset_id, start_ns) WHERE is_deleted = FALSE;
+CREATE INDEX idx_actions_primary_label ON actions (primary_label) WHERE is_deleted = FALSE AND primary_label IS NOT NULL;
+CREATE INDEX idx_actions_labels_gin ON actions USING GIN (labels) WHERE is_deleted = FALSE;
+CREATE INDEX idx_actions_run_id ON actions (source_name, run_id) WHERE is_deleted = FALSE AND run_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_actions_external ON actions (asset_id, source_name, external_id) WHERE external_id IS NOT NULL AND is_deleted = FALSE;
