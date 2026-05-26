@@ -6,7 +6,6 @@ import httpx
 import respx
 
 from cyber_databrew_sdk.config import ConfigManager
-from cyber_databrew_sdk.config.contract import ConfigSource
 from cyber_databrew_sdk.config.endpoints import ENDPOINTS
 
 

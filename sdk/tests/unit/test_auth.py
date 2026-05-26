@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cyber_databrew_sdk.auth import CompositeAuth, EmailAuth, DatabrewTokenAuth
+from cyber_databrew_sdk.auth import CompositeAuth, DatabrewTokenAuth, EmailAuth
 
 
 class TestDatabrewTokenAuth:

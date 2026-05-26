@@ -459,3 +459,141 @@ class TestAuditManager:
         client.audit.lineage_search("a1")
         req = route.calls.last.request
         assert req.url.params["asset_id"] == "a1"
+
+
+# =========================================================================
+# ActionManager
+# =========================================================================
+
+class TestActionManager:
+    def test_list(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/assets/a1/actions").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        client.actions.list("a1")
+        assert route.calls.last.request.url.path == "/api/v1/assets/a1/actions"
+
+    def test_list_with_params(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/assets/a1/actions").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        client.actions.list("a1", source_type="human", limit=10)
+        req = route.calls.last.request
+        assert req.url.params["source_type"] == "human"
+        assert req.url.params["limit"] == "10"
+
+    def test_create(self, client):
+        respx.post(f"{BASE_URL}/api/v1/assets/a1/actions").mock(
+            return_value=httpx.Response(201, json={"action_id": "act1"})
+        )
+        result = client.actions.create("a1", {"primary_label": "car"})
+        assert result["action_id"] == "act1"
+
+    def test_update(self, client):
+        route = respx.patch(f"{BASE_URL}/api/v1/assets/a1/actions/act1").mock(
+            return_value=httpx.Response(200, json={"action_id": "act1"})
+        )
+        client.actions.update("a1", "act1", {"primary_label": "truck"})
+        assert route.calls.last.request.url.path == "/api/v1/assets/a1/actions/act1"
+
+    def test_delete(self, client):
+        respx.delete(f"{BASE_URL}/api/v1/assets/a1/actions/act1").mock(
+            return_value=httpx.Response(204)
+        )
+        assert client.actions.delete("a1", "act1") == {}
+
+
+# =========================================================================
+# EvalMetricsManager
+# =========================================================================
+
+class TestEvalMetricsManager:
+    def test_report_eval_result(self, client):
+        respx.post(f"{BASE_URL}/api/v1/assets/a1/eval-results").mock(
+            return_value=httpx.Response(201, json={"eval_id": "e1"})
+        )
+        result = client.eval_metrics.report_eval_result("a1", {"score": 0.95})
+        assert result["eval_id"] == "e1"
+
+    def test_list_eval_results(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/assets/a1/eval-results").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        client.eval_metrics.list_eval_results("a1")
+        assert route.calls.last.request.url.path == "/api/v1/assets/a1/eval-results"
+
+    def test_list_metrics(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/assets/a1/metrics").mock(
+            return_value=httpx.Response(200, json={"metrics": {}})
+        )
+        client.eval_metrics.list_metrics("a1")
+        assert route.calls.last.request.url.path == "/api/v1/assets/a1/metrics"
+
+    def test_get_registry(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/metrics/registry").mock(
+            return_value=httpx.Response(200, json={"metrics": []})
+        )
+        client.eval_metrics.get_registry()
+        assert route.calls.last.request.url.path == "/api/v1/metrics/registry"
+
+    def test_search_by_metrics(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/metrics:search").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        client.eval_metrics.search_by_metrics({"quality_min": 0.9})
+        assert route.calls.last.request.url.path == "/api/v1/metrics:search"
+
+
+# =========================================================================
+# AdminSearchManager
+# =========================================================================
+
+class TestAdminSearchManager:
+    def test_reindex(self, client):
+        respx.post(f"{BASE_URL}/api/v1/admin/search/reindex").mock(
+            return_value=httpx.Response(202, json={"status": "started"})
+        )
+        result = client.admin_search.reindex()
+        assert result["status"] == "started"
+
+    def test_create_reindex_job(self, client):
+        respx.post(f"{BASE_URL}/api/v1/admin/search/reindex-jobs").mock(
+            return_value=httpx.Response(201, json={"job_id": "j1"})
+        )
+        result = client.admin_search.create_reindex_job({"type": "full"})
+        assert result["job_id"] == "j1"
+
+    def test_list_reindex_jobs(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/admin/search/reindex-jobs").mock(
+            return_value=httpx.Response(200, json={"jobs": []})
+        )
+        client.admin_search.list_reindex_jobs()
+        assert route.calls.last.request.url.path == "/api/v1/admin/search/reindex-jobs"
+
+    def test_get_reindex_job(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/admin/search/reindex-jobs/j1").mock(
+            return_value=httpx.Response(200, json={"job_id": "j1"})
+        )
+        client.admin_search.get_reindex_job("j1")
+        assert route.calls.last.request.url.path == "/api/v1/admin/search/reindex-jobs/j1"
+
+    def test_stop_reindex_job(self, client):
+        respx.post(f"{BASE_URL}/api/v1/admin/search/reindex-jobs/j1/stop").mock(
+            return_value=httpx.Response(200, json={"status": "stopping"})
+        )
+        result = client.admin_search.stop_reindex_job("j1")
+        assert result["status"] == "stopping"
+
+    def test_resume_reindex_job(self, client):
+        respx.post(f"{BASE_URL}/api/v1/admin/search/reindex-jobs/j1/resume").mock(
+            return_value=httpx.Response(200, json={"status": "resumed"})
+        )
+        result = client.admin_search.resume_reindex_job("j1")
+        assert result["status"] == "resumed"
+
+    def test_abandon_reindex_job(self, client):
+        respx.post(f"{BASE_URL}/api/v1/admin/search/reindex-jobs/j1/abandon").mock(
+            return_value=httpx.Response(200, json={"status": "abandoned"})
+        )
+        result = client.admin_search.abandon_reindex_job("j1")
+        assert result["status"] == "abandoned"

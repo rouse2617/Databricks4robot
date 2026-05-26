@@ -101,6 +101,25 @@ ENDPOINTS: dict[str, str] = {
     # ── Audit ─────────────────────────────────────────────────────────
     "audit_search": "/api/v1/audit/search",
     "audit_lineage_search": "/api/v1/audit/lineage-search",
+    # ── Actions (child assets) ─────────────────────────────────────────
+    "action_list": "/api/v1/assets/{asset_id}/actions",
+    "action_create": "/api/v1/assets/{asset_id}/actions",
+    "action_update": "/api/v1/assets/{asset_id}/actions/{action_id}",
+    "action_delete": "/api/v1/assets/{asset_id}/actions/{action_id}",
+    # ── Eval / Metrics ────────────────────────────────────────────────
+    "eval_result_report": "/api/v1/assets/{asset_id}/eval-results",
+    "eval_result_list": "/api/v1/assets/{asset_id}/eval-results",
+    "metric_list": "/api/v1/assets/{asset_id}/metrics",
+    "metric_registry": "/api/v1/metrics/registry",
+    "metric_search": "/api/v1/metrics:search",
+    # ── Admin / Search Reindex ─────────────────────────────────────────
+    "admin_search_reindex": "/api/v1/admin/search/reindex",
+    "admin_search_reindex_job_create": "/api/v1/admin/search/reindex-jobs",
+    "admin_search_reindex_job_list": "/api/v1/admin/search/reindex-jobs",
+    "admin_search_reindex_job_get": "/api/v1/admin/search/reindex-jobs/{job_id}",
+    "admin_search_reindex_job_stop": "/api/v1/admin/search/reindex-jobs/{job_id}/stop",
+    "admin_search_reindex_job_resume": "/api/v1/admin/search/reindex-jobs/{job_id}/resume",
+    "admin_search_reindex_job_abandon": "/api/v1/admin/search/reindex-jobs/{job_id}/abandon",
     # ── SDK Config (bootstrap discovery) ──────────────────────────────
     "sdk_config": "/api/v1/sdk-config",
 }

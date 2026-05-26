@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 
 from cyber_databrew_sdk._requestor import APIRequestor
-from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, EmailAuth, DatabrewTokenAuth
+from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, DatabrewTokenAuth, EmailAuth
 from cyber_databrew_sdk.config import ConfigManager
 
 _logger = logging.getLogger(__name__)
@@ -39,6 +39,9 @@ _managers: dict[str, tuple[str, str]] = {
     "events": ("cyber_databrew_sdk.managers.events", "EventManager"),
     "registry": ("cyber_databrew_sdk.managers.registry", "RegistryManager"),
     "audit": ("cyber_databrew_sdk.managers.audit", "AuditManager"),
+    "actions": ("cyber_databrew_sdk.managers.actions", "ActionManager"),
+    "eval_metrics": ("cyber_databrew_sdk.managers.eval_metrics", "EvalMetricsManager"),
+    "admin_search": ("cyber_databrew_sdk.managers.admin_search", "AdminSearchManager"),
 }
 
 

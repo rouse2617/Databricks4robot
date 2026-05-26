@@ -3,7 +3,7 @@
 import typing as _t
 import warnings
 
-from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, EmailAuth, DatabrewTokenAuth
+from cyber_databrew_sdk.auth import AuthProvider, CompositeAuth, DatabrewTokenAuth, EmailAuth
 from cyber_databrew_sdk.client import CyberDatabrew, CyberDatabrewClient
 from cyber_databrew_sdk.config import ConfigManager
 from cyber_databrew_sdk.exceptions import (
@@ -34,10 +34,10 @@ __all__ = [
     "CyberDatabrewClient",
     "CyberDatabrewError",
     "DataCurationClient",
-    "DatabrewTokenAuth",
-    "EmailAuth",
     "DatabrewClient",
     "DatabrewTokenAuth",
+    "DatabrewTokenAuth",
+    "EmailAuth",
     "NotFoundError",
     "RateLimitError",
     "ServerError",
