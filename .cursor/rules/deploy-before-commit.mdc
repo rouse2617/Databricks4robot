@@ -1,9 +1,0 @@
----
-description: Deploy gate — link to docs/agents/deploy-before-commit.md
-globs:
-alwaysApply: true
----
-
-Before any runtime `git commit` / `git push`, follow `docs/agents/deploy-before-commit.md`.
-
-Compact recovery: after context compaction, re-read `docs/agents/deploy-before-commit.md` before committing.
