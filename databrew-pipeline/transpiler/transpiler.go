@@ -31,6 +31,9 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	if opts == nil {
 		opts = &Options{}
 	}
+	if opts.TTLSecondsAfter == 0 {
+		opts.TTLSecondsAfter = 3600
+	}
 	name := opts.Name
 	if name == "" {
 		name = p.Name
@@ -121,6 +124,30 @@ func buildInputSpecs(p *Pipeline) map[string][]inputSpec {
 				})
 			}
 		}
+		for _, env := range node.Component.Env {
+			if env.From == "" {
+				continue
+			}
+			refNode, refPort := splitRef(env.From)
+			if refNode == "" || refPort == "" {
+				continue
+			}
+			pn := safeParamName(env.Name)
+			already := false
+			for _, is := range m[node.ID] {
+				if is.paramName == pn {
+					already = true
+					break
+				}
+			}
+			if !already {
+				m[node.ID] = append(m[node.ID], inputSpec{
+					paramName: pn,
+					srcNode:   refNode,
+					srcPort:   safeParamName(refPort),
+				})
+			}
+		}
 	}
 	return m
 }
@@ -128,12 +155,21 @@ func buildInputSpecs(p *Pipeline) map[string][]inputSpec {
 // buildNodeTemplate creates a Container template. Input params are name-only —
 // actual values come from DAG task arguments.
 func buildNodeTemplate(node Node, inputs []inputSpec) *wfv1.Template {
+	pullPolicy := corev1.PullIfNotPresent
+	switch node.Component.ImagePullPolicy {
+	case "Always":
+		pullPolicy = corev1.PullAlways
+	case "Never":
+		pullPolicy = corev1.PullNever
+	case "IfNotPresent":
+		pullPolicy = corev1.PullIfNotPresent
+	}
 	tmpl := wfv1.Template{
 		Name: templateName(node.ID),
 		Container: &corev1.Container{
 			Image:           node.Component.Image,
 			Command:         node.Component.Command,
-			ImagePullPolicy: corev1.PullIfNotPresent,
+			ImagePullPolicy: pullPolicy,
 		},
 	}
 
@@ -199,6 +235,22 @@ func buildNodeTemplate(node Node, inputs []inputSpec) *wfv1.Template {
 		}
 	}
 	tmpl.Container.Args = containerArgs
+
+	// Environment variables
+	var envVars []corev1.EnvVar
+	for _, env := range node.Component.Env {
+		if env.From != "" {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  env.Name,
+				Value: fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(env.Name)),
+			})
+		} else {
+			envVars = append(envVars, corev1.EnvVar{Name: env.Name, Value: env.Value})
+		}
+	}
+	if len(envVars) > 0 {
+		tmpl.Container.Env = envVars
+	}
 
 	return &tmpl
 }

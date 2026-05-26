@@ -1,0 +1,6 @@
+node_modules
+dist
+bundle
+public/assets
+.vscode
+yarn-error.log

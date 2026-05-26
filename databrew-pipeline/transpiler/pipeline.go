@@ -19,11 +19,13 @@ type Node struct {
 
 // Component is a pipeline step backed by a container image.
 type Component struct {
-	Name      string               `json:"name" yaml:"name"`
-	Image     string               `json:"image" yaml:"image"`
-	Command   []string             `json:"command,omitempty" yaml:"command,omitempty"`
-	Args      []Argument           `json:"args,omitempty" yaml:"args,omitempty"`
-	Resources *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Name            string               `json:"name" yaml:"name"`
+	Image           string               `json:"image" yaml:"image"`
+	ImagePullPolicy string               `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
+	Command         []string             `json:"command,omitempty" yaml:"command,omitempty"`
+	Args            []Argument           `json:"args,omitempty" yaml:"args,omitempty"`
+	Env             []EnvVar             `json:"env,omitempty" yaml:"env,omitempty"`
+	Resources       *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
 
 // ResourceRequirements defines compute resources for a component.
@@ -36,6 +38,13 @@ type ResourceRequirements struct {
 // Argument defines a parameter passed to a component.
 // Value is used for static values; From references another node's output.
 type Argument struct {
+	Name  string `json:"name" yaml:"name"`
+	Value string `json:"value,omitempty" yaml:"value,omitempty"`
+	From  string `json:"from,omitempty" yaml:"from,omitempty"`
+}
+
+// EnvVar defines an environment variable for a component.
+type EnvVar struct {
 	Name  string `json:"name" yaml:"name"`
 	Value string `json:"value,omitempty" yaml:"value,omitempty"`
 	From  string `json:"from,omitempty" yaml:"from,omitempty"`

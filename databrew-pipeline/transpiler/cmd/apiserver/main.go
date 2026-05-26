@@ -41,7 +41,12 @@ func init() {
 
 	wfNamespace = os.Getenv("WF_NS")
 	if wfNamespace == "" {
-		wfNamespace = "sandbox-project-a"
+		// Local kind cluster (kubeconfig-argo-local) uses sandbox-project-a; GKE dev uses cyber-databrew-dev.
+		if strings.Contains(kubeconfig, "kubeconfig-argo-local") {
+			wfNamespace = "sandbox-project-a"
+		} else {
+			wfNamespace = "cyber-databrew-dev"
+		}
 	}
 }
 
@@ -109,12 +114,32 @@ func kubectl(args ...string) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
+func kubectlApply(manifest string) (string, error) {
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", wfNamespace, "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 func refreshStatus(wfName string) string {
-	out, _, err := kubectl("get", "wf", wfName, "-o", "jsonpath={.status.phase}")
+	out, stderr, err := kubectl("get", "wf", wfName, "-o", "jsonpath={.status.phase}")
 	if err != nil {
+		msg := stderr + out
+		if strings.Contains(msg, "NotFound") || strings.Contains(msg, "not found") {
+			return "NotFound"
+		}
 		return "Unknown"
 	}
-	return strings.TrimSpace(out)
+	phase := strings.TrimSpace(out)
+	if phase == "" {
+		return "Pending"
+	}
+	return phase
+}
+
+func workflowExists(wfName string) bool {
+	out, _, err := kubectl("get", "wf", wfName, "-o", "name")
+	return err == nil && strings.TrimSpace(out) != ""
 }
 
 func nowStr() string {
@@ -192,6 +217,25 @@ func handleDeletePipeline(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, APIResponse{OK: true})
 }
 
+func handleGetPipeline(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, 400, "id required")
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(dataDir, "pipelines", id+".json"))
+	if err != nil {
+		writeError(w, 404, "pipeline not found")
+		return
+	}
+	var tpl PipelineTemplate
+	if json.Unmarshal(data, &tpl) != nil {
+		writeError(w, 500, "corrupt pipeline file")
+		return
+	}
+	writeJSON(w, 200, APIResponse{OK: true, Data: tpl})
+}
+
 // ── Deploy ──────────────────────────────────────────────────────
 
 func handleDeploy(w http.ResponseWriter, r *http.Request) {
@@ -240,8 +284,9 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 	// Transpile to Argo Workflow
 	opts := &transpiler.Options{
-		Name:      wfName,
-		Namespace: wfNamespace,
+		Name:            wfName,
+		Namespace:       wfNamespace,
+		TTLSecondsAfter: 3600,
 	}
 	wf, err := transpiler.Transpile(&pipe, opts)
 	if err != nil {
@@ -261,25 +306,19 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Submit to Kubernetes
-	stdout, stderr, err := kubectl("apply", "-f", "-")
-	if err != nil {
-		// Try with stdin
-		cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", wfNamespace, "apply", "-f", "-")
-		cmd.Stdin = strings.NewReader(string(manifest))
-		applyOut, applyErr := cmd.CombinedOutput()
-		if applyErr != nil {
-			writeError(w, 500, fmt.Sprintf("kubectl apply failed: %s\n%s", string(applyOut), applyErr.Error()))
+	applyOut, applyErr := kubectlApply(string(manifest))
+	if applyErr != nil {
+		writeError(w, 500, fmt.Sprintf("kubectl apply failed (namespace=%s): %s\n%s", wfNamespace, applyOut, applyErr.Error()))
+		return
+	}
+
+	initialStatus := refreshStatus(wfName)
+	if initialStatus == "Unknown" || initialStatus == "NotFound" {
+		if !workflowExists(wfName) {
+			writeError(w, 500, fmt.Sprintf("workflow %q not found after apply in namespace %s (is Argo Workflows installed? set WF_NS). kubectl: %s", wfName, wfNamespace, strings.TrimSpace(applyOut)))
 			return
 		}
-		stdout = string(applyOut)
-		_ = stderr
-	} else {
-		_ = stdout
-		// Try piping through stdin for reliability
-		cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", wfNamespace, "apply", "-f", "-")
-		cmd.Stdin = strings.NewReader(string(manifest))
-		cmd.CombinedOutput()
+		initialStatus = "Pending"
 	}
 
 	// Save deployment record
@@ -287,7 +326,7 @@ func handleDeploy(w http.ResponseWriter, r *http.Request) {
 		ID:           genID(),
 		PipelineName: pipe.Name,
 		WorkflowName: wfName,
-		Status:       "Running",
+		Status:       initialStatus,
 		Nodes:        len(pipe.Nodes),
 		CreatedAt:    nowStr(),
 		Manifest:     string(manifest),
@@ -310,7 +349,7 @@ func handleListDeployments(w http.ResponseWriter, r *http.Request) {
 		var dep DeploymentRecord
 		if json.Unmarshal(data, &dep) == nil {
 			// Refresh status from cluster
-			if dep.Status == "Running" || dep.Status == "Pending" {
+			if dep.Status == "Running" || dep.Status == "Pending" || dep.Status == "Unknown" {
 				dep.Status = refreshStatus(dep.WorkflowName)
 				if dep.Status == "Succeeded" || dep.Status == "Failed" {
 					dep.FinishedAt = nowStr()
@@ -393,7 +432,8 @@ func main() {
 	mux.HandleFunc("POST /api/pipelines", handleSavePipeline)
 	mux.HandleFunc("DELETE /api/pipelines/{id}", handleDeletePipeline)
 
-	// Deploy
+	// Single pipeline (use /pipeline/ singular to avoid conflict with /api/pipelines)
+	mux.HandleFunc("GET /api/pipeline/{id}", handleGetPipeline)
 	mux.HandleFunc("POST /api/deploy", handleDeploy)
 	mux.HandleFunc("GET /api/deployments", handleListDeployments)
 	mux.HandleFunc("GET /api/deployments/{id}", handleGetDeployment)
