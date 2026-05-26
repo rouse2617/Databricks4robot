@@ -76,6 +76,7 @@ docs/screenshots/qa-session-*/
 
 # Local temp worktrees / nested repos
 .local/
+.claude/worktrees/
 _tmp_cyber_iac/
 _tmp_cyber_iac_fresh/
 .openharness/
