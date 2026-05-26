@@ -113,13 +113,14 @@ export default function TagsTab({
 		key: string,
 		sourceType: string | undefined,
 	) => {
-		setLocalDetailed((prev) =>
-			prev.filter(
-				(r) =>
-					!(r.tag_key === key && (!sourceType || r.source_type === sourceType)),
-			),
+		const nextDetailed = localDetailed.filter(
+			(r) =>
+				!(r.tag_key === key && (!sourceType || r.source_type === sourceType)),
 		);
-		if (!sourceType) {
+		setLocalDetailed(nextDetailed);
+		// If this was the last source for this tag key, also remove from flat map
+		const hasRemaining = nextDetailed.some((r) => r.tag_key === key);
+		if (!sourceType || !hasRemaining) {
 			setLocalTags((prev) => {
 				const next = { ...prev };
 				delete next[key];

@@ -33,7 +33,17 @@ export default function DeliveryHistoryTab({ assetId }: Props) {
 					if (!cancelled) setDeliveries([]);
 					return;
 				}
-				const items = await Promise.all(ids.map((id) => deliveriesApi.get(id)));
+				// Limit concurrent requests to avoid overwhelming browser connection pool
+				const concurrency = 6;
+				const items = [];
+				for (let i = 0; i < ids.length; i += concurrency) {
+					const batch = ids.slice(i, i + concurrency);
+					const batchResults = await Promise.all(
+						batch.map((id) => deliveriesApi.get(id)),
+					);
+					items.push(...batchResults);
+					if (cancelled) return;
+				}
 				if (!cancelled) setDeliveries(items);
 			} catch {
 				if (!cancelled) {

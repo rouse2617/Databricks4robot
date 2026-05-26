@@ -155,12 +155,11 @@ func (e ErrSourceContract) Error() string {
 // configured sources yet).
 func (r *TagRegistry) ValidateSource(sourceType, sourceName, sourceVersion string) error {
 	r.mu.RLock()
-	sources := r.sources
-	r.mu.RUnlock()
-	if len(sources) == 0 {
+	defer r.mu.RUnlock()
+	if len(r.sources) == 0 {
 		return nil
 	}
-	def, ok := sources[sourceType]
+	def, ok := r.sources[sourceType]
 	if !ok {
 		return ErrUnknownSource{Source: sourceType}
 	}
