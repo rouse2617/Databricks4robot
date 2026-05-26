@@ -3,10 +3,15 @@ package deliveryrules
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
+
+// maxConcurrentLoads limits concurrent asset-snapshot DB queries in checkRules
+// to avoid overwhelming the database on large batches.
+const maxConcurrentLoads = 10
 
 // Violation describes one asset blocked by one rule.
 type Violation struct {
@@ -90,13 +95,47 @@ func (e *Engine) checkRules(ctx context.Context, customerID string, assetIDs []s
 		})
 	}
 
+	// Load asset snapshots concurrently with bounded parallelism.
+	type loadedSnap struct {
+		id   string
+		snap AssetSnapshot
+	}
+	snapChan := make(chan loadedSnap, len(assetIDs))
+	errChan := make(chan error, len(assetIDs))
+	sem := make(chan struct{}, maxConcurrentLoads)
+	var wg sync.WaitGroup
+
+	for _, assetID := range assetIDs {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			snap, err := e.loadSnapshot(ctx, id)
+			<-sem
+			if err != nil {
+				errChan <- err
+				return
+			}
+			snapChan <- loadedSnap{id: id, snap: snap}
+		}(assetID)
+	}
+	wg.Wait()
+	close(snapChan)
+	close(errChan)
+
+	if err, ok := <-errChan; ok {
+		return nil, err
+	}
+
+	snaps := make(map[string]AssetSnapshot, len(assetIDs))
+	for ls := range snapChan {
+		snaps[ls.id] = ls.snap
+	}
+
 	var violations []Violation
 	for _, assetID := range assetIDs {
-		snap, err := e.loadSnapshot(ctx, assetID)
-		if err != nil {
-			return nil, err
-		}
-
+		snap := snaps[assetID]
+		
 		// CYB-1051: lazy-load the logical-all snapshot only when needed.
 		var logicalSnap *AssetSnapshot
 		getLogicalSnap := func() (AssetSnapshot, error) {

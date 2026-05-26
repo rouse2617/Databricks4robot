@@ -1177,6 +1177,9 @@ LIMIT 50`
 			return nil
 		}
 		// On transient error, sleep and return empty (don't kill the stream).
+		slog.ErrorContext(ctx, "pollAssetEvents: query failed",
+			"err", err,
+		)
 		if !sleepAssetEventStreamPoll(ctx) {
 			return nil
 		}
@@ -1193,11 +1196,17 @@ LIMIT 50`
 			&ev.Payload,
 			&ev.OccurredAt,
 		); err != nil {
+			slog.ErrorContext(ctx, "pollAssetEvents: scan failed",
+				"err", err,
+			)
 			return []sseEvent{}
 		}
 		events = append(events, ev)
 	}
 	if err := rows.Err(); err != nil {
+		slog.ErrorContext(ctx, "pollAssetEvents: rows iteration failed",
+			"err", err,
+		)
 		return []sseEvent{}
 	}
 
