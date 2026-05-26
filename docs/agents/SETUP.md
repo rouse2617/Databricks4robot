@@ -52,14 +52,14 @@
 
 ### Git commit-msg hook（本仓库，Agent 自动配置）
 
-本地 `git commit` 时校验 Conventional Commits（与 CI `commitlint` 规则一致）。**用户不必手动执行**；Agent 在首次任务时静默配置即可。
+本地 `git commit` 时由 **`commitlint --edit`** 校验（`scripts/commitlint-run.sh`，与 CI 同一套包和 `.commitlintrc.json`）。**用户不必手动执行**；Agent 在首次任务时静默配置即可。
 
 - [ ] 在仓库根目录检查：`git config --get core.hooksPath` 是否为 `.githooks`
 - 若未设置，在仓库根目录执行（**仅本仓库**，不要用 `--global`）：
 
   ```bash
   git config core.hooksPath .githooks
-  chmod +x .githooks/commit-msg
+  chmod +x .githooks/commit-msg scripts/commitlint-run.sh
   ```
 
 - 验证：故意错误的 message 应被 hook 拒绝（可选，不必每次做）
@@ -67,7 +67,24 @@
 **说明：**
 
 - 合并不合规的 commit 仍由 **CI `commitlint`** 拦截（PR 上硬兜底）；本地 hook 只是提前反馈。
+- **Subject 必须全小写**（`subject-case: lower-case`）：第一行不能写 `CEL`/`API` 等，应写 `cel`/`api`；正文可保留大写。规则由 `commitlint` 执行，与 CI 一致。
 - Agent 只改当前 clone 的 `core.hooksPath`，不修改用户全局 git 配置。
+
+### Git pre-push hook（推送前本地 CI，可选）
+
+在 **push 到 GitHub 之前** 跑与 CI 相近的检查，减少「推上去才红」：
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-push .githooks/commit-msg scripts/ci-local.sh scripts/commitlint-run.sh
+```
+
+- **commit 时**：`commit-msg` → `scripts/commitlint-run.sh --edit`（与 CI 同规则；首次会 `npm ci` 安装 `tools/commitlint`）。
+- **push 前**：`pre-push` 调用 `scripts/ci-local.sh`（pre-commit 全库 + commitlint 相对 `origin/main`）。
+- 临时跳过：`SKIP_PREPUSH=1 git push`
+- 更重一轮（含 go test / frontend test）：`scripts/ci-local.sh --full`
+
+线上 PR CI 仍会在 push 后跑；本地 hook 是提前反馈，不能 100% 替代 GitHub runner。
 
 ## Credentials (interrupt user only when needed)
 

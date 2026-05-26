@@ -1,4 +1,5 @@
-## Push to `main` → build backend image → deploy prod Cloud Run (when the service exists).
+## Manual prod deploy — PR comment `/deploy-cloudrun-prod-backend` (PR must target `main`).
+## Does **not** run on push/merge to `main`. Comment on the merged PR is supported.
 ##
 ## If `cyber-databrew-backend-prod` does not exist yet, the PipelineRun still succeeds after push
 ## to Artifact Registry; deploy is skipped until you create the Cloud Run service.
@@ -11,11 +12,10 @@
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
-  name: push-backend-cloudrun-prod-{{revision}}
+  name: deploy-cloudrun-prod-backend-{{pull_request_number}}-{{revision}}
   annotations:
-    pipelinesascode.tekton.dev/on-event: "[push]"
-    pipelinesascode.tekton.dev/on-target-branch: "[main,refs/heads/main]"
-    pipelinesascode.tekton.dev/on-path-change: "[backend/**, deploy/cloudrun/**, .tekton/push-backend-cloudrun-prod.yaml]"
+    pipelinesascode.tekton.dev/on-comment: "^(/deploy-cloudrun-prod-backend)$"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
     pipelinesascode.tekton.dev/target-namespace: "tekton-pipelines"
     pipelinesascode.tekton.dev/task: "git-clone"
     pipelinesascode.tekton.dev/max-keep-runs: "8"
@@ -148,7 +148,7 @@ spec:
       - name: notify-feishu-open
         params:
           - name: pipeline-label
-            value: "push-backend-cloudrun-prod"
+            value: "deploy-cloudrun-prod-backend"
           - name: notify-deploy-line
             value: "Cloud Run：若 cyber-databrew-backend-prod 已存在则本次 gcloud run deploy 已成功；若服务尚不存在则 deploy 会 skip（仅推镜像），以 Tekton gcloud 步骤日志为准。"
           - name: tasks-status

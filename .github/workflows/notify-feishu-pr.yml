@@ -1,0 +1,47 @@
+# Feishu on PRs targeting main → A 群 (FEISHU_BOT_WEBHOOK_MAIN).
+name: Feishu PR Notifications
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+    branches:
+      - main
+
+jobs:
+  post-merge-deploy-hint:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comment prod deploy commands on merged PR
+        uses: actions/github-script@v7
+        with:
+          script-path: .github/scripts/pr-prod-deploy-comment.js
+
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify Feishu
+        env:
+          FEISHU_BOT_WEBHOOK_MAIN: ${{ secrets.FEISHU_BOT_WEBHOOK_MAIN }}
+          FEISHU_BOT_WEBHOOK_BRANCH: ${{ secrets.FEISHU_BOT_WEBHOOK_BRANCH }}
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+          ACTION: ${{ github.event.action }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+          BASE_BRANCH: ${{ github.base_ref }}
+          ACTOR: ${{ github.actor }}
+        run: bash .github/scripts/feishu-pr-notify.sh

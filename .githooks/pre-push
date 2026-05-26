@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Run local CI checks before git push (same spirit as GitHub pre-commit + commitlint).
+# Skip: SKIP_PREPUSH=1 git push
+set -euo pipefail
+
+if [[ "${SKIP_PREPUSH:-}" == "1" ]]; then
+  echo "pre-push: SKIP_PREPUSH=1, skipping ci-local"
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+exec "${ROOT}/scripts/ci-local.sh"

@@ -37,7 +37,7 @@ Do **not** ask the user to confirm that you will follow this workflow. Do **not*
 ## Workflow constraints (mandatory)
 
 - Runtime paths: `backend/`, `Frontend/`, `sdk/`, `dagster/` — see `docs/agents/spec-driven-workflow.md`
-- Commit format: Conventional Commits — `type(scope): description`
+- Commit format: Conventional Commits — `type(scope): description`. **Subject (first line) must be entirely lower-case** — CI `commitlint` enforces `subject-case` (e.g. write `cel` / `api`, not `CEL` / `API`; acronyms in the body are fine).
 - Full step tables: `docs/agents/WORKFLOWS.md`
 - **New/changed HTTP API** → [API contract sync](#api-contract-sync-mandatory) (same PR, no exceptions except documented hotfix backfill)
 
