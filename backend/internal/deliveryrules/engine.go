@@ -135,7 +135,7 @@ func (e *Engine) checkRules(ctx context.Context, customerID string, assetIDs []s
 	var violations []Violation
 	for _, assetID := range assetIDs {
 		snap := snaps[assetID]
-		
+
 		// CYB-1051: lazy-load the logical-all snapshot only when needed.
 		var logicalSnap *AssetSnapshot
 		getLogicalSnap := func() (AssetSnapshot, error) {
