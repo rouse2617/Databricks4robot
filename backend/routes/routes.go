@@ -148,12 +148,11 @@ func RegisterAll(
 		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
 		assets.POST("/:id/revisions", assetHandler.PromoteRevision)
 
-		// Layered child-asset creation (CYB-1222)
-		// NOTE: /:id/actions is NOT registered here — the existing data-platform
-		// actionHandler.Create owns that route (see block near endpoint 284).
+		// Layered child-asset creation (CYB-1222, CYB-1228)
 		assets.POST("/:id/clips", assetHandler.CreateClip)
 		assets.POST("/:id/frames", assetHandler.CreateFrame)
 		assets.POST("/:id/tasks", assetHandler.CreateTask)
+		assets.POST("/:id/actions", assetHandler.CreateAction)
 
 		// Logical asset endpoints
 		api.GET("/logical-assets/:id/current", assetHandler.GetCurrentForLogical)
@@ -280,12 +279,14 @@ func RegisterAll(
 			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
 		}
 
-		// Actions (mcap → seg → action 第三层; docs/review/data-platform-design.md §5.2.15)
+		// Action annotations (mcap → seg → action 第三层; docs/review/data-platform-design.md §5.2.15)
+		// NOTE: moved from /:id/actions to /:id/action-annotations — the layered
+		// asset creation API now owns /:id/actions (CYB-1228).
 		if actionHandler != nil {
-			assets.POST("/:id/actions", actionHandler.Create)
-			assets.GET("/:id/actions", actionHandler.List)
-			assets.PATCH("/:id/actions/:action_id", actionHandler.Patch)
-			assets.DELETE("/:id/actions/:action_id", actionHandler.Delete)
+			assets.POST("/:id/action-annotations", actionHandler.Create)
+			assets.GET("/:id/action-annotations", actionHandler.List)
+			assets.PATCH("/:id/action-annotations/:action_id", actionHandler.Patch)
+			assets.DELETE("/:id/action-annotations/:action_id", actionHandler.Delete)
 		}
 
 		// Eval / Metrics (Phase 1.5)
