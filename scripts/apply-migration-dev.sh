@@ -27,6 +27,8 @@ if [[ -f "$ARG" ]]; then
   MIGRATION="$ARG"
 elif [[ -f "$ROOT/backend/migrations/$ARG" ]]; then
   MIGRATION="$ROOT/backend/migrations/$ARG"
+elif [[ -f "$ROOT/backend/migrations/archive/$ARG" ]]; then
+  MIGRATION="$ROOT/backend/migrations/archive/$ARG"
 else
   echo "migration not found: $ARG" >&2
   exit 1
