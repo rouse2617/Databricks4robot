@@ -20,9 +20,19 @@ type mockTemplateRepo struct {
 
 func (m *mockTemplateRepo) Save(_ context.Context, t *models.PipelineTemplate) error {
 	m.saved = append(m.saved, t)
+	if m.byID == nil {
+		m.byID = make(map[string]*models.PipelineTemplate)
+	}
+	m.byID[t.ID] = t
 	return nil
 }
-func (m *mockTemplateRepo) FindAll(_ context.Context) ([]models.PipelineTemplate, error) { return nil, nil }
+func (m *mockTemplateRepo) FindAll(_ context.Context) ([]models.PipelineTemplate, error) {
+	out := make([]models.PipelineTemplate, 0, len(m.byID))
+	for _, t := range m.byID {
+		out = append(out, *t)
+	}
+	return out, nil
+}
 func (m *mockTemplateRepo) FindByID(_ context.Context, id string) (*models.PipelineTemplate, error) {
 	return m.byID[id], nil
 }
@@ -30,21 +40,38 @@ func (m *mockTemplateRepo) FindVersionsByName(_ context.Context, _ string) ([]mo
 	return nil, nil
 }
 func (m *mockTemplateRepo) GetNextVersion(_ context.Context, _ string) (int, error) { m.ver++; return m.ver, nil }
-func (m *mockTemplateRepo) Delete(_ context.Context, _ string) error { return nil }
+func (m *mockTemplateRepo) Delete(_ context.Context, id string) error {
+	delete(m.byID, id)
+	return nil
+}
 
 type mockDeploymentRepo struct {
 	saved []*models.PipelineDeployment
+	byID  map[string]*models.PipelineDeployment
 }
 
 func (m *mockDeploymentRepo) Save(_ context.Context, d *models.PipelineDeployment) error {
 	m.saved = append(m.saved, d)
+	if m.byID == nil {
+		m.byID = make(map[string]*models.PipelineDeployment)
+	}
+	m.byID[d.ID] = d
 	return nil
 }
-func (m *mockDeploymentRepo) FindAll(_ context.Context) ([]models.PipelineDeployment, error) { return nil, nil }
-func (m *mockDeploymentRepo) FindByID(_ context.Context, _ string) (*models.PipelineDeployment, error) {
-	return nil, nil
+func (m *mockDeploymentRepo) FindAll(_ context.Context) ([]models.PipelineDeployment, error) {
+	out := make([]models.PipelineDeployment, len(m.saved))
+	for i, d := range m.saved {
+		out[i] = *d
+	}
+	return out, nil
 }
-func (m *mockDeploymentRepo) Delete(_ context.Context, _ string) error { return nil }
+func (m *mockDeploymentRepo) FindByID(_ context.Context, id string) (*models.PipelineDeployment, error) {
+	return m.byID[id], nil
+}
+func (m *mockDeploymentRepo) Delete(_ context.Context, id string) error {
+	delete(m.byID, id)
+	return nil
+}
 func (m *mockDeploymentRepo) UpdateStatus(_ context.Context, _, _ string) error { return nil }
 
 type mockAssetRepo struct {

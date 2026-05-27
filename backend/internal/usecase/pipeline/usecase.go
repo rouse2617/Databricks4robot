@@ -437,11 +437,16 @@ func (uc *Usecase) RegisterOutput(ctx context.Context, in RegisterPipelineOutput
 
 	// Create asset_relations from input assets to output asset (F4.7).
 	if uc.relationWriter != nil {
-		if inputIDs, ok := dep.PipelineJSON["_input_asset_ids"].([]interface{}); ok {
+		switch inputIDs := dep.PipelineJSON["_input_asset_ids"].(type) {
+		case []interface{}:
 			for _, id := range inputIDs {
 				if s, ok := id.(string); ok {
 					_ = uc.relationWriter.InsertRelation(ctx, s, assetID, "pipeline_output", in.DeploymentID)
 				}
+			}
+		case []string:
+			for _, s := range inputIDs {
+				_ = uc.relationWriter.InsertRelation(ctx, s, assetID, "pipeline_output", in.DeploymentID)
 			}
 		}
 	}
@@ -509,12 +514,15 @@ func (uc *Usecase) GetLineage(ctx context.Context, assetID string) (*AssetLineag
 		lineage.WorkflowName = dep.WorkflowName
 		// Extract input asset IDs from PipelineJSON.
 		if dep.PipelineJSON != nil {
-			if raw, ok := dep.PipelineJSON["_input_asset_ids"].([]interface{}); ok {
+			switch raw := dep.PipelineJSON["_input_asset_ids"].(type) {
+			case []interface{}:
 				for _, id := range raw {
 					if s, ok := id.(string); ok {
 						lineage.InputAssets = append(lineage.InputAssets, s)
 					}
 				}
+			case []string:
+				lineage.InputAssets = raw
 			}
 		}
 	}
