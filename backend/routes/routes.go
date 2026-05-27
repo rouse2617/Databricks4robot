@@ -312,12 +312,17 @@ func RegisterAll(
 			api.GET("/pipelines", pipelineHandler.ListTemplates)
 			api.GET("/pipelines/:id", pipelineHandler.GetTemplate)
 			api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
-			api.GET("/pipelines/:name/versions", pipelineHandler.ListVersions)
+			api.GET("/pipelines/:id/versions", pipelineHandler.ListVersions)
+			api.GET("/pipelines/:id/diff/:id2", pipelineHandler.DiffTemplates)
 			api.POST("/deploy", pipelineHandler.Deploy)
 			api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
 			api.GET("/deployments", pipelineHandler.ListDeployments)
 			api.GET("/deployments/:id", pipelineHandler.GetDeployment)
+			api.GET("/deployments/:id/resources", pipelineHandler.GetResourceUsage)
+			api.POST("/deployments/:id/save-template", pipelineHandler.SaveFromDeployment)
 			api.DELETE("/deployments/:id", pipelineHandler.DeleteDeployment)
+			api.POST("/pipeline-assets", pipelineHandler.RegisterOutput)
+			api.GET("/assets/:id/pipeline-lineage", pipelineHandler.GetLineage)
 		}
 
 		// Pipeline component registry
@@ -332,6 +337,7 @@ func RegisterAll(
 		// Workflow monitoring
 		if workflowHandler != nil {
 			api.GET("/workflows", workflowHandler.ListWorkflows)
+			api.GET("/workflows/:name/logs", workflowHandler.GetWorkflowLogs)
 			api.GET("/workflows/:name", workflowHandler.GetWorkflow)
 		}
 

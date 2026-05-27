@@ -1,4 +1,4 @@
-import { Button, Tag, message, Modal, Input, Table } from "antd";
+import { Button, Tag, message, Modal, Input, Table, Dropdown, Space } from "antd";
 import { useEffect, useState, useCallback } from "react";
 import {
 	getPipeline,
@@ -12,7 +12,8 @@ import {
 } from "../../api/pipelineApi";
 import { searchApi } from "../../api/search";
 import type { SearchAssetResult } from "../../api/search";
-import { ReloadOutlined, DeleteOutlined, PlayCircleOutlined, SearchOutlined, EditOutlined, EyeOutlined } from "@ant-design/icons";
+import type { Pipeline } from "./types";
+import { ReloadOutlined, DeleteOutlined, PlayCircleOutlined, SearchOutlined, EditOutlined, EyeOutlined, DownOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -23,7 +24,7 @@ const STATUS_COLORS: Record<string, string> = {
 	Error: "error",
 };
 
-export function DeployPanel() {
+export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pipeline) => void }) {
 		const navigate = useNavigate();
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
@@ -61,6 +62,16 @@ export function DeployPanel() {
 		setSearchResults([]);
 		setSelectedAssetIds([]);
 		setAssetModalOpen(true);
+	};
+
+	const handleDirectRun = async (templateId: string) => {
+		try {
+			await deployTemplate(templateId);
+			message.success("部署成功");
+			refresh();
+		} catch (err) {
+			message.error("部署失败: " + String(err));
+		}
 	};
 
 	const handleAssetSearch = async (value: string) => {
@@ -114,8 +125,12 @@ export function DeployPanel() {
 	const handleEditTemplate = async (id: string) => {
 		try {
 			const t = await getPipeline(id);
-			sessionStorage.setItem("pipeline-edit", JSON.stringify(t.pipeline));
-			navigate("/pipeline");
+			if (onEditTemplate) {
+				onEditTemplate(t.pipeline as Pipeline);
+			} else {
+				sessionStorage.setItem("pipeline-edit", JSON.stringify(t.pipeline));
+				navigate("/pipeline");
+			}
 		} catch (err) {
 			message.error("加载模板失败: " + String(err));
 		}
@@ -170,14 +185,24 @@ export function DeployPanel() {
 								</div>
 							</div>
 							<div className="deploy-btn-list">
-								<Button
-									size="small"
-									type="primary"
-									icon={<PlayCircleOutlined />}
-									onClick={() => handleDeployClick(t.id)}
-								>
-									运行
-								</Button>
+								<Space.Compact>
+									<Button
+										size="small"
+										type="primary"
+										icon={<PlayCircleOutlined />}
+										onClick={() => handleDirectRun(t.id)}
+									>
+										运行
+									</Button>
+									<Dropdown
+										menu={{ items: [{ key: "assets", label: "选择资产运行", onClick: () => handleDeployClick(t.id) }] }}
+										trigger={["click"]}
+									>
+										<Button size="small" type="primary" style={{ padding: "0 4px" }}>
+											<DownOutlined style={{ fontSize: 10 }} />
+										</Button>
+									</Dropdown>
+								</Space.Compact>
 								<Button
 									size="small"
 									icon={<EditOutlined />}

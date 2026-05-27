@@ -62,3 +62,13 @@ export function listWorkflows(): Promise<{ items: WorkflowSummary[] }> {
 export function getWorkflow(name: string): Promise<WorkflowDetail> {
   return request("GET", `/workflows/${encodeURIComponent(name)}`);
 }
+
+export function getWorkflowLogs(
+  name: string,
+  nodeId: string,
+): Promise<{ logs: string }> {
+  return request(
+    "GET",
+    `/workflows/${encodeURIComponent(name)}/logs?nodeId=${encodeURIComponent(nodeId)}`,
+  );
+}

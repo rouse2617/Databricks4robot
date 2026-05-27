@@ -104,21 +104,26 @@ function PipelineCanvas() {
 		saveComponents(registeredComponents);
 	}, [registeredComponents]);
 
+	const loadPipelineToCanvas = useCallback((pipeline: Pipeline) => {
+		const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
+		setNodes(n);
+		setEdges(e);
+		if (pipeline.name) setPipelineName(pipeline.name);
+		setView("pipeline");
+		setSelectedNode(null);
+		setJsonOutput(null);
+	}, [setNodes, setEdges]);
+
 	useEffect(() => {
 		const raw = sessionStorage.getItem("pipeline-edit");
 		if (!raw) return;
 		sessionStorage.removeItem("pipeline-edit");
 		try {
-			const pipeline: Pipeline = JSON.parse(raw);
-			const { nodes: importedNodes, edges: importedEdges } =
-				fromTranspilerPipeline(pipeline);
-			setNodes(importedNodes);
-			setEdges(importedEdges);
-			if (pipeline.name) setPipelineName(pipeline.name);
+			loadPipelineToCanvas(JSON.parse(raw));
 		} catch {
 			/* ignore */
 		}
-	}, [setNodes, setEdges]);
+	}, [loadPipelineToCanvas]);
 
 	const onConnect = useCallback(
 		(connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
@@ -439,7 +444,7 @@ function PipelineCanvas() {
 						/>
 					</div>
 				) : (
-					<DeployPanel />
+					<DeployPanel onEditTemplate={loadPipelineToCanvas} />
 				)}
 			</div>
 

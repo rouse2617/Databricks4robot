@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Button, Table, Tag } from "antd";
+import { useEffect, useState, useMemo } from "react";
+import { Button, Table, Tag, Select } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { listWorkflows, type WorkflowSummary } from "../api/workflowApi";
@@ -15,6 +15,7 @@ const STATUS_COLORS: Record<string, string> = {
 export default function WorkflowListPage() {
   const [items, setItems] = useState<WorkflowSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const navigate = useNavigate();
 
   const refresh = async () => {
@@ -32,6 +33,11 @@ export default function WorkflowListPage() {
   useEffect(() => {
     refresh();
   }, []);
+
+  const filtered = useMemo(
+    () => (statusFilter ? items.filter((i) => i.status === statusFilter) : items),
+    [items, statusFilter],
+  );
 
   const columns = [
     {
@@ -103,8 +109,24 @@ export default function WorkflowListPage() {
           刷新
         </Button>
       </div>
+      <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+        <Select
+          allowClear
+          placeholder="状态筛选"
+          style={{ width: 140 }}
+          value={statusFilter}
+          onChange={(val) => setStatusFilter(val)}
+          options={[
+            { label: "Running", value: "Running" },
+            { label: "Succeeded", value: "Succeeded" },
+            { label: "Failed", value: "Failed" },
+            { label: "Error", value: "Error" },
+            { label: "Pending", value: "Pending" },
+          ]}
+        />
+      </div>
       <Table
-        dataSource={items}
+        dataSource={filtered}
         columns={columns}
         rowKey="name"
         loading={loading}
@@ -113,7 +135,7 @@ export default function WorkflowListPage() {
           onClick: () => navigate(`/workflows/${record.name}`),
           style: { cursor: "pointer" },
         })}
-        pagination={false}
+        pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
       />
     </div>
   );
