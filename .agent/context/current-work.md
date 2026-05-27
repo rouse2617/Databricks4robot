@@ -10,7 +10,7 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ## Recently completed (2026-05-28)
 
-### Pipeline tasks — all T-01~T-11 done ✓ + T-12 done ✓
+### Pipeline tasks — all T-01~T-13 done ✓
 
 | ID | Priority | Description | Status |
 |----|----------|-------------|--------|
@@ -26,29 +26,26 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-10 | P2 | Asset detail pipeline lineage (LineageTab) | ✅ |
 | T-11 | P3 | OpenAPI sync (workflows/{name}/logs) | ✅ |
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
+| T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (T-12)
+### What was done this cycle (T-13)
 
-1. **T-12**: Added asset existence validation in `Deploy()` usecase
-   - New validation loop runs before env assembly — checks ALL asset IDs exist via `assetRepo.Get`
-   - Returns `ErrAssetNotFound` (wrapping with asset_id detail) if any asset is missing/nil
-   - New sentinel errors: `ErrAssetNotFound`, `ErrInvalidArgument`
-   - Handler `mapDeployError` maps `ErrAssetNotFound` → 400 BadRequest
-   - Unit tests cover: missing asset, valid assets, empty asset IDs (skip validation), first invalid among many
-   - Files changed:
-     - `backend/internal/usecase/pipeline/usecase.go` — validation logic + sentinel errors
-     - `backend/internal/handlers/pipeline/handler.go` — error mapping
-     - `backend/internal/usecase/pipeline/usecase_test.go` — new test file (4 subtests)
+1. **T-13**: Display asset storage URI in asset picker + search index
+   - Backend: added `storage_uri` to search index document in `builder.go`
+   - Frontend: added `storage_uri` field to `SearchAssetHit` and `normalizeSearchHitToAsset`
+   - `DeployPanel.tsx`: new "存储路径" column (monospace, truncated at 40 chars, `—` fallback)
+   - `PipelinePage.tsx` deploy modal asset table: new "存储路径" column (monospace, truncated at 36 chars)
+   - Both columns reuse `storage_uri` from search index results
+   - Verified: `go build ./...` ✅, `npx tsc --noEmit` ✅, pipeline tests ✅
 
 ## What's next
 
-All pipeline-next-steps.md §2.2 tasks complete (T-01~T-11) + T-12 done. Next options:
+All pipeline-next-steps.md §2.2 tasks complete (T-01~T-13). Next options:
 
-1. **T-13** (optional) — Display asset storage region/URI in asset picker (frontend)
-2. **Code review** — Look for missing endpoints in openapi.yaml, dead code, or UX polish items
-3. **Data plan integration** (T-14) — Architectural decision record
+1. **Code review** — Look for missing endpoints in openapi.yaml, dead code, or UX polish items
+2. **Data plan integration** (T-14) — Architectural decision record
 
-See [docs/review/pipeline-next-steps.md](../../docs/review/pipeline-next-steps.md) §6 for details on T-12~T-14.
+See [docs/review/pipeline-next-steps.md](../../docs/review/pipeline-next-steps.md) §6 for T-14 details.
 
 ## Non-Done DataBrew
 

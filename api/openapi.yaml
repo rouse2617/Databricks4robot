@@ -1572,6 +1572,101 @@ components:
           additionalProperties: true
           description: Optional metadata for the new child asset
 
+    # ── Pipeline ─────────────────────────────────────────────────────────
+    PipelineTemplate:
+      type: object
+      properties:
+        id: { type: string, description: Template ID }
+        name: { type: string, description: Template name }
+        version: { type: integer, description: Template version number }
+        pipeline:
+          type: object
+          description: Full pipeline definition (nodes + edges)
+        nodeCount: { type: integer, description: Number of nodes in the pipeline }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PipelineDeployment:
+      type: object
+      properties:
+        id: { type: string, description: Deployment ID }
+        templateId: { type: string, nullable: true, description: Optional linked template ID }
+        pipelineName: { type: string, description: Pipeline name from the deployed pipeline }
+        workflowName: { type: string, description: Resulting Argo workflow name }
+        status: { type: string, description: Deployment/workflow status (Succeeded, Running, Failed, etc.) }
+        nodeCount: { type: integer }
+        manifest: { type: string, nullable: true }
+        pipelineJSON:
+          type: object
+          nullable: true
+          description: Snapshot of the pipeline definition at deployment time
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time, nullable: true }
+    PipelineComponent:
+      type: object
+      properties:
+        id: { type: string, description: Component ID }
+        name: { type: string }
+        description: { type: string }
+        image: { type: string, description: Docker image name }
+        tag: { type: string, description: Docker image tag }
+        source: { type: string, description: Source registry identifier }
+        inputPorts:
+          type: array
+          items: { $ref: '#/components/schemas/PortDef' }
+        outputPorts:
+          type: array
+          items: { $ref: '#/components/schemas/PortDef' }
+        resources:
+          type: object
+          description: Container resource requirements
+        envVars:
+          type: array
+          items: { $ref: '#/components/schemas/EnvVarDef' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PortDef:
+      type: object
+      properties:
+        name: { type: string }
+        type: { type: string }
+        desc: { type: string }
+        default_value: { type: string }
+    EnvVarDef:
+      type: object
+      properties:
+        name: { type: string }
+        value: { type: string }
+    WorkflowSummary:
+      type: object
+      properties:
+        name: { type: string }
+        status: { type: string }
+        nodeCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time, nullable: true }
+    WorkflowDetail:
+      type: object
+      properties:
+        name: { type: string }
+        status: { type: string }
+        message: { type: string }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowNodeStatus' }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time, nullable: true }
+    WorkflowNodeStatus:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        displayName: { type: string }
+        phase: { type: string, description: "Node phase (Running, Succeeded, Failed, Error, etc.)" }
+        message: { type: string }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────
   /healthz:
@@ -3807,4 +3902,447 @@ paths:
           description: Missing nodeId parameter
         '404':
           description: Workflow or node not found
+
+  # ── Pipeline templates ────────────────────────────────────────────
+  /api/v1/pipelines:
+    post:
+      tags: [Pipeline]
+      summary: Save a new pipeline template
+      description: Creates a new reusable pipeline template from a pipeline definition.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, pipeline]
+              properties:
+                name: { type: string, description: Template name }
+                pipeline:
+                  type: object
+                  description: Full pipeline definition (nodes + edges)
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineTemplate' }
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    get:
+      tags: [Pipeline]
+      summary: List pipeline templates
+      description: Returns all saved pipeline templates.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Template list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineTemplate' }
+  /api/v1/pipelines/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get a pipeline template by ID
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template ID
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineTemplate' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    delete:
+      tags: [Pipeline]
+      summary: Delete a pipeline template
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted successfully
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/pipelines/{id}/versions:
+    get:
+      tags: [Pipeline]
+      summary: List all versions of a pipeline template
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template name (the `id` param maps to name for version listing)
+      responses:
+        '200':
+          description: Version list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineTemplate' }
+
+  # ── Deployment ────────────────────────────────────────────────────
+  /api/v1/deploy:
+    post:
+      tags: [Pipeline]
+      summary: Deploy a pipeline directly (without saving a template)
+      description: >
+        Accepts an inline pipeline definition and optionally asset IDs.
+        Returns a deployment record linking to the resulting Argo workflow.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pipeline]
+              properties:
+                pipeline:
+                  type: object
+                  description: Full pipeline definition
+                name: { type: string, description: Optional pipeline name }
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                  description: Optional asset IDs to bind as environment variables
+      responses:
+        '201':
+          description: Deployment created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineDeployment' }
+        '400':
+          description: Invalid request or asset not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/deploy/template/{id}:
+    post:
+      tags: [Pipeline]
+      summary: Deploy a pipeline by template ID
+      description: >
+        Deploys a saved template by its ID. Optionally binds asset IDs.
+        This is the recommended deployment path.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template ID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, description: Optional override pipeline name }
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                  description: Optional asset IDs to bind as environment variables
+      responses:
+        '201':
+          description: Deployment created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineDeployment' }
+        '400':
+          description: Invalid request or asset not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  # ── Deployments listing ───────────────────────────────────────────
+  /api/v1/deployments:
+    get:
+      tags: [Pipeline]
+      summary: List all deployments
+      description: Returns all pipeline deployments ordered by creation time.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Deployment list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineDeployment' }
+  /api/v1/deployments/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get a deployment by ID
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Deployment ID
+      responses:
+        '200':
+          description: Deployment details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineDeployment' }
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    delete:
+      tags: [Pipeline]
+      summary: Delete a deployment
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted successfully
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  # ── Pipeline component registry ───────────────────────────────────
+  /api/v1/components:
+    post:
+      tags: [Pipeline]
+      summary: Register a new pipeline component
+      description: Creates a new pipeline component (Docker image) in the registry.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, description, image, tag, source, inputPorts, outputPorts]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                image: { type: string }
+                tag: { type: string }
+                source: { type: string }
+                inputPorts:
+                  type: array
+                  items: { $ref: '#/components/schemas/PortDef' }
+                outputPorts:
+                  type: array
+                  items: { $ref: '#/components/schemas/PortDef' }
+                resources:
+                  type: object
+                  description: Container resource requirements
+                envVars:
+                  type: array
+                  items: { $ref: '#/components/schemas/EnvVarDef' }
+      responses:
+        '201':
+          description: Component created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineComponent' }
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    get:
+      tags: [Pipeline]
+      summary: List all registered pipeline components
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Component list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineComponent' }
+  /api/v1/components/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get a pipeline component by ID
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Component details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineComponent' }
+        '404':
+          description: Component not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    put:
+      tags: [Pipeline]
+      summary: Update a pipeline component
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                image: { type: string }
+                tag: { type: string }
+                source: { type: string }
+                inputPorts:
+                  type: array
+                  items: { $ref: '#/components/schemas/PortDef' }
+                outputPorts:
+                  type: array
+                  items: { $ref: '#/components/schemas/PortDef' }
+                resources:
+                  type: object
+                envVars:
+                  type: array
+                  items: { $ref: '#/components/schemas/EnvVarDef' }
+      responses:
+        '200':
+          description: Component updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineComponent' }
+        '404':
+          description: Component not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    delete:
+      tags: [Pipeline]
+      summary: Delete a pipeline component
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted successfully
+        '404':
+          description: Component not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  # ── Workflow monitoring ───────────────────────────────────────────
+  /api/v1/workflows:
+    get:
+      tags: [Pipeline]
+      summary: List all Argo workflows
+      description: Returns all Argo Workflows in the pipeline namespace.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Workflow list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/WorkflowSummary' }
+  /api/v1/workflows/{name}:
+    get:
+      tags: [Pipeline]
+      summary: Get workflow details
+      description: Returns full workflow details including node statuses.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowDetail' }
+        '404':
+          description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
 
