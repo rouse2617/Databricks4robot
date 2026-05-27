@@ -50,6 +50,7 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		core.eval,
 		core.action,
 		core.pipeline,
+		core.pipelineComponent,
 		core.query,
 		core.workflow,
 	)

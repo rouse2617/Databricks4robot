@@ -50,14 +50,14 @@ Pipeline 是 **Cyber Databrew 智算平台** 的核心编排层。用户把处�
 
 | # | 需求 | 优先级 | 备注 |
 |---|------|--------|------|
-| F1.1 | 注册组件：image + tag + 名称 + 描述 | P0 | 当前可手工注册到组件库侧边栏 |
-| F1.2 | 声明输入端口（输入源类型：asset / param / file） | P0 | transpiler 需要知道怎么传参数 |
-| F1.3 | 声明输出端口（输出的产物类型） | P0 | 用于后续资产注册和血缘记录 |
-| F1.4 | 声明资源需求（CPU / 内存 / GPU / 临时存储） | P0 | transpiler 生成 resources 字段 |
-| F1.5 | 声明环境变量（可透传 pipeline 级别的参数） | P1 | 减少镜像硬编码 |
-| F1.6 | 组件版本管理（迭代不影响已有 pipeline） | P1 | 类似 tag_registry / algo_registry |
-| F1.7 | 组件搜索/筛选 | P1 | 组件多了需要找 |
-| F1.8 | 组件来源标注（system / custom / marketplace） | P2 | 区分平台内置和用户自定义 |
+| F1.1 | 注册组件：image + tag + 名称 + 描述 | P0 | ✅ CYB-1264 |
+| F1.2 | 声明输入端口（输入源类型：asset / param / file） | P0 | ✅ CYB-1264 |
+| F1.3 | 声明输出端口（输出的产物类型） | P0 | ✅ CYB-1264 |
+| F1.4 | 声明资源需求（CPU / 内存 / GPU / 临时存储） | P0 | ✅ CYB-1264 |
+| F1.5 | 声明环境变量（可透传 pipeline 级别的参数） | P1 | ✅ CYB-1264 |
+| F1.6 | 组件版本管理（迭代不影响已有 pipeline） | P1 | 待加 |
+| F1.7 | 组件搜索/筛选 | P1 | 待加 |
+| F1.8 | 组件来源标注（system / custom / marketplace） | P2 | 默认 custom，system 待加 |
 
 **API 设计参考**：
 
@@ -132,8 +132,8 @@ POST   /api/v1/components/:id/versions 发布新版本
 | 资源限制 | ✅ |
 | 环境变量 | ✅ |
 | 依赖解析 | ✅ |
-| retryStrategy | ⚪ 待加 |
-| activeDeadlineSeconds | ⚪ 待加 |
+| retryStrategy | ✅ CYB-1262 |
+| activeDeadlineSeconds | ✅ CYB-1262 |
 | parallelism 限制 | ⚪ 待加 |
 | volume 挂载 | ⚪ 待加 |
 
@@ -341,10 +341,10 @@ backfill_items:          ← P1 新增
 
 | 功能 | 预计工作量 | 依赖 |
 |------|-----------|------|
-| F1 组件注册表 API + 前端管理页 | 后端 ~150 行 + 前端 ~200 行 | 无 |
-| F4.1 运行前选 asset | 前端 ~80 行 + transpiler ~50 行 | 无 |
-| F3.7 retryStrategy 配到 transpiler | transpiler ~30 行 | 无 |
-| F3.8 超时配置 | transpiler ~20 行 | 无 |
+| F1 组件注册表 API + 前端管理页 | 后端 ~150 行 + 前端 ~200 行 | 无 | ✅ CYB-1264 |
+| F4.1 运行前选 asset | 前端 ~80 行 + transpiler ~50 行 | 无 | ✅ CYB-1263 |
+| F3.7 retryStrategy 配到 transpiler | transpiler ~30 行 | 无 | ✅ CYB-1262 |
+| F3.8 超时配置 | transpiler ~20 行 | 无 | ✅ CYB-1262 |
 | F5.4/F5.5/F5.6 Step 操作（日志/重试/终止） | handler ~100 行 + 前端 ~150 行 | Argo API |
 | F6 Backfill 全套（表 + API + 前端进度） | ~400 行 | F4.1 |
 | F7.5 Template 版本管理 | ~80 行 | 无 |

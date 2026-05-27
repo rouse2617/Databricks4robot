@@ -4,6 +4,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
+	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
@@ -16,6 +17,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
+	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
@@ -90,10 +92,12 @@ func setupCore(inf *infra) *coreHandlers {
 		wfClient := k8s.NewArgoClient(kc.ArgoClientset)
 		puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, wfClient, inf.cfg.ArgoWorkflowsNamespace)
 		pipelineHandler = pipelineH.New(puc)
-	} else {
-		puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, nil, "")
-		pipelineHandler = pipelineH.New(puc)
 	}
+
+	// Pipeline component registry
+	pipelineComponentRepo := postgres.NewPipelineComponentRepo(pg)
+	pipelineComponentUC := pipelineComponentUC.New(pipelineComponentRepo)
+	pipelineComponentHandler := pipelineComponentH.New(pipelineComponentUC)
 
 	// ── Workflow monitoring ──
 	var workflowHandler *workflowH.Handler
@@ -112,7 +116,8 @@ func setupCore(inf *infra) *coreHandlers {
 		algoRun:      algoRunHandler,
 		eval:         evalHandler,
 		action:       actionHandler,
-		pipeline:     pipelineHandler,
+		pipeline:           pipelineHandler,
+			pipelineComponent:  pipelineComponentHandler,
 		query:        queryHandler,
 		workflow:     workflowHandler,
 		assetUC:      assetUsecase,

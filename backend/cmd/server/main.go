@@ -16,6 +16,7 @@ import (
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
+	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
@@ -78,8 +79,9 @@ type coreHandlers struct {
 	action       *actionH.Handler
 	query        *queryH.Handler
 	workflow     *workflowH.Handler
-	pipeline     *pipelineH.Handler
-	assetUC      *assetUC.Usecase
+	pipeline           *pipelineH.Handler
+	pipelineComponent  *pipelineComponentH.Handler
+	assetUC            *assetUC.Usecase
 }
 
 // optional holds components that are not required for the core API to function.

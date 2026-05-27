@@ -25,6 +25,7 @@ import (
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
+	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
@@ -58,6 +59,7 @@ func RegisterAll(
 	evalHandler *evalH.Handler,
 	actionHandler *actionH.Handler,
 	pipelineHandler *pipelineH.Handler,
+	pipelineComponentHandler *pipelineComponentH.Handler,
 	queryHandler *queryH.Handler,
 	workflowHandler *workflowH.Handler,
 ) {
@@ -313,6 +315,15 @@ func RegisterAll(
 			api.GET("/deployments", pipelineHandler.ListDeployments)
 			api.GET("/deployments/:id", pipelineHandler.GetDeployment)
 			api.DELETE("/deployments/:id", pipelineHandler.DeleteDeployment)
+		}
+
+		// Pipeline component registry
+		if pipelineComponentHandler != nil {
+			api.POST("/components", pipelineComponentHandler.CreateComponent)
+			api.GET("/components", pipelineComponentHandler.ListComponents)
+			api.GET("/components/:id", pipelineComponentHandler.GetComponent)
+			api.PUT("/components/:id", pipelineComponentHandler.UpdateComponent)
+			api.DELETE("/components/:id", pipelineComponentHandler.DeleteComponent)
 		}
 
 		// Workflow monitoring
