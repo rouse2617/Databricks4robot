@@ -28,55 +28,40 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (T-13 + OpenAPI sync)
+### What was done this cycle (2026-05-28 cycle 3) — Pipeline component usecase + workflow handler tests
 
-1. **T-13**: Display asset storage URI in asset picker + search index
-   - Backend: added `storage_uri` to search index document in `builder.go`
-   - Frontend: added `storage_uri` field to `SearchAssetHit` and `normalizeSearchHitToAsset`
-   - `DeployPanel.tsx`: new "存储路径" column (monospace, truncated at 40 chars, `—` fallback)
-   - `PipelinePage.tsx` deploy modal asset table: new "存储路径" column (monospace, truncated at 36 chars)
-   - Both columns reuse `storage_uri` from search index results
-   - Verified: `go build ./...` ✅, `npx tsc --noEmit` ✅, pipeline tests ✅
+1. **New test file**: `backend/internal/usecase/pipeline_component/usecase_test.go` (15 tests)
+   - `TestCreate`: basic creation, validates ID/ports/source defaults
+   - `TestCreate_EmptyList`: empty list on fresh repo
+   - `TestCreateAndList`: create 2 items, list all + filter by query
+   - `TestList_FilterBySource`: filter by system/custom source
+   - `TestGet_Existing` / `TestGet_NonExistent`: get lifecycle
+   - `TestUpdate_Existing` / `TestUpdate_NonExistent`: update lifecycle
+   - `TestDelete_Existing` / `TestDelete_NonExistent`: delete lifecycle
+   - `TestSeedSystemComponents_Empty` / `_Idempotent`: seeding behavior
+   - `TestCreate_WithExplicitSource`: preserves custom source
+   - `TestCreate_WithPorts`: preserves input/output port definitions
+   - `TestUpdate_PreservesCreatedAt`: update preserves original CreatedAt
 
-2. **OpenAPI sync**: Added all 17 missing pipeline/component/workflow endpoint definitions
+2. **New test file**: `backend/internal/handlers/workflow/handler_test.go` (7 tests)
+   - `TestListWorkflows_Empty`: empty response with items: []
+   - `TestListWorkflows_WithItems`: name, status, nodeCount in response
+   - `TestGetWorkflow_Success`: full workflow with nodes array
+   - `TestGetWorkflow_EmptyName`: Gin route matching for /workflows/
+   - `TestGetWorkflowLogs_Success`: logs returned via mock
+   - `TestGetWorkflowLogs_EmptyNodeId`: 400 without nodeId query param
+   - `TestGetWorkflowLogs_EmptyName`: 400 with empty name
 
-### What was done this cycle (2026-05-28 cycle 2) — Comprehensive usecase tests + bugfixes
-
-1. **New test file**: `backend/internal/usecase/pipeline/usecase_crud_test.go`
-   - 34 subtests across 10 test suites covering all non-Deploy usecase methods
-   - `TestSaveTemplate`: auto-incremented version, node count, zero nodes edge case
-   - `TestTemplateCRUD`: ListTemplates, GetTemplate, DeleteTemplate lifecycle
-   - `TestDeployByTemplateID`: existing template, missing template, name override
-   - `TestSaveFromDeployment`: creates template from deployment, custom name, missing deployment
-   - `TestListDeployments`: non-empty and empty list
-   - `TestDeploymentCRUD`: GetDeployment, nil for missing, DeleteDeployment
-   - `TestRegisterOutput`: output asset creation, event lineage, asset relations, missing deployment, auto-ID
-   - `TestGetLineage`: full lineage from events + deployment, no-events fallback
-   - `TestDiffTemplates`: identical diff, added/removed/modified nodes, added/removed edges, missing template error
-
-2. **Fixed mock implementations** in `usecase_test.go`:
-   - `mockTemplateRepo.Save` now populates `byID` map
-   - `mockTemplateRepo.FindAll` returns saved items
-   - `mockTemplateRepo.Delete` removes from map
-   - `mockDeploymentRepo.Save` populates `byID` map + `FindAll`/`FindByID`/`Delete` all work
-
-3. **Fixed 2 real type assertion bugs** in `usecase.go`:
-   - `GetLineage`: `_input_asset_ids` stored as `[]string` (from Deploy func) but asserted as `[]interface{}`
-   - `RegisterOutput`: same issue in relation writer lookup
-   - Both now handle both `[]string` and `[]interface{}` via type switch
-
-4. **Verified**: `go build ./...` ✅, `go test ./internal/usecase/pipeline/...` (34/34 PASS) ✅, `go test ./internal/transpiler/...` ✅, `npx tsc --noEmit` ✅
-   - 8 new schemas: PipelineTemplate, PipelineDeployment, PipelineComponent, PortDef, EnvVarDef, WorkflowSummary, WorkflowDetail, WorkflowNodeStatus
-   - Pipeline CRUD: POST/GET /pipelines, GET/DELETE /pipelines/:id, GET /pipelines/:id/versions
-   - Deploy: POST /deploy, POST /deploy/template/:id
-   - Deployments: GET /deployments, GET/DELETE /deployments/:id
-   - Components: POST/GET /components, GET/PUT/DELETE /components/:id
-   - Workflows: GET /workflows, GET /workflows/:name
-   - File: `api/openapi.yaml` (+538 lines)
+3. **Verified**: `go build ./...` ✅, `go test ./internal/usecase/pipeline_component/...` (15/15 PASS) ✅, `go test ./internal/handlers/workflow/...` (7/7 PASS) ✅, `go test ./internal/usecase/pipeline/...` ✅, `go test ./internal/transpiler/...` ✅, `npx tsc --noEmit` ✅
 
 ## What's next
 
-All pipeline-next-steps.md tasks complete (T-01~T-13). OpenAPI now covers 100% of registered pipeline endpoints.
+All pipeline-next-steps.md tasks complete (T-01~T-13). All pipeline-related packages now have test coverage:
+- `internal/usecase/pipeline` — 34 tests ✅
+- `internal/usecase/pipeline_component` — 15 tests ✅
+- `internal/handlers/workflow` — 7 tests ✅
+- `internal/handlers/pipeline` — 0 tests (could add next)
+- `internal/handlers/pipeline_component` — 0 tests (could add next)
 
 ## Non-Done DataBrew
 
