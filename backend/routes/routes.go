@@ -319,6 +319,8 @@ func RegisterAll(
 			api.GET("/deployments", pipelineHandler.ListDeployments)
 			api.GET("/deployments/:id", pipelineHandler.GetDeployment)
 			api.GET("/deployments/:id/resources", pipelineHandler.GetResourceUsage)
+			api.POST("/deployments/:id/retry", pipelineHandler.RetryDeployment)
+			api.POST("/deployments/:id/stop", pipelineHandler.StopDeployment)
 			api.POST("/deployments/:id/save-template", pipelineHandler.SaveFromDeployment)
 			api.DELETE("/deployments/:id", pipelineHandler.DeleteDeployment)
 			api.POST("/pipeline-assets", pipelineHandler.RegisterOutput)

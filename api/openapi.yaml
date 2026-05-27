@@ -3605,7 +3605,7 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/AffectedAsset' }
   # ── Pipeline ──────────────────────────────────────────────────────
-  /api/v1/pipelines/{id1}/diff/{id2}:
+  /api/v1/pipelines/{id}/diff/{id2}:
     get:
       tags: [Pipeline]
       summary: Compare two pipeline template versions
@@ -3614,7 +3614,7 @@ paths:
         between two pipeline templates identified by their IDs.
       parameters:
         - in: path
-          name: id1
+          name: id
           required: true
           schema:
             type: string
@@ -4151,6 +4151,63 @@ paths:
       responses:
         '204':
           description: Deleted successfully
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/deployments/{id}/retry:
+    post:
+      tags: [Pipeline]
+      summary: Retry a failed or stopped deployment
+      description: >
+        Retries a pipeline deployment by re-submitting the Argo workflow.
+        Only works on deployments with 'failed' or 'stopped' status.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Deployment ID
+      responses:
+        '201':
+          description: Deployment retried
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineDeployment' }
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/deployments/{id}/stop:
+    post:
+      tags: [Pipeline]
+      summary: Stop a running deployment
+      description: >
+        Stops a running pipeline deployment by terminating the underlying
+        Argo workflow. Only works on deployments with 'running' status.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Deployment ID
+      responses:
+        '200':
+          description: Workflow stopped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: workflow stopped
         '404':
           description: Deployment not found
           content:
