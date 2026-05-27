@@ -74,8 +74,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	}, []);
 
 	return (
-		<>
-			<Layout style={{ minHeight: "100vh" }}>
+		<Layout style={{ minHeight: "100vh" }}>
 				<Sider
 					width={siderWidth}
 					breakpoint="lg"
@@ -92,20 +91,19 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 					}}
 				>
 					{/* logo area */}
-					<div
-						role="button"
-						tabIndex={0}
+					<button
+						type="button"
 						style={{
 							height: 64,
 							display: "flex",
 							alignItems: "center",
 							paddingLeft: 24,
 							cursor: "pointer",
+							background: "none",
+							border: "none",
+							width: "100%",
 						}}
 						onClick={() => navigate("/dashboard")}
-						onKeyDown={(e) => {
-							if (e.key === "Enter") navigate("/dashboard");
-						}}
 					>
 						<img
 							src="/favicon.svg"
@@ -115,7 +113,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 						<Typography.Title level={5} style={{ margin: 0, color: "#fff" }}>
 							DataBrew
 						</Typography.Title>
-					</div>
+					</button>
 
 					{/* search */}
 					<div style={{ padding: "0 16px 12px" }}>
@@ -178,6 +176,5 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 					</Content>
 				</Layout>
 			</Layout>
-		</>
 	);
 }
