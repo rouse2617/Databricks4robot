@@ -20,7 +20,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './App.css';
-import type { Pipeline, Argument } from './types/pipeline';
+import type { Pipeline, Argument, PortDef } from './types/pipeline';
 import * as api from './api';
 
 // ── Types ────────────────────────────────────────────────────
@@ -34,6 +34,7 @@ interface RegisteredComponent {
   cpu: string;
   memory: string;
   disk: string;
+  inputPorts?: PortDef[];
 }
 
 const STORAGE_KEY = 'databrew-components';
@@ -84,6 +85,15 @@ let nodeCounter = 0;
 function createPipelineNode(comp: RegisteredComponent, x: number, y: number): Node {
   nodeCounter++;
   const id = `step-${nodeCounter}`;
+  // Pre-fill args from input port default values (F2.10).
+  const args: Argument[] = [...(comp.args || [])];
+  if (comp.inputPorts) {
+    for (const port of comp.inputPorts) {
+      if (port.default_value && !args.some((a) => a.name === port.name)) {
+        args.push({ name: port.name, value: port.default_value });
+      }
+    }
+  }
   return {
     id,
     type: 'pipelineStep',
@@ -92,7 +102,7 @@ function createPipelineNode(comp: RegisteredComponent, x: number, y: number): No
       label: comp.name,
       image: comp.image,
       command: comp.command,
-      args: comp.args || [],
+      args,
       cpu: comp.cpu,
       memory: comp.memory,
       disk: comp.disk,

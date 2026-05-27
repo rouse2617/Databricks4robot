@@ -6,13 +6,14 @@ import (
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	argowffake "github.com/argoproj/argo-workflows/v3/pkg/client/clientset/versioned/fake"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestArgoClient_CreateGetDeleteWorkflow(t *testing.T) {
 	fakeClientset := argowffake.NewSimpleClientset()
-	client := NewArgoClient(fakeClientset)
+	client := NewArgoClient(fakeClientset, k8sfake.NewSimpleClientset())
 	ctx := context.Background()
 	ns := "default"
 
@@ -63,7 +64,7 @@ func TestArgoClient_CreateGetDeleteWorkflow(t *testing.T) {
 
 func TestArgoClient_ListWorkflows(t *testing.T) {
 	fakeClientset := argowffake.NewSimpleClientset()
-	client := NewArgoClient(fakeClientset)
+	client := NewArgoClient(fakeClientset, k8sfake.NewSimpleClientset())
 	ctx := context.Background()
 	ns := "default"
 

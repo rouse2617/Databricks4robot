@@ -3,18 +3,23 @@ package transpiler
 // Pipeline is the top-level DAG definition.
 // It can be created by the UI (drag-and-drop) or hand-written (or AI-generated).
 type Pipeline struct {
-	Name    string `json:"name" yaml:"name"`
-	Version string `json:"version,omitempty" yaml:"version,omitempty"`
-	Nodes   []Node `json:"nodes" yaml:"nodes"`
-	Edges   []Edge `json:"edges" yaml:"edges"`
+	Name        string `json:"name" yaml:"name"`
+	Version     string `json:"version,omitempty" yaml:"version,omitempty"`
+	Parallelism int32  `json:"parallelism,omitempty" yaml:"parallelism,omitempty"` // max concurrent pods (0 = unlimited)
+	Nodes       []Node `json:"nodes" yaml:"nodes"`
+	Edges       []Edge `json:"edges" yaml:"edges"`
 }
 
 // Node is a single step in the pipeline.
+// When SubNodes is non-empty this node is a sub-graph (nested DAG).
 type Node struct {
-	ID        string    `json:"id" yaml:"id"`
-	Component Component `json:"component" yaml:"component"`
-	Inputs    []Port    `json:"inputs,omitempty" yaml:"inputs,omitempty"`
-	Outputs   []Port    `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	ID           string        `json:"id" yaml:"id"`
+	Component    Component     `json:"component" yaml:"component"`
+	Inputs       []Port        `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	Outputs      []Port        `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	SubNodes     []Node        `json:"sub_nodes,omitempty" yaml:"sub_nodes,omitempty"`
+	SubEdges     []Edge        `json:"sub_edges,omitempty" yaml:"sub_edges,omitempty"`
+	VolumeMounts []VolumeMount `json:"volume_mounts,omitempty" yaml:"volume_mounts,omitempty"`
 }
 
 // Component is a pipeline step backed by a container image.
@@ -54,6 +59,16 @@ type EnvVar struct {
 	Name  string `json:"name" yaml:"name"`
 	Value string `json:"value,omitempty" yaml:"value,omitempty"`
 	From  string `json:"from,omitempty" yaml:"from,omitempty"`
+}
+
+// VolumeMount describes a volume mount on a node's container.
+type VolumeMount struct {
+	Name      string `json:"name" yaml:"name"`
+	MountPath string `json:"mountPath" yaml:"mountPath"`
+	SubPath   string `json:"subPath,omitempty" yaml:"subPath,omitempty"`
+	ReadOnly  bool   `json:"readOnly,omitempty" yaml:"readOnly,omitempty"`
+	PVCName   string `json:"pvcName,omitempty" yaml:"pvcName,omitempty"`    // existing PVC
+	EmptyDir  bool   `json:"emptyDir,omitempty" yaml:"emptyDir,omitempty"`  // ephemeral volume
 }
 
 // Edge connects an output port of one node to an input port of another.

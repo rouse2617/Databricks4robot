@@ -38,6 +38,11 @@ export interface Port {
   type: string;
 }
 
+// PortDef extends Port with default value for component registry (F2.10).
+export interface PortDef extends Port {
+  default_value?: string;
+}
+
 export interface ResourceRequirements {
   cpu?: string;
   memory?: string;

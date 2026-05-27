@@ -16,7 +16,7 @@ import {
 	useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Button, Input, message, Modal, Typography } from "antd";
+import { Button, Input, message, Modal, Typography, Collapse, Table } from "antd";
 import {
 	PlayCircleOutlined,
 	SaveOutlined,
@@ -35,7 +35,10 @@ import type {
 	PipelineNodeData,
 } from "../components/pipeline/types";
 import { savePipeline, deployTemplate, type Deployment } from "../api/pipelineApi";
+import { searchApi } from "../api/search";
+import type { SearchAssetResult } from "../api/search";
 import { toTranspilerPipeline, fromTranspilerPipeline } from "../lib/pipelineContract";
+import { useNavigate } from "react-router-dom";
 
 import "../styles/pipeline.css";
 
@@ -82,6 +85,7 @@ function createPipelineNode(
 }
 
 function PipelineCanvas() {
+	const navigate = useNavigate();
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const [nodes, setNodes, onNodesChange] = useNodesState<Node<PipelineNodeData>>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -99,6 +103,11 @@ function PipelineCanvas() {
 		error?: string;
 	}>({ open: false, deploying: false, done: false, name: "" });
 	const [jsonOutput, setJsonOutput] = useState<string | null>(null);
+	// Asset selection for deploy modal
+	const [assetSearchResults, setAssetSearchResults] = useState<SearchAssetResult[]>([]);
+	const [assetSearching, setAssetSearching] = useState(false);
+	const [assetQuery, setAssetQuery] = useState("");
+	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 
 	useEffect(() => {
 		saveComponents(registeredComponents);
@@ -242,6 +251,9 @@ function PipelineCanvas() {
 			done: false,
 			name: pipelineName,
 		});
+		setAssetSearchResults([]);
+		setAssetQuery("");
+		setSelectedAssetIds([]);
 	}, [pipelineName]);
 
 	const closeDeployDialog = useCallback(() => {
@@ -253,13 +265,29 @@ function PipelineCanvas() {
 		});
 	}, []);
 
+	const handleAssetSearch = async (value: string) => {
+		if (!value.trim()) return;
+		setAssetSearching(true);
+		try {
+			const res = await searchApi.searchAssets({ q: value, page_size: 50 });
+			setAssetSearchResults(res.items);
+		} catch {
+			message.error("搜索资产失败");
+		} finally {
+			setAssetSearching(false);
+		}
+	};
+
 	const handleDeploy = useCallback(async () => {
 		setDeployDialog((prev) => ({ ...prev, deploying: true, done: false }));
 		try {
 			const pipeline = buildPipelineJSON();
 			const name = deployDialog.name || pipelineName;
 			const saved = await savePipeline(name, pipeline);
-			const result = await deployTemplate(saved.id);
+			const result = await deployTemplate(
+				saved.id,
+				selectedAssetIds.length > 0 ? selectedAssetIds : undefined,
+			);
 			setDeployDialog((prev) => ({
 				...prev,
 				deploying: false,
@@ -274,7 +302,7 @@ function PipelineCanvas() {
 				error: String(err),
 			}));
 		}
-	}, [buildPipelineJSON, deployDialog.name, pipelineName]);
+	}, [buildPipelineJSON, deployDialog.name, pipelineName, selectedAssetIds]);
 
 	return (
 		<div
@@ -511,6 +539,53 @@ function PipelineCanvas() {
 								<span style={{ fontSize: 3, color: "#cbd5e1" }}>•</span>
 								<span>{edges.length} 条连线</span>
 							</div>
+							<Collapse
+								ghost
+								size="small"
+								items={[
+									{
+										key: "assets",
+										label: (
+											<span style={{ fontSize: 12, color: "#64748b" }}>
+												高级：绑定资产（可选）
+											</span>
+										),
+										children: (
+											<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+												<Input.Search
+													placeholder="搜索资产（输入 asset_id 或名称）"
+													onSearch={handleAssetSearch}
+													loading={assetSearching}
+													size="small"
+												/>
+												{assetSearchResults.length > 0 ? (
+													<Table
+														rowKey="asset_id"
+														dataSource={assetSearchResults}
+														size="small"
+														pagination={false}
+														scroll={{ y: 180 }}
+														rowSelection={{
+															type: "checkbox",
+															selectedRowKeys: selectedAssetIds,
+															onChange: (keys) => setSelectedAssetIds(keys as string[]),
+														}}
+														columns={[
+															{ title: "Asset ID", dataIndex: "asset_id", width: 120 },
+															{ title: "类型", dataIndex: "asset_type", width: 80 },
+															{ title: "状态", dataIndex: "lifecycle_state", width: 80 },
+														]}
+													/>
+												) : (
+													<div style={{ color: "#999", textAlign: "center", padding: 12, fontSize: 12 }}>
+														{assetQuery ? "未找到匹配的资产" : "输入关键字搜索资产，不选择则直接部署"}
+													</div>
+												)}
+											</div>
+										),
+									},
+								]}
+							/>
 						</div>
 						<div
 							style={{
@@ -590,7 +665,16 @@ function PipelineCanvas() {
 										).toLocaleString()}
 									</span>
 								</div>
-								<div style={{ marginTop: 16 }}>
+								<div style={{ marginTop: 16, display: "flex", gap: 8, justifyContent: "center" }}>
+									<Button
+										type="primary"
+										onClick={() => {
+											closeDeployDialog();
+											navigate("/workflows/" + deployDialog.result!.workflowName);
+										}}
+									>
+										查看 Workflow
+									</Button>
 									<Button
 										onClick={() => {
 											setView("deploy");
@@ -601,7 +685,6 @@ function PipelineCanvas() {
 									</Button>
 									<Button
 										onClick={closeDeployDialog}
-										style={{ marginLeft: 8 }}
 									>
 										关闭
 									</Button>

@@ -33,9 +33,11 @@ func (h *Handler) CreateComponent(c *gin.Context) {
 	c.JSON(201, created)
 }
 
-// ListComponents handles GET /api/v1/components.
+// ListComponents handles GET /api/v1/components?q=&source=.
 func (h *Handler) ListComponents(c *gin.Context) {
-	items, err := h.uc.List(c.Request.Context())
+	q := strings.TrimSpace(c.Query("q"))
+	source := strings.TrimSpace(c.Query("source"))
+	items, err := h.uc.List(c.Request.Context(), q, source)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return

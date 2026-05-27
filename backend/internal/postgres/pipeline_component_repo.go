@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -97,13 +98,31 @@ func (r *PipelineComponentRepo) Save(ctx context.Context, pc *models.PipelineCom
 	return nil
 }
 
-// FindAll returns all pipeline components ordered by name.
-func (r *PipelineComponentRepo) FindAll(ctx context.Context) ([]models.PipelineComponent, error) {
+// FindAll returns all pipeline components ordered by name, with optional search/filter.
+func (r *PipelineComponentRepo) FindAll(ctx context.Context, filter *repository.ComponentFilter) ([]models.PipelineComponent, error) {
 	q := `SELECT ` + pipelineComponentSelectCols + `
-	FROM pipeline_components
-	ORDER BY name ASC`
+	FROM pipeline_components`
+	var args []any
+	var conditions []string
+	argIdx := 0
+	if filter != nil {
+		if filter.Query != "" {
+			argIdx++
+			conditions = append(conditions, fmt.Sprintf(`name ILIKE $%d`, argIdx))
+			args = append(args, "%"+filter.Query+"%")
+		}
+		if filter.Source != "" {
+			argIdx++
+			conditions = append(conditions, fmt.Sprintf(`source = $%d`, argIdx))
+			args = append(args, filter.Source)
+		}
+	}
+	if len(conditions) > 0 {
+		q += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	q += ` ORDER BY name ASC`
 	db := dbFromCtx(ctx, r.c.db)
-	rows, err := db.Query(ctx, q)
+	rows, err := db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("postgres PipelineComponentRepo.FindAll: %w", err)
 	}

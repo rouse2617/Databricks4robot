@@ -12,6 +12,7 @@
 | [pipeline-qa-report.md](./pipeline-qa-report.md) | 全功能测试矩阵、用户旅程、缺陷 ID |
 | [pipeline-frontend-guide.md](./pipeline-frontend-guide.md) | 前端 JSON 契约、Phase A/B/C 实施步骤 |
 | [pipeline-requirements.md](./pipeline-requirements.md) | 产品需求真源 |
+| **[pipeline-next-steps.md](./pipeline-next-steps.md)** | **开发实施指南（下一步怎么做）** |
 | [CYB-1254 design](../openspec/changes/CYB-1254-pipeline-integration/design.md) | 集成架构 |
 
 ---

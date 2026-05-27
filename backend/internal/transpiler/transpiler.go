@@ -28,6 +28,9 @@ type Options struct {
 	RetryStrategy        *RetryStrategy
 	ActiveDeadlineSeconds int64
 	WorkflowParams       []Param // workflow-level parameters (e.g. asset_ids)
+	// GlobalEnv are environment variables injected into every node container (e.g. asset paths).
+	GlobalEnv            []corev1.EnvVar
+	ExtraVolumes         []corev1.Volume // additional workflow-level volumes
 }
 
 // RetryStrategy defines automatic retry policy for each step.
@@ -76,6 +79,11 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 		wf.Spec.ImagePullSecrets = append(wf.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: s})
 	}
 
+	if p.Parallelism > 0 {
+		v := int64(p.Parallelism)
+		wf.Spec.Parallelism = &v
+	}
+
 	// Workflow-level parameters (e.g. asset_ids passed at deploy time)
 	if len(opts.WorkflowParams) > 0 {
 		var params []wfv1.Parameter
@@ -91,21 +99,75 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	// Build node input specs: for each node, which input params come from where
 	nodeInputs := buildInputSpecs(p)
 	nodeTemplates := make(map[string]string)
-
+	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, opts)
+	if err != nil {
+		return nil, fmt.Errorf("build node templates: %w", err)
+	}
+	for _, tmpl := range allTmpls {
+		wf.Spec.Templates = append(wf.Spec.Templates, tmpl)
+	}
 	for _, node := range p.Nodes {
-		tmpl := buildNodeTemplate(node, nodeInputs[node.ID], opts)
-		nodeTemplates[node.ID] = tmpl.Name
-		wf.Spec.Templates = append(wf.Spec.Templates, *tmpl)
+		nodeTemplates[node.ID] = templateName(node.ID)
 	}
 
 	dagTmpl := buildDAGTemplate(p.Nodes, p.Edges, nodeTemplates, nodeInputs)
 	wf.Spec.Templates = append(wf.Spec.Templates, *dagTmpl)
 
-	wf.Spec.Volumes = []corev1.Volume{
-		{Name: "temp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-	}
+	wf.Spec.Volumes = buildWorkflowVolumes(p.Nodes, opts.ExtraVolumes)
 
 	return wf, nil
+}
+
+// buildWorkflowVolumes collects volume declarations from node volume mounts and extra volumes.
+func buildWorkflowVolumes(nodes []Node, extra []corev1.Volume) []corev1.Volume {
+	seen := make(map[string]bool)
+	var vols []corev1.Volume
+	for _, v := range extra {
+		if !seen[v.Name] {
+			vols = append(vols, v)
+			seen[v.Name] = true
+		}
+	}
+	// Collect volumes from all nodes (including sub-graph nodes).
+	var collect func(nodes []Node)
+	collect = func(ns []Node) {
+		for _, n := range ns {
+			for _, vm := range n.VolumeMounts {
+				if seen[vm.Name] {
+					continue
+				}
+				if vm.EmptyDir {
+					vols = append(vols, corev1.Volume{
+						Name: vm.Name,
+						VolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
+						},
+					})
+					seen[vm.Name] = true
+				} else if vm.PVCName != "" {
+					vols = append(vols, corev1.Volume{
+						Name: vm.Name,
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: vm.PVCName,
+								ReadOnly:  vm.ReadOnly,
+							},
+						},
+					})
+					seen[vm.Name] = true
+				}
+			}
+			if len(n.SubNodes) > 0 {
+				collect(n.SubNodes)
+			}
+		}
+	}
+	collect(nodes)
+	// Always include a temp emptyDir for scratch space.
+	if !seen["temp"] {
+		vols = append(vols, corev1.Volume{Name: "temp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
+	}
+	return vols
 }
 
 // buildInputSpecs collects all input parameter specs from edges and arg.From references.
@@ -114,6 +176,9 @@ func buildInputSpecs(p *Pipeline) map[string][]inputSpec {
 	for _, edge := range p.Edges {
 		targetNode, targetPort := edge.ResolveTarget()
 		srcNode, srcPort := edge.ResolveSource()
+		if targetPort == "" {
+			continue
+		}
 		m[targetNode] = append(m[targetNode], inputSpec{
 			paramName: safeParamName(targetPort),
 			srcNode:   srcNode,
@@ -173,9 +238,9 @@ func buildInputSpecs(p *Pipeline) map[string][]inputSpec {
 	return m
 }
 
-// buildNodeTemplate creates a Container template. Input params are name-only —
+// buildContainerTemplate creates a Container template. Input params are name-only —
 // actual values come from DAG task arguments.
-func buildNodeTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Template {
+func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -272,6 +337,23 @@ func buildNodeTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Templ
 	if len(envVars) > 0 {
 		tmpl.Container.Env = envVars
 	}
+	// Volume mounts
+	if len(node.VolumeMounts) > 0 {
+		var volMounts []corev1.VolumeMount
+		for _, vm := range node.VolumeMounts {
+			volMounts = append(volMounts, corev1.VolumeMount{
+				Name:      vm.Name,
+				MountPath: vm.MountPath,
+				SubPath:   vm.SubPath,
+				ReadOnly:  vm.ReadOnly,
+			})
+		}
+		tmpl.Container.VolumeMounts = volMounts
+	}
+	// GlobalEnv (asset IDs, deployment ID, etc.) injected into every container.
+	if len(opts.GlobalEnv) > 0 {
+		tmpl.Container.Env = append(tmpl.Container.Env, opts.GlobalEnv...)
+	}
 
 	// Retry strategy
 	if opts.RetryStrategy != nil && opts.RetryStrategy.Limit > 0 {
@@ -336,6 +418,56 @@ func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]strin
 		Name: "dag",
 		DAG:  &wfv1.DAGTemplate{Tasks: tasks},
 	}
+}
+
+// buildAllNodeTemplates recursively builds templates for a list of nodes.
+// For container nodes returns 1 template; for sub-graph nodes returns N+1
+// templates (1 DAG template + N leaf templates for sub-nodes).
+func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, opts *Options) ([]wfv1.Template, error) {
+	var all []wfv1.Template
+	for _, node := range nodes {
+		tms, err := buildNodeTemplates(node, inputs[node.ID], opts)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, tms...)
+	}
+	return all, nil
+}
+
+// buildNodeTemplates returns all templates for a single node.
+// For sub-graph nodes this recursively includes sub-node templates.
+func buildNodeTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
+	if len(node.SubNodes) > 0 {
+		return buildSubGraphTemplates(node, inputs, opts)
+	}
+	return []wfv1.Template{*buildContainerTemplate(node, inputs, opts)}, nil
+}
+
+// buildSubGraphTemplates builds templates for a sub-graph node.
+// Returns container templates for sub-nodes plus the DAG template.
+func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
+	subPipe := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
+	subInputs := buildInputSpecs(subPipe)
+
+	var templates []wfv1.Template
+	for _, subNode := range node.SubNodes {
+		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], opts)
+		if err != nil {
+			return nil, err
+		}
+		templates = append(templates, tms...)
+	}
+
+	subTemplateNames := make(map[string]string)
+	for _, subNode := range node.SubNodes {
+		subTemplateNames[subNode.ID] = templateName(subNode.ID)
+	}
+
+	dagTmpl := buildDAGTemplate(node.SubNodes, node.SubEdges, subTemplateNames, subInputs)
+	dagTmpl.Name = templateName(node.ID)
+	templates = append(templates, *dagTmpl)
+	return templates, nil
 }
 
 // --- helpers ---

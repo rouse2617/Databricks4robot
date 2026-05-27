@@ -9,16 +9,18 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
 
 	// Load default auth providers (gcp, oidc, etc.)
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 )
 
-// Client holds K8s and Argo Workflow clientsets along with the target namespace.
+// Client holds K8s, Argo Workflow, and Metrics clientsets.
 type Client struct {
-	Namespace      string
-	KubeClientset  kubernetes.Interface
-	ArgoClientset  argowfclientset.Interface
+	Namespace       string
+	KubeClientset   kubernetes.Interface
+	ArgoClientset   argowfclientset.Interface
+	MetricsClientset metricsclientset.Interface
 }
 
 // NewClient creates a Client by loading a rest.Config from the given kubeconfig
@@ -40,10 +42,16 @@ func NewClient(kubeconfigPath, namespace string) (*Client, error) {
 		return nil, fmt.Errorf("create argo workflow clientset: %w", err)
 	}
 
+	metricsClientset, err := metricsclientset.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("create metrics clientset: %w", err)
+	}
+
 	return &Client{
-		Namespace:     namespace,
-		KubeClientset: kubeClientset,
-		ArgoClientset: argoClientset,
+		Namespace:        namespace,
+		KubeClientset:    kubeClientset,
+		ArgoClientset:    argoClientset,
+		MetricsClientset: metricsClientset,
 	}, nil
 }
 

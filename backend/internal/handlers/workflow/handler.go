@@ -106,3 +106,19 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 	}
 	c.JSON(200, resp)
 }
+
+// GetWorkflowLogs handles GET /api/v1/workflows/:name/logs?nodeId=xxx
+func (h *Handler) GetWorkflowLogs(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	nodeId := strings.TrimSpace(c.Query("nodeId"))
+	if name == "" || nodeId == "" {
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow name and nodeId are required", nil)
+		return
+	}
+	logs, err := h.wfClient.GetWorkflowLogs(c.Request.Context(), name, nodeId, h.namespace)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"logs": logs})
+}

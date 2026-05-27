@@ -48,6 +48,8 @@ tags:
     description: Internal service-to-service endpoints
   - name: Infrastructure
     description: Health check, readiness, metrics, version info
+  - name: Pipeline
+    description: Pipeline orchestration (Argo Workflows)
 components:
   securitySchemes:
     DatabrewToken:
@@ -3507,3 +3509,266 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/AffectedAsset' }
+  # ── Pipeline ──────────────────────────────────────────────────────
+  /api/v1/pipelines/{id1}/diff/{id2}:
+    get:
+      tags: [Pipeline]
+      summary: Compare two pipeline template versions
+      description: >
+        Returns a structural diff (added/removed/modified nodes and edges)
+        between two pipeline templates identified by their IDs.
+      parameters:
+        - in: path
+          name: id1
+          required: true
+          schema:
+            type: string
+          description: First pipeline template ID
+        - in: path
+          name: id2
+          required: true
+          schema:
+            type: string
+          description: Second pipeline template ID
+      responses:
+        '200':
+          description: Structural diff
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  added_nodes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        component: { type: object }
+                        inputs: { type: array, items: { type: object } }
+                        outputs: { type: array, items: { type: object } }
+                  removed_nodes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                  modified_nodes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                  added_edges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source: { type: string }
+                        target: { type: string }
+                  removed_edges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source: { type: string }
+                        target: { type: string }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/deployments/{id}/resources:
+    get:
+      tags: [Pipeline]
+      summary: Get pod-level resource usage for a deployment
+      description: >
+        Returns CPU/memory actual usage (from K8s Metrics API) vs requests/limits
+        (from pod spec) for each pod belonging to a workflow deployment.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Pipeline deployment ID
+      responses:
+        '200':
+          description: Resource usage report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deployment_id:
+                    type: string
+                  workflow_name:
+                    type: string
+                  status:
+                    type: string
+                  pods:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        pod_name:
+                          type: string
+                        node_name:
+                          type: string
+                        cpu_usage:
+                          type: string
+                        memory_usage:
+                          type: string
+                        cpu_request:
+                          type: string
+                        memory_request:
+                          type: string
+                        cpu_limit:
+                          type: string
+                        memory_limit:
+                          type: string
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/v1/deployments/{id}/save-template:
+    post:
+      tags: [Pipeline]
+      summary: Save deployment as a new pipeline template
+      description: >
+        Creates a new pipeline template from a deployment's pipeline JSON,
+        allowing users to reuse a successful run's configuration.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Pipeline deployment ID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Optional template name (defaults to pipeline name + "-from-deployment")
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  version: { type: integer }
+                  node_count: { type: integer }
+                  created_at: { type: string }
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/v1/pipeline-assets:
+    post:
+      tags: [Pipeline]
+      summary: Register a pipeline step output as a new asset
+      description: >
+        Called by pipeline containers to register processing results as
+        new assets for lineage tracing. The deployment_id is injected as
+        the PIPELINE_DEPLOYMENT_ID environment variable.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deployment_id, storage_uri]
+              properties:
+                deployment_id:
+                  type: string
+                  description: Pipeline deployment ID
+                node_id:
+                  type: string
+                  description: Pipeline step node ID
+                asset_id:
+                  type: string
+                  description: Optional caller-chosen asset ID (auto-generated if empty)
+                storage_uri:
+                  type: string
+                  description: URI of the output data (e.g. gs://bucket/path)
+                asset_type:
+                  type: string
+                  description: Asset type (e.g. image, video, pointcloud)
+                files:
+                  type: object
+                  description: File mapping (name -> URI)
+                  additionalProperties:
+                    type: string
+                metadata:
+                  type: object
+                  description: Arbitrary metadata
+      responses:
+        '201':
+          description: Asset registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/assets/{id}/pipeline-lineage:
+    get:
+      tags: [Pipeline]
+      summary: Get pipeline lineage for an asset
+      description: >
+        Returns which pipeline run and step produced the asset, plus its
+        input assets. Queries asset_events for pipeline_output records.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: Asset ID
+      responses:
+        '200':
+          description: Lineage info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  asset_id:
+                    type: string
+                  deployment_id:
+                    type: string
+                  pipeline_name:
+                    type: string
+                  workflow_name:
+                    type: string
+                  node_id:
+                    type: string
+                  input_assets:
+                    type: array
+                    items:
+                      type: string
+                  produced_at:
+                    type: string
+                    format: date-time
+

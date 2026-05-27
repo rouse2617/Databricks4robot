@@ -16,6 +16,7 @@ function argoAssetsPlugin(): Plugin {
 }
 
 export default defineConfig({
+  base: '/argo/',
   plugins: [argoAssetsPlugin(), react()],
   define: {
     'process.env.DEFAULT_TZ': JSON.stringify('UTC'),
@@ -54,7 +55,7 @@ export default defineConfig({
     preprocessorOptions: {
       scss: {
         // Absolute font URLs so icons work under /workflows/* routes (not /workflows/assets/...).
-        additionalData: `$fa-font-path: "/assets/fonts";\n$argo-icon-fonts-root: "/assets/fonts/";\n`,
+        additionalData: `$fa-font-path: "/argo/assets/fonts";\n$argo-icon-fonts-root: "/argo/assets/fonts/";\n`,
         silenceDeprecations: ['legacy-js-api', 'mixed-decls'],
         loadPaths: ['.'],
       },

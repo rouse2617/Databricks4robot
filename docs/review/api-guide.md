@@ -2163,3 +2163,152 @@ curl -X POST "$BASE/api/v1/deliveries" \
   -H "Idempotency-Key: delivery-$(date +%s)" \
   -d "{\"asset_ids\":[\"$ASSET_ID\"],\"customer_id\":\"cust-001\"}"
 ```
+
+
+## 11. Pipeline 编排
+
+### 组件注册表（F1）
+
+组件注册表管理可拖拽的 pipeline 组件（Docker 镜像）。
+
+```bash
+# 列出组件（支持搜索/筛选）
+curl -s "$BASE/api/v1/components" \
+  -H "X-Databrew-Token: $TOKEN"
+# 按名称搜索: ?q=processor
+# 按来源筛选: ?source=custom|system
+# 组合: ?q=processor&source=custom
+
+# 响应: {"items": [{...}, ...]}
+
+# 创建组件
+curl -X POST "$BASE/api/v1/components" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-processor",
+    "description": "My processing component",
+    "image": "registry.example.com/my-processor",
+    "tag": "v1",
+    "inputPorts": [{"name": "input", "type": "asset"}],
+    "outputPorts": [{"name": "output", "type": "asset"}],
+    "resources": {"cpu": "500m", "memory": "256Mi"}
+  }'
+# 响应: 201 + Component 对象
+
+# 获取组件详情
+curl -s "$BASE/api/v1/components/<ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 更新组件
+curl -X PUT "$BASE/api/v1/components/<ID>" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name": "...", "image": "...", ...}'
+
+# 删除组件
+curl -X DELETE "$BASE/api/v1/components/<ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+# 响应: 204
+```
+
+### Pipeline 版本对比（F2.12）
+
+对比两个 pipeline template 版本的 node 和 edge 差异。
+
+```bash
+curl -s "$BASE/api/v1/pipelines/<ID1>/diff/<ID2>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "added_nodes": [{"id": "new-step", "component": {"name": "...", "image": "..."}}],
+#   "removed_nodes": [{"id": "old-step"}],
+#   "modified_nodes": [{"id": "changed-step", "component": {"name": "...", "image": "..."}}],
+#   "added_edges": [{"source": "a.out", "target": "b.in"}],
+#   "removed_edges": [{"source": "c.out", "target": "d.in"}]
+# }
+# 404: template 不存在
+```
+
+### 查询资源使用量（F5.8）
+
+查询 workflow 各 pod 的 CPU/Mem 实际使用 vs request/limit。
+
+```bash
+curl -s "$BASE/api/v1/deployments/<DEPLOYMENT_ID>/resources" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "deployment_id": "dep-123",
+#   "workflow_name": "my-pipeline-a1b2c3",
+#   "status": "Running",
+#   "pods": [
+#     {
+#       "pod_name": "my-pipeline-a1b2c3-step-process-12345",
+#       "cpu_usage": "125m",
+#       "memory_usage": "64Mi",
+#       "cpu_request": "500m",
+#       "memory_request": "256Mi",
+#       "cpu_limit": "1000m",
+#       "memory_limit": "512Mi"
+#     }
+#   ]
+# }
+# 404: deployment 不存在
+```
+
+### 从部署记录保存为 Template（F7.8）
+
+把一次 deployment 的 pipeline 配置保存为新 template。
+
+```bash
+curl -X POST "$BASE/api/v1/deployments/<DEPLOYMENT_ID>/save-template" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name": "my-saved-template"}'
+
+# 响应: 201 + Template 对象
+# name 可选，默认 pipeline_name + "-from-deployment"
+# 404: deployment 不存在
+```
+
+### 注册 Pipeline 产出资产（F4.3）
+
+Pipeline 容器处理完数据后，通过回调 API 注册产出资产。
+
+```bash
+# 容器内部：PIPELINE_DEPLOYMENT_ID 由平台自动注入
+curl -X POST "$BASE/api/v1/pipeline-assets" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "deployment_id": "'"$PIPELINE_DEPLOYMENT_ID"'",
+    "node_id": "step-processor",
+    "asset_id": "",
+    "storage_uri": "gs://bucket/output/result.png",
+    "asset_type": "image",
+    "files": {"result": "gs://bucket/output/result.png"},
+    "metadata": {"resolution": "1920x1080"}
+  }'
+
+# 正常响应: 201 + Asset 对象
+# 404: deployment_id 不存在
+```
+
+### 查询产出血缘（F4.5）
+
+从 asset 追溯是哪个 pipeline 的哪次 run 产生的。
+
+```bash
+curl -s "$BASE/api/v1/assets/<ASSET_ID>/pipeline-lineage" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "asset_id": "aset0001",
+#   "deployment_id": "abc-123",
+#   "pipeline_name": "my-pipeline",
+#   "workflow_name": "my-pipeline-a1b2c3",
+#   "node_id": "step-processor",
+#   "input_assets": ["input-001", "input-002"],
+#   "produced_at": "2026-05-27T12:00:00Z"
+# }
+```

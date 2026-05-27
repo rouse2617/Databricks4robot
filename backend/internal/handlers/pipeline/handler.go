@@ -86,9 +86,9 @@ func (h *Handler) DeleteTemplate(c *gin.Context) {
 	c.Status(204)
 }
 
-// ListVersions handles GET /api/v1/pipelines/:name/versions.
+// ListVersions handles GET /api/v1/pipelines/:id/versions.
 func (h *Handler) ListVersions(c *gin.Context) {
-	name := strings.TrimSpace(c.Param("name"))
+	name := strings.TrimSpace(c.Param("id"))
 	if name == "" {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "name is required", nil)
 		return
@@ -201,4 +201,146 @@ func mapDeployError(c *gin.Context, err error) {
 		return
 	}
 	httpresp.Internal(c, err.Error())
+}
+
+// RetryDeployment handles POST /api/v1/deployments/:id/retry.
+func (h *Handler) RetryDeployment(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	dep, err := h.uc.RetryDeployment(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(201, dep)
+}
+
+// StopDeployment handles POST /api/v1/deployments/:id/stop.
+func (h *Handler) StopDeployment(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	if err := h.uc.StopDeployment(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"message": "workflow stopped"})
+}
+
+// SaveFromDeployment handles POST /api/v1/deployments/:id/save-template.
+func (h *Handler) SaveFromDeployment(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "deployment id is required", nil)
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	t, err := h.uc.SaveFromDeployment(c.Request.Context(), id, req.Name)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(201, t)
+}
+
+// GetResourceUsage handles GET /api/v1/deployments/:id/resources.
+func (h *Handler) GetResourceUsage(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "deployment id is required", nil)
+		return
+	}
+
+	report, err := h.uc.GetResourceUsage(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, report)
+}
+
+// DiffTemplates handles GET /api/v1/pipelines/:id1/diff/:id2.
+func (h *Handler) DiffTemplates(c *gin.Context) {
+	id1 := strings.TrimSpace(c.Param("id"))
+	id2 := strings.TrimSpace(c.Param("id2"))
+	if id1 == "" || id2 == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "both id1 and id2 are required", nil)
+		return
+	}
+
+	diff, err := h.uc.DiffTemplates(c.Request.Context(), id1, id2)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrTemplateNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, diff)
+}
+
+// RegisterOutput handles POST /api/v1/pipeline-assets.
+// Pipeline containers call back to register processing results as new assets.
+func (h *Handler) RegisterOutput(c *gin.Context) {
+	var req pipelineUC.RegisterPipelineOutputInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if req.DeploymentID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "deployment_id is required", nil)
+		return
+	}
+	asset, err := h.uc.RegisterOutput(c.Request.Context(), req)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(201, asset)
+}
+
+// GetLineage handles GET /api/v1/assets/:id/pipeline-lineage.
+func (h *Handler) GetLineage(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset id is required", nil)
+		return
+	}
+	lineage, err := h.uc.GetLineage(c.Request.Context(), id)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, lineage)
 }

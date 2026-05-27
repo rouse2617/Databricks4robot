@@ -192,3 +192,41 @@ func TestTranspileWorkflowParams(t *testing.T) {
 		t.Fatalf("params = %v, want [asset_ids threshold]", names)
 	}
 }
+
+func TestTranspileParallelism(t *testing.T) {
+	p := &Pipeline{
+		Name:        "parallel-test",
+		Parallelism: 3,
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{Name: "n", Image: "busybox:latest"},
+		}},
+	}
+	wf, err := Transpile(p, &Options{Name: "parallel-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.Parallelism == nil {
+		t.Fatal("expected Parallelism to be set")
+	}
+	if *wf.Spec.Parallelism != 3 {
+		t.Fatalf("Parallelism = %d, want 3", *wf.Spec.Parallelism)
+	}
+}
+
+func TestTranspileParallelismZero(t *testing.T) {
+	p := &Pipeline{
+		Name: "no-parallel-limit",
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{Name: "n", Image: "busybox:latest"},
+		}},
+	}
+	wf, err := Transpile(p, &Options{Name: "no-parallel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf.Spec.Parallelism != nil {
+		t.Fatal("expected Parallelism to be nil when not set")
+	}
+}

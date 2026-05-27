@@ -18,6 +18,7 @@ import {
   Position,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import dagre from 'dagre';
 import type { Pipeline, PipelineNode, Argument } from './types';
 import * as api from './api';
 import { NodeConfig } from './NodeConfigPanel';
@@ -358,6 +359,37 @@ export function PipelineCanvas() {
     setJsonOutput(null);
   }, [setNodes, setEdges]);
 
+  const autoLayout = useCallback(() => {
+    setNodes((nds) => {
+      if (nds.length === 0) return nds;
+      const g = new dagre.graphlib.Graph();
+      g.setDefaultEdgeLabel(() => ({}));
+      g.setGraph({ rankdir: 'LR', nodesep: 50, ranksep: 80, marginx: 40, marginy: 40 });
+
+      const nodeWidth = 200;
+      const nodeHeight = 80;
+
+      nds.forEach((n) => g.setNode(n.id, { width: nodeWidth, height: nodeHeight }));
+      setEdges((eds) => {
+        eds.forEach((e) => g.setEdge(e.source, e.target));
+        return eds;
+      });
+      dagre.layout(g);
+
+      return nds.map((n) => {
+        const dagreNode = g.node(n.id);
+        if (!dagreNode) return n;
+        return {
+          ...n,
+          position: {
+            x: dagreNode.x - nodeWidth / 2,
+            y: dagreNode.y - nodeHeight / 2,
+          },
+        };
+      });
+    });
+  }, [setNodes, setEdges]);
+
   // ── Deploy ─────────────────────────────────────────────
 
   const openDeployDialog = useCallback(() => {
@@ -470,6 +502,7 @@ export function PipelineCanvas() {
               <button className="terminal-btn" onClick={handleSaveTemplate}>Save</button>
               <button className="terminal-btn" onClick={exportPipeline}>Export</button>
               <button className="terminal-btn" onClick={importPipeline}>Import</button>
+              <button className="terminal-btn" onClick={autoLayout}>Layout</button>
               <button className="terminal-btn danger" onClick={clearCanvas}>Clear</button>
             </div>
           </>

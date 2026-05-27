@@ -1,4 +1,4 @@
-import { Button, Tag, message, Modal, Input, Table, Dropdown, Space } from "antd";
+import { Button, Tag, message, Modal, Input, Table, Dropdown, Space, Alert } from "antd";
 import { useEffect, useState, useCallback } from "react";
 import {
 	getPipeline,
@@ -224,7 +224,7 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 
 			{/* Asset selection modal */}
 			<Modal
-				title="选择处理资产"
+				title="可选：绑定处理资产"
 				open={assetModalOpen}
 				onCancel={() => setAssetModalOpen(false)}
 				onOk={handleDeployConfirm}
@@ -232,6 +232,12 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 				okText="部署"
 				width={640}
 			>
+				<Alert
+					type="info"
+					message="不选择则直接部署，不注入资产环境变量。"
+					showIcon
+					style={{ marginBottom: 16, fontSize: 12 }}
+				/>
 				<Input.Search
 					placeholder="搜索资产（输入 asset_id 或名称）"
 					onSearch={handleAssetSearch}

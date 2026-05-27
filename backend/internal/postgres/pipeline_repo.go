@@ -68,16 +68,17 @@ func (r *PipelineTemplateRepo) Save(ctx context.Context, t *models.PipelineTempl
 	}
 
 	const q = `
-INSERT INTO pipeline_templates (id, name, pipeline, node_count, created_at, updated_at)
-VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+INSERT INTO pipeline_templates (id, name, version, pipeline, node_count, created_at, updated_at)
+VALUES ($1, $2, $7, $3::jsonb, $4, $5, $6)
 ON CONFLICT (id) DO UPDATE SET
     name       = EXCLUDED.name,
+    version    = EXCLUDED.version,
     pipeline   = EXCLUDED.pipeline,
     node_count = EXCLUDED.node_count,
     updated_at = EXCLUDED.updated_at`
 
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, q, t.ID, t.Name, pipelineJSON, t.NodeCount, t.CreatedAt, t.UpdatedAt); err != nil {
+	if err := db.Exec(ctx, q, t.ID, t.Name, pipelineJSON, t.NodeCount, t.CreatedAt, t.UpdatedAt, t.Version); err != nil {
 		return fmt.Errorf("postgres PipelineTemplateRepo.Save: %w", err)
 	}
 	return nil
@@ -249,9 +250,14 @@ ON CONFLICT (id) DO UPDATE SET
     updated_at    = EXCLUDED.updated_at,
     finished_at   = EXCLUDED.finished_at`
 
+	var templateID any
+	if d.TemplateID != "" {
+		templateID = d.TemplateID
+	}
+
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
-		d.ID, d.TemplateID, d.PipelineName, d.WorkflowName, d.Status, d.NodeCount,
+		d.ID, templateID, d.PipelineName, d.WorkflowName, d.Status, d.NodeCount,
 		manifest, pipelineJSON, d.CreatedAt, now, d.FinishedAt,
 	); err != nil {
 		return fmt.Errorf("postgres PipelineDeploymentRepo.Save: %w", err)

@@ -20,9 +20,10 @@ type PipelineComponent struct {
 
 // PortDef defines an input or output port for a component.
 type PortDef struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-	Desc string `json:"desc,omitempty"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Desc         string `json:"desc,omitempty"`
+	DefaultValue string `json:"default_value,omitempty"` // default value for input ports (F2.10)
 }
 
 // EnvVarDef defines an environment variable for a component.

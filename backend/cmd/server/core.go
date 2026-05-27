@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
+	"log/slog"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
@@ -94,14 +96,20 @@ func setupCore(inf *infra) *coreHandlers {
 		puc             *pipelineUC.Usecase
 	)
 	if kc := inf.k8sClient; kc != nil {
-		wfClient := k8s.NewArgoClient(kc.ArgoClientset)
-		puc = pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, wfClient, inf.cfg.ArgoWorkflowsNamespace)
+		wfClient := k8s.NewArgoClient(kc.ArgoClientset, kc.KubeClientset)
+		puc = pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, wfClient, inf.cfg.ArgoWorkflowsNamespace)
+		puc.SetAssetEventRepo(assetEventRepo)
+		puc.SetRelationWriter(assetRepo)
+		puc.SetMetricsClient(k8s.NewMetricsClient(kc.KubeClientset, kc.MetricsClientset))
 		pipelineHandler = pipelineH.New(puc)
 	}
 
 	// Pipeline component registry
 	pipelineComponentRepo := postgres.NewPipelineComponentRepo(pg)
 	pipelineComponentUC := pipelineComponentUC.New(pipelineComponentRepo)
+	if err := pipelineComponentUC.SeedSystemComponents(context.Background()); err != nil {
+		slog.Warn("seed system components", "err", err)
+	}
 	pipelineComponentHandler := pipelineComponentH.New(pipelineComponentUC)
 
 	backfillRepo := postgres.NewBackfillRepo(pg)
@@ -111,7 +119,7 @@ func setupCore(inf *infra) *coreHandlers {
 	// ── Workflow monitoring ──
 	var workflowHandler *workflowH.Handler
 	if kc := inf.k8sClient; kc != nil {
-		wfClient := k8s.NewArgoClient(kc.ArgoClientset)
+		wfClient := k8s.NewArgoClient(kc.ArgoClientset, kc.KubeClientset)
 		workflowHandler = workflowH.New(wfClient, inf.cfg.ArgoWorkflowsNamespace)
 	}
 
