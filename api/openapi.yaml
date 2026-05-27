@@ -4053,6 +4053,49 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  # ── Direct deploy (legacy, inline pipeline) ─────────────────────────
+  /api/v1/deploy:
+    post:
+      tags: [Pipeline]
+      summary: Deploy a pipeline directly (inline definition)
+      description: >
+        Deploys a pipeline by sending its full definition inline.
+        This is the original (legacy) deploy path. For saved templates,
+        prefer `POST /api/v1/deploy/template/{id}`.
+        Optionally binds asset IDs as environment variables.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pipeline]
+              properties:
+                pipeline:
+                  type: object
+                  description: Full pipeline definition (nodes + edges)
+                name:
+                  type: string
+                  description: Optional pipeline name (auto-generated if omitted)
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                  description: Optional asset IDs to bind as environment variables
+      responses:
+        '201':
+          description: Deployment created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineDeployment' }
+        '400':
+          description: Invalid request or asset not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
   /api/v1/deploy/template/{id}:
     post:
       tags: [Pipeline]
