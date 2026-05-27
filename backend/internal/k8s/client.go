@@ -1,7 +1,9 @@
 package k8s
 
 import (
+	"encoding/base64"
 	"fmt"
+	"os"
 
 	argowfclientset "github.com/argoproj/argo-workflows/v3/pkg/client/clientset/versioned"
 	"k8s.io/client-go/kubernetes"
@@ -49,6 +51,10 @@ func NewClient(kubeconfigPath, namespace string) (*Client, error) {
 //   - If kubeconfigPath is non-empty, it is used explicitly.
 //   - Otherwise, InClusterConfig is tried first, falling back to the default
 //     kubeconfig search path (~/.kube/config).
+//   - As a final fallback, K8S_BEARER_TOKEN + K8S_API_ENDPOINT env vars are
+//     used (e.g. on Cloud Run where neither kubeconfig nor in-cluster works).
+//     K8S_CA_CERT_BASE64 (base64-encoded CA cert) is optional; if omitted the
+//     system CA pool is used.
 func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 	if kubeconfigPath != "" {
 		return clientcmd.BuildConfigFromFlags("", kubeconfigPath)
@@ -63,8 +69,30 @@ func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 	// Fall back to the default kubeconfig loading rules.
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	configOverrides := &clientcmd.ConfigOverrides{}
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+	config, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		loadingRules,
 		configOverrides,
 	).ClientConfig()
+	if err == nil {
+		return config, nil
+	}
+
+	// Final fallback: bearer token from env vars (Cloud Run with no kubeconfig).
+	token := os.Getenv("K8S_BEARER_TOKEN")
+	endpoint := os.Getenv("K8S_API_ENDPOINT")
+	if token != "" && endpoint != "" {
+		tlsConfig := rest.TLSClientConfig{Insecure: false}
+		if ca := os.Getenv("K8S_CA_CERT_BASE64"); ca != "" {
+			if raw, err := base64.StdEncoding.DecodeString(ca); err == nil {
+				tlsConfig.CAData = raw
+			}
+		}
+		return &rest.Config{
+			Host:            endpoint,
+			BearerToken:     token,
+			TLSClientConfig: tlsConfig,
+		}, nil
+	}
+
+	return nil, err
 }

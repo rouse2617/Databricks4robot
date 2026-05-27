@@ -220,7 +220,7 @@ func Load() *Config {
 		AdminToken: getenv("ADMIN_TOKEN", ""),
 
 		KubeconfigPath:        getenv("KUBECONFIG_PATH", ""),
-		ArgoWorkflowsNamespace: getenv("ARGO_WORKFLOWS_NAMESPACE", "default"),
+		ArgoWorkflowsNamespace: getenv("ARGO_WORKFLOWS_NAMESPACE", ""),
 	}
 }
 
