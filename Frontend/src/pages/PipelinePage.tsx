@@ -22,7 +22,7 @@ import {
 	Tabs,
 	Typography,
 } from "antd";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ComponentPalette } from "../components/pipeline/ComponentPalette";
 import { ComponentManager } from "../components/pipeline/ComponentManager";
 import { DeployPanel } from "../components/pipeline/DeployPanel";
@@ -45,10 +45,6 @@ function loadComponents(): RegisteredComponent[] {
 	} catch {
 		return getDefaultComponents();
 	}
-}
-
-function saveComponents(comps: RegisteredComponent[]) {
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(comps));
 }
 
 function getDefaultComponents(): RegisteredComponent[] {
@@ -113,7 +109,7 @@ function createPipelineNode(
 	};
 }
 
-function PipelineCanvas() {
+function PipelineCanvas({ registeredComponents: comps }: { registeredComponents: RegisteredComponent[] }) {
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const [nodes, setNodes, onNodesChange] = useNodesState<ReactFlowNode<PipelineNodeData>>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -121,9 +117,7 @@ function PipelineCanvas() {
 	const [pipelineName, setPipelineName] = useState("my-pipeline");
 	const [selectedNode, setSelectedNode] = useState<ReactFlowNode<PipelineNodeData> | null>(null);
 	const [jsonOutput, setJsonOutput] = useState<string | null>(null);
-	const [registeredComponents] = useState<RegisteredComponent[]>(
-		loadComponents,
-	);
+	// registeredComponents passed as prop from PipelinePage
 	const [deployDialog, setDeployDialog] = useState<{
 		open: boolean;
 		deploying: boolean;
@@ -133,9 +127,6 @@ function PipelineCanvas() {
 		error?: string;
 	}>({ open: false, deploying: false, done: false, name: "" });
 
-	useEffect(() => {
-		saveComponents(registeredComponents);
-	}, [registeredComponents]);
 
 	const onConnect = useCallback(
 		(connection: any) => setEdges((eds) => addEdge(connection, eds)),
@@ -376,7 +367,7 @@ function PipelineCanvas() {
 				</Button>
 			</div>
 			<div className="pipeline-body">
-				<ComponentPalette components={registeredComponents} onDragStart={onDragStart} />
+				<ComponentPalette components={comps} onDragStart={onDragStart} />
 				<div className="canvas-wrapper" ref={wrapperRef}>
 					<ReactFlow
 						nodes={nodes}
@@ -514,9 +505,6 @@ export default function PipelinePage() {
 		loadComponents,
 	);
 
-	useEffect(() => {
-		saveComponents(registeredComponents);
-	}, [registeredComponents]);
 
 	const tabItems = [
 		{
@@ -525,7 +513,7 @@ export default function PipelinePage() {
 			children: (
 				<div style={{ height: "calc(100vh - 220px)" }}>
 					<ReactFlowProvider>
-						<PipelineCanvas />
+						<PipelineCanvas registeredComponents={registeredComponents} />
 					</ReactFlowProvider>
 				</div>
 			),

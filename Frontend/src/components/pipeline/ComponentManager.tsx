@@ -1,5 +1,5 @@
 import { Button, Input, Typography } from "antd";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { RegisteredComponent } from "./types";
 import { PlusOutlined } from "@ant-design/icons";
 
@@ -26,6 +26,13 @@ function blank(): RegisteredComponent {
 export function ComponentManager({ components, onChange }: Props) {
 	const [editing, setEditing] = useState<RegisteredComponent | null>(null);
 	const [isNew, setIsNew] = useState(false);
+	const [commandText, setCommandText] = useState("");
+
+	useEffect(() => {
+		if (editing) {
+			setCommandText(JSON.stringify(editing.command));
+		}
+	}, [editing?.id]);
 
 	const save = (c: RegisteredComponent) => {
 		if (isNew) {
@@ -102,10 +109,14 @@ export function ComponentManager({ components, onChange }: Props) {
 						<label>
 							命令 (JSON)
 							<Input
-								value={JSON.stringify(editing.command)}
-								onChange={(e) => {
+								value={commandText}
+								onChange={(e) => setCommandText(e.target.value)}
+								onBlur={() => {
 									try {
-										setEditing({ ...editing, command: JSON.parse(e.target.value) });
+										const parsed = JSON.parse(commandText);
+										if (Array.isArray(parsed)) {
+											setEditing({ ...editing, command: parsed });
+										}
 									} catch {
 										/* ignore */
 									}

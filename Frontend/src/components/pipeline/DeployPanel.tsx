@@ -1,4 +1,4 @@
-import { Button, Tag } from "antd";
+import { Button, Tag, message } from "antd";
 import { useEffect, useState, useCallback } from "react";
 import {
 	listDeployments,
@@ -53,18 +53,20 @@ export function DeployPanel() {
 	const handleDeleteDeployment = async (id: string) => {
 		try {
 			await deleteDeployment(id);
+			message.success("已删除部署记录");
 			refresh();
-		} catch {
-			/* ignore */
+		} catch (err) {
+			message.error("删除失败: " + String(err));
 		}
 	};
 
 	const handleDeleteTemplate = async (id: string) => {
 		try {
 			await deletePipeline(id);
+			message.success("已删除流水线模板");
 			refresh();
-		} catch {
-			/* ignore */
+		} catch (err) {
+			message.error("删除失败: " + String(err));
 		}
 	};
 

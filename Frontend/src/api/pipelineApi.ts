@@ -26,6 +26,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 		headers: body ? { "Content-Type": "application/json" } : undefined,
 		body: body ? JSON.stringify(body) : undefined,
 	});
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || `HTTP ${res.status}`);
+	}
+	const contentType = res.headers.get("content-type") || "";
+	if (!contentType.includes("application/json")) {
+		throw new Error(`unexpected content-type: ${contentType}`);
+	}
 	const json = await res.json();
 	if (!json.ok) throw new Error(json.error || "request failed");
 	return json.data as T;

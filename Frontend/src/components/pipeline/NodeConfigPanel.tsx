@@ -1,5 +1,6 @@
 import { Input } from "antd";
 import type { Node } from "@xyflow/react";
+import { useEffect, useState } from "react";
 import type { PipelineNodeData } from "./types";
 
 interface Props {
@@ -8,6 +9,12 @@ interface Props {
 }
 
 export function NodeConfigPanel({ node, onUpdate }: Props) {
+	const [commandText, setCommandText] = useState("");
+
+	useEffect(() => {
+		setCommandText(JSON.stringify(node.data.command ?? []));
+	}, [node.id]);
+
 	return (
 		<>
 			<div className="config-panel-header">
@@ -31,10 +38,14 @@ export function NodeConfigPanel({ node, onUpdate }: Props) {
 				<div className="config-field">
 					<label>命令 (JSON)</label>
 					<Input
-						value={JSON.stringify(node.data.command ?? [])}
-						onChange={(e) => {
+						value={commandText}
+						onChange={(e) => setCommandText(e.target.value)}
+						onBlur={() => {
 							try {
-								onUpdate(node.id, { command: JSON.parse(e.target.value) });
+								const parsed = JSON.parse(commandText);
+								if (Array.isArray(parsed)) {
+									onUpdate(node.id, { command: parsed });
+								}
 							} catch {
 								/* ignore */
 							}
