@@ -172,6 +172,7 @@ func RegisterAll(
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)
+		api.GET("/asset-types/:type/schema", assetHandler.GetAssetTypeSchema)
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)

@@ -17,14 +17,15 @@ import (
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
-	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
-	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
-	backfillUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
+	backfillUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
+	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
+	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
 )
 
 // ── Layer 2: Core business layer (repos + usecases + handlers) ──
@@ -51,11 +52,14 @@ func setupCore(inf *infra) *coreHandlers {
 	algoUC := assetUC.NewAlgoUsecase(pg, assetRepo, algoLatestRepo, assetEventRepo, inf.algoRegistry)
 	algoUC.SetAlgoRunRepo(algoRunRepo)
 	assetUsecase := assetUC.NewWithProjections(pg, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, inf.tagRegistry, inf.algoRegistry)
+	assetTypeSchemas := models.NewSchemaRegistry()
+	assetUsecase.SetSchemaRegistry(assetTypeSchemas)
 	assetUsecase.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
 	assetUsecase.SetCustomerRepo(customerRepo) // CYB-1070: customer.* namespace lint
 	// CYB-1164: asset hierarchy validator.
-	assetUsecase.SetValidator(deliveryrules.NewAssetWriteValidator(
+	assetUsecase.SetValidator(deliveryrules.NewAssetWriteValidatorWithSchemas(
 		deliveryrules.NewAssetRepoParentGetter(assetRepo),
+		assetTypeSchemas,
 	))
 	assetUsecase.SetUsageStatsRepo(usageStatsRepo) // CYB-1095/1096: usage stats
 

@@ -38,17 +38,32 @@ type ParentGetter interface {
 
 // AssetWriteValidator checks L1-L7 hierarchy invariants before asset writes.
 type AssetWriteValidator struct {
-	parents ParentGetter
+	parents        ParentGetter
+	schemaRegistry *models.SchemaRegistry
 }
 
 func NewAssetWriteValidator(parents ParentGetter) *AssetWriteValidator {
 	return &AssetWriteValidator{parents: parents}
 }
 
+func NewAssetWriteValidatorWithSchemas(parents ParentGetter, schemaRegistry *models.SchemaRegistry) *AssetWriteValidator {
+	return &AssetWriteValidator{parents: parents, schemaRegistry: schemaRegistry}
+}
+
 // ValidateCreate checks all invariants for a new asset INSERT.
 func (v *AssetWriteValidator) ValidateCreate(ctx context.Context, a *models.Asset) error {
 	if v.parents == nil {
+		if v.schemaRegistry != nil {
+			return v.schemaRegistry.Validate(a.AssetType, a.Metadata)
+		}
 		return nil
+	}
+
+	if v.schemaRegistry != nil && v.schemaRegistry.GetSchema(a.AssetType) != nil {
+		if err := v.schemaRegistry.Validate(a.AssetType, a.Metadata); err != nil {
+			return err
+		}
+		return v.validateRegisteredType(ctx, a)
 	}
 
 	// raw_mcap is always a root — no parent needed.
@@ -102,6 +117,32 @@ func (v *AssetWriteValidator) ValidateCreate(ctx context.Context, a *models.Asse
 			Expected:  fmt.Sprintf("unknown asset type %q", a.AssetType),
 		}
 	}
+}
+
+func (v *AssetWriteValidator) validateRegisteredType(ctx context.Context, a *models.Asset) error {
+	if a.AssetType == "annotation_result" && a.ParentAssetID == "" {
+		return &HierarchyViolation{
+			Invariant: "L7",
+			AssetType: a.AssetType,
+			Expected:  "annotation_result must have a parent_asset_id",
+		}
+	}
+	if a.ParentAssetID == "" {
+		return nil
+	}
+	parent, err := v.parents.GetParentInfo(ctx, a.ParentAssetID)
+	if err != nil {
+		return fmt.Errorf("lookup parent %s: %w", a.ParentAssetID, err)
+	}
+	if parent == nil {
+		return &HierarchyViolation{
+			Invariant: "L0",
+			AssetType: a.AssetType,
+			ParentID:  a.ParentAssetID,
+			Expected:  fmt.Sprintf("parent asset %s not found", a.ParentAssetID),
+		}
+	}
+	return nil
 }
 
 // ValidateUpdate checks invariants that apply to updates.

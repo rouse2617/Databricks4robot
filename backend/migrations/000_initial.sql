@@ -254,7 +254,7 @@ CREATE TABLE asset_relations (
     parent_start_offset_ms bigint,
     parent_end_offset_ms bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT chk_relation_type CHECK ((relation_type = ANY (ARRAY['split_from'::text, 'derived_from'::text, 'contains'::text, 'sampled_from'::text, 'merged_from'::text, 'revision_of'::text])))
+    CONSTRAINT chk_relation_type CHECK ((relation_type = ANY (ARRAY['split_from'::text, 'derived_from'::text, 'contains'::text, 'sampled_from'::text, 'merged_from'::text, 'revision_of'::text, 'annotated_from'::text, 'materialized_from'::text])))
 );
 
 CREATE TABLE asset_tags (
@@ -354,7 +354,7 @@ CREATE TABLE assets (
     CONSTRAINT assets_mcap_file_id_check CHECK ((mcap_file_id ~ '^[0-9A-Za-z]{8}$'::text)),
     CONSTRAINT assets_revision_check CHECK (((revision IS NULL) OR (revision >= 1))),
     CONSTRAINT chk_lifecycle_state CHECK ((lifecycle_state = ANY (ARRAY['created'::text, 'processing'::text, 'ready'::text, 'delivered'::text, 'archived'::text, 'superseded'::text, 'failed'::text, 'rejected'::text]))),
-    CONSTRAINT chk_mcap_file_required CHECK (((asset_type = 'derived_asset'::text) OR (mcap_file_id IS NOT NULL)))
+    CONSTRAINT chk_mcap_file_required CHECK (((asset_type = ANY (ARRAY['derived_asset'::text, 'dataset'::text, 'annotation_result'::text])) OR (mcap_file_id IS NOT NULL)))
 );
 
 CREATE TABLE audit_events (

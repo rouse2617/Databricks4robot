@@ -107,6 +107,26 @@ func (h *Handler) Get(c *gin.Context) {
 	c.JSON(200, a)
 }
 
+// GetAssetTypeSchema returns a registered asset_type metadata JSON Schema.
+// @Summary      Get asset type schema
+// @Description  Return the JSON Schema definition for an asset_type
+// @Tags         assets
+// @Produce      json
+// @Param        type path string true "Asset type"
+// @Success      200 {object} object
+// @Failure      404 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /asset-types/{type}/schema [get]
+func (h *Handler) GetAssetTypeSchema(c *gin.Context) {
+	assetType := strings.TrimSpace(c.Param("type"))
+	schema, ok := h.uc.GetAssetTypeSchema(assetType)
+	if !ok {
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "asset type schema not found")
+		return
+	}
+	c.Data(http.StatusOK, "application/schema+json", schema)
+}
+
 // List returns assets with optional filters and pagination.
 // Deprecated: asset list queries should use POST /api/v1/queries/run.
 func (h *Handler) List(c *gin.Context) {
@@ -526,7 +546,7 @@ func (h *Handler) Create(c *gin.Context) {
 	var req struct {
 		AssetID             string                 `json:"asset_id" label:"资产ID"`
 		LogicalAssetID      string                 `json:"logical_asset_id" label:"逻辑资产ID"`
-		McapFileID          string                 `json:"mcap_file_id" binding:"required" label:"MCAP文件ID"`
+		McapFileID          string                 `json:"mcap_file_id" label:"MCAP文件ID"`
 		StartTimestampNs    int64                  `json:"start_timestamp_ns" binding:"required,gt=0" label:"起始时间戳"`
 		EndTimestampNs      int64                  `json:"end_timestamp_ns" binding:"required,gt=0" label:"结束时间戳"`
 		Reviewer            string                 `json:"reviewer" binding:"required" label:"审核人"`
