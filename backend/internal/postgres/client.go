@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -153,7 +154,7 @@ func envInt32(key string, fallback int32) int32 {
 func New(ctx context.Context, cfg *config.Config) (*Client, error) {
 	dsn := fmt.Sprintf(
 		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName,
+		cfg.DBUser, url.QueryEscape(cfg.DBPassword), cfg.DBHost, cfg.DBPort, cfg.DBName,
 	)
 	return NewFromDSN(ctx, dsn)
 }
