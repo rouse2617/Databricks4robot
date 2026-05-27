@@ -28,35 +28,33 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 13) — ComponentManager frontend component tests
+### What was done this cycle (2026-05-28 cycle 14) — DeployPanel frontend component tests
 
-1. **Created `Frontend/src/components/pipeline/ComponentManager.test.tsx`** with 16 tests:
-   - Empty state, component list rendering, "新建" button click opens form
-   - Opens edit form when clicking a component in the list
-   - Save new component: local state (`onChange`) and API callback (`onSaveApi`) both triggered
-   - Save existing component: update API called with `isNew=false`
-   - Delete component: `onDeleteApi` called with correct ID, local state updated
-   - API failure fallback: `message.warning` shown, local state preserved despite API error
-   - Command JSON parsing on blur with proper array parsing
-   - Cancel closes the form, no leftover form UI
-   - New components don't show delete button
-   - Active component highlighted with `.cm-item.active` class
-   - Editing context switches correctly between components
-   - Local-only mode (no API props) works as expected
+1. **Created `Frontend/src/components/pipeline/DeployPanel.test.tsx`** with 15 tests:
+   - Empty state, template/deployment listing on mount
+   - Direct run (`handleDirectRun`) calls `deployTemplate` with correct ID
+   - Error toast on deploy failure
+   - Asset modal: opens via dropdown "选择资产运行", selects assets via mock AssetPicker
+   - Deploy without asset IDs passes `undefined`
+   - Edit template with `onEditTemplate` callback (loads via API and invokes callback)
+   - Fallback to `sessionStorage` when no callback provided
+   - Load template failure shows error toast
+   - Delete template and deployment records
+   - Navigate to workflow detail on "查看"
+   - Data refresh after successful deploy (2 calls: mount + refresh)
+   - Modal info alert text verification
+   - Graceful handling of API failure (empty state without crash)
 
-2. **Verified**: `npx vitest run src/components/pipeline/ComponentManager.test.tsx` ✅ (16/16 passed), `npx tsc --noEmit` ✅, `go build ./...` ✅, all backend pipeline tests ✅
+2. **Verified**: All 15 tests pass, `npx tsc --noEmit` ✅, `go build ./...` ✅, all backend pipeline tests ✅, all 40 frontend pipeline component tests ✅
 
-3. **Deployed**: Frontend dev Cloud Run (revision 00269-4tt)
+3. **Deployed**: Frontend dev Cloud Run (revision 00270-w8s)
 
 ### What's next
 
-- Frontend component tests for DeployPanel remain as future work
 - All pipeline tasks T-01~T-13 are completed and verified
-- Pipeline contract test coverage: 23 tests
-- AssetPicker component test coverage: 9 tests
-- ComponentManager component test coverage: 16 tests
-- No remaining pipeline implementation or quality tasks
-- Next cycle: review entire codebase for cross-module improvements
+- Pipeline component tests: AssetPicker (9), ComponentManager (16), DeployPanel (15) = 40 total
+- Pipeline contract backend tests: 23 tests (usecase + transpiler)
+- Next cycle: review entire codebase for cross-module improvements or new features
 
 ## Non-Done DataBrew
 
