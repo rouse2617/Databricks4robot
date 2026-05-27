@@ -35,6 +35,13 @@ import type {
 	PipelineNodeData,
 } from "../components/pipeline/types";
 import { savePipeline, deployTemplate, type Deployment } from "../api/pipelineApi";
+import {
+	listComponents,
+	createComponent,
+	updateComponent,
+	deleteComponent,
+	type PipelineComponentAPI,
+} from "../api/pipelineComponentApi";
 import { searchApi } from "../api/search";
 import type { SearchAssetResult } from "../api/search";
 import { toTranspilerPipeline, fromTranspilerPipeline } from "../lib/pipelineContract";
@@ -58,6 +65,46 @@ function loadComponents(): RegisteredComponent[] {
 
 function saveComponents(comps: RegisteredComponent[]) {
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(comps));
+}
+
+/** Map backend PipelineComponentAPI → frontend RegisteredComponent. */
+function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
+	const resources = api.resources ?? {};
+	return {
+		id: api.id,
+		name: api.name,
+		image: api.tag ? `${api.image}:${api.tag}` : api.image,
+		command: (resources.command as string[]) ?? ["sh", "-c"],
+		args: (resources.args as {name: string; value?: string; from?: string}[]) ?? [],
+		cpu: (resources.cpu as string) ?? "",
+		memory: (resources.memory as string) ?? "",
+		disk: (resources.disk as string) ?? "",
+	};
+}
+
+/** Map frontend RegisteredComponent → backend PipelineComponentAPI shape. */
+function registeredToApi(comp: RegisteredComponent): Omit<PipelineComponentAPI, "createdAt" | "updatedAt"> {
+	const idx = comp.image.lastIndexOf(":");
+	const image = idx > 0 ? comp.image.slice(0, idx) : comp.image;
+	const tag = idx > 0 ? comp.image.slice(idx + 1) : "latest";
+	return {
+		id: comp.id,
+		name: comp.name,
+		description: "",
+		image,
+		tag,
+		source: "manual",
+		inputPorts: [{ name: "input", type: "string" }],
+		outputPorts: [{ name: "output", type: "string" }],
+		resources: {
+			command: comp.command,
+			args: comp.args,
+			cpu: comp.cpu,
+			memory: comp.memory,
+			disk: comp.disk,
+		},
+		envVars: [],
+	};
 }
 
 let nodeCounter = 0;
@@ -112,6 +159,46 @@ function PipelineCanvas() {
 	useEffect(() => {
 		saveComponents(registeredComponents);
 	}, [registeredComponents]);
+
+	// Load registered components from API on startup, fallback to localStorage
+	useEffect(() => {
+		listComponents()
+			.then((res) => {
+				const mapped = (res.items ?? []).map(apiToRegistered);
+				if (mapped.length > 0) {
+					setRegisteredComponents(mapped);
+					saveComponents(mapped);
+				}
+			})
+			.catch(() => {
+				// API failed, keep localStorage data (already set in useState)
+			});
+	}, []);
+
+	const handleComponentSave = useCallback(
+		async (comp: RegisteredComponent, isNew: boolean) => {
+			try {
+				const apiData = registeredToApi(comp);
+				if (isNew) {
+					const created = await createComponent(apiData);
+					comp.id = created.id; // Use server-assigned ID
+				} else {
+					await updateComponent(comp.id, apiData);
+				}
+			} catch {
+				// API failed — still keep changes in localStorage via existing effect
+			}
+		},
+		[],
+	);
+
+	const handleComponentDelete = useCallback(async (id: string) => {
+		try {
+			await deleteComponent(id);
+		} catch {
+			// API failed — still keep changes in localStorage
+		}
+	}, []);
 
 	const loadPipelineToCanvas = useCallback((pipeline: Pipeline) => {
 		const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
@@ -466,10 +553,12 @@ function PipelineCanvas() {
 					</>
 				) : view === "components" ? (
 					<div className="registry-view">
-						<ComponentManager
+					<ComponentManager
 							components={registeredComponents}
 							onChange={setRegisteredComponents}
-						/>
+							onSaveApi={handleComponentSave}
+							onDeleteApi={handleComponentDelete}
+					/>
 					</div>
 				) : (
 					<DeployPanel onEditTemplate={loadPipelineToCanvas} />

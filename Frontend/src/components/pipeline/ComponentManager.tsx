@@ -1,5 +1,5 @@
-import { Button, Input, Typography } from "antd";
-import { useState, useEffect } from "react";
+import { Button, Input, Typography, message } from "antd";
+import { useState, useEffect, useCallback } from "react";
 import type { RegisteredComponent } from "./types";
 import { PlusOutlined } from "@ant-design/icons";
 
@@ -8,6 +8,10 @@ const { Text } = Typography;
 interface Props {
 	components: RegisteredComponent[];
 	onChange: (c: RegisteredComponent[]) => void;
+	/** Called when a component is saved (create or update). */
+	onSaveApi?: (comp: RegisteredComponent, isNew: boolean) => Promise<void>;
+	/** Called when a component is deleted. */
+	onDeleteApi?: (id: string) => Promise<void>;
 }
 
 function blank(): RegisteredComponent {
@@ -23,7 +27,7 @@ function blank(): RegisteredComponent {
 	};
 }
 
-export function ComponentManager({ components, onChange }: Props) {
+export function ComponentManager({ components, onChange, onSaveApi, onDeleteApi }: Props) {
 	const [editing, setEditing] = useState<RegisteredComponent | null>(null);
 	const [isNew, setIsNew] = useState(false);
 	const [commandText, setCommandText] = useState("");
@@ -34,19 +38,48 @@ export function ComponentManager({ components, onChange }: Props) {
 		}
 	}, [editing?.id]);
 
-	const save = (c: RegisteredComponent) => {
-		if (isNew) {
-			onChange([...components, c]);
-		} else {
-			onChange(components.map((x) => (x.id === c.id ? c : x)));
-		}
-		setEditing(null);
-	};
+	const save = useCallback(
+		async (c: RegisteredComponent) => {
+			// Update local state first
+			let updated: RegisteredComponent[];
+			if (isNew) {
+				updated = [...components, c];
+			} else {
+				updated = components.map((x) => (x.id === c.id ? c : x));
+			}
+			onChange(updated);
 
-	const remove = (id: string) => {
-		onChange(components.filter((x) => x.id !== id));
-		if (editing?.id === id) setEditing(null);
-	};
+			// Sync to API if available
+			if (onSaveApi) {
+				try {
+					await onSaveApi(c, isNew);
+				} catch {
+					message.warning("组件保存到服务端失败，已保留本地数据");
+				}
+			}
+
+			setEditing(null);
+		},
+		[components, isNew, onChange, onSaveApi],
+	);
+
+	const remove = useCallback(
+		async (id: string) => {
+			// Update local state first
+			onChange(components.filter((x) => x.id !== id));
+			if (editing?.id === id) setEditing(null);
+
+			// Sync to API if available
+			if (onDeleteApi) {
+				try {
+					await onDeleteApi(id);
+				} catch {
+					message.warning("组件从服务端删除失败，已从本地移除");
+				}
+			}
+		},
+		[components, editing?.id, onChange, onDeleteApi],
+	);
 
 	return (
 		<div className="component-manager">
