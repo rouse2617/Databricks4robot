@@ -210,11 +210,11 @@ GET /api/v1/deployments/:id/outputs
 
 | # | 需求 | 优先级 | 备注 |
 |---|------|--------|------|
-| F6.1 | 创建 backfill job（选 template + 筛选条件） | P1 | 替代 Dagster backfill |
-| F6.2 | Backfill 进度（总数/已完成/失败） | P1 | 进度条 + 列表 |
-| F6.3 | 暂停/继续 backfill | P1 | 控制并发 |
-| F6.4 | Backfill 失败重试 | P1 | 只重试失败的 items |
-| F6.5 | Backfill 历史查询 | P2 | 看之前的回放记录 |
+| F6.1 | 创建 backfill job（选 template + 筛选条件） | P1 | ✅ CYB-1267 |
+| F6.2 | Backfill 进度（总数/已完成/失败） | P1 | ✅ CYB-1267 |
+| F6.3 | 暂停/继续 backfill | P1 | ✅ CYB-1267 |
+| F6.4 | Backfill 失败重试 | P1 | ✅ CYB-1267 |
+| F6.5 | Backfill 历史查询 | P2 | ✅ CYB-1267 (GET /backfill + GET /backfill/:id) |
 | F6.6 | 自动 backfill（新版本发布后自动触发） | P3 | 类似 Dagster 的 auto-materialize |
 
 **设计参考**：
@@ -252,7 +252,7 @@ POST   /api/v1/backfill/:id/retry-failed 重试失败的
 | F7.2 | 加载已有 template 到画布 | P0 | ✅ 已实现 |
 | F7.3 | 列出所有 template | P0 | ✅ 已实现 |
 | F7.4 | 删除 template | P0 | ✅ 已实现 |
-| F7.5 | Template 版本管理 | P1 | 当前是覆盖保存 |
+| F7.5 | Template 版本管理 | P1 | ✅ CYB-1265 |
 | F7.6 | Template 分享（跨用户） | P2 | 配合多租户 |
 | F7.7 | Template 标签/分类 | P2 | 方便检索 |
 | F7.8 | Template 从部署记录快速保存 | P2 | 跑成功了改一改另存 |
@@ -346,8 +346,8 @@ backfill_items:          ← P1 新增
 | F3.7 retryStrategy 配到 transpiler | transpiler ~30 行 | 无 | ✅ CYB-1262 |
 | F3.8 超时配置 | transpiler ~20 行 | 无 | ✅ CYB-1262 |
 | F5.4/F5.5/F5.6 Step 操作（日志/重试/终止） | handler ~100 行 + 前端 ~150 行 | Argo API |
-| F6 Backfill 全套（表 + API + 前端进度） | ~400 行 | F4.1 |
-| F7.5 Template 版本管理 | ~80 行 | 无 |
+| F6 Backfill 全套（表 + API + 前端进度） | ~400 行 | F4.1 | ✅ CYB-1267 |
+| F7.5 Template 版本管理 | ~80 行 | 无 | ✅ CYB-1265 |
 
 **Phase 1 总估：~3-4 周**
 
