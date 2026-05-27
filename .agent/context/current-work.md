@@ -39,6 +39,33 @@ Human-updated scratchpad for compact recovery. All agents should read this after
    - Verified: `go build ./...` ✅, `npx tsc --noEmit` ✅, pipeline tests ✅
 
 2. **OpenAPI sync**: Added all 17 missing pipeline/component/workflow endpoint definitions
+
+### What was done this cycle (2026-05-28 cycle 2) — Comprehensive usecase tests + bugfixes
+
+1. **New test file**: `backend/internal/usecase/pipeline/usecase_crud_test.go`
+   - 34 subtests across 10 test suites covering all non-Deploy usecase methods
+   - `TestSaveTemplate`: auto-incremented version, node count, zero nodes edge case
+   - `TestTemplateCRUD`: ListTemplates, GetTemplate, DeleteTemplate lifecycle
+   - `TestDeployByTemplateID`: existing template, missing template, name override
+   - `TestSaveFromDeployment`: creates template from deployment, custom name, missing deployment
+   - `TestListDeployments`: non-empty and empty list
+   - `TestDeploymentCRUD`: GetDeployment, nil for missing, DeleteDeployment
+   - `TestRegisterOutput`: output asset creation, event lineage, asset relations, missing deployment, auto-ID
+   - `TestGetLineage`: full lineage from events + deployment, no-events fallback
+   - `TestDiffTemplates`: identical diff, added/removed/modified nodes, added/removed edges, missing template error
+
+2. **Fixed mock implementations** in `usecase_test.go`:
+   - `mockTemplateRepo.Save` now populates `byID` map
+   - `mockTemplateRepo.FindAll` returns saved items
+   - `mockTemplateRepo.Delete` removes from map
+   - `mockDeploymentRepo.Save` populates `byID` map + `FindAll`/`FindByID`/`Delete` all work
+
+3. **Fixed 2 real type assertion bugs** in `usecase.go`:
+   - `GetLineage`: `_input_asset_ids` stored as `[]string` (from Deploy func) but asserted as `[]interface{}`
+   - `RegisterOutput`: same issue in relation writer lookup
+   - Both now handle both `[]string` and `[]interface{}` via type switch
+
+4. **Verified**: `go build ./...` ✅, `go test ./internal/usecase/pipeline/...` (34/34 PASS) ✅, `go test ./internal/transpiler/...` ✅, `npx tsc --noEmit` ✅
    - 8 new schemas: PipelineTemplate, PipelineDeployment, PipelineComponent, PortDef, EnvVarDef, WorkflowSummary, WorkflowDetail, WorkflowNodeStatus
    - Pipeline CRUD: POST/GET /pipelines, GET/DELETE /pipelines/:id, GET /pipelines/:id/versions
    - Deploy: POST /deploy, POST /deploy/template/:id
