@@ -28,40 +28,39 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 3) — Pipeline component usecase + workflow handler tests
+### What was done this cycle (2026-05-28 cycle 4) — Pipeline handler tests
 
-1. **New test file**: `backend/internal/usecase/pipeline_component/usecase_test.go` (15 tests)
-   - `TestCreate`: basic creation, validates ID/ports/source defaults
-   - `TestCreate_EmptyList`: empty list on fresh repo
-   - `TestCreateAndList`: create 2 items, list all + filter by query
-   - `TestList_FilterBySource`: filter by system/custom source
-   - `TestGet_Existing` / `TestGet_NonExistent`: get lifecycle
-   - `TestUpdate_Existing` / `TestUpdate_NonExistent`: update lifecycle
-   - `TestDelete_Existing` / `TestDelete_NonExistent`: delete lifecycle
-   - `TestSeedSystemComponents_Empty` / `_Idempotent`: seeding behavior
-   - `TestCreate_WithExplicitSource`: preserves custom source
-   - `TestCreate_WithPorts`: preserves input/output port definitions
-   - `TestUpdate_PreservesCreatedAt`: update preserves original CreatedAt
+1. **New test file**: `backend/internal/handlers/pipeline/handler_test.go` (35 tests)
+   - 9 template tests (SaveTemplate success/validation, ListTemplates empty/with items, GetTemplate success/not found/empty ID, DeleteTemplate success/empty ID, ListVersions)
+   - 3 deploy tests (Deploy success/missing pipeline, DeployByTemplate success/not found/empty ID)
+   - 13 deployment tests (ListDeployments empty/with items, GetDeployment success/not found/empty ID, DeleteDeployment success/empty ID, RetryDeployment success/not found, StopDeployment success/not found, SaveFromDeployment success/not found, GetResourceUsage not found)
+   - 4 register output tests (success, missing deployment_id, invalid body, deployment not found)
+   - 2 lineage tests (success, empty ID)
+   - 2 error mapping tests (asset validation, template not found)
 
-2. **New test file**: `backend/internal/handlers/workflow/handler_test.go` (7 tests)
-   - `TestListWorkflows_Empty`: empty response with items: []
-   - `TestListWorkflows_WithItems`: name, status, nodeCount in response
-   - `TestGetWorkflow_Success`: full workflow with nodes array
-   - `TestGetWorkflow_EmptyName`: Gin route matching for /workflows/
-   - `TestGetWorkflowLogs_Success`: logs returned via mock
-   - `TestGetWorkflowLogs_EmptyNodeId`: 400 without nodeId query param
-   - `TestGetWorkflowLogs_EmptyName`: 400 with empty name
+2. **New test file**: `backend/internal/handlers/pipeline_component/handler_test.go` (13 tests)
+   - CreateComponent (success, invalid body)
+   - ListComponents (empty, with items, with query/source filter)
+   - GetComponent (success, not found, empty ID)
+   - UpdateComponent (success, invalid body, empty ID)
+   - DeleteComponent (success, empty ID)
 
-3. **Verified**: `go build ./...` ✅, `go test ./internal/usecase/pipeline_component/...` (15/15 PASS) ✅, `go test ./internal/handlers/workflow/...` (7/7 PASS) ✅, `go test ./internal/usecase/pipeline/...` ✅, `go test ./internal/transpiler/...` ✅, `npx tsc --noEmit` ✅
+3. **Verified**: `go build ./...` ✅, `go test ./internal/handlers/pipeline/...` (35/35 PASS) ✅, `go test ./internal/handlers/pipeline_component/...` (13/13 PASS) ✅, `go test ./internal/usecase/pipeline/...` ✅, `go test ./internal/usecase/pipeline_component/...` ✅, `go test ./internal/transpiler/...` ✅
 
 ## What's next
 
 All pipeline-next-steps.md tasks complete (T-01~T-13). All pipeline-related packages now have test coverage:
+- `internal/handlers/pipeline` — 35 tests ✅ (NEW this cycle)
+- `internal/handlers/pipeline_component` — 13 tests ✅ (NEW this cycle)
+- `internal/handlers/workflow` — 7 tests ✅
 - `internal/usecase/pipeline` — 34 tests ✅
 - `internal/usecase/pipeline_component` — 15 tests ✅
-- `internal/handlers/workflow` — 7 tests ✅
-- `internal/handlers/pipeline` — 0 tests (could add next)
-- `internal/handlers/pipeline_component` — 0 tests (could add next)
+
+Next opportunities (from code review):
+- Review `api/openapi.yaml` for any missing pipeline endpoints
+- Check frontend TypeScript for type coverage
+- Add more integration-style handler tests (e.g., edge cases with assetEventRepo)
+- Consider linter/go vet cleanup if any
 
 ## Non-Done DataBrew
 
