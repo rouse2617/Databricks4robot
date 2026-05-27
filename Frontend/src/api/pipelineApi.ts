@@ -29,7 +29,7 @@ export function getPipeline(id: string): Promise<PipelineTemplate> {
   return request<PipelineTemplate>("GET", `/pipelines/${id}`);
 }
 
-export function savePipeline(name: string, pipeline: unknown): Promise<PipelineTemplate> {
+export function savePipeline(name: string, pipeline: Pipeline): Promise<PipelineTemplate> {
   return request<PipelineTemplate>("POST", "/pipelines", { name, pipeline });
 }
 
