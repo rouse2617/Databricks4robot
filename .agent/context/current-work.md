@@ -28,39 +28,32 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 4) — Pipeline handler tests
+### What was done this cycle (2026-05-28 cycle 6) — Integration route tests
 
-1. **New test file**: `backend/internal/handlers/pipeline/handler_test.go` (35 tests)
-   - 9 template tests (SaveTemplate success/validation, ListTemplates empty/with items, GetTemplate success/not found/empty ID, DeleteTemplate success/empty ID, ListVersions)
-   - 3 deploy tests (Deploy success/missing pipeline, DeployByTemplate success/not found/empty ID)
-   - 13 deployment tests (ListDeployments empty/with items, GetDeployment success/not found/empty ID, DeleteDeployment success/empty ID, RetryDeployment success/not found, StopDeployment success/not found, SaveFromDeployment success/not found, GetResourceUsage not found)
-   - 4 register output tests (success, missing deployment_id, invalid body, deployment not found)
-   - 2 lineage tests (success, empty ID)
-   - 2 error mapping tests (asset validation, template not found)
+1. **Added 3 new test functions** in `backend/routes/routes_test.go` covering **50 subtests**:
+   - `TestPipelineRoutes_Registered` — 34 subtests (17 pipeline routes × 2: no-auth=401 + with-auth=expected)
+   - `TestPipelineComponentRoutes_Registered` — 10 subtests (5 component routes × 2)
+   - `TestWorkflowRoutes_Registered` — 6 subtests (3 workflow routes × 2)
 
-2. **New test file**: `backend/internal/handlers/pipeline_component/handler_test.go` (13 tests)
-   - CreateComponent (success, invalid body)
-   - ListComponents (empty, with items, with query/source filter)
-   - GetComponent (success, not found, empty ID)
-   - UpdateComponent (success, invalid body, empty ID)
-   - DeleteComponent (success, empty ID)
+2. **Mock implementations added**:
+   - `routePipelineTemplateRepo` — mock for `PipelineTemplateRepository`
+   - `routePipelineDeploymentRepo` — mock for `PipelineDeploymentRepository`
+   - `routePipelineComponentRepo` — mock for `PipelineComponentRepository`
+   - `mockWorkflowClient` — mock for `k8s.WorkflowClient` (implements all 7 methods)
 
-3. **Verified**: `go build ./...` ✅, `go test ./internal/handlers/pipeline/...` (35/35 PASS) ✅, `go test ./internal/handlers/pipeline_component/...` (13/13 PASS) ✅, `go test ./internal/usecase/pipeline/...` ✅, `go test ./internal/usecase/pipeline_component/...` ✅, `go test ./internal/transpiler/...` ✅
+3. **Routes verified as properly registered**:
+   - Pipeline templates: POST/GET/DELETE /pipelines, GET /pipelines/:id/versions, GET /pipelines/:id/diff/:id2
+   - Deploy: POST /deploy, POST /deploy/template/:id
+   - Deployments: GET /deployments, GET /deployments/:id, GET /deployments/:id/resources, POST /deployments/:id/retry|stop|save-template, DELETE /deployments/:id
+   - Assets: POST /pipeline-assets, GET /assets/:id/pipeline-lineage
+   - Components: POST/GET/PUT/DELETE /components
+   - Workflows: GET /workflows, GET /workflows/:name/logs, GET /workflows/:name
 
-## What was done this cycle (2026-05-28 cycle 5) — Orphaned routes + OpenAPI sync
-
-1. **Fixed orphaned handler routes** — `RetryDeployment` and `StopDeployment` handler functions existed (with tests) but were never registered in `routes.go`. Added:
-   - `POST /api/v1/deployments/:id/retry` → `pipelineHandler.RetryDeployment`
-   - `POST /api/v1/deployments/:id/stop` → `pipelineHandler.StopDeployment`
-
-2. **OpenAPI sync** — Added `/api/v1/deployments/{id}/retry` and `/api/v1/deployments/{id}/stop` endpoints with full request/response schemas. Fixed param name in `/api/v1/pipelines/{id}/diff/{id2}` from `id1` → `id` to match actual Gin route param.
-
-3. **Verified**: `go build ./...` ✅, `go vet ./...` ✅, `npx tsc --noEmit` ✅, pipeline handler tests 35/35 PASS ✅
+4. **Verified**: `go build ./...` ✅, `go test ./routes/...` (PASS) ✅, `go test ./internal/handlers/pipeline/...` ✅, `go test ./internal/handlers/pipeline_component/...` ✅, `npx tsc --noEmit` ✅
 
 ## What's next
 
 - Review frontend pipeline pages for TypeScript type coverage / unused imports
-- Check for integration-level route tests (routes_test.go lacks pipeline route tests)
 - Review openapi.yaml for any other param naming inconsistencies across all domains
 
 ## Non-Done DataBrew
