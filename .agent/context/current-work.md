@@ -28,32 +28,25 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 8) — AssetPicker extraction + PipelinePage fix
+### What was done this cycle (2026-05-28 cycle 9) — Type safety improvement: Pipeline type over unknown
 
-1. **Fixed broken PipelinePage.tsx deploy modal**:
-   - Previous agent left the file in a broken state: removed asset search state variables (`assetSearching`, `assetSearchResults`, `assetQuery`) but the JSX still referenced them
-   - Line 627 had corrupted indentation (literal `\t` characters instead of actual tabs)
-   - `Table` was removed from imports but still used in JSX → would fail `tsc --noEmit`
-   - Replaced the entire inline asset search/table code (60 lines) with `<AssetPicker>` component (21 lines)
+1. **Upgraded `pipelineApi.ts` types**:
+   - Imported `Pipeline` type from `./components/pipeline/types` instead of using `unknown`
+   - `PipelineTemplate.pipeline` and `Deployment.pipelineJSON` are now properly typed as `Pipeline` (was `unknown`)
+   - This enables full type checking when working with pipeline data from API responses
 
-2. **Extracted shared `AssetPicker` component**:
-   - Created `Frontend/src/components/pipeline/AssetPicker.tsx` — reusable, stateless asset search + multi-select table
-   - Props: `selectedIds`, `onSelectionChange`, `placeholder`, `maxHeight`
-   - Columns: Asset ID, 类型, 状态, 存储路径 (with truncation)
-   - Used by both `DeployPanel.tsx` and `PipelinePage.tsx` deploy modal
+2. **Removed type assertion cast** in `DeployPanel.tsx`:
+   - Previously had `t.pipeline as Pipeline` in `handleEditTemplate` — now `onEditTemplate(t.pipeline)` with clean type inference
+   - Eliminates a type-safety gap
 
-3. **Refactored `DeployPanel.tsx`** to use `AssetPicker` (removed ~80 lines of duplicated inline code)
-
-4. **Added `credentials: "include"`** to `pipelineClient.ts` for cookie-based auth
-
-5. **Verified**: `npx tsc --noEmit` ✅, `go build ./...` ✅
-6. **Deployed**: frontend-dev ✅ (revision 00266)
+3. **Verified**: `npx tsc --noEmit` ✅, `go build ./...` ✅
 
 ### What's next
 
 - All pipeline tasks T-01~T-13 are completed and deployed
-- No remaining `any` types in pipeline frontend code
-- Next step if continuing: review `api/openapi.yaml` for missing endpoints, or check for code improvements across the codebase
+- All `any`/`unknown` type gaps in pipeline frontend code resolved
+- All pipeline endpoints documented in openapi.yaml (in sync with routes.go)
+- Next cycle: review for additional code quality improvements or check if deploy is needed
 
 ## Non-Done DataBrew
 
