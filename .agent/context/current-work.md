@@ -28,25 +28,22 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 9) — Type safety improvement: Pipeline type over unknown
+### What was done this cycle (2026-05-28 cycle 10) — Type safety: savePipeline parameter type
 
-1. **Upgraded `pipelineApi.ts` types**:
-   - Imported `Pipeline` type from `./components/pipeline/types` instead of using `unknown`
-   - `PipelineTemplate.pipeline` and `Deployment.pipelineJSON` are now properly typed as `Pipeline` (was `unknown`)
-   - This enables full type checking when working with pipeline data from API responses
+1. **Upgraded `savePipeline` parameter type** in `pipelineApi.ts`:
+   - Changed `pipeline: unknown` to `pipeline: Pipeline` (Pipeline type was already imported)
+   - This provides compile-time type checking when saving pipelines via the API client
+   - Callers already passed `Pipeline` type objects — no runtime impact, just better type safety
 
-2. **Removed type assertion cast** in `DeployPanel.tsx`:
-   - Previously had `t.pipeline as Pipeline` in `handleEditTemplate` — now `onEditTemplate(t.pipeline)` with clean type inference
-   - Eliminates a type-safety gap
-
-3. **Verified**: `npx tsc --noEmit` ✅, `go build ./...` ✅
+2. **Verified**: `npx tsc --noEmit` ✅, `go build ./...` ✅, `go vet` ✅
 
 ### What's next
 
 - All pipeline tasks T-01~T-13 are completed and deployed
-- All `any`/`unknown` type gaps in pipeline frontend code resolved
-- All pipeline endpoints documented in openapi.yaml (in sync with routes.go)
-- Next cycle: review for additional code quality improvements or check if deploy is needed
+- All `any`/`unknown` type gaps in pipeline frontend code resolved (last one fixed this cycle)
+- OpenAPI is fully in sync with routes.go for all pipeline endpoints
+- No remaining pipeline implementation tasks
+- Next cycle: check for new backend improvements or bug fixes
 
 ## Non-Done DataBrew
 
