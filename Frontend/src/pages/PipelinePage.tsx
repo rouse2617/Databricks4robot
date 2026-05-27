@@ -661,8 +661,21 @@ function PipelineCanvas() {
 														}}
 														columns={[
 															{ title: "Asset ID", dataIndex: "asset_id", width: 120 },
-															{ title: "类型", dataIndex: "asset_type", width: 80 },
-															{ title: "状态", dataIndex: "lifecycle_state", width: 80 },
+															{ title: "类型", dataIndex: "asset_type", width: 70 },
+															{ title: "状态", dataIndex: "lifecycle_state", width: 70 },
+															{
+																title: "存储路径",
+																dataIndex: "storage_uri",
+																width: 180,
+																render: (v: string | undefined) =>
+																	v ? (
+																		<span style={{ fontSize: 11, fontFamily: '"SF Mono", monospace', color: "#64748b" }}>
+																			{v.length > 36 ? v.slice(0, 36) + "\u2026" : v}
+																		</span>
+																	) : (
+																		<span style={{ fontSize: 11, color: "#aaa" }}>\u2014</span>
+																	),
+															},
 														]}
 													/>
 												) : (

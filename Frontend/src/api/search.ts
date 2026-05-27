@@ -42,6 +42,7 @@ export interface SearchAssetHit {
 	status?: string;
 	version?: number;
 	retention_tier?: string;
+	storage_uri?: string;
 	owner?: string;
 	reviewer?: string;
 	start_timestamp_ns?: number;
@@ -212,6 +213,7 @@ export function normalizeSearchHitToAsset(
 		updated_at: hit.updated_at ?? "",
 		version: hit.version ?? 0,
 		_highlight: hit._highlight,
+		storage_uri: hit.storage_uri,
 	};
 }
 

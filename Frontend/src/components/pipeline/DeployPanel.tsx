@@ -147,13 +147,27 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 			title: "类型",
 			dataIndex: "asset_type",
 			key: "asset_type",
-			width: 100,
+			width: 80,
 		},
 		{
 			title: "状态",
 			dataIndex: "lifecycle_state",
 			key: "lifecycle_state",
-			width: 100,
+			width: 80,
+		},
+		{
+			title: "存储路径",
+			dataIndex: "storage_uri",
+			key: "storage_uri",
+			width: 200,
+			render: (v: string | undefined) =>
+				v ? (
+					<span style={{ fontSize: 11, fontFamily: '"SF Mono", monospace', color: "#64748b" }}>
+						{v.length > 40 ? v.slice(0, 40) + "…" : v}
+					</span>
+				) : (
+					<span style={{ fontSize: 11, color: "#aaa" }}>—</span>
+				),
 		},
 	];
 
