@@ -185,3 +185,13 @@ export interface ActivityItem {
 	description: string;
 	timestamp: string;
 }
+
+export interface PipelineLineage {
+	asset_id: string;
+	deployment_id?: string;
+	pipeline_name?: string;
+	workflow_name?: string;
+	node_id?: string;
+	input_assets?: string[];
+	produced_at?: string;
+}

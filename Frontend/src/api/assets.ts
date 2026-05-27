@@ -11,6 +11,7 @@ import type {
 	AssetEvent,
 	AssetProvenance,
 	PaginatedResponse,
+	PipelineLineage,
 } from "./types";
 
 export type { Asset };

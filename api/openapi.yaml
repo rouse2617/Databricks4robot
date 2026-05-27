@@ -3772,3 +3772,39 @@ paths:
                     type: string
                     format: date-time
 
+  /api/v1/workflows/{name}/logs:
+    get:
+      tags: [Pipeline]
+      summary: Get workflow node logs
+      description: >
+        Returns logs for a specific node in a workflow. The logs are
+        fetched from the corresponding Kubernetes Pod via the Argo
+        Workflow API.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+          description: Workflow name
+        - in: query
+          name: nodeId
+          required: true
+          schema:
+            type: string
+          description: Node ID (matches Argo template name)
+      responses:
+        '200':
+          description: Log content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: string
+        '400':
+          description: Missing nodeId parameter
+        '404':
+          description: Workflow or node not found
+
