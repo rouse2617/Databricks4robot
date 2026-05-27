@@ -222,7 +222,7 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 		CreatedAt:    time.Now().UTC(),
 	}
 	if len(templateID) > 0 {
-		dep.TemplateID = templateID[0]
+		dep.TemplateID = &templateID[0]
 	}
 	// Embed input asset IDs into PipelineJSON for lineage queries (F4.7).
 	if len(assetIDs) > 0 {

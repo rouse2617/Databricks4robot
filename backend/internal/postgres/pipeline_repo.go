@@ -190,17 +190,21 @@ const pipelineDeploymentSelectCols = `id, template_id, pipeline_name, workflow_n
 func scanPipelineDeployment(rs rowScanner) (*models.PipelineDeployment, error) {
 	var (
 		d            models.PipelineDeployment
+		templateID   *string
 		manifest     *string
 		pipelineJSON []byte
 	)
 	if err := rs.Scan(
-		&d.ID, &d.TemplateID, &d.PipelineName, &d.WorkflowName,
+		&d.ID, &templateID, &d.PipelineName, &d.WorkflowName,
 		&d.Status, &d.NodeCount, &manifest, &pipelineJSON, &d.CreatedAt, &d.UpdatedAt, &d.FinishedAt,
 	); err != nil {
 		return nil, err
 	}
 	if manifest != nil {
 		d.Manifest = manifest
+	}
+	if templateID != nil {
+		d.TemplateID = templateID
 	}
 	if len(pipelineJSON) > 0 {
 		_ = json.Unmarshal(pipelineJSON, &d.PipelineJSON)
@@ -251,8 +255,8 @@ ON CONFLICT (id) DO UPDATE SET
     finished_at   = EXCLUDED.finished_at`
 
 	var templateID any
-	if d.TemplateID != "" {
-		templateID = d.TemplateID
+	if d.TemplateID != nil {
+		templateID = *d.TemplateID
 	}
 
 	db := dbFromCtx(ctx, r.c.db)

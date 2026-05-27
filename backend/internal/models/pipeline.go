@@ -20,7 +20,7 @@ type PipelineTemplate struct {
 // status, and optionally the rendered manifest and pipeline JSON snapshot.
 type PipelineDeployment struct {
 	ID           string                 `json:"id"`
-	TemplateID   string                 `json:"templateId"`
+	TemplateID   *string                `json:"templateId,omitempty"`
 	PipelineName string                 `json:"pipelineName"`
 	WorkflowName string                 `json:"workflowName"`
 	Status       string                 `json:"status"`
