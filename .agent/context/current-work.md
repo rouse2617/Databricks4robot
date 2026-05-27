@@ -28,24 +28,32 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 7) — Dead code cleanup + API client dedup
+### What was done this cycle (2026-05-28 cycle 8) — AssetPicker extraction + PipelinePage fix
 
-1. **Removed dead code**:
-   - Removed `deploy()` function from `pipelineApi.ts` (never imported/called)
-   - Removed `getComponent()` from `pipelineComponentApi.ts` (never imported/called)
+1. **Fixed broken PipelinePage.tsx deploy modal**:
+   - Previous agent left the file in a broken state: removed asset search state variables (`assetSearching`, `assetSearchResults`, `assetQuery`) but the JSX still referenced them
+   - Line 627 had corrupted indentation (literal `\t` characters instead of actual tabs)
+   - `Table` was removed from imports but still used in JSX → would fail `tsc --noEmit`
+   - Replaced the entire inline asset search/table code (60 lines) with `<AssetPicker>` component (21 lines)
 
-2. **Extracted shared `pipelineClient.ts`**:
-   - Moved duplicated `request()` function and `ApiError` class from 3 files into `Frontend/src/api/pipelineClient.ts`
-   - Refactored `pipelineApi.ts`, `pipelineComponentApi.ts`, `workflowApi.ts` to import from shared module
-   - Preserved original Axios-based `client.ts` (used by asset/auth modules) unchanged
+2. **Extracted shared `AssetPicker` component**:
+   - Created `Frontend/src/components/pipeline/AssetPicker.tsx` — reusable, stateless asset search + multi-select table
+   - Props: `selectedIds`, `onSelectionChange`, `placeholder`, `maxHeight`
+   - Columns: Asset ID, 类型, 状态, 存储路径 (with truncation)
+   - Used by both `DeployPanel.tsx` and `PipelinePage.tsx` deploy modal
 
-3. **Verified**: `npx tsc --noEmit` ✅, `go build ./...` ✅
-4. **Deployed**: frontend-dev ✅ (revision 00265)
+3. **Refactored `DeployPanel.tsx`** to use `AssetPicker` (removed ~80 lines of duplicated inline code)
+
+4. **Added `credentials: "include"`** to `pipelineClient.ts` for cookie-based auth
+
+5. **Verified**: `npx tsc --noEmit` ✅, `go build ./...` ✅
+6. **Deployed**: frontend-dev ✅ (revision 00266)
 
 ### What's next
 
-- Review remaining TypeScript any-types across the frontend (present in asset-related pages, not pipeline)
-- Consider extracting `assetColumns` in DeployPanel and PipelinePage into a shared AssetPicker component
+- All pipeline tasks T-01~T-13 are completed and deployed
+- No remaining `any` types in pipeline frontend code
+- Next step if continuing: review `api/openapi.yaml` for missing endpoints, or check for code improvements across the codebase
 
 ## Non-Done DataBrew
 
