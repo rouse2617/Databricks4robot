@@ -73,10 +73,6 @@ export function deletePipeline(id: string): Promise<void> {
 	return request<void>("DELETE", `/pipelines/${id}`);
 }
 
-export function deploy(pipeline: unknown, name?: string): Promise<Deployment> {
-	return request<Deployment>("POST", "/deploy", { pipeline, name });
-}
-
 export function deployTemplate(templateId: string, assetIds?: string[]): Promise<Deployment> {
 	return request<Deployment>("POST", `/deploy/template/${templateId}`, { asset_ids: assetIds });
 }

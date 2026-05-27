@@ -74,11 +74,6 @@ export function listComponents(): Promise<{ items: PipelineComponentAPI[] }> {
 	return request("GET", "/components");
 }
 
-/** Get a single component by ID. */
-export function getComponent(id: string): Promise<PipelineComponentAPI> {
-	return request("GET", `/components/${encodeURIComponent(id)}`);
-}
-
 /** Create a new pipeline component. */
 export function createComponent(
 	pc: Omit<PipelineComponentAPI, "id" | "createdAt" | "updatedAt">,
