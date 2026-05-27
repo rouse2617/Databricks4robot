@@ -28,33 +28,24 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 6) — Integration route tests
+### What was done this cycle (2026-05-28 cycle 7) — Dead code cleanup + API client dedup
 
-1. **Added 3 new test functions** in `backend/routes/routes_test.go` covering **50 subtests**:
-   - `TestPipelineRoutes_Registered` — 34 subtests (17 pipeline routes × 2: no-auth=401 + with-auth=expected)
-   - `TestPipelineComponentRoutes_Registered` — 10 subtests (5 component routes × 2)
-   - `TestWorkflowRoutes_Registered` — 6 subtests (3 workflow routes × 2)
+1. **Removed dead code**:
+   - Removed `deploy()` function from `pipelineApi.ts` (never imported/called)
+   - Removed `getComponent()` from `pipelineComponentApi.ts` (never imported/called)
 
-2. **Mock implementations added**:
-   - `routePipelineTemplateRepo` — mock for `PipelineTemplateRepository`
-   - `routePipelineDeploymentRepo` — mock for `PipelineDeploymentRepository`
-   - `routePipelineComponentRepo` — mock for `PipelineComponentRepository`
-   - `mockWorkflowClient` — mock for `k8s.WorkflowClient` (implements all 7 methods)
+2. **Extracted shared `pipelineClient.ts`**:
+   - Moved duplicated `request()` function and `ApiError` class from 3 files into `Frontend/src/api/pipelineClient.ts`
+   - Refactored `pipelineApi.ts`, `pipelineComponentApi.ts`, `workflowApi.ts` to import from shared module
+   - Preserved original Axios-based `client.ts` (used by asset/auth modules) unchanged
 
-3. **Routes verified as properly registered**:
-   - Pipeline templates: POST/GET/DELETE /pipelines, GET /pipelines/:id/versions, GET /pipelines/:id/diff/:id2
-   - Deploy: POST /deploy, POST /deploy/template/:id
-   - Deployments: GET /deployments, GET /deployments/:id, GET /deployments/:id/resources, POST /deployments/:id/retry|stop|save-template, DELETE /deployments/:id
-   - Assets: POST /pipeline-assets, GET /assets/:id/pipeline-lineage
-   - Components: POST/GET/PUT/DELETE /components
-   - Workflows: GET /workflows, GET /workflows/:name/logs, GET /workflows/:name
+3. **Verified**: `npx tsc --noEmit` ✅, `go build ./...` ✅
+4. **Deployed**: frontend-dev ✅ (revision 00265)
 
-4. **Verified**: `go build ./...` ✅, `go test ./routes/...` (PASS) ✅, `go test ./internal/handlers/pipeline/...` ✅, `go test ./internal/handlers/pipeline_component/...` ✅, `npx tsc --noEmit` ✅
+### What's next
 
-## What's next
-
-- Review frontend pipeline pages for TypeScript type coverage / unused imports
-- Review openapi.yaml for any other param naming inconsistencies across all domains
+- Review remaining TypeScript any-types across the frontend (present in asset-related pages, not pipeline)
+- Consider extracting `assetColumns` in DeployPanel and PipelinePage into a shared AssetPicker component
 
 ## Non-Done DataBrew
 
