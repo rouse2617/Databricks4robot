@@ -16,6 +16,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+    credentials: "include",
   });
   if (!res.ok) {
     let code = "UNKNOWN";

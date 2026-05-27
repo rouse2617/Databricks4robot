@@ -1,4 +1,4 @@
-import { Button, Tag, message, Modal, Input, Table, Dropdown, Space, Alert } from "antd";
+import { Button, Tag, message, Modal, Dropdown, Space, Alert } from "antd";
 import { useEffect, useState, useCallback } from "react";
 import {
 	getPipeline,
@@ -10,11 +10,10 @@ import {
 	type PipelineTemplate,
 	type Deployment,
 } from "../../api/pipelineApi";
-import { searchApi } from "../../api/search";
-import type { SearchAssetResult } from "../../api/search";
 import type { Pipeline } from "./types";
-import { ReloadOutlined, DeleteOutlined, PlayCircleOutlined, SearchOutlined, EditOutlined, EyeOutlined, DownOutlined } from "@ant-design/icons";
+import { ReloadOutlined, DeleteOutlined, PlayCircleOutlined, EditOutlined, EyeOutlined, DownOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
+import AssetPicker from "./AssetPicker";
 
 const STATUS_COLORS: Record<string, string> = {
 	Succeeded: "success",
@@ -33,10 +32,7 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 	// Asset selection modal state
 	const [assetModalOpen, setAssetModalOpen] = useState(false);
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
-	const [assetQuery, setAssetQuery] = useState("");
-	const [searchResults, setSearchResults] = useState<SearchAssetResult[]>([]);
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-	const [searching, setSearching] = useState(false);
 	const [deploying, setDeploying] = useState(false);
 
 	const refresh = useCallback(async () => {
@@ -58,8 +54,6 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 
 	const handleDeployClick = (templateId: string) => {
 		setDeployTargetId(templateId);
-		setAssetQuery("");
-		setSearchResults([]);
 		setSelectedAssetIds([]);
 		setAssetModalOpen(true);
 	};
@@ -71,19 +65,6 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 			refresh();
 		} catch (err) {
 			message.error("部署失败: " + String(err));
-		}
-	};
-
-	const handleAssetSearch = async (value: string) => {
-		if (!value.trim()) return;
-		setSearching(true);
-		try {
-			const res = await searchApi.searchAssets({ q: value, page_size: 50 });
-			setSearchResults(res.items);
-		} catch {
-			message.error("搜索资产失败");
-		} finally {
-			setSearching(false);
 		}
 	};
 
@@ -135,41 +116,6 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 			message.error("加载模板失败: " + String(err));
 		}
 	};
-
-	const assetColumns = [
-		{
-			title: "Asset ID",
-			dataIndex: "asset_id",
-			key: "asset_id",
-			width: 120,
-		},
-		{
-			title: "类型",
-			dataIndex: "asset_type",
-			key: "asset_type",
-			width: 80,
-		},
-		{
-			title: "状态",
-			dataIndex: "lifecycle_state",
-			key: "lifecycle_state",
-			width: 80,
-		},
-		{
-			title: "存储路径",
-			dataIndex: "storage_uri",
-			key: "storage_uri",
-			width: 200,
-			render: (v: string | undefined) =>
-				v ? (
-					<span style={{ fontSize: 11, fontFamily: '"SF Mono", monospace', color: "#64748b" }}>
-						{v.length > 40 ? v.slice(0, 40) + "…" : v}
-					</span>
-				) : (
-					<span style={{ fontSize: 11, color: "#aaa" }}>—</span>
-				),
-		},
-	];
 
 	return (
 		<div className="deploy-panel">
@@ -252,32 +198,11 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 					showIcon
 					style={{ marginBottom: 16, fontSize: 12 }}
 				/>
-				<Input.Search
-					placeholder="搜索资产（输入 asset_id 或名称）"
-					onSearch={handleAssetSearch}
-					enterButton={<><SearchOutlined /> 搜索</>}
-					loading={searching}
-					style={{ marginBottom: 16 }}
+				<AssetPicker
+					selectedIds={selectedAssetIds}
+					onSelectionChange={setSelectedAssetIds}
+					maxHeight={300}
 				/>
-				{searchResults.length > 0 ? (
-					<Table
-						rowKey="asset_id"
-						columns={assetColumns}
-						dataSource={searchResults}
-						size="small"
-						rowSelection={{
-							type: "checkbox",
-							selectedRowKeys: selectedAssetIds,
-							onChange: (keys) => setSelectedAssetIds(keys as string[]),
-						}}
-						pagination={false}
-						scroll={{ y: 300 }}
-					/>
-				) : (
-					<div style={{ color: "#999", textAlign: "center", padding: 24 }}>
-						{assetQuery ? "未找到匹配的资产" : "请输入关键字搜索资产，不选择则直接部署"}
-					</div>
-				)}
 			</Modal>
 
 			<div className="deploy-section-title" style={{ marginTop: 20 }}>

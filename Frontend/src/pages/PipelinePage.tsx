@@ -16,7 +16,7 @@ import {
 	useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Button, Input, message, Modal, Typography, Collapse, Table } from "antd";
+import { Button, Input, message, Modal, Typography, Collapse } from "antd";
 import {
 	PlayCircleOutlined,
 	SaveOutlined,
@@ -42,10 +42,9 @@ import {
 	deleteComponent,
 	type PipelineComponentAPI,
 } from "../api/pipelineComponentApi";
-import { searchApi } from "../api/search";
-import type { SearchAssetResult } from "../api/search";
 import { toTranspilerPipeline, fromTranspilerPipeline } from "../lib/pipelineContract";
 import { useNavigate } from "react-router-dom";
+import AssetPicker from "../components/pipeline/AssetPicker";
 
 import "../styles/pipeline.css";
 
@@ -151,9 +150,6 @@ function PipelineCanvas() {
 	}>({ open: false, deploying: false, done: false, name: "" });
 	const [jsonOutput, setJsonOutput] = useState<string | null>(null);
 	// Asset selection for deploy modal
-	const [assetSearchResults, setAssetSearchResults] = useState<SearchAssetResult[]>([]);
-	const [assetSearching, setAssetSearching] = useState(false);
-	const [assetQuery, setAssetQuery] = useState("");
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 
 	useEffect(() => {
@@ -338,8 +334,6 @@ function PipelineCanvas() {
 			done: false,
 			name: pipelineName,
 		});
-		setAssetSearchResults([]);
-		setAssetQuery("");
 		setSelectedAssetIds([]);
 	}, [pipelineName]);
 
@@ -351,19 +345,6 @@ function PipelineCanvas() {
 			name: "",
 		});
 	}, []);
-
-	const handleAssetSearch = async (value: string) => {
-		if (!value.trim()) return;
-		setAssetSearching(true);
-		try {
-			const res = await searchApi.searchAssets({ q: value, page_size: 50 });
-			setAssetSearchResults(res.items);
-		} catch {
-			message.error("搜索资产失败");
-		} finally {
-			setAssetSearching(false);
-		}
-	};
 
 	const handleDeploy = useCallback(async () => {
 		setDeployDialog((prev) => ({ ...prev, deploying: true, done: false }));
@@ -640,50 +621,11 @@ function PipelineCanvas() {
 											</span>
 										),
 										children: (
-											<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-												<Input.Search
-													placeholder="搜索资产（输入 asset_id 或名称）"
-													onSearch={handleAssetSearch}
-													loading={assetSearching}
-													size="small"
-												/>
-												{assetSearchResults.length > 0 ? (
-													<Table
-														rowKey="asset_id"
-														dataSource={assetSearchResults}
-														size="small"
-														pagination={false}
-														scroll={{ y: 180 }}
-														rowSelection={{
-															type: "checkbox",
-															selectedRowKeys: selectedAssetIds,
-															onChange: (keys) => setSelectedAssetIds(keys as string[]),
-														}}
-														columns={[
-															{ title: "Asset ID", dataIndex: "asset_id", width: 120 },
-															{ title: "类型", dataIndex: "asset_type", width: 70 },
-															{ title: "状态", dataIndex: "lifecycle_state", width: 70 },
-															{
-																title: "存储路径",
-																dataIndex: "storage_uri",
-																width: 180,
-																render: (v: string | undefined) =>
-																	v ? (
-																		<span style={{ fontSize: 11, fontFamily: '"SF Mono", monospace', color: "#64748b" }}>
-																			{v.length > 36 ? v.slice(0, 36) + "\u2026" : v}
-																		</span>
-																	) : (
-																		<span style={{ fontSize: 11, color: "#aaa" }}>\u2014</span>
-																	),
-															},
-														]}
-													/>
-												) : (
-													<div style={{ color: "#999", textAlign: "center", padding: 12, fontSize: 12 }}>
-														{assetQuery ? "未找到匹配的资产" : "输入关键字搜索资产，不选择则直接部署"}
-													</div>
-												)}
-											</div>
+											<AssetPicker
+												selectedIds={selectedAssetIds}
+												onSelectionChange={setSelectedAssetIds}
+												maxHeight={180}
+											/>
 										),
 									},
 								]}
