@@ -53,6 +53,7 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		core.pipelineComponent,
 		core.query,
 		core.workflow,
+		core.backfill,
 	)
 
 	// Config watcher is created and managed by setupOptional (optional.go).

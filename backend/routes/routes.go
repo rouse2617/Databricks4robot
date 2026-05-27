@@ -20,6 +20,7 @@ import (
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
@@ -62,6 +63,7 @@ func RegisterAll(
 	pipelineComponentHandler *pipelineComponentH.Handler,
 	queryHandler *queryH.Handler,
 	workflowHandler *workflowH.Handler,
+	backfillHandler *backfillH.Handler,
 ) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
@@ -331,6 +333,16 @@ func RegisterAll(
 		if workflowHandler != nil {
 			api.GET("/workflows", workflowHandler.ListWorkflows)
 			api.GET("/workflows/:name", workflowHandler.GetWorkflow)
+		}
+
+		// Backfill jobs
+		if backfillHandler != nil {
+			api.POST("/backfill", backfillHandler.CreateJob)
+			api.GET("/backfill", backfillHandler.ListJobs)
+			api.GET("/backfill/:id", backfillHandler.GetJob)
+			api.POST("/backfill/:id/pause", backfillHandler.PauseJob)
+			api.POST("/backfill/:id/resume", backfillHandler.ResumeJob)
+			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
 		}
 
 		if queryHandler != nil {

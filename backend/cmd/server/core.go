@@ -5,6 +5,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
+	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
@@ -20,6 +21,7 @@ import (
 	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
+	backfillUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
 
@@ -87,10 +89,13 @@ func setupCore(inf *infra) *coreHandlers {
 	// ── Pipeline (Argo Workflows) ──
 	pipelineTemplateRepo := postgres.NewPipelineTemplateRepo(pg)
 	pipelineDeploymentRepo := postgres.NewPipelineDeploymentRepo(pg)
-	var pipelineHandler *pipelineH.Handler
+	var (
+		pipelineHandler *pipelineH.Handler
+		puc             *pipelineUC.Usecase
+	)
 	if kc := inf.k8sClient; kc != nil {
 		wfClient := k8s.NewArgoClient(kc.ArgoClientset)
-		puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, wfClient, inf.cfg.ArgoWorkflowsNamespace)
+		puc = pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, wfClient, inf.cfg.ArgoWorkflowsNamespace)
 		pipelineHandler = pipelineH.New(puc)
 	}
 
@@ -98,6 +103,10 @@ func setupCore(inf *infra) *coreHandlers {
 	pipelineComponentRepo := postgres.NewPipelineComponentRepo(pg)
 	pipelineComponentUC := pipelineComponentUC.New(pipelineComponentRepo)
 	pipelineComponentHandler := pipelineComponentH.New(pipelineComponentUC)
+
+	backfillRepo := postgres.NewBackfillRepo(pg)
+	backfillUC := backfillUC.New(backfillRepo, puc)
+	backfillHandler := backfillH.New(backfillUC)
 
 	// ── Workflow monitoring ──
 	var workflowHandler *workflowH.Handler
@@ -118,6 +127,7 @@ func setupCore(inf *infra) *coreHandlers {
 		action:       actionHandler,
 		pipeline:           pipelineHandler,
 			pipelineComponent:  pipelineComponentHandler,
+			backfill:           backfillHandler,
 		query:        queryHandler,
 		workflow:     workflowHandler,
 		assetUC:      assetUsecase,

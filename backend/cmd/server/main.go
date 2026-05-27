@@ -8,6 +8,7 @@ import (
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
@@ -81,6 +82,7 @@ type coreHandlers struct {
 	workflow     *workflowH.Handler
 	pipeline           *pipelineH.Handler
 	pipelineComponent  *pipelineComponentH.Handler
+	backfill           *backfillH.Handler
 	assetUC            *assetUC.Usecase
 }
 
