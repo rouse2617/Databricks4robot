@@ -4,6 +4,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,11 +13,17 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	searchUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/search"
 )
+
+type assetSearchUsecase interface {
+	SearchAssets(context.Context, searchUC.SearchAssetsRequest) (*elasticsearch.SearchResponse, error)
+}
 
 // Handler serves search endpoints backed by Elasticsearch.
 type Handler struct {
 	es       *elasticsearch.Client
+	search   assetSearchUsecase
 	sync     func() SyncInfo
 	progress func(context.Context) (SyncProgress, error)
 }
@@ -25,7 +32,7 @@ type Handler struct {
 // return 503 for search requests (graceful degradation). sync may be nil;
 // SyncStatus then returns a minimal snapshot based only on whether ES is wired.
 func New(esClient *elasticsearch.Client, sync func() SyncInfo, progress func(context.Context) (SyncProgress, error)) *Handler {
-	return &Handler{es: esClient, sync: sync, progress: progress}
+	return &Handler{es: esClient, search: searchUC.New(esClient), sync: sync, progress: progress}
 }
 
 // SearchAssets handles GET /api/v1/search/assets.
@@ -78,16 +85,54 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 		}
 	}
 
-	req := elasticsearch.SearchRequest{
-		Mode:     strings.TrimSpace(c.Query("mode")),
-		Query:    q,
-		Filters:  filters,
-		Page:     page,
-		PageSize: pageSize,
+	lineageWith := strings.TrimSpace(c.Query("lineage_with"))
+	lineageDirection := strings.TrimSpace(c.Query("lineage_direction"))
+	if lineageDirection == "" {
+		lineageDirection = searchUC.DirectionBoth
+	}
+	lineageDirection = strings.ToLower(lineageDirection)
+	if lineageDirection != searchUC.DirectionUpstream &&
+		lineageDirection != searchUC.DirectionDownstream &&
+		lineageDirection != searchUC.DirectionBoth {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "lineage_direction must be upstream, downstream, or both", nil)
+		return
+	}
+	lineageDepth := 1
+	if raw := strings.TrimSpace(c.Query("lineage_depth")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "lineage_depth must be a positive integer", nil)
+			return
+		}
+		if v > 3 {
+			v = 3
+		}
+		lineageDepth = v
+	}
+	relationTypes, err := parseRelationTypes(c.QueryArray("relation_types"), c.Query("relation_types"))
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
 	}
 
-	result, err := h.es.Search(c.Request.Context(), req)
+	req := searchUC.SearchAssetsRequest{
+		Mode:             strings.TrimSpace(c.Query("mode")),
+		Query:            q,
+		Filters:          filters,
+		Page:             page,
+		PageSize:         pageSize,
+		LineageWith:      lineageWith,
+		LineageDirection: lineageDirection,
+		LineageDepth:     lineageDepth,
+		RelationTypes:    relationTypes,
+	}
+
+	result, err := h.search.SearchAssets(c.Request.Context(), req)
 	if err != nil {
+		if errors.Is(err, searchUC.ErrLineageSeedNotFound) {
+			httpresp.Error(c, http.StatusNotFound, httpresp.CodeInvalidArgument, "lineage_with asset not found", nil)
+			return
+		}
 		httpresp.Error(c, http.StatusServiceUnavailable,
 			httpresp.CodeServiceUnavailable,
 			"Elasticsearch query failed: "+err.Error(), nil)
@@ -124,6 +169,42 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 		"page_size":    pageSize,
 		"aggregations": result.Aggregations,
 	})
+}
+
+var supportedRelationTypes = map[string]struct{}{
+	"split_from":   {},
+	"contains":     {},
+	"derived_from": {},
+	"merged_from":  {},
+	"sampled_from": {},
+	"revision_of":  {},
+	"pipeline_output": {},
+}
+
+func parseRelationTypes(repeated []string, single string) ([]string, error) {
+	rawValues := repeated
+	if len(rawValues) == 0 && strings.TrimSpace(single) != "" {
+		rawValues = []string{single}
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0)
+	for _, raw := range rawValues {
+		for _, part := range strings.Split(raw, ",") {
+			relationType := strings.ToLower(strings.TrimSpace(part))
+			if relationType == "" {
+				return nil, errors.New("relation_types must be a comma-separated list of supported relation types")
+			}
+			if _, ok := supportedRelationTypes[relationType]; !ok {
+				return nil, errors.New("unsupported relation_type " + strconv.Quote(relationType))
+			}
+			if _, ok := seen[relationType]; ok {
+				continue
+			}
+			seen[relationType] = struct{}{}
+			out = append(out, relationType)
+		}
+	}
+	return out, nil
 }
 
 // SyncStatus handles GET /api/v1/search/sync-status (Elasticsearch index path).

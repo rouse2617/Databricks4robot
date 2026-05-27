@@ -16,6 +16,7 @@ type Builder struct {
 	Algos   repository.AssetAlgoLatestRepository
 	Mcap    repository.McapFileRepository
 	Actions repository.ActionRepository // optional; nil disables actions[] projection
+	Lineage repository.AssetLineageRepository
 }
 
 // Build returns the document for an asset suitable for ES index API.
@@ -66,6 +67,9 @@ doc = map[string]any{
 		"tags":               []map[string]any{},
 		"algos":              []map[string]any{},
 		"mcap":               map[string]any{},
+		"lineage_upstream_ids":     []string{},
+		"lineage_downstream_ids":   []string{},
+		"lineage_relation_types":   []string{},
 	}
 
 	if a.ParentAssetID != "" {
@@ -176,6 +180,18 @@ doc = map[string]any{
 
 	if a.StartTimestampNs > 0 {
 		doc["recorded_at"] = time.Unix(0, a.StartTimestampNs).UTC().Format(time.RFC3339Nano)
+	}
+
+	if b.Lineage != nil {
+		projection, err := b.Lineage.GetLineageProjection(ctx, assetID)
+		if err != nil {
+			return nil, false, err
+		}
+		if projection != nil {
+			doc["lineage_upstream_ids"] = projection.UpstreamIDs
+			doc["lineage_downstream_ids"] = projection.DownstreamIDs
+			doc["lineage_relation_types"] = projection.RelationTypes
+		}
 	}
 
 	// actions[] nested: re-read the seg's full action set on every projection.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,21 +54,88 @@ func assetVersionInsertArgs(a *models.Asset) (logicalID interface{}, revision in
 // InsertRelation inserts a generic asset_relations edge (parent→child direction).
 func (r *AssetRepo) InsertRelation(ctx context.Context, parentAssetID, childAssetID, relationType, runID string) error {
 	const q = `
-INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id)
-VALUES ($1, $2, $3, NULLIF($4, ''))
-ON CONFLICT (parent_asset_id, child_asset_id, relation_type) DO NOTHING`
+WITH inserted AS (
+  INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id)
+  VALUES ($1, $2, $3, NULLIF($4, ''))
+  ON CONFLICT (parent_asset_id, child_asset_id, relation_type) DO NOTHING
+  RETURNING parent_asset_id, child_asset_id, relation_type, run_id
+),
+event_rows AS (
+  SELECT parent_asset_id AS asset_id, child_asset_id AS related_asset_id, relation_type, run_id, 'downstream' AS lineage_direction FROM inserted
+  UNION ALL
+  SELECT child_asset_id AS asset_id, parent_asset_id AS related_asset_id, relation_type, run_id, 'upstream' AS lineage_direction FROM inserted
+)
+INSERT INTO asset_events (
+  event_id, event_type, aggregate_type, payload_schema_version,
+  asset_id, event_source, run_id, event_payload
+)
+SELECT
+  gen_random_uuid(), 'asset_relation_upserted', 'asset', 'v1',
+  asset_id, 'backend', run_id,
+  jsonb_build_object(
+    'asset_id', asset_id,
+    'related_asset_id', related_asset_id,
+    'relation_type', relation_type,
+    'lineage_direction', lineage_direction
+  )
+FROM event_rows`
 	db := dbFromCtx(ctx, r.c.db)
 	return db.Exec(ctx, q, parentAssetID, childAssetID, relationType, runID)
 }
 
 // InsertRevisionOf records new revision -> prior revision (parent=new, child=prior per PRD).
 func (r *AssetRepo) InsertRevisionOf(ctx context.Context, newAssetID, priorAssetID, runID string) error {
+	return r.InsertRelation(ctx, newAssetID, priorAssetID, "revision_of", runID)
+}
+
+func (r *AssetRepo) GetLineageProjection(ctx context.Context, assetID string) (*repository.AssetLineageProjection, error) {
 	const q = `
-INSERT INTO asset_relations(parent_asset_id, child_asset_id, relation_type, run_id)
-VALUES ($1, $2, 'revision_of', NULLIF($3, ''))
-ON CONFLICT (parent_asset_id, child_asset_id, relation_type) DO NOTHING`
+SELECT parent_asset_id, child_asset_id, relation_type
+FROM asset_relations
+WHERE parent_asset_id = $1 OR child_asset_id = $1`
 	db := dbFromCtx(ctx, r.c.db)
-	return db.Exec(ctx, q, newAssetID, priorAssetID, runID)
+	rows, err := db.Query(ctx, q, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.GetLineageProjection: %w", err)
+	}
+	defer rows.Close()
+
+	upstream := map[string]struct{}{}
+	downstream := map[string]struct{}{}
+	relationTypes := map[string]struct{}{}
+	for rows.Next() {
+		var parentID, childID, relationType string
+		if err := rows.Scan(&parentID, &childID, &relationType); err != nil {
+			return nil, fmt.Errorf("postgres AssetRepo.GetLineageProjection scan: %w", err)
+		}
+		if childID == assetID && parentID != "" {
+			upstream[parentID] = struct{}{}
+		}
+		if parentID == assetID && childID != "" {
+			downstream[childID] = struct{}{}
+		}
+		if relationType != "" {
+			relationTypes[relationType] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres AssetRepo.GetLineageProjection rows: %w", err)
+	}
+
+	return &repository.AssetLineageProjection{
+		UpstreamIDs:   sortedKeys(upstream),
+		DownstreamIDs: sortedKeys(downstream),
+		RelationTypes: sortedKeys(relationTypes),
+	}, nil
+}
+
+func sortedKeys(in map[string]struct{}) []string {
+	out := make([]string, 0, len(in))
+	for k := range in {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func prepAssetForWrite(a *models.Asset) {

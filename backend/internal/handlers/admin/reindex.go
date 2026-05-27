@@ -47,6 +47,9 @@ func New(
 	jobs repository.SearchReindexJobRepository,
 ) *Handler {
 	b := &searchindex.Builder{Assets: assets, Tags: tags, Algos: algos, Mcap: mcap, Actions: actions}
+	if lineage, ok := assets.(repository.AssetLineageRepository); ok {
+		b.Lineage = lineage
+	}
 	return &Handler{
 		assets:      assets,
 		tags:        tags,

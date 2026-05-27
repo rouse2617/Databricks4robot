@@ -73,6 +73,7 @@ type SearchRequest struct {
 	Mode     string
 	Query    string     // free-text query (multi_match)
 	Filters  []FilterOp // structured filters with operators
+	AssetIDs []string   // optional candidate asset_id set
 	Page     int
 	PageSize int
 }
@@ -131,6 +132,40 @@ func (c *Client) SearchBody(ctx context.Context, body map[string]any) (*SearchRe
 	return c.doSearch(ctx, body)
 }
 
+func (c *Client) GetDocumentSource(ctx context.Context, id string) (map[string]any, bool, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, false, nil
+	}
+	url := fmt.Sprintf("%s/%s/_doc/%s", strings.TrimRight(c.baseURL, "/"), c.index, id)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("elasticsearch: get document request: %w", err)
+	}
+	resp, err := c.doReq(httpReq)
+	if err != nil {
+		return nil, false, fmt.Errorf("elasticsearch: get document failed: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("elasticsearch: get document read: %w", err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if resp.StatusCode >= 300 {
+		return nil, false, fmt.Errorf("elasticsearch: get document status %d: %s", resp.StatusCode, string(respBody))
+	}
+	var parsed struct {
+		Found  bool           `json:"found"`
+		Source map[string]any `json:"_source"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, false, fmt.Errorf("elasticsearch: get document unmarshal: %w", err)
+	}
+	return parsed.Source, parsed.Found, nil
+}
+
 // SearchBodyScroll is like SearchBody but adds scroll=2m and returns the scroll
 // ID so callers can continue fetching pages with ScrollNext.
 func (c *Client) SearchBodyScroll(ctx context.Context, body map[string]any) (*SearchResponse, string, error) {
@@ -153,6 +188,24 @@ func buildSearchBody(req SearchRequest) map[string]any {
 
 	if req.Query != "" {
 		must = append(must, buildSearchModeQuery(req.Mode, req.Query))
+	}
+	if len(req.AssetIDs) > 0 {
+		values := make([]any, 0, len(req.AssetIDs))
+		seen := make(map[string]struct{}, len(req.AssetIDs))
+		for _, id := range req.AssetIDs {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			values = append(values, id)
+		}
+		if len(values) > 0 {
+			filter = append(filter, map[string]any{"terms": map[string]any{"asset_id": values}})
+		}
 	}
 
 	// Group nested filters by path+key so that multiple conditions on the

@@ -63,6 +63,14 @@ func (s *stubAlgoRepo) ListByAsset(_ context.Context, _ string) ([]*models.Asset
 	return s.algos, nil
 }
 
+type stubLineageRepo struct {
+	projection *repository.AssetLineageProjection
+}
+
+func (s *stubLineageRepo) GetLineageProjection(context.Context, string) (*repository.AssetLineageProjection, error) {
+	return s.projection, nil
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 func TestBuild_LifecycleStateIsPrimary(t *testing.T) {
@@ -171,5 +179,36 @@ func TestBuild_NilAssetReturnsNotOk(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected ok=false for nil asset")
+	}
+}
+
+func TestBuild_LineageProjection(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:        "asset-mid",
+			McapFileID:     "m-1",
+			AssetType:      "segment",
+			LifecycleState: "ready",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+		Lineage: &stubLineageRepo{projection: &repository.AssetLineageProjection{
+			UpstreamIDs:   []string{"asset-parent"},
+			DownstreamIDs: []string{"asset-child"},
+			RelationTypes: []string{"derived_from"},
+		}},
+	}
+	doc, ok, err := b.Build(context.Background(), "asset-mid")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	if got := doc["lineage_upstream_ids"].([]string); len(got) != 1 || got[0] != "asset-parent" {
+		t.Fatalf("lineage_upstream_ids = %#v", doc["lineage_upstream_ids"])
+	}
+	if got := doc["lineage_downstream_ids"].([]string); len(got) != 1 || got[0] != "asset-child" {
+		t.Fatalf("lineage_downstream_ids = %#v", doc["lineage_downstream_ids"])
 	}
 }

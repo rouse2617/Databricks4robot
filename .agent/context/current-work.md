@@ -28,18 +28,16 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-## Cycle 17 (2026-05-28 07:46) — OpenAPI sync: add Backfill endpoints, fix deploy duplicate
+## Cycle 18 (2026-05-28 07:57) — OpenAPI sync: fix action-annotations path, add missing POST /assets/:id/actions
 
-1. **Audited openapi.yaml vs routes.go comprehensively** — Found Backfill endpoint group (6 endpoints) was entirely missing from the OpenAPI spec. Also found a duplicate `/api/v1/deploy` entry introduced in cycle 16.
-2. **Added BackfillJob & BackfillItem schemas** to `components/schemas` section — matching the Go `models.BackfillJob` / `models.BackfillItem` structs (id, name, templateId, filterJson, status, counts, timestamps).
-3. **Added 6 Backfill path endpoints**: `POST /api/v1/backfill` (create), `GET /api/v1/backfill` (list), `GET /api/v1/backfill/{id}` (get), `POST /api/v1/backfill/{id}/pause`, `POST /api/v1/backfill/{id}/resume`, `POST /api/v1/backfill/{id}/retry-failed`.
-4. **Removed duplicate `/api/v1/deploy`** entry (the original at `# Deployment` section was complete; the duplicate at `# Direct deploy (legacy)` with identical content was redundant).
-5. **Verified**: YAML valid ✅, `go build ./...` ✅, `npx tsc --noEmit` ✅
+1. **Audited routes.go vs openapi.yaml for remaining gaps** — Found that the action-annotations endpoints were still documented under the old `/actions` path in openapi.yaml, even though routes.go had moved them to `/action-annotations` (CYB-1228 layered asset creation now owns the old `/actions` path).
+2. **Fixed 4 action-annotations endpoints** in openapi.yaml: renamed paths from `/actions` to `/action-annotations`, updated tags from `[Actions]` to `[ActionAnnotations]`, updated summaries.
+3. **Added missing `POST /assets/{id}/actions`** endpoint for the layered child-asset creation (action-type) that now lives at the old `/actions` path — using `ChildAssetCreateRequest` schema, consistent with clips/frames/tasks siblings.
+4. **Verified**: YAML valid ✅, `go build ./...` ✅, `npx tsc --noEmit` ✅
 
 ### What's next for next cycle
 
-- All pipeline tasks T-01~T-13 are done, OpenAPI is fully synced for pipeline + backfill
-- Consider adding `action-annotations` endpoints to OpenAPI (also missing from spec)
+- All pipeline tasks T-01~T-13 are done, OpenAPI is fully synced for pipeline + backfill + action-annotations
 - Review codebase for cross-module improvements or bug fixes
 - Check if there are remaining pre-existing test failures (7 non-pipeline test failures)
 
