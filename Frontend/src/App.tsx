@@ -21,6 +21,8 @@ const MetricsSearchPage = lazy(() => import("./pages/MetricsSearchPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const EventsPage = lazy(() => import("./pages/EventsPage"));
 const PipelinePage = lazy(() => import("./pages/PipelinePage"));
+const WorkflowListPage = lazy(() => import("./pages/WorkflowListPage"));
+const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
 function PageLoader() {
@@ -62,6 +64,8 @@ function ProtectedRoutes() {
 						<Route path="/metrics" element={<MetricsSearchPage />} />
 						<Route path="/events" element={<EventsPage />} />
 						<Route path="/pipeline" element={<PipelinePage />} />
+						<Route path="/workflows" element={<WorkflowListPage />} />
+						<Route path="/workflows/:name" element={<WorkflowDetailPage />} />
 						<Route path="/settings" element={<SettingsPage />} />
 						<Route path="*" element={<Navigate to="/dashboard" replace />} />
 					</Routes>

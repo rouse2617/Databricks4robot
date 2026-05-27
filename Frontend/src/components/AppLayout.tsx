@@ -6,6 +6,7 @@ import {
 	FundProjectionScreenOutlined,
 	HistoryOutlined,
 	LogoutOutlined,
+	PlayCircleOutlined,
 	RobotOutlined,
 	SendOutlined,
 	SettingOutlined,
@@ -35,6 +36,7 @@ const menuItems = [
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
 	{ key: "/pipeline", icon: <ApartmentOutlined />, label: "流水线" },
+	{ key: "/workflows", icon: <PlayCircleOutlined />, label: "运行记录" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
 	{
@@ -55,6 +57,7 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
 	if (pathname.startsWith("/pipeline")) return "/pipeline";
+	if (pathname.startsWith("/workflows")) return "/workflows";
 	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	if (pathname.startsWith("/algo")) return "/algo";
 	return "/assets";

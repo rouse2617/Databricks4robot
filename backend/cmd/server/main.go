@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
@@ -14,7 +15,9 @@ import (
 	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
@@ -37,6 +40,7 @@ type infra struct {
 	metricRegistry *config.MetricRegistry
 	queryFieldReg  *config.QueryFieldRegistry
 	actionLabelReg *config.ActionLabelRegistry
+	k8sClient      *k8s.Client
 }
 
 func (inf *infra) close() {
@@ -73,6 +77,8 @@ type coreHandlers struct {
 	eval         *evalH.Handler
 	action       *actionH.Handler
 	query        *queryH.Handler
+	workflow     *workflowH.Handler
+	pipeline     *pipelineH.Handler
 	assetUC      *assetUC.Usecase
 }
 

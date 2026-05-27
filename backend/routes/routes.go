@@ -24,7 +24,9 @@ import (
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
@@ -55,7 +57,9 @@ func RegisterAll(
 	purgeHandler *adminH.PurgeHandler,
 	evalHandler *evalH.Handler,
 	actionHandler *actionH.Handler,
+	pipelineHandler *pipelineH.Handler,
 	queryHandler *queryH.Handler,
+	workflowHandler *workflowH.Handler,
 ) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
@@ -296,6 +300,25 @@ func RegisterAll(
 			assets.GET("/:id/metrics", evalHandler.ListMetrics)
 			api.GET("/metrics/registry", evalHandler.GetRegistry)
 			api.POST("/metrics:search", evalHandler.SearchByMetrics)
+		}
+
+		// Pipeline (Argo Workflows) — templates, deploy, deployments
+		if pipelineHandler != nil {
+			api.POST("/pipelines", pipelineHandler.SaveTemplate)
+			api.GET("/pipelines", pipelineHandler.ListTemplates)
+			api.GET("/pipelines/:id", pipelineHandler.GetTemplate)
+			api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
+			api.POST("/deploy", pipelineHandler.Deploy)
+			api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
+			api.GET("/deployments", pipelineHandler.ListDeployments)
+			api.GET("/deployments/:id", pipelineHandler.GetDeployment)
+			api.DELETE("/deployments/:id", pipelineHandler.DeleteDeployment)
+		}
+
+		// Workflow monitoring
+		if workflowHandler != nil {
+			api.GET("/workflows", workflowHandler.ListWorkflows)
+			api.GET("/workflows/:name", workflowHandler.GetWorkflow)
 		}
 
 		if queryHandler != nil {

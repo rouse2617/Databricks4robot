@@ -3,6 +3,12 @@ export interface Pipeline {
 	version?: string;
 	nodes: PipelineNodeDef[];
 	edges: PipelineEdgeDef[];
+
+	/** Asset input selection — which assets this pipeline processes. */
+	assetSelection?: {
+		assetIds?: string[];
+		assetQuery?: string;
+	};
 }
 
 export interface PipelineNodeDef {

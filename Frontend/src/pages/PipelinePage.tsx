@@ -351,7 +351,7 @@ function PipelineCanvas({ registeredComponents: comps }: { registeredComponents:
 					placeholder="pipeline-name"
 				/>
 				<Button type="primary" size="small" onClick={openDeployDialog}>
-					部署
+					运行
 				</Button>
 				<Button size="small" onClick={handleSaveTemplate}>
 					保存
@@ -407,7 +407,7 @@ function PipelineCanvas({ registeredComponents: comps }: { registeredComponents:
 				open={deployDialog.open}
 				onCancel={closeDeployDialog}
 				footer={null}
-				title="部署流水线"
+				title="运行流水线"
 				width={480}
 			>
 				{!deployDialog.deploying && !deployDialog.done && (
@@ -416,7 +416,7 @@ function PipelineCanvas({ registeredComponents: comps }: { registeredComponents:
 							type="secondary"
 							style={{ fontSize: 12, display: "block", marginBottom: 14 }}
 						>
-							将编译流水线并提交到 Kubernetes 集群。
+							将流水线提交运行。
 						</Text>
 						<div className="deploy-dialog-fields">
 							<label>
@@ -440,7 +440,7 @@ function PipelineCanvas({ registeredComponents: comps }: { registeredComponents:
 								onClick={handleDeploy}
 								disabled={nodes.length === 0}
 							>
-								部署
+								运行
 							</Button>
 						</div>
 					</>
@@ -448,7 +448,7 @@ function PipelineCanvas({ registeredComponents: comps }: { registeredComponents:
 				{deployDialog.deploying && (
 					<div className="deploy-progress">
 						<Spin />
-						<Text type="secondary">正在部署流水线...</Text>
+						<Text type="secondary">正在运行流水线...</Text>
 					</div>
 				)}
 				{deployDialog.done && (
@@ -456,7 +456,7 @@ function PipelineCanvas({ registeredComponents: comps }: { registeredComponents:
 						{deployDialog.error ? (
 							<>
 								<div className="dep-empty" style={{ color: "#dc2626" }}>
-									部署失败
+									运行失败
 								</div>
 								<Text
 									type="secondary"
@@ -474,7 +474,7 @@ function PipelineCanvas({ registeredComponents: comps }: { registeredComponents:
 						) : deployDialog.result ? (
 							<>
 								<div style={{ color: "#16a34a", fontWeight: 600, fontSize: 16 }}>
-									部署成功
+									运行成功
 								</div>
 								<Text
 									code
@@ -483,7 +483,7 @@ function PipelineCanvas({ registeredComponents: comps }: { registeredComponents:
 									{deployDialog.result.workflowName}
 								</Text>
 								<div className="dep-card-meta" style={{ justifyContent: "center", marginTop: 8 }}>
-									<span>{deployDialog.result.nodes} 个节点</span>
+									<span>{deployDialog.result.nodeCount} 个节点</span>
 									<span className="dot">•</span>
 									<span>{new Date(deployDialog.result.createdAt).toLocaleString()}</span>
 								</div>
@@ -520,7 +520,7 @@ export default function PipelinePage() {
 		},
 		{
 			key: "registry",
-			label: "组件注册表",
+			label: "自定义组件",
 			children: (
 				<ComponentManager
 					components={registeredComponents}
@@ -530,7 +530,7 @@ export default function PipelinePage() {
 		},
 		{
 			key: "deploy",
-			label: "部署管理",
+			label: "运行记录",
 			children: <DeployPanel />,
 		},
 	];
@@ -538,7 +538,7 @@ export default function PipelinePage() {
 	return (
 		<div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
 			<Typography.Title level={4} style={{ margin: "0 0 12px 0", flexShrink: 0 }}>
-				流水线设计器
+				资产处理流水线
 			</Typography.Title>
 			<Tabs
 				activeKey={tab}

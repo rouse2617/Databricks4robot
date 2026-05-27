@@ -1,7 +1,9 @@
 package main
 
 import (
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
+	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
@@ -12,6 +14,8 @@ import (
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
+	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
@@ -78,6 +82,26 @@ func setupCore(inf *infra) *coreHandlers {
 		queryHandler = queryH.New(assetUsecase, inf.queryFieldReg, inf.es, savedQueryRepo)
 	}
 
+	// ── Pipeline (Argo Workflows) ──
+	pipelineTemplateRepo := postgres.NewPipelineTemplateRepo(pg)
+	pipelineDeploymentRepo := postgres.NewPipelineDeploymentRepo(pg)
+	var pipelineHandler *pipelineH.Handler
+	if kc := inf.k8sClient; kc != nil {
+		wfClient := k8s.NewArgoClient(kc.ArgoClientset)
+		puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, wfClient, inf.cfg.ArgoWorkflowsNamespace)
+		pipelineHandler = pipelineH.New(puc)
+	} else {
+		puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, nil, "")
+		pipelineHandler = pipelineH.New(puc)
+	}
+
+	// ── Workflow monitoring ──
+	var workflowHandler *workflowH.Handler
+	if kc := inf.k8sClient; kc != nil {
+		wfClient := k8s.NewArgoClient(kc.ArgoClientset)
+		workflowHandler = workflowH.New(wfClient, inf.cfg.ArgoWorkflowsNamespace)
+	}
+
 	return &coreHandlers{
 		asset:        assetHandler,
 		algo:         algoHandler,
@@ -88,7 +112,9 @@ func setupCore(inf *infra) *coreHandlers {
 		algoRun:      algoRunHandler,
 		eval:         evalHandler,
 		action:       actionHandler,
+		pipeline:     pipelineHandler,
 		query:        queryHandler,
+		workflow:     workflowHandler,
 		assetUC:      assetUsecase,
 	}
 }

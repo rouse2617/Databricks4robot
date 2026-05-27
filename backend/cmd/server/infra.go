@@ -13,6 +13,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
@@ -120,6 +121,18 @@ func setupInfra() *infra {
 			"backend", st.Backend, "error", st.Error)
 	}
 
+	// ── Optional: K8s/Argo Workflows client ──
+	var k8sClient *k8s.Client
+	if cfg.ArgoWorkflowsNamespace != "" {
+		kc, err := k8s.NewClient(cfg.KubeconfigPath, cfg.ArgoWorkflowsNamespace)
+		if err != nil {
+			slog.Warn("k8s client unavailable; pipeline deploy will be disabled", "err", err)
+		} else {
+			k8sClient = kc
+			slog.Info("k8s client connected", "namespace", cfg.ArgoWorkflowsNamespace)
+		}
+	}
+
 	// ── Optional: Elasticsearch ──
 	var esClient *espkg.Client
 	if cfg.ElasticsearchURL != "" {
@@ -144,5 +157,6 @@ func setupInfra() *infra {
 		metricRegistry:  metricRegistry,
 		queryFieldReg:   queryFieldReg,
 		actionLabelReg:  actionLabelReg,
+		k8sClient:       k8sClient,
 	}
 }

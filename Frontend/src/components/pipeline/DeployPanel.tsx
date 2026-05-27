@@ -53,7 +53,7 @@ export function DeployPanel() {
 	const handleDeleteDeployment = async (id: string) => {
 		try {
 			await deleteDeployment(id);
-			message.success("已删除部署记录");
+			message.success("已删除运行记录");
 			refresh();
 		} catch (err) {
 			message.error("删除失败: " + String(err));
@@ -73,7 +73,7 @@ export function DeployPanel() {
 	return (
 		<div className="deploy-panel">
 			<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-				<h3>部署管理</h3>
+				<h3>运行记录</h3>
 				<Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
@@ -104,7 +104,7 @@ export function DeployPanel() {
 									icon={<PlayCircleOutlined />}
 									onClick={() => handleDeployTemplate(t.id)}
 								>
-									部署
+									运行
 								</Button>
 								<Button
 									size="small"
@@ -119,12 +119,12 @@ export function DeployPanel() {
 			</div>
 
 			<div className="deploy-section-title" style={{ marginTop: 20 }}>
-				部署历史
+				运行历史
 				<span className="count">{deployments.length}</span>
 			</div>
 			<div className="deploy-section">
 				{deployments.length === 0 ? (
-					<div className="dep-empty">暂无部署记录</div>
+					<div className="dep-empty">暂无运行记录</div>
 				) : (
 					deployments.map((d) => (
 						<div key={d.id} className="dep-card">
@@ -132,7 +132,7 @@ export function DeployPanel() {
 								<div className="dep-card-name">{d.pipelineName}</div>
 								<div className="dep-card-meta">
 									<Tag color={STATUS_COLORS[d.status] || "default"}>{d.status}</Tag>
-									<span>{d.nodes} 个节点</span>
+									<span>{d.nodeCount} 个节点</span>
 									<span className="dot">•</span>
 									<span>{new Date(d.createdAt).toLocaleString()}</span>
 									{d.finishedAt && (

@@ -1,4 +1,4 @@
-const API = "/api";
+const API = "/api/v1";
 
 export interface PipelineTemplate {
 	id: string;
@@ -13,11 +13,22 @@ export interface Deployment {
 	pipelineName: string;
 	workflowName: string;
 	status: string;
-	nodes: number;
+	nodeCount: number;
 	createdAt: string;
 	finishedAt?: string;
 	manifest?: string;
-	pipelineJSON?: string;
+	pipelineJSON?: unknown;
+}
+
+class ApiError extends Error {
+	code: string;
+	status: number;
+	constructor(status: number, code: string, message: string) {
+		super(message);
+		this.name = "ApiError";
+		this.status = status;
+		this.code = code;
+	}
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -27,42 +38,49 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 		body: body ? JSON.stringify(body) : undefined,
 	});
 	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(text || `HTTP ${res.status}`);
+		let code = "UNKNOWN";
+		let message = `HTTP ${res.status}`;
+		try {
+			const err = await res.json();
+			code = err.code || code;
+			message = err.message || err.error || message;
+		} catch {
+			/* ignore parse errors */
+		}
+		throw new ApiError(res.status, code, message);
 	}
+	if (res.status === 204) return undefined as T;
 	const contentType = res.headers.get("content-type") || "";
 	if (!contentType.includes("application/json")) {
-		throw new Error(`unexpected content-type: ${contentType}`);
+		return undefined as T;
 	}
-	const json = await res.json();
-	if (!json.ok) throw new Error(json.error || "request failed");
-	return json.data as T;
+	return res.json() as Promise<T>;
 }
 
 export function listPipelines(): Promise<PipelineTemplate[]> {
-	return request("GET", "/pipelines");
+	return request<{ items: PipelineTemplate[] }>("GET", "/pipelines").then((r) => r.items);
 }
 
 export function savePipeline(name: string, pipeline: unknown): Promise<PipelineTemplate> {
-	return request("POST", "/pipelines", { name, pipeline });
+	return request<PipelineTemplate>("POST", "/pipelines", { name, pipeline });
 }
 
 export function deletePipeline(id: string): Promise<void> {
-	return request("DELETE", `/pipelines/${id}`);
+	return request<void>("DELETE", `/pipelines/${id}`);
 }
 
 export function deploy(pipeline: unknown, name?: string): Promise<Deployment> {
-	return request("POST", "/deploy", { pipeline, name });
+	return request<Deployment>("POST", "/deploy", { pipeline, name });
 }
 
 export function deployTemplate(templateId: string): Promise<Deployment> {
-	return request("POST", "/deploy", { templateId });
+	return request<Deployment>("POST", `/deploy/template/${templateId}`);
 }
 
 export function listDeployments(): Promise<Deployment[]> {
-	return request("GET", "/deployments");
+	return request<{ items: Deployment[] }>("GET", "/deployments").then((r) => r.items);
 }
 
 export function deleteDeployment(id: string): Promise<void> {
-	return request("DELETE", `/deployments/${id}`);
+	return request<void>("DELETE", `/deployments/${id}`);
 }

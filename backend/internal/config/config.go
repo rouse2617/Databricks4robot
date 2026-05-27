@@ -127,6 +127,10 @@ type Config struct {
 
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
+
+	// Argo Workflows / K8s
+	KubeconfigPath        string // path to kubeconfig (empty = in-cluster or default search)
+	ArgoWorkflowsNamespace string // namespace for Argo Workflows (default "default")
 }
 
 func Load() *Config {
@@ -214,6 +218,9 @@ func Load() *Config {
 		DeliveryEligibilityProjectorEnabled: getenv("DELIVERY_ELIGIBILITY_PROJECTOR_ENABLED", "false"),
 
 		AdminToken: getenv("ADMIN_TOKEN", ""),
+
+		KubeconfigPath:        getenv("KUBECONFIG_PATH", ""),
+		ArgoWorkflowsNamespace: getenv("ARGO_WORKFLOWS_NAMESPACE", "default"),
 	}
 }
 
