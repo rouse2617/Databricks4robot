@@ -28,7 +28,7 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (T-13)
+### What was done this cycle (T-13 + OpenAPI sync)
 
 1. **T-13**: Display asset storage URI in asset picker + search index
    - Backend: added `storage_uri` to search index document in `builder.go`
@@ -38,14 +38,18 @@ Human-updated scratchpad for compact recovery. All agents should read this after
    - Both columns reuse `storage_uri` from search index results
    - Verified: `go build ./...` ✅, `npx tsc --noEmit` ✅, pipeline tests ✅
 
+2. **OpenAPI sync**: Added all 17 missing pipeline/component/workflow endpoint definitions
+   - 8 new schemas: PipelineTemplate, PipelineDeployment, PipelineComponent, PortDef, EnvVarDef, WorkflowSummary, WorkflowDetail, WorkflowNodeStatus
+   - Pipeline CRUD: POST/GET /pipelines, GET/DELETE /pipelines/:id, GET /pipelines/:id/versions
+   - Deploy: POST /deploy, POST /deploy/template/:id
+   - Deployments: GET /deployments, GET/DELETE /deployments/:id
+   - Components: POST/GET /components, GET/PUT/DELETE /components/:id
+   - Workflows: GET /workflows, GET /workflows/:name
+   - File: `api/openapi.yaml` (+538 lines)
+
 ## What's next
 
-All pipeline-next-steps.md §2.2 tasks complete (T-01~T-13). Next options:
-
-1. **Code review** — Look for missing endpoints in openapi.yaml, dead code, or UX polish items
-2. **Data plan integration** (T-14) — Architectural decision record
-
-See [docs/review/pipeline-next-steps.md](../../docs/review/pipeline-next-steps.md) §6 for T-14 details.
+All pipeline-next-steps.md tasks complete (T-01~T-13). OpenAPI now covers 100% of registered pipeline endpoints.
 
 ## Non-Done DataBrew
 
