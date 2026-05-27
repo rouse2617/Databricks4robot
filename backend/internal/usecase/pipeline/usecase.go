@@ -20,8 +20,10 @@ import (
 
 // Sentinel errors.
 var (
-	ErrTemplateNotFound   = errors.New("template not found")
-	ErrDeploymentNotFound = errors.New("deployment not found")
+	ErrTemplateNotFound        = errors.New("template not found")
+	ErrDeploymentNotFound      = errors.New("deployment not found")
+	ErrAssetNotFound           = errors.New("asset not found")
+	ErrInvalidArgument         = errors.New("invalid argument")
 )
 
 // Usecase orchestrates pipeline template management and deployment.
@@ -137,6 +139,16 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 
 	wfName := pipeName + "-" + uuid.New().String()[:6]
 	depID := uuid.New().String()
+
+	// Validate all asset IDs exist before proceeding (T-12).
+	if len(assetIDs) > 0 && uc.assetRepo != nil {
+		for _, aid := range assetIDs {
+			a, err := uc.assetRepo.Get(ctx, aid)
+			if err != nil || a == nil {
+				return nil, fmt.Errorf("%w: asset_id=%q", ErrAssetNotFound, aid)
+			}
+		}
+	}
 
 	// Assemble workflow-level params and global env vars from asset IDs.
 	var wfParams []transpiler.Param

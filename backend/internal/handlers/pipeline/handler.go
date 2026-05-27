@@ -200,6 +200,10 @@ func mapDeployError(c *gin.Context, err error) {
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 		return
 	}
+	if errors.Is(err, pipelineUC.ErrAssetNotFound) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
 	httpresp.Internal(c, err.Error())
 }
 
