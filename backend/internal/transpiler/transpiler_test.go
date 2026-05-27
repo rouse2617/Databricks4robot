@@ -155,3 +155,40 @@ func TestTranspileRetryAndTimeout(t *testing.T) {
 	}
 	t.Fatal("step-n1 template not found")
 }
+
+func TestTranspileWorkflowParams(t *testing.T) {
+	p := &Pipeline{
+		Name: "wf-params",
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{Name: "n", Image: "busybox:latest"},
+		}},
+	}
+	opts := &Options{
+		Name: "wf-params",
+		WorkflowParams: []Param{
+			{Name: "asset_ids", Value: "[\"V4ftKjqX\",\"kK9qIAqG\"]"},
+			{Name: "threshold", Value: "0.5"},
+		},
+	}
+	wf, err := Transpile(p, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(wf.Spec.Arguments.Parameters) != 2 {
+		t.Fatalf("got %d params, want 2", len(wf.Spec.Arguments.Parameters))
+	}
+
+	var names []string
+	for _, p := range wf.Spec.Arguments.Parameters {
+		names = append(names, p.Name)
+		if p.Value == nil || p.Value.String() == "" {
+			t.Fatalf("param %q has nil or empty value", p.Name)
+		}
+	}
+
+	if names[0] != "asset_ids" || names[1] != "threshold" {
+		t.Fatalf("params = %v, want [asset_ids threshold]", names)
+	}
+}

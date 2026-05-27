@@ -151,7 +151,7 @@ Pipeline 和资产管理的核心结合点。
 
 | # | 需求 | 优先级 | 备注 |
 |---|------|--------|------|
-| F4.1 | pipeline 运行前选择输入 asset(s) | P1 | 前端选 asset / filter 规则 |
+| F4.1 | pipeline 运行前选择输入 asset(s) | P1 | ✅ CYB-1263 |
 | F4.2 | 运行参数透传（asset path、metadata 传给容器） | P1 | env / parameter 注入 |
 | F4.3 | 处理结果自动注册新 asset（容器回调 API） | P1 | 容器 finish 后 POST /assets |
 | F4.4 | pipeline 执行记录写入 asset_events | P2 | 事件流可追溯 |

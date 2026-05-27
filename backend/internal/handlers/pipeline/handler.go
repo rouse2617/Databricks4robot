@@ -91,13 +91,14 @@ func (h *Handler) Deploy(c *gin.Context) {
 	var req struct {
 		Pipeline map[string]interface{} `json:"pipeline" binding:"required"`
 		Name     string                 `json:"name"`
+		AssetIDs []string               `json:"asset_ids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
 
-	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name)
+	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs)
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -114,11 +115,12 @@ func (h *Handler) DeployByTemplate(c *gin.Context) {
 	}
 
 	var req struct {
-		Name string `json:"name"`
+		Name     string   `json:"name"`
+		AssetIDs []string `json:"asset_ids"`
 	}
-	_ = c.ShouldBindJSON(&req) // name is optional
+	_ = c.ShouldBindJSON(&req) // name and asset_ids are optional
 
-	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name)
+	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs)
 	if err != nil {
 		mapDeployError(c, err)
 		return

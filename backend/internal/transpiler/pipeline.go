@@ -35,6 +35,12 @@ type ResourceRequirements struct {
 	Disk   string `json:"disk,omitempty" yaml:"disk,omitempty"`     // ephemeral storage, e.g. "1Gi"
 }
 
+// Param is a key-value pair for workflow-level parameters.
+type Param struct {
+	Name  string `json:"name" yaml:"name"`
+	Value string `json:"value" yaml:"value"`
+}
+
 // Argument defines a parameter passed to a component.
 // Value is used for static values; From references another node's output.
 type Argument struct {

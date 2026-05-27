@@ -27,6 +27,7 @@ type Options struct {
 	TTLSecondsAfter      int32
 	RetryStrategy        *RetryStrategy
 	ActiveDeadlineSeconds int64
+	WorkflowParams       []Param // workflow-level parameters (e.g. asset_ids)
 }
 
 // RetryStrategy defines automatic retry policy for each step.
@@ -73,6 +74,18 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 	}
 	for _, s := range opts.ImagePullSecrets {
 		wf.Spec.ImagePullSecrets = append(wf.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: s})
+	}
+
+	// Workflow-level parameters (e.g. asset_ids passed at deploy time)
+	if len(opts.WorkflowParams) > 0 {
+		var params []wfv1.Parameter
+		for _, p := range opts.WorkflowParams {
+			params = append(params, wfv1.Parameter{
+				Name:  p.Name,
+				Value: wfv1.AnyStringPtr(p.Value),
+			})
+		}
+		wf.Spec.Arguments = wfv1.Arguments{Parameters: params}
 	}
 
 	// Build node input specs: for each node, which input params come from where

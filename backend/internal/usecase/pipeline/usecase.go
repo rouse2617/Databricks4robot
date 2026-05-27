@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"fmt"
 	"time"
 
@@ -81,7 +82,8 @@ func (uc *Usecase) DeleteTemplate(ctx context.Context, id string) error {
 
 // Deploy transpiles a pipeline and submits it as an Argo Workflow.
 // pipelineArg is the raw pipeline JSON map. name overrides the workflow name.
-func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{}, name string) (*models.PipelineDeployment, error) {
+// assetIDs are passed as workflow-level parameters (F4.1).
+func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{}, name string, assetIDs []string) (*models.PipelineDeployment, error) {
 	// Marshal pipeline to JSON for transpiler.
 	raw, err := json.Marshal(pipelineArg)
 	if err != nil {
@@ -100,11 +102,21 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 
 	wfName := pipeName + "-" + uuid.New().String()[:6]
 
+	// Assemble workflow-level params from asset IDs.
+	var wfParams []transpiler.Param
+	if len(assetIDs) > 0 {
+		wfParams = append(wfParams, transpiler.Param{
+			Name:  "asset_ids",
+			Value: strings.Join(assetIDs, ","),
+		})
+	}
+
 	// Transpile to Argo Workflow.
 	opts := &transpiler.Options{
 		Name:            wfName,
 		Namespace:       uc.namespace,
 		TTLSecondsAfter: 3600,
+		WorkflowParams:  wfParams,
 	}
 	wf, err := transpiler.Transpile(pipe, opts)
 	if err != nil {
@@ -145,7 +157,7 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 }
 
 // DeployByTemplateID deploys a saved template.
-func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name string) (*models.PipelineDeployment, error) {
+func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name string, assetIDs []string) (*models.PipelineDeployment, error) {
 	t, err := uc.templateRepo.FindByID(ctx, templateID)
 	if err != nil {
 		return nil, fmt.Errorf("find template: %w", err)
@@ -156,7 +168,7 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	if name == "" {
 		name = t.Name
 	}
-	return uc.Deploy(ctx, t.Pipeline, name)
+	return uc.Deploy(ctx, t.Pipeline, name, assetIDs)
 }
 
 // ── Deployments ───────────────────────────────────────────────────
