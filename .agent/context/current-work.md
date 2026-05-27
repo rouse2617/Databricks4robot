@@ -47,20 +47,21 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 3. **Verified**: `go build ./...` ✅, `go test ./internal/handlers/pipeline/...` (35/35 PASS) ✅, `go test ./internal/handlers/pipeline_component/...` (13/13 PASS) ✅, `go test ./internal/usecase/pipeline/...` ✅, `go test ./internal/usecase/pipeline_component/...` ✅, `go test ./internal/transpiler/...` ✅
 
+## What was done this cycle (2026-05-28 cycle 5) — Orphaned routes + OpenAPI sync
+
+1. **Fixed orphaned handler routes** — `RetryDeployment` and `StopDeployment` handler functions existed (with tests) but were never registered in `routes.go`. Added:
+   - `POST /api/v1/deployments/:id/retry` → `pipelineHandler.RetryDeployment`
+   - `POST /api/v1/deployments/:id/stop` → `pipelineHandler.StopDeployment`
+
+2. **OpenAPI sync** — Added `/api/v1/deployments/{id}/retry` and `/api/v1/deployments/{id}/stop` endpoints with full request/response schemas. Fixed param name in `/api/v1/pipelines/{id}/diff/{id2}` from `id1` → `id` to match actual Gin route param.
+
+3. **Verified**: `go build ./...` ✅, `go vet ./...` ✅, `npx tsc --noEmit` ✅, pipeline handler tests 35/35 PASS ✅
+
 ## What's next
 
-All pipeline-next-steps.md tasks complete (T-01~T-13). All pipeline-related packages now have test coverage:
-- `internal/handlers/pipeline` — 35 tests ✅ (NEW this cycle)
-- `internal/handlers/pipeline_component` — 13 tests ✅ (NEW this cycle)
-- `internal/handlers/workflow` — 7 tests ✅
-- `internal/usecase/pipeline` — 34 tests ✅
-- `internal/usecase/pipeline_component` — 15 tests ✅
-
-Next opportunities (from code review):
-- Review `api/openapi.yaml` for any missing pipeline endpoints
-- Check frontend TypeScript for type coverage
-- Add more integration-style handler tests (e.g., edge cases with assetEventRepo)
-- Consider linter/go vet cleanup if any
+- Review frontend pipeline pages for TypeScript type coverage / unused imports
+- Check for integration-level route tests (routes_test.go lacks pipeline route tests)
+- Review openapi.yaml for any other param naming inconsistencies across all domains
 
 ## Non-Done DataBrew
 
