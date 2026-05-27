@@ -93,6 +93,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 				>
 					{/* logo area */}
 					<div
+						role="button"
+						tabIndex={0}
 						style={{
 							height: 64,
 							display: "flex",
