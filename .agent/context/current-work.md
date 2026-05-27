@@ -30,4 +30,4 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 
 ---
 
-_Update the sections above when starting a new CYB issue. Clear "Active issue" constraints after merge._
+See [memory.md](memory.md) for project stack, user profile, and workflow rules. _Update sections above when starting a new CYB issue._
