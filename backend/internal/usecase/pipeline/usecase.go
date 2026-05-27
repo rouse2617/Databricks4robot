@@ -189,7 +189,7 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 			return nil, fmt.Errorf("create workflow: %w", err)
 		}
 		phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, uc.namespace)
-		if err == nil {
+		if err == nil && phase != "" {
 			status = string(phase)
 		}
 	}
@@ -287,7 +287,7 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 	// Refresh status for active workflows.
 	if uc.wfClient != nil {
 		for i := range list {
-			if list[i].Status == "Running" || list[i].Status == "Pending" || list[i].Status == "Unknown" {
+			if list[i].Status == "" || list[i].Status == "Running" || list[i].Status == "Pending" || list[i].Status == "Unknown" {
 				phase, err := uc.wfClient.GetWorkflowStatus(ctx, list[i].WorkflowName, uc.namespace)
 				if err == nil {
 					list[i].Status = string(phase)
@@ -312,7 +312,7 @@ func (uc *Usecase) GetDeployment(ctx context.Context, id string) (*models.Pipeli
 	if d == nil {
 		return nil, nil
 	}
-	if uc.wfClient != nil && (d.Status == "Running" || d.Status == "Pending" || d.Status == "Unknown") {
+	if uc.wfClient != nil && (d.Status == "" || d.Status == "Running" || d.Status == "Pending" || d.Status == "Unknown") {
 		phase, err := uc.wfClient.GetWorkflowStatus(ctx, d.WorkflowName, uc.namespace)
 		if err == nil {
 			d.Status = string(phase)

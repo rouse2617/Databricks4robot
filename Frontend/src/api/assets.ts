@@ -337,6 +337,10 @@ export const assetsApi = {
 				};
 			}>(`/assets/${assetId}/lineage`)
 			.then((r) => r.data),
+	getPipelineLineage: (assetId: string) =>
+		apiClient
+			.get<PipelineLineage>(`/assets/${assetId}/pipeline-lineage`)
+			.then((r) => r.data),
 	getProvenance: (assetId: string) =>
 		apiClient
 			.get<AssetProvenance>(`/assets/${assetId}/provenance`)
