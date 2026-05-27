@@ -61,6 +61,10 @@ export function listPipelines(): Promise<PipelineTemplate[]> {
 	return request<{ items: PipelineTemplate[] }>("GET", "/pipelines").then((r) => r.items);
 }
 
+export function getPipeline(id: string): Promise<PipelineTemplate> {
+	return request<PipelineTemplate>("GET", `/pipelines/${id}`);
+}
+
 export function savePipeline(name: string, pipeline: unknown): Promise<PipelineTemplate> {
 	return request<PipelineTemplate>("POST", "/pipelines", { name, pipeline });
 }
@@ -73,8 +77,8 @@ export function deploy(pipeline: unknown, name?: string): Promise<Deployment> {
 	return request<Deployment>("POST", "/deploy", { pipeline, name });
 }
 
-export function deployTemplate(templateId: string): Promise<Deployment> {
-	return request<Deployment>("POST", `/deploy/template/${templateId}`);
+export function deployTemplate(templateId: string, assetIds?: string[]): Promise<Deployment> {
+	return request<Deployment>("POST", `/deploy/template/${templateId}`, { asset_ids: assetIds });
 }
 
 export function listDeployments(): Promise<Deployment[]> {

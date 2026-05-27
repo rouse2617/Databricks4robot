@@ -1,6 +1,6 @@
 import { Spin } from "antd";
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
@@ -38,12 +38,13 @@ function PageLoader() {
 
 function ProtectedRoutes() {
 	const { isAuthenticated, loading } = useAuth();
+	const location = useLocation();
 	if (loading) return <PageLoader />;
 	if (!isAuthenticated) return <Navigate to="/login" replace />;
 	return (
 		<AppLayout>
 			<ErrorBoundary>
-				<Suspense fallback={<PageLoader />}>
+				<Suspense fallback={<PageLoader />} key={location.pathname}>
 					<Routes>
 						<Route path="/" element={<Navigate to="/dashboard" replace />} />
 						<Route path="/dashboard" element={<DashboardPage />} />

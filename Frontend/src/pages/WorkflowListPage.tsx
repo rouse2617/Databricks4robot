@@ -98,7 +98,7 @@ export default function WorkflowListPage() {
           marginBottom: 16,
         }}
       >
-        <h2 style={{ margin: 0 }}>运行记录</h2>
+        <h2 style={{ margin: 0 }}>流水线运行</h2>
         <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
           刷新
         </Button>
@@ -108,7 +108,7 @@ export default function WorkflowListPage() {
         columns={columns}
         rowKey="name"
         loading={loading}
-        locale={{ emptyText: "暂无运行记录" }}
+        locale={{ emptyText: "暂无流水线运行" }}
         onRow={(record) => ({
           onClick: () => navigate(`/workflows/${record.name}`),
           style: { cursor: "pointer" },

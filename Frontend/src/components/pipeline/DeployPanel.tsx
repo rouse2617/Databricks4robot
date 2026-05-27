@@ -1,6 +1,7 @@
-import { Button, Tag, message } from "antd";
+import { Button, Tag, message, Modal, Input, Table } from "antd";
 import { useEffect, useState, useCallback } from "react";
 import {
+	getPipeline,
 	listDeployments,
 	listPipelines,
 	deletePipeline,
@@ -9,7 +10,10 @@ import {
 	type PipelineTemplate,
 	type Deployment,
 } from "../../api/pipelineApi";
-import { ReloadOutlined, DeleteOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { searchApi } from "../../api/search";
+import type { SearchAssetResult } from "../../api/search";
+import { ReloadOutlined, DeleteOutlined, PlayCircleOutlined, SearchOutlined, EditOutlined, EyeOutlined } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
 
 const STATUS_COLORS: Record<string, string> = {
 	Succeeded: "success",
@@ -20,9 +24,19 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export function DeployPanel() {
+		const navigate = useNavigate();
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
 	const [loading, setLoading] = useState(false);
+
+	// Asset selection modal state
+	const [assetModalOpen, setAssetModalOpen] = useState(false);
+	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
+	const [assetQuery, setAssetQuery] = useState("");
+	const [searchResults, setSearchResults] = useState<SearchAssetResult[]>([]);
+	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+	const [searching, setSearching] = useState(false);
+	const [deploying, setDeploying] = useState(false);
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -41,19 +55,46 @@ export function DeployPanel() {
 		refresh();
 	}, [refresh]);
 
-	const handleDeployTemplate = async (id: string) => {
+	const handleDeployClick = (templateId: string) => {
+		setDeployTargetId(templateId);
+		setAssetQuery("");
+		setSearchResults([]);
+		setSelectedAssetIds([]);
+		setAssetModalOpen(true);
+	};
+
+	const handleAssetSearch = async (value: string) => {
+		if (!value.trim()) return;
+		setSearching(true);
 		try {
-			await deployTemplate(id);
+			const res = await searchApi.searchAssets({ q: value, page_size: 50 });
+			setSearchResults(res.items);
+		} catch {
+			message.error("搜索资产失败");
+		} finally {
+			setSearching(false);
+		}
+	};
+
+	const handleDeployConfirm = async () => {
+		if (!deployTargetId) return;
+		setDeploying(true);
+		try {
+			await deployTemplate(deployTargetId, selectedAssetIds.length > 0 ? selectedAssetIds : undefined);
+			message.success("部署成功");
+			setAssetModalOpen(false);
 			refresh();
 		} catch (err) {
-			console.error(err);
+			message.error("部署失败: " + String(err));
+		} finally {
+			setDeploying(false);
 		}
 	};
 
 	const handleDeleteDeployment = async (id: string) => {
 		try {
 			await deleteDeployment(id);
-			message.success("已删除运行记录");
+			message.success("已删除部署记录");
 			refresh();
 		} catch (err) {
 			message.error("删除失败: " + String(err));
@@ -70,10 +111,41 @@ export function DeployPanel() {
 		}
 	};
 
+	const handleEditTemplate = async (id: string) => {
+		try {
+			const t = await getPipeline(id);
+			sessionStorage.setItem("pipeline-edit", JSON.stringify(t.pipeline));
+			navigate("/pipeline");
+		} catch (err) {
+			message.error("加载模板失败: " + String(err));
+		}
+	};
+
+	const assetColumns = [
+		{
+			title: "Asset ID",
+			dataIndex: "asset_id",
+			key: "asset_id",
+			width: 120,
+		},
+		{
+			title: "类型",
+			dataIndex: "asset_type",
+			key: "asset_type",
+			width: 100,
+		},
+		{
+			title: "状态",
+			dataIndex: "lifecycle_state",
+			key: "lifecycle_state",
+			width: 100,
+		},
+	];
+
 	return (
 		<div className="deploy-panel">
 			<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-				<h3>运行记录</h3>
+				<h3>部署记录</h3>
 				<Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
@@ -102,9 +174,16 @@ export function DeployPanel() {
 									size="small"
 									type="primary"
 									icon={<PlayCircleOutlined />}
-									onClick={() => handleDeployTemplate(t.id)}
+									onClick={() => handleDeployClick(t.id)}
 								>
 									运行
+								</Button>
+								<Button
+									size="small"
+									icon={<EditOutlined />}
+									onClick={() => handleEditTemplate(t.id)}
+								>
+									编辑
 								</Button>
 								<Button
 									size="small"
@@ -118,13 +197,51 @@ export function DeployPanel() {
 				)}
 			</div>
 
+			{/* Asset selection modal */}
+			<Modal
+				title="选择处理资产"
+				open={assetModalOpen}
+				onCancel={() => setAssetModalOpen(false)}
+				onOk={handleDeployConfirm}
+				confirmLoading={deploying}
+				okText="部署"
+				width={640}
+			>
+				<Input.Search
+					placeholder="搜索资产（输入 asset_id 或名称）"
+					onSearch={handleAssetSearch}
+					enterButton={<><SearchOutlined /> 搜索</>}
+					loading={searching}
+					style={{ marginBottom: 16 }}
+				/>
+				{searchResults.length > 0 ? (
+					<Table
+						rowKey="asset_id"
+						columns={assetColumns}
+						dataSource={searchResults}
+						size="small"
+						rowSelection={{
+							type: "checkbox",
+							selectedRowKeys: selectedAssetIds,
+							onChange: (keys) => setSelectedAssetIds(keys as string[]),
+						}}
+						pagination={false}
+						scroll={{ y: 300 }}
+					/>
+				) : (
+					<div style={{ color: "#999", textAlign: "center", padding: 24 }}>
+						{assetQuery ? "未找到匹配的资产" : "请输入关键字搜索资产，不选择则直接部署"}
+					</div>
+				)}
+			</Modal>
+
 			<div className="deploy-section-title" style={{ marginTop: 20 }}>
 				运行历史
 				<span className="count">{deployments.length}</span>
 			</div>
 			<div className="deploy-section">
 				{deployments.length === 0 ? (
-					<div className="dep-empty">暂无运行记录</div>
+					<div className="dep-empty">暂无部署记录</div>
 				) : (
 					deployments.map((d) => (
 						<div key={d.id} className="dep-card">
@@ -144,6 +261,13 @@ export function DeployPanel() {
 								</div>
 							</div>
 							<div className="deploy-btn-list">
+								<Button
+									size="small"
+									icon={<EyeOutlined />}
+									onClick={() => navigate("/workflows/" + d.workflowName)}
+								>
+									查看
+								</Button>
 								<Button
 									size="small"
 									danger
