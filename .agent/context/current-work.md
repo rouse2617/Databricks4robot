@@ -28,26 +28,20 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 15) — PipelinePage 25-unit-test suite
+## Cycle 17 (2026-05-28 07:46) — OpenAPI sync: add Backfill endpoints, fix deploy duplicate
 
-1. **Fixed `Frontend/src/pages/PipelinePage.test.tsx`** — 25 tests covering the full canvas deploy flow:
-   - Render & structure (3): tabs, toolbar, name input
-   - Export/Import (4): JSON output, valid/invalid/cancel import
-   - Save (2): success toast, error toast
-   - Deploy dialog (10): modal open, node counts (0/1), deploy w/wo assets, error display, "查看 Workflow" navigation, "查看部署" tab switch, "关闭" button
-   - Component registry (2): API load on mount, localStorage fallback
-   - sessionStorage (3): load on mount, empty, invalid JSON
+1. **Audited openapi.yaml vs routes.go comprehensively** — Found Backfill endpoint group (6 endpoints) was entirely missing from the OpenAPI spec. Also found a duplicate `/api/v1/deploy` entry introduced in cycle 16.
+2. **Added BackfillJob & BackfillItem schemas** to `components/schemas` section — matching the Go `models.BackfillJob` / `models.BackfillItem` structs (id, name, templateId, filterJson, status, counts, timestamps).
+3. **Added 6 Backfill path endpoints**: `POST /api/v1/backfill` (create), `GET /api/v1/backfill` (list), `GET /api/v1/backfill/{id}` (get), `POST /api/v1/backfill/{id}/pause`, `POST /api/v1/backfill/{id}/resume`, `POST /api/v1/backfill/{id}/retry-failed`.
+4. **Removed duplicate `/api/v1/deploy`** entry (the original at `# Deployment` section was complete; the duplicate at `# Direct deploy (legacy)` with identical content was redundant).
+5. **Verified**: YAML valid ✅, `go build ./...` ✅, `npx tsc --noEmit` ✅
 
-2. **Fixed 5 flaky tests** — Ant Design 5 inserts spaces in CJK button text ("部 署", "关 闭"). Replaced fragile `getAllByText("部署").pop()?.closest("button")` with `document.querySelector('.ant-btn-primary:not(.ant-btn-sm)')` and regex matchers for spaced text. Old deploy tests never actually clicked the modal deploy button due to this spacing issue.
+### What's next for next cycle
 
-3. **Verified**: All 25 PipelinePage tests pass ✅, all 40 pipeline component tests pass ✅, `npx tsc --noEmit` ✅, `go build ./...` ✅
-
-### What's next
-
-- All pipeline tasks T-01~T-13 are completed and verified
-- Pipeline frontend tests: PipelinePage (25) + AssetPicker (9) + ComponentManager (16) + DeployPanel (15) + pipelineContract (unit) = 66 total
-- Pipeline contract backend tests: 23 tests (usecase + transpiler)
-- Next cycle: review entire codebase for cross-module improvements or new features
+- All pipeline tasks T-01~T-13 are done, OpenAPI is fully synced for pipeline + backfill
+- Consider adding `action-annotations` endpoints to OpenAPI (also missing from spec)
+- Review codebase for cross-module improvements or bug fixes
+- Check if there are remaining pre-existing test failures (7 non-pipeline test failures)
 
 ## Non-Done DataBrew
 

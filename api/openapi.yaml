@@ -1666,6 +1666,31 @@ components:
         message: { type: string }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
+    BackfillJob:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        templateId: { type: string }
+        filterJson: { type: object, nullable: true }
+        totalCount: { type: integer }
+        completedCount: { type: integer }
+        failedCount: { type: integer }
+        status: { type: string, description: "running | paused | completed | failed" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    BackfillItem:
+      type: object
+      properties:
+        id: { type: string }
+        jobId: { type: string }
+        assetId: { type: string }
+        status: { type: string, description: "pending | running | completed | failed | cancelled" }
+        workflowName: { type: string, nullable: true }
+        errorMessage: { type: string, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
 
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────
@@ -4054,48 +4079,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorBody' }
 
-  # ── Direct deploy (legacy, inline pipeline) ─────────────────────────
-  /api/v1/deploy:
-    post:
-      tags: [Pipeline]
-      summary: Deploy a pipeline directly (inline definition)
-      description: >
-        Deploys a pipeline by sending its full definition inline.
-        This is the original (legacy) deploy path. For saved templates,
-        prefer `POST /api/v1/deploy/template/{id}`.
-        Optionally binds asset IDs as environment variables.
-      security:
-        - DatabrewToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [pipeline]
-              properties:
-                pipeline:
-                  type: object
-                  description: Full pipeline definition (nodes + edges)
-                name:
-                  type: string
-                  description: Optional pipeline name (auto-generated if omitted)
-                asset_ids:
-                  type: array
-                  items: { type: string }
-                  description: Optional asset IDs to bind as environment variables
-      responses:
-        '201':
-          description: Deployment created
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/PipelineDeployment' }
-        '400':
-          description: Invalid request or asset not found
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
-
   /api/v1/deploy/template/{id}:
     post:
       tags: [Pipeline]
@@ -4442,6 +4425,150 @@ paths:
               schema: { $ref: '#/components/schemas/WorkflowDetail' }
         '404':
           description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  # ── Backfill jobs (batch asset processing) ────────────────────────────
+  /api/v1/backfill:
+    post:
+      tags: [Backfill]
+      summary: Create a new backfill job
+      description: Creates a batch backfill job that processes multiple assets through a pipeline template.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, templateId]
+              properties:
+                name: { type: string, description: Job name }
+                templateId: { type: string, description: Pipeline template ID }
+                filterJson: { type: object, description: Asset filter criteria (JSON) }
+      responses:
+        '201':
+          description: Backfill job created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackfillJob' }
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    get:
+      tags: [Backfill]
+      summary: List all backfill jobs
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Backfill job list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/BackfillJob' }
+  /api/v1/backfill/{id}:
+    get:
+      tags: [Backfill]
+      summary: Get a backfill job by ID
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Backfill job details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackfillJob' }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/backfill/{id}/pause:
+    post:
+      tags: [Backfill]
+      summary: Pause a running backfill job
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job paused
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: job paused }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/backfill/{id}/resume:
+    post:
+      tags: [Backfill]
+      summary: Resume a paused backfill job
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: job resumed }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/backfill/{id}/retry-failed:
+    post:
+      tags: [Backfill]
+      summary: Retry all failed items in a backfill job
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Retry started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: retry started for N failed items }
+        '404':
+          description: Job not found
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorBody' }
