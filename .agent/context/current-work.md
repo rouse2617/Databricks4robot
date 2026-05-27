@@ -28,31 +28,24 @@ Human-updated scratchpad for compact recovery. All agents should read this after
 | T-12 | P1 | Asset existence validation before deploy (backend) | ✅ |
 | T-13 | P2 | Display asset storage URI in asset picker (frontend) | ✅ |
 
-### What was done this cycle (2026-05-28 cycle 14) — DeployPanel frontend component tests
+### What was done this cycle (2026-05-28 cycle 15) — PipelinePage 25-unit-test suite
 
-1. **Created `Frontend/src/components/pipeline/DeployPanel.test.tsx`** with 15 tests:
-   - Empty state, template/deployment listing on mount
-   - Direct run (`handleDirectRun`) calls `deployTemplate` with correct ID
-   - Error toast on deploy failure
-   - Asset modal: opens via dropdown "选择资产运行", selects assets via mock AssetPicker
-   - Deploy without asset IDs passes `undefined`
-   - Edit template with `onEditTemplate` callback (loads via API and invokes callback)
-   - Fallback to `sessionStorage` when no callback provided
-   - Load template failure shows error toast
-   - Delete template and deployment records
-   - Navigate to workflow detail on "查看"
-   - Data refresh after successful deploy (2 calls: mount + refresh)
-   - Modal info alert text verification
-   - Graceful handling of API failure (empty state without crash)
+1. **Fixed `Frontend/src/pages/PipelinePage.test.tsx`** — 25 tests covering the full canvas deploy flow:
+   - Render & structure (3): tabs, toolbar, name input
+   - Export/Import (4): JSON output, valid/invalid/cancel import
+   - Save (2): success toast, error toast
+   - Deploy dialog (10): modal open, node counts (0/1), deploy w/wo assets, error display, "查看 Workflow" navigation, "查看部署" tab switch, "关闭" button
+   - Component registry (2): API load on mount, localStorage fallback
+   - sessionStorage (3): load on mount, empty, invalid JSON
 
-2. **Verified**: All 15 tests pass, `npx tsc --noEmit` ✅, `go build ./...` ✅, all backend pipeline tests ✅, all 40 frontend pipeline component tests ✅
+2. **Fixed 5 flaky tests** — Ant Design 5 inserts spaces in CJK button text ("部 署", "关 闭"). Replaced fragile `getAllByText("部署").pop()?.closest("button")` with `document.querySelector('.ant-btn-primary:not(.ant-btn-sm)')` and regex matchers for spaced text. Old deploy tests never actually clicked the modal deploy button due to this spacing issue.
 
-3. **Deployed**: Frontend dev Cloud Run (revision 00270-w8s)
+3. **Verified**: All 25 PipelinePage tests pass ✅, all 40 pipeline component tests pass ✅, `npx tsc --noEmit` ✅, `go build ./...` ✅
 
 ### What's next
 
 - All pipeline tasks T-01~T-13 are completed and verified
-- Pipeline component tests: AssetPicker (9), ComponentManager (16), DeployPanel (15) = 40 total
+- Pipeline frontend tests: PipelinePage (25) + AssetPicker (9) + ComponentManager (16) + DeployPanel (15) + pipelineContract (unit) = 66 total
 - Pipeline contract backend tests: 23 tests (usecase + transpiler)
 - Next cycle: review entire codebase for cross-module improvements or new features
 
