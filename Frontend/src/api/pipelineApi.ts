@@ -1,9 +1,10 @@
 import { request } from "./pipelineClient";
+import type { Pipeline } from "../components/pipeline/types";
 
 export interface PipelineTemplate {
   id: string;
   name: string;
-  pipeline: unknown;
+  pipeline: Pipeline;
   nodeCount: number;
   createdAt: string;
 }
@@ -17,7 +18,7 @@ export interface Deployment {
   createdAt: string;
   finishedAt?: string;
   manifest?: string;
-  pipelineJSON?: unknown;
+  pipelineJSON?: Pipeline;
 }
 
 export function listPipelines(): Promise<PipelineTemplate[]> {

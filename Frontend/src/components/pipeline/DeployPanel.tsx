@@ -107,7 +107,7 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 		try {
 			const t = await getPipeline(id);
 			if (onEditTemplate) {
-				onEditTemplate(t.pipeline as Pipeline);
+				onEditTemplate(t.pipeline);
 			} else {
 				sessionStorage.setItem("pipeline-edit", JSON.stringify(t.pipeline));
 				navigate("/pipeline");
