@@ -1,4 +1,4 @@
-const API = "/api/v1";
+import { request } from "./pipelineClient";
 
 export interface WorkflowSummary {
   name: string;
@@ -25,34 +25,6 @@ export interface WorkflowDetail {
   nodes: WorkflowNodeStatus[];
   createdAt: string;
   finishedAt?: string;
-}
-
-class ApiError extends Error {
-  code: string;
-  status: number;
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-  }
-}
-
-async function request<T>(method: string, path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`, { method });
-  if (!res.ok) {
-    let code = "UNKNOWN";
-    let message = `HTTP ${res.status}`;
-    try {
-      const err = await res.json();
-      code = err.code || code;
-      message = err.message || err.error || message;
-    } catch {
-      /* ignore parse errors */
-    }
-    throw new ApiError(res.status, code, message);
-  }
-  return res.json() as Promise<T>;
 }
 
 export function listWorkflows(): Promise<{ items: WorkflowSummary[] }> {
