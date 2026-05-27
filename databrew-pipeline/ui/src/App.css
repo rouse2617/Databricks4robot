@@ -1,0 +1,1051 @@
+/* ══════════════════════════════════════════════════════════════
+   DataBrew Pipeline — Warm Light Workshop Aesthetic
+   Sand, amber, and monospace — clean industrial feel
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Layout ─────────────────────────────────────── */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+/* ── Header ──────────────────────────────────────── */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  height: 52px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.app-header::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--amber) 20%, var(--amber) 80%, transparent 100%);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--amber);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.app-header h1::before {
+  content: '◆ ';
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* ── Tabs ────────────────────────────────────────── */
+
+.tab-nav {
+  display: flex;
+  gap: 0;
+  margin: 0 8px;
+  height: 100%;
+  align-items: stretch;
+}
+
+.tab-btn {
+  position: relative;
+  padding: 0 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  transition: color 0.15s;
+}
+
+.tab-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--amber);
+  transform: scaleX(0);
+  transition: transform 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text-secondary);
+}
+
+.tab-btn.active {
+  color: var(--amber);
+}
+
+.tab-btn.active::after {
+  transform: scaleX(1);
+}
+
+.tab-btn:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: -1px;
+}
+
+/* ── Pipeline Name ───────────────────────────────── */
+
+.pipeline-name-input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 12px;
+  width: 200px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: border-color 0.15s;
+}
+
+.pipeline-name-input::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.pipeline-name-input:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-glow);
+}
+
+/* ── Toolbar ─────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.terminal-btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all 0.15s ease;
+}
+
+.terminal-btn:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: var(--amber-glow);
+}
+
+.terminal-btn:active {
+  background: var(--amber-glow-strong);
+}
+
+.terminal-btn:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: 2px;
+}
+
+.terminal-btn.primary {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.terminal-btn.danger {
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.terminal-btn.danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+/* ── Body ─────────────────────────────────────────── */
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Palette ─────────────────────────────────────── */
+
+.palette {
+  width: 210px;
+  min-width: 210px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.palette-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.palette-header h3 {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+.palette-count {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: grab;
+  transition: all 0.15s ease;
+  user-select: none;
+  position: relative;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.palette-item::before {
+  content: '⠿';
+  font-size: 14px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  line-height: 1;
+}
+
+.palette-item:hover {
+  border-color: var(--amber);
+  box-shadow: 0 2px 8px var(--amber-glow);
+}
+
+.palette-item:hover::before {
+  color: var(--amber);
+  opacity: 1;
+}
+
+.palette-item:active {
+  cursor: grabbing;
+  border-color: var(--amber-dim);
+  box-shadow: 0 2px 12px var(--amber-glow-strong);
+}
+
+.pi-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.pi-label {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.pi-image {
+  font-size: 10px;
+  color: var(--text-muted);
+  word-break: break-all;
+  line-height: 1.3;
+  margin-top: 1px;
+}
+
+/* ── Canvas ──────────────────────────────────────── */
+
+.canvas-wrapper {
+  flex: 1;
+  height: 100%;
+  background: var(--bg-primary);
+  position: relative;
+}
+
+/* ── Pipeline Node (React Flow custom node) ─────── */
+
+.pipeline-node {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 180px;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.pipeline-node::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--border);
+  transition: background 0.2s ease;
+}
+
+.pipeline-node:hover {
+  border-color: var(--border-light);
+}
+
+.pipeline-node.selected {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-glow), 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.pipeline-node.selected::before {
+  background: var(--amber);
+}
+
+.node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 0;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.node-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.pipeline-node.selected .node-status-dot {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}
+
+.node-body {
+  padding: 6px 14px 10px;
+}
+
+.node-info {
+  font-size: 10px;
+  color: var(--text-muted);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.node-handle {
+  width: 8px !important;
+  height: 8px !important;
+  background: var(--bg-elevated) !important;
+  border: 2px solid var(--border-light) !important;
+  transition: all 0.15s ease !important;
+}
+
+.node-handle:hover {
+  border-color: var(--amber) !important;
+  background: var(--amber-glow) !important;
+}
+
+/* ── Config Panel ────────────────────────────────── */
+
+.config-panel {
+  width: 260px;
+  min-width: 260px;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.config-panel-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-panel-header h3 {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+.config-panel-header::before {
+  content: '◈';
+  font-size: 10px;
+  color: var(--amber);
+}
+
+.config-content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-field label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.config-field input,
+.config-field select {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.config-field input::placeholder {
+  color: var(--text-muted);
+}
+
+.config-field input:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-glow);
+}
+
+.config-section-title {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-bottom: 2px;
+}
+
+.config-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.config-empty::before {
+  content: '◈';
+  font-size: 18px;
+  color: var(--border);
+}
+
+/* ── JSON Output Drawer ──────────────────────────── */
+
+.json-output {
+  position: absolute;
+  bottom: 0;
+  left: 210px;
+  right: 260px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--amber);
+  padding: 14px 18px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--amber-dim);
+  z-index: 20;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.06);
+}
+
+.json-output::before {
+  content: '▼ output';
+  display: block;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* ── Registry View ──────────────────────────────── */
+
+.registry-view {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ── Deployments Tab ───────────────────────────── */
+
+.deploy-view {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.deploy-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 800px;
+  padding: 24px 20px;
+  overflow: hidden;
+}
+
+.deploy-panel h3 {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.deploy-panel h3 span {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.deploy-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deploy-section-title {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  padding: 12px 0 4px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deploy-section-title .count {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/* ── Deployment / Pipeline Cards ────────────────── */
+
+.dep-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: all 0.15s ease;
+}
+
+.dep-card:hover {
+  border-color: var(--border-light);
+}
+
+.dep-card-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dep-card-name {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.dep-card-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dep-card-meta .dot {
+  font-size: 3px;
+  color: var(--border-light);
+}
+
+/* ── Status Badges ──────────────────────────────── */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 3px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.status-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.status-badge.succeeded {
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
+}
+
+.status-badge.succeeded::before {
+  background: var(--success);
+}
+
+.status-badge.running {
+  background: color-mix(in srgb, var(--cyan) 10%, transparent);
+  color: var(--cyan);
+}
+
+.status-badge.running::before {
+  background: var(--cyan);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.status-badge.failed, .status-badge.error {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.status-badge.failed::before, .status-badge.error::before {
+  background: var(--danger);
+}
+
+.status-badge.pending {
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  color: var(--amber-dim);
+}
+
+.status-badge.pending::before {
+  background: var(--amber);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.status-badge.unknown {
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  color: var(--text-muted);
+}
+
+.status-badge.unknown::before {
+  background: var(--text-muted);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* ── Deploy Buttons ─────────────────────────────── */
+
+.deploy-btn-list {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ── Deploy Dialog / Overlay ────────────────────── */
+
+.deploy-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.deploy-dialog {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  min-width: 420px;
+  max-width: 520px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.12);
+}
+
+.deploy-dialog h3 {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 15px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.deploy-dialog .dep-card-meta {
+  margin-bottom: 16px;
+}
+
+.deploy-dialog-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.deploy-dialog-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.deploy-dialog-fields input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.deploy-dialog-fields input:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-glow);
+}
+
+.deploy-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+/* ── Deploy Progress ────────────────────────────── */
+
+.deploy-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  text-align: center;
+}
+
+.deploy-spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--border);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.deploy-result {
+  padding: 20px;
+  text-align: center;
+}
+
+.deploy-result .status-badge {
+  font-size: 13px;
+  padding: 6px 16px;
+  margin-bottom: 8px;
+}
+
+.deploy-result .wf-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+/* ── Empty States ───────────────────────────────── */
+
+.dep-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.dep-empty::before {
+  content: '◈';
+  font-size: 18px;
+  color: var(--border);
+}
+
+/* ── Component Manager ──────────────────────────── */
+
+.component-manager {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 600px;
+  padding: 24px 20px;
+}
+
+.cm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.cm-header h3 {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.cm-header h3::before {
+  content: '◈ ';
+  color: var(--amber);
+  font-size: 12px;
+}
+
+.cm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.cm-item {
+  padding: 12px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cm-item:hover {
+  border-color: var(--border-light);
+  border-left-color: var(--amber-dim);
+}
+
+.cm-item.active {
+  border-color: var(--amber);
+  border-left-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-glow);
+}
+
+.cm-item-name {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.cm-item-image {
+  font-size: 10px;
+  color: var(--text-muted);
+  word-break: break-all;
+  margin-top: 2px;
+}
+
+.cm-form {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.cm-form h4 {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cm-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cm-form-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.cm-form-fields input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.cm-form-fields input::placeholder {
+  color: var(--text-muted);
+}
+
+.cm-form-fields input:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-glow);
+}
+
+.cm-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── React Flow Overrides ────────────────────────── */
+
+.react-flow__background {
+  opacity: 0.5 !important;
+}
+
+.react-flow__minimap {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+}
+
+.react-flow__controls {
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: var(--bg-elevated) !important;
+  border-bottom: 1px solid var(--border) !important;
+  fill: var(--text-secondary) !important;
+  transition: all 0.15s ease !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--bg-hover) !important;
+  fill: var(--amber) !important;
+}
+
+.react-flow__edge-path {
+  stroke: var(--border-light) !important;
+  stroke-width: 1.5 !important;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:focus .react-flow__edge-path {
+  stroke: var(--amber) !important;
+  stroke-width: 2 !important;
+}
+
+.react-flow__handle {
+  width: 8px !important;
+  height: 8px !important;
+  background: var(--bg-elevated) !important;
+  border: 2px solid var(--border-light) !important;
+  transition: all 0.15s ease !important;
+}
+
+.react-flow__handle:hover {
+  border-color: var(--amber) !important;
+  background: var(--amber-glow) !important;
+}
