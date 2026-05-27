@@ -3,8 +3,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -153,14 +151,11 @@ func envInt32(key string, fallback int32) int32 {
 }
 
 func New(ctx context.Context, cfg *config.Config) (*Client, error) {
-	u := &url.URL{
-		Scheme:   "postgres",
-		User:     url.UserPassword(cfg.DBUser, cfg.DBPassword),
-		Host:     net.JoinHostPort(cfg.DBHost, cfg.DBPort),
-		Path:     "/" + cfg.DBName,
-		RawQuery: "sslmode=disable",
-	}
-	return NewFromDSN(ctx, u.String())
+	// Use key=value format to avoid URL encoding issues with special chars in
+	// the password (e.g. >, &).  pgx natively supports both formats.
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName)
+	return NewFromDSN(ctx, dsn)
 }
 
 // NewFromDSN creates a Client from a raw DSN string. Useful for integration
