@@ -1,0 +1,9 @@
+{
+  "name": "cyber-databrew",
+  "compatibility_date": "2026-05-27",
+  "main": "_worker.js",
+  "assets": {
+    "directory": "./site",
+    "binding": "ASSETS"
+  }
+}
