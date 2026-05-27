@@ -310,6 +310,7 @@ func RegisterAll(
 			api.GET("/pipelines", pipelineHandler.ListTemplates)
 			api.GET("/pipelines/:id", pipelineHandler.GetTemplate)
 			api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
+			api.GET("/pipelines/:name/versions", pipelineHandler.ListVersions)
 			api.POST("/deploy", pipelineHandler.Deploy)
 			api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
 			api.GET("/deployments", pipelineHandler.ListDeployments)

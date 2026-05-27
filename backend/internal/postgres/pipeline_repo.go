@@ -23,7 +23,7 @@ func NewPipelineTemplateRepo(c *Client) *PipelineTemplateRepo { return &Pipeline
 
 var _ repository.PipelineTemplateRepository = (*PipelineTemplateRepo)(nil)
 
-const pipelineTemplateSelectCols = `id, name, pipeline, node_count, created_at, updated_at`
+const pipelineTemplateSelectCols = `id, name, version, pipeline, node_count, created_at, updated_at`
 
 func scanPipelineTemplate(rs rowScanner) (*models.PipelineTemplate, error) {
 	var (
@@ -31,7 +31,7 @@ func scanPipelineTemplate(rs rowScanner) (*models.PipelineTemplate, error) {
 		pipelineJSON []byte
 	)
 	if err := rs.Scan(
-		&t.ID, &t.Name, &pipelineJSON, &t.NodeCount, &t.CreatedAt, &t.UpdatedAt,
+		&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -130,6 +130,41 @@ func (r *PipelineTemplateRepo) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("postgres PipelineTemplateRepo.Delete: %w", err)
 	}
 	return nil
+}
+
+// FindVersionsByName returns all versions of a named pipeline template
+// ordered by version DESC.
+func (r *PipelineTemplateRepo) FindVersionsByName(ctx context.Context, name string) ([]models.PipelineTemplate, error) {
+	q := `SELECT ` + pipelineTemplateSelectCols + `
+	FROM pipeline_templates
+	WHERE name = $1
+	ORDER BY version DESC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, name)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineTemplateRepo.FindVersionsByName: %w", err)
+	}
+	defer rows.Close()
+	var out []models.PipelineTemplate
+	for rows.Next() {
+		t, err := scanPipelineTemplate(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineTemplateRepo.FindVersionsByName scan: %w", err)
+		}
+		out = append(out, *t)
+	}
+	return out, nil
+}
+
+// GetNextVersion returns the next version number for a template name.
+func (r *PipelineTemplateRepo) GetNextVersion(ctx context.Context, name string) (int, error) {
+	const q = `SELECT COALESCE(MAX(version), 0) + 1 FROM pipeline_templates WHERE name = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	var v int
+	if err := db.QueryRow(ctx, q, name).Scan(&v); err != nil {
+		return 0, fmt.Errorf("postgres PipelineTemplateRepo.GetNextVersion: %w", err)
+	}
+	return v, nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -45,11 +45,16 @@ func New(
 
 // ── Templates ─────────────────────────────────────────────────────
 
-// SaveTemplate persists a pipeline template.
+// SaveTemplate persists a pipeline template with auto-incremented version.
 func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[string]interface{}) (*models.PipelineTemplate, error) {
+	version, err := uc.templateRepo.GetNextVersion(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("get next version: %w", err)
+	}
 	t := &models.PipelineTemplate{
 		ID:        uuid.New().String(),
 		Name:      name,
+		Version:   version,
 		Pipeline:  pipeline,
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
@@ -61,6 +66,11 @@ func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[s
 		return nil, fmt.Errorf("save template: %w", err)
 	}
 	return t, nil
+}
+
+// ListVersions returns all versions of a named pipeline template.
+func (uc *Usecase) ListVersions(ctx context.Context, name string) ([]models.PipelineTemplate, error) {
+	return uc.templateRepo.FindVersionsByName(ctx, name)
 }
 
 // ListTemplates returns all pipeline templates.

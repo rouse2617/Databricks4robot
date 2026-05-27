@@ -86,6 +86,25 @@ func (h *Handler) DeleteTemplate(c *gin.Context) {
 	c.Status(204)
 }
 
+// ListVersions handles GET /api/v1/pipelines/:name/versions.
+func (h *Handler) ListVersions(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "name is required", nil)
+		return
+	}
+
+	items, err := h.uc.ListVersions(c.Request.Context(), name)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []models.PipelineTemplate{}
+	}
+	c.JSON(200, gin.H{"items": items})
+}
+
 // Deploy handles POST /api/v1/deploy.
 func (h *Handler) Deploy(c *gin.Context) {
 	var req struct {

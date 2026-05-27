@@ -8,6 +8,7 @@ import "time"
 type PipelineTemplate struct {
 	ID        string                 `json:"id"`
 	Name      string                 `json:"name"`
+	Version   int                    `json:"version"`
 	Pipeline  map[string]interface{} `json:"pipeline"`
 	NodeCount int                    `json:"nodeCount"`
 	CreatedAt time.Time              `json:"createdAt"`
