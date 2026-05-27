@@ -14,8 +14,8 @@ tags:
     description: Asset CRUD, lifecycle, versioning, usage stats
   - name: AssetTags
     description: Asset tag management (multi-source, history)
-  - name: Actions
-    description: Time-bounded annotations on segment assets
+  - name: ActionAnnotations
+    description: Time-bounded annotations on segment assets (moved from /actions)
   - name: AlgoRuns
     description: First-class algorithm execution events
   - name: LegacyAlgo
@@ -2152,6 +2152,31 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/assets/{id}/actions:
+    post:
+      tags: [Assets]
+      summary: Create action-type child asset under a parent (layered creation, CYB-1228)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChildAssetCreateRequest' }
+      responses:
+        '201':
+          description: Action child asset created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Asset' }
+        '422':
+          description: Hierarchy violation or invalid domain state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/logical-assets/{id}/current:
     get:
@@ -2262,11 +2287,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TagHistoryResponse' }
 
-  # ── Actions ────────────────────────────────────────────────────────────
-  /api/v1/assets/{id}/actions:
+  # ── ActionAnnotations ────────────────────────────────────────────────────
+  /api/v1/assets/{id}/action-annotations:
     post:
-      tags: [Actions]
-      summary: Create action on asset
+      tags: [ActionAnnotations]
+      summary: Create action annotation on asset
       parameters:
         - in: path
           name: id
@@ -2284,8 +2309,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Action' }
     get:
-      tags: [Actions]
-      summary: List actions on asset
+      tags: [ActionAnnotations]
+      summary: List action annotations on asset
       parameters:
         - in: path
           name: id
@@ -2297,10 +2322,10 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ActionListResponse' }
-  /api/v1/assets/{id}/actions/{action_id}:
+  /api/v1/assets/{id}/action-annotations/{action_id}:
     patch:
-      tags: [Actions]
-      summary: Patch action
+      tags: [ActionAnnotations]
+      summary: Patch action annotation
       parameters:
         - in: path
           name: id
@@ -2322,8 +2347,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Action' }
     delete:
-      tags: [Actions]
-      summary: Soft-delete action
+      tags: [ActionAnnotations]
+      summary: Soft-delete action annotation
       parameters:
         - in: path
           name: id
