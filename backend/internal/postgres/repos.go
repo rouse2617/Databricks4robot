@@ -1574,7 +1574,7 @@ INSERT INTO asset_tags (
     NULLIF($9, ''), NULLIF($10, ''),
     now(), now(), now()
 )
-ON CONFLICT ON CONSTRAINT uq_asset_tags_identity DO UPDATE SET
+ON CONFLICT (asset_id, tag_key, tag_value, source_type, source_version_norm) DO UPDATE SET
     tag_type   = EXCLUDED.tag_type,
     run_id     = EXCLUDED.run_id,
     tenant_id  = EXCLUDED.tenant_id,
