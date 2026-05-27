@@ -126,16 +126,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 						mode="inline"
 						selectedKeys={[resolveSelectedKey(location.pathname)]}
 						items={menuItems}
-						onClick={({ key }) => {
-							if (key === "/pipeline") {
-								window.open(
-									"https://cyber-databrew-pipeline-ui-dev-234851712830.us-central1.run.app/pipeline",
-									"_blank",
-								);
-							} else {
-								navigate(key);
-							}
-						}}
+						onClick={({ key }) => navigate(key)}
 					/>
 				</Sider>
 				<Layout style={{ marginLeft: isMobile ? 0 : siderWidth }}>

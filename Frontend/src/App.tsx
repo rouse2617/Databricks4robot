@@ -20,6 +20,7 @@ const RegistryCenterPage = lazy(() => import("./pages/RegistryCenterPage"));
 const MetricsSearchPage = lazy(() => import("./pages/MetricsSearchPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const EventsPage = lazy(() => import("./pages/EventsPage"));
+const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
 function PageLoader() {
@@ -60,6 +61,7 @@ function ProtectedRoutes() {
 						<Route path="/tags" element={<Navigate to="/registry" replace />} />
 						<Route path="/metrics" element={<MetricsSearchPage />} />
 						<Route path="/events" element={<EventsPage />} />
+						<Route path="/pipeline" element={<PipelinePage />} />
 						<Route path="/settings" element={<SettingsPage />} />
 						<Route path="*" element={<Navigate to="/dashboard" replace />} />
 					</Routes>
