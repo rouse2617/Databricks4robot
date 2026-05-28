@@ -30,7 +30,16 @@ const PHASE_COLORS: Record<string, string> = {
 
 function isDisplayableNode(node: WorkflowNodeStatus): boolean {
 	const type = (node.type ?? "").toLowerCase();
-	return DISPLAYABLE_NODE_TYPES.has(type);
+	const phase = node.phase;
+	const parentPath = node.id.split(".").slice(0, -1).join(".");
+	const isRootDagNode =
+		node.type === "" &&
+		!!node.name &&
+		(node.name === node.id || (!!parentPath && node.name === parentPath));
+	const hasMeaningfulPhase =
+		phase === "Skipped" || phase === "Omitted" || DISPLAYABLE_NODE_TYPES.has(type);
+
+	return !!hasMeaningfulPhase && !isRootDagNode;
 }
 
 function getNodeDisplayText(node: WorkflowNodeStatus): string {
