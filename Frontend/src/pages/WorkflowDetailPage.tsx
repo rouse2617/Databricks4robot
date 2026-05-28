@@ -30,6 +30,7 @@ import {
 } from "../lib/workflow-operations";
 import { useWorkflowDetail } from "./useWorkflowDetail";
 import { WorkflowDagView } from "./WorkflowDagView";
+import { WorkflowYamlViewer } from "../components/pipeline/WorkflowYamlViewer";
 
 function getNodeDisplayText(node: WorkflowNodeStatus): string {
 	return node.displayName || node.templateName || node.name;
@@ -312,6 +313,7 @@ export default function WorkflowDetailPage() {
 		setLogSearch,
 	} = useWorkflowDetail(name);
 	const [showNodeLogs, setShowNodeLogs] = useState(false);
+	const [manifestNode, setManifestNode] = useState<WorkflowNodeStatus | null>(null);
 	const operations = useMemo(
 		() => (workflow ? getWorkflowOperationConfigs(workflow) : []),
 		[workflow],
@@ -373,9 +375,7 @@ export default function WorkflowDetailPage() {
 
 	const handleManifest = useCallback(() => {
 		if (!selectedNode) return;
-		message.info({
-			content: "MANIFEST 功能暂未接入，当前展示为占位信息",
-		});
+		setManifestNode(selectedNode);
 	}, [selectedNode]);
 
 	const handleRetryNode = useCallback(() => {
@@ -557,6 +557,11 @@ export default function WorkflowDetailPage() {
 					onSearch={setLogSearch}
 				/>
 			</Modal>
+
+			<WorkflowYamlViewer
+				nodeData={manifestNode}
+				onClose={() => setManifestNode(null)}
+			/>
 		</div>
 	);
 }
