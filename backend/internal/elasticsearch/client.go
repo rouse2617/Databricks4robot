@@ -169,11 +169,10 @@ func (c *Client) GetDocumentSource(ctx context.Context, id string) (map[string]a
 // SearchBodyScroll is like SearchBody but adds scroll=2m and returns the scroll
 // ID so callers can continue fetching pages with ScrollNext.
 func (c *Client) SearchBodyScroll(ctx context.Context, body map[string]any) (*SearchResponse, string, error) {
-	scrolled := make(map[string]any, len(body)+1)
+	scrolled := make(map[string]any, len(body))
 	for k, v := range body {
 		scrolled[k] = v
 	}
-	scrolled["scroll"] = "2m"
 	return c.doScrollSearch(ctx, scrolled, 2)
 }
 
