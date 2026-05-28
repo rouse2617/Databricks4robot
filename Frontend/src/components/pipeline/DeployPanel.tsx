@@ -1,5 +1,6 @@
 import {
 	DeleteOutlined,
+	LinkOutlined,
 	DownOutlined,
 	EditOutlined,
 	EyeOutlined,
@@ -58,8 +59,10 @@ function extractPipelineAssetIds(pipelineJSON: Pipeline | undefined): string[] {
 
 export function DeployPanel({
 	onEditTemplate,
+	compact,
 }: {
 	onEditTemplate?: (pipeline: Pipeline) => void;
+	compact?: boolean;
 }) {
 	const navigate = useNavigate();
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
@@ -156,6 +159,84 @@ export function DeployPanel({
 			message.error(`加载模板失败: ${String(err)}`);
 		}
 	};
+
+	if (compact) {
+		const recentDeployments = deployments.slice(0, 3);
+		return (
+			<div className="deploy-panel">
+				<div
+					style={{
+						display: "flex",
+						justifyContent: "space-between",
+						alignItems: "center",
+						marginBottom: 12,
+					}}
+				>
+					<div className="deploy-section-title">最近部署</div>
+					<a
+						href="/workflows"
+						style={{
+							color: "#2563eb",
+							fontSize: 12,
+							textDecoration: "underline",
+						}}
+					>
+						查看全部
+					</a>
+				</div>
+
+				<div className="deploy-section">
+					{recentDeployments.length === 0 ? (
+						<div className="dep-empty">暂无部署记录</div>
+					) : (
+						recentDeployments.map((d) => (
+							<div key={d.id} className="dep-card">
+								<div className="dep-card-info">
+									<div className="dep-card-name">{d.pipelineName}</div>
+									<div className="dep-card-meta">
+										<Tag color={STATUS_COLORS[d.status] || "default"}>
+											{d.status}
+										</Tag>
+									</div>
+								</div>
+								<Button
+									size="small"
+									icon={<LinkOutlined />}
+									onClick={() => navigate(`/workflows/${d.workflowName}`)}
+								>
+									查看
+								</Button>
+							</div>
+						))
+					)}
+				</div>
+
+				<div className="deploy-section-title" style={{ marginTop: 18 }}>
+					模板
+				</div>
+				<div className="deploy-section">
+					{templates.length === 0 ? (
+						<div className="dep-empty">暂无已保存的流水线模板</div>
+					) : (
+						templates.map((t) => (
+							<div key={t.id} className="dep-card">
+								<div className="dep-card-info">
+									<div className="dep-card-name">{t.name}</div>
+								</div>
+								<Button
+									size="small"
+									icon={<EditOutlined />}
+									onClick={() => handleEditTemplate(t.id)}
+								>
+									加载到画布
+								</Button>
+							</div>
+						))
+					)}
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div className="deploy-panel">

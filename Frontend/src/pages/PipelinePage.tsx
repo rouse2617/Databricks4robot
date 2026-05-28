@@ -40,17 +40,12 @@ import {
 	savePipeline,
 } from "../api/pipelineApi";
 import {
-	createComponent,
-	deleteComponent,
 	listComponents,
 	type PipelineComponentAPI,
-	type PipelineComponentPayload,
 	type PipelineComponentType,
-	updateComponent,
 } from "../api/pipelineComponentApi";
 import type { Asset } from "../api/types";
 import AssetPicker from "../components/pipeline/AssetPicker";
-import { ComponentManager } from "../components/pipeline/ComponentManager";
 import { ComponentPalette } from "../components/pipeline/ComponentPalette";
 import { DeployPanel } from "../components/pipeline/DeployPanel";
 import { NodeConfigPanel } from "../components/pipeline/NodeConfigPanel";
@@ -332,42 +327,6 @@ function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 	};
 }
 
-/** Map frontend RegisteredComponent → backend PipelineComponentAPI shape. */
-function registeredToApi(comp: RegisteredComponent): PipelineComponentPayload {
-	const idx = comp.image.lastIndexOf(":");
-	const image = idx > 0 ? comp.image.slice(0, idx) : comp.image;
-	const tag = idx > 0 ? comp.image.slice(idx + 1) : "latest";
-	const normalizedType = normalizeComponentType(comp.type);
-	const normalizedSource = (comp.source || "").trim() || "custom";
-	return {
-		name: comp.name,
-		type: normalizedType,
-		description: "",
-		image,
-		tag,
-		source: normalizedSource,
-		command: comp.command,
-		args: comp.args.map((arg) => arg.value || arg.name).filter(Boolean),
-		inputPorts: [{ name: "input", type: "string" }],
-		outputPorts: [{ name: "output", type: "string" }],
-		resources: {
-			command: comp.command,
-			args: comp.args,
-			type: normalizedType,
-			env: (comp.env ?? []).reduce<Record<string, string>>((acc, item) => {
-				const key = item.name?.trim();
-				if (!key) return acc;
-				acc[key] = item.value || "";
-				return acc;
-			}, {}),
-			cpu: comp.cpu,
-			memory: comp.memory,
-			disk: comp.disk,
-		},
-		envVars: [],
-	};
-}
-
 let nodeCounter = 0;
 
 function createPipelineNode(
@@ -420,9 +379,7 @@ function PipelineCanvas() {
 	const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
 	const [registeredComponents, setRegisteredComponents] =
 		useState<RegisteredComponent[]>(loadComponents);
-	const [view, setView] = useState<"pipeline" | "components" | "deploy">(
-		"pipeline",
-	);
+	const [view, setView] = useState<"pipeline" | "deploy">("pipeline");
 	const [deployDialog, setDeployDialog] = useState<{
 		open: boolean;
 		deploying: boolean;
@@ -477,33 +434,6 @@ function PipelineCanvas() {
 			.catch(() => {
 				// API failed, keep localStorage data (already set in useState)
 			});
-	}, []);
-
-	const handleComponentSave = useCallback(
-		async (comp: RegisteredComponent, isNew: boolean) => {
-			try {
-				const apiData = registeredToApi(comp);
-				if (isNew) {
-					const created = await createComponent(apiData);
-					comp.id = created.id; // Use server-assigned ID
-				} else {
-					await updateComponent(comp.id, apiData);
-				}
-			} catch (err) {
-				const detail = err instanceof Error ? err.message : String(err);
-				throw new Error(`组件保存到服务端失败: ${detail}`);
-			}
-		},
-		[],
-	);
-
-	const handleComponentDelete = useCallback(async (id: string) => {
-		try {
-			await deleteComponent(id);
-		} catch (err) {
-			const detail = err instanceof Error ? err.message : String(err);
-			throw new Error(`组件从服务端删除失败: ${detail}`);
-		}
 	}, []);
 
 	const loadPipelineToCanvas = useCallback(
@@ -915,7 +845,7 @@ function PipelineCanvas() {
 						alignItems: "stretch",
 					}}
 				>
-					{(["pipeline", "components", "deploy"] as const).map((tab) => (
+					{(["pipeline", "deploy"] as const).map((tab) => (
 						<button
 							type="button"
 							key={tab}
@@ -940,9 +870,7 @@ function PipelineCanvas() {
 						>
 							{tab === "pipeline"
 								? "画布"
-								: tab === "components"
-									? "组件"
-									: "部署"}
+								: "部署"}
 						</button>
 					))}
 				</div>
@@ -1193,17 +1121,30 @@ function PipelineCanvas() {
 							/>
 						)}
 					</>
-				) : view === "components" ? (
-					<div className="registry-view">
-						<ComponentManager
-							components={registeredComponents}
-							onChange={setRegisteredComponents}
-							onSaveApi={handleComponentSave}
-							onDeleteApi={handleComponentDelete}
-						/>
-					</div>
 				) : (
-					<DeployPanel onEditTemplate={loadPipelineToCanvas} />
+					<div
+						style={{
+							padding: 16,
+							gap: 12,
+							display: "flex",
+							flexDirection: "column",
+							flex: 1,
+							overflow: "auto",
+						}}
+					>
+						<div>
+							<Button
+								size="small"
+								type="primary"
+								icon={<PlayCircleOutlined />}
+								onClick={openDeployDialog}
+								disabled={!canDeploy}
+							>
+								部署
+							</Button>
+						</div>
+						<DeployPanel compact onEditTemplate={loadPipelineToCanvas} />
+					</div>
 				)}
 			</div>
 
