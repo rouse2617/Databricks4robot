@@ -408,7 +408,7 @@ func (r *routePipelineComponentRepo) Update(_ context.Context, _ *models.Pipelin
 }
 func (r *routePipelineComponentRepo) Delete(_ context.Context, _ string) error { return nil }
 
-// mockWorkflowClient implements k8s.WorkflowClient for route-level tests.
+// mockWorkflowClient implements argo.WorkflowClient for route-level tests.
 type mockWorkflowClient struct{}
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
@@ -20,7 +21,6 @@ import (
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -42,7 +42,7 @@ type infra struct {
 	metricRegistry *config.MetricRegistry
 	queryFieldReg  *config.QueryFieldRegistry
 	actionLabelReg *config.ActionLabelRegistry
-	k8sClient      *k8s.Client
+	workflowClient argo.WorkflowClient
 }
 
 func (inf *infra) close() {

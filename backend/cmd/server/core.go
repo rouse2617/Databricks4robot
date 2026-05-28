@@ -16,7 +16,6 @@ import (
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
@@ -95,18 +94,10 @@ func setupCore(inf *infra) *coreHandlers {
 	// ── Pipeline (Argo Workflows) ──
 	pipelineTemplateRepo := postgres.NewPipelineTemplateRepo(pg)
 	pipelineDeploymentRepo := postgres.NewPipelineDeploymentRepo(pg)
-	var (
-		pipelineHandler *pipelineH.Handler
-		puc             *pipelineUC.Usecase
-	)
-	if kc := inf.k8sClient; kc != nil {
-		wfClient := k8s.NewArgoClient(kc.ArgoClientset, kc.KubeClientset)
-		puc = pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, wfClient, inf.cfg.ArgoWorkflowsNamespace)
-		puc.SetAssetEventRepo(assetEventRepo)
-		puc.SetRelationWriter(assetRepo)
-		puc.SetMetricsClient(k8s.NewMetricsClient(kc.KubeClientset, kc.MetricsClientset))
-		pipelineHandler = pipelineH.New(puc)
-	}
+	puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
+	puc.SetAssetEventRepo(assetEventRepo)
+	puc.SetRelationWriter(assetRepo)
+	pipelineHandler := pipelineH.New(puc)
 
 	// Pipeline component registry
 	pipelineComponentRepo := postgres.NewPipelineComponentRepo(pg)
@@ -121,11 +112,7 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillHandler := backfillH.New(backfillUC)
 
 	// ── Workflow monitoring ──
-	var workflowHandler *workflowH.Handler
-	if kc := inf.k8sClient; kc != nil {
-		wfClient := k8s.NewArgoClient(kc.ArgoClientset, kc.KubeClientset)
-		workflowHandler = workflowH.New(wfClient, inf.cfg.ArgoWorkflowsNamespace)
-	}
+	workflowHandler := workflowH.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
 
 	return &coreHandlers{
 		asset:             assetHandler,

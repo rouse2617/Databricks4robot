@@ -5,16 +5,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 )
 
 type Handler struct {
-	wfClient  k8s.WorkflowClient
+	wfClient  argo.WorkflowClient
 	namespace string
 }
 
-func New(wfClient k8s.WorkflowClient, namespace string) *Handler {
+func New(wfClient argo.WorkflowClient, namespace string) *Handler {
 	return &Handler{wfClient: wfClient, namespace: namespace}
 }
 
