@@ -264,6 +264,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 	var (
 		a               models.Asset
 		lifecycleState  string
+		mcapFileID      *string
 		segLoc          *string
 		parentID        *string
 		rootID          *string
@@ -286,7 +287,7 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 		isCurrent       *bool
 	)
 	err := row.Scan(
-		&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
+		&a.AssetID, &mcapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
 		&lifecycleState, &a.AssetType, &a.DurationMs,
 		&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 		&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
@@ -303,6 +304,9 @@ func (r *AssetRepo) scanOneAsset(ctx context.Context, row rowScanner) (*models.A
 			return nil, nil
 		}
 		return nil, fmt.Errorf("postgres AssetRepo.scanOneAsset: %w", err)
+	}
+	if mcapFileID != nil {
+		a.McapFileID = *mcapFileID
 	}
 	a.LifecycleState = lifecycleState
 	if segLoc != nil {
@@ -611,6 +615,7 @@ ORDER BY revision ASC NULLS LAST, created_at ASC`
 		var (
 			a               models.Asset
 			lifecycleState  string
+			mcapFileID      *string
 			segLoc          *string
 			parentID        *string
 			rootID          *string
@@ -625,7 +630,7 @@ ORDER BY revision ASC NULLS LAST, created_at ASC`
 			isCurrent       *bool
 		)
 		if err := rows.Scan(
-			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
+			&a.AssetID, &mcapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
 			&lifecycleState, &a.AssetType, &a.DurationMs,
 			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
@@ -635,6 +640,9 @@ ORDER BY revision ASC NULLS LAST, created_at ASC`
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListByLogicalAssetID scan: %w", err)
+		}
+		if mcapFileID != nil {
+			a.McapFileID = *mcapFileID
 		}
 		finishAssetVersionFields(&a, logicalID, revision, isCurrent)
 		a.LifecycleState = lifecycleState
@@ -2568,6 +2576,7 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 		var (
 			a               models.Asset
 			lifecycleState  string
+			mcapFileID      *string
 			segLoc          *string
 			parentID        *string
 			rootID          *string
@@ -2582,7 +2591,7 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			isCurrent       *bool
 		)
 		if err := rows.Scan(
-			&a.AssetID, &a.McapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
+			&a.AssetID, &mcapFileID, &a.StartTimestampNs, &a.EndTimestampNs, &segLoc,
 			&lifecycleState, &a.AssetType, &a.DurationMs,
 			&a.Owner, &a.Reviewer, &a.DeliveryCount, &a.LastDeliveredAt, &a.LastDeliveredTo,
 			&a.RetentionTier, &a.ExpireAt, &a.StorageURI, &a.ThumbURI, &a.AssetLevel,
@@ -2592,6 +2601,9 @@ FROM assets WHERE %s ORDER BY %s LIMIT $%d OFFSET $%d`,
 			&a.CreatedAt, &a.UpdatedAt, &a.Version,
 		); err != nil {
 			return nil, fmt.Errorf("postgres AssetRepo.ListWithFilters scan: %w", err)
+		}
+		if mcapFileID != nil {
+			a.McapFileID = *mcapFileID
 		}
 		finishAssetVersionFields(&a, logicalID, revision, isCurrent)
 		a.LifecycleState = lifecycleState

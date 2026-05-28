@@ -298,7 +298,7 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 			var err error
 			esOut, err = h.fetchESFacetsOrTotal(ctx, plan, skipPGCount)
 			esErr = err
-			return err
+			return nil // ES failure is non-fatal; handled in fallback below
 		})
 	}
 
