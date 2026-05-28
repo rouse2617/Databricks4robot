@@ -11,7 +11,7 @@ import (
 
 	"errors"
 
-	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
@@ -32,8 +32,7 @@ type Usecase struct {
 	assetRepo      repository.AssetRepository
 	assetEventRepo repository.AssetEventRepository
 	relationWriter repository.AssetRelationWriter
-	wfClient       k8s.WorkflowClient
-	metricsClient  k8s.MetricsClient
+	wfClient       argo.WorkflowClient
 	namespace      string
 }
 
@@ -47,17 +46,12 @@ func (uc *Usecase) SetRelationWriter(r repository.AssetRelationWriter) {
 	uc.relationWriter = r
 }
 
-// SetMetricsClient sets the K8s metrics client (optional, for F5.8).
-func (uc *Usecase) SetMetricsClient(m k8s.MetricsClient) {
-	uc.metricsClient = m
-}
-
-// New creates a Usecase. wfClient may be nil (no K8s/Argo integration).
+// New creates a Usecase.
 func New(
 	templateRepo repository.PipelineTemplateRepository,
 	deploymentRepo repository.PipelineDeploymentRepository,
 	assetRepo repository.AssetRepository,
-	wfClient k8s.WorkflowClient,
+	wfClient argo.WorkflowClient,
 	namespace string,
 ) *Usecase {
 	return &Usecase{
@@ -533,10 +527,22 @@ func (uc *Usecase) GetLineage(ctx context.Context, assetID string) (*AssetLineag
 
 // ResourceUsageReport describes per-pod resource usage for a deployment.
 type ResourceUsageReport struct {
-	DeploymentID string                 `json:"deployment_id"`
-	WorkflowName string                 `json:"workflow_name"`
-	Status       string                 `json:"status"`
-	Pods         []k8s.PodResourceUsage `json:"pods"`
+	DeploymentID string             `json:"deployment_id"`
+	WorkflowName string             `json:"workflow_name"`
+	Status       string             `json:"status"`
+	Pods         []PodResourceUsage `json:"pods"`
+}
+
+// PodResourceUsage is retained in the API response while k8s metrics are disabled.
+type PodResourceUsage struct {
+	PodName       string `json:"pod_name"`
+	NodeName      string `json:"node_name,omitempty"`
+	CPUUsage      string `json:"cpu_usage"`
+	MemoryUsage   string `json:"memory_usage"`
+	CPURequest    string `json:"cpu_request"`
+	MemoryRequest string `json:"memory_request"`
+	CPULimit      string `json:"cpu_limit"`
+	MemoryLimit   string `json:"memory_limit"`
 }
 
 // GetResourceUsage returns resource usage for pods belonging to a deployment.
@@ -553,14 +559,7 @@ func (uc *Usecase) GetResourceUsage(ctx context.Context, deploymentID string) (*
 		DeploymentID: deploymentID,
 		WorkflowName: d.WorkflowName,
 		Status:       d.Status,
-	}
-
-	if uc.metricsClient != nil {
-		pods, err := uc.metricsClient.GetWorkflowResourceUsage(ctx, d.WorkflowName, uc.namespace)
-		if err != nil {
-			return nil, fmt.Errorf("get resource usage: %w", err)
-		}
-		report.Pods = pods
+		Pods:         []PodResourceUsage{},
 	}
 
 	return report, nil

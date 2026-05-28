@@ -9,11 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
@@ -121,17 +121,12 @@ func setupInfra() *infra {
 			"backend", st.Backend, "error", st.Error)
 	}
 
-	// ── Optional: K8s/Argo Workflows client ──
-	var k8sClient *k8s.Client
-	if cfg.ArgoWorkflowsNamespace != "" {
-		kc, err := k8s.NewClient(cfg.KubeconfigPath, cfg.ArgoWorkflowsNamespace)
-		if err != nil {
-			slog.Warn("k8s client unavailable; pipeline deploy will be disabled", "err", err)
-		} else {
-			k8sClient = kc
-			slog.Info("k8s client connected", "namespace", cfg.ArgoWorkflowsNamespace)
-		}
-	}
+	// ── Argo Workflows client ──
+	argoCfg := argo.ConfigFromEnv()
+	workflowClient := argo.NewClientFromConfig(argoCfg)
+	slog.Info("argo workflow client configured",
+		"server_url_set", argoCfg.ServerURL != "",
+		"namespace", cfg.ArgoWorkflowsNamespace)
 
 	// ── Optional: Elasticsearch ──
 	var esClient *espkg.Client
@@ -157,6 +152,6 @@ func setupInfra() *infra {
 		metricRegistry:  metricRegistry,
 		queryFieldReg:   queryFieldReg,
 		actionLabelReg:  actionLabelReg,
-		k8sClient:       k8sClient,
+		workflowClient:  workflowClient,
 	}
 }
