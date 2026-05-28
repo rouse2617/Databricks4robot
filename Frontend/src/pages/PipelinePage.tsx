@@ -35,9 +35,9 @@ import {
 	Collapse,
 	Input,
 	Modal,
+	message,
 	Tooltip,
 	Typography,
-	message,
 } from "antd";
 import { useNavigate } from "react-router-dom";
 import {
@@ -74,7 +74,9 @@ const nodeTypes: NodeTypes = { pipelineStep: PipelineStepNode };
 
 const STORAGE_KEY = "databrew-components";
 
-function dedupeComponentsByName(comps: RegisteredComponent[]): RegisteredComponent[] {
+function dedupeComponentsByName(
+	comps: RegisteredComponent[],
+): RegisteredComponent[] {
 	const seen = new Set<string>();
 	return comps.filter((c) => {
 		const key = c.name.trim().toLowerCase();
@@ -215,8 +217,8 @@ function PipelineCanvas() {
 		listComponents()
 			.then((res) => {
 				const mapped = dedupeComponentsByName(
-				(res.items ?? []).map(apiToRegistered),
-			);
+					(res.items ?? []).map(apiToRegistered),
+				);
 				if (mapped.length > 0) {
 					setRegisteredComponents(mapped);
 					saveComponents(mapped);
