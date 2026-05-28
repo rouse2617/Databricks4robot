@@ -35,6 +35,11 @@ class TestEndpointRegistry:
         assert "sdk_config" in ENDPOINTS
         assert ENDPOINTS["sdk_config"] == "/api/v1/sdk-config"
 
+    def test_workflow_endpoints(self):
+        assert ENDPOINTS["workflow_get"] == "/api/v1/workflows/{workflow_name}"
+        assert ENDPOINTS["workflow_retry"] == "/api/v1/workflows/{workflow_name}/retry"
+        assert ENDPOINTS["workflow_delete"] == "/api/v1/workflows/{workflow_name}"
+
     def test_all_templates_use_format_syntax(self):
         """All path templates must be valid str.format templates."""
         for name, template in ENDPOINTS.items():
@@ -50,3 +55,4 @@ class TestEndpointRegistry:
         """Spot-check that parameterized templates resolve."""
         assert ENDPOINTS["asset_get"].format(asset_id="abc") == "/api/v1/assets/abc"
         assert ENDPOINTS["delivery_commit"].format(delivery_id="d1") == "/api/v1/deliveries/d1/commit"
+        assert ENDPOINTS["workflow_resume"].format(workflow_name="wf1") == "/api/v1/workflows/wf1/resume"

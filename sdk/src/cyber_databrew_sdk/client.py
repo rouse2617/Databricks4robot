@@ -42,6 +42,7 @@ _managers: dict[str, tuple[str, str]] = {
     "actions": ("cyber_databrew_sdk.managers.actions", "ActionManager"),
     "eval_metrics": ("cyber_databrew_sdk.managers.eval_metrics", "EvalMetricsManager"),
     "admin_search": ("cyber_databrew_sdk.managers.admin_search", "AdminSearchManager"),
+    "workflows": ("cyber_databrew_sdk.managers.workflows", "WorkflowManager"),
 }
 
 

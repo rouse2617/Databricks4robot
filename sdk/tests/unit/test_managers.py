@@ -249,6 +249,42 @@ class TestAlgoRunManager:
 
 
 # =========================================================================
+# WorkflowManager
+# =========================================================================
+
+class TestWorkflowManager:
+    def test_list_and_get(self, client):
+        respx.get(f"{BASE_URL}/api/v1/workflows").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert client.workflows.list() == {"items": []}
+
+        respx.get(f"{BASE_URL}/api/v1/workflows/wf1").mock(
+            return_value=httpx.Response(200, json={"name": "wf1", "nodes": []})
+        )
+        assert client.workflows.get("wf1")["name"] == "wf1"
+
+    def test_logs(self, client):
+        respx.get(f"{BASE_URL}/api/v1/workflows/wf1/logs").mock(
+            return_value=httpx.Response(200, json={"logs": "hello"})
+        )
+        assert client.workflows.logs("wf1", "n1") == {"logs": "hello"}
+
+    def test_operations(self, client):
+        for operation in ("retry", "resubmit", "suspend", "resume", "terminate"):
+            respx.post(f"{BASE_URL}/api/v1/workflows/wf1/{operation}").mock(
+                return_value=httpx.Response(200, json={"message": "ok"})
+            )
+            assert getattr(client.workflows, operation)("wf1") == {"message": "ok"}
+
+    def test_delete(self, client):
+        respx.delete(f"{BASE_URL}/api/v1/workflows/wf1").mock(
+            return_value=httpx.Response(200, json={"message": "ok"})
+        )
+        assert client.workflows.delete("wf1") == {"message": "ok"}
+
+
+# =========================================================================
 # SearchManager
 # =========================================================================
 

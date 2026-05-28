@@ -21,6 +21,11 @@ type WorkflowClient interface {
 	ListWorkflows(ctx context.Context, namespace string, labelSelector string) ([]wfv1.Workflow, error)
 	GetWorkflow(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
 	StopWorkflow(ctx context.Context, name, namespace string) error
+	RetryWorkflow(ctx context.Context, name, namespace string) error
+	ResubmitWorkflow(ctx context.Context, name, namespace string) error
+	SuspendWorkflow(ctx context.Context, name, namespace string) error
+	ResumeWorkflow(ctx context.Context, name, namespace string) error
+	TerminateWorkflow(ctx context.Context, name, namespace string) error
 	GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
 }
 
@@ -32,11 +37,13 @@ type Client struct {
 }
 
 // CreateWorkflow creates a workflow in the specified namespace.
+// Sends a WorkflowCreateRequest body ({workflow: ...}) per Argo Server v4 REST API.
 func (c *Client) CreateWorkflow(ctx context.Context, wf *wfv1.Workflow, namespace string) error {
 	if wf == nil {
 		return fmt.Errorf("workflow is nil")
 	}
-	return c.do(ctx, http.MethodPost, workflowPath(namespace), nil, wf, nil)
+	return c.do(ctx, http.MethodPost, workflowPath(namespace), nil,
+		map[string]any{"workflow": wf}, nil)
 }
 
 // GetWorkflowStatus returns the current phase of the named workflow.
@@ -79,6 +86,35 @@ func (c *Client) GetWorkflow(ctx context.Context, name, namespace string) (*wfv1
 // StopWorkflow stops a running workflow through Argo Server's stop endpoint.
 func (c *Client) StopWorkflow(ctx context.Context, name, namespace string) error {
 	return c.do(ctx, http.MethodPut, workflowNamePath(namespace, name)+"/stop", nil, map[string]any{}, nil)
+}
+
+// RetryWorkflow retries a workflow through Argo Server's retry endpoint.
+func (c *Client) RetryWorkflow(ctx context.Context, name, namespace string) error {
+	return c.workflowOperation(ctx, name, namespace, "retry")
+}
+
+// ResubmitWorkflow resubmits a workflow through Argo Server's resubmit endpoint.
+func (c *Client) ResubmitWorkflow(ctx context.Context, name, namespace string) error {
+	return c.workflowOperation(ctx, name, namespace, "resubmit")
+}
+
+// SuspendWorkflow suspends a workflow through Argo Server's suspend endpoint.
+func (c *Client) SuspendWorkflow(ctx context.Context, name, namespace string) error {
+	return c.workflowOperation(ctx, name, namespace, "suspend")
+}
+
+// ResumeWorkflow resumes a workflow through Argo Server's resume endpoint.
+func (c *Client) ResumeWorkflow(ctx context.Context, name, namespace string) error {
+	return c.workflowOperation(ctx, name, namespace, "resume")
+}
+
+// TerminateWorkflow terminates a workflow through Argo Server's terminate endpoint.
+func (c *Client) TerminateWorkflow(ctx context.Context, name, namespace string) error {
+	return c.workflowOperation(ctx, name, namespace, "terminate")
+}
+
+func (c *Client) workflowOperation(ctx context.Context, name, namespace, operation string) error {
+	return c.do(ctx, http.MethodPut, workflowNamePath(namespace, name)+"/"+operation, nil, map[string]any{}, nil)
 }
 
 // GetWorkflowLogs returns logs for a workflow node using Argo Server log streaming.

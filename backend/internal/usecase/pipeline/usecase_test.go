@@ -131,6 +131,11 @@ func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error 
 func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) (string, error) {
 	return "", nil
 }
+func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, _ string) error { return nil }
 
 func newMockAssetRepo() *mockAssetRepo {
 	return &mockAssetRepo{assets: make(map[string]*models.Asset)}

@@ -2350,3 +2350,41 @@ curl -s "$BASE/api/v1/assets/<ASSET_ID>/pipeline-lineage" \
 #   "produced_at": "2026-05-27T12:00:00Z"
 # }
 ```
+
+### Workflow 监控与操作
+
+直接查看和操作 Argo workflow。所有操作接口成功时返回 `{"message":"ok"}`；Argo 返回错误时，后端返回标准错误体。
+
+```bash
+# 列出 workflows
+curl -s "$BASE/api/v1/workflows" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 查看 workflow 详情（含 labels、progress、estimatedDuration，以及节点 type/inputs/outputs/templateName/resourcesDuration/children 等字段）
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 查看节点日志
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 重试 / 重新提交 / 暂停 / 恢复 / 终止
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/retry" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resubmit" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/suspend" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resume" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/terminate" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 删除 workflow
+curl -X DELETE "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 错误路径示例：缺少 nodeId 返回 400
+curl -i "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs" \
+  -H "X-Databrew-Token: $TOKEN"
+```

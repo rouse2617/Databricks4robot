@@ -121,6 +121,16 @@ ENDPOINTS: dict[str, str] = {
     "admin_search_reindex_job_stop": "/api/v1/admin/search/reindex-jobs/{job_id}/stop",
     "admin_search_reindex_job_resume": "/api/v1/admin/search/reindex-jobs/{job_id}/resume",
     "admin_search_reindex_job_abandon": "/api/v1/admin/search/reindex-jobs/{job_id}/abandon",
+    # ── Workflows ─────────────────────────────────────────────────────
+    "workflow_list": "/api/v1/workflows",
+    "workflow_get": "/api/v1/workflows/{workflow_name}",
+    "workflow_logs": "/api/v1/workflows/{workflow_name}/logs",
+    "workflow_retry": "/api/v1/workflows/{workflow_name}/retry",
+    "workflow_resubmit": "/api/v1/workflows/{workflow_name}/resubmit",
+    "workflow_suspend": "/api/v1/workflows/{workflow_name}/suspend",
+    "workflow_resume": "/api/v1/workflows/{workflow_name}/resume",
+    "workflow_terminate": "/api/v1/workflows/{workflow_name}/terminate",
+    "workflow_delete": "/api/v1/workflows/{workflow_name}",
     # ── SDK Config (bootstrap discovery) ──────────────────────────────
     "sdk_config": "/api/v1/sdk-config",
 }

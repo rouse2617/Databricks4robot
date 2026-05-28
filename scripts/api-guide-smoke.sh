@@ -130,6 +130,32 @@ expect_code_post() {
 	echo "$body"
 }
 
+delete() {
+	local name="$1" path="$2"
+	local raw
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X DELETE "${API_HDR[@]}" "$BASE$path" 2>/dev/null) || raw=$'\n000'
+	RESP_CODE=$(echo "$raw" | tail -n1)
+	RESP_BODY=$(echo "$raw" | sed '$d')
+	if [[ "$RESP_CODE" =~ ^2 ]]; then ok "$name"; else bad "$name"; fi
+	echo "$RESP_BODY"
+}
+
+expect_code_delete() {
+	local name="$1" path="$2" expected="$3"
+	local raw code body
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X DELETE "${API_HDR[@]}" "$BASE$path" 2>/dev/null) || raw=$'\n000'
+	code=$(echo "$raw" | tail -n1)
+	body=$(echo "$raw" | sed '$d')
+	RESP_CODE="$code"
+	RESP_BODY="$body"
+	if [[ "$code" == "$expected" ]]; then
+		ok "$name"
+	else
+		bad "$name (expected ${expected})"
+	fi
+	echo "$body"
+}
+
 expect_json_number() {
 	local name="$1" body="$2" field="$3" expected="$4"
 	local got
@@ -200,6 +226,38 @@ post "queries run (include_history)" "/api/v1/queries/run?include_history=true" 
 post "queries run (keyword)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"keyword","scope":{"resource":"assets"},"where":{"pred":{"field":"_fulltext","op":"ilike","value":"warehouse"}},"page":{"page":1,"page_size":5}}' >/dev/null
 get "deliveries list" "/api/v1/deliveries?page=1&page_size=5"
 get "mcap-files list" "/api/v1/mcap-files?page=1&page_size=5"
+
+echo ""
+echo "--- § workflow monitoring / operations ---"
+get "workflows list" "/api/v1/workflows"
+if [[ -n "${WORKFLOW_NAME:-}" ]]; then
+	get "workflow detail" "/api/v1/workflows/${WORKFLOW_NAME}"
+	expect_code_get "workflow logs missing nodeId -> 400" "/api/v1/workflows/${WORKFLOW_NAME}/logs" "400" >/dev/null
+	if [[ -n "${WORKFLOW_NODE_ID:-}" ]]; then
+		get "workflow node logs" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}"
+	else
+		echo "  skip workflow logs happy path — set WORKFLOW_NODE_ID to exercise GET /workflows/{name}/logs"
+	fi
+else
+	echo "  skip workflow detail/log smoke — set WORKFLOW_NAME to exercise GET /workflows/{name}"
+fi
+expect_code_get "workflow missing detail -> 404" "/api/v1/workflows/__missing_workflow__" "404" >/dev/null
+for op in retry resubmit suspend resume terminate; do
+	expect_code_post "workflow ${op} missing workflow -> 500" "/api/v1/workflows/__missing_workflow__/${op}" "{}" "500" >/dev/null
+done
+if [[ -n "${WORKFLOW_OPERATION_NAME:-}" ]]; then
+	for op in retry resubmit suspend resume terminate; do
+		post "workflow ${op}" "/api/v1/workflows/${WORKFLOW_OPERATION_NAME}/${op}" "{}" >/dev/null
+	done
+else
+	echo "  skip workflow operation happy paths — set WORKFLOW_OPERATION_NAME to a disposable workflow"
+fi
+expect_code_delete "workflow delete missing workflow -> 500" "/api/v1/workflows/__missing_workflow__" "500" >/dev/null
+if [[ -n "${WORKFLOW_DELETE_NAME:-}" ]]; then
+	delete "workflow delete" "/api/v1/workflows/${WORKFLOW_DELETE_NAME}" >/dev/null
+else
+	echo "  skip workflow delete happy path — set WORKFLOW_DELETE_NAME to a disposable workflow"
+fi
 
 echo ""
 echo "--- § algo-runs (CYB-1018/CYB-1123) ---"

@@ -1698,6 +1698,11 @@ components:
         name: { type: string }
         status: { type: string }
         message: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        estimatedDuration: { type: integer, format: int64, description: Estimated workflow duration in seconds }
+        progress: { type: string, description: Workflow progress, e.g. 1/2 }
         nodes:
           type: array
           items: { $ref: '#/components/schemas/WorkflowNodeStatus' }
@@ -1709,10 +1714,36 @@ components:
         id: { type: string }
         name: { type: string }
         displayName: { type: string }
+        type: { type: string, description: "Node type (Pod, StepGroup, DAG, etc.)" }
+        templateName: { type: string }
         phase: { type: string, description: "Node phase (Running, Succeeded, Failed, Error, etc.)" }
         message: { type: string }
+        inputs:
+          type: object
+          description: Argo node inputs, including parameters and artifacts.
+          additionalProperties: true
+        outputs:
+          type: object
+          description: Argo node outputs, including parameters and artifacts.
+          additionalProperties: true
+        resourcesDuration:
+          type: object
+          description: Argo resource duration counters for the node.
+          additionalProperties: true
+        hostNodeName: { type: string }
+        progress: { type: string, description: Node progress, e.g. 1/2 }
+        estimatedDuration: { type: integer, format: int64, description: Estimated node duration in seconds }
+        children:
+          type: array
+          items: { type: string }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
+    WorkflowOperationResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: ok
     BackfillJob:
       type: object
       properties:
@@ -4573,6 +4604,149 @@ paths:
               schema: { $ref: '#/components/schemas/WorkflowDetail' }
         '404':
           description: Workflow not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+    delete:
+      tags: [Pipeline]
+      summary: Delete a workflow
+      description: Deletes an Argo workflow from the pipeline namespace.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow deleted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '500':
+          description: Argo API error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/workflows/{name}/retry:
+    post:
+      tags: [Pipeline]
+      summary: Retry a workflow
+      description: Calls the Argo retry operation for the named workflow.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow operation accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '500':
+          description: Argo API error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/workflows/{name}/resubmit:
+    post:
+      tags: [Pipeline]
+      summary: Resubmit a workflow
+      description: Calls the Argo resubmit operation for the named workflow.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow operation accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '500':
+          description: Argo API error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/workflows/{name}/suspend:
+    post:
+      tags: [Pipeline]
+      summary: Suspend a workflow
+      description: Calls the Argo suspend operation for the named workflow.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow operation accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '500':
+          description: Argo API error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/workflows/{name}/resume:
+    post:
+      tags: [Pipeline]
+      summary: Resume a workflow
+      description: Calls the Argo resume operation for the named workflow.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow operation accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '500':
+          description: Argo API error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/workflows/{name}/terminate:
+    post:
+      tags: [Pipeline]
+      summary: Terminate a workflow
+      description: Calls the Argo terminate operation for the named workflow.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow operation accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '500':
+          description: Argo API error
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorBody' }

@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"context"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -20,7 +22,7 @@ func New(wfClient argo.WorkflowClient, namespace string) *Handler {
 
 // ListWorkflows handles GET /api/v1/workflows
 func (h *Handler) ListWorkflows(c *gin.Context) {
-	list, err := h.wfClient.ListWorkflows(c.Request.Context(), h.namespace, "")
+	list, err := h.wfClient.ListWorkflows(c.Request.Context(), h.namespaceFor(c), "")
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -59,28 +61,46 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
 		return
 	}
-	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, h.namespace)
+	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, h.namespaceFor(c))
 	if err != nil {
 		httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
 		return
 	}
 	type nodeItem struct {
-		ID          string  `json:"id"`
-		Name        string  `json:"name"`
-		DisplayName string  `json:"displayName"`
-		Phase       string  `json:"phase"`
-		Message     string  `json:"message,omitempty"`
-		StartedAt   *string `json:"startedAt,omitempty"`
-		FinishedAt  *string `json:"finishedAt,omitempty"`
+		ID                string   `json:"id"`
+		Name              string   `json:"name"`
+		DisplayName       string   `json:"displayName"`
+		Type              string   `json:"type"`
+		TemplateName      string   `json:"templateName"`
+		Phase             string   `json:"phase"`
+		Message           string   `json:"message,omitempty"`
+		Inputs            any      `json:"inputs,omitempty"`
+		Outputs           any      `json:"outputs,omitempty"`
+		ResourcesDuration any      `json:"resourcesDuration,omitempty"`
+		HostNodeName      string   `json:"hostNodeName,omitempty"`
+		Progress          string   `json:"progress,omitempty"`
+		EstimatedDuration int64    `json:"estimatedDuration,omitempty"`
+		Children          []string `json:"children,omitempty"`
+		StartedAt         *string  `json:"startedAt,omitempty"`
+		FinishedAt        *string  `json:"finishedAt,omitempty"`
 	}
 	nodes := make([]nodeItem, 0, len(wf.Status.Nodes))
 	for _, n := range wf.Status.Nodes {
 		ni := nodeItem{
-			ID:          n.ID,
-			Name:        n.TemplateName,
-			DisplayName: n.DisplayName,
-			Phase:       string(n.Phase),
-			Message:     n.Message,
+			ID:                n.ID,
+			Name:              n.Name,
+			DisplayName:       n.DisplayName,
+			Type:              string(n.Type),
+			TemplateName:      n.TemplateName,
+			Phase:             string(n.Phase),
+			Message:           n.Message,
+			Inputs:            n.Inputs,
+			Outputs:           n.Outputs,
+			ResourcesDuration: n.ResourcesDuration,
+			HostNodeName:      n.HostNodeName,
+			Progress:          string(n.Progress),
+			EstimatedDuration: int64(n.EstimatedDuration),
+			Children:          n.Children,
 		}
 		if !n.StartedAt.IsZero() {
 			t := n.StartedAt.Time.Format("2006-01-02T15:04:05Z")
@@ -94,11 +114,14 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 	}
 	created := wf.CreationTimestamp.Time.Format("2006-01-02T15:04:05Z")
 	resp := gin.H{
-		"name":      wf.Name,
-		"status":    string(wf.Status.Phase),
-		"message":   wf.Status.Message,
-		"nodes":     nodes,
-		"createdAt": created,
+		"name":              wf.Name,
+		"status":            string(wf.Status.Phase),
+		"message":           wf.Status.Message,
+		"nodes":             nodes,
+		"createdAt":         created,
+		"labels":            wf.Labels,
+		"estimatedDuration": int64(wf.Status.EstimatedDuration),
+		"progress":          string(wf.Status.Progress),
 	}
 	if !wf.Status.FinishedAt.IsZero() {
 		t := wf.Status.FinishedAt.Time.Format("2006-01-02T15:04:05Z")
@@ -115,10 +138,60 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow name and nodeId are required", nil)
 		return
 	}
-	logs, err := h.wfClient.GetWorkflowLogs(c.Request.Context(), name, nodeId, h.namespace)
+	logs, err := h.wfClient.GetWorkflowLogs(c.Request.Context(), name, nodeId, h.namespaceFor(c))
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(200, gin.H{"logs": logs})
+}
+
+// RetryWorkflow handles POST /api/v1/workflows/:name/retry
+func (h *Handler) RetryWorkflow(c *gin.Context) {
+	h.workflowOperation(c, h.wfClient.RetryWorkflow)
+}
+
+// ResubmitWorkflow handles POST /api/v1/workflows/:name/resubmit
+func (h *Handler) ResubmitWorkflow(c *gin.Context) {
+	h.workflowOperation(c, h.wfClient.ResubmitWorkflow)
+}
+
+// SuspendWorkflow handles POST /api/v1/workflows/:name/suspend
+func (h *Handler) SuspendWorkflow(c *gin.Context) {
+	h.workflowOperation(c, h.wfClient.SuspendWorkflow)
+}
+
+// ResumeWorkflow handles POST /api/v1/workflows/:name/resume
+func (h *Handler) ResumeWorkflow(c *gin.Context) {
+	h.workflowOperation(c, h.wfClient.ResumeWorkflow)
+}
+
+// TerminateWorkflow handles POST /api/v1/workflows/:name/terminate
+func (h *Handler) TerminateWorkflow(c *gin.Context) {
+	h.workflowOperation(c, h.wfClient.TerminateWorkflow)
+}
+
+// DeleteWorkflow handles DELETE /api/v1/workflows/:name
+func (h *Handler) DeleteWorkflow(c *gin.Context) {
+	h.workflowOperation(c, h.wfClient.DeleteWorkflow)
+}
+
+func (h *Handler) workflowOperation(c *gin.Context, fn func(context.Context, string, string) error) {
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
+		return
+	}
+	if err := fn(c.Request.Context(), name, h.namespaceFor(c)); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func (h *Handler) namespaceFor(c *gin.Context) string {
+	if namespace := strings.TrimSpace(c.GetString("namespace")); namespace != "" {
+		return namespace
+	}
+	return h.namespace
 }
