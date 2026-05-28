@@ -1,12 +1,22 @@
-import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
+import {
+	Handle,
+	type NodeProps,
+	Position,
+	SelectType,
+} from "@ant-design/pro-flow";
 import type { PipelineNodeData } from "./types";
 
 export function PipelineStepNode({
 	data,
 	selected,
-}: NodeProps<Node<PipelineNodeData>>) {
+}: NodeProps<PipelineNodeData>) {
+	const selectType = selected
+		? (data.selectType as SelectType | undefined) || SelectType.SELECT
+		: SelectType.DEFAULT;
 	return (
-		<div className={`pipeline-node ${selected ? "selected" : ""}`}>
+		<div
+			className={`pipeline-node select-${selectType} ${selected ? "selected" : ""}`}
+		>
 			<Handle type="target" position={Position.Left} className="node-handle" />
 			<div className="node-header">
 				<span className="node-status-dot" />

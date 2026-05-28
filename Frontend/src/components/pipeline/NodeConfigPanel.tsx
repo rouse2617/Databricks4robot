@@ -1,4 +1,4 @@
-import type { Node } from "@xyflow/react";
+import type { Node } from "@ant-design/pro-flow";
 import { Input } from "antd";
 import { useEffect, useState } from "react";
 import type { PipelineNodeData } from "./types";

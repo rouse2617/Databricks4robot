@@ -1,28 +1,4 @@
 import {
-	addEdge,
-	Background,
-	BackgroundVariant,
-	type Connection,
-	Controls,
-	type Edge,
-	MiniMap,
-	type Node,
-	type NodeTypes,
-	ReactFlow,
-	ReactFlowProvider,
-	useEdgesState,
-	useNodesState,
-	useReactFlow,
-} from "@xyflow/react";
-import {
-	type DragEvent,
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
-import "@xyflow/react/dist/style.css";
-import {
 	DeleteOutlined,
 	ExportOutlined,
 	ImportOutlined,
@@ -30,15 +6,32 @@ import {
 	SaveOutlined,
 } from "@ant-design/icons";
 import {
+	type Edge,
+	FlowEditor,
+	FlowEditorProvider,
+	type Node,
+	SelectType,
+	useFlowEditor,
+} from "@ant-design/pro-flow";
+import {
 	Alert,
 	Button,
 	Collapse,
 	Input,
+	Menu,
 	Modal,
 	message,
 	Tooltip,
 	Typography,
 } from "antd";
+import {
+	type DragEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	type Deployment,
@@ -70,9 +63,26 @@ import {
 
 import "../styles/pipeline.css";
 
-const nodeTypes: NodeTypes = { pipelineStep: PipelineStepNode };
+const nodeTypes = { pipelineStep: PipelineStepNode };
 
 const STORAGE_KEY = "databrew-components";
+
+type PipelineFlowNode = Node<PipelineNodeData>;
+type PipelineFlowEdge = Edge;
+
+type CanvasMenuState = {
+	open: boolean;
+	x: number;
+	y: number;
+	node: PipelineFlowNode | null;
+};
+
+function toRecord<T extends { id: string }>(items: T[]): Record<string, T> {
+	return items.reduce<Record<string, T>>((acc, item) => {
+		acc[item.id] = item;
+		return acc;
+	}, {});
+}
 
 function dedupeComponentsByName(
 	comps: RegisteredComponent[],
@@ -162,7 +172,7 @@ function createPipelineNode(
 	comp: RegisteredComponent,
 	x: number,
 	y: number,
-): Node<PipelineNodeData> {
+): PipelineFlowNode {
 	nodeCounter++;
 	return {
 		id: `step-${nodeCounter}`,
@@ -176,6 +186,7 @@ function createPipelineNode(
 			cpu: comp.cpu || "",
 			memory: comp.memory || "",
 			disk: comp.disk || "",
+			selectType: SelectType.DEFAULT,
 		},
 	};
 }
@@ -183,14 +194,19 @@ function createPipelineNode(
 function PipelineCanvas() {
 	const navigate = useNavigate();
 	const wrapperRef = useRef<HTMLDivElement>(null);
-	const [nodes, setNodes, onNodesChange] = useNodesState<
-		Node<PipelineNodeData>
-	>([]);
-	const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-	const reactFlow = useReactFlow();
+	const editor = useFlowEditor();
+	const [nodes, setNodes] = useState<PipelineFlowNode[]>([]);
+	const [edges, setEdges] = useState<PipelineFlowEdge[]>([]);
 	const [pipelineName, setPipelineName] = useState("my-pipeline");
-	const [selectedNode, setSelectedNode] =
-		useState<Node<PipelineNodeData> | null>(null);
+	const [selectedNode, setSelectedNode] = useState<PipelineFlowNode | null>(
+		null,
+	);
+	const [contextMenu, setContextMenu] = useState<CanvasMenuState>({
+		open: false,
+		x: 0,
+		y: 0,
+		node: null,
+	});
 	const [registeredComponents, setRegisteredComponents] =
 		useState<RegisteredComponent[]>(loadComponents);
 	const [view, setView] = useState<"pipeline" | "components" | "deploy">(
@@ -208,9 +224,19 @@ function PipelineCanvas() {
 	// Asset selection for deploy modal
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 
+	const flattenNodes = useMemo(() => toRecord(nodes), [nodes]);
+	const flattenEdges = useMemo(() => toRecord(edges), [edges]);
+
 	useEffect(() => {
 		saveComponents(registeredComponents);
 	}, [registeredComponents]);
+
+	useEffect(() => {
+		setSelectedNode((prev) => {
+			if (!prev) return null;
+			return nodes.find((node) => node.id === prev.id) ?? null;
+		});
+	}, [nodes]);
 
 	// Load registered components from API on startup, fallback to localStorage
 	useEffect(() => {
@@ -264,9 +290,10 @@ function PipelineCanvas() {
 			if (pipeline.name) setPipelineName(pipeline.name);
 			setView("pipeline");
 			setSelectedNode(null);
+			editor.deselectAll();
 			setJsonOutput(null);
 		},
-		[setNodes, setEdges],
+		[editor],
 	);
 
 	useEffect(() => {
@@ -279,11 +306,6 @@ function PipelineCanvas() {
 			/* ignore */
 		}
 	}, [loadPipelineToCanvas]);
-
-	const onConnect = useCallback(
-		(connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
-		[setEdges],
-	);
 
 	const onDragStart = useCallback((e: DragEvent, comp: RegisteredComponent) => {
 		e.dataTransfer.setData("application/reactflow", JSON.stringify(comp));
@@ -304,38 +326,134 @@ function PipelineCanvas() {
 				const comp: RegisteredComponent = JSON.parse(raw);
 				const bounds = wrapperRef.current?.getBoundingClientRect();
 				if (!bounds) return;
-				const position = reactFlow.screenToFlowPosition({
+				const position = editor.screenToFlowPosition({
 					x: event.clientX,
 					y: event.clientY,
 				});
 				const newNode = createPipelineNode(comp, position.x, position.y);
-				setNodes((nds) => nds.concat(newNode));
+				editor.addNode(newNode);
+				editor.selectElements([newNode.id]);
+				setSelectedNode(newNode);
 			} catch {
 				/* ignore */
 			}
 		},
-		[reactFlow, setNodes],
+		[editor],
+	);
+
+	const selectNodeWithEdges = useCallback(
+		(node: PipelineFlowNode) => {
+			const connectedEdgeIds = edges
+				.filter((edge) => edge.source === node.id || edge.target === node.id)
+				.map((edge) => edge.id);
+			setSelectedNode(node);
+			editor.selectElements([node.id, ...connectedEdgeIds]);
+		},
+		[edges, editor],
 	);
 
 	const onNodeClick = useCallback(
-		(_: React.MouseEvent, node: Node) =>
-			setSelectedNode(node as Node<PipelineNodeData>),
-		[],
+		(_: React.MouseEvent, node: Node) => {
+			setContextMenu((prev) => ({ ...prev, open: false }));
+			selectNodeWithEdges(node as PipelineFlowNode);
+		},
+		[selectNodeWithEdges],
 	);
-	const onPaneClick = useCallback(() => setSelectedNode(null), []);
+	const onPaneClick = useCallback(() => {
+		setSelectedNode(null);
+		setContextMenu((prev) => ({ ...prev, open: false }));
+		editor.deselectAll();
+	}, [editor]);
+
+	const onPaneContextMenu = useCallback(
+		(event: React.MouseEvent) => {
+			event.preventDefault();
+			setSelectedNode(null);
+			editor.deselectAll();
+			setContextMenu({
+				open: true,
+				x: event.clientX,
+				y: event.clientY,
+				node: null,
+			});
+		},
+		[editor],
+	);
+
+	const onNodeContextMenu = useCallback(
+		(event: React.MouseEvent, node: Node) => {
+			event.preventDefault();
+			event.stopPropagation();
+			const pipelineNode = node as PipelineFlowNode;
+			selectNodeWithEdges(pipelineNode);
+			setContextMenu({
+				open: true,
+				x: event.clientX,
+				y: event.clientY,
+				node: pipelineNode,
+			});
+		},
+		[selectNodeWithEdges],
+	);
 
 	const updateNodeData = useCallback(
 		(id: string, data: Record<string, unknown>) => {
-			setNodes((nds) =>
-				nds.map((n) =>
-					n.id === id ? { ...n, data: { ...n.data, ...data } } : n,
-				),
-			);
+			editor.updateNodeData(id, data);
 			setSelectedNode((prev) =>
 				prev?.id === id ? { ...prev, data: { ...prev.data, ...data } } : prev,
 			);
 		},
-		[setNodes],
+		[editor],
+	);
+
+	const handleContextMenuClick = useCallback(
+		({ key }: { key: string }) => {
+			const menuNode = contextMenu.node;
+			setContextMenu((prev) => ({ ...prev, open: false }));
+
+			if (menuNode) {
+				if (key === "configure") {
+					selectNodeWithEdges(menuNode);
+					return;
+				}
+				if (key === "copy") {
+					editor.selectElements([menuNode.id]);
+					window.setTimeout(() => {
+						void editor
+							.copySelection()
+							.catch(() => message.warning("浏览器未允许读取剪贴板"));
+					}, 0);
+					return;
+				}
+				if (key === "delete") {
+					editor.selectElements([menuNode.id]);
+					window.setTimeout(() => {
+						editor.deleteSelection();
+						setSelectedNode((prev) => (prev?.id === menuNode.id ? null : prev));
+					}, 0);
+					return;
+				}
+			}
+
+			if (key === "paste") {
+				void editor
+					.paste()
+					.catch(() => message.warning("浏览器未允许读取剪贴板"));
+			}
+			if (key === "selectAll") {
+				editor.selectAll();
+			}
+			if (key === "zoomIn") {
+				editor.reactflow?.zoomIn();
+			}
+			if (key === "zoomOut") {
+				editor.reactflow?.zoomOut();
+			}
+			if (key === "fitView") {
+				editor.reactflow?.fitView();
+			}
+		},
+		[contextMenu.node, editor, selectNodeWithEdges],
 	);
 
 	const buildPipelineJSON = useCallback(
@@ -363,7 +481,7 @@ function PipelineCanvas() {
 		} catch {
 			message.error("无效的 JSON");
 		}
-	}, [setNodes, setEdges]);
+	}, []);
 
 	const clearCanvas = useCallback(() => {
 		Modal.confirm({
@@ -376,10 +494,11 @@ function PipelineCanvas() {
 				setNodes([]);
 				setEdges([]);
 				setSelectedNode(null);
+				editor.deselectAll();
 				setJsonOutput(null);
 			},
 		});
-	}, [setNodes, setEdges]);
+	}, [editor]);
 
 	const handleSave = useCallback(async () => {
 		try {
@@ -580,30 +699,64 @@ function PipelineCanvas() {
 							ref={wrapperRef}
 							style={{ flex: 1, height: "100%", position: "relative" }}
 						>
-							<ReactFlow
-								nodes={nodes}
-								edges={edges}
-								onNodesChange={onNodesChange}
-								onEdgesChange={onEdgesChange}
-								onConnect={onConnect}
-								onDrop={onDrop}
-								onDragOver={onDragOver}
-								onNodeClick={onNodeClick}
-								onPaneClick={onPaneClick}
+							<FlowEditor
 								nodeTypes={nodeTypes}
-								fitView
-							>
-								<Background
-									variant={BackgroundVariant.Dots}
-									gap={24}
-									color="#d4c9bc"
-								/>
-								<Controls />
-								<MiniMap />
-							</ReactFlow>
+								flattenNodes={flattenNodes}
+								flattenEdges={flattenEdges}
+								onFlattenNodesChange={(nextNodes) =>
+									setNodes(Object.values(nextNodes) as PipelineFlowNode[])
+								}
+								onFlattenEdgesChange={(nextEdges) =>
+									setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
+								}
+								contextMenuEnabled={false}
+								flowProps={{
+									onDrop,
+									onDragOver,
+									onNodeClick,
+									onNodeContextMenu,
+									onPaneClick,
+									onPaneContextMenu,
+								}}
+							/>
 							{nodes.length === 0 && (
 								<div className="canvas-empty" aria-live="polite">
 									从左侧拖入组件 → 连接圆点 → 保存 / 部署
+								</div>
+							)}
+							{contextMenu.open && (
+								<div
+									className="pipeline-context-menu"
+									style={{
+										left: contextMenu.x,
+										top: contextMenu.y,
+									}}
+								>
+									<Menu
+										selectable={false}
+										onClick={handleContextMenuClick}
+										items={
+											contextMenu.node
+												? [
+														{ key: "configure", label: "配置节点" },
+														{ key: "copy", label: "复制节点" },
+														{ type: "divider" },
+														{
+															key: "delete",
+															label: "删除节点",
+															danger: true,
+														},
+													]
+												: [
+														{ key: "paste", label: "粘贴" },
+														{ key: "selectAll", label: "选择全部" },
+														{ type: "divider" },
+														{ key: "zoomIn", label: "放大" },
+														{ key: "zoomOut", label: "缩小" },
+														{ key: "fitView", label: "适应画布" },
+													]
+										}
+									/>
 								</div>
 							)}
 						</div>
@@ -844,8 +997,8 @@ function PipelineCanvas() {
 
 export default function PipelinePage() {
 	return (
-		<ReactFlowProvider>
+		<FlowEditorProvider>
 			<PipelineCanvas />
-		</ReactFlowProvider>
+		</FlowEditorProvider>
 	);
 }

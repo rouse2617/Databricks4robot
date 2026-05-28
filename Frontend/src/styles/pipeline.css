@@ -102,6 +102,21 @@
 	position: relative;
 }
 
+.pipeline-context-menu {
+	position: fixed;
+	z-index: 1200;
+	width: 148px;
+	overflow: hidden;
+	border: 1px solid var(--color-border, #e2e8f0);
+	border-radius: 6px;
+	background: var(--color-bg-container, #fff);
+	box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+}
+
+.pipeline-context-menu .ant-menu {
+	border-inline-end: 0;
+}
+
 /* ── Pipeline Node (React Flow custom node) ─────── */
 
 .pipeline-node {
@@ -137,6 +152,26 @@
 	box-shadow:
 		0 0 0 3px rgba(37, 99, 235, 0.12),
 		0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.pipeline-node.select-DANGER {
+	border-color: #ef4444;
+}
+
+.pipeline-node.select-WARNING {
+	border-color: #f59e0b;
+}
+
+.pipeline-node.select-SUB_SELECT {
+	border-color: #60a5fa;
+}
+
+.pipeline-node.select-SUB_DANGER {
+	border-color: #fca5a5;
+}
+
+.pipeline-node.select-SUB_WARNING {
+	border-color: #fcd34d;
 }
 
 .pipeline-node.selected::before {
@@ -594,9 +629,10 @@
 }
 
 .react-flow__edge.selected .react-flow__edge-path,
-.react-flow__edge:focus .react-flow__edge-path {
+.react-flow__edge:focus .react-flow__edge-path,
+.react-flow__edge:focus-visible .react-flow__edge-path {
 	stroke: var(--color-primary, #2563eb);
-	stroke-width: 2;
+	stroke-width: 3px;
 }
 
 /* ── JSON Output ────────────────────────────────── */

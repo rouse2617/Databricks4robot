@@ -24,3 +24,14 @@
 - [x] Add CSRF hardening for cookie auth and pipeline mutating API calls.
 - [x] Make pipeline/backfill migration deltas idempotent and add migration apply tracking.
 - [x] Verify final backend build and full test suite.
+
+## Pro-flow canvas upgrade follow-up
+
+- [x] Install `@ant-design/pro-flow` in `Frontend/`.
+- [x] Replace the pipeline canvas runtime with pro-flow `FlowEditor` / `FlowEditorProvider` while keeping custom pipeline nodes.
+- [x] Route canvas add, move, connect, selection, copy/paste, delete, undo, and redo through the pro-flow editor store.
+- [x] Add canvas and node right-click menus for paste/select/zoom and configure/copy/delete.
+- [x] Preserve selected-node config behavior and highlight connected edges via pro-flow selection state.
+- [x] Verify `cd Frontend && npm run lint`.
+- [x] Verify `cd Frontend && npm run build`.
+- [x] Verify focused tests: `cd Frontend && npm run test -- PipelinePage` and `npm run test -- pipelineContract`.

@@ -1,4 +1,3 @@
-import type { Edge, Node } from "@xyflow/react";
 import type {
 	Pipeline,
 	PipelineEdgeDef,
@@ -9,6 +8,21 @@ import type {
 
 const DEFAULT_INPUT_PORT = "input";
 const DEFAULT_OUTPUT_PORT = "output";
+
+type PipelineCanvasNode = {
+	id: string;
+	type?: string;
+	position: { x: number; y: number };
+	data: PipelineNodeData;
+};
+
+type PipelineCanvasEdge = {
+	id: string;
+	source: string;
+	target: string;
+	sourceHandle?: string | null;
+	targetHandle?: string | null;
+};
 
 const defaultInputs = (): Port[] => [
 	{ name: DEFAULT_INPUT_PORT, type: "string" },
@@ -34,8 +48,8 @@ export function formatEdgeEndpoint(
 }
 
 export function toTranspilerPipeline(
-	nodes: Node<PipelineNodeData>[],
-	edges: Edge[],
+	nodes: PipelineCanvasNode[],
+	edges: PipelineCanvasEdge[],
 	meta: { name: string; version?: string },
 ): Pipeline {
 	return {
@@ -46,7 +60,7 @@ export function toTranspilerPipeline(
 	};
 }
 
-function nodeToDef(n: Node<PipelineNodeData>): PipelineNodeDef {
+function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 	const d = n.data;
 	return {
 		id: n.id,
@@ -65,7 +79,7 @@ function nodeToDef(n: Node<PipelineNodeData>): PipelineNodeDef {
 	};
 }
 
-function edgeToDef(e: Edge): PipelineEdgeDef {
+function edgeToDef(e: PipelineCanvasEdge): PipelineEdgeDef {
 	return {
 		source: formatEdgeEndpoint(e.source, e.sourceHandle, DEFAULT_OUTPUT_PORT),
 		target: formatEdgeEndpoint(e.target, e.targetHandle, DEFAULT_INPUT_PORT),
@@ -74,10 +88,10 @@ function edgeToDef(e: Edge): PipelineEdgeDef {
 
 /** Restore canvas state from a saved transpiler pipeline JSON. */
 export function fromTranspilerPipeline(pipeline: Pipeline): {
-	nodes: Node<PipelineNodeData>[];
-	edges: Edge[];
+	nodes: PipelineCanvasNode[];
+	edges: PipelineCanvasEdge[];
 } {
-	const nodes: Node<PipelineNodeData>[] = pipeline.nodes.map((pn, i) => ({
+	const nodes: PipelineCanvasNode[] = pipeline.nodes.map((pn, i) => ({
 		id: pn.id,
 		type: "pipelineStep" as const,
 		position: { x: 120 + i * 80, y: 100 + i * 60 },
@@ -92,7 +106,7 @@ export function fromTranspilerPipeline(pipeline: Pipeline): {
 		},
 	}));
 
-	const edges: Edge[] = pipeline.edges.map((pe, i) => {
+	const edges: PipelineCanvasEdge[] = pipeline.edges.map((pe, i) => {
 		const source = splitRef(pe.source);
 		const target = splitRef(pe.target);
 		return {
