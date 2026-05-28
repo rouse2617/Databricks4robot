@@ -227,7 +227,7 @@ export const searchApi = {
 			.get<SearchSyncProgressResponse>("/search/sync-progress")
 			.then((r) => r.data),
 
-	searchAssets: (params?: SearchAssetsParams) => {
+	searchAssets: (params?: SearchAssetsParams, signal?: AbortSignal) => {
 		const sp = new URLSearchParams();
 		if (params?.q) sp.set("q", params.q);
 		if (params?.mode) sp.set("mode", params.mode);
@@ -241,6 +241,7 @@ export const searchApi = {
 		return apiClient
 			.get<Omit<SearchAssetsResponse, "items"> & { items: SearchAssetHit[] }>(
 				`/search/assets?${sp.toString()}`,
+				{ signal },
 			)
 			.then((r) => ({
 				...r.data,

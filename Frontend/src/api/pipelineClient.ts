@@ -17,11 +17,10 @@ export async function request<T>(
 	body?: unknown,
 ): Promise<T> {
 	const headers: Record<string, string> = {};
-	const isMutating = !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
 	if (body) {
 		headers["Content-Type"] = "application/json";
 	}
-	if (isMutating) {
+	if (["POST", "PUT", "DELETE"].includes(method.toUpperCase())) {
 		headers["X-Requested-With"] = "XMLHttpRequest";
 	}
 

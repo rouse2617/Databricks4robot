@@ -214,13 +214,9 @@ describe("ComponentManager", () => {
 		});
 	});
 
-	it("shows warning when onSaveApi fails", async () => {
+	it("shows persistent error and keeps local state unchanged when onSaveApi fails", async () => {
 		const onSaveApi = vi.fn().mockRejectedValue(new Error("API error"));
 		const onChange = vi.fn();
-		const messageWarning = vi.fn();
-		vi.spyOn((await import("antd")).message, "warning").mockImplementation(
-			messageWarning,
-		);
 
 		render(
 			<ComponentManager
@@ -238,21 +234,14 @@ describe("ComponentManager", () => {
 		fireEvent.click(getButton("创建"));
 
 		await waitFor(() => {
-			// Local state should still update even if API fails
-			expect(onChange).toHaveBeenCalled();
-			expect(messageWarning).toHaveBeenCalledWith(
-				"组件保存到服务端失败，已保留本地数据",
-			);
+			expect(screen.getByText("API error")).toBeTruthy();
 		});
+		expect(onChange).not.toHaveBeenCalled();
 	});
 
-	it("shows warning when onDeleteApi fails", async () => {
+	it("shows persistent error and keeps local state unchanged when onDeleteApi fails", async () => {
 		const onDeleteApi = vi.fn().mockRejectedValue(new Error("Delete error"));
 		const onChange = vi.fn();
-		const messageWarning = vi.fn();
-		vi.spyOn((await import("antd")).message, "warning").mockImplementation(
-			messageWarning,
-		);
 
 		render(
 			<ComponentManager
@@ -266,12 +255,9 @@ describe("ComponentManager", () => {
 		fireEvent.click(getButton("删除"));
 
 		await waitFor(() => {
-			// Local state should update despite API failure
-			expect(onChange).toHaveBeenCalled();
-			expect(messageWarning).toHaveBeenCalledWith(
-				"组件从服务端删除失败，已从本地移除",
-			);
+			expect(screen.getByText("Delete error")).toBeTruthy();
 		});
+		expect(onChange).not.toHaveBeenCalled();
 	});
 
 	it("parses command JSON on blur", async () => {

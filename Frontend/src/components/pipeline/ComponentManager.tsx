@@ -1,5 +1,5 @@
 import { PlusOutlined } from "@ant-design/icons";
-import { Button, Input, message, Typography } from "antd";
+import { Alert, Button, Input, Typography } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import type { RegisteredComponent } from "./types";
 
@@ -36,6 +36,9 @@ export function ComponentManager({
 	const [editing, setEditing] = useState<RegisteredComponent | null>(null);
 	const [isNew, setIsNew] = useState(false);
 	const [commandText, setCommandText] = useState("");
+	const [error, setError] = useState<string | null>(null);
+	const [saving, setSaving] = useState(false);
+	const [deleting, setDeleting] = useState(false);
 
 	useEffect(() => {
 		if (editing) {
@@ -45,42 +48,45 @@ export function ComponentManager({
 
 	const save = useCallback(
 		async (c: RegisteredComponent) => {
-			// Update local state first
-			let updated: RegisteredComponent[];
-			if (isNew) {
-				updated = [...components, c];
-			} else {
-				updated = components.map((x) => (x.id === c.id ? c : x));
-			}
-			onChange(updated);
-
-			// Sync to API if available
-			if (onSaveApi) {
-				try {
+			setSaving(true);
+			setError(null);
+			try {
+				if (onSaveApi) {
 					await onSaveApi(c, isNew);
-				} catch {
-					message.warning("组件保存到服务端失败，已保留本地数据");
 				}
-			}
 
-			setEditing(null);
+				let updated: RegisteredComponent[];
+				if (isNew) {
+					updated = [...components, c];
+				} else {
+					updated = components.map((x) => (x.id === c.id ? c : x));
+				}
+				onChange(updated);
+				setEditing(null);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "组件保存失败");
+			} finally {
+				setSaving(false);
+			}
 		},
 		[components, isNew, onChange, onSaveApi],
 	);
 
 	const remove = useCallback(
 		async (id: string) => {
-			// Update local state first
-			onChange(components.filter((x) => x.id !== id));
-			if (editing?.id === id) setEditing(null);
-
-			// Sync to API if available
-			if (onDeleteApi) {
-				try {
+			setDeleting(true);
+			setError(null);
+			try {
+				if (onDeleteApi) {
 					await onDeleteApi(id);
-				} catch {
-					message.warning("组件从服务端删除失败，已从本地移除");
 				}
+
+				onChange(components.filter((x) => x.id !== id));
+				if (editing?.id === id) setEditing(null);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "组件删除失败");
+			} finally {
+				setDeleting(false);
 			}
 		},
 		[components, editing?.id, onChange, onDeleteApi],
@@ -208,16 +214,39 @@ export function ComponentManager({
 						</div>
 					</div>
 					<div className="cm-form-actions">
-						<Button type="primary" onClick={() => save(editing)}>
+						<Button
+							type="primary"
+							loading={saving}
+							disabled={deleting}
+							onClick={() => save(editing)}
+						>
 							{isNew ? "创建" : "保存"}
 						</Button>
 						{!isNew && (
-							<Button danger onClick={() => remove(editing.id)}>
+							<Button
+								danger
+								loading={deleting}
+								disabled={saving}
+								onClick={() => remove(editing.id)}
+							>
 								删除
 							</Button>
 						)}
-						<Button onClick={() => setEditing(null)}>取消</Button>
+						<Button
+							disabled={saving || deleting}
+							onClick={() => setEditing(null)}
+						>
+							取消
+						</Button>
 					</div>
+					{error && (
+						<Alert
+							type="error"
+							showIcon
+							message={error}
+							style={{ marginTop: 12 }}
+						/>
+					)}
 				</div>
 			)}
 		</div>
