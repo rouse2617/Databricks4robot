@@ -23,6 +23,8 @@ func NewSchemaRegistry() *SchemaRegistry {
 	r := &SchemaRegistry{schemas: map[string]assetTypeSchema{}}
 	r.register("dataset", datasetSchemaJSON, validateDatasetMetadata)
 	r.register("annotation_result", annotationResultSchemaJSON, validateAnnotationResultMetadata)
+	r.register("ml_model", mlModelSchemaJSON, validateMLModelMetadata)
+	r.register("evaluation_report", evaluationReportSchemaJSON, validateEvaluationReportMetadata)
 	return r
 }
 
@@ -102,6 +104,45 @@ var annotationResultSchemaJSON = json.RawMessage(`{
   }
 }`)
 
+var mlModelSchemaJSON = json.RawMessage(`{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyber-databrew.local/schemas/asset-types/ml_model.json",
+  "title": "ml_model asset metadata",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "framework": { "type": "string" },
+    "architecture": { "type": "string" },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "quantization": { "type": "string" },
+    "artifact_uri": { "type": "string" },
+    "training_run_id": { "type": "string" },
+    "base_model": { "type": "string" }
+  }
+}`)
+
+var evaluationReportSchemaJSON = json.RawMessage(`{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyber-databrew.local/schemas/asset-types/evaluation_report.json",
+  "title": "evaluation_report asset metadata",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "model_id": { "type": "string" },
+    "dataset_id": { "type": "string" },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "evaluated_at": { "type": "string" },
+    "tool": { "type": "string" },
+    "report_uri": { "type": "string" }
+  }
+}`)
+
 func validateDatasetMetadata(metadata map[string]interface{}) error {
 	if err := optionalStringEnum(metadata, "format", "parquet", "csv", "image", "lidar", "other"); err != nil {
 		return err
@@ -163,6 +204,30 @@ func validateAnnotationResultMetadata(metadata map[string]interface{}) error {
 	return nil
 }
 
+func validateMLModelMetadata(metadata map[string]interface{}) error {
+	for _, key := range []string{"framework", "architecture", "quantization", "artifact_uri", "training_run_id", "base_model"} {
+		if err := optionalString(metadata, key); err != nil {
+			return err
+		}
+	}
+	if err := optionalObject(metadata, "metrics"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateEvaluationReportMetadata(metadata map[string]interface{}) error {
+	for _, key := range []string{"model_id", "dataset_id", "evaluated_at", "tool", "report_uri"} {
+		if err := optionalString(metadata, key); err != nil {
+			return err
+		}
+	}
+	if err := optionalObject(metadata, "metrics"); err != nil {
+		return err
+	}
+	return nil
+}
+
 func optionalString(metadata map[string]interface{}, key string) error {
 	raw, ok := metadata[key]
 	if !ok || raw == nil {
@@ -170,6 +235,17 @@ func optionalString(metadata map[string]interface{}, key string) error {
 	}
 	if _, ok := raw.(string); !ok {
 		return fmt.Errorf("metadata.%s must be a string", key)
+	}
+	return nil
+}
+
+func optionalObject(metadata map[string]interface{}, key string) error {
+	raw, ok := metadata[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	if _, ok := raw.(map[string]interface{}); !ok {
+		return fmt.Errorf("metadata.%s must be an object", key)
 	}
 	return nil
 }
