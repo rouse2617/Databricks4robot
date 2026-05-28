@@ -8,6 +8,10 @@ export function truncateMiddle(text: string, maxLength: number): string {
 	return `${text.slice(0, edge)}...${text.slice(text.length - edge)}`;
 }
 
+export function getWorkflowNodeDisplayText(node: WorkflowNodeStatus): string {
+	return node.displayName || node.templateName || node.name;
+}
+
 export function getWorkflowNodePodName(node: WorkflowNodeStatus): string {
 	if (node.podName?.trim()) {
 		return node.podName.trim();

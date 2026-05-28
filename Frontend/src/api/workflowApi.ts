@@ -109,7 +109,7 @@ export function getWorkflowLogs(
 }
 
 export function getWorkflowLogStreamUrl(name: string, nodeId: string): string {
-	return `/workflows/${encodeURIComponent(name)}/log/stream?nodeId=${encodeURIComponent(nodeId)}`;
+	return `/api/v1/workflows/${encodeURIComponent(name)}/log/stream?nodeId=${encodeURIComponent(nodeId)}`;
 }
 
 function postWorkflowOperation(

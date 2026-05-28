@@ -6,6 +6,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -83,8 +84,14 @@ function mockDeployResult(overrides: Partial<Deployment> = {}): Deployment {
 	};
 }
 
+function clickDeployTab() {
+	const tabs = document.querySelectorAll(".pipeline-toolbar__tab");
+	expect(tabs.length).toBeGreaterThanOrEqual(2);
+	fireEvent.click(tabs[1] as HTMLButtonElement);
+}
+
 /** Import a pipeline with one node so canvas is non-empty for deploy tests. */
-function importOneNodePipeline(customName = "test-pipeline") {
+async function importOneNodePipeline(customName = "test-pipeline") {
 	const pipeline = {
 		name: customName,
 		version: "1",
@@ -103,8 +110,21 @@ function importOneNodePipeline(customName = "test-pipeline") {
 		],
 		edges: [],
 	};
-	vi.spyOn(window, "prompt").mockReturnValue(JSON.stringify(pipeline));
 	fireEvent.click(screen.getByText("导入"));
+	const modal = document.querySelector(".ant-modal");
+	expect(modal).toBeTruthy();
+	const textarea = modal?.querySelector("textarea") as HTMLTextAreaElement;
+	expect(textarea).toBeTruthy();
+	fireEvent.change(textarea, {
+		target: { value: JSON.stringify(pipeline) },
+	});
+	fireEvent.click(
+		within(modal as HTMLElement).getByRole("button", { name: /导.*入/ }),
+	);
+	await waitFor(() => {
+		expect(screen.getByDisplayValue(customName)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /play-circle/i })).not.toBeDisabled();
+	});
 }
 
 async function getMockMessage() {
@@ -114,12 +134,13 @@ async function getMockMessage() {
 
 /** Find the modal's primary deploy button (not the canvas toolbar one). */
 function getModalDeployBtn(): HTMLButtonElement {
-	// Ant Design 5 adds -sm for small buttons (canvas toolbar) and spacing in text ("部 署")
-	const btn = document.querySelector<HTMLButtonElement>(
-		".ant-btn-primary:not(.ant-btn-sm)",
-	);
+	const modal = screen.getByText("部署流水线").closest(".ant-modal");
+	expect(modal).toBeTruthy();
+	const btn = within(modal as HTMLElement).getByRole("button", {
+		name: /^部.*署$/,
+	});
 	expect(btn).not.toBeNull();
-	expect(btn?.disabled).toBe(false);
+	expect(btn).not.toBeDisabled();
 	return btn as HTMLButtonElement;
 }
 
@@ -152,25 +173,22 @@ describe("PipelinePage", () => {
 	});
 
 	// ── Tab switching ───────────────────────────────────────────────
-	it("switches to components tab", async () => {
+	it("shows component palette on canvas view", () => {
 		renderPage();
-		fireEvent.click(screen.getAllByText("组件")[0]);
-		await waitFor(() => {
-			expect(screen.getByText("组件注册表")).toBeInTheDocument();
-		});
+		expect(screen.getByRole("heading", { name: "组件" })).toBeInTheDocument();
 	});
 
 	it("switches to deploy tab", async () => {
 		renderPage();
-		fireEvent.click(screen.getAllByText("部署")[0]);
+		clickDeployTab();
 		await waitFor(() => {
-			expect(screen.getByText("部署记录")).toBeInTheDocument();
+			expect(screen.getByText("最近部署")).toBeInTheDocument();
 		});
 	});
 
 	it("switches back to canvas tab from deploy", () => {
 		renderPage();
-		fireEvent.click(screen.getAllByText("部署")[0]);
+		clickDeployTab();
 		fireEvent.click(screen.getByText("画布"));
 		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
 	});
@@ -185,25 +203,37 @@ describe("PipelinePage", () => {
 	});
 
 	// ── Import ──────────────────────────────────────────────────────
-	it("loads pipeline from JSON import", () => {
+	it("loads pipeline from JSON import", async () => {
 		renderPage();
-		importOneNodePipeline("imported-pipeline");
-		expect(screen.getByDisplayValue("imported-pipeline")).toBeInTheDocument();
+		await importOneNodePipeline("imported-pipeline");
+		await waitFor(() => {
+			expect(screen.getByDisplayValue("imported-pipeline")).toBeInTheDocument();
+		});
 		expect(document.querySelector(".json-output")).not.toBeInTheDocument();
 	});
 
 	it("shows error on invalid JSON import", async () => {
-		vi.spyOn(window, "prompt").mockReturnValue("invalid json{{}");
 		renderPage();
 		fireEvent.click(screen.getByText("导入"));
+		const modal = document.querySelector(".ant-modal");
+		expect(modal).toBeTruthy();
+		const textarea = modal?.querySelector("textarea") as HTMLTextAreaElement;
+		fireEvent.change(textarea, { target: { value: "invalid json{{}" } });
+		fireEvent.click(
+			within(modal as HTMLElement).getByRole("button", { name: /导.*入/ }),
+		);
 		const msg = await getMockMessage();
 		expect(msg.error).toHaveBeenCalledWith("无效的 JSON");
 	});
 
 	it("does nothing on cancelled import", () => {
-		vi.spyOn(window, "prompt").mockReturnValue(null);
 		renderPage();
 		fireEvent.click(screen.getByText("导入"));
+		const modal = document.querySelector(".ant-modal");
+		expect(modal).toBeTruthy();
+		fireEvent.click(
+			within(modal as HTMLElement).getByRole("button", { name: /取.*消/ }),
+		);
 		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
 	});
 
@@ -240,21 +270,19 @@ describe("PipelinePage", () => {
 	it("disables toolbar deploy when canvas is empty", () => {
 		renderPage();
 		expect(screen.getByRole("button", { name: /play-circle/i })).toBeDisabled();
-		expect(
-			screen.getByText("从左侧拖入组件 → 连接圆点 → 保存 / 部署"),
-		).toBeInTheDocument();
+		expect(screen.getByText("开始设计流水线")).toBeInTheDocument();
 	});
 
-	it("opens deploy modal with title", () => {
+	it("opens deploy modal with title", async () => {
 		renderPage();
-		importOneNodePipeline("with-nodes");
+		await importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 		expect(screen.getByText("部署流水线")).toBeInTheDocument();
 	});
 
-	it("shows node count in deploy modal (with nodes)", () => {
+	it("shows node count in deploy modal (with nodes)", async () => {
 		renderPage();
-		importOneNodePipeline("with-nodes");
+		await importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 		expect(screen.getByText("1 个节点")).toBeInTheDocument();
 	});
@@ -267,10 +295,13 @@ describe("PipelinePage", () => {
 		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
-		importOneNodePipeline("with-nodes");
+		await importOneNodePipeline("with-nodes");
 
 		// Open deploy modal
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
+		await waitFor(() => {
+			expect(screen.getByText("1 个节点")).toBeInTheDocument();
+		});
 
 		// Change workflow name
 		const nameInput = screen.getByPlaceholderText("with-nodes");
@@ -299,7 +330,7 @@ describe("PipelinePage", () => {
 		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
-		importOneNodePipeline("with-nodes");
+		await importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 
 		// Expand asset picker
@@ -327,7 +358,7 @@ describe("PipelinePage", () => {
 		mockDeployTemplate.mockRejectedValueOnce(new Error("Cluster unavailable"));
 
 		renderPage();
-		importOneNodePipeline("with-nodes");
+		await importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 		fireEvent.click(getModalDeployBtn());
 
@@ -345,7 +376,7 @@ describe("PipelinePage", () => {
 		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
-		importOneNodePipeline("with-nodes");
+		await importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 		fireEvent.click(getModalDeployBtn());
 
@@ -363,7 +394,7 @@ describe("PipelinePage", () => {
 		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
-		importOneNodePipeline("with-nodes");
+		await importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 		fireEvent.click(getModalDeployBtn());
 
@@ -373,7 +404,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(screen.getByText(/查看部署/));
 
 		await waitFor(() => {
-			expect(screen.getByText("部署记录")).toBeInTheDocument();
+			expect(screen.getByText("最近部署")).toBeInTheDocument();
 		});
 	});
 

@@ -5,35 +5,34 @@ import {
 	MarkerType,
 	Position,
 	ReactFlow,
+	ReactFlowProvider,
 	type Edge as RFEdge,
 	type Node as RFNode,
 	useEdgesState,
 	useNodesState,
+	useReactFlow,
 } from "@xyflow/react";
-import { Input, Tooltip } from "antd";
+import { Input } from "antd";
 import dagre from "dagre";
-import dayjs from "dayjs";
-import relativeTime from "dayjs/plugin/relativeTime";
-import { type MouseEvent, useCallback, useEffect, useState } from "react";
+import { type MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import "@xyflow/react/dist/style.css";
+import "./WorkflowDagView.css";
 import type { WorkflowDagEdge, WorkflowNodeStatus } from "../api/workflowApi";
-
-dayjs.extend(relativeTime);
+import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
+import {
+	WorkflowDagNode,
+	type WorkflowDagNodeData,
+} from "./WorkflowDagNode";
 
 const DISPLAYABLE_NODE_TYPES = new Set(["pod", "template"]);
-const DAG_NODE_WIDTH = 220;
-const DAG_NODE_HEIGHT = 86;
-const PROGRESS_RING_SIZE = 20;
-const PROGRESS_RING_STROKE = 3;
+const DAG_NODE_WIDTH = 240;
+const DAG_NODE_HEIGHT = 92;
+const DAG_RANK_DIR = "LR" as const;
+const DAG_NODE_GAP = 72;
+const DAG_FIT_MIN_ZOOM = 0.72;
+const DAG_FIT_MAX_ZOOM = 1;
 
-const PHASE_COLORS: Record<string, string> = {
-	Running: "#2563eb",
-	Succeeded: "#16a34a",
-	Failed: "#dc2626",
-	Pending: "#6b7280",
-	Error: "#dc2626",
-	Skipped: "#9ca3af",
-	Suspended: "#7c3aed",
-};
+const nodeTypes = { workflowStep: WorkflowDagNode };
 
 function getProgressPercent(progress: string | undefined): number | null {
 	if (!progress) return null;
@@ -45,65 +44,6 @@ function getProgressPercent(progress: string | undefined): number | null {
 	const total = Number(parts[1]);
 	if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return null;
 	return Math.min(100, Math.max(0, Math.round((done / total) * 100)));
-}
-
-function getProgressRingColor(phase: string): string {
-	if (phase === "Succeeded") return PHASE_COLORS.Succeeded;
-	if (phase === "Running") return PHASE_COLORS.Running;
-	return "#9ca3af";
-}
-
-function getNodeRelativeTime(node: WorkflowNodeStatus): string | null {
-	const startedAt = node.startedAt;
-	if (!startedAt) return null;
-	const started = dayjs(startedAt);
-	if (!started.isValid()) return null;
-	if (node.finishedAt) {
-		const finished = dayjs(node.finishedAt);
-		if (finished.isValid()) {
-			return finished.fromNow();
-		}
-	}
-	return started.fromNow();
-}
-
-function ProgressRing({ percent, color }: { percent: number; color: string }) {
-	const size = PROGRESS_RING_SIZE;
-	const center = size / 2;
-	const radius = center - PROGRESS_RING_STROKE / 2;
-	const circumference = 2 * Math.PI * radius;
-	const dashOffset = circumference - (percent / 100) * circumference;
-
-	return (
-		<svg
-			width={size}
-			height={size}
-			viewBox={`0 0 ${size} ${size}`}
-			style={{ position: "absolute", right: 4, top: 4 }}
-		>
-			<circle
-				cx={center}
-				cy={center}
-				r={radius}
-				fill="none"
-				stroke="rgba(255, 255, 255, 0.35)"
-				strokeWidth={PROGRESS_RING_STROKE}
-				opacity={0.8}
-			/>
-			<circle
-				cx={center}
-				cy={center}
-				r={radius}
-				fill="none"
-				stroke={color}
-				strokeWidth={PROGRESS_RING_STROKE}
-				strokeDasharray={`${circumference} ${circumference}`}
-				strokeDashoffset={dashOffset}
-				transform={`rotate(-90 ${center} ${center})`}
-				strokeLinecap="round"
-			/>
-		</svg>
-	);
 }
 
 function isDisplayableNode(node: WorkflowNodeStatus): boolean {
@@ -122,8 +62,16 @@ function isDisplayableNode(node: WorkflowNodeStatus): boolean {
 	return !!hasMeaningfulPhase && !isRootDagNode;
 }
 
-function getNodeDisplayText(node: WorkflowNodeStatus): string {
-	return node.displayName || node.templateName || node.name;
+export function countDisplayableWorkflowNodes(
+	rawNodes: WorkflowNodeStatus[],
+): number {
+	return rawNodes.filter(isDisplayableNode).length;
+}
+
+export function filterDisplayableWorkflowNodes(
+	rawNodes: WorkflowNodeStatus[],
+): WorkflowNodeStatus[] {
+	return rawNodes.filter(isDisplayableNode);
 }
 
 function getNearestVisibleAncestorId(
@@ -145,11 +93,9 @@ function getNearestVisibleAncestorId(
 	return null;
 }
 
-interface WorkflowDagNodeData extends Record<string, unknown> {
-	workflowNode: WorkflowNodeStatus;
+interface WorkflowDagNode extends RFNode<WorkflowDagNodeData> {
+	type: "workflowStep";
 }
-
-type WorkflowDagNode = RFNode<WorkflowDagNodeData>;
 
 export function buildDagElements(
 	rawNodes: WorkflowNodeStatus[],
@@ -177,12 +123,13 @@ export function buildDagElements(
 			id: edgeId,
 			source,
 			target,
-			style: { stroke: "#94a3b8" },
+			type: "smoothstep",
+			style: { stroke: "#64748b", strokeWidth: 1.5 },
 			markerEnd: {
 				type: MarkerType.ArrowClosed,
-				color: "#94a3b8",
-				width: 12,
-				height: 12,
+				color: "#64748b",
+				width: 14,
+				height: 14,
 			},
 		});
 	};
@@ -225,8 +172,8 @@ export function buildDagElements(
 
 	const graph = new dagre.graphlib.Graph();
 	graph.setGraph({
-		rankdir: "TB",
-		nodesep: 70,
+		rankdir: DAG_RANK_DIR,
+		nodesep: DAG_NODE_GAP,
 		ranksep: 80,
 		marginx: 20,
 		marginy: 20,
@@ -242,10 +189,18 @@ export function buildDagElements(
 	dagre.layout(graph);
 
 	const normalizedSearch = nodeSearch.trim().toLowerCase();
-	const nodes = displayableNodes.map((node) => {
-		const position = graph.node(node.id);
+	const nodes = displayableNodes.map((node, index) => {
+		const dagreNode = graph.node(node.id);
+		const hasLayout =
+			dagreNode &&
+			typeof dagreNode.x === "number" &&
+			typeof dagreNode.y === "number";
+		const layoutX = hasLayout
+			? dagreNode.x
+			: index * (DAG_NODE_WIDTH + DAG_NODE_GAP);
+		const layoutY = hasLayout ? dagreNode.y : 0;
 		const isSelected = node.id === selectedNodeId;
-		const displayText = getNodeDisplayText(node).toLowerCase();
+		const displayText = getWorkflowNodeDisplayText(node).toLowerCase();
 		const matchesSearch =
 			normalizedSearch.length === 0 ||
 			displayText.includes(normalizedSearch) ||
@@ -253,73 +208,26 @@ export function buildDagElements(
 		const progressPercent = getProgressPercent(node.progress);
 		return {
 			id: node.id,
-			type: "default",
+			type: "workflowStep" as const,
+			width: DAG_NODE_WIDTH,
+			height: DAG_NODE_HEIGHT,
+			draggable: false,
+			connectable: false,
+			selectable: true,
 			position: {
-				x: (position?.x ?? 0) - DAG_NODE_WIDTH / 2,
-				y: (position?.y ?? 0) - DAG_NODE_HEIGHT / 2,
+				x: layoutX - DAG_NODE_WIDTH / 2,
+				y: layoutY - DAG_NODE_HEIGHT / 2,
 			},
 			data: {
 				workflowNode: node,
-				label: (
-					<div
-						style={{
-							textAlign: "center",
-							whiteSpace: "nowrap",
-							overflow: "hidden",
-							textOverflow: "ellipsis",
-							lineHeight: 1.25,
-							position: "relative",
-						}}
-					>
-						{progressPercent !== null && (
-							<ProgressRing
-								percent={progressPercent}
-								color={getProgressRingColor(node.phase)}
-							/>
-						)}
-						<div
-							style={{
-								fontWeight: 700,
-								overflow: "hidden",
-								textOverflow: "ellipsis",
-							}}
-							title={getNodeDisplayText(node)}
-						>
-							{getNodeDisplayText(node)}
-						</div>
-						<div style={{ fontSize: 11, opacity: 0.85, marginTop: 4 }}>
-							{node.phase}
-							{(() => {
-								const relTime = getNodeRelativeTime(node);
-								return relTime ? (
-									<>
-										{" "}
-										<Tooltip title={node.startedAt ? dayjs(node.startedAt).toLocaleString() : ""}>
-											<span style={{ opacity: 0.75 }}>{relTime}</span>
-										</Tooltip>
-									</>
-								) : null;
-							})()}
-						</div>
-					</div>
-				),
+				selected: isSelected,
+				dimmed: !matchesSearch,
+				progressPercent,
 			},
-			style: {
-				width: DAG_NODE_WIDTH,
-				padding: 10,
-				opacity: matchesSearch ? 1 : 0.2,
-				borderRadius: 8,
-				border: isSelected ? "2px solid #111827" : "1px solid #d1d5db",
-				background: PHASE_COLORS[node.phase] || "#9ca3af",
-				color: "#ffffff",
-				fontSize: 12,
-				fontWeight: 600,
-				minWidth: DAG_NODE_WIDTH,
-			},
-			sourcePosition: Position.Bottom,
-			targetPosition: Position.Top,
-			};
-		});
+			sourcePosition: Position.Right,
+			targetPosition: Position.Left,
+		};
+	});
 
 	return { nodes, edges };
 }
@@ -329,13 +237,34 @@ interface WorkflowDagViewProps {
 	workflowEdges?: WorkflowDagEdge[];
 	selectedNodeId: string | null;
 	onNodeSelect: (node: WorkflowNodeStatus | null) => void;
+	emptyMessage?: string;
 }
 
-export function WorkflowDagView({
+function FitViewOnGraphChange({ graphKey }: { graphKey: string }): null {
+	const { fitView } = useReactFlow();
+
+	useEffect(() => {
+		if (!graphKey) return;
+		const frame = requestAnimationFrame(() => {
+			void fitView({
+				padding: 0.18,
+				minZoom: DAG_FIT_MIN_ZOOM,
+				maxZoom: DAG_FIT_MAX_ZOOM,
+				duration: 200,
+			});
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [graphKey, fitView]);
+
+	return null;
+}
+
+function WorkflowDagViewInner({
 	nodes: rawNodes,
 	workflowEdges,
 	selectedNodeId,
 	onNodeSelect,
+	emptyMessage,
 }: WorkflowDagViewProps): React.JSX.Element {
 	const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowDagNode>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdge>([]);
@@ -366,36 +295,87 @@ export function WorkflowDagView({
 		onNodeSelect(null);
 	}, [onNodeSelect]);
 
+	const graphKey = useMemo(() => {
+		const displayableNodes = rawNodes.filter(isDisplayableNode);
+		if (displayableNodes.length === 0) return "";
+		const nodeIds = displayableNodes
+			.map((node) => node.id)
+			.sort()
+			.join("|");
+		const edgeIds = (workflowEdges ?? [])
+			.map((edge) => `${edge.source}->${edge.target}`)
+			.sort()
+			.join("|");
+		return `${nodeIds}::${edgeIds}::${nodeSearch}`;
+	}, [rawNodes, workflowEdges, nodeSearch]);
+
+	const displayableCount = countDisplayableWorkflowNodes(rawNodes);
+	const showEmptyState = displayableCount === 0;
+
 	return (
-		<div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-			<div style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>
+		<div className="workflow-dag-view">
+			<div className="workflow-dag-view__toolbar">
 				<Input.Search
 					placeholder="搜索节点..."
 					allowClear
 					value={nodeSearch}
 					onChange={(event) => setNodeSearch(event.target.value)}
-					style={{ width: 280, maxWidth: "100%" }}
+					className="workflow-dag-view__search"
 				/>
+				<span className="workflow-dag-view__meta">
+					{displayableCount} 个步骤
+				</span>
 			</div>
-			<div style={{ flex: 1 }}>
+			<div className="workflow-dag-view__canvas">
 				<ReactFlow
 					nodes={nodes}
 					edges={edges}
+					nodeTypes={nodeTypes}
 					onNodesChange={onNodesChange}
 					onEdgesChange={onEdgesChange}
 					onNodeClick={onNodeClick}
 					onPaneClick={onPaneClick}
-					fitView
-					minZoom={0.1}
+					nodesDraggable={false}
+					nodesConnectable={false}
+					elementsSelectable
+					panOnDrag
+					panOnScroll
+					zoomOnScroll
+					minZoom={0.35}
+					maxZoom={1.5}
+					proOptions={{ hideAttribution: true }}
 				>
+					<FitViewOnGraphChange graphKey={graphKey} />
 					<Background
-						variant={BackgroundVariant.Dots}
-						gap={24}
+						variant={BackgroundVariant.Lines}
+						gap={20}
 						color="#cbd5e1"
+						lineWidth={1}
 					/>
-					<Controls />
+					<Controls showInteractive={false} position="bottom-right" />
 				</ReactFlow>
+				{showEmptyState ? (
+					<div className="workflow-dag-view__empty">
+						<div className="workflow-dag-view__empty-card">
+							<div className="workflow-dag-view__empty-title">
+								暂无可展示的 DAG 节点
+							</div>
+							<div>
+								{emptyMessage ||
+									"工作流可能在启动前失败，或所有步骤仍处于隐藏/省略状态。"}
+							</div>
+						</div>
+					</div>
+				) : null}
 			</div>
 		</div>
+	);
+}
+
+export function WorkflowDagView(props: WorkflowDagViewProps): React.JSX.Element {
+	return (
+		<ReactFlowProvider>
+			<WorkflowDagViewInner {...props} />
+		</ReactFlowProvider>
 	);
 }

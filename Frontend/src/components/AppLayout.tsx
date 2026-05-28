@@ -4,6 +4,7 @@ import {
 	DashboardOutlined,
 	DatabaseOutlined,
 	FileOutlined,
+	ForkOutlined,
 	FundProjectionScreenOutlined,
 	HistoryOutlined,
 	LogoutOutlined,
@@ -36,8 +37,9 @@ const menuItems = [
 	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
-	{ key: "/components", icon: <AppstoreOutlined />, label: "组件管理" },
-	{ key: "/workflows", icon: <PlayCircleOutlined />, label: "流水线运行" },
+	{ key: "/components", icon: <AppstoreOutlined />, label: "步骤组件" },
+	{ key: "/pipeline", icon: <ForkOutlined />, label: "流水线设计" },
+	{ key: "/workflows", icon: <PlayCircleOutlined />, label: "流水线执行记录" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
 	{
@@ -65,6 +67,13 @@ function resolveSelectedKey(pathname: string): string {
 	return "/assets";
 }
 
+function isFullBleedPage(pathname: string): boolean {
+	return (
+		pathname.startsWith("/pipeline") ||
+		/^\/workflows\/[^/]+/.test(pathname)
+	);
+}
+
 export default function AppLayout({ children }: { children: ReactNode }) {
 	const navigate = useNavigate();
 	const location = useLocation();
@@ -72,6 +81,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const screens = useBreakpoint();
 	const isMobile = !screens.lg;
 	const siderWidth = 220;
+	const fullBleed = isFullBleedPage(location.pathname);
 
 	// Browser restores scroll position on back-nav, no dep needed
 	useEffect(() => {
@@ -168,7 +178,14 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 							/>
 						</Dropdown>
 					</div>
-					<div style={{ padding: 24 }}>{children}</div>
+					<div
+						style={{
+							padding: fullBleed ? 0 : 24,
+							minHeight: fullBleed ? 0 : undefined,
+						}}
+					>
+						{children}
+					</div>
 				</Content>
 			</Layout>
 		</Layout>

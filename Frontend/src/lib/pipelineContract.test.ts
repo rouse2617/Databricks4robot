@@ -4,8 +4,26 @@ import type { Pipeline, PipelineNodeData } from "../components/pipeline/types";
 import {
 	formatEdgeEndpoint,
 	fromTranspilerPipeline,
+	normalizeComponentArgs,
 	toTranspilerPipeline,
 } from "./pipelineContract";
+
+// ── normalizeComponentArgs ────────────────────────────────────────────
+
+describe("normalizeComponentArgs", () => {
+	it("converts string args to Argument objects", () => {
+		expect(normalizeComponentArgs(["echo hello", "world"])).toEqual([
+			{ name: "echo hello", value: "echo hello" },
+			{ name: "world", value: "world" },
+		]);
+	});
+
+	it("passes through Argument objects", () => {
+		expect(
+			normalizeComponentArgs([{ name: "arg1", value: "hello" }]),
+		).toEqual([{ name: "arg1", value: "hello" }]);
+	});
+});
 
 // ── formatEdgeEndpoint ────────────────────────────────────────────────
 
@@ -64,6 +82,29 @@ describe("toTranspilerPipeline", () => {
 		expect(result.edges).toEqual([]);
 	});
 
+	it("serializes string-like canvas args for transpiler export", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "writer",
+					image: "busybox:latest",
+					command: ["sh", "-c"],
+					args: ["echo hello"] as unknown as PipelineNodeData["args"],
+					cpu: "",
+					memory: "",
+					disk: "",
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].component.args).toEqual([
+			{ name: "echo hello", value: "echo hello" },
+		]);
+	});
+
 	it("converts a single node correctly", () => {
 		const nodes: Node<PipelineNodeData>[] = [
 			{
@@ -119,6 +160,8 @@ describe("toTranspilerPipeline", () => {
 			cpu: "1000m",
 			memory: "512Mi",
 			disk: "10Gi",
+			type: "container",
+			source: "custom",
 		});
 	});
 

@@ -2,6 +2,97 @@
    DataBrew Pipeline — Custom styles for React Flow canvas
    ══════════════════════════════════════════════════════════════ */
 
+/* ── Page Shell ─────────────────────────────────── */
+
+.pipeline-page {
+	display: flex;
+	flex-direction: column;
+	height: calc(100vh - 49px);
+	overflow: hidden;
+	position: relative;
+	background: #eef2f6;
+}
+
+.pipeline-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	padding: 0 16px;
+	min-height: 52px;
+	border-bottom: 1px solid var(--color-border, #dbe3ee);
+	flex-shrink: 0;
+	background: #fff;
+}
+
+.pipeline-toolbar__left {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	min-width: 0;
+}
+
+.pipeline-toolbar__title {
+	margin: 0 !important;
+	font-size: 15px !important;
+	font-weight: 600 !important;
+	color: #0f172a !important;
+	white-space: nowrap;
+}
+
+.pipeline-toolbar__tabs {
+	display: flex;
+	align-items: stretch;
+	height: 52px;
+}
+
+.pipeline-toolbar__tab {
+	padding: 0 14px;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+	font-size: 13px;
+	color: #64748b;
+	border-bottom: 2px solid transparent;
+	font-weight: 500;
+	transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.pipeline-toolbar__tab:hover {
+	color: #2563eb;
+}
+
+.pipeline-toolbar__tab--active {
+	color: #2563eb;
+	border-bottom-color: #2563eb;
+	font-weight: 600;
+}
+
+.pipeline-toolbar__name {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.pipeline-toolbar__name-label {
+	font-size: 12px;
+	color: #64748b;
+	white-space: nowrap;
+}
+
+.pipeline-toolbar__name-input {
+	width: 220px;
+	font-family: "SF Mono", "Fira Code", monospace;
+	font-size: 12px;
+}
+
+.pipeline-toolbar__actions {
+	display: flex;
+	gap: 6px;
+	margin-left: auto;
+	flex-shrink: 0;
+}
+
 /* ── Layout ─────────────────────────────────────── */
 
 .pipeline-body {
@@ -100,6 +191,7 @@
 	flex: 1;
 	height: 100%;
 	position: relative;
+	background: #eef2f6;
 }
 
 .pipeline-context-menu {
@@ -240,8 +332,34 @@
 	padding: 14px 16px;
 	border-bottom: 1px solid var(--color-border, #e2e8f0);
 	display: flex;
-	align-items: center;
-	gap: 8px;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.config-panel-header__info {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	flex: 1;
+}
+
+.config-panel-label {
+	font-weight: 600;
+	font-size: 13px;
+	color: #0f172a;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.config-panel-type {
+	font-size: 11px;
+	color: #64748b;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .config-panel-header h3 {
@@ -287,26 +405,58 @@
 	position: absolute;
 	inset: 0;
 	display: flex;
+	flex-direction: column;
 	align-items: center;
 	justify-content: center;
+	gap: 12px;
 	pointer-events: none;
 	font-size: 13px;
-	color: var(--color-text-secondary, #94a3b8);
+	color: var(--color-text-secondary, #64748b);
 	text-align: center;
 	padding: 24px;
 	z-index: 5;
 }
 
+.canvas-empty__title {
+	font-size: 18px;
+	font-weight: 600;
+	color: #0f172a;
+}
+
+.canvas-empty__steps {
+	margin: 0;
+	padding-left: 18px;
+	text-align: left;
+	line-height: 1.8;
+}
+
 .config-empty {
 	display: flex;
 	flex-direction: column;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: center;
 	gap: 8px;
-	padding: 40px 20px;
+	padding: 24px 20px;
 	color: var(--color-text-secondary, #64748b);
 	font-size: 12px;
-	text-align: center;
+	text-align: left;
+	height: 100%;
+}
+
+.config-empty__title {
+	font-size: 13px;
+	font-weight: 600;
+	color: #0f172a;
+}
+
+.config-empty p {
+	margin: 0;
+	line-height: 1.6;
+}
+
+.config-empty__hint {
+	color: #94a3b8;
+	font-size: 11px;
 }
 
 /* ── Deployments ───────────────────────────────── */
@@ -604,7 +754,7 @@
 /* ── React Flow Overrides ─────────────────────── */
 
 .react-flow__background {
-	opacity: 0.5;
+	opacity: 0.65;
 }
 
 .react-flow__minimap {

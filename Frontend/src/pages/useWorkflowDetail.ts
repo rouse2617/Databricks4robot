@@ -112,7 +112,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				return;
 			}
 
-			const stream = new EventSource(getWorkflowLogStreamUrl(name, nodeId));
+			const stream = new EventSource(getWorkflowLogStreamUrl(name, nodeId), {
+				withCredentials: true,
+			});
 			eventSourceRef.current = stream;
 			let receivedLine = false;
 

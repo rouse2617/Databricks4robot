@@ -22,7 +22,7 @@ import type { WorkflowNodeStatus } from "../api/workflowApi";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { LinkifiedText } from "../components/common/LinkifiedText";
 import { WorkflowNodeDetailPanel } from "../components/pipeline/WorkflowNodeDetailPanel";
-import { PHASE_COLORS, STATUS_COLORS } from "../lib/constants";
+import { STATUS_COLORS } from "../lib/constants";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationConfigs,
@@ -31,125 +31,8 @@ import {
 } from "../lib/workflow-operations";
 import { useWorkflowDetail } from "./useWorkflowDetail";
 import { WorkflowDagView } from "./WorkflowDagView";
-
-function getNodeDisplayText(node: WorkflowNodeStatus): string {
-	return node.displayName || node.templateName || node.name;
-}
-
-function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
-	const withTime = nodes.filter((n) => n.startedAt);
-	if (withTime.length === 0) {
-		return (
-			<div style={{ padding: 40, textAlign: "center", color: "#6b7280" }}>
-				暂无节点时间数据
-			</div>
-		);
-	}
-
-	const times = withTime.map((n) => ({
-		start: new Date(n.startedAt as string).getTime(),
-		end: n.finishedAt ? new Date(n.finishedAt).getTime() : Date.now(),
-		id: n.id,
-	}));
-	const globalStart = Math.min(...times.map((t) => t.start));
-	const globalEnd = Math.max(...times.map((t) => t.end));
-	const range = globalEnd - globalStart || 1;
-
-	const rowH = 36;
-	const headerH = 30;
-	const labelW = 180;
-	const padL = 16;
-
-	return (
-		<div style={{ overflow: "auto", height: "100%", padding: 16 }}>
-			<div style={{ minWidth: 600 }}>
-				<div
-					style={{
-						position: "relative",
-						height: headerH,
-						marginLeft: labelW + padL,
-					}}
-				>
-					{[0, 0.25, 0.5, 0.75, 1].map((pct) => (
-						<div
-							key={pct}
-							style={{
-								position: "absolute",
-								left: `${pct * 100}%`,
-								top: 0,
-								fontSize: 11,
-								color: "#6b7280",
-								transform: "translateX(-50%)",
-							}}
-						>
-							{new Date(globalStart + range * pct).toLocaleTimeString()}
-						</div>
-					))}
-					<div
-						style={{
-							position: "absolute",
-							top: 16,
-							left: 0,
-							right: 0,
-							height: 1,
-							background: "#e5e7eb",
-						}}
-					/>
-				</div>
-				{times.map((item) => {
-					const node = nodes.find((itemNode) => itemNode.id === item.id);
-					if (!node) return null;
-					const left = ((item.start - globalStart) / range) * 100;
-					const width = ((item.end - item.start) / range) * 100;
-					return (
-						<div
-							key={node.id}
-							style={{ display: "flex", alignItems: "center", height: rowH }}
-						>
-							<div
-								style={{
-									width: labelW,
-									fontSize: 12,
-									textAlign: "right",
-									paddingRight: padL,
-									overflow: "hidden",
-									textOverflow: "ellipsis",
-									whiteSpace: "nowrap",
-									color: "#374151",
-								}}
-								title={node.displayName || node.name}
-							>
-								{node.displayName || node.name}
-							</div>
-							<div style={{ flex: 1, position: "relative" }}>
-								<div
-									style={{
-										position: "absolute",
-										left: `${left}%`,
-										width: `${Math.max(width, 1)}%`,
-										top: 4,
-										height: rowH - 8,
-										borderRadius: 4,
-										background: PHASE_COLORS[node.phase] || "#9ca3af",
-										opacity: 0.85,
-										display: "flex",
-										alignItems: "center",
-										paddingLeft: 6,
-										fontSize: 11,
-										color: "#fff",
-										overflow: "hidden",
-									}}
-								>
-									{Math.round((item.end - item.start) / 1000)}s
-								</div>
-							</div>
-						</div>
-					);
-				})}
-			</div>
-		</div>
-	);
-}
+import { WorkflowTimelineView } from "./WorkflowTimelineView";
+import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 
 function buildHighlightedLogNodes(logContent: string, keyword: string) {
 	const normalized = keyword.trim();
@@ -224,7 +107,7 @@ function WorkflowLogPanel({
 		>
 			<h4 style={{ margin: "0 0 10px 0", fontSize: 14 }}>
 				{selectedNode
-					? `${getNodeDisplayText(selectedNode)} 日志`
+					? `${getWorkflowNodeDisplayText(selectedNode)} 日志`
 					: "日志查看器"}
 			</h4>
 			<Input.Search
@@ -237,7 +120,7 @@ function WorkflowLogPanel({
 
 			{!selectedNode ? (
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>
-					点击 DAG 节点查看该节点日志
+					点击 DAG 或时间线节点查看该节点日志
 				</div>
 			) : loading ? (
 				<div style={{ textAlign: "center", padding: 40 }}>
@@ -419,7 +302,7 @@ export default function WorkflowDetailPage() {
 	return (
 		<div
 			style={{
-				height: "calc(100vh - 64px)",
+				height: "calc(100vh - 49px)",
 				display: "flex",
 				flexDirection: "column",
 			}}
@@ -527,7 +410,11 @@ export default function WorkflowDetailPage() {
 						emptyMessage={workflow.message}
 					/>
 				) : (
-					<TimelineView nodes={workflow.nodes} />
+					<WorkflowTimelineView
+						nodes={workflow.nodes}
+						selectedNodeId={selectedNode?.id ?? null}
+						onNodeSelect={selectNode}
+					/>
 				)}
 			</div>
 

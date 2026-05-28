@@ -1,4 +1,5 @@
 import { Typography } from "antd";
+import { Link } from "react-router-dom";
 import type { RegisteredComponent } from "./types";
 
 const { Text } = Typography;
@@ -30,11 +31,9 @@ export function ComponentPalette({ components, onDragStart }: Props) {
 				</button>
 			))}
 			{components.length === 0 && (
-				<Text
-					type="secondary"
-					style={{ padding: 40, textAlign: "center", display: "block" }}
-				>
-					暂无组件，请在 Registry 中添加
+				<Text type="secondary" style={{ padding: "24px 8px", display: "block" }}>
+					暂无组件，请先在{" "}
+					<Link to="/components">步骤组件</Link> 中创建。
 				</Text>
 			)}
 		</aside>

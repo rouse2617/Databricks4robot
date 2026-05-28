@@ -24,6 +24,8 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
+
+const { TextArea } = Input;
 import {
 	type DragEvent,
 	useCallback,
@@ -58,6 +60,7 @@ import type {
 } from "../components/pipeline/types";
 import {
 	fromTranspilerPipeline,
+	normalizeComponentArgs,
 	toTranspilerPipeline,
 } from "../lib/pipelineContract";
 
@@ -97,17 +100,7 @@ function dedupeComponentsByName(
 	});
 }
 
-function imageHasTag(image: string): boolean {
-	if (image.includes("@")) return true;
-	const lastSlash = image.lastIndexOf("/");
-	const lastColon = image.lastIndexOf(":");
-	return lastColon > lastSlash && lastColon < image.length - 1;
-}
-
-function formatImage(image: string, tag?: string): string {
-	if (!tag || imageHasTag(image)) return image;
-	return `${image}:${tag}`;
-}
+import { formatComponentImage as formatImage } from "../lib/pipelineComponentDisplay";
 
 function normalizeComponentType(
 	type: string | undefined,
@@ -286,9 +279,6 @@ function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 	const resources = api.resources ?? {};
 	const normalizedType = normalizeComponentType(api.type);
 	const normalizedSource = (api.source || "custom").trim() || "custom";
-	const legacyArgs = resources.args as
-		| { name: string; value?: string; from?: string }[]
-		| undefined;
 	const envFromObject = api.env
 		? Object.entries(api.env).map(([name, value]) => ({
 				name,
@@ -316,12 +306,13 @@ function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 		source: normalizedSource,
 		image: formatImage(api.image, api.tag),
 		command: api.command ?? ((resources.command as string[]) || ["sh", "-c"]),
-		args:
-			legacyArgs ??
-			(api.args ?? []).map((value, index) => ({
-				name: `arg${index + 1}`,
-				value,
-			})),
+		args: normalizeComponentArgs(
+			(api.args && api.args.length > 0
+				? api.args
+				: Array.isArray(resources.args)
+					? resources.args
+					: undefined) as unknown[],
+		),
 		env: envFromObject.length > 0 ? envFromObject : envFromResource,
 		cpu: (resources.cpu as string) ?? "",
 		memory: (resources.memory as string) ?? "",
@@ -401,6 +392,8 @@ function PipelineCanvas() {
 		mode: "edit",
 	});
 	const [jsonOutput, setJsonOutput] = useState<string | null>(null);
+	const [importModalOpen, setImportModalOpen] = useState(false);
+	const [importText, setImportText] = useState("");
 	// Asset selection for deploy modal
 	const [selectedAssetIds, setSelectedAssetIds] =
 		useState<string[]>(queryAssetIds);
@@ -723,8 +716,16 @@ function PipelineCanvas() {
 	}, [buildPipelineJSON]);
 
 	const importPipeline = useCallback(() => {
-		const text = prompt("粘贴 Pipeline JSON:");
-		if (!text) return;
+		setImportText("");
+		setImportModalOpen(true);
+	}, []);
+
+	const applyImportedPipeline = useCallback(() => {
+		const text = importText.trim();
+		if (!text) {
+			message.warning("请粘贴 Pipeline JSON");
+			return;
+		}
 		try {
 			const pipeline: Pipeline = JSON.parse(text);
 			const { nodes: importedNodes, edges: importedEdges } =
@@ -736,10 +737,13 @@ function PipelineCanvas() {
 				setPipelineName(pipeline.name);
 			}
 			setJsonOutput(null);
+			setImportModalOpen(false);
+			setImportText("");
+			message.success("导入成功");
 		} catch {
 			message.error("无效的 JSON");
 		}
-	}, []);
+	}, [importText]);
 
 	const clearCanvas = useCallback(() => {
 		Modal.confirm({
@@ -854,80 +858,44 @@ function PipelineCanvas() {
 	}, [buildPipelineJSON]);
 
 	return (
-		<div
-			style={{
-				display: "flex",
-				flexDirection: "column",
-				height: "calc(100vh - 110px)",
-				overflow: "hidden",
-				position: "relative",
-			}}
-		>
+		<div className="pipeline-page">
 			{/* Header */}
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					gap: 12,
-					padding: "0 16px",
-					height: 48,
-					borderBottom: "1px solid var(--color-border, #e2e8f0)",
-					flexShrink: 0,
-					background: "#fff",
-				}}
-			>
-				<div
-					style={{
-						display: "flex",
-						gap: 0,
-						height: "100%",
-						alignItems: "stretch",
-					}}
-				>
-					{(["pipeline", "deploy"] as const).map((tab) => (
-						<button
-							type="button"
-							key={tab}
-							onClick={() => {
-								setView(tab);
-								setJsonOutput(null);
-							}}
-							style={{
-								padding: "0 14px",
-								border: "none",
-								background: "transparent",
-								cursor: "pointer",
-								fontSize: 12,
-								letterSpacing: "0.5px",
-								textTransform: "uppercase",
-								color: view === tab ? "#2563eb" : "#94a3b8",
-								borderBottom:
-									view === tab ? "2px solid #2563eb" : "2px solid transparent",
-								fontWeight: view === tab ? 600 : 400,
-								transition: "color 0.15s",
-							}}
-						>
-							{tab === "pipeline"
-								? "画布"
-								: "部署"}
-						</button>
-					))}
+			<div className="pipeline-toolbar">
+				<div className="pipeline-toolbar__left">
+					<Typography.Title level={5} className="pipeline-toolbar__title">
+						流水线设计
+					</Typography.Title>
+					<div className="pipeline-toolbar__tabs">
+						{(["pipeline", "deploy"] as const).map((tab) => (
+							<button
+								type="button"
+								key={tab}
+								className={`pipeline-toolbar__tab${view === tab ? " pipeline-toolbar__tab--active" : ""}`}
+								onClick={() => {
+									setView(tab);
+									setJsonOutput(null);
+								}}
+							>
+								{tab === "pipeline" ? "画布" : "部署"}
+							</button>
+						))}
+					</div>
 				</div>
 
 				{view === "pipeline" && (
 					<>
-						<Input
-							value={pipelineName}
-							onChange={(e) => setPipelineName(e.target.value)}
-							placeholder="pipeline-name"
-							style={{
-								width: 180,
-								fontFamily: '"SF Mono",monospace',
-								fontSize: 12,
-							}}
-							size="small"
-						/>
-						<div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+						<div className="pipeline-toolbar__name">
+							<span className="pipeline-toolbar__name-label">名称</span>
+							<Input
+								value={pipelineName}
+								onChange={(e) => setPipelineName(e.target.value)}
+								placeholder="my-pipeline"
+								aria-label="流水线名称"
+								className="pipeline-toolbar__name-input"
+								size="small"
+							/>
+						</div>
+						<div className="pipeline-toolbar__actions">
 							<Tooltip
 								title={
 									canDeploy
@@ -978,7 +946,7 @@ function PipelineCanvas() {
 			</div>
 
 			{/* Body */}
-			<div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+			<div className="pipeline-body">
 				{view === "pipeline" ? (
 					<>
 						<ComponentPalette
@@ -1012,7 +980,13 @@ function PipelineCanvas() {
 							/>
 							{nodes.length === 0 && (
 								<div className="canvas-empty" aria-live="polite">
-									从左侧拖入组件 → 连接圆点 → 保存 / 部署
+									<div className="canvas-empty__title">开始设计流水线</div>
+									<ol className="canvas-empty__steps">
+										<li>从左侧拖入组件</li>
+										<li>连接节点右侧与左侧圆点</li>
+										<li>选中节点后点击「配置节点」</li>
+										<li>保存或部署到集群</li>
+									</ol>
 								</div>
 							)}
 							{contextMenu.open && (
@@ -1055,10 +1029,21 @@ function PipelineCanvas() {
 							{selectedNode ? (
 								<>
 									<div className="config-panel-header">
-										<span className="config-panel-label">
-											{selectedNode.data?.label || selectedNode.id}
-										</span>
-										<span className="config-panel-type">双击进行配置</span>
+										<div className="config-panel-header__info">
+											<span className="config-panel-label">
+												{selectedNode.data?.label || selectedNode.id}
+											</span>
+											<span className="config-panel-type">
+												{selectedNode.data?.image || "未设置镜像"}
+											</span>
+										</div>
+										<Button
+											size="small"
+											type="primary"
+											onClick={() => setEditingNodeId(selectedNode.id)}
+										>
+											配置节点
+										</Button>
 									</div>
 									<div className="config-content">
 										<div className="config-section-title">关联资产</div>
@@ -1148,7 +1133,13 @@ function PipelineCanvas() {
 									</div>
 								</>
 							) : (
-								<div className="config-empty">选择一个节点进行配置</div>
+								<div className="config-empty">
+									<div className="config-empty__title">节点配置</div>
+									<p>选中画布上的节点后，可在此查看关联资产并打开配置面板。</p>
+									<p className="config-empty__hint">
+										也可双击节点，或右键选择「配置节点」。
+									</p>
+								</div>
 							)}
 						</aside>
 						{editingNode && (
@@ -1191,6 +1182,30 @@ function PipelineCanvas() {
 			{jsonOutput && <pre className="json-output">{jsonOutput}</pre>}
 
 			{/* Deploy Dialog */}
+			<Modal
+				open={importModalOpen}
+				title="导入流水线"
+				okText="导入"
+				cancelText="取消"
+				onOk={applyImportedPipeline}
+				onCancel={() => {
+					setImportModalOpen(false);
+					setImportText("");
+				}}
+				destroyOnClose
+			>
+				<p style={{ marginTop: 0, color: "#64748b", fontSize: 13 }}>
+					粘贴 Pipeline JSON，将替换当前画布内容。
+				</p>
+				<TextArea
+					value={importText}
+					onChange={(event) => setImportText(event.target.value)}
+					placeholder='{"name":"my-pipeline","nodes":[],"edges":[]}'
+					autoSize={{ minRows: 10, maxRows: 18 }}
+					style={{ fontFamily: '"SF Mono", "Fira Code", monospace', fontSize: 12 }}
+				/>
+			</Modal>
+
 			<Modal
 				title="部署流水线"
 				open={deployDialog.open}

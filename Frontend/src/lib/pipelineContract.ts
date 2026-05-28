@@ -1,10 +1,31 @@
 import type {
+	Argument,
 	Pipeline,
 	PipelineEdgeDef,
 	PipelineNodeData,
 	PipelineNodeDef,
 	Port,
 } from "../components/pipeline/types";
+
+/** Coerce API/canvas args (string[] or Argument[]) into transpiler Argument objects. */
+export function normalizeComponentArgs(args: unknown[] | undefined): Argument[] {
+	if (!args || args.length === 0) return [];
+	return args.map((item, index) => {
+		if (typeof item === "string") {
+			const value = item.trim();
+			return { name: value || `arg${index + 1}`, value };
+		}
+		if (item && typeof item === "object") {
+			const record = item as { name?: string; value?: string; from?: string };
+			const value = record.value ?? record.name ?? "";
+			const name = record.name?.trim() || value || `arg${index + 1}`;
+			return record.from
+				? { name, value, from: record.from }
+				: { name, value };
+		}
+		return { name: `arg${index + 1}`, value: String(item) };
+	});
+}
 
 function envToRecords(
 	resources: unknown,
@@ -111,7 +132,7 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 			type: d.type || "container",
 			source: d.source || "custom",
 			command: d.command || [],
-			args: d.args || [],
+			args: normalizeComponentArgs(d.args as unknown[]),
 			resources:
 				d.cpu || d.memory || d.disk
 					? {
@@ -151,7 +172,7 @@ export function fromTranspilerPipeline(pipeline: Pipeline): {
 			type: (pn.component as { type?: string }).type || "container",
 			source: (pn.component as { source?: string }).source || "custom",
 			command: pn.component.command || [],
-			args: pn.component.args || [],
+			args: normalizeComponentArgs(pn.component.args as unknown[]),
 			env: envToRecords(pn.component.resources),
 			cpu: pn.component.resources?.cpu || "",
 			memory: pn.component.resources?.memory || "",

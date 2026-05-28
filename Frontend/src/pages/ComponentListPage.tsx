@@ -29,6 +29,10 @@ import {
 	type PipelineComponentType,
 	updateComponent,
 } from "../api/pipelineComponentApi";
+import {
+	dedupePipelineComponentsByName,
+	formatComponentImage,
+} from "../lib/pipelineComponentDisplay";
 
 type EnvRow = { name?: string; value?: string };
 
@@ -133,7 +137,7 @@ export default function ComponentListPage() {
 		setError(null);
 		try {
 			const res = await listComponents();
-			setItems(res.items || []);
+			setItems(dedupePipelineComponentsByName(res.items || []));
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			setError(detail);
@@ -230,7 +234,7 @@ export default function ComponentListPage() {
 			key: "image",
 			ellipsis: true,
 			render: (_, record) =>
-				`${record.image}${record.tag ? `:${record.tag}` : ""}`,
+				formatComponentImage(record.image, record.tag),
 		},
 		{
 			title: "描述",
@@ -311,10 +315,10 @@ export default function ComponentListPage() {
 			>
 				<div>
 					<Typography.Title level={2} style={{ margin: 0 }}>
-						组件管理
+						步骤组件
 					</Typography.Title>
 					<Typography.Text type="secondary">
-						管理可复用的流水线组件
+						管理可复用的流水线步骤定义
 					</Typography.Text>
 				</div>
 				<Space wrap>
