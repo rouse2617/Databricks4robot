@@ -105,7 +105,7 @@ gcloud run deploy cyber-databrew-frontend-dev \
 # Backend health
 curl -s -o /dev/null -w "%{http_code}" https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app/healthz
 
-# Frontend 
+# Frontend
 curl -s -o /dev/null -w "%{http_code}" https://cyber-databrew-frontend-dev-234851712830.us-central1.run.app/
 ```
 

@@ -155,7 +155,7 @@ by passing query params through to the Argo API.
 
 #### B1 Workflow List Rich Filtering
 - **Estimate:** 2 days
-- **Backend impact:** 
+- **Backend impact:**
   - Extend `ListWorkflows` to support query params: `phases`, `labels`, `nameFilter`, `createdAfter`, `finishedBefore`
   - The Argo client's `ListWorkflows` already passes `listOptions.labelSelector` — extend to support additional query params
   - The `ListWorkflows` handler currently passes an empty label selector — wire up frontend filter values
@@ -487,7 +487,7 @@ The `ListWorkflows` and `GetWorkflow` handlers need response structure upgrades:
 **GetWorkflow — add per-node fields:**
 - `type` (string — "Pod", "StepGroup", "DAG", "Retry", "Suspend", "Skipped")
 - `inputs` — parameters, artifacts
-- `outputs` — parameters, artifacts  
+- `outputs` — parameters, artifacts
 - `templateName` / `templateScope`
 - `resourcesDuration` (ResourceDuration map)
 - `hostNodeName` (string)

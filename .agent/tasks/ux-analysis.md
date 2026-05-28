@@ -90,7 +90,7 @@ Write findings to `docs/review/ux-analysis-report.md` in the project repo. Struc
 | # | Screen | Issue | Severity | Fix | Effort |
 |---|--------|-------|----------|-----|--------|
 
-### P2 (Major) 
+### P2 (Major)
 ...
 
 ### P3 (Minor / Enhancement)

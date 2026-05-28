@@ -1,8 +1,8 @@
 # Pipeline 全功能 E2E 测试报告
 
-> **环境**: https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app  
-> **最近复测**: 2026-05-28（用户反馈已修复后）  
-> **方式**: Chrome DevTools MCP + `curl` + Network 抓包  
+> **环境**: https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app
+> **最近复测**: 2026-05-28（用户反馈已修复后）
+> **方式**: Chrome DevTools MCP + `curl` + Network 抓包
 > **结论**: **路由已从 404 恢复为 503（handler 已挂载）；前端多项 UX/数据问题已修；全链路仍被 `k8s/argo workflows client is not configured` 阻塞。**
 
 ---

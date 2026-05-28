@@ -174,11 +174,11 @@ type Component struct {
     ImagePullPolicy string                `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
     Command         []string              `json:"command,omitempty" yaml:"command,omitempty"`
     Args            []Argument            `json:"args,omitempty" yaml:"args,omitempty"`
-    
+
     // NEW FIELD
     Mode   string   `json:"mode,omitempty" yaml:"mode,omitempty"`     // "container" (default) or "script"
     Source string   `json:"source,omitempty" yaml:"source,omitempty"`  // inline script body (script mode only)
-    
+
     Env             []EnvVar              `json:"env,omitempty" yaml:"env,omitempty"`
     Resources       *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
@@ -227,7 +227,7 @@ for _, arg := range node.Component.Args {
 func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Template {
     // Start with a copy of container template setup (image, pull policy, resources, env, volumes)
     tmpl := buildContainerTemplate(node, inputs, opts)
-    
+
     // Convert from container to script template
     script := &wfv1.ScriptTemplate{
         Image:           tmpl.Container.Image,
@@ -235,21 +235,21 @@ func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Tem
         ImagePullPolicy: tmpl.Container.ImagePullPolicy,
         Source:          node.Component.Source,
     }
-    
+
     if len(script.Command) == 0 {
         script.Command = []string{"sh"}  // default interpreter
     }
-    
+
     if script.Source == "" {
         // Fallback: build source from Args
         script.Source = buildSourceFromArgs(node)
     }
-    
+
     // Prepend mkdir -p to source when outputs are declared
     if len(node.Outputs) > 0 {
         script.Source = "mkdir -p /tmp/outputs\n" + script.Source
     }
-    
+
     tmpl.Container = nil
     tmpl.Script = script
     return tmpl

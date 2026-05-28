@@ -75,6 +75,6 @@ Pipeline creation → deploy → monitor flow is functional end-to-end. The core
 ## Top Recommendations
 
 1. **Node name mapping** — This is the single biggest UX problem. Fix this and everything downstream (logs, DAG, monitoring) becomes comprehensible.
-2. **Config panel** — Currently the canvas is mostly decorative. Until users can configure what a node actually does, it's a visual editor that can't edit. 
+2. **Config panel** — Currently the canvas is mostly decorative. Until users can configure what a node actually does, it's a visual editor that can't edit.
 3. **Post-deploy flow** — Make the gap between "I deployed" and "it's running" smaller. Auto-navigate, auto-refresh, show status changes.
 4. **Component ecosystem** — More components + custom component support is the key to making the pipeline useful beyond PoC.
