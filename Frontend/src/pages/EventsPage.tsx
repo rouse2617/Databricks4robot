@@ -5,6 +5,7 @@
 import { ReloadOutlined, SearchOutlined } from "@ant-design/icons";
 import {
 	Alert,
+	Radio,
 	Button,
 	Card,
 	Modal,
@@ -178,9 +179,11 @@ export default function EventsPage() {
 	const [assetId, setAssetId] = useState(() =>
 		initialAssetIdFromSearch(searchParams),
 	);
-	const [events, setEvents] = useState<AssetEvent[]>([]);
+const [events, setEvents] = useState<AssetEvent[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [loadingMore, setLoadingMore] = useState(false);
+	const [realtimeMode, setRealtimeMode] = useState(false);
+	const [streamConnected, setStreamConnected] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [eventTypeFilter] = useState<string | undefined>(undefined);
 	const [payloadOpen, setPayloadOpen] = useState(false);
@@ -239,11 +242,19 @@ export default function EventsPage() {
 			setError(m);
 			setEvents([]);
 		} finally {
-			if (fetchId === fetchIdRef.current) {
+		if (fetchId === fetchIdRef.current) {
 				setLoading(false);
 			}
 		}
 	}, [assetId, isPerAsset, eventTypeFilter]);
+
+	const closeEventStream = useCallback(() => {
+		streamCleanupRef.current?.();
+		streamCleanupRef.current = null;
+		setStreamConnected(false);
+	}, []);
+
+	const streamCleanupRef = useRef<(() => void) | null>(null);
 
 	const loadMore = useCallback(async () => {
 		if (nextCursor == null || loadingMore) return;
@@ -265,16 +276,62 @@ export default function EventsPage() {
 	}, [nextCursor, loadingMore, eventTypeFilter, msgApi]);
 
 	useEffect(() => {
+		if (!isPerAsset) {
+			setRealtimeMode(false);
+			return;
+		}
+		if (!realtimeMode) {
+			closeEventStream();
+			return;
+		}
+		const trimmed = assetId.trim();
+		if (!isCanonicalAssetId(trimmed)) return;
+
+		const cleanup = assetsApi.streamForAsset(trimmed, {
+			onOpen: () => {
+				setError(null);
+				setStreamConnected(true);
+			},
+			onEvent: (evt) => {
+				setEvents((prev) => {
+					if (
+						prev.some(
+							(row) =>
+								row.event_seq === evt.event_seq &&
+								row.event_id === evt.event_id,
+						)
+					)
+						return prev;
+					return [evt, ...prev];
+				});
+			},
+			onError: () => {
+				setStreamConnected(false);
+			},
+		});
+		streamCleanupRef.current = cleanup;
+		setStreamConnected(false);
+		return () => {
+			cleanup();
+			streamCleanupRef.current = null;
+			setStreamConnected(false);
+		};
+	}, [assetId, isPerAsset, realtimeMode, closeEventStream]);
+
+	useEffect(() => {
 		const trimmed = assetId.trim();
 		if (trimmed && !isCanonicalAssetId(trimmed)) {
 			setLoading(false);
+			return;
+		}
+		if (realtimeMode) {
 			return;
 		}
 		setEvents([]);
 		setNextCursor(undefined);
 		setError(null);
 		fetchEvents();
-	}, [fetchEvents, assetId]);
+	}, [fetchEvents, realtimeMode]);
 
 	useEffect(() => {
 		if (!searchParams.has("asset_id")) return;
@@ -283,6 +340,10 @@ export default function EventsPage() {
 
 	const onAssetIdInput = (value: string) => {
 		setAssetId(value);
+		if (realtimeMode) {
+			setRealtimeMode(false);
+			closeEventStream();
+		}
 		setLoading(true);
 		setEvents([]);
 		setNextCursor(undefined);
@@ -354,23 +415,41 @@ export default function EventsPage() {
 							}}
 						/>
 					</div>
-					{isPerAsset && (
-						<Button
-							icon={<ReloadOutlined />}
-							onClick={() => onAssetIdInput("")}
-							size="small"
-						>
-							清除资产
-						</Button>
-					)}
+				{isPerAsset && (
+					<Radio.Group
+						value={realtimeMode ? "realtime" : "manual"}
+						onChange={(e) => setRealtimeMode(e.target.value === "realtime")}
+						optionType="button"
+						size="small"
+						options={[
+							{ label: "手动刷新", value: "manual" },
+							{ label: "实时模式", value: "realtime" },
+						]}
+					/>
+				)}
+				{isPerAsset && realtimeMode ? (
+					<Tag color={streamConnected ? "green" : "red"}>
+						{streamConnected ? "🟢 实时" : "🔴 断开"}
+					</Tag>
+				) : null}
+				{isPerAsset && (
 					<Button
 						icon={<ReloadOutlined />}
-						onClick={fetchEvents}
-						loading={loading}
+						onClick={() => onAssetIdInput("")}
 						size="small"
 					>
-						刷新
+						清除资产
 					</Button>
+				)}
+				<Button
+					icon={<ReloadOutlined />}
+					onClick={fetchEvents}
+					loading={loading}
+					size="small"
+					disabled={realtimeMode}
+				>
+					刷新
+				</Button>
 				</Space>
 			</Card>
 
