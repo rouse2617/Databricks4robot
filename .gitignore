@@ -83,10 +83,12 @@ docs/screenshots/qa-session-*/
 .cursor/
 _tmp_cyber_iac/
 _tmp_cyber_iac_fresh/
-.openharness/
-
+.agents/
+# Agent QA dumps at repo root (keep under docs/screenshots/ if needed)
 # Agent/IDE personal configs — keep local only
 .agents/skills/
+# Agent task files — local only, not code
+.agent/tasks/
 .cursor-plugin/
 .omm/
 .vscode/
