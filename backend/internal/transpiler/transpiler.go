@@ -18,6 +18,13 @@ type inputSpec struct {
 	srcPort   string
 }
 
+// Volume represents a named volume that can be mounted.
+type Volume struct {
+	Name       string
+	IsEmptyDir bool
+	PVCName    string
+}
+
 // Options controls how the pipeline is transpiled.
 type Options struct {
 	Name                  string
@@ -29,8 +36,8 @@ type Options struct {
 	ActiveDeadlineSeconds int64
 	WorkflowParams        []Param // workflow-level parameters (e.g. asset_ids)
 	// GlobalEnv are environment variables injected into every node container (e.g. asset paths).
-	GlobalEnv    []corev1.EnvVar
-	ExtraVolumes []corev1.Volume // additional workflow-level volumes
+	GlobalEnv    []EnvVar
+	ExtraVolumes []Volume // additional workflow-level volumes
 }
 
 // RetryStrategy defines automatic retry policy for each step.
@@ -119,14 +126,27 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 }
 
 // buildWorkflowVolumes collects volume declarations from node volume mounts and extra volumes.
-func buildWorkflowVolumes(nodes []Node, extra []corev1.Volume) []corev1.Volume {
+func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 	seen := make(map[string]bool)
 	var vols []corev1.Volume
 	for _, v := range extra {
-		if !seen[v.Name] {
-			vols = append(vols, v)
-			seen[v.Name] = true
+		if seen[v.Name] {
+			continue
 		}
+		vol := corev1.Volume{Name: v.Name}
+		if v.IsEmptyDir {
+			vol.VolumeSource = corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			}
+		} else if v.PVCName != "" {
+			vol.VolumeSource = corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: v.PVCName,
+				},
+			}
+		}
+		vols = append(vols, vol)
+		seen[v.Name] = true
 	}
 	// Collect volumes from all nodes (including sub-graph nodes).
 	var collect func(nodes []Node)
@@ -352,7 +372,12 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 	}
 	// GlobalEnv (asset IDs, deployment ID, etc.) injected into every container.
 	if len(opts.GlobalEnv) > 0 {
-		tmpl.Container.Env = append(tmpl.Container.Env, opts.GlobalEnv...)
+		for _, env := range opts.GlobalEnv {
+			tmpl.Container.Env = append(tmpl.Container.Env, corev1.EnvVar{
+				Name:  env.Name,
+				Value: env.Value,
+			})
+		}
 	}
 
 	// Retry strategy

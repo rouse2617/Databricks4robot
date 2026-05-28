@@ -15,7 +15,6 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // Sentinel errors.
@@ -152,7 +151,7 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 
 	// Assemble workflow-level params and global env vars from asset IDs.
 	var wfParams []transpiler.Param
-	globalEnv := []corev1.EnvVar{
+	globalEnv := []transpiler.EnvVar{
 		{Name: "PIPELINE_DEPLOYMENT_ID", Value: depID},
 	}
 	if len(assetIDs) > 0 {
@@ -161,20 +160,20 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 			Value: strings.Join(assetIDs, ","),
 		})
 		globalEnv = append(globalEnv,
-			corev1.EnvVar{Name: "ASSET_IDS", Value: strings.Join(assetIDs, ",")},
-			corev1.EnvVar{Name: "ASSET_COUNT", Value: fmt.Sprintf("%d", len(assetIDs))},
+			transpiler.EnvVar{Name: "ASSET_IDS", Value: strings.Join(assetIDs, ",")},
+			transpiler.EnvVar{Name: "ASSET_COUNT", Value: fmt.Sprintf("%d", len(assetIDs))},
 		)
 		for i, aid := range assetIDs {
 			prefix := fmt.Sprintf("ASSET_%d_", i)
-			globalEnv = append(globalEnv, corev1.EnvVar{Name: prefix + "ID", Value: aid})
+			globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "ID", Value: aid})
 			if uc.assetRepo != nil {
 				a, err := uc.assetRepo.Get(ctx, aid)
 				if err == nil && a != nil {
 					if a.StorageURI != "" {
-						globalEnv = append(globalEnv, corev1.EnvVar{Name: prefix + "STORAGE_URI", Value: a.StorageURI})
+						globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "STORAGE_URI", Value: a.StorageURI})
 					}
 					if a.AssetType != "" {
-						globalEnv = append(globalEnv, corev1.EnvVar{Name: prefix + "TYPE", Value: a.AssetType})
+						globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "TYPE", Value: a.AssetType})
 					}
 				}
 			}
