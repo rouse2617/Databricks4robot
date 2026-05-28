@@ -340,6 +340,17 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 			containerArgs = append(containerArgs, fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(arg.Name)))
 		}
 	}
+	// Auto-create /tmp/outputs/ when the component declares output parameters
+	// and the container is running a shell command (sh -c).
+	// Typical case: Command=["sh"], Args=[{Value:"-c"}, {Value:"echo ... > /tmp/outputs/output"}]
+	// → containerArgs = ["-c", "echo ..."]
+	if len(outputParams) > 0 && isShellName(node.Component.Command) {
+		if len(containerArgs) >= 2 && containerArgs[0] == "-c" {
+			containerArgs[1] = "mkdir -p /tmp/outputs && " + containerArgs[1]
+		} else if len(containerArgs) == 1 {
+			containerArgs[0] = "mkdir -p /tmp/outputs && " + containerArgs[0]
+		}
+	}
 	tmpl.Container.Args = containerArgs
 
 	// Environment variables
@@ -466,6 +477,9 @@ func buildNodeTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Te
 	if len(node.SubNodes) > 0 {
 		return buildSubGraphTemplates(node, inputs, opts)
 	}
+	if node.Component.Mode == "script" {
+		return []wfv1.Template{*buildScriptTemplate(node, inputs, opts)}, nil
+	}
 	return []wfv1.Template{*buildContainerTemplate(node, inputs, opts)}, nil
 }
 
@@ -495,7 +509,179 @@ func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv
 	return templates, nil
 }
 
+// buildScriptTemplate creates a Script template (Argo script template).
+// In script mode:
+//   - Command is the interpreter (default: ["sh"])
+//   - Source is the inline script body
+//   - Argo writes source to a temp file and runs `command < tmpfile`
+//   - Stdout is automatically captured as outputs.result
+//   - File-based output params use valueFrom.path (same as container mode)
+func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Template {
+	pullPolicy := corev1.PullIfNotPresent
+	switch node.Component.ImagePullPolicy {
+	case "Always":
+		pullPolicy = corev1.PullAlways
+	case "Never":
+		pullPolicy = corev1.PullNever
+	case "IfNotPresent":
+		pullPolicy = corev1.PullIfNotPresent
+	}
+
+	// Determine interpreter command
+	command := node.Component.Command
+	if len(command) == 0 {
+		command = []string{"sh"} // default interpreter
+	}
+
+	// Determine source
+	source := node.Component.Source
+	if source == "" && len(node.Component.Args) > 0 {
+		// Fallback: derive source from positional args
+		for _, a := range node.Component.Args {
+			if a.Value != "" {
+				source += a.Value + "\n"
+			} else if a.From != "" {
+				source += fmt.Sprintf("# value from {{inputs.parameters.%s}}\n", safeParamName(a.Name))
+			} else {
+				source += fmt.Sprintf("# value from {{inputs.parameters.%s}}\n", safeParamName(a.Name))
+			}
+		}
+	}
+
+	tmpl := wfv1.Template{
+		Name: templateName(node.ID),
+		Script: &wfv1.ScriptTemplate{
+			Container: corev1.Container{
+				Image:           node.Component.Image,
+				Command:         command,
+				ImagePullPolicy: pullPolicy,
+			},
+			Source: source,
+		},
+	}
+
+	// Resources
+	if node.Component.Resources != nil {
+		res := node.Component.Resources
+		limits := corev1.ResourceList{}
+		requests := corev1.ResourceList{}
+
+		if res.CPU != "" {
+			if q, err := resource.ParseQuantity(res.CPU); err == nil {
+				limits[corev1.ResourceCPU] = q
+				requests[corev1.ResourceCPU] = q
+			}
+		}
+		if res.Memory != "" {
+			if q, err := resource.ParseQuantity(res.Memory); err == nil {
+				limits[corev1.ResourceMemory] = q
+				requests[corev1.ResourceMemory] = q
+			}
+		}
+		if res.Disk != "" {
+			if q, err := resource.ParseQuantity(res.Disk); err == nil {
+				limits[corev1.ResourceEphemeralStorage] = q
+				requests[corev1.ResourceEphemeralStorage] = q
+			}
+		}
+		if len(limits) > 0 || len(requests) > 0 {
+			tmpl.Script.Resources = corev1.ResourceRequirements{Limits: limits, Requests: requests}
+		}
+	}
+
+	// Input param declarations (names only — values come from DAG task arguments)
+	var inputParams []wfv1.Parameter
+	for _, is := range inputs {
+		inputParams = append(inputParams, wfv1.Parameter{Name: is.paramName})
+	}
+	if len(inputParams) > 0 {
+		tmpl.Inputs = wfv1.Inputs{Parameters: inputParams}
+	}
+
+	// Output parameters (captured from file paths)
+	var outputParams []wfv1.Parameter
+	for _, out := range node.Outputs {
+		outputParams = append(outputParams, wfv1.Parameter{
+			Name:      safeParamName(out.Name),
+			ValueFrom: &wfv1.ValueFrom{Path: fmt.Sprintf("/tmp/outputs/%s", out.Name)},
+		})
+	}
+	if len(outputParams) > 0 {
+		tmpl.Outputs = wfv1.Outputs{Parameters: outputParams}
+		// Auto-create /tmp/outputs/ directory in the script source
+		tmpl.Script.Source = "mkdir -p /tmp/outputs\n" + tmpl.Script.Source
+	}
+
+	// Environment variables
+	var envVars []corev1.EnvVar
+	for _, env := range node.Component.Env {
+		if env.From != "" {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  env.Name,
+				Value: fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(env.Name)),
+			})
+		} else {
+			envVars = append(envVars, corev1.EnvVar{Name: env.Name, Value: env.Value})
+		}
+	}
+	if len(envVars) > 0 {
+		tmpl.Script.Env = envVars
+	}
+	// Volume mounts
+	if len(node.VolumeMounts) > 0 {
+		var volMounts []corev1.VolumeMount
+		for _, vm := range node.VolumeMounts {
+			volMounts = append(volMounts, corev1.VolumeMount{
+				Name:      vm.Name,
+				MountPath: vm.MountPath,
+				SubPath:   vm.SubPath,
+				ReadOnly:  vm.ReadOnly,
+			})
+		}
+		tmpl.Script.VolumeMounts = volMounts
+	}
+	// GlobalEnv injected into every node.
+	if len(opts.GlobalEnv) > 0 {
+		for _, env := range opts.GlobalEnv {
+			tmpl.Script.Env = append(tmpl.Script.Env, corev1.EnvVar{
+				Name:  env.Name,
+				Value: env.Value,
+			})
+		}
+	}
+
+	// Retry strategy
+	if opts.RetryStrategy != nil && opts.RetryStrategy.Limit > 0 {
+		limit := intstr.FromInt(int(opts.RetryStrategy.Limit))
+		tmpl.RetryStrategy = &wfv1.RetryStrategy{
+			Limit: &limit,
+		}
+	}
+
+	// Timeout per step
+	if opts.ActiveDeadlineSeconds > 0 {
+		d := intstr.FromInt(int(opts.ActiveDeadlineSeconds))
+		tmpl.ActiveDeadlineSeconds = &d
+	}
+
+	return &tmpl
+}
+
 // --- helpers ---
+
+// isShellName reports whether cmd is a single shell name (e.g. ["sh"], ["/bin/sh"]).
+// In Argo container templates, the shell interpreter is typically set as Command and
+// the -c flag + script body are in Args.
+func isShellName(cmd []string) bool {
+	if len(cmd) != 1 {
+		return false
+	}
+	switch cmd[0] {
+	case "sh", "bash", "dash", "zsh", "/bin/sh", "/bin/bash", "/usr/bin/sh", "/usr/bin/bash":
+		return true
+	}
+	return false
+}
 
 func templateName(nodeID string) string {
 	return "step-" + strings.ReplaceAll(nodeID, "_", "-")

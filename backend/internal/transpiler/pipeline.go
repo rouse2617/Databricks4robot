@@ -29,6 +29,12 @@ type Component struct {
 	ImagePullPolicy string                `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
 	Command         []string              `json:"command,omitempty" yaml:"command,omitempty"`
 	Args            []Argument            `json:"args,omitempty" yaml:"args,omitempty"`
+	// Mode controls the template type: "container" (default) or "script".
+	// "container" emits an Argo container template (suitable for any image).
+	// "script" emits an Argo script template: Source is injected as inline script,
+	// and Command is treated as the interpreter (default: ["sh"]).
+	Mode   string `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Source string `json:"source,omitempty" yaml:"source,omitempty"` // inline script body (script mode only)
 	Env             []EnvVar              `json:"env,omitempty" yaml:"env,omitempty"`
 	Resources       *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
