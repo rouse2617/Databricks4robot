@@ -272,6 +272,11 @@ echo "--- § workflow monitoring / operations ---"
 get "workflows list" "/api/v1/workflows"
 if [[ -n "${WORKFLOW_NAME:-}" ]]; then
 	get "workflow detail" "/api/v1/workflows/${WORKFLOW_NAME}"
+	if echo "$RESP_BODY" | python3 -c 'import sys,json; data=json.load(sys.stdin); assert isinstance(data.get("edges"), list)' 2>/dev/null; then
+		ok "workflow detail edges contract"
+	else
+		bad "workflow detail edges contract"
+	fi
 	expect_code_get "workflow logs missing nodeId -> 400" "/api/v1/workflows/${WORKFLOW_NAME}/logs" "400" >/dev/null
 	if [[ -n "${WORKFLOW_NODE_ID:-}" ]]; then
 		get "workflow node logs" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}"

@@ -2371,9 +2371,16 @@ curl -s "$BASE/api/v1/assets/<ASSET_ID>/pipeline-lineage" \
 curl -s "$BASE/api/v1/workflows" \
   -H "X-Databrew-Token: $TOKEN"
 
-# 查看 workflow 详情（含 labels、progress、estimatedDuration，以及节点 type/inputs/outputs/templateName/resourcesDuration/children 等字段）
+# 查看 workflow 详情（含 labels、progress、estimatedDuration、nodes，以及标准化 DAG edges）
 curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
   -H "X-Databrew-Token: $TOKEN"
+
+# edges 示例：用于前端绘制 DAG 连线；Failed -> Omitted 等逻辑依赖也会保留
+# {
+#   "edges": [
+#     {"id":"e-step-1-step-2","source":"step-1","target":"step-2","kind":"dag"}
+#   ]
+# }
 
 # 查看节点日志
 curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>" \

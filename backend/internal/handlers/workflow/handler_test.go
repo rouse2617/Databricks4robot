@@ -448,6 +448,86 @@ func TestGetWorkflow_Success(t *testing.T) {
 	}
 }
 
+func TestGetWorkflow_NormalizedEdgesForOmittedDAGStep(t *testing.T) {
+	wf := &wfv1.Workflow{}
+	wf.CreationTimestamp = metav1.Now()
+	wf.Name = "e2e-two-step-auto"
+	wf.Status.Phase = wfv1.WorkflowPhase("Failed")
+	wf.Spec.Entrypoint = "dag"
+	wf.Spec.Templates = []wfv1.Template{
+		{
+			Name: "dag",
+			DAG: &wfv1.DAGTemplate{
+				Tasks: []wfv1.DAGTask{
+					{Name: "step-step-1", Template: "step-step-1"},
+					{
+						Name:         "step-step-2",
+						Template:     "step-step-2",
+						Dependencies: []string{"step-step-1"},
+					},
+				},
+			},
+		},
+	}
+	wf.Status.Nodes = wfv1.Nodes{
+		"root": {
+			ID:          "root",
+			Name:        "e2e-two-step-auto",
+			DisplayName: "e2e-two-step-auto",
+			Type:        wfv1.NodeTypeDAG,
+			Phase:       wfv1.NodeFailed,
+			Children:    []string{"step-1", "step-2"},
+		},
+		"step-1": {
+			ID:           "step-1",
+			Name:         "e2e-two-step-auto.step-step-1",
+			DisplayName:  "step-step-1",
+			Type:         wfv1.NodeTypePod,
+			TemplateName: "step-step-1",
+			Phase:        wfv1.NodeFailed,
+			BoundaryID:   "root",
+		},
+		"step-2": {
+			ID:           "step-2",
+			Name:         "e2e-two-step-auto.step-step-2",
+			DisplayName:  "step-step-2",
+			TemplateName: "step-step-2",
+			Phase:        wfv1.NodePhase("Omitted"),
+			BoundaryID:   "root",
+		},
+	}
+
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return wf, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/e2e-two-step-auto", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	edges := resp["edges"].([]interface{})
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 normalized edge, got %d: %#v", len(edges), edges)
+	}
+	edge := edges[0].(map[string]interface{})
+	if edge["source"] != "step-1" || edge["target"] != "step-2" {
+		t.Fatalf("unexpected edge endpoints: %#v", edge)
+	}
+	if edge["kind"] != "dag" {
+		t.Fatalf("expected dag edge, got %#v", edge)
+	}
+}
+
 func TestGetWorkflow_EmptyName(t *testing.T) {
 	h := New(&mockWorkflowClient{}, "default")
 	gin.SetMode(gin.TestMode)

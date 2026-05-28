@@ -1750,8 +1750,22 @@ components:
         nodes:
           type: array
           items: { $ref: '#/components/schemas/WorkflowNodeStatus' }
+        edges:
+          type: array
+          description: Normalized workflow DAG edges between renderable workflow nodes.
+          items: { $ref: '#/components/schemas/WorkflowDagEdge' }
         createdAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true }
+    WorkflowDagEdge:
+      type: object
+      properties:
+        id: { type: string, description: Stable edge identifier for DAG rendering }
+        source: { type: string, description: Source workflow node id }
+        target: { type: string, description: Target workflow node id }
+        kind:
+          type: string
+          enum: [runtime, dag, fallback]
+          description: Edge origin. `dag` preserves logical dependencies such as failed upstream to omitted downstream steps.
     WorkflowNodeStatus:
       type: object
       properties:

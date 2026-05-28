@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react";
 import dagre from "dagre";
 import { type MouseEvent, useCallback, useEffect } from "react";
-import type { WorkflowNodeStatus } from "../api/workflowApi";
+import type { WorkflowDagEdge, WorkflowNodeStatus } from "../api/workflowApi";
 
 const DISPLAYABLE_NODE_TYPES = new Set(["pod", "template"]);
 const DAG_NODE_WIDTH = 220;
@@ -37,7 +37,9 @@ function isDisplayableNode(node: WorkflowNodeStatus): boolean {
 		!!node.name &&
 		(node.name === node.id || (!!parentPath && node.name === parentPath));
 	const hasMeaningfulPhase =
-		phase === "Skipped" || phase === "Omitted" || DISPLAYABLE_NODE_TYPES.has(type);
+		phase === "Skipped" ||
+		phase === "Omitted" ||
+		DISPLAYABLE_NODE_TYPES.has(type);
 
 	return !!hasMeaningfulPhase && !isRootDagNode;
 }
@@ -71,8 +73,9 @@ interface WorkflowDagNodeData extends Record<string, unknown> {
 
 type WorkflowDagNode = RFNode<WorkflowDagNodeData>;
 
-function buildDagElements(
+export function buildDagElements(
 	rawNodes: WorkflowNodeStatus[],
+	workflowEdges: WorkflowDagEdge[] | undefined,
 	selectedNodeId: string | null,
 ): {
 	nodes: WorkflowDagNode[];
@@ -105,27 +108,39 @@ function buildDagElements(
 		});
 	};
 
-	for (const sourceNode of rawNodes) {
-		const sourceId = getNearestVisibleAncestorId(
-			sourceNode,
-			byName,
-			displayableIds,
-		);
-		for (const childId of sourceNode.children ?? []) {
-			const childNode = byId.get(childId);
-			if (!childNode || !displayableIds.has(childId) || !sourceId) continue;
-			addEdge(sourceId, childId);
+	if (workflowEdges) {
+		for (const edge of workflowEdges) {
+			if (
+				!displayableIds.has(edge.source) ||
+				!displayableIds.has(edge.target)
+			) {
+				continue;
+			}
+			addEdge(edge.source, edge.target);
 		}
-	}
+	} else {
+		for (const sourceNode of rawNodes) {
+			const sourceId = getNearestVisibleAncestorId(
+				sourceNode,
+				byName,
+				displayableIds,
+			);
+			for (const childId of sourceNode.children ?? []) {
+				const childNode = byId.get(childId);
+				if (!childNode || !displayableIds.has(childId) || !sourceId) continue;
+				addEdge(sourceId, childId);
+			}
+		}
 
-	for (const targetNode of displayableNodes) {
-		const sourceId = getNearestVisibleAncestorId(
-			targetNode,
-			byName,
-			displayableIds,
-		);
-		if (sourceId && sourceId !== targetNode.id) {
-			addEdge(sourceId, targetNode.id);
+		for (const targetNode of displayableNodes) {
+			const sourceId = getNearestVisibleAncestorId(
+				targetNode,
+				byName,
+				displayableIds,
+			);
+			if (sourceId && sourceId !== targetNode.id) {
+				addEdge(sourceId, targetNode.id);
+			}
 		}
 	}
 
@@ -206,12 +221,14 @@ function buildDagElements(
 
 interface WorkflowDagViewProps {
 	nodes: WorkflowNodeStatus[];
+	workflowEdges?: WorkflowDagEdge[];
 	selectedNodeId: string | null;
 	onNodeSelect: (node: WorkflowNodeStatus | null) => void;
 }
 
 export function WorkflowDagView({
 	nodes: rawNodes,
+	workflowEdges,
 	selectedNodeId,
 	onNodeSelect,
 }: WorkflowDagViewProps): React.JSX.Element {
@@ -221,11 +238,12 @@ export function WorkflowDagView({
 	useEffect(() => {
 		const { nodes: nextNodes, edges: nextEdges } = buildDagElements(
 			rawNodes,
+			workflowEdges,
 			selectedNodeId,
 		);
 		setNodes(nextNodes);
 		setEdges(nextEdges);
-	}, [rawNodes, selectedNodeId, setNodes, setEdges]);
+	}, [rawNodes, workflowEdges, selectedNodeId, setNodes, setEdges]);
 
 	const onNodeClick = useCallback(
 		(_: MouseEvent, node: WorkflowDagNode) => {

@@ -466,6 +466,7 @@ export default function WorkflowDetailPage() {
 					{viewMode === "dag" ? (
 						<WorkflowDagView
 							nodes={workflow.nodes}
+							workflowEdges={workflow.edges}
 							selectedNodeId={selectedNode?.id ?? null}
 							onNodeSelect={selectNode}
 						/>

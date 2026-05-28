@@ -31,11 +31,21 @@ export interface WorkflowNodeStatus {
 	estimatedDuration?: number;
 }
 
+export type WorkflowDagEdgeKind = "runtime" | "dag" | "fallback";
+
+export interface WorkflowDagEdge {
+	id: string;
+	source: string;
+	target: string;
+	kind: WorkflowDagEdgeKind;
+}
+
 export interface WorkflowDetail {
 	name: string;
 	status: string;
 	message?: string;
 	nodes: WorkflowNodeStatus[];
+	edges?: WorkflowDagEdge[];
 	createdAt: string;
 	finishedAt?: string;
 	labels?: Record<string, string>;

@@ -193,6 +193,7 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		"status":            string(wf.Status.Phase),
 		"message":           wf.Status.Message,
 		"nodes":             nodes,
+		"edges":             buildWorkflowDagEdges(wf),
 		"createdAt":         created,
 		"labels":            wf.Labels,
 		"estimatedDuration": int64(wf.Status.EstimatedDuration),

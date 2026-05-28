@@ -260,9 +260,25 @@ class TestWorkflowManager:
         assert client.workflows.list() == {"items": []}
 
         respx.get(f"{BASE_URL}/api/v1/workflows/wf1").mock(
-            return_value=httpx.Response(200, json={"name": "wf1", "nodes": []})
+            return_value=httpx.Response(
+                200,
+                json={
+                    "name": "wf1",
+                    "nodes": [],
+                    "edges": [
+                        {
+                            "id": "e-step-1-step-2",
+                            "source": "step-1",
+                            "target": "step-2",
+                            "kind": "dag",
+                        }
+                    ],
+                },
+            )
         )
-        assert client.workflows.get("wf1")["name"] == "wf1"
+        workflow = client.workflows.get("wf1")
+        assert workflow["name"] == "wf1"
+        assert workflow["edges"][0]["kind"] == "dag"
 
     def test_logs(self, client):
         respx.get(f"{BASE_URL}/api/v1/workflows/wf1/logs").mock(
