@@ -110,3 +110,13 @@ ralph.yml
 # Deploy verification screenshots
 frontend-dev-screenshot*.png
 backend-dev-screenshot*.png
+
+# Argo UI full source (not directly used — embed by reference)
+argo-ui/
+
+# Task / planning files (no code)
+TASK-*
+.hermes/TASK-*
+
+# Agent screenshots (local-only QA artifacts)
+.agent/screenshots/

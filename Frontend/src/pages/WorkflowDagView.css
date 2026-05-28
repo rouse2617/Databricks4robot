@@ -1,0 +1,8 @@
+/* React Flow: keep zoom/pan controls above the interaction pane */
+.workflow-dag-view .react-flow__controls {
+	z-index: 5;
+}
+
+.workflow-dag-view .react-flow__panel.react-flow__controls {
+	pointer-events: all;
+}
