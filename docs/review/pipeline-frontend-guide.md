@@ -1,7 +1,7 @@
 # Pipeline 前端对接指南
 
-> 版本：2026-05-27  
-> 读者：做 `Frontend/src/pages/PipelinePage` 及相关组件的前端 / 全栈  
+> 版本：2026-05-27
+> 读者：做 `Frontend/src/pages/PipelinePage` 及相关组件的前端 / 全栈
 > 配套：[pipeline-requirements.md](./pipeline-requirements.md)（产品需求）、[CYB-1254 design](../../openspec/changes/CYB-1254-pipeline-integration/design.md)（集成设计）
 
 ---
@@ -136,8 +136,8 @@
 2. 在 `buildPipelineJSON` 里 **只调用** `toTranspilerPipeline`，禁止手写 map。
 3. **默认 port 策略**（在仍用「整节点 handle」期间）：
    - 每个节点从组件注册表拷贝 `inputPorts` / `outputPorts`；若无，用 `{ name: "input" }` / `{ name: "output" }`。
-   - 每条 React Flow 边导出为  
-     `source: ${edge.source}.output`（或组件第一个 output port）  
+   - 每条 React Flow 边导出为
+     `source: ${edge.source}.output`（或组件第一个 output port）
      `target: ${edge.target}.input`（或组件第一个 input port）。
 4. 单测：`pipelineContract.test.ts`，断言 §2.4 golden JSON。
 
@@ -367,9 +367,9 @@ export interface PipelineNodeData {
 
 ## 11. 建议执行顺序（给 PM / TL）
 
-1. **Phase A** 合并 — 阻塞「能跑通两节点 pipeline」  
-2. **Phase B** 合并 — 阻塞「团队共享组件」  
-3. **Phase C** 按优先级切片（资产选择 > 多 port UI > 布局美化）  
+1. **Phase A** 合并 — 阻塞「能跑通两节点 pipeline」
+2. **Phase B** 合并 — 阻塞「团队共享组件」
+3. **Phase C** 按优先级切片（资产选择 > 多 port UI > 布局美化）
 
 每阶段 PR 附：golden JSON + dev 部署截图 + `GET /deployments` 一条成功记录。
 
