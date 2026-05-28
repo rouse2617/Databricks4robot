@@ -425,6 +425,21 @@ func (m *mockWorkflowClient) GetWorkflow(_ context.Context, _, _ string) (*wfv1.
 	return &wfv1.Workflow{}, nil
 }
 func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
 func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) (string, error) {
 	return "", nil
 }
@@ -626,7 +641,13 @@ func TestWorkflowRoutes_Registered(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/v1/workflows", http.StatusOK},
 		{http.MethodGet, "/api/v1/workflows/test-wf/logs?nodeId=n1", http.StatusOK},
+		{http.MethodPost, "/api/v1/workflows/test-wf/retry", http.StatusOK},
+		{http.MethodPost, "/api/v1/workflows/test-wf/resubmit", http.StatusOK},
+		{http.MethodPost, "/api/v1/workflows/test-wf/suspend", http.StatusOK},
+		{http.MethodPost, "/api/v1/workflows/test-wf/resume", http.StatusOK},
+		{http.MethodPost, "/api/v1/workflows/test-wf/terminate", http.StatusOK},
 		{http.MethodGet, "/api/v1/workflows/test-wf", http.StatusOK},
+		{http.MethodDelete, "/api/v1/workflows/test-wf", http.StatusOK},
 	}
 
 	// Without auth.

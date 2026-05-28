@@ -2210,8 +2210,8 @@ curl -X POST "$BASE/api/v1/deliveries" \
 组件注册表管理可拖拽的 pipeline 组件（Docker 镜像）。
 
 ```bash
-# 列出组件（支持搜索/筛选）
-curl -s "$BASE/api/v1/components" \
+# 列出组件（支持搜索/筛选；/api/v1/components 为兼容别名）
+curl -s "$BASE/api/v1/pipeline-components" \
   -H "X-Databrew-Token: $TOKEN"
 # 按名称搜索: ?q=processor
 # 按来源筛选: ?source=custom|system
@@ -2220,32 +2220,43 @@ curl -s "$BASE/api/v1/components" \
 # 响应: {"items": [{...}, ...]}
 
 # 创建组件
-curl -X POST "$BASE/api/v1/components" \
+curl -X POST "$BASE/api/v1/pipeline-components" \
   -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{
     "name": "my-processor",
+    "type": "container",
     "description": "My processing component",
     "image": "registry.example.com/my-processor",
     "tag": "v1",
+    "command": ["python", "/app/main.py"],
+    "args": ["--input", "{{inputs.asset}}"],
+    "env": {"MODE": "batch"},
     "inputPorts": [{"name": "input", "type": "asset"}],
     "outputPorts": [{"name": "output", "type": "asset"}],
     "resources": {"cpu": "500m", "memory": "256Mi"}
   }'
 # 响应: 201 + Component 对象
+# 必填字段: name, type(container|script|resource|suspend), image
 
 # 获取组件详情
-curl -s "$BASE/api/v1/components/<ID>" \
+curl -s "$BASE/api/v1/pipeline-components/<ID>" \
   -H "X-Databrew-Token: $TOKEN"
 
 # 更新组件
-curl -X PUT "$BASE/api/v1/components/<ID>" \
+curl -X PUT "$BASE/api/v1/pipeline-components/<ID>" \
   -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name": "...", "image": "...", ...}'
+  -d '{"name": "my-processor", "type": "container", "image": "registry.example.com/my-processor", "tag": "v2"}'
 
 # 删除组件
-curl -X DELETE "$BASE/api/v1/components/<ID>" \
+curl -X DELETE "$BASE/api/v1/pipeline-components/<ID>" \
   -H "X-Databrew-Token: $TOKEN"
 # 响应: 204
+
+# 校验失败示例
+curl -i -X POST "$BASE/api/v1/pipeline-components" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"missing-image","type":"container"}'
+# 响应: 400 + 标准错误体
 ```
 
 ### Pipeline 版本对比（F2.12）
@@ -2349,4 +2360,42 @@ curl -s "$BASE/api/v1/assets/<ASSET_ID>/pipeline-lineage" \
 #   "input_assets": ["input-001", "input-002"],
 #   "produced_at": "2026-05-27T12:00:00Z"
 # }
+```
+
+### Workflow 监控与操作
+
+直接查看和操作 Argo workflow。所有操作接口成功时返回 `{"message":"ok"}`；Argo 返回错误时，后端返回标准错误体。
+
+```bash
+# 列出 workflows
+curl -s "$BASE/api/v1/workflows" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 查看 workflow 详情（含 labels、progress、estimatedDuration，以及节点 type/inputs/outputs/templateName/resourcesDuration/children 等字段）
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 查看节点日志
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 重试 / 重新提交 / 暂停 / 恢复 / 终止
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/retry" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resubmit" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/suspend" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resume" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/terminate" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 删除 workflow
+curl -X DELETE "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 错误路径示例：缺少 nodeId 返回 400
+curl -i "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs" \
+  -H "X-Databrew-Token: $TOKEN"
 ```

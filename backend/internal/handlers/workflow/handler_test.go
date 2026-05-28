@@ -15,9 +15,11 @@ import (
 // ── Mock WorkflowClient ─────────────────────────────────────────────────────
 
 type mockWorkflowClient struct {
-	listFn func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
-	getFn  func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
-	logsFn func(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
+	listFn    func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
+	getFn     func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+	logsFn    func(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
+	operation string
+	namespace string
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
@@ -27,9 +29,35 @@ func (m *mockWorkflowClient) GetWorkflowStatus(_ context.Context, _, _ string) (
 	return "", nil
 }
 func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) error {
+	m.operation = "delete"
 	return nil
 }
 func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, namespace string) error {
+	m.operation = "retry"
+	m.namespace = namespace
+	return nil
+}
+func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, namespace string) error {
+	m.operation = "resubmit"
+	m.namespace = namespace
+	return nil
+}
+func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, namespace string) error {
+	m.operation = "suspend"
+	m.namespace = namespace
+	return nil
+}
+func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, namespace string) error {
+	m.operation = "resume"
+	m.namespace = namespace
+	return nil
+}
+func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, namespace string) error {
+	m.operation = "terminate"
+	m.namespace = namespace
 	return nil
 }
 func (m *mockWorkflowClient) ListWorkflows(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error) {
@@ -63,9 +91,16 @@ func makeWorkflow(name, phase string, nodeCount int) *wfv1.Workflow {
 	for i := 0; i < nodeCount; i++ {
 		id := string(rune('a' + i))
 		whf.Status.Nodes[id] = wfv1.NodeStatus{
-			ID:    id,
-			Name:  "step-" + id,
-			Phase: wfv1.NodePhase("Running"),
+			ID:                id,
+			Name:              "step-" + id,
+			DisplayName:       "step-" + id,
+			Type:              wfv1.NodeTypePod,
+			TemplateName:      "template-" + id,
+			Phase:             wfv1.NodePhase("Running"),
+			HostNodeName:      "node-" + id,
+			Progress:          wfv1.Progress("1/2"),
+			EstimatedDuration: wfv1.EstimatedDuration(12),
+			Children:          []string{"child-" + id},
 		}
 	}
 	return whf
@@ -77,6 +112,12 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.GET("/workflows", h.ListWorkflows)
 	r.GET("/workflows/:name/logs", h.GetWorkflowLogs)
 	r.GET("/workflows/:name", h.GetWorkflow)
+	r.POST("/workflows/:name/retry", h.RetryWorkflow)
+	r.POST("/workflows/:name/resubmit", h.ResubmitWorkflow)
+	r.POST("/workflows/:name/suspend", h.SuspendWorkflow)
+	r.POST("/workflows/:name/resume", h.ResumeWorkflow)
+	r.POST("/workflows/:name/terminate", h.TerminateWorkflow)
+	r.DELETE("/workflows/:name", h.DeleteWorkflow)
 	return r
 }
 
@@ -177,6 +218,19 @@ func TestGetWorkflow_Success(t *testing.T) {
 	if len(nodes) != 2 {
 		t.Fatalf("expected 2 nodes, got %d", len(nodes))
 	}
+	firstNode := nodes[0].(map[string]interface{})
+	if firstNode["type"] != "Pod" {
+		t.Errorf("expected node type Pod, got %v", firstNode["type"])
+	}
+	if firstNode["templateName"] == "" {
+		t.Errorf("expected templateName to be included")
+	}
+	if firstNode["hostNodeName"] == "" {
+		t.Errorf("expected hostNodeName to be included")
+	}
+	if _, ok := firstNode["children"].([]interface{}); !ok {
+		t.Errorf("expected children to be included")
+	}
 }
 
 func TestGetWorkflow_EmptyName(t *testing.T) {
@@ -244,5 +298,46 @@ func TestGetWorkflowLogs_EmptyName(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for empty name, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestWorkflowOperations(t *testing.T) {
+	tests := []struct {
+		method string
+		path   string
+		wantOp string
+	}{
+		{http.MethodPost, "/workflows/test-wf/retry", "retry"},
+		{http.MethodPost, "/workflows/test-wf/resubmit", "resubmit"},
+		{http.MethodPost, "/workflows/test-wf/suspend", "suspend"},
+		{http.MethodPost, "/workflows/test-wf/resume", "resume"},
+		{http.MethodPost, "/workflows/test-wf/terminate", "terminate"},
+		{http.MethodDelete, "/workflows/test-wf", "delete"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.wantOp, func(t *testing.T) {
+			client := &mockWorkflowClient{}
+			h := New(client, "fallback")
+			r := setupRouter(h)
+
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+			if client.operation != tt.wantOp {
+				t.Fatalf("expected operation %s, got %s", tt.wantOp, client.operation)
+			}
+			var resp map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if resp["message"] != "ok" {
+				t.Fatalf("expected ok message, got %q", resp["message"])
+			}
+		})
 	}
 }

@@ -27,7 +27,7 @@ func (h *Handler) CreateComponent(c *gin.Context) {
 	}
 	created, err := h.uc.Create(c.Request.Context(), &pc)
 	if err != nil {
-		httpresp.Internal(c, err.Error())
+		writeComponentError(c, err)
 		return
 	}
 	c.JSON(201, created)
@@ -81,7 +81,7 @@ func (h *Handler) UpdateComponent(c *gin.Context) {
 	}
 	pc.ID = id
 	if err := h.uc.Update(c.Request.Context(), &pc); err != nil {
-		httpresp.Internal(c, err.Error())
+		writeComponentError(c, err)
 		return
 	}
 	c.JSON(200, &pc)
@@ -95,8 +95,22 @@ func (h *Handler) DeleteComponent(c *gin.Context) {
 		return
 	}
 	if err := h.uc.Delete(c.Request.Context(), id); err != nil {
-		httpresp.Internal(c, err.Error())
+		writeComponentError(c, err)
 		return
 	}
 	c.Status(204)
+}
+
+func writeComponentError(c *gin.Context, err error) {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "component not found")
+	case strings.Contains(msg, "required") || strings.Contains(msg, "type must be"):
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
+	case strings.Contains(msg, "system components cannot"):
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
+	default:
+		httpresp.Internal(c, msg)
+	}
 }

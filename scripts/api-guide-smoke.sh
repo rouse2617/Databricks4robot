@@ -114,10 +114,54 @@ post_json() {
 	echo "$RESP_BODY"
 }
 
+put_json() {
+	local name="$1" path="$2" data="$3"
+	local raw
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X PUT "${API_HDR[@]}" "$BASE$path" -d "$data" 2>/dev/null) || raw=$'\n000'
+	RESP_CODE=$(echo "$raw" | tail -n1)
+	RESP_BODY=$(echo "$raw" | sed '$d')
+	if [[ "$RESP_CODE" =~ ^2 ]]; then
+		PASS=$((PASS + 1))
+		echo "  OK  $name" >&2
+	else
+		FAIL=$((FAIL + 1))
+		echo "  FAIL $name (HTTP ${RESP_CODE})" >&2
+		echo "$RESP_BODY" | head -c 400 >&2
+		echo >&2
+	fi
+	echo "$RESP_BODY"
+}
+
 expect_code_post() {
 	local name="$1" path="$2" data="$3" expected="$4"
 	local raw code body
 	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X POST "${API_HDR[@]}" "$BASE$path" -d "$data" 2>/dev/null) || raw=$'\n000'
+	code=$(echo "$raw" | tail -n1)
+	body=$(echo "$raw" | sed '$d')
+	RESP_CODE="$code"
+	RESP_BODY="$body"
+	if [[ "$code" == "$expected" ]]; then
+		ok "$name"
+	else
+		bad "$name (expected ${expected})"
+	fi
+	echo "$body"
+}
+
+delete() {
+	local name="$1" path="$2"
+	local raw
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X DELETE "${API_HDR[@]}" "$BASE$path" 2>/dev/null) || raw=$'\n000'
+	RESP_CODE=$(echo "$raw" | tail -n1)
+	RESP_BODY=$(echo "$raw" | sed '$d')
+	if [[ "$RESP_CODE" =~ ^2 ]]; then ok "$name"; else bad "$name"; fi
+	echo "$RESP_BODY"
+}
+
+expect_code_delete() {
+	local name="$1" path="$2" expected="$3"
+	local raw code body
+	raw=$(curl -sS --max-time 30 -w "\n%{http_code}" -X DELETE "${API_HDR[@]}" "$BASE$path" 2>/dev/null) || raw=$'\n000'
 	code=$(echo "$raw" | tail -n1)
 	body=$(echo "$raw" | sed '$d')
 	RESP_CODE="$code"
@@ -192,6 +236,28 @@ get "asset type schema dataset" "/api/v1/asset-types/dataset/schema"
 expect_code_get "asset type schema unknown -> 404" "/api/v1/asset-types/unknown/schema" "404" >/dev/null
 
 echo ""
+echo "--- § pipeline component registry ---"
+get "pipeline-components list" "/api/v1/pipeline-components"
+expect_code_post "pipeline-components missing image -> 400" "/api/v1/pipeline-components" '{"name":"smoke-missing-image","type":"container"}' "400" >/dev/null
+if [[ "${RUN_WRITES:-0}" == "1" ]]; then
+	component_name="smoke-component-$(date +%s)"
+	component_body='{"name":"'"${component_name}"'","type":"container","description":"api guide smoke","image":"busybox","tag":"latest","command":["sh","-c"],"args":["echo ok"],"env":{"MODE":"smoke"}}'
+	component_created=$(post_json "pipeline-components create" "/api/v1/pipeline-components" "$component_body")
+	component_id=$(echo "$component_created" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+	if [[ -n "$component_id" ]]; then
+		get "pipeline-components get" "/api/v1/pipeline-components/${component_id}"
+		put_json "pipeline-components update" "/api/v1/pipeline-components/${component_id}" '{"name":"'"${component_name}"'-updated","type":"container","image":"busybox","tag":"1.36"}' >/dev/null
+		delete "pipeline-components delete" "/api/v1/pipeline-components/${component_id}" >/dev/null
+	else
+		RESP_CODE="json"
+		RESP_BODY="$component_created"
+		bad "pipeline-components create id extraction"
+	fi
+else
+	echo "  skip pipeline-components write smoke — set RUN_WRITES=1 to create/update/delete a disposable component"
+fi
+
+echo ""
 echo "--- § 资产 / 搜索 / 交付 / mcap-files ---"
 get "search sync status" "/api/v1/search/sync-status"
 expect_code_get "search lineage invalid direction -> 400" "/api/v1/search/assets?lineage_with=asset-smoke&lineage_direction=sideways" "400" >/dev/null
@@ -200,6 +266,38 @@ post "queries run (include_history)" "/api/v1/queries/run?include_history=true" 
 post "queries run (keyword)" "/api/v1/queries/run" '{"schema_version":"v1","mode":"keyword","scope":{"resource":"assets"},"where":{"pred":{"field":"_fulltext","op":"ilike","value":"warehouse"}},"page":{"page":1,"page_size":5}}' >/dev/null
 get "deliveries list" "/api/v1/deliveries?page=1&page_size=5"
 get "mcap-files list" "/api/v1/mcap-files?page=1&page_size=5"
+
+echo ""
+echo "--- § workflow monitoring / operations ---"
+get "workflows list" "/api/v1/workflows"
+if [[ -n "${WORKFLOW_NAME:-}" ]]; then
+	get "workflow detail" "/api/v1/workflows/${WORKFLOW_NAME}"
+	expect_code_get "workflow logs missing nodeId -> 400" "/api/v1/workflows/${WORKFLOW_NAME}/logs" "400" >/dev/null
+	if [[ -n "${WORKFLOW_NODE_ID:-}" ]]; then
+		get "workflow node logs" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}"
+	else
+		echo "  skip workflow logs happy path — set WORKFLOW_NODE_ID to exercise GET /workflows/{name}/logs"
+	fi
+else
+	echo "  skip workflow detail/log smoke — set WORKFLOW_NAME to exercise GET /workflows/{name}"
+fi
+expect_code_get "workflow missing detail -> 404" "/api/v1/workflows/__missing_workflow__" "404" >/dev/null
+for op in retry resubmit suspend resume terminate; do
+	expect_code_post "workflow ${op} missing workflow -> 500" "/api/v1/workflows/__missing_workflow__/${op}" "{}" "500" >/dev/null
+done
+if [[ -n "${WORKFLOW_OPERATION_NAME:-}" ]]; then
+	for op in retry resubmit suspend resume terminate; do
+		post "workflow ${op}" "/api/v1/workflows/${WORKFLOW_OPERATION_NAME}/${op}" "{}" >/dev/null
+	done
+else
+	echo "  skip workflow operation happy paths — set WORKFLOW_OPERATION_NAME to a disposable workflow"
+fi
+expect_code_delete "workflow delete missing workflow -> 500" "/api/v1/workflows/__missing_workflow__" "500" >/dev/null
+if [[ -n "${WORKFLOW_DELETE_NAME:-}" ]]; then
+	delete "workflow delete" "/api/v1/workflows/${WORKFLOW_DELETE_NAME}" >/dev/null
+else
+	echo "  skip workflow delete happy path — set WORKFLOW_DELETE_NAME to a disposable workflow"
+fi
 
 echo ""
 echo "--- § algo-runs (CYB-1018/CYB-1123) ---"

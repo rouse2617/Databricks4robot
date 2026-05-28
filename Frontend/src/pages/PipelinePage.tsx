@@ -50,6 +50,7 @@ import {
 	deleteComponent,
 	listComponents,
 	type PipelineComponentAPI,
+	type PipelineComponentPayload,
 	updateComponent,
 } from "../api/pipelineComponentApi";
 import AssetPicker from "../components/pipeline/AssetPicker";
@@ -115,14 +116,20 @@ function saveComponents(comps: RegisteredComponent[]) {
 /** Map backend PipelineComponentAPI → frontend RegisteredComponent. */
 function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 	const resources = api.resources ?? {};
+	const legacyArgs = resources.args as
+		| { name: string; value?: string; from?: string }[]
+		| undefined;
 	return {
 		id: api.id,
 		name: api.name,
 		image: formatImage(api.image, api.tag),
-		command: (resources.command as string[]) ?? ["sh", "-c"],
+		command: api.command ?? ((resources.command as string[]) || ["sh", "-c"]),
 		args:
-			(resources.args as { name: string; value?: string; from?: string }[]) ??
-			[],
+			legacyArgs ??
+			(api.args ?? []).map((value, index) => ({
+				name: `arg${index + 1}`,
+				value,
+			})),
 		cpu: (resources.cpu as string) ?? "",
 		memory: (resources.memory as string) ?? "",
 		disk: (resources.disk as string) ?? "",
@@ -130,19 +137,19 @@ function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 }
 
 /** Map frontend RegisteredComponent → backend PipelineComponentAPI shape. */
-function registeredToApi(
-	comp: RegisteredComponent,
-): Omit<PipelineComponentAPI, "createdAt" | "updatedAt"> {
+function registeredToApi(comp: RegisteredComponent): PipelineComponentPayload {
 	const idx = comp.image.lastIndexOf(":");
 	const image = idx > 0 ? comp.image.slice(0, idx) : comp.image;
 	const tag = idx > 0 ? comp.image.slice(idx + 1) : "latest";
 	return {
-		id: comp.id,
 		name: comp.name,
+		type: "container",
 		description: "",
 		image,
 		tag,
-		source: "manual",
+		source: "custom",
+		command: comp.command,
+		args: comp.args.map((arg) => arg.value || arg.name).filter(Boolean),
 		inputPorts: [{ name: "input", type: "string" }],
 		outputPorts: [{ name: "output", type: "string" }],
 		resources: {

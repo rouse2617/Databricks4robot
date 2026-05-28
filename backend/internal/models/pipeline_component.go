@@ -6,10 +6,14 @@ import "time"
 type PipelineComponent struct {
 	ID          string                 `json:"id"`
 	Name        string                 `json:"name"`
+	Type        string                 `json:"type"`
 	Description string                 `json:"description"`
 	Image       string                 `json:"image"`
 	Tag         string                 `json:"tag"`
 	Source      string                 `json:"source"`
+	Command     []string               `json:"command,omitempty"`
+	Args        []string               `json:"args,omitempty"`
+	Env         map[string]string      `json:"env,omitempty"`
 	InputPorts  []PortDef              `json:"inputPorts"`
 	OutputPorts []PortDef              `json:"outputPorts"`
 	Resources   map[string]interface{} `json:"resources,omitempty"`
