@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
@@ -106,6 +108,30 @@ func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.
 	return nil, nil
 }
 
+type mockWorkflowClient struct{}
+
+func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) GetWorkflowStatus(_ context.Context, _, _ string) (wfv1.WorkflowPhase, error) {
+	return wfv1.WorkflowSucceeded, nil
+}
+func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) ListWorkflows(_ context.Context, _ string, _ string) ([]wfv1.Workflow, error) {
+	return nil, nil
+}
+func (m *mockWorkflowClient) GetWorkflow(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+	return &wfv1.Workflow{}, nil
+}
+func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) (string, error) {
+	return "", nil
+}
+
 func newMockAssetRepo() *mockAssetRepo {
 	return &mockAssetRepo{assets: make(map[string]*models.Asset)}
 }
@@ -115,6 +141,7 @@ func newUsecase(assetRepo *mockAssetRepo) *Usecase {
 		templateRepo:   &mockTemplateRepo{byID: make(map[string]*models.PipelineTemplate)},
 		deploymentRepo: &mockDeploymentRepo{},
 		assetRepo:      assetRepo,
+		wfClient:       &mockWorkflowClient{},
 	}
 }
 

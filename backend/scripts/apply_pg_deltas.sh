@@ -21,11 +21,39 @@ PGPASSWORD="${PGPASSWORD:-postgres}"
 PGDATABASE="${PGDATABASE:-cyber_databrew_dev}"
 DB_URL="${DATABASE_URL:-postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}}"
 
+ensure_migrations_table() {
+  psql "$DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  migration_name TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+SQL
+}
+
+migration_applied() {
+  local name="$1"
+  [[ "$(psql "$DB_URL" -v ON_ERROR_STOP=1 -v migration="$name" -Atqc "SELECT 1 FROM schema_migrations WHERE migration_name = :'migration'")" == "1" ]]
+}
+
+record_migration() {
+  local name="$1"
+  psql "$DB_URL" -v ON_ERROR_STOP=1 -v migration="$name" -c "INSERT INTO schema_migrations (migration_name) VALUES (:'migration') ON CONFLICT (migration_name) DO NOTHING"
+}
+
 apply_one() {
   local f="$1"
-  echo "==> $(basename "$f")"
+  local name
+  name="$(basename "$f")"
+  if migration_applied "$name"; then
+    echo "==> $name (already applied, skip)"
+    return
+  fi
+  echo "==> $name"
   psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+  record_migration "$name"
 }
+
+ensure_migrations_table
 
 shopt -s nullglob
 deltas=()

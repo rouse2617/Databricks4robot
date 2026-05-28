@@ -1,4 +1,4 @@
-CREATE TABLE pipeline_components (
+CREATE TABLE IF NOT EXISTS pipeline_components (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -13,5 +13,5 @@ CREATE TABLE pipeline_components (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_pipeline_components_name ON pipeline_components(name);
-CREATE INDEX idx_pipeline_components_source ON pipeline_components(source);
+CREATE INDEX IF NOT EXISTS idx_pipeline_components_name ON pipeline_components(name);
+CREATE INDEX IF NOT EXISTS idx_pipeline_components_source ON pipeline_components(source);

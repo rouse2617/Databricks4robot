@@ -17,3 +17,10 @@
 - [ ] 8. 验证：`npm run build` 通过
 - [ ] 9. 前端 dev deploy → MCP 验证
 - [ ] 10. PR
+
+## Backend major bugfix follow-up
+
+- [x] Fix pipeline handler test nil pointer panic and verify `go test ./internal/handlers/pipeline/`.
+- [x] Add CSRF hardening for cookie auth and pipeline mutating API calls.
+- [x] Make pipeline/backfill migration deltas idempotent and add migration apply tracking.
+- [x] Verify final backend build and full test suite.

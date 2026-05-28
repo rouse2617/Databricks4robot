@@ -16,9 +16,18 @@ export async function request<T>(
 	path: string,
 	body?: unknown,
 ): Promise<T> {
+	const headers: Record<string, string> = {};
+	const isMutating = !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
+	if (body) {
+		headers["Content-Type"] = "application/json";
+	}
+	if (isMutating) {
+		headers["X-Requested-With"] = "XMLHttpRequest";
+	}
+
 	const res = await fetch(`${API}${path}`, {
 		method,
-		headers: body ? { "Content-Type": "application/json" } : undefined,
+		headers: Object.keys(headers).length > 0 ? headers : undefined,
 		body: body ? JSON.stringify(body) : undefined,
 		credentials: "include",
 	});

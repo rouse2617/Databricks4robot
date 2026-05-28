@@ -189,6 +189,9 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 	}
 
 	// Submit to Argo workflow engine.
+	if uc.wfClient == nil {
+		return nil, ErrWorkflowUnavailable
+	}
 	status := "Pending"
 	if err := uc.wfClient.CreateWorkflow(ctx, wf, uc.namespace); err != nil {
 		if strings.Contains(err.Error(), "argo server URL is empty") {

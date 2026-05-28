@@ -2,7 +2,7 @@
 -- Adds tables for storing reusable pipeline templates and tracking pipeline deployments
 -- triggered from pipeline-to-workflow orchestration.
 
-CREATE TABLE pipeline_templates (
+CREATE TABLE IF NOT EXISTS pipeline_templates (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     pipeline JSONB NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE pipeline_templates (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE pipeline_deployments (
+CREATE TABLE IF NOT EXISTS pipeline_deployments (
     id TEXT PRIMARY KEY,
     template_id TEXT REFERENCES pipeline_templates(id),
     pipeline_name TEXT NOT NULL,

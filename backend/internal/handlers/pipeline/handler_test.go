@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
@@ -112,6 +113,30 @@ func (m *mockAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interfa
 }
 func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
 	return nil, nil
+}
+
+type mockWorkflowClient struct{}
+
+func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) GetWorkflowStatus(_ context.Context, _, _ string) (wfv1.WorkflowPhase, error) {
+	return wfv1.WorkflowSucceeded, nil
+}
+func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) ListWorkflows(_ context.Context, _ string, _ string) ([]wfv1.Workflow, error) {
+	return nil, nil
+}
+func (m *mockWorkflowClient) GetWorkflow(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+	return &wfv1.Workflow{}, nil
+}
+func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) (string, error) {
+	return "", nil
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -377,7 +402,7 @@ func TestListVersions_Success(t *testing.T) {
 // ── Deploy Tests ─────────────────────────────────────────────────────────────
 
 func TestDeploy_Success(t *testing.T) {
-	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
 	h := New(uc)
 	r := setupRouter(h)
 
@@ -418,7 +443,7 @@ func TestDeploy_MissingPipeline(t *testing.T) {
 func TestDeployByTemplate_Success(t *testing.T) {
 	templateRepo := &mockTemplateRepo{}
 	_ = templateRepo.Save(context.Background(), makeTemplate("tpl-1", "my-pipeline", 1))
-	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
 	h := New(uc)
 	r := setupRouter(h)
 
@@ -627,7 +652,7 @@ func TestRetryDeployment_Success(t *testing.T) {
 		PipelineName: "my-pipeline",
 		PipelineJSON: map[string]interface{}{"name": "test", "nodes": []interface{}{}},
 	})
-	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, nil, "default")
+	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
 	h := New(uc)
 	r := setupRouter(h)
 

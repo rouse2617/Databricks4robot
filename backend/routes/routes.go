@@ -119,6 +119,7 @@ func RegisterAll(
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 				return
 			}
+			c.SetSameSite(http.SameSiteLaxMode)
 			c.SetCookie("databrew_session", token, 86400, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{"authenticated": true})
 		})
@@ -128,6 +129,7 @@ func RegisterAll(
 			c.JSON(http.StatusOK, gin.H{"authenticated": true})
 		})
 		authProtected.POST("/logout", func(c *gin.Context) {
+			c.SetSameSite(http.SameSiteLaxMode)
 			c.SetCookie("databrew_session", "", -1, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{"authenticated": false})
 		})
