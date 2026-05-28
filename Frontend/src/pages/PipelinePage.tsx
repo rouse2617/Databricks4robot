@@ -39,6 +39,7 @@ import { assetsApi } from "../api/assets";
 import {
 	type Deployment,
 	deployTemplate,
+	getPipeline,
 	previewDeploy,
 	savePipeline,
 } from "../api/pipelineApi";
@@ -373,6 +374,10 @@ function PipelineCanvas() {
 	const [registeredComponents, setRegisteredComponents] =
 		useState<RegisteredComponent[]>(loadComponents);
 	const [view, setView] = useState<"pipeline" | "deploy">("pipeline");
+	const templateId = useMemo(
+		() => searchParams.get("templateId") || null,
+		[searchParams],
+	);
 	const [deployDialog, setDeployDialog] = useState<{
 		open: boolean;
 		deploying: boolean;
@@ -456,7 +461,7 @@ function PipelineCanvas() {
 		[editor],
 	);
 
-	useEffect(() => {
+	const loadPipelineFromSessionStorage = useCallback(() => {
 		const raw = sessionStorage.getItem("pipeline-edit");
 		if (!raw) return;
 		sessionStorage.removeItem("pipeline-edit");
@@ -466,6 +471,28 @@ function PipelineCanvas() {
 			/* ignore */
 		}
 	}, [loadPipelineToCanvas]);
+
+	useEffect(() => {
+		if (!templateId) {
+			loadPipelineFromSessionStorage();
+			return;
+		}
+
+		let cancelled = false;
+		getPipeline(templateId)
+			.then((template) => {
+				if (cancelled) return;
+				loadPipelineToCanvas(template.pipeline);
+			})
+			.catch(() => {
+				if (cancelled) return;
+				loadPipelineFromSessionStorage();
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [loadPipelineFromSessionStorage, loadPipelineToCanvas, templateId]);
 
 	const onDragStart = useCallback((e: DragEvent, comp: RegisteredComponent) => {
 		e.dataTransfer.setData("application/reactflow", JSON.stringify(comp));
@@ -765,8 +792,8 @@ function PipelineCanvas() {
 
 	const handleSave = useCallback(async () => {
 		try {
-			const result = await savePipeline(pipelineName, buildPipelineJSON());
-			message.success(`已保存: ${result.name}`);
+			await savePipeline(pipelineName, buildPipelineJSON());
+			message.success(`已保存流水线模板`);
 		} catch (err) {
 			message.error(`保存失败: ${String(err)}`);
 		}
@@ -857,14 +884,17 @@ function PipelineCanvas() {
 		}
 	}, [buildPipelineJSON]);
 
+	const isTemplateLanding = view === "pipeline" && nodes.length === 0;
+	const currentTemplateLabel = pipelineName || "未命名流水线";
+
 	return (
 		<div className="pipeline-page">
 			{/* Header */}
-			<div className="pipeline-toolbar">
-				<div className="pipeline-toolbar__left">
-					<Typography.Title level={5} className="pipeline-toolbar__title">
-						流水线设计
-					</Typography.Title>
+				<div className="pipeline-toolbar">
+					<div className="pipeline-toolbar__left">
+						<Typography.Title level={5} className="pipeline-toolbar__title">
+							{isTemplateLanding ? "我的流水线" : "流水线设计"}
+						</Typography.Title>
 					<div className="pipeline-toolbar__tabs">
 						{(["pipeline", "deploy"] as const).map((tab) => (
 							<button
@@ -882,7 +912,7 @@ function PipelineCanvas() {
 					</div>
 				</div>
 
-				{view === "pipeline" && (
+					{view === "pipeline" && !isTemplateLanding && (
 					<>
 						<div className="pipeline-toolbar__name">
 							<span className="pipeline-toolbar__name-label">名称</span>
@@ -946,211 +976,219 @@ function PipelineCanvas() {
 			</div>
 
 			{/* Body */}
-			<div className="pipeline-body">
+			<div
+				className={
+					isTemplateLanding
+						? "pipeline-body pipeline-body--template-list"
+						: "pipeline-body"
+				}
+			>
 				{view === "pipeline" ? (
-					<>
-						<ComponentPalette
-							components={registeredComponents}
-							onDragStart={onDragStart}
-						/>
+					isTemplateLanding ? (
 						<div
-							className="canvas-wrapper"
-							ref={wrapperRef}
-							style={{ flex: 1, height: "100%", position: "relative" }}
+							style={{
+								flex: 1,
+								overflow: "auto",
+								padding: 16,
+								width: "100%",
+							}}
 						>
-							<FlowEditor
-								nodeTypes={nodeTypes}
-								flattenNodes={flattenNodes}
-								flattenEdges={flattenEdges}
-								onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
-									setNodes(Object.values(nextNodes) as PipelineFlowNode[])
-								}
-								onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
-									setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
-								}
-								contextMenuEnabled={false}
-								flowProps={{
-									onDrop,
-									onDragOver,
-									onNodeClick,
-									onNodeContextMenu,
-									onPaneClick,
-									onPaneContextMenu,
-								}}
-							/>
-							{nodes.length === 0 && (
-								<div className="canvas-empty" aria-live="polite">
-									<div className="canvas-empty__title">开始设计流水线</div>
-									<ol className="canvas-empty__steps">
-										<li>从左侧拖入组件</li>
-										<li>连接节点右侧与左侧圆点</li>
-										<li>选中节点后点击「配置节点」</li>
-										<li>保存或部署到集群</li>
-									</ol>
-								</div>
-							)}
-							{contextMenu.open && (
-								<div
-									className="pipeline-context-menu"
-									style={{
-										left: contextMenu.x,
-										top: contextMenu.y,
-									}}
-								>
-									<Menu
-										selectable={false}
-										onClick={handleContextMenuClick}
-										items={
-											contextMenu.node
-												? [
-														{ key: "configure", label: "配置节点" },
-														{ key: "copy", label: "复制节点" },
-														{ type: "divider" },
-														{
-															key: "delete",
-															label: "删除节点",
-															danger: true,
-														},
-													]
-												: [
-														{ key: "paste", label: "粘贴" },
-														{ key: "selectAll", label: "选择全部" },
-														{ type: "divider" },
-														{ key: "zoomIn", label: "放大" },
-														{ key: "zoomOut", label: "缩小" },
-														{ key: "fitView", label: "适应画布" },
-													]
-										}
-									/>
-								</div>
-							)}
+							<DeployPanel onEditTemplate={loadPipelineToCanvas} />
 						</div>
-						<aside className="config-panel">
-							{selectedNode ? (
-								<>
-									<div className="config-panel-header">
-										<div className="config-panel-header__info">
-											<span className="config-panel-label">
-												{selectedNode.data?.label || selectedNode.id}
-											</span>
-											<span className="config-panel-type">
-												{selectedNode.data?.image || "未设置镜像"}
-											</span>
-										</div>
-										<Button
-											size="small"
-											type="primary"
-											onClick={() => setEditingNodeId(selectedNode.id)}
-										>
-											配置节点
-										</Button>
-									</div>
-									<div className="config-content">
-										<div className="config-section-title">关联资产</div>
-										{selectedNodeAssetLoading ? (
-											<div
-												style={{
-													fontSize: 12,
-													color: "#64748b",
-												}}
-											>
-												{selectedNodeAssetId
-													? "正在加载关联资产..."
-													: "未关联资产"}
-											</div>
-										) : selectedNodeAssetError ? (
-											<div
-												style={{
-													fontSize: 12,
-													color: "#dc2626",
-												}}
-											>
-												{selectedNodeAssetError}
-											</div>
-										) : selectedNodeAssetInfo ? (
-											<div
-												style={{
-													display: "grid",
-													gap: 6,
-												}}
-											>
-												<div className="config-field">
-													<span
-														style={{
-															fontSize: 10,
-															color: "var(--color-text-secondary, #64748b)",
-															textTransform: "uppercase",
-															letterSpacing: "0.8px",
-														}}
-													>
-														名称
-													</span>
-													<Typography.Text>
-														{selectedNodeAssetInfo.name}
-													</Typography.Text>
-												</div>
-												<div className="config-field">
-													<span
-														style={{
-															fontSize: 10,
-															color: "var(--color-text-secondary, #64748b)",
-															textTransform: "uppercase",
-															letterSpacing: "0.8px",
-														}}
-													>
-														类型
-													</span>
-													<Typography.Text>
-														{selectedNodeAssetInfo.type}
-													</Typography.Text>
-												</div>
-												<div className="config-field">
-													<span
-														style={{
-															fontSize: 10,
-															color: "var(--color-text-secondary, #64748b)",
-															textTransform: "uppercase",
-															letterSpacing: "0.8px",
-														}}
-													>
-														大小
-													</span>
-													<Typography.Text>
-														{selectedNodeAssetInfo.size}
-													</Typography.Text>
-												</div>
-											</div>
-										) : (
-											<div
-												style={{
-													fontSize: 12,
-													color: "#64748b",
-												}}
-											>
-												未选择关联资产
-											</div>
-										)}
-									</div>
-								</>
-							) : (
-								<div className="config-empty">
-									<div className="config-empty__title">节点配置</div>
-									<p>选中画布上的节点后，可在此查看关联资产并打开配置面板。</p>
-									<p className="config-empty__hint">
-										也可双击节点，或右键选择「配置节点」。
-									</p>
-								</div>
-							)}
-						</aside>
-						{editingNode && (
-							<NodeConfigPanel
-								open={Boolean(editingNode)}
-								node={editingNode}
-								onCancel={closeNodeConfig}
-								onSave={saveNodeConfig}
+					) : (
+						<>
+							<ComponentPalette
+								components={registeredComponents}
+								onDragStart={onDragStart}
 							/>
-						)}
-					</>
+							<div
+								className="canvas-wrapper"
+								ref={wrapperRef}
+								style={{ flex: 1, height: "100%", position: "relative" }}
+							>
+								<FlowEditor
+									nodeTypes={nodeTypes}
+									flattenNodes={flattenNodes}
+									flattenEdges={flattenEdges}
+									onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
+										setNodes(Object.values(nextNodes) as PipelineFlowNode[])
+									}
+									onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
+										setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
+									}
+									contextMenuEnabled={false}
+									flowProps={{
+										onDrop,
+										onDragOver,
+										onNodeClick,
+										onNodeContextMenu,
+										onPaneClick,
+										onPaneContextMenu,
+									}}
+								/>
+								{contextMenu.open && (
+									<div
+										className="pipeline-context-menu"
+										style={{
+											left: contextMenu.x,
+											top: contextMenu.y,
+										}}
+									>
+										<Menu
+											selectable={false}
+											onClick={handleContextMenuClick}
+											items={
+												contextMenu.node
+													? [
+															{ key: "configure", label: "配置节点" },
+															{ key: "copy", label: "复制节点" },
+															{ type: "divider" },
+															{
+																key: "delete",
+																label: "删除节点",
+																danger: true,
+															},
+														]
+													: [
+															{ key: "paste", label: "粘贴" },
+															{ key: "selectAll", label: "选择全部" },
+															{ type: "divider" },
+															{ key: "zoomIn", label: "放大" },
+															{ key: "zoomOut", label: "缩小" },
+															{ key: "fitView", label: "适应画布" },
+														]
+											}
+										/>
+									</div>
+								)}
+							</div>
+							<aside className="config-panel">
+								{selectedNode ? (
+									<>
+										<div className="config-panel-header">
+											<div className="config-panel-header__info">
+												<span className="config-panel-label">
+													{selectedNode.data?.label || selectedNode.id}
+												</span>
+												<span className="config-panel-type">
+													{selectedNode.data?.image || "未设置镜像"}
+												</span>
+											</div>
+											<Button
+												size="small"
+												type="primary"
+												onClick={() => setEditingNodeId(selectedNode.id)}
+											>
+												配置节点
+											</Button>
+										</div>
+										<div className="config-content">
+											<div className="config-section-title">关联资产</div>
+											{selectedNodeAssetLoading ? (
+												<div
+													style={{
+														fontSize: 12,
+														color: "#64748b",
+													}}
+												>
+													{selectedNodeAssetId
+														? "正在加载关联资产..."
+														: "未关联资产"}
+												</div>
+											) : selectedNodeAssetError ? (
+												<div
+													style={{
+														fontSize: 12,
+														color: "#dc2626",
+													}}
+												>
+													{selectedNodeAssetError}
+												</div>
+											) : selectedNodeAssetInfo ? (
+												<div
+													style={{
+														display: "grid",
+														gap: 6,
+													}}
+												>
+													<div className="config-field">
+														<span
+															style={{
+																fontSize: 10,
+																color: "var(--color-text-secondary, #64748b)",
+																textTransform: "uppercase",
+																letterSpacing: "0.8px",
+															}}
+														>
+															名称
+														</span>
+														<Typography.Text>
+															{selectedNodeAssetInfo.name}
+														</Typography.Text>
+													</div>
+													<div className="config-field">
+														<span
+															style={{
+																fontSize: 10,
+																color: "var(--color-text-secondary, #64748b)",
+																textTransform: "uppercase",
+																letterSpacing: "0.8px",
+															}}
+														>
+															类型
+														</span>
+														<Typography.Text>
+															{selectedNodeAssetInfo.type}
+														</Typography.Text>
+													</div>
+													<div className="config-field">
+														<span
+															style={{
+																fontSize: 10,
+																color: "var(--color-text-secondary, #64748b)",
+																textTransform: "uppercase",
+																letterSpacing: "0.8px",
+															}}
+														>
+															大小
+														</span>
+														<Typography.Text>
+															{selectedNodeAssetInfo.size}
+														</Typography.Text>
+													</div>
+												</div>
+											) : (
+												<div
+													style={{
+														fontSize: 12,
+														color: "#64748b",
+													}}
+												>
+													未选择关联资产
+												</div>
+											)}
+										</div>
+									</>
+								) : (
+									<div className="config-empty">
+										<div className="config-empty__title">节点配置</div>
+										<p>选中画布上的节点后，可在此查看关联资产并打开配置面板。</p>
+										<p className="config-empty__hint">
+											也可双击节点，或右键选择「配置节点」。
+										</p>
+									</div>
+								)}
+							</aside>
+							{editingNode && (
+								<NodeConfigPanel
+									open={Boolean(editingNode)}
+									node={editingNode}
+									onCancel={closeNodeConfig}
+									onSave={saveNodeConfig}
+								/>
+							)}
+						</>
+					)
 				) : (
 					<div
 						style={{
@@ -1215,6 +1253,12 @@ function PipelineCanvas() {
 			>
 				{!deployDialog.deploying && !deployDialog.done && deployDialog.mode === "edit" && (
 					<>
+						<Typography.Text
+							type="secondary"
+							style={{ fontSize: 12, display: "block", marginBottom: 4 }}
+						>
+							当前模板：{currentTemplateLabel}
+						</Typography.Text>
 						<Typography.Paragraph
 							type="secondary"
 							style={{ fontSize: 12, marginBottom: 16 }}
@@ -1323,6 +1367,12 @@ function PipelineCanvas() {
 				)}
 				{!deployDialog.deploying && !deployDialog.done && deployDialog.mode === "preview" && (
 					<>
+						<Typography.Text
+							type="secondary"
+							style={{ fontSize: 12, display: "block", marginBottom: 4 }}
+						>
+							当前模板：{currentTemplateLabel}
+						</Typography.Text>
 						<Typography.Paragraph
 							type="secondary"
 							style={{ fontSize: 12, marginBottom: 12 }}
@@ -1417,6 +1467,10 @@ function PipelineCanvas() {
 							</>
 						) : deployDialog.result ? (
 							<>
+								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+									当前模板：{currentTemplateLabel}
+								</Typography.Text>
+								<br />
 								<Typography.Text type="success" strong>
 									部署成功
 								</Typography.Text>

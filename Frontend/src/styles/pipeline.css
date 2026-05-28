@@ -102,6 +102,14 @@
 	position: relative;
 }
 
+.pipeline-body--template-list {
+	padding: 16px;
+}
+
+.pipeline-body--template-list .deploy-panel {
+	max-width: none;
+}
+
 /* ── Palette ─────────────────────────────────────── */
 
 .palette {
