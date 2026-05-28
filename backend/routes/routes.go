@@ -178,6 +178,7 @@ func RegisterAll(
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)
+		api.GET("/events/stream", assetHandler.HandleGlobalEventsStream)
 
 		// Audit / discovery layer (CYB-1097/1098)
 		if auditHandler != nil {

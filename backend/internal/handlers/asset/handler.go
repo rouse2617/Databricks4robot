@@ -1162,6 +1162,79 @@ func (h *Handler) HandleEventsStream(c *gin.Context) {
 	})
 }
 
+// HandleGlobalEventsStream streams global asset events as Server-Sent Events (CYB-1099).
+// Supports Last-Event-ID header for reconnection — the client sends the last
+// event_seq it received and the server replays from that point onward.
+//
+// @Summary      Stream global asset events (SSE)
+// @Description  SSE endpoint that polls asset_events for new rows across all assets.
+//
+//	Supports Last-Event-ID for reconnection (value must be an event_seq integer).
+//
+// @Tags         assets
+// @Produce      text/event-stream
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /events/stream [get]
+func (h *Handler) HandleGlobalEventsStream(c *gin.Context) {
+	lastEventIDStr := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	var afterSeq *int64
+	if lastEventIDStr != "" {
+		v, err := strconv.ParseInt(lastEventIDStr, 10, 64)
+		if err != nil || v < 0 {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid Last-Event-ID", map[string]any{
+				"error": "Last-Event-ID must be a non-negative event_seq integer",
+			})
+			return
+		}
+		afterSeq = &v
+	}
+
+	// SSE headers.
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	c.Stream(func(w io.Writer) bool {
+		events := h.pollGlobalAssetEvents(c.Request.Context(), afterSeq)
+		if events == nil {
+			// Context cancelled or query failed — stop streaming.
+			return false
+		}
+
+		for _, ev := range events {
+			payloadJSON, _ := json.Marshal(ev.Payload)
+			if payloadJSON == nil {
+				payloadJSON = []byte("{}")
+			}
+
+			// SSE format: "id: <event_seq>\nevent: <event_type>\ndata: <json>\n\n"
+			line := fmt.Sprintf("id: %d\nevent: %s\ndata: {\"event_id\":%q,\"event_seq\":%d,\"event_type\":%q,\"asset_id\":%q,\"event_payload\":%s,\"occurred_at\":%q}\n\n",
+				ev.EventSeq, ev.EventType,
+				ev.EventID, ev.EventSeq, ev.EventType, ev.AssetID,
+				string(payloadJSON),
+				ev.OccurredAt.Format(time.RFC3339Nano),
+			)
+
+			if _, err := io.WriteString(w, line); err != nil {
+				return false
+			}
+
+			afterSeq = &ev.EventSeq
+		}
+
+		// Send keepalive comment every poll cycle.
+		if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+			return false
+		}
+
+		return true
+	})
+}
+
 // pollAssetEvents queries asset_events for rows with event_seq > afterSeq
 // belonging to the given asset. Returns nil when the context is cancelled or
 // the query fails.
@@ -1225,6 +1298,82 @@ LIMIT 50`
 	}
 	if err := rows.Err(); err != nil {
 		slog.ErrorContext(ctx, "pollAssetEvents: rows iteration failed",
+			"err", err,
+		)
+		return []sseEvent{}
+	}
+
+	// If no new events, sleep before polling again.
+	if len(events) == 0 {
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+	}
+
+	return events
+}
+
+// pollGlobalAssetEvents queries asset_events for rows with event_seq > afterSeq
+// across all assets. Returns nil when the context is cancelled or the query fails.
+func (h *Handler) pollGlobalAssetEvents(ctx context.Context, afterSeq *int64) []sseEvent {
+	if h.pgq == nil {
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+		return []sseEvent{}
+	}
+
+	where := "TRUE"
+	args := []interface{}{}
+	if afterSeq != nil {
+		args = append(args, *afterSeq)
+		where = fmt.Sprintf("event_seq > $%d", len(args))
+	}
+
+	q := `SELECT event_id, event_seq, event_type,
+  COALESCE(asset_id::text, ''),
+  event_payload,
+  occurred_at
+FROM asset_events
+WHERE ` + where + `
+ORDER BY event_seq ASC
+LIMIT 50`
+
+	rows, err := h.pgq.Query(ctx, q, args...)
+	if err != nil {
+		// If context cancelled, return nil to signal stop.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
+		// On transient error, sleep and return empty (don't kill the stream).
+		slog.ErrorContext(ctx, "pollGlobalAssetEvents: query failed",
+			"err", err,
+		)
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+		return []sseEvent{}
+	}
+	defer rows.Close()
+
+	var events []sseEvent
+	for rows.Next() {
+		var ev sseEvent
+		if err := rows.Scan(
+			&ev.EventID, &ev.EventSeq, &ev.EventType,
+			&ev.AssetID,
+			&ev.Payload,
+			&ev.OccurredAt,
+		); err != nil {
+			slog.ErrorContext(ctx, "pollGlobalAssetEvents: scan failed",
+				"err", err,
+			)
+			return []sseEvent{}
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		slog.ErrorContext(ctx, "pollGlobalAssetEvents: rows iteration failed",
 			"err", err,
 		)
 		return []sseEvent{}
