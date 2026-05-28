@@ -43,14 +43,14 @@ func cloneDoc(in map[string]any) map[string]any {
 func TestSearchAssets_LineageDownstreamDepthTwo(t *testing.T) {
 	repo := &fakeESRepo{docs: map[string]map[string]any{
 		"a": {
-			"asset_id":                 "a",
-			"lineage_downstream_ids":   []any{"b"},
-			"lineage_relation_types":   []any{"derived_from"},
+			"asset_id":               "a",
+			"lineage_downstream_ids": []any{"b"},
+			"lineage_relation_types": []any{"derived_from"},
 		},
 		"b": {
-			"asset_id":                 "b",
-			"lineage_downstream_ids":   []any{"c"},
-			"lineage_relation_types":   []any{"derived_from"},
+			"asset_id":               "b",
+			"lineage_downstream_ids": []any{"c"},
+			"lineage_relation_types": []any{"derived_from"},
 		},
 		"c": {
 			"asset_id":               "c",

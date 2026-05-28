@@ -60,6 +60,7 @@ ENDPOINTS: dict[str, str] = {
     "algo_run_cancel": "/api/v1/algo-runs/{run_id}/cancel",
     "algo_run_affected_assets": "/api/v1/algo-runs/{run_id}/affected-assets",
     # ── Search ────────────────────────────────────────────────────────
+    "search_assets": "/api/v1/search/assets",
     "search_sync_status": "/api/v1/search/sync-status",
     "search_sync_progress": "/api/v1/search/sync-progress",
     # ── Queries ───────────────────────────────────────────────────────

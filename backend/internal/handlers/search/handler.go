@@ -39,14 +39,18 @@ func New(esClient *elasticsearch.Client, sync func() SyncInfo, progress func(con
 //
 // Query parameters:
 //
-//	q          — free-text query (multi_match over notes/owner.text/reviewer.text/asset_id)
-//	filter     — repeated, format "field:op:value" where op is one of
-//	             eq | ne | gt | gte | lt | lte | between.
-//	             "between" expects value="lower,upper" (e.g. "9000,11000").
-//	             Field routing is handled by the ES client; nested paths
-//	             tags.<key> and algos.<name>[.<attr>] are auto-detected.
-//	page       — 1-based page number (default 1)
-//	page_size  — results per page (default 20, max 200)
+//	q               — free-text query (multi_match over notes/owner.text/reviewer.text/asset_id)
+//	filter          — repeated, format "field:op:value" where op is one of
+//	                  eq | ne | gt | gte | lt | lte | between.
+//	                  "between" expects value="lower,upper" (e.g. "9000,11000").
+//	                  Field routing is handled by the ES client; nested paths
+//	                  tags.<key> and algos.<name>[.<attr>] are auto-detected.
+//	lineage_with    — asset_id to find related assets; when set enables lineage filter
+//	lineage_direction — "upstream", "downstream", or "both" (default "both")
+//	lineage_depth   — max recursion depth (default 1, max 3)
+//	relation_types  — filter by relation type (comma-separated, e.g. "derived_from,contains")
+//	page            — 1-based page number (default 1)
+//	page_size       — results per page (default 20, max 200)
 func (h *Handler) SearchAssets(c *gin.Context) {
 	if h.es == nil {
 		httpresp.Error(c, http.StatusServiceUnavailable,
@@ -172,12 +176,12 @@ func (h *Handler) SearchAssets(c *gin.Context) {
 }
 
 var supportedRelationTypes = map[string]struct{}{
-	"split_from":   {},
-	"contains":     {},
-	"derived_from": {},
-	"merged_from":  {},
-	"sampled_from": {},
-	"revision_of":  {},
+	"split_from":      {},
+	"contains":        {},
+	"derived_from":    {},
+	"merged_from":     {},
+	"sampled_from":    {},
+	"revision_of":     {},
 	"pipeline_output": {},
 }
 

@@ -259,6 +259,22 @@ class TestSearchManager:
         )
         assert client.search.get_sync_status()["status"] == "ok"
 
+    def test_assets_with_lineage_filter(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/search/assets").mock(
+            return_value=httpx.Response(200, json={"items": [], "total": 0})
+        )
+        client.search.assets(
+            lineage_with="asset-root",
+            lineage_direction="downstream",
+            lineage_depth=2,
+            relation_types=["derived_from", "pipeline_output"],
+        )
+        params = dict(route.calls.last.request.url.params)
+        assert params["lineage_with"] == "asset-root"
+        assert params["lineage_direction"] == "downstream"
+        assert params["lineage_depth"] == "2"
+        assert params["relation_types"] == "derived_from,pipeline_output"
+
     def test_get_sync_progress(self, client):
         respx.get(f"{BASE_URL}/api/v1/search/sync-progress").mock(
             return_value=httpx.Response(200, json={"progress": 0.5})
