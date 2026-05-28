@@ -2368,12 +2368,14 @@ curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
 curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>" \
   -H "X-Databrew-Token: $TOKEN"
 
-# 重试 / 重新提交 / 暂停 / 恢复 / 终止
+# 重试 / 重新提交 / 暂停 / 停止 / 恢复 / 终止
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/retry" \
   -H "X-Databrew-Token: $TOKEN"
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resubmit" \
   -H "X-Databrew-Token: $TOKEN"
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/suspend" \
+  -H "X-Databrew-Token: $TOKEN"
+curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/stop" \
   -H "X-Databrew-Token: $TOKEN"
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resume" \
   -H "X-Databrew-Token: $TOKEN"

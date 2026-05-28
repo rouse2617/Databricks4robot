@@ -32,7 +32,9 @@ func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) erro
 	m.operation = "delete"
 	return nil
 }
-func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
+func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, namespace string) error {
+	m.operation = "stop"
+	m.namespace = namespace
 	return nil
 }
 func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, namespace string) error {
@@ -115,6 +117,7 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.POST("/workflows/:name/retry", h.RetryWorkflow)
 	r.POST("/workflows/:name/resubmit", h.ResubmitWorkflow)
 	r.POST("/workflows/:name/suspend", h.SuspendWorkflow)
+	r.POST("/workflows/:name/stop", h.StopWorkflow)
 	r.POST("/workflows/:name/resume", h.ResumeWorkflow)
 	r.POST("/workflows/:name/terminate", h.TerminateWorkflow)
 	r.DELETE("/workflows/:name", h.DeleteWorkflow)
@@ -310,6 +313,7 @@ func TestWorkflowOperations(t *testing.T) {
 		{http.MethodPost, "/workflows/test-wf/retry", "retry"},
 		{http.MethodPost, "/workflows/test-wf/resubmit", "resubmit"},
 		{http.MethodPost, "/workflows/test-wf/suspend", "suspend"},
+		{http.MethodPost, "/workflows/test-wf/stop", "stop"},
 		{http.MethodPost, "/workflows/test-wf/resume", "resume"},
 		{http.MethodPost, "/workflows/test-wf/terminate", "terminate"},
 		{http.MethodDelete, "/workflows/test-wf", "delete"},

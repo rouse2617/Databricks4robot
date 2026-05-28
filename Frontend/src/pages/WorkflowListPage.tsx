@@ -1,47 +1,32 @@
+import { MoreOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
-	CheckCircleOutlined,
-	ClockCircleOutlined,
-	CloseCircleOutlined,
-	ExclamationCircleOutlined,
-	LoadingOutlined,
-	ReloadOutlined,
-} from "@ant-design/icons";
-import { Button, Card, Input, Select, Table, Tag } from "antd";
+	Button,
+	Card,
+	Dropdown,
+	Input,
+	Modal,
+	message,
+	Select,
+	Table,
+	Tag,
+} from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { listWorkflows, type WorkflowSummary } from "../api/workflowApi";
-
-const WORKFLOW_STATUSES = [
-	"Running",
-	"Succeeded",
-	"Failed",
-	"Error",
-	"Pending",
-] as const;
-
-const STATUS_COLORS: Record<string, string> = {
-	Succeeded: "success",
-	Running: "processing",
-	Pending: "warning",
-	Failed: "error",
-	Error: "error",
-};
-
-const STATUS_ACCENT_COLORS: Record<string, string> = {
-	Succeeded: "#52c41a",
-	Running: "#1677ff",
-	Pending: "#faad14",
-	Failed: "#ff4d4f",
-	Error: "#cf1322",
-};
-
-const STATUS_ICONS: Record<string, React.ReactNode> = {
-	Succeeded: <CheckCircleOutlined />,
-	Running: <LoadingOutlined />,
-	Pending: <ClockCircleOutlined />,
-	Failed: <CloseCircleOutlined />,
-	Error: <ExclamationCircleOutlined />,
-};
+import { DurationPanel } from "../components/common/DurationPanel";
+import { WorkflowLabels } from "../components/common/WorkflowLabels";
+import {
+	STATUS_ACCENT_COLORS,
+	STATUS_COLORS,
+	STATUS_ICONS,
+	WORKFLOW_PHASES,
+} from "../lib/constants";
+import {
+	getAvailableWorkflowOperationConfigs,
+	getWorkflowOperationMenuItems,
+	type WorkflowOperationConfig,
+	type WorkflowOperationKey,
+} from "../lib/workflow-operations";
 
 export default function WorkflowListPage() {
 	const [items, setItems] = useState<WorkflowSummary[]>([]);
@@ -49,6 +34,7 @@ export default function WorkflowListPage() {
 	const [statusFilter, setStatusFilter] = useState<string | undefined>();
 	const [nameSearch, setNameSearch] = useState("");
 	const [debouncedNameSearch, setDebouncedNameSearch] = useState("");
+	const [operationLoading, setOperationLoading] = useState<string | null>(null);
 	const navigate = useNavigate();
 
 	const refresh = useCallback(async () => {
@@ -77,17 +63,60 @@ export default function WorkflowListPage() {
 
 	const statusCounts = useMemo(() => {
 		const counts = Object.fromEntries(
-			WORKFLOW_STATUSES.map((status) => [status, 0]),
-		) as Record<(typeof WORKFLOW_STATUSES)[number], number>;
+			WORKFLOW_PHASES.map((status) => [status, 0]),
+		) as Record<(typeof WORKFLOW_PHASES)[number], number>;
 
 		for (const item of items) {
 			if (item.status in counts) {
-				counts[item.status as (typeof WORKFLOW_STATUSES)[number]] += 1;
+				counts[item.status as (typeof WORKFLOW_PHASES)[number]] += 1;
 			}
 		}
 
 		return counts;
 	}, [items]);
+
+	const executeOperation = useCallback(
+		async (
+			record: WorkflowSummary,
+			operation: WorkflowOperationConfig,
+		): Promise<void> => {
+			const loadingKey = `${record.name}:${operation.key}`;
+			setOperationLoading(loadingKey);
+			try {
+				await operation.run();
+				message.success(`${operation.title}已提交`);
+				await refresh();
+			} catch (err) {
+				message.error(`${operation.title}失败: ${String(err)}`);
+			} finally {
+				setOperationLoading(null);
+			}
+		},
+		[refresh],
+	);
+
+	const runOperation = useCallback(
+		(record: WorkflowSummary, key: WorkflowOperationKey) => {
+			const operation = getAvailableWorkflowOperationConfigs(record).find(
+				(item) => item.key === key,
+			);
+			if (!operation) return;
+
+			if (operation.key === "delete" || operation.key === "terminate") {
+				Modal.confirm({
+					title: `确认${operation.title} ${record.name}?`,
+					okText: operation.title,
+					okButtonProps: { danger: operation.danger },
+					cancelText: "取消",
+					onOk: () => executeOperation(record, operation),
+				});
+				return;
+			}
+
+			executeOperation(record, operation);
+		},
+		[executeOperation],
+	);
 
 	const filtered = useMemo(
 		() =>
@@ -127,6 +156,27 @@ export default function WorkflowListPage() {
 			width: 100,
 		},
 		{
+			title: "标签",
+			dataIndex: "labels",
+			key: "labels",
+			width: 260,
+			render: (labels?: Record<string, string>) => (
+				<WorkflowLabels labels={labels} />
+			),
+		},
+		{
+			title: "耗时",
+			key: "duration",
+			width: 140,
+			render: (_: unknown, record: WorkflowSummary) => (
+				<DurationPanel
+					phase={record.status}
+					startedAt={record.createdAt}
+					finishedAt={record.finishedAt}
+				/>
+			),
+		},
+		{
 			title: "创建时间",
 			dataIndex: "createdAt",
 			key: "createdAt",
@@ -143,19 +193,46 @@ export default function WorkflowListPage() {
 		{
 			title: "操作",
 			key: "actions",
-			width: 100,
-			render: (_: unknown, record: WorkflowSummary) => (
-				<Button
-					type="link"
-					size="small"
-					onClick={(e) => {
-						e.stopPropagation();
-						navigate(`/workflows/${record.name}`);
-					}}
-				>
-					查看
-				</Button>
-			),
+			width: 150,
+			render: (_: unknown, record: WorkflowSummary) => {
+				const menuItems = getWorkflowOperationMenuItems(record);
+				const hasOperationLoading = operationLoading?.startsWith(
+					`${record.name}:`,
+				);
+
+				return (
+					<div style={{ display: "flex", gap: 4 }}>
+						<Button
+							type="link"
+							size="small"
+							onClick={(event) => {
+								event.stopPropagation();
+								navigate(`/workflows/${record.name}`);
+							}}
+						>
+							查看
+						</Button>
+						<Dropdown
+							menu={{
+								items: menuItems,
+								onClick: ({ key }) =>
+									runOperation(record, key as WorkflowOperationKey),
+							}}
+							trigger={["click"]}
+							disabled={menuItems.length === 0}
+						>
+							<Button
+								size="small"
+								icon={<MoreOutlined />}
+								loading={hasOperationLoading}
+								onClick={(event) => event.stopPropagation()}
+							>
+								操作
+							</Button>
+						</Dropdown>
+					</div>
+				);
+			},
 		},
 	];
 
@@ -182,7 +259,7 @@ export default function WorkflowListPage() {
 					marginBottom: 16,
 				}}
 			>
-				{WORKFLOW_STATUSES.map((status) => {
+				{WORKFLOW_PHASES.map((status) => {
 					const accentColor = STATUS_ACCENT_COLORS[status];
 
 					return (
@@ -227,7 +304,7 @@ export default function WorkflowListPage() {
 					style={{ width: 140 }}
 					value={statusFilter}
 					onChange={(val) => setStatusFilter(val)}
-					options={WORKFLOW_STATUSES.map((status) => ({
+					options={WORKFLOW_PHASES.map((status) => ({
 						label: status,
 						value: status,
 					}))}

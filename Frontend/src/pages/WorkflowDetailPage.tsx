@@ -17,11 +17,14 @@ import {
 import {
 	Button,
 	Descriptions,
+	Modal,
 	message,
 	Segmented,
+	Space,
 	Spin,
 	Tabs,
 	Tag,
+	Tooltip,
 } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -32,23 +35,15 @@ import {
 	type WorkflowDetail,
 	type WorkflowNodeStatus,
 } from "../api/workflowApi";
-
-const PHASE_COLORS: Record<string, string> = {
-	Succeeded: "#16a34a",
-	Running: "#2563eb",
-	Pending: "#d97706",
-	Failed: "#dc2626",
-	Error: "#dc2626",
-	Skipped: "#6b7280",
-};
-
-const STATUS_COLORS: Record<string, string> = {
-	Succeeded: "success",
-	Running: "processing",
-	Pending: "warning",
-	Failed: "error",
-	Error: "error",
-};
+import { DurationPanel } from "../components/common/DurationPanel";
+import { LinkifiedText } from "../components/common/LinkifiedText";
+import { WorkflowLabels } from "../components/common/WorkflowLabels";
+import { PHASE_COLORS, STATUS_COLORS } from "../lib/constants";
+import {
+	getWorkflowOperationConfigs,
+	type WorkflowOperationConfig,
+	type WorkflowOperationKey,
+} from "../lib/workflow-operations";
 
 function buildFlowNodes(
 	nodes: WorkflowNodeStatus[],
@@ -337,8 +332,10 @@ export default function WorkflowDetailPage() {
 	const [viewMode, setViewMode] = useState<"dag" | "timeline">("dag");
 	const [logLoading, setLogLoading] = useState(false);
 	const [logContent, setLogContent] = useState<string | null>(null);
+	const [operationLoading, setOperationLoading] =
+		useState<WorkflowOperationKey | null>(null);
 
-	useEffect(() => {
+	const loadWorkflow = useCallback(() => {
 		if (!name) return;
 		setLoading(true);
 		getWorkflow(name)
@@ -346,6 +343,48 @@ export default function WorkflowDetailPage() {
 			.catch(console.error)
 			.finally(() => setLoading(false));
 	}, [name]);
+
+	useEffect(() => {
+		loadWorkflow();
+	}, [loadWorkflow]);
+
+	const executeOperation = useCallback(
+		async (operation: WorkflowOperationConfig) => {
+			if (!wf || operation.disabled) return;
+			setOperationLoading(operation.key);
+			try {
+				await operation.run();
+				message.success(`${operation.title}已提交`);
+				if (operation.key === "delete") {
+					navigate("/workflows");
+					return;
+				}
+				loadWorkflow();
+			} catch (err) {
+				message.error(`${operation.title}失败: ${String(err)}`);
+			} finally {
+				setOperationLoading(null);
+			}
+		},
+		[loadWorkflow, navigate, wf],
+	);
+
+	const runOperation = useCallback(
+		(operation: WorkflowOperationConfig) => {
+			if (operation.key === "delete" || operation.key === "terminate") {
+				Modal.confirm({
+					title: `确认${operation.title} ${wf?.name}?`,
+					okText: operation.title,
+					okButtonProps: { danger: operation.danger },
+					cancelText: "取消",
+					onOk: () => executeOperation(operation),
+				});
+				return;
+			}
+			executeOperation(operation);
+		},
+		[executeOperation, wf?.name],
+	);
 
 	if (loading) {
 		return (
@@ -364,6 +403,8 @@ export default function WorkflowDetailPage() {
 	if (!wf) {
 		return <div style={{ padding: 24 }}>未找到工作流</div>;
 	}
+
+	const operations = getWorkflowOperationConfigs(wf);
 
 	return (
 		<div
@@ -394,8 +435,41 @@ export default function WorkflowDetailPage() {
 					创建: {new Date(wf.createdAt).toLocaleString()}
 					{wf.finishedAt &&
 						` | 完成: ${new Date(wf.finishedAt).toLocaleString()}`}
+					{" | 耗时: "}
+					<DurationPanel
+						phase={wf.status}
+						startedAt={wf.createdAt}
+						finishedAt={wf.finishedAt}
+						progress={wf.progress}
+					/>
 				</span>
-				<div style={{ marginLeft: "auto" }}>
+				<div
+					style={{
+						marginLeft: "auto",
+						display: "flex",
+						alignItems: "center",
+						gap: 8,
+					}}
+				>
+					<Space size={4} wrap>
+						{operations.map((operation) => (
+							<Tooltip
+								key={operation.key}
+								title={operation.disabled ? "当前状态不可用" : operation.title}
+							>
+								<Button
+									size="small"
+									icon={operation.icon}
+									danger={operation.danger}
+									disabled={operation.disabled}
+									loading={operationLoading === operation.key}
+									onClick={() => runOperation(operation)}
+								>
+									{operation.title}
+								</Button>
+							</Tooltip>
+						))}
+					</Space>
 					<Segmented
 						value={viewMode}
 						onChange={(val) => setViewMode(val as "dag" | "timeline")}
@@ -462,9 +536,16 @@ export default function WorkflowDetailPage() {
 											</Descriptions.Item>
 											{selectedNode.message && (
 												<Descriptions.Item label="消息">
-													{selectedNode.message}
+													<LinkifiedText text={selectedNode.message} />
 												</Descriptions.Item>
 											)}
+											<Descriptions.Item label="耗时">
+												<DurationPanel
+													phase={selectedNode.phase}
+													startedAt={selectedNode.startedAt}
+													finishedAt={selectedNode.finishedAt}
+												/>
+											</Descriptions.Item>
 											{selectedNode.startedAt && (
 												<Descriptions.Item label="开始时间">
 													{new Date(selectedNode.startedAt).toLocaleString()}
@@ -475,6 +556,9 @@ export default function WorkflowDetailPage() {
 													{new Date(selectedNode.finishedAt).toLocaleString()}
 												</Descriptions.Item>
 											)}
+											<Descriptions.Item label="标签">
+												<WorkflowLabels labels={wf.labels} />
+											</Descriptions.Item>
 										</Descriptions>
 									),
 								},
