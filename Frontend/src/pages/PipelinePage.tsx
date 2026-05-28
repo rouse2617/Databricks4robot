@@ -74,6 +74,28 @@ const nodeTypes: NodeTypes = { pipelineStep: PipelineStepNode };
 
 const STORAGE_KEY = "databrew-components";
 
+function dedupeComponentsByName(comps: RegisteredComponent[]): RegisteredComponent[] {
+	const seen = new Set<string>();
+	return comps.filter((c) => {
+		const key = c.name.trim().toLowerCase();
+		if (!key || seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+}
+
+function imageHasTag(image: string): boolean {
+	if (image.includes("@")) return true;
+	const lastSlash = image.lastIndexOf("/");
+	const lastColon = image.lastIndexOf(":");
+	return lastColon > lastSlash && lastColon < image.length - 1;
+}
+
+function formatImage(image: string, tag?: string): string {
+	if (!tag || imageHasTag(image)) return image;
+	return `${image}:${tag}`;
+}
+
 function loadComponents(): RegisteredComponent[] {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
@@ -94,7 +116,7 @@ function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 	return {
 		id: api.id,
 		name: api.name,
-		image: api.tag ? `${api.image}:${api.tag}` : api.image,
+		image: formatImage(api.image, api.tag),
 		command: (resources.command as string[]) ?? ["sh", "-c"],
 		args:
 			(resources.args as { name: string; value?: string; from?: string }[]) ??
@@ -192,7 +214,9 @@ function PipelineCanvas() {
 	useEffect(() => {
 		listComponents()
 			.then((res) => {
-				const mapped = (res.items ?? []).map(apiToRegistered);
+				const mapped = dedupeComponentsByName(
+				(res.items ?? []).map(apiToRegistered),
+			);
 				if (mapped.length > 0) {
 					setRegisteredComponents(mapped);
 					saveComponents(mapped);
