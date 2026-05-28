@@ -2,6 +2,8 @@ import { MoreOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
 	Button,
 	Card,
+	Checkbox,
+	DatePicker,
 	Dropdown,
 	Input,
 	Modal,
@@ -10,9 +12,14 @@ import {
 	Table,
 	Tag,
 } from "antd";
+import dayjs, { type Dayjs } from "dayjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { listWorkflows, type WorkflowSummary } from "../api/workflowApi";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+	type ListWorkflowsParams,
+	listWorkflows,
+	type WorkflowSummary,
+} from "../api/workflowApi";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { WorkflowLabels } from "../components/common/WorkflowLabels";
 import {
@@ -28,30 +35,137 @@ import {
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
 
+const { RangePicker } = DatePicker;
+
+const LABEL_SEPARATOR = "=";
+
+const parseDate = (value: string | null): Dayjs | null => {
+	if (!value) return null;
+	const parsed = dayjs(value);
+	return parsed.isValid() ? parsed : null;
+};
+
+const serializeLabel = (key: string, value: string): string =>
+	`${key}${LABEL_SEPARATOR}${value}`;
+
+const datesEqual = (a: Dayjs | null, b: Dayjs | null): boolean => {
+	if (!a && !b) return true;
+	if (!a || !b) return false;
+	return a.isSame(b);
+};
+
+const arraysEqual = (a: string[], b: string[]): boolean => {
+	if (a.length !== b.length) return false;
+	return a.every((value, idx) => value === b[idx]);
+};
+
+const normalizeStatus = (value: string | null): string | undefined => {
+	const trimmed = value?.trim();
+	if (!trimmed) return undefined;
+	return WORKFLOW_PHASES.includes(trimmed as (typeof WORKFLOW_PHASES)[number])
+		? trimmed
+		: undefined;
+};
+
 export default function WorkflowListPage() {
+	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<WorkflowSummary[]>([]);
 	const [loading, setLoading] = useState(false);
-	const [statusFilter, setStatusFilter] = useState<string | undefined>();
-	const [nameSearch, setNameSearch] = useState("");
-	const [debouncedNameSearch, setDebouncedNameSearch] = useState("");
+	const [statusFilter, setStatusFilter] = useState<string | undefined>(
+		normalizeStatus(searchParams.get("status")),
+	);
+	const [nameSearch, setNameSearch] = useState(
+		searchParams.get("name")?.trim() ?? "",
+	);
+	const [debouncedNameSearch, setDebouncedNameSearch] = useState(
+		searchParams.get("name")?.trim().toLowerCase() ?? "",
+	);
+	const [labelFilter, setLabelFilter] = useState<string[]>(() => {
+		const labels = searchParams.getAll("label");
+		return Array.from(
+			new Set(labels.map((label) => label.trim()).filter(Boolean)),
+		);
+	});
+	const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([
+		parseDate(searchParams.get("createdAfter")),
+		parseDate(searchParams.get("finishedBefore")),
+	]);
 	const [operationLoading, setOperationLoading] = useState<string | null>(null);
 	const navigate = useNavigate();
+
+	useEffect(() => {
+		const nextStatus = normalizeStatus(searchParams.get("status"));
+		const nextName = searchParams.get("name")?.trim() ?? "";
+		const nextLabelFilter = Array.from(
+			new Set(
+				searchParams
+					.getAll("label")
+					.map((label) => label.trim())
+					.filter(Boolean),
+			),
+		);
+		const nextCreatedAfter = parseDate(searchParams.get("createdAfter"));
+		const nextFinishedBefore = parseDate(searchParams.get("finishedBefore"));
+
+		setStatusFilter((prev) => (prev === nextStatus ? prev : nextStatus));
+		setNameSearch((prev) => (prev === nextName ? prev : nextName));
+		setDebouncedNameSearch((prev) => {
+			const normalized = nextName.toLowerCase();
+			return prev === normalized ? prev : normalized;
+		});
+		setLabelFilter((prev) =>
+			arraysEqual(prev, nextLabelFilter) ? prev : nextLabelFilter,
+		);
+		setDateRange((prev) => {
+			if (
+				datesEqual(prev[0], nextCreatedAfter) &&
+				datesEqual(prev[1], nextFinishedBefore)
+			) {
+				return prev;
+			}
+			return [nextCreatedAfter, nextFinishedBefore];
+		});
+	}, [searchParams]);
+
+	useEffect(() => {
+		const next = new URLSearchParams();
+		if (statusFilter) next.set("status", statusFilter);
+		if (nameSearch) next.set("name", nameSearch.trim());
+		for (const label of labelFilter) {
+			if (label) next.append("label", label);
+		}
+		if (dateRange[0]) next.set("createdAfter", dateRange[0].toISOString());
+		if (dateRange[1]) next.set("finishedBefore", dateRange[1].toISOString());
+
+		if (next.toString() !== searchParams.toString()) {
+			setSearchParams(next, { replace: true });
+		}
+	}, [
+		dateRange,
+		labelFilter,
+		nameSearch,
+		searchParams,
+		setSearchParams,
+		statusFilter,
+	]);
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
 		try {
-			const res = await listWorkflows();
+			const params: ListWorkflowsParams = {
+				name: debouncedNameSearch || undefined,
+				label: labelFilter.length ? labelFilter : undefined,
+				createdAfter: dateRange[0]?.toISOString(),
+				finishedBefore: dateRange[1]?.toISOString(),
+			};
+			const res = await listWorkflows(params);
 			setItems(res.items || []);
 		} catch (err) {
 			console.error(err);
 		} finally {
 			setLoading(false);
 		}
-	}, []);
-
-	useEffect(() => {
-		refresh();
-	}, [refresh]);
+	}, [debouncedNameSearch, labelFilter, dateRange]);
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => {
@@ -60,6 +174,29 @@ export default function WorkflowListPage() {
 
 		return () => window.clearTimeout(timer);
 	}, [nameSearch]);
+
+	useEffect(() => {
+		refresh();
+	}, [refresh]);
+
+	const availableLabelOptions = useMemo(() => {
+		const labels = new Set<string>();
+		for (const item of items) {
+			for (const [key, value] of Object.entries(item.labels ?? {})) {
+				labels.add(serializeLabel(key, value));
+			}
+		}
+		return Array.from(labels).sort((a, b) => a.localeCompare(b));
+	}, [items]);
+
+	const labelCheckboxOptions = useMemo(
+		() =>
+			availableLabelOptions.map((label) => ({
+				label: <Tag>{label}</Tag>,
+				value: label,
+			})),
+		[availableLabelOptions],
+	);
 
 	const statusCounts = useMemo(() => {
 		const counts = Object.fromEntries(
@@ -74,6 +211,48 @@ export default function WorkflowListPage() {
 
 		return counts;
 	}, [items]);
+
+	const filtered = useMemo(
+		() =>
+			items.filter((item) => {
+				const matchesStatus = statusFilter
+					? item.status === statusFilter
+					: true;
+				const matchesName = debouncedNameSearch
+					? item.name.toLowerCase().includes(debouncedNameSearch)
+					: true;
+				const matchesLabel =
+					labelFilter.length === 0
+						? true
+						: labelFilter.every((selectedLabel) => {
+								const delimiter = selectedLabel.indexOf(LABEL_SEPARATOR);
+								if (delimiter <= 0) return false;
+								const selectedKey = selectedLabel.slice(0, delimiter);
+								const selectedValue = selectedLabel.slice(delimiter + 1);
+								return item.labels?.[selectedKey] === selectedValue;
+							});
+				const createdAt = dayjs(item.createdAt);
+				const matchesCreatedAfter = dateRange[0]
+					? createdAt.isValid() &&
+						(createdAt.isAfter(dateRange[0]) || createdAt.isSame(dateRange[0]))
+					: true;
+				const finishedAt = item.finishedAt ? dayjs(item.finishedAt) : null;
+				const matchesFinishedBefore = dateRange[1]
+					? finishedAt?.isValid() &&
+						(finishedAt.isBefore(dateRange[1]) ||
+							finishedAt.isSame(dateRange[1]))
+					: true;
+
+				return (
+					matchesStatus &&
+					matchesName &&
+					matchesLabel &&
+					matchesCreatedAfter &&
+					matchesFinishedBefore
+				);
+			}),
+		[debouncedNameSearch, dateRange, items, labelFilter, statusFilter],
+	);
 
 	const executeOperation = useCallback(
 		async (
@@ -116,21 +295,6 @@ export default function WorkflowListPage() {
 			executeOperation(record, operation);
 		},
 		[executeOperation],
-	);
-
-	const filtered = useMemo(
-		() =>
-			items.filter((item) => {
-				const matchesStatus = statusFilter
-					? item.status === statusFilter
-					: true;
-				const matchesName = debouncedNameSearch
-					? item.name.toLowerCase().includes(debouncedNameSearch)
-					: true;
-
-				return matchesStatus && matchesName;
-			}),
-		[debouncedNameSearch, items, statusFilter],
 	);
 
 	const columns = [
@@ -292,10 +456,10 @@ export default function WorkflowListPage() {
 			</div>
 			<div
 				style={{
-					marginBottom: 16,
 					display: "flex",
 					gap: 8,
 					flexWrap: "wrap",
+					marginBottom: 16,
 				}}
 			>
 				<Select
@@ -319,7 +483,32 @@ export default function WorkflowListPage() {
 						setDebouncedNameSearch(value.trim().toLowerCase())
 					}
 				/>
+				<RangePicker
+					value={dateRange}
+					placeholder={["创建开始时间", "完成截止时间"]}
+					onChange={(values) =>
+						setDateRange([values?.[0] ?? null, values?.[1] ?? null])
+					}
+					style={{ width: 320 }}
+				/>
 			</div>
+			<div
+				style={{
+					marginBottom: 16,
+					display: "flex",
+					alignItems: "center",
+					flexWrap: "wrap",
+					gap: 8,
+				}}
+			>
+				<span style={{ color: "rgba(0,0,0,0.65)" }}>标签筛选：</span>
+				<Checkbox.Group
+					options={labelCheckboxOptions}
+					value={labelFilter}
+					onChange={(values) => setLabelFilter(values as string[])}
+				/>
+			</div>
+
 			<Table
 				dataSource={filtered}
 				columns={columns}

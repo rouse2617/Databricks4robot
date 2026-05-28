@@ -9,6 +9,13 @@ export interface WorkflowSummary {
 	labels?: Record<string, string>;
 }
 
+export interface ListWorkflowsParams {
+	name?: string;
+	label?: string[];
+	createdAfter?: string;
+	finishedBefore?: string;
+}
+
 export interface WorkflowNodeStatus {
 	id: string;
 	name: string;
@@ -39,8 +46,21 @@ export interface WorkflowOperationResponse {
 	message: string;
 }
 
-export function listWorkflows(): Promise<{ items: WorkflowSummary[] }> {
-	return request("GET", "/workflows");
+export function listWorkflows(
+	params: ListWorkflowsParams = {},
+): Promise<{ items: WorkflowSummary[] }> {
+	const sp = new URLSearchParams();
+	if (params.name) sp.set("name", params.name);
+	if (params.label && params.label.length > 0) {
+		for (const label of params.label) {
+			sp.append("label", label);
+		}
+	}
+	if (params.createdAfter) sp.set("createdAfter", params.createdAfter);
+	if (params.finishedBefore) sp.set("finishedBefore", params.finishedBefore);
+
+	const query = sp.toString();
+	return request("GET", query ? `/workflows?${query}` : "/workflows");
 }
 
 export function getWorkflow(name: string): Promise<WorkflowDetail> {
