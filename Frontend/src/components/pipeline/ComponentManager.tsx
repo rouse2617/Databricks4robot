@@ -1,6 +1,6 @@
 import { PlusOutlined } from "@ant-design/icons";
-import { Alert, Button, Input, Typography } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { Alert, Button, Collapse, Input, Typography } from "antd";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RegisteredComponent } from "./types";
 
 const { Text } = Typography;
@@ -18,13 +18,38 @@ function blank(): RegisteredComponent {
 	return {
 		id: `c${Date.now()}`,
 		name: "",
+		type: "container",
+		source: "custom",
 		image: "",
 		command: ["sh", "-c"],
 		args: [],
+		env: [],
 		cpu: "",
 		memory: "",
 		disk: "",
 	};
+}
+
+function getTypeLabel(type: string): string {
+	switch (type) {
+		case "container":
+			return "Container";
+		case "script":
+			return "Script";
+		default:
+			return "自定义";
+	}
+}
+
+function getGroupOrder(typeLabel: string): number {
+	switch (typeLabel) {
+		case "Container":
+			return 0;
+		case "Script":
+			return 1;
+		default:
+			return 2;
+	}
 }
 
 export function ComponentManager({
@@ -39,6 +64,38 @@ export function ComponentManager({
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 	const [deleting, setDeleting] = useState(false);
+	const [queryText, setQueryText] = useState("");
+
+	const filtered = useMemo(() => {
+		const kw = queryText.trim().toLowerCase();
+		if (!kw) return components;
+		return components.filter((component) =>
+			component.name.toLowerCase().includes(kw),
+		);
+	}, [components, queryText]);
+
+	const groups = useMemo(() => {
+		const buckets = new Map<string, RegisteredComponent[]>();
+		for (const comp of filtered) {
+			const group = getTypeLabel(comp.type || "");
+			const arr = buckets.get(group);
+			if (arr) {
+				arr.push(comp);
+			} else {
+				buckets.set(group, [comp]);
+			}
+		}
+		return Array.from(buckets.entries())
+			.sort(
+				(a, b) =>
+					getGroupOrder(a[0]) - getGroupOrder(b[0]) || a[0].localeCompare(b[0]),
+			)
+			.map(([label, comps]) => ({
+				key: label,
+				label: `${label} (${comps.length})`,
+				comps,
+			}));
+	}, [filtered]);
 
 	useEffect(() => {
 		if (editing) {
@@ -110,28 +167,51 @@ export function ComponentManager({
 			</div>
 
 			<div className="cm-list">
-				{components.length === 0 && (
+				<div className="cm-search">
+					<Input.Search
+						allowClear
+						value={queryText}
+						onChange={(event) => setQueryText(event.target.value)}
+						placeholder="按名称搜索"
+						size="small"
+					/>
+				</div>
+
+				{filtered.length === 0 && (
 					<Text
 						type="secondary"
 						style={{ padding: 40, textAlign: "center", display: "block" }}
 					>
-						暂无注册组件
+						{queryText ? "未找到匹配组件" : "暂无注册组件"}
 					</Text>
 				)}
-				{components.map((c) => (
-					<button
-						key={c.id}
-						type="button"
-						className={`cm-item ${editing?.id === c.id ? "active" : ""}`}
-						onClick={() => {
-							setEditing(c);
-							setIsNew(false);
-						}}
-					>
-						<div className="cm-item-name">{c.name}</div>
-						<div className="cm-item-image">{c.image}</div>
-					</button>
-				))}
+				{groups.length > 0 && (
+					<Collapse
+						size="small"
+						items={groups.map((group) => ({
+							key: group.key,
+							label: group.label,
+							children: (
+								<div className="cm-group-list">
+									{group.comps.map((c) => (
+										<button
+											key={c.id}
+											type="button"
+											className={`cm-item ${editing?.id === c.id ? "active" : ""}`}
+											onClick={() => {
+												setEditing(c);
+												setIsNew(false);
+											}}
+										>
+											<div className="cm-item-name">{c.name}</div>
+											<div className="cm-item-image">{c.image}</div>
+										</button>
+									))}
+								</div>
+							),
+						}))}
+					/>
+				)}
 			</div>
 
 			{editing && (

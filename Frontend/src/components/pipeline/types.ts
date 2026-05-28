@@ -21,8 +21,11 @@ export interface PipelineNodeDef {
 export interface Component {
 	name: string;
 	image: string;
+	type?: string;
+	source?: string;
 	command?: string[];
 	args?: Argument[];
+	env?: Record<string, string>;
 	resources?: ResourceRequirements;
 }
 
@@ -46,14 +49,20 @@ export interface ResourceRequirements {
 	cpu?: string;
 	memory?: string;
 	disk?: string;
+	type?: string;
+	source?: string;
+	env?: Record<string, string>;
 }
 
 export interface RegisteredComponent {
 	id: string;
 	name: string;
+	type?: string;
+	source?: string;
 	image: string;
 	command: string[];
 	args: Argument[];
+	env?: Argument[];
 	cpu: string;
 	memory: string;
 	disk: string;
@@ -61,9 +70,12 @@ export interface RegisteredComponent {
 
 export interface PipelineNodeData {
 	label: string;
+	type?: string;
+	source?: string;
 	image: string;
 	command: string[];
 	args: Argument[];
+	env?: Argument[];
 	cpu: string;
 	memory: string;
 	disk: string;

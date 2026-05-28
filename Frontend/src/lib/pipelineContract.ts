@@ -6,6 +6,47 @@ import type {
 	Port,
 } from "../components/pipeline/types";
 
+function envToRecords(
+	resources: unknown,
+): Array<{ name: string; value: string }> {
+	if (!resources || typeof resources !== "object") return [];
+	const raw = (resources as { env?: unknown }).env;
+	if (!raw) return [];
+	if (Array.isArray(raw)) {
+		return raw
+			.map((item) => {
+				if (!item || typeof item !== "object") return null;
+				const record = item as { name?: string; value?: string };
+				if (!record.name) return null;
+				return {
+					name: record.name,
+					value: record.value || "",
+				};
+			})
+			.filter((item): item is { name: string; value: string } => Boolean(item));
+	}
+	if (typeof raw === "object") {
+		return Object.entries(raw as Record<string, string>).map(
+			([name, value]) => ({
+				name,
+				value: String(value || ""),
+			}),
+		);
+	}
+	return [];
+}
+
+function envToMap(
+	env: Array<{ name: string; value?: string }>,
+): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const item of env) {
+		if (!item.name || item.value === undefined) continue;
+		out[item.name] = item.value;
+	}
+	return out;
+}
+
 const DEFAULT_INPUT_PORT = "input";
 const DEFAULT_OUTPUT_PORT = "output";
 
@@ -67,11 +108,20 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 		component: {
 			name: d.label || "",
 			image: d.image || "",
+			type: d.type || "container",
+			source: d.source || "custom",
 			command: d.command || [],
 			args: d.args || [],
 			resources:
 				d.cpu || d.memory || d.disk
-					? { cpu: d.cpu, memory: d.memory, disk: d.disk }
+					? {
+							cpu: d.cpu,
+							memory: d.memory,
+							disk: d.disk,
+							type: d.type || "container",
+							source: d.source || "custom",
+							env: d.env ? envToMap(d.env) : undefined,
+						}
 					: undefined,
 		},
 		inputs: defaultInputs(),
@@ -98,8 +148,11 @@ export function fromTranspilerPipeline(pipeline: Pipeline): {
 		data: {
 			label: pn.component.name,
 			image: pn.component.image,
+			type: (pn.component as { type?: string }).type || "container",
+			source: (pn.component as { source?: string }).source || "custom",
 			command: pn.component.command || [],
 			args: pn.component.args || [],
+			env: envToRecords(pn.component.resources),
 			cpu: pn.component.resources?.cpu || "",
 			memory: pn.component.resources?.memory || "",
 			disk: pn.component.resources?.disk || "",
