@@ -9,10 +9,12 @@ import {
 	Modal,
 	message,
 	Select,
+	Tooltip,
 	Table,
 	Tag,
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -36,6 +38,7 @@ import {
 } from "../lib/workflow-operations";
 
 const { RangePicker } = DatePicker;
+dayjs.extend(relativeTime);
 
 const LABEL_SEPARATOR = "=";
 
@@ -296,20 +299,36 @@ export default function WorkflowListPage() {
 				/>
 			),
 		},
-		{
-			title: "创建时间",
-			dataIndex: "createdAt",
-			key: "createdAt",
-			width: 180,
-			render: (t: string) => (t ? new Date(t).toLocaleString() : "-"),
-		},
-		{
-			title: "完成时间",
-			dataIndex: "finishedAt",
-			key: "finishedAt",
-			width: 180,
-			render: (t?: string) => (t ? new Date(t).toLocaleString() : "-"),
-		},
+			{
+				title: "创建时间",
+				dataIndex: "createdAt",
+				key: "createdAt",
+				width: 180,
+				render: (t: string) => {
+					if (!t) return "-";
+					const created = dayjs(t);
+					if (!created.isValid()) return new Date(t).toLocaleString();
+					return (
+						<Tooltip title={created.toLocaleString()}>{created.fromNow()}</Tooltip>
+					);
+				},
+			},
+			{
+				title: "完成时间",
+				dataIndex: "finishedAt",
+				key: "finishedAt",
+				width: 180,
+				render: (t?: string) => {
+					if (!t) return "-";
+					const finished = dayjs(t);
+					if (!finished.isValid()) return new Date(t).toLocaleString();
+					return (
+						<Tooltip title={finished.toLocaleString()}>
+							{finished.fromNow()}
+						</Tooltip>
+					);
+				},
+			},
 		{
 			title: "操作",
 			key: "actions",
