@@ -122,6 +122,7 @@ func (c *Client) workflowOperation(ctx context.Context, name, namespace, operati
 func (c *Client) GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error) {
 	query := url.Values{}
 	query.Set("logOptions.container", "main")
+	query.Set("podName", nodeId)
 	if nodeId != "" {
 		query.Set("grep", nodeId)
 	}
