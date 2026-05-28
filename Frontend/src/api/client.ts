@@ -1,6 +1,6 @@
 import axios from "axios";
 
-export const UNAUTHORIZED_EVENT="***";
+export const UNAUTHORIZED_EVENT = "***";
 
 /** Default timeout for most API calls */
 const DEFAULT_TIMEOUT = 30_000;

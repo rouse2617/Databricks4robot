@@ -1,5 +1,5 @@
-import type { RegisteredComponent } from "./types";
 import { Typography } from "antd";
+import type { RegisteredComponent } from "./types";
 
 const { Text } = Typography;
 
@@ -16,8 +16,9 @@ export function ComponentPalette({ components, onDragStart }: Props) {
 				<span className="palette-count">{components.length}</span>
 			</div>
 			{components.map((c) => (
-				<div
+				<button
 					key={c.id}
+					type="button"
 					className="palette-item"
 					draggable
 					onDragStart={(e) => onDragStart(e, c)}
@@ -26,10 +27,13 @@ export function ComponentPalette({ components, onDragStart }: Props) {
 						<div className="pi-label">{c.name}</div>
 						<div className="pi-image">{c.image}</div>
 					</div>
-				</div>
+				</button>
 			))}
 			{components.length === 0 && (
-				<Text type="secondary" style={{ padding: 40, textAlign: "center", display: "block" }}>
+				<Text
+					type="secondary"
+					style={{ padding: 40, textAlign: "center", display: "block" }}
+				>
 					暂无组件，请在 Registry 中添加
 				</Text>
 			)}

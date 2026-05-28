@@ -22,7 +22,8 @@ beforeAll(() => {
 		}) as typeof window.getComputedStyle,
 	});
 
-	window.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+	window.ResizeObserver =
+		MockResizeObserver as unknown as typeof ResizeObserver;
 
 	console.error = (...args: unknown[]) => {
 		if (typeof args[0] === "string" && args[0].includes(PSEUDO_STYLE_WARNING)) {

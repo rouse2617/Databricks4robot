@@ -61,7 +61,8 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 	const [data, setData] = useState<LineageData | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [pipelineLineage, setPipelineLineage] = useState<PipelineLineage | null>(null);
+	const [pipelineLineage, setPipelineLineage] =
+		useState<PipelineLineage | null>(null);
 	const [pipelineLoading, setPipelineLoading] = useState(true);
 
 	useEffect(() => {
@@ -101,7 +102,8 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 	if (!data) return <Alert type="info" showIcon message="暂无血缘数据" />;
 
 	const hasPipelineLineage =
-		pipelineLineage && (pipelineLineage.workflow_name || pipelineLineage.deployment_id);
+		pipelineLineage &&
+		(pipelineLineage.workflow_name || pipelineLineage.deployment_id);
 
 	return (
 		<div style={{ padding: "0 4px", maxWidth: 720 }}>
@@ -117,60 +119,77 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 					style={{ marginBottom: 16 }}
 				>
 					<Descriptions column={1} size="small">
-						{pipelineLineage!.workflow_name && (
+						{pipelineLineage?.workflow_name && (
 							<Descriptions.Item label="Workflow">
 								<Text
 									code
 									style={{ cursor: "pointer", color: "#1677ff" }}
-									onClick={() =>
-										navigate(`/workflows/${encodeURIComponent(pipelineLineage!.workflow_name!)}`)
-									}
+									onClick={() => {
+										const wf = pipelineLineage?.workflow_name;
+										if (wf) navigate(`/workflows/${encodeURIComponent(wf)}`);
+									}}
 								>
-									{pipelineLineage!.workflow_name}
+									{pipelineLineage?.workflow_name}
 								</Text>
 							</Descriptions.Item>
 						)}
-						{pipelineLineage!.pipeline_name && (
+						{pipelineLineage?.pipeline_name && (
 							<Descriptions.Item label="Pipeline">
-								<Text code>{pipelineLineage!.pipeline_name}</Text>
+								<Text code>{pipelineLineage?.pipeline_name}</Text>
 							</Descriptions.Item>
 						)}
-						{pipelineLineage!.deployment_id && (
+						{pipelineLineage?.deployment_id && (
 							<Descriptions.Item label="部署 ID">
 								<Text code style={{ fontSize: 11 }}>
-									{pipelineLineage!.deployment_id}
+									{pipelineLineage?.deployment_id}
 								</Text>
 							</Descriptions.Item>
 						)}
-						{pipelineLineage!.node_id && (
+						{pipelineLineage?.node_id && (
 							<Descriptions.Item label="节点">
-								<Text code>{pipelineLineage!.node_id}</Text>
+								<Text code>{pipelineLineage?.node_id}</Text>
 							</Descriptions.Item>
 						)}
-						{pipelineLineage!.produced_at && (
+						{pipelineLineage?.produced_at && (
 							<Descriptions.Item label="产生时间">
 								<Text type="secondary">
-									{new Date(pipelineLineage!.produced_at).toLocaleString()}
+									{new Date(pipelineLineage?.produced_at).toLocaleString()}
 								</Text>
 							</Descriptions.Item>
 						)}
 					</Descriptions>
-					{pipelineLineage!.input_assets && pipelineLineage!.input_assets.length > 0 && (
-						<div style={{ marginTop: 8 }}>
-							<Text strong style={{ fontSize: 12 }}>输入资产:</Text>
-							<div style={{ marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
-								{pipelineLineage!.input_assets.map((aid) => (
-									<Tag
-										key={aid}
-										style={{ cursor: "pointer", fontFamily: "monospace", fontSize: 11 }}
-										onClick={() => navigate(`/assets/${encodeURIComponent(aid)}`)}
-									>
-										{aid.slice(0, 16)}...
-									</Tag>
-								))}
+					{pipelineLineage?.input_assets &&
+						pipelineLineage?.input_assets.length > 0 && (
+							<div style={{ marginTop: 8 }}>
+								<Text strong style={{ fontSize: 12 }}>
+									输入资产:
+								</Text>
+								<div
+									style={{
+										marginTop: 4,
+										display: "flex",
+										gap: 4,
+										flexWrap: "wrap",
+									}}
+								>
+									{pipelineLineage?.input_assets.map((aid) => (
+										<Tag
+											key={aid}
+											style={{
+												cursor: "pointer",
+												fontFamily: "monospace",
+												fontSize: 11,
+											}}
+											onClick={() =>
+												navigate(`/assets/${encodeURIComponent(aid)}`)
+											}
+										>
+											{aid.slice(0, 16)}...
+										</Tag>
+									))}
+								</div>
 							</div>
-						</div>
-					)}
+						)}
 				</Card>
 			)}
 

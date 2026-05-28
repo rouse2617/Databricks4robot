@@ -1,7 +1,10 @@
-import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import type { PipelineNodeData } from "./types";
 
-export function PipelineStepNode({ data, selected }: NodeProps<Node<PipelineNodeData>>) {
+export function PipelineStepNode({
+	data,
+	selected,
+}: NodeProps<Node<PipelineNodeData>>) {
 	return (
 		<div className={`pipeline-node ${selected ? "selected" : ""}`}>
 			<Handle type="target" position={Position.Left} className="node-handle" />

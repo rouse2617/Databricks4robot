@@ -78,97 +78,97 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
 	return (
 		<Layout style={{ minHeight: "100vh" }}>
-				<Sider
-					width={siderWidth}
-					breakpoint="lg"
-					collapsedWidth={0}
-					trigger={null}
+			<Sider
+				width={siderWidth}
+				breakpoint="lg"
+				collapsedWidth={0}
+				trigger={null}
+				style={{
+					overflow: "auto",
+					height: "100vh",
+					position: "fixed",
+					left: 0,
+					top: 0,
+					bottom: 0,
+					zIndex: 100,
+				}}
+			>
+				{/* logo area */}
+				<button
+					type="button"
 					style={{
-						overflow: "auto",
-						height: "100vh",
-						position: "fixed",
-						left: 0,
-						top: 0,
-						bottom: 0,
-						zIndex: 100,
+						height: 64,
+						display: "flex",
+						alignItems: "center",
+						paddingLeft: 24,
+						cursor: "pointer",
+						background: "none",
+						border: "none",
+						width: "100%",
 					}}
+					onClick={() => navigate("/dashboard")}
 				>
-					{/* logo area */}
-					<button
-						type="button"
-						style={{
-							height: 64,
-							display: "flex",
-							alignItems: "center",
-							paddingLeft: 24,
-							cursor: "pointer",
-							background: "none",
-							border: "none",
-							width: "100%",
-						}}
-						onClick={() => navigate("/dashboard")}
-					>
-						<img
-							src="/favicon.svg"
-							alt="DataBrew"
-							style={{ width: 28, height: 28, marginRight: 10 }}
-						/>
-						<Typography.Title level={5} style={{ margin: 0, color: "#fff" }}>
-							DataBrew
-						</Typography.Title>
-					</button>
-
-					{/* search */}
-					<div style={{ padding: "0 16px 12px" }}>
-						<CmdKSearch />
-					</div>
-
-					{/* nav */}
-					<Menu
-						theme="dark"
-						mode="inline"
-						selectedKeys={[resolveSelectedKey(location.pathname)]}
-						items={menuItems}
-						onClick={({ key }) => navigate(key)}
+					<img
+						src="/favicon.svg"
+						alt="DataBrew"
+						style={{ width: 28, height: 28, marginRight: 10 }}
 					/>
-				</Sider>
-				<Layout style={{ marginLeft: isMobile ? 0 : siderWidth }}>
-					<Content style={{ minHeight: "100vh" }}>
-						<div
-							style={{
-								display: "flex",
-								justifyContent: "flex-end",
-								padding: "12px 24px",
-								background: "#fff",
-								borderBottom: "1px solid #f0f0f0",
-							}}
-						>
-							<Dropdown
-								menu={{
-									items: [
-										{
-											key: "logout",
-											icon: <LogoutOutlined />,
-											label: "退出登录",
-											onClick: () => {
-												logout();
-												navigate("/login");
-											},
+					<Typography.Title level={5} style={{ margin: 0, color: "#fff" }}>
+						DataBrew
+					</Typography.Title>
+				</button>
+
+				{/* search */}
+				<div style={{ padding: "0 16px 12px" }}>
+					<CmdKSearch />
+				</div>
+
+				{/* nav */}
+				<Menu
+					theme="dark"
+					mode="inline"
+					selectedKeys={[resolveSelectedKey(location.pathname)]}
+					items={menuItems}
+					onClick={({ key }) => navigate(key)}
+				/>
+			</Sider>
+			<Layout style={{ marginLeft: isMobile ? 0 : siderWidth }}>
+				<Content style={{ minHeight: "100vh" }}>
+					<div
+						style={{
+							display: "flex",
+							justifyContent: "flex-end",
+							padding: "12px 24px",
+							background: "#fff",
+							borderBottom: "1px solid #f0f0f0",
+						}}
+					>
+						<Dropdown
+							menu={{
+								items: [
+									{
+										key: "logout",
+										icon: <LogoutOutlined />,
+										label: "退出登录",
+										onClick: () => {
+											logout();
+											navigate("/login");
 										},
-									],
-								}}
-								placement="bottomRight"
-							>
-								<Avatar
-									size="small"
-									icon={<UserOutlined />}
-									style={{ cursor: "pointer", backgroundColor: "#1677ff" }}
-								/>
-							</Dropdown>
-						</div>
-						<div style={{ padding: 24 }}>{children}</div>
-					</Content>
-				</Layout>
+									},
+								],
+							}}
+							placement="bottomRight"
+						>
+							<Avatar
+								size="small"
+								icon={<UserOutlined />}
+								style={{ cursor: "pointer", backgroundColor: "#1677ff" }}
+							/>
+						</Dropdown>
+					</div>
+					<div style={{ padding: 24 }}>{children}</div>
+				</Content>
 			</Layout>
+		</Layout>
 	);
 }

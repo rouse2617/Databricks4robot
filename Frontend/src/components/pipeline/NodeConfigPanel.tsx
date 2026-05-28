@@ -1,5 +1,5 @@
-import { Input } from "antd";
 import type { Node } from "@xyflow/react";
+import { Input } from "antd";
 import { useEffect, useState } from "react";
 import type { PipelineNodeData } from "./types";
 
@@ -13,7 +13,7 @@ export function NodeConfigPanel({ node, onUpdate }: Props) {
 
 	useEffect(() => {
 		setCommandText(JSON.stringify(node.data.command ?? []));
-	}, [node.id]);
+	}, [node.data.command]);
 
 	return (
 		<>
@@ -22,22 +22,25 @@ export function NodeConfigPanel({ node, onUpdate }: Props) {
 			</div>
 			<div className="config-content">
 				<div className="config-field">
-					<label>名称</label>
+					<label htmlFor="ncc-name">名称</label>
 					<Input
+						id="ncc-name"
 						value={node.data.label ?? ""}
 						onChange={(e) => onUpdate(node.id, { label: e.target.value })}
 					/>
 				</div>
 				<div className="config-field">
-					<label>镜像</label>
+					<label htmlFor="ncc-image">镜像</label>
 					<Input
+						id="ncc-image"
 						value={node.data.image ?? ""}
 						onChange={(e) => onUpdate(node.id, { image: e.target.value })}
 					/>
 				</div>
 				<div className="config-field">
-					<label>命令 (JSON)</label>
+					<label htmlFor="ncc-command">命令 (JSON)</label>
 					<Input
+						id="ncc-command"
 						value={commandText}
 						onChange={(e) => setCommandText(e.target.value)}
 						onBlur={() => {
@@ -54,24 +57,27 @@ export function NodeConfigPanel({ node, onUpdate }: Props) {
 				</div>
 				<div className="config-section-title">资源配额</div>
 				<div className="config-field">
-					<label>CPU</label>
+					<label htmlFor="ncc-cpu">CPU</label>
 					<Input
+						id="ncc-cpu"
 						value={node.data.cpu ?? ""}
 						onChange={(e) => onUpdate(node.id, { cpu: e.target.value })}
 						placeholder="500m"
 					/>
 				</div>
 				<div className="config-field">
-					<label>内存</label>
+					<label htmlFor="ncc-memory">内存</label>
 					<Input
+						id="ncc-memory"
 						value={node.data.memory ?? ""}
 						onChange={(e) => onUpdate(node.id, { memory: e.target.value })}
 						placeholder="256Mi"
 					/>
 				</div>
 				<div className="config-field">
-					<label>磁盘</label>
+					<label htmlFor="ncc-disk">磁盘</label>
 					<Input
+						id="ncc-disk"
 						value={node.data.disk ?? ""}
 						onChange={(e) => onUpdate(node.id, { disk: e.target.value })}
 						placeholder="1Gi"

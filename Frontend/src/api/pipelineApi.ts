@@ -1,50 +1,62 @@
-import { request } from "./pipelineClient";
 import type { Pipeline } from "../components/pipeline/types";
+import { request } from "./pipelineClient";
 
 export interface PipelineTemplate {
-  id: string;
-  name: string;
-  pipeline: Pipeline;
-  nodeCount: number;
-  createdAt: string;
+	id: string;
+	name: string;
+	pipeline: Pipeline;
+	nodeCount: number;
+	createdAt: string;
 }
 
 export interface Deployment {
-  id: string;
-  pipelineName: string;
-  workflowName: string;
-  status: string;
-  nodeCount: number;
-  createdAt: string;
-  finishedAt?: string;
-  manifest?: string;
-  pipelineJSON?: Pipeline;
+	id: string;
+	pipelineName: string;
+	workflowName: string;
+	status: string;
+	nodeCount: number;
+	createdAt: string;
+	finishedAt?: string;
+	manifest?: string;
+	pipelineJSON?: Pipeline;
 }
 
 export function listPipelines(): Promise<PipelineTemplate[]> {
-  return request<{ items: PipelineTemplate[] }>("GET", "/pipelines").then((r) => r.items);
+	return request<{ items: PipelineTemplate[] }>("GET", "/pipelines").then(
+		(r) => r.items,
+	);
 }
 
 export function getPipeline(id: string): Promise<PipelineTemplate> {
-  return request<PipelineTemplate>("GET", `/pipelines/${id}`);
+	return request<PipelineTemplate>("GET", `/pipelines/${id}`);
 }
 
-export function savePipeline(name: string, pipeline: Pipeline): Promise<PipelineTemplate> {
-  return request<PipelineTemplate>("POST", "/pipelines", { name, pipeline });
+export function savePipeline(
+	name: string,
+	pipeline: Pipeline,
+): Promise<PipelineTemplate> {
+	return request<PipelineTemplate>("POST", "/pipelines", { name, pipeline });
 }
 
 export function deletePipeline(id: string): Promise<void> {
-  return request<void>("DELETE", `/pipelines/${id}`);
+	return request<void>("DELETE", `/pipelines/${id}`);
 }
 
-export function deployTemplate(templateId: string, assetIds?: string[]): Promise<Deployment> {
-  return request<Deployment>("POST", `/deploy/template/${templateId}`, { asset_ids: assetIds });
+export function deployTemplate(
+	templateId: string,
+	assetIds?: string[],
+): Promise<Deployment> {
+	return request<Deployment>("POST", `/deploy/template/${templateId}`, {
+		asset_ids: assetIds,
+	});
 }
 
 export function listDeployments(): Promise<Deployment[]> {
-  return request<{ items: Deployment[] }>("GET", "/deployments").then((r) => r.items);
+	return request<{ items: Deployment[] }>("GET", "/deployments").then(
+		(r) => r.items,
+	);
 }
 
 export function deleteDeployment(id: string): Promise<void> {
-  return request<void>("DELETE", `/deployments/${id}`);
+	return request<void>("DELETE", `/deployments/${id}`);
 }

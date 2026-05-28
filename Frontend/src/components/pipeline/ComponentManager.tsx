@@ -1,7 +1,7 @@
-import { Button, Input, Typography, message } from "antd";
-import { useState, useEffect, useCallback } from "react";
-import type { RegisteredComponent } from "./types";
 import { PlusOutlined } from "@ant-design/icons";
+import { Button, Input, message, Typography } from "antd";
+import { useCallback, useEffect, useState } from "react";
+import type { RegisteredComponent } from "./types";
 
 const { Text } = Typography;
 
@@ -16,7 +16,7 @@ interface Props {
 
 function blank(): RegisteredComponent {
 	return {
-		id: "c" + Date.now(),
+		id: `c${Date.now()}`,
 		name: "",
 		image: "",
 		command: ["sh", "-c"],
@@ -27,7 +27,12 @@ function blank(): RegisteredComponent {
 	};
 }
 
-export function ComponentManager({ components, onChange, onSaveApi, onDeleteApi }: Props) {
+export function ComponentManager({
+	components,
+	onChange,
+	onSaveApi,
+	onDeleteApi,
+}: Props) {
 	const [editing, setEditing] = useState<RegisteredComponent | null>(null);
 	const [isNew, setIsNew] = useState(false);
 	const [commandText, setCommandText] = useState("");
@@ -36,7 +41,7 @@ export function ComponentManager({ components, onChange, onSaveApi, onDeleteApi 
 		if (editing) {
 			setCommandText(JSON.stringify(editing.command));
 		}
-	}, [editing?.id]);
+	}, [editing?.id, editing.command, editing]);
 
 	const save = useCallback(
 		async (c: RegisteredComponent) => {
@@ -100,13 +105,17 @@ export function ComponentManager({ components, onChange, onSaveApi, onDeleteApi 
 
 			<div className="cm-list">
 				{components.length === 0 && (
-					<Text type="secondary" style={{ padding: 40, textAlign: "center", display: "block" }}>
+					<Text
+						type="secondary"
+						style={{ padding: 40, textAlign: "center", display: "block" }}
+					>
 						暂无注册组件
 					</Text>
 				)}
 				{components.map((c) => (
-					<div
+					<button
 						key={c.id}
+						type="button"
 						className={`cm-item ${editing?.id === c.id ? "active" : ""}`}
 						onClick={() => {
 							setEditing(c);
@@ -115,7 +124,7 @@ export function ComponentManager({ components, onChange, onSaveApi, onDeleteApi 
 					>
 						<div className="cm-item-name">{c.name}</div>
 						<div className="cm-item-image">{c.image}</div>
-					</div>
+					</button>
 				))}
 			</div>
 
@@ -123,25 +132,32 @@ export function ComponentManager({ components, onChange, onSaveApi, onDeleteApi 
 				<div className="cm-form">
 					<h4>{isNew ? "新建组件" : "编辑组件"}</h4>
 					<div className="cm-form-fields">
-						<label>
-							名称
+						<div className="cm-field">
+							<label htmlFor="cm-name">名称</label>
 							<Input
+								id="cm-name"
 								value={editing.name}
-								onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+								onChange={(e) =>
+									setEditing({ ...editing, name: e.target.value })
+								}
 								placeholder="my-component"
 							/>
-						</label>
-						<label>
-							镜像
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-image">镜像</label>
 							<Input
+								id="cm-image"
 								value={editing.image}
-								onChange={(e) => setEditing({ ...editing, image: e.target.value })}
+								onChange={(e) =>
+									setEditing({ ...editing, image: e.target.value })
+								}
 								placeholder="repo/image:tag"
 							/>
-						</label>
-						<label>
-							命令 (JSON)
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-command">命令 (JSON)</label>
 							<Input
+								id="cm-command"
 								value={commandText}
 								onChange={(e) => setCommandText(e.target.value)}
 								onBlur={() => {
@@ -156,31 +172,40 @@ export function ComponentManager({ components, onChange, onSaveApi, onDeleteApi 
 								}}
 								placeholder='["sh", "-c"]'
 							/>
-						</label>
-						<label>
-							CPU
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-cpu">CPU</label>
 							<Input
+								id="cm-cpu"
 								value={editing.cpu}
-								onChange={(e) => setEditing({ ...editing, cpu: e.target.value })}
+								onChange={(e) =>
+									setEditing({ ...editing, cpu: e.target.value })
+								}
 								placeholder="500m"
 							/>
-						</label>
-						<label>
-							内存
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-memory">内存</label>
 							<Input
+								id="cm-memory"
 								value={editing.memory}
-								onChange={(e) => setEditing({ ...editing, memory: e.target.value })}
+								onChange={(e) =>
+									setEditing({ ...editing, memory: e.target.value })
+								}
 								placeholder="256Mi"
 							/>
-						</label>
-						<label>
-							磁盘
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-disk">磁盘</label>
 							<Input
+								id="cm-disk"
 								value={editing.disk}
-								onChange={(e) => setEditing({ ...editing, disk: e.target.value })}
+								onChange={(e) =>
+									setEditing({ ...editing, disk: e.target.value })
+								}
 								placeholder="1Gi"
 							/>
-						</label>
+						</div>
 					</div>
 					<div className="cm-form-actions">
 						<Button type="primary" onClick={() => save(editing)}>

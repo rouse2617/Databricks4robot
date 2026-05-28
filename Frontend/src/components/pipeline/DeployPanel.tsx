@@ -1,19 +1,26 @@
-import { Button, Tag, message, Modal, Dropdown, Space, Alert } from "antd";
-import { useEffect, useState, useCallback } from "react";
 import {
+	DeleteOutlined,
+	DownOutlined,
+	EditOutlined,
+	EyeOutlined,
+	PlayCircleOutlined,
+	ReloadOutlined,
+} from "@ant-design/icons";
+import { Alert, Button, Dropdown, Modal, message, Space, Tag } from "antd";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+	type Deployment,
+	deleteDeployment,
+	deletePipeline,
+	deployTemplate,
 	getPipeline,
 	listDeployments,
 	listPipelines,
-	deletePipeline,
-	deleteDeployment,
-	deployTemplate,
 	type PipelineTemplate,
-	type Deployment,
 } from "../../api/pipelineApi";
-import type { Pipeline } from "./types";
-import { ReloadOutlined, DeleteOutlined, PlayCircleOutlined, EditOutlined, EyeOutlined, DownOutlined } from "@ant-design/icons";
-import { useNavigate } from "react-router-dom";
 import AssetPicker from "./AssetPicker";
+import type { Pipeline } from "./types";
 
 const STATUS_COLORS: Record<string, string> = {
 	Succeeded: "success",
@@ -23,8 +30,12 @@ const STATUS_COLORS: Record<string, string> = {
 	Error: "error",
 };
 
-export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pipeline) => void }) {
-		const navigate = useNavigate();
+export function DeployPanel({
+	onEditTemplate,
+}: {
+	onEditTemplate?: (pipeline: Pipeline) => void;
+}) {
+	const navigate = useNavigate();
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -64,7 +75,7 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 			message.success("部署成功");
 			refresh();
 		} catch (err) {
-			message.error("部署失败: " + String(err));
+			message.error(`部署失败: ${String(err)}`);
 		}
 	};
 
@@ -72,12 +83,15 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 		if (!deployTargetId) return;
 		setDeploying(true);
 		try {
-			await deployTemplate(deployTargetId, selectedAssetIds.length > 0 ? selectedAssetIds : undefined);
+			await deployTemplate(
+				deployTargetId,
+				selectedAssetIds.length > 0 ? selectedAssetIds : undefined,
+			);
 			message.success("部署成功");
 			setAssetModalOpen(false);
 			refresh();
 		} catch (err) {
-			message.error("部署失败: " + String(err));
+			message.error(`部署失败: ${String(err)}`);
 		} finally {
 			setDeploying(false);
 		}
@@ -89,7 +103,7 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 			message.success("已删除部署记录");
 			refresh();
 		} catch (err) {
-			message.error("删除失败: " + String(err));
+			message.error(`删除失败: ${String(err)}`);
 		}
 	};
 
@@ -99,7 +113,7 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 			message.success("已删除流水线模板");
 			refresh();
 		} catch (err) {
-			message.error("删除失败: " + String(err));
+			message.error(`删除失败: ${String(err)}`);
 		}
 	};
 
@@ -113,15 +127,27 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 				navigate("/pipeline");
 			}
 		} catch (err) {
-			message.error("加载模板失败: " + String(err));
+			message.error(`加载模板失败: ${String(err)}`);
 		}
 	};
 
 	return (
 		<div className="deploy-panel">
-			<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 12,
+					marginBottom: 16,
+				}}
+			>
 				<h3>部署记录</h3>
-				<Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
+				<Button
+					size="small"
+					icon={<ReloadOutlined />}
+					onClick={refresh}
+					loading={loading}
+				>
 					刷新
 				</Button>
 			</div>
@@ -155,10 +181,22 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 										运行
 									</Button>
 									<Dropdown
-										menu={{ items: [{ key: "assets", label: "选择资产运行", onClick: () => handleDeployClick(t.id) }] }}
+										menu={{
+											items: [
+												{
+													key: "assets",
+													label: "选择资产运行",
+													onClick: () => handleDeployClick(t.id),
+												},
+											],
+										}}
 										trigger={["click"]}
 									>
-										<Button size="small" type="primary" style={{ padding: "0 4px" }}>
+										<Button
+											size="small"
+											type="primary"
+											style={{ padding: "0 4px" }}
+										>
 											<DownOutlined style={{ fontSize: 10 }} />
 										</Button>
 									</Dropdown>
@@ -218,14 +256,18 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 							<div className="dep-card-info">
 								<div className="dep-card-name">{d.pipelineName}</div>
 								<div className="dep-card-meta">
-									<Tag color={STATUS_COLORS[d.status] || "default"}>{d.status}</Tag>
+									<Tag color={STATUS_COLORS[d.status] || "default"}>
+										{d.status}
+									</Tag>
 									<span>{d.nodeCount} 个节点</span>
 									<span className="dot">•</span>
 									<span>{new Date(d.createdAt).toLocaleString()}</span>
 									{d.finishedAt && (
 										<>
 											<span className="dot">•</span>
-											<span>完成: {new Date(d.finishedAt).toLocaleString()}</span>
+											<span>
+												完成: {new Date(d.finishedAt).toLocaleString()}
+											</span>
 										</>
 									)}
 								</div>
@@ -234,7 +276,7 @@ export function DeployPanel({ onEditTemplate }: { onEditTemplate?: (pipeline: Pi
 								<Button
 									size="small"
 									icon={<EyeOutlined />}
-									onClick={() => navigate("/workflows/" + d.workflowName)}
+									onClick={() => navigate(`/workflows/${d.workflowName}`)}
 								>
 									查看
 								</Button>

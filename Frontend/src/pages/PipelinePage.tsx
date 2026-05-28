@@ -1,50 +1,63 @@
-import { useState, useCallback, useRef, useEffect, type DragEvent } from "react";
 import {
-	ReactFlow,
 	addEdge,
-	useNodesState,
-	useEdgesState,
-	type Node,
-	type Edge,
-	type Connection,
-	type NodeTypes,
 	Background,
-	Controls,
-	MiniMap,
 	BackgroundVariant,
+	type Connection,
+	Controls,
+	type Edge,
+	MiniMap,
+	type Node,
+	type NodeTypes,
+	ReactFlow,
 	ReactFlowProvider,
+	useEdgesState,
+	useNodesState,
 	useReactFlow,
 } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { Button, Input, message, Modal, Typography, Collapse } from "antd";
 import {
-	PlayCircleOutlined,
-	SaveOutlined,
+	type DragEvent,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
+import "@xyflow/react/dist/style.css";
+import {
+	DeleteOutlined,
 	ExportOutlined,
 	ImportOutlined,
-	DeleteOutlined,
+	PlayCircleOutlined,
+	SaveOutlined,
 } from "@ant-design/icons";
-import { ComponentPalette } from "../components/pipeline/ComponentPalette";
-import { NodeConfigPanel } from "../components/pipeline/NodeConfigPanel";
+import { Button, Collapse, Input, Modal, message, Typography } from "antd";
+import { useNavigate } from "react-router-dom";
+import {
+	type Deployment,
+	deployTemplate,
+	savePipeline,
+} from "../api/pipelineApi";
+import {
+	createComponent,
+	deleteComponent,
+	listComponents,
+	type PipelineComponentAPI,
+	updateComponent,
+} from "../api/pipelineComponentApi";
+import AssetPicker from "../components/pipeline/AssetPicker";
 import { ComponentManager } from "../components/pipeline/ComponentManager";
+import { ComponentPalette } from "../components/pipeline/ComponentPalette";
 import { DeployPanel } from "../components/pipeline/DeployPanel";
+import { NodeConfigPanel } from "../components/pipeline/NodeConfigPanel";
 import { PipelineStepNode } from "../components/pipeline/PipelineNode";
 import type {
-	RegisteredComponent,
 	Pipeline,
 	PipelineNodeData,
+	RegisteredComponent,
 } from "../components/pipeline/types";
-import { savePipeline, deployTemplate, type Deployment } from "../api/pipelineApi";
 import {
-	listComponents,
-	createComponent,
-	updateComponent,
-	deleteComponent,
-	type PipelineComponentAPI,
-} from "../api/pipelineComponentApi";
-import { toTranspilerPipeline, fromTranspilerPipeline } from "../lib/pipelineContract";
-import { useNavigate } from "react-router-dom";
-import AssetPicker from "../components/pipeline/AssetPicker";
+	fromTranspilerPipeline,
+	toTranspilerPipeline,
+} from "../lib/pipelineContract";
 
 import "../styles/pipeline.css";
 
@@ -74,7 +87,9 @@ function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 		name: api.name,
 		image: api.tag ? `${api.image}:${api.tag}` : api.image,
 		command: (resources.command as string[]) ?? ["sh", "-c"],
-		args: (resources.args as {name: string; value?: string; from?: string}[]) ?? [],
+		args:
+			(resources.args as { name: string; value?: string; from?: string }[]) ??
+			[],
 		cpu: (resources.cpu as string) ?? "",
 		memory: (resources.memory as string) ?? "",
 		disk: (resources.disk as string) ?? "",
@@ -82,7 +97,9 @@ function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 }
 
 /** Map frontend RegisteredComponent → backend PipelineComponentAPI shape. */
-function registeredToApi(comp: RegisteredComponent): Omit<PipelineComponentAPI, "createdAt" | "updatedAt"> {
+function registeredToApi(
+	comp: RegisteredComponent,
+): Omit<PipelineComponentAPI, "createdAt" | "updatedAt"> {
 	const idx = comp.image.lastIndexOf(":");
 	const image = idx > 0 ? comp.image.slice(0, idx) : comp.image;
 	const tag = idx > 0 ? comp.image.slice(idx + 1) : "latest";
@@ -133,13 +150,19 @@ function createPipelineNode(
 function PipelineCanvas() {
 	const navigate = useNavigate();
 	const wrapperRef = useRef<HTMLDivElement>(null);
-	const [nodes, setNodes, onNodesChange] = useNodesState<Node<PipelineNodeData>>([]);
+	const [nodes, setNodes, onNodesChange] = useNodesState<
+		Node<PipelineNodeData>
+	>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 	const reactFlow = useReactFlow();
 	const [pipelineName, setPipelineName] = useState("my-pipeline");
-	const [selectedNode, setSelectedNode] = useState<Node<PipelineNodeData> | null>(null);
-	const [registeredComponents, setRegisteredComponents] = useState<RegisteredComponent[]>(loadComponents);
-	const [view, setView] = useState<"pipeline" | "components" | "deploy">("pipeline");
+	const [selectedNode, setSelectedNode] =
+		useState<Node<PipelineNodeData> | null>(null);
+	const [registeredComponents, setRegisteredComponents] =
+		useState<RegisteredComponent[]>(loadComponents);
+	const [view, setView] = useState<"pipeline" | "components" | "deploy">(
+		"pipeline",
+	);
 	const [deployDialog, setDeployDialog] = useState<{
 		open: boolean;
 		deploying: boolean;
@@ -196,15 +219,18 @@ function PipelineCanvas() {
 		}
 	}, []);
 
-	const loadPipelineToCanvas = useCallback((pipeline: Pipeline) => {
-		const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
-		setNodes(n);
-		setEdges(e);
-		if (pipeline.name) setPipelineName(pipeline.name);
-		setView("pipeline");
-		setSelectedNode(null);
-		setJsonOutput(null);
-	}, [setNodes, setEdges]);
+	const loadPipelineToCanvas = useCallback(
+		(pipeline: Pipeline) => {
+			const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
+			setNodes(n);
+			setEdges(e);
+			if (pipeline.name) setPipelineName(pipeline.name);
+			setView("pipeline");
+			setSelectedNode(null);
+			setJsonOutput(null);
+		},
+		[setNodes, setEdges],
+	);
 
 	useEffect(() => {
 		const raw = sessionStorage.getItem("pipeline-edit");
@@ -222,13 +248,10 @@ function PipelineCanvas() {
 		[setEdges],
 	);
 
-	const onDragStart = useCallback(
-		(e: DragEvent, comp: RegisteredComponent) => {
-			e.dataTransfer.setData("application/reactflow", JSON.stringify(comp));
-			e.dataTransfer.effectAllowed = "move";
-		},
-		[],
-	);
+	const onDragStart = useCallback((e: DragEvent, comp: RegisteredComponent) => {
+		e.dataTransfer.setData("application/reactflow", JSON.stringify(comp));
+		e.dataTransfer.effectAllowed = "move";
+	}, []);
 
 	const onDragOver = useCallback((event: DragEvent) => {
 		event.preventDefault();
@@ -258,7 +281,8 @@ function PipelineCanvas() {
 	);
 
 	const onNodeClick = useCallback(
-		(_: React.MouseEvent, node: Node) => setSelectedNode(node as Node<PipelineNodeData>),
+		(_: React.MouseEvent, node: Node) =>
+			setSelectedNode(node as Node<PipelineNodeData>),
 		[],
 	);
 	const onPaneClick = useCallback(() => setSelectedNode(null), []);
@@ -266,7 +290,9 @@ function PipelineCanvas() {
 	const updateNodeData = useCallback(
 		(id: string, data: Record<string, unknown>) => {
 			setNodes((nds) =>
-				nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...data } } : n)),
+				nds.map((n) =>
+					n.id === id ? { ...n, data: { ...n.data, ...data } } : n,
+				),
 			);
 			setSelectedNode((prev) =>
 				prev?.id === id ? { ...prev, data: { ...prev.data, ...data } } : prev,
@@ -323,7 +349,7 @@ function PipelineCanvas() {
 			const result = await savePipeline(pipelineName, buildPipelineJSON());
 			message.success(`已保存: ${result.name}`);
 		} catch (err) {
-			message.error("保存失败: " + String(err));
+			message.error(`保存失败: ${String(err)}`);
 		}
 	}, [pipelineName, buildPipelineJSON]);
 
@@ -405,6 +431,7 @@ function PipelineCanvas() {
 				>
 					{(["pipeline", "components", "deploy"] as const).map((tab) => (
 						<button
+							type="button"
 							key={tab}
 							onClick={() => {
 								setView(tab);
@@ -419,7 +446,8 @@ function PipelineCanvas() {
 								letterSpacing: "0.5px",
 								textTransform: "uppercase",
 								color: view === tab ? "#2563eb" : "#94a3b8",
-								borderBottom: view === tab ? "2px solid #2563eb" : "2px solid transparent",
+								borderBottom:
+									view === tab ? "2px solid #2563eb" : "2px solid transparent",
 								fontWeight: view === tab ? 600 : 400,
 								transition: "color 0.15s",
 							}}
@@ -455,11 +483,7 @@ function PipelineCanvas() {
 							>
 								部署
 							</Button>
-							<Button
-								size="small"
-								icon={<SaveOutlined />}
-								onClick={handleSave}
-							>
+							<Button size="small" icon={<SaveOutlined />} onClick={handleSave}>
 								保存
 							</Button>
 							<Button
@@ -526,7 +550,10 @@ function PipelineCanvas() {
 						</div>
 						<aside className="config-panel">
 							{selectedNode ? (
-								<NodeConfigPanel node={selectedNode} onUpdate={updateNodeData} />
+								<NodeConfigPanel
+									node={selectedNode}
+									onUpdate={updateNodeData}
+								/>
 							) : (
 								<div className="config-empty">选择一个节点进行配置</div>
 							)}
@@ -534,12 +561,12 @@ function PipelineCanvas() {
 					</>
 				) : view === "components" ? (
 					<div className="registry-view">
-					<ComponentManager
+						<ComponentManager
 							components={registeredComponents}
 							onChange={setRegisteredComponents}
 							onSaveApi={handleComponentSave}
 							onDeleteApi={handleComponentDelete}
-					/>
+						/>
 					</div>
 				) : (
 					<DeployPanel onEditTemplate={loadPipelineToCanvas} />
@@ -574,6 +601,7 @@ function PipelineCanvas() {
 							}}
 						>
 							<label
+								htmlFor="pp-workflow-name"
 								style={{
 									display: "flex",
 									flexDirection: "column",
@@ -586,6 +614,7 @@ function PipelineCanvas() {
 							>
 								工作流名称
 								<Input
+									id="pp-workflow-name"
 									value={deployDialog.name}
 									onChange={(e) =>
 										setDeployDialog((prev) => ({
@@ -704,17 +733,24 @@ function PipelineCanvas() {
 									<span>{deployDialog.result.nodeCount} 个节点</span>
 									<span style={{ fontSize: 3, color: "#cbd5e1" }}>•</span>
 									<span>
-										{new Date(
-											deployDialog.result.createdAt,
-										).toLocaleString()}
+										{new Date(deployDialog.result.createdAt).toLocaleString()}
 									</span>
 								</div>
-								<div style={{ marginTop: 16, display: "flex", gap: 8, justifyContent: "center" }}>
+								<div
+									style={{
+										marginTop: 16,
+										display: "flex",
+										gap: 8,
+										justifyContent: "center",
+									}}
+								>
 									<Button
 										type="primary"
 										onClick={() => {
 											closeDeployDialog();
-											navigate("/workflows/" + deployDialog.result!.workflowName);
+											navigate(
+												`/workflows/${deployDialog.result?.workflowName}`,
+											);
 										}}
 									>
 										查看 Workflow
@@ -727,11 +763,7 @@ function PipelineCanvas() {
 									>
 										查看部署
 									</Button>
-									<Button
-										onClick={closeDeployDialog}
-									>
-										关闭
-									</Button>
+									<Button onClick={closeDeployDialog}>关闭</Button>
 								</div>
 							</>
 						) : null}
