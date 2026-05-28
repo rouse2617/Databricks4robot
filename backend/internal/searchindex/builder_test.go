@@ -237,6 +237,98 @@ func TestBuild_AnnotationResultProjection(t *testing.T) {
 	}
 }
 
+func TestBuild_MLModelProjection(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:        "model001",
+			AssetType:      "ml_model",
+			LifecycleState: "ready",
+			Metadata: map[string]interface{}{
+				"framework":    "pytorch",
+				"architecture": "resnet50",
+				"metrics": map[string]any{
+					"accuracy": 0.94,
+					"f1":       0.91,
+				},
+				"quantization": "int8",
+				"artifact_uri": "gs://models/resnet50",
+				"owner_note":   "ignored in typed projection",
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "model001")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	projection, ok := doc["ml_model"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected ml_model projection, got %#v", doc["ml_model"])
+	}
+	if projection["framework"] != "pytorch" ||
+		projection["architecture"] != "resnet50" ||
+		projection["quantization"] != "int8" ||
+		projection["artifact_uri"] != "gs://models/resnet50" {
+		t.Fatalf("unexpected ml_model projection: %#v", projection)
+	}
+	metrics, ok := projection["metrics"].(map[string]any)
+	if !ok || metrics["accuracy"] != 0.94 || metrics["f1"] != 0.91 {
+		t.Fatalf("unexpected ml_model metrics projection: %#v", projection["metrics"])
+	}
+	if _, exists := projection["owner_note"]; exists {
+		t.Fatalf("owner_note should not be in typed ES projection: %#v", projection)
+	}
+}
+
+func TestBuild_EvaluationReportProjection(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:        "eval001",
+			AssetType:      "evaluation_report",
+			LifecycleState: "ready",
+			Metadata: map[string]interface{}{
+				"model_id":   "model001",
+				"dataset_id": "dataset001",
+				"metrics": map[string]any{
+					"precision": 0.88,
+					"recall":    0.86,
+				},
+				"tool":       "evaluator",
+				"report_uri": "ignored in typed projection",
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "eval001")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	projection, ok := doc["evaluation_report"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected evaluation_report projection, got %#v", doc["evaluation_report"])
+	}
+	if projection["model_id"] != "model001" ||
+		projection["dataset_id"] != "dataset001" ||
+		projection["tool"] != "evaluator" {
+		t.Fatalf("unexpected evaluation_report projection: %#v", projection)
+	}
+	metrics, ok := projection["metrics"].(map[string]any)
+	if !ok || metrics["precision"] != 0.88 || metrics["recall"] != 0.86 {
+		t.Fatalf("unexpected evaluation_report metrics projection: %#v", projection["metrics"])
+	}
+	if _, exists := projection["report_uri"]; exists {
+		t.Fatalf("report_uri should not be in typed ES projection: %#v", projection)
+	}
+}
+
 func TestBuild_NilAssetReturnsNotOk(t *testing.T) {
 	b := &Builder{
 		Assets: &stubAssetRepo{asset: nil},

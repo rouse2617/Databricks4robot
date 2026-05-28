@@ -259,6 +259,25 @@ func addTypedMetadataProjection(doc map[string]any, assetType string, meta map[s
 		if len(projection) > 0 {
 			doc["annotation_result"] = projection
 		}
+	case "ml_model":
+		projection := map[string]any{}
+		copyIfPresent(projection, meta, "framework")
+		copyIfPresent(projection, meta, "architecture")
+		copyIfPresent(projection, meta, "metrics")
+		copyIfPresent(projection, meta, "quantization")
+		copyIfPresent(projection, meta, "artifact_uri")
+		if len(projection) > 0 {
+			doc["ml_model"] = projection
+		}
+	case "evaluation_report":
+		projection := map[string]any{}
+		copyIfPresent(projection, meta, "model_id")
+		copyIfPresent(projection, meta, "dataset_id")
+		copyIfPresent(projection, meta, "metrics")
+		copyIfPresent(projection, meta, "tool")
+		if len(projection) > 0 {
+			doc["evaluation_report"] = projection
+		}
 	}
 }
 

@@ -81,6 +81,25 @@ _es_curl -X PUT "${OS_URL}/assets" \
         }
       },
 
+      "ml_model": {
+        "properties": {
+          "framework":    { "type": "keyword" },
+          "architecture": { "type": "keyword" },
+          "metrics":      { "type": "flattened" },
+          "quantization": { "type": "keyword" },
+          "artifact_uri": { "type": "keyword" }
+        }
+      },
+
+      "evaluation_report": {
+        "properties": {
+          "model_id":   { "type": "keyword" },
+          "dataset_id": { "type": "keyword" },
+          "metrics":    { "type": "flattened" },
+          "tool":       { "type": "keyword" }
+        }
+      },
+
       "owner":              { "type": "keyword", "fields": { "text": { "type": "text" } } },
       "reviewer":           { "type": "keyword", "fields": { "text": { "type": "text" } } },
       "notes":              { "type": "text" },
