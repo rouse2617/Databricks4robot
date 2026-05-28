@@ -751,7 +751,9 @@ function PipelineCanvas() {
 	}, []);
 
 	const applyImportedPipeline = useCallback(() => {
-		const text = importTextRef.current.trim();
+		const text =
+			document.querySelector(".ant-modal textarea")?.value?.trim() ||
+			importTextRef.current.trim();
 		if (!text) {
 			message.warning("请粘贴 Pipeline JSON");
 			return;
