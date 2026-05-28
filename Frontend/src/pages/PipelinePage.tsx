@@ -399,6 +399,7 @@ function PipelineCanvas() {
 	const [jsonOutput, setJsonOutput] = useState<string | null>(null);
 	const [importModalOpen, setImportModalOpen] = useState(false);
 	const [importText, setImportText] = useState("");
+	const importTextRef = useRef<string>("");
 	// Asset selection for deploy modal
 	const [selectedAssetIds, setSelectedAssetIds] =
 		useState<string[]>(queryAssetIds);
@@ -745,11 +746,12 @@ function PipelineCanvas() {
 
 	const importPipeline = useCallback(() => {
 		setImportText("");
+		importTextRef.current = "";
 		setImportModalOpen(true);
 	}, []);
 
 	const applyImportedPipeline = useCallback(() => {
-		const text = importText.trim();
+		const text = importTextRef.current.trim();
 		if (!text) {
 			message.warning("请粘贴 Pipeline JSON");
 			return;
@@ -993,7 +995,7 @@ function PipelineCanvas() {
 										left: 210,
 										top: 0,
 										bottom: 0,
-										width: 360,
+										right: 0,
 										background: "#fff",
 										borderRight: "1px solid var(--color-border, #e2e8f0)",
 										overflow: "auto",
@@ -1248,14 +1250,17 @@ function PipelineCanvas() {
 					setImportModalOpen(false);
 					setImportText("");
 				}}
-				destroyOnClose
+				destroyOnHidden
 			>
 				<p style={{ marginTop: 0, color: "#64748b", fontSize: 13 }}>
 					粘贴 Pipeline JSON，将替换当前画布内容。
 				</p>
 				<TextArea
 					value={importText}
-					onChange={(event) => setImportText(event.target.value)}
+					onChange={(event) => {
+						setImportText(event.target.value);
+						importTextRef.current = event.target.value;
+					}}
 					placeholder='{"name":"my-pipeline","nodes":[],"edges":[]}'
 					autoSize={{ minRows: 10, maxRows: 18 }}
 					style={{ fontFamily: '"SF Mono", "Fira Code", monospace', fontSize: 12 }}
@@ -1268,6 +1273,7 @@ function PipelineCanvas() {
 				onCancel={closeDeployDialog}
 				footer={null}
 				width={780}
+				destroyOnHidden
 			>
 				{!deployDialog.deploying && !deployDialog.done && deployDialog.mode === "edit" && (
 					<>
