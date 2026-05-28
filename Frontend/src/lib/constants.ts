@@ -3,7 +3,7 @@ import {
 	ClockCircleOutlined,
 	CloseCircleOutlined,
 	ExclamationCircleOutlined,
-	LoadingOutlined,
+	PlayCircleOutlined,
 } from "@ant-design/icons";
 import { createElement, type ReactNode } from "react";
 
@@ -15,6 +15,23 @@ export const WORKFLOW_PHASES = [
 	"Pending",
 	"Suspended",
 ] as const;
+
+export const WORKFLOW_PHASE_LABELS: Record<
+	(typeof WORKFLOW_PHASES)[number],
+	string
+> = {
+	Running: "运行中",
+	Succeeded: "成功",
+	Failed: "失败",
+	Error: "异常",
+	Pending: "等待中",
+	Suspended: "已暂停",
+};
+
+/** Always show these summary cards; hide other phases when count is 0. */
+export const WORKFLOW_SUMMARY_ALWAYS_VISIBLE = new Set<
+	(typeof WORKFLOW_PHASES)[number]
+>(["Running", "Succeeded", "Failed", "Error"]);
 
 export type WorkflowPhase = (typeof WORKFLOW_PHASES)[number] | string;
 
@@ -30,7 +47,7 @@ export const PHASE_COLORS: Record<string, string> = {
 
 export const STATUS_COLORS: Record<string, string> = {
 	Succeeded: "success",
-	Running: "processing",
+	Running: "blue",
 	Pending: "warning",
 	Failed: "error",
 	Error: "error",
@@ -49,7 +66,7 @@ export const STATUS_ACCENT_COLORS: Record<string, string> = {
 
 export const STATUS_ICONS: Record<string, ReactNode> = {
 	Succeeded: createElement(CheckCircleOutlined),
-	Running: createElement(LoadingOutlined),
+	Running: createElement(PlayCircleOutlined),
 	Pending: createElement(ClockCircleOutlined),
 	Failed: createElement(CloseCircleOutlined),
 	Error: createElement(ExclamationCircleOutlined),

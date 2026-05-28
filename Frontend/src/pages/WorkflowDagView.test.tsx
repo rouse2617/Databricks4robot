@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkflowDagEdge, WorkflowNodeStatus } from "../api/workflowApi";
-import { buildDagElements } from "./WorkflowDagView";
+import { buildDagElements, countDisplayableWorkflowNodes } from "./WorkflowDagView";
 
 describe("buildDagElements", () => {
 	const nodes: WorkflowNodeStatus[] = [
@@ -53,5 +53,20 @@ describe("buildDagElements", () => {
   const result = buildDagElements(nodes, workflowEdges, null, "");
 
 		expect(result.edges).toHaveLength(0);
+	});
+
+	it("counts only displayable workflow nodes", () => {
+		expect(countDisplayableWorkflowNodes(nodes)).toBe(2);
+		expect(
+			countDisplayableWorkflowNodes([
+				{
+					id: "root",
+					name: "wf",
+					displayName: "wf",
+					type: "DAG",
+					phase: "Failed",
+				},
+			]),
+		).toBe(0);
 	});
 });

@@ -24,13 +24,13 @@ import { LinkifiedText } from "../components/common/LinkifiedText";
 import { WorkflowNodeDetailPanel } from "../components/pipeline/WorkflowNodeDetailPanel";
 import { PHASE_COLORS, STATUS_COLORS } from "../lib/constants";
 import {
+	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationConfigs,
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
 import { useWorkflowDetail } from "./useWorkflowDetail";
 import { WorkflowDagView } from "./WorkflowDagView";
-import { WorkflowYamlViewer } from "../components/pipeline/WorkflowYamlViewer";
 
 function getNodeDisplayText(node: WorkflowNodeStatus): string {
 	return node.displayName || node.templateName || node.name;
@@ -197,7 +197,7 @@ function WorkflowLogPanel({
 	search: string;
 	onSearch: (value: string) => void;
 }) {
-	const logBodyRef = useRef<HTMLPreElement | null>(null);
+	const logBodyRef = useRef<HTMLDivElement | null>(null);
 	const logElement =
 		logContent === null ? null : buildHighlightedLogNodes(logContent, search);
 
@@ -250,7 +250,7 @@ function WorkflowLogPanel({
 			) : logContent === null ? (
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>暂无日志</div>
 			) : (
-				<pre
+				<div
 					ref={logBodyRef}
 					style={{
 						flex: 1,
@@ -264,11 +264,10 @@ function WorkflowLogPanel({
 						borderRadius: 6,
 						border: "1px solid #e5e7eb",
 						minHeight: 0,
-						margin: 0,
 					}}
 				>
 					{logElement}
-				</pre>
+				</div>
 			)}
 			{selectedNode && (
 				<div style={{ marginTop: 12 }}>
@@ -314,10 +313,17 @@ export default function WorkflowDetailPage() {
 		setLogSearch,
 	} = useWorkflowDetail(name);
 	const [showNodeLogs, setShowNodeLogs] = useState(false);
-	const [manifestNode, setManifestNode] = useState<WorkflowNodeStatus | null>(null);
 	const operations = useMemo(
 		() => (workflow ? getWorkflowOperationConfigs(workflow) : []),
 		[workflow],
+	);
+	const availableOperations = useMemo(
+		() => (workflow ? getAvailableWorkflowOperationConfigs(workflow) : []),
+		[workflow],
+	);
+	const canRetryWorkflow = useMemo(
+		() => operations.some((op) => op.key === "retry" && !op.disabled),
+		[operations],
 	);
 
 	const executeOperation = useCallback(
@@ -374,31 +380,17 @@ export default function WorkflowDetailPage() {
 		setShowNodeLogs(false);
 	}, []);
 
-	const handleManifest = useCallback(() => {
-		if (!selectedNode) return;
-		setManifestNode(selectedNode);
-	}, [selectedNode]);
-
-	const handleRetryNode = useCallback(() => {
-		if (!selectedNode || !workflow) return;
+	const handleRetryWorkflow = useCallback(() => {
+		if (!workflow) return;
 		const retryConfig = operations.find(
 			(operation) => operation.key === "retry",
 		);
-		if (!retryConfig) {
-			message.warning("未找到可用重试动作");
-			return;
-		}
-		if (retryConfig.disabled) {
-			message.warning(`当前工作流状态不可执行${retryConfig.title}`);
+		if (!retryConfig || retryConfig.disabled) {
+			message.warning("当前工作流状态不可重试");
 			return;
 		}
 		runOperation(retryConfig);
-	}, [operations, runOperation, selectedNode, workflow]);
-
-	const handleShowEvents = useCallback(() => {
-		if (!selectedNode) return;
-		window.open("/events", "_blank", "noopener");
-	}, [selectedNode]);
+	}, [operations, runOperation, workflow]);
 
 	useEffect(() => {
 		if (!selectedNode) {
@@ -451,6 +443,22 @@ export default function WorkflowDetailPage() {
 				<Tag color={STATUS_COLORS[workflow.status] || "default"}>
 					{workflow.status}
 				</Tag>
+				{workflow.message ? (
+					<Tooltip title={workflow.message}>
+						<span
+							style={{
+								color: "#dc2626",
+								fontSize: 12,
+								maxWidth: 420,
+								overflow: "hidden",
+								textOverflow: "ellipsis",
+								whiteSpace: "nowrap",
+							}}
+						>
+							{workflow.message}
+						</span>
+					</Tooltip>
+				) : null}
 				<span style={{ color: "#6b7280", fontSize: 12 }}>
 					创建: {new Date(workflow.createdAt).toLocaleString()}
 					{workflow.finishedAt &&
@@ -472,22 +480,17 @@ export default function WorkflowDetailPage() {
 					}}
 				>
 					<Space size={4} wrap>
-						{operations.map((operation) => (
-							<Tooltip
+						{availableOperations.map((operation) => (
+							<Button
 								key={operation.key}
-								title={operation.disabled ? "当前状态不可用" : operation.title}
+								size="small"
+								icon={operation.icon}
+								danger={operation.danger}
+								loading={operationLoading === operation.key}
+								onClick={() => runOperation(operation)}
 							>
-								<Button
-									size="small"
-									icon={operation.icon}
-									danger={operation.danger}
-									disabled={operation.disabled}
-									loading={operationLoading === operation.key}
-									onClick={() => runOperation(operation)}
-								>
-									{operation.title}
-								</Button>
-							</Tooltip>
+								{operation.title}
+							</Button>
 						))}
 					</Space>
 					<Segmented
@@ -514,13 +517,14 @@ export default function WorkflowDetailPage() {
 					/>
 				</div>
 			</div>
-			<div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+			<div style={{ flex: 1, display: "flex", minHeight: 0, minWidth: 0 }}>
 				{viewMode === "dag" ? (
 					<WorkflowDagView
 						nodes={workflow.nodes}
 						workflowEdges={workflow.edges}
 						selectedNodeId={selectedNode?.id ?? null}
 						onNodeSelect={selectNode}
+						emptyMessage={workflow.message}
 					/>
 				) : (
 					<TimelineView nodes={workflow.nodes} />
@@ -532,10 +536,9 @@ export default function WorkflowDetailPage() {
 				workflow={workflow}
 				open={!!selectedNode}
 				onClose={closeNodeDetailPanel}
-				onManifest={handleManifest}
-				onRetryNode={handleRetryNode}
+				canRetryWorkflow={canRetryWorkflow}
+				onRetryWorkflow={handleRetryWorkflow}
 				onShowLogs={handleShowNodeLogs}
-				onShowEvents={handleShowEvents}
 			/>
 
 			<Modal
@@ -558,11 +561,6 @@ export default function WorkflowDetailPage() {
 					onSearch={setLogSearch}
 				/>
 			</Modal>
-
-			<WorkflowYamlViewer
-				nodeData={manifestNode}
-				onClose={() => setManifestNode(null)}
-			/>
 		</div>
 	);
 }

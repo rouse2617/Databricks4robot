@@ -1,8 +1,4 @@
-import {
-	FileTextOutlined,
-	ReloadOutlined,
-	ThunderboltOutlined,
-} from "@ant-design/icons";
+import { FileTextOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
 	Button,
 	Card,
@@ -15,6 +11,7 @@ import {
 	Table,
 	Tabs,
 	Tag,
+	Tooltip,
 	Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -22,6 +19,10 @@ import dayjs from "dayjs";
 import { useMemo } from "react";
 import type { WorkflowDetail, WorkflowNodeStatus } from "../../api/workflowApi";
 import { STATUS_COLORS } from "../../lib/constants";
+import {
+	getWorkflowNodePodName,
+	truncateMiddle,
+} from "../../lib/workflowNodeDisplay";
 import { DurationPanel } from "../common/DurationPanel";
 
 type KeyValue = { name: string; value?: string };
@@ -113,6 +114,21 @@ function formatArtifactRows(items?: Artifact[]) {
 	}));
 }
 
+function CopyableEllipsisText({
+	text,
+	maxLength = 40,
+}: {
+	text: string;
+	maxLength?: number;
+}) {
+	const display = truncateMiddle(text, maxLength);
+	return (
+		<Tooltip title={text}>
+			<Typography.Text copyable={{ text }}>{display}</Typography.Text>
+		</Tooltip>
+	);
+}
+
 function ContainersTab({ node }: { node: WorkflowNodeStatus }) {
 	type ContainerItem = {
 		name: string;
@@ -129,7 +145,16 @@ function ContainersTab({ node }: { node: WorkflowNodeStatus }) {
 	}, [node]);
 
 	if (containerData.length === 0) {
-		return <Empty description="暂无容器" />;
+		return (
+			<Empty
+				description="暂无容器详情"
+				styles={{ description: { maxWidth: 360, margin: "0 auto" } }}
+			>
+				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+					当前 API 未返回容器 spec；可在「概览」查看节点状态，或通过「日志」排查运行详情。
+				</Typography.Text>
+			</Empty>
+		);
 	}
 
 	return (
@@ -150,9 +175,9 @@ function InputsTab({ node }: { node: WorkflowNodeStatus }) {
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<div>
-				<div style={{ marginBottom: 8, fontWeight: 600 }}>参数</div>
+				<div style={{ marginBottom: 8, fontWeight: 600 }}>输入参数</div>
 				{parameters.length === 0 ? (
-					<Empty description="暂无参数" />
+					<Empty description="暂无输入参数" />
 				) : (
 					<Table
 						size="small"
@@ -164,9 +189,9 @@ function InputsTab({ node }: { node: WorkflowNodeStatus }) {
 				)}
 			</div>
 			<div>
-				<div style={{ marginBottom: 8, fontWeight: 600 }}>产物</div>
+				<div style={{ marginBottom: 8, fontWeight: 600 }}>输入产物</div>
 				{artifacts.length === 0 ? (
-					<Empty description="暂无产物" />
+					<Empty description="暂无输入产物" />
 				) : (
 					<Table
 						size="small"
@@ -189,7 +214,7 @@ function OutputsTab({ node }: { node: WorkflowNodeStatus }) {
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<Row gutter={[12, 12]}>
 				<Col span={24}>
-					<Card size="small" title="Result">
+					<Card size="small" title="结果">
 						<Typography.Paragraph>
 							<pre
 								style={{
@@ -204,7 +229,7 @@ function OutputsTab({ node }: { node: WorkflowNodeStatus }) {
 					</Card>
 				</Col>
 				<Col span={24}>
-					<Card size="small" title="ExitCode">
+					<Card size="small" title="退出码">
 						{typeof node.outputs?.exitCode === "number"
 							? node.outputs.exitCode
 							: "—"}
@@ -212,9 +237,9 @@ function OutputsTab({ node }: { node: WorkflowNodeStatus }) {
 				</Col>
 			</Row>
 			<div>
-				<div style={{ marginBottom: 8, fontWeight: 600 }}>Parameters</div>
+				<div style={{ marginBottom: 8, fontWeight: 600 }}>输出参数</div>
 				{parameters.length === 0 ? (
-					<Empty description="暂无参数" />
+					<Empty description="暂无输出参数" />
 				) : (
 					<Table
 						size="small"
@@ -226,9 +251,9 @@ function OutputsTab({ node }: { node: WorkflowNodeStatus }) {
 				)}
 			</div>
 			<div>
-				<div style={{ marginBottom: 8, fontWeight: 600 }}>Artifacts</div>
+				<div style={{ marginBottom: 8, fontWeight: 600 }}>输出产物</div>
 				{artifacts.length === 0 ? (
-					<Empty description="暂无产物" />
+					<Empty description="暂无输出产物" />
 				) : (
 					<Table
 						size="small"
@@ -250,42 +275,45 @@ function SummaryTab({
 	node: WorkflowNodeStatus;
 	workflow: WorkflowDetail;
 }) {
+	const podName = getWorkflowNodePodName(node);
 	const memoizationText = node.memoizationStatus
-		? `hit=${node.memoizationStatus.hit} key=${node.memoizationStatus.key} cache=${node.memoizationStatus.cacheName}`
+		? `命中=${node.memoizationStatus.hit ? "是" : "否"}，key=${node.memoizationStatus.key}，cache=${node.memoizationStatus.cacheName}`
 		: "—";
 
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<Descriptions size="small" column={1} layout="vertical" bordered>
-				<Descriptions.Item label="NAME">
+				<Descriptions.Item label="名称">
 					<Typography.Text copyable={{ text: node.displayName || node.name }}>
 						{node.displayName || node.name}
 					</Typography.Text>
 				</Descriptions.Item>
-				<Descriptions.Item label="ID">
-					<Typography.Text copyable={{ text: node.id }}>
-						{node.id}
-					</Typography.Text>
+				<Descriptions.Item label="节点 ID">
+					<CopyableEllipsisText text={node.id} />
 				</Descriptions.Item>
-				<Descriptions.Item label="POD NAME">
-					{node.podName || "—"}
+				<Descriptions.Item label="Pod 名称">
+					{podName ? <CopyableEllipsisText text={podName} /> : "—"}
 				</Descriptions.Item>
-				<Descriptions.Item label="HOST NODE NAME">
-					{node.hostNodeName || "—"}
+				<Descriptions.Item label="宿主机">
+					{node.hostNodeName ? (
+						<CopyableEllipsisText text={node.hostNodeName} maxLength={32} />
+					) : (
+						"—"
+					)}
 				</Descriptions.Item>
-				<Descriptions.Item label="TYPE">
+				<Descriptions.Item label="类型">
 					{node.type || node.templateName || "—"}
 				</Descriptions.Item>
-				<Descriptions.Item label="PHASE">
+				<Descriptions.Item label="状态">
 					<Tag color={STATUS_COLORS[node.phase] || "default"}>{node.phase}</Tag>
 				</Descriptions.Item>
-				<Descriptions.Item label="START TIME">
+				<Descriptions.Item label="开始时间">
 					{formatRelativeTime(node.startedAt)}
 				</Descriptions.Item>
-				<Descriptions.Item label="END TIME">
+				<Descriptions.Item label="结束时间">
 					{formatRelativeTime(node.finishedAt)}
 				</Descriptions.Item>
-				<Descriptions.Item label="DURATION">
+				<Descriptions.Item label="耗时">
 					<DurationPanel
 						phase={node.phase}
 						startedAt={node.startedAt}
@@ -293,18 +321,29 @@ function SummaryTab({
 						progress={node.progress}
 					/>
 				</Descriptions.Item>
-				<Descriptions.Item label="WORKFLOW">{workflow.name}</Descriptions.Item>
-				<Descriptions.Item label="PROGRESS">
+				<Descriptions.Item label="所属工作流">
+					<CopyableEllipsisText text={workflow.name} maxLength={36} />
+				</Descriptions.Item>
+				<Descriptions.Item label="进度">
 					{node.progress || workflow.progress || "—"}
 				</Descriptions.Item>
-				<Descriptions.Item label="MEMOIZATION">
+				<Descriptions.Item label="Memoization">
 					{memoizationText}
 				</Descriptions.Item>
-				<Descriptions.Item label="RESOURCES DURATION">
+				<Descriptions.Item label="资源耗时">
 					<pre style={{ margin: 0 }}>
 						{formatResourceDurationText(node.resourcesDuration)}
 					</pre>
 				</Descriptions.Item>
+				{node.message ? (
+					<Descriptions.Item label="消息">
+						<Typography.Paragraph
+							style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}
+						>
+							{node.message}
+						</Typography.Paragraph>
+					</Descriptions.Item>
+				) : null}
 			</Descriptions>
 		</Space>
 	);
@@ -315,21 +354,32 @@ export function WorkflowNodeDetailPanel({
 	workflow,
 	open,
 	onClose,
-	onManifest,
-	onRetryNode,
+	onRetryWorkflow,
+	canRetryWorkflow,
 	onShowLogs,
-	onShowEvents,
 }: {
 	node: WorkflowNodeStatus | null;
 	workflow: WorkflowDetail | null;
 	open: boolean;
 	onClose: () => void;
-	onManifest: () => void;
-	onRetryNode: () => void;
+	onRetryWorkflow?: () => void;
+	canRetryWorkflow?: boolean;
 	onShowLogs: () => void;
-	onShowEvents: () => void;
 }) {
 	if (!node || !workflow) return null;
+
+	const drawerExtra = [
+		<Button key="logs" type="primary" icon={<FileTextOutlined />} onClick={onShowLogs}>
+			日志
+		</Button>,
+	];
+	if (canRetryWorkflow && onRetryWorkflow) {
+		drawerExtra.unshift(
+			<Button key="retry" icon={<ReloadOutlined />} onClick={onRetryWorkflow}>
+				重试工作流
+			</Button>,
+		);
+	}
 
 	return (
 		<Drawer
@@ -338,53 +388,34 @@ export function WorkflowNodeDetailPanel({
 			width={520}
 			open={open}
 			onClose={onClose}
-			extra={[
-				<Button key="manifest" icon={<FileTextOutlined />} onClick={onManifest}>
-					MANIFEST
-				</Button>,
-				<Button key="retry" icon={<ReloadOutlined />} onClick={onRetryNode}>
-					RETRY NODE
-				</Button>,
-				<Button key="logs" icon={<FileTextOutlined />} onClick={onShowLogs}>
-					LOGS
-				</Button>,
-				<Button
-					key="events"
-					icon={<ThunderboltOutlined />}
-					onClick={onShowEvents}
-				>
-					EVENTS
-				</Button>,
-			]}
-			bodyStyle={{ paddingTop: 8 }}
+			extra={drawerExtra}
+			styles={{ body: { paddingTop: 8 } }}
 		>
-			<Space direction="vertical" style={{ width: "100%" }}>
-				<Tabs
-					type="card"
-					items={[
-						{
-							key: "summary",
-							label: "SUMMARY",
-							children: <SummaryTab node={node} workflow={workflow} />,
-						},
-						{
-							key: "containers",
-							label: "CONTAINERS",
-							children: <ContainersTab node={node} />,
-						},
-						{
-							key: "inputs-outputs",
-							label: "INPUTS/OUTPUTS",
-							children: (
-								<Space direction="vertical" style={{ width: "100%" }}>
-									<InputsTab node={node} />
-									<OutputsTab node={node} />
-								</Space>
-							),
-						},
-					]}
-				/>
-			</Space>
+			<Tabs
+				type="card"
+				items={[
+					{
+						key: "summary",
+						label: "概览",
+						children: <SummaryTab node={node} workflow={workflow} />,
+					},
+					{
+						key: "containers",
+						label: "容器",
+						children: <ContainersTab node={node} />,
+					},
+					{
+						key: "inputs-outputs",
+						label: "输入/输出",
+						children: (
+							<Space direction="vertical" style={{ width: "100%" }}>
+								<InputsTab node={node} />
+								<OutputsTab node={node} />
+							</Space>
+						),
+					},
+				]}
+			/>
 		</Drawer>
 	);
 }

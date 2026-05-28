@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
+    "dev:remote": "VITE_API_BASE_URL=https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app vite --host",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
