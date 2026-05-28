@@ -107,7 +107,16 @@ export function buildDagElements(
 	edges: RFEdge[];
 } {
 	const displayableNodes = rawNodes.filter(isDisplayableNode);
-	const displayableIds = new Set(displayableNodes.map((node) => node.id));
+	const normalizedSearch = nodeSearch.trim().toLowerCase();
+	const visibleNodes = displayableNodes.filter((node) => {
+		if (normalizedSearch.length === 0) return true;
+		const displayText = getWorkflowNodeDisplayText(node).toLowerCase();
+		return (
+			displayText.includes(normalizedSearch) ||
+			node.name.toLowerCase().includes(normalizedSearch)
+		);
+	});
+	const visibleIds = new Set(visibleNodes.map((node) => node.id));
 	const byId = new Map(rawNodes.map((node) => [node.id, node]));
 	const byName = new Map(rawNodes.map((node) => [node.name, node]));
 
@@ -137,8 +146,8 @@ export function buildDagElements(
 	if (workflowEdges) {
 		for (const edge of workflowEdges) {
 			if (
-				!displayableIds.has(edge.source) ||
-				!displayableIds.has(edge.target)
+				!visibleIds.has(edge.source) ||
+				!visibleIds.has(edge.target)
 			) {
 				continue;
 			}
@@ -149,20 +158,20 @@ export function buildDagElements(
 			const sourceId = getNearestVisibleAncestorId(
 				sourceNode,
 				byName,
-				displayableIds,
+				visibleIds,
 			);
 			for (const childId of sourceNode.children ?? []) {
 				const childNode = byId.get(childId);
-				if (!childNode || !displayableIds.has(childId) || !sourceId) continue;
+				if (!childNode || !visibleIds.has(childId) || !sourceId) continue;
 				addEdge(sourceId, childId);
 			}
 		}
 
-		for (const targetNode of displayableNodes) {
+		for (const targetNode of visibleNodes) {
 			const sourceId = getNearestVisibleAncestorId(
 				targetNode,
 				byName,
-				displayableIds,
+				visibleIds,
 			);
 			if (sourceId && sourceId !== targetNode.id) {
 				addEdge(sourceId, targetNode.id);
@@ -180,16 +189,14 @@ export function buildDagElements(
 	});
 	graph.setDefaultEdgeLabel(() => ({}));
 
-	for (const node of displayableNodes) {
+	for (const node of visibleNodes) {
 		graph.setNode(node.id, { width: DAG_NODE_WIDTH, height: DAG_NODE_HEIGHT });
 	}
 	for (const edge of edges) {
 		graph.setEdge(edge.source, edge.target);
 	}
 	dagre.layout(graph);
-
-	const normalizedSearch = nodeSearch.trim().toLowerCase();
-	const nodes = displayableNodes.map((node, index) => {
+	const nodes = visibleNodes.map((node, index) => {
 		const dagreNode = graph.node(node.id);
 		const hasLayout =
 			dagreNode &&
@@ -205,6 +212,7 @@ export function buildDagElements(
 			normalizedSearch.length === 0 ||
 			displayText.includes(normalizedSearch) ||
 			node.name.toLowerCase().includes(normalizedSearch);
+		const dimmed = !matchesSearch;
 		const progressPercent = getProgressPercent(node.progress);
 		return {
 			id: node.id,
@@ -221,7 +229,7 @@ export function buildDagElements(
 			data: {
 				workflowNode: node,
 				selected: isSelected,
-				dimmed: !matchesSearch,
+				dimmed,
 				progressPercent,
 			},
 			sourcePosition: Position.Right,

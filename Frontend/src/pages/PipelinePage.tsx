@@ -484,8 +484,9 @@ function PipelineCanvas() {
 				if (cancelled) return;
 				loadPipelineToCanvas(template.pipeline);
 			})
-			.catch(() => {
+			.catch((err) => {
 				if (cancelled) return;
+				message.error(`模板加载失败: ${String(err)}`);
 				loadPipelineFromSessionStorage();
 			});
 
@@ -912,7 +913,7 @@ function PipelineCanvas() {
 					</div>
 				</div>
 
-					{view === "pipeline" && !isTemplateLanding && (
+					{view === "pipeline" && (
 					<>
 						<div className="pipeline-toolbar__name">
 							<span className="pipeline-toolbar__name-label">名称</span>
@@ -993,6 +994,19 @@ function PipelineCanvas() {
 								width: "100%",
 							}}
 						>
+							<div
+								style={{
+									color: "#64748b",
+									fontSize: 13,
+									marginBottom: 16,
+									display: "flex",
+									flexDirection: "column",
+									gap: 4,
+								}}
+							>
+								<span>从左侧「组件面板」拖入组件到画布，开始设计你的第一个流水线</span>
+								<span>或从下方列表选择一个已保存的模板进行编辑</span>
+							</div>
 							<DeployPanel onEditTemplate={loadPipelineToCanvas} />
 						</div>
 					) : (
@@ -1304,7 +1318,7 @@ function PipelineCanvas() {
 											name: e.target.value,
 										}))
 									}
-									placeholder={pipelineName}
+									placeholder="留空则使用当前流水线名称"
 									size="small"
 								/>
 							</label>
