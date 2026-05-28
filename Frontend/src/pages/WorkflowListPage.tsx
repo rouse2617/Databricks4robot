@@ -153,6 +153,7 @@ export default function WorkflowListPage() {
 		setLoading(true);
 		try {
 			const params: ListWorkflowsParams = {
+				status: statusFilter,
 				name: debouncedNameSearch || undefined,
 				label: labelFilter.length ? labelFilter : undefined,
 				createdAfter: dateRange[0]?.toISOString(),
@@ -165,7 +166,7 @@ export default function WorkflowListPage() {
 		} finally {
 			setLoading(false);
 		}
-	}, [debouncedNameSearch, labelFilter, dateRange]);
+	}, [statusFilter, debouncedNameSearch, labelFilter, dateRange]);
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => {
@@ -179,24 +180,21 @@ export default function WorkflowListPage() {
 		refresh();
 	}, [refresh]);
 
-	const availableLabelOptions = useMemo(() => {
+	const labelCheckboxOptions = useMemo(() => {
 		const labels = new Set<string>();
 		for (const item of items) {
 			for (const [key, value] of Object.entries(item.labels ?? {})) {
 				labels.add(serializeLabel(key, value));
 			}
 		}
-		return Array.from(labels).sort((a, b) => a.localeCompare(b));
+		const availableLabelOptions = Array.from(labels).sort((a, b) =>
+			a.localeCompare(b),
+		);
+		return availableLabelOptions.map((label) => ({
+			label: <Tag>{label}</Tag>,
+			value: label,
+		}));
 	}, [items]);
-
-	const labelCheckboxOptions = useMemo(
-		() =>
-			availableLabelOptions.map((label) => ({
-				label: <Tag>{label}</Tag>,
-				value: label,
-			})),
-		[availableLabelOptions],
-	);
 
 	const statusCounts = useMemo(() => {
 		const counts = Object.fromEntries(
@@ -211,48 +209,6 @@ export default function WorkflowListPage() {
 
 		return counts;
 	}, [items]);
-
-	const filtered = useMemo(
-		() =>
-			items.filter((item) => {
-				const matchesStatus = statusFilter
-					? item.status === statusFilter
-					: true;
-				const matchesName = debouncedNameSearch
-					? item.name.toLowerCase().includes(debouncedNameSearch)
-					: true;
-				const matchesLabel =
-					labelFilter.length === 0
-						? true
-						: labelFilter.every((selectedLabel) => {
-								const delimiter = selectedLabel.indexOf(LABEL_SEPARATOR);
-								if (delimiter <= 0) return false;
-								const selectedKey = selectedLabel.slice(0, delimiter);
-								const selectedValue = selectedLabel.slice(delimiter + 1);
-								return item.labels?.[selectedKey] === selectedValue;
-							});
-				const createdAt = dayjs(item.createdAt);
-				const matchesCreatedAfter = dateRange[0]
-					? createdAt.isValid() &&
-						(createdAt.isAfter(dateRange[0]) || createdAt.isSame(dateRange[0]))
-					: true;
-				const finishedAt = item.finishedAt ? dayjs(item.finishedAt) : null;
-				const matchesFinishedBefore = dateRange[1]
-					? finishedAt?.isValid() &&
-						(finishedAt.isBefore(dateRange[1]) ||
-							finishedAt.isSame(dateRange[1]))
-					: true;
-
-				return (
-					matchesStatus &&
-					matchesName &&
-					matchesLabel &&
-					matchesCreatedAfter &&
-					matchesFinishedBefore
-				);
-			}),
-		[debouncedNameSearch, dateRange, items, labelFilter, statusFilter],
-	);
 
 	const executeOperation = useCallback(
 		async (
@@ -510,7 +466,7 @@ export default function WorkflowListPage() {
 			</div>
 
 			<Table
-				dataSource={filtered}
+				dataSource={items}
 				columns={columns}
 				rowKey="name"
 				loading={loading}

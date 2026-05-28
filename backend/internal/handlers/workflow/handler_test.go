@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	"github.com/gin-gonic/gin"
@@ -84,12 +85,27 @@ func (m *mockWorkflowClient) GetWorkflowLogs(ctx context.Context, workflowName, 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 func makeWorkflow(name, phase string, nodeCount int) *wfv1.Workflow {
+	return makeWorkflowWithMeta(name, phase, nodeCount, metav1.Now().Time, nil, nil)
+}
+
+func makeWorkflowWithMeta(
+	name, phase string,
+	nodeCount int,
+	createdAt time.Time,
+	finishedAt *time.Time,
+	labels map[string]string,
+) *wfv1.Workflow {
 	whf := &wfv1.Workflow{}
-	fi := metav1.Now()
-	whf.CreationTimestamp = fi
+	whf.CreationTimestamp = metav1.NewTime(createdAt)
 	whf.Name = name
 	whf.Status.Phase = wfv1.WorkflowPhase(phase)
 	whf.Status.Nodes = make(wfv1.Nodes)
+	if finishedAt != nil {
+		whf.Status.FinishedAt = metav1.NewTime(*finishedAt)
+	}
+	if labels != nil {
+		whf.Labels = labels
+	}
 	for i := 0; i < nodeCount; i++ {
 		id := string(rune('a' + i))
 		whf.Status.Nodes[id] = wfv1.NodeStatus{
@@ -189,6 +205,202 @@ func TestListWorkflows_WithItems(t *testing.T) {
 	}
 	if second["nodeCount"] != float64(3) {
 		t.Errorf("expected nodeCount 3, got %v", second["nodeCount"])
+	}
+}
+
+func TestListWorkflows_FilterByName(t *testing.T) {
+	base := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+	h := New(&mockWorkflowClient{
+		listFn: func(_ context.Context, _, _ string) ([]wfv1.Workflow, error) {
+			return []wfv1.Workflow{
+				*makeWorkflowWithMeta("AlphaRun", "Running", 1, base.Add(-2*time.Hour), nil, nil),
+				*makeWorkflowWithMeta("beta-run", "Succeeded", 1, base.Add(-1*time.Hour), nil, nil),
+				*makeWorkflowWithMeta("delta-ALPHA", "Failed", 1, base.Add(-30*time.Minute), nil, nil),
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows?name=alpha", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items := resp["items"].([]interface{})
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+}
+
+func TestListWorkflows_FilterByStatus(t *testing.T) {
+	base := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+	h := New(&mockWorkflowClient{
+		listFn: func(_ context.Context, _, _ string) ([]wfv1.Workflow, error) {
+			return []wfv1.Workflow{
+				*makeWorkflowWithMeta("wf-running", "Running", 1, base, nil, nil),
+				*makeWorkflowWithMeta("wf-succeeded", "Succeeded", 1, base, nil, nil),
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows?status=Succeeded", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items := resp["items"].([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].(map[string]interface{})["name"] != "wf-succeeded" {
+		t.Errorf("expected wf-succeeded, got %v", items[0].(map[string]interface{})["name"])
+	}
+}
+
+func TestListWorkflows_FilterByLabels(t *testing.T) {
+	base := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+	h := New(&mockWorkflowClient{
+		listFn: func(_ context.Context, _, _ string) ([]wfv1.Workflow, error) {
+			return []wfv1.Workflow{
+				*makeWorkflowWithMeta(
+					"wf-a",
+					"Running",
+					1,
+					base.Add(-2*time.Hour),
+					nil,
+					map[string]string{"team": "ml", "env": "prod"},
+				),
+				*makeWorkflowWithMeta(
+					"wf-b",
+					"Running",
+					1,
+					base.Add(-1*time.Hour),
+					nil,
+					map[string]string{"team": "ml", "env": "staging"},
+				),
+				*makeWorkflowWithMeta(
+					"wf-c",
+					"Running",
+					1,
+					base.Add(-30*time.Minute),
+					nil,
+					map[string]string{"team": "ops", "env": "prod"},
+				),
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/workflows?label=team=ml&label=env=prod",
+		nil,
+	)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items := resp["items"].([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].(map[string]interface{})["name"] != "wf-a" {
+		t.Errorf("expected wf-a, got %v", items[0].(map[string]interface{})["name"])
+	}
+}
+
+func TestListWorkflows_FilterByCreatedAfter(t *testing.T) {
+	base := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+	oldTime := base.Add(-2 * time.Hour)
+	newTime := base
+	h := New(&mockWorkflowClient{
+		listFn: func(_ context.Context, _, _ string) ([]wfv1.Workflow, error) {
+			return []wfv1.Workflow{
+				*makeWorkflowWithMeta("wf-old", "Running", 1, oldTime, nil, nil),
+				*makeWorkflowWithMeta("wf-new", "Running", 1, newTime, nil, nil),
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/workflows?createdAfter="+base.Format(time.RFC3339),
+		nil,
+	)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items := resp["items"].([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].(map[string]interface{})["name"] != "wf-new" {
+		t.Errorf("expected wf-new, got %v", items[0].(map[string]interface{})["name"])
+	}
+}
+
+func TestListWorkflows_FilterByFinishedBefore(t *testing.T) {
+	base := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
+	oldFinished := base.Add(-2 * time.Hour)
+	newFinished := base.Add(2 * time.Hour)
+	h := New(&mockWorkflowClient{
+		listFn: func(_ context.Context, _, _ string) ([]wfv1.Workflow, error) {
+			return []wfv1.Workflow{
+				*makeWorkflowWithMeta(
+					"wf-early-finish",
+					"Succeeded",
+					1,
+					base.Add(-3*time.Hour),
+					&oldFinished,
+					nil,
+				),
+				*makeWorkflowWithMeta(
+					"wf-late-finish",
+					"Succeeded",
+					1,
+					base.Add(-2*time.Hour),
+					&newFinished,
+					nil,
+				),
+				*makeWorkflowWithMeta("wf-running", "Running", 1, base.Add(-time.Hour), nil, nil),
+			}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/workflows?finishedBefore="+base.Format(time.RFC3339),
+		nil,
+	)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items := resp["items"].([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].(map[string]interface{})["name"] != "wf-early-finish" {
+		t.Errorf("expected wf-early-finish, got %v", items[0].(map[string]interface{})["name"])
 	}
 }
 

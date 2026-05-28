@@ -10,6 +10,7 @@ export interface WorkflowSummary {
 }
 
 export interface ListWorkflowsParams {
+	status?: string;
 	name?: string;
 	label?: string[];
 	createdAfter?: string;
@@ -50,6 +51,7 @@ export function listWorkflows(
 	params: ListWorkflowsParams = {},
 ): Promise<{ items: WorkflowSummary[] }> {
 	const sp = new URLSearchParams();
+	if (params.status) sp.set("status", params.status);
 	if (params.name) sp.set("name", params.name);
 	if (params.label && params.label.length > 0) {
 		for (const label of params.label) {

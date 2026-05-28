@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"strings"
 
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
@@ -22,11 +25,81 @@ func New(wfClient argo.WorkflowClient, namespace string) *Handler {
 
 // ListWorkflows handles GET /api/v1/workflows
 func (h *Handler) ListWorkflows(c *gin.Context) {
+	nameFilter := strings.TrimSpace(c.Query("name"))
+	statusFilter := strings.TrimSpace(c.Query("status"))
+	labelFilters := c.QueryArray("label")
+	createdAfterRaw := strings.TrimSpace(c.Query("createdAfter"))
+	finishedBeforeRaw := strings.TrimSpace(c.Query("finishedBefore"))
+
+	var (
+		createdAfter        time.Time
+		createdAfterGiven   bool
+		finishedBefore      time.Time
+		finishedBeforeGiven bool
+	)
+	if createdAfterRaw != "" {
+		if parsed, err := time.Parse(time.RFC3339, createdAfterRaw); err == nil {
+			createdAfter = parsed
+			createdAfterGiven = true
+		}
+	}
+	if finishedBeforeRaw != "" {
+		if parsed, err := time.Parse(time.RFC3339, finishedBeforeRaw); err == nil {
+			finishedBefore = parsed
+			finishedBeforeGiven = true
+		}
+	}
+
+	parsedLabels := make([][2]string, 0, len(labelFilters))
+	for _, raw := range labelFilters {
+		key, value, found := strings.Cut(strings.TrimSpace(raw), "=")
+		if !found || key == "" || value == "" {
+			continue
+		}
+		parsedLabels = append(parsedLabels, [2]string{key, value})
+	}
+
 	list, err := h.wfClient.ListWorkflows(c.Request.Context(), h.namespaceFor(c), "")
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
+
+	filtered := make([]wfv1.Workflow, 0, len(list))
+	for _, wf := range list {
+		if nameFilter != "" &&
+			!strings.Contains(strings.ToLower(wf.Name), strings.ToLower(nameFilter)) {
+			continue
+		}
+		if statusFilter != "" && string(wf.Status.Phase) != statusFilter {
+			continue
+		}
+		labelMatch := true
+		for _, item := range parsedLabels {
+			v, ok := wf.Labels[item[0]]
+			if !ok || v != item[1] {
+				labelMatch = false
+				break
+			}
+		}
+		if !labelMatch {
+			continue
+		}
+		if createdAfterGiven && wf.CreationTimestamp.Time.Before(createdAfter) {
+			continue
+		}
+		if finishedBeforeGiven {
+			if wf.Status.FinishedAt.IsZero() {
+				continue
+			}
+			if wf.Status.FinishedAt.Time.After(finishedBefore) {
+				continue
+			}
+		}
+
+		filtered = append(filtered, wf)
+	}
+
 	type item struct {
 		Name       string            `json:"name"`
 		Status     string            `json:"status"`
@@ -35,8 +108,8 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		FinishedAt *string           `json:"finishedAt,omitempty"`
 		Labels     map[string]string `json:"labels,omitempty"`
 	}
-	items := make([]item, 0, len(list))
-	for _, wf := range list {
+	items := make([]item, 0, len(filtered))
+	for _, wf := range filtered {
 		created := wf.CreationTimestamp.Time.Format("2006-01-02T15:04:05Z")
 		it := item{
 			Name:      wf.Name,
