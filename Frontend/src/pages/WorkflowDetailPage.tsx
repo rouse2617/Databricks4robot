@@ -3,80 +3,35 @@ import {
 	ArrowLeftOutlined,
 	BarsOutlined,
 } from "@ant-design/icons";
-import {
-	Background,
-	BackgroundVariant,
-	Controls,
-	ReactFlow,
-	ReactFlowProvider,
-	type Node as RFNode,
-	useEdgesState,
-	useNodesState,
-} from "@xyflow/react";
+import Ansi from "ansi-to-react";
 import {
 	Button,
 	Descriptions,
+	Input,
 	Modal,
 	message,
 	Segmented,
 	Space,
 	Spin,
-	Tabs,
 	Tag,
 	Tooltip,
 } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import "@xyflow/react/dist/style.css";
-import {
-	getWorkflow,
-	getWorkflowLogs,
-	type WorkflowDetail,
-	type WorkflowNodeStatus,
-} from "../api/workflowApi";
+import type { WorkflowNodeStatus } from "../api/workflowApi";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { LinkifiedText } from "../components/common/LinkifiedText";
-import { WorkflowLabels } from "../components/common/WorkflowLabels";
 import { PHASE_COLORS, STATUS_COLORS } from "../lib/constants";
 import {
 	getWorkflowOperationConfigs,
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
-import { buildWorkflowFlowEdges } from "../lib/workflowDag";
+import { useWorkflowDetail } from "./useWorkflowDetail";
+import { WorkflowDagView } from "./WorkflowDagView";
 
-function buildFlowNodes(
-	nodes: WorkflowNodeStatus[],
-	onNodeClick: (node: WorkflowNodeStatus) => void,
-): RFNode[] {
-	return nodes.map((n, i) => ({
-		id: n.id,
-		type: "default",
-		position: { x: (i % 4) * 220, y: Math.floor(i / 4) * 120 },
-		data: {
-			label: (
-				<div style={{ fontSize: 12, textAlign: "center" }}>
-					<div style={{ fontWeight: 600 }}>{n.displayName || n.name}</div>
-					<Tag
-						color={STATUS_COLORS[n.phase] || "default"}
-						style={{ fontSize: 10, marginTop: 4 }}
-					>
-						{n.phase}
-					</Tag>
-				</div>
-			),
-			nodeStatus: n,
-			onClick: () => onNodeClick(n),
-		},
-		style: {
-			background: PHASE_COLORS[n.phase] || "#f3f4f6",
-			color: "#fff",
-			border: "none",
-			borderRadius: 8,
-			padding: 10,
-			minWidth: 140,
-		},
-	}));
+function getNodeDisplayText(node: WorkflowNodeStatus): string {
+	return node.displayName || node.templateName || node.name;
 }
 
 function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
@@ -92,6 +47,7 @@ function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
 	const times = withTime.map((n) => ({
 		start: new Date(n.startedAt as string).getTime(),
 		end: n.finishedAt ? new Date(n.finishedAt).getTime() : Date.now(),
+		id: n.id,
 	}));
 	const globalStart = Math.min(...times.map((t) => t.start));
 	const globalEnd = Math.max(...times.map((t) => t.end));
@@ -105,7 +61,6 @@ function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
 	return (
 		<div style={{ overflow: "auto", height: "100%", padding: 16 }}>
 			<div style={{ minWidth: 600 }}>
-				{/* Time axis header */}
 				<div
 					style={{
 						position: "relative",
@@ -139,15 +94,14 @@ function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
 						}}
 					/>
 				</div>
-				{/* Node rows */}
-				{withTime.map((n) => {
-					const t = times.find((_, i) => withTime[i].id === n.id);
-					if (!t) return null;
-					const left = ((t.start - globalStart) / range) * 100;
-					const width = ((t.end - t.start) / range) * 100;
+				{times.map((item) => {
+					const node = nodes.find((itemNode) => itemNode.id === item.id);
+					if (!node) return null;
+					const left = ((item.start - globalStart) / range) * 100;
+					const width = ((item.end - item.start) / range) * 100;
 					return (
 						<div
-							key={n.id}
+							key={node.id}
 							style={{ display: "flex", alignItems: "center", height: rowH }}
 						>
 							<div
@@ -161,9 +115,9 @@ function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
 									whiteSpace: "nowrap",
 									color: "#374151",
 								}}
-								title={n.displayName || n.name}
+								title={node.displayName || node.name}
 							>
-								{n.displayName || n.name}
+								{node.displayName || node.name}
 							</div>
 							<div style={{ flex: 1, position: "relative" }}>
 								<div
@@ -174,7 +128,7 @@ function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
 										top: 4,
 										height: rowH - 8,
 										borderRadius: 4,
-										background: PHASE_COLORS[n.phase] || "#9ca3af",
+										background: PHASE_COLORS[node.phase] || "#9ca3af",
 										opacity: 0.85,
 										display: "flex",
 										alignItems: "center",
@@ -184,7 +138,7 @@ function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
 										overflow: "hidden",
 									}}
 								>
-									{Math.round((t.end - t.start) / 1000)}s
+									{Math.round((item.end - item.start) / 1000)}s
 								</div>
 							</div>
 						</div>
@@ -195,142 +149,175 @@ function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
 	);
 }
 
-function Flow({
-	nodes: rawNodes,
-	onNodeSelect,
-}: {
-	nodes: WorkflowNodeStatus[];
-	onNodeSelect: (node: WorkflowNodeStatus | null) => void;
-}) {
-	const [nodes, setNodes, onNodesChange] = useNodesState(
-		buildFlowNodes(rawNodes, onNodeSelect),
-	);
-	const [edges, setEdges, onEdgesChange] = useEdgesState(
-		buildWorkflowFlowEdges(rawNodes),
-	);
+function buildHighlightedLogNodes(logContent: string, keyword: string) {
+	const normalized = keyword.trim();
+	if (!normalized) {
+		return [<Ansi key="raw-log">{logContent}</Ansi>];
+	}
 
-	useEffect(() => {
-		setNodes(buildFlowNodes(rawNodes, onNodeSelect));
-		setEdges(buildWorkflowFlowEdges(rawNodes));
-	}, [rawNodes, onNodeSelect, setNodes, setEdges]);
-
-	const onNodeClick = useCallback(
-		(_: React.MouseEvent, node: RFNode) => {
-			const ns = node.data?.nodeStatus as WorkflowNodeStatus | undefined;
-			if (ns) {
-				onNodeSelect(ns);
-			}
-		},
-		[onNodeSelect],
-	);
-
-	const onPaneClick = useCallback(() => {
-		onNodeSelect(null);
-	}, [onNodeSelect]);
-
-	return (
-		<ReactFlow
-			nodes={nodes}
-			edges={edges}
-			onNodesChange={onNodesChange}
-			onEdgesChange={onEdgesChange}
-			onNodeClick={onNodeClick}
-			onPaneClick={onPaneClick}
-			fitView
-		>
-			<Background variant={BackgroundVariant.Dots} gap={24} color="#cbd5e1" />
-			<Controls />
-		</ReactFlow>
-	);
+	const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const pattern = new RegExp(`(${escaped})`, "gi");
+	const parts = logContent.split(pattern);
+	let offset = 0;
+	let segmentIndex = 0;
+	return parts.flatMap((part) => {
+		const key = `log-chunk-${offset}-${offset + part.length}`;
+		offset += part.length;
+		const isMatch = segmentIndex % 2 === 1;
+		segmentIndex += 1;
+		if (!part) return [];
+		if (isMatch) {
+			return (
+				<mark
+					key={key}
+					style={{ background: "#fef08a", padding: 0, borderRadius: 0 }}
+				>
+					<Ansi>{part}</Ansi>
+				</mark>
+			);
+		}
+		return <Ansi key={key}>{part}</Ansi>;
+	});
 }
 
-function LogViewer({
-	workflowName,
-	nodeId,
+function WorkflowLogPanel({
+	selectedNode,
 	loading,
 	logContent,
-	onLoad,
+	error,
+	search,
+	onSearch,
 }: {
-	workflowName: string;
-	nodeId: string;
+	selectedNode: WorkflowNodeStatus | null;
 	loading: boolean;
 	logContent: string | null;
-	onLoad: (loading: boolean, content: string | null) => void;
+	error: string | null;
+	search: string;
+	onSearch: (value: string) => void;
 }) {
-	useEffect(() => {
-		onLoad(true, null);
-		getWorkflowLogs(workflowName, nodeId)
-			.then((res) => onLoad(false, res.logs || "(无日志)"))
-			.catch((err) => {
-				onLoad(false, null);
-				message.error(`获取日志失败: ${String(err)}`);
-			});
-	}, [workflowName, nodeId, onLoad]);
+	const logBodyRef = useRef<HTMLDivElement | null>(null);
+	const logElement =
+		logContent === null ? null : buildHighlightedLogNodes(logContent, search);
 
-	if (loading) {
-		return (
-			<div style={{ textAlign: "center", padding: 40 }}>
-				<Spin />
-			</div>
-		);
-	}
-	if (logContent === null) {
-		return (
-			<div style={{ color: "#999", textAlign: "center", padding: 24 }}>
-				获取日志失败
-			</div>
-		);
-	}
+	useEffect(() => {
+		if (
+			selectedNode &&
+			!loading &&
+			!error &&
+			logContent !== null &&
+			logBodyRef.current
+		) {
+			logBodyRef.current.scrollTop = logBodyRef.current.scrollHeight;
+		}
+	}, [selectedNode, loading, error, logContent]);
+
 	return (
-		<pre
+		<div
 			style={{
-				fontSize: 11,
-				fontFamily: '"SF Mono", "Fira Code", monospace',
-				whiteSpace: "pre-wrap",
-				wordBreak: "break-all",
-				maxHeight: 400,
-				overflow: "auto",
-				background: "#f8f9fa",
-				padding: 12,
-				borderRadius: 6,
-				margin: 0,
+				height: "100%",
+				display: "flex",
+				flexDirection: "column",
+				padding: 16,
 			}}
 		>
-			{logContent}
-		</pre>
+			<h4 style={{ margin: "0 0 10px 0", fontSize: 14 }}>
+				{selectedNode
+					? `${getNodeDisplayText(selectedNode)} 日志`
+					: "日志查看器"}
+			</h4>
+			<Input.Search
+				placeholder="日志关键字搜索"
+				value={search}
+				onChange={(event) => onSearch(event.target.value)}
+				allowClear
+				style={{ marginBottom: 12 }}
+			/>
+
+			{!selectedNode ? (
+				<div style={{ color: "#9ca3af", fontSize: 13 }}>
+					点击 DAG 节点查看该节点日志
+				</div>
+			) : loading ? (
+				<div style={{ textAlign: "center", padding: 40 }}>
+					<Spin />
+				</div>
+			) : error ? (
+				<div
+					style={{ color: "#dc2626", fontSize: 13 }}
+				>{`获取日志失败：${error}`}</div>
+			) : logContent === null ? (
+				<div style={{ color: "#9ca3af", fontSize: 13 }}>暂无日志</div>
+			) : (
+				<div
+					ref={logBodyRef}
+					style={{
+						flex: 1,
+						fontSize: 11,
+						fontFamily: '"SF Mono", "Fira Code", monospace',
+						whiteSpace: "pre-wrap",
+						wordBreak: "break-all",
+						overflow: "auto",
+						background: "#f8f9fa",
+						padding: 12,
+						borderRadius: 6,
+						border: "1px solid #e5e7eb",
+						minHeight: 0,
+					}}
+				>
+					{logElement}
+				</div>
+			)}
+			{selectedNode && (
+				<div style={{ marginTop: 12 }}>
+					<Descriptions column={1} size="small" colon={false}>
+						<Descriptions.Item label="节点ID">
+							{selectedNode.id}
+						</Descriptions.Item>
+						<Descriptions.Item label="类型">
+							{selectedNode.type || "-"}
+						</Descriptions.Item>
+						<Descriptions.Item label="状态">
+							<Tag color={STATUS_COLORS[selectedNode.phase] || "default"}>
+								{selectedNode.phase}
+							</Tag>
+						</Descriptions.Item>
+						{selectedNode.message && (
+							<Descriptions.Item label="消息">
+								<LinkifiedText text={selectedNode.message} />
+							</Descriptions.Item>
+						)}
+					</Descriptions>
+				</div>
+			)}
+			{!selectedNode && <div style={{ marginTop: "auto" }} />}
+		</div>
 	);
 }
 
 export default function WorkflowDetailPage() {
 	const { name } = useParams<{ name: string }>();
 	const navigate = useNavigate();
-	const [wf, setWf] = useState<WorkflowDetail | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [selectedNode, setSelectedNode] = useState<WorkflowNodeStatus | null>(
-		null,
-	);
 	const [viewMode, setViewMode] = useState<"dag" | "timeline">("dag");
-	const [logLoading, setLogLoading] = useState(false);
-	const [logContent, setLogContent] = useState<string | null>(null);
 	const [operationLoading, setOperationLoading] =
 		useState<WorkflowOperationKey | null>(null);
 
-	const loadWorkflow = useCallback(() => {
-		if (!name) return;
-		setLoading(true);
-		getWorkflow(name)
-			.then(setWf)
-			.catch(console.error)
-			.finally(() => setLoading(false));
-	}, [name]);
-
-	useEffect(() => {
-		loadWorkflow();
-	}, [loadWorkflow]);
+	const {
+		workflow,
+		loading,
+		selectedNode,
+		selectNode,
+		loadWorkflow,
+		logState,
+		setLogSearch,
+	} = useWorkflowDetail(name);
+	const operations = useMemo(
+		() => (workflow ? getWorkflowOperationConfigs(workflow) : []),
+		[workflow],
+	);
 
 	const executeOperation = useCallback(
 		async (operation: WorkflowOperationConfig) => {
-			if (!wf || operation.disabled) return;
+			if (!workflow || operation.disabled) return;
 			setOperationLoading(operation.key);
 			try {
 				await operation.run();
@@ -346,14 +333,14 @@ export default function WorkflowDetailPage() {
 				setOperationLoading(null);
 			}
 		},
-		[loadWorkflow, navigate, wf],
+		[loadWorkflow, navigate, workflow],
 	);
 
 	const runOperation = useCallback(
 		(operation: WorkflowOperationConfig) => {
 			if (operation.key === "delete" || operation.key === "terminate") {
 				Modal.confirm({
-					title: `确认${operation.title} ${wf?.name}?`,
+					title: `确认${operation.title} ${workflow?.name}?`,
 					okText: operation.title,
 					okButtonProps: { danger: operation.danger },
 					cancelText: "取消",
@@ -363,7 +350,7 @@ export default function WorkflowDetailPage() {
 			}
 			executeOperation(operation);
 		},
-		[executeOperation, wf?.name],
+		[executeOperation, workflow?.name],
 	);
 
 	if (loading) {
@@ -380,11 +367,9 @@ export default function WorkflowDetailPage() {
 		);
 	}
 
-	if (!wf) {
+	if (!workflow) {
 		return <div style={{ padding: 24 }}>未找到工作流</div>;
 	}
-
-	const operations = getWorkflowOperationConfigs(wf);
 
 	return (
 		<div
@@ -409,18 +394,20 @@ export default function WorkflowDetailPage() {
 				>
 					返回
 				</Button>
-				<h3 style={{ margin: 0 }}>{wf.name}</h3>
-				<Tag color={STATUS_COLORS[wf.status] || "default"}>{wf.status}</Tag>
+				<h3 style={{ margin: 0 }}>{workflow.name}</h3>
+				<Tag color={STATUS_COLORS[workflow.status] || "default"}>
+					{workflow.status}
+				</Tag>
 				<span style={{ color: "#6b7280", fontSize: 12 }}>
-					创建: {new Date(wf.createdAt).toLocaleString()}
-					{wf.finishedAt &&
-						` | 完成: ${new Date(wf.finishedAt).toLocaleString()}`}
+					创建: {new Date(workflow.createdAt).toLocaleString()}
+					{workflow.finishedAt &&
+						` | 完成: ${new Date(workflow.finishedAt).toLocaleString()}`}
 					{" | 耗时: "}
 					<DurationPanel
-						phase={wf.status}
-						startedAt={wf.createdAt}
-						finishedAt={wf.finishedAt}
-						progress={wf.progress}
+						phase={workflow.status}
+						startedAt={workflow.createdAt}
+						finishedAt={workflow.finishedAt}
+						progress={workflow.progress}
 					/>
 				</span>
 				<div
@@ -474,95 +461,34 @@ export default function WorkflowDetailPage() {
 					/>
 				</div>
 			</div>
-			<div style={{ flex: 1, display: "flex" }}>
-				<div style={{ flex: 1 }}>
+			<div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+				<div style={{ flex: "0 0 60%", minWidth: 0 }}>
 					{viewMode === "dag" ? (
-						<ReactFlowProvider>
-							<Flow nodes={wf.nodes} onNodeSelect={setSelectedNode} />
-						</ReactFlowProvider>
+						<WorkflowDagView
+							nodes={workflow.nodes}
+							selectedNodeId={selectedNode?.id ?? null}
+							onNodeSelect={selectNode}
+						/>
 					) : (
-						<TimelineView nodes={wf.nodes} />
+						<TimelineView nodes={workflow.nodes} />
 					)}
 				</div>
-				{selectedNode && (
-					<div
-						style={{
-							width: 360,
-							borderLeft: "1px solid #e5e7eb",
-							padding: 16,
-							overflowY: "auto",
-						}}
-					>
-						<h4 style={{ marginBottom: 12 }}>
-							{selectedNode.displayName || selectedNode.name}
-						</h4>
-						<Tabs
-							size="small"
-							items={[
-								{
-									key: "detail",
-									label: "详情",
-									children: (
-										<Descriptions column={1} size="small" colon={false}>
-											<Descriptions.Item label="名称">
-												{selectedNode.name}
-											</Descriptions.Item>
-											<Descriptions.Item label="状态">
-												<Tag
-													color={STATUS_COLORS[selectedNode.phase] || "default"}
-												>
-													{selectedNode.phase}
-												</Tag>
-											</Descriptions.Item>
-											{selectedNode.message && (
-												<Descriptions.Item label="消息">
-													<LinkifiedText text={selectedNode.message} />
-												</Descriptions.Item>
-											)}
-											<Descriptions.Item label="耗时">
-												<DurationPanel
-													phase={selectedNode.phase}
-													startedAt={selectedNode.startedAt}
-													finishedAt={selectedNode.finishedAt}
-												/>
-											</Descriptions.Item>
-											{selectedNode.startedAt && (
-												<Descriptions.Item label="开始时间">
-													{new Date(selectedNode.startedAt).toLocaleString()}
-												</Descriptions.Item>
-											)}
-											{selectedNode.finishedAt && (
-												<Descriptions.Item label="完成时间">
-													{new Date(selectedNode.finishedAt).toLocaleString()}
-												</Descriptions.Item>
-											)}
-											<Descriptions.Item label="标签">
-												<WorkflowLabels labels={wf.labels} />
-											</Descriptions.Item>
-										</Descriptions>
-									),
-								},
-								{
-									key: "logs",
-									label: "日志",
-									children: (
-										<LogViewer
-											key={selectedNode.id}
-											workflowName={name || ""}
-											nodeId={selectedNode.id}
-											loading={logLoading}
-											logContent={logContent}
-											onLoad={(loading, content) => {
-												setLogLoading(loading);
-												setLogContent(content);
-											}}
-										/>
-									),
-								},
-							]}
-						/>
-					</div>
-				)}
+				<div
+					style={{
+						flex: "0 0 40%",
+						borderLeft: "1px solid #e5e7eb",
+						overflow: "hidden",
+					}}
+				>
+					<WorkflowLogPanel
+						selectedNode={selectedNode}
+						loading={logState.loading}
+						logContent={logState.content}
+						error={logState.error}
+						search={logState.search}
+						onSearch={setLogSearch}
+					/>
+				</div>
 			</div>
 		</div>
 	);
