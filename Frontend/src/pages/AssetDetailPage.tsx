@@ -458,6 +458,18 @@ export default function AssetDetailPage() {
 				<Text type="secondary" className="text-xs font-mono">
 					{asset.asset_id}
 				</Text>
+				<Button
+					size="small"
+					onClick={() => {
+						if (asset?.asset_id) {
+							navigate(
+								`/pipeline?asset_ids=${encodeURIComponent(asset.asset_id)}`,
+							);
+						}
+					}}
+				>
+					以此资产创建流水线
+				</Button>
 			</div>
 
 			{/* Preview Hero */}

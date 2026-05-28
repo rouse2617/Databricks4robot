@@ -32,7 +32,8 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { assetsApi } from "../api/assets";
 import {
 	type Deployment,
 	deployTemplate,
@@ -47,6 +48,7 @@ import {
 	type PipelineComponentType,
 	updateComponent,
 } from "../api/pipelineComponentApi";
+import type { Asset } from "../api/types";
 import AssetPicker from "../components/pipeline/AssetPicker";
 import { ComponentManager } from "../components/pipeline/ComponentManager";
 import { ComponentPalette } from "../components/pipeline/ComponentPalette";
@@ -137,6 +139,149 @@ function loadComponents(): RegisteredComponent[] {
 
 function saveComponents(comps: RegisteredComponent[]) {
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(comps));
+}
+
+function uniqSorted(values: string[]): string[] {
+	return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function toStringArray(value: unknown): string[] {
+	if (typeof value === "string") return [value].filter(Boolean);
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item) => (typeof item === "string" ? item.trim() : ""))
+		.filter((item) => item.length > 0);
+}
+
+function parseAssetIds(raw: string | null | undefined): string[] {
+	if (!raw) return [];
+	return raw
+		.split(",")
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
+}
+
+function extractNodeAssetIds(node: PipelineFlowNode | null): string[] {
+	if (!node) return [];
+	const data = node.data as Record<string, unknown>;
+	const direct = uniqSorted([
+		...toStringArray(data.asset_id),
+		...toStringArray(data.assetId),
+		...toStringArray(data.input_asset_id),
+		...toStringArray(data._input_asset_id),
+		...toStringArray(data.asset_ids),
+		...toStringArray(data.assetIds),
+		...toStringArray(data.input_asset_ids),
+		...toStringArray(data._input_asset_ids),
+	]);
+	const fromAssetSelection = toStringArray(
+		(data.assetSelection as Record<string, unknown> | undefined)?.assetIds,
+	);
+	return uniqSorted([...direct, ...fromAssetSelection]);
+}
+
+function extractPipelineAssetIds(
+	pipeline: Pipeline | Record<string, unknown>,
+): string[] {
+	const contract = pipeline as Record<string, unknown>;
+	return uniqSorted([
+		...toStringArray(contract._input_asset_ids),
+		...toStringArray(contract.input_asset_ids),
+		...toStringArray(
+			(contract.input as Record<string, unknown> | undefined)?.asset_ids,
+		),
+		...toStringArray(
+			(contract.assetSelection as Record<string, unknown> | undefined)
+				?.assetIds,
+		),
+	]);
+}
+
+function formatBytes(bytes: unknown): string {
+	const n = typeof bytes === "string" ? Number(bytes) : bytes;
+	if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "—";
+	if (n === 0) return "0 B";
+	const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+	let size = n;
+	let i = 0;
+	while (size >= 1024 && i < units.length - 1) {
+		size /= 1024;
+		i += 1;
+	}
+	return `${size.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
+}
+
+function toNumber(value: unknown): number | null {
+	if (typeof value === "number") {
+		return Number.isFinite(value) ? value : null;
+	}
+	if (typeof value === "string") {
+		const parsed = Number(value);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
+}
+
+function extractAssetSizeBytes(raw: Record<string, unknown>): number | null {
+	const directSize =
+		toNumber(raw.size) ??
+		toNumber(raw.size_bytes) ??
+		toNumber((raw as { bytes?: unknown }).bytes);
+	if (directSize !== null) return directSize;
+
+	const directNested = [raw.metadata, raw.files_json];
+	for (const nested of directNested) {
+		if (nested && typeof nested === "object") {
+			const candidate = nested as Record<string, unknown>;
+			const candidateSize =
+				toNumber(candidate.size) ??
+				toNumber(candidate.size_bytes) ??
+				toNumber(candidate.byte_size) ??
+				toNumber(candidate.bytes);
+			if (candidateSize !== null) return candidateSize;
+		}
+	}
+
+	if (raw.files_json && typeof raw.files_json === "object") {
+		for (const value of Object.values(
+			raw.files_json as Record<string, unknown>,
+		)) {
+			if (!value || typeof value !== "object") continue;
+			const fileMeta = value as Record<string, unknown>;
+			const fromFile =
+				toNumber(fileMeta.size) ??
+				toNumber(fileMeta.size_bytes) ??
+				toNumber(fileMeta.byte_size) ??
+				toNumber(fileMeta.bytes);
+			if (fromFile !== null) return fromFile;
+		}
+	}
+
+	return null;
+}
+
+function parseAssetName(
+	asset: Record<string, unknown>,
+	fallbackId: string,
+): string {
+	if (typeof asset.name === "string" && asset.name.trim()) return asset.name;
+	if (typeof asset.display_name === "string" && asset.display_name.trim()) {
+		return asset.display_name;
+	}
+	return fallbackId || "—";
+}
+
+function parseAssetType(
+	asset: Record<string, unknown>,
+	fallback: string,
+): string {
+	if (typeof asset.asset_type === "string" && asset.asset_type.trim()) {
+		return asset.asset_type;
+	}
+	if (typeof asset.type === "string" && asset.type.trim()) {
+		return asset.type;
+	}
+	return fallback;
 }
 
 /** Map backend PipelineComponentAPI → frontend RegisteredComponent. */
@@ -253,8 +398,13 @@ function createPipelineNode(
 
 function PipelineCanvas() {
 	const navigate = useNavigate();
+	const [searchParams] = useSearchParams();
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const editor = useFlowEditor();
+	const queryAssetIds = useMemo(
+		() => parseAssetIds(searchParams.get("asset_ids")),
+		[searchParams],
+	);
 	const [nodes, setNodes] = useState<PipelineFlowNode[]>([]);
 	const [edges, setEdges] = useState<PipelineFlowEdge[]>([]);
 	const [pipelineName, setPipelineName] = useState("my-pipeline");
@@ -283,10 +433,23 @@ function PipelineCanvas() {
 	}>({ open: false, deploying: false, done: false, name: "" });
 	const [jsonOutput, setJsonOutput] = useState<string | null>(null);
 	// Asset selection for deploy modal
-	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+	const [selectedAssetIds, setSelectedAssetIds] =
+		useState<string[]>(queryAssetIds);
+	const [selectedNodeAsset, setSelectedNodeAsset] = useState<Asset | null>(
+		null,
+	);
+	const [selectedNodeAssetLoading, setSelectedNodeAssetLoading] =
+		useState(false);
+	const [selectedNodeAssetError, setSelectedNodeAssetError] = useState<
+		string | null
+	>(null);
 
 	const flattenNodes = useMemo(() => toRecord(nodes), [nodes]);
 	const flattenEdges = useMemo(() => toRecord(edges), [edges]);
+
+	useEffect(() => {
+		setSelectedAssetIds(queryAssetIds);
+	}, [queryAssetIds]);
 
 	useEffect(() => {
 		saveComponents(registeredComponents);
@@ -551,6 +714,68 @@ function PipelineCanvas() {
 		[nodes, edges, pipelineName],
 	);
 
+	const pipelineAssetIds = useMemo(
+		() => extractPipelineAssetIds(buildPipelineJSON()),
+		[buildPipelineJSON],
+	);
+
+	const selectedNodeAssetId = useMemo(() => {
+		const nodeAssetIds = extractNodeAssetIds(selectedNode);
+		if (nodeAssetIds.length > 0) {
+			return nodeAssetIds[0];
+		}
+		if (pipelineAssetIds.length > 0) {
+			return pipelineAssetIds[0];
+		}
+		return selectedAssetIds[0] ?? "";
+	}, [pipelineAssetIds, selectedAssetIds, selectedNode]);
+
+	useEffect(() => {
+		if (!selectedNodeAssetId) {
+			setSelectedNodeAsset(null);
+			setSelectedNodeAssetError(null);
+			setSelectedNodeAssetLoading(false);
+			return;
+		}
+
+		let alive = true;
+		setSelectedNodeAssetLoading(true);
+		setSelectedNodeAssetError(null);
+
+		assetsApi
+			.get(selectedNodeAssetId)
+			.then((asset) => {
+				if (!alive) return;
+				setSelectedNodeAsset(asset);
+			})
+			.catch(() => {
+				if (!alive) return;
+				setSelectedNodeAsset(null);
+				setSelectedNodeAssetError("加载关联资产失败");
+			})
+			.finally(() => {
+				if (!alive) return;
+				setSelectedNodeAssetLoading(false);
+			});
+
+		return () => {
+			alive = false;
+		};
+	}, [selectedNodeAssetId]);
+
+	const selectedNodeAssetInfo = useMemo(() => {
+		if (!selectedNodeAsset) {
+			return null;
+		}
+
+		const raw = selectedNodeAsset as unknown as Record<string, unknown>;
+		return {
+			name: parseAssetName(raw, selectedNodeAsset.asset_id),
+			type: parseAssetType(raw, selectedNodeAsset.type ?? "—"),
+			size: formatBytes(extractAssetSizeBytes(raw)),
+		};
+	}, [selectedNodeAsset]);
+
 	const exportPipeline = useCallback(() => {
 		setJsonOutput(JSON.stringify(buildPipelineJSON(), null, 2));
 	}, [buildPipelineJSON]);
@@ -625,6 +850,13 @@ function PipelineCanvas() {
 			name: "",
 		});
 	}, []);
+
+	const deployDialogAssetId = useMemo(() => {
+		if (!deployDialog.result) return "";
+		return (
+			extractPipelineAssetIds(deployDialog.result.pipelineJSON ?? {})[0] ?? ""
+		);
+	}, [deployDialog.result]);
 
 	const handleDeploy = useCallback(async () => {
 		setDeployDialog((prev) => ({ ...prev, deploying: true, done: false }));
@@ -853,11 +1085,102 @@ function PipelineCanvas() {
 							)}
 						</div>
 						<aside className="config-panel">
-							<div className="config-empty">
-								{selectedNode
-									? "已选中节点，双击进行配置"
-									: "选择一个节点进行配置"}
-							</div>
+							{selectedNode ? (
+								<>
+									<div className="config-panel-header">
+										<span className="config-panel-label">{selectedNode.data?.label || selectedNode.id}</span>
+										<span className="config-panel-type">双击进行配置</span>
+									</div>
+									<div className="config-content">
+										<div className="config-section-title">关联资产</div>
+										{selectedNodeAssetLoading ? (
+											<div
+												style={{
+													fontSize: 12,
+													color: "#64748b",
+												}}
+											>
+												{selectedNodeAssetId
+													? "正在加载关联资产..."
+													: "未关联资产"}
+											</div>
+										) : selectedNodeAssetError ? (
+											<div
+												style={{
+													fontSize: 12,
+													color: "#dc2626",
+												}}
+											>
+												{selectedNodeAssetError}
+											</div>
+										) : selectedNodeAssetInfo ? (
+											<div
+												style={{
+													display: "grid",
+													gap: 6,
+												}}
+											>
+												<div className="config-field">
+													<span
+														style={{
+															fontSize: 10,
+															color: "var(--color-text-secondary, #64748b)",
+															textTransform: "uppercase",
+															letterSpacing: "0.8px",
+														}}
+													>
+														名称
+													</span>
+													<Typography.Text>
+														{selectedNodeAssetInfo.name}
+													</Typography.Text>
+												</div>
+												<div className="config-field">
+													<span
+														style={{
+															fontSize: 10,
+															color: "var(--color-text-secondary, #64748b)",
+															textTransform: "uppercase",
+															letterSpacing: "0.8px",
+														}}
+													>
+														类型
+													</span>
+													<Typography.Text>
+														{selectedNodeAssetInfo.type}
+													</Typography.Text>
+												</div>
+												<div className="config-field">
+													<span
+														style={{
+															fontSize: 10,
+															color: "var(--color-text-secondary, #64748b)",
+															textTransform: "uppercase",
+															letterSpacing: "0.8px",
+														}}
+													>
+														大小
+													</span>
+													<Typography.Text>
+														{selectedNodeAssetInfo.size}
+													</Typography.Text>
+												</div>
+											</div>
+										) : (
+											<div
+												style={{
+													fontSize: 12,
+													color: "#64748b",
+												}}
+											>
+												未选择关联资产
+											</div>
+										)}
+									</div>
+								</>
+							) : (
+								<div className="config-empty">选择一个节点进行配置</div>
+							)}
 						</aside>
 						{editingNode && (
 							<NodeConfigPanel
@@ -1038,6 +1361,14 @@ function PipelineCanvas() {
 								>
 									{deployDialog.result.workflowName}
 								</p>
+								{deployDialogAssetId ? (
+									<Button
+										type="link"
+										onClick={() => navigate(`/assets/${deployDialogAssetId}`)}
+									>
+										查看关联资产
+									</Button>
+								) : null}
 								<div
 									style={{
 										fontSize: 10,
