@@ -30,6 +30,32 @@ const STATUS_COLORS: Record<string, string> = {
 	Error: "error",
 };
 
+function toStringArray(value: unknown): string[] {
+	if (typeof value === "string") return [value].filter(Boolean);
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item) => (typeof item === "string" ? item.trim() : ""))
+		.filter((item) => item.length > 0);
+}
+
+function extractPipelineAssetIds(pipelineJSON: Pipeline | undefined): string[] {
+	const contract = (pipelineJSON ?? {}) as Record<string, unknown>;
+	return [
+		...toStringArray(contract._input_asset_ids),
+		...toStringArray(contract.input_asset_ids),
+		...toStringArray(
+			(contract.input as Record<string, unknown> | undefined)?.asset_ids,
+		),
+		...toStringArray(
+			(contract.assetSelection as Record<string, unknown> | undefined)
+				?.assetIds,
+		),
+	]
+		.filter(Boolean)
+		.filter((value, index, values) => values.indexOf(value) === index)
+		.sort();
+}
+
 export function DeployPanel({
 	onEditTemplate,
 }: {
@@ -251,44 +277,56 @@ export function DeployPanel({
 				{deployments.length === 0 ? (
 					<div className="dep-empty">暂无部署记录</div>
 				) : (
-					deployments.map((d) => (
-						<div key={d.id} className="dep-card">
-							<div className="dep-card-info">
-								<div className="dep-card-name">{d.pipelineName}</div>
-								<div className="dep-card-meta">
-									<Tag color={STATUS_COLORS[d.status] || "default"}>
-										{d.status}
-									</Tag>
-									<span>{d.nodeCount} 个节点</span>
-									<span className="dot">•</span>
-									<span>{new Date(d.createdAt).toLocaleString()}</span>
-									{d.finishedAt && (
-										<>
-											<span className="dot">•</span>
-											<span>
-												完成: {new Date(d.finishedAt).toLocaleString()}
-											</span>
-										</>
-									)}
+					deployments.map((d) => {
+						const pipelineAssetIds = extractPipelineAssetIds(d.pipelineJSON);
+						const pipelineAssetId = pipelineAssetIds[0];
+						return (
+							<div key={d.id} className="dep-card">
+								<div className="dep-card-info">
+									<div className="dep-card-name">{d.pipelineName}</div>
+									<div className="dep-card-meta">
+										<Tag color={STATUS_COLORS[d.status] || "default"}>
+											{d.status}
+										</Tag>
+										<span>{d.nodeCount} 个节点</span>
+										<span className="dot">•</span>
+										<span>{new Date(d.createdAt).toLocaleString()}</span>
+										{d.finishedAt && (
+											<>
+												<span className="dot">•</span>
+												<span>
+													完成: {new Date(d.finishedAt).toLocaleString()}
+												</span>
+											</>
+										)}
+									</div>
+								</div>
+								<div className="deploy-btn-list">
+									{pipelineAssetId ? (
+										<Button
+											size="small"
+											onClick={() => navigate(`/assets/${pipelineAssetId}`)}
+										>
+											查看关联资产
+										</Button>
+									) : null}
+									<Button
+										size="small"
+										icon={<EyeOutlined />}
+										onClick={() => navigate(`/workflows/${d.workflowName}`)}
+									>
+										查看
+									</Button>
+									<Button
+										size="small"
+										danger
+										icon={<DeleteOutlined />}
+										onClick={() => handleDeleteDeployment(d.id)}
+									/>
 								</div>
 							</div>
-							<div className="deploy-btn-list">
-								<Button
-									size="small"
-									icon={<EyeOutlined />}
-									onClick={() => navigate(`/workflows/${d.workflowName}`)}
-								>
-									查看
-								</Button>
-								<Button
-									size="small"
-									danger
-									icon={<DeleteOutlined />}
-									onClick={() => handleDeleteDeployment(d.id)}
-								/>
-							</div>
-						</div>
-					))
+						);
+					})
 				)}
 			</div>
 		</div>
