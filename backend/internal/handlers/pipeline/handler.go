@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -202,6 +203,10 @@ func mapDeployError(c *gin.Context, err error) {
 	}
 	if errors.Is(err, pipelineUC.ErrAssetNotFound) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+	if errors.Is(err, pipelineUC.ErrWorkflowUnavailable) {
+		httpresp.Error(c, http.StatusServiceUnavailable, httpresp.CodeServiceUnavailable, err.Error(), nil)
 		return
 	}
 	httpresp.Internal(c, err.Error())

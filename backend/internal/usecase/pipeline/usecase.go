@@ -19,10 +19,11 @@ import (
 
 // Sentinel errors.
 var (
-	ErrTemplateNotFound   = errors.New("template not found")
-	ErrDeploymentNotFound = errors.New("deployment not found")
-	ErrAssetNotFound      = errors.New("asset not found")
-	ErrInvalidArgument    = errors.New("invalid argument")
+	ErrTemplateNotFound    = errors.New("template not found")
+	ErrDeploymentNotFound  = errors.New("deployment not found")
+	ErrAssetNotFound       = errors.New("asset not found")
+	ErrInvalidArgument     = errors.New("invalid argument")
+	ErrWorkflowUnavailable = errors.New("workflow service unavailable: argo server not configured")
 )
 
 // Usecase orchestrates pipeline template management and deployment.
@@ -187,16 +188,17 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 		return nil, fmt.Errorf("transpile: %w", err)
 	}
 
-	// Submit to K8s/Argo if client is available.
+	// Submit to Argo workflow engine.
 	status := "Pending"
-	if uc.wfClient != nil {
-		if err := uc.wfClient.CreateWorkflow(ctx, wf, uc.namespace); err != nil {
-			return nil, fmt.Errorf("create workflow: %w", err)
+	if err := uc.wfClient.CreateWorkflow(ctx, wf, uc.namespace); err != nil {
+		if strings.Contains(err.Error(), "argo server URL is empty") {
+			return nil, fmt.Errorf("%w: create workflow", ErrWorkflowUnavailable)
 		}
-		phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, uc.namespace)
-		if err == nil && phase != "" {
-			status = string(phase)
-		}
+		return nil, fmt.Errorf("create workflow: %w", err)
+	}
+	phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, uc.namespace)
+	if err == nil && phase != "" {
+		status = string(phase)
 	}
 
 	manifest := ""
