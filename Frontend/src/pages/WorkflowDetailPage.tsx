@@ -197,7 +197,7 @@ function WorkflowLogPanel({
 	search: string;
 	onSearch: (value: string) => void;
 }) {
-	const logBodyRef = useRef<HTMLDivElement | null>(null);
+	const logBodyRef = useRef<HTMLPreElement | null>(null);
 	const logElement =
 		logContent === null ? null : buildHighlightedLogNodes(logContent, search);
 
