@@ -1961,7 +1961,6 @@ paths:
           required: true
           schema:
             type: string
-            enum: [dataset, annotation_result]
       responses:
         '200':
           description: JSON Schema for assets.metadata of the requested asset type.
@@ -2005,26 +2004,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FoxgloveSourceResponse' }
-  /api/v1/asset-types/{type}/schema:
-    get:
-      tags: [Assets]
-      summary: Get JSON Schema for a registered asset type
-      parameters:
-        - in: path
-          name: type
-          required: true
-          schema:
-            type: string
-          description: Asset type name (e.g. dataset, annotation_result)
-      responses:
-        '200':
-          description: JSON Schema document
-          content:
-            application/schema+json:
-              schema:
-                type: object
-        '404':
-          description: Asset type not registered
   /api/v1/assets/{id}/deliveries:
     get:
       tags: [Assets]
