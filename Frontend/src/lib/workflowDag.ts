@@ -2,9 +2,7 @@ import type { Edge as RFEdge } from "@xyflow/react";
 import type { WorkflowNodeStatus } from "../api/workflowApi";
 
 /** Build React Flow edges from Argo workflow node status (uses `children`, then dotted names). */
-export function buildWorkflowFlowEdges(
-	nodes: WorkflowNodeStatus[],
-): RFEdge[] {
+export function buildWorkflowFlowEdges(nodes: WorkflowNodeStatus[]): RFEdge[] {
 	const byId = new Map(nodes.map((n) => [n.id, n]));
 	const edges: RFEdge[] = [];
 	const seen = new Set<string>();

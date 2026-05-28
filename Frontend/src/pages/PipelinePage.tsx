@@ -44,6 +44,7 @@ import {
 	listComponents,
 	type PipelineComponentAPI,
 	type PipelineComponentPayload,
+	type PipelineComponentType,
 	updateComponent,
 } from "../api/pipelineComponentApi";
 import AssetPicker from "../components/pipeline/AssetPicker";
@@ -109,6 +110,21 @@ function formatImage(image: string, tag?: string): string {
 	return `${image}:${tag}`;
 }
 
+function normalizeComponentType(
+	type: string | undefined,
+): PipelineComponentType {
+	const value = (type || "").trim();
+	switch (value) {
+		case "container":
+		case "script":
+		case "resource":
+		case "suspend":
+			return value;
+		default:
+			return "container";
+	}
+}
+
 function loadComponents(): RegisteredComponent[] {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
@@ -126,12 +142,36 @@ function saveComponents(comps: RegisteredComponent[]) {
 /** Map backend PipelineComponentAPI → frontend RegisteredComponent. */
 function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 	const resources = api.resources ?? {};
+	const normalizedType = normalizeComponentType(api.type);
+	const normalizedSource = (api.source || "custom").trim() || "custom";
 	const legacyArgs = resources.args as
 		| { name: string; value?: string; from?: string }[]
 		| undefined;
+	const envFromObject = api.env
+		? Object.entries(api.env).map(([name, value]) => ({
+				name,
+				value: value || "",
+			}))
+		: [];
+	const envFromResource =
+		Array.isArray(resources.env) && resources.env.length > 0
+			? (resources.env as { name?: string; value?: string }[]).map((item) => ({
+					name: item.name || "",
+					value: item.value || "",
+				}))
+			: typeof resources.env === "object" && resources.env
+				? Object.entries(resources.env as Record<string, string>).map(
+						([name, value]) => ({
+							name,
+							value: value || "",
+						}),
+					)
+				: [];
 	return {
 		id: api.id,
 		name: api.name,
+		type: normalizedType,
+		source: normalizedSource,
 		image: formatImage(api.image, api.tag),
 		command: api.command ?? ((resources.command as string[]) || ["sh", "-c"]),
 		args:
@@ -140,6 +180,7 @@ function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
 				name: `arg${index + 1}`,
 				value,
 			})),
+		env: envFromObject.length > 0 ? envFromObject : envFromResource,
 		cpu: (resources.cpu as string) ?? "",
 		memory: (resources.memory as string) ?? "",
 		disk: (resources.disk as string) ?? "",
@@ -151,13 +192,15 @@ function registeredToApi(comp: RegisteredComponent): PipelineComponentPayload {
 	const idx = comp.image.lastIndexOf(":");
 	const image = idx > 0 ? comp.image.slice(0, idx) : comp.image;
 	const tag = idx > 0 ? comp.image.slice(idx + 1) : "latest";
+	const normalizedType = normalizeComponentType(comp.type);
+	const normalizedSource = (comp.source || "").trim() || "custom";
 	return {
 		name: comp.name,
-		type: "container",
+		type: normalizedType,
 		description: "",
 		image,
 		tag,
-		source: "custom",
+		source: normalizedSource,
 		command: comp.command,
 		args: comp.args.map((arg) => arg.value || arg.name).filter(Boolean),
 		inputPorts: [{ name: "input", type: "string" }],
@@ -165,6 +208,13 @@ function registeredToApi(comp: RegisteredComponent): PipelineComponentPayload {
 		resources: {
 			command: comp.command,
 			args: comp.args,
+			type: normalizedType,
+			env: (comp.env ?? []).reduce<Record<string, string>>((acc, item) => {
+				const key = item.name?.trim();
+				if (!key) return acc;
+				acc[key] = item.value || "";
+				return acc;
+			}, {}),
 			cpu: comp.cpu,
 			memory: comp.memory,
 			disk: comp.disk,
@@ -187,9 +237,12 @@ function createPipelineNode(
 		position: { x, y },
 		data: {
 			label: comp.name,
+			type: comp.type || "container",
+			source: comp.source || "",
 			image: comp.image,
 			command: comp.command,
 			args: comp.args || [],
+			env: comp.env || [],
 			cpu: comp.cpu || "",
 			memory: comp.memory || "",
 			disk: comp.disk || "",
@@ -214,6 +267,7 @@ function PipelineCanvas() {
 		y: 0,
 		node: null,
 	});
+	const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
 	const [registeredComponents, setRegisteredComponents] =
 		useState<RegisteredComponent[]>(loadComponents);
 	const [view, setView] = useState<"pipeline" | "components" | "deploy">(
@@ -294,6 +348,7 @@ function PipelineCanvas() {
 			const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
 			setNodes(n);
 			setEdges(e);
+			setEditingNodeId(null);
 			if (pipeline.name) setPipelineName(pipeline.name);
 			setView("pipeline");
 			setSelectedNode(null);
@@ -341,6 +396,7 @@ function PipelineCanvas() {
 				editor.addNode(newNode);
 				editor.selectElements([newNode.id]);
 				setSelectedNode(newNode);
+				setEditingNodeId(null);
 			} catch {
 				/* ignore */
 			}
@@ -360,15 +416,20 @@ function PipelineCanvas() {
 	);
 
 	const onNodeClick = useCallback(
-		(_: React.MouseEvent, node: Node) => {
+		(event: React.MouseEvent, node: Node) => {
 			setContextMenu((prev) => ({ ...prev, open: false }));
-			selectNodeWithEdges(node as PipelineFlowNode);
+			const pipelineNode = node as PipelineFlowNode;
+			selectNodeWithEdges(pipelineNode);
+			if (event.detail > 1) {
+				setEditingNodeId(pipelineNode.id);
+			}
 		},
 		[selectNodeWithEdges],
 	);
 	const onPaneClick = useCallback(() => {
 		setSelectedNode(null);
 		setContextMenu((prev) => ({ ...prev, open: false }));
+		setEditingNodeId(null);
 		editor.deselectAll();
 	}, [editor]);
 
@@ -376,6 +437,7 @@ function PipelineCanvas() {
 		(event: React.MouseEvent) => {
 			event.preventDefault();
 			setSelectedNode(null);
+			setEditingNodeId(null);
 			editor.deselectAll();
 			setContextMenu({
 				open: true,
@@ -406,11 +468,28 @@ function PipelineCanvas() {
 	const updateNodeData = useCallback(
 		(id: string, data: Record<string, unknown>) => {
 			editor.updateNodeData(id, data);
-		setSelectedNode((prev: PipelineFlowNode | null) =>
+			setSelectedNode((prev: PipelineFlowNode | null) =>
 				prev?.id === id ? { ...prev, data: { ...prev.data, ...data } } : prev,
 			);
 		},
 		[editor],
+	);
+
+	const closeNodeConfig = useCallback(() => {
+		setEditingNodeId(null);
+	}, []);
+
+	const saveNodeConfig = useCallback(
+		(id: string, data: Partial<PipelineNodeData>) => {
+			updateNodeData(id, data as Record<string, unknown>);
+			closeNodeConfig();
+		},
+		[closeNodeConfig, updateNodeData],
+	);
+
+	const editingNode = useMemo(
+		() => nodes.find((node) => node.id === editingNodeId) ?? null,
+		[nodes, editingNodeId],
 	);
 
 	const handleContextMenuClick = useCallback(
@@ -421,6 +500,7 @@ function PipelineCanvas() {
 			if (menuNode) {
 				if (key === "configure") {
 					selectNodeWithEdges(menuNode);
+					setEditingNodeId(menuNode.id);
 					return;
 				}
 				if (key === "copy") {
@@ -436,7 +516,10 @@ function PipelineCanvas() {
 					editor.selectElements([menuNode.id]);
 					window.setTimeout(() => {
 						editor.deleteSelection();
-						setSelectedNode((prev: PipelineFlowNode | null) => (prev?.id === menuNode.id ? null : prev));
+						setSelectedNode((prev: PipelineFlowNode | null) =>
+							prev?.id === menuNode.id ? null : prev,
+						);
+						setEditingNodeId((prev) => (prev === menuNode.id ? null : prev));
 					}, 0);
 					return;
 				}
@@ -481,6 +564,7 @@ function PipelineCanvas() {
 				fromTranspilerPipeline(pipeline);
 			setNodes(importedNodes);
 			setEdges(importedEdges);
+			setEditingNodeId(null);
 			if (pipeline.name) {
 				setPipelineName(pipeline.name);
 			}
@@ -501,6 +585,7 @@ function PipelineCanvas() {
 				setNodes([]);
 				setEdges([]);
 				setSelectedNode(null);
+				setEditingNodeId(null);
 				editor.deselectAll();
 				setJsonOutput(null);
 			},
@@ -710,12 +795,12 @@ function PipelineCanvas() {
 								nodeTypes={nodeTypes}
 								flattenNodes={flattenNodes}
 								flattenEdges={flattenEdges}
-onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
-	setNodes(Object.values(nextNodes) as PipelineFlowNode[])
-}
-onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
-	setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
-}
+								onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
+									setNodes(Object.values(nextNodes) as PipelineFlowNode[])
+								}
+								onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
+									setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
+								}
 								contextMenuEnabled={false}
 								flowProps={{
 									onDrop,
@@ -768,15 +853,20 @@ onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
 							)}
 						</div>
 						<aside className="config-panel">
-							{selectedNode ? (
-								<NodeConfigPanel
-									node={selectedNode}
-									onUpdate={updateNodeData}
-								/>
-							) : (
-								<div className="config-empty">选择一个节点进行配置</div>
-							)}
+							<div className="config-empty">
+								{selectedNode
+									? "已选中节点，双击进行配置"
+									: "选择一个节点进行配置"}
+							</div>
 						</aside>
+						{editingNode && (
+							<NodeConfigPanel
+								open={Boolean(editingNode)}
+								node={editingNode}
+								onCancel={closeNodeConfig}
+								onSave={saveNodeConfig}
+							/>
+						)}
 					</>
 				) : view === "components" ? (
 					<div className="registry-view">

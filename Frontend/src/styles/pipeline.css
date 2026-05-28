@@ -518,6 +518,16 @@
 	margin-bottom: 20px;
 }
 
+.cm-search {
+	margin-bottom: 10px;
+}
+
+.cm-group-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
 .cm-item {
 	padding: 12px 14px;
 	background: #fff;
