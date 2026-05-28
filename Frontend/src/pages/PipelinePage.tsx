@@ -1088,7 +1088,9 @@ function PipelineCanvas() {
 							{selectedNode ? (
 								<>
 									<div className="config-panel-header">
-										<span className="config-panel-label">{selectedNode.data?.label || selectedNode.id}</span>
+										<span className="config-panel-label">
+											{selectedNode.data?.label || selectedNode.id}
+										</span>
 										<span className="config-panel-type">双击进行配置</span>
 									</div>
 									<div className="config-content">
