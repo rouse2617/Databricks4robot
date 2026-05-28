@@ -29,7 +29,16 @@ import {
 	PlayCircleOutlined,
 	SaveOutlined,
 } from "@ant-design/icons";
-import { Button, Collapse, Input, Modal, message, Typography } from "antd";
+import {
+	Alert,
+	Button,
+	Collapse,
+	Input,
+	Modal,
+	Tooltip,
+	Typography,
+	message,
+} from "antd";
 import { useNavigate } from "react-router-dom";
 import {
 	type Deployment,
@@ -353,7 +362,13 @@ function PipelineCanvas() {
 		}
 	}, [pipelineName, buildPipelineJSON]);
 
+	const canDeploy = nodes.length > 0;
+
 	const openDeployDialog = useCallback(() => {
+		if (nodes.length === 0) {
+			message.warning("请先从左侧拖入至少一个组件到画布");
+			return;
+		}
 		setDeployDialog({
 			open: true,
 			deploying: false,
@@ -361,7 +376,7 @@ function PipelineCanvas() {
 			name: pipelineName,
 		});
 		setSelectedAssetIds([]);
-	}, [pipelineName]);
+	}, [pipelineName, nodes.length]);
 
 	const closeDeployDialog = useCallback(() => {
 		setDeployDialog({
@@ -475,14 +490,25 @@ function PipelineCanvas() {
 							size="small"
 						/>
 						<div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-							<Button
-								size="small"
-								type="primary"
-								icon={<PlayCircleOutlined />}
-								onClick={openDeployDialog}
+							<Tooltip
+								title={
+									canDeploy
+										? "保存并部署为 Argo Workflow"
+										: "请先从左侧拖入至少一个组件到画布"
+								}
 							>
-								部署
-							</Button>
+								<span>
+									<Button
+										size="small"
+										type="primary"
+										icon={<PlayCircleOutlined />}
+										onClick={openDeployDialog}
+										disabled={!canDeploy}
+									>
+										部署
+									</Button>
+								</span>
+							</Tooltip>
 							<Button size="small" icon={<SaveOutlined />} onClick={handleSave}>
 								保存
 							</Button>
@@ -547,6 +573,11 @@ function PipelineCanvas() {
 								<Controls />
 								<MiniMap />
 							</ReactFlow>
+							{nodes.length === 0 && (
+								<div className="canvas-empty" aria-live="polite">
+									从左侧拖入组件 → 连接圆点 → 保存 / 部署
+								</div>
+							)}
 						</div>
 						<aside className="config-panel">
 							{selectedNode ? (
@@ -592,6 +623,15 @@ function PipelineCanvas() {
 						>
 							将流水线转换为 Argo Workflow 并提交到 Kubernetes 集群。
 						</Typography.Paragraph>
+						{!canDeploy && (
+							<Alert
+								type="warning"
+								showIcon
+								message="画布为空"
+								description="请先从左侧拖入至少一个组件，或导入带节点的 Pipeline JSON。"
+								style={{ marginBottom: 16 }}
+							/>
+						)}
 						<div
 							style={{
 								display: "flex",
@@ -673,7 +713,7 @@ function PipelineCanvas() {
 							<Button
 								type="primary"
 								onClick={handleDeploy}
-								disabled={nodes.length === 0}
+								disabled={!canDeploy}
 							>
 								部署
 							</Button>

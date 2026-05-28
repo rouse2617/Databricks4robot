@@ -237,16 +237,19 @@ describe("PipelinePage", () => {
 	});
 
 	// ── Deploy dialog ──────────────────────────────────────────────
-	it("opens deploy modal with title", () => {
+	it("disables toolbar deploy when canvas is empty", () => {
 		renderPage();
-		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
-		expect(screen.getByText("部署流水线")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /play-circle/i })).toBeDisabled();
+		expect(
+			screen.getByText("从左侧拖入组件 → 连接圆点 → 保存 / 部署"),
+		).toBeInTheDocument();
 	});
 
-	it("shows node count in deploy modal (empty canvas)", () => {
+	it("opens deploy modal with title", () => {
 		renderPage();
+		importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
-		expect(screen.getByText("0 个节点")).toBeInTheDocument();
+		expect(screen.getByText("部署流水线")).toBeInTheDocument();
 	});
 
 	it("shows node count in deploy modal (with nodes)", () => {
