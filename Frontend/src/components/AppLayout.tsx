@@ -36,7 +36,6 @@ const menuItems = [
 	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
-	{ key: "/pipeline", icon: <ApartmentOutlined />, label: "流水线" },
 	{ key: "/components", icon: <AppstoreOutlined />, label: "组件管理" },
 	{ key: "/workflows", icon: <PlayCircleOutlined />, label: "流水线运行" },
 	{ type: "divider" as const },
