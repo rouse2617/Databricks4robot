@@ -350,6 +350,7 @@ func RegisterAll(
 		if workflowHandler != nil {
 			api.GET("/workflows", workflowHandler.ListWorkflows)
 			api.GET("/workflows/:name/logs", workflowHandler.GetWorkflowLogs)
+			api.GET("/workflows/:name/log/stream", workflowHandler.StreamWorkflowLogs)
 			api.POST("/workflows/:name/retry", workflowHandler.RetryWorkflow)
 			api.POST("/workflows/:name/resubmit", workflowHandler.ResubmitWorkflow)
 			api.POST("/workflows/:name/suspend", workflowHandler.SuspendWorkflow)

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	getWorkflow,
 	getWorkflowLogs,
+	getWorkflowLogStreamUrl,
 	type WorkflowDetail,
 	type WorkflowNodeStatus,
 } from "../api/workflowApi";
@@ -42,6 +43,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const [loading, setLoading] = useState(true);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [logState, setLogState] = useState<WorkflowLogState>(EMPTY_LOG_STATE);
+	const eventSourceRef = useRef<EventSource | null>(null);
 
 	const loadWorkflow = useCallback(() => {
 		if (!name) return;
@@ -59,33 +61,95 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		loadWorkflow();
 	}, [loadWorkflow]);
 
-	const loadNodeLogs = useCallback(
+	const stopNodeLogStream = useCallback(() => {
+		if (eventSourceRef.current) {
+			eventSourceRef.current.close();
+			eventSourceRef.current = null;
+		}
+	}, []);
+
+	const fallbackToLogsApi = useCallback(
 		async (nodeId: string) => {
 			if (!name) return;
-			setLogState((current) => ({ ...current, loading: true, error: null }));
+			setLogState((current) => ({
+				...current,
+				loading: true,
+				error: null,
+			}));
 			try {
 				const res = await getWorkflowLogs(name, nodeId);
-				setLogState({
+				setLogState((current) => ({
 					content: res.logs || "",
 					loading: false,
 					error: null,
-					search: "",
-				});
+					search: current.search,
+				}));
 			} catch (err) {
-				setLogState({
+				setLogState((current) => ({
 					content: null,
 					loading: false,
 					error: toErrorMessage(err),
-					search: "",
-				});
+					search: current.search,
+				}));
 			}
 		},
 		[name],
 	);
 
+	const loadNodeLogs = useCallback(
+		async (nodeId: string) => {
+			if (!name) return;
+			stopNodeLogStream();
+			setLogState((current) => ({
+				...current,
+				loading: true,
+				error: null,
+				content: "",
+			}));
+
+			if (typeof EventSource === "undefined") {
+				await fallbackToLogsApi(nodeId);
+				return;
+			}
+
+			const stream = new EventSource(getWorkflowLogStreamUrl(name, nodeId));
+			eventSourceRef.current = stream;
+			let receivedLine = false;
+
+			stream.onmessage = (event) => {
+				receivedLine = true;
+				setLogState((current) => ({
+					...current,
+					loading: false,
+					error: null,
+					content: current.content
+						? `${current.content}\n${event.data}`
+						: event.data,
+				}));
+			};
+
+			stream.onerror = () => {
+				if (eventSourceRef.current !== stream) {
+					return;
+				}
+				stopNodeLogStream();
+				if (!receivedLine) {
+					void fallbackToLogsApi(nodeId);
+					return;
+				}
+				setLogState((current) => ({
+					...current,
+					loading: false,
+				}));
+			};
+		},
+		[fallbackToLogsApi, name, stopNodeLogStream],
+	);
+
 	const selectNode = useCallback(
 		(node: WorkflowNodeStatus | null) => {
 			if (!node || !name) {
+				stopNodeLogStream();
 				setSelectedNodeId(null);
 				setLogState((current) => ({
 					...EMPTY_LOG_STATE,
@@ -95,18 +159,36 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			}
 			setSelectedNodeId(node.id);
 			setLogState((current) => ({
-				...EMPTY_LOG_STATE,
-				search: current.search,
+				...current,
+				content: "",
+				loading: false,
+				error: null,
 			}));
-			void loadNodeLogs(node.id);
 		},
-		[loadNodeLogs, name],
+		[name, stopNodeLogStream],
 	);
 
 	const selectedNode = useMemo(() => {
 		if (!workflow || !selectedNodeId) return null;
 		return workflow.nodes.find((node) => node.id === selectedNodeId) ?? null;
 	}, [workflow, selectedNodeId]);
+
+	useEffect(() => {
+		if (!selectedNodeId || !name) {
+			stopNodeLogStream();
+			return;
+		}
+		void loadNodeLogs(selectedNodeId);
+		return () => {
+			stopNodeLogStream();
+		};
+	}, [loadNodeLogs, name, selectedNodeId, stopNodeLogStream]);
+
+	useEffect(() => {
+		return () => {
+			stopNodeLogStream();
+		};
+	}, [stopNodeLogStream]);
 
 	useEffect(() => {
 		if (!workflow || !selectedNodeId) return;

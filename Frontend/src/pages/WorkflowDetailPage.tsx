@@ -250,7 +250,7 @@ function WorkflowLogPanel({
 			) : logContent === null ? (
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>暂无日志</div>
 			) : (
-				<div
+				<pre
 					ref={logBodyRef}
 					style={{
 						flex: 1,
@@ -264,10 +264,11 @@ function WorkflowLogPanel({
 						borderRadius: 6,
 						border: "1px solid #e5e7eb",
 						minHeight: 0,
+						margin: 0,
 					}}
 				>
 					{logElement}
-				</div>
+				</pre>
 			)}
 			{selectedNode && (
 				<div style={{ marginTop: 12 }}>
