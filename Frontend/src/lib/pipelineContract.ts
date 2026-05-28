@@ -10,8 +10,12 @@ import type {
 const DEFAULT_INPUT_PORT = "input";
 const DEFAULT_OUTPUT_PORT = "output";
 
-const defaultInputs = (): Port[] => [{ name: DEFAULT_INPUT_PORT, type: "string" }];
-const defaultOutputs = (): Port[] => [{ name: DEFAULT_OUTPUT_PORT, type: "string" }];
+const defaultInputs = (): Port[] => [
+	{ name: DEFAULT_INPUT_PORT, type: "string" },
+];
+const defaultOutputs = (): Port[] => [
+	{ name: DEFAULT_OUTPUT_PORT, type: "string" },
+];
 
 /** Format React Flow edge endpoints for the transpiler (node-id.port-name). */
 export function formatEdgeEndpoint(
@@ -22,7 +26,10 @@ export function formatEdgeEndpoint(
 	if (nodeId.includes(".")) {
 		return nodeId;
 	}
-	const port = (handle && handle.length > 0 ? handle : defaultPort).replace(/^\./, "");
+	const port = (handle && handle.length > 0 ? handle : defaultPort).replace(
+		/^\./,
+		"",
+	);
 	return `${nodeId}.${port}`;
 }
 
