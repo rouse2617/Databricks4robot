@@ -978,43 +978,47 @@ function PipelineCanvas() {
 
 			{/* Body */}
 			<div
-				className={
-					isTemplateLanding
-						? "pipeline-body pipeline-body--template-list"
-						: "pipeline-body"
-				}
+				className="pipeline-body"
 			>
 				{view === "pipeline" ? (
-					isTemplateLanding ? (
-						<div
-							style={{
-								flex: 1,
-								overflow: "auto",
-								padding: 16,
-								width: "100%",
-							}}
-						>
-							<div
-								style={{
-									color: "#64748b",
-									fontSize: 13,
-									marginBottom: 16,
-									display: "flex",
-									flexDirection: "column",
-									gap: 4,
-								}}
-							>
-								<span>从左侧「组件面板」拖入组件到画布，开始设计你的第一个流水线</span>
-								<span>或从下方列表选择一个已保存的模板进行编辑</span>
-							</div>
-							<DeployPanel onEditTemplate={loadPipelineToCanvas} />
-						</div>
-					) : (
-						<>
+					<>
 							<ComponentPalette
 								components={registeredComponents}
 								onDragStart={onDragStart}
 							/>
+							{isTemplateLanding && (
+								<div
+									style={{
+										position: "absolute",
+										left: 210,
+										top: 0,
+										bottom: 0,
+										width: 360,
+										background: "#fff",
+										borderRight: "1px solid var(--color-border, #e2e8f0)",
+										overflow: "auto",
+										padding: 16,
+										zIndex: 10,
+										display: "flex",
+										flexDirection: "column",
+										gap: 12,
+									}}
+								>
+									<div
+										style={{
+											color: "#64748b",
+											fontSize: 13,
+											display: "flex",
+											flexDirection: "column",
+											gap: 4,
+										}}
+									>
+										<span>从左侧「组件面板」拖入组件到画布</span>
+										<span>或从下方选择一个已保存的模板</span>
+									</div>
+									<DeployPanel onEditTemplate={loadPipelineToCanvas} />
+								</div>
+							)}
 							<div
 								className="canvas-wrapper"
 								ref={wrapperRef}
@@ -1203,7 +1207,7 @@ function PipelineCanvas() {
 							)}
 						</>
 					)
-				) : (
+				: (
 					<div
 						style={{
 							padding: 16,
