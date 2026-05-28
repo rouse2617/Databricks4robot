@@ -24,3 +24,12 @@
 - [x] Add CSRF hardening for cookie auth and pipeline mutating API calls.
 - [x] Make pipeline/backfill migration deltas idempotent and add migration apply tracking.
 - [x] Verify final backend build and full test suite.
+
+## Argo workflow operations follow-up
+
+- [x] Port Argo `WorkflowOperationsMap` into a shared Frontend operation utility.
+- [x] Add workflow action buttons to the workflow detail header.
+- [x] Add phase-filtered workflow action dropdowns to workflow list rows.
+- [x] Share workflow phase constants, duration formatting, label tags, and linkified text helpers.
+- [x] Expose and document `POST /api/v1/workflows/{name}/stop`.
+- [x] Verify with `npm run lint`, `npm run build`, and targeted workflow route tests.

@@ -18,3 +18,7 @@
 - 不改动 transpiler（Go 后端）
 - 不替换 databrew-pipeline/argo-ui（Argo 的 fork，独立运行）
 - 不涉及后端 API 变更
+
+## Follow-up scope — Argo workflow operations
+
+This follow-up ports Argo's shared workflow operation map into the DataBrew frontend and wires workflow list/detail controls to the existing workflow operation API. The only backend API delta is exposing the already-implemented Argo `StopWorkflow` capability as `POST /api/v1/workflows/{name}/stop` so the UI stop action has a first-class endpoint.

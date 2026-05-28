@@ -1692,6 +1692,9 @@ components:
         nodeCount: { type: integer }
         createdAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true }
+        labels:
+          type: object
+          additionalProperties: { type: string }
     WorkflowDetail:
       type: object
       properties:
@@ -4683,6 +4686,30 @@ paths:
       tags: [Pipeline]
       summary: Suspend a workflow
       description: Calls the Argo suspend operation for the named workflow.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+      responses:
+        '200':
+          description: Workflow operation accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
+        '500':
+          description: Argo API error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorBody' }
+  /api/v1/workflows/{name}/stop:
+    post:
+      tags: [Pipeline]
+      summary: Stop a workflow
+      description: Calls the Argo stop operation for the named workflow.
       security:
         - DatabrewToken: []
       parameters:

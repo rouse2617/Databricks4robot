@@ -348,6 +348,7 @@ func RegisterAll(
 			api.POST("/workflows/:name/retry", workflowHandler.RetryWorkflow)
 			api.POST("/workflows/:name/resubmit", workflowHandler.ResubmitWorkflow)
 			api.POST("/workflows/:name/suspend", workflowHandler.SuspendWorkflow)
+			api.POST("/workflows/:name/stop", workflowHandler.StopWorkflow)
 			api.POST("/workflows/:name/resume", workflowHandler.ResumeWorkflow)
 			api.POST("/workflows/:name/terminate", workflowHandler.TerminateWorkflow)
 			api.GET("/workflows/:name", workflowHandler.GetWorkflow)

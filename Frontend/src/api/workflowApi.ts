@@ -6,16 +6,20 @@ export interface WorkflowSummary {
 	nodeCount: number;
 	createdAt: string;
 	finishedAt?: string;
+	labels?: Record<string, string>;
 }
 
 export interface WorkflowNodeStatus {
 	id: string;
 	name: string;
 	displayName: string;
+	type?: string;
+	templateName?: string;
 	phase: string;
 	message?: string;
 	startedAt?: string;
 	finishedAt?: string;
+	estimatedDuration?: number;
 }
 
 export interface WorkflowDetail {
@@ -25,6 +29,13 @@ export interface WorkflowDetail {
 	nodes: WorkflowNodeStatus[];
 	createdAt: string;
 	finishedAt?: string;
+	labels?: Record<string, string>;
+	estimatedDuration?: number;
+	progress?: string;
+}
+
+export interface WorkflowOperationResponse {
+	message: string;
 }
 
 export function listWorkflows(): Promise<{ items: WorkflowSummary[] }> {
@@ -43,4 +54,55 @@ export function getWorkflowLogs(
 		"GET",
 		`/workflows/${encodeURIComponent(name)}/logs?nodeId=${encodeURIComponent(nodeId)}`,
 	);
+}
+
+function postWorkflowOperation(
+	name: string,
+	operation: string,
+): Promise<WorkflowOperationResponse> {
+	return request(
+		"POST",
+		`/workflows/${encodeURIComponent(name)}/${operation}`,
+		{},
+	);
+}
+
+export function retryWorkflow(
+	name: string,
+): Promise<WorkflowOperationResponse> {
+	return postWorkflowOperation(name, "retry");
+}
+
+export function resubmitWorkflow(
+	name: string,
+): Promise<WorkflowOperationResponse> {
+	return postWorkflowOperation(name, "resubmit");
+}
+
+export function suspendWorkflow(
+	name: string,
+): Promise<WorkflowOperationResponse> {
+	return postWorkflowOperation(name, "suspend");
+}
+
+export function stopWorkflow(name: string): Promise<WorkflowOperationResponse> {
+	return postWorkflowOperation(name, "stop");
+}
+
+export function resumeWorkflow(
+	name: string,
+): Promise<WorkflowOperationResponse> {
+	return postWorkflowOperation(name, "resume");
+}
+
+export function terminateWorkflow(
+	name: string,
+): Promise<WorkflowOperationResponse> {
+	return postWorkflowOperation(name, "terminate");
+}
+
+export function deleteWorkflow(
+	name: string,
+): Promise<WorkflowOperationResponse> {
+	return request("DELETE", `/workflows/${encodeURIComponent(name)}`);
 }

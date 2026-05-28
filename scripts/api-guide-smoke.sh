@@ -242,11 +242,11 @@ else
 	echo "  skip workflow detail/log smoke — set WORKFLOW_NAME to exercise GET /workflows/{name}"
 fi
 expect_code_get "workflow missing detail -> 404" "/api/v1/workflows/__missing_workflow__" "404" >/dev/null
-for op in retry resubmit suspend resume terminate; do
+for op in retry resubmit suspend stop resume terminate; do
 	expect_code_post "workflow ${op} missing workflow -> 500" "/api/v1/workflows/__missing_workflow__/${op}" "{}" "500" >/dev/null
 done
 if [[ -n "${WORKFLOW_OPERATION_NAME:-}" ]]; then
-	for op in retry resubmit suspend resume terminate; do
+	for op in retry resubmit suspend stop resume terminate; do
 		post "workflow ${op}" "/api/v1/workflows/${WORKFLOW_OPERATION_NAME}/${op}" "{}" >/dev/null
 	done
 else

@@ -644,6 +644,7 @@ func TestWorkflowRoutes_Registered(t *testing.T) {
 		{http.MethodPost, "/api/v1/workflows/test-wf/retry", http.StatusOK},
 		{http.MethodPost, "/api/v1/workflows/test-wf/resubmit", http.StatusOK},
 		{http.MethodPost, "/api/v1/workflows/test-wf/suspend", http.StatusOK},
+		{http.MethodPost, "/api/v1/workflows/test-wf/stop", http.StatusOK},
 		{http.MethodPost, "/api/v1/workflows/test-wf/resume", http.StatusOK},
 		{http.MethodPost, "/api/v1/workflows/test-wf/terminate", http.StatusOK},
 		{http.MethodGet, "/api/v1/workflows/test-wf", http.StatusOK},

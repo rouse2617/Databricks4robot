@@ -28,11 +28,12 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		return
 	}
 	type item struct {
-		Name       string  `json:"name"`
-		Status     string  `json:"status"`
-		NodeCount  int     `json:"nodeCount"`
-		CreatedAt  *string `json:"createdAt,omitempty"`
-		FinishedAt *string `json:"finishedAt,omitempty"`
+		Name       string            `json:"name"`
+		Status     string            `json:"status"`
+		NodeCount  int               `json:"nodeCount"`
+		CreatedAt  *string           `json:"createdAt,omitempty"`
+		FinishedAt *string           `json:"finishedAt,omitempty"`
+		Labels     map[string]string `json:"labels,omitempty"`
 	}
 	items := make([]item, 0, len(list))
 	for _, wf := range list {
@@ -42,6 +43,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 			Status:    string(wf.Status.Phase),
 			NodeCount: len(wf.Status.Nodes),
 			CreatedAt: &created,
+			Labels:    wf.Labels,
 		}
 		if wf.Status.FinishedAt.IsZero() {
 			it.FinishedAt = nil
@@ -159,6 +161,11 @@ func (h *Handler) ResubmitWorkflow(c *gin.Context) {
 // SuspendWorkflow handles POST /api/v1/workflows/:name/suspend
 func (h *Handler) SuspendWorkflow(c *gin.Context) {
 	h.workflowOperation(c, h.wfClient.SuspendWorkflow)
+}
+
+// StopWorkflow handles POST /api/v1/workflows/:name/stop
+func (h *Handler) StopWorkflow(c *gin.Context) {
+	h.workflowOperation(c, h.wfClient.StopWorkflow)
 }
 
 // ResumeWorkflow handles POST /api/v1/workflows/:name/resume
