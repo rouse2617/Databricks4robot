@@ -111,10 +111,13 @@ describe("AssetPicker", () => {
 		if (searchButton) fireEvent.click(searchButton);
 
 		await waitFor(() => {
-			expect(searchApi.searchAssets).toHaveBeenCalledWith({
-				q: "ast",
-				page_size: 50,
-			});
+			expect(searchApi.searchAssets).toHaveBeenCalledWith(
+				{
+					q: "ast",
+					page_size: 50,
+				},
+				expect.any(AbortSignal),
+			);
 		});
 
 		expect(screen.getByText("ast-001")).toBeTruthy();
@@ -236,7 +239,7 @@ describe("AssetPicker", () => {
 		});
 	});
 
-	it("handles search API failure gracefully", async () => {
+	it("shows error state when search API fails", async () => {
 		vi.mocked(searchApi.searchAssets).mockRejectedValue(
 			new Error("Network error"),
 		);
@@ -251,7 +254,9 @@ describe("AssetPicker", () => {
 
 		await waitFor(() => {
 			expect(searchApi.searchAssets).toHaveBeenCalled();
+			expect(screen.getByText("搜索资产失败，请重试")).toBeTruthy();
 		});
+		expect(screen.queryByText("未找到匹配的资产")).toBeNull();
 	});
 
 	it("accepts custom placeholder and maxHeight props", () => {

@@ -1,5 +1,5 @@
-import { Input, message, Table } from "antd";
-import { useState } from "react";
+import { Alert, Button, Input, Table } from "antd";
+import { useEffect, useRef, useState } from "react";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
 
@@ -26,19 +26,48 @@ export default function AssetPicker({
 	const [results, setResults] = useState<SearchAssetResult[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [query, setQuery] = useState("");
+	const [error, setError] = useState<string | null>(null);
+	const abortRef = useRef<AbortController | null>(null);
+
+	useEffect(() => {
+		return () => {
+			abortRef.current?.abort();
+		};
+	}, []);
+
+	const isAbortError = (err: unknown) =>
+		(err instanceof DOMException && err.name === "AbortError") ||
+		(typeof err === "object" &&
+			err !== null &&
+			("name" in err || "code" in err) &&
+			((err as { name?: string }).name === "AbortError" ||
+				(err as { code?: string }).code === "ERR_CANCELED"));
 
 	const handleSearch = async (value: string) => {
 		const trimmed = value.trim();
 		if (!trimmed) return;
+		abortRef.current?.abort();
+		const controller = new AbortController();
+		abortRef.current = controller;
 		setQuery(trimmed);
 		setLoading(true);
+		setError(null);
 		try {
-			const res = await searchApi.searchAssets({ q: trimmed, page_size: 50 });
-			setResults(res.items);
-		} catch {
-			message.error("搜索资产失败");
+			const res = await searchApi.searchAssets(
+				{ q: trimmed, page_size: 50 },
+				controller.signal,
+			);
+			if (abortRef.current === controller && !controller.signal.aborted) {
+				setResults(res.items);
+			}
+		} catch (err) {
+			if (!isAbortError(err) && abortRef.current === controller) {
+				setError("搜索资产失败，请重试");
+			}
 		} finally {
-			setLoading(false);
+			if (abortRef.current === controller) {
+				setLoading(false);
+			}
 		}
 	};
 
@@ -50,7 +79,18 @@ export default function AssetPicker({
 				loading={loading}
 				size="small"
 			/>
-			{results.length > 0 ? (
+			{error ? (
+				<Alert
+					type="error"
+					showIcon
+					message={error}
+					action={
+						<Button size="small" danger onClick={() => handleSearch(query)}>
+							重试
+						</Button>
+					}
+				/>
+			) : results.length > 0 ? (
 				<Table
 					rowKey="asset_id"
 					dataSource={results}

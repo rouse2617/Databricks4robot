@@ -16,9 +16,17 @@ export async function request<T>(
 	path: string,
 	body?: unknown,
 ): Promise<T> {
+	const headers: Record<string, string> = {};
+	if (body) {
+		headers["Content-Type"] = "application/json";
+	}
+	if (["POST", "PUT", "DELETE"].includes(method.toUpperCase())) {
+		headers["X-Requested-With"] = "XMLHttpRequest";
+	}
+
 	const res = await fetch(`${API}${path}`, {
 		method,
-		headers: body ? { "Content-Type": "application/json" } : undefined,
+		headers: Object.keys(headers).length > 0 ? headers : undefined,
 		body: body ? JSON.stringify(body) : undefined,
 		credentials: "include",
 	});
