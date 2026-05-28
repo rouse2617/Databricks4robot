@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -117,13 +118,26 @@ func (h *Handler) Deploy(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	dryRun := false
+	if raw := strings.TrimSpace(c.Query("dryRun")); raw != "" {
+		v, err := strconv.ParseBool(raw)
+		if err != nil {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid dryRun query value", map[string]any{"error": err.Error()})
+			return
+		}
+		dryRun = v
+	}
 
-	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs)
+	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{DryRun: dryRun})
 	if err != nil {
 		mapDeployError(c, err)
 		return
 	}
-	c.JSON(201, dep)
+	if dryRun {
+		c.JSON(http.StatusOK, dep)
+		return
+	}
+	c.JSON(http.StatusCreated, dep)
 }
 
 // DeployByTemplate handles POST /api/v1/deploy/template/:id.
