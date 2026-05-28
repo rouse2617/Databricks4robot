@@ -20,22 +20,22 @@ type inputSpec struct {
 
 // Options controls how the pipeline is transpiled.
 type Options struct {
-	Name                 string
-	Namespace            string
-	ServiceAccount       string
-	ImagePullSecrets     []string
-	TTLSecondsAfter      int32
-	RetryStrategy        *RetryStrategy
+	Name                  string
+	Namespace             string
+	ServiceAccount        string
+	ImagePullSecrets      []string
+	TTLSecondsAfter       int32
+	RetryStrategy         *RetryStrategy
 	ActiveDeadlineSeconds int64
-	WorkflowParams       []Param // workflow-level parameters (e.g. asset_ids)
+	WorkflowParams        []Param // workflow-level parameters (e.g. asset_ids)
 	// GlobalEnv are environment variables injected into every node container (e.g. asset paths).
-	GlobalEnv            []corev1.EnvVar
-	ExtraVolumes         []corev1.Volume // additional workflow-level volumes
+	GlobalEnv    []corev1.EnvVar
+	ExtraVolumes []corev1.Volume // additional workflow-level volumes
 }
 
 // RetryStrategy defines automatic retry policy for each step.
 type RetryStrategy struct {
-	Limit     int32 `json:"limit,omitempty"`
+	Limit int32 `json:"limit,omitempty"`
 }
 
 // Transpile converts a Pipeline definition into an Argo Workflow CRD.

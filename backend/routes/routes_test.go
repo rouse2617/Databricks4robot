@@ -298,6 +298,26 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 	}
 }
 
+func TestAssetTypeSchemaRouteRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
+	mcapHandler := mcapH.New(&routeMcapRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, nil)
+	cfg := &config.Config{DatabrewToken: "dev-token"}
+
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/asset-types/dataset/schema", nil)
+	req.Header.Set("X-Databrew-Token", "dev-token")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -365,7 +385,7 @@ func (r *routePipelineDeploymentRepo) FindByID(_ context.Context, id string) (*m
 	}
 	return &models.PipelineDeployment{ID: id, PipelineName: "test-pipeline", Status: "Pending"}, nil
 }
-func (r *routePipelineDeploymentRepo) Delete(_ context.Context, _ string) error { return nil }
+func (r *routePipelineDeploymentRepo) Delete(_ context.Context, _ string) error          { return nil }
 func (r *routePipelineDeploymentRepo) UpdateStatus(_ context.Context, _, _ string) error { return nil }
 
 type routePipelineComponentRepo struct{}
@@ -383,7 +403,9 @@ func (r *routePipelineComponentRepo) FindByID(_ context.Context, id string) (*mo
 	}
 	return &models.PipelineComponent{ID: id, Name: "test-comp"}, nil
 }
-func (r *routePipelineComponentRepo) Update(_ context.Context, _ *models.PipelineComponent) error { return nil }
+func (r *routePipelineComponentRepo) Update(_ context.Context, _ *models.PipelineComponent) error {
+	return nil
+}
 func (r *routePipelineComponentRepo) Delete(_ context.Context, _ string) error { return nil }
 
 // mockWorkflowClient implements k8s.WorkflowClient for route-level tests.

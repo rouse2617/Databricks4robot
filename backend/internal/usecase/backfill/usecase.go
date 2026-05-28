@@ -14,8 +14,8 @@ import (
 
 // Usecase orchestrates backfill job operations.
 type Usecase struct {
-	repo        repository.BackfillRepository
-	pipelineUC  *pipelineUC.Usecase
+	repo       repository.BackfillRepository
+	pipelineUC *pipelineUC.Usecase
 }
 
 // New creates a Usecase.

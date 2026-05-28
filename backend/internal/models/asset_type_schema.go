@@ -246,7 +246,7 @@ func integerValue(raw interface{}) (int64, bool) {
 	case int64:
 		return v, true
 	case float64:
-		if math.Trunc(v) == v && v >= math.MinInt64 && v <= math.MaxInt64 {
+		if math.Trunc(v) == v && v >= float64(-1<<63) && v <= float64(1<<63-1) {
 			return int64(v), true
 		}
 	case json.Number:

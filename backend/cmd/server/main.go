@@ -4,13 +4,12 @@ import (
 	"context"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
-	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
@@ -19,8 +18,9 @@ import (
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
-	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -69,21 +69,21 @@ type coreRepos struct {
 
 // coreHandlers groups all HTTP handlers that form the main API surface.
 type coreHandlers struct {
-	asset        *assetH.Handler
-	algo         *assetH.AlgoHandler
-	mcap         *mcapH.Handler
-	delivery     *deliveryH.Handler
-	customer     *customerH.Handler
-	deliveryRule *deliveryruleH.Handler
-	algoRun      *algorunH.Handler
-	eval         *evalH.Handler
-	action       *actionH.Handler
-	query        *queryH.Handler
-	workflow     *workflowH.Handler
-	pipeline           *pipelineH.Handler
-	pipelineComponent  *pipelineComponentH.Handler
-	backfill           *backfillH.Handler
-	assetUC            *assetUC.Usecase
+	asset             *assetH.Handler
+	algo              *assetH.AlgoHandler
+	mcap              *mcapH.Handler
+	delivery          *deliveryH.Handler
+	customer          *customerH.Handler
+	deliveryRule      *deliveryruleH.Handler
+	algoRun           *algorunH.Handler
+	eval              *evalH.Handler
+	action            *actionH.Handler
+	query             *queryH.Handler
+	workflow          *workflowH.Handler
+	pipeline          *pipelineH.Handler
+	pipelineComponent *pipelineComponentH.Handler
+	backfill          *backfillH.Handler
+	assetUC           *assetUC.Usecase
 }
 
 // optional holds components that are not required for the core API to function.

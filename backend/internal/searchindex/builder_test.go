@@ -158,6 +158,77 @@ func TestBuild_VersionFieldsWhenLogicalAssetSet(t *testing.T) {
 	}
 }
 
+func TestBuild_DatasetProjection(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:        "data0001",
+			AssetType:      "dataset",
+			LifecycleState: "ready",
+			Metadata: map[string]interface{}{
+				"format":            "parquet",
+				"record_count":      float64(42),
+				"size_bytes":        float64(2048),
+				"annotation_status": "raw",
+				"source":            "ignored in typed projection",
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "data0001")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	dataset, ok := doc["dataset"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected dataset projection, got %#v", doc["dataset"])
+	}
+	if dataset["format"] != "parquet" || dataset["annotation_status"] != "raw" {
+		t.Fatalf("unexpected dataset projection: %#v", dataset)
+	}
+	if _, exists := dataset["source"]; exists {
+		t.Fatalf("source should not be in typed ES projection: %#v", dataset)
+	}
+}
+
+func TestBuild_AnnotationResultProjection(t *testing.T) {
+	now := time.Now().UTC()
+	b := &Builder{
+		Assets: &stubAssetRepo{asset: &models.Asset{
+			AssetID:        "anno0001",
+			AssetType:      "annotation_result",
+			LifecycleState: "ready",
+			Metadata: map[string]interface{}{
+				"tool":          "label-studio",
+				"quality_score": 0.8,
+				"coverage":      0.9,
+				"artifact_uri":  "ignored in typed projection",
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}},
+		Tags:  &stubTagRepo{},
+		Algos: &stubAlgoRepo{},
+	}
+	doc, ok, err := b.Build(context.Background(), "anno0001")
+	if err != nil || !ok {
+		t.Fatalf("Build: ok=%v err=%v", ok, err)
+	}
+	projection, ok := doc["annotation_result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected annotation_result projection, got %#v", doc["annotation_result"])
+	}
+	if projection["tool"] != "label-studio" || projection["coverage"] != 0.9 {
+		t.Fatalf("unexpected annotation_result projection: %#v", projection)
+	}
+	if _, exists := projection["artifact_uri"]; exists {
+		t.Fatalf("artifact_uri should not be in typed ES projection: %#v", projection)
+	}
+}
+
 func TestBuild_NilAssetReturnsNotOk(t *testing.T) {
 	b := &Builder{
 		Assets: &stubAssetRepo{asset: nil},

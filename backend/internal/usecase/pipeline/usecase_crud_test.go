@@ -25,7 +25,9 @@ func (m *mockEventRepo) Append(_ context.Context, in repository.AssetEventAppend
 func (m *mockEventRepo) ListByAsset(_ context.Context, assetID string, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return m.events[assetID], nil
 }
-func (m *mockEventRepo) ListPending(_ context.Context, _ int) ([]*models.AssetEvent, error)           { return nil, nil }
+func (m *mockEventRepo) ListPending(_ context.Context, _ int) ([]*models.AssetEvent, error) {
+	return nil, nil
+}
 func (m *mockEventRepo) ListPendingSafe(_ context.Context, _ time.Duration, _ int) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
@@ -35,14 +37,14 @@ func (m *mockEventRepo) ListVersionPromotedByLogical(_ context.Context, _ string
 func (m *mockEventRepo) ListGlobal(_ context.Context, _ repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
-func (m *mockEventRepo) MarkPublished(_ context.Context, _ []int64) error        { return nil }
-func (m *mockEventRepo) MarkFailed(_ context.Context, _ int64, _ string) error    { return nil }
-func (m *mockEventRepo) CountPending(_ context.Context) (int64, error)             { return 0, nil }
+func (m *mockEventRepo) MarkPublished(_ context.Context, _ []int64) error      { return nil }
+func (m *mockEventRepo) MarkFailed(_ context.Context, _ int64, _ string) error { return nil }
+func (m *mockEventRepo) CountPending(_ context.Context) (int64, error)         { return 0, nil }
 func (m *mockEventRepo) CountPendingClaimable(_ context.Context, _ time.Duration) (int64, error) {
 	return 0, nil
 }
-func (m *mockEventRepo) CountProcessing(_ context.Context) (int64, error) { return 0, nil }
-func (m *mockEventRepo) OldestPendingAge(_ context.Context) (float64, error)        { return 0, nil }
+func (m *mockEventRepo) CountProcessing(_ context.Context) (int64, error)    { return 0, nil }
+func (m *mockEventRepo) OldestPendingAge(_ context.Context) (float64, error) { return 0, nil }
 func (m *mockEventRepo) PublishStateCounts(_ context.Context) (map[string]int64, error) {
 	return nil, nil
 }

@@ -67,8 +67,8 @@ type VolumeMount struct {
 	MountPath string `json:"mountPath" yaml:"mountPath"`
 	SubPath   string `json:"subPath,omitempty" yaml:"subPath,omitempty"`
 	ReadOnly  bool   `json:"readOnly,omitempty" yaml:"readOnly,omitempty"`
-	PVCName   string `json:"pvcName,omitempty" yaml:"pvcName,omitempty"`    // existing PVC
-	EmptyDir  bool   `json:"emptyDir,omitempty" yaml:"emptyDir,omitempty"`  // ephemeral volume
+	PVCName   string `json:"pvcName,omitempty" yaml:"pvcName,omitempty"`   // existing PVC
+	EmptyDir  bool   `json:"emptyDir,omitempty" yaml:"emptyDir,omitempty"` // ephemeral volume
 }
 
 // Edge connects an output port of one node to an input port of another.

@@ -129,7 +129,7 @@ type Config struct {
 	AdminToken string
 
 	// Argo Workflows / K8s
-	KubeconfigPath        string // path to kubeconfig (empty = in-cluster or default search)
+	KubeconfigPath         string // path to kubeconfig (empty = in-cluster or default search)
 	ArgoWorkflowsNamespace string // namespace for Argo Workflows (default "default")
 }
 
@@ -161,7 +161,7 @@ func Load() *Config {
 		TopicMcapFinalized: getenv("TOPIC_MCAP_FINALIZED", "gcs.mcap.finalized.v1"),
 		TopicAssetEvents:   getenv("TOPIC_ASSET_EVENTS", "cyber-databrew-asset-events"),
 
-			DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
+		DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
@@ -219,11 +219,10 @@ func Load() *Config {
 
 		AdminToken: getenv("ADMIN_TOKEN", ""),
 
-		KubeconfigPath:        getenv("KUBECONFIG_PATH", ""),
+		KubeconfigPath:         getenv("KUBECONFIG_PATH", ""),
 		ArgoWorkflowsNamespace: getenv("ARGO_WORKFLOWS_NAMESPACE", ""),
 	}
 }
-
 
 // AdminRoutesEnabled reports whether privileged admin/internal HTTP routes are mounted.
 // In production, ADMIN_TOKEN must be set; dev may fall back to DATABREW_TOKEN when unset.

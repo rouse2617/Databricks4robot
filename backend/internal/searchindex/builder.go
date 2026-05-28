@@ -43,7 +43,7 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		lifecycleState = string(a.Status)
 	}
 
-doc = map[string]any{
+	doc = map[string]any{
 		"asset_id":           a.AssetID,
 		"mcap_file_id":       a.McapFileID,
 		"segment_locator":    a.SegmentLocator,

@@ -12,6 +12,8 @@ tags:
     description: Authentication endpoints (token-based login, session cookies)
   - name: Assets
     description: Asset CRUD, lifecycle, versioning, usage stats
+  - name: AssetTypes
+    description: Asset type metadata schemas
   - name: AssetTags
     description: Asset tag management (multi-source, history)
   - name: ActionAnnotations
@@ -198,6 +200,10 @@ components:
         total: { type: integer }
         page: { type: integer }
         page_size: { type: integer }
+    AssetTypeSchema:
+      type: object
+      description: JSON Schema definition for an asset type metadata object.
+      additionalProperties: true
 
     # ── AssetMcapLocator ───────────────────────────────────────────────────
     AssetMcapLocator:
@@ -1900,9 +1906,34 @@ paths:
               schema:
                 type: object
                 properties:
-                  items:
-                    type: array
-                    items: { $ref: '#/components/schemas/Asset' }
+                items:
+                  type: array
+                  items: { $ref: '#/components/schemas/Asset' }
+
+  /api/v1/asset-types/{type}/schema:
+    get:
+      tags: [AssetTypes]
+      summary: Get asset type metadata schema
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+            enum: [dataset, annotation_result]
+      responses:
+        '200':
+          description: JSON Schema for assets.metadata of the requested asset type.
+          content:
+            application/schema+json:
+              schema: { $ref: '#/components/schemas/AssetTypeSchema' }
+            application/json:
+              schema: { $ref: '#/components/schemas/AssetTypeSchema' }
+        '404':
+          description: Asset type schema not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/assets/{id}/mcap-locator:
     get:
       tags: [Assets]
@@ -1933,6 +1964,26 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FoxgloveSourceResponse' }
+  /api/v1/asset-types/{type}/schema:
+    get:
+      tags: [Assets]
+      summary: Get JSON Schema for a registered asset type
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema:
+            type: string
+          description: Asset type name (e.g. dataset, annotation_result)
+      responses:
+        '200':
+          description: JSON Schema document
+          content:
+            application/schema+json:
+              schema:
+                type: object
+        '404':
+          description: Asset type not registered
   /api/v1/assets/{id}/deliveries:
     get:
       tags: [Assets]
@@ -4597,4 +4648,3 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorBody' }
-

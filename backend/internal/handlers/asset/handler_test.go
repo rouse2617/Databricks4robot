@@ -401,6 +401,28 @@ func TestCreate(t *testing.T) {
 	}
 }
 
+func TestGetAssetTypeSchema(t *testing.T) {
+	h := New(assetUC.New(&mockAssetRepo{}), &mockDeliveryRepoForAsset{})
+	r := setupAssetRouter(http.MethodGet, "/asset-types/:type/schema", h.GetAssetTypeSchema)
+
+	w := doReq(t, r, http.MethodGet, "/asset-types/dataset/schema", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &schema); err != nil {
+		t.Fatalf("schema response is not JSON: %v", err)
+	}
+	if got, _ := schema["title"].(string); got == "" {
+		t.Fatalf("expected schema title, got %#v", schema)
+	}
+
+	w = doReq(t, r, http.MethodGet, "/asset-types/unknown/schema", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown schema, got %d", w.Code)
+	}
+}
+
 func TestHandleRatingsHistoryValidationAndNotConfigured(t *testing.T) {
 	q := &fakeAssetSQLQuerier{}
 	h := &Handler{pgq: q}

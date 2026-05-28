@@ -45,7 +45,7 @@ func TestTranspileDefaultTTL(t *testing.T) {
 	p := &Pipeline{
 		Name: "ttl",
 		Nodes: []Node{{
-			ID: "n1",
+			ID:        "n1",
 			Component: Component{Name: "n", Image: "busybox:latest"},
 		}},
 	}
@@ -65,7 +65,7 @@ func TestTranspileRetryStrategy(t *testing.T) {
 	p := &Pipeline{
 		Name: "retry-test",
 		Nodes: []Node{{
-			ID: "n1",
+			ID:        "n1",
 			Component: Component{Name: "n", Image: "busybox:latest"},
 		}},
 	}
@@ -97,12 +97,12 @@ func TestTranspileActiveDeadlineSeconds(t *testing.T) {
 	p := &Pipeline{
 		Name: "timeout-test",
 		Nodes: []Node{{
-			ID: "n1",
+			ID:        "n1",
 			Component: Component{Name: "n", Image: "busybox:latest"},
 		}},
 	}
 	opts := &Options{
-		Name:                 "timeout-test",
+		Name:                  "timeout-test",
 		ActiveDeadlineSeconds: 600,
 	}
 	wf, err := Transpile(p, opts)
@@ -128,13 +128,13 @@ func TestTranspileRetryAndTimeout(t *testing.T) {
 	p := &Pipeline{
 		Name: "combined",
 		Nodes: []Node{{
-			ID: "n1",
+			ID:        "n1",
 			Component: Component{Name: "n", Image: "busybox:latest"},
 		}},
 	}
 	opts := &Options{
-		Name:                 "combined",
-		RetryStrategy:        &RetryStrategy{Limit: 2},
+		Name:                  "combined",
+		RetryStrategy:         &RetryStrategy{Limit: 2},
 		ActiveDeadlineSeconds: 300,
 	}
 	wf, err := Transpile(p, opts)
@@ -160,7 +160,7 @@ func TestTranspileWorkflowParams(t *testing.T) {
 	p := &Pipeline{
 		Name: "wf-params",
 		Nodes: []Node{{
-			ID: "n1",
+			ID:        "n1",
 			Component: Component{Name: "n", Image: "busybox:latest"},
 		}},
 	}
@@ -198,7 +198,7 @@ func TestTranspileParallelism(t *testing.T) {
 		Name:        "parallel-test",
 		Parallelism: 3,
 		Nodes: []Node{{
-			ID: "n1",
+			ID:        "n1",
 			Component: Component{Name: "n", Image: "busybox:latest"},
 		}},
 	}
@@ -218,7 +218,7 @@ func TestTranspileParallelismZero(t *testing.T) {
 	p := &Pipeline{
 		Name: "no-parallel-limit",
 		Nodes: []Node{{
-			ID: "n1",
+			ID:        "n1",
 			Component: Component{Name: "n", Image: "busybox:latest"},
 		}},
 	}

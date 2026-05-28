@@ -188,6 +188,8 @@ echo ""
 echo "--- § 注册表 ---"
 get "algo-registry" "/api/v1/algo-registry"
 get "tag-registry" "/api/v1/tag-registry"
+get "asset type schema dataset" "/api/v1/asset-types/dataset/schema"
+expect_code_get "asset type schema unknown -> 404" "/api/v1/asset-types/unknown/schema" "404" >/dev/null
 
 echo ""
 echo "--- § 资产 / 搜索 / 交付 / mcap-files ---"

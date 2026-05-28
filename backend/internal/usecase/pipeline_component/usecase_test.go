@@ -12,9 +12,9 @@ import (
 // ── Mock repository ─────────────────────────────────────────────────────────
 
 type mockComponentRepo struct {
-	byID   map[string]*models.PipelineComponent
-	all    []models.PipelineComponent
-	saved  []*models.PipelineComponent
+	byID      map[string]*models.PipelineComponent
+	all       []models.PipelineComponent
+	saved     []*models.PipelineComponent
 	updateErr error
 	deleteErr error
 }
@@ -107,7 +107,7 @@ func TestCreate(t *testing.T) {
 	uc := New(repo)
 
 	pc := &models.PipelineComponent{
-		Name: "test-component",
+		Name:  "test-component",
 		Image: "nginx:latest",
 		Tag:   "latest",
 	}
