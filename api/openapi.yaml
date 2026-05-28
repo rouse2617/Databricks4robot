@@ -4028,14 +4028,6 @@ paths:
         the PIPELINE_DEPLOYMENT_ID environment variable.
       security:
         - DatabrewToken: []
-      parameters:
-        - in: query
-          name: dryRun
-          required: false
-          schema:
-            type: boolean
-            default: false
-          description: When true, return transpiled Workflow manifest only without creating workflow
       requestBody:
         required: true
         content:
@@ -4167,14 +4159,6 @@ paths:
       description: Creates a new reusable pipeline template from a pipeline definition.
       security:
         - DatabrewToken: []
-      parameters:
-        - in: query
-          name: dryRun
-          required: false
-          schema:
-            type: boolean
-            default: false
-          description: When true, return transpiled manifest only without creating a workflow
       requestBody:
         required: true
         content:
@@ -4290,6 +4274,14 @@ paths:
         Returns a deployment record linking to the resulting Argo workflow.
       security:
         - DatabrewToken: []
+      parameters:
+        - in: query
+          name: dryRun
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, return transpiled manifest without creating a workflow
       requestBody:
         required: true
         content:
