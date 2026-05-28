@@ -37,6 +37,7 @@ import { assetsApi } from "../api/assets";
 import {
 	type Deployment,
 	deployTemplate,
+	previewDeploy,
 	savePipeline,
 } from "../api/pipelineApi";
 import {
@@ -65,6 +66,7 @@ import "../styles/pipeline.css";
 const nodeTypes = { pipelineStep: PipelineStepNode };
 
 const STORAGE_KEY = "databrew-components";
+type DeployMode = "edit" | "preview";
 
 type PipelineFlowNode = Node<PipelineNodeData>;
 type PipelineFlowEdge = Edge;
@@ -385,9 +387,19 @@ function PipelineCanvas() {
 		deploying: boolean;
 		done: boolean;
 		name: string;
+		mode: DeployMode;
 		result?: Deployment;
 		error?: string;
-	}>({ open: false, deploying: false, done: false, name: "" });
+		previewManifest?: string;
+		previewLoading?: boolean;
+		previewError?: string;
+	}>({
+		open: false,
+		deploying: false,
+		done: false,
+		name: "",
+		mode: "edit",
+	});
 	const [jsonOutput, setJsonOutput] = useState<string | null>(null);
 	// Asset selection for deploy modal
 	const [selectedAssetIds, setSelectedAssetIds] =
@@ -767,6 +779,7 @@ function PipelineCanvas() {
 			open: true,
 			deploying: false,
 			done: false,
+			mode: "edit",
 			name: pipelineName,
 		});
 		setSelectedAssetIds([]);
@@ -778,6 +791,7 @@ function PipelineCanvas() {
 			deploying: false,
 			done: false,
 			name: "",
+			mode: "edit",
 		});
 	}, []);
 
@@ -813,6 +827,31 @@ function PipelineCanvas() {
 			}));
 		}
 	}, [buildPipelineJSON, deployDialog.name, pipelineName, selectedAssetIds]);
+
+	const handlePreviewDeploy = useCallback(async () => {
+		setDeployDialog((prev) => ({
+			...prev,
+			previewLoading: true,
+			previewError: undefined,
+			previewManifest: undefined,
+			mode: "preview",
+		}));
+		try {
+			const pipeline = buildPipelineJSON();
+			const { manifest } = await previewDeploy(pipeline);
+			setDeployDialog((prev) => ({
+				...prev,
+				previewLoading: false,
+				previewManifest: manifest,
+			}));
+		} catch (err) {
+			setDeployDialog((prev) => ({
+				...prev,
+				previewLoading: false,
+				previewError: String(err),
+			}));
+		}
+	}, [buildPipelineJSON]);
 
 	return (
 		<div
@@ -1157,9 +1196,9 @@ function PipelineCanvas() {
 				open={deployDialog.open}
 				onCancel={closeDeployDialog}
 				footer={null}
-				width={480}
+				width={780}
 			>
-				{!deployDialog.deploying && !deployDialog.done && (
+				{!deployDialog.deploying && !deployDialog.done && deployDialog.mode === "edit" && (
 					<>
 						<Typography.Paragraph
 							type="secondary"
@@ -1254,12 +1293,84 @@ function PipelineCanvas() {
 							}}
 						>
 							<Button onClick={closeDeployDialog}>取消</Button>
+							<Button onClick={handlePreviewDeploy} disabled={!canDeploy}>
+								预览
+							</Button>
 							<Button
 								type="primary"
 								onClick={handleDeploy}
 								disabled={!canDeploy}
 							>
 								部署
+							</Button>
+						</div>
+					</>
+				)}
+				{!deployDialog.deploying && !deployDialog.done && deployDialog.mode === "preview" && (
+					<>
+						<Typography.Paragraph
+							type="secondary"
+							style={{ fontSize: 12, marginBottom: 12 }}
+						>
+							以下为 dry-run 结果，仅用于确认。
+						</Typography.Paragraph>
+						{deployDialog.previewLoading ? (
+							<div style={{ textAlign: "center", padding: 20 }}>
+								<Typography.Text type="secondary">
+									正在生成预览内容...
+								</Typography.Text>
+							</div>
+						) : deployDialog.previewError ? (
+							<Alert
+								type="error"
+								showIcon
+								message="预览失败"
+								description={deployDialog.previewError}
+								style={{ marginBottom: 16 }}
+							/>
+						) : (
+							<pre
+								style={{
+									margin: 0,
+									padding: 12,
+									background: "#0f172a",
+									color: "#e2e8f0",
+									borderRadius: 8,
+									overflow: "auto",
+									maxHeight: 360,
+									fontSize: 12,
+									fontFamily:
+										'"SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+									lineHeight: 1.5,
+									whiteSpace: "pre",
+								}}
+							>
+								{deployDialog.previewManifest || "（暂无内容）"}
+							</pre>
+						)}
+						<div
+							style={{
+								display: "flex",
+								gap: 8,
+								justifyContent: "flex-end",
+								borderTop: "1px solid var(--color-border, #e2e8f0)",
+								paddingTop: 14,
+								marginTop: 12,
+							}}
+						>
+							<Button
+								onClick={() =>
+									setDeployDialog((prev) => ({ ...prev, mode: "edit" }))
+								}
+							>
+								返回编辑
+							</Button>
+							<Button
+								type="primary"
+								onClick={handleDeploy}
+								disabled={!canDeploy}
+							>
+								确认部署
 							</Button>
 						</div>
 					</>

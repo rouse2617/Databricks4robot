@@ -21,6 +21,14 @@ export interface Deployment {
 	pipelineJSON?: Pipeline;
 }
 
+export function previewDeploy(
+	pipeline: Pipeline,
+): Promise<{ manifest: string }> {
+	return request<{ manifest?: string }>("POST", "/deploy?dryRun=true", {
+		pipeline,
+	}).then((resp) => ({ manifest: resp.manifest || "" }));
+}
+
 export function listPipelines(): Promise<PipelineTemplate[]> {
 	return request<{ items: PipelineTemplate[] }>("GET", "/pipelines").then(
 		(r) => r.items,

@@ -4028,6 +4028,14 @@ paths:
         the PIPELINE_DEPLOYMENT_ID environment variable.
       security:
         - DatabrewToken: []
+      parameters:
+        - in: query
+          name: dryRun
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, return transpiled Workflow manifest only without creating workflow
       requestBody:
         required: true
         content:
@@ -4159,6 +4167,14 @@ paths:
       description: Creates a new reusable pipeline template from a pipeline definition.
       security:
         - DatabrewToken: []
+      parameters:
+        - in: query
+          name: dryRun
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, return transpiled manifest only without creating a workflow
       requestBody:
         required: true
         content:
@@ -4291,6 +4307,11 @@ paths:
                   items: { type: string }
                   description: Optional asset IDs to bind as environment variables
       responses:
+        '200':
+          description: Dry-run preview generated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineDeployment' }
         '201':
           description: Deployment created
           content:

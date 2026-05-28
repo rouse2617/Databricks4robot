@@ -15,6 +15,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
+	"gopkg.in/yaml.v3"
 )
 
 // Sentinel errors.
@@ -35,6 +36,11 @@ type Usecase struct {
 	relationWriter repository.AssetRelationWriter
 	wfClient       argo.WorkflowClient
 	namespace      string
+}
+
+type DeployOptions struct {
+	DryRun     bool
+	TemplateID string
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -114,7 +120,13 @@ func (uc *Usecase) DeleteTemplate(ctx context.Context, id string) error {
 // Deploy transpiles a pipeline and submits it as an Argo Workflow.
 // pipelineArg is the raw pipeline JSON map. name overrides the workflow name.
 // assetIDs are passed as workflow-level parameters (F4.1).
-func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{}, name string, assetIDs []string, templateID ...string) (*models.PipelineDeployment, error) {
+func (uc *Usecase) Deploy(
+	ctx context.Context,
+	pipelineArg map[string]interface{},
+	name string,
+	assetIDs []string,
+	opts ...DeployOptions,
+) (*models.PipelineDeployment, error) {
 	// Marshal pipeline to JSON for transpiler.
 	raw, err := json.Marshal(pipelineArg)
 	if err != nil {
@@ -133,6 +145,12 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 
 	wfName := pipeName + "-" + uuid.New().String()[:6]
 	depID := uuid.New().String()
+	templateID := ""
+	dryRun := false
+	if len(opts) > 0 {
+		templateID = opts[0].TemplateID
+		dryRun = opts[0].DryRun
+	}
 
 	// Validate all asset IDs exist before proceeding (T-12).
 	if len(assetIDs) > 0 && uc.assetRepo != nil {
@@ -176,16 +194,39 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 	}
 
 	// Transpile to Argo Workflow.
-	opts := &transpiler.Options{
+	wfOpts := &transpiler.Options{
 		Name:            wfName,
 		Namespace:       uc.namespace,
 		TTLSecondsAfter: 3600,
 		WorkflowParams:  wfParams,
 		GlobalEnv:       globalEnv,
 	}
-	wf, err := transpiler.Transpile(pipe, opts)
+	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
 		return nil, fmt.Errorf("transpile: %w", err)
+	}
+
+	manifestBytes, err := yaml.Marshal(wf)
+	if err != nil {
+		return nil, fmt.Errorf("marshal manifest: %w", err)
+	}
+	manifest := string(manifestBytes)
+	if manifest == "" {
+		manifest = "{}\n"
+	}
+
+	if dryRun {
+		return &models.PipelineDeployment{
+			ID:           depID,
+			PipelineName: pipeName,
+			WorkflowName: wfName,
+			Status:       "Preview",
+			NodeCount:    nodeCount,
+			Manifest:     &manifest,
+			PipelineJSON: pipelineArg,
+			CreatedAt:    time.Now().UTC(),
+			UpdatedAt:    time.Now().UTC(),
+		}, nil
 	}
 
 	// Submit to Argo workflow engine.
@@ -204,11 +245,6 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 		status = string(phase)
 	}
 
-	manifest := ""
-	if m, err := json.MarshalIndent(wf, "", "  "); err == nil {
-		manifest = string(m)
-	}
-
 	dep := &models.PipelineDeployment{
 		ID:           depID,
 		PipelineName: pipeName,
@@ -219,8 +255,8 @@ func (uc *Usecase) Deploy(ctx context.Context, pipelineArg map[string]interface{
 		PipelineJSON: pipelineArg,
 		CreatedAt:    time.Now().UTC(),
 	}
-	if len(templateID) > 0 {
-		dep.TemplateID = &templateID[0]
+	if templateID != "" {
+		dep.TemplateID = &templateID
 	}
 	// Embed input asset IDs into PipelineJSON for lineage queries (F4.7).
 	if len(assetIDs) > 0 {
@@ -264,7 +300,7 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	if name == "" {
 		name = t.Name
 	}
-	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, templateID)
+	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, DeployOptions{TemplateID: templateID})
 }
 
 // SaveFromDeployment creates a new template from a deployment's pipeline JSON (F7.8).
