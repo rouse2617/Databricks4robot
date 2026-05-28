@@ -286,4 +286,3 @@ func (r *BackfillRepo) CountItemsByStatus(ctx context.Context, jobID, status str
 	}
 	return n, nil
 }
-

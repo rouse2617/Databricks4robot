@@ -2,29 +2,30 @@ package main
 
 import (
 	"context"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
-	"log/slog"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
-	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
-	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
-	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
+	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
-	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
-	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
-	backfillUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
+	backfillUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
+	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
+	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
+	"log/slog"
 )
 
 // ── Layer 2: Core business layer (repos + usecases + handlers) ──
@@ -51,11 +52,14 @@ func setupCore(inf *infra) *coreHandlers {
 	algoUC := assetUC.NewAlgoUsecase(pg, assetRepo, algoLatestRepo, assetEventRepo, inf.algoRegistry)
 	algoUC.SetAlgoRunRepo(algoRunRepo)
 	assetUsecase := assetUC.NewWithProjections(pg, assetRepo, assetTagRepo, algoLatestRepo, assetEventRepo, inf.tagRegistry, inf.algoRegistry)
+	assetTypeSchemas := models.NewSchemaRegistry()
+	assetUsecase.SetSchemaRegistry(assetTypeSchemas)
 	assetUsecase.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
 	assetUsecase.SetCustomerRepo(customerRepo) // CYB-1070: customer.* namespace lint
 	// CYB-1164: asset hierarchy validator.
-	assetUsecase.SetValidator(deliveryrules.NewAssetWriteValidator(
+	assetUsecase.SetValidator(deliveryrules.NewAssetWriteValidatorWithSchemas(
 		deliveryrules.NewAssetRepoParentGetter(assetRepo),
+		assetTypeSchemas,
 	))
 	assetUsecase.SetUsageStatsRepo(usageStatsRepo) // CYB-1095/1096: usage stats
 
@@ -124,20 +128,20 @@ func setupCore(inf *infra) *coreHandlers {
 	}
 
 	return &coreHandlers{
-		asset:        assetHandler,
-		algo:         algoHandler,
-		mcap:         mcapHandler,
-		delivery:     deliveryHandler,
-		customer:     customerHandler,
-		deliveryRule: deliveryRuleHandler,
-		algoRun:      algoRunHandler,
-		eval:         evalHandler,
-		action:       actionHandler,
-		pipeline:           pipelineHandler,
-			pipelineComponent:  pipelineComponentHandler,
-			backfill:           backfillHandler,
-		query:        queryHandler,
-		workflow:     workflowHandler,
-		assetUC:      assetUsecase,
+		asset:             assetHandler,
+		algo:              algoHandler,
+		mcap:              mcapHandler,
+		delivery:          deliveryHandler,
+		customer:          customerHandler,
+		deliveryRule:      deliveryRuleHandler,
+		algoRun:           algoRunHandler,
+		eval:              evalHandler,
+		action:            actionHandler,
+		pipeline:          pipelineHandler,
+		pipelineComponent: pipelineComponentHandler,
+		backfill:          backfillHandler,
+		query:             queryHandler,
+		workflow:          workflowHandler,
+		assetUC:           assetUsecase,
 	}
 }

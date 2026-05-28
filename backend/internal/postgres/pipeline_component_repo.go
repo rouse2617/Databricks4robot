@@ -31,11 +31,11 @@ const pipelineComponentSelectCols = `id, name, description, image, tag, source,
 
 func scanPipelineComponent(rs rowScanner) (*models.PipelineComponent, error) {
 	var (
-		pc         models.PipelineComponent
-		inPorts    []byte
-		outPorts   []byte
-		resources  []byte
-		envVars    []byte
+		pc        models.PipelineComponent
+		inPorts   []byte
+		outPorts  []byte
+		resources []byte
+		envVars   []byte
 	)
 	if err := rs.Scan(
 		&pc.ID, &pc.Name, &pc.Description, &pc.Image, &pc.Tag, &pc.Source,

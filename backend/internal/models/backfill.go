@@ -12,7 +12,7 @@ type BackfillJob struct {
 	TotalCount     int                    `json:"totalCount"`
 	CompletedCount int                    `json:"completedCount"`
 	FailedCount    int                    `json:"failedCount"`
-	Status         string                 `json:"status"`      // running | paused | completed | failed
+	Status         string                 `json:"status"` // running | paused | completed | failed
 	CreatedAt      time.Time              `json:"createdAt"`
 	UpdatedAt      time.Time              `json:"updatedAt"`
 }

@@ -28,6 +28,25 @@
 
 Query API 的筛选 / 排序字段名与注册中心一致，见 §1.3。
 
+### Asset type schema
+
+注册型资产类型的 `metadata` 约束可通过 schema 端点发现：
+
+```bash
+curl "$BASE/api/v1/asset-types/dataset/schema" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl "$BASE/api/v1/asset-types/annotation_result/schema" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+当前注册类型：
+
+- `dataset`: `format` (`parquet|csv|image|lidar|other`), `record_count`, `size_bytes`, `annotation_status` (`raw|annotated|validated`), `time_range`, `source`
+- `annotation_result`: `tool`, `schema_version`, `annotators`, `quality_score`, `coverage`, `artifact_uri`
+
+未知类型返回 `404 ASSET_NOT_FOUND` 风格错误体；旧资产类型仍走兼容校验。
+
 ## 基础信息
 
 - 基础 URL: `http://localhost:8080`（本地开发）

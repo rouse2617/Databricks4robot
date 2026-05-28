@@ -43,7 +43,7 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		lifecycleState = string(a.Status)
 	}
 
-doc = map[string]any{
+	doc = map[string]any{
 		"asset_id":           a.AssetID,
 		"mcap_file_id":       a.McapFileID,
 		"segment_locator":    a.SegmentLocator,
@@ -97,6 +97,7 @@ doc = map[string]any{
 		doc["revision"] = a.Revision
 		doc["is_current"] = a.IsCurrent
 	}
+	addTypedMetadataProjection(doc, a.AssetType, meta)
 
 	notes := ""
 	if v, exists := meta["notes"]; exists {
@@ -221,4 +222,32 @@ doc = map[string]any{
 	}
 
 	return doc, true, nil
+}
+
+func addTypedMetadataProjection(doc map[string]any, assetType string, meta map[string]any) {
+	switch assetType {
+	case "dataset":
+		projection := map[string]any{}
+		copyIfPresent(projection, meta, "format")
+		copyIfPresent(projection, meta, "record_count")
+		copyIfPresent(projection, meta, "size_bytes")
+		copyIfPresent(projection, meta, "annotation_status")
+		if len(projection) > 0 {
+			doc["dataset"] = projection
+		}
+	case "annotation_result":
+		projection := map[string]any{}
+		copyIfPresent(projection, meta, "tool")
+		copyIfPresent(projection, meta, "quality_score")
+		copyIfPresent(projection, meta, "coverage")
+		if len(projection) > 0 {
+			doc["annotation_result"] = projection
+		}
+	}
+}
+
+func copyIfPresent(dst map[string]any, src map[string]any, key string) {
+	if value, ok := src[key]; ok {
+		dst[key] = value
+	}
 }

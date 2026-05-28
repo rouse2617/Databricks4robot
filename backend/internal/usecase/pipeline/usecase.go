@@ -3,8 +3,8 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,10 +20,10 @@ import (
 
 // Sentinel errors.
 var (
-	ErrTemplateNotFound        = errors.New("template not found")
-	ErrDeploymentNotFound      = errors.New("deployment not found")
-	ErrAssetNotFound           = errors.New("asset not found")
-	ErrInvalidArgument         = errors.New("invalid argument")
+	ErrTemplateNotFound   = errors.New("template not found")
+	ErrDeploymentNotFound = errors.New("deployment not found")
+	ErrAssetNotFound      = errors.New("asset not found")
+	ErrInvalidArgument    = errors.New("invalid argument")
 )
 
 // Usecase orchestrates pipeline template management and deployment.
@@ -380,12 +380,12 @@ func (uc *Usecase) StopDeployment(ctx context.Context, id string) error {
 
 // RegisterPipelineOutputInput describes an asset produced by a pipeline step.
 type RegisterPipelineOutputInput struct {
-	DeploymentID string            `json:"deployment_id"`
-	NodeID       string            `json:"node_id"`
-	AssetID      string            `json:"asset_id"`
-	StorageURI   string            `json:"storage_uri"`
-	AssetType    string            `json:"asset_type"`
-	Files        map[string]string `json:"files,omitempty"`
+	DeploymentID string                 `json:"deployment_id"`
+	NodeID       string                 `json:"node_id"`
+	AssetID      string                 `json:"asset_id"`
+	StorageURI   string                 `json:"storage_uri"`
+	AssetType    string                 `json:"asset_type"`
+	Files        map[string]string      `json:"files,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -427,11 +427,11 @@ func (uc *Usecase) RegisterOutput(ctx context.Context, in RegisterPipelineOutput
 			"pipeline_name": dep.PipelineName,
 		})
 		_ = uc.assetEventRepo.Append(ctx, repository.AssetEventAppendInput{
-			EventType:   "pipeline_output",
+			EventType:     "pipeline_output",
 			AggregateType: "asset",
-			AssetID:     assetID,
-			RunID:       in.DeploymentID,
-			EventPayload: eventPayload,
+			AssetID:       assetID,
+			RunID:         in.DeploymentID,
+			EventPayload:  eventPayload,
 		})
 	}
 
@@ -534,10 +534,10 @@ func (uc *Usecase) GetLineage(ctx context.Context, assetID string) (*AssetLineag
 
 // ResourceUsageReport describes per-pod resource usage for a deployment.
 type ResourceUsageReport struct {
-	DeploymentID string                      `json:"deployment_id"`
-	WorkflowName string                      `json:"workflow_name"`
-	Status       string                      `json:"status"`
-	Pods         []k8s.PodResourceUsage       `json:"pods"`
+	DeploymentID string                 `json:"deployment_id"`
+	WorkflowName string                 `json:"workflow_name"`
+	Status       string                 `json:"status"`
+	Pods         []k8s.PodResourceUsage `json:"pods"`
 }
 
 // GetResourceUsage returns resource usage for pods belonging to a deployment.

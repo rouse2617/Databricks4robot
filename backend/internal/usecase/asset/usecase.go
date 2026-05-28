@@ -71,21 +71,22 @@ type Usecase struct {
 	customerRepo   repository.CustomerRepository       // CYB-1070: customer.* namespace lint
 	usageStatsRepo repository.AssetUsageStatRepository // CYB-1095/1096: usage stats
 	validator      *deliveryrules.AssetWriteValidator  // CYB-1164: hierarchy invariants
+	schemaRegistry *models.SchemaRegistry
 }
 
 func New(repo repository.AssetRepository) *Usecase {
-	return &Usecase{repo: repo}
+	return &Usecase{repo: repo, schemaRegistry: models.NewSchemaRegistry()}
 }
 
 // NewWithTagRegistry creates a Usecase with tag validation support.
 func NewWithTagRegistry(repo repository.AssetRepository, tagReg *config.TagRegistry) *Usecase {
-	return &Usecase{repo: repo, tagRegistry: tagReg}
+	return &Usecase{repo: repo, tagRegistry: tagReg, schemaRegistry: models.NewSchemaRegistry()}
 }
 
 // NewFull creates a Usecase with tag validation and algo registry support.
 // The algo registry is used to initialize algorithm states on asset creation.
 func NewFull(repo repository.AssetRepository, tagReg *config.TagRegistry, algoReg *config.AlgoRegistry) *Usecase {
-	return &Usecase{repo: repo, tagRegistry: tagReg, algoRegistry: algoReg}
+	return &Usecase{repo: repo, tagRegistry: tagReg, algoRegistry: algoReg, schemaRegistry: models.NewSchemaRegistry()}
 }
 
 // NewWithProjections wires the asset usecase with the projection and event
@@ -108,6 +109,7 @@ func NewWithProjections(
 		tagRepo:        tagRepo,
 		algoLatestRepo: algoLatestRepo,
 		eventRepo:      eventRepo,
+		schemaRegistry: models.NewSchemaRegistry(),
 	}
 }
 
@@ -129,6 +131,21 @@ func (u *Usecase) SetUsageStatsRepo(r repository.AssetUsageStatRepository) {
 // SetValidator wires the asset hierarchy validator (CYB-1164).
 func (u *Usecase) SetValidator(v *deliveryrules.AssetWriteValidator) {
 	u.validator = v
+}
+
+func (u *Usecase) SetSchemaRegistry(r *models.SchemaRegistry) {
+	u.schemaRegistry = r
+}
+
+func (u *Usecase) GetAssetTypeSchema(assetType string) (json.RawMessage, bool) {
+	if u.schemaRegistry == nil {
+		return nil, false
+	}
+	schema := u.schemaRegistry.GetSchema(assetType)
+	if schema == nil {
+		return nil, false
+	}
+	return schema, true
 }
 
 func (u *Usecase) withMutationTx(ctx context.Context, fn func(context.Context) error) error {
@@ -791,9 +808,6 @@ func (u *Usecase) ListGlobalEvents(ctx context.Context, in ListEventsInput) (*Li
 }
 
 func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, error) {
-	if in.McapFileID == "" {
-		return nil, ErrMcapFileIDRequired
-	}
 	if in.EndTimestampNs <= in.StartTimestampNs {
 		return nil, ErrInvalidRange
 	}
@@ -833,6 +847,9 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	if assetType == "" {
 		assetType = "segment"
 		segType = "segment"
+	}
+	if in.McapFileID == "" && assetType != "derived_asset" && (u.schemaRegistry == nil || u.schemaRegistry.GetSchema(assetType) == nil) {
+		return nil, ErrMcapFileIDRequired
 	}
 	a := &models.Asset{
 		AssetID:             "",
@@ -884,6 +901,11 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	}
 	if len(in.Metadata) > 0 {
 		a.Metadata = in.Metadata
+	}
+	if u.schemaRegistry != nil {
+		if err := u.schemaRegistry.Validate(a.AssetType, a.Metadata); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidTag, err.Error())
+		}
 	}
 	if len(in.LifecycleMeta) > 0 {
 		a.LifecycleMeta = in.LifecycleMeta
@@ -998,6 +1020,11 @@ func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput
 		Files:            map[string]string{},
 		Tags:             map[string]string{},
 		AlgoResults:      map[string]string{},
+	}
+	if u.schemaRegistry != nil {
+		if err := u.schemaRegistry.Validate(a.AssetType, a.Metadata); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidTag, err.Error())
+		}
 	}
 
 	// CYB-1164: validate hierarchy invariants before persisting.

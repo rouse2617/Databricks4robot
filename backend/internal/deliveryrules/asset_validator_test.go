@@ -240,6 +240,51 @@ func TestValidateCreate_derivedAssetWithParentOK(t *testing.T) {
 	}
 }
 
+func TestValidateCreate_registeredDatasetNoParentOK(t *testing.T) {
+	v := NewAssetWriteValidatorWithSchemas(&mockParentGetter{}, models.NewSchemaRegistry())
+	err := v.ValidateCreate(context.Background(), &models.Asset{
+		AssetType: "dataset",
+		Metadata:  map[string]interface{}{"format": "parquet", "record_count": float64(1)},
+	})
+	if err != nil {
+		t.Fatalf("expected no error for registered dataset, got %v", err)
+	}
+}
+
+func TestValidateCreate_registeredTypeInvalidMetadata(t *testing.T) {
+	v := NewAssetWriteValidatorWithSchemas(&mockParentGetter{}, models.NewSchemaRegistry())
+	err := v.ValidateCreate(context.Background(), &models.Asset{
+		AssetType: "dataset",
+		Metadata:  map[string]interface{}{"format": "jsonl"},
+	})
+	if err == nil {
+		t.Fatal("expected invalid dataset metadata to be rejected")
+	}
+}
+
+func TestValidateCreate_annotationResultRequiresParent(t *testing.T) {
+	v := NewAssetWriteValidatorWithSchemas(&mockParentGetter{}, models.NewSchemaRegistry())
+	err := v.ValidateCreate(context.Background(), &models.Asset{AssetType: "annotation_result"})
+	var hv *HierarchyViolation
+	if !errors.As(err, &hv) || hv.Invariant != "L7" {
+		t.Fatalf("expected L7 violation, got %v", err)
+	}
+}
+
+func TestValidateCreate_annotationResultParentExistsOK(t *testing.T) {
+	v := NewAssetWriteValidatorWithSchemas(&mockParentGetter{infos: map[string]*ParentInfo{
+		"data001": parentInfo("dataset"),
+	}}, models.NewSchemaRegistry())
+	err := v.ValidateCreate(context.Background(), &models.Asset{
+		AssetType:     "annotation_result",
+		ParentAssetID: "data001",
+		Metadata:      map[string]interface{}{"coverage": 0.9},
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
 // ─── nil validator (no getter) ──────────────────────────────────────────────
 
 func TestValidateCreate_nilGetterSkipsValidation(t *testing.T) {

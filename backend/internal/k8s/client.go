@@ -17,9 +17,9 @@ import (
 
 // Client holds K8s, Argo Workflow, and Metrics clientsets.
 type Client struct {
-	Namespace       string
-	KubeClientset   kubernetes.Interface
-	ArgoClientset   argowfclientset.Interface
+	Namespace        string
+	KubeClientset    kubernetes.Interface
+	ArgoClientset    argowfclientset.Interface
 	MetricsClientset metricsclientset.Interface
 }
 

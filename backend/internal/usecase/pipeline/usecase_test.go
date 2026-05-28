@@ -39,7 +39,10 @@ func (m *mockTemplateRepo) FindByID(_ context.Context, id string) (*models.Pipel
 func (m *mockTemplateRepo) FindVersionsByName(_ context.Context, _ string) ([]models.PipelineTemplate, error) {
 	return nil, nil
 }
-func (m *mockTemplateRepo) GetNextVersion(_ context.Context, _ string) (int, error) { m.ver++; return m.ver, nil }
+func (m *mockTemplateRepo) GetNextVersion(_ context.Context, _ string) (int, error) {
+	m.ver++
+	return m.ver, nil
+}
 func (m *mockTemplateRepo) Delete(_ context.Context, id string) error {
 	delete(m.byID, id)
 	return nil
@@ -85,15 +88,17 @@ func (m *mockAssetRepo) Get(_ context.Context, assetID string) (*models.Asset, e
 	}
 	return a, nil
 }
-func (m *mockAssetRepo) GetAll(_ context.Context, _ string) (*models.Asset, error)       { return nil, nil }
-func (m *mockAssetRepo) InsertNew(_ context.Context, _ *models.Asset) error               { return nil }
-func (m *mockAssetRepo) Set(_ context.Context, _ *models.Asset) error                      { return nil }
-func (m *mockAssetRepo) SoftDelete(_ context.Context, _ string) error                      { return nil }
-func (m *mockAssetRepo) ListByMcapFile(_ context.Context, _ string) ([]*models.Asset, error) { return nil, nil }
+func (m *mockAssetRepo) GetAll(_ context.Context, _ string) (*models.Asset, error) { return nil, nil }
+func (m *mockAssetRepo) InsertNew(_ context.Context, _ *models.Asset) error        { return nil }
+func (m *mockAssetRepo) Set(_ context.Context, _ *models.Asset) error              { return nil }
+func (m *mockAssetRepo) SoftDelete(_ context.Context, _ string) error              { return nil }
+func (m *mockAssetRepo) ListByMcapFile(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (m *mockAssetRepo) ListByLogicalAssetID(_ context.Context, _ string) ([]*models.Asset, error) {
 	return nil, nil
 }
-func (m *mockAssetRepo) WriteSegmentIndex(_ context.Context, _ *models.Asset) error       { return nil }
+func (m *mockAssetRepo) WriteSegmentIndex(_ context.Context, _ *models.Asset) error { return nil }
 func (m *mockAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, _ int, _ int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }

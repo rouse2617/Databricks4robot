@@ -81,12 +81,12 @@ func (uc *Usecase) Delete(ctx context.Context, id string) error {
 // systemComponents are built-in components seeded at startup.
 var systemComponents = []models.PipelineComponent{
 	{
-		ID:   "sys-pass-through",
-		Name: "Pass Through",
+		ID:          "sys-pass-through",
+		Name:        "Pass Through",
 		Description: "透传输入到输出，用于测试 DAG 连线",
-		Image: "busybox:latest",
-		Tag:  "latest",
-		Source: "system",
+		Image:       "busybox:latest",
+		Tag:         "latest",
+		Source:      "system",
 		InputPorts:  []models.PortDef{{Name: "input", Type: "asset", Desc: "输入资产"}},
 		OutputPorts: []models.PortDef{{Name: "output", Type: "asset", Desc: "输出资产"}},
 	},

@@ -64,6 +64,23 @@ _es_curl -X PUT "${OS_URL}/assets" \
 
       "metadata":           { "type": "flattened" },
 
+      "dataset": {
+        "properties": {
+          "format":             { "type": "keyword" },
+          "record_count":       { "type": "long" },
+          "size_bytes":         { "type": "long" },
+          "annotation_status":  { "type": "keyword" }
+        }
+      },
+
+      "annotation_result": {
+        "properties": {
+          "tool":           { "type": "keyword" },
+          "quality_score":  { "type": "double" },
+          "coverage":       { "type": "double" }
+        }
+      },
+
       "owner":              { "type": "keyword", "fields": { "text": { "type": "text" } } },
       "reviewer":           { "type": "keyword", "fields": { "text": { "type": "text" } } },
       "notes":              { "type": "text" },

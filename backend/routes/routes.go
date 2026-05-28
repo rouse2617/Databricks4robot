@@ -18,9 +18,9 @@ import (
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
+	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
-	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
 	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
@@ -28,9 +28,9 @@ import (
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
-	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 
 	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
@@ -172,6 +172,7 @@ func RegisterAll(
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)
+		api.GET("/asset-types/:type/schema", assetHandler.GetAssetTypeSchema)
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)

@@ -7,17 +7,17 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ── Mock WorkflowClient ─────────────────────────────────────────────────────
 
 type mockWorkflowClient struct {
-	listFn    func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
-	getFn     func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
-	logsFn    func(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
+	listFn func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
+	getFn  func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+	logsFn func(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
@@ -63,9 +63,9 @@ func makeWorkflow(name, phase string, nodeCount int) *wfv1.Workflow {
 	for i := 0; i < nodeCount; i++ {
 		id := string(rune('a' + i))
 		whf.Status.Nodes[id] = wfv1.NodeStatus{
-			ID:     id,
-			Name:   "step-" + id,
-			Phase:  wfv1.NodePhase("Running"),
+			ID:    id,
+			Name:  "step-" + id,
+			Phase: wfv1.NodePhase("Running"),
 		}
 	}
 	return whf

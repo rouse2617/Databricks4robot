@@ -14,14 +14,14 @@ import (
 
 // PodResourceUsage represents CPU/memory usage for a single pod.
 type PodResourceUsage struct {
-	PodName       string            `json:"pod_name"`
-	NodeName      string            `json:"node_name,omitempty"`
-	CPUUsage      string            `json:"cpu_usage"`      // e.g. "125m"
-	MemoryUsage   string            `json:"memory_usage"`   // e.g. "64Mi"
-	CPURequest    string            `json:"cpu_request"`    // from pod spec
-	MemoryRequest string            `json:"memory_request"` // from pod spec
-	CPULimit      string            `json:"cpu_limit"`      // from pod spec
-	MemoryLimit   string            `json:"memory_limit"`   // from pod spec
+	PodName       string `json:"pod_name"`
+	NodeName      string `json:"node_name,omitempty"`
+	CPUUsage      string `json:"cpu_usage"`      // e.g. "125m"
+	MemoryUsage   string `json:"memory_usage"`   // e.g. "64Mi"
+	CPURequest    string `json:"cpu_request"`    // from pod spec
+	MemoryRequest string `json:"memory_request"` // from pod spec
+	CPULimit      string `json:"cpu_limit"`      // from pod spec
+	MemoryLimit   string `json:"memory_limit"`   // from pod spec
 }
 
 // MetricsClient defines the interface for querying pod resource usage.
@@ -33,7 +33,7 @@ type MetricsClient interface {
 
 // K8sMetricsClient implements MetricsClient using the K8s Metrics API.
 type K8sMetricsClient struct {
-	kubeClientset   kubernetes.Interface
+	kubeClientset    kubernetes.Interface
 	metricsClientset metricsclientset.Interface
 }
 
