@@ -131,6 +131,12 @@ ENDPOINTS: dict[str, str] = {
     "workflow_resume": "/api/v1/workflows/{workflow_name}/resume",
     "workflow_terminate": "/api/v1/workflows/{workflow_name}/terminate",
     "workflow_delete": "/api/v1/workflows/{workflow_name}",
+    # ── Pipeline Components ────────────────────────────────────────────
+    "pipeline_component_list": "/api/v1/pipeline-components",
+    "pipeline_component_create": "/api/v1/pipeline-components",
+    "pipeline_component_get": "/api/v1/pipeline-components/{component_id}",
+    "pipeline_component_update": "/api/v1/pipeline-components/{component_id}",
+    "pipeline_component_delete": "/api/v1/pipeline-components/{component_id}",
     # ── SDK Config (bootstrap discovery) ──────────────────────────────
     "sdk_config": "/api/v1/sdk-config",
 }

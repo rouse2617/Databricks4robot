@@ -285,6 +285,49 @@ class TestWorkflowManager:
 
 
 # =========================================================================
+# PipelineComponentManager
+# =========================================================================
+
+class TestPipelineComponentManager:
+    def test_list_and_get(self, client):
+        respx.get(f"{BASE_URL}/api/v1/pipeline-components").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert client.pipeline_components.list(q="processor", source="custom") == {"items": []}
+
+        respx.get(f"{BASE_URL}/api/v1/pipeline-components/c1").mock(
+            return_value=httpx.Response(200, json={"id": "c1", "name": "processor"})
+        )
+        assert client.pipeline_components.get("c1")["id"] == "c1"
+
+    def test_create_update_delete(self, client):
+        payload = {"name": "processor", "type": "container", "image": "busybox"}
+        respx.post(f"{BASE_URL}/api/v1/pipeline-components").mock(
+            return_value=httpx.Response(201, json={"id": "c1", **payload})
+        )
+        assert client.pipeline_components.create(payload)["id"] == "c1"
+
+        respx.put(f"{BASE_URL}/api/v1/pipeline-components/c1").mock(
+            return_value=httpx.Response(200, json={"id": "c1", "tag": "v2"})
+        )
+        updated = client.pipeline_components.update(
+            "c1",
+            {
+                "name": "processor",
+                "type": "container",
+                "image": "busybox",
+                "tag": "v2",
+            },
+        )
+        assert updated["tag"] == "v2"
+
+        respx.delete(f"{BASE_URL}/api/v1/pipeline-components/c1").mock(
+            return_value=httpx.Response(204)
+        )
+        assert client.pipeline_components.delete("c1") == {}
+
+
+# =========================================================================
 # SearchManager
 # =========================================================================
 

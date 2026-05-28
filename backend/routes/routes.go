@@ -334,11 +334,15 @@ func RegisterAll(
 
 		// Pipeline component registry
 		if pipelineComponentHandler != nil {
-			api.POST("/components", pipelineComponentHandler.CreateComponent)
-			api.GET("/components", pipelineComponentHandler.ListComponents)
-			api.GET("/components/:id", pipelineComponentHandler.GetComponent)
-			api.PUT("/components/:id", pipelineComponentHandler.UpdateComponent)
-			api.DELETE("/components/:id", pipelineComponentHandler.DeleteComponent)
+			registerComponentRoutes := func(group *gin.RouterGroup, base string) {
+				group.POST(base, pipelineComponentHandler.CreateComponent)
+				group.GET(base, pipelineComponentHandler.ListComponents)
+				group.GET(base+"/:id", pipelineComponentHandler.GetComponent)
+				group.PUT(base+"/:id", pipelineComponentHandler.UpdateComponent)
+				group.DELETE(base+"/:id", pipelineComponentHandler.DeleteComponent)
+			}
+			registerComponentRoutes(api, "/pipeline-components")
+			registerComponentRoutes(api, "/components")
 		}
 
 		// Workflow monitoring
@@ -348,7 +352,6 @@ func RegisterAll(
 			api.POST("/workflows/:name/retry", workflowHandler.RetryWorkflow)
 			api.POST("/workflows/:name/resubmit", workflowHandler.ResubmitWorkflow)
 			api.POST("/workflows/:name/suspend", workflowHandler.SuspendWorkflow)
-			api.POST("/workflows/:name/stop", workflowHandler.StopWorkflow)
 			api.POST("/workflows/:name/resume", workflowHandler.ResumeWorkflow)
 			api.POST("/workflows/:name/terminate", workflowHandler.TerminateWorkflow)
 			api.GET("/workflows/:name", workflowHandler.GetWorkflow)

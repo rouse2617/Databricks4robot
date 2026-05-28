@@ -1654,10 +1654,22 @@ components:
       properties:
         id: { type: string, description: Component ID }
         name: { type: string }
+        type:
+          type: string
+          enum: [container, script, resource, suspend]
         description: { type: string }
         image: { type: string, description: Docker image name }
         tag: { type: string, description: Docker image tag }
         source: { type: string, description: Source registry identifier }
+        command:
+          type: array
+          items: { type: string }
+        args:
+          type: array
+          items: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
         inputPorts:
           type: array
           items: { $ref: '#/components/schemas/PortDef' }
@@ -1672,6 +1684,38 @@ components:
           items: { $ref: '#/components/schemas/EnvVarDef' }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    PipelineComponentRequest:
+      type: object
+      required: [name, type, image]
+      properties:
+        name: { type: string }
+        type:
+          type: string
+          enum: [container, script, resource, suspend]
+        description: { type: string }
+        image: { type: string }
+        tag: { type: string, default: latest }
+        source: { type: string, default: custom }
+        command:
+          type: array
+          items: { type: string }
+        args:
+          type: array
+          items: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        inputPorts:
+          type: array
+          items: { $ref: '#/components/schemas/PortDef' }
+        outputPorts:
+          type: array
+          items: { $ref: '#/components/schemas/PortDef' }
+        resources:
+          type: object
+        envVars:
+          type: array
+          items: { $ref: '#/components/schemas/EnvVarDef' }
     PortDef:
       type: object
       properties:
@@ -1692,9 +1736,6 @@ components:
         nodeCount: { type: integer }
         createdAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true }
-        labels:
-          type: object
-          additionalProperties: { type: string }
     WorkflowDetail:
       type: object
       properties:
@@ -4423,38 +4464,18 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorBody' }
 
   # ── Pipeline component registry ───────────────────────────────────
-  /api/v1/components:
+  /api/v1/pipeline-components:
     post:
       tags: [Pipeline]
       summary: Register a new pipeline component
-      description: Creates a new pipeline component (Docker image) in the registry.
+      description: Creates a custom pipeline component in the registry.
       security:
         - DatabrewToken: []
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [name, description, image, tag, source, inputPorts, outputPorts]
-              properties:
-                name: { type: string }
-                description: { type: string }
-                image: { type: string }
-                tag: { type: string }
-                source: { type: string }
-                inputPorts:
-                  type: array
-                  items: { $ref: '#/components/schemas/PortDef' }
-                outputPorts:
-                  type: array
-                  items: { $ref: '#/components/schemas/PortDef' }
-                resources:
-                  type: object
-                  description: Container resource requirements
-                envVars:
-                  type: array
-                  items: { $ref: '#/components/schemas/EnvVarDef' }
+            schema: { $ref: '#/components/schemas/PipelineComponentRequest' }
       responses:
         '201':
           description: Component created
@@ -4471,6 +4492,15 @@ paths:
       summary: List all registered pipeline components
       security:
         - DatabrewToken: []
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive name search
+        - in: query
+          name: source
+          schema: { type: string }
+          description: Optional source filter such as custom or system
       responses:
         '200':
           description: Component list
@@ -4482,7 +4512,7 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/PipelineComponent' }
-  /api/v1/components/{id}:
+  /api/v1/pipeline-components/{id}:
     get:
       tags: [Pipeline]
       summary: Get a pipeline component by ID
@@ -4518,25 +4548,7 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                name: { type: string }
-                description: { type: string }
-                image: { type: string }
-                tag: { type: string }
-                source: { type: string }
-                inputPorts:
-                  type: array
-                  items: { $ref: '#/components/schemas/PortDef' }
-                outputPorts:
-                  type: array
-                  items: { $ref: '#/components/schemas/PortDef' }
-                resources:
-                  type: object
-                envVars:
-                  type: array
-                  items: { $ref: '#/components/schemas/EnvVarDef' }
+            schema: { $ref: '#/components/schemas/PipelineComponentRequest' }
       responses:
         '200':
           description: Component updated
@@ -4548,6 +4560,96 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorBody' }
+
+  /api/v1/components:
+    get:
+      tags: [Pipeline]
+      summary: List registered pipeline components (compatibility alias)
+      deprecated: true
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Component list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineComponent' }
+    post:
+      tags: [Pipeline]
+      summary: Register a pipeline component (compatibility alias)
+      deprecated: true
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineComponentRequest' }
+      responses:
+        '201':
+          description: Component created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineComponent' }
+  /api/v1/components/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get a pipeline component by ID (compatibility alias)
+      deprecated: true
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Component details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineComponent' }
+    put:
+      tags: [Pipeline]
+      summary: Update a pipeline component (compatibility alias)
+      deprecated: true
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineComponentRequest' }
+      responses:
+        '200':
+          description: Component updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineComponent' }
+    delete:
+      tags: [Pipeline]
+      summary: Delete a pipeline component (compatibility alias)
+      deprecated: true
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Deleted successfully
     delete:
       tags: [Pipeline]
       summary: Delete a pipeline component
@@ -4686,30 +4788,6 @@ paths:
       tags: [Pipeline]
       summary: Suspend a workflow
       description: Calls the Argo suspend operation for the named workflow.
-      security:
-        - DatabrewToken: []
-      parameters:
-        - in: path
-          name: name
-          required: true
-          schema: { type: string }
-          description: Workflow name
-      responses:
-        '200':
-          description: Workflow operation accepted
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/WorkflowOperationResponse' }
-        '500':
-          description: Argo API error
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
-  /api/v1/workflows/{name}/stop:
-    post:
-      tags: [Pipeline]
-      summary: Stop a workflow
-      description: Calls the Argo stop operation for the named workflow.
       security:
         - DatabrewToken: []
       parameters:

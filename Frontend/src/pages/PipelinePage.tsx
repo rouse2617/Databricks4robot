@@ -239,7 +239,7 @@ function PipelineCanvas() {
 	}, [registeredComponents]);
 
 	useEffect(() => {
-		setSelectedNode((prev) => {
+		setSelectedNode((prev: PipelineFlowNode | null) => {
 			if (!prev) return null;
 			return nodes.find((node) => node.id === prev.id) ?? null;
 		});
@@ -406,7 +406,7 @@ function PipelineCanvas() {
 	const updateNodeData = useCallback(
 		(id: string, data: Record<string, unknown>) => {
 			editor.updateNodeData(id, data);
-			setSelectedNode((prev) =>
+		setSelectedNode((prev: PipelineFlowNode | null) =>
 				prev?.id === id ? { ...prev, data: { ...prev.data, ...data } } : prev,
 			);
 		},
@@ -436,7 +436,7 @@ function PipelineCanvas() {
 					editor.selectElements([menuNode.id]);
 					window.setTimeout(() => {
 						editor.deleteSelection();
-						setSelectedNode((prev) => (prev?.id === menuNode.id ? null : prev));
+						setSelectedNode((prev: PipelineFlowNode | null) => (prev?.id === menuNode.id ? null : prev));
 					}, 0);
 					return;
 				}
@@ -710,12 +710,12 @@ function PipelineCanvas() {
 								nodeTypes={nodeTypes}
 								flattenNodes={flattenNodes}
 								flattenEdges={flattenEdges}
-								onFlattenNodesChange={(nextNodes) =>
-									setNodes(Object.values(nextNodes) as PipelineFlowNode[])
-								}
-								onFlattenEdgesChange={(nextEdges) =>
-									setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
-								}
+onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
+	setNodes(Object.values(nextNodes) as PipelineFlowNode[])
+}
+onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
+	setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
+}
 								contextMenuEnabled={false}
 								flowProps={{
 									onDrop,
