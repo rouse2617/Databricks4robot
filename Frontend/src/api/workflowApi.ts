@@ -29,6 +29,25 @@ export interface WorkflowNodeStatus {
 	startedAt?: string;
 	finishedAt?: string;
 	estimatedDuration?: number;
+	progress?: string;
+	hostNodeName?: string;
+	podName?: string;
+	outputs?: {
+		parameters?: Array<{ name: string; value?: string }>;
+		artifacts?: Array<{ name: string; path?: string }>;
+		result?: string;
+		exitCode?: number;
+	};
+	inputs?: {
+		parameters?: Array<{ name: string; value?: string }>;
+		artifacts?: Array<{ name: string; path?: string }>;
+	};
+	resourcesDuration?: Record<string, number>;
+	memoizationStatus?: {
+		hit: boolean;
+		key: string;
+		cacheName: string;
+	};
 }
 
 export type WorkflowDagEdgeKind = "runtime" | "dag" | "fallback";

@@ -21,6 +21,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import type { WorkflowNodeStatus } from "../api/workflowApi";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { LinkifiedText } from "../components/common/LinkifiedText";
+import { WorkflowNodeDetailPanel } from "../components/pipeline/WorkflowNodeDetailPanel";
 import { PHASE_COLORS, STATUS_COLORS } from "../lib/constants";
 import {
 	getWorkflowOperationConfigs,
@@ -310,6 +311,7 @@ export default function WorkflowDetailPage() {
 		logState,
 		setLogSearch,
 	} = useWorkflowDetail(name);
+	const [showNodeLogs, setShowNodeLogs] = useState(false);
 	const operations = useMemo(
 		() => (workflow ? getWorkflowOperationConfigs(workflow) : []),
 		[workflow],
@@ -352,6 +354,56 @@ export default function WorkflowDetailPage() {
 		},
 		[executeOperation, workflow?.name],
 	);
+
+	const closeNodeDetailPanel = useCallback(() => {
+		setShowNodeLogs(false);
+		selectNode(null);
+	}, [selectNode]);
+
+	const handleShowNodeLogs = useCallback(() => {
+		if (!selectedNode) {
+			return;
+		}
+		setShowNodeLogs(true);
+	}, [selectedNode]);
+
+	const handleCloseNodeLogs = useCallback(() => {
+		setShowNodeLogs(false);
+	}, []);
+
+	const handleManifest = useCallback(() => {
+		if (!selectedNode) return;
+		message.info({
+			content: "MANIFEST 功能暂未接入，当前展示为占位信息",
+		});
+	}, [selectedNode]);
+
+	const handleRetryNode = useCallback(() => {
+		if (!selectedNode || !workflow) return;
+		const retryConfig = operations.find(
+			(operation) => operation.key === "retry",
+		);
+		if (!retryConfig) {
+			message.warning("未找到可用重试动作");
+			return;
+		}
+		if (retryConfig.disabled) {
+			message.warning(`当前工作流状态不可执行${retryConfig.title}`);
+			return;
+		}
+		runOperation(retryConfig);
+	}, [operations, runOperation, selectedNode, workflow]);
+
+	const handleShowEvents = useCallback(() => {
+		if (!selectedNode) return;
+		window.open("/events", "_blank", "noopener");
+	}, [selectedNode]);
+
+	useEffect(() => {
+		if (!selectedNode) {
+			setShowNodeLogs(false);
+		}
+	}, [selectedNode]);
 
 	if (loading) {
 		return (
@@ -462,35 +514,49 @@ export default function WorkflowDetailPage() {
 				</div>
 			</div>
 			<div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-				<div style={{ flex: "0 0 60%", minWidth: 0 }}>
-					{viewMode === "dag" ? (
-						<WorkflowDagView
-							nodes={workflow.nodes}
-							workflowEdges={workflow.edges}
-							selectedNodeId={selectedNode?.id ?? null}
-							onNodeSelect={selectNode}
-						/>
-					) : (
-						<TimelineView nodes={workflow.nodes} />
-					)}
-				</div>
-				<div
-					style={{
-						flex: "0 0 40%",
-						borderLeft: "1px solid #e5e7eb",
-						overflow: "hidden",
-					}}
-				>
-					<WorkflowLogPanel
-						selectedNode={selectedNode}
-						loading={logState.loading}
-						logContent={logState.content}
-						error={logState.error}
-						search={logState.search}
-						onSearch={setLogSearch}
+				{viewMode === "dag" ? (
+					<WorkflowDagView
+						nodes={workflow.nodes}
+						workflowEdges={workflow.edges}
+						selectedNodeId={selectedNode?.id ?? null}
+						onNodeSelect={selectNode}
 					/>
-				</div>
+				) : (
+					<TimelineView nodes={workflow.nodes} />
+				)}
 			</div>
+
+			<WorkflowNodeDetailPanel
+				node={selectedNode}
+				workflow={workflow}
+				open={!!selectedNode}
+				onClose={closeNodeDetailPanel}
+				onManifest={handleManifest}
+				onRetryNode={handleRetryNode}
+				onShowLogs={handleShowNodeLogs}
+				onShowEvents={handleShowEvents}
+			/>
+
+			<Modal
+				open={showNodeLogs}
+				title={
+					selectedNode
+						? `${selectedNode.displayName || selectedNode.name} 日志`
+						: "日志"
+				}
+				width="80%"
+				onCancel={handleCloseNodeLogs}
+				footer={null}
+			>
+				<WorkflowLogPanel
+					selectedNode={selectedNode}
+					loading={logState.loading}
+					logContent={logState.content}
+					error={logState.error}
+					search={logState.search}
+					onSearch={setLogSearch}
+				/>
+			</Modal>
 		</div>
 	);
 }

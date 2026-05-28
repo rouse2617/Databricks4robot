@@ -10,13 +10,20 @@ import {
 	useEdgesState,
 	useNodesState,
 } from "@xyflow/react";
+import { Input, Tooltip } from "antd";
 import dagre from "dagre";
-import { type MouseEvent, useCallback, useEffect } from "react";
+import dayjs from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
+import { type MouseEvent, useCallback, useEffect, useState } from "react";
 import type { WorkflowDagEdge, WorkflowNodeStatus } from "../api/workflowApi";
+
+dayjs.extend(relativeTime);
 
 const DISPLAYABLE_NODE_TYPES = new Set(["pod", "template"]);
 const DAG_NODE_WIDTH = 220;
 const DAG_NODE_HEIGHT = 86;
+const PROGRESS_RING_SIZE = 20;
+const PROGRESS_RING_STROKE = 3;
 
 const PHASE_COLORS: Record<string, string> = {
 	Running: "#2563eb",
@@ -27,6 +34,77 @@ const PHASE_COLORS: Record<string, string> = {
 	Skipped: "#9ca3af",
 	Suspended: "#7c3aed",
 };
+
+function getProgressPercent(progress: string | undefined): number | null {
+	if (!progress) return null;
+	const trimmed = progress.trim();
+	if (!trimmed) return null;
+	const parts = trimmed.split("/");
+	if (parts.length !== 2) return null;
+	const done = Number(parts[0]);
+	const total = Number(parts[1]);
+	if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return null;
+	return Math.min(100, Math.max(0, Math.round((done / total) * 100)));
+}
+
+function getProgressRingColor(phase: string): string {
+	if (phase === "Succeeded") return PHASE_COLORS.Succeeded;
+	if (phase === "Running") return PHASE_COLORS.Running;
+	return "#9ca3af";
+}
+
+function getNodeRelativeTime(node: WorkflowNodeStatus): string | null {
+	const startedAt = node.startedAt;
+	if (!startedAt) return null;
+	const started = dayjs(startedAt);
+	if (!started.isValid()) return null;
+	if (node.finishedAt) {
+		const finished = dayjs(node.finishedAt);
+		if (finished.isValid()) {
+			return finished.fromNow();
+		}
+	}
+	return started.fromNow();
+}
+
+function ProgressRing({ percent, color }: { percent: number; color: string }) {
+	const size = PROGRESS_RING_SIZE;
+	const center = size / 2;
+	const radius = center - PROGRESS_RING_STROKE / 2;
+	const circumference = 2 * Math.PI * radius;
+	const dashOffset = circumference - (percent / 100) * circumference;
+
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox={`0 0 ${size} ${size}`}
+			style={{ position: "absolute", right: 4, top: 4 }}
+		>
+			<circle
+				cx={center}
+				cy={center}
+				r={radius}
+				fill="none"
+				stroke="rgba(255, 255, 255, 0.35)"
+				strokeWidth={PROGRESS_RING_STROKE}
+				opacity={0.8}
+			/>
+			<circle
+				cx={center}
+				cy={center}
+				r={radius}
+				fill="none"
+				stroke={color}
+				strokeWidth={PROGRESS_RING_STROKE}
+				strokeDasharray={`${circumference} ${circumference}`}
+				strokeDashoffset={dashOffset}
+				transform={`rotate(-90 ${center} ${center})`}
+				strokeLinecap="round"
+			/>
+		</svg>
+	);
+}
 
 function isDisplayableNode(node: WorkflowNodeStatus): boolean {
 	const type = (node.type ?? "").toLowerCase();
@@ -77,6 +155,7 @@ export function buildDagElements(
 	rawNodes: WorkflowNodeStatus[],
 	workflowEdges: WorkflowDagEdge[] | undefined,
 	selectedNodeId: string | null,
+	nodeSearch: string,
 ): {
 	nodes: WorkflowDagNode[];
 	edges: RFEdge[];
@@ -162,9 +241,16 @@ export function buildDagElements(
 	}
 	dagre.layout(graph);
 
+	const normalizedSearch = nodeSearch.trim().toLowerCase();
 	const nodes = displayableNodes.map((node) => {
 		const position = graph.node(node.id);
 		const isSelected = node.id === selectedNodeId;
+		const displayText = getNodeDisplayText(node).toLowerCase();
+		const matchesSearch =
+			normalizedSearch.length === 0 ||
+			displayText.includes(normalizedSearch) ||
+			node.name.toLowerCase().includes(normalizedSearch);
+		const progressPercent = getProgressPercent(node.progress);
 		return {
 			id: node.id,
 			type: "default",
@@ -182,8 +268,15 @@ export function buildDagElements(
 							overflow: "hidden",
 							textOverflow: "ellipsis",
 							lineHeight: 1.25,
+							position: "relative",
 						}}
 					>
+						{progressPercent !== null && (
+							<ProgressRing
+								percent={progressPercent}
+								color={getProgressRingColor(node.phase)}
+							/>
+						)}
 						<div
 							style={{
 								fontWeight: 700,
@@ -196,6 +289,17 @@ export function buildDagElements(
 						</div>
 						<div style={{ fontSize: 11, opacity: 0.85, marginTop: 4 }}>
 							{node.phase}
+							{(() => {
+								const relTime = getNodeRelativeTime(node);
+								return relTime ? (
+									<>
+										{" "}
+										<Tooltip title={node.startedAt ? dayjs(node.startedAt).toLocaleString() : ""}>
+											<span style={{ opacity: 0.75 }}>{relTime}</span>
+										</Tooltip>
+									</>
+								) : null;
+							})()}
 						</div>
 					</div>
 				),
@@ -203,6 +307,7 @@ export function buildDagElements(
 			style: {
 				width: DAG_NODE_WIDTH,
 				padding: 10,
+				opacity: matchesSearch ? 1 : 0.2,
 				borderRadius: 8,
 				border: isSelected ? "2px solid #111827" : "1px solid #d1d5db",
 				background: PHASE_COLORS[node.phase] || "#9ca3af",
@@ -213,8 +318,8 @@ export function buildDagElements(
 			},
 			sourcePosition: Position.Bottom,
 			targetPosition: Position.Top,
-		};
-	});
+			};
+		});
 
 	return { nodes, edges };
 }
@@ -234,16 +339,18 @@ export function WorkflowDagView({
 }: WorkflowDagViewProps): React.JSX.Element {
 	const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowDagNode>([]);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdge>([]);
+	const [nodeSearch, setNodeSearch] = useState("");
 
 	useEffect(() => {
 		const { nodes: nextNodes, edges: nextEdges } = buildDagElements(
 			rawNodes,
 			workflowEdges,
 			selectedNodeId,
+			nodeSearch,
 		);
 		setNodes(nextNodes);
 		setEdges(nextEdges);
-	}, [rawNodes, workflowEdges, selectedNodeId, setNodes, setEdges]);
+	}, [rawNodes, workflowEdges, selectedNodeId, nodeSearch, setNodes, setEdges]);
 
 	const onNodeClick = useCallback(
 		(_: MouseEvent, node: WorkflowDagNode) => {
@@ -260,18 +367,35 @@ export function WorkflowDagView({
 	}, [onNodeSelect]);
 
 	return (
-		<ReactFlow
-			nodes={nodes}
-			edges={edges}
-			onNodesChange={onNodesChange}
-			onEdgesChange={onEdgesChange}
-			onNodeClick={onNodeClick}
-			onPaneClick={onPaneClick}
-			fitView
-			minZoom={0.1}
-		>
-			<Background variant={BackgroundVariant.Dots} gap={24} color="#cbd5e1" />
-			<Controls />
-		</ReactFlow>
+		<div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+			<div style={{ padding: 8, borderBottom: "1px solid #e5e7eb" }}>
+				<Input.Search
+					placeholder="搜索节点..."
+					allowClear
+					value={nodeSearch}
+					onChange={(event) => setNodeSearch(event.target.value)}
+					style={{ width: 280, maxWidth: "100%" }}
+				/>
+			</div>
+			<div style={{ flex: 1 }}>
+				<ReactFlow
+					nodes={nodes}
+					edges={edges}
+					onNodesChange={onNodesChange}
+					onEdgesChange={onEdgesChange}
+					onNodeClick={onNodeClick}
+					onPaneClick={onPaneClick}
+					fitView
+					minZoom={0.1}
+				>
+					<Background
+						variant={BackgroundVariant.Dots}
+						gap={24}
+						color="#cbd5e1"
+					/>
+					<Controls />
+				</ReactFlow>
+			</div>
+		</div>
 	);
 }
