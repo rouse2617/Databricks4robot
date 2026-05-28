@@ -27,6 +27,7 @@ type WorkflowClient interface {
 	ResumeWorkflow(ctx context.Context, name, namespace string) error
 	TerminateWorkflow(ctx context.Context, name, namespace string) error
 	GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
+	GetWorkflowLogStream(ctx context.Context, workflowName, podName, container, namespace string) (io.ReadCloser, error)
 }
 
 // Client implements WorkflowClient using the Argo Server REST API.
@@ -136,6 +137,23 @@ func (c *Client) GetWorkflowLogs(ctx context.Context, workflowName, nodeId, name
 		return "", fmt.Errorf("parse workflow logs: %w", err)
 	}
 	return logs, nil
+}
+
+// GetWorkflowLogStream returns a live log stream for a specific workflow pod.
+func (c *Client) GetWorkflowLogStream(
+	ctx context.Context,
+	workflowName, podName, container, namespace string,
+) (io.ReadCloser, error) {
+	query := url.Values{}
+	query.Set("podName", podName)
+	query.Set("container", container)
+	query.Set("follow", "true")
+
+	resp, err := c.doRequest(ctx, http.MethodGet, workflowNamePath(namespace, workflowName)+"/log", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any) error {

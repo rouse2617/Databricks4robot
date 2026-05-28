@@ -108,6 +108,10 @@ export function getWorkflowLogs(
 	);
 }
 
+export function getWorkflowLogStreamUrl(name: string, nodeId: string): string {
+	return `/workflows/${encodeURIComponent(name)}/log/stream?nodeId=${encodeURIComponent(nodeId)}`;
+}
+
 function postWorkflowOperation(
 	name: string,
 	operation: string,
