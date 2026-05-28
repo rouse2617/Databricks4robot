@@ -17,6 +17,7 @@ export interface WorkflowNodeStatus {
 	templateName?: string;
 	phase: string;
 	message?: string;
+	children?: string[];
 	startedAt?: string;
 	finishedAt?: string;
 	estimatedDuration?: number;

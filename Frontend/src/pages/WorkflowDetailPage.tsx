@@ -9,7 +9,6 @@ import {
 	Controls,
 	ReactFlow,
 	ReactFlowProvider,
-	type Edge as RFEdge,
 	type Node as RFNode,
 	useEdgesState,
 	useNodesState,
@@ -44,6 +43,7 @@ import {
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
+import { buildWorkflowFlowEdges } from "../lib/workflowDag";
 
 function buildFlowNodes(
 	nodes: WorkflowNodeStatus[],
@@ -77,26 +77,6 @@ function buildFlowNodes(
 			minWidth: 140,
 		},
 	}));
-}
-
-function buildFlowEdges(nodes: WorkflowNodeStatus[]): RFEdge[] {
-	const edges: RFEdge[] = [];
-	// Try to infer edges from node IDs — Argo uses parent/child naming
-	for (const n of nodes) {
-		const parts = n.id.split(".");
-		if (parts.length > 1) {
-			const parentId = parts.slice(0, -1).join(".");
-			if (nodes.find((x) => x.id === parentId)) {
-				edges.push({
-					id: `e-${parentId}-${n.id}`,
-					source: parentId,
-					target: n.id,
-					style: { stroke: "#94a3b8" },
-				});
-			}
-		}
-	}
-	return edges;
 }
 
 function TimelineView({ nodes }: { nodes: WorkflowNodeStatus[] }) {
@@ -226,12 +206,12 @@ function Flow({
 		buildFlowNodes(rawNodes, onNodeSelect),
 	);
 	const [edges, setEdges, onEdgesChange] = useEdgesState(
-		buildFlowEdges(rawNodes),
+		buildWorkflowFlowEdges(rawNodes),
 	);
 
 	useEffect(() => {
 		setNodes(buildFlowNodes(rawNodes, onNodeSelect));
-		setEdges(buildFlowEdges(rawNodes));
+		setEdges(buildWorkflowFlowEdges(rawNodes));
 	}, [rawNodes, onNodeSelect, setNodes, setEdges]);
 
 	const onNodeClick = useCallback(
