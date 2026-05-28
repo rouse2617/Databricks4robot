@@ -101,6 +101,10 @@ _es_curl -X PUT "${OS_URL}/assets" \
       "root_asset_id":      { "type": "keyword" },
       "asset_level":        { "type": "integer" },
 
+      "lineage_upstream_ids":   { "type": "keyword" },
+      "lineage_downstream_ids": { "type": "keyword" },
+      "lineage_relation_types": { "type": "keyword" },
+
       "logical_asset_id":   { "type": "keyword" },
       "revision":           { "type": "long" },
       "is_current":         { "type": "boolean" },

@@ -249,6 +249,8 @@ func RegisterAll(
 
 		// Search endpoints (Elasticsearch-backed)
 		if searchHandler != nil {
+			api.GET("/search", searchHandler.SearchAssets)
+			api.GET("/search/assets", searchHandler.SearchAssets)
 			api.GET("/search/sync-status", searchHandler.SyncStatus)
 			api.GET("/search/sync-progress", searchHandler.SyncProgress)
 		}

@@ -1686,8 +1686,7 @@ curl "$BASE/api/v1/tag-registry" \
 ## 7. Elasticsearch 检索 (Search)
 
 ### 7.1 全文检索资产
-`GET /api/v1/search/assets` 已从正式查询主路径下线。
-全文、keyword、semantic、similar、facet 统一通过 Query API 进入：
+`GET /api/v1/search` / `GET /api/v1/search/assets` 是 ES 直连兼容入口；全文、keyword、semantic、similar、facet 的正式主路径仍建议通过 Query API 进入：
 
 - `POST /api/v1/queries/validate`
 - `POST /api/v1/queries/run`
@@ -1698,6 +1697,26 @@ curl "$BASE/api/v1/tag-registry" \
 - semantic：`mode=semantic`
 - similar：`mode=similar`
 - 结构化 tag / mcap / algo / action 条件：统一放进 Query IR 的 `where`
+
+#### 7.1.1 血缘过滤（ES lineage projection）
+
+搜索兼容入口支持基于 ES 投影的直接血缘过滤。`lineage_with` 指定种子资产；`lineage_direction` 可为 `upstream`、`downstream`、`both`；`lineage_depth` 默认 `1`、最大 `3`；`relation_types` 可传逗号分隔或重复参数。
+
+```bash
+curl "$BASE/api/v1/search/assets?lineage_with=b9a5a281&lineage_direction=downstream&lineage_depth=2&relation_types=derived_from,pipeline_output" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+响应 `200`：`items[]` 为匹配的关联资产，每条结果保留 `lineage_upstream_ids` / `lineage_downstream_ids` / `lineage_relation_types`，并额外包含 `lineage_relation` 标记本次命中的种子资产、方向、深度和关系类型。
+
+错误示例：
+
+```bash
+curl "$BASE/api/v1/search/assets?lineage_with=b9a5a281&lineage_direction=sideways" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+响应 `400`：`lineage_direction must be upstream, downstream, or both`。
 
 ### 7.2 Admin：全量从 PG 重建 ES（不推进 outbox 游标）
 

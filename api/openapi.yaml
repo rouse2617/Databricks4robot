@@ -1267,6 +1267,47 @@ components:
         es_applied_min_seq: { type: integer, format: int64 }
         consumer_lag: { type: integer, format: int64 }
         checked_at: { type: string, format: date-time }
+    SearchAggBucket:
+      type: object
+      properties:
+        key: { type: string }
+        doc_count: { type: integer, format: int64 }
+    SearchAssetsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              asset_id: { type: string }
+              lineage_upstream_ids:
+                type: array
+                items: { type: string }
+              lineage_downstream_ids:
+                type: array
+                items: { type: string }
+              lineage_relation_types:
+                type: array
+                items: { type: string }
+              lineage_relation:
+                type: object
+                properties:
+                  asset_id: { type: string }
+                  direction: { type: string, enum: [upstream, downstream, both] }
+                  depth: { type: integer }
+                  relation_types:
+                    type: array
+                    items: { type: string }
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        page_size: { type: integer }
+        aggregations:
+          type: object
+          additionalProperties:
+            type: array
+            items: { $ref: '#/components/schemas/SearchAggBucket' }
 
     # ── Lakehouse ──────────────────────────────────────────────────────────
     LakehouseReport:
@@ -3192,6 +3233,58 @@ paths:
                         state: { type: string }
 
   # ── Search ─────────────────────────────────────────────────────────────
+  /api/v1/search:
+    get:
+      tags: [Search]
+      summary: Search assets
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: Free-text query }
+        - { name: mode, in: query, schema: { type: string, enum: [keyword, semantic, similar] } }
+        - { name: filter, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true, description: 'Repeated field:op:value filters' }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, default: 20, maximum: 200 } }
+        - { name: lineage_with, in: query, schema: { type: string }, description: Asset ID used as lineage seed }
+        - { name: lineage_direction, in: query, schema: { type: string, enum: [upstream, downstream, both], default: both } }
+        - { name: lineage_depth, in: query, schema: { type: integer, default: 1, maximum: 3 } }
+        - { name: relation_types, in: query, schema: { type: string }, description: Comma-separated or repeated relation types }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchAssetsResponse' }
+        '400':
+          description: Invalid search parameter
+        '404':
+          description: lineage_with asset not found
+        '503':
+          description: Elasticsearch unavailable
+  /api/v1/search/assets:
+    get:
+      tags: [Search]
+      summary: Search assets (compatibility path)
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: Free-text query }
+        - { name: mode, in: query, schema: { type: string, enum: [keyword, semantic, similar] } }
+        - { name: filter, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true, description: 'Repeated field:op:value filters' }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, default: 20, maximum: 200 } }
+        - { name: lineage_with, in: query, schema: { type: string }, description: Asset ID used as lineage seed }
+        - { name: lineage_direction, in: query, schema: { type: string, enum: [upstream, downstream, both], default: both } }
+        - { name: lineage_depth, in: query, schema: { type: integer, default: 1, maximum: 3 } }
+        - { name: relation_types, in: query, schema: { type: string }, description: Comma-separated or repeated relation types }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchAssetsResponse' }
+        '400':
+          description: Invalid search parameter
+        '404':
+          description: lineage_with asset not found
+        '503':
+          description: Elasticsearch unavailable
   /api/v1/search/sync-status:
     get:
       tags: [Search]

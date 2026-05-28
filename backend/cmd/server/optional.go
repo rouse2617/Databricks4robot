@@ -214,6 +214,7 @@ func setupOptional(inf *infra, core *coreHandlers) *optional {
 				Algos:   postgres.NewAssetAlgoLatestRepo(pg),
 				Mcap:    postgres.NewMcapFileRepo(pg),
 				Actions: postgres.NewActionRepo(pg),
+				Lineage: postgres.NewAssetRepo(pg),
 			},
 			BatchSize:        esBatchSize,
 			BatchWaitMs:      esBatchWaitMs,

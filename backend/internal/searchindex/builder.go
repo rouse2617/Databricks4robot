@@ -16,6 +16,7 @@ type Builder struct {
 	Algos   repository.AssetAlgoLatestRepository
 	Mcap    repository.McapFileRepository
 	Actions repository.ActionRepository // optional; nil disables actions[] projection
+	Lineage repository.AssetLineageRepository
 }
 
 // Build returns the document for an asset suitable for ES index API.
@@ -44,28 +45,31 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 	}
 
 	doc = map[string]any{
-		"asset_id":           a.AssetID,
-		"mcap_file_id":       a.McapFileID,
-		"segment_locator":    a.SegmentLocator,
-		"asset_type":         a.AssetType,
-		"lifecycle_state":    lifecycleState,
-		"status":             string(a.Status), // deprecated — retained during dual-write window (§5.8.1)
-		"is_deleted":         false,
-		"version":            a.Version,
-		"retention_tier":     a.RetentionTier,
-		"storage_uri":        a.StorageURI,
-		"owner":              a.Owner,
-		"reviewer":           a.Reviewer,
-		"start_timestamp_ns": a.StartTimestampNs,
-		"end_timestamp_ns":   a.EndTimestampNs,
-		"duration_ms":        a.DurationMs,
-		"delivery_count":     a.DeliveryCount,
-		"asset_level":        a.AssetLevel,
-		"metadata":           meta,
-		"tags_flat":          map[string]any{},
-		"tags":               []map[string]any{},
-		"algos":              []map[string]any{},
-		"mcap":               map[string]any{},
+		"asset_id":               a.AssetID,
+		"mcap_file_id":           a.McapFileID,
+		"segment_locator":        a.SegmentLocator,
+		"asset_type":             a.AssetType,
+		"lifecycle_state":        lifecycleState,
+		"status":                 string(a.Status), // deprecated — retained during dual-write window (§5.8.1)
+		"is_deleted":             false,
+		"version":                a.Version,
+		"retention_tier":         a.RetentionTier,
+		"storage_uri":            a.StorageURI,
+		"owner":                  a.Owner,
+		"reviewer":               a.Reviewer,
+		"start_timestamp_ns":     a.StartTimestampNs,
+		"end_timestamp_ns":       a.EndTimestampNs,
+		"duration_ms":            a.DurationMs,
+		"delivery_count":         a.DeliveryCount,
+		"asset_level":            a.AssetLevel,
+		"metadata":               meta,
+		"tags_flat":              map[string]any{},
+		"tags":                   []map[string]any{},
+		"algos":                  []map[string]any{},
+		"mcap":                   map[string]any{},
+		"lineage_upstream_ids":   []string{},
+		"lineage_downstream_ids": []string{},
+		"lineage_relation_types": []string{},
 	}
 
 	if a.ParentAssetID != "" {
@@ -177,6 +181,18 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 
 	if a.StartTimestampNs > 0 {
 		doc["recorded_at"] = time.Unix(0, a.StartTimestampNs).UTC().Format(time.RFC3339Nano)
+	}
+
+	if b.Lineage != nil {
+		projection, err := b.Lineage.GetLineageProjection(ctx, assetID)
+		if err != nil {
+			return nil, false, err
+		}
+		if projection != nil {
+			doc["lineage_upstream_ids"] = projection.UpstreamIDs
+			doc["lineage_downstream_ids"] = projection.DownstreamIDs
+			doc["lineage_relation_types"] = projection.RelationTypes
+		}
 	}
 
 	// actions[] nested: re-read the seg's full action set on every projection.
