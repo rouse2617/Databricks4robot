@@ -12,14 +12,24 @@ export interface EnvVarDef {
 	value?: string;
 }
 
+export type PipelineComponentType =
+	| "container"
+	| "script"
+	| "resource"
+	| "suspend";
+
 /** Backend PipelineComponent model shape. */
 export interface PipelineComponentAPI {
 	id: string;
 	name: string;
+	type: PipelineComponentType;
 	description: string;
 	image: string;
 	tag: string;
 	source: string;
+	command?: string[];
+	args?: string[];
+	env?: Record<string, string>;
 	inputPorts: PortDef[];
 	outputPorts: PortDef[];
 	resources?: Record<string, unknown>;
@@ -28,27 +38,64 @@ export interface PipelineComponentAPI {
 	updatedAt: string;
 }
 
+export type PipelineComponentPayload = Pick<
+	PipelineComponentAPI,
+	"name" | "type" | "image"
+> &
+	Partial<
+		Pick<
+			PipelineComponentAPI,
+			| "description"
+			| "tag"
+			| "source"
+			| "command"
+			| "args"
+			| "env"
+			| "inputPorts"
+			| "outputPorts"
+			| "resources"
+			| "envVars"
+		>
+	>;
+
 /** List all registered pipeline components. */
-export function listComponents(): Promise<{ items: PipelineComponentAPI[] }> {
-	return request("GET", "/components");
+export function listComponents(params?: {
+	q?: string;
+	source?: string;
+}): Promise<{ items: PipelineComponentAPI[] }> {
+	const query = new URLSearchParams();
+	if (params?.q) query.set("q", params.q);
+	if (params?.source) query.set("source", params.source);
+	const suffix = query.toString() ? `?${query.toString()}` : "";
+	return request<{ items: PipelineComponentAPI[] }>(
+		"GET",
+		`/pipeline-components${suffix}`,
+	);
 }
 
 /** Create a new pipeline component. */
 export function createComponent(
-	pc: Omit<PipelineComponentAPI, "id" | "createdAt" | "updatedAt">,
+	pc: PipelineComponentPayload,
 ): Promise<PipelineComponentAPI> {
-	return request("POST", "/components", pc);
+	return request<PipelineComponentAPI>("POST", "/pipeline-components", pc);
 }
 
 /** Update an existing pipeline component. */
 export function updateComponent(
 	id: string,
-	pc: Partial<PipelineComponentAPI>,
+	pc: PipelineComponentPayload,
 ): Promise<PipelineComponentAPI> {
-	return request("PUT", `/components/${encodeURIComponent(id)}`, pc);
+	return request<PipelineComponentAPI>(
+		"PUT",
+		`/pipeline-components/${encodeURIComponent(id)}`,
+		pc,
+	);
 }
 
 /** Delete a pipeline component. */
 export function deleteComponent(id: string): Promise<void> {
-	return request("DELETE", `/components/${encodeURIComponent(id)}`);
+	return request<void>(
+		"DELETE",
+		`/pipeline-components/${encodeURIComponent(id)}`,
+	);
 }

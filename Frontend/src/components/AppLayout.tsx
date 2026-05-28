@@ -1,5 +1,6 @@
 import {
 	ApartmentOutlined,
+	AppstoreOutlined,
 	DashboardOutlined,
 	DatabaseOutlined,
 	FileOutlined,
@@ -36,6 +37,7 @@ const menuItems = [
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
 	{ key: "/pipeline", icon: <ApartmentOutlined />, label: "流水线" },
+	{ key: "/components", icon: <AppstoreOutlined />, label: "组件管理" },
 	{ key: "/workflows", icon: <PlayCircleOutlined />, label: "流水线运行" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
@@ -56,6 +58,7 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/events")) return "/events";
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
+	if (pathname.startsWith("/components")) return "/components";
 	if (pathname.startsWith("/pipeline")) return "/pipeline";
 	if (pathname.startsWith("/workflows")) return "/workflows";
 	if (pathname.startsWith("/algo-runs")) return "/algo-runs";

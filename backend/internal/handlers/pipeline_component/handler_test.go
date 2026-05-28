@@ -63,6 +63,12 @@ func (m *mockComponentRepo) Update(_ context.Context, c *models.PipelineComponen
 	existing.Image = c.Image
 	existing.Tag = c.Tag
 	existing.Source = c.Source
+	existing.Type = c.Type
+	existing.Command = c.Command
+	existing.Args = c.Args
+	existing.Env = c.Env
+	existing.Resources = c.Resources
+	existing.EnvVars = c.EnvVars
 	existing.InputPorts = c.InputPorts
 	existing.OutputPorts = c.OutputPorts
 	existing.UpdatedAt = time.Now().UTC()
@@ -80,6 +86,7 @@ func makeComponent(id, name, source string) *models.PipelineComponent {
 	return &models.PipelineComponent{
 		ID:          id,
 		Name:        name,
+		Type:        "container",
 		Description: "test component",
 		Image:       "docker.io/test/" + name,
 		Tag:         "latest",
@@ -99,6 +106,11 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.GET("/api/v1/components/:id", h.GetComponent)
 	r.PUT("/api/v1/components/:id", h.UpdateComponent)
 	r.DELETE("/api/v1/components/:id", h.DeleteComponent)
+	r.POST("/api/v1/pipeline-components", h.CreateComponent)
+	r.GET("/api/v1/pipeline-components", h.ListComponents)
+	r.GET("/api/v1/pipeline-components/:id", h.GetComponent)
+	r.PUT("/api/v1/pipeline-components/:id", h.UpdateComponent)
+	r.DELETE("/api/v1/pipeline-components/:id", h.DeleteComponent)
 	return r
 }
 
@@ -110,8 +122,8 @@ func TestCreateComponent_Success(t *testing.T) {
 	h := New(usecase)
 	r := setupRouter(h)
 
-	body := `{"name":"my-component","description":"my desc","image":"docker.io/test/my-component","tag":"v1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/components", strings.NewReader(body))
+	body := `{"name":"my-component","type":"container","description":"my desc","image":"docker.io/test/my-component","tag":"v1","command":["python"],"args":["main.py"],"env":{"MODE":"test"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-components", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -129,6 +141,12 @@ func TestCreateComponent_Success(t *testing.T) {
 	if resp.ID == "" {
 		t.Error("expected non-empty ID")
 	}
+	if resp.Type != "container" {
+		t.Errorf("expected type container, got %q", resp.Type)
+	}
+	if len(resp.Command) != 1 || resp.Command[0] != "python" {
+		t.Fatalf("expected command to round trip, got %#v", resp.Command)
+	}
 }
 
 func TestCreateComponent_InvalidBody(t *testing.T) {
@@ -145,6 +163,23 @@ func TestCreateComponent_InvalidBody(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid body, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateComponent_MissingRequiredFields(t *testing.T) {
+	repo := &mockComponentRepo{}
+	usecase := uc.New(repo)
+	h := New(usecase)
+	r := setupRouter(h)
+
+	body := `{"name":"missing-image","type":"container"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-components", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing image, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -178,8 +213,8 @@ func TestListComponents_WithItems(t *testing.T) {
 	repo := &mockComponentRepo{}
 	// Pre-populate by saving through usecase
 	usecase := uc.New(repo)
-	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "comp-a", Image: "img/a"})
-	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "comp-b", Image: "img/b"})
+	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "comp-a", Type: "container", Image: "img/a"})
+	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "comp-b", Type: "container", Image: "img/b"})
 	h := New(usecase)
 	r := setupRouter(h)
 
@@ -204,9 +239,9 @@ func TestListComponents_WithQueryAndSource(t *testing.T) {
 	repo := &mockComponentRepo{}
 	usecase := uc.New(repo)
 	// Pre-populate with components of different sources
-	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "alpha", Image: "img/a", Source: "system"})
-	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "beta", Image: "img/b", Source: "custom"})
-	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "gamma", Image: "img/c", Source: "system"})
+	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "alpha", Type: "container", Image: "img/a", Source: "system"})
+	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "beta", Type: "container", Image: "img/b", Source: "custom"})
+	_, _ = usecase.Create(context.Background(), &models.PipelineComponent{Name: "gamma", Type: "container", Image: "img/c", Source: "system"})
 	h := New(usecase)
 	r := setupRouter(h)
 
@@ -231,7 +266,7 @@ func TestListComponents_WithQueryAndSource(t *testing.T) {
 func TestGetComponent_Success(t *testing.T) {
 	repo := &mockComponentRepo{}
 	usecase := uc.New(repo)
-	created, _ := usecase.Create(context.Background(), &models.PipelineComponent{Name: "my-component", Image: "img/c", Description: "test"})
+	created, _ := usecase.Create(context.Background(), &models.PipelineComponent{Name: "my-component", Type: "container", Image: "img/c", Description: "test"})
 	h := New(usecase)
 	r := setupRouter(h)
 
@@ -289,12 +324,12 @@ func TestGetComponent_EmptyID(t *testing.T) {
 func TestUpdateComponent_Success(t *testing.T) {
 	repo := &mockComponentRepo{}
 	usecase := uc.New(repo)
-	created, _ := usecase.Create(context.Background(), &models.PipelineComponent{Name: "old-name", Image: "img/old"})
+	created, _ := usecase.Create(context.Background(), &models.PipelineComponent{Name: "old-name", Type: "container", Image: "img/old"})
 	h := New(usecase)
 	r := setupRouter(h)
 
-	body := `{"name":"updated-component","description":"updated","image":"docker.io/test/updated","tag":"v2"}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/components/"+created.ID, strings.NewReader(body))
+	body := `{"name":"updated-component","type":"script","description":"updated","image":"docker.io/test/updated","tag":"v2","command":["bash"],"args":["run.sh"]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/pipeline-components/"+created.ID, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -311,6 +346,9 @@ func TestUpdateComponent_Success(t *testing.T) {
 	}
 	if resp.Name != "updated-component" {
 		t.Errorf("expected name 'updated-component', got %q", resp.Name)
+	}
+	if resp.Type != "script" {
+		t.Errorf("expected type script, got %q", resp.Type)
 	}
 }
 
@@ -353,7 +391,7 @@ func TestUpdateComponent_EmptyID(t *testing.T) {
 func TestDeleteComponent_Success(t *testing.T) {
 	repo := &mockComponentRepo{}
 	usecase := uc.New(repo)
-	created, _ := usecase.Create(context.Background(), &models.PipelineComponent{Name: "to-delete", Image: "img/del"})
+	created, _ := usecase.Create(context.Background(), &models.PipelineComponent{Name: "to-delete", Type: "container", Image: "img/del"})
 	h := New(usecase)
 	r := setupRouter(h)
 

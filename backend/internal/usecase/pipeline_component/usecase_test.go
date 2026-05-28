@@ -108,6 +108,7 @@ func TestCreate(t *testing.T) {
 
 	pc := &models.PipelineComponent{
 		Name:  "test-component",
+		Type:  "container",
 		Image: "nginx:latest",
 		Tag:   "latest",
 	}
@@ -167,10 +168,10 @@ func TestCreateAndList(t *testing.T) {
 	uc := New(repo)
 
 	_, _ = uc.Create(context.Background(), &models.PipelineComponent{
-		Name: "alpha", Image: "alpine:latest", Tag: "latest",
+		Name: "alpha", Type: "container", Image: "alpine:latest", Tag: "latest",
 	})
 	_, _ = uc.Create(context.Background(), &models.PipelineComponent{
-		Name: "beta", Image: "busybox:latest", Tag: "latest",
+		Name: "beta", Type: "container", Image: "busybox:latest", Tag: "latest",
 	})
 
 	// List all
@@ -197,10 +198,10 @@ func TestList_FilterBySource(t *testing.T) {
 	uc := New(repo)
 
 	_, _ = uc.Create(context.Background(), &models.PipelineComponent{
-		Name: "sys-one", Image: "busybox", Tag: "1", Source: "system",
+		Name: "sys-one", Type: "container", Image: "busybox", Tag: "1", Source: "system",
 	})
 	_, _ = uc.Create(context.Background(), &models.PipelineComponent{
-		Name: "custom-one", Image: "nginx", Tag: "1", Source: "custom",
+		Name: "custom-one", Type: "container", Image: "nginx", Tag: "1", Source: "custom",
 	})
 
 	items, err := uc.List(context.Background(), "", "system")
@@ -238,7 +239,7 @@ func TestGet_Existing(t *testing.T) {
 	uc := New(repo)
 
 	created, _ := uc.Create(context.Background(), &models.PipelineComponent{
-		Name: "fetch-me", Image: "busybox", Tag: "1",
+		Name: "fetch-me", Type: "container", Image: "busybox", Tag: "1",
 	})
 
 	fetched, err := uc.Get(context.Background(), created.ID)
@@ -261,7 +262,7 @@ func TestUpdate_Existing(t *testing.T) {
 	uc := New(repo)
 
 	created, _ := uc.Create(context.Background(), &models.PipelineComponent{
-		Name: "old-name", Image: "nginx:1.0", Tag: "1.0",
+		Name: "old-name", Type: "container", Image: "nginx:1.0", Tag: "1.0",
 	})
 
 	created.Name = "new-name"
@@ -294,8 +295,10 @@ func TestUpdate_NonExistent(t *testing.T) {
 	uc := New(repo)
 
 	pc := &models.PipelineComponent{
-		ID:   "non-existent",
-		Name: "ghost",
+		ID:    "non-existent",
+		Name:  "ghost",
+		Type:  "container",
+		Image: "busybox",
 	}
 
 	err := uc.Update(context.Background(), pc)
@@ -309,7 +312,7 @@ func TestDelete_Existing(t *testing.T) {
 	uc := New(repo)
 
 	created, _ := uc.Create(context.Background(), &models.PipelineComponent{
-		Name: "delete-me", Image: "busybox", Tag: "1",
+		Name: "delete-me", Type: "container", Image: "busybox", Tag: "1",
 	})
 
 	err := uc.Delete(context.Background(), created.ID)
@@ -328,8 +331,8 @@ func TestDelete_NonExistent(t *testing.T) {
 	uc := New(repo)
 
 	err := uc.Delete(context.Background(), "non-existent")
-	if err != nil {
-		t.Fatalf("Delete non-existent should not error: %v", err)
+	if err == nil {
+		t.Fatal("Delete non-existent should error")
 	}
 }
 
@@ -352,6 +355,9 @@ func TestSeedSystemComponents_Empty(t *testing.T) {
 	}
 	if pc.Source != "system" {
 		t.Errorf("Expected source 'system', got %q", pc.Source)
+	}
+	if pc.Type != "container" {
+		t.Errorf("Expected type 'container', got %q", pc.Type)
 	}
 	if pc.Name != "Pass Through" {
 		t.Errorf("Expected name 'Pass Through', got %q", pc.Name)
@@ -388,6 +394,7 @@ func TestCreate_WithExplicitSource(t *testing.T) {
 
 	pc := &models.PipelineComponent{
 		Name:   "explicit-source",
+		Type:   "container",
 		Image:  "python:3.12",
 		Tag:    "3.12",
 		Source: "dockerhub",
@@ -408,6 +415,7 @@ func TestCreate_WithPorts(t *testing.T) {
 
 	pc := &models.PipelineComponent{
 		Name:  "with-ports",
+		Type:  "container",
 		Image: "custom:latest",
 		Tag:   "latest",
 		InputPorts: []models.PortDef{
@@ -435,7 +443,7 @@ func TestUpdate_PreservesCreatedAt(t *testing.T) {
 	uc := New(repo)
 
 	created, _ := uc.Create(context.Background(), &models.PipelineComponent{
-		Name: "preserve-time", Image: "busybox", Tag: "1",
+		Name: "preserve-time", Type: "container", Image: "busybox", Tag: "1",
 	})
 	originalCreatedAt := created.CreatedAt
 

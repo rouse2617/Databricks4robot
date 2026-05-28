@@ -55,6 +55,7 @@ func scanPipelineComponent(rs rowScanner) (*models.PipelineComponent, error) {
 	if len(envVars) > 0 {
 		_ = json.Unmarshal(envVars, &pc.EnvVars)
 	}
+	hydrateComponentDerivedFields(&pc)
 	if pc.InputPorts == nil {
 		pc.InputPorts = []models.PortDef{}
 	}
@@ -62,6 +63,59 @@ func scanPipelineComponent(rs rowScanner) (*models.PipelineComponent, error) {
 		pc.OutputPorts = []models.PortDef{}
 	}
 	return &pc, nil
+}
+
+func hydrateComponentDerivedFields(pc *models.PipelineComponent) {
+	if pc.Resources == nil {
+		pc.Resources = map[string]interface{}{}
+	}
+	if pc.Type == "" {
+		if value, ok := pc.Resources["type"].(string); ok {
+			pc.Type = value
+		}
+	}
+	if pc.Type == "" {
+		pc.Type = "container"
+		pc.Resources["type"] = pc.Type
+	}
+	if len(pc.Command) == 0 {
+		pc.Command = stringSliceFromJSONValue(pc.Resources["command"])
+	}
+	if len(pc.Args) == 0 {
+		pc.Args = stringSliceFromJSONValue(pc.Resources["args"])
+	}
+	if pc.Env == nil {
+		pc.Env = map[string]string{}
+		if raw, ok := pc.Resources["env"].(map[string]interface{}); ok {
+			for name, value := range raw {
+				if s, ok := value.(string); ok {
+					pc.Env[name] = s
+				}
+			}
+		}
+		for _, item := range pc.EnvVars {
+			if item.Name != "" {
+				pc.Env[item.Name] = item.Value
+			}
+		}
+	}
+}
+
+func stringSliceFromJSONValue(value interface{}) []string {
+	switch v := value.(type) {
+	case []string:
+		return v
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 // Save inserts a pipeline component.
