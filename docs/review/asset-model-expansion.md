@@ -727,4 +727,3 @@ PG 初期可通过 `metadata #>> '{type_metadata,framework}'` 支持少量字段
 4. ES mapping 增加 `dataset.*`、`annotation_result.*`；搜索 builder 投影 `metadata.type_metadata` 中的高频字段。
 5. 支持 `ml_model`、`evaluation_report`，并自动创建训练/评测关系边。
 6. 基于真实查询量决定是否新增 `dataset_assets`、`ml_model_assets` 投影表。
-

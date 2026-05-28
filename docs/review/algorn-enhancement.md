@@ -1,8 +1,8 @@
 # AlgoRun 与资产平台深化集成设计
 
-> 版本：2026-05-28  
-> 状态：设计评审稿  
-> 范围：AlgoRun 训练产出自动资产化、输入血缘自动记录、Pipeline 训练节点、训练执行追踪  
+> 版本：2026-05-28
+> 状态：设计评审稿
+> 范围：AlgoRun 训练产出自动资产化、输入血缘自动记录、Pipeline 训练节点、训练执行追踪
 > 约束：Go 1.25 + Gin + PostgreSQL + Elasticsearch + BigQuery/BigLake Iceberg；后端分层保持 `handler -> usecase -> repository`
 
 ---
@@ -1263,4 +1263,3 @@ MVP 完成后，平台即可回答：
 这些输入数据后续影响了哪些模型版本？
 某个 run 产出了哪些资产 revision？
 ```
-

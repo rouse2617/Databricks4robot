@@ -1,9 +1,9 @@
 # Pipeline 全功能 E2E 测试报告
 
-> **环境**: https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app  
-> **对比环境**（曾可用 pipeline/deployments API）: `cyber-databrew-frontend-dev-234851712830.us-central1.run.app`  
-> **时间**: 2026-05-28  
-> **方式**: Chrome DevTools MCP + Network 抓包 + 代码审查  
+> **环境**: https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app
+> **对比环境**（曾可用 pipeline/deployments API）: `cyber-databrew-frontend-dev-234851712830.us-central1.run.app`
+> **时间**: 2026-05-28
+> **方式**: Chrome DevTools MCP + Network 抓包 + 代码审查
 > **结论**: **前端 UI/契约层大幅改进，但当前 dev 后端未注册 pipeline/workflow 路由，全链路无法在本 URL 跑通。**
 
 ---
