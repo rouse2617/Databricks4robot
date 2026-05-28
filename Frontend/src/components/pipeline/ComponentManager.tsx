@@ -41,7 +41,7 @@ export function ComponentManager({
 		if (editing) {
 			setCommandText(JSON.stringify(editing.command));
 		}
-	}, [editing?.id, editing.command, editing]);
+	}, [editing]);
 
 	const save = useCallback(
 		async (c: RegisteredComponent) => {

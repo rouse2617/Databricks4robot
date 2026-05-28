@@ -33,7 +33,7 @@ vi.mock("../api/pipelineComponentApi", () => ({
 
 // ── Mock AssetPicker ──────────────────────────────────────────────
 vi.mock("../components/pipeline/AssetPicker", () => ({
-	default: ({ selectedIds, onSelectionChange }: Record<string, unknown>) => (
+	default: ({ selectedIds, onSelectionChange }: { selectedIds: string[]; onSelectionChange: (ids: string[]) => void }) => (
 		<div data-testid="mock-asset-picker">
 			<span>Selected: {selectedIds.join(",") || "(none)"}</span>
 			<button
