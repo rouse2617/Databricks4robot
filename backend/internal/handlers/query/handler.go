@@ -276,9 +276,15 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 		esErr error
 	)
 
-	g, ctx := errgroup.WithContext(ctx)
+	// Save original request context before errgroup — errgroup.WithContext
+	// derives a new context that is cancelled by g.Wait() after all goroutines
+	// complete (Go stdlib errgroup v0.5+ behaviour). Any fallback PG queries
+	// after g.Wait() that use the errgroup context would immediately fail with
+	// "context canceled". See internal issue CYB-xxx.
+	reqCtx := ctx
+	eg, ctx := errgroup.WithContext(ctx)
 
-	g.Go(func() error {
+	eg.Go(func() error {
 		pgStarted := time.Now()
 		if skipPGCount {
 			items, pgErr = h.pgExecutor.ExecutePage(ctx, h.assetUC, compiled)
@@ -294,7 +300,7 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 	})
 
 	if needESFacets || needESTotalOnly {
-		g.Go(func() error {
+		eg.Go(func() error {
 			var err error
 			esOut, err = h.fetchESFacetsOrTotal(ctx, plan, skipPGCount)
 			esErr = err
@@ -302,7 +308,7 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 		})
 	}
 
-	if err := g.Wait(); err != nil {
+	if err := eg.Wait(); err != nil {
 		if pgErr != nil {
 			return nil, 0, pgErr
 		}
@@ -318,19 +324,20 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 		}
 	}
 
+	// Use reqCtx (not ctx) here — ctx is cancelled by eg.Wait() above.
 	if skipPGCount {
 		switch {
 		case esOut != nil && esOut.MatchTotal > 0:
 			total = esOut.MatchTotal
 		case esErr != nil || esOut == nil:
 			compiled.Warnings = append(compiled.Warnings, "elasticsearch unavailable; used postgres count")
-			items, total, pgErr = h.pgExecutor.Execute(ctx, h.assetUC, compiled)
+			items, total, pgErr = h.pgExecutor.Execute(reqCtx, h.assetUC, compiled)
 			if pgErr != nil {
 				return nil, 0, pgErr
 			}
 		default:
 			compiled.Warnings = append(compiled.Warnings, "elasticsearch total unavailable; used postgres count")
-			items, total, pgErr = h.pgExecutor.Execute(ctx, h.assetUC, compiled)
+			items, total, pgErr = h.pgExecutor.Execute(reqCtx, h.assetUC, compiled)
 			if pgErr != nil {
 				return nil, 0, pgErr
 			}
