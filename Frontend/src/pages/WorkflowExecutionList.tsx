@@ -1,17 +1,21 @@
 import { MoreOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
+	Alert,
 	Button,
 	Card,
 	Checkbox,
 	DatePicker,
 	Dropdown,
+	Empty,
 	Input,
 	Modal,
+	Skeleton,
+	Tag,
+	Tooltip,
+	Typography,
+	Table,
 	message,
 	Select,
-	Tooltip,
-	Table,
-	Tag,
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
@@ -42,6 +46,17 @@ dayjs.extend(relativeTime);
 
 const LABEL_SEPARATOR = "=";
 
+interface WorkflowExecutionListProps {
+	active?: boolean;
+}
+
+type WorkflowErrorKind = "network" | "service-unavailable";
+
+type WorkflowErrorState = {
+	kind: WorkflowErrorKind;
+	message: string;
+};
+
 const parseDate = (value: string | null): Dayjs | null => {
 	if (!value) return null;
 	const parsed = dayjs(value);
@@ -70,10 +85,46 @@ const normalizeStatus = (value: string | null): string | undefined => {
 		: undefined;
 };
 
-export function WorkflowExecutionList() {
+const describeWorkflowError = (err: unknown): WorkflowErrorState => {
+	const message =
+		err instanceof Error
+			? err.message
+			: typeof err === "string"
+				? err
+				: "请求失败，请稍后重试";
+
+	const normalized = message.toLowerCase();
+	if (
+		normalized.includes("failed to fetch") ||
+		normalized.includes("network") ||
+		normalized.includes("econnrefused") ||
+		normalized.includes("enotfound") ||
+		normalized.includes("timeout") ||
+		normalized.includes("typeerror")
+	) {
+		return {
+			kind: "network",
+			message,
+		};
+	}
+
+	return {
+		kind: "service-unavailable",
+		message,
+	};
+};
+
+const getErrorTitle = (kind: WorkflowErrorKind): string =>
+	kind === "network" ? "网络错误" : "服务不可用";
+
+export function WorkflowExecutionList({
+	active = true,
+}: WorkflowExecutionListProps) {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<WorkflowSummary[]>([]);
 	const [loading, setLoading] = useState(false);
+	const [initializedOnce, setInitializedOnce] = useState(false);
+	const [error, setError] = useState<WorkflowErrorState | null>(null);
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(
 		normalizeStatus(searchParams.get("status")),
 	);
@@ -161,6 +212,7 @@ export function WorkflowExecutionList() {
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
+		setError(null);
 		try {
 			const params: ListWorkflowsParams = {
 				status: statusFilter,
@@ -173,10 +225,19 @@ export function WorkflowExecutionList() {
 			setItems(res.items || []);
 		} catch (err) {
 			console.error(err);
+			setError(describeWorkflowError(err));
+			setItems([]);
 		} finally {
 			setLoading(false);
+			setInitializedOnce(true);
 		}
 	}, [statusFilter, debouncedNameSearch, labelFilter, dateRange]);
+
+	useEffect(() => {
+		if (active) {
+			refresh();
+		}
+	}, [active, refresh]);
 
 	useEffect(() => {
 		const timer = window.setTimeout(() => {
@@ -185,10 +246,6 @@ export function WorkflowExecutionList() {
 
 		return () => window.clearTimeout(timer);
 	}, [nameSearch]);
-
-	useEffect(() => {
-		refresh();
-	}, [refresh]);
 
 	useEffect(() => {
 		setPage(1);
@@ -272,15 +329,21 @@ export function WorkflowExecutionList() {
 			title: "名称",
 			dataIndex: "name",
 			key: "name",
+			width: 260,
 			ellipsis: true,
 		},
 		{
 			title: "状态",
 			dataIndex: "status",
 			key: "status",
-			width: 120,
+			width: 130,
 			render: (s: string) => (
-				<Tag color={STATUS_COLORS[s] || "default"}>{s}</Tag>
+				<Tag
+					color={STATUS_COLORS[s] || STATUS_ACCENT_COLORS[s] || "default"}
+					style={{ padding: "2px 8px" }}
+				>
+					{s}
+				</Tag>
 			),
 		},
 		{
@@ -293,7 +356,7 @@ export function WorkflowExecutionList() {
 			title: "标签",
 			dataIndex: "labels",
 			key: "labels",
-			width: 260,
+			width: 240,
 			render: (labels?: Record<string, string>) => (
 				<WorkflowLabels labels={labels} />
 			),
@@ -343,7 +406,7 @@ export function WorkflowExecutionList() {
 		{
 			title: "操作",
 			key: "actions",
-			width: 150,
+			width: 110,
 			render: (_: unknown, record: WorkflowSummary) => {
 				const menuItems = getWorkflowOperationMenuItems(record);
 				const hasOperationLoading = operationLoading?.startsWith(
@@ -386,8 +449,10 @@ export function WorkflowExecutionList() {
 		},
 	];
 
+	const showSkeleton = loading && !initializedOnce;
+
 	return (
-		<div>
+		<div className="pipeline-execution-list">
 			<div
 				style={{
 					display: "flex",
@@ -396,7 +461,9 @@ export function WorkflowExecutionList() {
 					marginBottom: 16,
 				}}
 			>
-				<h2 style={{ margin: 0 }}>流水线执行记录</h2>
+				<Typography.Title level={4} style={{ margin: 0 }}>
+					流水线执行记录
+				</Typography.Title>
 				<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
@@ -409,49 +476,47 @@ export function WorkflowExecutionList() {
 					marginBottom: 16,
 				}}
 			>
-				{WORKFLOW_PHASES.map((status) => {
-					const accentColor = STATUS_ACCENT_COLORS[status];
+				{showSkeleton
+					? WORKFLOW_PHASES.map((status) => <Card key={status} loading />)
+					: WORKFLOW_PHASES.map((status) => {
+						const accentColor = STATUS_ACCENT_COLORS[status];
 
-					return (
-						<Card
-							key={status}
-							size="small"
-							styles={{
-								body: {
-									alignItems: "center",
-									display: "flex",
-									gap: 10,
-									padding: "10px 12px",
-								},
-							}}
-							style={{
-								borderColor: accentColor,
-								borderLeft: `4px solid ${accentColor}`,
-							}}
-						>
-							<span style={{ color: accentColor, fontSize: 18 }}>
-								{STATUS_ICONS[status]}
-							</span>
-							<span style={{ color: "rgba(0, 0, 0, 0.65)" }}>{status}</span>
-							<strong style={{ fontSize: 18, marginLeft: "auto" }}>
-								{statusCounts[status]}
-							</strong>
-						</Card>
-					);
-				})}
+						return (
+							<Card
+								key={status}
+								size="small"
+								styles={{
+									body: {
+										alignItems: "center",
+										display: "flex",
+										gap: 10,
+										padding: "10px 12px",
+									},
+								}}
+								style={{
+									borderColor: accentColor,
+									borderLeft: `4px solid ${accentColor}`,
+								}}
+							>
+								<span style={{ color: accentColor, fontSize: 18 }}>
+									{STATUS_ICONS[status]}
+								</span>
+								<span style={{ color: "rgba(0, 0, 0, 0.65)" }}>
+									{status}
+								</span>
+								<strong style={{ fontSize: 18, marginLeft: "auto" }}>
+									{statusCounts[status]}
+								</strong>
+							</Card>
+						);
+					})}
 			</div>
-			<div
-				style={{
-					display: "flex",
-					gap: 8,
-					flexWrap: "wrap",
-					marginBottom: 16,
-				}}
-			>
+
+			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
 					allowClear
 					placeholder="状态筛选"
-					style={{ width: 140 }}
+					style={{ minWidth: 140, flex: "1 1 160px" }}
 					value={statusFilter}
 					onChange={(val) => setStatusFilter(val)}
 					options={WORKFLOW_PHASES.map((status) => ({
@@ -462,7 +527,7 @@ export function WorkflowExecutionList() {
 				<Input.Search
 					allowClear
 					placeholder="按名称搜索"
-					style={{ maxWidth: 320, minWidth: 220 }}
+					style={{ minWidth: 220, flex: "1 1 220px" }}
 					value={nameSearch}
 					onChange={(event) => setNameSearch(event.target.value)}
 					onSearch={(value) => setDebouncedNameSearch(value.trim().toLowerCase())}
@@ -473,19 +538,20 @@ export function WorkflowExecutionList() {
 					onChange={(values) =>
 						setDateRange([values?.[0] ?? null, values?.[1] ?? null])
 					}
-					style={{ width: 320 }}
+					style={{ minWidth: 320, flex: "1 1 260px" }}
 				/>
 			</div>
+
 			<div
 				style={{
-					marginBottom: 16,
 					display: "flex",
 					alignItems: "center",
 					flexWrap: "wrap",
 					gap: 8,
+					marginBottom: 16,
 				}}
 			>
-				<span style={{ color: "rgba(0,0,0,0.65)" }}>标签筛选：</span>
+				<Typography.Text type="secondary">标签筛选：</Typography.Text>
 				<Checkbox.Group
 					options={labelCheckboxOptions}
 					value={labelFilter}
@@ -493,38 +559,66 @@ export function WorkflowExecutionList() {
 				/>
 			</div>
 
-			<Table
-				dataSource={items}
-				columns={columns}
-				rowKey="name"
-				loading={loading}
-				locale={{ emptyText: "暂无执行记录" }}
-				onRow={(record) => ({
-					onClick: (event) => {
-						const el = event.target as HTMLElement;
-						if (
-							el.closest(
-								"a, button, input, textarea, select, label, [role='checkbox'], .ant-pagination, .ant-select, .ant-pagination-item, .ant-dropdown",
-							)
-						) {
-							return;
-						}
-						navigate(`/workflows/${record.name}`);
-					},
-					style: { cursor: "pointer" },
-				})}
-				pagination={{
-					current: page,
-					pageSize,
-					showSizeChanger: true,
-					pageSizeOptions: ["10", "20", "50", "100"],
-					showTotal: (total) => `共 ${total} 条`,
-					onChange: (nextPage, nextPageSize) => {
-						setPage(nextPage);
-						setPageSize(nextPageSize);
-					},
-				}}
-			/>
+			{error ? (
+				<Alert
+					type="error"
+					showIcon
+					message={getErrorTitle(error.kind)}
+					description={error.message}
+					action={
+						<Button size="small" onClick={refresh} loading={loading}>
+							重试
+						</Button>
+					}
+					style={{ marginBottom: 16 }}
+				/>
+			) : null}
+
+			{showSkeleton ? (
+				<Skeleton
+					active
+					paragraph={{ rows: 8 }}
+					title={false}
+					style={{ width: "100%" }}
+				/>
+				) : items.length === 0 ? (
+					<Empty description="暂无执行记录，部署流水线后将自动生成" />
+				) : (
+				<div className="pipeline-execution-table">
+					<Table
+						dataSource={items}
+						columns={columns}
+						rowKey="name"
+						loading={loading}
+						rowClassName={() => "pipeline-execution-table-row"}
+						onRow={(record) => ({
+							onClick: (event) => {
+								const el = event.target as HTMLElement;
+								if (
+									el.closest(
+										"a, button, input, textarea, select, label, [role='checkbox'], .ant-pagination, .ant-pagination-item, .ant-dropdown",
+									)
+								) {
+									return;
+								}
+								navigate(`/workflows/${record.name}`);
+							},
+							style: { cursor: "pointer" },
+						})}
+						pagination={{
+								current: page,
+								pageSize,
+								showSizeChanger: true,
+								pageSizeOptions: ["10", "20", "50", "100"],
+								showTotal: (total) => `共 ${total} 条`,
+								onChange: (nextPage, nextPageSize) => {
+									setPage(nextPage);
+									setPageSize(nextPageSize);
+								},
+							}}
+					/>
+				</div>
+			)}
 		</div>
 	);
 }

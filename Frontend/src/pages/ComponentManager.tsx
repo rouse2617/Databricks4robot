@@ -1,20 +1,29 @@
-import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+	DeleteOutlined,
+	EditOutlined,
+	EyeOutlined,
+	PlusOutlined,
+	ReloadOutlined,
+} from "@ant-design/icons";
 import {
 	Alert,
 	Button,
+	Empty,
 	Form,
 	Input,
 	Modal,
-	message,
 	Popconfirm,
 	Select,
 	Space,
 	Table,
 	Tag,
+	Tooltip,
 	Typography,
+	message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type { InputRef } from "antd/es/input";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	createComponent,
 	deleteComponent,
@@ -31,14 +40,16 @@ import {
 
 type EnvRow = { name?: string; value?: string };
 
+type ModalMode = "create" | "edit" | "view";
+
 interface ComponentFormValues {
 	name: string;
 	type: PipelineComponentType;
 	image: string;
 	tag?: string;
 	description?: string;
-	command?: string[];
-	args?: string[];
+	command?: string;
+	args?: string;
 	envRows?: EnvRow[];
 }
 
@@ -56,9 +67,16 @@ const TYPE_COLORS: Record<PipelineComponentType, string> = {
 	suspend: "orange",
 };
 
-function toFormValues(
-	component?: PipelineComponentAPI,
-): ComponentFormValues {
+const splitInputItems = (value?: string): string[] =>
+	(value || "")
+		.split(/[\n,]/)
+		.map((v) => v.trim())
+		.filter(Boolean);
+
+const joinInputItems = (value?: string[]): string =>
+	(value || []).map((item) => item.trim()).filter(Boolean).join(", ");
+
+function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 	if (!component) {
 		return {
 			name: "",
@@ -66,8 +84,8 @@ function toFormValues(
 			image: "",
 			tag: "latest",
 			description: "",
-			command: [],
-			args: [],
+			command: "",
+			args: "",
 			envRows: [],
 		};
 	}
@@ -78,8 +96,8 @@ function toFormValues(
 		image: component.image,
 		tag: component.tag || "latest",
 		description: component.description || "",
-		command: component.command || [],
-		args: component.args || [],
+		command: joinInputItems(component.command || []),
+		args: joinInputItems(component.args || []),
 		envRows: Object.entries(component.env || {}).map(([name, value]) => ({
 			name,
 			value,
@@ -87,22 +105,25 @@ function toFormValues(
 	};
 }
 
-function toPayload(values: ComponentFormValues): PipelineComponentPayload {
+function toPayload(
+	values: ComponentFormValues,
+	componentSource?: string,
+): PipelineComponentPayload {
 	const env: Record<string, string> = {};
 	for (const row of values.envRows || []) {
 		const name = row.name?.trim();
 		if (name) env[name] = row.value || "";
 	}
 
-	const command = (values.command || []).map((v) => v.trim()).filter(Boolean);
-	const args = (values.args || []).map((v) => v.trim()).filter(Boolean);
+	const command = splitInputItems(values.command);
+	const args = splitInputItems(values.args);
 
 	return {
 		name: values.name.trim(),
 		type: values.type,
 		image: values.image.trim(),
 		tag: values.tag?.trim() || "latest",
-		source: "custom",
+		source: componentSource || "custom",
 		description: values.description?.trim() || "",
 		command,
 		args,
@@ -125,9 +146,13 @@ export function ComponentManager() {
 	const [error, setError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 	const [modalOpen, setModalOpen] = useState(false);
-	const [editing, setEditing] = useState<PipelineComponentAPI | null>(null);
+	const [modalMode, setModalMode] = useState<ModalMode | null>(null);
+	const [activeComponent, setActiveComponent] = useState<PipelineComponentAPI | null>(
+		null,
+	);
 	const [form] = Form.useForm<ComponentFormValues>();
 	const [messageApi, contextHolder] = message.useMessage();
+	const nameInputRef = useRef<InputRef>(null);
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -157,31 +182,63 @@ export function ComponentManager() {
 		);
 	}, [items, search]);
 
+	const isCreateMode = modalMode === "create";
+	const isEditMode = modalMode === "edit";
+	const isViewMode = modalMode === "view";
+
+	useEffect(() => {
+		if (!modalOpen || !isCreateMode) return;
+		const id = window.setTimeout(() => {
+			nameInputRef.current?.focus();
+		}, 0);
+
+		return () => window.clearTimeout(id);
+	}, [isCreateMode, modalOpen]);
+
 	const openCreate = () => {
-		setEditing(null);
+		setActiveComponent(null);
+		setModalMode("create");
 		form.setFieldsValue(toFormValues());
 		setModalOpen(true);
 	};
 
 	const openEdit = (component: PipelineComponentAPI) => {
-		setEditing(component);
+		setActiveComponent(component);
+		setModalMode("edit");
 		form.setFieldsValue(toFormValues(component));
 		setModalOpen(true);
 	};
 
+	const openView = (component: PipelineComponentAPI) => {
+		setActiveComponent(component);
+		setModalMode("view");
+		form.setFieldsValue(toFormValues(component));
+		setModalOpen(true);
+	};
+
+	const closeModal = () => {
+		setModalOpen(false);
+		setModalMode(null);
+		setActiveComponent(null);
+	};
+
 	const handleSave = async () => {
+		if (isViewMode) {
+			closeModal();
+			return;
+		}
 		const values = await form.validateFields();
 		setSaving(true);
 		try {
-			const payload = toPayload(values);
-			if (editing) {
-				await updateComponent(editing.id, payload);
+			const payload = toPayload(values, activeComponent?.source);
+			if (activeComponent) {
+				await updateComponent(activeComponent.id, payload);
 				messageApi.success("组件已更新");
 			} else {
 				await createComponent(payload);
 				messageApi.success("组件已创建");
 			}
-			setModalOpen(false);
+			closeModal();
 			await refresh();
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
@@ -229,13 +286,23 @@ export function ComponentManager() {
 		{
 			title: "镜像",
 			key: "image",
-			ellipsis: true,
-			render: (_, record) => formatComponentImage(record.image, record.tag),
+			width: 240,
+			render: (_, record) => {
+				const imageText = formatComponentImage(record.image, record.tag);
+				return (
+					<Tooltip title={imageText}>
+						<div style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+							{imageText}
+						</div>
+					</Tooltip>
+				);
+			},
 		},
 		{
 			title: "描述",
 			dataIndex: "description",
 			key: "description",
+			width: 220,
 			ellipsis: true,
 			render: (value: string) => value || "-",
 		},
@@ -243,7 +310,7 @@ export function ComponentManager() {
 			title: "来源",
 			dataIndex: "source",
 			key: "source",
-			width: 100,
+			width: 110,
 			render: (source: string) => (
 				<Tag color={source === "system" ? "gold" : "default"}>{source}</Tag>
 			),
@@ -252,7 +319,7 @@ export function ComponentManager() {
 			title: "创建时间",
 			dataIndex: "createdAt",
 			key: "createdAt",
-			width: 180,
+			width: 170,
 			render: (value: string) =>
 				value ? new Date(value).toLocaleString() : "-",
 		},
@@ -260,40 +327,57 @@ export function ComponentManager() {
 			title: "更新时间",
 			dataIndex: "updatedAt",
 			key: "updatedAt",
-			width: 180,
+			width: 170,
 			render: (value: string) =>
 				value ? new Date(value).toLocaleString() : "-",
 		},
 		{
 			title: "操作",
 			key: "actions",
-			width: 160,
-			render: (_, record) => (
-				<Space>
-					<Button
-						type="text"
-						icon={<EditOutlined />}
-						aria-label="编辑组件"
-						onClick={() => openEdit(record)}
-					/>
-					<Popconfirm
-						title="删除组件"
-						description={`确认删除 ${record.name}？`}
-						okText="删除"
-						cancelText="取消"
-						disabled={record.source === "system"}
-						onConfirm={() => handleDelete(record)}
-					>
+			width: 170,
+			render: (_, record) => {
+				const isSystemComponent = record.source === "system";
+				return (
+					<Space>
 						<Button
 							type="text"
-							danger
-							disabled={record.source === "system"}
-							icon={<DeleteOutlined />}
-							aria-label="删除组件"
+							icon={<EyeOutlined />}
+							aria-label="查看组件"
+							onClick={() => openView(record)}
 						/>
-					</Popconfirm>
-				</Space>
-			),
+						<Button
+							type="text"
+							icon={<EditOutlined />}
+							aria-label="编辑组件"
+							onClick={() => openEdit(record)}
+						/>
+						<Tooltip
+							title={
+								isSystemComponent
+									? "系统来源组件禁止删除"
+									: "删除组件"
+							}
+						>
+							<Popconfirm
+								title="删除组件"
+								description={`确认删除 ${record.name}？此操作无法撤销。`}
+								okText="确认删除"
+								cancelText="取消"
+								disabled={isSystemComponent}
+								onConfirm={() => handleDelete(record)}
+							>
+								<Button
+									type="text"
+									danger
+									disabled={isSystemComponent}
+									icon={<DeleteOutlined />}
+									aria-label="删除组件"
+								/>
+							</Popconfirm>
+						</Tooltip>
+					</Space>
+				);
+			},
 		},
 	];
 
@@ -343,139 +427,186 @@ export function ComponentManager() {
 					showIcon
 					message="组件列表加载失败"
 					description={error}
+					action={
+						<Button size="small" onClick={refresh} loading={loading}>
+							重试
+						</Button>
+					}
 				/>
 			) : null}
 
-			<Table
-				rowKey="id"
-				loading={loading}
-				columns={columns}
-				dataSource={filteredItems}
-				pagination={{ pageSize: 12, showSizeChanger: true }}
-				scroll={{ x: 900 }}
-			/>
+				{!loading && filteredItems.length === 0 ? (
+					<Empty description="暂无组件，点击「新建组件」创建第一个步骤定义" />
+				) : (
+				<Table
+					rowKey="id"
+					loading={loading}
+					columns={columns}
+					dataSource={filteredItems}
+						pagination={{ pageSize: 12, showSizeChanger: true }}
+						scroll={{ x: 900 }}
+					/>
+				)}
 
 			<Modal
 				open={modalOpen}
-				title={editing ? "编辑组件" : "新建组件"}
-				okText={editing ? "保存" : "创建"}
-				cancelText="取消"
+				title={
+					isViewMode ? "查看组件" : isEditMode ? "编辑组件" : "新建组件"
+				}
+				okText={isEditMode ? "保存" : "创建"}
+				cancelText="关闭"
 				confirmLoading={saving}
 				onOk={handleSave}
-				onCancel={() => setModalOpen(false)}
+				onCancel={closeModal}
 				width={760}
 				destroyOnHidden
-			>
-				<Form
-					form={form}
-					layout="vertical"
-					initialValues={toFormValues()}
-					style={{ marginTop: 16 }}
+				footer={
+					isViewMode
+						? [
+							<Button key="close" onClick={closeModal}>
+								关闭
+							</Button>,
+						]
+						: undefined
+					}
 				>
-					<div
-						style={{
-							display: "grid",
-							gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-							gap: 12,
-						}}
+					<Form
+						form={form}
+						layout="vertical"
+						style={{ marginTop: 16 }}
+						preserve={false}
 					>
-						<Form.Item
-							name="name"
-							label="名称"
-							rules={[{ required: true, message: "请输入组件名称" }]}
+						<div
+							style={{
+								display: "grid",
+								gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+								gap: 12,
+							}}
 						>
-							<Input placeholder="normalize-mcap" />
-						</Form.Item>
-						<Form.Item
-							name="type"
-							label="类型"
-							rules={[{ required: true, message: "请选择组件类型" }]}
+							<Form.Item
+								name="name"
+								label="名称"
+								rules={[{ required: true, message: "请输入组件名称" }]}
+							>
+								<Input
+									placeholder="normalize-mcap"
+									disabled={isViewMode}
+									ref={nameInputRef}
+								/>
+							</Form.Item>
+							<Form.Item
+								name="type"
+								label="类型"
+								rules={[{ required: true, message: "请选择组件类型" }]}
+							>
+								<Select options={TYPE_OPTIONS} disabled={isViewMode} />
+							</Form.Item>
+						</div>
+
+						<div
+							style={{
+								display: "grid",
+								gridTemplateColumns: "minmax(260px, 1fr) 160px",
+								gap: 12,
+							}}
 						>
-							<Select options={TYPE_OPTIONS} />
+							<Form.Item
+								name="image"
+								label="镜像"
+								rules={[{ required: true, message: "请输入镜像" }]}
+							>
+								<Input
+									placeholder="registry.example.com/databrew/worker"
+									disabled={isViewMode}
+								/>
+							</Form.Item>
+							<Form.Item name="tag" label="标签">
+								<Input placeholder="latest" disabled={isViewMode} />
+							</Form.Item>
+						</div>
+
+						<Form.Item name="description" label="描述">
+							<Input.TextArea
+								rows={3}
+								maxLength={500}
+								showCount
+								disabled={isViewMode}
+							/>
 						</Form.Item>
-					</div>
 
-					<div
-						style={{
-							display: "grid",
-							gridTemplateColumns: "minmax(260px, 1fr) 160px",
-							gap: 12,
-						}}
-					>
-						<Form.Item
-							name="image"
-							label="镜像"
-							rules={[{ required: true, message: "请输入镜像" }]}
-						>
-							<Input placeholder="registry.example.com/databrew/worker" />
+						<Form.Item name="command" label="命令">
+							<Input.TextArea
+								rows={2}
+								placeholder="例如: python, /app/main.py"
+								disabled={isViewMode}
+							/>
 						</Form.Item>
-						<Form.Item name="tag" label="标签">
-							<Input placeholder="latest" />
+
+						<Form.Item name="args" label="参数">
+							<Input.TextArea
+								rows={2}
+								placeholder="例如: --input, {{inputs.asset}}"
+								disabled={isViewMode}
+							/>
 						</Form.Item>
-					</div>
 
-					<Form.Item name="description" label="描述">
-						<Input.TextArea rows={3} maxLength={500} showCount />
-					</Form.Item>
-
-					<Form.Item name="command" label="命令">
-						<Select
-							mode="tags"
-							tokenSeparators={[","]}
-							placeholder="例如 python, /app/main.py"
-						/>
-					</Form.Item>
-
-					<Form.Item name="args" label="参数">
-						<Select
-							mode="tags"
-							tokenSeparators={[","]}
-							placeholder="例如 --input, {{inputs.asset}}"
-						/>
-					</Form.Item>
-
-					<Form.List name="envRows">
-						{(fields, { add, remove }) => (
-							<div>
-								<div
-									style={{
-										display: "flex",
-										alignItems: "center",
-										justifyContent: "space-between",
-										marginBottom: 8,
-									}}
-								>
-									<Typography.Text>环境变量</Typography.Text>
-									<Button size="small" onClick={() => add({})}>
-										添加变量
-									</Button>
-								</div>
-								{fields.map((field) => (
-									<Space
-										key={field.key}
-										align="baseline"
-										style={{ display: "flex", marginBottom: 8 }}
+						<Form.List name="envRows">
+							{(fields, { add, remove }) => (
+								<div>
+									<div
+										style={{
+											display: "flex",
+											alignItems: "center",
+											justifyContent: "space-between",
+											marginBottom: 8,
+										}}
 									>
-										<Form.Item {...field} name={[field.name, "name"]}>
-											<Input placeholder="KEY" style={{ width: 220 }} />
-										</Form.Item>
-										<Form.Item {...field} name={[field.name, "value"]}>
-											<Input placeholder="value" style={{ width: 320 }} />
-										</Form.Item>
-										<Button
-											type="text"
-											danger
-											icon={<DeleteOutlined />}
-											aria-label="移除环境变量"
-											onClick={() => remove(field.name)}
-										/>
-									</Space>
-								))}
-							</div>
-						)}
-					</Form.List>
+										<Typography.Text>环境变量</Typography.Text>
+										{!isViewMode ? (
+											<Button size="small" onClick={() => add({})}>
+												添加变量
+											</Button>
+										) : null}
+									</div>
+									{fields.map((field, index) => (
+										<Space
+											key={field.key}
+											align="baseline"
+											style={{ display: "flex", marginBottom: 8 }}
+										>
+											<span style={{ width: 20, color: "rgba(0,0,0,0.45)" }}>
+												{index + 1}.
+											</span>
+											<Form.Item {...field} name={[field.name, "name"]}>
+												<Input
+													placeholder="KEY"
+													style={{ width: 220 }}
+													disabled={isViewMode}
+												/>
+											</Form.Item>
+											<Form.Item {...field} name={[field.name, "value"]}>
+												<Input
+													placeholder="value"
+													style={{ width: 320 }}
+													disabled={isViewMode}
+												/>
+											</Form.Item>
+											{!isViewMode ? (
+												<Button
+													type="text"
+													danger
+													icon={<DeleteOutlined />}
+													aria-label="移除环境变量"
+													onClick={() => remove(field.name)}
+												/>
+											) : null}
+										</Space>
+									))}
+								</div>
+							)}
+						</Form.List>
 				</Form>
 			</Modal>
-		.</div>
+		</div>
 	);
 }
