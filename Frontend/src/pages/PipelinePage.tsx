@@ -1335,41 +1335,53 @@ export default function PipelinePage() {
 		[searchParams, setSearchParams],
 	);
 
+	const tabLabel = useCallback((title: string, subtitle: string) => {
+		return (
+			<div className="pipeline-tab-label">
+				<span className="pipeline-tab-label__title">{title}</span>
+				<span className="pipeline-tab-label__subtitle">{subtitle}</span>
+			</div>
+		);
+	}, []);
+
 	return (
 		<div className="pipeline-tabs-page">
 			<Tabs
 				activeKey={activeTab}
 				onChange={onTabChange}
 				destroyOnHidden={false}
+				animated={{ inkBar: true, tabPane: true }}
 				items={[
 					{
 						key: "design",
-						label: "设计",
+						label: tabLabel("设计", "编辑流水线画布"),
 						children: (
-							<ErrorBoundary
-								title="流水线设计错误"
-								subTitle="设计画布加载失败，可重试或刷新页面"
-							>
-								<FlowEditorProvider>
-									<PipelineCanvas />
-								</FlowEditorProvider>
-							</ErrorBoundary>
+							<div className="pipeline-tab-content pipeline-tab-content--canvas">
+								<ErrorBoundary
+									title="流水线设计错误"
+									subTitle="设计画布加载失败，可重试或刷新页面"
+								>
+									<FlowEditorProvider>
+										<PipelineCanvas />
+									</FlowEditorProvider>
+								</ErrorBoundary>
+							</div>
 						),
 					},
 					{
 						key: "executions",
-						label: "执行记录",
+						label: tabLabel("执行记录", "查看和管理流水线运行"),
 						children: (
-							<div style={{ padding: 24 }}>
-								<WorkflowExecutionList />
+							<div className="pipeline-tab-content pipeline-tab-content--panel">
+								<WorkflowExecutionList active={activeTab === "executions"} />
 							</div>
 						),
 					},
 					{
 						key: "components",
-						label: "组件",
+						label: tabLabel("组件", "管理可复用的步骤定义"),
 						children: (
-							<div style={{ padding: 24 }}>
+							<div className="pipeline-tab-content pipeline-tab-content--panel">
 								<ComponentManager />
 							</div>
 						),
