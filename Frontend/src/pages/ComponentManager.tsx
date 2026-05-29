@@ -188,9 +188,10 @@ export function ComponentManager() {
 
 	useEffect(() => {
 		if (!modalOpen || !isCreateMode) return;
+		// 等 Modal 进场动画完成后再聚焦
 		const id = window.setTimeout(() => {
 			nameInputRef.current?.focus();
-		}, 0);
+		}, 200);
 
 		return () => window.clearTimeout(id);
 	}, [isCreateMode, modalOpen]);

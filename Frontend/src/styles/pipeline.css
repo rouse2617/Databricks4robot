@@ -1163,7 +1163,28 @@
 }
 
 .pipeline-tab-content--panel {
-	max-width: 1320px;
+	max-width: 960px;
+}
+
+@media (max-width: 640px) {
+	.pipeline-tab-content--panel {
+		max-width: none;
+	}
+}
+
+.pipeline-tabs-page .ant-tabs-tabpane {
+	animation: pipelineTabFadeIn 0.2s ease-out;
+}
+
+@keyframes pipelineTabFadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .pipeline-tab-content--canvas {

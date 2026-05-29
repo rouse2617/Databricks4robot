@@ -590,6 +590,7 @@ export function WorkflowExecutionList({
 						columns={columns}
 						rowKey="name"
 						loading={loading}
+						scroll={{ x: 1200 }}
 						rowClassName={() => "pipeline-execution-table-row"}
 						onRow={(record) => ({
 							onClick: (event) => {
