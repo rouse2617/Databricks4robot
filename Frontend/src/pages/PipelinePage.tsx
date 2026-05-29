@@ -23,6 +23,7 @@ import {
 	message,
 	Modal,
 	Tooltip,
+	Tabs,
 	Typography,
 } from "antd";
 
@@ -65,6 +66,8 @@ import {
 	normalizeComponentArgs,
 	toTranspilerPipeline,
 } from "../lib/pipelineContract";
+import { ComponentManager } from "./ComponentManager";
+import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 import "../styles/pipeline.css";
 
@@ -755,7 +758,7 @@ function PipelineCanvas() {
 
 	const applyImportedPipeline = useCallback(() => {
 		const text =
-			document.querySelector(".ant-modal textarea")?.value?.trim() ||
+			(document.querySelector(".ant-modal textarea") as HTMLTextAreaElement | null)?.value?.trim() ||
 			importTextRef.current.trim();
 		if (!text) {
 			message.warning("请粘贴 Pipeline JSON");
@@ -1576,10 +1579,74 @@ function PipelineCanvas() {
 	);
 }
 
+type PipelineTab = "design" | "executions" | "components";
+
+function resolvePipelineTab(raw: string | null): PipelineTab {
+	switch (raw) {
+		case "executions":
+			return "executions";
+		case "components":
+			return "components";
+		default:
+			return "design";
+	}
+}
+
 export default function PipelinePage() {
+	const [searchParams, setSearchParams] = useSearchParams();
+	const activeTab = useMemo(
+		() => resolvePipelineTab(searchParams.get("tab")),
+		[searchParams],
+	);
+	const onTabChange = useCallback(
+		(nextTab: string) => {
+			const next = new URLSearchParams(searchParams);
+			if (nextTab === "design") {
+				next.delete("tab");
+			} else {
+				next.set("tab", nextTab);
+			}
+			setSearchParams(next, { replace: true });
+		},
+		[searchParams, setSearchParams],
+	);
+
 	return (
-		<FlowEditorProvider>
-			<PipelineCanvas />
-		</FlowEditorProvider>
+		<div className="pipeline-tabs-page">
+			<Tabs
+				activeKey={activeTab}
+				onChange={onTabChange}
+				destroyInactiveTabPane={false}
+				items={[
+					{
+						key: "design",
+						label: "设计",
+						children: (
+							<FlowEditorProvider>
+								<PipelineCanvas />
+							</FlowEditorProvider>
+						),
+					},
+					{
+						key: "executions",
+						label: "执行记录",
+						children: (
+							<div style={{ padding: 24 }}>
+								<WorkflowExecutionList />
+							</div>
+						),
+					},
+					{
+						key: "components",
+						label: "组件",
+						children: (
+							<div style={{ padding: 24 }}>
+								<ComponentManager />
+							</div>
+						),
+					},
+				]}
+			/>
+		</div>
 	);
 }

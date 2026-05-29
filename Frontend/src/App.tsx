@@ -27,8 +27,6 @@ const MetricsSearchPage = lazy(() => import("./pages/MetricsSearchPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const EventsPage = lazy(() => import("./pages/EventsPage"));
 const PipelinePage = lazy(() => import("./pages/PipelinePage"));
-const ComponentListPage = lazy(() => import("./pages/ComponentListPage"));
-const WorkflowListPage = lazy(() => import("./pages/WorkflowListPage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
@@ -72,8 +70,14 @@ function ProtectedRoutes() {
 						<Route path="/metrics" element={<MetricsSearchPage />} />
 						<Route path="/events" element={<EventsPage />} />
 						<Route path="/pipeline" element={<PipelinePage />} />
-						<Route path="/components" element={<ComponentListPage />} />
-						<Route path="/workflows" element={<WorkflowListPage />} />
+						<Route
+							path="/components"
+							element={<Navigate to="/pipeline?tab=components" replace />}
+						/>
+						<Route
+							path="/workflows"
+							element={<Navigate to="/pipeline?tab=executions" replace />}
+						/>
 						<Route path="/workflows/:name" element={<WorkflowDetailPage />} />
 						<Route path="/settings" element={<SettingsPage />} />
 						<Route path="*" element={<Navigate to="/dashboard" replace />} />

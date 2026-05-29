@@ -1,6 +1,5 @@
 import {
 	ApartmentOutlined,
-	AppstoreOutlined,
 	DashboardOutlined,
 	DatabaseOutlined,
 	FileOutlined,
@@ -8,7 +7,6 @@ import {
 	FundProjectionScreenOutlined,
 	HistoryOutlined,
 	LogoutOutlined,
-	PlayCircleOutlined,
 	RobotOutlined,
 	SendOutlined,
 	SettingOutlined,
@@ -37,9 +35,7 @@ const menuItems = [
 	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
-	{ key: "/components", icon: <AppstoreOutlined />, label: "步骤组件" },
-	{ key: "/pipeline", icon: <ForkOutlined />, label: "流水线设计" },
-	{ key: "/workflows", icon: <PlayCircleOutlined />, label: "流水线执行记录" },
+	{ key: "/pipeline", icon: <ForkOutlined />, label: "流水线" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
 	{
@@ -59,19 +55,15 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/events")) return "/events";
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
-	if (pathname.startsWith("/components")) return "/components";
 	if (pathname.startsWith("/pipeline")) return "/pipeline";
-	if (pathname.startsWith("/workflows")) return "/workflows";
+	if (pathname.startsWith("/workflows")) return "/pipeline";
 	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	if (pathname.startsWith("/algo")) return "/algo";
 	return "/assets";
 }
 
 function isFullBleedPage(pathname: string): boolean {
-	return (
-		pathname.startsWith("/pipeline") ||
-		/^\/workflows\/[^/]+/.test(pathname)
-	);
+	return pathname.startsWith("/pipeline");
 }
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -160,7 +152,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 								items: [
 									{
 										key: "logout",
-										icon: <LogoutOutlined />,
+										icon: <LogoutOutlined />
+										,
 										label: "退出登录",
 										onClick: () => {
 											logout();
