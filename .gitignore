@@ -33,7 +33,7 @@ backend/.env
 !backend/.env.example
 deploy/cloudrun/backend.env.runtime
 
-# OpenSpec design artifact screenshots (do not commit deploy-verify images)
+# OpenSpec design artifact screenshots
 openspec/changes/**/*.png
 
 # GCP
@@ -47,13 +47,17 @@ openspec/changes/**/*.png
 !deploy/k8s/monitoring/dashboards/*.json
 !backend/schemas/events/*.json
 
-# IDE / editor local (do not commit machine-specific or assistant bundles)
+# IDE / editor / agent configs (local only)
 .idea/
 .vscode/
 .cursor/
+.cursor-plugin/
+.kiro/
 .cursorrules
 .agents/
-.kiro/
+.agent/tasks/
+.agent/screenshots/
+.omm/
 *.swp
 
 # OS
@@ -66,57 +70,40 @@ Frontend/e2e/report/
 Frontend/e2e/screenshots/*.png
 /e2e-screenshots/
 
-# Agent QA dumps at repo root (keep under docs/screenshots/ if needed)
+# Agent QA dumps (keep under docs/screenshots/ if needed)
 /screenshot*.png
 /verify_*.png
 /review.js
 docs/screenshots/qa-session-*/
+frontend-dev-screenshot*.png
+backend-dev-screenshot*.png
 
-# Local Feishu wiki sync (scripts/sync_review_to_wiki_incremental.py output + state)
+# Local Feishu wiki sync
 .sync_tmp_docs_review_to_wiki_*/
 .sync_state_docs_review_to_wiki*.json
 .cursor_tmp_*.json
 
 # Local temp worktrees / nested repos
+.worktrees-split/
 .local/
 .claude/
-.cursor/
 _tmp_cyber_iac/
 _tmp_cyber_iac_fresh/
-.agents/
-# Agent QA dumps at repo root (keep under docs/screenshots/ if needed)
-# Agent/IDE personal configs — keep local only
-.agents/skills/
-# Agent task files — local only, not code
-.agent/tasks/
-.cursor-plugin/
-.omm/
-.vscode/
 
 # Test coverage
 Frontend/coverage/
 
-
 # Dagster (unused scaffold)
 dagster/
 
-
 # Personal/temporary files
-.cursorrules
 skills-lock.json
 TODO.md
 ralph.yml
 
-# Deploy verification screenshots
-frontend-dev-screenshot*.png
-backend-dev-screenshot*.png
-
-# Argo UI full source (not directly used — embed by reference)
+# Argo UI full source (not directly used)
 argo-ui/
 
-# Task / planning files (no code)
+# Task / planning files
 TASK-*
 .hermes/TASK-*
-
-# Agent screenshots (local-only QA artifacts)
-.agent/screenshots/
