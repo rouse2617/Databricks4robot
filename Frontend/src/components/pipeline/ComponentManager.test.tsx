@@ -24,6 +24,19 @@ function queryButton(name: string) {
 	});
 }
 
+function expandComponentGroups() {
+	for (const header of document.querySelectorAll(".ant-collapse-header")) {
+		if (header.getAttribute("aria-expanded") === "false") {
+			fireEvent.click(header);
+		}
+	}
+}
+
+function openComponentByName(name: string) {
+	expandComponentGroups();
+	fireEvent.click(screen.getByText(name));
+}
+
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {
 		writable: true,
@@ -76,6 +89,7 @@ describe("ComponentManager", () => {
 		render(
 			<ComponentManager components={sampleComponents} onChange={() => {}} />,
 		);
+		expandComponentGroups();
 		expect(screen.getByText("step-a")).toBeTruthy();
 		expect(screen.getByText("step-b")).toBeTruthy();
 		expect(screen.getByText("busybox:latest")).toBeTruthy();
@@ -96,7 +110,7 @@ describe("ComponentManager", () => {
 		render(
 			<ComponentManager components={sampleComponents} onChange={() => {}} />,
 		);
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 		expect(screen.getByText("编辑组件")).toBeTruthy();
 		// Name input should be populated
 		const nameInput = screen.getByPlaceholderText(
@@ -172,7 +186,7 @@ describe("ComponentManager", () => {
 		);
 
 		// Click existing component to edit
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 		// Modify name
 		const nameInput = screen.getByPlaceholderText(
 			"my-component",
@@ -201,7 +215,7 @@ describe("ComponentManager", () => {
 		);
 
 		// Open edit for a component
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 		// Click delete button
 		fireEvent.click(getButton("删除"));
 
@@ -251,7 +265,7 @@ describe("ComponentManager", () => {
 			/>,
 		);
 
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 		fireEvent.click(getButton("删除"));
 
 		await waitFor(() => {
@@ -266,7 +280,7 @@ describe("ComponentManager", () => {
 			<ComponentManager components={sampleComponents} onChange={onChange} />,
 		);
 
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 
 		const commandInput = screen.getByPlaceholderText(
 			'["sh", "-c"]',
@@ -293,7 +307,7 @@ describe("ComponentManager", () => {
 			<ComponentManager components={sampleComponents} onChange={() => {}} />,
 		);
 
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 		expect(screen.getByText("编辑组件")).toBeTruthy();
 
 		fireEvent.click(getButton("取消"));
@@ -315,7 +329,7 @@ describe("ComponentManager", () => {
 			<ComponentManager components={sampleComponents} onChange={() => {}} />,
 		);
 
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 
 		// The active item should have class "active"
 		const activeItems = document.querySelectorAll(".cm-item.active");
@@ -330,9 +344,9 @@ describe("ComponentManager", () => {
 		);
 
 		// Edit step-a
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 		// Switch to step-b
-		fireEvent.click(screen.getByText("step-b"));
+		openComponentByName("step-b");
 
 		await waitFor(() => {
 			// Form should now show step-b data
@@ -349,7 +363,7 @@ describe("ComponentManager", () => {
 			<ComponentManager components={sampleComponents} onChange={onChange} />,
 		);
 
-		fireEvent.click(screen.getByText("step-a"));
+		openComponentByName("step-a");
 		const nameInput = screen.getByPlaceholderText(
 			"my-component",
 		) as HTMLInputElement;

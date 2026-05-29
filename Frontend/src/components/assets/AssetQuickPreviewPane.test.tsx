@@ -89,15 +89,21 @@ describe("AssetQuickPreviewPane", () => {
 	});
 
 	it("renders collapsed state as thin bar with expand button", () => {
-		const { container } = renderPane({ collapsed: true });
-		// Should render a narrow div, not the full card
+		const { container } = renderPane({
+			collapsed: true,
+			activeAssetId: "asset-001",
+		});
 		const bar = container.firstElementChild as HTMLElement;
 		expect(bar.style.width).toBe("36px");
 	});
 
 	it("calls onCollapse when expand button is clicked in collapsed state", () => {
 		const fn = vi.fn();
-		renderPane({ collapsed: true, onCollapse: fn });
+		renderPane({
+			collapsed: true,
+			activeAssetId: "asset-001",
+			onCollapse: fn,
+		});
 		const btn = screen.getByTitle("展开预览");
 		fireEvent.click(btn);
 		expect(fn).toHaveBeenCalledOnce();
@@ -222,16 +228,18 @@ describe("AssetQuickPreviewPane", () => {
 		expect(fn).toHaveBeenCalledWith("asset-001");
 	});
 
-	it("renders disabled Find Similar button with tooltip", () => {
+	it("renders Find Similar button and calls onFindSimilar when clicked", () => {
+		const fn = vi.fn();
 		const asset = makeAsset();
 		renderPane({
 			activeAssetId: "asset-001",
 			fetchStatus: "success",
 			asset,
 			previewManifest: defaultManifest,
+			onFindSimilar: fn,
 		});
-		const btn = screen.getByText("查找相似").closest("button");
-		expect(btn?.disabled).toBe(true);
+		fireEvent.click(screen.getByText("查找相似"));
+		expect(fn).toHaveBeenCalledWith("asset-001");
 	});
 
 	it("shows error state when fetchStatus is error and no asset", () => {

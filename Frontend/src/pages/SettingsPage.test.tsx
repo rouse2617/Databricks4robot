@@ -86,6 +86,20 @@ vi.mock("../lib/apiError", () => ({
 	extractApiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }));
 
+vi.mock("../api/lakehouse", () => ({
+	lakehouseApi: {
+		syncProgress: vi.fn(() =>
+			Promise.resolve({
+				outbox_published_max_seq: 1000,
+				bronze_max_event_seq: 950,
+				bronze_lag_events: 50,
+				bronze_stale_seconds: 120,
+				checked_at: "2026-05-12T00:00:00Z",
+			}),
+		),
+	},
+}));
+
 afterEach(() => {
 	cleanup();
 	mockCreateReindexJob.mockReset();
