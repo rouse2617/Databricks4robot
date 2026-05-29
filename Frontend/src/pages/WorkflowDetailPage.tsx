@@ -15,6 +15,7 @@ import {
 	Spin,
 	Tag,
 	Tooltip,
+	Alert,
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -189,6 +190,7 @@ export default function WorkflowDetailPage() {
 	const {
 		workflow,
 		loading,
+		loadError,
 		selectedNode,
 		selectNode,
 		loadWorkflow,
@@ -295,8 +297,30 @@ export default function WorkflowDetailPage() {
 		);
 	}
 
-	if (!workflow) {
+	if (!loading && loadError?.kind === "not_found") {
 		return <div style={{ padding: 24 }}>未找到工作流</div>;
+	}
+
+	if (!loading && loadError?.kind === "error") {
+		return (
+			<div style={{ padding: 24 }}>
+				<Alert
+					type="error"
+					showIcon
+					message="加载工作流失败"
+					description={loadError.message}
+					action={
+						<Button size="small" onClick={loadWorkflow}>
+							重试
+						</Button>
+					}
+				/>
+			</div>
+		);
+	}
+
+	if (!workflow) {
+		return null;
 	}
 
 	return (

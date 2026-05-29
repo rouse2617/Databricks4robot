@@ -18,6 +18,7 @@ import {
 	getPipeline,
 	listDeployments,
 	listPipelines,
+	retryDeployment,
 	type PipelineTemplate,
 } from "../../api/pipelineApi";
 import AssetPicker from "./AssetPicker";
@@ -39,6 +40,8 @@ const STATUS_COLORS: Record<string, string> = {
 	Failed: "error",
 	Error: "error",
 };
+
+const RETRYABLE_DEPLOYMENT_STATUSES = new Set(["Failed", "Error"]);
 
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
 
@@ -304,6 +307,16 @@ export function DeployPanel({
 			refresh();
 		} catch (err) {
 			message.error(`删除失败: ${String(err)}`);
+		}
+	};
+
+	const handleRetryDeployment = async (id: string) => {
+		try {
+			await retryDeployment(id);
+			message.success("已重新提交部署");
+			refresh();
+		} catch (err) {
+			message.error(`重试失败: ${String(err)}`);
 		}
 	};
 
@@ -596,6 +609,15 @@ export function DeployPanel({
 											onClick={() => navigate(`/assets/${pipelineAssetId}`)}
 										>
 											查看关联资产
+										</Button>
+									) : null}
+									{RETRYABLE_DEPLOYMENT_STATUSES.has(d.status) ? (
+										<Button
+											size="small"
+											icon={<ReloadOutlined />}
+											onClick={() => handleRetryDeployment(d.id)}
+										>
+											重试
 										</Button>
 									) : null}
 									<Button
