@@ -436,18 +436,18 @@ export function ComponentManager() {
 				/>
 			) : null}
 
-				{!loading && filteredItems.length === 0 ? (
-					<Empty description="暂无组件，点击「新建组件」创建第一个步骤定义" />
-				) : (
+			{!loading && filteredItems.length === 0 ? (
+				<Empty description="暂无组件，点击「新建组件」创建第一个步骤定义" />
+			) : (
 				<Table
 					rowKey="id"
 					loading={loading}
 					columns={columns}
 					dataSource={filteredItems}
-						pagination={{ pageSize: 12, showSizeChanger: true }}
-						scroll={{ x: 900 }}
-					/>
-				)}
+					pagination={{ pageSize: 12, showSizeChanger: true }}
+					scroll={{ x: 900 }}
+				/>
+			)}
 
 			<Modal
 				open={modalOpen}
@@ -460,7 +460,7 @@ export function ComponentManager() {
 				onOk={handleSave}
 				onCancel={closeModal}
 				width={760}
-				destroyOnHidden
+				destroyOnClose
 				footer={
 					isViewMode
 						? [

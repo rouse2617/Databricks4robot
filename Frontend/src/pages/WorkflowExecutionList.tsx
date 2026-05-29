@@ -581,7 +581,7 @@ export function WorkflowExecutionList({
 					title={false}
 					style={{ width: "100%" }}
 				/>
-				) : items.length === 0 ? (
+				) : !error && items.length === 0 ? (
 					<Empty description="暂无执行记录，部署流水线后将自动生成" />
 				) : (
 				<div className="pipeline-execution-table">
