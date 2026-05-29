@@ -4,6 +4,8 @@ import { Component } from "react";
 
 interface Props {
 	children: ReactNode;
+	title?: string;
+	subTitle?: string;
 }
 
 interface State {
@@ -25,18 +27,25 @@ export default class ErrorBoundary extends Component<Props, State> {
 		console.error("ErrorBoundary caught:", error, errorInfo);
 	}
 
+	handleRetry = () => {
+		this.setState({ hasError: false, error: null });
+	};
+
 	render() {
 		if (this.state.hasError) {
 			return (
 				<Result
 					status="error"
-					title="页面出错了"
-					subTitle={this.state.error?.message ?? "未知错误"}
-					extra={
-						<Button type="primary" onClick={() => window.location.reload()}>
+					title={this.props.title ?? "页面出错了"}
+					subTitle={this.state.error?.message ?? this.props.subTitle ?? "未知错误"}
+					extra={[
+						<Button key="retry" type="primary" onClick={this.handleRetry}>
+							重试
+						</Button>,
+						<Button key="reload" onClick={() => window.location.reload()}>
 							刷新页面
-						</Button>
-					}
+						</Button>,
+					]}
 				/>
 			);
 		}

@@ -4,18 +4,23 @@ import {
 	Position,
 	SelectType,
 } from "@ant-design/pro-flow";
+import { memo } from "react";
 import type { PipelineNodeData } from "./types";
 
-export function PipelineStepNode({
+function PipelineStepNodeInner({
 	data,
 	selected,
 }: NodeProps<PipelineNodeData>) {
 	const selectType = selected
 		? (data.selectType as SelectType | undefined) || SelectType.SELECT
 		: SelectType.DEFAULT;
+	const label = data.label || "未命名步骤";
 	return (
 		<div
 			className={`pipeline-node select-${selectType} ${selected ? "selected" : ""}`}
+			role="group"
+			aria-label={`流水线节点 ${label}`}
+			aria-selected={selected}
 		>
 			<Handle type="target" position={Position.Left} className="node-handle" />
 			<div className="node-header">
@@ -29,3 +34,5 @@ export function PipelineStepNode({
 		</div>
 	);
 }
+
+export const PipelineStepNode = memo(PipelineStepNodeInner);

@@ -16,10 +16,22 @@ import PipelinePage from "./PipelinePage";
 // ── Mock pipelineApi ──────────────────────────────────────────────
 const mockSavePipeline = vi.fn();
 const mockDeployTemplate = vi.fn();
+const mockListPipelines = vi.fn().mockResolvedValue([]);
+const mockListDeployments = vi.fn().mockResolvedValue([]);
+const mockGetPipeline = vi.fn();
+const mockDeletePipeline = vi.fn();
+const mockDeleteDeployment = vi.fn();
+const mockPreviewDeploy = vi.fn();
 
 vi.mock("../api/pipelineApi", () => ({
 	savePipeline: (...args: unknown[]) => mockSavePipeline(...args),
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
+	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
+	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
+	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
+	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
+	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
+	previewDeploy: (...args: unknown[]) => mockPreviewDeploy(...args),
 }));
 
 // ── Mock pipelineComponentApi ─────────────────────────────────────
@@ -84,10 +96,8 @@ function mockDeployResult(overrides: Partial<Deployment> = {}): Deployment {
 	};
 }
 
-function clickDeployTab() {
-	const tabs = document.querySelectorAll(".pipeline-toolbar__tab");
-	expect(tabs.length).toBeGreaterThanOrEqual(2);
-	fireEvent.click(tabs[1] as HTMLButtonElement);
+function openSavedDrawer() {
+	fireEvent.click(screen.getByText("查看全部"));
 }
 
 /** Import a pipeline with one node so canvas is non-empty for deploy tests. */
@@ -152,11 +162,12 @@ describe("PipelinePage", () => {
 	});
 
 	// ── Render & structure ──────────────────────────────────────────
-	it("renders the page with three tab buttons", () => {
+	it("renders the design toolbar and saved panel", () => {
 		renderPage();
 		expect(screen.getAllByText("组件").length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText("画布")).toBeInTheDocument();
-		expect(screen.getAllByText("部署").length).toBeGreaterThanOrEqual(1);
+		expect(screen.getByText("保存")).toBeInTheDocument();
+		expect(screen.getByTestId("saved-pipelines-panel")).toBeInTheDocument();
+		expect(screen.getByText("已保存")).toBeInTheDocument();
 	});
 
 	it("shows canvas toolbar buttons by default", () => {
@@ -178,19 +189,12 @@ describe("PipelinePage", () => {
 		expect(screen.getByRole("heading", { name: "组件" })).toBeInTheDocument();
 	});
 
-	it("switches to deploy tab", async () => {
+	it("opens saved drawer from sidebar link", async () => {
 		renderPage();
-		clickDeployTab();
+		openSavedDrawer();
 		await waitFor(() => {
-			expect(screen.getByText("最近部署")).toBeInTheDocument();
+			expect(screen.getByText("已保存与运行记录")).toBeInTheDocument();
 		});
-	});
-
-	it("switches back to canvas tab from deploy", () => {
-		renderPage();
-		clickDeployTab();
-		fireEvent.click(screen.getByText("画布"));
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
 	});
 
 	// ── Export ──────────────────────────────────────────────────────
@@ -270,7 +274,7 @@ describe("PipelinePage", () => {
 	it("disables toolbar deploy when canvas is empty", () => {
 		renderPage();
 		expect(screen.getByRole("button", { name: /play-circle/i })).toBeDisabled();
-		expect(screen.getByText("开始设计流水线")).toBeInTheDocument();
+		expect(screen.getByText("拖入组件开始设计")).toBeInTheDocument();
 	});
 
 	it("opens deploy modal with title", async () => {
@@ -304,7 +308,10 @@ describe("PipelinePage", () => {
 		});
 
 		// Change workflow name
-		const nameInput = screen.getByPlaceholderText("with-nodes");
+		const nameInput = document.getElementById(
+			"pp-workflow-name",
+		) as HTMLInputElement;
+		expect(nameInput).toBeTruthy();
 		fireEvent.change(nameInput, { target: { value: "my-workflow" } });
 
 		// Click the modal's primary deploy button
@@ -386,7 +393,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(screen.getByText("查看 Workflow"));
 	});
 
-	it("switches to deploy tab on '查看部署'", async () => {
+	it("opens saved drawer on '查看记录'", async () => {
 		mockSavePipeline.mockResolvedValueOnce({
 			id: "tmpl-001",
 			name: "with-nodes",
@@ -399,12 +406,12 @@ describe("PipelinePage", () => {
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() =>
-			expect(screen.getByText(/查看部署/)).toBeInTheDocument(),
+			expect(screen.getByText(/查看记录/)).toBeInTheDocument(),
 		);
-		fireEvent.click(screen.getByText(/查看部署/));
+		fireEvent.click(screen.getByText(/查看记录/));
 
 		await waitFor(() => {
-			expect(screen.getByText("最近部署")).toBeInTheDocument();
+			expect(screen.getByText("已保存与运行记录")).toBeInTheDocument();
 		});
 	});
 

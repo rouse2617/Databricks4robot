@@ -6,6 +6,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -347,10 +348,14 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("test-pipeline")).toBeTruthy();
 
-		// Find delete buttons (danger type with DeleteOutlined)
-		const deleteBtns = screen.getAllByRole("button", { name: /delete/i });
-		expect(deleteBtns.length).toBeGreaterThanOrEqual(1);
-		fireEvent.click(deleteBtns[0]);
+		fireEvent.click(screen.getByRole("button", { name: /删除流水线/i }));
+		await waitFor(() => {
+			expect(document.querySelector(".ant-popconfirm")).toBeTruthy();
+		});
+		const popconfirm = document.querySelector(".ant-popconfirm") as HTMLElement;
+		fireEvent.click(
+			within(popconfirm).getByRole("button", { name: /删.*除/ }),
+		);
 
 		await waitFor(() => {
 			expect(mockDeletePipeline).toHaveBeenCalledWith("tmpl-001");

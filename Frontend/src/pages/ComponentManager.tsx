@@ -120,7 +120,7 @@ function toPayload(values: ComponentFormValues): PipelineComponentPayload {
 
 export function ComponentManager() {
 	const [items, setItems] = useState<PipelineComponentAPI[]>([]);
-	const [loading, setLoading] = useState(false);
+	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
@@ -319,6 +319,7 @@ export function ComponentManager() {
 				</div>
 				<Space wrap>
 					<Input.Search
+						id="component-manager-search"
 						allowClear
 						placeholder="搜索名称、镜像或描述"
 						value={search}

@@ -7,9 +7,9 @@ import {
 	PlayCircleOutlined,
 	ReloadOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Dropdown, Modal, message, Space, Tag } from "antd";
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Alert, Button, Dropdown, Modal, Popconfirm, Skeleton, Space, Tag, message } from "antd";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
 	type Deployment,
 	deleteDeployment,
@@ -21,6 +21,15 @@ import {
 	type PipelineTemplate,
 } from "../../api/pipelineApi";
 import AssetPicker from "./AssetPicker";
+import { PipelineEmptyState } from "./PipelineEmptyState";
+import {
+	COMPACT_TEMPLATE_LIMIT,
+	DEPLOYMENT_PAGE_SIZE,
+	SIDEBAR_TEMPLATE_LIMIT,
+	TEMPLATE_PAGE_SIZE,
+	dedupeTemplatesByName,
+	prepareDeployments,
+} from "./deployPanelUtils";
 import type { Pipeline } from "./types";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -30,6 +39,23 @@ const STATUS_COLORS: Record<string, string> = {
 	Failed: "error",
 	Error: "error",
 };
+
+export type DeployPanelVariant = "full" | "compact" | "sidebar";
+
+function PanelSkeleton({ rows = 3 }: { rows?: number }) {
+	return (
+		<div className="deploy-panel-skeleton" data-testid="deploy-panel-loading">
+			{Array.from({ length: rows }, (_, index) => (
+				<Skeleton
+					key={index}
+					active
+					paragraph={{ rows: 1 }}
+					title={false}
+				/>
+			))}
+		</div>
+	);
+}
 
 function toStringArray(value: unknown): string[] {
 	if (typeof value === "string") return [value].filter(Boolean);
@@ -57,34 +83,172 @@ function extractPipelineAssetIds(pipelineJSON: Pipeline | undefined): string[] {
 		.sort();
 }
 
+function TemplateCard({
+	template,
+	onDirectRun,
+	onDeployWithAssets,
+	onEdit,
+	onDelete,
+	compactActions,
+}: {
+	template: PipelineTemplate;
+	onDirectRun: (id: string) => void;
+	onDeployWithAssets: (id: string) => void;
+	onEdit: (id: string) => void;
+	onDelete: (id: string) => void;
+	compactActions?: boolean;
+}) {
+	return (
+		<div key={template.id} className="dep-card">
+			<div className="dep-card-info">
+				<div className="dep-card-name">{template.name}</div>
+				{!compactActions ? (
+					<div className="dep-card-meta">
+						<span>{template.nodeCount} 个节点</span>
+						<span className="dot">•</span>
+						<span>{new Date(template.createdAt).toLocaleString()}</span>
+					</div>
+				) : (
+					<div className="dep-card-meta dep-card-meta--compact">
+						<span>{template.nodeCount} 个节点</span>
+					</div>
+				)}
+			</div>
+			{compactActions ? (
+				<Space.Compact>
+					<Button
+						size="small"
+						icon={<EditOutlined />}
+						onClick={() => onEdit(template.id)}
+					>
+						打开
+					</Button>
+					<Popconfirm
+						title="删除此流水线？"
+						description="删除后不可恢复"
+						okText="删除"
+						cancelText="取消"
+						onConfirm={() => onDelete(template.id)}
+					>
+						<Button
+							size="small"
+							danger
+							icon={<DeleteOutlined />}
+							aria-label="删除流水线"
+						/>
+					</Popconfirm>
+				</Space.Compact>
+			) : (
+				<div className="deploy-btn-list">
+					<Space.Compact>
+						<Button
+							size="small"
+							type="primary"
+							icon={<PlayCircleOutlined />}
+							onClick={() => onDirectRun(template.id)}
+						>
+							运行
+						</Button>
+						<Dropdown
+							menu={{
+								items: [
+									{
+										key: "assets",
+										label: "选择资产运行",
+										onClick: () => onDeployWithAssets(template.id),
+									},
+								],
+							}}
+							trigger={["click"]}
+						>
+							<Button
+								size="small"
+								type="primary"
+								style={{ padding: "0 4px" }}
+							>
+								<DownOutlined style={{ fontSize: 10 }} />
+							</Button>
+						</Dropdown>
+					</Space.Compact>
+					<Button
+						size="small"
+						icon={<EditOutlined />}
+						onClick={() => onEdit(template.id)}
+					>
+						编辑
+					</Button>
+					<Popconfirm
+						title="删除此流水线？"
+						description="删除后不可恢复"
+						okText="删除"
+						cancelText="取消"
+						onConfirm={() => onDelete(template.id)}
+					>
+						<Button
+							size="small"
+							danger
+							icon={<DeleteOutlined />}
+							aria-label="删除流水线"
+						/>
+					</Popconfirm>
+				</div>
+			)}
+		</div>
+	);
+}
+
 export function DeployPanel({
 	onEditTemplate,
 	refreshKey,
 	compact,
+	variant,
+	onViewAll,
 }: {
 	onEditTemplate?: (pipeline: Pipeline) => void;
 	refreshKey?: number;
 	compact?: boolean;
+	variant?: DeployPanelVariant;
+	onViewAll?: () => void;
 }) {
+	const resolvedVariant: DeployPanelVariant =
+		variant ?? (compact ? "compact" : "full");
 	const navigate = useNavigate();
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
-	const [loading, setLoading] = useState(false);
+	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState<string | null>(null);
+	const [templateVisibleCount, setTemplateVisibleCount] =
+		useState(TEMPLATE_PAGE_SIZE);
+	const [deploymentVisibleCount, setDeploymentVisibleCount] = useState(
+		DEPLOYMENT_PAGE_SIZE,
+	);
 
-	// Asset selection modal state
 	const [assetModalOpen, setAssetModalOpen] = useState(false);
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 	const [deploying, setDeploying] = useState(false);
 
+	const displayTemplates = useMemo(
+		() => dedupeTemplatesByName(templates),
+		[templates],
+	);
+	const displayDeployments = useMemo(
+		() => prepareDeployments(deployments),
+		[deployments],
+	);
+
 	const refresh = useCallback(async () => {
 		setLoading(true);
+		setError(null);
 		try {
 			const [d, t] = await Promise.all([listDeployments(), listPipelines()]);
 			setDeployments(d);
 			setTemplates(t);
-		} catch {
-			/* server not available */
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			setError(detail);
+			setDeployments([]);
+			setTemplates([]);
 		} finally {
 			setLoading(false);
 		}
@@ -93,6 +257,11 @@ export function DeployPanel({
 	useEffect(() => {
 		refresh();
 	}, [refresh, refreshKey]);
+
+	useEffect(() => {
+		setTemplateVisibleCount(TEMPLATE_PAGE_SIZE);
+		setDeploymentVisibleCount(DEPLOYMENT_PAGE_SIZE);
+	}, [templates, deployments]);
 
 	const handleDeployClick = (templateId: string) => {
 		setDeployTargetId(templateId);
@@ -162,34 +331,112 @@ export function DeployPanel({
 		}
 	};
 
-	if (compact) {
-		const recentDeployments = deployments.slice(0, 3);
+	const renderTemplateSection = (
+		items: PipelineTemplate[],
+		options?: { compactActions?: boolean; emptyLabel?: string },
+	) => {
+		if (loading) {
+			return <PanelSkeleton rows={resolvedVariant === "sidebar" ? 2 : 3} />;
+		}
+		if (items.length === 0) {
+			return (
+				<PipelineEmptyState
+					variant="deploy"
+					title={options?.emptyLabel ?? "暂无已保存的流水线模板"}
+				/>
+			);
+		}
+		return items.map((t) => (
+			<TemplateCard
+				key={t.id}
+				template={t}
+				onDirectRun={handleDirectRun}
+				onDeployWithAssets={handleDeployClick}
+				onEdit={handleEditTemplate}
+				onDelete={handleDeleteTemplate}
+				compactActions={options?.compactActions}
+			/>
+		));
+	};
+
+	if (resolvedVariant === "sidebar") {
+		const sidebarTemplates = displayTemplates.slice(0, SIDEBAR_TEMPLATE_LIMIT);
+		const hiddenCount = Math.max(
+			displayTemplates.length - sidebarTemplates.length,
+			0,
+		);
+
 		return (
-			<div className="deploy-panel">
-				<div
-					style={{
-						display: "flex",
-						justifyContent: "space-between",
-						alignItems: "center",
-						marginBottom: 12,
-					}}
-				>
+			<div className="deploy-panel deploy-panel--sidebar">
+				<div className="deploy-panel-sidebar__header">
+					<div className="deploy-panel-sidebar__title">已保存</div>
+					{!loading ? (
+						<span className="count">{displayTemplates.length}</span>
+					) : null}
+				</div>
+				{error ? (
+					<Alert
+						type="error"
+						showIcon
+						message="加载失败"
+						description={error}
+						style={{ marginBottom: 12, fontSize: 12 }}
+					/>
+				) : null}
+				<div className="deploy-section">
+					{renderTemplateSection(sidebarTemplates, {
+						compactActions: true,
+					})}
+				</div>
+				{hiddenCount > 0 || onViewAll ? (
+					<div className="deploy-panel-sidebar__footer">
+						{hiddenCount > 0 ? (
+							<span className="deploy-panel-sidebar__hint">
+								还有 {hiddenCount} 个模板未显示
+							</span>
+						) : null}
+						{onViewAll ? (
+							<Button type="link" size="small" onClick={onViewAll}>
+								查看全部
+							</Button>
+						) : null}
+					</div>
+				) : null}
+			</div>
+		);
+	}
+
+	if (resolvedVariant === "compact") {
+		const recentDeployments = displayDeployments.slice(0, 3);
+		const compactTemplates = displayTemplates.slice(0, COMPACT_TEMPLATE_LIMIT);
+		const hiddenTemplates = Math.max(
+			displayTemplates.length - compactTemplates.length,
+			0,
+		);
+
+		return (
+			<div className="deploy-panel deploy-panel--compact">
+				{error ? (
+					<Alert
+						type="error"
+						showIcon
+						message="加载失败"
+						description={error}
+						style={{ marginBottom: 12, fontSize: 12 }}
+					/>
+				) : null}
+				<div className="deploy-panel-compact__section-header">
 					<div className="deploy-section-title">最近部署</div>
-					<a
-						href="/workflows"
-						style={{
-							color: "#2563eb",
-							fontSize: 12,
-							textDecoration: "underline",
-						}}
-					>
+					<Link to="/workflows" className="deploy-panel-compact__link">
 						查看全部
-					</a>
+					</Link>
 				</div>
 
 				<div className="deploy-section">
-					{recentDeployments.length === 0 ? (
-						<div className="dep-empty">暂无部署记录</div>
+					{loading ? (
+						<PanelSkeleton rows={2} />
+					) : recentDeployments.length === 0 ? (
+						<PipelineEmptyState variant="deploy" title="暂无部署记录" />
 					) : (
 						recentDeployments.map((d) => (
 							<div key={d.id} className="dep-card">
@@ -213,43 +460,33 @@ export function DeployPanel({
 					)}
 				</div>
 
-				<div className="deploy-section-title" style={{ marginTop: 18 }}>
+				<div className="deploy-section-title deploy-panel-compact__templates-title">
 					模板
+					{!loading ? (
+						<span className="count">{displayTemplates.length}</span>
+					) : null}
 				</div>
 				<div className="deploy-section">
-					{templates.length === 0 ? (
-						<div className="dep-empty">暂无已保存的流水线模板</div>
-					) : (
-						templates.map((t) => (
-							<div key={t.id} className="dep-card">
-								<div className="dep-card-info">
-									<div className="dep-card-name">{t.name}</div>
-								</div>
-								<Button
-									size="small"
-									icon={<EditOutlined />}
-									onClick={() => handleEditTemplate(t.id)}
-								>
-									加载到画布
-								</Button>
-							</div>
-						))
-					)}
+					{renderTemplateSection(compactTemplates, {
+						compactActions: true,
+						emptyLabel: "暂无已保存的流水线模板",
+					})}
 				</div>
+				{hiddenTemplates > 0 ? (
+					<div className="deploy-panel-compact__hint">
+						还有 {hiddenTemplates} 个同名模板已折叠
+					</div>
+				) : null}
 			</div>
 		);
 	}
 
+	const visibleTemplates = displayTemplates.slice(0, templateVisibleCount);
+	const visibleDeployments = displayDeployments.slice(0, deploymentVisibleCount);
+
 	return (
 		<div className="deploy-panel">
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					gap: 12,
-					marginBottom: 16,
-				}}
-			>
+			<div className="deploy-panel__toolbar">
 				<h3>部署记录</h3>
 				<Button
 					size="small"
@@ -261,75 +498,39 @@ export function DeployPanel({
 				</Button>
 			</div>
 
+			{error ? (
+				<Alert
+					type="error"
+					showIcon
+					message="加载失败"
+					description={error}
+					style={{ marginBottom: 16, fontSize: 12 }}
+				/>
+			) : null}
+
 			<div className="deploy-section-title">
 				已保存的流水线
-				<span className="count">{templates.length}</span>
+				{!loading ? (
+					<span className="count">{displayTemplates.length}</span>
+				) : null}
 			</div>
 			<div className="deploy-section">
-				{templates.length === 0 ? (
-					<div className="dep-empty">暂无已保存的流水线模板</div>
-				) : (
-					templates.map((t) => (
-						<div key={t.id} className="dep-card">
-							<div className="dep-card-info">
-								<div className="dep-card-name">{t.name}</div>
-								<div className="dep-card-meta">
-									<span>{t.nodeCount} 个节点</span>
-									<span className="dot">•</span>
-									<span>{new Date(t.createdAt).toLocaleString()}</span>
-								</div>
-							</div>
-							<div className="deploy-btn-list">
-								<Space.Compact>
-									<Button
-										size="small"
-										type="primary"
-										icon={<PlayCircleOutlined />}
-										onClick={() => handleDirectRun(t.id)}
-									>
-										运行
-									</Button>
-									<Dropdown
-										menu={{
-											items: [
-												{
-													key: "assets",
-													label: "选择资产运行",
-													onClick: () => handleDeployClick(t.id),
-												},
-											],
-										}}
-										trigger={["click"]}
-									>
-										<Button
-											size="small"
-											type="primary"
-											style={{ padding: "0 4px" }}
-										>
-											<DownOutlined style={{ fontSize: 10 }} />
-										</Button>
-									</Dropdown>
-								</Space.Compact>
-								<Button
-									size="small"
-									icon={<EditOutlined />}
-									onClick={() => handleEditTemplate(t.id)}
-								>
-									编辑
-								</Button>
-								<Button
-									size="small"
-									danger
-									icon={<DeleteOutlined />}
-									onClick={() => handleDeleteTemplate(t.id)}
-								/>
-							</div>
-						</div>
-					))
-				)}
+				{renderTemplateSection(visibleTemplates)}
 			</div>
+			{displayTemplates.length > visibleTemplates.length ? (
+				<Button
+					type="link"
+					size="small"
+					className="deploy-panel__load-more"
+					onClick={() =>
+						setTemplateVisibleCount((count) => count + TEMPLATE_PAGE_SIZE)
+					}
+				>
+					加载更多模板（还剩{" "}
+					{displayTemplates.length - visibleTemplates.length} 条）
+				</Button>
+			) : null}
 
-			{/* Asset selection modal */}
 			<Modal
 				title="可选：绑定处理资产"
 				open={assetModalOpen}
@@ -352,15 +553,19 @@ export function DeployPanel({
 				/>
 			</Modal>
 
-			<div className="deploy-section-title" style={{ marginTop: 20 }}>
+			<div className="deploy-section-title deploy-panel__history-title">
 				运行历史
-				<span className="count">{deployments.length}</span>
+				{!loading ? (
+					<span className="count">{displayDeployments.length}</span>
+				) : null}
 			</div>
 			<div className="deploy-section">
-				{deployments.length === 0 ? (
-					<div className="dep-empty">暂无部署记录</div>
+				{loading ? (
+					<PanelSkeleton rows={3} />
+				) : visibleDeployments.length === 0 ? (
+					<PipelineEmptyState variant="deploy" title="暂无部署记录" />
 				) : (
-					deployments.map((d) => {
+					visibleDeployments.map((d) => {
 						const pipelineAssetIds = extractPipelineAssetIds(d.pipelineJSON);
 						const pipelineAssetId = pipelineAssetIds[0];
 						return (
@@ -374,14 +579,14 @@ export function DeployPanel({
 										<span>{d.nodeCount} 个节点</span>
 										<span className="dot">•</span>
 										<span>{new Date(d.createdAt).toLocaleString()}</span>
-										{d.finishedAt && (
+										{d.finishedAt ? (
 											<>
 												<span className="dot">•</span>
 												<span>
 													完成: {new Date(d.finishedAt).toLocaleString()}
 												</span>
 											</>
-										)}
+										) : null}
 									</div>
 								</div>
 								<div className="deploy-btn-list">
@@ -412,6 +617,19 @@ export function DeployPanel({
 					})
 				)}
 			</div>
+			{displayDeployments.length > visibleDeployments.length ? (
+				<Button
+					type="link"
+					size="small"
+					className="deploy-panel__load-more"
+					onClick={() =>
+						setDeploymentVisibleCount((count) => count + DEPLOYMENT_PAGE_SIZE)
+					}
+				>
+					加载更多记录（还剩{" "}
+					{displayDeployments.length - visibleDeployments.length} 条）
+				</Button>
+			) : null}
 		</div>
 	);
 }
