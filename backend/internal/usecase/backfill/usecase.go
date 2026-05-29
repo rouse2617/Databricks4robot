@@ -40,7 +40,6 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 		return nil, fmt.Errorf("save backfill job: %w", err)
 	}
 
-	// Create items for each asset.
 	items := make([]models.BackfillItem, len(assetIDs))
 	for i, aid := range assetIDs {
 		items[i] = models.BackfillItem{
@@ -54,19 +53,35 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 		return nil, fmt.Errorf("save backfill items: %w", err)
 	}
 
-	// Deploy pipeline for each item in the background.
-	// TODO: make this async with a worker queue for large backfills.
-	go func() {
-		for _, item := range items {
-			_ = uc.executeItem(context.Background(), item, templateID)
-		}
-	}()
+	go uc.runItems(context.Background(), job.ID, templateID, items, "pending")
 
 	return job, nil
 }
 
+func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, items []models.BackfillItem, allowed ...string) {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, status := range allowed {
+		allowedSet[status] = struct{}{}
+	}
+	for _, item := range items {
+		if _, ok := allowedSet[item.Status]; !ok {
+			continue
+		}
+		job, err := uc.repo.FindJobByID(ctx, jobID)
+		if err != nil || job == nil || job.Status == "paused" {
+			return
+		}
+		_ = uc.executeItem(ctx, item, templateID)
+	}
+}
+
 // executeItem deploys the pipeline for a single backfill item and tracks status.
 func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, templateID string) error {
+	job, err := uc.repo.FindJobByID(ctx, item.JobID)
+	if err != nil || job == nil || job.Status == "paused" {
+		return nil
+	}
+
 	_ = uc.repo.UpdateItemStatus(ctx, item.ID, "running", "", "")
 
 	dep, err := uc.pipelineUC.DeployByTemplateID(ctx, templateID, "", []string{item.AssetID})
@@ -109,9 +124,24 @@ func (uc *Usecase) PauseJob(ctx context.Context, id string) error {
 	return uc.repo.UpdateJobStatus(ctx, id, "paused")
 }
 
-// ResumeJob resumes a paused backfill job.
+// ResumeJob resumes a paused backfill job and re-schedules pending items.
 func (uc *Usecase) ResumeJob(ctx context.Context, id string) error {
-	return uc.repo.UpdateJobStatus(ctx, id, "running")
+	job, err := uc.repo.FindJobByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if job == nil {
+		return ErrNotFound
+	}
+	if err := uc.repo.UpdateJobStatus(ctx, id, "running"); err != nil {
+		return err
+	}
+	items, err := uc.repo.FindItemsByJobID(ctx, id)
+	if err != nil {
+		return err
+	}
+	go uc.runItems(context.Background(), id, job.TemplateID, items, "pending")
+	return nil
 }
 
 // RetryFailed retries all failed items for a backfill job.

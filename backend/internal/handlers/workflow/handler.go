@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -124,7 +125,11 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 	}
 	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, h.namespaceFor(c))
 	if err != nil {
-		httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
+		if errors.Is(err, argo.ErrNotFound) {
+			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
 		return
 	}
 	type nodeItem struct {

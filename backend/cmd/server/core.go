@@ -97,6 +97,7 @@ func setupCore(inf *infra) *coreHandlers {
 	puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
 	puc.SetAssetEventRepo(assetEventRepo)
 	puc.SetRelationWriter(assetRepo)
+	puc.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
 	pipelineHandler := pipelineH.New(puc)
 
 	// Pipeline component registry

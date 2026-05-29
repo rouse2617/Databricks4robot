@@ -11,6 +11,8 @@ import (
 
 	"errors"
 
+	"log/slog"
+
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -34,6 +36,7 @@ type Usecase struct {
 	assetRepo      repository.AssetRepository
 	assetEventRepo repository.AssetEventRepository
 	relationWriter repository.AssetRelationWriter
+	logicalRepo    repository.LogicalAssetRepository
 	wfClient       argo.WorkflowClient
 	namespace      string
 }
@@ -51,6 +54,17 @@ func (uc *Usecase) SetAssetEventRepo(r repository.AssetEventRepository) {
 // SetRelationWriter sets the asset relation writer (optional, for F4.7).
 func (uc *Usecase) SetRelationWriter(r repository.AssetRelationWriter) {
 	uc.relationWriter = r
+}
+
+// SetLogicalAssetRepo wires logical_assets persistence (CYB-1013 pipeline outputs).
+func (uc *Usecase) SetLogicalAssetRepo(r repository.LogicalAssetRepository) {
+	uc.logicalRepo = r
+}
+
+func logPipelineSideEffect(op string, err error) {
+	if err != nil {
+		slog.Warn("pipeline side effect failed", "op", op, "err", err)
+	}
 }
 
 // New creates a Usecase.
@@ -275,13 +289,13 @@ func (uc *Usecase) Deploy(
 			"workflow_name": wfName,
 		})
 		for _, aid := range assetIDs {
-			_ = uc.assetEventRepo.Append(ctx, repository.AssetEventAppendInput{
+			logPipelineSideEffect("append pipeline_processing event", uc.assetEventRepo.Append(ctx, repository.AssetEventAppendInput{
 				EventType:     "pipeline_processing",
 				AggregateType: "asset",
 				AssetID:       aid,
 				RunID:         depID,
 				EventPayload:  payload,
-			})
+			}))
 		}
 	}
 
@@ -324,16 +338,24 @@ func (uc *Usecase) SaveFromDeployment(ctx context.Context, deploymentID, templat
 
 // ── Deployments ───────────────────────────────────────────────────
 
+// maxActiveDeploymentStatusRefresh caps Argo status polls per ListDeployments call.
+const maxActiveDeploymentStatusRefresh = 50
+
 // ListDeployments returns all deployments, optionally refreshing active statuses.
 func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeployment, error) {
 	list, err := uc.deploymentRepo.FindAll(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// Refresh status for active workflows.
+	// Refresh status for active workflows (capped to avoid N+1 storms).
 	if uc.wfClient != nil {
+		refreshed := 0
 		for i := range list {
+			if refreshed >= maxActiveDeploymentStatusRefresh {
+				break
+			}
 			if list[i].Status == "" || list[i].Status == "Running" || list[i].Status == "Pending" || list[i].Status == "Unknown" {
+				refreshed++
 				phase, err := uc.wfClient.GetWorkflowStatus(ctx, list[i].WorkflowName, uc.namespace)
 				if err == nil {
 					list[i].Status = string(phase)
@@ -341,7 +363,7 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 						now := time.Now().UTC()
 						list[i].FinishedAt = &now
 					}
-					_ = uc.deploymentRepo.UpdateStatus(ctx, list[i].ID, string(phase))
+					logPipelineSideEffect("update deployment status", uc.deploymentRepo.UpdateStatus(ctx, list[i].ID, string(phase)))
 				}
 			}
 		}
@@ -366,7 +388,7 @@ func (uc *Usecase) GetDeployment(ctx context.Context, id string) (*models.Pipeli
 				now := time.Now().UTC()
 				d.FinishedAt = &now
 			}
-			_ = uc.deploymentRepo.UpdateStatus(ctx, d.ID, string(phase))
+			logPipelineSideEffect("update deployment status", uc.deploymentRepo.UpdateStatus(ctx, d.ID, string(phase)))
 		}
 	}
 	return d, nil
@@ -377,7 +399,7 @@ func (uc *Usecase) DeleteDeployment(ctx context.Context, id string) error {
 	if uc.wfClient != nil {
 		d, err := uc.deploymentRepo.FindByID(ctx, id)
 		if err == nil && d != nil {
-			_ = uc.wfClient.DeleteWorkflow(ctx, d.WorkflowName, uc.namespace)
+			logPipelineSideEffect("delete workflow", uc.wfClient.DeleteWorkflow(ctx, d.WorkflowName, uc.namespace))
 		}
 	}
 	return uc.deploymentRepo.Delete(ctx, id)
@@ -450,6 +472,9 @@ func (uc *Usecase) RegisterOutput(ctx context.Context, in RegisterPipelineOutput
 		Metadata:   in.Metadata,
 		CreatedAt:  time.Now().UTC(),
 	}
+	if err := seedPipelineOutputVersion(ctx, uc.logicalRepo, asset); err != nil {
+		return nil, fmt.Errorf("seed pipeline output version: %w", err)
+	}
 	if err := uc.assetRepo.InsertNew(ctx, asset); err != nil {
 		return nil, fmt.Errorf("insert asset: %w", err)
 	}
@@ -461,13 +486,13 @@ func (uc *Usecase) RegisterOutput(ctx context.Context, in RegisterPipelineOutput
 			"node_id":       in.NodeID,
 			"pipeline_name": dep.PipelineName,
 		})
-		_ = uc.assetEventRepo.Append(ctx, repository.AssetEventAppendInput{
+		logPipelineSideEffect("append pipeline_output event", uc.assetEventRepo.Append(ctx, repository.AssetEventAppendInput{
 			EventType:     "pipeline_output",
 			AggregateType: "asset",
 			AssetID:       assetID,
 			RunID:         in.DeploymentID,
 			EventPayload:  eventPayload,
-		})
+		}))
 	}
 
 	// Create asset_relations from input assets to output asset (F4.7).
@@ -476,12 +501,12 @@ func (uc *Usecase) RegisterOutput(ctx context.Context, in RegisterPipelineOutput
 		case []interface{}:
 			for _, id := range inputIDs {
 				if s, ok := id.(string); ok {
-					_ = uc.relationWriter.InsertRelation(ctx, s, assetID, "pipeline_output", in.DeploymentID)
+					logPipelineSideEffect("insert pipeline_output relation", uc.relationWriter.InsertRelation(ctx, s, assetID, "pipeline_output", in.DeploymentID))
 				}
 			}
 		case []string:
 			for _, s := range inputIDs {
-				_ = uc.relationWriter.InsertRelation(ctx, s, assetID, "pipeline_output", in.DeploymentID)
+				logPipelineSideEffect("insert pipeline_output relation", uc.relationWriter.InsertRelation(ctx, s, assetID, "pipeline_output", in.DeploymentID))
 			}
 		}
 	}
