@@ -6,7 +6,6 @@ import {
 	SaveOutlined,
 } from "@ant-design/icons";
 import {
-	type Edge,
 	FlowEditor,
 	FlowEditorProvider,
 	type Node,

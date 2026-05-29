@@ -1,1 +1,0 @@
-{"schema_version":"v1","mode":"structured","scope":{"resource":"assets"},"select":{"fields":["asset_id","asset_type","lifecycle_state","owner","duration","updated_at"]},"sort":[{"field":"updated_at","direction":"desc"}],"page":{"page":2,"page_size":20,"offset":20,"limit":20},"debug":{"explain":true}}
