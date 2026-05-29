@@ -91,7 +91,7 @@ func TestRegisterAll(t *testing.T) {
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
-	cfg := &config.Config{GraceToken: "dev-token"}
+	cfg := &config.Config{DatabrewToken: "dev-token"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -184,7 +184,7 @@ func TestRemovedHealthzOutboxRoute(t *testing.T) {
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
-	cfg := &config.Config{GraceToken: "dev-token"}
+	cfg := &config.Config{DatabrewToken: "dev-token"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
@@ -204,7 +204,7 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
 	adminHandler := adminH.New(&routeAssetRepo{}, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
-	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
+	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
@@ -234,7 +234,7 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
 	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
-	cfg := &config.Config{GraceToken: "dev-token"}
+	cfg := &config.Config{DatabrewToken: "dev-token"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
@@ -254,7 +254,7 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
-	cfg := &config.Config{GraceToken: "dev-token"}
+	cfg := &config.Config{DatabrewToken: "dev-token"}
 	// Pass nil actionHandler: routes only register when handler is non-nil,
 	// so verify both PATCH and DELETE paths are wired by exercising a real
 	// handler. Use a handler with a no-op usecase: the call will fail body
@@ -287,7 +287,7 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
-	cfg := &config.Config{GraceToken: "dev-token", Env: "production"}
+	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 

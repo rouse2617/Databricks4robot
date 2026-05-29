@@ -22,6 +22,7 @@ func StructuredLogger() gin.HandlerFunc {
 
 		status := c.Writer.Status()
 		rid, _ := c.Get("request_id")
+		user, _ := c.Get(CtxKeyEmail)
 
 		attrs := []any{
 			"method", c.Request.Method,
@@ -30,6 +31,9 @@ func StructuredLogger() gin.HandlerFunc {
 			"latency", latency.Round(time.Millisecond).String(),
 			"request_id", rid,
 			"client_ip", c.ClientIP(),
+		}
+		if user != nil && user != "" {
+			attrs = append(attrs, "user_email", user)
 		}
 
 		if status >= 500 {

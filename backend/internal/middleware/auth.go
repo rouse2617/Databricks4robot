@@ -1,15 +1,23 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/auth"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 )
 
+// Context keys for user info injected by JWT auth.
+const (
+	CtxKeyEmail = "user_email"
+	CtxKeyRole  = "user_role"
+)
+
 // StaticTokenAuth is a Phase 0 placeholder.
-// Replace with OIDC/JWT in Phase 0.5.
 func StaticTokenAuth(token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		got := c.GetHeader("X-Grace-Token")
@@ -26,6 +34,64 @@ func StaticTokenAuth(token string) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		c.Next()
+	}
+}
+
+// JWTAuth returns a Gin middleware that authenticates via JWT.
+//
+// Auth source priority:
+//  1. X-Grace-Token header → static token (legacy SDK path)
+//  2. Authorization: Bearer <jwt> → JWT
+//  3. grace_session cookie → JWT
+//
+// On success, user_email and user_role are set in the gin context.
+func JWTAuth(staticToken, jwtSecret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Legacy static token via header → SDK backward compat.
+		if header := c.GetHeader("X-Grace-Token"); header != "" {
+			if header != staticToken && header != "Bearer "+staticToken {
+				httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "unauthorized")
+				c.Abort()
+				return
+			}
+			c.Set(CtxKeyEmail, "sdk")
+			c.Set(CtxKeyRole, "admin")
+			c.Next()
+			return
+		}
+
+		// JWT from Authorization header or cookie.
+		tokenStr := c.GetHeader("Authorization")
+		if tokenStr == "" {
+			if cookie, err := c.Cookie("grace_session"); err == nil {
+				tokenStr = cookie
+			}
+		}
+		tokenStr = strings.TrimPrefix(tokenStr, "Bearer ")
+
+		if tokenStr == "" {
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "unauthorized")
+			c.Abort()
+			return
+		}
+
+		claims, jwtErr := auth.VerifyToken(jwtSecret, tokenStr)
+		if jwtErr == nil {
+			c.Set(CtxKeyEmail, claims.Email)
+			c.Set(CtxKeyRole, claims.Role)
+			c.Next()
+			return
+		}
+
+		// Not a valid JWT — fall back to legacy static token.
+		if tokenStr != staticToken {
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, fmt.Sprintf("invalid token: %v", jwtErr))
+			c.Abort()
+			return
+		}
+		c.Set(CtxKeyEmail, "sdk")
+		c.Set(CtxKeyRole, "admin")
 		c.Next()
 	}
 }

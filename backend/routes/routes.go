@@ -12,6 +12,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+		"github.com/CyberOrigin2077/cyber-databrew/internal/auth"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
@@ -78,45 +79,93 @@ func RegisterAll(
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	auth := middleware.StaticTokenAuth(cfg.GraceToken)
-	adminAuth := middleware.AdminTokenAuth(cfg.AdminToken, cfg.GraceToken, cfg.Env)
+	adminAuth := middleware.AdminTokenAuth(cfg.AdminToken, cfg.DatabrewToken, cfg.Env)
 	adminRoutesEnabled := cfg.AdminRoutesEnabled()
 	secureSessionCookie := cfg.Env == "production"
 
+	// ── Auth routes (public) ──
 	authPublic := r.Group("/api/v1/auth")
 	{
-		authPublic.POST("/login", func(c *gin.Context) {
+		authPublic.POST("/email-login", func(c *gin.Context) {
 			var req struct {
-				Token string `json:"token"`
+				Email string `json:"email"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
 				return
 			}
-			token := strings.TrimSpace(req.Token)
-			if token == "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			email := strings.TrimSpace(strings.ToLower(req.Email))
+			if email == "" || !strings.Contains(email, "@") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "valid email is required"})
 				return
 			}
-			if token != cfg.GraceToken {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+
+			domain := email[strings.LastIndex(email, "@")+1:]
+			if cfg.AllowedDomain == "" || domain != cfg.AllowedDomain {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "email domain not allowed"})
 				return
 			}
-			c.SetCookie("grace_session", token, 86400, "/", "", secureSessionCookie, true)
-			c.JSON(http.StatusOK, gin.H{"authenticated": true})
+
+			jwtToken, err := auth.SignToken(cfg.JWTSecret, email, "user", 24*time.Hour)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign token"})
+				return
+			}
+			c.SetSameSite(http.SameSiteLaxMode)
+			c.SetCookie("grace_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
+			c.JSON(http.StatusOK, gin.H{
+				"authenticated": true,
+				"email":         email,
+				"role":          "user",
+			})
 		})
 
-		authProtected := authPublic.Group("", auth)
+		authProtected := authPublic.Group("", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
 		authProtected.GET("/me", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"authenticated": true})
+			email, _ := c.Get(middleware.CtxKeyEmail)
+			role, _ := c.Get(middleware.CtxKeyRole)
+			c.JSON(http.StatusOK, gin.H{
+				"authenticated": true,
+				"email":         email,
+				"role":          role,
+			})
 		})
 		authProtected.POST("/logout", func(c *gin.Context) {
+			c.SetSameSite(http.SameSiteLaxMode)
 			c.SetCookie("grace_session", "", -1, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{"authenticated": false})
 		})
 	}
 
-	api := r.Group("/api/v1", auth)
+	// Legacy static-token login for SDK backward compat.
+	authPublic.POST("/login", func(c *gin.Context) {
+		var req struct {
+			Token string `json:"token"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			return
+		}
+		token := strings.TrimSpace(req.Token)
+		if token == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			return
+		}
+		if token != cfg.DatabrewToken {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+		jwtToken, err := auth.SignToken(cfg.JWTSecret, "legacy", "admin", 24*time.Hour)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign token"})
+			return
+		}
+		c.SetSameSite(http.SameSiteLaxMode)
+		c.SetCookie("grace_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
+		c.JSON(http.StatusOK, gin.H{"authenticated": true})
+	})
+
+	api := r.Group("/api/v1", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
 	if cbMiddleware != nil {
 		api.Use(cbMiddleware)
 	}

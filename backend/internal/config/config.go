@@ -31,8 +31,10 @@ type Config struct {
 	TopicMcapFinalized string
 	TopicAssetEvents   string
 
-	// Auth (Phase 0 static token; Phase 0.5 → OIDC)
-	GraceToken string
+	// Auth (Phase 0 static token; Phase 0.5 → email + JWT)
+	DatabrewToken string
+	JWTSecret     string // HMAC-SHA256 secret for JWT signing
+	AllowedDomain string // email domain allowlisted (e.g. "cyberorigin.ai")
 
 	// Logging
 	LogLevel  string // debug, info, warn, error
@@ -146,7 +148,9 @@ func Load() *Config {
 		TopicMcapFinalized: getenv("TOPIC_MCAP_FINALIZED", "gcs.mcap.finalized.v1"),
 		TopicAssetEvents:   getenv("TOPIC_ASSET_EVENTS", "cyber-databrew-asset-events"),
 
-		GraceToken: getenv("GRACE_TOKEN", "dev-token"),
+		DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
+		JWTSecret:     getenv("JWT_SECRET", "dev-jwt-secret"),
+		AllowedDomain: getenv("ALLOWED_DOMAIN", "cyberorigin.ai"),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
