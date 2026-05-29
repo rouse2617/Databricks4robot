@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,9 @@ import (
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 )
+
+// ErrNotFound indicates the requested Argo resource does not exist.
+var ErrNotFound = errors.New("argo resource not found")
 
 // WorkflowClient defines the interface for managing Argo Workflows.
 type WorkflowClient interface {
@@ -221,6 +225,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 		message := strings.TrimSpace(string(raw))
 		if message == "" {
 			message = resp.Status
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, message)
 		}
 		return nil, fmt.Errorf("argo API %s %s failed: %s", method, path, message)
 	}

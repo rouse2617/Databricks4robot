@@ -56,6 +56,26 @@ type mockRelationWriter struct {
 	relations []relationRecord
 }
 
+type mockLogicalAssetRepo struct {
+	inserted []*models.LogicalAsset
+}
+
+func (m *mockLogicalAssetRepo) Get(_ context.Context, _ string) (*models.LogicalAsset, error) {
+	return nil, repository.ErrLogicalAssetNotFound
+}
+func (m *mockLogicalAssetRepo) Insert(_ context.Context, la *models.LogicalAsset) error {
+	m.inserted = append(m.inserted, la)
+	return nil
+}
+func (m *mockLogicalAssetRepo) BumpRevision(_ context.Context, _ string, _ int64) error { return nil }
+func (m *mockLogicalAssetRepo) MaxRevision(_ context.Context, _ string) (int64, error) {
+	return 0, nil
+}
+func (m *mockLogicalAssetRepo) CurrentAssetID(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (m *mockLogicalAssetRepo) ClearCurrentForLogical(_ context.Context, _ string) error { return nil }
+
 type relationRecord struct {
 	srcAssetID    string
 	dstAssetID    string
@@ -453,9 +473,11 @@ func TestRegisterOutput(t *testing.T) {
 		repo.assets["input-2"] = &models.Asset{AssetID: "input-2", AssetType: "dataset", StorageURI: "gs://bucket/in2"}
 		eventRepo := &mockEventRepo{}
 		relWriter := &mockRelationWriter{}
+		logicalRepo := &mockLogicalAssetRepo{}
 		uc := newUsecase(repo)
 		uc.assetEventRepo = eventRepo
 		uc.relationWriter = relWriter
+		uc.logicalRepo = logicalRepo
 
 		pipe := map[string]interface{}{
 			"name": "output-test",
@@ -487,6 +509,12 @@ func TestRegisterOutput(t *testing.T) {
 		}
 		if asset.StorageURI != "gs://bucket/result" {
 			t.Fatalf("expected 'gs://bucket/result', got %q", asset.StorageURI)
+		}
+		if asset.LogicalAssetID != "output-1" || asset.Revision != 1 || !asset.IsCurrent {
+			t.Fatalf("expected versioned pipeline output asset, got %#v", asset)
+		}
+		if len(logicalRepo.inserted) != 1 {
+			t.Fatalf("expected logical asset insert, got %d", len(logicalRepo.inserted))
 		}
 
 		// Verify event was appended (2 from Deploy input assets + 1 from RegisterOutput).
