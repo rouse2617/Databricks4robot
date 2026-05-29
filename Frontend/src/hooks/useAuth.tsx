@@ -25,7 +25,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
 	const [isAuthenticated, setIsAuthenticated] = useState(false);
 	const [loading, setLoading] = useState(true);
-	const [user, setUser] = useState<{ email: string; role: string } | null>(null);
+	const [user, setUser] = useState<{ email: string; role: string } | null>(
+		null,
+	);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -40,7 +42,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 			.then((data) => {
 				if (!cancelled) {
 					setIsAuthenticated(true);
-					if (data.email) setUser({ email: data.email, role: data.role ?? "user" });
+					if (data.email)
+						setUser({ email: data.email, role: data.role ?? "user" });
 				}
 			})
 			.catch(async () => {
@@ -78,7 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 	};
 
 	return (
-		<AuthContext.Provider value={{ isAuthenticated, loading, user, login, logout }}>
+		<AuthContext.Provider
+			value={{ isAuthenticated, loading, user, login, logout }}
+		>
 			{children}
 		</AuthContext.Provider>
 	);

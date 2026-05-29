@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { listComponents, type PipelineComponentAPI } from "../api/pipelineComponentApi";
+import {
+	type Dispatch,
+	type SetStateAction,
+	useCallback,
+	useEffect,
+	useState,
+} from "react";
+import {
+	listComponents,
+	type PipelineComponentAPI,
+} from "../api/pipelineComponentApi";
 import type { RegisteredComponent } from "../components/pipeline/types";
 
 const STORAGE_KEY = "databrew-components";

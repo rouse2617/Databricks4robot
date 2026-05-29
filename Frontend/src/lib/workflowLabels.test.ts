@@ -19,9 +19,7 @@ describe("workflowLabels", () => {
 
 	it("formats resubmit label key in Chinese", () => {
 		expect(
-			formatWorkflowLabelKey(
-				"workflows.argoproj.io/resubmitted-from-workflow",
-			),
+			formatWorkflowLabelKey("workflows.argoproj.io/resubmitted-from-workflow"),
 		).toBe("重提交自");
 	});
 });

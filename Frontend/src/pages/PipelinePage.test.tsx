@@ -133,7 +133,9 @@ async function importOneNodePipeline(customName = "test-pipeline") {
 	);
 	await waitFor(() => {
 		expect(screen.getByDisplayValue(customName)).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /play-circle/i })).not.toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: /play-circle/i }),
+		).not.toBeDisabled();
 	});
 }
 

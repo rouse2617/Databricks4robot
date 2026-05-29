@@ -43,6 +43,12 @@ func (r *routeAssetRepo) ListWithFilters(context.Context, string, []interface{},
 func (r *routeAssetRepo) MergeCfAlgo(context.Context, string, int64, map[string]interface{}, map[string]interface{}) (int64, error) {
 	return 0, nil
 }
+func (r *routeAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
+func (r *routeAssetRepo) ListDescendants(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 
 type routeMcapRepo struct{}
 
@@ -63,7 +69,12 @@ func (r *routeDeliveryRepo) Set(context.Context, *models.Delivery) error { retur
 func (r *routeDeliveryRepo) Get(context.Context, string) (*models.Delivery, error) {
 	return &models.Delivery{DeliveryID: "d1"}, nil
 }
-func (r *routeDeliveryRepo) WriteIndexes(context.Context, string, *models.Delivery) error { return nil }
+func (r *routeDeliveryRepo) AddItems(ctx context.Context, deliveryID string, assetIDs []string) error {
+	return nil
+}
+func (r *routeDeliveryRepo) RefreshAssetDeliveryIndex(ctx context.Context, assetID string) error {
+	return nil
+}
 func (r *routeDeliveryRepo) ListByCustomer(context.Context, string) ([]string, error) {
 	return []string{"d1"}, nil
 }
@@ -73,16 +84,32 @@ func (r *routeDeliveryRepo) ListByAsset(context.Context, string) ([]string, erro
 func (r *routeDeliveryRepo) ListItems(context.Context, string) ([]*models.DeliveryItem, error) {
 	return []*models.DeliveryItem{{DeliveryID: "d1", AssetID: "aaaaaaaa"}}, nil
 }
-func (r *routeDeliveryRepo) List(context.Context, int, int, string) ([]*models.Delivery, int64, error) {
+func (r *routeDeliveryRepo) List(ctx context.Context, page, pageSize int, status, customerID string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
+}
+func (r *routeDeliveryRepo) Update(ctx context.Context, d *models.Delivery, expectedRowVersion int64) error {
+	return nil
 }
 
 type routeIdemRepo struct{}
 
+func (r *routeIdemRepo) Lock(context.Context, string, string) error { return nil }
 func (r *routeIdemRepo) Get(context.Context, string, string) (*repository.IdempotencyRecord, error) {
 	return nil, nil
 }
 func (r *routeIdemRepo) Save(context.Context, *repository.IdempotencyRecord) error { return nil }
+
+type routeCustomerRepo struct{}
+
+func (r *routeCustomerRepo) Insert(context.Context, *models.Customer) error { return nil }
+func (r *routeCustomerRepo) Get(context.Context, string) (*models.Customer, error) {
+	return &models.Customer{CustomerID: "c1"}, nil
+}
+func (r *routeCustomerRepo) Update(context.Context, *models.Customer) error { return nil }
+func (r *routeCustomerRepo) Exists(context.Context, string) (bool, error)    { return true, nil }
+func (r *routeCustomerRepo) List(ctx context.Context, status, slaTier, region string, limit int, cursor string) ([]*models.Customer, error) {
+	return nil, nil
+}
 
 func TestRegisterAll(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -90,10 +117,10 @@ func TestRegisterAll(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -183,10 +210,10 @@ func TestRemovedHealthzOutboxRoute(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz/outbox", nil)
 	w := httptest.NewRecorder()
@@ -202,11 +229,11 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	adminHandler := adminH.New(&routeAssetRepo{}, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Databrew-Token", "dev-token")
@@ -232,11 +259,11 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	assetRepo := &routeAssetRepo{}
 	assetHandler := assetH.New(assetUC.New(assetRepo), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Databrew-Token", "dev-token")
@@ -253,15 +280,10 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
-	// Pass nil actionHandler: routes only register when handler is non-nil,
-	// so verify both PATCH and DELETE paths are wired by exercising a real
-	// handler. Use a handler with a no-op usecase: the call will fail body
-	// validation rather than 404 page-not-found, which is what we want to
-	// confirm the route is registered.
 	actionHandler := actionH.New(nil)
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil, nil, nil, nil, nil)
 
 	want := map[string]bool{
 		"PATCH /api/v1/assets/:id/actions/:action_id":  false,
@@ -286,10 +308,10 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 
 	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
 	mcapHandler := mcapH.New(&routeMcapRepo{})
-	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"dev-token"}`))
 	req.Header.Set("Content-Type", "application/json")

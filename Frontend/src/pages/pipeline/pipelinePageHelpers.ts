@@ -1,5 +1,8 @@
-import { SelectType, type Edge, type Node } from "@ant-design/pro-flow";
-import type { PipelineComponentAPI, PipelineComponentType } from "../../api/pipelineComponentApi";
+import { type Edge, type Node, SelectType } from "@ant-design/pro-flow";
+import type {
+	PipelineComponentAPI,
+	PipelineComponentType,
+} from "../../api/pipelineComponentApi";
 import type {
 	Pipeline,
 	PipelineNodeData,
@@ -11,7 +14,9 @@ import { normalizeComponentArgs } from "../../lib/pipelineContract";
 export type PipelineFlowNode = Node<PipelineNodeData>;
 export type PipelineFlowEdge = Edge;
 
-export function toRecord<T extends { id: string }>(items: T[]): Record<string, T> {
+export function toRecord<T extends { id: string }>(
+	items: T[],
+): Record<string, T> {
 	return items.reduce<Record<string, T>>((acc, item) => {
 		acc[item.id] = item;
 		return acc;
@@ -126,7 +131,9 @@ function toNumber(value: unknown): number | null {
 	return null;
 }
 
-export function extractAssetSizeBytes(raw: Record<string, unknown>): number | null {
+export function extractAssetSizeBytes(
+	raw: Record<string, unknown>,
+): number | null {
 	const directSize =
 		toNumber(raw.size) ??
 		toNumber(raw.size_bytes) ??
@@ -188,7 +195,9 @@ export function parseAssetType(
 	return fallback;
 }
 
-export function apiToRegistered(api: PipelineComponentAPI): RegisteredComponent {
+export function apiToRegistered(
+	api: PipelineComponentAPI,
+): RegisteredComponent {
 	const resources = api.resources ?? {};
 	const normalizedType = normalizeComponentType(api.type);
 	const normalizedSource = (api.source || "custom").trim() || "custom";

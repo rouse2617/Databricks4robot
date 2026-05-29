@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../api/pipelineClient";
 import {
 	getWorkflow,
-	getWorkflowLogs,
 	getWorkflowLogStreamUrl,
+	getWorkflowLogs,
 	type WorkflowDetail,
 	type WorkflowNodeStatus,
 } from "../api/workflowApi";
@@ -103,7 +103,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		}, WORKFLOW_POLL_INTERVAL_MS);
 
 		return () => window.clearInterval(timer);
-	}, [name, workflow?.status]);
+	}, [name, workflow?.status, workflow]);
 
 	const stopNodeLogStream = useCallback(() => {
 		if (eventSourceRef.current) {

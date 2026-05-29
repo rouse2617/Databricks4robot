@@ -12,6 +12,7 @@ import {
 	Form,
 	Input,
 	Modal,
+	message,
 	Popconfirm,
 	Select,
 	Space,
@@ -19,10 +20,9 @@ import {
 	Tag,
 	Tooltip,
 	Typography,
-	message,
 } from "antd";
-import type { ColumnsType } from "antd/es/table";
 import type { InputRef } from "antd/es/input";
+import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	createComponent,
@@ -74,7 +74,10 @@ const splitInputItems = (value?: string): string[] =>
 		.filter(Boolean);
 
 const joinInputItems = (value?: string[]): string =>
-	(value || []).map((item) => item.trim()).filter(Boolean).join(", ");
+	(value || [])
+		.map((item) => item.trim())
+		.filter(Boolean)
+		.join(", ");
 
 function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 	if (!component) {
@@ -147,9 +150,8 @@ export function ComponentManager() {
 	const [search, setSearch] = useState("");
 	const [modalOpen, setModalOpen] = useState(false);
 	const [modalMode, setModalMode] = useState<ModalMode | null>(null);
-	const [activeComponent, setActiveComponent] = useState<PipelineComponentAPI | null>(
-		null,
-	);
+	const [activeComponent, setActiveComponent] =
+		useState<PipelineComponentAPI | null>(null);
 	const [form] = Form.useForm<ComponentFormValues>();
 	const [messageApi, contextHolder] = message.useMessage();
 	const nameInputRef = useRef<InputRef>(null);
@@ -292,7 +294,14 @@ export function ComponentManager() {
 				const imageText = formatComponentImage(record.image, record.tag);
 				return (
 					<Tooltip title={imageText}>
-						<div style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+						<div
+							style={{
+								maxWidth: 220,
+								overflow: "hidden",
+								textOverflow: "ellipsis",
+								whiteSpace: "nowrap",
+							}}
+						>
 							{imageText}
 						</div>
 					</Tooltip>
@@ -353,11 +362,7 @@ export function ComponentManager() {
 							onClick={() => openEdit(record)}
 						/>
 						<Tooltip
-							title={
-								isSystemComponent
-									? "系统来源组件禁止删除"
-									: "删除组件"
-							}
+							title={isSystemComponent ? "系统来源组件禁止删除" : "删除组件"}
 						>
 							<Popconfirm
 								title="删除组件"
@@ -451,9 +456,7 @@ export function ComponentManager() {
 
 			<Modal
 				open={modalOpen}
-				title={
-					isViewMode ? "查看组件" : isEditMode ? "编辑组件" : "新建组件"
-				}
+				title={isViewMode ? "查看组件" : isEditMode ? "编辑组件" : "新建组件"}
 				okText={isEditMode ? "保存" : "创建"}
 				cancelText="关闭"
 				confirmLoading={saving}
@@ -464,148 +467,148 @@ export function ComponentManager() {
 				footer={
 					isViewMode
 						? [
-							<Button key="close" onClick={closeModal}>
-								关闭
-							</Button>,
-						]
+								<Button key="close" onClick={closeModal}>
+									关闭
+								</Button>,
+							]
 						: undefined
-					}
+				}
+			>
+				<Form
+					form={form}
+					layout="vertical"
+					style={{ marginTop: 16 }}
+					preserve={false}
 				>
-					<Form
-						form={form}
-						layout="vertical"
-						style={{ marginTop: 16 }}
-						preserve={false}
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+							gap: 12,
+						}}
 					>
-						<div
-							style={{
-								display: "grid",
-								gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-								gap: 12,
-							}}
+						<Form.Item
+							name="name"
+							label="名称"
+							rules={[{ required: true, message: "请输入组件名称" }]}
 						>
-							<Form.Item
-								name="name"
-								label="名称"
-								rules={[{ required: true, message: "请输入组件名称" }]}
-							>
-								<Input
-									placeholder="normalize-mcap"
-									disabled={isViewMode}
-									ref={nameInputRef}
-								/>
-							</Form.Item>
-							<Form.Item
-								name="type"
-								label="类型"
-								rules={[{ required: true, message: "请选择组件类型" }]}
-							>
-								<Select options={TYPE_OPTIONS} disabled={isViewMode} />
-							</Form.Item>
-						</div>
-
-						<div
-							style={{
-								display: "grid",
-								gridTemplateColumns: "minmax(260px, 1fr) 160px",
-								gap: 12,
-							}}
+							<Input
+								placeholder="normalize-mcap"
+								disabled={isViewMode}
+								ref={nameInputRef}
+							/>
+						</Form.Item>
+						<Form.Item
+							name="type"
+							label="类型"
+							rules={[{ required: true, message: "请选择组件类型" }]}
 						>
-							<Form.Item
-								name="image"
-								label="镜像"
-								rules={[{ required: true, message: "请输入镜像" }]}
-							>
-								<Input
-									placeholder="registry.example.com/databrew/worker"
-									disabled={isViewMode}
-								/>
-							</Form.Item>
-							<Form.Item name="tag" label="标签">
-								<Input placeholder="latest" disabled={isViewMode} />
-							</Form.Item>
-						</div>
+							<Select options={TYPE_OPTIONS} disabled={isViewMode} />
+						</Form.Item>
+					</div>
 
-						<Form.Item name="description" label="描述">
-							<Input.TextArea
-								rows={3}
-								maxLength={500}
-								showCount
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns: "minmax(260px, 1fr) 160px",
+							gap: 12,
+						}}
+					>
+						<Form.Item
+							name="image"
+							label="镜像"
+							rules={[{ required: true, message: "请输入镜像" }]}
+						>
+							<Input
+								placeholder="registry.example.com/databrew/worker"
 								disabled={isViewMode}
 							/>
 						</Form.Item>
-
-						<Form.Item name="command" label="命令">
-							<Input.TextArea
-								rows={2}
-								placeholder="例如: python, /app/main.py"
-								disabled={isViewMode}
-							/>
+						<Form.Item name="tag" label="标签">
+							<Input placeholder="latest" disabled={isViewMode} />
 						</Form.Item>
+					</div>
 
-						<Form.Item name="args" label="参数">
-							<Input.TextArea
-								rows={2}
-								placeholder="例如: --input, {{inputs.asset}}"
-								disabled={isViewMode}
-							/>
-						</Form.Item>
+					<Form.Item name="description" label="描述">
+						<Input.TextArea
+							rows={3}
+							maxLength={500}
+							showCount
+							disabled={isViewMode}
+						/>
+					</Form.Item>
 
-						<Form.List name="envRows">
-							{(fields, { add, remove }) => (
-								<div>
-									<div
-										style={{
-											display: "flex",
-											alignItems: "center",
-											justifyContent: "space-between",
-											marginBottom: 8,
-										}}
-									>
-										<Typography.Text>环境变量</Typography.Text>
-										{!isViewMode ? (
-											<Button size="small" onClick={() => add({})}>
-												添加变量
-											</Button>
-										) : null}
-									</div>
-									{fields.map((field, index) => (
-										<Space
-											key={field.key}
-											align="baseline"
-											style={{ display: "flex", marginBottom: 8 }}
-										>
-											<span style={{ width: 20, color: "rgba(0,0,0,0.45)" }}>
-												{index + 1}.
-											</span>
-											<Form.Item {...field} name={[field.name, "name"]}>
-												<Input
-													placeholder="KEY"
-													style={{ width: 220 }}
-													disabled={isViewMode}
-												/>
-											</Form.Item>
-											<Form.Item {...field} name={[field.name, "value"]}>
-												<Input
-													placeholder="value"
-													style={{ width: 320 }}
-													disabled={isViewMode}
-												/>
-											</Form.Item>
-											{!isViewMode ? (
-												<Button
-													type="text"
-													danger
-													icon={<DeleteOutlined />}
-													aria-label="移除环境变量"
-													onClick={() => remove(field.name)}
-												/>
-											) : null}
-										</Space>
-									))}
+					<Form.Item name="command" label="命令">
+						<Input.TextArea
+							rows={2}
+							placeholder="例如: python, /app/main.py"
+							disabled={isViewMode}
+						/>
+					</Form.Item>
+
+					<Form.Item name="args" label="参数">
+						<Input.TextArea
+							rows={2}
+							placeholder="例如: --input, {{inputs.asset}}"
+							disabled={isViewMode}
+						/>
+					</Form.Item>
+
+					<Form.List name="envRows">
+						{(fields, { add, remove }) => (
+							<div>
+								<div
+									style={{
+										display: "flex",
+										alignItems: "center",
+										justifyContent: "space-between",
+										marginBottom: 8,
+									}}
+								>
+									<Typography.Text>环境变量</Typography.Text>
+									{!isViewMode ? (
+										<Button size="small" onClick={() => add({})}>
+											添加变量
+										</Button>
+									) : null}
 								</div>
-							)}
-						</Form.List>
+								{fields.map((field, index) => (
+									<Space
+										key={field.key}
+										align="baseline"
+										style={{ display: "flex", marginBottom: 8 }}
+									>
+										<span style={{ width: 20, color: "rgba(0,0,0,0.45)" }}>
+											{index + 1}.
+										</span>
+										<Form.Item {...field} name={[field.name, "name"]}>
+											<Input
+												placeholder="KEY"
+												style={{ width: 220 }}
+												disabled={isViewMode}
+											/>
+										</Form.Item>
+										<Form.Item {...field} name={[field.name, "value"]}>
+											<Input
+												placeholder="value"
+												style={{ width: 320 }}
+												disabled={isViewMode}
+											/>
+										</Form.Item>
+										{!isViewMode ? (
+											<Button
+												type="text"
+												danger
+												icon={<DeleteOutlined />}
+												aria-label="移除环境变量"
+												onClick={() => remove(field.name)}
+											/>
+										) : null}
+									</Space>
+								))}
+							</div>
+						)}
+					</Form.List>
 				</Form>
 			</Modal>
 		</div>

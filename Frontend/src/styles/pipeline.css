@@ -47,10 +47,10 @@
 }
 
 .pipeline-toolbar__title {
-	margin: 0 !important;
-	font-size: var(--pipeline-font-lg) !important;
-	font-weight: var(--pipeline-weight-semibold) !important;
-	color: #0f172a !important;
+	margin: 0;
+	font-size: var(--pipeline-font-lg);
+	font-weight: var(--pipeline-weight-semibold);
+	color: #0f172a;
 	white-space: nowrap;
 }
 
@@ -69,7 +69,9 @@
 	color: #64748b;
 	border-bottom: 2px solid transparent;
 	font-weight: 500;
-	transition: color 0.15s ease, border-color 0.15s ease;
+	transition:
+		color 0.15s ease,
+		border-color 0.15s ease;
 }
 
 .pipeline-toolbar__tab:hover {
@@ -1137,7 +1139,7 @@
 }
 
 .pipeline-tabs-page .ant-tabs-tab {
-	margin-right: 18px !important;
+	margin-right: 18px;
 }
 
 .pipeline-tab-label {
@@ -1207,7 +1209,7 @@
 }
 
 .pipeline-execution-table-row:hover > td {
-	background: #f6faff !important;
+	background: #f6faff;
 }
 
 .pipeline-execution-table .ant-table {

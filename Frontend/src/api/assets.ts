@@ -162,7 +162,9 @@ function parseStreamEvent(payload: unknown): AssetEvent | null {
 			? obj.event_seq
 			: Number(obj.event_seq ?? 0) || 0;
 	const occurredAt =
-		typeof obj.occurred_at === "string" ? obj.occurred_at : new Date().toISOString();
+		typeof obj.occurred_at === "string"
+			? obj.occurred_at
+			: new Date().toISOString();
 	return {
 		event_id: obj.event_id ?? `stream-${eventSeq}`,
 		event_seq: eventSeq,
@@ -387,9 +389,17 @@ export const assetsApi = {
 			})),
 
 	streamForAsset: (assetId: string, callbacks?: AssetEventStreamCallback) =>
-		streamAssetEvents(makeEventStreamUrl(`/assets/${encodeURIComponent(assetId)}/events/stream`), callbacks),
+		streamAssetEvents(
+			makeEventStreamUrl(
+				`/assets/${encodeURIComponent(assetId)}/events/stream`,
+			),
+			callbacks,
+		),
 
-	streamGlobalEvents: (callbacks?: AssetEventStreamCallback, fallbackAssetId?: string) =>
+	streamGlobalEvents: (
+		callbacks?: AssetEventStreamCallback,
+		fallbackAssetId?: string,
+	) =>
 		fallbackAssetId
 			? streamAssetEvents(
 					makeEventStreamUrl(

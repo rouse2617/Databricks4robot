@@ -9,13 +9,13 @@ import {
 	Empty,
 	Input,
 	Modal,
+	message,
+	Select,
 	Skeleton,
+	Table,
 	Tag,
 	Tooltip,
 	Typography,
-	Table,
-	message,
-	Select,
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
@@ -249,7 +249,7 @@ export function WorkflowExecutionList({
 
 	useEffect(() => {
 		setPage(1);
-	}, [statusFilter, debouncedNameSearch, labelFilter, dateRange]);
+	}, []);
 
 	const labelCheckboxOptions = useMemo(() => {
 		const labels = new Set<string>();
@@ -383,7 +383,9 @@ export function WorkflowExecutionList({
 				const created = dayjs(t);
 				if (!created.isValid()) return new Date(t).toLocaleString();
 				return (
-					<Tooltip title={created.toLocaleString()}>{created.fromNow()}</Tooltip>
+					<Tooltip title={created.toLocaleString()}>
+						{created.fromNow()}
+					</Tooltip>
 				);
 			},
 		},
@@ -479,37 +481,35 @@ export function WorkflowExecutionList({
 				{showSkeleton
 					? WORKFLOW_PHASES.map((status) => <Card key={status} loading />)
 					: WORKFLOW_PHASES.map((status) => {
-						const accentColor = STATUS_ACCENT_COLORS[status];
+							const accentColor = STATUS_ACCENT_COLORS[status];
 
-						return (
-							<Card
-								key={status}
-								size="small"
-								styles={{
-									body: {
-										alignItems: "center",
-										display: "flex",
-										gap: 10,
-										padding: "10px 12px",
-									},
-								}}
-								style={{
-									borderColor: accentColor,
-									borderLeft: `4px solid ${accentColor}`,
-								}}
-							>
-								<span style={{ color: accentColor, fontSize: 18 }}>
-									{STATUS_ICONS[status]}
-								</span>
-								<span style={{ color: "rgba(0, 0, 0, 0.65)" }}>
-									{status}
-								</span>
-								<strong style={{ fontSize: 18, marginLeft: "auto" }}>
-									{statusCounts[status]}
-								</strong>
-							</Card>
-						);
-					})}
+							return (
+								<Card
+									key={status}
+									size="small"
+									styles={{
+										body: {
+											alignItems: "center",
+											display: "flex",
+											gap: 10,
+											padding: "10px 12px",
+										},
+									}}
+									style={{
+										borderColor: accentColor,
+										borderLeft: `4px solid ${accentColor}`,
+									}}
+								>
+									<span style={{ color: accentColor, fontSize: 18 }}>
+										{STATUS_ICONS[status]}
+									</span>
+									<span style={{ color: "rgba(0, 0, 0, 0.65)" }}>{status}</span>
+									<strong style={{ fontSize: 18, marginLeft: "auto" }}>
+										{statusCounts[status]}
+									</strong>
+								</Card>
+							);
+						})}
 			</div>
 
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
@@ -530,7 +530,9 @@ export function WorkflowExecutionList({
 					style={{ minWidth: 220, flex: "1 1 220px" }}
 					value={nameSearch}
 					onChange={(event) => setNameSearch(event.target.value)}
-					onSearch={(value) => setDebouncedNameSearch(value.trim().toLowerCase())}
+					onSearch={(value) =>
+						setDebouncedNameSearch(value.trim().toLowerCase())
+					}
 				/>
 				<RangePicker
 					value={dateRange}
@@ -581,9 +583,9 @@ export function WorkflowExecutionList({
 					title={false}
 					style={{ width: "100%" }}
 				/>
-				) : !error && items.length === 0 ? (
-					<Empty description="暂无执行记录，部署流水线后将自动生成" />
-				) : (
+			) : !error && items.length === 0 ? (
+				<Empty description="暂无执行记录，部署流水线后将自动生成" />
+			) : (
 				<div className="pipeline-execution-table">
 					<Table
 						dataSource={items}
@@ -607,16 +609,16 @@ export function WorkflowExecutionList({
 							style: { cursor: "pointer" },
 						})}
 						pagination={{
-								current: page,
-								pageSize,
-								showSizeChanger: true,
-								pageSizeOptions: ["10", "20", "50", "100"],
-								showTotal: (total) => `共 ${total} 条`,
-								onChange: (nextPage, nextPageSize) => {
-									setPage(nextPage);
-									setPageSize(nextPageSize);
-								},
-							}}
+							current: page,
+							pageSize,
+							showSizeChanger: true,
+							pageSizeOptions: ["10", "20", "50", "100"],
+							showTotal: (total) => `共 ${total} 条`,
+							onChange: (nextPage, nextPageSize) => {
+								setPage(nextPage);
+								setPageSize(nextPageSize);
+							},
+						}}
 					/>
 				</div>
 			)}

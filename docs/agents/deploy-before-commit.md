@@ -38,8 +38,8 @@ When in doubt, treat the change as runtime-affecting and follow the full gate.
 
 | Service | Registry image | Dev service name |
 |---------|----------------|------------------|
-| Backend | `us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend` | `cyber-databrew-backend-dev` |
-| Frontend (Cloud Run) | `us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/cyber-databrew-frontend` | `cyber-databrew-frontend-dev` |
+| Backend | `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend` | `cyber-databrew-backend-dev` |
+| Frontend (Cloud Run) | `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend` | `cyber-databrew-frontend-dev` |
 
 Set once per shell:
 
@@ -53,8 +53,8 @@ export REG=us-central1-docker.pkg.dev/${PROJECT_ID}
 ### Backend — build, push, deploy
 
 ```bash
-export BACKEND_IMAGE="${REG}/rick-cyber-databrew-images/cyber-databrew-backend:${SHA}"
-export BACKEND_LATEST="${REG}/rick-cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest"
+export BACKEND_IMAGE="${REG}/cyber-databrew-images/cyber-databrew-backend:${SHA}"
+export BACKEND_LATEST="${REG}/cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest"
 
 docker build --platform=linux/amd64 -f backend/Dockerfile -t "${BACKEND_IMAGE}" backend/
 docker tag "${BACKEND_IMAGE}" "${BACKEND_LATEST}"
@@ -72,9 +72,9 @@ USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
 Frontend is two images (SPA + nginx wrapper). Match `deploy/cloudrun/frontend-dev.sh` defaults:
 
 ```bash
-export FRONTEND_BASE="${REG}/video-proc-images/cyber-databrew-frontend:dev-latest"
-export FRONTEND_IMAGE="${REG}/video-proc-images/cyber-databrew-frontend:${SHA}"
-export FRONTEND_LATEST="${REG}/video-proc-images/cyber-databrew-frontend:cloudrun-dev-latest"
+export FRONTEND_BASE="${REG}/cyber-databrew-images/cyber-databrew-frontend:dev-latest"
+export FRONTEND_IMAGE="${REG}/cyber-databrew-images/cyber-databrew-frontend:${SHA}"
+export FRONTEND_LATEST="${REG}/cyber-databrew-images/cyber-databrew-frontend:cloudrun-dev-latest"
 
 docker build --platform=linux/amd64 \
   --build-arg "VITE_APP_VERSION=${SHA}" \
@@ -145,7 +145,7 @@ gcloud run services update-traffic cyber-databrew-backend-dev \
 
 ```bash
 USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
-  IMAGE="${REG}/rick-cyber-databrew-images/cyber-databrew-backend:<old-sha>" \
+  IMAGE="${REG}/cyber-databrew-images/cyber-databrew-backend:<old-sha>" \
   DB_PASSWORD_SECRET=cyber-databrew-dev-postgres-password \
   bash deploy/cloudrun/backend-dev.sh
 ```

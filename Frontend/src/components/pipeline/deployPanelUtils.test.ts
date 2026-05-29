@@ -37,9 +37,7 @@ describe("deployPanelUtils", () => {
 			}),
 		]);
 		expect(deduped).toHaveLength(2);
-		expect(deduped.find((item) => item.name === "my-pipeline")?.id).toBe(
-			"new",
-		);
+		expect(deduped.find((item) => item.name === "my-pipeline")?.id).toBe("new");
 	});
 
 	it("prepares deployments in reverse chronological order", () => {

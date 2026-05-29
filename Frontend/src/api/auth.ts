@@ -14,7 +14,9 @@ export interface EmailLoginResponse {
 
 export const authApi = {
 	emailLogin: (email: string) =>
-		apiClient.post("/auth/email-login", { email }).then((r) => r.data as EmailLoginResponse),
+		apiClient
+			.post("/auth/email-login", { email })
+			.then((r) => r.data as EmailLoginResponse),
 	login: (token: string) =>
 		apiClient.post("/auth/login", { token }).then((r) => r.data),
 	me: () => apiClient.get("/auth/me").then((r) => r.data as MeResponse),

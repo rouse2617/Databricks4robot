@@ -9,7 +9,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 
@@ -355,9 +355,7 @@ describe("DeployPanel", () => {
 			expect(document.querySelector(".ant-popconfirm")).toBeTruthy();
 		});
 		const popconfirm = document.querySelector(".ant-popconfirm") as HTMLElement;
-		fireEvent.click(
-			within(popconfirm).getByRole("button", { name: /删.*除/ }),
-		);
+		fireEvent.click(within(popconfirm).getByRole("button", { name: /删.*除/ }));
 
 		await waitFor(() => {
 			expect(mockDeletePipeline).toHaveBeenCalledWith("tmpl-001");

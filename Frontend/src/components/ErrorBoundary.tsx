@@ -37,7 +37,9 @@ export default class ErrorBoundary extends Component<Props, State> {
 				<Result
 					status="error"
 					title={this.props.title ?? "页面出错了"}
-					subTitle={this.state.error?.message ?? this.props.subTitle ?? "未知错误"}
+					subTitle={
+						this.state.error?.message ?? this.props.subTitle ?? "未知错误"
+					}
 					extra={[
 						<Button key="retry" type="primary" onClick={this.handleRetry}>
 							重试

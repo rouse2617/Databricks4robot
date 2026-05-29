@@ -1,9 +1,4 @@
-import {
-	Handle,
-	Position,
-	type Node,
-	type NodeProps,
-} from "@xyflow/react";
+import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { Tag, Tooltip } from "antd";
 import dayjs from "dayjs";
 import type { WorkflowNodeStatus } from "../api/workflowApi";
@@ -92,8 +87,7 @@ export function WorkflowDagNode({
 	const phase = workflowNode.phase;
 	const accent = PHASE_COLORS[phase] || "#64748b";
 	const phaseLabel =
-		WORKFLOW_PHASE_LABELS[phase as keyof typeof WORKFLOW_PHASE_LABELS] ||
-		phase;
+		WORKFLOW_PHASE_LABELS[phase as keyof typeof WORKFLOW_PHASE_LABELS] || phase;
 	const relTime = getNodeRelativeTime(workflowNode);
 	const isRunning = phase === "Running";
 
@@ -156,9 +150,7 @@ export function WorkflowDagNode({
 						<Tooltip
 							title={
 								workflowNode.startedAt
-									? dayjs(workflowNode.startedAt).format(
-											"YYYY-MM-DD HH:mm:ss",
-										)
+									? dayjs(workflowNode.startedAt).format("YYYY-MM-DD HH:mm:ss")
 									: ""
 							}
 						>

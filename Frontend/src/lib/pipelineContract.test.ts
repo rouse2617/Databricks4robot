@@ -19,9 +19,9 @@ describe("normalizeComponentArgs", () => {
 	});
 
 	it("passes through Argument objects", () => {
-		expect(
-			normalizeComponentArgs([{ name: "arg1", value: "hello" }]),
-		).toEqual([{ name: "arg1", value: "hello" }]);
+		expect(normalizeComponentArgs([{ name: "arg1", value: "hello" }])).toEqual([
+			{ name: "arg1", value: "hello" },
+		]);
 	});
 });
 

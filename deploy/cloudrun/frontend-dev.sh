@@ -4,8 +4,8 @@ set -euo pipefail
 PROJECT_ID="${PROJECT_ID:-green-valley-442103}"
 REGION="${REGION:-us-central1}"
 SERVICE_NAME="${SERVICE_NAME:-cyber-databrew-frontend-dev}"
-BASE_IMAGE="${BASE_IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/cyber-databrew-frontend:dev-latest}"
-IMAGE="${IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/cyber-databrew-frontend:cloudrun-dev-latest}"
+BASE_IMAGE="${BASE_IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:dev-latest}"
+IMAGE="${IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:cloudrun-dev-latest}"
 USE_CLOUD_BUILD="${USE_CLOUD_BUILD:-false}"
 
 # ── Auto-detect version info from git ──

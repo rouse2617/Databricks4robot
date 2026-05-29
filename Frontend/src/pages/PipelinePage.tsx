@@ -19,15 +19,16 @@ import {
 	Drawer,
 	Input,
 	Menu,
-	message,
 	Modal,
-	Tooltip,
-	Tabs,
-	Typography,
+	message,
 	Spin,
+	Tabs,
+	Tooltip,
+	Typography,
 } from "antd";
 
 const { TextArea } = Input;
+
 import {
 	type DragEvent,
 	useCallback,
@@ -46,26 +47,25 @@ import {
 	savePipeline,
 } from "../api/pipelineApi";
 import type { Asset } from "../api/types";
+import ErrorBoundary from "../components/ErrorBoundary";
 import AssetPicker from "../components/pipeline/AssetPicker";
 import { ComponentPalette } from "../components/pipeline/ComponentPalette";
 import { DeployPanel } from "../components/pipeline/DeployPanel";
-import { PipelineEmptyState } from "../components/pipeline/PipelineEmptyState";
 import { NodeConfigPanel } from "../components/pipeline/NodeConfigPanel";
+import { PipelineEmptyState } from "../components/pipeline/PipelineEmptyState";
 import { PipelineStepNode } from "../components/pipeline/PipelineNode";
-import ErrorBoundary from "../components/ErrorBoundary";
-import { usePipelineComponents } from "../hooks/usePipelineComponents";
-import { usePipelineKeyboardShortcuts } from "../hooks/usePipelineKeyboardShortcuts";
 import type {
 	Pipeline,
 	PipelineNodeData,
 	RegisteredComponent,
 } from "../components/pipeline/types";
+import { usePipelineComponents } from "../hooks/usePipelineComponents";
+import { usePipelineKeyboardShortcuts } from "../hooks/usePipelineKeyboardShortcuts";
 import {
 	fromTranspilerPipeline,
 	toTranspilerPipeline,
 } from "../lib/pipelineContract";
 import { ComponentManager } from "./ComponentManager";
-import { WorkflowExecutionList } from "./WorkflowExecutionList";
 import {
 	apiToRegistered,
 	createPipelineNode,
@@ -74,13 +74,14 @@ import {
 	extractNodeAssetIds,
 	extractPipelineAssetIds,
 	formatBytes,
+	type PipelineFlowEdge,
+	type PipelineFlowNode,
 	parseAssetIds,
 	parseAssetName,
 	parseAssetType,
 	toRecord,
-	type PipelineFlowEdge,
-	type PipelineFlowNode,
 } from "./pipeline/pipelinePageHelpers";
+import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 import "../styles/pipeline.css";
 
@@ -488,8 +489,11 @@ function PipelineCanvas() {
 
 	const applyImportedPipeline = useCallback(() => {
 		const text =
-			(document.querySelector(".ant-modal textarea") as HTMLTextAreaElement | null)?.value?.trim() ||
-			importTextRef.current.trim();
+			(
+				document.querySelector(
+					".ant-modal textarea",
+				) as HTMLTextAreaElement | null
+			)?.value?.trim() || importTextRef.current.trim();
 		if (!text) {
 			message.warning("请粘贴 Pipeline JSON");
 			return;
@@ -511,7 +515,7 @@ function PipelineCanvas() {
 		} catch {
 			message.error("无效的 JSON");
 		}
-	}, [importText]);
+	}, []);
 
 	const clearCanvas = useCallback(() => {
 		modal.confirm({
@@ -529,13 +533,13 @@ function PipelineCanvas() {
 				setJsonOutput(null);
 			},
 		});
-	}, [editor]);
+	}, [editor, modal.confirm]);
 
 	const handleSave = useCallback(async () => {
 		try {
 			await savePipeline(pipelineName, buildPipelineJSON());
 			message.success("已保存，可在右侧「已保存」查看");
-			setTemplateRefreshKey(k => k + 1);
+			setTemplateRefreshKey((k) => k + 1);
 		} catch (err) {
 			message.error(`保存失败: ${String(err)}`);
 		}
@@ -648,307 +652,305 @@ function PipelineCanvas() {
 	return (
 		<div className="pipeline-page">
 			{/* Header */}
-				<div className="pipeline-toolbar">
-					<div className="pipeline-toolbar__left">
-						<Typography.Title level={5} className="pipeline-toolbar__title">
-							流水线设计
-						</Typography.Title>
-					</div>
-
-					<div className="pipeline-toolbar__name">
-						<span className="pipeline-toolbar__name-label">名称</span>
-						<Input
-							id="pipeline-name-input"
-							name="pipelineName"
-							value={pipelineName}
-							onChange={(e) => setPipelineName(e.target.value)}
-							placeholder="输入流水线名称"
-							aria-label="流水线名称"
-							className="pipeline-toolbar__name-input"
-							size="small"
-						/>
-					</div>
-					<div className="pipeline-toolbar__actions">
-						<Tooltip
-							title={
-								canDeploy
-									? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
-									: "请先从左侧拖入至少一个组件到画布"
-							}
-						>
-							<span>
-								<Button
-									size="small"
-									type="primary"
-									icon={<PlayCircleOutlined />}
-									onClick={openDeployDialog}
-									disabled={!canDeploy}
-								>
-									部署
-								</Button>
-							</span>
-						</Tooltip>
-						<Tooltip title="保存 (⌘/Ctrl+S)">
-							<Button size="small" icon={<SaveOutlined />} onClick={handleSave}>
-								保存
-							</Button>
-						</Tooltip>
-						<Button
-							size="small"
-							icon={<ExportOutlined />}
-							onClick={exportPipeline}
-						>
-							导出
-						</Button>
-						<Button
-							size="small"
-							icon={<ImportOutlined />}
-							onClick={importPipeline}
-						>
-							导入
-						</Button>
-						<Button
-							size="small"
-							danger
-							icon={<DeleteOutlined />}
-							onClick={clearCanvas}
-						>
-							清空
-						</Button>
-					</div>
+			<div className="pipeline-toolbar">
+				<div className="pipeline-toolbar__left">
+					<Typography.Title level={5} className="pipeline-toolbar__title">
+						流水线设计
+					</Typography.Title>
 				</div>
+
+				<div className="pipeline-toolbar__name">
+					<span className="pipeline-toolbar__name-label">名称</span>
+					<Input
+						id="pipeline-name-input"
+						name="pipelineName"
+						value={pipelineName}
+						onChange={(e) => setPipelineName(e.target.value)}
+						placeholder="输入流水线名称"
+						aria-label="流水线名称"
+						className="pipeline-toolbar__name-input"
+						size="small"
+					/>
+				</div>
+				<div className="pipeline-toolbar__actions">
+					<Tooltip
+						title={
+							canDeploy
+								? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
+								: "请先从左侧拖入至少一个组件到画布"
+						}
+					>
+						<span>
+							<Button
+								size="small"
+								type="primary"
+								icon={<PlayCircleOutlined />}
+								onClick={openDeployDialog}
+								disabled={!canDeploy}
+							>
+								部署
+							</Button>
+						</span>
+					</Tooltip>
+					<Tooltip title="保存 (⌘/Ctrl+S)">
+						<Button size="small" icon={<SaveOutlined />} onClick={handleSave}>
+							保存
+						</Button>
+					</Tooltip>
+					<Button
+						size="small"
+						icon={<ExportOutlined />}
+						onClick={exportPipeline}
+					>
+						导出
+					</Button>
+					<Button
+						size="small"
+						icon={<ImportOutlined />}
+						onClick={importPipeline}
+					>
+						导入
+					</Button>
+					<Button
+						size="small"
+						danger
+						icon={<DeleteOutlined />}
+						onClick={clearCanvas}
+					>
+						清空
+					</Button>
+				</div>
+			</div>
 
 			{/* Body */}
 			<div className="pipeline-body">
-				<>
-							<ComponentPalette
-								components={registeredComponents}
-								onDragStart={onDragStart}
-								loading={componentsLoading}
-								error={componentsError}
-								onRetry={reloadComponents}
+				<ComponentPalette
+					components={registeredComponents}
+					onDragStart={onDragStart}
+					loading={componentsLoading}
+					error={componentsError}
+					onRetry={reloadComponents}
+				/>
+				<div
+					className="canvas-wrapper"
+					ref={wrapperRef}
+					style={{ flex: 1, height: "100%", position: "relative" }}
+					role="application"
+					aria-label="流水线画布"
+				>
+					{templateLoading ? (
+						<div className="pipeline-canvas-loading" aria-busy="true">
+							<Spin tip="正在加载模板..." />
+						</div>
+					) : null}
+					{isCanvasEmpty && !templateLoading ? (
+						<PipelineEmptyState
+							variant="canvas"
+							title="拖入组件开始设计"
+							hint="从左侧拖入步骤，连线后点「保存」；已保存的在右侧查看"
+						/>
+					) : null}
+					<ErrorBoundary
+						title="画布渲染错误"
+						subTitle="流水线画布出现异常，可重试或刷新页面"
+					>
+						<FlowEditor
+							nodeTypes={nodeTypes}
+							flattenNodes={flattenNodes}
+							flattenEdges={flattenEdges}
+							onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
+								setNodes(Object.values(nextNodes) as PipelineFlowNode[])
+							}
+							onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
+								setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
+							}
+							contextMenuEnabled={false}
+							flowProps={{
+								onDrop,
+								onDragOver,
+								onNodeClick,
+								onNodeContextMenu,
+								onPaneClick,
+								onPaneContextMenu,
+								onlyRenderVisibleElements: true,
+								minZoom: 0.2,
+								maxZoom: 2,
+								proOptions: { hideAttribution: true },
+							}}
+						/>
+					</ErrorBoundary>
+					{contextMenu.open && (
+						<div
+							className="pipeline-context-menu"
+							style={{
+								left: contextMenu.x,
+								top: contextMenu.y,
+							}}
+						>
+							<Menu
+								selectable={false}
+								onClick={handleContextMenuClick}
+								items={
+									contextMenu.node
+										? [
+												{ key: "configure", label: "配置节点" },
+												{ key: "copy", label: "复制节点" },
+												{ type: "divider" },
+												{
+													key: "delete",
+													label: "删除节点",
+													danger: true,
+												},
+											]
+										: [
+												{ key: "paste", label: "粘贴" },
+												{ key: "selectAll", label: "选择全部" },
+												{ type: "divider" },
+												{ key: "zoomIn", label: "放大" },
+												{ key: "zoomOut", label: "缩小" },
+												{ key: "fitView", label: "适应画布" },
+											]
+								}
 							/>
-							<div
-								className="canvas-wrapper"
-								ref={wrapperRef}
-								style={{ flex: 1, height: "100%", position: "relative" }}
-								role="application"
-								aria-label="流水线画布"
-							>
-								{templateLoading ? (
-									<div className="pipeline-canvas-loading" aria-busy="true">
-										<Spin tip="正在加载模板..." />
+						</div>
+					)}
+				</div>
+				<aside className="config-panel">
+					<div
+						className="config-panel__saved"
+						data-testid="saved-pipelines-panel"
+					>
+						<DeployPanel
+							variant="sidebar"
+							_refreshKey={templateRefreshKey}
+							onEditTemplate={loadPipelineToCanvas}
+							onViewAll={() => setSavedDrawerOpen(true)}
+						/>
+					</div>
+					<div className="config-panel__node">
+						{selectedNode ? (
+							<>
+								<div className="config-panel-header">
+									<div className="config-panel-header__info">
+										<span className="config-panel-label">
+											{selectedNode.data?.label || selectedNode.id}
+										</span>
+										<span className="config-panel-type">
+											{selectedNode.data?.image || "未设置镜像"}
+										</span>
 									</div>
-								) : null}
-								{isCanvasEmpty && !templateLoading ? (
-									<PipelineEmptyState
-										variant="canvas"
-										title="拖入组件开始设计"
-										hint="从左侧拖入步骤，连线后点「保存」；已保存的在右侧查看"
-									/>
-								) : null}
-								<ErrorBoundary
-									title="画布渲染错误"
-									subTitle="流水线画布出现异常，可重试或刷新页面"
-								>
-									<FlowEditor
-										nodeTypes={nodeTypes}
-										flattenNodes={flattenNodes}
-										flattenEdges={flattenEdges}
-										onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
-											setNodes(Object.values(nextNodes) as PipelineFlowNode[])
-										}
-										onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
-											setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
-										}
-										contextMenuEnabled={false}
-										flowProps={{
-											onDrop,
-											onDragOver,
-											onNodeClick,
-											onNodeContextMenu,
-											onPaneClick,
-											onPaneContextMenu,
-											onlyRenderVisibleElements: true,
-											minZoom: 0.2,
-											maxZoom: 2,
-											proOptions: { hideAttribution: true },
-										}}
-									/>
-								</ErrorBoundary>
-								{contextMenu.open && (
-									<div
-										className="pipeline-context-menu"
-										style={{
-											left: contextMenu.x,
-											top: contextMenu.y,
-										}}
+									<Button
+										size="small"
+										type="primary"
+										onClick={() => setEditingNodeId(selectedNode.id)}
 									>
-										<Menu
-											selectable={false}
-											onClick={handleContextMenuClick}
-											items={
-												contextMenu.node
-													? [
-															{ key: "configure", label: "配置节点" },
-															{ key: "copy", label: "复制节点" },
-															{ type: "divider" },
-															{
-																key: "delete",
-																label: "删除节点",
-																danger: true,
-															},
-														]
-													: [
-															{ key: "paste", label: "粘贴" },
-															{ key: "selectAll", label: "选择全部" },
-															{ type: "divider" },
-															{ key: "zoomIn", label: "放大" },
-															{ key: "zoomOut", label: "缩小" },
-															{ key: "fitView", label: "适应画布" },
-														]
-											}
-										/>
-									</div>
-								)}
-							</div>
-							<aside className="config-panel">
-								<div
-									className="config-panel__saved"
-									data-testid="saved-pipelines-panel"
-								>
-									<DeployPanel
-										variant="sidebar"
-										refreshKey={templateRefreshKey}
-										onEditTemplate={loadPipelineToCanvas}
-										onViewAll={() => setSavedDrawerOpen(true)}
-									/>
+										配置节点
+									</Button>
 								</div>
-								<div className="config-panel__node">
-								{selectedNode ? (
-									<>
-										<div className="config-panel-header">
-											<div className="config-panel-header__info">
-												<span className="config-panel-label">
-													{selectedNode.data?.label || selectedNode.id}
+								<div className="config-content">
+									<div className="config-section-title">关联资产</div>
+									{selectedNodeAssetLoading ? (
+										<div
+											style={{
+												fontSize: 12,
+												color: "#64748b",
+											}}
+										>
+											{selectedNodeAssetId
+												? "正在加载关联资产..."
+												: "未关联资产"}
+										</div>
+									) : selectedNodeAssetError ? (
+										<div
+											style={{
+												fontSize: 12,
+												color: "#dc2626",
+											}}
+										>
+											{selectedNodeAssetError}
+										</div>
+									) : selectedNodeAssetInfo ? (
+										<div
+											style={{
+												display: "grid",
+												gap: 6,
+											}}
+										>
+											<div className="config-field">
+												<span
+													style={{
+														fontSize: 10,
+														color: "var(--color-text-secondary, #64748b)",
+														textTransform: "uppercase",
+														letterSpacing: "0.8px",
+													}}
+												>
+													名称
 												</span>
-												<span className="config-panel-type">
-													{selectedNode.data?.image || "未设置镜像"}
-												</span>
+												<Typography.Text>
+													{selectedNodeAssetInfo.name}
+												</Typography.Text>
 											</div>
-											<Button
-												size="small"
-												type="primary"
-												onClick={() => setEditingNodeId(selectedNode.id)}
-											>
-												配置节点
-											</Button>
+											<div className="config-field">
+												<span
+													style={{
+														fontSize: 10,
+														color: "var(--color-text-secondary, #64748b)",
+														textTransform: "uppercase",
+														letterSpacing: "0.8px",
+													}}
+												>
+													类型
+												</span>
+												<Typography.Text>
+													{selectedNodeAssetInfo.type}
+												</Typography.Text>
+											</div>
+											<div className="config-field">
+												<span
+													style={{
+														fontSize: 10,
+														color: "var(--color-text-secondary, #64748b)",
+														textTransform: "uppercase",
+														letterSpacing: "0.8px",
+													}}
+												>
+													大小
+												</span>
+												<Typography.Text>
+													{selectedNodeAssetInfo.size}
+												</Typography.Text>
+											</div>
 										</div>
-										<div className="config-content">
-											<div className="config-section-title">关联资产</div>
-											{selectedNodeAssetLoading ? (
-												<div
-													style={{
-														fontSize: 12,
-														color: "#64748b",
-													}}
-												>
-													{selectedNodeAssetId
-														? "正在加载关联资产..."
-														: "未关联资产"}
-												</div>
-											) : selectedNodeAssetError ? (
-												<div
-													style={{
-														fontSize: 12,
-														color: "#dc2626",
-													}}
-												>
-													{selectedNodeAssetError}
-												</div>
-											) : selectedNodeAssetInfo ? (
-												<div
-													style={{
-														display: "grid",
-														gap: 6,
-													}}
-												>
-													<div className="config-field">
-														<span
-															style={{
-																fontSize: 10,
-																color: "var(--color-text-secondary, #64748b)",
-																textTransform: "uppercase",
-																letterSpacing: "0.8px",
-															}}
-														>
-															名称
-														</span>
-														<Typography.Text>
-															{selectedNodeAssetInfo.name}
-														</Typography.Text>
-													</div>
-													<div className="config-field">
-														<span
-															style={{
-																fontSize: 10,
-																color: "var(--color-text-secondary, #64748b)",
-																textTransform: "uppercase",
-																letterSpacing: "0.8px",
-															}}
-														>
-															类型
-														</span>
-														<Typography.Text>
-															{selectedNodeAssetInfo.type}
-														</Typography.Text>
-													</div>
-													<div className="config-field">
-														<span
-															style={{
-																fontSize: 10,
-																color: "var(--color-text-secondary, #64748b)",
-																textTransform: "uppercase",
-																letterSpacing: "0.8px",
-															}}
-														>
-															大小
-														</span>
-														<Typography.Text>
-															{selectedNodeAssetInfo.size}
-														</Typography.Text>
-													</div>
-												</div>
-											) : (
-												<div
-													style={{
-														fontSize: 12,
-														color: "#64748b",
-													}}
-												>
-													未选择关联资产
-												</div>
-											)}
+									) : (
+										<div
+											style={{
+												fontSize: 12,
+												color: "#64748b",
+											}}
+										>
+											未选择关联资产
 										</div>
-									</>
-								) : (
-									<PipelineEmptyState
-										variant="config"
-										title="节点配置"
-										description="选中画布节点后，在此查看详情。"
-									/>
-								)}
+									)}
 								</div>
-							</aside>
-							{editingNode && (
-								<NodeConfigPanel
-									open={Boolean(editingNode)}
-									node={editingNode}
-									onCancel={closeNodeConfig}
-									onSave={saveNodeConfig}
-								/>
-							)}
-						</>
+							</>
+						) : (
+							<PipelineEmptyState
+								variant="config"
+								title="节点配置"
+								description="选中画布节点后，在此查看详情。"
+							/>
+						)}
+					</div>
+				</aside>
+				{editingNode && (
+					<NodeConfigPanel
+						open={Boolean(editingNode)}
+						node={editingNode}
+						onCancel={closeNodeConfig}
+						onSave={saveNodeConfig}
+					/>
+				)}
 			</div>
 
 			<Drawer
@@ -960,7 +962,7 @@ function PipelineCanvas() {
 			>
 				<DeployPanel
 					variant="full"
-					refreshKey={templateRefreshKey}
+					_refreshKey={templateRefreshKey}
 					onEditTemplate={(pipeline) => {
 						loadPipelineToCanvas(pipeline);
 						setSavedDrawerOpen(false);
@@ -995,7 +997,10 @@ function PipelineCanvas() {
 					}}
 					placeholder='{"name":"my-pipeline","nodes":[],"edges":[]}'
 					autoSize={{ minRows: 10, maxRows: 18 }}
-					style={{ fontFamily: '"SF Mono", "Fira Code", monospace', fontSize: 12 }}
+					style={{
+						fontFamily: '"SF Mono", "Fira Code", monospace',
+						fontSize: 12,
+					}}
 				/>
 			</Modal>
 
@@ -1007,195 +1012,199 @@ function PipelineCanvas() {
 				width={780}
 				destroyOnHidden
 			>
-				{!deployDialog.deploying && !deployDialog.done && deployDialog.mode === "edit" && (
-					<>
-						<Typography.Text
-							type="secondary"
-							style={{ fontSize: 12, display: "block", marginBottom: 4 }}
-						>
-							当前模板：{currentTemplateLabel}
-						</Typography.Text>
-						<Typography.Paragraph
-							type="secondary"
-							style={{ fontSize: 12, marginBottom: 16 }}
-						>
-							将流水线转换为 Argo Workflow 并提交到 Kubernetes 集群。
-						</Typography.Paragraph>
-						{!canDeploy && (
-							<Alert
-								type="warning"
-								showIcon
-								message="画布为空"
-								description="请先从左侧拖入至少一个组件，或导入带节点的 Pipeline JSON。"
-								style={{ marginBottom: 16 }}
-							/>
-						)}
-						<div
-							style={{
-								display: "flex",
-								flexDirection: "column",
-								gap: 12,
-								marginBottom: 16,
-							}}
-						>
-							<label
-								htmlFor="pp-workflow-name"
+				{!deployDialog.deploying &&
+					!deployDialog.done &&
+					deployDialog.mode === "edit" && (
+						<>
+							<Typography.Text
+								type="secondary"
+								style={{ fontSize: 12, display: "block", marginBottom: 4 }}
+							>
+								当前模板：{currentTemplateLabel}
+							</Typography.Text>
+							<Typography.Paragraph
+								type="secondary"
+								style={{ fontSize: 12, marginBottom: 16 }}
+							>
+								将流水线转换为 Argo Workflow 并提交到 Kubernetes 集群。
+							</Typography.Paragraph>
+							{!canDeploy && (
+								<Alert
+									type="warning"
+									showIcon
+									message="画布为空"
+									description="请先从左侧拖入至少一个组件，或导入带节点的 Pipeline JSON。"
+									style={{ marginBottom: 16 }}
+								/>
+							)}
+							<div
 								style={{
 									display: "flex",
 									flexDirection: "column",
-									gap: 4,
-									fontSize: 10,
-									textTransform: "uppercase",
-									letterSpacing: "0.8px",
-									color: "#64748b",
+									gap: 12,
+									marginBottom: 16,
 								}}
 							>
-								工作流名称
-								<Input
-									id="pp-workflow-name"
-									value={deployDialog.name}
-									onChange={(e) =>
-										setDeployDialog((prev) => ({
-											...prev,
-											name: e.target.value,
-										}))
-									}
-									placeholder="留空则使用当前流水线名称"
+								<label
+									htmlFor="pp-workflow-name"
+									style={{
+										display: "flex",
+										flexDirection: "column",
+										gap: 4,
+										fontSize: 10,
+										textTransform: "uppercase",
+										letterSpacing: "0.8px",
+										color: "#64748b",
+									}}
+								>
+									工作流名称
+									<Input
+										id="pp-workflow-name"
+										value={deployDialog.name}
+										onChange={(e) =>
+											setDeployDialog((prev) => ({
+												...prev,
+												name: e.target.value,
+											}))
+										}
+										placeholder="留空则使用当前流水线名称"
+										size="small"
+									/>
+								</label>
+								<div
+									style={{
+										fontSize: 10,
+										color: "#64748b",
+										display: "flex",
+										gap: 8,
+									}}
+								>
+									<span>{nodes.length} 个节点</span>
+									<span style={{ fontSize: 3, color: "#cbd5e1" }}>•</span>
+									<span>{edges.length} 条连线</span>
+								</div>
+								<Collapse
+									ghost
 									size="small"
+									items={[
+										{
+											key: "assets",
+											label: (
+												<span style={{ fontSize: 12, color: "#64748b" }}>
+													高级：绑定资产（可选）
+												</span>
+											),
+											children: (
+												<AssetPicker
+													selectedIds={selectedAssetIds}
+													onSelectionChange={setSelectedAssetIds}
+													maxHeight={180}
+												/>
+											),
+										},
+									]}
 								/>
-							</label>
+							</div>
 							<div
 								style={{
-									fontSize: 10,
-									color: "#64748b",
 									display: "flex",
 									gap: 8,
+									justifyContent: "flex-end",
+									borderTop: "1px solid var(--color-border, #e2e8f0)",
+									paddingTop: 14,
 								}}
 							>
-								<span>{nodes.length} 个节点</span>
-								<span style={{ fontSize: 3, color: "#cbd5e1" }}>•</span>
-								<span>{edges.length} 条连线</span>
+								<Button onClick={closeDeployDialog}>取消</Button>
+								<Button onClick={handlePreviewDeploy} disabled={!canDeploy}>
+									预览
+								</Button>
+								<Button
+									type="primary"
+									onClick={handleDeploy}
+									disabled={!canDeploy}
+								>
+									部署
+								</Button>
 							</div>
-							<Collapse
-								ghost
-								size="small"
-								items={[
-									{
-										key: "assets",
-										label: (
-											<span style={{ fontSize: 12, color: "#64748b" }}>
-												高级：绑定资产（可选）
-											</span>
-										),
-										children: (
-											<AssetPicker
-												selectedIds={selectedAssetIds}
-												onSelectionChange={setSelectedAssetIds}
-												maxHeight={180}
-											/>
-										),
-									},
-								]}
-							/>
-						</div>
-						<div
-							style={{
-								display: "flex",
-								gap: 8,
-								justifyContent: "flex-end",
-								borderTop: "1px solid var(--color-border, #e2e8f0)",
-								paddingTop: 14,
-							}}
-						>
-							<Button onClick={closeDeployDialog}>取消</Button>
-							<Button onClick={handlePreviewDeploy} disabled={!canDeploy}>
-								预览
-							</Button>
-							<Button
-								type="primary"
-								onClick={handleDeploy}
-								disabled={!canDeploy}
+						</>
+					)}
+				{!deployDialog.deploying &&
+					!deployDialog.done &&
+					deployDialog.mode === "preview" && (
+						<>
+							<Typography.Text
+								type="secondary"
+								style={{ fontSize: 12, display: "block", marginBottom: 4 }}
 							>
-								部署
-							</Button>
-						</div>
-					</>
-				)}
-				{!deployDialog.deploying && !deployDialog.done && deployDialog.mode === "preview" && (
-					<>
-						<Typography.Text
-							type="secondary"
-							style={{ fontSize: 12, display: "block", marginBottom: 4 }}
-						>
-							当前模板：{currentTemplateLabel}
-						</Typography.Text>
-						<Typography.Paragraph
-							type="secondary"
-							style={{ fontSize: 12, marginBottom: 12 }}
-						>
-							以下为 dry-run 结果，仅用于确认。
-						</Typography.Paragraph>
-						{deployDialog.previewLoading ? (
-							<div style={{ textAlign: "center", padding: 20 }}>
-								<Typography.Text type="secondary">
-									正在生成预览内容...
-								</Typography.Text>
-							</div>
-						) : deployDialog.previewError ? (
-							<Alert
-								type="error"
-								showIcon
-								message="预览失败"
-								description={deployDialog.previewError}
-								style={{ marginBottom: 16 }}
-							/>
-						) : (
-							<pre
+								当前模板：{currentTemplateLabel}
+							</Typography.Text>
+							<Typography.Paragraph
+								type="secondary"
+								style={{ fontSize: 12, marginBottom: 12 }}
+							>
+								以下为 dry-run 结果，仅用于确认。
+							</Typography.Paragraph>
+							{deployDialog.previewLoading ? (
+								<div style={{ textAlign: "center", padding: 20 }}>
+									<Typography.Text type="secondary">
+										正在生成预览内容...
+									</Typography.Text>
+								</div>
+							) : deployDialog.previewError ? (
+								<Alert
+									type="error"
+									showIcon
+									message="预览失败"
+									description={deployDialog.previewError}
+									style={{ marginBottom: 16 }}
+								/>
+							) : (
+								<pre
+									style={{
+										margin: 0,
+										padding: 12,
+										background: "#0f172a",
+										color: "#e2e8f0",
+										borderRadius: 8,
+										overflow: "auto",
+										maxHeight: 360,
+										fontSize: 12,
+										fontFamily:
+											'"SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+										lineHeight: 1.5,
+										whiteSpace: "pre",
+									}}
+								>
+									{deployDialog.previewManifest || "（暂无内容）"}
+								</pre>
+							)}
+							<div
 								style={{
-									margin: 0,
-									padding: 12,
-									background: "#0f172a",
-									color: "#e2e8f0",
-									borderRadius: 8,
-									overflow: "auto",
-									maxHeight: 360,
-									fontSize: 12,
-									fontFamily:
-										'"SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-									lineHeight: 1.5,
-									whiteSpace: "pre",
+									display: "flex",
+									gap: 8,
+									justifyContent: "flex-end",
+									borderTop: "1px solid var(--color-border, #e2e8f0)",
+									paddingTop: 14,
+									marginTop: 12,
 								}}
 							>
-								{deployDialog.previewManifest || "（暂无内容）"}
-							</pre>
-						)}
-						<div
-							style={{
-								display: "flex",
-								gap: 8,
-								justifyContent: "flex-end",
-								borderTop: "1px solid var(--color-border, #e2e8f0)",
-								paddingTop: 14,
-								marginTop: 12,
-							}}
-						>
-							<Button
-								onClick={() =>
-									setDeployDialog((prev) => ({ ...prev, mode: "edit" }))
-								}
-							>
-								返回编辑
-							</Button>
-							<Button
-								type="primary"
-								onClick={handleDeploy}
-								disabled={!canDeploy}
-							>
-								确认部署
-							</Button>
-						</div>
-					</>
-				)}
+								<Button
+									onClick={() =>
+										setDeployDialog((prev) => ({ ...prev, mode: "edit" }))
+									}
+								>
+									返回编辑
+								</Button>
+								<Button
+									type="primary"
+									onClick={handleDeploy}
+									disabled={!canDeploy}
+								>
+									确认部署
+								</Button>
+							</div>
+						</>
+					)}
 				{deployDialog.deploying && (
 					<div style={{ textAlign: "center", padding: 20 }}>
 						<Typography.Text type="secondary">

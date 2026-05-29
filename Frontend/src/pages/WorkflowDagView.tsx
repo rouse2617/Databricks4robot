@@ -14,15 +14,18 @@ import {
 } from "@xyflow/react";
 import { Input } from "antd";
 import dagre from "dagre";
-import { type MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+	type MouseEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import "@xyflow/react/dist/style.css";
 import "./WorkflowDagView.css";
 import type { WorkflowDagEdge, WorkflowNodeStatus } from "../api/workflowApi";
 import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
-import {
-	WorkflowDagNode,
-	type WorkflowDagNodeData,
-} from "./WorkflowDagNode";
+import { WorkflowDagNode, type WorkflowDagNodeData } from "./WorkflowDagNode";
 
 const DISPLAYABLE_NODE_TYPES = new Set(["pod", "template"]);
 const DAG_NODE_WIDTH = 240;
@@ -42,7 +45,8 @@ function getProgressPercent(progress: string | undefined): number | null {
 	if (parts.length !== 2) return null;
 	const done = Number(parts[0]);
 	const total = Number(parts[1]);
-	if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return null;
+	if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0)
+		return null;
 	return Math.min(100, Math.max(0, Math.round((done / total) * 100)));
 }
 
@@ -93,7 +97,7 @@ function getNearestVisibleAncestorId(
 	return null;
 }
 
-interface WorkflowDagNode extends RFNode<WorkflowDagNodeData> {
+interface WorkflowDagNodeType extends RFNode<WorkflowDagNodeData> {
 	type: "workflowStep";
 }
 
@@ -103,7 +107,7 @@ export function buildDagElements(
 	selectedNodeId: string | null,
 	nodeSearch: string,
 ): {
-	nodes: WorkflowDagNode[];
+	nodes: WorkflowDagNodeType[];
 	edges: RFEdge[];
 } {
 	const displayableNodes = rawNodes.filter(isDisplayableNode);
@@ -145,10 +149,7 @@ export function buildDagElements(
 
 	if (workflowEdges) {
 		for (const edge of workflowEdges) {
-			if (
-				!visibleIds.has(edge.source) ||
-				!visibleIds.has(edge.target)
-			) {
+			if (!visibleIds.has(edge.source) || !visibleIds.has(edge.target)) {
 				continue;
 			}
 			addEdge(edge.source, edge.target);
@@ -274,7 +275,9 @@ function WorkflowDagViewInner({
 	onNodeSelect,
 	emptyMessage,
 }: WorkflowDagViewProps): React.JSX.Element {
-	const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowDagNode>([]);
+	const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowDagNodeType>(
+		[],
+	);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<RFEdge>([]);
 	const [nodeSearch, setNodeSearch] = useState("");
 
@@ -290,7 +293,7 @@ function WorkflowDagViewInner({
 	}, [rawNodes, workflowEdges, selectedNodeId, nodeSearch, setNodes, setEdges]);
 
 	const onNodeClick = useCallback(
-		(_: MouseEvent, node: WorkflowDagNode) => {
+		(_: MouseEvent, node: WorkflowDagNodeType) => {
 			const workflowNode = node.data.workflowNode;
 			if (workflowNode) {
 				onNodeSelect(workflowNode);
@@ -380,7 +383,9 @@ function WorkflowDagViewInner({
 	);
 }
 
-export function WorkflowDagView(props: WorkflowDagViewProps): React.JSX.Element {
+export function WorkflowDagView(
+	props: WorkflowDagViewProps,
+): React.JSX.Element {
 	return (
 		<ReactFlowProvider>
 			<WorkflowDagViewInner {...props} />

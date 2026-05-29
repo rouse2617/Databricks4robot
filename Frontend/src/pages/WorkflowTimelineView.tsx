@@ -41,17 +41,13 @@ export function WorkflowTimelineView({
 		.map((node) => ({
 			node,
 			start: new Date(node.startedAt as string).getTime(),
-			end: node.finishedAt
-				? new Date(node.finishedAt).getTime()
-				: Date.now(),
+			end: node.finishedAt ? new Date(node.finishedAt).getTime() : Date.now(),
 		}));
 
 	if (items.length === 0) {
 		return (
 			<div className="workflow-timeline-view">
-				<div className="workflow-timeline-view__empty">
-					暂无节点时间数据
-				</div>
+				<div className="workflow-timeline-view__empty">暂无节点时间数据</div>
 			</div>
 		);
 	}

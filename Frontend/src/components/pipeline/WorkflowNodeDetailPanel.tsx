@@ -151,7 +151,8 @@ function ContainersTab({ node }: { node: WorkflowNodeStatus }) {
 				styles={{ description: { maxWidth: 360, margin: "0 auto" } }}
 			>
 				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-					当前 API 未返回容器 spec；可在「概览」查看节点状态，或通过「日志」排查运行详情。
+					当前 API 未返回容器
+					spec；可在「概览」查看节点状态，或通过「日志」排查运行详情。
 				</Typography.Text>
 			</Empty>
 		);
@@ -369,7 +370,12 @@ export function WorkflowNodeDetailPanel({
 	if (!node || !workflow) return null;
 
 	const drawerExtra = [
-		<Button key="logs" type="primary" icon={<FileTextOutlined />} onClick={onShowLogs}>
+		<Button
+			key="logs"
+			type="primary"
+			icon={<FileTextOutlined />}
+			onClick={onShowLogs}
+		>
 			日志
 		</Button>,
 	];

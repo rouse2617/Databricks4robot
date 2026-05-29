@@ -9,7 +9,7 @@ export default function LoginPage() {
 
 	const onFinish = async ({ email }: { email: string }) => {
 		const trimmed = email.trim().toLowerCase();
-		if (!trimmed || !trimmed.includes("@")) {
+		if (!trimmed?.includes("@")) {
 			msg.error("请输入有效的公司邮箱");
 			return;
 		}

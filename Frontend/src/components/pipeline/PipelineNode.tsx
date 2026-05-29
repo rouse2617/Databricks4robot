@@ -18,7 +18,8 @@ function PipelineStepNodeInner({
 	return (
 		<div
 			className={`pipeline-node select-${selectType} ${selected ? "selected" : ""}`}
-			role="group"
+			role="option"
+			tabIndex={0}
 			aria-label={`流水线节点 ${label}`}
 			aria-selected={selected}
 		>

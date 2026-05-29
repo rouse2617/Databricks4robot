@@ -5,11 +5,11 @@
 import { ReloadOutlined, SearchOutlined } from "@ant-design/icons";
 import {
 	Alert,
-	Radio,
 	Button,
 	Card,
 	Modal,
 	message,
+	Radio,
 	Space,
 	Spin,
 	Table,
@@ -179,7 +179,7 @@ export default function EventsPage() {
 	const [assetId, setAssetId] = useState(() =>
 		initialAssetIdFromSearch(searchParams),
 	);
-const [events, setEvents] = useState<AssetEvent[]>([]);
+	const [events, setEvents] = useState<AssetEvent[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [realtimeMode, setRealtimeMode] = useState(false);
@@ -242,7 +242,7 @@ const [events, setEvents] = useState<AssetEvent[]>([]);
 			setError(m);
 			setEvents([]);
 		} finally {
-		if (fetchId === fetchIdRef.current) {
+			if (fetchId === fetchIdRef.current) {
 				setLoading(false);
 			}
 		}
@@ -331,7 +331,7 @@ const [events, setEvents] = useState<AssetEvent[]>([]);
 		setNextCursor(undefined);
 		setError(null);
 		fetchEvents();
-	}, [fetchEvents, realtimeMode]);
+	}, [fetchEvents, realtimeMode, assetId.trim]);
 
 	useEffect(() => {
 		if (!searchParams.has("asset_id")) return;
@@ -415,41 +415,41 @@ const [events, setEvents] = useState<AssetEvent[]>([]);
 							}}
 						/>
 					</div>
-				{isPerAsset && (
-					<Radio.Group
-						value={realtimeMode ? "realtime" : "manual"}
-						onChange={(e) => setRealtimeMode(e.target.value === "realtime")}
-						optionType="button"
-						size="small"
-						options={[
-							{ label: "手动刷新", value: "manual" },
-							{ label: "实时模式", value: "realtime" },
-						]}
-					/>
-				)}
-				{isPerAsset && realtimeMode ? (
-					<Tag color={streamConnected ? "green" : "red"}>
-						{streamConnected ? "🟢 实时" : "🔴 断开"}
-					</Tag>
-				) : null}
-				{isPerAsset && (
+					{isPerAsset && (
+						<Radio.Group
+							value={realtimeMode ? "realtime" : "manual"}
+							onChange={(e) => setRealtimeMode(e.target.value === "realtime")}
+							optionType="button"
+							size="small"
+							options={[
+								{ label: "手动刷新", value: "manual" },
+								{ label: "实时模式", value: "realtime" },
+							]}
+						/>
+					)}
+					{isPerAsset && realtimeMode ? (
+						<Tag color={streamConnected ? "green" : "red"}>
+							{streamConnected ? "🟢 实时" : "🔴 断开"}
+						</Tag>
+					) : null}
+					{isPerAsset && (
+						<Button
+							icon={<ReloadOutlined />}
+							onClick={() => onAssetIdInput("")}
+							size="small"
+						>
+							清除资产
+						</Button>
+					)}
 					<Button
 						icon={<ReloadOutlined />}
-						onClick={() => onAssetIdInput("")}
+						onClick={fetchEvents}
+						loading={loading}
 						size="small"
+						disabled={realtimeMode}
 					>
-						清除资产
+						刷新
 					</Button>
-				)}
-				<Button
-					icon={<ReloadOutlined />}
-					onClick={fetchEvents}
-					loading={loading}
-					size="small"
-					disabled={realtimeMode}
-				>
-					刷新
-				</Button>
 				</Space>
 			</Card>
 

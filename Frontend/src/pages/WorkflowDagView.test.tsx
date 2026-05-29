@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { WorkflowDagEdge, WorkflowNodeStatus } from "../api/workflowApi";
-import { buildDagElements, countDisplayableWorkflowNodes } from "./WorkflowDagView";
+import {
+	buildDagElements,
+	countDisplayableWorkflowNodes,
+} from "./WorkflowDagView";
 
 describe("buildDagElements", () => {
 	const nodes: WorkflowNodeStatus[] = [
@@ -31,7 +34,7 @@ describe("buildDagElements", () => {
 			},
 		];
 
-  const result = buildDagElements(nodes, workflowEdges, null, "");
+		const result = buildDagElements(nodes, workflowEdges, null, "");
 
 		expect(result.edges).toHaveLength(1);
 		expect(result.edges[0]).toMatchObject({
@@ -50,7 +53,7 @@ describe("buildDagElements", () => {
 			},
 		];
 
-  const result = buildDagElements(nodes, workflowEdges, null, "");
+		const result = buildDagElements(nodes, workflowEdges, null, "");
 
 		expect(result.edges).toHaveLength(0);
 	});

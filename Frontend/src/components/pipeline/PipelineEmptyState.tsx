@@ -1,7 +1,11 @@
 import { Button } from "antd";
 import type { ReactNode } from "react";
 
-export type PipelineEmptyStateVariant = "canvas" | "config" | "deploy" | "palette";
+export type PipelineEmptyStateVariant =
+	| "canvas"
+	| "config"
+	| "deploy"
+	| "palette";
 
 export interface PipelineEmptyStateProps {
 	variant: PipelineEmptyStateVariant;

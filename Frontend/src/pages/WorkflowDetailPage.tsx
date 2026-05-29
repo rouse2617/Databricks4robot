@@ -5,6 +5,7 @@ import {
 } from "@ant-design/icons";
 import Ansi from "ansi-to-react";
 import {
+	Alert,
 	Button,
 	Descriptions,
 	Input,
@@ -15,7 +16,6 @@ import {
 	Spin,
 	Tag,
 	Tooltip,
-	Alert,
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -30,10 +30,10 @@ import {
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
+import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 import { useWorkflowDetail } from "./useWorkflowDetail";
 import { WorkflowDagView } from "./WorkflowDagView";
 import { WorkflowTimelineView } from "./WorkflowTimelineView";
-import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 
 function buildHighlightedLogNodes(logContent: string, keyword: string) {
 	const normalized = keyword.trim();

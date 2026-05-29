@@ -12,18 +12,26 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-		"github.com/CyberOrigin2077/cyber-databrew/internal/auth"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/auth"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	algoRunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
+	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
+	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	deliveryRuleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
+	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 
 	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
@@ -40,7 +48,11 @@ func RegisterAll(
 	assetHandler *assetH.Handler,
 	mcapHandler *mcapH.Handler,
 	deliveryHandler *deliveryH.Handler,
+	customerHandler *customerH.Handler,
+	deliveryRuleHandler *deliveryRuleH.Handler,
+	algoRunHandler *algoRunH.Handler,
 	algoHandler *assetH.AlgoHandler,
+	auditHandler *auditH.Handler,
 	lakehouseHandler *lakehouseH.Handler,
 	registryHandler *registryH.Handler,
 	searchHandler *searchH.Handler,
@@ -48,8 +60,17 @@ func RegisterAll(
 	purgeHandler *adminH.PurgeHandler,
 	evalHandler *evalH.Handler,
 	actionHandler *actionH.Handler,
+	pipelineHandler *pipelineH.Handler,
+	pipelineComponentHandler *pipelineComponentH.Handler,
 	queryHandler *queryH.Handler,
+	workflowHandler *workflowH.Handler,
+	backfillHandler *backfillH.Handler,
 ) {
+	// Suppress unused warnings for handler params that don't have route
+	// registrations wired yet (routes are registered in follow-up PRs).
+	_, _, _, _, _, _, _, _ = customerHandler, deliveryRuleHandler, algoRunHandler,
+		auditHandler, pipelineHandler, pipelineComponentHandler, workflowHandler, backfillHandler
+
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
 	r.Use(middleware.RequestGuard(2048))
@@ -263,7 +284,7 @@ func RegisterAll(
 			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
 		}
 
-		// Actions (mcap → seg → action 第三层; docs/review/data-platform-design.md §5.2.15)
+		// Actions (mcap → seg → action 第三层)
 		if actionHandler != nil {
 			assets.POST("/:id/actions", actionHandler.Create)
 			assets.GET("/:id/actions", actionHandler.List)

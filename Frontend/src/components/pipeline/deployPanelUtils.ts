@@ -9,8 +9,7 @@ export function sortByCreatedDesc<T extends { createdAt: string }>(
 	items: T[],
 ): T[] {
 	return [...items].sort(
-		(a, b) =>
-			new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+		(a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
 	);
 }
 

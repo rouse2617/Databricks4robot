@@ -118,6 +118,20 @@ type Config struct {
 
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
+
+	// OpenLineage emitter
+	OpenLineageEmitterEnabled string
+	OpenLineageEndpoint       string
+	OpenLineageSubscription   string
+	OpenLineageNamespace      string
+	OpenLineageProducer       string
+	OpenLineageTimeoutMs      string
+
+	// Argo Workflows
+	ArgoWorkflowsNamespace string
+
+	// DeliveryEligibilityProjector
+	DeliveryEligibilityProjectorEnabled string
 }
 
 func Load() *Config {
@@ -196,7 +210,14 @@ func Load() *Config {
 		OutboxESCheckpointShards:            getenv("OUTBOX_ES_CHECKPOINT_SHARDS", "16"),
 		OutboxESCheckpointIdleAfterSec:      getenv("OUTBOX_ES_CHECKPOINT_IDLE_AFTER_SEC", "300"),
 
-		AdminToken: getenv("ADMIN_TOKEN", ""),
+		AdminToken:               getenv("ADMIN_TOKEN", ""),
+		OpenLineageEmitterEnabled: getenv("OPENLINEAGE_EMITTER_ENABLED", ""),
+		OpenLineageEndpoint:       getenv("OPENLINEAGE_ENDPOINT", ""),
+		OpenLineageSubscription:   getenv("OPENLINEAGE_SUBSCRIPTION", ""),
+		OpenLineageNamespace:      getenv("OPENLINEAGE_NAMESPACE", ""),
+		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", ""),
+		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", ""),
+		ArgoWorkflowsNamespace:    getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
 	}
 }
 

@@ -8,7 +8,9 @@ import type {
 } from "../components/pipeline/types";
 
 /** Coerce API/canvas args (string[] or Argument[]) into transpiler Argument objects. */
-export function normalizeComponentArgs(args: unknown[] | undefined): Argument[] {
+export function normalizeComponentArgs(
+	args: unknown[] | undefined,
+): Argument[] {
 	if (!args || args.length === 0) return [];
 	return args.map((item, index) => {
 		if (typeof item === "string") {
@@ -19,9 +21,7 @@ export function normalizeComponentArgs(args: unknown[] | undefined): Argument[] 
 			const record = item as { name?: string; value?: string; from?: string };
 			const value = record.value ?? record.name ?? "";
 			const name = record.name?.trim() || value || `arg${index + 1}`;
-			return record.from
-				? { name, value, from: record.from }
-				: { name, value };
+			return record.from ? { name, value, from: record.from } : { name, value };
 		}
 		return { name: `arg${index + 1}`, value: String(item) };
 	});

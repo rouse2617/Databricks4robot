@@ -14,7 +14,7 @@ set -euo pipefail
 PROJECT_ID="${PROJECT_ID:-green-valley-442103}"
 REGION="${REGION:-us-central1}"
 SERVICE_NAME="${SERVICE_NAME:-cyber-databrew-backend-dev}"
-IMAGE="${IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest}"
+IMAGE="${IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest}"
 
 USE_CLOUD_BUILD="${USE_CLOUD_BUILD:-false}"
 USE_EXISTING_IMAGE="${USE_EXISTING_IMAGE:-false}"

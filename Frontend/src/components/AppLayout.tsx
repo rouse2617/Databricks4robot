@@ -152,8 +152,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 								items: [
 									{
 										key: "logout",
-										icon: <LogoutOutlined />
-										,
+										icon: <LogoutOutlined />,
 										label: "退出登录",
 										onClick: () => {
 											logout();

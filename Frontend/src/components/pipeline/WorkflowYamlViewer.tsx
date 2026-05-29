@@ -31,7 +31,11 @@ function formatJsonValue(value: unknown, indent: number = 0): React.ReactNode {
 		return <span style={tokenStyles.boolean}>{String(value)}</span>;
 	}
 	if (value instanceof Date) {
-		return <span style={tokenStyles.string}>{JSON.stringify(value.toISOString())}</span>;
+		return (
+			<span style={tokenStyles.string}>
+				{JSON.stringify(value.toISOString())}
+			</span>
+		);
 	}
 	if (Array.isArray(value)) {
 		if (value.length === 0) {
@@ -46,18 +50,21 @@ function formatJsonValue(value: unknown, indent: number = 0): React.ReactNode {
 		return (
 			<>
 				<span style={tokenStyles.punct}>[</span>
-				{value.map((item, index) => (
-					<Fragment key={`${item}-${index}`}>
-						<br />
-						<span style={{ whiteSpace: "pre" }}>
-							{"  ".repeat(childIndent)}
-						</span>
-						{formatJsonValue(item, childIndent)}
-						{index < value.length - 1 ? (
-							<span style={tokenStyles.punct}>,</span>
-						) : null}
-					</Fragment>
-				))}
+				{value.map((item, idx) => {
+					const elementKey = `json-${idx}`;
+					return (
+						<Fragment key={elementKey}>
+							<br />
+							<span style={{ whiteSpace: "pre" }}>
+								{"  ".repeat(childIndent)}
+							</span>
+							{formatJsonValue(item, childIndent)}
+							{idx < value.length - 1 ? (
+								<span style={tokenStyles.punct}>,</span>
+							) : null}
+						</Fragment>
+					);
+				})}
 				<br />
 				<span style={{ whiteSpace: "pre" }}>{"  ".repeat(indent)}</span>
 				<span style={tokenStyles.punct}>]</span>
@@ -77,24 +84,22 @@ function formatJsonValue(value: unknown, indent: number = 0): React.ReactNode {
 
 		const childIndent = indent + 1;
 		return (
-				<>
-					<span style={tokenStyles.punct}>{"{"}</span>
-					{entries.map(([entryKey, entryValue], index) => (
-						<Fragment
-							key={`${entryKey}-${typeof entryValue}-${index}`}
-						>
-							<br />
-							<span style={{ whiteSpace: "pre" }}>
-								{"  ".repeat(childIndent)}
-							</span>
-							<span style={tokenStyles.key}>{JSON.stringify(entryKey)}</span>
-							<span style={tokenStyles.punct}>: </span>
-							{formatJsonValue(entryValue, childIndent)}
-							{index < entries.length - 1 ? (
-								<span style={tokenStyles.punct}>,</span>
-							) : null}
-						</Fragment>
-					))}
+			<>
+				<span style={tokenStyles.punct}>{"{"}</span>
+				{entries.map(([entryKey, entryValue], index) => (
+					<Fragment key={`${entryKey}`}>
+						<br />
+						<span style={{ whiteSpace: "pre" }}>
+							{"  ".repeat(childIndent)}
+						</span>
+						<span style={tokenStyles.key}>{JSON.stringify(entryKey)}</span>
+						<span style={tokenStyles.punct}>: </span>
+						{formatJsonValue(entryValue, childIndent)}
+						{index < entries.length - 1 ? (
+							<span style={tokenStyles.punct}>,</span>
+						) : null}
+					</Fragment>
+				))}
 				<br />
 				<span style={{ whiteSpace: "pre" }}>{"  ".repeat(indent)}</span>
 				<span style={tokenStyles.punct}>{"}"}</span>

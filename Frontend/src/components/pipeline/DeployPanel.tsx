@@ -1,13 +1,23 @@
 import {
 	DeleteOutlined,
-	LinkOutlined,
 	DownOutlined,
 	EditOutlined,
 	EyeOutlined,
+	LinkOutlined,
 	PlayCircleOutlined,
 	ReloadOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Dropdown, Modal, Popconfirm, Skeleton, Space, Tag, message } from "antd";
+import {
+	Alert,
+	Button,
+	Dropdown,
+	Modal,
+	message,
+	Popconfirm,
+	Skeleton,
+	Space,
+	Tag,
+} from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -18,19 +28,19 @@ import {
 	getPipeline,
 	listDeployments,
 	listPipelines,
-	retryDeployment,
 	type PipelineTemplate,
+	retryDeployment,
 } from "../../api/pipelineApi";
 import AssetPicker from "./AssetPicker";
-import { PipelineEmptyState } from "./PipelineEmptyState";
 import {
 	COMPACT_TEMPLATE_LIMIT,
 	DEPLOYMENT_PAGE_SIZE,
-	SIDEBAR_TEMPLATE_LIMIT,
-	TEMPLATE_PAGE_SIZE,
 	dedupeTemplatesByName,
 	prepareDeployments,
+	SIDEBAR_TEMPLATE_LIMIT,
+	TEMPLATE_PAGE_SIZE,
 } from "./deployPanelUtils";
+import { PipelineEmptyState } from "./PipelineEmptyState";
 import type { Pipeline } from "./types";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -46,15 +56,11 @@ const RETRYABLE_DEPLOYMENT_STATUSES = new Set(["Failed", "Error"]);
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
 
 function PanelSkeleton({ rows = 3 }: { rows?: number }) {
+	const keys = Array.from({ length: rows }, (_, i) => `skel-${i}`);
 	return (
 		<div className="deploy-panel-skeleton" data-testid="deploy-panel-loading">
-			{Array.from({ length: rows }, (_, index) => (
-				<Skeleton
-					key={index}
-					active
-					paragraph={{ rows: 1 }}
-					title={false}
-				/>
+			{keys.map((key) => (
+				<Skeleton key={key} active paragraph={{ rows: 1 }} title={false} />
 			))}
 		</div>
 	);
@@ -164,11 +170,7 @@ function TemplateCard({
 							}}
 							trigger={["click"]}
 						>
-							<Button
-								size="small"
-								type="primary"
-								style={{ padding: "0 4px" }}
-							>
+							<Button size="small" type="primary" style={{ padding: "0 4px" }}>
 								<DownOutlined style={{ fontSize: 10 }} />
 							</Button>
 						</Dropdown>
@@ -202,17 +204,18 @@ function TemplateCard({
 
 export function DeployPanel({
 	onEditTemplate,
-	refreshKey,
+	_refreshKey,
 	compact,
 	variant,
 	onViewAll,
 }: {
 	onEditTemplate?: (pipeline: Pipeline) => void;
-	refreshKey?: number;
+	_refreshKey?: number;
 	compact?: boolean;
 	variant?: DeployPanelVariant;
 	onViewAll?: () => void;
 }) {
+	void _refreshKey;
 	const resolvedVariant: DeployPanelVariant =
 		variant ?? (compact ? "compact" : "full");
 	const navigate = useNavigate();
@@ -222,9 +225,8 @@ export function DeployPanel({
 	const [error, setError] = useState<string | null>(null);
 	const [templateVisibleCount, setTemplateVisibleCount] =
 		useState(TEMPLATE_PAGE_SIZE);
-	const [deploymentVisibleCount, setDeploymentVisibleCount] = useState(
-		DEPLOYMENT_PAGE_SIZE,
-	);
+	const [deploymentVisibleCount, setDeploymentVisibleCount] =
+		useState(DEPLOYMENT_PAGE_SIZE);
 
 	const [assetModalOpen, setAssetModalOpen] = useState(false);
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
@@ -259,12 +261,12 @@ export function DeployPanel({
 
 	useEffect(() => {
 		refresh();
-	}, [refresh, refreshKey]);
+	}, [refresh]);
 
 	useEffect(() => {
 		setTemplateVisibleCount(TEMPLATE_PAGE_SIZE);
 		setDeploymentVisibleCount(DEPLOYMENT_PAGE_SIZE);
-	}, [templates, deployments]);
+	}, []);
 
 	const handleDeployClick = (templateId: string) => {
 		setDeployTargetId(templateId);
@@ -495,7 +497,10 @@ export function DeployPanel({
 	}
 
 	const visibleTemplates = displayTemplates.slice(0, templateVisibleCount);
-	const visibleDeployments = displayDeployments.slice(0, deploymentVisibleCount);
+	const visibleDeployments = displayDeployments.slice(
+		0,
+		deploymentVisibleCount,
+	);
 
 	return (
 		<div className="deploy-panel">
@@ -539,8 +544,8 @@ export function DeployPanel({
 						setTemplateVisibleCount((count) => count + TEMPLATE_PAGE_SIZE)
 					}
 				>
-					加载更多模板（还剩{" "}
-					{displayTemplates.length - visibleTemplates.length} 条）
+					加载更多模板（还剩 {displayTemplates.length - visibleTemplates.length}{" "}
+					条）
 				</Button>
 			) : null}
 
