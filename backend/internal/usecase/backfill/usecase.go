@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
+
+var ErrNotFound = errors.New("backfill job not found")
 
 // Usecase orchestrates backfill job operations.
 type Usecase struct {
@@ -74,7 +77,8 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	}
 
 	wfName := dep.WorkflowName
-	_ = uc.repo.UpdateItemStatus(ctx, item.ID, "running", wfName, "")
+	_ = uc.repo.UpdateItemStatus(ctx, item.ID, "completed", wfName, "")
+	_ = uc.repo.IncrementCompleted(ctx, item.JobID)
 	return nil
 }
 
@@ -122,7 +126,7 @@ func (uc *Usecase) RetryFailed(ctx context.Context, jobID string) error {
 		return err
 	}
 	if job == nil {
-		return fmt.Errorf("backfill job not found: %s", jobID)
+		return ErrNotFound
 	}
 
 	for _, item := range items {

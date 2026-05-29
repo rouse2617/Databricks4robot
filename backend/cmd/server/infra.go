@@ -94,17 +94,21 @@ func setupInfra() *infra {
 	}
 
 	// ── Optional: GCS bytes source for MCAP proxy ──
-	var mcapBytesSource mcapH.BytesSource
+	var (
+		mcapBytesSource mcapH.BytesSource
+		gcsClient       *storage.Client
+	)
 	{
-		gcsClient, err := storage.NewClient(ctx)
+		client, err := storage.NewClient(ctx)
 		if err != nil {
 			slog.Warn("gcs client unavailable; mcap bytes proxy disabled", "err", err)
 		} else {
-			defer func() { _ = gcsClient.Close() }()
-			src, srcErr := mcapH.NewGCSBytesSource(gcsClient)
+			src, srcErr := mcapH.NewGCSBytesSource(client)
 			if srcErr != nil {
 				slog.Warn("gcs bytes source init failed; mcap bytes proxy disabled", "err", srcErr)
+				_ = client.Close()
 			} else {
+				gcsClient = client
 				mcapBytesSource = src
 			}
 		}
@@ -147,6 +151,7 @@ func setupInfra() *infra {
 		es:              esClient,
 		lake:            lakeClient,
 		mcapBytesSource: mcapBytesSource,
+		gcsClient:       gcsClient,
 		algoRegistry:    algoRegistry,
 		tagRegistry:     tagRegistry,
 		metricRegistry:  metricRegistry,

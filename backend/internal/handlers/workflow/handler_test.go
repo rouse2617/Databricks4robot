@@ -324,6 +324,32 @@ func TestListWorkflows_FilterByLabels(t *testing.T) {
 	}
 }
 
+func TestListWorkflows_InvalidCreatedAfter(t *testing.T) {
+	h := New(&mockWorkflowClient{}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows?createdAfter=not-a-date", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestListWorkflows_InvalidFinishedBefore(t *testing.T) {
+	h := New(&mockWorkflowClient{}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows?finishedBefore=bad", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestListWorkflows_FilterByCreatedAfter(t *testing.T) {
 	base := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 	oldTime := base.Add(-2 * time.Hour)
