@@ -4665,20 +4665,6 @@ paths:
               schema: { $ref: '#/components/schemas/PipelineComponent' }
     delete:
       tags: [Pipeline]
-      summary: Delete a pipeline component (compatibility alias)
-      deprecated: true
-      security:
-        - DatabrewToken: []
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema: { type: string }
-      responses:
-        '204':
-          description: Deleted successfully
-    delete:
-      tags: [Pipeline]
       summary: Delete a pipeline component
       security:
         - DatabrewToken: []
