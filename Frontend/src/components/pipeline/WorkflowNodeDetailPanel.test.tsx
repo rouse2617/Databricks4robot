@@ -2,8 +2,8 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { WorkflowNodeDetailPanel } from "./WorkflowNodeDetailPanel";
 import type { WorkflowDetail, WorkflowNodeStatus } from "../../api/workflowApi";
+import { WorkflowNodeDetailPanel } from "./WorkflowNodeDetailPanel";
 
 Object.defineProperty(window, "matchMedia", {
 	writable: true,
@@ -53,21 +53,39 @@ const baseWorkflow: WorkflowDetail = {
 describe("WorkflowNodeDetailPanel", () => {
 	it("returns null when node is null", () => {
 		const { container } = render(
-			<WorkflowNodeDetailPanel node={null} workflow={baseWorkflow} open onClose={vi.fn()} onShowLogs={vi.fn()} />,
+			<WorkflowNodeDetailPanel
+				node={null}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
 		);
 		expect(container.innerHTML).toBe("");
 	});
 
 	it("returns null when workflow is null", () => {
 		const { container } = render(
-			<WorkflowNodeDetailPanel node={baseNode} workflow={null} open onClose={vi.fn()} onShowLogs={vi.fn()} />,
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={null}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
 		);
 		expect(container.innerHTML).toBe("");
 	});
 
 	it("renders drawer with summary tab", () => {
 		render(
-			<WorkflowNodeDetailPanel node={baseNode} workflow={baseWorkflow} open onClose={vi.fn()} onShowLogs={vi.fn()} />,
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
 		);
 		expect(screen.getByText("概览")).toBeTruthy();
 		expect(screen.getByText("容器")).toBeTruthy();
@@ -76,30 +94,66 @@ describe("WorkflowNodeDetailPanel", () => {
 
 	it("shows node phase tag", () => {
 		render(
-			<WorkflowNodeDetailPanel node={baseNode} workflow={baseWorkflow} open onClose={vi.fn()} onShowLogs={vi.fn()} />,
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
 		);
 		expect(screen.getByText("Succeeded")).toBeTruthy();
 	});
 
 	it("shows retry button when canRetryWorkflow", () => {
 		render(
-			<WorkflowNodeDetailPanel node={baseNode} workflow={baseWorkflow} open onClose={vi.fn()} onShowLogs={vi.fn()} onRetryWorkflow={vi.fn()} canRetryWorkflow />,
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+				onRetryWorkflow={vi.fn()}
+				canRetryWorkflow
+			/>,
 		);
 		expect(screen.getByText("重试工作流")).toBeTruthy();
 	});
 
 	it("renders containers tab", () => {
 		render(
-			<WorkflowNodeDetailPanel node={baseNode} workflow={baseWorkflow} open onClose={vi.fn()} onShowLogs={vi.fn()} />,
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
 		);
 		fireEvent.click(screen.getByText("容器"));
 		expect(screen.getByText("暂无容器详情")).toBeTruthy();
 	});
 
 	it("renders containers table when data present", () => {
-		const node = { ...baseNode, containers: [{ name: "main", image: "python:3.11", command: ["python"], args: ["train.py"] }] };
+		const node = {
+			...baseNode,
+			containers: [
+				{
+					name: "main",
+					image: "python:3.11",
+					command: ["python"],
+					args: ["train.py"],
+				},
+			],
+		};
 		render(
-			<WorkflowNodeDetailPanel node={node} workflow={baseWorkflow} open onClose={vi.fn()} onShowLogs={vi.fn()} />,
+			<WorkflowNodeDetailPanel
+				node={node}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
 		);
 		fireEvent.click(screen.getByText("容器"));
 		expect(screen.getByText("main")).toBeTruthy();
@@ -109,10 +163,19 @@ describe("WorkflowNodeDetailPanel", () => {
 	it("renders inputs in i/o tab", () => {
 		const node: WorkflowNodeStatus = {
 			...baseNode,
-			inputs: { parameters: [{ name: "lr", value: "0.01" }], artifacts: [{ name: "ds", path: "gs://b/data" }] },
+			inputs: {
+				parameters: [{ name: "lr", value: "0.01" }],
+				artifacts: [{ name: "ds", path: "gs://b/data" }],
+			},
 		};
 		render(
-			<WorkflowNodeDetailPanel node={node} workflow={baseWorkflow} open onClose={vi.fn()} onShowLogs={vi.fn()} />,
+			<WorkflowNodeDetailPanel
+				node={node}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
 		);
 		fireEvent.click(screen.getByText("输入/输出"));
 		expect(screen.getByText("lr")).toBeTruthy();
@@ -124,7 +187,13 @@ describe("WorkflowNodeDetailPanel", () => {
 			memoizationStatus: { hit: true, key: "abc", cacheName: "c1" },
 		};
 		render(
-			<WorkflowNodeDetailPanel node={node} workflow={baseWorkflow} open onClose={vi.fn()} onShowLogs={vi.fn()} />,
+			<WorkflowNodeDetailPanel
+				node={node}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
 		);
 		expect(screen.getByText(/命中=是/)).toBeTruthy();
 	});

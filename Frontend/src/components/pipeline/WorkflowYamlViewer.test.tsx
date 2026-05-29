@@ -2,15 +2,20 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { WorkflowYamlViewer } from "./WorkflowYamlViewer";
 import type { WorkflowNodeStatus } from "../../api/workflowApi";
+import { WorkflowYamlViewer } from "./WorkflowYamlViewer";
 
 Object.defineProperty(window, "matchMedia", {
 	writable: true,
 	value: vi.fn().mockImplementation((query: string) => ({
-		matches: false, media: query, onchange: null,
-		addListener: vi.fn(), removeListener: vi.fn(),
-		addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn(),
+		matches: false,
+		media: query,
+		onchange: null,
+		addListener: vi.fn(),
+		removeListener: vi.fn(),
+		addEventListener: vi.fn(),
+		removeEventListener: vi.fn(),
+		dispatchEvent: vi.fn(),
 	})),
 });
 
@@ -24,7 +29,9 @@ describe("WorkflowYamlViewer", () => {
 	};
 
 	it("renders nothing when nodeData is null", () => {
-		const { container } = render(<WorkflowYamlViewer nodeData={null} onClose={vi.fn()} />);
+		const { container } = render(
+			<WorkflowYamlViewer nodeData={null} onClose={vi.fn()} />,
+		);
 		expect(container.querySelector(".ant-modal")).toBeFalsy();
 	});
 
@@ -46,14 +53,23 @@ describe("WorkflowYamlViewer", () => {
 	});
 
 	it("renders JSON key names", () => {
-		const node = { id: "n1", name: "test", phase: "Succeeded", type: "Pod", extra: "value" };
+		const node = {
+			id: "n1",
+			name: "test",
+			phase: "Succeeded",
+			type: "Pod",
+			extra: "value",
+		};
 		render(<WorkflowYamlViewer nodeData={node} onClose={vi.fn()} />);
 		expect(screen.getByText(/"extra"/)).toBeTruthy();
 	});
 
 	it("renders nested objects", () => {
 		const node = {
-			id: "n1", name: "test", phase: "Succeeded", type: "Pod",
+			id: "n1",
+			name: "test",
+			phase: "Succeeded",
+			type: "Pod",
 			inputs: { lr: 0.001 },
 		};
 		render(<WorkflowYamlViewer nodeData={node} onClose={vi.fn()} />);
@@ -62,7 +78,10 @@ describe("WorkflowYamlViewer", () => {
 
 	it("renders arrays", () => {
 		const node = {
-			id: "n1", name: "test", phase: "Succeeded", type: "Pod",
+			id: "n1",
+			name: "test",
+			phase: "Succeeded",
+			type: "Pod",
 			children: ["c1", "c2"],
 		};
 		render(<WorkflowYamlViewer nodeData={node} onClose={vi.fn()} />);
@@ -70,7 +89,13 @@ describe("WorkflowYamlViewer", () => {
 	});
 
 	it("renders empty arrays", () => {
-		const node = { id: "n1", name: "test", phase: "Succeeded", type: "Pod", items: [] };
+		const node = {
+			id: "n1",
+			name: "test",
+			phase: "Succeeded",
+			type: "Pod",
+			items: [],
+		};
 		render(<WorkflowYamlViewer nodeData={node} onClose={vi.fn()} />);
 		const brackets = screen.getAllByText("[");
 		expect(brackets.length).toBeGreaterThanOrEqual(1);
