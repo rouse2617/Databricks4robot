@@ -114,9 +114,9 @@ func TestRegisterAll(t *testing.T) {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
 
-	// protected route with X-Grace-Token
+	// protected route with X-Databrew-Token
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/mcap-files", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	req.Header.Set("X-Request-ID", "rid-1")
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -169,7 +169,7 @@ func TestRegisterAll(t *testing.T) {
 
 	// internal route now requires auth (ADMIN_TOKEN or GraceToken fallback)
 	req = httptest.NewRequest(http.MethodPost, "/internal/commit-segments", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -209,7 +209,7 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -217,7 +217,7 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/internal/commit-segments", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -239,7 +239,7 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
-	req.Header.Set("X-Grace-Token", "dev-token")
+	req.Header.Set("X-Databrew-Token", "dev-token")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusServiceUnavailable {

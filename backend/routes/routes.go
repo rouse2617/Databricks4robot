@@ -112,7 +112,7 @@ func RegisterAll(
 				return
 			}
 			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie("grace_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
+			c.SetCookie("databrew_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{
 				"authenticated": true,
 				"email":         email,
@@ -132,7 +132,7 @@ func RegisterAll(
 		})
 		authProtected.POST("/logout", func(c *gin.Context) {
 			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie("grace_session", "", -1, "/", "", secureSessionCookie, true)
+			c.SetCookie("databrew_session", "", -1, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{"authenticated": false})
 		})
 	}
@@ -161,7 +161,7 @@ func RegisterAll(
 			return
 		}
 		c.SetSameSite(http.SameSiteLaxMode)
-		c.SetCookie("grace_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
+		c.SetCookie("databrew_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
 		c.JSON(http.StatusOK, gin.H{"authenticated": true})
 	})
 

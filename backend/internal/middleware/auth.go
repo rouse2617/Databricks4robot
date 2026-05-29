@@ -41,15 +41,15 @@ func StaticTokenAuth(token string) gin.HandlerFunc {
 // JWTAuth returns a Gin middleware that authenticates via JWT.
 //
 // Auth source priority:
-//  1. X-Grace-Token header → static token (legacy SDK path)
+//  1. X-Databrew-Token header → static token (legacy SDK path)
 //  2. Authorization: Bearer <jwt> → JWT
-//  3. grace_session cookie → JWT
+//  3. databrew_session cookie → JWT
 //
 // On success, user_email and user_role are set in the gin context.
 func JWTAuth(staticToken, jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Legacy static token via header → SDK backward compat.
-		if header := c.GetHeader("X-Grace-Token"); header != "" {
+		if header := c.GetHeader("X-Databrew-Token"); header != "" {
 			if header != staticToken && header != "Bearer "+staticToken {
 				httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "unauthorized")
 				c.Abort()
@@ -64,7 +64,7 @@ func JWTAuth(staticToken, jwtSecret string) gin.HandlerFunc {
 		// JWT from Authorization header or cookie.
 		tokenStr := c.GetHeader("Authorization")
 		if tokenStr == "" {
-			if cookie, err := c.Cookie("grace_session"); err == nil {
+			if cookie, err := c.Cookie("databrew_session"); err == nil {
 				tokenStr = cookie
 			}
 		}
