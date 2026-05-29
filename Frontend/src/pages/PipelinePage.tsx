@@ -402,6 +402,7 @@ function PipelineCanvas() {
 	const [importModalOpen, setImportModalOpen] = useState(false);
 	const [importText, setImportText] = useState("");
 	const importTextRef = useRef<string>("");
+	const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
 	// Asset selection for deploy modal
 	const [selectedAssetIds, setSelectedAssetIds] =
 		useState<string[]>(queryAssetIds);
@@ -801,6 +802,7 @@ function PipelineCanvas() {
 		try {
 			await savePipeline(pipelineName, buildPipelineJSON());
 			message.success(`已保存流水线模板`);
+			setTemplateRefreshKey(k => k + 1);
 		} catch (err) {
 			message.error(`保存失败: ${String(err)}`);
 		}
@@ -1022,7 +1024,7 @@ function PipelineCanvas() {
 										<span>从左侧「组件面板」拖入组件到画布</span>
 										<span>或从下方选择一个已保存的模板</span>
 									</div>
-									<DeployPanel onEditTemplate={loadPipelineToCanvas} />
+								<DeployPanel refreshKey={templateRefreshKey} onEditTemplate={loadPipelineToCanvas} />
 								</div>
 							)}
 							<div
@@ -1235,7 +1237,7 @@ function PipelineCanvas() {
 								部署
 							</Button>
 						</div>
-						<DeployPanel compact onEditTemplate={loadPipelineToCanvas} />
+					<DeployPanel compact refreshKey={templateRefreshKey} onEditTemplate={loadPipelineToCanvas} />
 					</div>
 				)}
 			</div>

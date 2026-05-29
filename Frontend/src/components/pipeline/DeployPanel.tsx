@@ -59,9 +59,11 @@ function extractPipelineAssetIds(pipelineJSON: Pipeline | undefined): string[] {
 
 export function DeployPanel({
 	onEditTemplate,
+	refreshKey,
 	compact,
 }: {
 	onEditTemplate?: (pipeline: Pipeline) => void;
+	refreshKey?: number;
 	compact?: boolean;
 }) {
 	const navigate = useNavigate();
@@ -90,7 +92,7 @@ export function DeployPanel({
 
 	useEffect(() => {
 		refresh();
-	}, [refresh]);
+	}, [refresh, refreshKey]);
 
 	const handleDeployClick = (templateId: string) => {
 		setDeployTargetId(templateId);
