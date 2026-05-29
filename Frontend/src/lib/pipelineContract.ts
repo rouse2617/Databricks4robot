@@ -134,7 +134,7 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 			command: d.command || [],
 			args: normalizeComponentArgs(d.args as unknown[]),
 			resources:
-				d.cpu || d.memory || d.disk
+				d.cpu || d.memory || d.disk || (d.env && d.env.length > 0)
 					? {
 							cpu: d.cpu,
 							memory: d.memory,

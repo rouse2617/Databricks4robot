@@ -68,6 +68,11 @@ export default function McapFilesPage() {
 		return () => window.clearTimeout(timer);
 	}, [ownerFilter]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: filter change triggers page reset
+	useEffect(() => {
+		setPage(1);
+	}, [debouncedOwnerFilter, stateFilter]);
+
 	const load = useCallback(
 		async (p = page) => {
 			setLoading(true);
