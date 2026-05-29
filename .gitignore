@@ -56,6 +56,7 @@ openspec/changes/**/*.png
 .cursorrules
 .agents/
 .agent/tasks/
+.agent/context/
 .agent/screenshots/
 .omm/
 *.swp
