@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -28,26 +27,13 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 	nameFilter := strings.TrimSpace(c.Query("name"))
 	statusFilter := strings.TrimSpace(c.Query("status"))
 	labelFilters := c.QueryArray("label")
-	createdAfterRaw := strings.TrimSpace(c.Query("createdAfter"))
-	finishedBeforeRaw := strings.TrimSpace(c.Query("finishedBefore"))
-
-	var (
-		createdAfter        time.Time
-		createdAfterGiven   bool
-		finishedBefore      time.Time
-		finishedBeforeGiven bool
-	)
-	if createdAfterRaw != "" {
-		if parsed, err := time.Parse(time.RFC3339, createdAfterRaw); err == nil {
-			createdAfter = parsed
-			createdAfterGiven = true
-		}
+	createdAfter, createdAfterGiven, ok := parseRFC3339QueryParam(c, "createdAfter")
+	if !ok {
+		return
 	}
-	if finishedBeforeRaw != "" {
-		if parsed, err := time.Parse(time.RFC3339, finishedBeforeRaw); err == nil {
-			finishedBefore = parsed
-			finishedBeforeGiven = true
-		}
+	finishedBefore, finishedBeforeGiven, ok := parseRFC3339QueryParam(c, "finishedBefore")
+	if !ok {
+		return
 	}
 
 	parsedLabels := make([][2]string, 0, len(labelFilters))

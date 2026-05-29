@@ -112,14 +112,14 @@ func (h *Handler) RetryFailed(c *gin.Context) {
 		return
 	}
 	if err := h.uc.RetryFailed(c.Request.Context(), id); err != nil {
-		mapError(c, err)
+		mapBackfillError(c, err)
 		return
 	}
 	c.JSON(200, gin.H{"status": "retrying"})
 }
 
-func mapError(c *gin.Context, err error) {
-	if errors.Is(err, errors.New("not found")) {
+func mapBackfillError(c *gin.Context, err error) {
+	if errors.Is(err, uc.ErrNotFound) {
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 		return
 	}

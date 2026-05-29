@@ -392,7 +392,8 @@ func (uc *Usecase) RetryDeployment(ctx context.Context, id string) (*models.Pipe
 	if d == nil {
 		return nil, ErrDeploymentNotFound
 	}
-	return uc.Deploy(ctx, d.PipelineJSON, d.PipelineName+"-retry", nil)
+	assetIDs := assetIDsFromPipelineJSON(d.PipelineJSON)
+	return uc.Deploy(ctx, d.PipelineJSON, d.PipelineName+"-retry", assetIDs)
 }
 
 // StopDeployment stops a running workflow by setting its Shutdown strategy.
@@ -574,7 +575,7 @@ type ResourceUsageReport struct {
 	Pods         []PodResourceUsage `json:"pods"`
 }
 
-// PodResourceUsage is retained in the API response while k8s metrics are disabled.
+// PodResourceUsage summarizes per-pod runtime duration and template resource requests.
 type PodResourceUsage struct {
 	PodName       string `json:"pod_name"`
 	NodeName      string `json:"node_name,omitempty"`
@@ -601,6 +602,19 @@ func (uc *Usecase) GetResourceUsage(ctx context.Context, deploymentID string) (*
 		WorkflowName: d.WorkflowName,
 		Status:       d.Status,
 		Pods:         []PodResourceUsage{},
+	}
+
+	if uc.wfClient != nil && d.WorkflowName != "" {
+		wf, err := uc.wfClient.GetWorkflow(ctx, d.WorkflowName, uc.namespace)
+		if err != nil {
+			return nil, fmt.Errorf("get workflow: %w", err)
+		}
+		if wf != nil {
+			if wf.Status.Phase != "" {
+				report.Status = string(wf.Status.Phase)
+			}
+			report.Pods = buildPodResourceUsageReport(wf, d.Manifest)
+		}
 	}
 
 	return report, nil
@@ -796,4 +810,24 @@ func rawToPipeline(raw json.RawMessage) (*transpiler.Pipeline, int, error) {
 		return nil, 0, err
 	}
 	return &pipe, len(pipe.Nodes), nil
+}
+
+func assetIDsFromPipelineJSON(pipeline map[string]interface{}) []string {
+	if pipeline == nil {
+		return nil
+	}
+	switch raw := pipeline["_input_asset_ids"].(type) {
+	case []string:
+		return raw
+	case []interface{}:
+		out := make([]string, 0, len(raw))
+		for _, id := range raw {
+			if s, ok := id.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }

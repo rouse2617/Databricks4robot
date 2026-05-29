@@ -6,8 +6,10 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -110,7 +112,9 @@ func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.
 	return nil, nil
 }
 
-type mockWorkflowClient struct{}
+type mockWorkflowClient struct {
+	getWorkflowFn func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+}
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
 	return nil
@@ -124,7 +128,10 @@ func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) erro
 func (m *mockWorkflowClient) ListWorkflows(_ context.Context, _ string, _ string) ([]wfv1.Workflow, error) {
 	return nil, nil
 }
-func (m *mockWorkflowClient) GetWorkflow(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+func (m *mockWorkflowClient) GetWorkflow(ctx context.Context, name, namespace string) (*wfv1.Workflow, error) {
+	if m.getWorkflowFn != nil {
+		return m.getWorkflowFn(ctx, name, namespace)
+	}
 	return &wfv1.Workflow{}, nil
 }
 func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
@@ -237,4 +244,114 @@ func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 			t.Fatalf("expected ErrAssetNotFound, got: %v", err)
 		}
 	})
+}
+
+func TestAssetIDsFromPipelineJSON(t *testing.T) {
+	t.Run("string slice", func(t *testing.T) {
+		got := assetIDsFromPipelineJSON(map[string]interface{}{
+			"_input_asset_ids": []string{"a1", "a2"},
+		})
+		if len(got) != 2 || got[0] != "a1" || got[1] != "a2" {
+			t.Fatalf("unexpected: %#v", got)
+		}
+	})
+
+	t.Run("interface slice", func(t *testing.T) {
+		got := assetIDsFromPipelineJSON(map[string]interface{}{
+			"_input_asset_ids": []interface{}{"a1", "a2"},
+		})
+		if len(got) != 2 {
+			t.Fatalf("unexpected: %#v", got)
+		}
+	})
+}
+
+func TestGetResourceUsage_ReturnsPods(t *testing.T) {
+	ctx := context.Background()
+	manifest := `apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+spec:
+  templates:
+  - name: main
+    container:
+      resources:
+        requests:
+          cpu: "100m"
+`
+	depRepo := &mockDeploymentRepo{}
+	depRepo.byID = map[string]*models.PipelineDeployment{
+		"dep-1": {
+			ID:           "dep-1",
+			WorkflowName: "wf-1",
+			Status:       "Running",
+			Manifest:     &manifest,
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		wf := &wfv1.Workflow{}
+		wf.Status.Phase = wfv1.WorkflowRunning
+		wf.Status.Nodes = wfv1.Nodes{
+			"pod-1": {
+				ID:           "pod-1",
+				Type:         wfv1.NodeTypePod,
+				TemplateName: "main",
+				HostNodeName: "node-a",
+				ResourcesDuration: wfv1.ResourcesDuration{
+					corev1.ResourceCPU: wfv1.NewResourceDuration(10 * time.Second),
+				},
+			},
+		}
+		return wf, nil
+	}
+
+	uc := New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, wfClient, "default")
+	report, err := uc.GetResourceUsage(ctx, "dep-1")
+	if err != nil {
+		t.Fatalf("GetResourceUsage: %v", err)
+	}
+	if len(report.Pods) != 1 {
+		t.Fatalf("expected 1 pod, got %d", len(report.Pods))
+	}
+	if report.Pods[0].PodName != "pod-1" || report.Pods[0].CPURequest != "100m" {
+		t.Fatalf("unexpected pod report: %#v", report.Pods[0])
+	}
+	if report.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("expected Running status, got %q", report.Status)
+	}
+}
+
+func TestRetryDeployment_PreservesInputAssetIDs(t *testing.T) {
+	ctx := context.Background()
+	depRepo := &mockDeploymentRepo{}
+	depRepo.byID = map[string]*models.PipelineDeployment{
+		"dep-1": {
+			ID:           "dep-1",
+			PipelineName: "pipe-a",
+			PipelineJSON: map[string]interface{}{
+				"name":             "pipe-a",
+				"nodes":            []interface{}{},
+				"_input_asset_ids": []interface{}{"asset-1", "asset-2"},
+			},
+		},
+	}
+	assetRepo := newMockAssetRepo()
+	assetRepo.assets["asset-1"] = &models.Asset{AssetID: "asset-1"}
+	assetRepo.assets["asset-2"] = &models.Asset{AssetID: "asset-2"}
+
+	uc := New(&mockTemplateRepo{}, depRepo, assetRepo, &mockWorkflowClient{}, "default")
+	dep, err := uc.RetryDeployment(ctx, "dep-1")
+	if err != nil {
+		t.Fatalf("RetryDeployment: %v", err)
+	}
+	raw, ok := dep.PipelineJSON["_input_asset_ids"].([]string)
+	if !ok {
+		t.Fatalf("expected []string _input_asset_ids, got %T", dep.PipelineJSON["_input_asset_ids"])
+	}
+	if len(raw) != 2 || raw[0] != "asset-1" || raw[1] != "asset-2" {
+		t.Fatalf("unexpected asset ids: %#v", raw)
+	}
 }

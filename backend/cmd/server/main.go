@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 
+	"cloud.google.com/go/storage"
+
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
@@ -36,6 +38,7 @@ type infra struct {
 	es              *espkg.Client
 	lake            lakehouse.Querier
 	mcapBytesSource mcapH.BytesSource // optional
+	gcsClient       *storage.Client   // optional; owns GCS client for mcapBytesSource
 
 	algoRegistry   *config.AlgoRegistry
 	tagRegistry    *config.TagRegistry
@@ -46,6 +49,9 @@ type infra struct {
 }
 
 func (inf *infra) close() {
+	if inf.gcsClient != nil {
+		_ = inf.gcsClient.Close()
+	}
 	if inf.pg != nil {
 		inf.pg.Close()
 	}
