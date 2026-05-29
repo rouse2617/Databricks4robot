@@ -1,62 +1,32 @@
-# Task: Create Linear Issues for Round 1-2 Work and Link Commits
+# Task: Create Linear issues for completed pipeline work
 
-We need to retroactively create Linear issues for all the work done and link them to commits. Going forward, every change must have a CYB-xxx before work starts.
+## Background
 
-## Completed Work (needs CYB issues)
+We've completed two pieces of work on `feat/pipeline-integration`:
 
-### Round 1
+### 1. Pipeline Template Save/Load UX (Frontend)
+- **What:** Empty pipeline canvas now shows template list ("我的流水线"), `?templateId=xxx` URL param auto-loads template to canvas, deploy dialog shows current template name
+- **Files changed:** `Frontend/src/pages/PipelinePage.tsx`, `Frontend/src/styles/pipeline.css`
+- **Commits:** `e378c83` (feat: pipeline template save/load ux)
+- **Labels:** feature
 
-1. **Backend bug fixes** — nil pointer panic in pipeline test, CSRF protection, migration idempotency
-   - Commit: `9b2abf6` (branch: round1/fix-backend → merged to feat/pipeline-integration)
-   - Files: backend/internal/handlers/pipeline/handler_test.go, backend/routes/routes.go, backend/migrations/...
-
-2. **Frontend bug fixes** — ComponentManager error swallowing, AssetPicker race condition, lint, CSRF header
-   - Commit: `9c7b45d` (branch: round1/fix-frontend → merged)
-   - Files: Frontend/src/components/pipeline/ComponentManager.tsx, AssetPicker.tsx, PipelinePage.tsx
-
-3. **Phase 0 backend** — 6 new Argo Workflow client methods + handlers + routes + extended response fields
-   - Merged but NOT a single commit (part of the merge commit)
-   - Files: backend/internal/argo/client.go, backend/internal/handlers/workflow/, backend/routes/routes.go
-   - New methods: RetryWorkflow, ResubmitWorkflow, SuspendWorkflow, ResumeWorkflow, TerminateWorkflow
-
-4. **Phase A — workflow summary counts + name search**
-   - Commit: `d3cc529` (branch: round1/phase-a-nodep → merged)
-   - Files: Frontend/src/pages/WorkflowListPage.tsx
-
-### Round 2
-
-5. **Workflow OperationsMap + shared utilities**
-   - Commit: `b242576` (branch: round2/argo-ops-map)
-   - Files: Frontend/src/lib/workflow-operations.ts, WorkflowDetailPage.tsx, WorkflowListPage.tsx
-   - Also synced OpenAPI + api-guide + smoke script
-
-6. **@ant-design/pro-flow canvas integration**
-   - NOT committed yet (waiting deploy verification)
-   - Files: Frontend/src/pages/PipelinePage.tsx, package.json
-
-7. **Component Registry page** (in progress)
-   - Worktree: /tmp/worktree-comp-registry
-   - NOT committed yet
-   - Backend CRUD + Frontend list page + modal
-
-## How to Create Issues
-
-Use Linear MCP to create issues in the cyber-databrew workspace. Each issue should:
-- Title in Chinese describing the change
-- Description with what was done, files changed
-- Label: `bug` or `feature` as appropriate
-- State: `Done` for completed work, `In Progress` for in-progress
-- Add comment with commit SHA and link
+### 2. Workflow Logs podName Fix (Backend)
+- **What:** `GetWorkflowLogs` now passes `podName=nodeId` to Argo API so step-level pod logs are fetched correctly
+- **Files changed:** `backend/internal/argo/client.go`
+- **Commits:** `b790eb6` (fix: pass podname to workflow logs endpoint)
+- **Labels:** bug
 
 ## Steps
 
-1. Check available Linear projects and workflow states via MCP
-2. Create issues for each completed piece of work
-3. Add comment linking the commit SHA
-4. Set state to Done for completed items
-5. Create issues for in-progress items (pro-flow, comp-registry) and set to In Progress
+1. Use Linear MCP to check available projects and states in the `cyber-databrew` Linear workspace
+2. Search for existing issues related to pipeline template or workflow logs - if none found, create new ones
+3. For each completed work item:
+   - Create a Linear issue with description, labels, and commit references
+   - Set state to `Done`
+   - Add a comment with the deploy summary
 
-## Format
+## Deploy Summary
 
-Issue title format: `CYB Round 2 - <feature description>` or just descriptive Chinese title
-Description should include: what was done, why, key files changed, commit SHA
+- **Backend revision:** `cyber-databrew-backend-dev-00355-dk7` (100% traffic)
+- **Image tag:** `e378c83`
+- **Branch:** `feat/pipeline-integration` (both commits pushed to origin)
