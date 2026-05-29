@@ -443,6 +443,9 @@ func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, _ string) e
 func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) (string, error) {
 	return "", nil
 }
+func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
 
 func TestPipelineRoutes_Registered(t *testing.T) {
 	gin.SetMode(gin.TestMode)

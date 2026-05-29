@@ -3,8 +3,10 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +82,9 @@ func (m *mockWorkflowClient) GetWorkflowLogs(ctx context.Context, workflowName, 
 		return m.logsFn(ctx, workflowName, nodeId, namespace)
 	}
 	return "", nil
+}
+func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

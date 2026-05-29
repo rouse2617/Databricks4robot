@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -137,6 +138,9 @@ func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error 
 }
 func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) (string, error) {
 	return "test logs", nil
+}
+func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error { return nil }
 func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error { return nil }
