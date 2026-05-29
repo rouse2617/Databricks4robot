@@ -68,3 +68,7 @@ export function listDeployments(): Promise<Deployment[]> {
 export function deleteDeployment(id: string): Promise<void> {
 	return request<void>("DELETE", `/deployments/${id}`);
 }
+
+export function retryDeployment(id: string): Promise<Deployment> {
+	return request<Deployment>("POST", `/deployments/${id}/retry`, {});
+}

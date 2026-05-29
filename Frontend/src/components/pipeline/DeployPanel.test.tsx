@@ -9,7 +9,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 
@@ -19,6 +19,7 @@ const mockListDeployments = vi.fn();
 const mockDeployTemplate = vi.fn();
 const mockDeletePipeline = vi.fn();
 const mockDeleteDeployment = vi.fn();
+const mockRetryDeployment = vi.fn();
 const mockGetPipeline = vi.fn();
 
 vi.mock("../../api/pipelineApi", () => ({
@@ -27,6 +28,7 @@ vi.mock("../../api/pipelineApi", () => ({
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
 	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
+	retryDeployment: (...args: unknown[]) => mockRetryDeployment(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
 }));
 
@@ -442,6 +444,25 @@ describe("DeployPanel", () => {
 
 		// Should show empty state without crashing
 		expect(await screen.findByText("暂无已保存的流水线模板")).toBeTruthy();
-		expect(screen.getByText("暂无部署记录")).toBeTruthy();
+		expect(await screen.findByText("暂无部署记录")).toBeTruthy();
+	});
+
+	it("retries failed deployments from history", async () => {
+		mockListPipelines.mockResolvedValue([]);
+		mockListDeployments.mockResolvedValue([
+			mockDeployment({ id: "dep-failed", status: "Failed" }),
+		]);
+		mockRetryDeployment.mockResolvedValue(
+			mockDeployment({ id: "dep-failed", status: "Running" }),
+		);
+		renderDeployPanel();
+
+		const retryButton = await screen.findByRole("button", { name: /重试/i });
+		fireEvent.click(retryButton);
+
+		await waitFor(() => {
+			expect(mockRetryDeployment).toHaveBeenCalledWith("dep-failed");
+		});
+		expect(mockListDeployments.mock.calls.length).toBeGreaterThanOrEqual(2);
 	});
 });

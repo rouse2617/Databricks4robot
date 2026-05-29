@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiError } from "../api/pipelineClient";
 import {
 	getWorkflow,
 	getWorkflowLogs,
@@ -14,9 +15,17 @@ interface WorkflowLogState {
 	search: string;
 }
 
+export type WorkflowLoadErrorKind = "not_found" | "error";
+
+export interface WorkflowLoadError {
+	kind: WorkflowLoadErrorKind;
+	message: string;
+}
+
 interface UseWorkflowDetailResult {
 	workflow: WorkflowDetail | null;
 	loading: boolean;
+	loadError: WorkflowLoadError | null;
 	selectedNode: WorkflowNodeStatus | null;
 	selectNode: (node: WorkflowNodeStatus | null) => void;
 	loadWorkflow: () => void;
@@ -31,6 +40,9 @@ const EMPTY_LOG_STATE: WorkflowLogState = {
 	search: "",
 };
 
+const ACTIVE_WORKFLOW_STATUSES = new Set(["Running", "Pending"]);
+const WORKFLOW_POLL_INTERVAL_MS = 8_000;
+
 function toErrorMessage(err: unknown): string {
 	if (err instanceof Error) {
 		return err.message;
@@ -38,9 +50,17 @@ function toErrorMessage(err: unknown): string {
 	return String(err);
 }
 
+function toLoadError(err: unknown): WorkflowLoadError {
+	if (err instanceof ApiError && err.status === 404) {
+		return { kind: "not_found", message: err.message };
+	}
+	return { kind: "error", message: toErrorMessage(err) };
+}
+
 export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [loadError, setLoadError] = useState<WorkflowLoadError | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [logState, setLogState] = useState<WorkflowLogState>(EMPTY_LOG_STATE);
 	const eventSourceRef = useRef<EventSource | null>(null);
@@ -48,11 +68,16 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const loadWorkflow = useCallback(() => {
 		if (!name) return;
 		setLoading(true);
+		setLoadError(null);
 		getWorkflow(name)
-			.then(setWorkflow)
+			.then((detail) => {
+				setWorkflow(detail);
+				setLoadError(null);
+			})
 			.catch((err) => {
 				console.error(err);
 				setWorkflow(null);
+				setLoadError(toLoadError(err));
 			})
 			.finally(() => setLoading(false));
 	}, [name]);
@@ -60,6 +85,25 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	useEffect(() => {
 		loadWorkflow();
 	}, [loadWorkflow]);
+
+	useEffect(() => {
+		if (!name || !workflow || !ACTIVE_WORKFLOW_STATUSES.has(workflow.status)) {
+			return;
+		}
+
+		const timer = window.setInterval(() => {
+			getWorkflow(name)
+				.then((detail) => {
+					setWorkflow(detail);
+					setLoadError(null);
+				})
+				.catch((err) => {
+					console.error(err);
+				});
+		}, WORKFLOW_POLL_INTERVAL_MS);
+
+		return () => window.clearInterval(timer);
+	}, [name, workflow?.status]);
 
 	const stopNodeLogStream = useCallback(() => {
 		if (eventSourceRef.current) {
@@ -209,6 +253,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	return {
 		workflow,
 		loading,
+		loadError,
 		selectedNode,
 		loadWorkflow,
 		selectNode,
