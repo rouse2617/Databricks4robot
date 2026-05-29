@@ -15,12 +15,13 @@ import {
 } from "@ant-design/pro-flow";
 import {
 	Alert,
+	App,
 	Button,
 	Collapse,
 	Input,
 	Menu,
-	Modal,
 	message,
+	Modal,
 	Tooltip,
 	Typography,
 } from "antd";
@@ -354,6 +355,7 @@ function PipelineCanvas() {
 	const [searchParams] = useSearchParams();
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const editor = useFlowEditor();
+	const { modal } = App.useApp();
 	const queryAssetIds = useMemo(
 		() => parseAssetIds(searchParams.get("asset_ids")),
 		[searchParams],
@@ -778,7 +780,7 @@ function PipelineCanvas() {
 	}, [importText]);
 
 	const clearCanvas = useCallback(() => {
-		Modal.confirm({
+		modal.confirm({
 			title: "清空画布",
 			content: "将删除当前所有节点与连线，此操作不可撤销。",
 			okText: "清空",
