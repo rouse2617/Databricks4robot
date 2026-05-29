@@ -8,5 +8,22 @@ if [[ "${SKIP_PREPUSH:-}" == "1" ]]; then
   exit 0
 fi
 
+# Read pre-push stdin to determine the commit range being pushed.
+# Pre-push stdin format: <local-ref> <local-sha> <remote-ref> <remote-sha>
+CL_LOCAL_RANGE=""
+while read LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+  # Only process the first ref being pushed.
+  if [[ -z "${CL_LOCAL_RANGE}" ]]; then
+    if [[ "${LOCAL_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+      if [[ "${REMOTE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+        CL_LOCAL_RANGE="${REMOTE_SHA}..${LOCAL_SHA}"
+      fi
+      # New branch (remote SHA all zeros): leave CL_LOCAL_RANGE empty
+      # → ci-local.sh falls back to merge-base..HEAD
+    fi
+  fi
+done
+
+export CL_LOCAL_RANGE
 ROOT="$(git rev-parse --show-toplevel)"
 exec "${ROOT}/scripts/ci-local.sh"

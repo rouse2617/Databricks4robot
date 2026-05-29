@@ -12,25 +12,18 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
+		"github.com/CyberOrigin2077/cyber-databrew/internal/auth"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
-	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
-	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
-	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
-	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
-	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
-	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
-	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
-	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 
 	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
@@ -47,11 +40,7 @@ func RegisterAll(
 	assetHandler *assetH.Handler,
 	mcapHandler *mcapH.Handler,
 	deliveryHandler *deliveryH.Handler,
-	customerHandler *customerH.Handler,
-	deliveryRuleHandler *deliveryruleH.Handler,
-	algoRunHandler *algorunH.Handler,
 	algoHandler *assetH.AlgoHandler,
-	auditHandler *auditH.Handler,
 	lakehouseHandler *lakehouseH.Handler,
 	registryHandler *registryH.Handler,
 	searchHandler *searchH.Handler,
@@ -59,17 +48,12 @@ func RegisterAll(
 	purgeHandler *adminH.PurgeHandler,
 	evalHandler *evalH.Handler,
 	actionHandler *actionH.Handler,
-	pipelineHandler *pipelineH.Handler,
-	pipelineComponentHandler *pipelineComponentH.Handler,
 	queryHandler *queryH.Handler,
-	workflowHandler *workflowH.Handler,
-	backfillHandler *backfillH.Handler,
 ) {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
 	r.Use(middleware.RequestGuard(2048))
 	r.Use(middleware.StructuredLogger())
-	r.Use(middleware.UserEmail())
 
 	// Rate limiting (disabled by default, set RATE_LIMIT_RPS to enable).
 	if rl := middleware.RateLimitFromConfig(cfg.RateLimitRPS, cfg.RateLimitBurst); rl != nil {
@@ -95,47 +79,93 @@ func RegisterAll(
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	auth := middleware.StaticTokenAuth(cfg.DatabrewToken)
 	adminAuth := middleware.AdminTokenAuth(cfg.AdminToken, cfg.DatabrewToken, cfg.Env)
 	adminRoutesEnabled := cfg.AdminRoutesEnabled()
 	secureSessionCookie := cfg.Env == "production"
 
+	// ── Auth routes (public) ──
 	authPublic := r.Group("/api/v1/auth")
 	{
-		authPublic.POST("/login", func(c *gin.Context) {
+		authPublic.POST("/email-login", func(c *gin.Context) {
 			var req struct {
-				Token string `json:"token"`
+				Email string `json:"email"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+				c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
 				return
 			}
-			token := strings.TrimSpace(req.Token)
-			if token == "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			email := strings.TrimSpace(strings.ToLower(req.Email))
+			if email == "" || !strings.Contains(email, "@") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "valid email is required"})
 				return
 			}
-			if token != cfg.DatabrewToken {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+
+			domain := email[strings.LastIndex(email, "@")+1:]
+			if cfg.AllowedDomain == "" || domain != cfg.AllowedDomain {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "email domain not allowed"})
+				return
+			}
+
+			jwtToken, err := auth.SignToken(cfg.JWTSecret, email, "user", 24*time.Hour)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign token"})
 				return
 			}
 			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie("databrew_session", token, 86400, "/", "", secureSessionCookie, true)
-			c.JSON(http.StatusOK, gin.H{"authenticated": true})
+			c.SetCookie("grace_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
+			c.JSON(http.StatusOK, gin.H{
+				"authenticated": true,
+				"email":         email,
+				"role":          "user",
+			})
 		})
 
-		authProtected := authPublic.Group("", auth)
+		authProtected := authPublic.Group("", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
 		authProtected.GET("/me", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"authenticated": true})
+			email, _ := c.Get(middleware.CtxKeyEmail)
+			role, _ := c.Get(middleware.CtxKeyRole)
+			c.JSON(http.StatusOK, gin.H{
+				"authenticated": true,
+				"email":         email,
+				"role":          role,
+			})
 		})
 		authProtected.POST("/logout", func(c *gin.Context) {
 			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie("databrew_session", "", -1, "/", "", secureSessionCookie, true)
+			c.SetCookie("grace_session", "", -1, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{"authenticated": false})
 		})
 	}
 
-	api := r.Group("/api/v1", auth)
+	// Legacy static-token login for SDK backward compat.
+	authPublic.POST("/login", func(c *gin.Context) {
+		var req struct {
+			Token string `json:"token"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			return
+		}
+		token := strings.TrimSpace(req.Token)
+		if token == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			return
+		}
+		if token != cfg.DatabrewToken {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+		jwtToken, err := auth.SignToken(cfg.JWTSecret, "legacy", "admin", 24*time.Hour)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign token"})
+			return
+		}
+		c.SetSameSite(http.SameSiteLaxMode)
+		c.SetCookie("grace_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
+		c.JSON(http.StatusOK, gin.H{"authenticated": true})
+	})
+
+	api := r.Group("/api/v1", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
 	if cbMiddleware != nil {
 		api.Use(cbMiddleware)
 	}
@@ -149,42 +179,17 @@ func RegisterAll(
 		assets.GET("/:id/mcap-locator", assetHandler.McapLocator)
 		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
 		assets.GET("/:id/events", assetHandler.ListEvents)
-		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
-		assets.GET("/:id/provenance", assetHandler.GetProvenance)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
 		assets.POST("/:id/tags", assetHandler.UpsertTag)
 		assets.DELETE("/:id/tags/:key", assetHandler.DeleteTag)
 		assets.GET("/:id/tags/history", assetHandler.ListTagHistory)
-		assets.POST("/:id/revisions", assetHandler.PromoteRevision)
-
-		// Layered child-asset creation (CYB-1222, CYB-1228)
-		assets.POST("/:id/clips", assetHandler.CreateClip)
-		assets.POST("/:id/frames", assetHandler.CreateFrame)
-		assets.POST("/:id/tasks", assetHandler.CreateTask)
-		assets.POST("/:id/actions", assetHandler.CreateAction)
-
-		// Logical asset endpoints
-		api.GET("/logical-assets/:id/current", assetHandler.GetCurrentForLogical)
-		api.GET("/logical-assets/:id/ratings-history", assetHandler.HandleRatingsHistory)
-
-		// Usage stats (CYB-1095/1096)
-		assets.POST("/:id/view", assetHandler.RecordView)
-		assets.POST("/:id/favorite", assetHandler.ToggleFavorite)
 
 		// Batch operations (custom method syntax: POST /assets:batch_get)
 		api.POST("/assets:batch_get", assetHandler.BatchGet)
-		api.GET("/asset-types/:type/schema", assetHandler.GetAssetTypeSchema)
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)
-		api.GET("/events/stream", assetHandler.HandleGlobalEventsStream)
-
-		// Audit / discovery layer (CYB-1097/1098)
-		if auditHandler != nil {
-			api.GET("/audit/search", auditHandler.HandleAuditSearch)
-			api.GET("/audit/lineage-search", auditHandler.HandleLineageSearch)
-		}
 
 		// Algorithm lifecycle routes
 		if algoHandler != nil {
@@ -199,49 +204,16 @@ func RegisterAll(
 
 		mcapFiles := api.Group("/mcap-files")
 		mcapFiles.POST("", mcapHandler.CreateFile)
-		mcapFiles.POST("/:id/finalize", mcapHandler.FinalizeUpload)
 		mcapFiles.GET("", mcapHandler.ListFiles)
 		mcapFiles.GET("/:id", mcapHandler.GetFile)
 		mcapFiles.GET("/:id/bytes", mcapHandler.Bytes)
 		mcapFiles.HEAD("/:id/bytes", mcapHandler.Bytes)
-
-		if customerHandler != nil {
-			api.POST("/customers", customerHandler.Create)
-			api.GET("/customers", customerHandler.List)
-			api.GET("/customers/:customer_id", customerHandler.Get)
-			api.PATCH("/customers/:customer_id", customerHandler.Update)
-		}
-
-		if deliveryRuleHandler != nil {
-			api.POST("/delivery-rules", deliveryRuleHandler.Create)
-			api.GET("/delivery-rules", deliveryRuleHandler.List)
-		}
-
-		if algoRunHandler != nil {
-			api.POST("/algo-runs", algoRunHandler.Create)
-			api.GET("/algo-runs", algoRunHandler.List)
-			api.GET("/algo-runs/:run_id", algoRunHandler.Get)
-			api.POST("/algo-runs/:run_id/start", algoRunHandler.Start)
-			api.POST("/algo-runs/:run_id/finish", algoRunHandler.Finish)
-			api.POST("/algo-runs/:run_id/cancel", algoRunHandler.Cancel)
-			api.GET("/algo-runs/:run_id/affected-assets", algoRunHandler.GetAffectedAssets)
-		}
 
 		api.POST("/deliveries", deliveryHandler.Commit)
 		api.GET("/deliveries", deliveryHandler.List)
 		api.GET("/deliveries/:id", deliveryHandler.Get)
 		api.GET("/deliveries/:id/items", deliveryHandler.ListItems)
 		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
-
-		// C2 (two-step) delivery workflow: draft → add items → commit
-		api.POST("/deliveries/draft", deliveryHandler.HandleDraft)
-		api.POST("/deliveries/:id/items", deliveryHandler.HandleAddItems)
-		api.POST("/deliveries/:id/commit", deliveryHandler.HandleCommitC2)
-
-		// Delivery operations (CYB-1104~1106)
-		api.POST("/deliveries/:id/cancel", deliveryHandler.HandleCancel)
-		api.POST("/deliveries/:id/retry", deliveryHandler.HandleRetry)
-		api.POST("/deliveries/:id/ack", deliveryHandler.HandleAck)
 
 		// Registry endpoints (read-only, from YAML config)
 		api.GET("/algo-registry", registryHandler.AlgoRegistry)
@@ -252,8 +224,6 @@ func RegisterAll(
 
 		// Search endpoints (Elasticsearch-backed)
 		if searchHandler != nil {
-			api.GET("/search", searchHandler.SearchAssets)
-			api.GET("/search/assets", searchHandler.SearchAssets)
 			api.GET("/search/sync-status", searchHandler.SyncStatus)
 			api.GET("/search/sync-progress", searchHandler.SyncProgress)
 		}
@@ -293,14 +263,12 @@ func RegisterAll(
 			internal.POST("/assets:batch_delete", purgeHandler.BatchDeleteAssets)
 		}
 
-		// Action annotations (mcap → seg → action 第三层; docs/review/data-platform-design.md §5.2.15)
-		// NOTE: moved from /:id/actions to /:id/action-annotations — the layered
-		// asset creation API now owns /:id/actions (CYB-1228).
+		// Actions (mcap → seg → action 第三层; docs/review/data-platform-design.md §5.2.15)
 		if actionHandler != nil {
-			assets.POST("/:id/action-annotations", actionHandler.Create)
-			assets.GET("/:id/action-annotations", actionHandler.List)
-			assets.PATCH("/:id/action-annotations/:action_id", actionHandler.Patch)
-			assets.DELETE("/:id/action-annotations/:action_id", actionHandler.Delete)
+			assets.POST("/:id/actions", actionHandler.Create)
+			assets.GET("/:id/actions", actionHandler.List)
+			assets.PATCH("/:id/actions/:action_id", actionHandler.Patch)
+			assets.DELETE("/:id/actions/:action_id", actionHandler.Delete)
 		}
 
 		// Eval / Metrics (Phase 1.5)
@@ -310,64 +278,6 @@ func RegisterAll(
 			assets.GET("/:id/metrics", evalHandler.ListMetrics)
 			api.GET("/metrics/registry", evalHandler.GetRegistry)
 			api.POST("/metrics:search", evalHandler.SearchByMetrics)
-		}
-
-		// Pipeline (Argo Workflows) — templates, deploy, deployments
-		if pipelineHandler != nil {
-			api.POST("/pipelines", pipelineHandler.SaveTemplate)
-			api.GET("/pipelines", pipelineHandler.ListTemplates)
-			api.GET("/pipelines/:id", pipelineHandler.GetTemplate)
-			api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
-			api.GET("/pipelines/:id/versions", pipelineHandler.ListVersions)
-			api.GET("/pipelines/:id/diff/:id2", pipelineHandler.DiffTemplates)
-			api.POST("/deploy", pipelineHandler.Deploy)
-			api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
-			api.GET("/deployments", pipelineHandler.ListDeployments)
-			api.GET("/deployments/:id", pipelineHandler.GetDeployment)
-			api.GET("/deployments/:id/resources", pipelineHandler.GetResourceUsage)
-			api.POST("/deployments/:id/retry", pipelineHandler.RetryDeployment)
-			api.POST("/deployments/:id/stop", pipelineHandler.StopDeployment)
-			api.POST("/deployments/:id/save-template", pipelineHandler.SaveFromDeployment)
-			api.DELETE("/deployments/:id", pipelineHandler.DeleteDeployment)
-			api.POST("/pipeline-assets", pipelineHandler.RegisterOutput)
-			api.GET("/assets/:id/pipeline-lineage", pipelineHandler.GetLineage)
-		}
-
-		// Pipeline component registry
-		if pipelineComponentHandler != nil {
-			registerComponentRoutes := func(group *gin.RouterGroup, base string) {
-				group.POST(base, pipelineComponentHandler.CreateComponent)
-				group.GET(base, pipelineComponentHandler.ListComponents)
-				group.GET(base+"/:id", pipelineComponentHandler.GetComponent)
-				group.PUT(base+"/:id", pipelineComponentHandler.UpdateComponent)
-				group.DELETE(base+"/:id", pipelineComponentHandler.DeleteComponent)
-			}
-			registerComponentRoutes(api, "/pipeline-components")
-			registerComponentRoutes(api, "/components")
-		}
-
-		// Workflow monitoring
-		if workflowHandler != nil {
-			api.GET("/workflows", workflowHandler.ListWorkflows)
-			api.GET("/workflows/:name/logs", workflowHandler.GetWorkflowLogs)
-			api.GET("/workflows/:name/log/stream", workflowHandler.StreamWorkflowLogs)
-			api.POST("/workflows/:name/retry", workflowHandler.RetryWorkflow)
-			api.POST("/workflows/:name/resubmit", workflowHandler.ResubmitWorkflow)
-			api.POST("/workflows/:name/suspend", workflowHandler.SuspendWorkflow)
-			api.POST("/workflows/:name/resume", workflowHandler.ResumeWorkflow)
-			api.POST("/workflows/:name/terminate", workflowHandler.TerminateWorkflow)
-			api.GET("/workflows/:name", workflowHandler.GetWorkflow)
-			api.DELETE("/workflows/:name", workflowHandler.DeleteWorkflow)
-		}
-
-		// Backfill jobs
-		if backfillHandler != nil {
-			api.POST("/backfill", backfillHandler.CreateJob)
-			api.GET("/backfill", backfillHandler.ListJobs)
-			api.GET("/backfill/:id", backfillHandler.GetJob)
-			api.POST("/backfill/:id/pause", backfillHandler.PauseJob)
-			api.POST("/backfill/:id/resume", backfillHandler.ResumeJob)
-			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
 		}
 
 		if queryHandler != nil {

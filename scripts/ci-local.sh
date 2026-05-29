@@ -43,18 +43,24 @@ if [[ "${MODE}" == "pre-commit-only" ]]; then
   exit 0
 fi
 
-BASE_REF="${CI_LOCAL_BASE:-origin/main}"
-if ! git rev-parse --verify "${BASE_REF}" >/dev/null 2>&1; then
-  BASE_REF="main"
+if [[ -n "${CL_LOCAL_RANGE:-}" ]]; then
+  FROM_SHA="${CL_LOCAL_RANGE%..*}"
+  TO_SHA="${CL_LOCAL_RANGE#*..}"
+  echo "==> commitlint (${CL_LOCAL_RANGE}, pre-push range)"
+else
+  BASE_REF="${CI_LOCAL_BASE:-origin/main}"
+  if ! git rev-parse --verify "${BASE_REF}" >/dev/null 2>&1; then
+    BASE_REF="main"
+  fi
+  if ! git rev-parse --verify "${BASE_REF}" >/dev/null 2>&1; then
+    echo "ERROR: no ${BASE_REF} for commitlint. Fetch your base branch, e.g.:" >&2
+    echo "  git fetch origin main && git branch -u origin/main main  # or set CI_LOCAL_BASE=origin/your-base" >&2
+    exit 1
+  fi
+  FROM_SHA="$(git merge-base "${BASE_REF}" HEAD)"
+  echo "==> commitlint (${FROM_SHA}..HEAD, base ${BASE_REF})"
 fi
-if ! git rev-parse --verify "${BASE_REF}" >/dev/null 2>&1; then
-  echo "ERROR: no ${BASE_REF} for commitlint. Fetch your base branch, e.g.:" >&2
-  echo "  git fetch origin main && git branch -u origin/main main  # or set CI_LOCAL_BASE=origin/your-base" >&2
-  exit 1
-fi
-FROM_SHA="$(git merge-base "${BASE_REF}" HEAD)"
-echo "==> commitlint (${FROM_SHA}..HEAD, base ${BASE_REF})"
-bash "${ROOT}/scripts/commitlint-run.sh" --from "${FROM_SHA}" --to HEAD --verbose
+bash "${ROOT}/scripts/commitlint-run.sh" --from "${FROM_SHA}" --to "${TO_SHA:-HEAD}" --verbose
 
 if [[ "${MODE}" != "full" ]]; then
   echo "OK: quick ci-local passed. For full parity: scripts/ci-local.sh --full"

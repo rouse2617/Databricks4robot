@@ -31,8 +31,10 @@ type Config struct {
 	TopicMcapFinalized string
 	TopicAssetEvents   string
 
-	// Auth (Phase 0 static token; Phase 0.5 → OIDC)
+	// Auth (Phase 0 static token; Phase 0.5 → email + JWT)
 	DatabrewToken string
+	JWTSecret     string // HMAC-SHA256 secret for JWT signing
+	AllowedDomain string // email domain allowlisted (e.g. "cyberorigin.ai")
 
 	// Logging
 	LogLevel  string // debug, info, warn, error
@@ -114,23 +116,8 @@ type Config struct {
 	// poll cycle + ES bulk window.
 	OutboxESCheckpointIdleAfterSec string
 
-	// Optional OpenLineage emitter (Pub/Sub asset_events -> Marquez/OpenLineage endpoint).
-	OpenLineageEmitterEnabled string
-	OpenLineageEndpoint       string
-	OpenLineageSubscription   string
-	OpenLineageNamespace      string
-	OpenLineageProducer       string
-	OpenLineageTimeoutMs      string
-
-	// DeliveryEligibilityProjector automatically manages delivery_ready:* tags.
-	DeliveryEligibilityProjectorEnabled string
-
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
-
-	// Argo Workflows / K8s
-	KubeconfigPath         string // path to kubeconfig (empty = in-cluster or default search)
-	ArgoWorkflowsNamespace string // namespace for Argo Workflows (default "default")
 }
 
 func Load() *Config {
@@ -162,6 +149,8 @@ func Load() *Config {
 		TopicAssetEvents:   getenv("TOPIC_ASSET_EVENTS", "cyber-databrew-asset-events"),
 
 		DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
+		JWTSecret:     getenv("JWT_SECRET", "dev-jwt-secret"),
+		AllowedDomain: getenv("ALLOWED_DOMAIN", "cyberorigin.ai"),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
@@ -207,25 +196,12 @@ func Load() *Config {
 		OutboxESCheckpointShards:            getenv("OUTBOX_ES_CHECKPOINT_SHARDS", "16"),
 		OutboxESCheckpointIdleAfterSec:      getenv("OUTBOX_ES_CHECKPOINT_IDLE_AFTER_SEC", "300"),
 
-		OpenLineageEmitterEnabled: getenv("OPENLINEAGE_EMITTER_ENABLED", "false"),
-		OpenLineageEndpoint:       getenv("OPENLINEAGE_ENDPOINT", ""),
-		OpenLineageSubscription:   getenv("OPENLINEAGE_SUBSCRIPTION", ""),
-		OpenLineageNamespace:      getenv("OPENLINEAGE_NAMESPACE", "cyber-databrew"),
-		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", "cyber-databrew"),
-		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", "5000"),
-
-		// DeliveryEligibilityProjector automatically tags assets eligible for delivery.
-		DeliveryEligibilityProjectorEnabled: getenv("DELIVERY_ELIGIBILITY_PROJECTOR_ENABLED", "false"),
-
 		AdminToken: getenv("ADMIN_TOKEN", ""),
-
-		KubeconfigPath:         getenv("KUBECONFIG_PATH", ""),
-		ArgoWorkflowsNamespace: getenv("ARGO_WORKFLOWS_NAMESPACE", ""),
 	}
 }
 
 // AdminRoutesEnabled reports whether privileged admin/internal HTTP routes are mounted.
-// In production, ADMIN_TOKEN must be set; dev may fall back to DATABREW_TOKEN when unset.
+// In production, ADMIN_TOKEN must be set; dev may fall back to GRACE_TOKEN when unset.
 func (c *Config) AdminRoutesEnabled() bool {
 	if c.AdminToken != "" {
 		return true
