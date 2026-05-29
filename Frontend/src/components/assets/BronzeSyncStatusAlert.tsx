@@ -66,12 +66,10 @@ export default function BronzeSyncStatusAlert() {
 	}
 	if (progress == null) return null;
 
-	const {
-		outbox_published_max_seq,
-		bronze_max_event_seq,
-		bronze_lag_events,
-		bronze_stale_seconds,
-	} = progress;
+	const outbox_published_max_seq = progress.outbox_published_max_seq ?? 0;
+	const bronze_max_event_seq = progress.bronze_max_event_seq ?? 0;
+	const bronze_lag_events = progress.bronze_lag_events ?? 0;
+	const bronze_stale_seconds = progress.bronze_stale_seconds ?? 0;
 
 	const isEmpty = bronze_max_event_seq === 0;
 	const alertType: "success" | "info" | "warning" | "error" = isEmpty

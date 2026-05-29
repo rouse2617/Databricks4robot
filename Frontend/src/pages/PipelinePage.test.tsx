@@ -155,10 +155,20 @@ function getModalDeployBtn(): HTMLButtonElement {
 }
 
 // ── Suite ─────────────────────────────────────────────────────────
+function resetPipelineMocks() {
+	mockListPipelines.mockResolvedValue([]);
+	mockListDeployments.mockResolvedValue([]);
+	mockListComponents.mockResolvedValue({ items: [] });
+}
+
 describe("PipelinePage", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		resetPipelineMocks();
+	});
+
 	afterEach(() => {
 		cleanup();
-		vi.clearAllMocks();
 	});
 
 	// ── Render & structure ──────────────────────────────────────────

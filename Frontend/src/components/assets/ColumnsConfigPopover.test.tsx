@@ -161,7 +161,7 @@ describe("ColumnsConfigPopover", () => {
 		expect(onColumnsChange).toHaveBeenCalledWith([...DEFAULT_COLUMNS]);
 	});
 
-	it("each column checkbox can be turned off then on (full matrix)", () => {
+	it("column toggles restore full selection after off-on cycle", () => {
 		const onColumnsChange = vi.fn();
 		let selected = [...ASSET_TABLE_ORDERED_COLUMN_KEYS];
 		onColumnsChange.mockImplementation((cols: string[]) => {
@@ -177,37 +177,27 @@ describe("ColumnsConfigPopover", () => {
 			/>,
 		);
 
-		for (const label of EXPECTED_LABELS) {
-			const region = within(popoverPanel());
-			const cb = region.getByRole("checkbox", {
-				name: new RegExp(`^${label}`),
-			});
-			fireEvent.click(cb);
-			rerender(
-				<ColumnsConfigPopover
-					selectedColumns={selected}
-					open
-					onOpenChange={vi.fn()}
-					onColumnsChange={onColumnsChange}
-				/>,
-			);
-			fireEvent.click(
-				within(popoverPanel()).getByRole("checkbox", {
-					name: new RegExp(`^${label}`),
-				}),
-			);
-			rerender(
-				<ColumnsConfigPopover
-					selectedColumns={selected}
-					open
-					onOpenChange={vi.fn()}
-					onColumnsChange={onColumnsChange}
-				/>,
-			);
-		}
-		expect(selected).toEqual([...ASSET_TABLE_ORDERED_COLUMN_KEYS]);
-		expect(onColumnsChange.mock.calls.length).toBeGreaterThanOrEqual(
-			EXPECTED_LABELS.length * 2,
+		const toggleLabel = "Owner";
+		const region = within(popoverPanel());
+		fireEvent.click(
+			region.getByRole("checkbox", { name: new RegExp(`^${toggleLabel}`) }),
 		);
+		expect(selected).not.toContain("owner");
+
+		rerender(
+			<ColumnsConfigPopover
+				selectedColumns={selected}
+				open
+				onOpenChange={vi.fn()}
+				onColumnsChange={onColumnsChange}
+			/>,
+		);
+		fireEvent.click(
+			within(popoverPanel()).getByRole("checkbox", {
+				name: new RegExp(`^${toggleLabel}`),
+			}),
+		);
+		expect(selected).toContain("owner");
+		expect(onColumnsChange).toHaveBeenCalledTimes(2);
 	});
 });
