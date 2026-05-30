@@ -235,7 +235,11 @@ func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compi
 		compiled.CandidateAssetIDs = esCompiled.CandidateAssetIDs
 	}
 	if len(esCompiled.ESResults) > 0 {
-		compiled.ESResults = esCompiled.ESResults
+		normalized := make([]map[string]any, 0, len(esCompiled.ESResults))
+		for _, esDoc := range esCompiled.ESResults {
+			normalized = append(normalized, normalizeESAsset(esDoc))
+		}
+		compiled.ESResults = normalized
 	}
 	compiled.MatchTotal = esCompiled.MatchTotal
 }
@@ -518,4 +522,98 @@ func (h *Handler) upsertSavedQuery(c *gin.Context, create bool) {
 		return
 	}
 	c.JSON(200, updated)
+}
+
+// normalizeESAsset converts an ES _source document map to match the PG Asset JSON
+// format that the frontend expects. ES stores nested tags as {key, value, ...} and
+// algos as {name, version, status}, while PG returns tags_flat + tags_detailed and
+// algo_results as a flat map with composite keys.
+func normalizeESAsset(esDoc map[string]any) map[string]any {
+	out := make(map[string]any, len(esDoc))
+
+	// Copy over all root-level fields that share the same name in ES and PG.
+	for _, key := range []string{
+		"asset_id", "mcap_file_id", "segment_locator", "asset_type",
+		"lifecycle_state", "status", "owner", "reviewer", "notes",
+		"start_timestamp_ns", "end_timestamp_ns", "duration_ms",
+		"delivery_count", "asset_level", "version", "is_deleted",
+		"retention_tier", "storage_uri", "thumb_uri",
+		"parent_asset_id", "root_asset_id", "tenant_id", "project_id",
+		"last_delivered_to", "last_delivered_at", "expire_at",
+		"logical_asset_id", "revision", "is_current",
+		"segment_index", "parent_start_offset_ms", "parent_end_offset_ms",
+		"split_method", "split_algo_name", "split_algo_version",
+		"split_run_id", "split_reason",
+		"created_at", "updated_at",
+		"metadata", "files_json",
+		"algo_inputs_uris", "annot_inputs_uris",
+		"actions",
+	} {
+		if v, ok := esDoc[key]; ok {
+			out[key] = v
+		}
+	}
+
+	// Map ES tags_flat → PG tags (both are flat key→value maps).
+	if v, ok := esDoc["tags_flat"]; ok {
+		out["tags"] = v
+	}
+
+	// Map ES tags[] → PG tags_detailed[] with field renames.
+	if raw, ok := esDoc["tags"]; ok {
+		if arr, ok := raw.([]any); ok {
+			detailed := make([]map[string]any, 0, len(arr))
+			for _, item := range arr {
+				if m, ok := item.(map[string]any); ok {
+					entry := map[string]any{
+						"tag_key":     m["key"],
+						"tag_value":   m["value"],
+						"source_type": m["source_type"],
+						"source_name": m["source_name"],
+					}
+					if taggedAt, ok := m["tagged_at"]; ok {
+						entry["tagged_at"] = taggedAt
+					}
+					detailed = append(detailed, entry)
+				}
+			}
+			if len(detailed) > 0 {
+				out["tags_detailed"] = detailed
+			}
+		}
+	}
+
+	// Flatten ES algos[] → PG algo_results with composite keys.
+	if raw, ok := esDoc["algos"]; ok {
+		if arr, ok := raw.([]any); ok {
+			algoResults := make(map[string]string, len(arr)*3)
+			for _, item := range arr {
+				if m, ok := item.(map[string]any); ok {
+					name, _ := m["name"].(string)
+					version, _ := m["version"].(string)
+					if name == "" || version == "" {
+						continue
+					}
+					prefix := name + "@" + version + ":"
+					if status, ok := m["status"].(string); ok {
+						algoResults[prefix+"status"] = status
+					}
+					if runID, ok := m["run_id"].(string); ok {
+						algoResults[prefix+"run_id"] = runID
+					}
+					if finishedAt, ok := m["finished_at"].(string); ok {
+						algoResults[prefix+"finished_at"] = finishedAt
+					}
+				}
+			}
+			if len(algoResults) > 0 {
+				out["algo_results"] = algoResults
+			}
+		}
+	}
+
+	// mcap → extract mcap_file_id only if available (ES already has it at root level).
+	// Skip: recorded_at, mcap (nested), lineage_*, dataset, annotation_result, ml_model, evaluation_report.
+
+	return out
 }
