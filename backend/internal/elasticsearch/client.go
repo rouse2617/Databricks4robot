@@ -347,19 +347,35 @@ func buildSearchBody(req SearchRequest) map[string]any {
 }
 
 func buildSearchModeQuery(mode, query string) map[string]any {
-	fields := []string{"notes", "owner.text", "reviewer.text", "asset_id", "asset_type"}
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "semantic":
+	buildBoolQuery := func(fuzzy bool) map[string]any {
+		matchClause := func(field string) map[string]any {
+			body := map[string]any{"query": query}
+			if fuzzy {
+				body["fuzziness"] = "AUTO"
+			}
+			return map[string]any{"match": map[string]any{field: body}}
+		}
+
 		return map[string]any{
-			"multi_match": map[string]any{
-				"query":     query,
-				"fields":    fields,
-				"type":      "best_fields",
-				"fuzziness": "AUTO",
+			"bool": map[string]any{
+				"should": []any{
+					map[string]any{"term": map[string]any{"asset_id": query}},
+					map[string]any{"term": map[string]any{"asset_type": query}},
+					matchClause("notes"),
+					matchClause("owner.text"),
+					matchClause("reviewer.text"),
+				},
+				"minimum_should_match": 1,
 			},
 		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "semantic":
+		return buildBoolQuery(true)
 	case "similar":
 		if strings.TrimSpace(query) != "" {
+			fields := []string{"notes", "owner.text", "reviewer.text", "asset_id", "asset_type"}
 			return map[string]any{
 				"more_like_this": map[string]any{
 					"fields":        fields,
@@ -369,21 +385,9 @@ func buildSearchModeQuery(mode, query string) map[string]any {
 				},
 			}
 		}
-		return map[string]any{
-			"multi_match": map[string]any{
-				"query":  query,
-				"fields": fields,
-				"type":   "best_fields",
-			},
-		}
+		return buildBoolQuery(false)
 	default:
-		return map[string]any{
-			"multi_match": map[string]any{
-				"query":  query,
-				"fields": fields,
-				"type":   "best_fields",
-			},
-		}
+		return buildBoolQuery(false)
 	}
 }
 
