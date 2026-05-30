@@ -49,7 +49,7 @@ func (e *Executor) Execute(ctx context.Context, body map[string]any, collectCand
 		MatchTotal: searchResp.Total,
 	}
 
-	if !collectCandidates {
+	if !collectCandidates || searchResp.Total == 0 {
 		return out, nil
 	}
 	defer func() {

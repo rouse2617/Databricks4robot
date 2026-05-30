@@ -270,6 +270,11 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 	if len(compiled.ESResults) > 0 {
 		return compiled.ESResults, compiled.MatchTotal, nil
 	}
+	// ES recall returned 0 results — short circuit, no PG fallback needed.
+	// ES is the authoritative search oracle for fulltext; if it says 0, trust it.
+	if plan.UseESRecall && compiled.MatchTotal == 0 {
+		return []*models.Asset{}, 0, nil
+	}
 
 	skipPGCount := canSkipPGCount(plan, compiled)
 	needESFacets := plan.UseESFacets && h.esExecutor != nil
