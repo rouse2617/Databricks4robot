@@ -133,9 +133,9 @@ func buildFulltextClause(pred queryir.QueryPredicate, startParam int) (*SQLClaus
 		pattern = "%" + pattern + "%"
 	}
 	sql := fmt.Sprintf(
-		"(assets.asset_id::text ILIKE $%d OR assets.mcap_file_id::text ILIKE $%d OR owner ILIKE $%d OR reviewer ILIKE $%d OR EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = assets.asset_id AND t.tag_key = 'notes' AND t.tag_value ILIKE $%d))",
+		"(assets.asset_id::text ILIKE $%d OR assets.mcap_file_id::text ILIKE $%d OR owner ILIKE $%d OR reviewer ILIKE $%d OR asset_type ILIKE $%d OR lifecycle_state ILIKE $%d OR EXISTS (SELECT 1 FROM asset_tags t WHERE t.asset_id = assets.asset_id AND t.tag_key = 'notes' AND t.tag_value ILIKE $%d))",
 		startParam, startParam,
-		startParam, startParam, startParam,
+		startParam, startParam, startParam, startParam, startParam,
 	)
 	return &SQLClause{
 		SQL:  sql,

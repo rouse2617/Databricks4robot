@@ -292,6 +292,17 @@ func RegisterAll(
 			assets.DELETE("/:id/actions/:action_id", actionHandler.Delete)
 		}
 
+		// Algo-runs (CYB-1018)
+		if algoRunHandler != nil {
+			api.POST("/algo-runs", algoRunHandler.Create)
+			api.GET("/algo-runs", algoRunHandler.List)
+			api.GET("/algo-runs/:run_id", algoRunHandler.Get)
+			api.POST("/algo-runs/:run_id/start", algoRunHandler.Start)
+			api.POST("/algo-runs/:run_id/finish", algoRunHandler.Finish)
+			api.POST("/algo-runs/:run_id/cancel", algoRunHandler.Cancel)
+			api.GET("/algo-runs/:run_id/affected-assets", algoRunHandler.GetAffectedAssets)
+		}
+
 		// Eval / Metrics (Phase 1.5)
 		if evalHandler != nil {
 			assets.POST("/:id/eval-results", evalHandler.ReportEvalResult)
@@ -299,6 +310,49 @@ func RegisterAll(
 			assets.GET("/:id/metrics", evalHandler.ListMetrics)
 			api.GET("/metrics/registry", evalHandler.GetRegistry)
 			api.POST("/metrics:search", evalHandler.SearchByMetrics)
+		}
+
+		// Pipeline (Argo Workflows) — templates, deploy, deployments
+		api.POST("/pipelines", pipelineHandler.SaveTemplate)
+		api.GET("/pipelines", pipelineHandler.ListTemplates)
+		api.GET("/pipelines/:id", pipelineHandler.GetTemplate)
+		api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
+		api.GET("/pipelines/:id/versions", pipelineHandler.ListVersions)
+		api.GET("/pipelines/:id/diff/:id2", pipelineHandler.DiffTemplates)
+		api.POST("/deploy", pipelineHandler.Deploy)
+		api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
+		api.GET("/deployments", pipelineHandler.ListDeployments)
+		api.GET("/deployments/:id", pipelineHandler.GetDeployment)
+		api.GET("/deployments/:id/resources", pipelineHandler.GetResourceUsage)
+		api.POST("/deployments/:id/retry", pipelineHandler.RetryDeployment)
+		api.POST("/deployments/:id/stop", pipelineHandler.StopDeployment)
+		api.POST("/deployments/:id/save-template", pipelineHandler.SaveFromDeployment)
+		api.DELETE("/deployments/:id", pipelineHandler.DeleteDeployment)
+		api.POST("/pipeline-assets", pipelineHandler.RegisterOutput)
+		api.GET("/assets/:id/pipeline-lineage", pipelineHandler.GetLineage)
+
+		// Pipeline component registry
+		if pipelineComponentHandler != nil {
+			api.POST("/pipeline-components", pipelineComponentHandler.CreateComponent)
+			api.GET("/pipeline-components", pipelineComponentHandler.ListComponents)
+			api.GET("/pipeline-components/:id", pipelineComponentHandler.GetComponent)
+			api.PUT("/pipeline-components/:id", pipelineComponentHandler.UpdateComponent)
+			api.DELETE("/pipeline-components/:id", pipelineComponentHandler.DeleteComponent)
+		}
+
+		// Workflow monitoring
+		api.GET("/workflows", workflowHandler.ListWorkflows)
+		api.GET("/workflows/:name/logs", workflowHandler.GetWorkflowLogs)
+		api.GET("/workflows/:name", workflowHandler.GetWorkflow)
+
+		// Backfill jobs
+		if backfillHandler != nil {
+			api.POST("/backfill", backfillHandler.CreateJob)
+			api.GET("/backfill", backfillHandler.ListJobs)
+			api.GET("/backfill/:id", backfillHandler.GetJob)
+			api.POST("/backfill/:id/pause", backfillHandler.PauseJob)
+			api.POST("/backfill/:id/resume", backfillHandler.ResumeJob)
+			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
 		}
 
 		if queryHandler != nil {

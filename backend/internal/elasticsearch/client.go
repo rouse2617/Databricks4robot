@@ -347,7 +347,7 @@ func buildSearchBody(req SearchRequest) map[string]any {
 }
 
 func buildSearchModeQuery(mode, query string) map[string]any {
-	fields := []string{"notes", "owner.text", "reviewer.text", "asset_id"}
+	fields := []string{"notes", "owner.text", "reviewer.text", "asset_id", "asset_type"}
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "semantic":
 		return map[string]any{
