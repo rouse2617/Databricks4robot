@@ -61,9 +61,17 @@ func (e *Executor) Execute(ctx context.Context, body map[string]any, collectCand
 	// If the recall matched too many docs, skip candidate transfer (PG refine is enough).
 	if searchResp.Total > maxRecallCandidateIDs {
 		out.Warnings = append(out.Warnings, fmt.Sprintf(
-			"elasticsearch recall matched %d docs (> %d); skipped candidate transfer and refined in postgres",
+			"elasticsearch recall matched %d docs (> %d); skipped candidate transfer and returned elasticsearch results directly",
 			searchResp.Total, maxRecallCandidateIDs,
 		))
+		if len(searchResp.Hits) > 0 {
+			hits := make([]map[string]any, 0, len(searchResp.Hits))
+			for _, hit := range searchResp.Hits {
+				hits = append(hits, hit.Source)
+			}
+			out.ESResults = hits
+		}
+		out.MatchTotal = searchResp.Total
 		return out, nil
 	}
 

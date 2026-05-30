@@ -234,6 +234,10 @@ func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compi
 	} else {
 		compiled.CandidateAssetIDs = esCompiled.CandidateAssetIDs
 	}
+	if len(esCompiled.ESResults) > 0 {
+		compiled.ESResults = esCompiled.ESResults
+	}
+	compiled.MatchTotal = esCompiled.MatchTotal
 }
 
 func (h *Handler) fetchESFacetsOrTotal(ctx context.Context, plan *queryplan.Plan, trackTotalHits bool) (*queryir.CompiledQuery, error) {
@@ -261,8 +265,11 @@ func (h *Handler) fetchESFacetsOrTotal(ctx context.Context, plan *queryplan.Plan
 	return esCompiled, nil
 }
 
-func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) ([]*models.Asset, int64, error) {
+func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) (any, int64, error) {
 	h.applyESRecall(ctx, plan, compiled)
+	if len(compiled.ESResults) > 0 {
+		return compiled.ESResults, compiled.MatchTotal, nil
+	}
 
 	skipPGCount := canSkipPGCount(plan, compiled)
 	needESFacets := plan.UseESFacets && h.esExecutor != nil

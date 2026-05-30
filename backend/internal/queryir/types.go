@@ -86,6 +86,10 @@ type CompiledQuery struct {
 	CandidateAssetIDs []string
 	// MatchTotal is set from Elasticsearch track_total_hits when PG COUNT is skipped.
 	MatchTotal int64 `json:"match_total,omitempty"`
+	// ESResults carries full ES _source data for the first page when
+	// ES recall matched (candidate transfer was skipped due to >10k matches).
+	// When present, the handler should skip PG refine and return these directly.
+	ESResults []map[string]any `json:"-"`
 }
 
 type FacetBucket struct {
