@@ -17,6 +17,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE_TAG="${IMAGE_TAG:-cyber-databrew-backend:local}"
 PLATFORM="${PLATFORM:-auto}"
 
+# Auto-detect version info from git (if available)
+VERSION="$(cd "${ROOT}" && git describe --tags 2>/dev/null || echo "dev")"
+COMMIT="$(cd "${ROOT}" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+
 case "${PLATFORM}" in
 auto)
 	case "$(uname -m)" in
@@ -36,10 +40,15 @@ native | local)
 	;;
 esac
 
-args=(-t "${IMAGE_TAG}" -f "${ROOT}/backend/Dockerfile")
+args=(-t "${IMAGE_TAG}" -f "${ROOT}/backend/Dockerfile"
+      --build-arg "VERSION=${VERSION}"
+      --build-arg "COMMIT=${COMMIT}")
 if [[ -n "${RESOLVED_PLATFORM}" ]]; then
-	args=(--platform "${RESOLVED_PLATFORM}" "${args[@]}")
+    args=(--platform "${RESOLVED_PLATFORM}" "${args[@]}")
 fi
+
+echo "Building backend image: ${IMAGE_TAG}"
+echo "  VERSION=${VERSION}  COMMIT=${COMMIT}"
 
 docker build "${args[@]}" "${ROOT}/backend"
 

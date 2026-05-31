@@ -26,6 +26,17 @@ export default {
       }
     }
 
+    // Serve Docusaurus docs under /doc/ with SPA fallback
+    if (url.pathname.startsWith("/doc/")) {
+      let response = await env.ASSETS.fetch(request);
+      if (response.status === 404) {
+        response = await env.ASSETS.fetch(
+          new Request(new URL("/doc/index.html", request.url))
+        );
+      }
+      return response;
+    }
+
     // Try static assets, fall back to index.html for SPA routing
     const response = await env.ASSETS.fetch(request);
     if (response.status === 404) {
