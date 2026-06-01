@@ -35,25 +35,32 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `asset_id` | UUID string | 全局唯一标识 |
-| `mcap_file_id` | string | 关联 MCAP 文件 |
-| `t_start` | int64 (ns) | 数据起始时间 |
-| `t_end` | int64 (ns) | 数据结束时间 |
-| `status` | enum | 生命周期状态 |
-| `tags` | map[str,str] | 自定义标签 |
+| `asset_id` | string (8位) | 全局唯一标识 |
+| `mcap_file_id` | string (8位) | 关联 MCAP 文件 |
+| `start_timestamp_ns` | int64 | 数据起始时间（纳秒） |
+| `end_timestamp_ns` | int64 | 数据结束时间（纳秒） |
+| `lifecycle_state` | enum | 生命周期状态（created/ready/delivered/archived） |
+| `asset_type` | enum | 资产类型（segment/clip/frame/task） |
+| `duration_ms` | int64 | 时长（毫秒） |
+| `reviewer` | string | 审核人 |
+| `owner` | string | 所有者 |
+| `tags` | map | 自定义标签（多源合并） |
+| `version` | int | 乐观锁版本号 |
 | `created_at` | datetime | 创建时间 |
 | `updated_at` | datetime | 更新时间 |
 
 ### MCAP File
 
-底层存储文件，与 Asset 1:1 或 N:1 关联。
+底层存储文件，与 Asset N:1 关联。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `file_id` | string | 文件唯一 ID |
-| `storage_path` | string | GCS 存储路径 |
+| `mcap_file_id` | string (8位) | 文件唯一 ID |
+| `gcs_path` | string | GCS 存储路径 |
 | `size_bytes` | int64 | 文件大小 |
-| `md5_hash` | string | 文件校验和 |
+| `raw_hash_md5` | string | 文件校验和 |
+| `ingest_state` | enum | 摄入状态 |
+| `file_duration_ms` | int64 | 文件时长（毫秒） |
 
 ### Delivery（交付）
 
@@ -61,10 +68,12 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `delivery_id` | UUID string | 交付唯一 ID |
+| `delivery_id` | UUID | 交付唯一 ID |
 | `customer_id` | string | 目标客户 |
-| `status` | enum | draft/committed/processing/done/failed |
-| `items` | DeliveryItem[] | 交付内容列表 |
+| `status` | enum | draft/delivered/cancelled/accepted |
+| `asset_count` | int | 包含资产数量 |
+| `owner` | string | 交付负责人 |
+| `note` | string | 备注说明 |
 
 ### Algo Run（算法运行）
 
@@ -72,39 +81,27 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `run_id` | UUID string | 运行唯一 ID |
-| `algo_key` | string | 算法标识 |
-| `status` | enum | pending/running/done/failed/cancelled |
-| `asset_ids` | string[] | 处理的资产列表 |
+| `run_id` | string (16位) | 运行唯一 ID |
+| `algo_name` | string | 算法名称 |
+| `algo_version` | string | 算法版本 |
+| `status` | enum | pending/running/ok/failed/cancelled |
+| `triggered_by` | string | 触发来源 |
 
 ## 关系说明
 
-- **Asset ↔ MCAP File**: 一个 Asset 关联一个 MCAP File，多个 Asset 可以共享同一个 MCAP File
-- **Asset ↔ Delivery**: 一个 Delivery 可以包含多个 Asset，通过 DeliveryItem 关联
-- **Asset ↔ Algo Run**: 一个 Algo Run 可以处理多个 Asset
-- **Asset ↔ Tag**: N:M，标签支持多源合并和历史追踪
+- **Asset ↔ MCAP File**: 一个 Asset 关联一个 MCAP File，多个 Asset 可共享同一 MCAP File
+- **Asset ↔ Delivery**: 一个 Delivery 可包含多个 Asset，通过 DeliveryItem 关联
+- **Asset ↔ Algo Run**: 一个 Algo Run 可处理多个 Asset
+- **Asset ↔ Tag**: N:M，标签支持多源共存和历史追踪
 - **Customer ↔ Delivery**: 一个 Customer 可以有多个 Delivery
 
 ## 审计日志
 
 所有实体变更都会记录审计日志，支持按事件类型、时间范围搜索：
 
-```python
-from cyber_databrew_sdk import CyberDatabrewClient
-
-client = CyberDatabrewClient(token="g-xxx")
-
-# 审计搜索
-results = client.audit.search(
-    asset_id="asset-xxx",
-    event_type="delivery.commit",
-    time_from="2026-01-01",
-    time_to="2026-05-25",
-)
-
-# 血缘审计
-results = client.audit.lineage_search(
-    asset_id="asset-xxx",
-    limit=50,
-)
+```bash
+curl "$BASE/api/v1/audit/search?event_type=algo_finished&limit=20" \
+  -H "X-Databrew-Token: $TOKEN"
 ```
+
+SDK 调用见 [API 参考](../api/overview.md) 和 [交互式 API Reference](../api/reference)。
