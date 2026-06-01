@@ -1,6 +1,13 @@
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+
+const openApiSpec = readFileSync(
+  path.resolve(process.cwd(), '../api/openapi.yaml'),
+  'utf8',
+);
 
 const config: Config = {
   title: 'Cyber Databrew',
@@ -45,6 +52,33 @@ const config: Config = {
     ],
   ],
 
+  plugins: [
+    [
+      '@scalar/docusaurus',
+      {
+        label: 'API Reference',
+        route: '/api/reference',
+        showNavLink: false,
+        configuration: {
+          title: 'Cyber Databrew API',
+          content: openApiSpec,
+          layout: 'modern',
+          theme: 'default',
+          hideClientButton: false,
+          persistAuth: true,
+          showSidebar: true,
+          showDeveloperTools: 'always',
+          servers: [
+            {
+              url: 'http://localhost:8080',
+              description: 'Local development',
+            },
+          ],
+        },
+      },
+    ],
+  ],
+
   themeConfig: {
     image: 'img/docusaurus-social-card.jpg',
     colorMode: {
@@ -62,7 +96,12 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'docsSidebar',
           position: 'left',
-          label: '文档',
+          label: 'Guides',
+        },
+        {
+          to: '/api/reference',
+          position: 'left',
+          label: 'REST API Reference',
         },
         {
           href: 'https://github.com/CyberOrigin2077/cyber-databrew',
