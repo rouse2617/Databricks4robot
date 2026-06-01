@@ -530,19 +530,22 @@ components:
     AlgoRunCreateRequest:
       type: object
       properties:
-        algo_name: { type: string }
-        algo_version: { type: string }
-        algo_kind: { type: string }
-        triggered_by: { type: string }
+        algo_name: { type: string, example: "scene-detector" }
+        algo_version: { type: string, example: "2.1.0" }
+        algo_kind: { type: string, example: "seg_runner" }
+        triggered_by: { type: string, example: "admin@cyberorigin.ai" }
         params:
           type: object
           additionalProperties: true
+          example: { threshold: 0.85, max_scenes: 100 }
         input_filter:
           type: object
           additionalProperties: true
+          example: { asset_type: "segment", lifecycle_state: "ready" }
         input_asset_ids:
           type: array
           items: { $ref: '#/components/schemas/AssetID' }
+          example: ["a1b2c3d4", "e5f6g7h8"]
     AlgoRunStartRequest:
       type: object
       properties:
@@ -785,13 +788,13 @@ components:
       type: object
       required: [customer_id, display_name]
       properties:
-        customer_id: { type: string }
-        display_name: { type: string }
-        legal_name: { type: string }
-        status: { type: string }
-        region: { type: string }
-        sla_tier: { type: string }
-        account_owner: { type: string }
+        customer_id: { type: string, example: "cust-acme-001" }
+        display_name: { type: string, example: "ACME Corporation" }
+        legal_name: { type: string, example: "ACME Technologies Ltd." }
+        status: { type: string, example: "active" }
+        region: { type: string, example: "us-west1" }
+        sla_tier: { type: string, example: "premium" }
+        account_owner: { type: string, example: "zhangsan" }
         compliance_tags:
           type: array
           items: {}
@@ -891,13 +894,14 @@ components:
       type: object
       required: [customer_id]
       properties:
-        customer_id: { type: string }
+        customer_id: { type: string, example: "cust-acme-001" }
         asset_ids:
           type: array
           items: { $ref: '#/components/schemas/AssetID' }
-        contract_id: { type: string }
-        note: { type: string }
-        owner: { type: string }
+          example: ["a1b2c3d4", "e5f6g7h8"]
+        contract_id: { type: string, example: "contract-Q3-2024" }
+        note: { type: string, example: "Priority delivery for ACME Q3 batch" }
+        owner: { type: string, example: "zhangsan" }
     DeliveryDraftResponse:
       type: object
       properties:
@@ -924,10 +928,11 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AssetID' }
           minItems: 1
-        customer_id: { type: string }
-        contract_id: { type: string }
-        note: { type: string }
-        owner: { type: string }
+          example: ["a1b2c3d4", "e5f6g7h8"]
+        customer_id: { type: string, example: "cust-acme-001" }
+        contract_id: { type: string, example: "contract-Q3-2024" }
+        note: { type: string, example: "Q3 release batch — customer ACME" }
+        owner: { type: string, example: "zhangsan" }
     DeliveryCommitResponse:
       type: object
       properties:
@@ -949,8 +954,8 @@ components:
     DeliveryCancelRequest:
       type: object
       properties:
-        cancelled_by: { type: string }
-        cancel_reason: { type: string }
+        cancelled_by: { type: string, example: "zhangsan" }
+        cancel_reason: { type: string, example: "Customer requested changes to asset list" }
     DeliveryCancelResponse:
       type: object
       properties:
@@ -964,7 +969,7 @@ components:
     DeliveryAckRequest:
       type: object
       properties:
-        acknowledged_by: { type: string }
+        acknowledged_by: { type: string, example: "lisi" }
     DeliveryAckResponse:
       type: object
       properties:
@@ -1071,44 +1076,46 @@ components:
     McapCreateFileRequest:
       type: object
       properties:
-        mcap_file_id: { type: string }
-        gcs_path: { type: string }
-        mcap_uri: { type: string }
-        size_bytes: { type: integer, format: int64 }
-        raw_hash_md5: { type: string }
-        raw_hash_sha256: { type: string }
-        ingest_state: { type: string }
-        file_duration_ms: { type: integer, format: int64 }
-        start_timestamp_ns: { type: integer, format: int64 }
-        end_timestamp_ns: { type: integer, format: int64 }
-        channel_count: { type: integer }
-        chunk_count: { type: integer }
-        vendor_id: { type: string }
-        collector_id: { type: string }
-        task_id: { type: string }
-        device_id: { type: string }
-        camera_model: { type: string }
-        data_source: { type: string }
-        location_id: { type: string }
-        scene_id: { type: string }
-        environment_id: { type: string }
-        collection_method: { type: string }
-        owner: { type: string }
-        retention_tier: { type: string }
-        expire_at: { type: string, format: date-time }
+        mcap_file_id: { type: string, example: "mcap0012", description: "8-character alphanumeric ID" }
+        gcs_path: { type: string, example: "gs://databrew-uploads/2024/03/run-001.mcap" }
+        mcap_uri: { type: string, example: "gs://databrew-uploads/2024/03/run-001.mcap" }
+        size_bytes: { type: integer, format: int64, example: 104857600 }
+        raw_hash_md5: { type: string, example: "d41d8cd98f00b204e9800998ecf8427e" }
+        raw_hash_sha256: { type: string, example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+        ingest_state: { type: string, example: "uploaded" }
+        file_duration_ms: { type: integer, format: int64, example: 3600000 }
+        start_timestamp_ns: { type: integer, format: int64, example: 1700000000000000000 }
+        end_timestamp_ns: { type: integer, format: int64, example: 1700003600000000000 }
+        channel_count: { type: integer, example: 8 }  # pragma: allowlist secret
+        chunk_count: { type: integer, example: 24 }
+        vendor_id: { type: string, example: "acme-sensors" }  # pragma: allowlist secret
+        collector_id: { type: string, example: "vehicle-001" }
+        task_id: { type: string, example: "task-route-42" }
+        device_id: { type: string, example: "lidar-unit-03" }
+        camera_model: { type: string, example: "FLIR-BFS-U3-16S2" }
+        data_source: { type: string, example: "onboard-recording" }
+        location_id: { type: string, example: "loc-sf-downtown" }
+        scene_id: { type: string, example: "scene-heavy-traffic" }
+        environment_id: { type: string, example: "env-urban-day" }
+        collection_method: { type: string, example: "automatic" }
+        owner: { type: string, example: "zhangsan" }
+        retention_tier: { type: string, example: "standard" }
+        expire_at: { type: string, format: date-time, example: "2025-06-01T00:00:00Z" }
         metadata:
           type: object
           additionalProperties: true
+          example: { vehicle_id: "VH-042", route: "SF-LA-101", weather: "clear" }
         process_state:
           type: object
           additionalProperties: { type: string }
-        tenant_id: { type: string }
-        project_id: { type: string }
+          example: { validation: "passed", indexing: "pending" }
+        tenant_id: { type: string, example: "tenant-cyberorigin" }
+        project_id: { type: string, example: "project-autonomous-v1" }
     McapFinalizeUploadRequest:
       type: object
       required: [mcap_file_id]
       properties:
-        mcap_file_id: { type: string }
+        mcap_file_id: { type: string, example: "mcap0012" }
 
     # ── Eval/Metrics ───────────────────────────────────────────────────────
     EvalResult:
@@ -1588,18 +1595,18 @@ components:
       type: object
       required: [token]
       properties:
-        token: { type: string }
+        token: { type: string, example: "g-databrew-admin-token-xxx" }
     EmailLoginRequest:
       type: object
       required: [email]
       properties:
-        email: { type: string, format: email }
+        email: { type: string, format: email, example: "user@example.com" }
     LoginResponse:
       type: object
       properties:
-        authenticated: { type: boolean }
-        email: { type: string, format: email }
-        role: { type: string }
+        authenticated: { type: boolean, example: true }
+        email: { type: string, format: email, example: "user@example.com" }
+        role: { type: string, example: "admin" }
 
     # ── Layered child-asset creation (CYB-1222) ─────────────────────────────
     ChildAssetCreateRequest:
@@ -1611,20 +1618,25 @@ components:
           format: int64
           minimum: 1
           description: Start timestamp in nanoseconds
+          example: 1700000000000000000
         end_timestamp_ns:
           type: integer
           format: int64
           minimum: 1
           description: End timestamp in nanoseconds
+          example: 1700000100000000000
         split_method:
           type: string
           description: "Split method. When unset or manual/rule:* → edge is split_from; algo:* → edge is derived_from"
+          example: "manual"
         split_run_id:
           type: string
+          example: "run-abc123"
         metadata:
           type: object
           additionalProperties: true
           description: Optional metadata for the new child asset
+          example: { source: "manual-annotation" }
 
     # ── Asset request bodies ────────────────────────────────────────────────
     CreateAssetRequest:
@@ -1632,40 +1644,40 @@ components:
       required: [start_timestamp_ns, end_timestamp_ns, reviewer]
       properties:
         asset_id: { $ref: '#/components/schemas/AssetID', description: "Optional — server generates if omitted" }
-        logical_asset_id: { type: string, description: "Logical asset group ID" }
+        logical_asset_id: { type: string, description: "Logical asset group ID", example: "aaaaaaaa" }
         mcap_file_id: { $ref: '#/components/schemas/McapFileID', description: "Source MCAP file" }
-        start_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "Start timestamp in nanoseconds" }
-        end_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "End timestamp in nanoseconds" }
-        reviewer: { type: string, description: "Reviewer name for the asset" }
-        owner: { type: string, description: "Owner name" }
-        type: { type: string, description: "Segment type (legacy)" }
-        asset_type: { type: string, description: "Asset type (e.g. segment, clip, frame_set, derived_asset)" }
-        status: { type: string, description: "Legacy lifecycle status" }
-        lifecycle_state: { type: string, description: "Lifecycle state" }
-        env: { type: string }
-        task: { type: string }
-        tags: { type: object, additionalProperties: { type: string }, description: "Key→value tags" }
-        files: { type: object, additionalProperties: { type: string }, description: "Key→value file URIs" }
-        metadata: { type: object, additionalProperties: true }
-        lifecycle_meta: { type: object, additionalProperties: true }
-        retention_tier: { type: string }
-        expire_at: { type: string, format: date-time, nullable: true }
-        storage_uri: { type: string }
-        thumb_uri: { type: string }
-        asset_level: { type: integer }
+        start_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "Start timestamp in nanoseconds", example: 1700000000000000000 }
+        end_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "End timestamp in nanoseconds", example: 1700000360000000000 }
+        reviewer: { type: string, description: "Reviewer name for the asset", example: "zhangsan" }
+        owner: { type: string, description: "Owner name", example: "lisi" }
+        type: { type: string, description: "Segment type (legacy)", example: "segment" }
+        asset_type: { type: string, description: "Asset type (e.g. segment, clip, frame_set, derived_asset)", example: "segment" }
+        status: { type: string, description: "Legacy lifecycle status", example: "ready" }
+        lifecycle_state: { type: string, description: "Lifecycle state", example: "ready" }
+        env: { type: string, example: "production" }
+        task: { type: string, example: "data-ingestion-pipeline-v3" }
+        tags: { type: object, additionalProperties: { type: string }, description: "Key→value tags", example: { project: "alpha", batch: "2024-03" } }
+        files: { type: object, additionalProperties: { type: string }, description: "Key→value file URIs", example: { image: "gs://bucket/preview.png", raw: "gs://bucket/data.bin" } }
+        metadata: { type: object, additionalProperties: true, example: { source: "lidar-sensor-01", resolution: "1920x1080" } }
+        lifecycle_meta: { type: object, additionalProperties: true, example: { reason: "quality-review-passed" } }
+        retention_tier: { type: string, example: "standard" }
+        expire_at: { type: string, format: date-time, nullable: true, example: "2025-06-01T00:00:00Z" }
+        storage_uri: { type: string, example: "gs://databrew-assets/segments/a1b2c3d4.mcap" }
+        thumb_uri: { type: string, example: "gs://databrew-thumbnails/a1b2c3d4.jpg" }
+        asset_level: { type: integer, example: 1 }
         parent_asset_id: { $ref: '#/components/schemas/AssetID', nullable: true }
         root_asset_id: { $ref: '#/components/schemas/AssetID', nullable: true }
-        segment_index: { type: integer, nullable: true }
-        parent_start_offset_ms: { type: integer, format: int64, nullable: true }
-        parent_end_offset_ms: { type: integer, format: int64, nullable: true }
-        split_method: { type: string }
-        split_algo_name: { type: string }
-        split_algo_version: { type: string }
-        split_run_id: { type: string }
-        split_reason: { type: string }
-        delivery_count: { type: integer }
-        last_delivered_at: { type: string, format: date-time, nullable: true }
-        last_delivered_to: { type: string, nullable: true }
+        segment_index: { type: integer, nullable: true, example: 3 }
+        parent_start_offset_ms: { type: integer, format: int64, nullable: true, example: 120000 }
+        parent_end_offset_ms: { type: integer, format: int64, nullable: true, example: 240000 }
+        split_method: { type: string, example: "manual" }
+        split_algo_name: { type: string, example: "scene-detector" }
+        split_algo_version: { type: string, example: "2.1.0" }
+        split_run_id: { type: string, example: "run-abc123" }
+        split_reason: { type: string, example: "scene-change-at-12s" }
+        delivery_count: { type: integer, example: 2 }
+        last_delivered_at: { type: string, format: date-time, nullable: true, example: "2025-05-01T10:30:00Z" }
+        last_delivered_to: { type: string, nullable: true, example: "customer-alpha" }
     BatchGetAssetsRequest:
       type: object
       required: [asset_ids]
@@ -1675,12 +1687,13 @@ components:
           items: { $ref: '#/components/schemas/AssetID' }
           maxItems: 100
           description: "List of asset IDs to fetch (max 100)"
+          example: ["a1b2c3d4", "e5f6g7h8"]
     PromoteRevisionRequest:
       type: object
       properties:
-        logical_asset_id: { type: string, description: "Logical asset group to promote into" }
-        revision_of: { type: string, description: "Source revision identifier" }
-        owner: { type: string, description: "Owner of the new revision" }
+        logical_asset_id: { type: string, description: "Logical asset group to promote into", example: "aaaaaaaa" }
+        revision_of: { type: string, description: "Source revision identifier", example: "a1b2c3d4" }
+        owner: { type: string, description: "Owner of the new revision", example: "lisi" }
 
     # ── Pipeline ─────────────────────────────────────────────────────────
     PipelineTemplate:
