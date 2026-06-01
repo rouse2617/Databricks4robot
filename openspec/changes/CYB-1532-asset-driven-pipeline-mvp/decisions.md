@@ -29,3 +29,15 @@
 - **Decision**: Commit, push, and open the PR before finishing the remaining Chrome MCP workflow-log/resource verification; mark the verification gap in `tasks.md` and the PR.
 - **Alternatives**: Continue local/deploy verification before opening the PR.
 - **Rationale**: Current user instruction takes precedence, and the unresolved part is an environment endpoint configuration issue rather than an untested local code path.
+
+## 2026-06-02 — Expired deployment status
+- **Context**: Dev verification showed historical deployment rows can outlive their Argo Workflow CR because the workflow spec uses TTL cleanup. Those rows could remain `Running` and then open to `未找到工作流`.
+- **Decision**: When status refresh sees `argo.ErrNotFound` for an active deployment, mark the deployment API status as `Expired` and allow retry from the saved pipeline JSON.
+- **Alternatives**: Delete stale deployment rows, keep showing the old status, or return a 404 only from workflow detail.
+- **Rationale**: `Expired` preserves audit/history while making the UI honest and recoverable.
+
+## 2026-06-02 — Dev Argo environment reminder
+- **Context**: User confirmed the dev backend deployment needs `ARGO_BASE_URL=https://cyber-databrew-pipeline-ui-dev-234851712830.us-central1.run.app`, `ARGO_WORKFLOWS_NAMESPACE=cyber-databrew-dev`, and `ARGO_SERVER_URL=http://10.2.1.211:2746`.
+- **Decision**: Keep this reminder in the change log for future dev deploys. `ARGO_SERVER_URL` is the internal Argo API endpoint used by the backend; `ARGO_BASE_URL` remains present for the pipeline UI URL.
+- **Alternatives**: Rely on memory or deployment script defaults only.
+- **Rationale**: Missing `ARGO_SERVER_URL` was the root cause of workflow/log verification failures.

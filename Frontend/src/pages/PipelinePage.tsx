@@ -1384,6 +1384,7 @@ type PipelineTab = "design" | "pipelines" | "executions" | "components";
 
 function resolvePipelineTab(raw: string | null): PipelineTab {
 	switch (raw) {
+		case "templates":
 		case "pipelines":
 			return "pipelines";
 		case "executions":

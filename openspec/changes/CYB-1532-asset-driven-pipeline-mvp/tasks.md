@@ -34,8 +34,11 @@
 - [x] [Frontend] Display asset count, target, workflow, run status, and linked asset list in executions.
 - [x] [Frontend] Keep node logs/resource details available from the workflow/run detail flow.
 - [x] [Frontend] Add component authoring hints for required output files when outputs are declared.
+- [x] [backend/frontend] Mark active deployments as `Expired` when the Argo Workflow CR has been TTL-cleaned, and allow retry.
+- [x] [Frontend] Support legacy `?tab=templates` links by routing them to the pipeline management tab.
 - [ ] [follow-up, migration approval required] Persist first-class `execution_targets`, `pipeline_runs`, and `pipeline_run_nodes` tables instead of compatibility mapping over `pipeline_deployments`.
 - [ ] [follow-up] Add first-class asset existence validation once the run API owns asset batch submission end-to-end.
+- [ ] [follow-up] Replace whole-log fetch with bounded tail/pagination/streaming for large pod logs.
 
 ## API Contract Sync
 - [x] Update `api/openapi.yaml` for any new/changed run or execution-target endpoints.
@@ -58,6 +61,10 @@
 - `cd Frontend && npm run build` — PASS with existing large chunk warning
 - `cd sdk && uv run pytest tests/unit/ -q` — PASS, 178 tests
 - `git diff --check` — PASS
+- `go test ./internal/usecase/pipeline/...` — PASS after `Expired` status fix
+- `cd Frontend && npm run test -- --run src/pages/PipelinePage.test.tsx src/components/pipeline/DeployPanel.test.tsx` — PASS, 41 tests after tab alias fix
+- `cd backend && go test ./...` — PASS after follow-up fixes
+- `cd Frontend && npm run lint` — PASS with 2 existing warnings (`WorkflowYamlViewer.test.tsx`, `WorkflowDagNode.css`)
 
 ### Dev deploy record — 2026-06-02
 | Service | Image tag | Cloud Run revision | URL |

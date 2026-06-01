@@ -91,9 +91,9 @@ vi.mock("antd", async (importOriginal) => {
 });
 
 // ── Helpers ───────────────────────────────────────────────────────
-function renderPage() {
+function renderPage(initialEntry = "/pipeline") {
 	return render(
-		<MemoryRouter>
+		<MemoryRouter initialEntries={[initialEntry]}>
 			<PipelinePage />
 		</MemoryRouter>,
 	);
@@ -263,6 +263,28 @@ describe("PipelinePage", () => {
 			expect(screen.getByText("流水线管理")).toBeInTheDocument();
 			expect(screen.getByText("saved-flow")).toBeInTheDocument();
 		});
+	});
+
+	it("treats legacy templates tab query as pipeline management tab", async () => {
+		mockListPipelines.mockResolvedValueOnce([
+			{
+				id: "tmpl-001",
+				name: "legacy-tab-flow",
+				nodeCount: 1,
+				createdAt: "2026-06-01T09:00:00Z",
+			},
+		]);
+
+		renderPage("/pipeline?tab=templates");
+
+		await waitFor(() => {
+			expect(screen.getByText("流水线管理")).toBeInTheDocument();
+			expect(screen.getByText("legacy-tab-flow")).toBeInTheDocument();
+		});
+		const pipelineTab = document.querySelector(
+			'[role="tab"][aria-controls$="panel-pipelines"]',
+		);
+		expect(pipelineTab).toHaveAttribute("aria-selected", "true");
 	});
 
 	// ── Export ──────────────────────────────────────────────────────

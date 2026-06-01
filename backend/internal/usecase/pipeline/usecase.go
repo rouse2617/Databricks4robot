@@ -391,6 +391,32 @@ func (uc *Usecase) SaveFromDeployment(ctx context.Context, deploymentID, templat
 // maxActiveDeploymentStatusRefresh caps Argo status polls per ListDeployments call.
 const maxActiveDeploymentStatusRefresh = 50
 
+const deploymentStatusExpired = "Expired"
+
+func isActiveDeploymentStatus(status string) bool {
+	return status == "" || status == "Running" || status == "Pending" || status == "Unknown"
+}
+
+func (uc *Usecase) refreshDeploymentStatus(ctx context.Context, d *models.PipelineDeployment) {
+	if uc.wfClient == nil || d == nil || !isActiveDeploymentStatus(d.Status) {
+		return
+	}
+	phase, err := uc.wfClient.GetWorkflowStatus(ctx, d.WorkflowName, uc.namespace)
+	if err != nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			d.Status = deploymentStatusExpired
+			logPipelineSideEffect("mark expired deployment", uc.deploymentRepo.UpdateStatus(ctx, d.ID, deploymentStatusExpired))
+		}
+		return
+	}
+	d.Status = string(phase)
+	if phase == "Succeeded" || phase == "Failed" || phase == "Error" {
+		now := time.Now().UTC()
+		d.FinishedAt = &now
+	}
+	logPipelineSideEffect("update deployment status", uc.deploymentRepo.UpdateStatus(ctx, d.ID, string(phase)))
+}
+
 // ListDeployments returns all deployments, optionally refreshing active statuses.
 func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeployment, error) {
 	list, err := uc.deploymentRepo.FindAll(ctx)
@@ -404,17 +430,9 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 			if refreshed >= maxActiveDeploymentStatusRefresh {
 				break
 			}
-			if list[i].Status == "" || list[i].Status == "Running" || list[i].Status == "Pending" || list[i].Status == "Unknown" {
+			if isActiveDeploymentStatus(list[i].Status) {
 				refreshed++
-				phase, err := uc.wfClient.GetWorkflowStatus(ctx, list[i].WorkflowName, uc.namespace)
-				if err == nil {
-					list[i].Status = string(phase)
-					if phase == "Succeeded" || phase == "Failed" || phase == "Error" {
-						now := time.Now().UTC()
-						list[i].FinishedAt = &now
-					}
-					logPipelineSideEffect("update deployment status", uc.deploymentRepo.UpdateStatus(ctx, list[i].ID, string(phase)))
-				}
+				uc.refreshDeploymentStatus(ctx, &list[i])
 			}
 		}
 	}
@@ -433,17 +451,7 @@ func (uc *Usecase) GetDeployment(ctx context.Context, id string) (*models.Pipeli
 	if d == nil {
 		return nil, nil
 	}
-	if uc.wfClient != nil && (d.Status == "" || d.Status == "Running" || d.Status == "Pending" || d.Status == "Unknown") {
-		phase, err := uc.wfClient.GetWorkflowStatus(ctx, d.WorkflowName, uc.namespace)
-		if err == nil {
-			d.Status = string(phase)
-			if phase == "Succeeded" || phase == "Failed" || phase == "Error" {
-				now := time.Now().UTC()
-				d.FinishedAt = &now
-			}
-			logPipelineSideEffect("update deployment status", uc.deploymentRepo.UpdateStatus(ctx, d.ID, string(phase)))
-		}
-	}
+	uc.refreshDeploymentStatus(ctx, d)
 	uc.enrichDeployment(d)
 	return d, nil
 }

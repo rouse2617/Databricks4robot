@@ -50,9 +50,10 @@ const STATUS_COLORS: Record<string, string> = {
 	Pending: "warning",
 	Failed: "error",
 	Error: "error",
+	Expired: "default",
 };
 
-const RETRYABLE_DEPLOYMENT_STATUSES = new Set(["Failed", "Error"]);
+const RETRYABLE_DEPLOYMENT_STATUSES = new Set(["Failed", "Error", "Expired"]);
 
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
 
