@@ -131,6 +131,10 @@ ENDPOINTS: dict[str, str] = {
     "workflow_resume": "/api/v1/workflows/{workflow_name}/resume",
     "workflow_terminate": "/api/v1/workflows/{workflow_name}/terminate",
     "workflow_delete": "/api/v1/workflows/{workflow_name}",
+    # ── Pipelines ─────────────────────────────────────────────────────
+    "pipeline_execution_targets": "/api/v1/execution-targets",
+    "pipeline_deploy_template": "/api/v1/deploy/template/{template_id}",
+    "pipeline_deployment_list": "/api/v1/deployments",
     # ── Pipeline Components ────────────────────────────────────────────
     "pipeline_component_list": "/api/v1/pipeline-components",
     "pipeline_component_create": "/api/v1/pipeline-components",

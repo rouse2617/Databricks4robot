@@ -258,6 +258,10 @@ export function ComponentManager({
 								}}
 								placeholder='["sh", "-c"]'
 							/>
+							<Text type="secondary" className="cm-field-hint">
+								声明输出的组件需要在运行时写入 /tmp/outputs/output，否则 Argo
+								会将节点标记为失败。
+							</Text>
 						</div>
 						<div className="cm-field">
 							<label htmlFor="cm-cpu">CPU</label>

@@ -301,6 +301,39 @@ class TestWorkflowManager:
 
 
 # =========================================================================
+# PipelineManager
+# =========================================================================
+
+class TestPipelineManager:
+    def test_list_execution_targets(self, client):
+        respx.get(f"{BASE_URL}/api/v1/execution-targets").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "default"}]})
+        )
+        result = client.pipelines.list_execution_targets()
+        assert result["items"][0]["id"] == "default"
+
+    def test_deploy_template_with_assets_and_target(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/deploy/template/tmpl-1").mock(
+            return_value=httpx.Response(201, json={"id": "dep-1"})
+        )
+        result = client.pipelines.deploy_template(
+            "tmpl-1",
+            asset_ids=["SDKT0202"],
+            target_id="default",
+            name="asset-run",
+        )
+        assert result["id"] == "dep-1"
+        assert route.calls.last.request.read()
+        assert route.calls.last.request.url.path == "/api/v1/deploy/template/tmpl-1"
+
+    def test_list_deployments(self, client):
+        respx.get(f"{BASE_URL}/api/v1/deployments").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert client.pipelines.list_deployments() == {"items": []}
+
+
+# =========================================================================
 # PipelineComponentManager
 # =========================================================================
 

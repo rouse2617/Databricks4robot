@@ -23,12 +23,25 @@ const mockDeletePipeline = vi.fn();
 const mockDeleteDeployment = vi.fn();
 const mockPreviewDeploy = vi.fn();
 const mockRetryDeployment = vi.fn();
+const mockListExecutionTargets = vi.fn().mockResolvedValue([
+	{
+		id: "default",
+		name: "Default Argo target",
+		cluster: "default",
+		namespace: "cyber-databrew-dev",
+		argoServerConfigured: true,
+		status: "available",
+		isDefault: true,
+	},
+]);
 
 vi.mock("../api/pipelineApi", () => ({
 	savePipeline: (...args: unknown[]) => mockSavePipeline(...args),
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
+	listExecutionTargets: (...args: unknown[]) =>
+		mockListExecutionTargets(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
 	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
@@ -147,7 +160,7 @@ function getModalDeployBtn(): HTMLButtonElement {
 	const modal = screen.getByText("部署流水线").closest(".ant-modal");
 	expect(modal).toBeTruthy();
 	const btn = within(modal as HTMLElement).getByRole("button", {
-		name: /^部.*署$/,
+		name: /运行/,
 	});
 	expect(btn).not.toBeNull();
 	expect(btn).not.toBeDisabled();
@@ -172,8 +185,26 @@ beforeAll(() => {
 });
 
 function resetPipelineMocks() {
+	mockSavePipeline.mockReset();
+	mockDeployTemplate.mockReset();
 	mockListPipelines.mockResolvedValue([]);
 	mockListDeployments.mockResolvedValue([]);
+	mockGetPipeline.mockReset();
+	mockDeletePipeline.mockReset();
+	mockDeleteDeployment.mockReset();
+	mockPreviewDeploy.mockReset();
+	mockRetryDeployment.mockReset();
+	mockListExecutionTargets.mockResolvedValue([
+		{
+			id: "default",
+			name: "Default Argo target",
+			cluster: "default",
+			namespace: "cyber-databrew-dev",
+			argoServerConfigured: true,
+			status: "available",
+			isDefault: true,
+		},
+	]);
 	mockListComponents.mockResolvedValue({ items: [] });
 }
 
@@ -356,7 +387,11 @@ describe("PipelinePage", () => {
 
 		await waitFor(() => {
 			expect(mockSavePipeline).toHaveBeenCalled();
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-001", undefined);
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-001",
+				undefined,
+				"default",
+			);
 		});
 
 		await waitFor(() => {
@@ -377,8 +412,6 @@ describe("PipelinePage", () => {
 		await importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 
-		// Expand asset picker
-		fireEvent.click(screen.getByText("高级：绑定资产（可选）"));
 		await waitFor(() =>
 			expect(screen.getByTestId("mock-asset-picker")).toBeInTheDocument(),
 		);
@@ -387,10 +420,11 @@ describe("PipelinePage", () => {
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-001", [
-				"ast-001",
-				"ast-002",
-			]);
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-001",
+				["ast-001", "ast-002"],
+				"default",
+			);
 		});
 	});
 

@@ -2303,6 +2303,59 @@ curl -s "$BASE/api/v1/pipelines/<ID1>/diff/<ID2>" \
 # 404: template 不存在
 ```
 
+### Pipeline 执行目标与资产驱动运行（CYB-1532）
+
+查询可用执行目标。当前 MVP 返回默认 dev 目标，后续可扩展为多个 cluster/namespace。
+
+```bash
+curl -s "$BASE/api/v1/execution-targets" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "items": [
+#     {
+#       "id": "default",
+#       "name": "Default Argo target",
+#       "cluster": "default",
+#       "namespace": "cyber-databrew-dev",
+#       "argoServerConfigured": true,
+#       "status": "available",
+#       "isDefault": true
+#     }
+#   ]
+# }
+```
+
+按模板提交资产驱动运行。`target_id` 可省略，省略时使用默认执行目标；`asset_ids` 可为空，但 UI 应把空资产运行标识为 no-asset run。
+
+```bash
+curl -X POST "$BASE/api/v1/deploy/template/<TEMPLATE_ID>" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_id": "default",
+    "asset_ids": ["SDKT0202", "SDKT0101"]
+  }'
+
+# 响应会包含兼容 deployment 字段以及运行上下文:
+# {
+#   "id": "dep-123",
+#   "pipelineName": "asset-pipeline",
+#   "workflowName": "asset-pipeline-a1b2c3",
+#   "status": "Pending",
+#   "assetIds": ["SDKT0202", "SDKT0101"],
+#   "assetCount": 2,
+#   "executionTarget": {
+#     "id": "default",
+#     "namespace": "cyber-databrew-dev",
+#     "status": "available"
+#   }
+# }
+# 400: asset 不存在或 target_id 不支持
+# 404: template 不存在
+```
+
 ### 查询资源使用量（F5.8）
 
 查询 workflow 各 pod 的 CPU/Mem 实际使用 vs request/limit。

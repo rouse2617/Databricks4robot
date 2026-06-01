@@ -22,11 +22,12 @@ import (
 
 // Sentinel errors.
 var (
-	ErrTemplateNotFound    = errors.New("template not found")
-	ErrDeploymentNotFound  = errors.New("deployment not found")
-	ErrAssetNotFound       = errors.New("asset not found")
-	ErrInvalidArgument     = errors.New("invalid argument")
-	ErrWorkflowUnavailable = errors.New("workflow service unavailable: argo server not configured")
+	ErrTemplateNotFound        = errors.New("template not found")
+	ErrDeploymentNotFound      = errors.New("deployment not found")
+	ErrAssetNotFound           = errors.New("asset not found")
+	ErrInvalidArgument         = errors.New("invalid argument")
+	ErrExecutionTargetNotFound = errors.New("execution target not found")
+	ErrWorkflowUnavailable     = errors.New("workflow service unavailable: argo server not configured")
 )
 
 // Usecase orchestrates pipeline template management and deployment.
@@ -44,6 +45,7 @@ type Usecase struct {
 type DeployOptions struct {
 	DryRun     bool
 	TemplateID string
+	TargetID   string
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -82,6 +84,37 @@ func New(
 		wfClient:       wfClient,
 		namespace:      namespace,
 	}
+}
+
+// ListExecutionTargets returns currently available runtime destinations.
+func (uc *Usecase) ListExecutionTargets(_ context.Context) []models.ExecutionTarget {
+	return []models.ExecutionTarget{uc.defaultExecutionTarget()}
+}
+
+func (uc *Usecase) defaultExecutionTarget() models.ExecutionTarget {
+	status := "available"
+	if uc.wfClient == nil || strings.TrimSpace(uc.namespace) == "" {
+		status = "unavailable"
+	}
+	return models.ExecutionTarget{
+		ID:                   "default",
+		Name:                 "Default Argo target",
+		Cluster:              "default",
+		Namespace:            uc.namespace,
+		ArgoServerConfigured: uc.wfClient != nil,
+		Status:               status,
+		IsDefault:            true,
+		Description:          "Current backend-configured Argo workflow namespace.",
+	}
+}
+
+func (uc *Usecase) resolveExecutionTarget(targetID string) (*models.ExecutionTarget, error) {
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" || targetID == "default" {
+		target := uc.defaultExecutionTarget()
+		return &target, nil
+	}
+	return nil, fmt.Errorf("%w: target_id=%q", ErrExecutionTargetNotFound, targetID)
 }
 
 // ── Templates ─────────────────────────────────────────────────────
@@ -165,6 +198,13 @@ func (uc *Usecase) Deploy(
 		templateID = opts[0].TemplateID
 		dryRun = opts[0].DryRun
 	}
+	target, err := uc.resolveExecutionTarget("")
+	if len(opts) > 0 {
+		target, err = uc.resolveExecutionTarget(opts[0].TargetID)
+	}
+	if err != nil {
+		return nil, err
+	}
 
 	// Validate all asset IDs exist before proceeding (T-12).
 	if len(assetIDs) > 0 && uc.assetRepo != nil {
@@ -231,15 +271,18 @@ func (uc *Usecase) Deploy(
 
 	if dryRun {
 		return &models.PipelineDeployment{
-			ID:           depID,
-			PipelineName: pipeName,
-			WorkflowName: wfName,
-			Status:       "Preview",
-			NodeCount:    nodeCount,
-			Manifest:     &manifest,
-			PipelineJSON: pipelineArg,
-			CreatedAt:    time.Now().UTC(),
-			UpdatedAt:    time.Now().UTC(),
+			ID:              depID,
+			PipelineName:    pipeName,
+			WorkflowName:    wfName,
+			Status:          "Preview",
+			NodeCount:       nodeCount,
+			Manifest:        &manifest,
+			PipelineJSON:    pipelineArg,
+			AssetIDs:        assetIDs,
+			AssetCount:      len(assetIDs),
+			ExecutionTarget: target,
+			CreatedAt:       time.Now().UTC(),
+			UpdatedAt:       time.Now().UTC(),
 		}, nil
 	}
 
@@ -260,14 +303,17 @@ func (uc *Usecase) Deploy(
 	}
 
 	dep := &models.PipelineDeployment{
-		ID:           depID,
-		PipelineName: pipeName,
-		WorkflowName: wfName,
-		Status:       status,
-		NodeCount:    nodeCount,
-		Manifest:     &manifest,
-		PipelineJSON: pipelineArg,
-		CreatedAt:    time.Now().UTC(),
+		ID:              depID,
+		PipelineName:    pipeName,
+		WorkflowName:    wfName,
+		Status:          status,
+		NodeCount:       nodeCount,
+		Manifest:        &manifest,
+		PipelineJSON:    pipelineArg,
+		AssetIDs:        assetIDs,
+		AssetCount:      len(assetIDs),
+		ExecutionTarget: target,
+		CreatedAt:       time.Now().UTC(),
 	}
 	if templateID != "" {
 		dep.TemplateID = &templateID
@@ -303,7 +349,7 @@ func (uc *Usecase) Deploy(
 }
 
 // DeployByTemplateID deploys a saved template.
-func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name string, assetIDs []string) (*models.PipelineDeployment, error) {
+func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name string, assetIDs []string, opts ...DeployOptions) (*models.PipelineDeployment, error) {
 	t, err := uc.templateRepo.FindByID(ctx, templateID)
 	if err != nil {
 		return nil, fmt.Errorf("find template: %w", err)
@@ -314,7 +360,11 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	if name == "" {
 		name = t.Name
 	}
-	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, DeployOptions{TemplateID: templateID})
+	deployOpts := DeployOptions{TemplateID: templateID}
+	if len(opts) > 0 {
+		deployOpts.TargetID = opts[0].TargetID
+	}
+	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }
 
 // SaveFromDeployment creates a new template from a deployment's pipeline JSON (F7.8).
@@ -368,6 +418,9 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 			}
 		}
 	}
+	for i := range list {
+		uc.enrichDeployment(&list[i])
+	}
 	return list, nil
 }
 
@@ -391,7 +444,20 @@ func (uc *Usecase) GetDeployment(ctx context.Context, id string) (*models.Pipeli
 			logPipelineSideEffect("update deployment status", uc.deploymentRepo.UpdateStatus(ctx, d.ID, string(phase)))
 		}
 	}
+	uc.enrichDeployment(d)
 	return d, nil
+}
+
+func (uc *Usecase) enrichDeployment(d *models.PipelineDeployment) {
+	if d == nil {
+		return
+	}
+	if len(d.AssetIDs) == 0 {
+		d.AssetIDs = assetIDsFromPipelineJSON(d.PipelineJSON)
+	}
+	d.AssetCount = len(d.AssetIDs)
+	target := uc.defaultExecutionTarget()
+	d.ExecutionTarget = &target
 }
 
 // DeleteDeployment removes a deployment record and optionally deletes the K8s workflow.

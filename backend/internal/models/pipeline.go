@@ -19,15 +19,32 @@ type PipelineTemplate struct {
 // to a workflow run. Each deployment records the target workflow, current
 // status, and optionally the rendered manifest and pipeline JSON snapshot.
 type PipelineDeployment struct {
-	ID           string                 `json:"id"`
-	TemplateID   *string                `json:"templateId,omitempty"`
-	PipelineName string                 `json:"pipelineName"`
-	WorkflowName string                 `json:"workflowName"`
-	Status       string                 `json:"status"`
-	NodeCount    int                    `json:"nodeCount"`
-	Manifest     *string                `json:"manifest,omitempty"`
-	PipelineJSON map[string]interface{} `json:"pipelineJSON,omitempty"`
-	CreatedAt    time.Time              `json:"createdAt"`
-	UpdatedAt    time.Time              `json:"updatedAt"`
-	FinishedAt   *time.Time             `json:"finishedAt,omitempty"`
+	ID              string                 `json:"id"`
+	TemplateID      *string                `json:"templateId,omitempty"`
+	PipelineName    string                 `json:"pipelineName"`
+	WorkflowName    string                 `json:"workflowName"`
+	Status          string                 `json:"status"`
+	NodeCount       int                    `json:"nodeCount"`
+	AssetIDs        []string               `json:"assetIds,omitempty"`
+	AssetCount      int                    `json:"assetCount"`
+	ExecutionTarget *ExecutionTarget       `json:"executionTarget,omitempty"`
+	Manifest        *string                `json:"manifest,omitempty"`
+	PipelineJSON    map[string]interface{} `json:"pipelineJSON,omitempty"`
+	CreatedAt       time.Time              `json:"createdAt"`
+	UpdatedAt       time.Time              `json:"updatedAt"`
+	FinishedAt      *time.Time             `json:"finishedAt,omitempty"`
+}
+
+// ExecutionTarget describes a runtime destination for pipeline workflows.
+// CYB-1532 starts with a compatibility default target backed by current Argo
+// configuration; persistence can be added once migrations are approved.
+type ExecutionTarget struct {
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	Cluster              string `json:"cluster"`
+	Namespace            string `json:"namespace"`
+	ArgoServerConfigured bool   `json:"argoServerConfigured"`
+	Status               string `json:"status"`
+	IsDefault            bool   `json:"isDefault"`
+	Description          string `json:"description,omitempty"`
 }

@@ -209,6 +209,16 @@ fi
 if [[ -n "${DB_PASSWORD_SECRET}" ]]; then
   remove_env "DB_PASSWORD" "${ENV_KV_FILE}"
   secret_args+=(--set-secrets "DB_PASSWORD=${DB_PASSWORD_SECRET}:${DB_PASSWORD_SECRET_VERSION}")
+elif [[ -n "${DB_PASSWORD_OVERRIDE}" ]]; then
+  # DB_PASSWORD_OVERRIDE is handled via upsert below; leave it in the env file.
+  :
+else
+  # Neither secret nor override: DB_PASSWORD came from K8s as plain text but
+  # the existing Cloud Run service has it as a Secret Manager reference.
+  # Remove it from the env file to avoid gcloud type conflict.
+  echo "INFO: DB_PASSWORD_SECRET and DB_PASSWORD_OVERRIDE both unset."
+  echo "      Removing DB_PASSWORD from deploy env to preserve existing Secret Manager config."
+  remove_env "DB_PASSWORD" "${ENV_KV_FILE}"
 fi
 
 [[ -n "${DB_HOST_OVERRIDE}" ]] && upsert_env "DB_HOST" "${DB_HOST_OVERRIDE}" "${ENV_KV_FILE}"

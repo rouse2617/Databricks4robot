@@ -1,0 +1,31 @@
+# Decisions — CYB-1532
+
+## 2026-06-01 — Checkpoint before runtime code
+- **Context**: CYB-1532 is a runtime feature touching backend, frontend, API contract, and likely migrations.
+- **Decision**: Create OpenSpec artifacts and stop for user confirmation before editing runtime code.
+- **Alternatives**: Start directly with UI/backend changes.
+- **Rationale**: Repository rules require proposal, design, tasks, and spec delta before runtime edits.
+
+## 2026-06-01 — Migration approval required
+- **Context**: The proposed MVP likely needs `execution_targets`, `pipeline_runs`, and `pipeline_run_nodes`.
+- **Decision**: Treat `backend/migrations/` edits as requiring explicit user approval at the checkpoint.
+- **Alternatives**: Avoid migrations and store all run metadata in `pipeline_deployments.pipeline_json`.
+- **Rationale**: JSON-only storage would make asset x node tracking and target governance brittle, and migrations are an off-limits zone requiring explicit approval.
+
+## 2026-06-02 — Runtime implementation without migrations
+- **Context**: The user replied "继续" after the OpenSpec checkpoint, but did not explicitly approve editing `backend/migrations/`.
+- **Decision**: Proceed with the runtime MVP using compatibility data from existing deployments and a default in-memory execution target; do not edit migrations in this pass.
+- **Alternatives**: Wait for explicit migration approval, or store all new model data in JSON blobs.
+- **Rationale**: This keeps progress moving on the user-visible asset-driven run flow while respecting the off-limits migration rule.
+
+## 2026-06-02 — Dev Argo endpoint verification blocker
+- **Context**: Cloud Run backend dev revision `cyber-databrew-backend-dev-00413-887` has `ARGO_BASE_URL=https://cyber-databrew-pipeline-ui-dev-234851712830.us-central1.run.app`, no `ARGO_SERVER_URL`, and no Argo auth token. `GET /api/v1/workflows` through backend returns Argo `UNAUTHORIZED`. Direct port-forward to `svc/argo-server` in `cyber-databrew-dev` returns 200 for the same Argo workflows API; the in-cluster service runs `--auth-mode=server --secure=false`.
+- **Decision**: Do not change Cloud Run configuration in this PR without explicit configuration approval. Record that workflow detail/log verification is blocked by the dev Argo endpoint pointing at the pipeline UI Cloud Run URL instead of the internal Argo Server service.
+- **Alternatives**: Temporarily redeploy backend with `ARGO_SERVER_URL=http://10.2.1.211:2746`, or add a persisted execution target config.
+- **Rationale**: The user explicitly said not to casually modify configuration and to confirm the cause first.
+
+## 2026-06-02 — User-approved PR before remaining dev verification
+- **Context**: Runtime changes normally require completed dev deploy verification before commit/push. After the Argo endpoint cause was identified, the user requested "先提交pr 我来测试".
+- **Decision**: Commit, push, and open the PR before finishing the remaining Chrome MCP workflow-log/resource verification; mark the verification gap in `tasks.md` and the PR.
+- **Alternatives**: Continue local/deploy verification before opening the PR.
+- **Rationale**: Current user instruction takes precedence, and the unresolved part is an environment endpoint configuration issue rather than an untested local code path.

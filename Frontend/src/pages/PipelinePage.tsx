@@ -15,11 +15,11 @@ import {
 	Alert,
 	App,
 	Button,
-	Collapse,
 	Input,
 	Menu,
 	Modal,
 	message,
+	Select,
 	Spin,
 	Tabs,
 	Tooltip,
@@ -41,7 +41,9 @@ import { assetsApi } from "../api/assets";
 import {
 	type Deployment,
 	deployTemplate,
+	type ExecutionTarget,
 	getPipeline,
+	listExecutionTargets,
 	previewDeploy,
 	savePipeline,
 } from "../api/pipelineApi";
@@ -154,6 +156,10 @@ function PipelineCanvas() {
 	// Asset selection for deploy modal
 	const [selectedAssetIds, setSelectedAssetIds] =
 		useState<string[]>(queryAssetIds);
+	const [executionTargets, setExecutionTargets] = useState<ExecutionTarget[]>(
+		[],
+	);
+	const [selectedTargetId, setSelectedTargetId] = useState("default");
 	const [selectedNodeAsset, setSelectedNodeAsset] = useState<Asset | null>(
 		null,
 	);
@@ -170,6 +176,25 @@ function PipelineCanvas() {
 	useEffect(() => {
 		setSelectedAssetIds(queryAssetIds);
 	}, [queryAssetIds]);
+
+	useEffect(() => {
+		let alive = true;
+		listExecutionTargets()
+			.then((targets) => {
+				if (!alive) return;
+				setExecutionTargets(targets);
+				const defaultTarget =
+					targets.find((target) => target.isDefault) ?? targets[0];
+				if (defaultTarget) setSelectedTargetId(defaultTarget.id);
+			})
+			.catch(() => {
+				if (!alive) return;
+				setExecutionTargets([]);
+			});
+		return () => {
+			alive = false;
+		};
+	}, []);
 
 	useEffect(() => {
 		setSelectedNode((prev: PipelineFlowNode | null) => {
@@ -607,6 +632,7 @@ function PipelineCanvas() {
 			const result = await deployTemplate(
 				saved.id,
 				selectedAssetIds.length > 0 ? selectedAssetIds : undefined,
+				selectedTargetId,
 			);
 			setDeployDialog((prev) => ({
 				...prev,
@@ -622,7 +648,13 @@ function PipelineCanvas() {
 				error: String(err),
 			}));
 		}
-	}, [buildPipelineJSON, deployDialog.name, pipelineName, selectedAssetIds]);
+	}, [
+		buildPipelineJSON,
+		deployDialog.name,
+		pipelineName,
+		selectedAssetIds,
+		selectedTargetId,
+	]);
 
 	const handlePreviewDeploy = useCallback(async () => {
 		setDeployDialog((prev) => ({
@@ -1022,8 +1054,19 @@ function PipelineCanvas() {
 								type="secondary"
 								style={{ fontSize: 12, marginBottom: 16 }}
 							>
-								将流水线转换为 Argo Workflow 并提交到 Kubernetes 集群。
+								选择执行目标和资产后，将流水线转换为 Argo Workflow 并提交到
+								Kubernetes 集群。
 							</Typography.Paragraph>
+							<Alert
+								type={selectedAssetIds.length > 0 ? "success" : "warning"}
+								showIcon
+								message={
+									selectedAssetIds.length > 0
+										? `将处理 ${selectedAssetIds.length} 个资产`
+										: "当前是 no-asset run：不会注入资产环境变量。"
+								}
+								style={{ marginBottom: 16 }}
+							/>
 							{!canDeploy && (
 								<Alert
 									type="warning"
@@ -1067,6 +1110,44 @@ function PipelineCanvas() {
 										size="small"
 									/>
 								</label>
+								<label
+									htmlFor="pp-execution-target"
+									style={{
+										display: "flex",
+										flexDirection: "column",
+										gap: 4,
+										fontSize: 10,
+										textTransform: "uppercase",
+										letterSpacing: "0.8px",
+										color: "#64748b",
+									}}
+								>
+									执行目标
+									<Select
+										id="pp-execution-target"
+										value={selectedTargetId}
+										onChange={setSelectedTargetId}
+										size="small"
+										options={(executionTargets.length > 0
+											? executionTargets
+											: [
+													{
+														id: "default",
+														name: "Default Argo target",
+														cluster: "default",
+														namespace: "default",
+														status: "unavailable",
+														isDefault: true,
+														argoServerConfigured: false,
+													} satisfies ExecutionTarget,
+												]
+										).map((target) => ({
+											value: target.id,
+											label: `${target.name} · ${target.cluster}/${target.namespace}`,
+											disabled: target.status !== "available",
+										}))}
+									/>
+								</label>
 								<div
 									style={{
 										fontSize: 10,
@@ -1079,26 +1160,10 @@ function PipelineCanvas() {
 									<span style={{ fontSize: 3, color: "#cbd5e1" }}>•</span>
 									<span>{edges.length} 条连线</span>
 								</div>
-								<Collapse
-									ghost
-									size="small"
-									items={[
-										{
-											key: "assets",
-											label: (
-												<span style={{ fontSize: 12, color: "#64748b" }}>
-													高级：绑定资产（可选）
-												</span>
-											),
-											children: (
-												<AssetPicker
-													selectedIds={selectedAssetIds}
-													onSelectionChange={setSelectedAssetIds}
-													maxHeight={180}
-												/>
-											),
-										},
-									]}
+								<AssetPicker
+									selectedIds={selectedAssetIds}
+									onSelectionChange={setSelectedAssetIds}
+									maxHeight={180}
 								/>
 							</div>
 							<div
@@ -1119,7 +1184,7 @@ function PipelineCanvas() {
 									onClick={handleDeploy}
 									disabled={!canDeploy}
 								>
-									部署
+									{selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
 								</Button>
 							</div>
 						</>
@@ -1196,7 +1261,7 @@ function PipelineCanvas() {
 									onClick={handleDeploy}
 									disabled={!canDeploy}
 								>
-									确认部署
+									{selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
 								</Button>
 							</div>
 						</>
@@ -1245,6 +1310,14 @@ function PipelineCanvas() {
 								>
 									{deployDialog.result.workflowName}
 								</p>
+								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+									{deployDialog.result.assetCount
+										? `${deployDialog.result.assetCount} 个资产`
+										: "无资产"}
+									{deployDialog.result.executionTarget
+										? ` · ${deployDialog.result.executionTarget.cluster}/${deployDialog.result.executionTarget.namespace}`
+										: ""}
+								</Typography.Text>
 								{deployDialogAssetId ? (
 									<Button
 										type="link"

@@ -3,8 +3,8 @@ package pipeline
 import (
 	"errors"
 	"net/http"
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -113,6 +113,7 @@ func (h *Handler) Deploy(c *gin.Context) {
 		Pipeline map[string]interface{} `json:"pipeline" binding:"required"`
 		Name     string                 `json:"name"`
 		AssetIDs []string               `json:"asset_ids"`
+		TargetID string                 `json:"target_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
@@ -128,7 +129,7 @@ func (h *Handler) Deploy(c *gin.Context) {
 		dryRun = v
 	}
 
-	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{DryRun: dryRun})
+	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{DryRun: dryRun, TargetID: req.TargetID})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -151,15 +152,22 @@ func (h *Handler) DeployByTemplate(c *gin.Context) {
 	var req struct {
 		Name     string   `json:"name"`
 		AssetIDs []string `json:"asset_ids"`
+		TargetID string   `json:"target_id"`
 	}
 	_ = c.ShouldBindJSON(&req) // name and asset_ids are optional
 
-	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs)
+	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID})
 	if err != nil {
 		mapDeployError(c, err)
 		return
 	}
 	c.JSON(201, dep)
+}
+
+// ListExecutionTargets handles GET /api/v1/execution-targets.
+func (h *Handler) ListExecutionTargets(c *gin.Context) {
+	items := h.uc.ListExecutionTargets(c.Request.Context())
+	c.JSON(200, gin.H{"items": items})
 }
 
 // ListDeployments handles GET /api/v1/deployments.
@@ -216,6 +224,10 @@ func mapDeployError(c *gin.Context, err error) {
 		return
 	}
 	if errors.Is(err, pipelineUC.ErrAssetNotFound) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+	if errors.Is(err, pipelineUC.ErrExecutionTargetNotFound) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 		return
 	}

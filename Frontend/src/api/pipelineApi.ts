@@ -15,10 +15,24 @@ export interface Deployment {
 	workflowName: string;
 	status: string;
 	nodeCount: number;
+	assetIds?: string[];
+	assetCount?: number;
+	executionTarget?: ExecutionTarget;
 	createdAt: string;
 	finishedAt?: string;
 	manifest?: string;
 	pipelineJSON?: Pipeline;
+}
+
+export interface ExecutionTarget {
+	id: string;
+	name: string;
+	cluster: string;
+	namespace: string;
+	argoServerConfigured: boolean;
+	status: "available" | "unavailable";
+	isDefault: boolean;
+	description?: string;
 }
 
 export function previewDeploy(
@@ -53,9 +67,11 @@ export function deletePipeline(id: string): Promise<void> {
 export function deployTemplate(
 	templateId: string,
 	assetIds?: string[],
+	targetId?: string,
 ): Promise<Deployment> {
 	return request<Deployment>("POST", `/deploy/template/${templateId}`, {
 		asset_ids: assetIds,
+		target_id: targetId,
 	});
 }
 
@@ -63,6 +79,13 @@ export function listDeployments(): Promise<Deployment[]> {
 	return request<{ items: Deployment[] }>("GET", "/deployments").then(
 		(r) => r.items,
 	);
+}
+
+export function listExecutionTargets(): Promise<ExecutionTarget[]> {
+	return request<{ items: ExecutionTarget[] }>(
+		"GET",
+		"/execution-targets",
+	).then((r) => r.items);
 }
 
 export function deleteDeployment(id: string): Promise<void> {

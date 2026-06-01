@@ -204,6 +204,17 @@ RESP_BODY=$(echo "$raw" | sed '$d')
 if [[ "$RESP_CODE" == "200" ]]; then ok "GET /healthz"; else bad "GET /healthz"; fi
 
 echo ""
+echo "--- § Pipeline execution targets ---"
+get "execution-targets" "/api/v1/execution-targets"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items', []); assert isinstance(items, list); assert all('id' in i and 'namespace' in i for i in items)" 2>/dev/null; then
+		ok "execution-targets response shape"
+	else
+		bad "execution-targets response shape"
+	fi
+fi
+
+echo ""
 echo "--- § Lakehouse / Trino 验证 ---"
 get "lakehouse/status" "/api/v1/lakehouse/status"
 get "lakehouse/tables" "/api/v1/lakehouse/tables"
