@@ -68,7 +68,7 @@ func RegisterAll(
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
-	_, _, _, _, _, _, _, _ = customerHandler, deliveryRuleHandler, algoRunHandler,
+	_, _, _, _, _, _, _ = deliveryRuleHandler, algoRunHandler,
 		auditHandler, pipelineHandler, pipelineComponentHandler, workflowHandler, backfillHandler
 
 	r.Use(middleware.RequestID())
@@ -236,6 +236,14 @@ func RegisterAll(
 		api.GET("/deliveries/:id/items", deliveryHandler.ListItems)
 		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
 
+		// Customer CRUD
+		if customerHandler != nil {
+			api.POST("/customers", customerHandler.Create)
+			api.GET("/customers", customerHandler.List)
+			api.GET("/customers/:customer_id", customerHandler.Get)
+			api.PATCH("/customers/:customer_id", customerHandler.Update)
+		}
+
 		// Registry endpoints (read-only, from YAML config)
 		api.GET("/algo-registry", registryHandler.AlgoRegistry)
 		api.GET("/tag-registry", registryHandler.TagRegistry)
@@ -245,6 +253,7 @@ func RegisterAll(
 
 		// Search endpoints (Elasticsearch-backed)
 		if searchHandler != nil {
+			api.GET("/search/assets", searchHandler.SearchAssets)
 			api.GET("/search/sync-status", searchHandler.SyncStatus)
 			api.GET("/search/sync-progress", searchHandler.SyncProgress)
 		}
