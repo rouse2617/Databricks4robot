@@ -50,7 +50,7 @@ curl "$BASE/api/v1/asset-types/annotation_result/schema" \
 ## 基础信息
 
 - 基础 URL: `http://localhost:8080`（本地开发）
-- 认证: `/api/v1/*` 默认需要 `X-Databrew-Token`；也支持先走 `POST /api/v1/auth/login` 写入 `databrew_session` cookie，再访问受保护接口
+- 认证: `/api/v1/*` 默认支持 `X-Databrew-Token`；浏览器端使用 `POST /api/v1/auth/email-login` 写入 `databrew_session` JWT cookie，再访问受保护接口；`POST /api/v1/auth/login` 保留给静态 token 会话登录和兼容场景
 - 响应格式: JSON
 - 请求 ID: 每个响应包含 `X-Request-ID` header
 
@@ -60,7 +60,19 @@ export BASE=http://localhost:8080
 export TOKEN=dev-token
 ```
 
-会话登录（可选）：
+邮箱会话登录（浏览器端实际路径）：
+
+```bash
+curl -X POST "$BASE/api/v1/auth/email-login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@cyberorigin.ai"}' \
+  -c /tmp/databrew.cookie
+
+curl "$BASE/api/v1/auth/me" -b /tmp/databrew.cookie
+curl -X POST "$BASE/api/v1/auth/logout" -b /tmp/databrew.cookie
+```
+
+静态 token 会话登录（SDK 兼容 / 调试可选）：
 
 ```bash
 curl -X POST "$BASE/api/v1/auth/login" \

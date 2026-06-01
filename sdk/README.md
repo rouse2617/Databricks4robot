@@ -8,7 +8,7 @@ Python SDK for the [cyber-databrew](https://github.com/CyberOrigin2077/cyber-dat
 
 ### 前置条件
 
-- Python 3.11+
+- Python 3.10+
 - `gcloud` 已登录并有权限访问 `green-valley-442103` 项目
 
 ### 安装命令（算法工程师用）
@@ -116,6 +116,33 @@ SDK 启动时会自动调用后端 `GET /api/v1/sdk-config` 获取配置覆盖�
 | `timeout` | 30.0 秒 |
 | 所有 endpoint 路径 | 内置 `/api/v1/...` 模板 |
 
+### 认证方式
+
+SDK 默认使用 `X-Databrew-Token` 进行程序化调用：
+
+```python
+client = CyberDatabrewClient(base_url="...", token="g-xxx")
+```
+
+或通过环境变量配置：
+
+```bash
+export CYBER_DATABREW_TOKEN="g-xxx"
+```
+
+浏览器端不是直接保存 SDK token；前端通过 `POST /api/v1/auth/email-login` 提交邮箱，后端校验域名后写入 `databrew_session` JWT cookie。后续浏览器请求依赖该 HttpOnly cookie 访问受保护接口。
+
+```bash
+curl -X POST "$BASE/api/v1/auth/email-login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@cyberorigin.ai"}' \
+  -c /tmp/databrew.cookie
+
+curl "$BASE/api/v1/auth/me" -b /tmp/databrew.cookie
+```
+
+`POST /api/v1/auth/login` 仍保留给静态 token 会话登录和兼容场景；SDK 直接传 `token` 时不需要先调用登录接口。
+
 ---
 
 ## 使用场景
@@ -127,41 +154,41 @@ from cyber_databrew_sdk import CyberDatabrewClient
 
 client = CyberDatabrewClient(base_url="...", token="g-xxx")
 
-# 查询资产（支持过滤、排序、分页）
-assets = client.assets.list(
+# 查询资产（支持过滤、分页）
+assets = client.assets.list_all(
     page=1,
     page_size=20,
-    sort_by="-created_at",
 )
+print(assets["items"])
 
 # 获取单个资产详情
 asset = client.assets.get("asset-id-xxx")
-print(asset.asset_id, asset.status)
+print(asset["asset_id"], asset["status"])
 
 # 创建资产
-asset = client.assets.create(
-    mcap_file_id="file-001",
-    t_start=1000000000,
-    t_end=2000000000,
-)
+asset = client.assets.create({
+    "mcap_file_id": "file-001",
+    "t_start": 1000000000,
+    "t_end": 2000000000,
+})
 
 # 更新资产
-asset = client.assets.update("asset-id-xxx", status="reviewed")
+asset = client.assets.update("asset-id-xxx", {"status": "reviewed"})
 
 # 批量获取
-assets = client.assets.batch_get(asset_ids=["id1", "id2", "id3"])
+assets = client.assets.batch_get(["id1", "id2", "id3"])
 
 # 血缘 / 谱系
-lineage = client.assets.lineage("asset-id-xxx")
-provenance = client.assets.provenance("asset-id-xxx")
+lineage = client.assets.get_lineage("asset-id-xxx")
+provenance = client.assets.get_provenance("asset-id-xxx")
 
 # 标签管理
-client.assets.set_tag("asset-id-xxx", key="priority", value="high")
+client.assets.set_tags("asset-id-xxx", [{"key": "priority", "value": "high"}])
 client.assets.delete_tag("asset-id-xxx", key="priority")
 
 # 记录浏览 / 收藏
 client.assets.record_view("asset-id-xxx")
-client.assets.toggle_favorite("asset-id-xxx")
+client.assets.set_favorite("asset-id-xxx", True)
 ```
 
 ### MCAP 文件存储
@@ -180,56 +207,59 @@ client.storage.download_mcap("file-001", output_path="./data.mcap")
 client.storage.download_asset_mcap("asset-id-xxx", output_path="./asset.mcap")
 
 # 上传最终确认
-client.storage.finalize_upload(mcap_file_id="file-001", storage_path="gs://...")
+client.storage.finalize_upload({
+    "mcap_file_id": "file-001",
+    "storage_path": "gs://...",
+})
 
 # 遍历消息
-messages = client.storage.get_messages("file-001", start_ns=0, end_ns=1000000)
+messages = client.storage.get_messages("file-001")
 ```
 
 ### 交付管理（Delivery）
 
 ```python
 # 创建交付
-delivery = client.deliveries.create(
-    customer_id="cust-001",
-    items=[
+delivery = client.delivery.create({
+    "customer_id": "cust-001",
+    "items": [
         {"asset_id": "asset-1", "mcap_file_id": "file-1"},
         {"asset_id": "asset-2", "mcap_file_id": "file-2"},
     ],
-)
+})
 
 # 两步提交：草稿 → 添加内容 → 提交
-draft = client.deliveries.create_draft(customer_id="cust-001")
-client.deliveries.add_items(draft.delivery_id, items=[...])
-client.deliveries.commit(draft.delivery_id)
+draft = client.delivery.draft({"customer_id": "cust-001"})
+client.delivery.add_items(draft["delivery_id"], {"items": [...]})
+client.delivery.commit(draft["delivery_id"])
 
 # 取消 / 重试 / 确认
-client.deliveries.cancel("delivery-id-xxx")
-client.deliveries.retry("delivery-id-xxx")
-client.deliveries.acknowledge("delivery-id-xxx")
+client.delivery.cancel("delivery-id-xxx")
+client.delivery.retry("delivery-id-xxx")
+client.delivery.ack("delivery-id-xxx")
 
 # 查询
-deliveries = client.deliveries.list(page=1, page_size=20)
-delivery = client.deliveries.get("delivery-id-xxx")
-items = client.deliveries.list_items("delivery-id-xxx")
+deliveries = client.delivery.list(page=1, page_size=20)
+delivery = client.delivery.get("delivery-id-xxx")
+items = client.delivery.get_items("delivery-id-xxx")
 
 # 规则列表
-rules = client.deliveries.list_rules()
+rules = client.delivery.list_rules()
 ```
 
 ### 算法运行（Algo Run）
 
 ```python
 # 创建 & 启动
-run = client.algo_runs.create(
-    algo_key="some-algo",
-    asset_ids=["asset-1", "asset-2"],
-)
-client.algo_runs.start(run.run_id)
+run = client.algo_runs.create({
+    "algo_key": "some-algo",
+    "asset_ids": ["asset-1", "asset-2"],
+})
+client.algo_runs.start(run["run_id"])
 
 # 完成 / 取消
-client.algo_runs.finish(run.run_id)
-client.algo_runs.cancel(run.run_id)
+client.algo_runs.finish(run["run_id"])
+client.algo_runs.cancel(run["run_id"])
 
 # 查询
 run = client.algo_runs.get("run-id-xxx")
@@ -242,20 +272,20 @@ assets = client.algo_runs.get_affected_assets("run-id-xxx")
 ### 客户管理
 
 ```python
-client.customers.create(customer_id="cust-001", name="ACME Corp")
+client.customers.create({"customer_id": "cust-001", "name": "ACME Corp"})
 client.customers.list()
 client.customers.get("cust-001")
-client.customers.update("cust-001", name="ACME Inc.")
+client.customers.update("cust-001", {"name": "ACME Inc."})
 ```
 
 ### 湖仓（Lakehouse）
 
 ```python
-client.lakehouse.report()
-client.lakehouse.status()
-client.lakehouse.tables()
-client.lakehouse.overview()
-client.lakehouse.sync_progress()
+client.lakehouse.get_report()
+client.lakehouse.get_status()
+client.lakehouse.get_tables()
+client.lakehouse.get_overview()
+client.lakehouse.get_sync_progress()
 ```
 
 ### 事件
@@ -267,9 +297,9 @@ events = client.events.list_global(page=1, page_size=20)
 # 资产事件
 events = client.events.list_for_asset("asset-id-xxx")
 
-# SSE 事件流（逐行迭代）
-for event in client.events.stream_for_asset("asset-id-xxx"):
-    print(event)
+# SSE 事件流
+stream = client.events.stream_for_asset("asset-id-xxx")
+print(stream)
 ```
 
 ### 注册中心（只读）
@@ -289,8 +319,8 @@ client.registry.list_lifecycle_states()
 results = client.audit.search(
     asset_id="asset-xxx",
     event_type="delivery.commit",
-    from_date="2026-01-01",
-    to_date="2026-05-25",
+    time_from="2026-01-01",
+    time_to="2026-05-25",
 )
 
 # 血缘审计
@@ -301,17 +331,17 @@ results = client.audit.lineage_search(asset_id="asset-xxx")
 
 ```python
 # 验证查询
-result = client.queries.validate(query_ir={...})
+result = client.queries.validate({"query_ir": {...}})
 
 # 运行查询
-result = client.queries.run(query_ir={...})
+result = client.queries.run({"query_ir": {...}})
 
 # 保存查询管理
-client.queries.create_saved_query(name="my query", query_ir={...})
-client.queries.list_saved_queries()
-client.queries.get_saved_query("query-id-xxx")
-client.queries.update_saved_query("query-id-xxx", name="new name")
-client.queries.delete_saved_query("query-id-xxx")
+client.queries.create_saved({"name": "my query", "query_ir": {...}})
+client.queries.list_saved()
+client.queries.get_saved("query-id-xxx")
+client.queries.update_saved("query-id-xxx", {"name": "new name"})
+client.queries.delete_saved("query-id-xxx")
 ```
 
 ### 搜索
@@ -357,9 +387,9 @@ except ServerError as e:
 
 ```python
 with CyberDatabrewClient(base_url="...", token="g-xxx") as client:
-    assets = client.assets.list()
-    for asset in assets:
-        print(asset.asset_id)
+    assets = client.assets.list_all()
+    for asset in assets["items"]:
+        print(asset["asset_id"])
 # 退出自动关闭 HTTP 连接
 ```
 
@@ -389,6 +419,11 @@ client._config.refresh(base_url="...")
 | `client.audit` | `AuditManager` | 审计搜索 |
 | `client.search` | `SearchManager` | ES 同步状态 |
 | `client.queries` | `QueryManager` | Query IR 验证、执行、保存 |
+| `client.actions` | `ActionManager` | 资产 action 列表、创建、更新、删除 |
+| `client.eval_metrics` | `EvalMetricsManager` | 评测结果、指标列表、指标检索 |
+| `client.admin_search` | `AdminSearchManager` | 搜索重建与重建任务管理 |
+| `client.workflows` | `WorkflowManager` | 工作流列表、详情、日志、操作 |
+| `client.pipeline_components` | `PipelineComponentManager` | Pipeline 组件列表与 CRUD |
 
 ---
 
