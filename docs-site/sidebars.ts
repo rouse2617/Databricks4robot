@@ -41,6 +41,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'api/overview',
+        'api/api-guide',
         {
           type: 'link',
           label: 'Interactive API Reference',
