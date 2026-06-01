@@ -23,6 +23,13 @@ const config: Config = {
   url: 'https://cyber-databrew.cyberorigin.ai',
   baseUrl: '/doc/',
 
+  scripts: [
+    {
+      src: '/doc/js/api-reference-default.js',
+      async: false,
+    },
+  ],
+
   organizationName: 'CyberOrigin2077',
   projectName: 'cyber-databrew',
 
@@ -64,10 +71,18 @@ const config: Config = {
           content: openApiSpec,
           layout: 'modern',
           theme: 'default',
+          defaultHttpClient: {
+            targetKey: 'shell',
+            clientKey: 'curl', // pragma: allowlist secret
+          },
+          defaultOpenFirstTag: true,
+          documentDownloadType: 'none',
+          expandAllResponses: false,
+          hideModels: true,
           hideClientButton: false,
           persistAuth: true,
           showSidebar: true,
-          showDeveloperTools: 'always',
+          showDeveloperTools: 'never',
           servers: [
             {
               url: 'http://localhost:8080',
@@ -99,9 +114,24 @@ const config: Config = {
           label: 'Guides',
         },
         {
+          to: '/guides/asset-management',
+          position: 'left',
+          label: 'Recipes',
+        },
+        {
           to: '/api/reference',
           position: 'left',
           label: 'REST API Reference',
+        },
+        {
+          to: '/getting-started/sdk-installation',
+          position: 'left',
+          label: 'Python API Reference',
+        },
+        {
+          to: '/changelog',
+          position: 'left',
+          label: 'Changelog',
         },
         {
           href: 'https://github.com/CyberOrigin2077/cyber-databrew',
