@@ -1852,6 +1852,7 @@ components:
           description: Argo resource duration counters for the node.
           additionalProperties: true
         hostNodeName: { type: string }
+        podName: { type: string, description: Kubernetes pod name backing this Argo Pod node, when resolvable. }
         progress: { type: string, description: Node progress, e.g. 1/2 }
         estimatedDuration: { type: integer, format: int64, description: Estimated node duration in seconds }
         children:

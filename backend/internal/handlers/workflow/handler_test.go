@@ -21,11 +21,14 @@ import (
 // ── Mock WorkflowClient ─────────────────────────────────────────────────────
 
 type mockWorkflowClient struct {
-	listFn    func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
-	getFn     func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
-	logsFn    func(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
-	operation string
-	namespace string
+	listFn        func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
+	getFn         func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+	logsFn        func(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
+	streamFn      func(ctx context.Context, workflowName, podName, container, namespace string) (io.ReadCloser, error)
+	operation     string
+	namespace     string
+	lastLogNodeID string
+	lastStreamPod string
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
@@ -81,12 +84,17 @@ func (m *mockWorkflowClient) GetWorkflow(ctx context.Context, name, namespace st
 	return nil, nil
 }
 func (m *mockWorkflowClient) GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error) {
+	m.lastLogNodeID = nodeId
 	if m.logsFn != nil {
 		return m.logsFn(ctx, workflowName, nodeId, namespace)
 	}
 	return "", nil
 }
-func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _, _ string) (io.ReadCloser, error) {
+func (m *mockWorkflowClient) GetWorkflowLogStream(ctx context.Context, workflowName, podName, container, namespace string) (io.ReadCloser, error) {
+	m.lastStreamPod = podName
+	if m.streamFn != nil {
+		return m.streamFn(ctx, workflowName, podName, container, namespace)
+	}
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
@@ -614,14 +622,26 @@ func TestGetWorkflow_EmptyName(t *testing.T) {
 }
 
 func TestGetWorkflowLogs_Success(t *testing.T) {
-	h := New(&mockWorkflowClient{
+	wf := makeWorkflow("test-wf", "Succeeded", 0)
+	wf.Status.Nodes["test-wf-123"] = wfv1.NodeStatus{
+		ID:          "test-wf-123",
+		Name:        "test-wf.step-emit",
+		DisplayName: "step-emit",
+		Type:        wfv1.NodeTypePod,
+		Phase:       wfv1.NodeSucceeded,
+	}
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return wf, nil
+		},
 		logsFn: func(_ context.Context, _, nodeId, _ string) (string, error) {
 			return "log output for node " + nodeId, nil
 		},
-	}, "default")
+	}
+	h := New(client, "default")
 	r := setupRouter(h)
 
-	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/logs?nodeId=step-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/logs?nodeId=test-wf-123", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -633,8 +653,51 @@ func TestGetWorkflowLogs_Success(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	logs, ok := resp["logs"].(string)
-	if !ok || logs != "log output for node step-1" {
+	if !ok || logs != "log output for node test-wf-step-emit-123" {
 		t.Errorf("unexpected logs: %v", resp["logs"])
+	}
+	if client.lastLogNodeID != "test-wf-step-emit-123" {
+		t.Fatalf("expected resolved pod name, got %q", client.lastLogNodeID)
+	}
+}
+
+func TestGetWorkflow_IncludesResolvedPodName(t *testing.T) {
+	wf := makeWorkflow("test-wf", "Succeeded", 0)
+	wf.Status.Nodes["test-wf-123"] = wfv1.NodeStatus{
+		ID:          "test-wf-123",
+		Name:        "test-wf.step-emit",
+		DisplayName: "step-emit",
+		Type:        wfv1.NodeTypePod,
+		Phase:       wfv1.NodeSucceeded,
+	}
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return wf, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Nodes []struct {
+			ID      string `json:"id"`
+			PodName string `json:"podName"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(resp.Nodes))
+	}
+	if resp.Nodes[0].PodName != "test-wf-step-emit-123" {
+		t.Fatalf("unexpected podName: %q", resp.Nodes[0].PodName)
 	}
 }
 

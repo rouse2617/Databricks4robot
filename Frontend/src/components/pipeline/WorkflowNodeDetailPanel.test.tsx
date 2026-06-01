@@ -105,6 +105,22 @@ describe("WorkflowNodeDetailPanel", () => {
 		expect(screen.getByText("Succeeded")).toBeTruthy();
 	});
 
+	it("shows resolved pod name when provided by the API", () => {
+		render(
+			<WorkflowNodeDetailPanel
+				node={{
+					...baseNode,
+					podName: "wf-step-emit-123",
+				}}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("wf-step-emit-123")).toBeTruthy();
+	});
+
 	it("shows retry button when canRetryWorkflow", () => {
 		render(
 			<WorkflowNodeDetailPanel
