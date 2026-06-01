@@ -2396,7 +2396,7 @@ curl -s "$BASE/api/v1/assets/<ASSET_ID>/pipeline-lineage" \
 curl -s "$BASE/api/v1/workflows" \
   -H "X-Databrew-Token: $TOKEN"
 
-# 查看 workflow 详情（含 labels、progress、estimatedDuration、nodes，以及标准化 DAG edges）
+# 查看 workflow 详情（含 labels、progress、estimatedDuration、nodes、Pod 节点 podName，以及标准化 DAG edges）
 curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
   -H "X-Databrew-Token: $TOKEN"
 
@@ -2407,7 +2407,7 @@ curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
 #   ]
 # }
 
-# 查看节点日志
+# 查看节点日志。nodeId 传 workflow detail 返回的节点 id；后端会解析实际 Kubernetes podName。
 curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>" \
   -H "X-Databrew-Token: $TOKEN"
 

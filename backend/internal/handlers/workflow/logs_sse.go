@@ -16,8 +16,8 @@ const defaultWorkflowLogContainer = "main"
 
 type workflowLogStreamEntry struct {
 	Result struct {
-		Content  string `json:"content"`
-		PodName  string `json:"podName"`
+		Content string `json:"content"`
+		PodName string `json:"podName"`
 	} `json:"result"`
 }
 
@@ -113,12 +113,11 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		return
 	}
 
-	_, ok := workflow.Status.Nodes[nodeID]
+	podName, ok := resolveWorkflowPodName(workflow, nodeID)
 	if !ok {
-		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow node not found", nil)
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
 		return
 	}
-	podName := nodeID
 
 	stream, err := h.wfClient.GetWorkflowLogStream(
 		c.Request.Context(),
@@ -131,7 +130,7 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		logs, fallbackErr := h.wfClient.GetWorkflowLogs(
 			c.Request.Context(),
 			name,
-			nodeID,
+			podName,
 			namespace,
 		)
 		if fallbackErr != nil {

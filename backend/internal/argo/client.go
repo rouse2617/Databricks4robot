@@ -30,7 +30,7 @@ type WorkflowClient interface {
 	SuspendWorkflow(ctx context.Context, name, namespace string) error
 	ResumeWorkflow(ctx context.Context, name, namespace string) error
 	TerminateWorkflow(ctx context.Context, name, namespace string) error
-	GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
+	GetWorkflowLogs(ctx context.Context, workflowName, podName, namespace string) (string, error)
 	GetWorkflowLogStream(ctx context.Context, workflowName, podName, container, namespace string) (io.ReadCloser, error)
 }
 
@@ -122,14 +122,11 @@ func (c *Client) workflowOperation(ctx context.Context, name, namespace, operati
 	return c.do(ctx, http.MethodPut, workflowNamePath(namespace, name)+"/"+operation, nil, map[string]any{}, nil)
 }
 
-// GetWorkflowLogs returns logs for a workflow node using Argo Server log streaming.
-func (c *Client) GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error) {
+// GetWorkflowLogs returns logs for a workflow pod using Argo Server log streaming.
+func (c *Client) GetWorkflowLogs(ctx context.Context, workflowName, podName, namespace string) (string, error) {
 	query := url.Values{}
 	query.Set("logOptions.container", "main")
-	query.Set("podName", nodeId)
-	if nodeId != "" {
-		query.Set("grep", nodeId)
-	}
+	query.Set("podName", podName)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, workflowNamePath(namespace, workflowName)+"/log", query, nil)
 	if err != nil {

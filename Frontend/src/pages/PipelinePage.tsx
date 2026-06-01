@@ -230,9 +230,18 @@ function PipelineCanvas() {
 		};
 	}, [loadPipelineFromSessionStorage, loadPipelineToCanvas, templateId]);
 
+	const componentById = useMemo(() => {
+		const map = new Map<string, RegisteredComponent>();
+		for (const component of registeredComponents) {
+			map.set(component.id, component);
+		}
+		return map;
+	}, [registeredComponents]);
+
 	const onDragStart = useCallback((e: DragEvent, comp: RegisteredComponent) => {
-		e.dataTransfer.setData("application/reactflow", JSON.stringify(comp));
-		e.dataTransfer.effectAllowed = "move";
+		e.dataTransfer.setData("application/databrew-component-id", comp.id);
+		e.dataTransfer.setData("text/plain", comp.id);
+		e.dataTransfer.effectAllowed = "copy";
 	}, []);
 
 	const onDragOver = useCallback((event: DragEvent) => {
@@ -243,26 +252,25 @@ function PipelineCanvas() {
 	const onDrop = useCallback(
 		(event: DragEvent) => {
 			event.preventDefault();
-			const raw = event.dataTransfer.getData("application/reactflow");
-			if (!raw) return;
-			try {
-				const comp: RegisteredComponent = JSON.parse(raw);
-				const bounds = wrapperRef.current?.getBoundingClientRect();
-				if (!bounds) return;
-				const position = editor.screenToFlowPosition({
-					x: event.clientX,
-					y: event.clientY,
-				});
-				const newNode = createPipelineNode(comp, position.x, position.y);
-				editor.addNode(newNode);
-				editor.selectElements([newNode.id]);
-				setSelectedNode(newNode);
-				setEditingNodeId(null);
-			} catch {
-				/* ignore */
-			}
+			const componentId =
+				event.dataTransfer.getData("application/databrew-component-id") ||
+				event.dataTransfer.getData("text/plain");
+			if (!componentId) return;
+			const comp = componentById.get(componentId);
+			if (!comp) return;
+			const bounds = wrapperRef.current?.getBoundingClientRect();
+			if (!bounds) return;
+			const position = editor.screenToFlowPosition({
+				x: event.clientX,
+				y: event.clientY,
+			});
+			const newNode = createPipelineNode(comp, position.x, position.y);
+			editor.addNode(newNode);
+			editor.selectElements([newNode.id]);
+			setSelectedNode(newNode);
+			setEditingNodeId(null);
 		},
-		[editor],
+		[componentById, editor],
 	);
 
 	const selectNodeWithEdges = useCallback(

@@ -140,6 +140,7 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		TemplateName      string   `json:"templateName"`
 		Phase             string   `json:"phase"`
 		Message           string   `json:"message,omitempty"`
+		PodName           string   `json:"podName,omitempty"`
 		Inputs            any      `json:"inputs,omitempty"`
 		Outputs           any      `json:"outputs,omitempty"`
 		ResourcesDuration any      `json:"resourcesDuration,omitempty"`
@@ -160,6 +161,7 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 			TemplateName:      n.TemplateName,
 			Phase:             string(n.Phase),
 			Message:           n.Message,
+			PodName:           "",
 			Inputs:            n.Inputs,
 			Outputs:           n.Outputs,
 			ResourcesDuration: n.ResourcesDuration,
@@ -175,6 +177,9 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		if !n.FinishedAt.IsZero() {
 			t := n.FinishedAt.Time.Format("2006-01-02T15:04:05Z")
 			ni.FinishedAt = &t
+		}
+		if podName, ok := resolveWorkflowPodName(wf, n.ID); ok {
+			ni.PodName = podName
 		}
 		nodes = append(nodes, ni)
 	}
@@ -205,7 +210,18 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow name and nodeId are required", nil)
 		return
 	}
-	logs, err := h.wfClient.GetWorkflowLogs(c.Request.Context(), name, nodeId, h.namespaceFor(c))
+	namespace := h.namespaceFor(c)
+	workflow, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	podName, ok := resolveWorkflowPodName(workflow, nodeId)
+	if !ok {
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
+		return
+	}
+	logs, err := h.wfClient.GetWorkflowLogs(c.Request.Context(), name, podName, namespace)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
