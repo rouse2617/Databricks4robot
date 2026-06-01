@@ -1,6 +1,30 @@
-# Overview
+---
+title: 概览
+sidebar_label: 概览
+description: Cyber Databrew 是面向视频与多模态数据的流水线平台，提供资产管理、算法编排、检索、交付、REST API 与 Python SDK。
+---
+
+# 概览
 
 **Cyber Databrew** 是一个面向视频与多模态数据的流水线平台，专注于**资产元数据管理、算法运行编排、检索与交付**。平台提供统一的 API 和 Python SDK，帮助团队高效管理从数据摄入、标注、算法处理到交付的完整生命周期。
+
+<div className="overview-quicklinks">
+  <a className="overview-quicklink" href="/doc/getting-started/quickstart">
+    <span className="overview-quicklink__eyebrow">开始使用</span>
+    <strong>快速开始</strong>
+    <span>用最短路径完成认证、资产创建和基础查询。</span>
+  </a>
+  <a className="overview-quicklink" href="/doc/getting-started/sdk-installation">
+    <span className="overview-quicklink__eyebrow">Python</span>
+    <strong>SDK 安装</strong>
+    <span>安装客户端并用代码接入 Databrew API。</span>
+  </a>
+  <a className="overview-quicklink" href="/doc/api/reference">
+    <span className="overview-quicklink__eyebrow">REST</span>
+    <strong>API Reference</strong>
+    <span>查看可交互的接口、参数和响应结构。</span>
+  </a>
+</div>
 
 ## 核心能力
 
@@ -46,10 +70,3 @@
 | 检索 | Elasticsearch |
 | 湖仓 | BigQuery / BigLake Iceberg |
 | 部署 | Cloudflare Workers + Assets |
-
-## 快速入口
-
-- **[快速开始](getting-started/quickstart.md)** — 5 分钟内上手
-- **[SDK 安装](getting-started/sdk-installation.md)** — Python SDK 安装指南
-- **[API 概览](api/overview.md)** — REST API 参考
-- **[资产管理指南](guides/asset-management.md)** — 完整的资产管理操作
