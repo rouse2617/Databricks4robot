@@ -80,7 +80,7 @@ for s in states["items"]:
 
 ```python
 # 列出组件
-result = client.pipeline_components.list(page=1, page_size=20)
+result = client.pipeline_components.list(q="camera", source="registry")
 for comp in result.get("items", []):
     print(comp)
 ```
@@ -107,8 +107,9 @@ info = client.storage.get_file_info("mcap0001")
 # 下载 MCAP（自动处理 302 重定向到 GCS 签名 URL）
 client.storage.download_mcap("mcap0001", output_path="./data.mcap")
 
-# 从资产下载 MCAP
-client.storage.download_asset_mcap("aset0001", output_path="./asset.mcap")
+# 获取资产关联的 MCAP 定位信息
+locator = client.assets.get_mcap_locator("aset0001")
+print(locator["asset_id"], locator["mcap"])
 
 # 上传最终确认
 client.storage.finalize_upload({

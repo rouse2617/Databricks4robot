@@ -39,7 +39,7 @@
 | `mcap_file_id` | string (8位) | 关联 MCAP 文件 |
 | `start_timestamp_ns` | int64 | 数据起始时间（纳秒） |
 | `end_timestamp_ns` | int64 | 数据结束时间（纳秒） |
-| `lifecycle_state` | enum | 生命周期状态（created/ready/delivered/archived） |
+| `lifecycle_state` | enum | 生命周期状态（created/processing/ready/delivered/archived/superseded/failed/rejected） |
 | `asset_type` | enum | 资产类型（segment/clip/frame/task） |
 | `duration_ms` | int64 | 时长（毫秒） |
 | `reviewer` | string | 审核人 |
@@ -70,7 +70,7 @@
 |------|------|------|
 | `delivery_id` | UUID | 交付唯一 ID |
 | `customer_id` | string | 目标客户 |
-| `status` | enum | draft/delivered/cancelled/accepted |
+| `status` | enum | pending/delivered/failed/accepted/rejected/recalled/cancelled/archived |
 | `asset_count` | int | 包含资产数量 |
 | `owner` | string | 交付负责人 |
 | `note` | string | 备注说明 |
@@ -100,8 +100,8 @@
 所有实体变更都会记录审计日志，支持按事件类型、时间范围搜索：
 
 ```bash
-curl "$BASE/api/v1/audit/search?event_type=algo_finished&limit=20" \
+curl "$BASE/api/v1/assets/aset0001/events?page_size=20" \
   -H "X-Databrew-Token: $TOKEN"
 ```
 
-SDK 调用见 [API 参考](../api/overview.md) 和 [交互式 API Reference](../api/reference)。
+SDK 调用可使用 `client.events.list_for_asset("aset0001")`。跨资产审计搜索属于内部/管理接口，使用前请以 [交互式 API Reference](../api/reference) 中当前部署的接口为准。
