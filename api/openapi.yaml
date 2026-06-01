@@ -1704,6 +1704,13 @@ components:
         workflowName: { type: string, description: Resulting Argo workflow name }
         status: { type: string, description: Deployment/workflow status (Succeeded, Running, Failed, etc.) }
         nodeCount: { type: integer }
+        assetIds:
+          type: array
+          items: { type: string }
+          description: Asset IDs selected for this run, when any
+        assetCount: { type: integer, description: Number of selected assets }
+        executionTarget:
+          $ref: '#/components/schemas/ExecutionTarget'
         manifest: { type: string, nullable: true }
         pipelineJSON:
           type: object
@@ -1712,6 +1719,19 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true }
+    ExecutionTarget:
+      type: object
+      properties:
+        id: { type: string, description: Stable execution target ID }
+        name: { type: string, description: Human-readable target name }
+        cluster: { type: string, description: Cluster label or identifier }
+        namespace: { type: string, description: Kubernetes namespace for Argo workflows }
+        argoServerConfigured: { type: boolean, description: Whether backend Argo client is configured }
+        status:
+          type: string
+          enum: [available, unavailable]
+        isDefault: { type: boolean }
+        description: { type: string }
     PipelineComponent:
       type: object
       properties:
@@ -4415,6 +4435,9 @@ paths:
                   type: array
                   items: { type: string }
                   description: Optional asset IDs to bind as environment variables
+                target_id:
+                  type: string
+                  description: Execution target ID. Defaults to the dev target when omitted.
       responses:
         '200':
           description: Dry-run preview generated
@@ -4458,6 +4481,9 @@ paths:
                   type: array
                   items: { type: string }
                   description: Optional asset IDs to bind as environment variables
+                target_id:
+                  type: string
+                  description: Execution target ID. Defaults to the dev target when omitted.
       responses:
         '201':
           description: Deployment created
@@ -4494,6 +4520,24 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/PipelineDeployment' }
+  /api/v1/execution-targets:
+    get:
+      tags: [Pipeline]
+      summary: List execution targets
+      description: Returns runtime destinations available for pipeline runs.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Execution target list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ExecutionTarget' }
   /api/v1/deployments/{id}:
     get:
       tags: [Pipeline]

@@ -142,10 +142,10 @@ func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) 
 func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _, _ string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
-func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error { return nil }
-func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error { return nil }
-func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, _ string) error { return nil }
-func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error     { return nil }
+func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error  { return nil }
+func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, _ string) error   { return nil }
+func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, _ string) error    { return nil }
 func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, _ string) error { return nil }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -187,6 +187,7 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.GET("/api/v1/pipelines/:id/diff/:id2", h.DiffTemplates)
 	r.POST("/api/v1/deploy", h.Deploy)
 	r.POST("/api/v1/deploy/template/:id", h.DeployByTemplate)
+	r.GET("/api/v1/execution-targets", h.ListExecutionTargets)
 	r.GET("/api/v1/deployments", h.ListDeployments)
 	r.GET("/api/v1/deployments/:id", h.GetDeployment)
 	r.DELETE("/api/v1/deployments/:id", h.DeleteDeployment)
@@ -197,6 +198,54 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.POST("/api/v1/pipeline-assets", h.RegisterOutput)
 	r.GET("/api/v1/assets/:id/pipeline-lineage", h.GetLineage)
 	return r
+}
+
+func TestListExecutionTargets_Default(t *testing.T) {
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "cyber-databrew-dev")
+	h := New(uc)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/execution-targets", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.ExecutionTarget `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected one default target, got %d", len(resp.Items))
+	}
+	if resp.Items[0].ID != "default" || resp.Items[0].Namespace != "cyber-databrew-dev" {
+		t.Fatalf("unexpected target: %+v", resp.Items[0])
+	}
+}
+
+func TestDeployByTemplate_RejectsUnknownTarget(t *testing.T) {
+	templates := &mockTemplateRepo{byID: map[string]*models.PipelineTemplate{
+		"tmpl-1": makeTemplate("tmpl-1", "target-test", 1),
+	}}
+	uc := pipelineUC.New(templates, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	h := New(uc)
+	r := setupRouter(h)
+
+	body := `{"target_id":"missing-target"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/deploy/template/tmpl-1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "execution target not found") {
+		t.Fatalf("expected target error, got %s", w.Body.String())
+	}
 }
 
 // ── Template Tests ───────────────────────────────────────────────────────────
@@ -537,7 +586,9 @@ func TestListDeployments_Empty(t *testing.T) {
 
 func TestListDeployments_WithItem(t *testing.T) {
 	depRepo := &mockDeploymentRepo{}
-	_ = depRepo.Save(context.Background(), makeDeployment("dep-1", "pipe-a", "Running"))
+	dep := makeDeployment("dep-1", "pipe-a", "Running")
+	dep.PipelineJSON = map[string]interface{}{"_input_asset_ids": []interface{}{"asset-a", "asset-b"}}
+	_ = depRepo.Save(context.Background(), dep)
 	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, nil, "default")
 	h := New(uc)
 	r := setupRouter(h)
@@ -560,6 +611,13 @@ func TestListDeployments_WithItem(t *testing.T) {
 	first := items[0].(map[string]interface{})
 	if first["pipelineName"] != "pipe-a" {
 		t.Errorf("expected pipelineName 'pipe-a', got %v", first["pipelineName"])
+	}
+	if first["assetCount"] != float64(2) {
+		t.Errorf("expected assetCount 2, got %v", first["assetCount"])
+	}
+	target, ok := first["executionTarget"].(map[string]interface{})
+	if !ok || target["id"] != "default" {
+		t.Fatalf("expected default execution target, got %#v", first["executionTarget"])
 	}
 }
 

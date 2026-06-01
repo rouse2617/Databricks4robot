@@ -104,6 +104,7 @@ describe("ComponentManager", () => {
 		expect(screen.getByPlaceholderText("my-component")).toBeTruthy();
 		expect(screen.getByPlaceholderText("repo/image:tag")).toBeTruthy();
 		expect(screen.getByPlaceholderText('["sh", "-c"]')).toBeTruthy();
+		expect(screen.getByText(/声明输出的组件需要在运行时写入/)).toBeTruthy();
 	});
 
 	it("opens edit form when clicking a component in the list", () => {

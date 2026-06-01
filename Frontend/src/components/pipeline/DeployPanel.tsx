@@ -1,6 +1,5 @@
 import {
 	DeleteOutlined,
-	DownOutlined,
 	EditOutlined,
 	EyeOutlined,
 	LinkOutlined,
@@ -10,10 +9,10 @@ import {
 import {
 	Alert,
 	Button,
-	Dropdown,
 	Modal,
 	message,
 	Popconfirm,
+	Select,
 	Skeleton,
 	Space,
 	Tag,
@@ -25,8 +24,10 @@ import {
 	deleteDeployment,
 	deletePipeline,
 	deployTemplate,
+	type ExecutionTarget,
 	getPipeline,
 	listDeployments,
+	listExecutionTargets,
 	listPipelines,
 	type PipelineTemplate,
 	retryDeployment,
@@ -94,15 +95,13 @@ function extractPipelineAssetIds(pipelineJSON: Pipeline | undefined): string[] {
 
 function TemplateCard({
 	template,
-	onDirectRun,
-	onDeployWithAssets,
+	onRun,
 	onEdit,
 	onDelete,
 	compactActions,
 }: {
 	template: PipelineTemplate;
-	onDirectRun: (id: string) => void;
-	onDeployWithAssets: (id: string) => void;
+	onRun: (id: string) => void;
 	onEdit: (id: string) => void;
 	onDelete: (id: string) => void;
 	compactActions?: boolean;
@@ -163,26 +162,10 @@ function TemplateCard({
 							size="small"
 							type="primary"
 							icon={<PlayCircleOutlined />}
-							onClick={() => onDirectRun(template.id)}
+							onClick={() => onRun(template.id)}
 						>
 							运行
 						</Button>
-						<Dropdown
-							menu={{
-								items: [
-									{
-										key: "assets",
-										label: "选择资产运行",
-										onClick: () => onDeployWithAssets(template.id),
-									},
-								],
-							}}
-							trigger={["click"]}
-						>
-							<Button size="small" type="primary" style={{ padding: "0 4px" }}>
-								<DownOutlined style={{ fontSize: 10 }} />
-							</Button>
-						</Dropdown>
 					</Space.Compact>
 					<Button
 						size="small"
@@ -230,6 +213,7 @@ export function DeployPanel({
 	const navigate = useNavigate();
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
+	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [templateVisibleCount, setTemplateVisibleCount] =
@@ -240,7 +224,9 @@ export function DeployPanel({
 	const [assetModalOpen, setAssetModalOpen] = useState(false);
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
 	const [deploying, setDeploying] = useState(false);
+	const [assetListModalIds, setAssetListModalIds] = useState<string[]>([]);
 
 	const displayTemplates = useMemo(
 		() => dedupeTemplatesByName(templates),
@@ -255,14 +241,24 @@ export function DeployPanel({
 		setLoading(true);
 		setError(null);
 		try {
-			const [d, t] = await Promise.all([listDeployments(), listPipelines()]);
+			const [d, t, executionTargets] = await Promise.all([
+				listDeployments(),
+				listPipelines(),
+				listExecutionTargets(),
+			]);
 			setDeployments(d);
 			setTemplates(t);
+			setTargets(executionTargets);
+			const defaultTarget =
+				executionTargets.find((target) => target.isDefault) ??
+				executionTargets[0];
+			if (defaultTarget) setSelectedTargetId(defaultTarget.id);
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			setError(detail);
 			setDeployments([]);
 			setTemplates([]);
+			setTargets([]);
 		} finally {
 			setLoading(false);
 		}
@@ -280,17 +276,10 @@ export function DeployPanel({
 	const handleDeployClick = (templateId: string) => {
 		setDeployTargetId(templateId);
 		setSelectedAssetIds([]);
+		const defaultTarget =
+			targets.find((target) => target.isDefault) ?? targets[0];
+		setSelectedTargetId(defaultTarget?.id ?? "default");
 		setAssetModalOpen(true);
-	};
-
-	const handleDirectRun = async (templateId: string) => {
-		try {
-			await deployTemplate(templateId);
-			message.success("部署成功");
-			refresh();
-		} catch (err) {
-			message.error(`部署失败: ${String(err)}`);
-		}
 	};
 
 	const handleDeployConfirm = async () => {
@@ -300,6 +289,7 @@ export function DeployPanel({
 			await deployTemplate(
 				deployTargetId,
 				selectedAssetIds.length > 0 ? selectedAssetIds : undefined,
+				selectedTargetId,
 			);
 			message.success("部署成功");
 			setAssetModalOpen(false);
@@ -373,8 +363,7 @@ export function DeployPanel({
 			<TemplateCard
 				key={t.id}
 				template={t}
-				onDirectRun={handleDirectRun}
-				onDeployWithAssets={handleDeployClick}
+				onRun={handleDeployClick}
 				onEdit={handleEditTemplate}
 				onDelete={handleDeleteTemplate}
 				compactActions={options?.compactActions}
@@ -560,25 +549,74 @@ export function DeployPanel({
 			</div>
 
 			<Modal
-				title="可选：绑定处理资产"
+				title="运行流水线"
 				open={assetModalOpen}
 				onCancel={() => setAssetModalOpen(false)}
 				onOk={handleDeployConfirm}
 				confirmLoading={deploying}
-				okText="部署"
+				okText={selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
 				width={640}
 			>
 				<Alert
-					type="info"
-					message="不选择则直接部署，不注入资产环境变量。"
+					type={selectedAssetIds.length > 0 ? "success" : "warning"}
+					message={
+						selectedAssetIds.length > 0
+							? `将处理 ${selectedAssetIds.length} 个资产`
+							: "当前是 no-asset run：不会注入资产环境变量。"
+					}
 					showIcon
 					style={{ marginBottom: 16, fontSize: 12 }}
 				/>
+				<div className="deploy-run-field">
+					<div className="deploy-run-field__label">执行目标</div>
+					<Select
+						value={selectedTargetId}
+						onChange={setSelectedTargetId}
+						style={{ width: "100%" }}
+						options={(targets.length > 0
+							? targets
+							: [
+									{
+										id: "default",
+										name: "Default Argo target",
+										namespace: "default",
+										cluster: "default",
+										status: "unavailable",
+										isDefault: true,
+										argoServerConfigured: false,
+									} satisfies ExecutionTarget,
+								]
+						).map((target) => ({
+							value: target.id,
+							label: `${target.name} · ${target.cluster}/${target.namespace}`,
+							disabled: target.status !== "available",
+						}))}
+					/>
+				</div>
 				<AssetPicker
 					selectedIds={selectedAssetIds}
 					onSelectionChange={setSelectedAssetIds}
 					maxHeight={300}
 				/>
+			</Modal>
+			<Modal
+				title={`关联资产（${assetListModalIds.length}）`}
+				open={assetListModalIds.length > 0}
+				onCancel={() => setAssetListModalIds([])}
+				footer={null}
+				width={520}
+			>
+				<div className="deploy-asset-list">
+					{assetListModalIds.map((assetId) => (
+						<Link
+							key={assetId}
+							to={`/assets/${encodeURIComponent(assetId)}`}
+							onClick={() => setAssetListModalIds([])}
+						>
+							{assetId}
+						</Link>
+					))}
+				</div>
 			</Modal>
 
 			<div className="deploy-panel__section-card">
@@ -596,7 +634,11 @@ export function DeployPanel({
 					) : (
 						visibleDeployments.map((d) => {
 							const pipelineAssetIds = extractPipelineAssetIds(d.pipelineJSON);
-							const pipelineAssetId = pipelineAssetIds[0];
+							const assetIds = d.assetIds?.length
+								? d.assetIds
+								: pipelineAssetIds;
+							const assetCount = d.assetCount ?? assetIds.length;
+							const target = d.executionTarget;
 							return (
 								<div key={d.id} className="dep-card">
 									<div className="dep-card-info">
@@ -606,6 +648,18 @@ export function DeployPanel({
 												{d.status}
 											</Tag>
 											<span>{d.nodeCount} 个节点</span>
+											<span className="dot">•</span>
+											<span>
+												{assetCount > 0 ? `${assetCount} 个资产` : "无资产"}
+											</span>
+											{target ? (
+												<>
+													<span className="dot">•</span>
+													<span>
+														{target.cluster}/{target.namespace}
+													</span>
+												</>
+											) : null}
 											<span className="dot">•</span>
 											<span>{new Date(d.createdAt).toLocaleString()}</span>
 											{d.finishedAt ? (
@@ -619,14 +673,15 @@ export function DeployPanel({
 										</div>
 									</div>
 									<div className="deploy-btn-list">
-										{pipelineAssetId ? (
+										{assetIds.length > 0 ? (
 											<Button
 												size="small"
-												onClick={() => navigate(`/assets/${pipelineAssetId}`)}
+												onClick={() => setAssetListModalIds(assetIds)}
 											>
-												查看关联资产
+												资产
 											</Button>
 										) : null}
+										<Tag>{d.workflowName}</Tag>
 										{RETRYABLE_DEPLOYMENT_STATUSES.has(d.status) ? (
 											<Button
 												size="small"

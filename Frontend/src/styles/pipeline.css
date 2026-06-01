@@ -839,6 +839,38 @@
 	align-self: flex-end;
 }
 
+.deploy-run-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 14px;
+}
+
+.deploy-run-field__label {
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--color-text-secondary, #64748b);
+	text-transform: uppercase;
+	letter-spacing: 1px;
+}
+
+.deploy-asset-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+	gap: 8px;
+}
+
+.deploy-asset-list a {
+	padding: 7px 9px;
+	border: 1px solid var(--color-border, #e2e8f0);
+	border-radius: 6px;
+	font-family: "SF Mono", monospace;
+	font-size: 12px;
+	color: var(--color-text, #1e293b);
+	background: #f8fafc;
+	overflow-wrap: anywhere;
+}
+
 /* ── Deploy Dialog ──────────────────────────────── */
 
 .deploy-overlay {
@@ -1011,6 +1043,13 @@
 	color: var(--color-text-secondary, #64748b);
 	text-transform: uppercase;
 	letter-spacing: 0.8px;
+}
+
+.cm-field-hint {
+	display: block;
+	margin-top: 6px;
+	font-size: 11px;
+	line-height: 1.5;
 }
 
 .cm-form-actions {

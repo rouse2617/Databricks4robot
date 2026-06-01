@@ -31,10 +31,13 @@ const mockDeletePipeline = vi.fn();
 const mockDeleteDeployment = vi.fn();
 const mockRetryDeployment = vi.fn();
 const mockGetPipeline = vi.fn();
+const mockListExecutionTargets = vi.fn();
 
 vi.mock("../../api/pipelineApi", () => ({
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
+	listExecutionTargets: (...args: unknown[]) =>
+		mockListExecutionTargets(...args),
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
 	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
@@ -108,14 +111,6 @@ function renderDeployPanel(
 	);
 }
 
-/** Click the Ant Design Dropdown trigger (down-arrow button) inside a template card. */
-function clickDropdownTrigger() {
-	const triggers = document.querySelectorAll(".ant-dropdown-trigger");
-	if (triggers.length > 0) {
-		fireEvent.click(triggers[0]);
-	}
-}
-
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {
 		writable: true,
@@ -142,6 +137,17 @@ describe("DeployPanel", () => {
 	it("shows empty state when no templates or deployments exist", async () => {
 		mockListPipelines.mockResolvedValue([]);
 		mockListDeployments.mockResolvedValue([]);
+		mockListExecutionTargets.mockResolvedValue([
+			{
+				id: "default",
+				name: "Default Argo target",
+				cluster: "default",
+				namespace: "cyber-databrew-dev",
+				argoServerConfigured: true,
+				status: "available",
+				isDefault: true,
+			},
+		]);
 		renderDeployPanel();
 
 		expect(await screen.findByText("暂无已保存的流水线模板")).toBeTruthy();
@@ -179,9 +185,19 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
+		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		const deployBtn = document.querySelector(
+			".ant-modal-footer .ant-btn-primary",
+		);
+		expect(deployBtn).toBeTruthy();
+		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-001");
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-001",
+				undefined,
+				"default",
+			);
 		});
 	});
 
@@ -193,6 +209,12 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
+		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		const deployBtn = document.querySelector(
+			".ant-modal-footer .ant-btn-primary",
+		);
+		expect(deployBtn).toBeTruthy();
+		if (deployBtn) fireEvent.click(deployBtn);
 
 		const { message } = await import("antd");
 		await waitFor(() => {
@@ -202,7 +224,7 @@ describe("DeployPanel", () => {
 		});
 	});
 
-	it("opens asset modal via dropdown and deploys with asset ids", async () => {
+	it("opens run modal and deploys with asset ids", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
 		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-003" }));
@@ -211,16 +233,11 @@ describe("DeployPanel", () => {
 		// Wait for template to render
 		expect(await screen.findByText("运行")).toBeTruthy();
 
-		// Click the dropdown trigger (down-arrow button) to show menu
-		clickDropdownTrigger();
-
-		// Now click "选择资产运行" from the dropdown menu
-		const assetRunBtn = await screen.findByText("选择资产运行");
-		fireEvent.click(assetRunBtn);
+		fireEvent.click(screen.getByText("运行"));
 
 		// Modal should open
 		await waitFor(() => {
-			expect(screen.getByText("可选：绑定处理资产")).toBeTruthy();
+			expect(screen.getByText("运行流水线")).toBeTruthy();
 		});
 
 		// Asset picker is shown
@@ -237,10 +254,11 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-001", [
-				"ast-001",
-				"ast-002",
-			]);
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-001",
+				["ast-001", "ast-002"],
+				"default",
+			);
 		});
 	});
 
@@ -252,15 +270,10 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 
-		// Click dropdown trigger
-		clickDropdownTrigger();
-
-		// Click "选择资产运行"
-		const assetRunBtn = await screen.findByText("选择资产运行");
-		fireEvent.click(assetRunBtn);
+		fireEvent.click(screen.getByText("运行"));
 
 		await waitFor(() => {
-			expect(screen.getByText("可选：绑定处理资产")).toBeTruthy();
+			expect(screen.getByText("运行流水线")).toBeTruthy();
 		});
 
 		// Verify no assets are pre-selected
@@ -276,7 +289,11 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-002", undefined);
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-002",
+				undefined,
+				"default",
+			);
 		});
 	});
 
@@ -411,35 +428,40 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
+		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		const deployBtn = document.querySelector(
+			".ant-modal-footer .ant-btn-primary",
+		);
+		expect(deployBtn).toBeTruthy();
+		if (deployBtn) fireEvent.click(deployBtn);
 
 		// After deploy, refresh() is called — verify deployTemplate was called
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith("tmpl-001");
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-001",
+				undefined,
+				"default",
+			);
 		});
 
 		// refresh() triggers listDeployments again (1 mount + 1 refresh = 2)
 		expect(mockListDeployments.mock.calls.length).toBeGreaterThanOrEqual(2);
 	});
 
-	it("shows modal with correct info text when opening from dropdown", async () => {
+	it("shows modal with no-asset run warning", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 
-		// Click dropdown trigger
-		clickDropdownTrigger();
-
-		// Click "选择资产运行"
-		const assetRunBtn = await screen.findByText("选择资产运行");
-		fireEvent.click(assetRunBtn);
+		fireEvent.click(screen.getByText("运行"));
 
 		await waitFor(() => {
 			expect(
-				screen.getByText("不选择则直接部署，不注入资产环境变量。"),
+				screen.getByText("当前是 no-asset run：不会注入资产环境变量。"),
 			).toBeTruthy();
-			expect(screen.getByText("可选：绑定处理资产")).toBeTruthy();
+			expect(screen.getByText("运行流水线")).toBeTruthy();
 		});
 	});
 

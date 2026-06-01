@@ -347,6 +347,7 @@ func RegisterAll(
 		api.GET("/pipelines/:id/diff/:id2", pipelineHandler.DiffTemplates)
 		api.POST("/deploy", pipelineHandler.Deploy)
 		api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
+		api.GET("/execution-targets", pipelineHandler.ListExecutionTargets)
 		api.GET("/deployments", pipelineHandler.ListDeployments)
 		api.GET("/deployments/:id", pipelineHandler.GetDeployment)
 		api.GET("/deployments/:id/resources", pipelineHandler.GetResourceUsage)

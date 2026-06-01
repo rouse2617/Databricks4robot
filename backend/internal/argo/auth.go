@@ -22,7 +22,7 @@ type Config struct {
 // ConfigFromEnv builds an Argo client config from environment variables.
 func ConfigFromEnv() *Config {
 	return &Config{
-		ServerURL:          strings.TrimSpace(os.Getenv("ARGO_SERVER_URL")),
+		ServerURL:          firstNonEmptyEnv("ARGO_SERVER_URL", "ARGO_BASE_URL"),
 		Token:              firstNonEmptyEnv("ARGO_AUTH_TOKEN", "ARGO_TOKEN"),
 		InsecureSkipVerify: parseBoolEnv("ARGO_INSECURE_SKIP_VERIFY"),
 		CACertBase64:       strings.TrimSpace(os.Getenv("ARGO_CA_CERT_BASE64")),
