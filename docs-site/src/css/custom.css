@@ -115,6 +115,78 @@ body {
   font-weight: 650;
 }
 
+.theme-doc-markdown a[href^="/doc/api/reference"] {
+  font-weight: 650;
+}
+
+.scalar-api-reference.references-sidebar {
+  --refs-sidebar-width: 320px;
+}
+
+.scalar-api-reference .api-reference-toolbar,
+.scalar-api-reference .darklight-reference-promo,
+.scalar-api-reference .section-flare,
+.scalar-api-reference .section-flare-item {
+  display: none !important;
+}
+
+.scalar-api-reference .t-doc__sidebar {
+  border-right: 1px solid #e5e7eb;
+}
+
+.scalar-api-reference .sidebar {
+  padding-top: 18px;
+}
+
+.scalar-api-reference .sidebar-search {
+  margin: 0 12px 18px;
+}
+
+.scalar-api-reference .sidebar-heading {
+  color: #667085;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.scalar-api-reference .section-container {
+  border-top-color: #e5e7eb;
+}
+
+.scalar-api-reference .section {
+  padding-top: 56px;
+}
+
+@media (min-width: 997px) {
+  .scalar-api-reference.references-sidebar .section {
+    margin-left: 96px !important;
+    margin-right: auto !important;
+  }
+}
+
+.scalar-api-reference .section:first-child {
+  min-height: auto;
+}
+
+.scalar-api-reference .section-header {
+  margin-bottom: 18px;
+}
+
+.scalar-api-reference .section-header h1,
+.scalar-api-reference .section-header h2,
+.scalar-api-reference .section-header h3 {
+  letter-spacing: 0;
+}
+
+.scalar-api-reference .section-column:nth-of-type(2) {
+  padding-top: 56px;
+}
+
+.scalar-api-reference .scalar-card {
+  border-radius: 8px;
+}
+
 /* GitHub header link */
 .header-github-link::before {
   content: '';
