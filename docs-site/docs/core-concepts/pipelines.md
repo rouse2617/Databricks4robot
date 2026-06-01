@@ -8,85 +8,47 @@
 
 Algo Run 是 Pipeline 体系中的执行单元，代表一次算法在指定资产上的运行实例。
 
-### 创建与启动
+### 状态机
 
-```python
-from cyber_databrew_sdk import CyberDatabrewClient
-
-client = CyberDatabrewClient(token="g-xxx")
-
-# 创建算法运行
-run = client.algo_runs.create(payload={
-    "algo_key": "some-algo",
-    "asset_ids": ["asset-1", "asset-2"],
-})
-
-# 启动运行
-client.algo_runs.start(run.run_id)
+```
+blocked → pending → running → ok
+                            ↘ failed
 ```
 
-### 完成与取消
+`ok` 和 `failed` 状态可通过 reset 回到 `pending`。
 
-```python
-# 标记为完成
-client.algo_runs.finish(run.run_id)
+### 核心字段
 
-# 取消运行
-client.algo_runs.cancel(run.run_id)
-```
+| 字段 | 说明 |
+|------|------|
+| `run_id` | 16 位字母数字，全局唯一 |
+| `algo_name` | 算法名称（如 hand_tracking） |
+| `algo_version` | 算法版本（如 2.0.0） |
+| `algo_kind` | 算法类别（processing 等） |
+| `status` | blocked / pending / running / ok / failed |
+| `triggered_by` | 触发来源 |
 
-### 查询运行状态
+### 可用算法
 
-```python
-# 获取单个运行详情
-run = client.algo_runs.get("run-id-xxx")
+| algo_key | 说明 | 依赖 |
+|----------|------|------|
+| `env_analysis@1.0.0` | AI 场景分析 | 无 |
+| `hand_tracking@1.2.0` | 手部追踪 | 无 |
+| `deface@2.0.0` | 去人脸 | 无 |
+| `action_annotation@1.0.0` | 动作标注 | hand_tracking + head_tracking + body_tracking |
 
-# 列出运行
-runs = client.algo_runs.list(page=1, page_size=20)
+### 依赖链
 
-# 获取受影响资产
-assets = client.algo_runs.get_affected_assets("run-id-xxx")
-```
+`action_annotation@1.0.0` 依赖三个算法。当所有依赖都完成（status=ok）后，系统自动将 `action_annotation` 从 `blocked` 变为 `pending`。
 
-## Pipeline Components（流水线组件）
+## Pipeline Components（建设中）
 
-SDK 提供了 Pipeline 组件管理器，用于后续流水线配置管理：
-
-```python
-from cyber_databrew_sdk import CyberDatabrewClient
-
-client = CyberDatabrewClient(token="g-xxx")
-
-# 操作 Pipeline 组件
-components = client.pipeline_components.list()
-```
+流水线组件管理器用于后续流水线配置管理，当前提供基础 CRUD。
 
 ## 注册中心
 
-注册中心提供了平台中可用的算法、标签、指标等元数据注册信息：
+注册中心提供平台中可用的算法、标签、指标、生命周期状态和操作标签的元数据注册信息。
 
-```python
-# 列出可用算法
-algos = client.registry.list_algos()
+## 代码示例
 
-# 列出可用标签
-tags = client.registry.list_tags()
-
-# 列出可用指标
-metrics = client.registry.list_metrics()
-
-# 列出生命周期状态
-states = client.registry.list_lifecycle_states()
-
-# 列出操作标签
-labels = client.registry.list_action_labels()
-```
-
-## 相关工作流
-
-平台还支持 Workflow 管理，用于更复杂的工作流编排：
-
-```python
-# Workflow 操作
-workflows = client.workflows.list()
-```
+具体的 SDK 和 API 调用示例见 [Pipeline 操作指南](../guides/pipeline-operations.md)。

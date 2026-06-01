@@ -2,114 +2,40 @@
 
 **交付（Delivery）** 是 Cyber Databrew 中面向客户的数据分发机制。通过 Delivery，你可以将选定的资产按照特定规则打包，交付给外部客户或合作伙伴。
 
-> ⚠️ 注意：SDK 中的管理器名称为 `client.delivery`（单数），而非 `client.deliveries`。
+> SDK 管理器名称为 `client.delivery`（单数）。
 
-## Delivery 的生命周期
-
-一个 Delivery 经历以下状态：
+## 生命周期
 
 ```
-草稿 (draft) → 已提交 (committed) → 处理中 → 已完成/失败
+draft → delivered → accepted
+                  ↘ cancelled
 ```
 
-其中草稿 → 提交为两步提交模式，允许在提交前多次添加内容。
+两步提交模式：先创建草稿，添加内容项，确认无误后提交。
 
-## 创建交付
+## 核心字段
 
-### 一步创建
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `delivery_id` | UUID | 交付唯一 ID |
+| `customer_id` | string | 目标客户 slug |
+| `status` | enum | draft / delivered / cancelled / accepted |
+| `asset_count` | int | 包含的资产数量 |
+| `owner` | string | 交付负责人 |
+| `note` | string | 备注 |
+| `created_at` | datetime | 创建时间 |
+| `delivered_at` | datetime | 交付时间 |
 
-```python
-from cyber_databrew_sdk import CyberDatabrewClient
+## 交付规则引擎
 
-client = CyberDatabrewClient(token="g-xxx")
+提交时自动校验，命中 block 规则时拒绝交付。客户级 `exclude_tags` 同样会拦截。命中时返回 `422 DELIVERY_RULE_FAILED`。
 
-# 直接创建交付（含内容项）
-delivery = client.delivery.create(payload={
-    "customer_id": "cust-001",
-    "items": [
-        {"asset_id": "asset-1", "mcap_file_id": "file-1"},
-        {"asset_id": "asset-2", "mcap_file_id": "file-2"},
-    ],
-})
-```
+## 幂等性
 
-### 两步提交模式
+`POST /deliveries` 要求 `Idempotency-Key` header：
+- 相同 key + 相同 body → 返回已有结果（幂等）
+- 相同 key + 不同 body → 409 冲突
 
-```python
-from cyber_databrew_sdk import CyberDatabrewClient
+## 代码示例
 
-client = CyberDatabrewClient(token="g-xxx")
-
-# 第一步：创建草稿
-draft = client.delivery.draft(payload={"customer_id": "cust-001"})
-
-# 第二步：添加内容项
-client.delivery.add_items(draft["delivery_id"], payload={
-    "items": [
-        {"asset_id": "asset-1", "mcap_file_id": "file-1"},
-    ],
-})
-
-# 第三步：提交
-client.delivery.commit(draft["delivery_id"])
-```
-
-## 管理交付
-
-### 取消交付
-
-```python
-client.delivery.cancel("delivery-id-xxx")
-```
-
-### 重试交付
-
-```python
-client.delivery.retry("delivery-id-xxx")
-```
-
-### 确认接收
-
-```python
-client.delivery.ack("delivery-id-xxx")
-```
-
-## 查询交付
-
-```python
-# 查询交付列表
-deliveries = client.delivery.list(page=1, page_size=20)
-
-# 获取单个交付详情
-delivery = client.delivery.get("delivery-id-xxx")
-
-# 列出交付中的内容项
-items = client.delivery.get_items("delivery-id-xxx")
-```
-
-## 交付规则
-
-交付规则定义了数据的处理方式（如格式转换、压缩等）：
-
-```python
-# 列出所有交付规则
-rules = client.delivery.list_rules()
-```
-
-## 客户管理
-
-SDK 提供基础客户管理功能：
-
-```python
-# 创建客户
-client.customers.create(payload={"customer_id": "cust-001", "name": "ACME Corp"})
-
-# 查询客户列表
-customers = client.customers.list()
-
-# 获取客户详情
-customer = client.customers.get("cust-001")
-
-# 更新客户信息
-client.customers.update("cust-001", payload={"name": "ACME Inc."})
-```
+具体的 SDK 和 API 调用示例见 [交付管理指南](../guides/delivery-management.md)。

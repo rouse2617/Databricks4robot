@@ -1,112 +1,118 @@
 # Pipeline Operations
 
-本章介绍流水线操作的完整指南，涵盖算法运行的管理和流水线组件的使用。
+本章介绍流水线操作的实践指南，涵盖算法运行的管理和流水线组件的使用。
 
 ## 算法运行管理
 
-### 创建算法运行
+### 创建与启动
 
 ```python
 from cyber_databrew_sdk import CyberDatabrewClient
 
 client = CyberDatabrewClient(token="g-xxx")
 
-# 创建运行（指定算法和资产）
-run = client.algo_runs.create(payload={
-    "algo_key": "some-algo",
-    "asset_ids": ["asset-1", "asset-2", "asset-3"],
+# 登记运行
+run = client.algo_runs.create({
+    "run_id": "R001abc123def456",
+    "algo_name": "hand_track",
+    "algo_version": "2.0",
+    "algo_kind": "processing",
+    "triggered_by": "manual:ops",
 })
-print(f"Created run: {run.run_id}")
+
+# 启动
+client.algo_runs.start(run["run_id"])
 ```
 
-### 生命周期管理
+### 完成与取消
 
 ```python
-# 启动运行
-client.algo_runs.start(run.run_id)
+# 成功
+client.algo_runs.finish(run["run_id"], {
+    "status": "ok",
+    "assets_processed": 10,
+})
 
-# 标记完成
-client.algo_runs.finish(run.run_id)
+# 失败
+client.algo_runs.finish(run["run_id"], {
+    "status": "failed",
+    "reason": "OOM",
+})
 
-# 取消运行
-client.algo_runs.cancel(run.run_id)
+# 取消
+client.algo_runs.cancel(run["run_id"])
 ```
 
-### 状态查询
+### 查询
 
 ```python
-# 获取单个运行详情
-run = client.algo_runs.get("run-id-xxx")
-print(f"Status: {run.status}, Algo: {run.algo_key}")
+# 获取单个运行
+run = client.algo_runs.get("R001abc123def456")
+print(run["status"], run["algo_name"])
 
-# 列出所有运行
-runs = client.algo_runs.list(page=1, page_size=20)
+# 列表
+result = client.algo_runs.list(page=1, page_size=20)
+for item in result["items"]:
+    print(item["run_id"], item["status"])
 
-# 查询受影响资产
-assets = client.algo_runs.get_affected_assets("run-id-xxx")
+# 受影响资产
+result = client.algo_runs.get_affected_assets("R001abc123def456")
 ```
 
 ## 注册中心
 
-了解平台支持哪些算法、标签和指标：
+```python
+# 列表查询（返回 dict，取 items 遍历）
+algos = client.registry.list_algos()
+for algo in algos["items"]:
+    print(algo["key"], algo["version"])
+
+tags = client.registry.list_tags()
+for tag in tags["items"]:
+    print(tag["key"])
+
+states = client.registry.list_lifecycle_states()
+for s in states["items"]:
+    print(s)
+```
+
+## Pipeline Components
 
 ```python
-# 算法列表
-for algo in client.registry.list_algos():
-    print(f"Algo: {algo}")
-
-# 标签列表
-for tag in client.registry.list_tags():
-    print(f"Tag: {tag}")
-
-# 指标列表
-for metric in client.registry.list_metrics():
-    print(f"Metric: {metric}")
+# 列出组件
+result = client.pipeline_components.list(page=1, page_size=20)
+for comp in result.get("items", []):
+    print(comp)
 ```
 
 ## 工作流
 
 ```python
-# 操作工作流
 workflows = client.workflows.list()
+for wf in workflows.get("items", []):
+    print(wf["name"])
 ```
 
 ## MCAP 文件存储
 
-### 列出文件
-
 ```python
-files = client.storage.list_files(page_size=20)
-```
+# 列出文件
+result = client.storage.list_files(page=1, page_size=20)
+for f in result["items"]:
+    print(f["mcap_file_id"], f["size_bytes"])
 
-### 获取文件信息
+# 获取文件信息
+info = client.storage.get_file_info("mcap0001")
 
-```python
-info = client.storage.get_file_info("file-001")
-```
-
-### 下载 MCAP 文件
-
-```python
-# 下载文件（自动跟随 302 到 GCS 签名 URL）
-client.storage.download_mcap("file-001", output_path="./data.mcap")
+# 下载 MCAP（自动处理 302 重定向到 GCS 签名 URL）
+client.storage.download_mcap("mcap0001", output_path="./data.mcap")
 
 # 从资产下载 MCAP
-client.storage.download_asset_mcap("asset-id-xxx", output_path="./asset.mcap")
-```
+client.storage.download_asset_mcap("aset0001", output_path="./asset.mcap")
 
-### 遍历消息
-
-```python
-messages = client.storage.get_messages("file-001")
-```
-
-### 处理上传
-
-```python
 # 上传最终确认
-client.storage.finalize_upload(payload={
-    "mcap_file_id": "file-001",
+client.storage.finalize_upload({
+    "mcap_file_id": "mcap0001",
     "storage_path": "gs://bucket/path/to/file",
 })
 ```

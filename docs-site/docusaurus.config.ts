@@ -49,7 +49,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/',
           editUrl:
-            'https://github.com/CyberOrigin2077/cyber-databrew/tree/main/docs-site/',
+            'https://github.com/CyberOrigin2077/cyber-databrew/tree/dev/docs-site/',
         },
         blog: false,
         theme: {
@@ -88,6 +88,10 @@ const config: Config = {
               url: 'http://localhost:8080',
               description: 'Local development',
             },
+            {
+              url: 'https://cyber-databrew.cyberorigin.ai',
+              description: 'Production',
+            },
           ],
         },
       },
@@ -114,19 +118,9 @@ const config: Config = {
           label: 'Guides',
         },
         {
-          to: '/guides/asset-management',
-          position: 'left',
-          label: 'Recipes',
-        },
-        {
           to: '/api/reference',
           position: 'left',
           label: 'REST API Reference',
-        },
-        {
-          to: '/getting-started/sdk-installation',
-          position: 'left',
-          label: 'Python API Reference',
         },
         {
           to: '/changelog',
