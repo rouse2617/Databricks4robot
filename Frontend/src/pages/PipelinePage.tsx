@@ -16,7 +16,6 @@ import {
 	App,
 	Button,
 	Collapse,
-	Drawer,
 	Input,
 	Menu,
 	Modal,
@@ -126,7 +125,6 @@ function PipelineCanvas() {
 		reload: reloadComponents,
 	} = usePipelineComponents(apiToRegistered, dedupeComponentsByName);
 	const [templateLoading, setTemplateLoading] = useState(false);
-	const [savedDrawerOpen, setSavedDrawerOpen] = useState(false);
 	const templateId = useMemo(
 		() => searchParams.get("templateId") || null,
 		[searchParams],
@@ -153,7 +151,6 @@ function PipelineCanvas() {
 	const [importModalOpen, setImportModalOpen] = useState(false);
 	const [importText, setImportText] = useState("");
 	const importTextRef = useRef<string>("");
-	const [templateRefreshKey, setTemplateRefreshKey] = useState(0);
 	// Asset selection for deploy modal
 	const [selectedAssetIds, setSelectedAssetIds] =
 		useState<string[]>(queryAssetIds);
@@ -538,8 +535,7 @@ function PipelineCanvas() {
 	const handleSave = useCallback(async () => {
 		try {
 			await savePipeline(pipelineName, buildPipelineJSON());
-			message.success("已保存，可在右侧「已保存」查看");
-			setTemplateRefreshKey((k) => k + 1);
+			message.success("已保存，可在「流水线」页签管理");
 		} catch (err) {
 			message.error(`保存失败: ${String(err)}`);
 		}
@@ -582,10 +578,9 @@ function PipelineCanvas() {
 				setImportModalOpen(false);
 				setImportText("");
 			}
-			if (savedDrawerOpen) setSavedDrawerOpen(false);
 		},
 		canDeploy,
-		modalOpen: deployDialog.open || importModalOpen || savedDrawerOpen,
+		modalOpen: deployDialog.open || importModalOpen,
 	});
 
 	const deployDialogAssetId = useMemo(() => {
@@ -648,6 +643,9 @@ function PipelineCanvas() {
 
 	const isCanvasEmpty = nodes.length === 0;
 	const currentTemplateLabel = pipelineName || "未命名流水线";
+	const deployDisabledReason = canDeploy
+		? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
+		: "请先从左侧拖入至少一个组件到画布，再保存或部署";
 
 	return (
 		<div className="pipeline-page">
@@ -673,17 +671,12 @@ function PipelineCanvas() {
 					/>
 				</div>
 				<div className="pipeline-toolbar__actions">
-					<Tooltip
-						title={
-							canDeploy
-								? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
-								: "请先从左侧拖入至少一个组件到画布"
-						}
-					>
+					<Tooltip title={deployDisabledReason}>
 						<span>
 							<Button
 								size="small"
 								type="primary"
+								className="pipeline-toolbar__deploy"
 								icon={<PlayCircleOutlined />}
 								onClick={openDeployDialog}
 								disabled={!canDeploy}
@@ -693,24 +686,32 @@ function PipelineCanvas() {
 						</span>
 					</Tooltip>
 					<Tooltip title="保存 (⌘/Ctrl+S)">
-						<Button size="small" icon={<SaveOutlined />} onClick={handleSave}>
+						<Button
+							size="small"
+							type="primary"
+							ghost
+							icon={<SaveOutlined />}
+							onClick={handleSave}
+						>
 							保存
 						</Button>
 					</Tooltip>
-					<Button
-						size="small"
-						icon={<ExportOutlined />}
-						onClick={exportPipeline}
-					>
-						导出
-					</Button>
-					<Button
-						size="small"
-						icon={<ImportOutlined />}
-						onClick={importPipeline}
-					>
-						导入
-					</Button>
+					<div className="pipeline-toolbar__secondary-actions">
+						<Button
+							size="small"
+							icon={<ExportOutlined />}
+							onClick={exportPipeline}
+						>
+							导出
+						</Button>
+						<Button
+							size="small"
+							icon={<ImportOutlined />}
+							onClick={importPipeline}
+						>
+							导入
+						</Button>
+					</div>
 					<Button
 						size="small"
 						danger
@@ -732,7 +733,12 @@ function PipelineCanvas() {
 					onRetry={reloadComponents}
 				/>
 				<div
-					className="canvas-wrapper"
+					className={[
+						"canvas-wrapper",
+						isCanvasEmpty ? "canvas-wrapper--empty" : "",
+					]
+						.filter(Boolean)
+						.join(" ")}
 					ref={wrapperRef}
 					style={{ flex: 1, height: "100%", position: "relative" }}
 					role="application"
@@ -747,7 +753,8 @@ function PipelineCanvas() {
 						<PipelineEmptyState
 							variant="canvas"
 							title="拖入组件开始设计"
-							hint="从左侧拖入步骤，连线后点「保存」；已保存的在右侧查看"
+							description="从左侧组件栏拖入步骤，连接节点后保存。"
+							hint="保存后可在「流水线」页签打开、运行或继续编辑。"
 						/>
 					) : null}
 					<ErrorBoundary
@@ -815,21 +822,17 @@ function PipelineCanvas() {
 						</div>
 					)}
 				</div>
-				<aside className="config-panel">
-					<div
-						className="config-panel__saved"
-						data-testid="saved-pipelines-panel"
-					>
-						<DeployPanel
-							variant="sidebar"
-							_refreshKey={templateRefreshKey}
-							onEditTemplate={loadPipelineToCanvas}
-							onViewAll={() => setSavedDrawerOpen(true)}
-						/>
-					</div>
-					<div className="config-panel__node">
-						{selectedNode ? (
-							<>
+				<aside
+					className={[
+						"config-panel",
+						selectedNode ? "config-panel--with-node" : "config-panel--empty",
+					]
+						.filter(Boolean)
+						.join(" ")}
+				>
+					{selectedNode ? (
+						<div className="config-panel__node">
+							<div>
 								<div className="config-panel-header">
 									<div className="config-panel-header__info">
 										<span className="config-panel-label">
@@ -933,15 +936,16 @@ function PipelineCanvas() {
 										</div>
 									)}
 								</div>
-							</>
-						) : (
-							<PipelineEmptyState
-								variant="config"
-								title="节点配置"
-								description="选中画布节点后，在此查看详情。"
-							/>
-						)}
-					</div>
+							</div>
+						</div>
+					) : (
+						<PipelineEmptyState
+							variant="config"
+							title="节点配置"
+							description="选中画布节点后，在此查看关联资产与节点详情。"
+							hint="已保存流水线请到「流水线」页签管理。"
+						/>
+					)}
 				</aside>
 				{editingNode && (
 					<NodeConfigPanel
@@ -952,23 +956,6 @@ function PipelineCanvas() {
 					/>
 				)}
 			</div>
-
-			<Drawer
-				title="已保存与运行记录"
-				open={savedDrawerOpen}
-				onClose={() => setSavedDrawerOpen(false)}
-				width={720}
-				destroyOnHidden
-			>
-				<DeployPanel
-					variant="full"
-					_refreshKey={templateRefreshKey}
-					onEditTemplate={(pipeline) => {
-						loadPipelineToCanvas(pipeline);
-						setSavedDrawerOpen(false);
-					}}
-				/>
-			</Drawer>
 
 			{/* JSON Output */}
 			{jsonOutput && <pre className="json-output">{jsonOutput}</pre>}
@@ -987,7 +974,8 @@ function PipelineCanvas() {
 				destroyOnHidden
 			>
 				<p style={{ marginTop: 0, color: "#64748b", fontSize: 13 }}>
-					粘贴 Pipeline JSON，将替换当前画布内容。
+					粘贴 Pipeline
+					JSON。导入成功后会覆盖当前画布内容，请先确认当前修改已保存。
 				</p>
 				<TextArea
 					value={importText}
@@ -1295,7 +1283,7 @@ function PipelineCanvas() {
 									<Button
 										onClick={() => {
 											closeDeployDialog();
-											setSavedDrawerOpen(true);
+											navigate("/pipeline?tab=executions");
 										}}
 									>
 										查看记录
@@ -1311,10 +1299,12 @@ function PipelineCanvas() {
 	);
 }
 
-type PipelineTab = "design" | "executions" | "components";
+type PipelineTab = "design" | "pipelines" | "executions" | "components";
 
 function resolvePipelineTab(raw: string | null): PipelineTab {
 	switch (raw) {
+		case "pipelines":
+			return "pipelines";
 		case "executions":
 			return "executions";
 		case "components":
@@ -1373,6 +1363,15 @@ export default function PipelinePage() {
 										<PipelineCanvas />
 									</FlowEditorProvider>
 								</ErrorBoundary>
+							</div>
+						),
+					},
+					{
+						key: "pipelines",
+						label: tabLabel("流水线", "管理已保存的流水线"),
+						children: (
+							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--management">
+								<DeployPanel variant="full" />
 							</div>
 						),
 					},

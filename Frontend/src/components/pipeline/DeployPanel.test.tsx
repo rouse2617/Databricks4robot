@@ -13,6 +13,16 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 
+const mockNavigate = vi.hoisted(() => vi.fn());
+
+vi.mock("react-router-dom", async (importOriginal) => {
+	const actual = await importOriginal<Record<string, unknown>>();
+	return {
+		...actual,
+		useNavigate: () => mockNavigate,
+	};
+});
+
 // Mock pipeline API
 const mockListPipelines = vi.fn();
 const mockListDeployments = vi.fn();
@@ -124,6 +134,7 @@ beforeAll(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	mockNavigate.mockClear();
 	cleanup();
 });
 
@@ -295,7 +306,7 @@ describe("DeployPanel", () => {
 		});
 	});
 
-	it("falls back to sessionStorage when onEditTemplate is not provided", async () => {
+	it("navigates to the designer with templateId when onEditTemplate is not provided", async () => {
 		const pipeline = {
 			name: "test-pipeline",
 			version: "1",
@@ -310,19 +321,16 @@ describe("DeployPanel", () => {
 			mockTemplate({ id: "tmpl-001", pipeline }),
 		);
 
-		const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
 		renderDeployPanel();
 
 		expect(await screen.findByText("编辑")).toBeTruthy();
 		fireEvent.click(screen.getByText("编辑"));
 
 		await waitFor(() => {
-			expect(setItemSpy).toHaveBeenCalledWith(
-				"pipeline-edit",
-				expect.stringContaining("test-pipeline"),
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/pipeline?templateId=tmpl-001",
 			);
 		});
-		setItemSpy.mockRestore();
 	});
 
 	it("shows error when load template fails on edit", async () => {

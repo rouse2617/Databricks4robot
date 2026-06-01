@@ -9,7 +9,7 @@ import {
 	within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Deployment } from "../api/pipelineApi";
 import PipelinePage from "./PipelinePage";
 
@@ -22,6 +22,7 @@ const mockGetPipeline = vi.fn();
 const mockDeletePipeline = vi.fn();
 const mockDeleteDeployment = vi.fn();
 const mockPreviewDeploy = vi.fn();
+const mockRetryDeployment = vi.fn();
 
 vi.mock("../api/pipelineApi", () => ({
 	savePipeline: (...args: unknown[]) => mockSavePipeline(...args),
@@ -32,6 +33,7 @@ vi.mock("../api/pipelineApi", () => ({
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
 	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
 	previewDeploy: (...args: unknown[]) => mockPreviewDeploy(...args),
+	retryDeployment: (...args: unknown[]) => mockRetryDeployment(...args),
 }));
 
 // ── Mock pipelineComponentApi ─────────────────────────────────────
@@ -96,10 +98,6 @@ function mockDeployResult(overrides: Partial<Deployment> = {}): Deployment {
 	};
 }
 
-function openSavedDrawer() {
-	fireEvent.click(screen.getByText("查看全部"));
-}
-
 /** Import a pipeline with one node so canvas is non-empty for deploy tests. */
 async function importOneNodePipeline(customName = "test-pipeline") {
 	const pipeline = {
@@ -157,6 +155,22 @@ function getModalDeployBtn(): HTMLButtonElement {
 }
 
 // ── Suite ─────────────────────────────────────────────────────────
+beforeAll(() => {
+	Object.defineProperty(window, "matchMedia", {
+		writable: true,
+		value: vi.fn().mockImplementation((query: string) => ({
+			matches: false,
+			media: query,
+			onchange: null,
+			addListener: vi.fn(),
+			removeListener: vi.fn(),
+			addEventListener: vi.fn(),
+			removeEventListener: vi.fn(),
+			dispatchEvent: vi.fn(),
+		})),
+	});
+});
+
 function resetPipelineMocks() {
 	mockListPipelines.mockResolvedValue([]);
 	mockListDeployments.mockResolvedValue([]);
@@ -174,12 +188,14 @@ describe("PipelinePage", () => {
 	});
 
 	// ── Render & structure ──────────────────────────────────────────
-	it("renders the design toolbar and saved panel", () => {
+	it("renders the design toolbar and node config panel", () => {
 		renderPage();
 		expect(screen.getAllByText("组件").length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText("保存")).toBeInTheDocument();
-		expect(screen.getByTestId("saved-pipelines-panel")).toBeInTheDocument();
-		expect(screen.getByText("已保存")).toBeInTheDocument();
+		expect(screen.getByText("节点配置")).toBeInTheDocument();
+		expect(
+			screen.getByText("已保存流水线请到「流水线」页签管理。"),
+		).toBeInTheDocument();
 	});
 
 	it("shows canvas toolbar buttons by default", () => {
@@ -201,11 +217,20 @@ describe("PipelinePage", () => {
 		expect(screen.getByRole("heading", { name: "组件" })).toBeInTheDocument();
 	});
 
-	it("opens saved drawer from sidebar link", async () => {
+	it("shows saved pipelines in the pipeline management tab", async () => {
+		mockListPipelines.mockResolvedValueOnce([
+			{
+				id: "tmpl-001",
+				name: "saved-flow",
+				nodeCount: 2,
+				createdAt: "2026-06-01T09:00:00Z",
+			},
+		]);
 		renderPage();
-		openSavedDrawer();
+		fireEvent.click(screen.getByText("管理已保存的流水线"));
 		await waitFor(() => {
-			expect(screen.getByText("已保存与运行记录")).toBeInTheDocument();
+			expect(screen.getByText("流水线管理")).toBeInTheDocument();
+			expect(screen.getByText("saved-flow")).toBeInTheDocument();
 		});
 	});
 
@@ -405,7 +430,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(screen.getByText("查看 Workflow"));
 	});
 
-	it("opens saved drawer on '查看记录'", async () => {
+	it("opens execution records on '查看记录'", async () => {
 		mockSavePipeline.mockResolvedValueOnce({
 			id: "tmpl-001",
 			name: "with-nodes",
@@ -423,7 +448,10 @@ describe("PipelinePage", () => {
 		fireEvent.click(screen.getByText(/查看记录/));
 
 		await waitFor(() => {
-			expect(screen.getByText("已保存与运行记录")).toBeInTheDocument();
+			expect(screen.getByRole("tab", { name: /执行记录/ })).toHaveAttribute(
+				"aria-selected",
+				"true",
+			);
 		});
 	});
 
