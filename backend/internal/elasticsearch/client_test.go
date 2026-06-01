@@ -35,7 +35,7 @@ func TestBuildSearchBody_NestedTagsAndDurationBetween(t *testing.T) {
 		`"scene"`,
 		`"tags.value"`,
 		`"highway"`,
-		`"multi_match"`,
+		`"minimum_should_match"`,
 		`"duration_ms"`,
 		`"gte":"9000"`,
 		`"lte":"11000"`,

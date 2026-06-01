@@ -53,7 +53,9 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 		return nil, fmt.Errorf("save backfill items: %w", err)
 	}
 
-	go uc.runItems(context.Background(), job.ID, templateID, items, "pending")
+	if uc.pipelineUC != nil {
+		go uc.runItems(context.Background(), job.ID, templateID, items, "pending")
+	}
 
 	return job, nil
 }
@@ -140,7 +142,9 @@ func (uc *Usecase) ResumeJob(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	go uc.runItems(context.Background(), id, job.TemplateID, items, "pending")
+	if uc.pipelineUC != nil {
+		go uc.runItems(context.Background(), id, job.TemplateID, items, "pending")
+	}
 	return nil
 }
 
