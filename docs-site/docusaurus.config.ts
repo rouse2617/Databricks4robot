@@ -78,7 +78,7 @@ const config: Config = {
           defaultOpenFirstTag: true,
           documentDownloadType: 'none',
           expandAllResponses: false,
-          hideModels: true,
+          hideModels: false,
           hideClientButton: false,
           persistAuth: true,
           showSidebar: true,

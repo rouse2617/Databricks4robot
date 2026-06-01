@@ -14,7 +14,7 @@ X-Databrew-Token: your-token-here
 
 ```bash
 curl -H "X-Databrew-Token: g-xxx" \
-  https://api-cyber-databrew.cyberorigin.ai/api/v1/assets
+  https://cyber-databrew.cyberorigin.ai/api/v1/assets
 ```
 
 ## Browser Email Login
@@ -40,7 +40,7 @@ Cyber Databrew Python SDK 支持多种认证配置方式，按优先级从高到
 from cyber_databrew_sdk import CyberDatabrewClient
 
 client = CyberDatabrewClient(
-    base_url="https://api-cyber-databrew.cyberorigin.ai",
+    base_url="https://cyber-databrew.cyberorigin.ai",
     token="g-xxx",
 )
 ```
@@ -48,7 +48,7 @@ client = CyberDatabrewClient(
 ### 2. Environment Variables
 
 ```bash
-export CYBER_DATABREW_BASE_URL="https://api-cyber-databrew.cyberorigin.ai"
+export CYBER_DATABREW_BASE_URL="https://cyber-databrew.cyberorigin.ai"
 export CYBER_DATABREW_TOKEN="g-xxx"
 export CYBER_DATABREW_EMAIL="user@company.com"  # 仅用于审计
 ```
@@ -58,7 +58,7 @@ export CYBER_DATABREW_EMAIL="user@company.com"  # 仅用于审计
 `~/.cyber-databrew/config.yaml`：
 
 ```yaml
-base_url: https://api-cyber-databrew.cyberorigin.ai
+base_url: https://cyber-databrew.cyberorigin.ai
 default_token: g-xxx
 default_email: user@company.com
 timeout: 60
@@ -81,7 +81,7 @@ SDK 启动时自动调用 `GET /api/v1/sdk-config` 获取远端配置覆盖。�
 
 ```python
 client = CyberDatabrewClient(
-    base_url="https://api-cyber-databrew.cyberorigin.ai",
+    base_url="https://cyber-databrew.cyberorigin.ai",
     token="g-xxx",
     email="user@company.com",
 )
