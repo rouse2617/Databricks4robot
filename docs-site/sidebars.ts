@@ -7,7 +7,7 @@ const sidebars: SidebarsConfig = {
       label: 'Getting Started',
       collapsed: false,
       items: [
-        'intro',
+        'overview',
         'getting-started/quickstart',
         'getting-started/authentication',
         'getting-started/sdk-installation',

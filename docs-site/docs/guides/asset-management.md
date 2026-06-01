@@ -8,8 +8,8 @@
 from cyber_databrew_sdk import CyberDatabrewClient
 
 client = CyberDatabrewClient(
-    base_url="https://api-cyber-databrew.cyberorigin.ai",
     token="g-xxx",
+    base_url="https://api-cyber-databrew.cyberorigin.ai",
 )
 ```
 
@@ -18,11 +18,11 @@ client = CyberDatabrewClient(
 ### 基本创建
 
 ```python
-asset = client.assets.create(
-    mcap_file_id="file-001",
-    t_start=1000000000,
-    t_end=2000000000,
-)
+asset = client.assets.create(payload={
+    "mcap_file_id": "file-001",
+    "t_start": 1000000000,
+    "t_end": 2000000000,
+})
 ```
 
 ### 参数说明
@@ -39,13 +39,10 @@ asset = client.assets.create(
 
 ```python
 # 基础分页查询
-assets = client.assets.list(page=1, page_size=20)
-
-# 按创建时间倒序
-assets = client.assets.list(page=1, page_size=20, sort_by="-created_at")
+assets = client.assets.list_all(page=1, page_size=20)
 
 # 按状态过滤
-assets = client.assets.list(page=1, page_size=20, status="reviewed")
+assets = client.assets.list_all(page=1, page_size=20, status="reviewed")
 ```
 
 ### 获取单个资产
@@ -65,18 +62,23 @@ assets = client.assets.batch_get(asset_ids=["id1", "id2", "id3"])
 
 ```python
 # 更新状态
-asset = client.assets.update("asset-id-xxx", status="reviewed")
+asset = client.assets.update("asset-id-xxx", payload={"status": "reviewed"})
 
 # 更新时间范围
-asset = client.assets.update("asset-id-xxx", t_start=2000000000, t_end=3000000000)
+asset = client.assets.update("asset-id-xxx", payload={
+    "t_start": 2000000000,
+    "t_end": 3000000000,
+})
 ```
 
 ## 标签管理
 
 ```python
 # 设置标签
-client.assets.set_tag("asset-id-xxx", key="priority", value="high")
-client.assets.set_tag("asset-id-xxx", key="source", value="lidar")
+client.assets.set_tags("asset-id-xxx", tags=[
+    {"key": "priority", "value": "high"},
+    {"key": "source", "value": "lidar"},
+])
 
 # 删除标签
 client.assets.delete_tag("asset-id-xxx", key="priority")
@@ -86,12 +88,12 @@ client.assets.delete_tag("asset-id-xxx", key="priority")
 
 ```python
 # 血缘：找出衍生资产
-lineage = client.assets.lineage("asset-id-xxx")
+lineage = client.assets.get_lineage("asset-id-xxx")
 for child in lineage:
     print(f"Child: {child.asset_id}")
 
 # 谱系：找出来源
-provenance = client.assets.provenance("asset-id-xxx")
+provenance = client.assets.get_provenance("asset-id-xxx")
 for parent in provenance:
     print(f"Parent: {parent.asset_id}")
 ```
@@ -102,11 +104,11 @@ for parent in provenance:
 # 记录浏览（用于热度分析/推荐）
 client.assets.record_view("asset-id-xxx")
 
-# 收藏切换
-client.assets.toggle_favorite("asset-id-xxx")
+# 收藏资产
+client.assets.set_favorite("asset-id-xxx", favorite=True)
 
-# 再次调用取消收藏
-client.assets.toggle_favorite("asset-id-xxx")
+# 取消收藏
+client.assets.set_favorite("asset-id-xxx", favorite=False)
 ```
 
 ## 错误处理

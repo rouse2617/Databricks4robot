@@ -11,11 +11,13 @@ Cyber Databrew 提供灵活的**标签系统**和**全局搜索**功能，帮助
 ```python
 from cyber_databrew_sdk import CyberDatabrewClient
 
-client = CyberDatabrewClient(base_url="...", token="g-xxx")
+client = CyberDatabrewClient(token="g-xxx")
 
 # 设置标签
-client.assets.set_tag("asset-id-xxx", key="priority", value="high")
-client.assets.set_tag("asset-id-xxx", key="source", value="camera-01")
+client.assets.set_tags("asset-id-xxx", tags=[
+    {"key": "priority", "value": "high"},
+    {"key": "source", "value": "camera-01"},
+])
 
 # 删除标签
 client.assets.delete_tag("asset-id-xxx", key="priority")
@@ -34,9 +36,10 @@ tags = client.registry.list_tags()
 
 平台使用 Elasticsearch 提供全文搜索功能。
 
-### 搜索同步状态
-
 ```python
+# 搜索资产
+results = client.search.assets(q="some keyword", page=1, page_size=20)
+
 # 获取搜索同步状态
 status = client.search.get_sync_status()
 
@@ -52,32 +55,32 @@ progress = client.search.get_sync_progress()
 
 ```python
 # 验证查询 IR
-result = client.queries.validate(query_ir={...})
+result = client.queries.validate(payload={...})
 
 # 运行查询
-result = client.queries.run(query_ir={...})
+result = client.queries.run(payload={...})
 ```
 
 ### 保存查询管理
 
 ```python
 # 创建保存的查询
-client.queries.create_saved_query(
-    name="my query",
-    query_ir={...},
-)
+client.queries.create_saved(payload={
+    "name": "my query",
+    "query_ir": {...},
+})
 
 # 列出保存的查询
-queries = client.queries.list_saved_queries()
+queries = client.queries.list_saved()
 
 # 获取保存的查询
-query = client.queries.get_saved_query("query-id-xxx")
+query = client.queries.get_saved("query-id-xxx")
 
 # 更新保存的查询
-client.queries.update_saved_query("query-id-xxx", name="new name")
+client.queries.update_saved("query-id-xxx", payload={"name": "new name"})
 
 # 删除保存的查询
-client.queries.delete_saved_query("query-id-xxx")
+client.queries.delete_saved("query-id-xxx")
 ```
 
 ## 事件流

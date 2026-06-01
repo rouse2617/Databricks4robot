@@ -24,13 +24,13 @@
 ```python
 from cyber_databrew_sdk import CyberDatabrewClient
 
-client = CyberDatabrewClient(base_url="...", token="g-xxx")
+client = CyberDatabrewClient(token="g-xxx")
 
 # 查询资产（支持过滤、排序、分页）
-assets = client.assets.list(
+assets = client.assets.list_all(
     page=1,
     page_size=20,
-    sort_by="-created_at",
+    status="reviewed",
 )
 
 # 遍历结果
@@ -49,18 +49,18 @@ print(asset.asset_id, asset.status, asset.tags)
 ### 创建资产
 
 ```python
-asset = client.assets.create(
-    mcap_file_id="file-001",
-    t_start=1000000000,
-    t_end=2000000000,
-)
+asset = client.assets.create(payload={
+    "mcap_file_id": "file-001",
+    "t_start": 1000000000,
+    "t_end": 2000000000,
+})
 print(f"Created: {asset.asset_id}")
 ```
 
 ### 更新资产
 
 ```python
-asset = client.assets.update("asset-id-xxx", status="reviewed")
+asset = client.assets.update("asset-id-xxx", payload={"status": "reviewed"})
 ```
 
 ### 批量获取
@@ -73,17 +73,19 @@ assets = client.assets.batch_get(asset_ids=["id1", "id2", "id3"])
 
 ```python
 # 血缘关系：找出哪些资产由当前资产衍生而来
-lineage = client.assets.lineage("asset-id-xxx")
+lineage = client.assets.get_lineage("asset-id-xxx")
 
 # 谱系追踪：找出当前资产的来源
-provenance = client.assets.provenance("asset-id-xxx")
+provenance = client.assets.get_provenance("asset-id-xxx")
 ```
 
 ## 标签管理
 
 ```python
 # 设置标签
-client.assets.set_tag("asset-id-xxx", key="priority", value="high")
+client.assets.set_tags("asset-id-xxx", tags=[
+    {"key": "priority", "value": "high"},
+])
 
 # 删除标签
 client.assets.delete_tag("asset-id-xxx", key="priority")
@@ -95,6 +97,9 @@ client.assets.delete_tag("asset-id-xxx", key="priority")
 # 记录浏览
 client.assets.record_view("asset-id-xxx")
 
-# 切换收藏
-client.assets.toggle_favorite("asset-id-xxx")
+# 收藏资产
+client.assets.set_favorite("asset-id-xxx", favorite=True)
+
+# 取消收藏
+client.assets.set_favorite("asset-id-xxx", favorite=False)
 ```

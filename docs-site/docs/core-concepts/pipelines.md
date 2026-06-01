@@ -13,13 +13,13 @@ Algo Run 是 Pipeline 体系中的执行单元，代表一次算法在指定资�
 ```python
 from cyber_databrew_sdk import CyberDatabrewClient
 
-client = CyberDatabrewClient(base_url="...", token="g-xxx")
+client = CyberDatabrewClient(token="g-xxx")
 
 # 创建算法运行
-run = client.algo_runs.create(
-    algo_key="some-algo",
-    asset_ids=["asset-1", "asset-2"],
-)
+run = client.algo_runs.create(payload={
+    "algo_key": "some-algo",
+    "asset_ids": ["asset-1", "asset-2"],
+})
 
 # 启动运行
 client.algo_runs.start(run.run_id)
@@ -55,7 +55,7 @@ SDK 提供了 Pipeline 组件管理器，用于后续流水线配置管理：
 ```python
 from cyber_databrew_sdk import CyberDatabrewClient
 
-client = CyberDatabrewClient(base_url="...", token="g-xxx")
+client = CyberDatabrewClient(token="g-xxx")
 
 # 操作 Pipeline 组件
 components = client.pipeline_components.list()

@@ -9,13 +9,13 @@
 ```python
 from cyber_databrew_sdk import CyberDatabrewClient
 
-client = CyberDatabrewClient(base_url="...", token="g-xxx")
+client = CyberDatabrewClient(token="g-xxx")
 
 # 创建运行（指定算法和资产）
-run = client.algo_runs.create(
-    algo_key="some-algo",
-    asset_ids=["asset-1", "asset-2", "asset-3"],
-)
+run = client.algo_runs.create(payload={
+    "algo_key": "some-algo",
+    "asset_ids": ["asset-1", "asset-2", "asset-3"],
+})
 print(f"Created run: {run.run_id}")
 ```
 
@@ -98,15 +98,15 @@ client.storage.download_asset_mcap("asset-id-xxx", output_path="./asset.mcap")
 ### 遍历消息
 
 ```python
-messages = client.storage.get_messages("file-001", start_ns=0, end_ns=1000000)
+messages = client.storage.get_messages("file-001")
 ```
 
 ### 处理上传
 
 ```python
 # 上传最终确认
-client.storage.finalize_upload(
-    mcap_file_id="file-001",
-    storage_path="gs://bucket/path/to/file",
-)
+client.storage.finalize_upload(payload={
+    "mcap_file_id": "file-001",
+    "storage_path": "gs://bucket/path/to/file",
+})
 ```

@@ -7,6 +7,8 @@ const config: Config = {
   tagline: '数据流水线平台 — 资产、算法、交付',
   favicon: 'img/favicon.svg',
 
+  trailingSlash: false,
+
   future: {
     v4: true,
   },

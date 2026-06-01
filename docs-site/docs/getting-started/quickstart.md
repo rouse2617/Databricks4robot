@@ -21,8 +21,8 @@ pip install cyber-databrew-sdk
 from cyber_databrew_sdk import CyberDatabrewClient
 
 client = CyberDatabrewClient(
-    base_url="https://api-cyber-databrew.cyberorigin.ai",
     token="your-token-here",
+    base_url="https://api-cyber-databrew.cyberorigin.ai",
 )
 ```
 
@@ -44,8 +44,8 @@ client = CyberDatabrewClient()
 ## 第三步：获取资产列表
 
 ```python
-# 列出资产（支持分页、过滤、排序）
-assets = client.assets.list(page=1, page_size=20)
+# 列出资产（支持过滤、排序、分页）
+assets = client.assets.list_all(page=1, page_size=20)
 
 for asset in assets:
     print(f"ID: {asset.asset_id}, Status: {asset.status}")
@@ -55,11 +55,11 @@ for asset in assets:
 
 ```python
 # 创建一条资产记录
-asset = client.assets.create(
-    mcap_file_id="file-001",
-    t_start=1000000000,
-    t_end=2000000000,
-)
+asset = client.assets.create(payload={
+    "mcap_file_id": "file-001",
+    "t_start": 1000000000,
+    "t_end": 2000000000,
+})
 print(f"Created asset: {asset.asset_id}")
 ```
 
@@ -67,12 +67,12 @@ print(f"Created asset: {asset.asset_id}")
 
 ```python
 # 创建一个数据交付
-delivery = client.deliveries.create(
-    customer_id="cust-001",
-    items=[
+delivery = client.delivery.create(payload={
+    "customer_id": "cust-001",
+    "items": [
         {"asset_id": "asset-1", "mcap_file_id": "file-1"},
     ],
-)
+})
 print(f"Delivery created: {delivery.delivery_id}")
 ```
 

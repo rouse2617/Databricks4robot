@@ -92,16 +92,19 @@
 ```python
 from cyber_databrew_sdk import CyberDatabrewClient
 
-client = CyberDatabrewClient(base_url="...", token="g-xxx")
+client = CyberDatabrewClient(token="g-xxx")
 
 # 审计搜索
 results = client.audit.search(
     asset_id="asset-xxx",
     event_type="delivery.commit",
-    from_date="2026-01-01",
-    to_date="2026-05-25",
+    time_from="2026-01-01",
+    time_to="2026-05-25",
 )
 
 # 血缘审计
-results = client.audit.lineage_search(asset_id="asset-xxx")
+results = client.audit.lineage_search(
+    asset_id="asset-xxx",
+    limit=50,
+)
 ```
