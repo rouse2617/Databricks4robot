@@ -1626,6 +1626,62 @@ components:
           additionalProperties: true
           description: Optional metadata for the new child asset
 
+    # ── Asset request bodies ────────────────────────────────────────────────
+    CreateAssetRequest:
+      type: object
+      required: [start_timestamp_ns, end_timestamp_ns, reviewer]
+      properties:
+        asset_id: { $ref: '#/components/schemas/AssetID', description: "Optional — server generates if omitted" }
+        logical_asset_id: { type: string, description: "Logical asset group ID" }
+        mcap_file_id: { $ref: '#/components/schemas/McapFileID', description: "Source MCAP file" }
+        start_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "Start timestamp in nanoseconds" }
+        end_timestamp_ns: { type: integer, format: int64, minimum: 1, description: "End timestamp in nanoseconds" }
+        reviewer: { type: string, description: "Reviewer name for the asset" }
+        owner: { type: string, description: "Owner name" }
+        type: { type: string, description: "Segment type (legacy)" }
+        asset_type: { type: string, description: "Asset type (e.g. segment, clip, frame_set, derived_asset)" }
+        status: { type: string, description: "Legacy lifecycle status" }
+        lifecycle_state: { type: string, description: "Lifecycle state" }
+        env: { type: string }
+        task: { type: string }
+        tags: { type: object, additionalProperties: { type: string }, description: "Key→value tags" }
+        files: { type: object, additionalProperties: { type: string }, description: "Key→value file URIs" }
+        metadata: { type: object, additionalProperties: true }
+        lifecycle_meta: { type: object, additionalProperties: true }
+        retention_tier: { type: string }
+        expire_at: { type: string, format: date-time, nullable: true }
+        storage_uri: { type: string }
+        thumb_uri: { type: string }
+        asset_level: { type: integer }
+        parent_asset_id: { $ref: '#/components/schemas/AssetID', nullable: true }
+        root_asset_id: { $ref: '#/components/schemas/AssetID', nullable: true }
+        segment_index: { type: integer, nullable: true }
+        parent_start_offset_ms: { type: integer, format: int64, nullable: true }
+        parent_end_offset_ms: { type: integer, format: int64, nullable: true }
+        split_method: { type: string }
+        split_algo_name: { type: string }
+        split_algo_version: { type: string }
+        split_run_id: { type: string }
+        split_reason: { type: string }
+        delivery_count: { type: integer }
+        last_delivered_at: { type: string, format: date-time, nullable: true }
+        last_delivered_to: { type: string, nullable: true }
+    BatchGetAssetsRequest:
+      type: object
+      required: [asset_ids]
+      properties:
+        asset_ids:
+          type: array
+          items: { $ref: '#/components/schemas/AssetID' }
+          maxItems: 100
+          description: "List of asset IDs to fetch (max 100)"
+    PromoteRevisionRequest:
+      type: object
+      properties:
+        logical_asset_id: { type: string, description: "Logical asset group to promote into" }
+        revision_of: { type: string, description: "Source revision identifier" }
+        owner: { type: string, description: "Owner of the new revision" }
+
     # ── Pipeline ─────────────────────────────────────────────────────────
     PipelineTemplate:
       type: object
@@ -1988,6 +2044,11 @@ paths:
     post:
       tags: [Assets]
       summary: Create asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAssetRequest' }
       responses:
         '201': { description: Created }
         '422':
@@ -2059,6 +2120,11 @@ paths:
     post:
       tags: [Assets]
       summary: Batch get assets by IDs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchGetAssetsRequest' }
       responses:
         '200':
           description: OK
@@ -2067,9 +2133,9 @@ paths:
               schema:
                 type: object
                 properties:
-                items:
-                  type: array
-                  items: { $ref: '#/components/schemas/Asset' }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Asset' }
 
   /api/v1/asset-types/{type}/schema:
     get:
@@ -2263,6 +2329,11 @@ paths:
           name: id
           required: true
           schema: { $ref: '#/components/schemas/AssetID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PromoteRevisionRequest' }
       responses:
         '200':
           description: Revision promoted
