@@ -7,11 +7,11 @@
 ## 生命周期
 
 ```
-draft → delivered → accepted
-                  ↘ cancelled
+pending → delivered → accepted
+       ↘ cancelled   ↘ archived
 ```
 
-两步提交模式：先创建草稿，添加内容项，确认无误后提交。
+两步提交模式中草稿在 API 中表现为 `pending` 状态：先创建 pending 交付，添加内容项，确认无误后提交为 delivered。
 
 ## 核心字段
 
@@ -19,7 +19,7 @@ draft → delivered → accepted
 |------|------|------|
 | `delivery_id` | UUID | 交付唯一 ID |
 | `customer_id` | string | 目标客户 slug |
-| `status` | enum | draft / delivered / cancelled / accepted |
+| `status` | enum | pending / delivered / failed / accepted / rejected / recalled / cancelled / archived |
 | `asset_count` | int | 包含的资产数量 |
 | `owner` | string | 交付负责人 |
 | `note` | string | 备注 |

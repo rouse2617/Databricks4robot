@@ -41,7 +41,7 @@ SDK 调用：
 
 ```python
 # SDK 搜索接口（推荐）
-result = client.search.search_assets(q="keyword", page_size=20)
+result = client.search.assets(q="keyword", page=1, page_size=20)
 for item in result["items"]:
     print(item["asset_id"], item["asset_type"])
 
@@ -103,7 +103,7 @@ print(f"Created: {asset['asset_id']}")
 
 ```python
 # 更新状态
-asset = client.assets.update("aset0001", {"lifecycle_state": "reviewed"})
+asset = client.assets.update("aset0001", {"lifecycle_state": "ready"})
 
 # 更新标签
 asset = client.assets.update("aset0001", {
@@ -151,7 +151,19 @@ from cyber_databrew_sdk.exceptions import NotFoundError, BadRequestError
 try:
     asset = client.assets.get("nonexistent")
 except NotFoundError as e:
-    print(f"资产不存在: {e}")
+    print(f"资产不存在: {e.message}")
+    print(f"错误码: {e.code}, request_id: {e.request_id}")
 except BadRequestError as e:
-    print(f"请求参数错误: {e}")
+    print(f"请求参数错误: {e.message}")
+    print(f"HTTP 状态: {e.http_status}, details: {e.details}")
 ```
+
+SDK 异常字段与 API 标准错误体保持一致：
+
+| SDK 字段 | API 字段 | 说明 |
+|----------|----------|------|
+| `e.code` | `code` | 稳定错误码，适合程序分支判断 |
+| `e.message` | `message` | 面向人的错误说明 |
+| `e.request_id` | `request_id` / `X-Request-ID` | 排查问题时提供给平台团队 |
+| `e.details` | `details` | 结构化错误上下文，可能为空 |
+| `e.http_status` | HTTP status | SDK 根据状态码映射到 typed exception |

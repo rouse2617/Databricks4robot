@@ -11,7 +11,7 @@
 | `mcap_file_id` | string (8位) | 关联的 MCAP 文件 ID |
 | `start_timestamp_ns` | int64 | 起始时间戳（纳秒） |
 | `end_timestamp_ns` | int64 | 结束时间戳（纳秒） |
-| `lifecycle_state` | enum | 生命周期状态（created, ready, delivered, archived） |
+| `lifecycle_state` | enum | 生命周期状态（created, processing, ready, delivered, archived, superseded, failed, rejected） |
 | `owner` | string | 所有者 |
 | `reviewer` | string | 审核人 |
 | `duration_ms` | int64 | 时长（毫秒） |
@@ -24,8 +24,9 @@
 ## 生命周期
 
 ```
-created → ready → delivered → archived
-                ↘ rejected
+created → processing → ready → delivered → archived
+      ↘ failed        ↘ rejected
+      ↘ superseded
 ```
 
 详情见 [算法状态机](../guides/pipeline-operations.md)。

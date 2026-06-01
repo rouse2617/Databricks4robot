@@ -3965,7 +3965,7 @@ paths:
           description: Template not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/deployments/{id}/resources:
     get:
       tags: [Pipeline]
@@ -4019,7 +4019,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/deployments/{id}/save-template:
     post:
@@ -4061,7 +4061,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/pipeline-assets:
     post:
@@ -4114,12 +4114,12 @@ paths:
           description: Invalid input
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/assets/{id}/pipeline-lineage:
     get:
       tags: [Pipeline]
@@ -4226,7 +4226,7 @@ paths:
           description: Invalid request body
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     get:
       tags: [Pipeline]
       summary: List pipeline templates
@@ -4266,7 +4266,7 @@ paths:
           description: Template not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Pipeline]
       summary: Delete a pipeline template
@@ -4284,7 +4284,7 @@ paths:
           description: Template not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/pipelines/{id}/versions:
     get:
       tags: [Pipeline]
@@ -4358,7 +4358,7 @@ paths:
           description: Invalid request or asset not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/deploy/template/{id}:
     post:
@@ -4396,12 +4396,12 @@ paths:
           description: Invalid request or asset not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Template not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Deployments listing ───────────────────────────────────────────
   /api/v1/deployments:
@@ -4444,7 +4444,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Pipeline]
       summary: Delete a deployment
@@ -4462,7 +4462,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/deployments/{id}/retry:
     post:
       tags: [Pipeline]
@@ -4488,7 +4488,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/deployments/{id}/stop:
     post:
       tags: [Pipeline]
@@ -4519,7 +4519,7 @@ paths:
           description: Deployment not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Pipeline component registry ───────────────────────────────────
   /api/v1/pipeline-components:
@@ -4544,7 +4544,7 @@ paths:
           description: Invalid request body
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     get:
       tags: [Pipeline]
       summary: List all registered pipeline components
@@ -4591,7 +4591,7 @@ paths:
           description: Component not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     put:
       tags: [Pipeline]
       summary: Update a pipeline component
@@ -4617,7 +4617,7 @@ paths:
           description: Component not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/components:
     get:
@@ -4711,7 +4711,7 @@ paths:
           description: Component not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Workflow monitoring ───────────────────────────────────────────
   /api/v1/workflows:
@@ -4755,7 +4755,7 @@ paths:
           description: Workflow not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     delete:
       tags: [Pipeline]
       summary: Delete a workflow
@@ -4778,7 +4778,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/retry:
     post:
       tags: [Pipeline]
@@ -4802,7 +4802,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/resubmit:
     post:
       tags: [Pipeline]
@@ -4826,7 +4826,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/suspend:
     post:
       tags: [Pipeline]
@@ -4850,7 +4850,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/resume:
     post:
       tags: [Pipeline]
@@ -4874,7 +4874,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/workflows/{name}/terminate:
     post:
       tags: [Pipeline]
@@ -4898,7 +4898,7 @@ paths:
           description: Argo API error
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Backfill jobs (batch asset processing) ────────────────────────────
   /api/v1/backfill:
@@ -4929,7 +4929,7 @@ paths:
           description: Invalid request
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
     get:
       tags: [Backfill]
       summary: List all backfill jobs
@@ -4967,7 +4967,7 @@ paths:
           description: Job not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/backfill/{id}/pause:
     post:
       tags: [Backfill]
@@ -4992,7 +4992,7 @@ paths:
           description: Job not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/backfill/{id}/resume:
     post:
       tags: [Backfill]
@@ -5017,7 +5017,7 @@ paths:
           description: Job not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/backfill/{id}/retry-failed:
     post:
       tags: [Backfill]
@@ -5042,4 +5042,4 @@ paths:
           description: Job not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorBody' }
+              schema: { $ref: '#/components/schemas/ErrorResponse' }

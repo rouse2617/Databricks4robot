@@ -32,6 +32,7 @@ import (
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 
 	_ "github.com/CyberOrigin2077/cyber-databrew/docs/swagger" // swagger docs
@@ -68,8 +69,7 @@ func RegisterAll(
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
-	_, _, _, _, _, _, _ = deliveryRuleHandler, algoRunHandler,
-		auditHandler, pipelineHandler, pipelineComponentHandler, workflowHandler, backfillHandler
+	_, _, _, _, _ = algoRunHandler, pipelineHandler, pipelineComponentHandler, workflowHandler, backfillHandler
 
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
@@ -112,24 +112,24 @@ func RegisterAll(
 				Email string `json:"email"`
 			}
 			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
+				httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "email is required", map[string]any{"error": err.Error()})
 				return
 			}
 			email := strings.TrimSpace(strings.ToLower(req.Email))
 			if email == "" || !strings.Contains(email, "@") {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "valid email is required"})
+				httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "valid email is required", nil)
 				return
 			}
 
 			domain := email[strings.LastIndex(email, "@")+1:]
 			if cfg.AllowedDomain == "" || domain != cfg.AllowedDomain {
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "email domain not allowed"})
+				httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "email domain not allowed")
 				return
 			}
 
 			jwtToken, err := auth.SignToken(cfg.JWTSecret, email, "user", 24*time.Hour)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign token"})
+				httpresp.Internal(c, "failed to sign token")
 				return
 			}
 			c.SetSameSite(http.SameSiteLaxMode)
@@ -164,21 +164,21 @@ func RegisterAll(
 			Token string `json:"token"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "token is required", map[string]any{"error": err.Error()})
 			return
 		}
 		token := strings.TrimSpace(req.Token)
 		if token == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "token is required", nil)
 			return
 		}
 		if token != cfg.DatabrewToken {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "invalid token")
 			return
 		}
 		jwtToken, err := auth.SignToken(cfg.JWTSecret, "legacy", "admin", 24*time.Hour)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign token"})
+			httpresp.Internal(c, "failed to sign token")
 			return
 		}
 		c.SetSameSite(http.SameSiteLaxMode)
@@ -200,6 +200,7 @@ func RegisterAll(
 		assets.GET("/:id/mcap-locator", assetHandler.McapLocator)
 		assets.GET("/:id/foxglove-source", assetHandler.FoxgloveSource)
 		assets.GET("/:id/events", assetHandler.ListEvents)
+		assets.GET("/:id/events/stream", assetHandler.HandleEventsStream)
 		assets.GET("/:id/lineage", assetHandler.GetLineage)
 		assets.GET("/:id/timeline", assetHandler.Timeline)
 		assets.POST("/:id/tags", assetHandler.UpsertTag)
@@ -211,6 +212,7 @@ func RegisterAll(
 
 		// Global event stream — no asset_id required.
 		api.GET("/events", assetHandler.ListGlobalEvents)
+		api.GET("/events/stream", assetHandler.HandleGlobalEventsStream)
 
 		// Algorithm lifecycle routes
 		if algoHandler != nil {
@@ -235,6 +237,17 @@ func RegisterAll(
 		api.GET("/deliveries/:id", deliveryHandler.Get)
 		api.GET("/deliveries/:id/items", deliveryHandler.ListItems)
 		api.GET("/customers/:customer_id/deliveries", deliveryHandler.ListByCustomer)
+		api.POST("/deliveries/draft", deliveryHandler.HandleDraft)
+		api.POST("/deliveries/:id/items", deliveryHandler.HandleAddItems)
+		api.POST("/deliveries/:id/commit", deliveryHandler.HandleCommitC2)
+		api.POST("/deliveries/:id/cancel", deliveryHandler.HandleCancel)
+		api.POST("/deliveries/:id/retry", deliveryHandler.HandleRetry)
+		api.POST("/deliveries/:id/ack", deliveryHandler.HandleAck)
+
+		if deliveryRuleHandler != nil {
+			api.POST("/delivery-rules", deliveryRuleHandler.Create)
+			api.GET("/delivery-rules", deliveryRuleHandler.List)
+		}
 
 		// Customer CRUD
 		if customerHandler != nil {
@@ -256,6 +269,10 @@ func RegisterAll(
 			api.GET("/search/assets", searchHandler.SearchAssets)
 			api.GET("/search/sync-status", searchHandler.SyncStatus)
 			api.GET("/search/sync-progress", searchHandler.SyncProgress)
+		}
+
+		if auditHandler != nil {
+			api.GET("/audit/search", auditHandler.HandleAuditSearch)
 		}
 
 		if lakehouseHandler != nil {

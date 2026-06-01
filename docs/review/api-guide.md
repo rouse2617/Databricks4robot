@@ -2167,6 +2167,19 @@ curl -X POST "$BASE/api/v1/metrics:search" \
 
 ## 9. 错误码参考
 
+标准 JSON 错误体：
+
+```json
+{
+  "code": "INVALID_ARGUMENT",
+  "message": "invalid request body",
+  "request_id": "req-xxx",
+  "details": {"field": "asset_id"}
+}
+```
+
+`details` 可省略；`request_id` 与响应头 `X-Request-ID` 对应。Python SDK 会将这些字段暴露为 `e.code`、`e.message`、`e.request_id`、`e.details`，并按 HTTP 状态码设置 `e.http_status` 和 typed exception。
+
 | HTTP | Code | 说明 |
 |------|------|------|
 | 400 | `INVALID_ARGUMENT` | 请求格式错误 |

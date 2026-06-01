@@ -240,7 +240,8 @@ func (h *Handler) SearchReindex(c *gin.Context) {
 func AdminTokenAuth(expected string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if expected == "" {
-			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "admin disabled"})
+			httpresp.Error(c, http.StatusNotFound, "ADMIN_DISABLED", "admin disabled", nil)
+			c.Abort()
 			return
 		}
 		tok := c.GetHeader("X-Admin-Token")

@@ -83,8 +83,9 @@ result = client.events.list_for_asset("aset0001")
 for event in result.get("items", []):
     print(event["event_type"], event["created_at"])
 
-# SSE 流（实时推送）
-for event in client.events.stream_for_asset("aset0001"):
+# 轮询最新事件
+result = client.events.list_for_asset("aset0001", page=1, page_size=20)
+for event in result.get("items", []):
     print(event["event_type"])
 ```
 

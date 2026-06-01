@@ -43,6 +43,21 @@ curl -X POST http://localhost:8080/api/v1/auth/email-login \
 
 使用 [Interactive API Reference](/doc/api/reference) 可以直接浏览 OpenAPI 生成的接口说明，并在页面中填写参数、认证信息后发送请求。接口列表、schema、错误响应与 `api/openapi.yaml` 同步，不再由本页维护。
 
+## Error Responses
+
+JSON API 错误统一返回以下字段：
+
+```json
+{
+  "code": "INVALID_ARGUMENT",
+  "message": "invalid request body",
+  "request_id": "req-xxx",
+  "details": {"field": "asset_id"}
+}
+```
+
+Python SDK 会把这些字段映射到异常对象：`e.code`、`e.message`、`e.request_id`、`e.details`，并额外提供 `e.http_status`。排查线上问题时优先保留 `request_id`。
+
 ## Maintaining API Docs
 
 新增或修改 HTTP API 时，请在同一个 PR 中更新：

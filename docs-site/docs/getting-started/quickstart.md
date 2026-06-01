@@ -46,7 +46,7 @@ asset = client.assets.get("aset0001")
 print(asset["asset_id"], asset["lifecycle_state"])
 
 # 搜索资产
-result = client.search.search_assets(q="keyword", page_size=20)
+result = client.search.assets(q="keyword", page=1, page_size=20)
 for item in result["items"]:
     print(item["asset_id"], item["asset_type"])
 ```
