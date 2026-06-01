@@ -108,9 +108,16 @@ function TemplateCard({
 	compactActions?: boolean;
 }) {
 	return (
-		<div key={template.id} className="dep-card">
+		<div
+			key={template.id}
+			className={["dep-card", compactActions ? "dep-card--compact" : ""]
+				.filter(Boolean)
+				.join(" ")}
+		>
 			<div className="dep-card-info">
-				<div className="dep-card-name">{template.name}</div>
+				<div className="dep-card-name" title={template.name}>
+					{template.name}
+				</div>
 				{!compactActions ? (
 					<div className="dep-card-meta">
 						<span>{template.nodeCount} 个节点</span>
@@ -120,6 +127,8 @@ function TemplateCard({
 				) : (
 					<div className="dep-card-meta dep-card-meta--compact">
 						<span>{template.nodeCount} 个节点</span>
+						<span className="dot">•</span>
+						<span>{new Date(template.createdAt).toLocaleDateString()}</span>
 					</div>
 				)}
 			</div>
@@ -338,8 +347,7 @@ export function DeployPanel({
 			if (onEditTemplate) {
 				onEditTemplate(t.pipeline);
 			} else {
-				sessionStorage.setItem("pipeline-edit", JSON.stringify(t.pipeline));
-				navigate("/pipeline");
+				navigate(`/pipeline?templateId=${encodeURIComponent(id)}`);
 			}
 		} catch (err) {
 			message.error(`加载模板失败: ${String(err)}`);
@@ -398,7 +406,7 @@ export function DeployPanel({
 						style={{ marginBottom: 12, fontSize: 12 }}
 					/>
 				) : null}
-				<div className="deploy-section">
+				<div className="deploy-section deploy-section--sidebar">
 					{renderTemplateSection(sidebarTemplates, {
 						compactActions: true,
 					})}
@@ -505,7 +513,7 @@ export function DeployPanel({
 	return (
 		<div className="deploy-panel">
 			<div className="deploy-panel__toolbar">
-				<h3>部署记录</h3>
+				<h3>流水线管理</h3>
 				<Button
 					size="small"
 					icon={<ReloadOutlined />}
@@ -526,28 +534,30 @@ export function DeployPanel({
 				/>
 			) : null}
 
-			<div className="deploy-section-title">
-				已保存的流水线
-				{!loading ? (
-					<span className="count">{displayTemplates.length}</span>
+			<div className="deploy-panel__section-card">
+				<div className="deploy-section-title">
+					已保存的流水线
+					{!loading ? (
+						<span className="count">{displayTemplates.length}</span>
+					) : null}
+				</div>
+				<div className="deploy-section">
+					{renderTemplateSection(visibleTemplates)}
+				</div>
+				{displayTemplates.length > visibleTemplates.length ? (
+					<Button
+						type="link"
+						size="small"
+						className="deploy-panel__load-more"
+						onClick={() =>
+							setTemplateVisibleCount((count) => count + TEMPLATE_PAGE_SIZE)
+						}
+					>
+						加载更多模板（还剩{" "}
+						{displayTemplates.length - visibleTemplates.length} 条）
+					</Button>
 				) : null}
 			</div>
-			<div className="deploy-section">
-				{renderTemplateSection(visibleTemplates)}
-			</div>
-			{displayTemplates.length > visibleTemplates.length ? (
-				<Button
-					type="link"
-					size="small"
-					className="deploy-panel__load-more"
-					onClick={() =>
-						setTemplateVisibleCount((count) => count + TEMPLATE_PAGE_SIZE)
-					}
-				>
-					加载更多模板（还剩 {displayTemplates.length - visibleTemplates.length}{" "}
-					条）
-				</Button>
-			) : null}
 
 			<Modal
 				title="可选：绑定处理资产"
@@ -571,92 +581,94 @@ export function DeployPanel({
 				/>
 			</Modal>
 
-			<div className="deploy-section-title deploy-panel__history-title">
-				运行历史
-				{!loading ? (
-					<span className="count">{displayDeployments.length}</span>
-				) : null}
-			</div>
-			<div className="deploy-section">
-				{loading ? (
-					<PanelSkeleton rows={3} />
-				) : visibleDeployments.length === 0 ? (
-					<PipelineEmptyState variant="deploy" title="暂无部署记录" />
-				) : (
-					visibleDeployments.map((d) => {
-						const pipelineAssetIds = extractPipelineAssetIds(d.pipelineJSON);
-						const pipelineAssetId = pipelineAssetIds[0];
-						return (
-							<div key={d.id} className="dep-card">
-								<div className="dep-card-info">
-									<div className="dep-card-name">{d.pipelineName}</div>
-									<div className="dep-card-meta">
-										<Tag color={STATUS_COLORS[d.status] || "default"}>
-											{d.status}
-										</Tag>
-										<span>{d.nodeCount} 个节点</span>
-										<span className="dot">•</span>
-										<span>{new Date(d.createdAt).toLocaleString()}</span>
-										{d.finishedAt ? (
-											<>
-												<span className="dot">•</span>
-												<span>
-													完成: {new Date(d.finishedAt).toLocaleString()}
-												</span>
-											</>
+			<div className="deploy-panel__section-card">
+				<div className="deploy-section-title deploy-panel__history-title">
+					运行历史
+					{!loading ? (
+						<span className="count">{displayDeployments.length}</span>
+					) : null}
+				</div>
+				<div className="deploy-section">
+					{loading ? (
+						<PanelSkeleton rows={3} />
+					) : visibleDeployments.length === 0 ? (
+						<PipelineEmptyState variant="deploy" title="暂无部署记录" />
+					) : (
+						visibleDeployments.map((d) => {
+							const pipelineAssetIds = extractPipelineAssetIds(d.pipelineJSON);
+							const pipelineAssetId = pipelineAssetIds[0];
+							return (
+								<div key={d.id} className="dep-card">
+									<div className="dep-card-info">
+										<div className="dep-card-name">{d.pipelineName}</div>
+										<div className="dep-card-meta">
+											<Tag color={STATUS_COLORS[d.status] || "default"}>
+												{d.status}
+											</Tag>
+											<span>{d.nodeCount} 个节点</span>
+											<span className="dot">•</span>
+											<span>{new Date(d.createdAt).toLocaleString()}</span>
+											{d.finishedAt ? (
+												<>
+													<span className="dot">•</span>
+													<span>
+														完成: {new Date(d.finishedAt).toLocaleString()}
+													</span>
+												</>
+											) : null}
+										</div>
+									</div>
+									<div className="deploy-btn-list">
+										{pipelineAssetId ? (
+											<Button
+												size="small"
+												onClick={() => navigate(`/assets/${pipelineAssetId}`)}
+											>
+												查看关联资产
+											</Button>
 										) : null}
+										{RETRYABLE_DEPLOYMENT_STATUSES.has(d.status) ? (
+											<Button
+												size="small"
+												icon={<ReloadOutlined />}
+												onClick={() => handleRetryDeployment(d.id)}
+											>
+												重试
+											</Button>
+										) : null}
+										<Button
+											size="small"
+											icon={<EyeOutlined />}
+											onClick={() => navigate(`/workflows/${d.workflowName}`)}
+										>
+											查看
+										</Button>
+										<Button
+											size="small"
+											danger
+											icon={<DeleteOutlined />}
+											onClick={() => handleDeleteDeployment(d.id)}
+										/>
 									</div>
 								</div>
-								<div className="deploy-btn-list">
-									{pipelineAssetId ? (
-										<Button
-											size="small"
-											onClick={() => navigate(`/assets/${pipelineAssetId}`)}
-										>
-											查看关联资产
-										</Button>
-									) : null}
-									{RETRYABLE_DEPLOYMENT_STATUSES.has(d.status) ? (
-										<Button
-											size="small"
-											icon={<ReloadOutlined />}
-											onClick={() => handleRetryDeployment(d.id)}
-										>
-											重试
-										</Button>
-									) : null}
-									<Button
-										size="small"
-										icon={<EyeOutlined />}
-										onClick={() => navigate(`/workflows/${d.workflowName}`)}
-									>
-										查看
-									</Button>
-									<Button
-										size="small"
-										danger
-										icon={<DeleteOutlined />}
-										onClick={() => handleDeleteDeployment(d.id)}
-									/>
-								</div>
-							</div>
-						);
-					})
-				)}
+							);
+						})
+					)}
+				</div>
+				{displayDeployments.length > visibleDeployments.length ? (
+					<Button
+						type="link"
+						size="small"
+						className="deploy-panel__load-more"
+						onClick={() =>
+							setDeploymentVisibleCount((count) => count + DEPLOYMENT_PAGE_SIZE)
+						}
+					>
+						加载更多记录（还剩{" "}
+						{displayDeployments.length - visibleDeployments.length} 条）
+					</Button>
+				) : null}
 			</div>
-			{displayDeployments.length > visibleDeployments.length ? (
-				<Button
-					type="link"
-					size="small"
-					className="deploy-panel__load-more"
-					onClick={() =>
-						setDeploymentVisibleCount((count) => count + DEPLOYMENT_PAGE_SIZE)
-					}
-				>
-					加载更多记录（还剩{" "}
-					{displayDeployments.length - visibleDeployments.length} 条）
-				</Button>
-			) : null}
 		</div>
 	);
 }
