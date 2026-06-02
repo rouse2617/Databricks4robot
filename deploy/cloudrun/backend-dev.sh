@@ -48,6 +48,11 @@ DATABREW_TOKEN_OVERRIDE="${DATABREW_TOKEN_OVERRIDE:-}"
 # The Cloud Run service cyber-databrew-pipeline-ui-dev is a separate UI proxy
 # (SSO/OIDC) and rejects K8s SA tokens with "unexpected signing method: RS256".
 ARGO_SERVER_URL_OVERRIDE="${ARGO_SERVER_URL_OVERRIDE:-http://10.2.1.211:2746}"
+K8S_API_ENDPOINT_OVERRIDE="${K8S_API_ENDPOINT_OVERRIDE:-}"
+K8S_BEARER_TOKEN_SECRET="${K8S_BEARER_TOKEN_SECRET:-}"
+K8S_BEARER_TOKEN_SECRET_VERSION="${K8S_BEARER_TOKEN_SECRET_VERSION:-latest}"
+K8S_CA_DATA_SECRET="${K8S_CA_DATA_SECRET:-}"
+K8S_CA_DATA_SECRET_VERSION="${K8S_CA_DATA_SECRET_VERSION:-latest}"
 LAKEHOUSE_BACKEND_OVERRIDE="${LAKEHOUSE_BACKEND_OVERRIDE:-}"
 LAKEHOUSE_BQ_PROJECT_OVERRIDE="${LAKEHOUSE_BQ_PROJECT_OVERRIDE:-}"
 LAKEHOUSE_BQ_DATASET_OVERRIDE="${LAKEHOUSE_BQ_DATASET_OVERRIDE:-}"
@@ -196,11 +201,11 @@ fi
 remove_env "PORT" "${ENV_KV_FILE}"
 # Do not blank ELASTICSEARCH_URL when ELASTICSEARCH_URL_OVERRIDE is empty (K8s-sourced value).
 
-secret_args=()
+secret_mappings=()
 remove_es_password_secret=false
 if [[ -n "${ELASTICSEARCH_PASSWORD_SECRET}" ]]; then
   remove_env "ELASTICSEARCH_PASSWORD" "${ENV_KV_FILE}"
-  secret_args+=(--set-secrets "ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD_SECRET}:${ELASTICSEARCH_PASSWORD_SECRET_VERSION}")
+  secret_mappings+=("ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD_SECRET}:${ELASTICSEARCH_PASSWORD_SECRET_VERSION}")
 elif [[ -n "${ELASTICSEARCH_PASSWORD_OVERRIDE}" ]]; then
   # Prefer explicit non-secret override and clear any prior secret binding when possible.
   remove_es_password_secret=true
@@ -212,7 +217,7 @@ fi
 
 if [[ -n "${DB_PASSWORD_SECRET}" ]]; then
   remove_env "DB_PASSWORD" "${ENV_KV_FILE}"
-  secret_args+=(--set-secrets "DB_PASSWORD=${DB_PASSWORD_SECRET}:${DB_PASSWORD_SECRET_VERSION}")
+  secret_mappings+=("DB_PASSWORD=${DB_PASSWORD_SECRET}:${DB_PASSWORD_SECRET_VERSION}")
 elif [[ -n "${DB_PASSWORD_OVERRIDE}" ]]; then
   # DB_PASSWORD_OVERRIDE is handled via upsert below; leave it in the env file.
   :
@@ -239,6 +244,15 @@ fi
 [[ -n "${OUTBOX_ES_SUBSCRIPTION_OVERRIDE}" ]] && upsert_env "OUTBOX_ES_SUBSCRIPTION" "${OUTBOX_ES_SUBSCRIPTION_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${ELASTICSEARCH_URL_OVERRIDE}" ]] && upsert_env "ELASTICSEARCH_URL" "${ELASTICSEARCH_URL_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${ELASTICSEARCH_PASSWORD_OVERRIDE}" ]] && upsert_env "ELASTICSEARCH_PASSWORD" "${ELASTICSEARCH_PASSWORD_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -n "${K8S_API_ENDPOINT_OVERRIDE}" ]] && upsert_env "K8S_API_ENDPOINT" "${K8S_API_ENDPOINT_OVERRIDE}" "${ENV_KV_FILE}"
+if [[ -n "${K8S_BEARER_TOKEN_SECRET}" ]]; then
+  remove_env "K8S_BEARER_TOKEN" "${ENV_KV_FILE}"
+  secret_mappings+=("K8S_BEARER_TOKEN=${K8S_BEARER_TOKEN_SECRET}:${K8S_BEARER_TOKEN_SECRET_VERSION}")
+fi
+if [[ -n "${K8S_CA_DATA_SECRET}" ]]; then
+  remove_env "K8S_CA_DATA" "${ENV_KV_FILE}"
+  secret_mappings+=("K8S_CA_DATA=${K8S_CA_DATA_SECRET}:${K8S_CA_DATA_SECRET_VERSION}")
+fi
 
 # Argo Workflows server lives in K8s, not on Cloud Run. Drop any K8s-merged
 # ARGO_BASE_URL (which points at the Cloud Run pipeline-ui proxy) and force
@@ -305,10 +319,11 @@ if [[ "${CPU_THROTTLING}" == "true" ]]; then
 else
   deploy_args+=(--no-cpu-throttling)
 fi
-if [[ ${#secret_args[@]} -gt 0 ]]; then
-  deploy_args+=("${secret_args[@]}")
+if [[ ${#secret_mappings[@]} -gt 0 ]]; then
+  secret_arg="$(IFS=,; echo "${secret_mappings[*]}")"
+  deploy_args+=(--set-secrets "${secret_arg}")
 fi
-if [[ "${remove_es_password_secret}" == "true" && ${#secret_args[@]} -eq 0 ]]; then
+if [[ "${remove_es_password_secret}" == "true" && ${#secret_mappings[@]} -eq 0 ]]; then
   deploy_args+=(--remove-secrets "ELASTICSEARCH_PASSWORD")
 fi
 

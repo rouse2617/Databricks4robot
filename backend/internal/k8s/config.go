@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -92,10 +93,20 @@ func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 }
 
 // buildTLSConfig resolves the K8s API TLS configuration.
-// Priority: K8S_INSECURE_SKIP_VERIFY=true → K8S_CA_B64 → K8S_CA_FILE → system trust store.
+// Priority: K8S_INSECURE_SKIP_VERIFY=true → K8S_CA_DATA → K8S_CA_B64 → K8S_CA_FILE → system trust store.
 func buildTLSConfig() (rest.TLSClientConfig, error) {
 	if os.Getenv("K8S_INSECURE_SKIP_VERIFY") == "true" {
 		return rest.TLSClientConfig{Insecure: true}, nil
+	}
+	if caData := strings.TrimSpace(os.Getenv("K8S_CA_DATA")); caData != "" {
+		decoded, err := base64.StdEncoding.DecodeString(caData)
+		if err == nil {
+			return rest.TLSClientConfig{CAData: decoded}, nil
+		}
+		if strings.Contains(caData, "BEGIN CERTIFICATE") {
+			return rest.TLSClientConfig{CAData: []byte(caData)}, nil
+		}
+		return rest.TLSClientConfig{}, fmt.Errorf("K8S_CA_DATA must be base64 certificate-authority-data or PEM text: %w", err)
 	}
 	if b64 := os.Getenv("K8S_CA_B64"); b64 != "" {
 		caData, err := base64.StdEncoding.DecodeString(b64)

@@ -17,3 +17,9 @@
 - **Decision**: Keep the existing order: validate workflow and node first, then return `K8S_UNAVAILABLE` only after a pod-backed node is resolved.
 - **Alternatives**: Return `K8S_UNAVAILABLE` immediately whenever the Kubernetes client is not configured.
 - **Rationale**: The endpoint contract is more useful when missing workflows/nodes return `WORKFLOW_NOT_FOUND` / `NODE_NOT_FOUND` even in local or degraded Kubernetes setups. `TestGetNodePodDiagnostics_WorkflowNotFoundBeforeKubernetesAvailability` locks this behavior.
+
+## 2026-06-02 — Support CA data for the default Kubernetes target
+- **Context**: Cloud Run dev could reach the GKE API endpoint with the configured bearer token, but Pod diagnostics failed TLS verification because file-mounted CA configuration is brittle in Cloud Run.
+- **Decision**: Add `K8S_CA_DATA` support for the current default Kubernetes target while keeping `K8S_CA_FILE` as a fallback.
+- **Alternatives**: Continue requiring `K8S_CA_FILE`, or skip TLS verification in dev.
+- **Rationale**: Inline CA data is easier to supply through Secret Manager and keeps TLS verification enabled. This is a compatibility step for the default target, not the long-term multi-cluster model; future `execution_targets` should store target-specific endpoint/auth/CA secret references and construct clients per target.
