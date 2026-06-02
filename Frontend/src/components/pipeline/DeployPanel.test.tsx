@@ -209,7 +209,7 @@ describe("DeployPanel", () => {
 		await waitFor(() => {
 			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
-				undefined,
+				[],
 				"default",
 			);
 		});
@@ -295,7 +295,7 @@ describe("DeployPanel", () => {
 			"(none)",
 		);
 
-		// Click OK without selecting assets — should pass undefined
+		// Click OK without selecting assets — should pass an explicit empty asset list
 		const deployBtn = document.querySelector(
 			".ant-modal-footer .ant-btn-primary",
 		);
@@ -305,7 +305,7 @@ describe("DeployPanel", () => {
 		await waitFor(() => {
 			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-002",
-				undefined,
+				[],
 				"default",
 			);
 		});
@@ -435,7 +435,7 @@ describe("DeployPanel", () => {
 		await waitFor(() => {
 			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
-				undefined,
+				[],
 				"default",
 			);
 		});

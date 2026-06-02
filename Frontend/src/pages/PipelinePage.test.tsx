@@ -464,7 +464,7 @@ describe("PipelinePage", () => {
 			expect(mockSavePipeline).toHaveBeenCalled();
 			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
-				undefined,
+				[],
 				"default",
 			);
 		});

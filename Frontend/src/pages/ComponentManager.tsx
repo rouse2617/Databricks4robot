@@ -547,6 +547,8 @@ export function ComponentManager() {
 								placeholder="normalize-mcap"
 								disabled={isViewMode}
 								ref={nameInputRef}
+								autoComplete="off"
+								onFocus={(e) => e.target.select()}
 							/>
 						</Form.Item>
 						<Form.Item
@@ -573,10 +575,17 @@ export function ComponentManager() {
 							<Input
 								placeholder="registry.example.com/databrew/worker"
 								disabled={isViewMode}
+								autoComplete="off"
+								onFocus={(e) => e.target.select()}
 							/>
 						</Form.Item>
 						<Form.Item name="tag" label="标签">
-							<Input placeholder="latest" disabled={isViewMode} />
+							<Input
+								placeholder="latest"
+								disabled={isViewMode}
+								autoComplete="off"
+								onFocus={(e) => e.target.select()}
+							/>
 						</Form.Item>
 					</div>
 

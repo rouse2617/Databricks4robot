@@ -69,8 +69,8 @@ export function deployTemplate(
 	assetIds?: string[],
 	targetId?: string,
 ): Promise<Deployment> {
-	return request<Deployment>("POST", `/deploy/template/${templateId}`, {
-		asset_ids: assetIds,
+	return request<Deployment>("POST", `/pipeline-runs/template/${templateId}`, {
+		asset_ids: assetIds ?? [],
 		target_id: targetId,
 	});
 }

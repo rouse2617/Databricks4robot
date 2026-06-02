@@ -632,7 +632,7 @@ function PipelineCanvas() {
 			const saved = await savePipeline(name, pipeline);
 			const result = await deployTemplate(
 				saved.id,
-				selectedAssetIds.length > 0 ? selectedAssetIds : undefined,
+				selectedAssetIds,
 				selectedTargetId,
 			);
 			setDeployDialog((prev) => ({
@@ -705,8 +705,10 @@ function PipelineCanvas() {
 						name="pipelineName"
 						value={pipelineName}
 						onChange={(e) => setPipelineName(e.target.value)}
+						onFocus={(e) => e.target.select()}
 						placeholder="输入流水线名称"
 						aria-label="流水线名称"
+						autoComplete="off"
 						className="pipeline-toolbar__name-input"
 						size="small"
 					/>

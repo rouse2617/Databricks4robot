@@ -271,11 +271,7 @@ export function DeployPanel({
 		if (!deployTargetId) return;
 		setDeploying(true);
 		try {
-			await deployTemplate(
-				deployTargetId,
-				selectedAssetIds.length > 0 ? selectedAssetIds : undefined,
-				selectedTargetId,
-			);
+			await deployTemplate(deployTargetId, selectedAssetIds, selectedTargetId);
 			message.success("部署成功");
 			setAssetModalOpen(false);
 			refresh();

@@ -41,6 +41,72 @@ func TestTranspileEdgePorts(t *testing.T) {
 	}
 }
 
+func TestTranspileSkipsUnconsumedOutputFileContract(t *testing.T) {
+	p := &Pipeline{
+		Name: "unconsumed-output",
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{
+				Name:    "n",
+				Image:   "busybox:latest",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "echo ok"}},
+			},
+			Outputs: []Port{{Name: "output", Type: "string"}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "unconsumed-output"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "step-n1" {
+			if len(tmpl.Outputs.Parameters) != 0 {
+				t.Fatalf("outputs = %+v, want none for unconsumed output port", tmpl.Outputs.Parameters)
+			}
+			if len(tmpl.Container.Args) > 0 && tmpl.Container.Args[len(tmpl.Container.Args)-1] != "echo ok" {
+				t.Fatalf("container args = %v, want command unchanged", tmpl.Container.Args)
+			}
+			return
+		}
+	}
+	t.Fatal("step-n1 template not found")
+}
+
+func TestTranspileDeclaresOutputWhenCommandWritesOutputFile(t *testing.T) {
+	p := &Pipeline{
+		Name: "file-output",
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{
+				Name:    "n",
+				Image:   "busybox:latest",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "echo ok > /tmp/outputs/output"}},
+			},
+			Outputs: []Port{{Name: "output", Type: "string"}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "file-output"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "step-n1" {
+			if len(tmpl.Outputs.Parameters) != 1 || tmpl.Outputs.Parameters[0].Name != "output" {
+				t.Fatalf("outputs = %+v, want output parameter", tmpl.Outputs.Parameters)
+			}
+			if got := tmpl.Container.Args[len(tmpl.Container.Args)-1]; got != "mkdir -p /tmp/outputs && echo ok > /tmp/outputs/output" {
+				t.Fatalf("script arg = %q", got)
+			}
+			return
+		}
+	}
+	t.Fatal("step-n1 template not found")
+}
+
 func TestTranspileDefaultTTL(t *testing.T) {
 	p := &Pipeline{
 		Name: "ttl",

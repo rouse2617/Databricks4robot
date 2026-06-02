@@ -585,6 +585,9 @@ func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) err
 		run.CreatedAt = now
 	}
 	run.UpdatedAt = now
+	if run.AssetIDs == nil {
+		run.AssetIDs = []string{}
+	}
 	if run.AssetCount == 0 {
 		run.AssetCount = len(run.AssetIDs)
 	}
@@ -618,7 +621,7 @@ INSERT INTO pipeline_runs (
   created_at, updated_at, started_at, finished_at
 ) VALUES (
   $1, $2, $3, $4, $5,
-  $6, $7::jsonb, $8, $9, $10, $11, $12,
+  $6, $7::jsonb, $8, $9, $10::text[], $11, $12,
   $13, $14::jsonb, $15, $16, $17,
   $18, $19, $20, $21
 )

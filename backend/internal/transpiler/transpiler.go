@@ -105,8 +105,9 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 
 	// Build node input specs: for each node, which input params come from where
 	nodeInputs := buildInputSpecs(p)
+	outputConsumers := buildOutputConsumers(p)
 	nodeTemplates := make(map[string]string)
-	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, opts)
+	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, outputConsumers, opts)
 	if err != nil {
 		return nil, fmt.Errorf("build node templates: %w", err)
 	}
@@ -258,9 +259,66 @@ func buildInputSpecs(p *Pipeline) map[string][]inputSpec {
 	return m
 }
 
+func buildOutputConsumers(p *Pipeline) map[string]map[string]bool {
+	m := make(map[string]map[string]bool)
+	mark := func(nodeID, port string) {
+		if nodeID == "" || port == "" {
+			return
+		}
+		if m[nodeID] == nil {
+			m[nodeID] = make(map[string]bool)
+		}
+		m[nodeID][port] = true
+		m[nodeID][safeParamName(port)] = true
+	}
+	for _, edge := range p.Edges {
+		nodeID, port := edge.ResolveSource()
+		mark(nodeID, port)
+	}
+	for _, node := range p.Nodes {
+		for _, arg := range node.Component.Args {
+			refNode, refPort := splitRef(arg.From)
+			mark(refNode, refPort)
+		}
+	}
+	return m
+}
+
+func outputParamDecls(node Node, consumed map[string]bool) []wfv1.Parameter {
+	var outputParams []wfv1.Parameter
+	for _, out := range node.Outputs {
+		if !consumed[out.Name] && !consumed[safeParamName(out.Name)] && !componentWritesOutputPath(node.Component, out.Name) {
+			continue
+		}
+		outputParams = append(outputParams, wfv1.Parameter{
+			Name:      safeParamName(out.Name),
+			ValueFrom: &wfv1.ValueFrom{Path: fmt.Sprintf("/tmp/outputs/%s", out.Name)},
+		})
+	}
+	return outputParams
+}
+
+func componentWritesOutputPath(c Component, outputName string) bool {
+	path := fmt.Sprintf("/tmp/outputs/%s", outputName)
+	if strings.Contains(c.Source, path) {
+		return true
+	}
+	for _, part := range c.Command {
+		if strings.Contains(part, path) {
+			return true
+		}
+	}
+	for _, arg := range c.Args {
+		if strings.Contains(arg.Value, path) {
+			return true
+		}
+	}
+	return false
+}
+
 // buildContainerTemplate creates a Container template. Input params are name-only —
 // actual values come from DAG task arguments.
-func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Template {
+func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -318,13 +376,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 	}
 
 	// Output parameters (captured from file paths)
-	var outputParams []wfv1.Parameter
-	for _, out := range node.Outputs {
-		outputParams = append(outputParams, wfv1.Parameter{
-			Name:      safeParamName(out.Name),
-			ValueFrom: &wfv1.ValueFrom{Path: fmt.Sprintf("/tmp/outputs/%s", out.Name)},
-		})
-	}
+	outputParams := outputParamDecls(node, consumedOutputs)
 	if len(outputParams) > 0 {
 		tmpl.Outputs = wfv1.Outputs{Parameters: outputParams}
 	}
@@ -344,11 +396,9 @@ func buildContainerTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.
 	// and the container is running a shell command (sh -c).
 	// Typical case: Command=["sh"], Args=[{Value:"-c"}, {Value:"echo ... > /tmp/outputs/output"}]
 	// → containerArgs = ["-c", "echo ..."]
-	if len(outputParams) > 0 && isShellName(node.Component.Command) {
-		if len(containerArgs) >= 2 && containerArgs[0] == "-c" {
-			containerArgs[1] = "mkdir -p /tmp/outputs && " + containerArgs[1]
-		} else if len(containerArgs) == 1 {
-			containerArgs[0] = "mkdir -p /tmp/outputs && " + containerArgs[0]
+	if len(outputParams) > 0 {
+		if scriptArgIndex := shellScriptArgIndex(node.Component.Command, containerArgs); scriptArgIndex >= 0 {
+			containerArgs[scriptArgIndex] = "mkdir -p /tmp/outputs && " + containerArgs[scriptArgIndex]
 		}
 	}
 	tmpl.Container.Args = containerArgs
@@ -459,10 +509,10 @@ func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]strin
 // buildAllNodeTemplates recursively builds templates for a list of nodes.
 // For container nodes returns 1 template; for sub-graph nodes returns N+1
 // templates (1 DAG template + N leaf templates for sub-nodes).
-func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, opts *Options) ([]wfv1.Template, error) {
+func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, outputConsumers map[string]map[string]bool, opts *Options) ([]wfv1.Template, error) {
 	var all []wfv1.Template
 	for _, node := range nodes {
-		tms, err := buildNodeTemplates(node, inputs[node.ID], opts)
+		tms, err := buildNodeTemplates(node, inputs[node.ID], outputConsumers[node.ID], opts)
 		if err != nil {
 			return nil, err
 		}
@@ -473,14 +523,14 @@ func buildAllNodeTemplates(nodes []Node, inputs map[string][]inputSpec, opts *Op
 
 // buildNodeTemplates returns all templates for a single node.
 // For sub-graph nodes this recursively includes sub-node templates.
-func buildNodeTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
+func buildNodeTemplates(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) ([]wfv1.Template, error) {
 	if len(node.SubNodes) > 0 {
 		return buildSubGraphTemplates(node, inputs, opts)
 	}
 	if node.Component.Mode == "script" {
-		return []wfv1.Template{*buildScriptTemplate(node, inputs, opts)}, nil
+		return []wfv1.Template{*buildScriptTemplate(node, inputs, consumedOutputs, opts)}, nil
 	}
-	return []wfv1.Template{*buildContainerTemplate(node, inputs, opts)}, nil
+	return []wfv1.Template{*buildContainerTemplate(node, inputs, consumedOutputs, opts)}, nil
 }
 
 // buildSubGraphTemplates builds templates for a sub-graph node.
@@ -488,10 +538,11 @@ func buildNodeTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Te
 func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
 	subPipe := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
 	subInputs := buildInputSpecs(subPipe)
+	subOutputConsumers := buildOutputConsumers(subPipe)
 
 	var templates []wfv1.Template
 	for _, subNode := range node.SubNodes {
-		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], opts)
+		tms, err := buildNodeTemplates(subNode, subInputs[subNode.ID], subOutputConsumers[subNode.ID], opts)
 		if err != nil {
 			return nil, err
 		}
@@ -516,7 +567,7 @@ func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv
 //   - Argo writes source to a temp file and runs `command < tmpfile`
 //   - Stdout is automatically captured as outputs.result
 //   - File-based output params use valueFrom.path (same as container mode)
-func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Template {
+func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[string]bool, opts *Options) *wfv1.Template {
 	pullPolicy := corev1.PullIfNotPresent
 	switch node.Component.ImagePullPolicy {
 	case "Always":
@@ -599,13 +650,7 @@ func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Tem
 	}
 
 	// Output parameters (captured from file paths)
-	var outputParams []wfv1.Parameter
-	for _, out := range node.Outputs {
-		outputParams = append(outputParams, wfv1.Parameter{
-			Name:      safeParamName(out.Name),
-			ValueFrom: &wfv1.ValueFrom{Path: fmt.Sprintf("/tmp/outputs/%s", out.Name)},
-		})
-	}
+	outputParams := outputParamDecls(node, consumedOutputs)
 	if len(outputParams) > 0 {
 		tmpl.Outputs = wfv1.Outputs{Parameters: outputParams}
 		// Auto-create /tmp/outputs/ directory in the script source
@@ -670,17 +715,34 @@ func buildScriptTemplate(node Node, inputs []inputSpec, opts *Options) *wfv1.Tem
 // --- helpers ---
 
 // isShellName reports whether cmd is a single shell name (e.g. ["sh"], ["/bin/sh"]).
-// In Argo container templates, the shell interpreter is typically set as Command and
-// the -c flag + script body are in Args.
-func isShellName(cmd []string) bool {
-	if len(cmd) != 1 {
-		return false
-	}
-	switch cmd[0] {
+func isShellBinary(name string) bool {
+	switch name {
 	case "sh", "bash", "dash", "zsh", "/bin/sh", "/bin/bash", "/usr/bin/sh", "/usr/bin/bash":
 		return true
 	}
 	return false
+}
+
+// shellScriptArgIndex finds the args entry that contains the shell script body.
+// Argo container templates commonly use either Command=["sh"], Args=["-c", "..."]
+// or Command=["sh", "-c"], Args=["..."].
+func shellScriptArgIndex(cmd []string, args []string) int {
+	if len(cmd) != 1 {
+		if len(cmd) == 2 && isShellBinary(cmd[0]) && cmd[1] == "-c" && len(args) == 1 {
+			return 0
+		}
+		return -1
+	}
+	if !isShellBinary(cmd[0]) {
+		return -1
+	}
+	if len(args) >= 2 && args[0] == "-c" {
+		return 1
+	}
+	if len(args) == 1 {
+		return 0
+	}
+	return -1
 }
 
 func templateName(nodeID string) string {
