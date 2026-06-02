@@ -11,3 +11,9 @@
 - **Decision**: Defer Python SDK coverage for this endpoint in this PR; keep OpenAPI, API guide, smoke script, backend tests, and frontend typed client in scope.
 - **Alternatives**: Add `client.workflows.pod_diagnostics(...)` and SDK unit tests now.
 - **Rationale**: The current user-facing need is UI debugging inside DataBrew. SDK access is optional and can be added later if external automation needs Pod diagnostics.
+
+## 2026-06-02 — Preserve workflow/node lookup before Kubernetes availability checks
+- **Context**: PR #90 review suggested checking `podClient == nil` before loading the Argo workflow to avoid an unnecessary Argo request.
+- **Decision**: Keep the existing order: validate workflow and node first, then return `K8S_UNAVAILABLE` only after a pod-backed node is resolved.
+- **Alternatives**: Return `K8S_UNAVAILABLE` immediately whenever the Kubernetes client is not configured.
+- **Rationale**: The endpoint contract is more useful when missing workflows/nodes return `WORKFLOW_NOT_FOUND` / `NODE_NOT_FOUND` even in local or degraded Kubernetes setups. `TestGetNodePodDiagnostics_WorkflowNotFoundBeforeKubernetesAvailability` locks this behavior.

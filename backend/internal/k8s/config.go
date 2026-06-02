@@ -32,10 +32,6 @@ func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 		return clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	}
 
-	if config, err := rest.InClusterConfig(); err == nil {
-		return config, nil
-	}
-
 	token := os.Getenv("K8S_BEARER_TOKEN")
 	endpoint := os.Getenv("K8S_API_ENDPOINT")
 	if token != "" && endpoint != "" {
@@ -46,6 +42,10 @@ func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 				CAFile: os.Getenv("K8S_CA_FILE"),
 			},
 		}, nil
+	}
+
+	if config, err := rest.InClusterConfig(); err == nil {
+		return config, nil
 	}
 
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()

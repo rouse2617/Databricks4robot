@@ -24,7 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
 	WorkflowDetail,
 	WorkflowNodeContainer,
@@ -287,8 +287,9 @@ function PodTab({
 	const [podDiag, setPodDiag] = useState<NodePodDiagnostics | null>(null);
 	const [podDiagLoading, setPodDiagLoading] = useState(false);
 	const [podDiagError, setPodDiagError] = useState<string | null>(null);
+	const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-	const loadPodDiagnostics = useCallback(() => {
+	useEffect(() => {
 		if (!workflowName || !node.id) return undefined;
 		let cancelled = false;
 		setPodDiagLoading(true);
@@ -300,7 +301,7 @@ function PodTab({
 			.catch((err) => {
 				if (!cancelled) {
 					setPodDiag(null);
-					setPodDiagError(String(err));
+					setPodDiagError(err instanceof Error ? err.message : String(err));
 				}
 			})
 			.finally(() => {
@@ -309,9 +310,7 @@ function PodTab({
 		return () => {
 			cancelled = true;
 		};
-	}, [workflowName, node.id]);
-
-	useEffect(() => loadPodDiagnostics(), [loadPodDiagnostics]);
+	}, [workflowName, node.id, refreshTrigger]);
 
 	const cluster = podDiag?.cluster ?? node.cluster;
 	const namespace = podDiag?.namespace ?? node.namespace;
@@ -347,7 +346,7 @@ function PodTab({
 							icon={<ReloadOutlined />}
 							loading={podDiagLoading}
 							onClick={() => {
-								loadPodDiagnostics();
+								setRefreshTrigger((prev) => prev + 1);
 							}}
 						>
 							重试

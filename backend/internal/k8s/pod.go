@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 
 	corev1 "k8s.io/api/core/v1"
@@ -116,24 +117,25 @@ func (c *podClient) GetPodDiagnostics(ctx context.Context, namespace, podName st
 		FieldSelector: fmt.Sprintf("involvedObject.kind=Pod,involvedObject.name=%s", podName),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list events for pod %s/%s: %w", namespace, podName, err)
-	}
-	for _, ev := range events.Items {
-		item := EventInfo{
-			Type:    ev.Type,
-			Reason:  ev.Reason,
-			Message: ev.Message,
-			Count:   ev.Count,
+		slog.Warn("failed to list events for pod diagnostics", "namespace", namespace, "podName", podName, "err", err)
+	} else {
+		for _, ev := range events.Items {
+			item := EventInfo{
+				Type:    ev.Type,
+				Reason:  ev.Reason,
+				Message: ev.Message,
+				Count:   ev.Count,
+			}
+			if !ev.FirstTimestamp.IsZero() {
+				t := ev.FirstTimestamp.Time.UTC().Format("2006-01-02T15:04:05Z")
+				item.FirstTimestamp = &t
+			}
+			if !ev.LastTimestamp.IsZero() {
+				t := ev.LastTimestamp.Time.UTC().Format("2006-01-02T15:04:05Z")
+				item.LastTimestamp = &t
+			}
+			diag.Events = append(diag.Events, item)
 		}
-		if !ev.FirstTimestamp.IsZero() {
-			t := ev.FirstTimestamp.Time.UTC().Format("2006-01-02T15:04:05Z")
-			item.FirstTimestamp = &t
-		}
-		if !ev.LastTimestamp.IsZero() {
-			t := ev.LastTimestamp.Time.UTC().Format("2006-01-02T15:04:05Z")
-			item.LastTimestamp = &t
-		}
-		diag.Events = append(diag.Events, item)
 	}
 
 	return diag, nil
