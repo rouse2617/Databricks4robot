@@ -1240,16 +1240,16 @@
 }
 
 .pipeline-tab-content {
-	margin: 0 auto;
+	margin: 0;
 	width: 100%;
 }
 
 .pipeline-tab-content--panel {
-	max-width: 960px;
+	max-width: none;
 }
 
 .pipeline-tab-content--management {
-	max-width: 1280px;
+	max-width: none;
 }
 
 .pipeline-tab-content--management .deploy-panel {
@@ -1288,7 +1288,7 @@
 	width: 100%;
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: 12px;
 }
 
 .pipeline-execution-filters {

@@ -47,3 +47,15 @@
 - **Decision**: Commit and push this frontend iteration to the existing PR before Cloud Run frontend dev deployment. Record local verification and the deploy gap in the PR comment.
 - **Alternatives**: Build and deploy the frontend dev image before pushing.
 - **Rationale**: Current user instruction prioritizes getting the PR update ready for review/testing; the change has local MCP verification and does not add backend API calls beyond removing a known 404 stream probe.
+
+## 2026-06-02 — Saved pipelines versus execution records
+- **Context**: The saved-pipeline management tab displayed its own `运行历史` list while the top-level `执行记录` tab already owned execution search, pagination, detail, retry/delete confirmations, and node/debug flows. This created two places for the same run concept and made the saved-pipeline page visually dense.
+- **Decision**: Keep the full saved-pipeline tab focused on template CRUD and run submission. Route run history and operational actions through the execution records tab, with a toolbar shortcut from saved pipelines.
+- **Alternatives**: Rename the embedded list, or keep a short recent-history section under saved pipelines.
+- **Rationale**: A single execution surface avoids conflicting labels and makes the page model match the product split: component library, pipeline templates, execution records, and run targets.
+
+## 2026-06-02 — Frontend dev deploy intentionally skipped
+- **Context**: The pipeline tab-width UX fix touches frontend runtime code. The user explicitly said they will handle deployment and asked for local frontend testing only.
+- **Decision**: Do not deploy Cloud Run frontend dev in this pass. Verify locally with Chrome DevTools MCP against `http://localhost:5176`, then push and open the PR.
+- **Alternatives**: Deploy frontend dev immediately after pushing the branch.
+- **Rationale**: Current user instruction takes precedence, and the local MCP checks directly verify the affected `/pipeline` tabs before handoff.

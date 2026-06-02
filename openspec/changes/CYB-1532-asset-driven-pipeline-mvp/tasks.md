@@ -36,6 +36,9 @@
 - [x] [Frontend] Add component authoring hints for required output files when outputs are declared.
 - [x] [backend/frontend] Mark active deployments as `Expired` when the Argo Workflow CR has been TTL-cleaned, and allow retry.
 - [x] [Frontend] Support legacy `?tab=templates` links by routing them to the pipeline management tab.
+- [x] [Frontend] Move run history out of the saved-pipeline management tab and keep execution operations in the execution records tab.
+- [x] [Frontend] Expand the execution records tab to use the full desktop work area instead of a narrow centered panel.
+- [x] [Frontend] Fix first-drop reliability by allowing the canvas wrapper to accept component drag/drop and using a matching copy drop effect.
 - [ ] [follow-up, migration approval required] Persist first-class `execution_targets`, `pipeline_runs`, and `pipeline_run_nodes` tables instead of compatibility mapping over `pipeline_deployments`.
 - [ ] [follow-up] Add first-class asset existence validation once the run API owns asset batch submission end-to-end.
 - [ ] [follow-up] Replace whole-log fetch with bounded tail/pagination/streaming for large pod logs.
@@ -65,6 +68,12 @@
 - `cd Frontend && npm run test -- --run src/pages/PipelinePage.test.tsx src/components/pipeline/DeployPanel.test.tsx` — PASS, 41 tests after tab alias fix
 - `cd backend && go test ./...` — PASS after follow-up fixes
 - `cd Frontend && npm run lint` — PASS with 2 existing warnings (`WorkflowYamlViewer.test.tsx`, `WorkflowDagNode.css`)
+- `cd Frontend && npm run test -- --run src/components/pipeline/DeployPanel.test.tsx src/pages/PipelinePage.test.tsx` — PASS, 39 tests after run-history/tab-width UX fix
+- `cd Frontend && npm run build` — PASS with existing large chunk warning after run-history/tab-width UX fix
+- Chrome DevTools MCP on local `http://localhost:5176/pipeline?tab=pipelines` — PASS, saved-pipeline tab no longer renders `运行历史`; the toolbar `执行记录` button navigates to the execution records tab.
+- Chrome DevTools MCP on local `http://localhost:5176/pipeline?tab=executions` — PASS, execution content uses the full desktop work area (`3180px` at `3440px` viewport) instead of the prior centered narrow panel.
+- Chrome DevTools MCP on local `http://localhost:5176/pipeline?tab=pipelines`, `?tab=components`, and `?tab=executions` — PASS, management tab content now uses the full main work area (`3180px` at `3440px` viewport) instead of the centered `1280px` panel.
+- Chrome DevTools MCP on local `http://localhost:5176/pipeline` — PASS, simulated component drag/drop added three nodes, toolbar deploy became enabled, `POST /api/v1/pipelines` returned `201`, and the saved template appeared in the pipeline management tab.
 
 ### Dev deploy record — 2026-06-02
 | Service | Image tag | Cloud Run revision | URL |

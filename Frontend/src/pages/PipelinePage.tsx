@@ -271,12 +271,13 @@ function PipelineCanvas() {
 
 	const onDragOver = useCallback((event: DragEvent) => {
 		event.preventDefault();
-		event.dataTransfer.dropEffect = "move";
+		event.dataTransfer.dropEffect = "copy";
 	}, []);
 
 	const onDrop = useCallback(
 		(event: DragEvent) => {
 			event.preventDefault();
+			event.stopPropagation();
 			const componentId =
 				event.dataTransfer.getData("application/databrew-component-id") ||
 				event.dataTransfer.getData("text/plain");
@@ -781,6 +782,8 @@ function PipelineCanvas() {
 						.join(" ")}
 					ref={wrapperRef}
 					style={{ flex: 1, height: "100%", position: "relative" }}
+					onDrop={onDrop}
+					onDragOver={onDragOver}
 					role="application"
 					aria-label="流水线画布"
 				>
@@ -1355,7 +1358,7 @@ function PipelineCanvas() {
 										onClick={() => {
 											closeDeployDialog();
 											navigate(
-												`/workflows/${deployDialog.result?.workflowName}`,
+												`/pipeline/executions/${deployDialog.result?.workflowName}`,
 											);
 										}}
 									>
@@ -1461,7 +1464,7 @@ export default function PipelinePage() {
 						key: "executions",
 						label: tabLabel("执行记录", "查看和管理流水线运行"),
 						children: (
-							<div className="pipeline-tab-content pipeline-tab-content--panel">
+							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--executions">
 								<WorkflowExecutionList active={activeTab === "executions"} />
 							</div>
 						),

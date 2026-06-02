@@ -367,6 +367,59 @@ describe("PipelinePage", () => {
 		expect(screen.getByText("拖入组件开始设计")).toBeInTheDocument();
 	});
 
+	it("adds a node when a palette component is dropped on the canvas wrapper", async () => {
+		mockListComponents.mockResolvedValueOnce({
+			items: [
+				{
+					id: "comp-drag",
+					name: "Drag Component",
+					type: "container",
+					image: "busybox:latest",
+					source: "custom",
+					createdAt: "2026-06-02T00:00:00Z",
+					updatedAt: "2026-06-02T00:00:00Z",
+				},
+			],
+		});
+
+		renderPage();
+
+		const component = await screen.findByRole("button", {
+			name: /拖入组件 Drag Component/,
+		});
+		const canvas = screen.getByRole("application", { name: "流水线画布" });
+		const dataTransfer = {
+			effectAllowed: "",
+			dropEffect: "",
+			data: new Map<string, string>(),
+			setData(type: string, value: string) {
+				this.data.set(type, value);
+			},
+			getData(type: string) {
+				return this.data.get(type) ?? "";
+			},
+		};
+
+		fireEvent.dragStart(component, { dataTransfer });
+		fireEvent.dragOver(canvas, {
+			dataTransfer,
+			clientX: 500,
+			clientY: 360,
+		});
+		fireEvent.drop(canvas, {
+			dataTransfer,
+			clientX: 500,
+			clientY: 360,
+		});
+
+		await waitFor(() => {
+			expect(
+				screen.getByRole("button", { name: /play-circle/i }),
+			).not.toBeDisabled();
+		});
+		expect(dataTransfer.dropEffect).toBe("copy");
+	});
+
 	it("opens deploy modal with title", async () => {
 		renderPage();
 		await importOneNodePipeline("with-nodes");
