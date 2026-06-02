@@ -314,6 +314,16 @@ export function WorkflowExecutionList({
 		setPage(1);
 	}, [draftDateRange, draftLabelFilter, draftNameSearch, draftStatusFilter]);
 
+	const applyStatusCardFilter = useCallback(
+		(status: (typeof WORKFLOW_PHASES)[number]) => {
+			const nextStatus = statusFilter === status ? undefined : status;
+			setStatusFilter(nextStatus);
+			setDraftStatusFilter(nextStatus);
+			setPage(1);
+		},
+		[statusFilter],
+	);
+
 	const resetFilters = useCallback(() => {
 		setDraftStatusFilter(undefined);
 		setDraftNameSearch("");
@@ -632,11 +642,23 @@ export function WorkflowExecutionList({
 					? WORKFLOW_PHASES.map((status) => <Card key={status} loading />)
 					: WORKFLOW_PHASES.map((status) => {
 							const accentColor = STATUS_ACCENT_COLORS[status];
+							const isActive = statusFilter === status;
 
 							return (
 								<Card
 									key={status}
+									role="button"
+									tabIndex={0}
+									aria-pressed={isActive}
+									aria-label={`筛选 ${status} 执行记录`}
 									size="small"
+									onClick={() => applyStatusCardFilter(status)}
+									onKeyDown={(event) => {
+										if (event.key === "Enter" || event.key === " ") {
+											event.preventDefault();
+											applyStatusCardFilter(status);
+										}
+									}}
 									styles={{
 										body: {
 											alignItems: "center",
@@ -646,8 +668,13 @@ export function WorkflowExecutionList({
 										},
 									}}
 									style={{
+										background: isActive ? `color-mix(in srgb, ${accentColor} 6%, transparent)` : undefined,
 										borderColor: accentColor,
 										borderLeft: `4px solid ${accentColor}`,
+										boxShadow: isActive
+											? `0 0 0 2px color-mix(in srgb, ${accentColor} 20%, transparent)`
+											: undefined,
+										cursor: "pointer",
 									}}
 								>
 									<span style={{ color: accentColor, fontSize: 18 }}>
