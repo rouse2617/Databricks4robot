@@ -1270,7 +1270,7 @@ function PipelineCanvas() {
 										gap: 8,
 									}}
 								>
-									<span>{nodes.length} 个节点</span>
+									<span>{nodes.length} 个步骤</span>
 									<span style={{ fontSize: 3, color: "#cbd5e1" }}>•</span>
 									<span>{edges.length} 条连线</span>
 								</div>
@@ -1451,7 +1451,7 @@ function PipelineCanvas() {
 										marginTop: 8,
 									}}
 								>
-									<span>{deployDialog.result.nodeCount} 个节点</span>
+									<span>{deployDialog.result.nodeCount} 个步骤</span>
 									<span style={{ fontSize: 3, color: "#cbd5e1" }}>•</span>
 									<span>
 										{new Date(deployDialog.result.createdAt).toLocaleString()}

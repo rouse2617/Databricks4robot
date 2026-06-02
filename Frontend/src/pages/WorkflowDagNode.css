@@ -37,8 +37,8 @@
 	opacity: 0.28;
 }
 
-.workflow-dag-node--running .workflow-dag-node__accent {
-	animation: workflow-dag-node-pulse 1.8s ease-in-out infinite;
+.workflow-dag-node--failed {
+	border-color: rgba(239, 68, 68, 0.45);
 }
 
 @keyframes workflow-dag-node-pulse {
@@ -60,13 +60,17 @@
 	background: var(--workflow-dag-accent, #64748b);
 }
 
+.workflow-dag-node--running .workflow-dag-node__accent {
+	animation: workflow-dag-node-pulse 1.8s ease-in-out infinite;
+}
+
 .workflow-dag-node__body {
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
 	height: 100%;
-	padding: 10px 14px 10px 16px;
-	gap: 8px;
+	padding: 8px 10px 8px 16px;
+	gap: 6px;
 }
 
 .workflow-dag-node__header {
@@ -118,6 +122,65 @@
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+.workflow-dag-node__message {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	color: #b91c1c;
+	font-size: 11px;
+	line-height: 1.25;
+	background: #fef2f2;
+	border: 1px solid #fecaca;
+	border-radius: 5px;
+	padding: 3px 6px;
+}
+
+.workflow-dag-node__message span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.workflow-dag-node__actions {
+	position: absolute;
+	right: 6px;
+	bottom: 5px;
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	opacity: 0;
+	transform: translateY(2px);
+	transition:
+		opacity 0.15s ease,
+		transform 0.15s ease;
+}
+
+.workflow-dag-node:hover .workflow-dag-node__actions,
+.workflow-dag-node--selected .workflow-dag-node__actions,
+.workflow-dag-node--failed .workflow-dag-node__actions {
+	opacity: 1;
+	transform: translateY(0);
+}
+
+.workflow-dag-node__actions .ant-btn {
+	width: 22px;
+	height: 22px;
+	min-width: 22px;
+	padding: 0;
+	color: #475569;
+	background: rgba(255, 255, 255, 0.92);
+	border: 1px solid #e2e8f0;
+	font-size: 11px;
+}
+
+.workflow-dag-node__actions .ant-btn:hover {
+	color: #2563eb;
+	border-color: #bfdbfe;
+	background: #eff6ff;
 }
 
 .workflow-dag-node__handle {

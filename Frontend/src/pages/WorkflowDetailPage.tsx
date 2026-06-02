@@ -25,7 +25,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import type { WorkflowNodeStatus } from "../api/workflowApi";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { LinkifiedText } from "../components/common/LinkifiedText";
-import { WorkflowNodeDetailPanel } from "../components/pipeline/WorkflowNodeDetailPanel";
+import {
+	WorkflowNodeDetailPanel,
+	type WorkflowNodeDetailTabKey,
+} from "../components/pipeline/WorkflowNodeDetailPanel";
 import { STATUS_COLORS } from "../lib/constants";
 import {
 	getAvailableWorkflowOperationConfigs,
@@ -35,6 +38,7 @@ import {
 } from "../lib/workflow-operations";
 import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 import { useWorkflowDetail } from "./useWorkflowDetail";
+import type { WorkflowDagNodeAction } from "./WorkflowDagNode";
 import { WorkflowDagView } from "./WorkflowDagView";
 import { WorkflowTimelineView } from "./WorkflowTimelineView";
 import {
@@ -295,6 +299,8 @@ export default function WorkflowDetailPage({
 		useState<WorkflowOperationKey | null>(null);
 	const [confirmOperation, setConfirmOperation] =
 		useState<WorkflowOperationConfig | null>(null);
+	const [nodeDetailTab, setNodeDetailTab] =
+		useState<WorkflowNodeDetailTabKey>("summary");
 
 	const {
 		workflow,
@@ -361,6 +367,31 @@ export default function WorkflowDetailPage({
 		setShowNodeLogs(false);
 		selectNode(null);
 	}, [selectNode]);
+
+	const handleSelectNode = useCallback(
+		(node: WorkflowNodeStatus | null) => {
+			setNodeDetailTab("summary");
+			selectNode(node);
+		},
+		[selectNode],
+	);
+
+	const handleNodeAction = useCallback(
+		(node: WorkflowNodeStatus, action: WorkflowDagNodeAction) => {
+			const tabByAction: Record<
+				WorkflowDagNodeAction,
+				WorkflowNodeDetailTabKey
+			> = {
+				summary: "summary",
+				logs: "logs",
+				runtime: "runtime",
+				io: "io",
+			};
+			setNodeDetailTab(tabByAction[action]);
+			selectNode(node);
+		},
+		[selectNode],
+	);
 
 	const handleShowNodeLogs = useCallback(() => {
 		if (!selectedNode) {
@@ -547,7 +578,8 @@ export default function WorkflowDetailPage({
 						nodes={workflow.nodes}
 						workflowEdges={workflow.edges}
 						selectedNodeId={selectedNode?.id ?? null}
-						onNodeSelect={selectNode}
+						onNodeSelect={handleSelectNode}
+						onNodeAction={handleNodeAction}
 						emptyMessage={workflow.message}
 						workflowStatus={workflow.status}
 					/>
@@ -555,7 +587,7 @@ export default function WorkflowDetailPage({
 					<WorkflowTimelineView
 						nodes={workflow.nodes}
 						selectedNodeId={selectedNode?.id ?? null}
-						onNodeSelect={selectNode}
+						onNodeSelect={handleSelectNode}
 					/>
 				)}
 			</div>
@@ -569,6 +601,8 @@ export default function WorkflowDetailPage({
 				canRetryWorkflow={canRetryWorkflow}
 				onRetryWorkflow={handleRetryWorkflow}
 				onShowLogs={handleShowNodeLogs}
+				activeTab={nodeDetailTab}
+				onActiveTabChange={setNodeDetailTab}
 			/>
 
 			<Modal

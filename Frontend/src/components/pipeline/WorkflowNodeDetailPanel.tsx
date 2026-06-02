@@ -1,10 +1,8 @@
 import {
 	CloudServerOutlined,
-	DollarOutlined,
 	FileTextOutlined,
 	LockOutlined,
 	ReloadOutlined,
-	ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
 	Alert,
@@ -25,6 +23,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
+import type React from "react";
 import { useMemo } from "react";
 import type {
 	WorkflowDetail,
@@ -44,6 +43,7 @@ import { DurationPanel } from "../common/DurationPanel";
 
 type KeyValue = { name: string; value?: string };
 type Artifact = { name: string; path?: string };
+export type WorkflowNodeDetailTabKey = "summary" | "logs" | "runtime" | "io";
 
 const keyValueColumns: ColumnsType<{
 	key: string;
@@ -520,6 +520,96 @@ function DebugTab({ node }: { node: WorkflowNodeStatus }) {
 	);
 }
 
+function LogsTab({
+	node,
+	onShowLogs,
+}: {
+	node: WorkflowNodeStatus;
+	onShowLogs: () => void;
+}) {
+	return (
+		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<Alert
+				type={
+					node.phase === "Failed" || node.phase === "Error" ? "error" : "info"
+				}
+				showIcon
+				message={
+					node.phase === "Failed" || node.phase === "Error"
+						? "优先查看该步骤日志"
+						: "查看该步骤日志"
+				}
+				description={
+					node.message ||
+					"日志会按当前步骤过滤展示；大日志会限制渲染尾部内容，后续可接入 tail、分页和流式 follow。"
+				}
+				action={
+					<Button type="primary" size="small" onClick={onShowLogs}>
+						打开日志查看器
+					</Button>
+				}
+			/>
+			<Descriptions size="small" column={1} layout="vertical" bordered>
+				<Descriptions.Item label="步骤">
+					{node.displayName || node.name}
+				</Descriptions.Item>
+				<Descriptions.Item label="Pod">
+					{getWorkflowNodePodName(node) || "—"}
+				</Descriptions.Item>
+				<Descriptions.Item label="状态">
+					<Tag color={STATUS_COLORS[node.phase] || "default"}>{node.phase}</Tag>
+				</Descriptions.Item>
+			</Descriptions>
+		</Space>
+	);
+}
+
+function RuntimeSection({
+	title,
+	children,
+}: {
+	title: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<section>
+			<div style={{ marginBottom: 8, fontWeight: 600 }}>{title}</div>
+			{children}
+		</section>
+	);
+}
+
+function RuntimeTab({ node }: { node: WorkflowNodeStatus }) {
+	return (
+		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<RuntimeSection title="Pod 与事件">
+				<PodTab node={node} />
+			</RuntimeSection>
+			<RuntimeSection title="容器">
+				<ContainersTab node={node} />
+			</RuntimeSection>
+			<RuntimeSection title="监控">
+				<MonitoringTab metrics={node.metrics} />
+			</RuntimeSection>
+			<RuntimeSection title="计费">
+				<BillingTab cost={node.cost} />
+			</RuntimeSection>
+			<RuntimeSection title="调试">
+				<DebugTab node={node} />
+			</RuntimeSection>
+		</Space>
+	);
+}
+
+function InputOutputTab({ node }: { node: WorkflowNodeStatus }) {
+	return (
+		<Space direction="vertical" style={{ width: "100%" }}>
+			<InputsTab node={node} />
+			<OutputsTab node={node} />
+		</Space>
+	);
+}
+
 function InputsTab({ node }: { node: WorkflowNodeStatus }) {
 	const parameters = formatKvRows(node.inputs?.parameters);
 	const artifacts = formatArtifactRows(node.inputs?.artifacts);
@@ -709,6 +799,8 @@ export function WorkflowNodeDetailPanel({
 	onRetryWorkflow,
 	canRetryWorkflow,
 	onShowLogs,
+	activeTab = "summary",
+	onActiveTabChange,
 }: {
 	node: WorkflowNodeStatus | null;
 	workflow: WorkflowDetail | null;
@@ -717,6 +809,8 @@ export function WorkflowNodeDetailPanel({
 	onRetryWorkflow?: () => void;
 	canRetryWorkflow?: boolean;
 	onShowLogs: () => void;
+	activeTab?: WorkflowNodeDetailTabKey;
+	onActiveTabChange?: (key: WorkflowNodeDetailTabKey) => void;
 }) {
 	if (!node || !workflow) return null;
 
@@ -750,6 +844,9 @@ export function WorkflowNodeDetailPanel({
 		>
 			<Tabs
 				type="card"
+				activeKey={onActiveTabChange ? activeTab : undefined}
+				defaultActiveKey={activeTab}
+				onChange={(key) => onActiveTabChange?.(key as WorkflowNodeDetailTabKey)}
 				items={[
 					{
 						key: "summary",
@@ -757,51 +854,27 @@ export function WorkflowNodeDetailPanel({
 						children: <SummaryTab node={node} workflow={workflow} />,
 					},
 					{
-						key: "containers",
-						label: "容器",
-						children: <ContainersTab node={node} />,
-					},
-					{
-						key: "pod",
+						key: "logs",
 						label: (
 							<>
-								<CloudServerOutlined /> Pod
+								<FileTextOutlined /> 日志
 							</>
 						),
-						children: <PodTab node={node} />,
+						children: <LogsTab node={node} onShowLogs={onShowLogs} />,
 					},
 					{
-						key: "monitoring",
-						label: "监控",
-						children: <MonitoringTab metrics={node.metrics} />,
-					},
-					{
-						key: "billing",
+						key: "runtime",
 						label: (
 							<>
-								<DollarOutlined /> 计费
+								<CloudServerOutlined /> 运行环境
 							</>
 						),
-						children: <BillingTab cost={node.cost} />,
+						children: <RuntimeTab node={node} />,
 					},
 					{
-						key: "debug",
-						label: (
-							<>
-								<ThunderboltOutlined /> 调试
-							</>
-						),
-						children: <DebugTab node={node} />,
-					},
-					{
-						key: "inputs-outputs",
+						key: "io",
 						label: "输入/输出",
-						children: (
-							<Space direction="vertical" style={{ width: "100%" }}>
-								<InputsTab node={node} />
-								<OutputsTab node={node} />
-							</Space>
-						),
+						children: <InputOutputTab node={node} />,
 					},
 				]}
 			/>

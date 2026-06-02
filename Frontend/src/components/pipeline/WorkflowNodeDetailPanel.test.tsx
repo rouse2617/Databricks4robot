@@ -88,12 +88,10 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		expect(screen.getByText("概览")).toBeTruthy();
-		expect(screen.getByText("容器")).toBeTruthy();
-		expect(screen.getByRole("tab", { name: /Pod/ })).toBeTruthy();
-		expect(screen.getByText("监控")).toBeTruthy();
-		expect(screen.getByText("计费")).toBeTruthy();
-		expect(screen.getByText("调试")).toBeTruthy();
+		expect(screen.getByRole("tab", { name: /日志/ })).toBeTruthy();
+		expect(screen.getByRole("tab", { name: /运行环境/ })).toBeTruthy();
 		expect(screen.getByText("输入/输出")).toBeTruthy();
+		expect(screen.getAllByRole("tab")).toHaveLength(4);
 	});
 
 	it("shows node phase tag", () => {
@@ -140,7 +138,7 @@ describe("WorkflowNodeDetailPanel", () => {
 		expect(screen.getByText("重试工作流")).toBeTruthy();
 	});
 
-	it("renders containers tab", () => {
+	it("renders containers section in runtime tab", () => {
 		render(
 			<WorkflowNodeDetailPanel
 				node={baseNode}
@@ -150,11 +148,11 @@ describe("WorkflowNodeDetailPanel", () => {
 				onShowLogs={vi.fn()}
 			/>,
 		);
-		fireEvent.click(screen.getByText("容器"));
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
 		expect(screen.getByText("暂无容器详情")).toBeTruthy();
 	});
 
-	it("renders containers table when data present", () => {
+	it("renders containers table when runtime data present", () => {
 		const node = {
 			...baseNode,
 			containers: [
@@ -175,7 +173,7 @@ describe("WorkflowNodeDetailPanel", () => {
 				onShowLogs={vi.fn()}
 			/>,
 		);
-		fireEvent.click(screen.getByText("容器"));
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
 		expect(screen.getByText("main")).toBeTruthy();
 		expect(screen.getByText("python:3.11")).toBeTruthy();
 	});
@@ -218,7 +216,7 @@ describe("WorkflowNodeDetailPanel", () => {
 		expect(screen.getByText(/命中=是/)).toBeTruthy();
 	});
 
-	it("renders pod diagnostics placeholders", () => {
+	it("renders runtime diagnostics placeholders", () => {
 		render(
 			<WorkflowNodeDetailPanel
 				node={{
@@ -243,7 +241,7 @@ describe("WorkflowNodeDetailPanel", () => {
 				onShowLogs={vi.fn()}
 			/>,
 		);
-		fireEvent.click(screen.getByRole("tab", { name: /Pod/ }));
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
 		expect(screen.getByText("gke-dev")).toBeTruthy();
 		expect(screen.getByText("cyber-databrew-dev")).toBeTruthy();
 		expect(screen.getByText("BackOff")).toBeTruthy();
@@ -276,11 +274,10 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 
-		fireEvent.click(screen.getByText("监控"));
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
 		expect(screen.getByText("监控快照")).toBeTruthy();
 		expect(screen.getAllByText("用量 50%").length).toBeGreaterThan(0);
 
-		fireEvent.click(screen.getByText("计费"));
 		expect(screen.getByText("计费快照")).toBeTruthy();
 		expect(screen.getByText("$0.1200")).toBeTruthy();
 	});
@@ -295,9 +292,24 @@ describe("WorkflowNodeDetailPanel", () => {
 				onShowLogs={vi.fn()}
 			/>,
 		);
-		fireEvent.click(screen.getByText("调试"));
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
 		expect(screen.getByText("Exec 接口待接入")).toBeTruthy();
 		expect(screen.getByText("等待后端 WebSocket exec 能力接入")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "pwd" })).toBeDisabled();
+	});
+
+	it("opens the requested compact tab", () => {
+		render(
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+				activeTab="logs"
+			/>,
+		);
+		expect(screen.getByText("查看该步骤日志")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "打开日志查看器" })).toBeTruthy();
 	});
 });

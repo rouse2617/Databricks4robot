@@ -111,7 +111,7 @@ function TemplateCard({
 						{template.versionCount && template.versionCount > 1 ? (
 							<span>{template.versionCount} 个版本</span>
 						) : null}
-						<span>{template.nodeCount} 个节点</span>
+						<span>{template.nodeCount} 个步骤</span>
 						<span className="dot">•</span>
 						<span>{new Date(template.createdAt).toLocaleString()}</span>
 					</div>
@@ -121,7 +121,7 @@ function TemplateCard({
 						{template.versionCount && template.versionCount > 1 ? (
 							<span>{template.versionCount} 版</span>
 						) : null}
-						<span>{template.nodeCount} 个节点</span>
+						<span>{template.nodeCount} 个步骤</span>
 						<span className="dot">•</span>
 						<span>{new Date(template.createdAt).toLocaleDateString()}</span>
 					</div>
@@ -673,7 +673,7 @@ export function DeployPanel({
 						style={{ width: "100%", marginBottom: 12 }}
 						options={deployVersions.map((version) => ({
 							value: version.version,
-							label: `v${version.version} · ${version.nodeCount} 个节点 · ${new Date(
+							label: `版本 v${version.version} · ${version.nodeCount} 个步骤 · 保存于 ${new Date(
 								version.createdAt,
 							).toLocaleString()}`,
 						}))}

@@ -435,7 +435,7 @@ describe("PipelinePage", () => {
 		renderPage();
 		await importOneNodePipeline("with-nodes");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
-		expect(screen.getByText("1 个节点")).toBeInTheDocument();
+		expect(screen.getByText("1 个步骤")).toBeInTheDocument();
 	});
 
 	it("deploys pipeline with nodes", async () => {
@@ -451,7 +451,7 @@ describe("PipelinePage", () => {
 		// Open deploy modal
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 		await waitFor(() => {
-			expect(screen.getByText("1 个节点")).toBeInTheDocument();
+			expect(screen.getByText("1 个步骤")).toBeInTheDocument();
 		});
 
 		// Change workflow name

@@ -25,11 +25,12 @@ import "@xyflow/react/dist/style.css";
 import "./WorkflowDagView.css";
 import type { WorkflowDagEdge, WorkflowNodeStatus } from "../api/workflowApi";
 import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
+import type { WorkflowDagNodeAction } from "./WorkflowDagNode";
 import { WorkflowDagNode, type WorkflowDagNodeData } from "./WorkflowDagNode";
 
 const DISPLAYABLE_NODE_TYPES = new Set(["pod", "template"]);
 const DAG_NODE_WIDTH = 240;
-const DAG_NODE_HEIGHT = 92;
+const DAG_NODE_HEIGHT = 112;
 const DAG_RANK_DIR = "LR" as const;
 const DAG_NODE_GAP = 72;
 const DAG_FIT_MIN_ZOOM = 0.72;
@@ -106,6 +107,10 @@ export function buildDagElements(
 	workflowEdges: WorkflowDagEdge[] | undefined,
 	selectedNodeId: string | null,
 	nodeSearch: string,
+	onNodeAction?: (
+		node: WorkflowNodeStatus,
+		action: WorkflowDagNodeAction,
+	) => void,
 ): {
 	nodes: WorkflowDagNodeType[];
 	edges: RFEdge[];
@@ -232,6 +237,7 @@ export function buildDagElements(
 				selected: isSelected,
 				dimmed,
 				progressPercent,
+				onAction: onNodeAction,
 			},
 			sourcePosition: Position.Right,
 			targetPosition: Position.Left,
@@ -246,6 +252,10 @@ interface WorkflowDagViewProps {
 	workflowEdges?: WorkflowDagEdge[];
 	selectedNodeId: string | null;
 	onNodeSelect: (node: WorkflowNodeStatus | null) => void;
+	onNodeAction?: (
+		node: WorkflowNodeStatus,
+		action: WorkflowDagNodeAction,
+	) => void;
 	emptyMessage?: string;
 	workflowStatus?: string;
 }
@@ -274,6 +284,7 @@ function WorkflowDagViewInner({
 	workflowEdges,
 	selectedNodeId,
 	onNodeSelect,
+	onNodeAction,
 	emptyMessage,
 	workflowStatus,
 }: WorkflowDagViewProps): React.JSX.Element {
@@ -289,10 +300,19 @@ function WorkflowDagViewInner({
 			workflowEdges,
 			selectedNodeId,
 			nodeSearch,
+			onNodeAction,
 		);
 		setNodes(nextNodes);
 		setEdges(nextEdges);
-	}, [rawNodes, workflowEdges, selectedNodeId, nodeSearch, setNodes, setEdges]);
+	}, [
+		rawNodes,
+		workflowEdges,
+		selectedNodeId,
+		nodeSearch,
+		onNodeAction,
+		setNodes,
+		setEdges,
+	]);
 
 	const onNodeClick = useCallback(
 		(_: MouseEvent, node: WorkflowDagNodeType) => {
