@@ -39,6 +39,7 @@
 - [x] [Frontend] Move run history out of the saved-pipeline management tab and keep execution operations in the execution records tab.
 - [x] [Frontend] Expand the execution records tab to use the full desktop work area instead of a narrow centered panel.
 - [x] [Frontend] Fix first-drop reliability by allowing the canvas wrapper to accept component drag/drop and using a matching copy drop effect.
+- [x] [Frontend] Add select-all and bulk delete controls for components, saved pipelines, and execution records.
 - [ ] [follow-up, migration approval required] Persist first-class `execution_targets`, `pipeline_runs`, and `pipeline_run_nodes` tables instead of compatibility mapping over `pipeline_deployments`.
 - [ ] [follow-up] Add first-class asset existence validation once the run API owns asset batch submission end-to-end.
 - [ ] [follow-up] Replace whole-log fetch with bounded tail/pagination/streaming for large pod logs.
@@ -74,6 +75,7 @@
 - Chrome DevTools MCP on local `http://localhost:5176/pipeline?tab=executions` — PASS, execution content uses the full desktop work area (`3180px` at `3440px` viewport) instead of the prior centered narrow panel.
 - Chrome DevTools MCP on local `http://localhost:5176/pipeline?tab=pipelines`, `?tab=components`, and `?tab=executions` — PASS, management tab content now uses the full main work area (`3180px` at `3440px` viewport) instead of the centered `1280px` panel.
 - Chrome DevTools MCP on local `http://localhost:5176/pipeline` — PASS, simulated component drag/drop added three nodes, toolbar deploy became enabled, `POST /api/v1/pipelines` returned `201`, and the saved template appeared in the pipeline management tab.
+- Chrome DevTools MCP on local frontend — PASS, cleanup through frontend API deleted 139 execution records and 74 saved pipelines; custom components were deleted and 6 protected system components remained because backend returns `system components cannot be deleted`.
 
 ### Dev deploy record — 2026-06-02
 | Service | Image tag | Cloud Run revision | URL |

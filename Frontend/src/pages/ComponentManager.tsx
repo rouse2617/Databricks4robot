@@ -152,6 +152,10 @@ export function ComponentManager() {
 	const [modalMode, setModalMode] = useState<ModalMode | null>(null);
 	const [activeComponent, setActiveComponent] =
 		useState<PipelineComponentAPI | null>(null);
+	const [selectedComponentIds, setSelectedComponentIds] = useState<string[]>(
+		[],
+	);
+	const [bulkDeleting, setBulkDeleting] = useState(false);
 	const [form] = Form.useForm<ComponentFormValues>();
 	const [messageApi, contextHolder] = message.useMessage();
 	const nameInputRef = useRef<InputRef>(null);
@@ -161,7 +165,13 @@ export function ComponentManager() {
 		setError(null);
 		try {
 			const res = await listComponents();
-			setItems(dedupePipelineComponentsByName(res.items || []));
+			const nextItems = dedupePipelineComponentsByName(res.items || []);
+			setItems(nextItems);
+			setSelectedComponentIds((prev) =>
+				prev.filter((id) =>
+					nextItems.some((item) => item.id === id && item.source !== "system"),
+				),
+			);
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			setError(detail);
@@ -259,6 +269,26 @@ export function ComponentManager() {
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			messageApi.error(detail);
+		}
+	};
+
+	const handleBulkDelete = async () => {
+		if (selectedComponentIds.length === 0) return;
+		setBulkDeleting(true);
+		try {
+			const results = await Promise.allSettled(
+				selectedComponentIds.map((id) => deleteComponent(id)),
+			);
+			const failedCount = results.filter(
+				(result) => result.status === "rejected",
+			).length;
+			const deletedCount = results.length - failedCount;
+			if (deletedCount > 0) messageApi.success(`已删除 ${deletedCount} 个组件`);
+			if (failedCount > 0) messageApi.error(`${failedCount} 个组件删除失败`);
+			setSelectedComponentIds([]);
+			await refresh();
+		} finally {
+			setBulkDeleting(false);
 		}
 	};
 
@@ -408,6 +438,19 @@ export function ComponentManager() {
 					</Typography.Text>
 				</div>
 				<Space wrap>
+					{selectedComponentIds.length > 0 ? (
+						<Popconfirm
+							title={`删除选中的 ${selectedComponentIds.length} 个组件？`}
+							description="删除后不可恢复。系统组件不可选择。"
+							okText="确认删除"
+							cancelText="取消"
+							onConfirm={handleBulkDelete}
+						>
+							<Button danger icon={<DeleteOutlined />} loading={bulkDeleting}>
+								批量删除（{selectedComponentIds.length}）
+							</Button>
+						</Popconfirm>
+					) : null}
 					<Input.Search
 						id="component-manager-search"
 						allowClear
@@ -449,6 +492,14 @@ export function ComponentManager() {
 					loading={loading}
 					columns={columns}
 					dataSource={filteredItems}
+					rowSelection={{
+						selectedRowKeys: selectedComponentIds,
+						onChange: (keys) => setSelectedComponentIds(keys as string[]),
+						getCheckboxProps: (record) => ({
+							disabled: record.source === "system",
+							name: record.name,
+						}),
+					}}
 					pagination={{ pageSize: 12, showSizeChanger: true }}
 					scroll={{ x: 900 }}
 				/>

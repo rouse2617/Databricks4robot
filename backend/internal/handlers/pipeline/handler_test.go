@@ -85,6 +85,14 @@ func (m *mockDeploymentRepo) Delete(_ context.Context, id string) error {
 	delete(m.byID, id)
 	return nil
 }
+func (m *mockDeploymentRepo) DeleteByTemplateID(_ context.Context, templateID string) error {
+	for id, d := range m.byID {
+		if d.TemplateID != nil && *d.TemplateID == templateID {
+			delete(m.byID, id)
+		}
+	}
+	return nil
+}
 func (m *mockDeploymentRepo) UpdateStatus(_ context.Context, _, _ string) error { return nil }
 
 type mockAssetRepo struct {

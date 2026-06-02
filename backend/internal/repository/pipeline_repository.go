@@ -51,6 +51,10 @@ type PipelineDeploymentRepository interface {
 	// does not exist.
 	Delete(ctx context.Context, id string) error
 
+	// DeleteByTemplateID removes all pipeline deployments associated with a
+	// template id. It is a no-op when no rows exist.
+	DeleteByTemplateID(ctx context.Context, templateID string) error
+
 	// UpdateStatus sets the status for a pipeline deployment. It is a no-op
 	// when the row does not exist.
 	UpdateStatus(ctx context.Context, id, status string) error

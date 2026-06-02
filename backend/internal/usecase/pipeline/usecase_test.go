@@ -82,6 +82,24 @@ func (m *mockDeploymentRepo) Delete(_ context.Context, id string) error {
 	delete(m.byID, id)
 	return nil
 }
+func (m *mockDeploymentRepo) DeleteByTemplateID(_ context.Context, templateID string) error {
+	if m.byID != nil {
+		for id, d := range m.byID {
+			if d.TemplateID != nil && *d.TemplateID == templateID {
+				delete(m.byID, id)
+			}
+		}
+	}
+	nextSaved := make([]*models.PipelineDeployment, 0, len(m.saved))
+	for _, d := range m.saved {
+		if d.TemplateID != nil && *d.TemplateID == templateID {
+			continue
+		}
+		nextSaved = append(nextSaved, d)
+	}
+	m.saved = nextSaved
+	return nil
+}
 func (m *mockDeploymentRepo) UpdateStatus(_ context.Context, id, status string) error {
 	if d := m.byID[id]; d != nil {
 		d.Status = status

@@ -22,6 +22,7 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+	deleteWorkflow,
 	type ListWorkflowsParams,
 	listWorkflows,
 	type WorkflowSummary,
@@ -160,6 +161,11 @@ export function WorkflowExecutionList({
 		parseDate(searchParams.get("finishedBefore")),
 	]);
 	const [operationLoading, setOperationLoading] = useState<string | null>(null);
+	const [selectedWorkflowNames, setSelectedWorkflowNames] = useState<string[]>(
+		[],
+	);
+	const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+	const [bulkDeleting, setBulkDeleting] = useState(false);
 	const [pendingOperation, setPendingOperation] = useState<{
 		record: WorkflowSummary;
 		operation: WorkflowOperationConfig;
@@ -252,6 +258,11 @@ export function WorkflowExecutionList({
 			};
 			const res = await listWorkflows(params);
 			setItems(res.items || []);
+			setSelectedWorkflowNames((prev) =>
+				prev.filter((name) =>
+					(res.items || []).some((item) => item.name === name),
+				),
+			);
 		} catch (err) {
 			console.error(err);
 			setError(describeWorkflowError(err));
@@ -390,6 +401,28 @@ export function WorkflowExecutionList({
 		setPendingOperation(null);
 		await executeOperation(record, operation);
 	}, [executeOperation, pendingOperation]);
+
+	const confirmBulkDelete = useCallback(async () => {
+		if (selectedWorkflowNames.length === 0) return;
+		setBulkDeleting(true);
+		try {
+			const results = await Promise.allSettled(
+				selectedWorkflowNames.map((name) => deleteWorkflow(name)),
+			);
+			const failedCount = results.filter(
+				(result) => result.status === "rejected",
+			).length;
+			const deletedCount = results.length - failedCount;
+			if (deletedCount > 0)
+				message.success(`已删除 ${deletedCount} 条执行记录`);
+			if (failedCount > 0) message.error(`${failedCount} 条执行记录删除失败`);
+			setSelectedWorkflowNames([]);
+			setBulkDeleteOpen(false);
+			await refresh();
+		} finally {
+			setBulkDeleting(false);
+		}
+	}, [refresh, selectedWorkflowNames]);
 
 	const columns = [
 		{
@@ -539,6 +572,16 @@ export function WorkflowExecutionList({
 				<Typography.Title level={4} style={{ margin: 0 }}>
 					流水线执行记录
 				</Typography.Title>
+				<Button
+					danger
+					disabled={selectedWorkflowNames.length === 0}
+					onClick={() => setBulkDeleteOpen(true)}
+				>
+					批量删除
+					{selectedWorkflowNames.length > 0
+						? `（${selectedWorkflowNames.length}）`
+						: ""}
+				</Button>
 				<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
@@ -667,6 +710,10 @@ export function WorkflowExecutionList({
 						columns={columns}
 						rowKey="name"
 						loading={loading}
+						rowSelection={{
+							selectedRowKeys: selectedWorkflowNames,
+							onChange: (keys) => setSelectedWorkflowNames(keys as string[]),
+						}}
 						scroll={{ x: 1200 }}
 						rowClassName={() => "pipeline-execution-table-row"}
 						onRow={(record) => ({
@@ -716,6 +763,17 @@ export function WorkflowExecutionList({
 				pendingOperation?.operation.key === "retry" ? (
 					<p>将基于当前工作流再次提交执行。</p>
 				) : null}
+			</Modal>
+			<Modal
+				open={bulkDeleteOpen}
+				title={`删除选中的 ${selectedWorkflowNames.length} 条执行记录？`}
+				okText="删除"
+				cancelText="取消"
+				okButtonProps={{ danger: true, loading: bulkDeleting }}
+				onOk={confirmBulkDelete}
+				onCancel={() => setBulkDeleteOpen(false)}
+			>
+				<p>删除后不可恢复。正在运行的工作流请先确认不再需要。</p>
 			</Modal>
 		</div>
 	);

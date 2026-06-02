@@ -8,6 +8,7 @@ import {
 import {
 	Alert,
 	Button,
+	Checkbox,
 	Modal,
 	message,
 	Popconfirm,
@@ -68,12 +69,18 @@ function TemplateCard({
 	onEdit,
 	onDelete,
 	compactActions,
+	selectable,
+	selected,
+	onSelect,
 }: {
 	template: PipelineTemplate;
 	onRun: (id: string) => void;
 	onEdit: (id: string) => void;
 	onDelete: (id: string) => void;
 	compactActions?: boolean;
+	selectable?: boolean;
+	selected?: boolean;
+	onSelect?: (id: string, selected: boolean) => void;
 }) {
 	return (
 		<div
@@ -82,6 +89,13 @@ function TemplateCard({
 				.filter(Boolean)
 				.join(" ")}
 		>
+			{selectable ? (
+				<Checkbox
+					checked={selected}
+					aria-label={`选择流水线 ${template.name}`}
+					onChange={(event) => onSelect?.(template.id, event.target.checked)}
+				/>
+			) : null}
 			<div className="dep-card-info">
 				<div className="dep-card-name" title={template.name}>
 					{template.name}
@@ -187,6 +201,8 @@ export function DeployPanel({
 	const [error, setError] = useState<string | null>(null);
 	const [templateVisibleCount, setTemplateVisibleCount] =
 		useState(TEMPLATE_PAGE_SIZE);
+	const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+	const [bulkDeletingTemplates, setBulkDeletingTemplates] = useState(false);
 
 	const [assetModalOpen, setAssetModalOpen] = useState(false);
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
@@ -215,6 +231,9 @@ export function DeployPanel({
 			]);
 			setDeployments(d);
 			setTemplates(t);
+			setSelectedTemplateIds((prev) =>
+				prev.filter((id) => t.some((template) => template.id === id)),
+			);
 			setTargets(executionTargets);
 			const defaultTarget =
 				executionTargets.find((target) => target.isDefault) ??
@@ -277,6 +296,30 @@ export function DeployPanel({
 		}
 	};
 
+	const handleBulkDeleteTemplates = async () => {
+		if (selectedTemplateIds.length === 0) return;
+		setBulkDeletingTemplates(true);
+		try {
+			const results = await Promise.allSettled(
+				selectedTemplateIds.map((id) => deletePipeline(id)),
+			);
+			const failedCount = results.filter(
+				(result) => result.status === "rejected",
+			).length;
+			const deletedCount = results.length - failedCount;
+			if (deletedCount > 0) {
+				message.success(`已删除 ${deletedCount} 条流水线`);
+			}
+			if (failedCount > 0) {
+				message.error(`${failedCount} 条流水线删除失败`);
+			}
+			setSelectedTemplateIds([]);
+			await refresh();
+		} finally {
+			setBulkDeletingTemplates(false);
+		}
+	};
+
 	const handleEditTemplate = async (id: string) => {
 		try {
 			const t = await getPipeline(id);
@@ -313,6 +356,15 @@ export function DeployPanel({
 				onEdit={handleEditTemplate}
 				onDelete={handleDeleteTemplate}
 				compactActions={options?.compactActions}
+				selectable={resolvedVariant === "full"}
+				selected={selectedTemplateIds.includes(t.id)}
+				onSelect={(id, checked) =>
+					setSelectedTemplateIds((prev) =>
+						checked
+							? Array.from(new Set([...prev, id]))
+							: prev.filter((item) => item !== id),
+					)
+				}
 			/>
 		));
 	};
@@ -445,6 +497,13 @@ export function DeployPanel({
 	}
 
 	const visibleTemplates = displayTemplates.slice(0, templateVisibleCount);
+	const selectableTemplateIds = displayTemplates.map((template) => template.id);
+	const selectedTemplateIdSet = new Set(selectedTemplateIds);
+	const allTemplatesSelected =
+		selectableTemplateIds.length > 0 &&
+		selectableTemplateIds.every((id) => selectedTemplateIdSet.has(id));
+	const someTemplatesSelected =
+		selectedTemplateIds.length > 0 && !allTemplatesSelected;
 
 	return (
 		<div className="deploy-panel">
@@ -481,9 +540,47 @@ export function DeployPanel({
 
 			<div className="deploy-panel__section-card">
 				<div className="deploy-section-title">
-					已保存的流水线
-					{!loading ? (
-						<span className="count">{displayTemplates.length}</span>
+					<div>
+						已保存的流水线
+						{!loading ? (
+							<span className="count">{displayTemplates.length}</span>
+						) : null}
+					</div>
+					{!loading && displayTemplates.length > 0 ? (
+						<Space>
+							<Checkbox
+								checked={allTemplatesSelected}
+								indeterminate={someTemplatesSelected}
+								onChange={(event) =>
+									setSelectedTemplateIds(
+										event.target.checked ? selectableTemplateIds : [],
+									)
+								}
+							>
+								全选
+							</Checkbox>
+							<Popconfirm
+								title={`删除选中的 ${selectedTemplateIds.length} 条流水线？`}
+								description="删除后不可恢复"
+								okText="删除"
+								cancelText="取消"
+								disabled={selectedTemplateIds.length === 0}
+								onConfirm={handleBulkDeleteTemplates}
+							>
+								<Button
+									size="small"
+									danger
+									icon={<DeleteOutlined />}
+									disabled={selectedTemplateIds.length === 0}
+									loading={bulkDeletingTemplates}
+								>
+									批量删除
+									{selectedTemplateIds.length > 0
+										? `（${selectedTemplateIds.length}）`
+										: ""}
+								</Button>
+							</Popconfirm>
+						</Space>
 					) : null}
 				</div>
 				<div className="deploy-section">

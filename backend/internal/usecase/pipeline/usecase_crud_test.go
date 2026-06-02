@@ -227,6 +227,49 @@ func TestTemplateCRUD(t *testing.T) {
 	}
 }
 
+func TestDeleteTemplateRemovesAssociatedDeployments(t *testing.T) {
+	ctx := context.Background()
+	templateRepo := &mockTemplateRepo{byID: make(map[string]*models.PipelineTemplate)}
+	deploymentRepo := &mockDeploymentRepo{}
+	uc := &Usecase{
+		templateRepo:   templateRepo,
+		deploymentRepo: deploymentRepo,
+		assetRepo:      newMockAssetRepo(),
+		wfClient:       &mockWorkflowClient{},
+	}
+	pipe := map[string]interface{}{
+		"name": "delete-with-deployments",
+		"nodes": []interface{}{
+			map[string]interface{}{"id": "step-1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+		},
+		"edges": []interface{}{},
+	}
+	tmpl, err := uc.SaveTemplate(ctx, "delete-with-deployments", pipe)
+	if err != nil {
+		t.Fatalf("SaveTemplate: %v", err)
+	}
+	dep, err := uc.DeployByTemplateID(ctx, tmpl.ID, "", nil)
+	if err != nil {
+		t.Fatalf("DeployByTemplateID: %v", err)
+	}
+	if dep.TemplateID == nil || *dep.TemplateID != tmpl.ID {
+		t.Fatalf("expected deployment templateID %q, got %v", tmpl.ID, dep.TemplateID)
+	}
+
+	if err := uc.DeleteTemplate(ctx, tmpl.ID); err != nil {
+		t.Fatalf("DeleteTemplate: %v", err)
+	}
+	if got, err := uc.GetTemplate(ctx, tmpl.ID); err != nil || got != nil {
+		t.Fatalf("expected deleted template, got template=%v err=%v", got, err)
+	}
+	if got, err := deploymentRepo.FindByID(ctx, dep.ID); err != nil || got != nil {
+		t.Fatalf("expected deleted deployment, got deployment=%v err=%v", got, err)
+	}
+	if len(deploymentRepo.saved) != 0 {
+		t.Fatalf("expected no saved deployments, got %d", len(deploymentRepo.saved))
+	}
+}
+
 // ── DeployByTemplateID ────────────────────────────────────────────────────
 
 func TestDeployByTemplateID(t *testing.T) {
