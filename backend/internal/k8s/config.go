@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -45,12 +46,14 @@ func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 		if audience == "" || endpoint == "" {
 			return nil, fmt.Errorf("K8S_USE_METADATA_TOKEN requires K8S_AUDIENCE and K8S_API_ENDPOINT")
 		}
+		tls, err := buildTLSConfig()
+		if err != nil {
+			return nil, fmt.Errorf("K8S TLS config: %w", err)
+		}
 		cached := transport.NewCachedTokenSource(newMetadataTokenSource(audience))
 		return &rest.Config{
-			Host: endpoint,
-			TLSClientConfig: rest.TLSClientConfig{
-				CAFile: os.Getenv("K8S_CA_FILE"),
-			},
+			Host:            endpoint,
+			TLSClientConfig: tls,
 			// WrapTransport runs after client-go's default bearer wrappers,
 			// so our token wins. NewOAuth2RoundTripper injects Authorization
 			// on every request and refreshes via the cached TokenSource.
@@ -61,12 +64,14 @@ func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 	token := os.Getenv("K8S_BEARER_TOKEN")
 	endpoint := os.Getenv("K8S_API_ENDPOINT")
 	if token != "" && endpoint != "" {
+		tls, err := buildTLSConfig()
+		if err != nil {
+			return nil, fmt.Errorf("K8S TLS config: %w", err)
+		}
 		return &rest.Config{
-			Host:        endpoint,
-			BearerToken: token,
-			TLSClientConfig: rest.TLSClientConfig{
-				CAFile: os.Getenv("K8S_CA_FILE"),
-			},
+			Host:            endpoint,
+			BearerToken:     token,
+			TLSClientConfig: tls,
 		}, nil
 	}
 
@@ -84,4 +89,23 @@ func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 	}
 
 	return nil, fmt.Errorf("no in-cluster, explicit token, or kubeconfig configuration: %w", err)
+}
+
+// buildTLSConfig resolves the K8s API TLS configuration.
+// Priority: K8S_INSECURE_SKIP_VERIFY=true → K8S_CA_B64 → K8S_CA_FILE → system trust store.
+func buildTLSConfig() (rest.TLSClientConfig, error) {
+	if os.Getenv("K8S_INSECURE_SKIP_VERIFY") == "true" {
+		return rest.TLSClientConfig{Insecure: true}, nil
+	}
+	if b64 := os.Getenv("K8S_CA_B64"); b64 != "" {
+		caData, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return rest.TLSClientConfig{}, fmt.Errorf("K8S_CA_B64 is not valid base64: %w", err)
+		}
+		return rest.TLSClientConfig{CAData: caData}, nil
+	}
+	if caFile := os.Getenv("K8S_CA_FILE"); caFile != "" {
+		return rest.TLSClientConfig{CAFile: caFile}, nil
+	}
+	return rest.TLSClientConfig{}, nil
 }
