@@ -284,12 +284,14 @@ function WorkflowRunContextPanel({
 }) {
 	const templateName =
 		getWorkflowLabel(workflow.labels, "pipeline-template") ||
-		getWorkflowLabel(workflow.labels, "template") ||
-		"后端待接入";
+		getWorkflowLabel(workflow.labels, "template");
+	const templateVersion = getWorkflowLabel(
+		workflow.labels,
+		"pipeline-template-version",
+	);
 	const assetIds =
 		getWorkflowLabel(workflow.labels, "asset-ids") ||
-		getWorkflowLabel(workflow.labels, "assets") ||
-		"后端待接入";
+		getWorkflowLabel(workflow.labels, "assets");
 
 	return (
 		<div
@@ -303,15 +305,29 @@ function WorkflowRunContextPanel({
 			}}
 		>
 			<Card size="small" title="Pipeline Template">
-				<Typography.Text>{templateName}</Typography.Text>
+				{templateName ? (
+					<Space direction="vertical" size={0}>
+						<Typography.Text>{templateName}</Typography.Text>
+						{templateVersion && (
+							<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+								版本 {templateVersion}
+							</Typography.Text>
+						)}
+					</Space>
+				) : (
+					<Typography.Text type="secondary">
+						本次运行未绑定流水线模板
+					</Typography.Text>
+				)}
 			</Card>
 			<Card size="small" title="关联资产">
-				<Typography.Text>{assetIds}</Typography.Text>
+				<Typography.Text type={assetIds ? undefined : "secondary"}>
+					{assetIds || "本次运行未绑定资产"}
+				</Typography.Text>
 			</Card>
 			<Card size="small" title="运行事件">
 				<Typography.Text type="secondary">
-					run_events 接口待接入，后续展示提交、调度、Pod
-					创建、节点状态变更和重试事件。
+					暂无运行事件；后续会展示提交、调度、Pod 创建、节点状态变更和重试记录。
 				</Typography.Text>
 			</Card>
 		</div>
@@ -336,7 +352,9 @@ function WorkflowAssetNodePanel() {
 			}}
 		>
 			<strong style={{ color: "#334155" }}>资产 × 节点明细</strong>
-			<span>后端接入后展示每个资产在每个步骤的状态、日志和资源信息。</span>
+			<span>
+				暂无资产节点明细；绑定资产运行后可查看每个资产在各步骤的状态、日志和资源。
+			</span>
 		</div>
 	);
 }

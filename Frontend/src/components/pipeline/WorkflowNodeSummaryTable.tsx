@@ -85,18 +85,17 @@ function formatDateTime(value?: string): string {
 	return date.toLocaleString();
 }
 
-function isSummaryNode(node: WorkflowNodeStatus): boolean {
+function isRuntimeNode(node: WorkflowNodeStatus): boolean {
 	const type = (node.type ?? "").toLowerCase();
-	if (type === "pod" || type === "template") return true;
+	if (type === "pod") return true;
 	if (node.podName) return true;
-	if (node.startedAt || node.finishedAt) return true;
-	return ["Succeeded", "Failed", "Error", "Running"].includes(node.phase);
+	return false;
 }
 
 export function buildWorkflowNodeSummaryRows(
 	nodes: WorkflowNodeStatus[],
 ): WorkflowNodeSummaryRow[] {
-	return nodes.filter(isSummaryNode).map((node) => {
+	return nodes.filter(isRuntimeNode).map((node) => {
 		const cost =
 			typeof node.estimatedCostUsd === "number"
 				? node.estimatedCostUsd
@@ -129,7 +128,7 @@ export function WorkflowNodeSummaryTable({
 	onOpenRuntime,
 }: WorkflowNodeSummaryTableProps) {
 	const rows = buildWorkflowNodeSummaryRows(nodes);
-	const totalDurationSeconds = rows.reduce(
+	const podDurationSeconds = rows.reduce(
 		(sum, row) => sum + (row.durationSeconds ?? 0),
 		0,
 	);
@@ -300,7 +299,7 @@ export function WorkflowNodeSummaryTable({
 					<Space size={6}>
 						<ClockCircleOutlined />
 						<Typography.Text>
-							累计节点耗时 {formatDurationSeconds(totalDurationSeconds)}
+							Pod 累计耗时 {formatDurationSeconds(podDurationSeconds)}
 						</Typography.Text>
 					</Space>
 					<Space size={6}>

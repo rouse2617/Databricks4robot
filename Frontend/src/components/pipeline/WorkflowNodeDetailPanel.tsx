@@ -433,11 +433,11 @@ function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
 			<Alert
 				type={metrics ? "success" : "info"}
 				showIcon
-				message={metrics ? "监控快照" : "监控接口待接入"}
+				message={metrics ? "监控快照" : "暂无监控数据"}
 				description={
 					metrics
 						? `采样时间：${metrics.sampledAt ? formatRelativeTime(metrics.sampledAt) : "—"}`
-						: "前端已预留 CPU、内存、GPU、网络、存储指标卡；后端可接 metrics-server、Prometheus 或 OpenCost allocation 数据。"
+						: "当前运行未返回 CPU、内存、GPU、网络或存储指标。"
 				}
 			/>
 			<Row gutter={[12, 12]}>
@@ -493,11 +493,11 @@ function BillingTab({ cost }: { cost?: WorkflowPodCost }) {
 			<Alert
 				type={cost ? "success" : "info"}
 				showIcon
-				message={cost ? "计费快照" : "计费接口待接入"}
+				message={cost ? "计费快照" : "暂无计费数据"}
 				description={
 					cost
 						? `窗口：${cost.window || "—"} · 来源：${cost.provider || "—"}`
-						: "前端已预留 OpenCost/custom 成本字段；后端应按 pipeline run、asset、node、cluster、namespace 归因。"
+						: "当前运行未返回该步骤的成本拆分。"
 				}
 			/>
 			<Row gutter={[12, 12]}>
@@ -558,10 +558,10 @@ function DebugTab({ node }: { node: WorkflowNodeStatus }) {
 			<Alert
 				type={execEnabled ? "warning" : "info"}
 				showIcon
-				message={execEnabled ? "调试终端待确认" : "Exec 接口待接入"}
+				message={execEnabled ? "调试终端待确认" : "Pod 调试暂未启用"}
 				description={
 					node.debug?.reason ||
-					"前端已预留终端区域和命令模板；后端需要 WebSocket exec 代理、RBAC、审计、超时和 cluster/namespace 隔离后再启用。"
+					"需要具备对应权限并开启命令审计后，才能在页面里进入 Pod 执行调试命令。"
 				}
 			/>
 			<Space wrap>
@@ -588,7 +588,7 @@ function DebugTab({ node }: { node: WorkflowNodeStatus }) {
 			>
 				<Space direction="vertical" align="center">
 					<LockOutlined style={{ fontSize: 22 }} />
-					<span>等待后端 WebSocket exec 能力接入</span>
+					<span>Pod 调试未启用</span>
 				</Space>
 			</div>
 		</Space>

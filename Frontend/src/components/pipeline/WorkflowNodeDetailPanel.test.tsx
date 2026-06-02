@@ -313,8 +313,8 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
-		expect(screen.getByText("Exec 接口待接入")).toBeTruthy();
-		expect(screen.getByText("等待后端 WebSocket exec 能力接入")).toBeTruthy();
+		expect(screen.getByText("Pod 调试暂未启用")).toBeTruthy();
+		expect(screen.getByText("Pod 调试未启用")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "pwd" })).toBeDisabled();
 	});
 

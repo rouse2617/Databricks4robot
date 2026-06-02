@@ -57,6 +57,23 @@ describe("WorkflowNodeSummaryTable", () => {
 		expect(rows[1].estimatedCostUsd).toBeNull();
 	});
 
+	it("excludes dag/controller nodes from pod duration and cost rows", () => {
+		const rows = buildWorkflowNodeSummaryRows([
+			{
+				id: "dag-node",
+				name: "workflow",
+				type: "DAG",
+				phase: "Succeeded",
+				startedAt: "2026-06-02T10:00:00Z",
+				finishedAt: "2026-06-02T10:10:00Z",
+			},
+			nodes[0],
+		]);
+
+		expect(rows).toHaveLength(1);
+		expect(rows[0].key).toBe("node-a");
+	});
+
 	it("does not keep increasing terminal node duration when finishedAt is missing", () => {
 		const rows = buildWorkflowNodeSummaryRows([
 			{
@@ -93,6 +110,7 @@ describe("WorkflowNodeSummaryTable", () => {
 		);
 
 		expect(screen.getByText("节点耗时 / 花费")).toBeTruthy();
+		expect(screen.getByText("Pod 累计耗时 5m 30s")).toBeTruthy();
 		expect(screen.getByText("训练节点")).toBeTruthy();
 		expect(screen.getByText("5m 0s")).toBeTruthy();
 		expect(screen.getAllByText("$1.25").length).toBeGreaterThan(0);
