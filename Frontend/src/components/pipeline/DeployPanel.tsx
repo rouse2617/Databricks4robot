@@ -1,7 +1,6 @@
 import {
 	DeleteOutlined,
 	EditOutlined,
-	EyeOutlined,
 	LinkOutlined,
 	PlayCircleOutlined,
 	ReloadOutlined,
@@ -21,7 +20,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
 	type Deployment,
-	deleteDeployment,
 	deletePipeline,
 	deployTemplate,
 	type ExecutionTarget,
@@ -30,12 +28,10 @@ import {
 	listExecutionTargets,
 	listPipelines,
 	type PipelineTemplate,
-	retryDeployment,
 } from "../../api/pipelineApi";
 import AssetPicker from "./AssetPicker";
 import {
 	COMPACT_TEMPLATE_LIMIT,
-	DEPLOYMENT_PAGE_SIZE,
 	dedupeTemplatesByName,
 	prepareDeployments,
 	SIDEBAR_TEMPLATE_LIMIT,
@@ -50,9 +46,8 @@ const STATUS_COLORS: Record<string, string> = {
 	Pending: "warning",
 	Failed: "error",
 	Error: "error",
+	Expired: "default",
 };
-
-const RETRYABLE_DEPLOYMENT_STATUSES = new Set(["Failed", "Error"]);
 
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
 
@@ -65,32 +60,6 @@ function PanelSkeleton({ rows = 3 }: { rows?: number }) {
 			))}
 		</div>
 	);
-}
-
-function toStringArray(value: unknown): string[] {
-	if (typeof value === "string") return [value].filter(Boolean);
-	if (!Array.isArray(value)) return [];
-	return value
-		.map((item) => (typeof item === "string" ? item.trim() : ""))
-		.filter((item) => item.length > 0);
-}
-
-function extractPipelineAssetIds(pipelineJSON: Pipeline | undefined): string[] {
-	const contract = (pipelineJSON ?? {}) as Record<string, unknown>;
-	return [
-		...toStringArray(contract._input_asset_ids),
-		...toStringArray(contract.input_asset_ids),
-		...toStringArray(
-			(contract.input as Record<string, unknown> | undefined)?.asset_ids,
-		),
-		...toStringArray(
-			(contract.assetSelection as Record<string, unknown> | undefined)
-				?.assetIds,
-		),
-	]
-		.filter(Boolean)
-		.filter((value, index, values) => values.indexOf(value) === index)
-		.sort();
 }
 
 function TemplateCard({
@@ -218,15 +187,12 @@ export function DeployPanel({
 	const [error, setError] = useState<string | null>(null);
 	const [templateVisibleCount, setTemplateVisibleCount] =
 		useState(TEMPLATE_PAGE_SIZE);
-	const [deploymentVisibleCount, setDeploymentVisibleCount] =
-		useState(DEPLOYMENT_PAGE_SIZE);
 
 	const [assetModalOpen, setAssetModalOpen] = useState(false);
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
 	const [deploying, setDeploying] = useState(false);
-	const [assetListModalIds, setAssetListModalIds] = useState<string[]>([]);
 
 	const displayTemplates = useMemo(
 		() => dedupeTemplatesByName(templates),
@@ -241,8 +207,9 @@ export function DeployPanel({
 		setLoading(true);
 		setError(null);
 		try {
+			const shouldLoadDeployments = resolvedVariant === "compact";
 			const [d, t, executionTargets] = await Promise.all([
-				listDeployments(),
+				shouldLoadDeployments ? listDeployments() : Promise.resolve([]),
 				listPipelines(),
 				listExecutionTargets(),
 			]);
@@ -262,7 +229,7 @@ export function DeployPanel({
 		} finally {
 			setLoading(false);
 		}
-	}, []);
+	}, [resolvedVariant]);
 
 	useEffect(() => {
 		refresh();
@@ -270,7 +237,6 @@ export function DeployPanel({
 
 	useEffect(() => {
 		setTemplateVisibleCount(TEMPLATE_PAGE_SIZE);
-		setDeploymentVisibleCount(DEPLOYMENT_PAGE_SIZE);
 	}, []);
 
 	const handleDeployClick = (templateId: string) => {
@@ -298,26 +264,6 @@ export function DeployPanel({
 			message.error(`部署失败: ${String(err)}`);
 		} finally {
 			setDeploying(false);
-		}
-	};
-
-	const handleDeleteDeployment = async (id: string) => {
-		try {
-			await deleteDeployment(id);
-			message.success("已删除部署记录");
-			refresh();
-		} catch (err) {
-			message.error(`删除失败: ${String(err)}`);
-		}
-	};
-
-	const handleRetryDeployment = async (id: string) => {
-		try {
-			await retryDeployment(id);
-			message.success("已重新提交部署");
-			refresh();
-		} catch (err) {
-			message.error(`重试失败: ${String(err)}`);
 		}
 	};
 
@@ -438,8 +384,11 @@ export function DeployPanel({
 					/>
 				) : null}
 				<div className="deploy-panel-compact__section-header">
-					<div className="deploy-section-title">最近部署</div>
-					<Link to="/workflows" className="deploy-panel-compact__link">
+					<div className="deploy-section-title">最近执行</div>
+					<Link
+						to="/pipeline?tab=executions"
+						className="deploy-panel-compact__link"
+					>
 						查看全部
 					</Link>
 				</div>
@@ -448,7 +397,7 @@ export function DeployPanel({
 					{loading ? (
 						<PanelSkeleton rows={2} />
 					) : recentDeployments.length === 0 ? (
-						<PipelineEmptyState variant="deploy" title="暂无部署记录" />
+						<PipelineEmptyState variant="deploy" title="暂无执行记录" />
 					) : (
 						recentDeployments.map((d) => (
 							<div key={d.id} className="dep-card">
@@ -463,7 +412,9 @@ export function DeployPanel({
 								<Button
 									size="small"
 									icon={<LinkOutlined />}
-									onClick={() => navigate(`/workflows/${d.workflowName}`)}
+									onClick={() =>
+										navigate(`/pipeline/executions/${d.workflowName}`)
+									}
 								>
 									查看
 								</Button>
@@ -494,23 +445,28 @@ export function DeployPanel({
 	}
 
 	const visibleTemplates = displayTemplates.slice(0, templateVisibleCount);
-	const visibleDeployments = displayDeployments.slice(
-		0,
-		deploymentVisibleCount,
-	);
 
 	return (
 		<div className="deploy-panel">
 			<div className="deploy-panel__toolbar">
 				<h3>流水线管理</h3>
-				<Button
-					size="small"
-					icon={<ReloadOutlined />}
-					onClick={refresh}
-					loading={loading}
-				>
-					刷新
-				</Button>
+				<Space>
+					<Button
+						size="small"
+						icon={<LinkOutlined />}
+						onClick={() => navigate("/pipeline?tab=executions")}
+					>
+						执行记录
+					</Button>
+					<Button
+						size="small"
+						icon={<ReloadOutlined />}
+						onClick={refresh}
+						loading={loading}
+					>
+						刷新
+					</Button>
+				</Space>
 			</div>
 
 			{error ? (
@@ -599,131 +555,6 @@ export function DeployPanel({
 					maxHeight={300}
 				/>
 			</Modal>
-			<Modal
-				title={`关联资产（${assetListModalIds.length}）`}
-				open={assetListModalIds.length > 0}
-				onCancel={() => setAssetListModalIds([])}
-				footer={null}
-				width={520}
-			>
-				<div className="deploy-asset-list">
-					{assetListModalIds.map((assetId) => (
-						<Link
-							key={assetId}
-							to={`/assets/${encodeURIComponent(assetId)}`}
-							onClick={() => setAssetListModalIds([])}
-						>
-							{assetId}
-						</Link>
-					))}
-				</div>
-			</Modal>
-
-			<div className="deploy-panel__section-card">
-				<div className="deploy-section-title deploy-panel__history-title">
-					运行历史
-					{!loading ? (
-						<span className="count">{displayDeployments.length}</span>
-					) : null}
-				</div>
-				<div className="deploy-section">
-					{loading ? (
-						<PanelSkeleton rows={3} />
-					) : visibleDeployments.length === 0 ? (
-						<PipelineEmptyState variant="deploy" title="暂无部署记录" />
-					) : (
-						visibleDeployments.map((d) => {
-							const pipelineAssetIds = extractPipelineAssetIds(d.pipelineJSON);
-							const assetIds = d.assetIds?.length
-								? d.assetIds
-								: pipelineAssetIds;
-							const assetCount = d.assetCount ?? assetIds.length;
-							const target = d.executionTarget;
-							return (
-								<div key={d.id} className="dep-card">
-									<div className="dep-card-info">
-										<div className="dep-card-name">{d.pipelineName}</div>
-										<div className="dep-card-meta">
-											<Tag color={STATUS_COLORS[d.status] || "default"}>
-												{d.status}
-											</Tag>
-											<span>{d.nodeCount} 个节点</span>
-											<span className="dot">•</span>
-											<span>
-												{assetCount > 0 ? `${assetCount} 个资产` : "无资产"}
-											</span>
-											{target ? (
-												<>
-													<span className="dot">•</span>
-													<span>
-														{target.cluster}/{target.namespace}
-													</span>
-												</>
-											) : null}
-											<span className="dot">•</span>
-											<span>{new Date(d.createdAt).toLocaleString()}</span>
-											{d.finishedAt ? (
-												<>
-													<span className="dot">•</span>
-													<span>
-														完成: {new Date(d.finishedAt).toLocaleString()}
-													</span>
-												</>
-											) : null}
-										</div>
-									</div>
-									<div className="deploy-btn-list">
-										{assetIds.length > 0 ? (
-											<Button
-												size="small"
-												onClick={() => setAssetListModalIds(assetIds)}
-											>
-												资产
-											</Button>
-										) : null}
-										<Tag>{d.workflowName}</Tag>
-										{RETRYABLE_DEPLOYMENT_STATUSES.has(d.status) ? (
-											<Button
-												size="small"
-												icon={<ReloadOutlined />}
-												onClick={() => handleRetryDeployment(d.id)}
-											>
-												重试
-											</Button>
-										) : null}
-										<Button
-											size="small"
-											icon={<EyeOutlined />}
-											onClick={() => navigate(`/workflows/${d.workflowName}`)}
-										>
-											查看
-										</Button>
-										<Button
-											size="small"
-											danger
-											icon={<DeleteOutlined />}
-											onClick={() => handleDeleteDeployment(d.id)}
-										/>
-									</div>
-								</div>
-							);
-						})
-					)}
-				</div>
-				{displayDeployments.length > visibleDeployments.length ? (
-					<Button
-						type="link"
-						size="small"
-						className="deploy-panel__load-more"
-						onClick={() =>
-							setDeploymentVisibleCount((count) => count + DEPLOYMENT_PAGE_SIZE)
-						}
-					>
-						加载更多记录（还剩{" "}
-						{displayDeployments.length - visibleDeployments.length} 条）
-					</Button>
-				) : null}
-			</div>
 		</div>
 	);
 }

@@ -2356,6 +2356,10 @@ curl -X POST "$BASE/api/v1/deploy/template/<TEMPLATE_ID>" \
 # 404: template 不存在
 ```
 
+部署记录的 `status` 会尽量跟随 Argo workflow phase。若旧部署记录仍存在但
+Argo Workflow CR 已被 TTL 清理，API 会返回 `Expired`，避免历史记录长期显示
+过期的 `Running`/`Pending` 状态；这类记录可以通过 retry 重新提交。
+
 ### 查询资源使用量（F5.8）
 
 查询 workflow 各 pod 的 CPU/Mem 实际使用 vs request/limit。

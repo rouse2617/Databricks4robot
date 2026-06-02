@@ -25,6 +25,10 @@ export interface WorkflowNodeStatus {
 	templateName?: string;
 	phase: string;
 	message?: string;
+	cluster?: string;
+	namespace?: string;
+	serviceAccountName?: string;
+	podIp?: string;
 	children?: string[];
 	startedAt?: string;
 	finishedAt?: string;
@@ -32,6 +36,13 @@ export interface WorkflowNodeStatus {
 	progress?: string;
 	hostNodeName?: string;
 	podName?: string;
+	restartCount?: number;
+	containers?: WorkflowNodeContainer[];
+	podConditions?: WorkflowPodCondition[];
+	podEvents?: WorkflowPodEvent[];
+	metrics?: WorkflowPodMetrics;
+	cost?: WorkflowPodCost;
+	debug?: WorkflowPodDebugCapabilities;
 	outputs?: {
 		parameters?: Array<{ name: string; value?: string }>;
 		artifacts?: Array<{ name: string; path?: string }>;
@@ -48,6 +59,68 @@ export interface WorkflowNodeStatus {
 		key: string;
 		cacheName: string;
 	};
+}
+
+export interface WorkflowNodeContainer {
+	name: string;
+	image?: string;
+	command?: string[];
+	args?: string[];
+	ready?: boolean;
+	restartCount?: number;
+	state?: string;
+	lastState?: string;
+}
+
+export interface WorkflowPodCondition {
+	type: string;
+	status: string;
+	reason?: string;
+	message?: string;
+	lastTransitionTime?: string;
+}
+
+export interface WorkflowPodEvent {
+	type: string;
+	reason: string;
+	message: string;
+	count?: number;
+	firstTimestamp?: string;
+	lastTimestamp?: string;
+}
+
+export interface WorkflowPodMetrics {
+	cpuCores?: number;
+	cpuRequestCores?: number;
+	cpuLimitCores?: number;
+	memoryBytes?: number;
+	memoryRequestBytes?: number;
+	memoryLimitBytes?: number;
+	gpuCount?: number;
+	networkRxBytes?: number;
+	networkTxBytes?: number;
+	storageBytes?: number;
+	sampledAt?: string;
+}
+
+export interface WorkflowPodCost {
+	totalCostUsd?: number;
+	cpuCostUsd?: number;
+	memoryCostUsd?: number;
+	gpuCostUsd?: number;
+	storageCostUsd?: number;
+	networkCostUsd?: number;
+	window?: string;
+	provider?: "opencost" | "custom";
+	calculatedAt?: string;
+}
+
+export interface WorkflowPodDebugCapabilities {
+	execEnabled?: boolean;
+	logStreamEnabled?: boolean;
+	metricsEnabled?: boolean;
+	costEnabled?: boolean;
+	reason?: string;
 }
 
 export type WorkflowDagEdgeKind = "runtime" | "dag" | "fallback";

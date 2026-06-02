@@ -11,6 +11,7 @@ import (
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
@@ -81,7 +82,17 @@ func (m *mockDeploymentRepo) Delete(_ context.Context, id string) error {
 	delete(m.byID, id)
 	return nil
 }
-func (m *mockDeploymentRepo) UpdateStatus(_ context.Context, _, _ string) error { return nil }
+func (m *mockDeploymentRepo) UpdateStatus(_ context.Context, id, status string) error {
+	if d := m.byID[id]; d != nil {
+		d.Status = status
+	}
+	for _, d := range m.saved {
+		if d.ID == id {
+			d.Status = status
+		}
+	}
+	return nil
+}
 
 type mockAssetRepo struct {
 	assets map[string]*models.Asset
@@ -113,13 +124,17 @@ func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.
 }
 
 type mockWorkflowClient struct {
-	getWorkflowFn func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+	getWorkflowFn       func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+	getWorkflowStatusFn func(ctx context.Context, name, namespace string) (wfv1.WorkflowPhase, error)
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
 	return nil
 }
-func (m *mockWorkflowClient) GetWorkflowStatus(_ context.Context, _, _ string) (wfv1.WorkflowPhase, error) {
+func (m *mockWorkflowClient) GetWorkflowStatus(ctx context.Context, name, namespace string) (wfv1.WorkflowPhase, error) {
+	if m.getWorkflowStatusFn != nil {
+		return m.getWorkflowStatusFn(ctx, name, namespace)
+	}
 	return wfv1.WorkflowSucceeded, nil
 }
 func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) error {
@@ -143,10 +158,10 @@ func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) 
 func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _, _ string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
-func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error { return nil }
-func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error { return nil }
-func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, _ string) error { return nil }
-func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error     { return nil }
+func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error  { return nil }
+func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, _ string) error   { return nil }
+func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, _ string) error    { return nil }
 func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, _ string) error { return nil }
 
 func newMockAssetRepo() *mockAssetRepo {
@@ -321,6 +336,70 @@ spec:
 	}
 	if report.Status != string(wfv1.WorkflowRunning) {
 		t.Fatalf("expected Running status, got %q", report.Status)
+	}
+}
+
+func TestDeploymentStatusRefresh_MarksMissingWorkflowExpired(t *testing.T) {
+	ctx := context.Background()
+	depRepo := &mockDeploymentRepo{}
+	dep := &models.PipelineDeployment{
+		ID:           "dep-1",
+		PipelineName: "pipe-a",
+		WorkflowName: "expired-wf",
+		Status:       "Running",
+	}
+	if err := depRepo.Save(ctx, dep); err != nil {
+		t.Fatalf("save deployment: %v", err)
+	}
+	wfClient := &mockWorkflowClient{
+		getWorkflowStatusFn: func(_ context.Context, name, _ string) (wfv1.WorkflowPhase, error) {
+			if name != "expired-wf" {
+				t.Fatalf("unexpected workflow name %q", name)
+			}
+			return wfv1.WorkflowUnknown, argo.ErrNotFound
+		},
+	}
+	uc := New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, wfClient, "default")
+
+	got, err := uc.GetDeployment(ctx, "dep-1")
+	if err != nil {
+		t.Fatalf("GetDeployment: %v", err)
+	}
+	if got.Status != "Expired" {
+		t.Fatalf("expected Expired status, got %q", got.Status)
+	}
+	if depRepo.byID["dep-1"].Status != "Expired" {
+		t.Fatalf("expected repo status Expired, got %q", depRepo.byID["dep-1"].Status)
+	}
+}
+
+func TestListDeployments_MarksMissingWorkflowExpired(t *testing.T) {
+	ctx := context.Background()
+	depRepo := &mockDeploymentRepo{}
+	if err := depRepo.Save(ctx, &models.PipelineDeployment{
+		ID:           "dep-1",
+		PipelineName: "pipe-a",
+		WorkflowName: "expired-wf",
+		Status:       "Running",
+	}); err != nil {
+		t.Fatalf("save deployment: %v", err)
+	}
+	wfClient := &mockWorkflowClient{
+		getWorkflowStatusFn: func(_ context.Context, _ string, _ string) (wfv1.WorkflowPhase, error) {
+			return wfv1.WorkflowUnknown, argo.ErrNotFound
+		},
+	}
+	uc := New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, wfClient, "default")
+
+	list, err := uc.ListDeployments(ctx)
+	if err != nil {
+		t.Fatalf("ListDeployments: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected one deployment, got %d", len(list))
+	}
+	if list[0].Status != "Expired" {
+		t.Fatalf("expected Expired status, got %q", list[0].Status)
 	}
 }
 

@@ -91,9 +91,9 @@ vi.mock("antd", async (importOriginal) => {
 });
 
 // ── Helpers ───────────────────────────────────────────────────────
-function renderPage() {
+function renderPage(initialEntry = "/pipeline") {
 	return render(
-		<MemoryRouter>
+		<MemoryRouter initialEntries={[initialEntry]}>
 			<PipelinePage />
 		</MemoryRouter>,
 	);
@@ -265,6 +265,28 @@ describe("PipelinePage", () => {
 		});
 	});
 
+	it("treats legacy templates tab query as pipeline management tab", async () => {
+		mockListPipelines.mockResolvedValueOnce([
+			{
+				id: "tmpl-001",
+				name: "legacy-tab-flow",
+				nodeCount: 1,
+				createdAt: "2026-06-01T09:00:00Z",
+			},
+		]);
+
+		renderPage("/pipeline?tab=templates");
+
+		await waitFor(() => {
+			expect(screen.getByText("流水线管理")).toBeInTheDocument();
+			expect(screen.getByText("legacy-tab-flow")).toBeInTheDocument();
+		});
+		const pipelineTab = document.querySelector(
+			'[role="tab"][aria-controls$="panel-pipelines"]',
+		);
+		expect(pipelineTab).toHaveAttribute("aria-selected", "true");
+	});
+
 	// ── Export ──────────────────────────────────────────────────────
 	it("shows JSON output on export", () => {
 		renderPage();
@@ -343,6 +365,59 @@ describe("PipelinePage", () => {
 		renderPage();
 		expect(screen.getByRole("button", { name: /play-circle/i })).toBeDisabled();
 		expect(screen.getByText("拖入组件开始设计")).toBeInTheDocument();
+	});
+
+	it("adds a node when a palette component is dropped on the canvas wrapper", async () => {
+		mockListComponents.mockResolvedValueOnce({
+			items: [
+				{
+					id: "comp-drag",
+					name: "Drag Component",
+					type: "container",
+					image: "busybox:latest",
+					source: "custom",
+					createdAt: "2026-06-02T00:00:00Z",
+					updatedAt: "2026-06-02T00:00:00Z",
+				},
+			],
+		});
+
+		renderPage();
+
+		const component = await screen.findByRole("button", {
+			name: /拖入组件 Drag Component/,
+		});
+		const canvas = screen.getByRole("application", { name: "流水线画布" });
+		const dataTransfer = {
+			effectAllowed: "",
+			dropEffect: "",
+			data: new Map<string, string>(),
+			setData(type: string, value: string) {
+				this.data.set(type, value);
+			},
+			getData(type: string) {
+				return this.data.get(type) ?? "";
+			},
+		};
+
+		fireEvent.dragStart(component, { dataTransfer });
+		fireEvent.dragOver(canvas, {
+			dataTransfer,
+			clientX: 500,
+			clientY: 360,
+		});
+		fireEvent.drop(canvas, {
+			dataTransfer,
+			clientX: 500,
+			clientY: 360,
+		});
+
+		await waitFor(() => {
+			expect(
+				screen.getByRole("button", { name: /play-circle/i }),
+			).not.toBeDisabled();
+		});
+		expect(dataTransfer.dropEffect).toBe("copy");
 	});
 
 	it("opens deploy modal with title", async () => {

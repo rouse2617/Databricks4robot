@@ -1715,7 +1715,7 @@ components:
         templateId: { type: string, nullable: true, description: Optional linked template ID }
         pipelineName: { type: string, description: Pipeline name from the deployed pipeline }
         workflowName: { type: string, description: Resulting Argo workflow name }
-        status: { type: string, description: Deployment/workflow status (Succeeded, Running, Failed, etc.) }
+        status: { type: string, description: Deployment/workflow status (Succeeded, Running, Failed, Error, Expired, etc.). Expired means the deployment record remains but the Argo Workflow CR is no longer available, usually due to TTL cleanup. }
         nodeCount: { type: integer }
         assetIds:
           type: array

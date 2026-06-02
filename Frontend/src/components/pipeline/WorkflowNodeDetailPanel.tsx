@@ -1,5 +1,13 @@
-import { FileTextOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
+	CloudServerOutlined,
+	DollarOutlined,
+	FileTextOutlined,
+	LockOutlined,
+	ReloadOutlined,
+	ThunderboltOutlined,
+} from "@ant-design/icons";
+import {
+	Alert,
 	Button,
 	Card,
 	Col,
@@ -8,6 +16,7 @@ import {
 	Empty,
 	Row,
 	Space,
+	Statistic,
 	Table,
 	Tabs,
 	Tag,
@@ -17,7 +26,15 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useMemo } from "react";
-import type { WorkflowDetail, WorkflowNodeStatus } from "../../api/workflowApi";
+import type {
+	WorkflowDetail,
+	WorkflowNodeContainer,
+	WorkflowNodeStatus,
+	WorkflowPodCondition,
+	WorkflowPodCost,
+	WorkflowPodEvent,
+	WorkflowPodMetrics,
+} from "../../api/workflowApi";
 import { STATUS_COLORS } from "../../lib/constants";
 import {
 	getWorkflowNodePodName,
@@ -67,9 +84,28 @@ const containerColumns: ColumnsType<{
 	image?: string;
 	command?: string[];
 	args?: string[];
+	ready?: boolean;
+	restartCount?: number;
+	state?: string;
 }> = [
 	{ title: "名称", dataIndex: "name", key: "name" },
 	{ title: "镜像", dataIndex: "image", key: "image" },
+	{
+		title: "状态",
+		dataIndex: "state",
+		key: "state",
+		render: (state?: string, record?: { ready?: boolean }) => (
+			<Tag color={record?.ready ? "green" : state ? "blue" : "default"}>
+				{state || (record?.ready ? "Ready" : "—")}
+			</Tag>
+		),
+	},
+	{
+		title: "重启",
+		dataIndex: "restartCount",
+		key: "restartCount",
+		render: (value?: number) => value ?? "—",
+	},
 	{
 		title: "命令",
 		dataIndex: "command",
@@ -81,6 +117,57 @@ const containerColumns: ColumnsType<{
 		dataIndex: "args",
 		key: "args",
 		render: (args?: string[]) => args?.join(" ") || "—",
+	},
+];
+
+const podConditionColumns: ColumnsType<WorkflowPodCondition & { key: string }> =
+	[
+		{ title: "类型", dataIndex: "type", key: "type" },
+		{
+			title: "状态",
+			dataIndex: "status",
+			key: "status",
+			render: (status: string) => (
+				<Tag color={status === "True" ? "green" : "default"}>{status}</Tag>
+			),
+		},
+		{ title: "原因", dataIndex: "reason", key: "reason" },
+		{
+			title: "消息",
+			dataIndex: "message",
+			key: "message",
+			render: (message?: string) => message || "—",
+		},
+	];
+
+const podEventColumns: ColumnsType<WorkflowPodEvent & { key: string }> = [
+	{
+		title: "级别",
+		dataIndex: "type",
+		key: "type",
+		render: (type: string) => (
+			<Tag color={type === "Warning" ? "orange" : "blue"}>{type}</Tag>
+		),
+	},
+	{ title: "原因", dataIndex: "reason", key: "reason" },
+	{
+		title: "次数",
+		dataIndex: "count",
+		key: "count",
+		render: (count?: number) => count ?? "—",
+	},
+	{
+		title: "消息",
+		dataIndex: "message",
+		key: "message",
+		render: (message: string) => (
+			<Typography.Text
+				style={{ maxWidth: 260 }}
+				ellipsis={{ tooltip: message }}
+			>
+				{message}
+			</Typography.Text>
+		),
 	},
 ];
 
@@ -114,6 +201,28 @@ function formatArtifactRows(items?: Artifact[]) {
 	}));
 }
 
+function formatBytes(value?: number) {
+	if (typeof value !== "number" || Number.isNaN(value)) return "—";
+	const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+	let next = value;
+	let unitIndex = 0;
+	while (next >= 1024 && unitIndex < units.length - 1) {
+		next /= 1024;
+		unitIndex += 1;
+	}
+	return `${next.toFixed(next >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function formatCost(value?: number) {
+	if (typeof value !== "number" || Number.isNaN(value)) return "—";
+	return `$${value.toFixed(value >= 1 ? 2 : 4)}`;
+}
+
+function getMetricPercent(used?: number, limit?: number) {
+	if (!used || !limit || limit <= 0) return undefined;
+	return Math.min(100, Math.round((used / limit) * 100));
+}
+
 function CopyableEllipsisText({
 	text,
 	maxLength = 40,
@@ -130,14 +239,8 @@ function CopyableEllipsisText({
 }
 
 function ContainersTab({ node }: { node: WorkflowNodeStatus }) {
-	type ContainerItem = {
-		name: string;
-		image?: string;
-		command?: string[];
-		args?: string[];
-	};
 	const containerData = useMemo(() => {
-		const raw = (node as { containers?: ContainerItem[] }).containers ?? [];
+		const raw: WorkflowNodeContainer[] = node.containers ?? [];
 		return raw.map((container, index) => ({
 			key: `${container.name || "container"}-${index}`,
 			...container,
@@ -166,6 +269,254 @@ function ContainersTab({ node }: { node: WorkflowNodeStatus }) {
 			pagination={false}
 			rowKey="key"
 		/>
+	);
+}
+
+function PodTab({ node }: { node: WorkflowNodeStatus }) {
+	const podName = getWorkflowNodePodName(node);
+	const conditionRows = (node.podConditions ?? []).map((condition, index) => ({
+		key: `${condition.type}-${index}`,
+		...condition,
+	}));
+	const eventRows = (node.podEvents ?? []).map((event, index) => ({
+		key: `${event.reason}-${index}`,
+		...event,
+	}));
+
+	return (
+		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<Alert
+				type="info"
+				showIcon
+				message="Pod 诊断接口待接入"
+				description="前端已预留 Pod describe、conditions、events、container 状态和 namespace/cluster 字段；后端接 Kubernetes API 后即可填充。"
+			/>
+			<Descriptions size="small" column={1} layout="vertical" bordered>
+				<Descriptions.Item label="Cluster">
+					{node.cluster || "—"}
+				</Descriptions.Item>
+				<Descriptions.Item label="Namespace">
+					{node.namespace || "—"}
+				</Descriptions.Item>
+				<Descriptions.Item label="Pod">
+					{podName ? <CopyableEllipsisText text={podName} /> : "—"}
+				</Descriptions.Item>
+				<Descriptions.Item label="Pod IP">
+					{node.podIp || "—"}
+				</Descriptions.Item>
+				<Descriptions.Item label="Service Account">
+					{node.serviceAccountName || "—"}
+				</Descriptions.Item>
+				<Descriptions.Item label="重启次数">
+					{node.restartCount ?? "—"}
+				</Descriptions.Item>
+			</Descriptions>
+			<div>
+				<div style={{ marginBottom: 8, fontWeight: 600 }}>Conditions</div>
+				{conditionRows.length === 0 ? (
+					<Empty description="暂无 Pod conditions" />
+				) : (
+					<Table
+						size="small"
+						dataSource={conditionRows}
+						columns={podConditionColumns}
+						pagination={false}
+						rowKey="key"
+					/>
+				)}
+			</div>
+			<div>
+				<div style={{ marginBottom: 8, fontWeight: 600 }}>Events</div>
+				{eventRows.length === 0 ? (
+					<Empty description="暂无 Pod events" />
+				) : (
+					<Table
+						size="small"
+						dataSource={eventRows}
+						columns={podEventColumns}
+						pagination={false}
+						rowKey="key"
+					/>
+				)}
+			</div>
+		</Space>
+	);
+}
+
+function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
+	const cpuPercent = getMetricPercent(
+		metrics?.cpuCores,
+		metrics?.cpuLimitCores || metrics?.cpuRequestCores,
+	);
+	const memoryPercent = getMetricPercent(
+		metrics?.memoryBytes,
+		metrics?.memoryLimitBytes || metrics?.memoryRequestBytes,
+	);
+
+	return (
+		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<Alert
+				type={metrics ? "success" : "info"}
+				showIcon
+				message={metrics ? "监控快照" : "监控接口待接入"}
+				description={
+					metrics
+						? `采样时间：${metrics.sampledAt ? formatRelativeTime(metrics.sampledAt) : "—"}`
+						: "前端已预留 CPU、内存、GPU、网络、存储指标卡；后端可接 metrics-server、Prometheus 或 OpenCost allocation 数据。"
+				}
+			/>
+			<Row gutter={[12, 12]}>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic
+							title="CPU"
+							value={metrics?.cpuCores ?? "—"}
+							suffix={typeof metrics?.cpuCores === "number" ? "cores" : ""}
+						/>
+						<Typography.Text type="secondary">
+							{cpuPercent === undefined
+								? "request / limit: —"
+								: `用量 ${cpuPercent}%`}
+						</Typography.Text>
+					</Card>
+				</Col>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic
+							title="Memory"
+							value={formatBytes(metrics?.memoryBytes)}
+						/>
+						<Typography.Text type="secondary">
+							{memoryPercent === undefined
+								? "request / limit: —"
+								: `用量 ${memoryPercent}%`}
+						</Typography.Text>
+					</Card>
+				</Col>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic title="GPU" value={metrics?.gpuCount ?? "—"} />
+					</Card>
+				</Col>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic
+							title="Network"
+							value={`${formatBytes(metrics?.networkRxBytes)} / ${formatBytes(metrics?.networkTxBytes)}`}
+						/>
+						<Typography.Text type="secondary">RX / TX</Typography.Text>
+					</Card>
+				</Col>
+			</Row>
+		</Space>
+	);
+}
+
+function BillingTab({ cost }: { cost?: WorkflowPodCost }) {
+	return (
+		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<Alert
+				type={cost ? "success" : "info"}
+				showIcon
+				message={cost ? "计费快照" : "计费接口待接入"}
+				description={
+					cost
+						? `窗口：${cost.window || "—"} · 来源：${cost.provider || "—"}`
+						: "前端已预留 OpenCost/custom 成本字段；后端应按 pipeline run、asset、node、cluster、namespace 归因。"
+				}
+			/>
+			<Row gutter={[12, 12]}>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic title="总成本" value={formatCost(cost?.totalCostUsd)} />
+					</Card>
+				</Col>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic title="CPU" value={formatCost(cost?.cpuCostUsd)} />
+					</Card>
+				</Col>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic title="Memory" value={formatCost(cost?.memoryCostUsd)} />
+					</Card>
+				</Col>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic title="GPU" value={formatCost(cost?.gpuCostUsd)} />
+					</Card>
+				</Col>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic
+							title="Storage"
+							value={formatCost(cost?.storageCostUsd)}
+						/>
+					</Card>
+				</Col>
+				<Col span={12}>
+					<Card size="small">
+						<Statistic
+							title="Network"
+							value={formatCost(cost?.networkCostUsd)}
+						/>
+					</Card>
+				</Col>
+			</Row>
+		</Space>
+	);
+}
+
+function DebugTab({ node }: { node: WorkflowNodeStatus }) {
+	const execEnabled = node.debug?.execEnabled === true;
+	const commandTemplates = [
+		"pwd",
+		"ls -lah",
+		"env",
+		"cat /tmp/outputs/output",
+		"df -h",
+		"ps aux",
+	];
+
+	return (
+		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<Alert
+				type={execEnabled ? "warning" : "info"}
+				showIcon
+				message={execEnabled ? "调试终端待确认" : "Exec 接口待接入"}
+				description={
+					node.debug?.reason ||
+					"前端已预留终端区域和命令模板；后端需要 WebSocket exec 代理、RBAC、审计、超时和 cluster/namespace 隔离后再启用。"
+				}
+			/>
+			<Space wrap>
+				{commandTemplates.map((command) => (
+					<Button key={command} size="small" disabled={!execEnabled}>
+						{command}
+					</Button>
+				))}
+			</Space>
+			<div
+				style={{
+					height: 220,
+					background: "#111827",
+					color: "#d1d5db",
+					borderRadius: 6,
+					padding: 12,
+					fontFamily: '"SF Mono", "Fira Code", monospace',
+					fontSize: 12,
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "center",
+					textAlign: "center",
+				}}
+			>
+				<Space direction="vertical" align="center">
+					<LockOutlined style={{ fontSize: 22 }} />
+					<span>等待后端 WebSocket exec 能力接入</span>
+				</Space>
+			</div>
+		</Space>
 	);
 }
 
@@ -409,6 +760,38 @@ export function WorkflowNodeDetailPanel({
 						key: "containers",
 						label: "容器",
 						children: <ContainersTab node={node} />,
+					},
+					{
+						key: "pod",
+						label: (
+							<>
+								<CloudServerOutlined /> Pod
+							</>
+						),
+						children: <PodTab node={node} />,
+					},
+					{
+						key: "monitoring",
+						label: "监控",
+						children: <MonitoringTab metrics={node.metrics} />,
+					},
+					{
+						key: "billing",
+						label: (
+							<>
+								<DollarOutlined /> 计费
+							</>
+						),
+						children: <BillingTab cost={node.cost} />,
+					},
+					{
+						key: "debug",
+						label: (
+							<>
+								<ThunderboltOutlined /> 调试
+							</>
+						),
+						children: <DebugTab node={node} />,
 					},
 					{
 						key: "inputs-outputs",

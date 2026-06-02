@@ -29,3 +29,33 @@
 - **Decision**: Commit, push, and open the PR before finishing the remaining Chrome MCP workflow-log/resource verification; mark the verification gap in `tasks.md` and the PR.
 - **Alternatives**: Continue local/deploy verification before opening the PR.
 - **Rationale**: Current user instruction takes precedence, and the unresolved part is an environment endpoint configuration issue rather than an untested local code path.
+
+## 2026-06-02 — Expired deployment status
+- **Context**: Dev verification showed historical deployment rows can outlive their Argo Workflow CR because the workflow spec uses TTL cleanup. Those rows could remain `Running` and then open to `未找到工作流`.
+- **Decision**: When status refresh sees `argo.ErrNotFound` for an active deployment, mark the deployment API status as `Expired` and allow retry from the saved pipeline JSON.
+- **Alternatives**: Delete stale deployment rows, keep showing the old status, or return a 404 only from workflow detail.
+- **Rationale**: `Expired` preserves audit/history while making the UI honest and recoverable.
+
+## 2026-06-02 — Dev Argo environment reminder
+- **Context**: User confirmed the dev backend deployment needs `ARGO_BASE_URL=https://cyber-databrew-pipeline-ui-dev-234851712830.us-central1.run.app`, `ARGO_WORKFLOWS_NAMESPACE=cyber-databrew-dev`, and `ARGO_SERVER_URL=http://10.2.1.211:2746`.
+- **Decision**: Keep this reminder in the change log for future dev deploys. `ARGO_SERVER_URL` is the internal Argo API endpoint used by the backend; `ARGO_BASE_URL` remains present for the pipeline UI URL.
+- **Alternatives**: Rely on memory or deployment script defaults only.
+- **Rationale**: Missing `ARGO_SERVER_URL` was the root cause of workflow/log verification failures.
+
+## 2026-06-02 — Frontend debug workbench pushed before dev deploy
+- **Context**: The frontend-only Pod debug workbench change normally requires frontend dev deploy verification before commit/push. The user explicitly requested submitting the PR to `dev` after local MCP verification.
+- **Decision**: Commit and push this frontend iteration to the existing PR before Cloud Run frontend dev deployment. Record local verification and the deploy gap in the PR comment.
+- **Alternatives**: Build and deploy the frontend dev image before pushing.
+- **Rationale**: Current user instruction prioritizes getting the PR update ready for review/testing; the change has local MCP verification and does not add backend API calls beyond removing a known 404 stream probe.
+
+## 2026-06-02 — Saved pipelines versus execution records
+- **Context**: The saved-pipeline management tab displayed its own `运行历史` list while the top-level `执行记录` tab already owned execution search, pagination, detail, retry/delete confirmations, and node/debug flows. This created two places for the same run concept and made the saved-pipeline page visually dense.
+- **Decision**: Keep the full saved-pipeline tab focused on template CRUD and run submission. Route run history and operational actions through the execution records tab, with a toolbar shortcut from saved pipelines.
+- **Alternatives**: Rename the embedded list, or keep a short recent-history section under saved pipelines.
+- **Rationale**: A single execution surface avoids conflicting labels and makes the page model match the product split: component library, pipeline templates, execution records, and run targets.
+
+## 2026-06-02 — Frontend dev deploy intentionally skipped
+- **Context**: The pipeline tab-width UX fix touches frontend runtime code. The user explicitly said they will handle deployment and asked for local frontend testing only.
+- **Decision**: Do not deploy Cloud Run frontend dev in this pass. Verify locally with Chrome DevTools MCP against `http://localhost:5176`, then push and open the PR.
+- **Alternatives**: Deploy frontend dev immediately after pushing the branch.
+- **Rationale**: Current user instruction takes precedence, and the local MCP checks directly verify the affected `/pipeline` tabs before handoff.

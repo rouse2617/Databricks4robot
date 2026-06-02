@@ -9,7 +9,15 @@ import {
 	within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 
@@ -28,8 +36,6 @@ const mockListPipelines = vi.fn();
 const mockListDeployments = vi.fn();
 const mockDeployTemplate = vi.fn();
 const mockDeletePipeline = vi.fn();
-const mockDeleteDeployment = vi.fn();
-const mockRetryDeployment = vi.fn();
 const mockGetPipeline = vi.fn();
 const mockListExecutionTargets = vi.fn();
 
@@ -40,8 +46,6 @@ vi.mock("../../api/pipelineApi", () => ({
 		mockListExecutionTargets(...args),
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
-	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
-	retryDeployment: (...args: unknown[]) => mockRetryDeployment(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
 }));
 
@@ -111,6 +115,14 @@ function renderDeployPanel(
 	);
 }
 
+function renderCompactDeployPanel() {
+	return render(
+		<MemoryRouter>
+			<DeployPanel variant="compact" />
+		</MemoryRouter>,
+	);
+}
+
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {
 		writable: true,
@@ -133,28 +145,32 @@ afterEach(() => {
 	cleanup();
 });
 
+beforeEach(() => {
+	vi.clearAllMocks();
+	mockListExecutionTargets.mockResolvedValue([
+		{
+			id: "default",
+			name: "Default Argo target",
+			cluster: "default",
+			namespace: "cyber-databrew-dev",
+			argoServerConfigured: true,
+			status: "available",
+			isDefault: true,
+		},
+	]);
+});
+
 describe("DeployPanel", () => {
-	it("shows empty state when no templates or deployments exist", async () => {
+	it("shows empty state when no templates exist", async () => {
 		mockListPipelines.mockResolvedValue([]);
-		mockListDeployments.mockResolvedValue([]);
-		mockListExecutionTargets.mockResolvedValue([
-			{
-				id: "default",
-				name: "Default Argo target",
-				cluster: "default",
-				namespace: "cyber-databrew-dev",
-				argoServerConfigured: true,
-				status: "available",
-				isDefault: true,
-			},
-		]);
 		renderDeployPanel();
 
 		expect(await screen.findByText("暂无已保存的流水线模板")).toBeTruthy();
-		expect(screen.getByText("暂无部署记录")).toBeTruthy();
+		expect(screen.queryByText("运行历史")).toBeNull();
+		expect(screen.queryByText("暂无部署记录")).toBeNull();
 	});
 
-	it("loads and displays templates and deployments on mount", async () => {
+	it("loads and displays templates on mount", async () => {
 		mockListPipelines.mockResolvedValue([
 			mockTemplate({ id: "tmpl-001", name: "my-pipeline", nodeCount: 5 }),
 		]);
@@ -167,12 +183,10 @@ describe("DeployPanel", () => {
 		]);
 		renderDeployPanel();
 
-		// "my-pipeline" appears in both template and deployment cards
 		const names = await screen.findAllByText("my-pipeline");
-		expect(names.length).toBeGreaterThanOrEqual(2);
-
-		// Deployment status tag
-		expect(screen.getByText("Succeeded")).toBeTruthy();
+		expect(names).toHaveLength(1);
+		expect(screen.queryByText("Succeeded")).toBeNull();
+		expect(mockListDeployments).not.toHaveBeenCalled();
 	});
 
 	it("calls deployTemplate on direct run", async () => {
@@ -387,37 +401,19 @@ describe("DeployPanel", () => {
 		});
 	});
 
-	it("deletes a deployment record", async () => {
-		mockListPipelines.mockResolvedValue([]);
-		mockListDeployments.mockResolvedValue([
-			mockDeployment({ id: "dep-001", pipelineName: "test-pipeline" }),
-		]);
-		mockDeleteDeployment.mockResolvedValue(undefined);
-		renderDeployPanel();
-
-		expect(await screen.findByText("test-pipeline")).toBeTruthy();
-
-		const deleteBtns = screen.getAllByRole("button", { name: /delete/i });
-		expect(deleteBtns.length).toBeGreaterThanOrEqual(1);
-		fireEvent.click(deleteBtns[0]);
-
-		await waitFor(() => {
-			expect(mockDeleteDeployment).toHaveBeenCalledWith("dep-001");
-		});
-	});
-
-	it("navigates to workflow detail on '查看'", async () => {
+	it("shows recent executions in compact mode", async () => {
 		mockListPipelines.mockResolvedValue([]);
 		mockListDeployments.mockResolvedValue([
 			mockDeployment({ id: "dep-001", workflowName: "wf-my-workflow" }),
 		]);
-		renderDeployPanel();
+		renderCompactDeployPanel();
 
+		expect(await screen.findByText("最近执行")).toBeTruthy();
 		expect(await screen.findByText("查看")).toBeTruthy();
-
-		// Click view — MemoryRouter handles the navigate internally
 		fireEvent.click(screen.getByText("查看"));
-		// No explicit assertion needed — MemoryRouter handles it without error
+		expect(mockNavigate).toHaveBeenCalledWith(
+			"/pipeline/executions/wf-my-workflow",
+		);
 	});
 
 	it("refreshes data after successful deploy", async () => {
@@ -444,8 +440,8 @@ describe("DeployPanel", () => {
 			);
 		});
 
-		// refresh() triggers listDeployments again (1 mount + 1 refresh = 2)
-		expect(mockListDeployments.mock.calls.length).toBeGreaterThanOrEqual(2);
+		// refresh() triggers listPipelines again (1 mount + 1 refresh = 2)
+		expect(mockListPipelines.mock.calls.length).toBeGreaterThanOrEqual(2);
 	});
 
 	it("shows modal with no-asset run warning", async () => {
@@ -472,25 +468,6 @@ describe("DeployPanel", () => {
 
 		// Should show empty state without crashing
 		expect(await screen.findByText("暂无已保存的流水线模板")).toBeTruthy();
-		expect(await screen.findByText("暂无部署记录")).toBeTruthy();
-	});
-
-	it("retries failed deployments from history", async () => {
-		mockListPipelines.mockResolvedValue([]);
-		mockListDeployments.mockResolvedValue([
-			mockDeployment({ id: "dep-failed", status: "Failed" }),
-		]);
-		mockRetryDeployment.mockResolvedValue(
-			mockDeployment({ id: "dep-failed", status: "Running" }),
-		);
-		renderDeployPanel();
-
-		const retryButton = await screen.findByRole("button", { name: /重试/i });
-		fireEvent.click(retryButton);
-
-		await waitFor(() => {
-			expect(mockRetryDeployment).toHaveBeenCalledWith("dep-failed");
-		});
-		expect(mockListDeployments.mock.calls.length).toBeGreaterThanOrEqual(2);
+		expect(screen.queryByText("暂无部署记录")).toBeNull();
 	});
 });

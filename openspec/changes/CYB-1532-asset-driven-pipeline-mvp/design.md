@@ -19,6 +19,7 @@
 - **Pipeline Run**: one submission of a template or ad-hoc pipeline against an execution target and optional asset batch. This is "this run".
 - **Pipeline Run Node**: the observed state for one run node, including Argo node ID, pod name, host, phase, timestamps, log pointer, resource duration, and message.
 - **Pipeline Run Asset Node**: the future normalized view of asset x node state for batch processing. The MVP can derive this from run assets and Argo node state until per-asset fan-out exists.
+- **Pod Debug Workbench**: the run-node detail surface for GKE Pod diagnosis. It groups logs, Pod describe/events, metrics, cost, and controlled exec commands behind backend-mediated APIs.
 
 ## Architecture Decisions
 
@@ -48,6 +49,18 @@
 - **Rationale**: testing showed a command can print success but the workflow still fails because `/tmp/outputs/output` is missing.
 - **Risk**: static validation cannot prove arbitrary commands write the file.
 
+### Decision 5: Keep GCP/GKE observability behind DataBrew backend APIs
+- **Approach**: the frontend reserves tabs and TypeScript shapes for Pod logs, Pod describe/events, monitoring, billing, and exec. Browser clients never receive kubeconfig or call the Kubernetes API directly.
+- **GCP/GKE fit**: metrics should be sourced from GKE-compatible backends such as Cloud Monitoring, Managed Service for Prometheus, metrics-server, or Prometheus service proxy. Cost should prefer OpenCost allocation data and may enrich with GCP pricing/billing metadata.
+- **Exec policy**: Pod exec requires a backend WebSocket proxy with RBAC, audit events, timeout, target allow-list, and cluster/namespace isolation before UI buttons are enabled.
+- **Rationale**: DataBrew users need debugging without becoming cluster admins, and multi-cluster support must remain governed by execution targets.
+
+### Decision 6: Make workflow execution UX explicit before backend expansion
+- **Approach**: execution filters use an explicit Apply/Reset flow instead of silent refresh, action menus show user feedback or confirmation, and workflow details move to `/pipeline/executions/:name` while legacy `/workflows/:name` redirects for compatibility.
+- **Run context**: the detail page reserves surfaces for pipeline template, selected assets, run-level events, and asset x node state. Until backend run metadata exists, these areas show explicit "backend待接入" placeholders instead of hiding the missing model.
+- **Failure UX**: failed workflows with no renderable DAG nodes show an error-style empty state and expose failed node entries so users can still open the node drawer and logs.
+- **Rationale**: the frontend should reflect the target product model now, while making unsupported backend capabilities visible and non-misleading.
+
 ## Data Flow
 
 ```mermaid
@@ -59,6 +72,7 @@ flowchart LR
   W --> N[Run node status/log/resource refresh]
   N --> UI[Run detail UI]
   R --> E[Asset events and lineage]
+  G[GKE metrics/cost/debug APIs] --> N
 ```
 
 ## Data Model Changes

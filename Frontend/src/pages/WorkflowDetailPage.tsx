@@ -7,6 +7,7 @@ import Ansi from "ansi-to-react";
 import {
 	Alert,
 	Button,
+	Card,
 	Descriptions,
 	Input,
 	Modal,
@@ -14,8 +15,10 @@ import {
 	Segmented,
 	Space,
 	Spin,
+	Table,
 	Tag,
 	Tooltip,
+	Typography,
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -34,6 +37,10 @@ import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 import { useWorkflowDetail } from "./useWorkflowDetail";
 import { WorkflowDagView } from "./WorkflowDagView";
 import { WorkflowTimelineView } from "./WorkflowTimelineView";
+import {
+	LOG_MAX_RENDER_LINES,
+	prepareVisibleLogContent,
+} from "./workflowLogView";
 
 function buildHighlightedLogNodes(logContent: string, keyword: string) {
 	const normalized = keyword.trim();
@@ -82,20 +89,29 @@ function WorkflowLogPanel({
 	onSearch: (value: string) => void;
 }) {
 	const logBodyRef = useRef<HTMLDivElement | null>(null);
+	const visibleLog = useMemo(
+		() =>
+			logContent === null
+				? null
+				: prepareVisibleLogContent(logContent, selectedNode),
+		[logContent, selectedNode],
+	);
 	const logElement =
-		logContent === null ? null : buildHighlightedLogNodes(logContent, search);
+		visibleLog === null
+			? null
+			: buildHighlightedLogNodes(visibleLog.content, search);
 
 	useEffect(() => {
 		if (
 			selectedNode &&
 			!loading &&
 			!error &&
-			logContent !== null &&
+			visibleLog !== null &&
 			logBodyRef.current
 		) {
 			logBodyRef.current.scrollTop = logBodyRef.current.scrollHeight;
 		}
-	}, [selectedNode, loading, error, logContent]);
+	}, [selectedNode, loading, error, visibleLog]);
 
 	return (
 		<div
@@ -134,24 +150,36 @@ function WorkflowLogPanel({
 			) : logContent === null ? (
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>暂无日志</div>
 			) : (
-				<div
-					ref={logBodyRef}
-					style={{
-						flex: 1,
-						fontSize: 11,
-						fontFamily: '"SF Mono", "Fira Code", monospace',
-						whiteSpace: "pre-wrap",
-						wordBreak: "break-all",
-						overflow: "auto",
-						background: "#f8f9fa",
-						padding: 12,
-						borderRadius: 6,
-						border: "1px solid #e5e7eb",
-						minHeight: 0,
-					}}
-				>
-					{logElement}
-				</div>
+				<>
+					{visibleLog?.truncated && (
+						<Alert
+							type="warning"
+							showIcon
+							style={{ marginBottom: 8 }}
+							message={`日志较大，当前仅显示尾部 ${visibleLog.content.length.toLocaleString()} 字符 / ${Math.min(visibleLog.totalLines, LOG_MAX_RENDER_LINES).toLocaleString()} 行。`}
+							description="完整大日志需要后端 tail、分页或流式接口支持；当前视图会限制渲染量以避免浏览器卡顿。"
+						/>
+					)}
+					<div
+						ref={logBodyRef}
+						style={{
+							flex: 1,
+							fontSize: 11,
+							fontFamily: '"SF Mono", "Fira Code", monospace',
+							whiteSpace: "pre-wrap",
+							wordBreak: "break-word",
+							overflow: "auto",
+							background: "#f8f9fa",
+							padding: 12,
+							borderRadius: 6,
+							border: "1px solid #e5e7eb",
+							minHeight: 0,
+							lineHeight: 1.55,
+						}}
+					>
+						{logElement}
+					</div>
+				</>
 			)}
 			{selectedNode && (
 				<div style={{ marginTop: 12 }}>
@@ -180,12 +208,93 @@ function WorkflowLogPanel({
 	);
 }
 
-export default function WorkflowDetailPage() {
+function getWorkflowLabel(
+	labels: Record<string, string> | undefined,
+	key: string,
+) {
+	return (
+		labels?.[key] ||
+		labels?.[`cyberorigin.ai/${key}`] ||
+		labels?.[`databrew/${key}`]
+	);
+}
+
+function WorkflowRunContextPanel({
+	workflow,
+}: {
+	workflow: NonNullable<ReturnType<typeof useWorkflowDetail>["workflow"]>;
+}) {
+	const templateName =
+		getWorkflowLabel(workflow.labels, "pipeline-template") ||
+		getWorkflowLabel(workflow.labels, "template") ||
+		"后端待接入";
+	const assetIds =
+		getWorkflowLabel(workflow.labels, "asset-ids") ||
+		getWorkflowLabel(workflow.labels, "assets") ||
+		"后端待接入";
+
+	return (
+		<div
+			style={{
+				display: "grid",
+				gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+				gap: 12,
+				padding: "12px 16px",
+				borderBottom: "1px solid #e5e7eb",
+				background: "#fff",
+			}}
+		>
+			<Card size="small" title="Pipeline Template">
+				<Typography.Text>{templateName}</Typography.Text>
+			</Card>
+			<Card size="small" title="关联资产">
+				<Typography.Text>{assetIds}</Typography.Text>
+			</Card>
+			<Card size="small" title="运行事件">
+				<Typography.Text type="secondary">
+					run_events 接口待接入，后续展示提交、调度、Pod
+					创建、节点状态变更和重试事件。
+				</Typography.Text>
+			</Card>
+		</div>
+	);
+}
+
+function WorkflowAssetNodePanel() {
+	return (
+		<Card
+			size="small"
+			title="资产 × 节点明细"
+			style={{ margin: "0 16px 12px" }}
+		>
+			<Table
+				size="small"
+				dataSource={[]}
+				columns={[
+					{ title: "资产", dataIndex: "asset", key: "asset" },
+					{ title: "节点", dataIndex: "node", key: "node" },
+					{ title: "状态", dataIndex: "status", key: "status" },
+					{ title: "日志", dataIndex: "logs", key: "logs" },
+				]}
+				pagination={false}
+				locale={{ emptyText: "后端待接入 asset × node 状态明细" }}
+			/>
+		</Card>
+	);
+}
+
+export default function WorkflowDetailPage({
+	legacyRoute = false,
+}: {
+	legacyRoute?: boolean;
+}) {
 	const { name } = useParams<{ name: string }>();
 	const navigate = useNavigate();
 	const [viewMode, setViewMode] = useState<"dag" | "timeline">("dag");
 	const [operationLoading, setOperationLoading] =
 		useState<WorkflowOperationKey | null>(null);
+	const [confirmOperation, setConfirmOperation] =
+		useState<WorkflowOperationConfig | null>(null);
 
 	const {
 		workflow,
@@ -234,19 +343,18 @@ export default function WorkflowDetailPage() {
 
 	const runOperation = useCallback(
 		(operation: WorkflowOperationConfig) => {
-			if (operation.key === "delete" || operation.key === "terminate") {
-				Modal.confirm({
-					title: `确认${operation.title} ${workflow?.name}?`,
-					okText: operation.title,
-					okButtonProps: { danger: operation.danger },
-					cancelText: "取消",
-					onOk: () => executeOperation(operation),
-				});
+			if (
+				operation.key === "delete" ||
+				operation.key === "terminate" ||
+				operation.key === "resubmit" ||
+				operation.key === "retry"
+			) {
+				setConfirmOperation(operation);
 				return;
 			}
 			executeOperation(operation);
 		},
-		[executeOperation, workflow?.name],
+		[executeOperation],
 	);
 
 	const closeNodeDetailPanel = useCallback(() => {
@@ -276,6 +384,14 @@ export default function WorkflowDetailPage() {
 		}
 		runOperation(retryConfig);
 	}, [operations, runOperation, workflow]);
+
+	useEffect(() => {
+		if (legacyRoute && name) {
+			navigate(`/pipeline/executions/${encodeURIComponent(name)}`, {
+				replace: true,
+			});
+		}
+	}, [legacyRoute, name, navigate]);
 
 	useEffect(() => {
 		if (!selectedNode) {
@@ -342,7 +458,7 @@ export default function WorkflowDetailPage() {
 			>
 				<Button
 					icon={<ArrowLeftOutlined />}
-					onClick={() => navigate("/workflows")}
+					onClick={() => navigate("/pipeline?tab=executions")}
 				>
 					返回
 				</Button>
@@ -424,6 +540,7 @@ export default function WorkflowDetailPage() {
 					/>
 				</div>
 			</div>
+			<WorkflowRunContextPanel workflow={workflow} />
 			<div style={{ flex: 1, display: "flex", minHeight: 0, minWidth: 0 }}>
 				{viewMode === "dag" ? (
 					<WorkflowDagView
@@ -432,6 +549,7 @@ export default function WorkflowDetailPage() {
 						selectedNodeId={selectedNode?.id ?? null}
 						onNodeSelect={selectNode}
 						emptyMessage={workflow.message}
+						workflowStatus={workflow.status}
 					/>
 				) : (
 					<WorkflowTimelineView
@@ -441,6 +559,7 @@ export default function WorkflowDetailPage() {
 					/>
 				)}
 			</div>
+			<WorkflowAssetNodePanel />
 
 			<WorkflowNodeDetailPanel
 				node={selectedNode}
@@ -451,6 +570,30 @@ export default function WorkflowDetailPage() {
 				onRetryWorkflow={handleRetryWorkflow}
 				onShowLogs={handleShowNodeLogs}
 			/>
+
+			<Modal
+				open={!!confirmOperation}
+				title={
+					confirmOperation
+						? `确认${confirmOperation.title} ${workflow.name}?`
+						: ""
+				}
+				okText={confirmOperation?.title}
+				cancelText="取消"
+				okButtonProps={{ danger: confirmOperation?.danger }}
+				onOk={async () => {
+					if (!confirmOperation) return;
+					const operation = confirmOperation;
+					setConfirmOperation(null);
+					await executeOperation(operation);
+				}}
+				onCancel={() => setConfirmOperation(null)}
+			>
+				{confirmOperation?.key === "resubmit" ||
+				confirmOperation?.key === "retry" ? (
+					<p>将基于当前工作流再次提交执行。</p>
+				) : null}
+			</Modal>
 
 			<Modal
 				open={showNodeLogs}

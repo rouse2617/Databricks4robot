@@ -89,6 +89,10 @@ describe("WorkflowNodeDetailPanel", () => {
 		);
 		expect(screen.getByText("概览")).toBeTruthy();
 		expect(screen.getByText("容器")).toBeTruthy();
+		expect(screen.getByRole("tab", { name: /Pod/ })).toBeTruthy();
+		expect(screen.getByText("监控")).toBeTruthy();
+		expect(screen.getByText("计费")).toBeTruthy();
+		expect(screen.getByText("调试")).toBeTruthy();
 		expect(screen.getByText("输入/输出")).toBeTruthy();
 	});
 
@@ -212,5 +216,88 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		expect(screen.getByText(/命中=是/)).toBeTruthy();
+	});
+
+	it("renders pod diagnostics placeholders", () => {
+		render(
+			<WorkflowNodeDetailPanel
+				node={{
+					...baseNode,
+					cluster: "gke-dev",
+					namespace: "cyber-databrew-dev",
+					serviceAccountName: "argo-workflow",
+					podIp: "10.1.2.3",
+					podConditions: [{ type: "Ready", status: "True" }],
+					podEvents: [
+						{
+							type: "Warning",
+							reason: "BackOff",
+							message: "Back-off restarting failed container",
+							count: 2,
+						},
+					],
+				}}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("tab", { name: /Pod/ }));
+		expect(screen.getByText("gke-dev")).toBeTruthy();
+		expect(screen.getByText("cyber-databrew-dev")).toBeTruthy();
+		expect(screen.getByText("BackOff")).toBeTruthy();
+	});
+
+	it("renders monitoring and billing shells", () => {
+		const node: WorkflowNodeStatus = {
+			...baseNode,
+			metrics: {
+				cpuCores: 0.5,
+				cpuLimitCores: 1,
+				memoryBytes: 512 * 1024 * 1024,
+				memoryLimitBytes: 1024 * 1024 * 1024,
+			},
+			cost: {
+				totalCostUsd: 0.12,
+				cpuCostUsd: 0.05,
+				memoryCostUsd: 0.04,
+				provider: "opencost",
+				window: "1h",
+			},
+		};
+		render(
+			<WorkflowNodeDetailPanel
+				node={node}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+
+		fireEvent.click(screen.getByText("监控"));
+		expect(screen.getByText("监控快照")).toBeTruthy();
+		expect(screen.getAllByText("用量 50%").length).toBeGreaterThan(0);
+
+		fireEvent.click(screen.getByText("计费"));
+		expect(screen.getByText("计费快照")).toBeTruthy();
+		expect(screen.getByText("$0.1200")).toBeTruthy();
+	});
+
+	it("renders disabled debug terminal shell before backend exec is available", () => {
+		render(
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByText("调试"));
+		expect(screen.getByText("Exec 接口待接入")).toBeTruthy();
+		expect(screen.getByText("等待后端 WebSocket exec 能力接入")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "pwd" })).toBeDisabled();
 	});
 });

@@ -247,6 +247,7 @@ interface WorkflowDagViewProps {
 	selectedNodeId: string | null;
 	onNodeSelect: (node: WorkflowNodeStatus | null) => void;
 	emptyMessage?: string;
+	workflowStatus?: string;
 }
 
 function FitViewOnGraphChange({ graphKey }: { graphKey: string }): null {
@@ -274,6 +275,7 @@ function WorkflowDagViewInner({
 	selectedNodeId,
 	onNodeSelect,
 	emptyMessage,
+	workflowStatus,
 }: WorkflowDagViewProps): React.JSX.Element {
 	const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowDagNodeType>(
 		[],
@@ -322,6 +324,10 @@ function WorkflowDagViewInner({
 
 	const displayableCount = countDisplayableWorkflowNodes(rawNodes);
 	const showEmptyState = displayableCount === 0;
+	const failedNodes = rawNodes.filter((node) =>
+		["Failed", "Error"].includes(node.phase),
+	);
+	const isFailedWorkflow = ["Failed", "Error"].includes(workflowStatus ?? "");
 
 	return (
 		<div className="workflow-dag-view">
@@ -367,14 +373,36 @@ function WorkflowDagViewInner({
 				</ReactFlow>
 				{showEmptyState ? (
 					<div className="workflow-dag-view__empty">
-						<div className="workflow-dag-view__empty-card">
+						<div
+							className={[
+								"workflow-dag-view__empty-card",
+								isFailedWorkflow ? "workflow-dag-view__empty-card--error" : "",
+							]
+								.filter(Boolean)
+								.join(" ")}
+						>
 							<div className="workflow-dag-view__empty-title">
-								暂无可展示的 DAG 节点
+								{isFailedWorkflow
+									? "工作流失败，暂无可展示 DAG"
+									: "暂无可展示的 DAG 节点"}
 							</div>
 							<div>
 								{emptyMessage ||
 									"工作流可能在启动前失败，或所有步骤仍处于隐藏/省略状态。"}
 							</div>
+							{failedNodes.length > 0 ? (
+								<div className="workflow-dag-view__empty-actions">
+									{failedNodes.slice(0, 3).map((node) => (
+										<button
+											key={node.id}
+											type="button"
+											onClick={() => onNodeSelect(node)}
+										>
+											查看失败节点：{getWorkflowNodeDisplayText(node)}
+										</button>
+									))}
+								</div>
+							) : null}
 						</div>
 					</div>
 				) : null}

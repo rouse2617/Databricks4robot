@@ -126,7 +126,11 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 									style={{ cursor: "pointer", color: "#1677ff" }}
 									onClick={() => {
 										const wf = pipelineLineage?.workflow_name;
-										if (wf) navigate(`/workflows/${encodeURIComponent(wf)}`);
+										if (wf) {
+											navigate(
+												`/pipeline/executions/${encodeURIComponent(wf)}`,
+											);
+										}
 									}}
 								>
 									{pipelineLineage?.workflow_name}

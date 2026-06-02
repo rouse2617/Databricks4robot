@@ -14,6 +14,7 @@ export const WORKFLOW_PHASES = [
 	"Error",
 	"Pending",
 	"Suspended",
+	"Expired",
 ] as const;
 
 export const WORKFLOW_PHASE_LABELS: Record<
@@ -26,6 +27,7 @@ export const WORKFLOW_PHASE_LABELS: Record<
 	Error: "异常",
 	Pending: "等待中",
 	Suspended: "已暂停",
+	Expired: "已过期",
 };
 
 /** Always show these summary cards; hide other phases when count is 0. */
@@ -43,6 +45,7 @@ export const PHASE_COLORS: Record<string, string> = {
 	Error: "#dc2626",
 	Skipped: "#6b7280",
 	Suspended: "#7c3aed",
+	Expired: "#6b7280",
 };
 
 export const STATUS_COLORS: Record<string, string> = {
@@ -53,6 +56,7 @@ export const STATUS_COLORS: Record<string, string> = {
 	Error: "error",
 	Skipped: "default",
 	Suspended: "purple",
+	Expired: "default",
 };
 
 export const STATUS_ACCENT_COLORS: Record<string, string> = {
@@ -62,6 +66,7 @@ export const STATUS_ACCENT_COLORS: Record<string, string> = {
 	Failed: "#ff4d4f",
 	Error: "#cf1322",
 	Suspended: "#722ed1",
+	Expired: "#6b7280",
 };
 
 export const STATUS_ICONS: Record<string, ReactNode> = {
@@ -71,4 +76,5 @@ export const STATUS_ICONS: Record<string, ReactNode> = {
 	Failed: createElement(CloseCircleOutlined),
 	Error: createElement(ExclamationCircleOutlined),
 	Suspended: createElement(ClockCircleOutlined),
+	Expired: createElement(ClockCircleOutlined),
 };
