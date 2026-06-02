@@ -30,8 +30,28 @@ type WorkflowClient interface {
 	SuspendWorkflow(ctx context.Context, name, namespace string) error
 	ResumeWorkflow(ctx context.Context, name, namespace string) error
 	TerminateWorkflow(ctx context.Context, name, namespace string) error
-	GetWorkflowLogs(ctx context.Context, workflowName, podName, namespace string) (string, error)
-	GetWorkflowLogStream(ctx context.Context, workflowName, podName, container, namespace string) (io.ReadCloser, error)
+	GetWorkflowLogs(ctx context.Context, workflowName, podName, namespace string, opts WorkflowLogOptions) (WorkflowLogResult, error)
+	GetWorkflowLogStream(ctx context.Context, workflowName, podName, namespace string, opts WorkflowLogOptions) (io.ReadCloser, error)
+}
+
+// WorkflowLogOptions contains bounded pod log query options.
+type WorkflowLogOptions struct {
+	Container    string
+	TailLines    *int64
+	LimitBytes   *int64
+	SinceSeconds *int64
+	SinceTime    string
+	Previous     bool
+	Timestamps   bool
+	Follow       bool
+}
+
+// WorkflowLogResult contains parsed log text plus truncation metadata.
+type WorkflowLogResult struct {
+	Logs       string
+	LineCount  int
+	Truncated  bool
+	LimitBytes int64
 }
 
 // Client implements WorkflowClient using the Argo Server REST API.
@@ -122,40 +142,81 @@ func (c *Client) workflowOperation(ctx context.Context, name, namespace, operati
 	return c.do(ctx, http.MethodPut, workflowNamePath(namespace, name)+"/"+operation, nil, map[string]any{}, nil)
 }
 
-// GetWorkflowLogs returns logs for a workflow pod using Argo Server log streaming.
-func (c *Client) GetWorkflowLogs(ctx context.Context, workflowName, podName, namespace string) (string, error) {
-	query := url.Values{}
-	query.Set("logOptions.container", "main")
-	query.Set("podName", podName)
+// GetWorkflowLogs returns bounded logs for a workflow pod using Argo Server log streaming.
+func (c *Client) GetWorkflowLogs(
+	ctx context.Context,
+	workflowName, podName, namespace string,
+	opts WorkflowLogOptions,
+) (WorkflowLogResult, error) {
+	query := workflowLogQuery(podName, opts)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, workflowNamePath(namespace, workflowName)+"/log", query, nil)
 	if err != nil {
-		return "", err
+		return WorkflowLogResult{}, err
 	}
 	defer resp.Body.Close()
 
-	logs, err := parseLogStream(resp.Body)
+	logs, lineCount, truncated, err := parseLogStreamBounded(resp.Body, opts.LimitBytes)
 	if err != nil {
-		return "", fmt.Errorf("parse workflow logs: %w", err)
+		return WorkflowLogResult{}, fmt.Errorf("parse workflow logs: %w", err)
 	}
-	return logs, nil
+	result := WorkflowLogResult{
+		Logs:      logs,
+		LineCount: lineCount,
+		Truncated: truncated,
+	}
+	if opts.LimitBytes != nil {
+		result.LimitBytes = *opts.LimitBytes
+	}
+	return result, nil
 }
 
 // GetWorkflowLogStream returns a live log stream for a specific workflow pod.
 func (c *Client) GetWorkflowLogStream(
 	ctx context.Context,
-	workflowName, podName, container, namespace string,
+	workflowName, podName, namespace string,
+	opts WorkflowLogOptions,
 ) (io.ReadCloser, error) {
-	query := url.Values{}
-	query.Set("podName", podName)
-	query.Set("container", container)
-	query.Set("follow", "true")
+	opts.Follow = true
+	query := workflowLogQuery(podName, opts)
 
 	resp, err := c.doRequest(ctx, http.MethodGet, workflowNamePath(namespace, workflowName)+"/log", query, nil)
 	if err != nil {
 		return nil, err
 	}
 	return resp.Body, nil
+}
+
+func workflowLogQuery(podName string, opts WorkflowLogOptions) url.Values {
+	query := url.Values{}
+	query.Set("podName", podName)
+	if opts.Container != "" {
+		query.Set("container", opts.Container)
+		query.Set("logOptions.container", opts.Container)
+	}
+	if opts.TailLines != nil {
+		query.Set("logOptions.tailLines", fmt.Sprintf("%d", *opts.TailLines))
+	}
+	if opts.LimitBytes != nil {
+		query.Set("logOptions.limitBytes", fmt.Sprintf("%d", *opts.LimitBytes))
+	}
+	if opts.SinceSeconds != nil {
+		query.Set("logOptions.sinceSeconds", fmt.Sprintf("%d", *opts.SinceSeconds))
+	}
+	if opts.SinceTime != "" {
+		query.Set("logOptions.sinceTime", opts.SinceTime)
+	}
+	if opts.Previous {
+		query.Set("logOptions.previous", "true")
+	}
+	if opts.Timestamps {
+		query.Set("logOptions.timestamps", "true")
+	}
+	if opts.Follow {
+		query.Set("follow", "true")
+		query.Set("logOptions.follow", "true")
+	}
+	return query
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any) error {

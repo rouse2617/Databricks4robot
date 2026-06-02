@@ -14,6 +14,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 )
 
 // ── Mocks ─────────────────────────────────────────────────────────────────
@@ -113,7 +114,9 @@ func (m *mockDeploymentRepo) UpdateStatus(_ context.Context, id, status string) 
 }
 
 type mockAssetRepo struct {
-	assets map[string]*models.Asset
+	assets    map[string]*models.Asset
+	findCalls int
+	lastFind  []string
 }
 
 func (m *mockAssetRepo) Get(_ context.Context, assetID string) (*models.Asset, error) {
@@ -122,6 +125,17 @@ func (m *mockAssetRepo) Get(_ context.Context, assetID string) (*models.Asset, e
 		return nil, nil
 	}
 	return a, nil
+}
+func (m *mockAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (map[string]struct{}, error) {
+	m.findCalls++
+	m.lastFind = append([]string(nil), assetIDs...)
+	out := make(map[string]struct{})
+	for _, assetID := range assetIDs {
+		if _, ok := m.assets[assetID]; ok {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
 }
 func (m *mockAssetRepo) GetAll(_ context.Context, _ string) (*models.Asset, error) { return nil, nil }
 func (m *mockAssetRepo) InsertNew(_ context.Context, _ *models.Asset) error        { return nil }
@@ -170,10 +184,10 @@ func (m *mockWorkflowClient) GetWorkflow(ctx context.Context, name, namespace st
 func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
 	return nil
 }
-func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) (string, error) {
-	return "", nil
+func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
+	return argo.WorkflowLogResult{}, nil
 }
-func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _, _ string) (io.ReadCloser, error) {
+func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
 func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error     { return nil }
@@ -249,6 +263,9 @@ func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 		if dep.PipelineName != "test-pipe" {
 			t.Fatalf("expected pipeline name 'test-pipe', got %q", dep.PipelineName)
 		}
+		if repo.findCalls != 1 {
+			t.Fatalf("expected one batch asset lookup, got %d", repo.findCalls)
+		}
 	})
 
 	t.Run("no asset IDs skips validation", func(t *testing.T) {
@@ -275,6 +292,34 @@ func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 		}
 		if !errors.Is(err, ErrAssetNotFound) {
 			t.Fatalf("expected ErrAssetNotFound, got: %v", err)
+		}
+		var validationErr *assetvalidation.ValidationError
+		if !errors.As(err, &validationErr) {
+			t.Fatalf("expected validation error details, got: %v", err)
+		}
+		if len(validationErr.MissingIDs) != 1 || validationErr.MissingIDs[0] != "missing-2" {
+			t.Fatalf("missing IDs = %v", validationErr.MissingIDs)
+		}
+		if repo.findCalls != 1 || strings.Join(repo.lastFind, ",") != "valid-1,missing-2" {
+			t.Fatalf("expected one batch lookup for both IDs, calls=%d ids=%v", repo.findCalls, repo.lastFind)
+		}
+	})
+
+	t.Run("duplicate asset ID returns validation details", func(t *testing.T) {
+		repo := newMockAssetRepo()
+		repo.assets["asset-1"] = &models.Asset{AssetID: "asset-1"}
+		uc := newUsecase(repo)
+
+		_, err := uc.Deploy(ctx, pipe, "", []string{"asset-1", "asset-1"})
+		if err == nil {
+			t.Fatal("expected error for duplicate asset, got nil")
+		}
+		var validationErr *assetvalidation.ValidationError
+		if !errors.As(err, &validationErr) {
+			t.Fatalf("expected validation error details, got: %v", err)
+		}
+		if len(validationErr.DuplicateIDs) != 1 || validationErr.DuplicateIDs[0] != "asset-1" {
+			t.Fatalf("duplicate IDs = %v", validationErr.DuplicateIDs)
 		}
 	})
 }
@@ -354,6 +399,44 @@ spec:
 	}
 	if report.Status != string(wfv1.WorkflowRunning) {
 		t.Fatalf("expected Running status, got %q", report.Status)
+	}
+	if report.Source.Workflow != "argo-live" || report.Source.Metrics != "unavailable" || report.Source.Spec != "stored-manifest" {
+		t.Fatalf("unexpected source metadata: %#v", report.Source)
+	}
+	if report.LiveMetricsAvailable {
+		t.Fatal("expected live metrics unavailable")
+	}
+	if report.ObservedAt == "" {
+		t.Fatal("expected observed_at")
+	}
+}
+
+func TestGetWorkflowNodeResourceUsage_ReturnsOneNode(t *testing.T) {
+	ctx := context.Background()
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		wf := &wfv1.Workflow{}
+		wf.Status.Phase = wfv1.WorkflowRunning
+		wf.Status.Nodes = wfv1.Nodes{
+			"pod-1": {ID: "pod-1", Type: wfv1.NodeTypePod},
+			"pod-2": {ID: "pod-2", Type: wfv1.NodeTypePod},
+		}
+		return wf, nil
+	}
+
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	report, err := uc.GetWorkflowNodeResourceUsage(ctx, "wf-1", "pod-2")
+	if err != nil {
+		t.Fatalf("GetWorkflowNodeResourceUsage: %v", err)
+	}
+	if len(report.Pods) != 1 || report.Pods[0].PodName != "pod-2" {
+		t.Fatalf("unexpected report pods: %#v", report.Pods)
+	}
+	if report.Source.Spec != "unavailable" {
+		t.Fatalf("expected unavailable spec source, got %#v", report.Source)
 	}
 }
 

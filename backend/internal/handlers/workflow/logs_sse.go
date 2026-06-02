@@ -39,8 +39,12 @@ func extractLogLine(raw string) (string, bool) {
 	return strings.TrimSpace(content), true
 }
 
-func writeWorkflowLogSSE(writer io.Writer, line string) bool {
-	if _, err := fmt.Fprintf(writer, "data: %s\n\n", line); err != nil {
+func writeWorkflowSSEEvent(writer io.Writer, event string, payload any) bool {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	if _, err := fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event, raw); err != nil {
 		return false
 	}
 	return true
@@ -50,10 +54,18 @@ func streamWorkflowLogs(
 	c *gin.Context,
 	writer io.Writer,
 	stream io.Reader,
+	podName string,
+	container string,
+	limitBytes int64,
 ) bool {
 	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), int(maxWorkflowLogLimitBytes))
 
+	if !writeWorkflowSSEEvent(writer, "heartbeat", gin.H{}) {
+		return false
+	}
+
+	var emittedBytes int64
 	for scanner.Scan() {
 		if c.Request.Context().Err() != nil {
 			return false
@@ -72,30 +84,43 @@ func streamWorkflowLogs(
 			if line == "" {
 				continue
 			}
-			if !writeWorkflowLogSSE(writer, line) {
+			lineBytes := int64(len([]byte(line)))
+			if limitBytes >= 0 && emittedBytes+lineBytes > limitBytes {
+				remaining := limitBytes - emittedBytes
+				if remaining > 0 {
+					line = string([]byte(line)[:remaining])
+					if !writeWorkflowSSEEvent(writer, "log", gin.H{
+						"podName":    podName,
+						"container":  container,
+						"line":       line,
+						"truncated":  true,
+						"limitBytes": limitBytes,
+					}) {
+						return false
+					}
+				}
+				_ = writeWorkflowSSEEvent(writer, "end", gin.H{"reason": "limit-bytes"})
+				return false
+			}
+			emittedBytes += lineBytes
+			if !writeWorkflowSSEEvent(writer, "log", gin.H{
+				"podName":   podName,
+				"container": container,
+				"line":      line,
+			}) {
 				return false
 			}
 		}
 	}
-	return scanner.Err() == nil
-}
-
-func streamWorkflowLogsText(writer io.Writer, logs string) bool {
-	hasAny := false
-	for _, line := range strings.Split(strings.TrimSuffix(logs, "\n"), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		if line == "" {
-			continue
-		}
-		hasAny = true
-		if !writeWorkflowLogSSE(writer, line) {
-			return false
-		}
+	if scanner.Err() != nil {
+		_ = writeWorkflowSSEEvent(writer, "end", gin.H{"reason": "stream-error"})
+		return false
 	}
-	return hasAny
+	_ = writeWorkflowSSEEvent(writer, "end", gin.H{"reason": "stream-complete"})
+	return false
 }
 
-// StreamWorkflowLogs handles GET /api/v1/workflows/:name/log/stream?nodeId=xxx
+// StreamWorkflowLogs handles GET /api/v1/workflows/:name/logs/stream?nodeId=xxx
 // This is an SSE endpoint that streams Argo workflow pod logs.
 func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 	name := strings.TrimSpace(c.Param("name"))
@@ -119,33 +144,20 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		return
 	}
 
+	opts, _, ok := parseWorkflowLogOptions(c)
+	if !ok {
+		return
+	}
+
 	stream, err := h.wfClient.GetWorkflowLogStream(
 		c.Request.Context(),
 		name,
 		podName,
-		defaultWorkflowLogContainer,
 		namespace,
+		opts,
 	)
 	if err != nil {
-		logs, fallbackErr := h.wfClient.GetWorkflowLogs(
-			c.Request.Context(),
-			name,
-			podName,
-			namespace,
-		)
-		if fallbackErr != nil {
-			httpresp.Internal(c, fallbackErr.Error())
-			return
-		}
-
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("X-Accel-Buffering", "no")
-
-		c.Stream(func(writer io.Writer) bool {
-			return streamWorkflowLogsText(writer, logs)
-		})
+		httpresp.Internal(c, err.Error())
 		return
 	}
 	defer stream.Close()
@@ -156,6 +168,6 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 	c.Header("X-Accel-Buffering", "no")
 
 	c.Stream(func(writer io.Writer) bool {
-		return streamWorkflowLogs(c, writer, stream)
+		return streamWorkflowLogs(c, writer, stream, podName, opts.Container, *opts.LimitBytes)
 	})
 }

@@ -326,6 +326,51 @@ class TestPipelineManager:
         assert route.calls.last.request.read()
         assert route.calls.last.request.url.path == "/api/v1/deploy/template/tmpl-1"
 
+    def test_create_run(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/pipeline-runs").mock(
+            return_value=httpx.Response(201, json={"id": "run-1"})
+        )
+        result = client.pipelines.create_run(
+            {"name": "pipe", "nodes": [], "edges": []},
+            asset_ids=["asset-1"],
+            target_id="default",
+            name="run-name",
+        )
+        assert result["id"] == "run-1"
+        body = route.calls.last.request.read()
+        assert b'"pipeline"' in body
+        assert route.calls.last.request.url.path == "/api/v1/pipeline-runs"
+
+    def test_create_run_from_template(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/pipeline-runs/template/tmpl-1").mock(
+            return_value=httpx.Response(201, json={"id": "run-1"})
+        )
+        result = client.pipelines.create_run_from_template("tmpl-1", asset_ids=["asset-1"])
+        assert result["id"] == "run-1"
+        assert route.calls.last.request.url.path == "/api/v1/pipeline-runs/template/tmpl-1"
+
+    def test_pipeline_run_crud_actions(self, client):
+        respx.get(f"{BASE_URL}/api/v1/pipeline-runs").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1").mock(
+            return_value=httpx.Response(200, json={"id": "run-1"})
+        )
+        respx.post(f"{BASE_URL}/api/v1/pipeline-runs/run-1/retry").mock(
+            return_value=httpx.Response(201, json={"id": "run-2"})
+        )
+        respx.post(f"{BASE_URL}/api/v1/pipeline-runs/run-1/stop").mock(
+            return_value=httpx.Response(200, json={"message": "pipeline run stopped"})
+        )
+        respx.delete(f"{BASE_URL}/api/v1/pipeline-runs/run-1").mock(
+            return_value=httpx.Response(204)
+        )
+        assert client.pipelines.list_runs() == {"items": []}
+        assert client.pipelines.get_run("run-1")["id"] == "run-1"
+        assert client.pipelines.retry_run("run-1")["id"] == "run-2"
+        assert client.pipelines.stop_run("run-1")["message"] == "pipeline run stopped"
+        assert client.pipelines.delete_run("run-1") == {}
+
     def test_list_deployments(self, client):
         respx.get(f"{BASE_URL}/api/v1/deployments").mock(
             return_value=httpx.Response(200, json={"items": []})

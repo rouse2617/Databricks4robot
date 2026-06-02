@@ -348,6 +348,13 @@ func RegisterAll(
 		api.POST("/deploy", pipelineHandler.Deploy)
 		api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
 		api.GET("/execution-targets", pipelineHandler.ListExecutionTargets)
+		api.POST("/pipeline-runs", pipelineHandler.CreateRun)
+		api.POST("/pipeline-runs/template/:id", pipelineHandler.CreateRunByTemplate)
+		api.GET("/pipeline-runs", pipelineHandler.ListRuns)
+		api.GET("/pipeline-runs/:id", pipelineHandler.GetRun)
+		api.POST("/pipeline-runs/:id/retry", pipelineHandler.RetryRun)
+		api.POST("/pipeline-runs/:id/stop", pipelineHandler.StopRun)
+		api.DELETE("/pipeline-runs/:id", pipelineHandler.DeleteRun)
 		api.GET("/deployments", pipelineHandler.ListDeployments)
 		api.GET("/deployments/:id", pipelineHandler.GetDeployment)
 		api.GET("/deployments/:id/resources", pipelineHandler.GetResourceUsage)
@@ -370,6 +377,10 @@ func RegisterAll(
 		// Workflow monitoring
 		api.GET("/workflows", workflowHandler.ListWorkflows)
 		api.GET("/workflows/:name/logs", workflowHandler.GetWorkflowLogs)
+		api.GET("/workflows/:name/logs/stream", workflowHandler.StreamWorkflowLogs)
+		api.GET("/workflows/:name/log/stream", workflowHandler.StreamWorkflowLogs)
+		api.GET("/workflows/:name/resources", pipelineHandler.GetWorkflowResourceUsage)
+		api.GET("/workflows/:name/nodes/:nodeId/resources", pipelineHandler.GetWorkflowNodeResourceUsage)
 		api.GET("/workflows/:name", workflowHandler.GetWorkflow)
 
 		// Backfill jobs

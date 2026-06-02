@@ -20,6 +20,8 @@ type fakeDB struct {
 	queryRow         rowScanner
 	queryErr         error
 	rows             rowsScanner
+	querySQLs        []string
+	queryArgs        [][]any
 	execErr          error
 	execRowsAffected int64
 	pingErr          error
@@ -34,7 +36,9 @@ func (f *fakeDB) QueryRow(_ context.Context, _ string, _ ...any) rowScanner {
 	}
 	return f.queryRow
 }
-func (f *fakeDB) Query(_ context.Context, _ string, _ ...any) (rowsScanner, error) {
+func (f *fakeDB) Query(_ context.Context, q string, args ...any) (rowsScanner, error) {
+	f.querySQLs = append(f.querySQLs, q)
+	f.queryArgs = append(f.queryArgs, args)
 	if f.queryErr != nil {
 		return nil, f.queryErr
 	}
@@ -234,6 +238,44 @@ func TestAssetRepo(t *testing.T) {
 	if got.LifecycleState != "ready" || got.AssetType != "segment" || got.DurationMs != 1200 {
 		t.Fatalf("new columns not read: lifecycle=%s type=%s durationMs=%d", got.LifecycleState, got.AssetType, got.DurationMs)
 	}
+
+	db.rows = nil
+	db.querySQLs = nil
+	db.queryArgs = nil
+	existing, err := repo.FindExistingIDs(ctx, nil)
+	if err != nil {
+		t.Fatalf("find existing empty err: %v", err)
+	}
+	if len(existing) != 0 || len(db.querySQLs) != 0 {
+		t.Fatalf("empty FindExistingIDs should not query, got existing=%v queries=%d", existing, len(db.querySQLs))
+	}
+
+	db.rows = &fakeRows{data: [][]any{{"a1"}, {"a2"}}}
+	existing, err = repo.FindExistingIDs(ctx, []string{"a1", "a2", "missing"})
+	if err != nil {
+		t.Fatalf("find existing err: %v", err)
+	}
+	if _, ok := existing["a1"]; !ok {
+		t.Fatalf("expected a1 to exist: %v", existing)
+	}
+	if _, ok := existing["a2"]; !ok {
+		t.Fatalf("expected a2 to exist: %v", existing)
+	}
+	if _, ok := existing["missing"]; ok {
+		t.Fatalf("did not expect missing in existing set: %v", existing)
+	}
+	if len(db.queryArgs) == 0 || len(db.queryArgs[len(db.queryArgs)-1]) != 1 {
+		t.Fatalf("expected one ANY($1) query argument, got %#v", db.queryArgs)
+	}
+	if got, ok := db.queryArgs[len(db.queryArgs)-1][0].([]string); !ok || len(got) != 3 {
+		t.Fatalf("expected []string query argument, got %#v", db.queryArgs[len(db.queryArgs)-1][0])
+	}
+
+	db.queryErr = errors.New("find fail")
+	if _, err := repo.FindExistingIDs(ctx, []string{"a1"}); err == nil {
+		t.Fatalf("expected find existing query error")
+	}
+	db.queryErr = nil
 
 	a := &models.Asset{AssetID: "a2", McapFileID: "m1", Status: models.AssetStatusApproved}
 	if err := repo.Set(ctx, a); err != nil {

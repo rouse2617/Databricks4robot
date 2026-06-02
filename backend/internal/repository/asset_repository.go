@@ -25,6 +25,8 @@ var ErrDuplicateAssetID = errors.New("duplicate asset id")
 // inside Client.WithTx.
 type AssetRepository interface {
 	Get(ctx context.Context, assetID string) (*models.Asset, error)
+	// FindExistingIDs returns the subset of assetIDs that exist and are not soft-deleted.
+	FindExistingIDs(ctx context.Context, assetIDs []string) (map[string]struct{}, error)
 	// GetAll returns an asset regardless of soft-delete status.
 	// Used by GET /assets/:id so soft-deleted assets remain accessible
 	// per the API contract ("soft-deleted assets can still be retrieved").

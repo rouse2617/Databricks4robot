@@ -34,5 +34,62 @@ class PipelineManager(BaseManager):
             json_body=payload,
         )
 
+    def create_run(
+        self,
+        pipeline: dict[str, Any],
+        *,
+        asset_ids: list[str] | None = None,
+        target_id: str | None = None,
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"pipeline": pipeline}
+        if asset_ids is not None:
+            payload["asset_ids"] = asset_ids
+        if target_id is not None:
+            payload["target_id"] = target_id
+        if name is not None:
+            payload["name"] = name
+        return self._request(
+            "POST",
+            self._endpoint("pipeline_run_create"),
+            json_body=payload,
+        )
+
+    def create_run_from_template(
+        self,
+        template_id: str,
+        *,
+        asset_ids: list[str] | None = None,
+        target_id: str | None = None,
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if asset_ids is not None:
+            payload["asset_ids"] = asset_ids
+        if target_id is not None:
+            payload["target_id"] = target_id
+        if name is not None:
+            payload["name"] = name
+        return self._request(
+            "POST",
+            self._endpoint("pipeline_run_create_template", template_id=template_id),
+            json_body=payload,
+        )
+
+    def list_runs(self) -> dict[str, Any]:
+        return self._request("GET", self._endpoint("pipeline_run_list"))
+
+    def get_run(self, run_id: str) -> dict[str, Any]:
+        return self._request("GET", self._endpoint("pipeline_run_get", run_id=run_id))
+
+    def retry_run(self, run_id: str) -> dict[str, Any]:
+        return self._request("POST", self._endpoint("pipeline_run_retry", run_id=run_id))
+
+    def stop_run(self, run_id: str) -> dict[str, Any]:
+        return self._request("POST", self._endpoint("pipeline_run_stop", run_id=run_id))
+
+    def delete_run(self, run_id: str) -> dict[str, Any]:
+        return self._request("DELETE", self._endpoint("pipeline_run_delete", run_id=run_id))
+
     def list_deployments(self) -> dict[str, Any]:
         return self._request("GET", self._endpoint("pipeline_deployment_list"))

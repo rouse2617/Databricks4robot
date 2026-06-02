@@ -54,6 +54,18 @@ func (m *mockAssetRepo) GetAll(_ context.Context, assetID string) (*models.Asset
 	return &cp, nil
 }
 
+func (m *mockAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (map[string]struct{}, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]struct{})
+	for _, assetID := range assetIDs {
+		if _, ok := m.assets[assetID]; ok {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
 // version returns the persisted asset version (used by tests to assert that
 // algo operations do NOT bump it).
 func (m *mockAssetRepo) version(assetID string) int64 {

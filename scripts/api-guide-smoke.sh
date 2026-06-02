@@ -213,6 +213,14 @@ if [[ "$RESP_CODE" == "200" ]]; then
 		bad "execution-targets response shape"
 	fi
 fi
+get "pipeline-runs" "/api/v1/pipeline-runs"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items', []); assert isinstance(items, list); assert all('id' in i and 'status' in i and 'workflowName' in i for i in items)" 2>/dev/null; then
+		ok "pipeline-runs response shape"
+	else
+		bad "pipeline-runs response shape"
+	fi
+fi
 
 echo ""
 echo "--- § Lakehouse / Trino 验证 ---"
@@ -290,7 +298,18 @@ if [[ -n "${WORKFLOW_NAME:-}" ]]; then
 	fi
 	expect_code_get "workflow logs missing nodeId -> 400" "/api/v1/workflows/${WORKFLOW_NAME}/logs" "400" >/dev/null
 	if [[ -n "${WORKFLOW_NODE_ID:-}" ]]; then
-		get "workflow node logs" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}"
+		get "workflow node logs bounded" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}&tailLines=50&limitBytes=65536"
+		if echo "$RESP_BODY" | python3 -c 'import sys,json; data=json.load(sys.stdin); assert data.get("truncation", {}).get("bounded") is True; assert "lineCount" in data' 2>/dev/null; then
+			ok "workflow logs bounded metadata"
+		else
+			bad "workflow logs bounded metadata"
+		fi
+		raw=$(curl -sS -N --max-time 3 -D - -o /dev/null "${API_HDR[@]}" "${BASE}/api/v1/workflows/${WORKFLOW_NAME}/logs/stream?nodeId=${WORKFLOW_NODE_ID}&tailLines=1&limitBytes=4096" 2>/dev/null || true)
+		if echo "$raw" | grep -qi "Content-Type: text/event-stream"; then
+			ok "workflow logs stream content-type"
+		else
+			bad "workflow logs stream content-type"
+		fi
 	else
 		echo "  skip workflow logs happy path — set WORKFLOW_NODE_ID to exercise GET /workflows/{name}/logs"
 	fi
@@ -322,6 +341,8 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	RUN_ID=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print(''.join(secrets.choice(a) for _ in range(16)))")
 	post "POST algo-runs" "/api/v1/algo-runs" "{\"run_id\":\"${RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\"}" >/dev/null
 	expect_code_post "POST algo-runs duplicate run_id -> 409" "/api/v1/algo-runs" "{\"run_id\":\"${RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\"}" "409" >/dev/null
+	MISSING_ASSET_RUN_ID=$(python3 -c "import secrets,string; a=string.ascii_letters+string.digits; print(''.join(secrets.choice(a) for _ in range(16)))")
+	expect_code_post "POST algo-runs missing input asset -> 400" "/api/v1/algo-runs" "{\"run_id\":\"${MISSING_ASSET_RUN_ID}\",\"algo_name\":\"hand_track\",\"algo_version\":\"2.0\",\"algo_kind\":\"processing\",\"triggered_by\":\"manual:api-guide-smoke\",\"input_asset_ids\":[\"DEAD1536\"]}" "400" >/dev/null
 	get "GET algo-runs/{id}" "/api/v1/algo-runs/${RUN_ID}"
 	post "POST algo-runs start" "/api/v1/algo-runs/${RUN_ID}/start" "{}" >/dev/null
 	get "GET algo-runs affected-assets" "/api/v1/algo-runs/${RUN_ID}/affected-assets"

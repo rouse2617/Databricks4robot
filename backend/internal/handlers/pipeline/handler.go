@@ -10,6 +10,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
@@ -164,10 +165,142 @@ func (h *Handler) DeployByTemplate(c *gin.Context) {
 	c.JSON(201, dep)
 }
 
+// CreateRun handles POST /api/v1/pipeline-runs.
+func (h *Handler) CreateRun(c *gin.Context) {
+	var req struct {
+		Pipeline map[string]interface{} `json:"pipeline" binding:"required"`
+		Name     string                 `json:"name"`
+		AssetIDs []string               `json:"asset_ids"`
+		TargetID string                 `json:"target_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	run, err := h.uc.CreateRun(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID})
+	if err != nil {
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, run)
+}
+
+// CreateRunByTemplate handles POST /api/v1/pipeline-runs/template/:id.
+func (h *Handler) CreateRunByTemplate(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "template id is required", nil)
+		return
+	}
+	var req struct {
+		Name     string   `json:"name"`
+		AssetIDs []string `json:"asset_ids"`
+		TargetID string   `json:"target_id"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID})
+	if err != nil {
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, run)
+}
+
 // ListExecutionTargets handles GET /api/v1/execution-targets.
 func (h *Handler) ListExecutionTargets(c *gin.Context) {
-	items := h.uc.ListExecutionTargets(c.Request.Context())
+	items, err := h.uc.ListExecutionTargets(c.Request.Context())
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
 	c.JSON(200, gin.H{"items": items})
+}
+
+// ListRuns handles GET /api/v1/pipeline-runs.
+func (h *Handler) ListRuns(c *gin.Context) {
+	items, err := h.uc.ListRuns(c.Request.Context())
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []models.PipelineRun{}
+	}
+	c.JSON(200, gin.H{"items": items})
+}
+
+// GetRun handles GET /api/v1/pipeline-runs/:id.
+func (h *Handler) GetRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	run, err := h.uc.GetRun(c.Request.Context(), id)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if run == nil {
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+		return
+	}
+	c.JSON(200, run)
+}
+
+// RetryRun handles POST /api/v1/pipeline-runs/:id/retry.
+func (h *Handler) RetryRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	run, err := h.uc.RetryRun(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, run)
+}
+
+// StopRun handles POST /api/v1/pipeline-runs/:id/stop.
+func (h *Handler) StopRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	if err := h.uc.StopRun(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"message": "pipeline run stopped"})
+}
+
+// DeleteRun handles DELETE /api/v1/pipeline-runs/:id.
+func (h *Handler) DeleteRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	if err := h.uc.DeleteRun(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // ListDeployments handles GET /api/v1/deployments.
@@ -219,6 +352,11 @@ func (h *Handler) DeleteDeployment(c *gin.Context) {
 }
 
 func mapDeployError(c *gin.Context, err error) {
+	var assetErr *assetvalidation.ValidationError
+	if errors.As(err, &assetErr) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, assetErr.Message(), assetErr.Details())
+		return
+	}
 	if errors.Is(err, pipelineUC.ErrTemplateNotFound) {
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 		return
@@ -311,6 +449,47 @@ func (h *Handler) GetResourceUsage(c *gin.Context) {
 	report, err := h.uc.GetResourceUsage(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, report)
+}
+
+// GetWorkflowResourceUsage handles GET /api/v1/workflows/:name/resources.
+func (h *Handler) GetWorkflowResourceUsage(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "workflow name is required", nil)
+		return
+	}
+
+	report, err := h.uc.GetWorkflowResourceUsage(c.Request.Context(), name)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) || errors.Is(err, pipelineUC.ErrWorkflowUnavailable) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, report)
+}
+
+// GetWorkflowNodeResourceUsage handles GET /api/v1/workflows/:name/nodes/:nodeId/resources.
+func (h *Handler) GetWorkflowNodeResourceUsage(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	nodeID := strings.TrimSpace(c.Param("nodeId"))
+	if name == "" || nodeID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "workflow name and nodeId are required", nil)
+		return
+	}
+
+	report, err := h.uc.GetWorkflowNodeResourceUsage(c.Request.Context(), name, nodeID)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) || errors.Is(err, pipelineUC.ErrWorkflowUnavailable) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 			return
 		}

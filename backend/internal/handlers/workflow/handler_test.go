@@ -21,14 +21,16 @@ import (
 // ── Mock WorkflowClient ─────────────────────────────────────────────────────
 
 type mockWorkflowClient struct {
-	listFn        func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
-	getFn         func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
-	logsFn        func(ctx context.Context, workflowName, nodeId, namespace string) (string, error)
-	streamFn      func(ctx context.Context, workflowName, podName, container, namespace string) (io.ReadCloser, error)
-	operation     string
-	namespace     string
-	lastLogNodeID string
-	lastStreamPod string
+	listFn         func(ctx context.Context, namespace, labelSelector string) ([]wfv1.Workflow, error)
+	getFn          func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+	logsFn         func(ctx context.Context, workflowName, nodeId, namespace string, opts argo.WorkflowLogOptions) (argo.WorkflowLogResult, error)
+	streamFn       func(ctx context.Context, workflowName, podName, namespace string, opts argo.WorkflowLogOptions) (io.ReadCloser, error)
+	operation      string
+	namespace      string
+	lastLogNodeID  string
+	lastStreamPod  string
+	lastLogOpts    argo.WorkflowLogOptions
+	lastStreamOpts argo.WorkflowLogOptions
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
@@ -83,17 +85,19 @@ func (m *mockWorkflowClient) GetWorkflow(ctx context.Context, name, namespace st
 	}
 	return nil, nil
 }
-func (m *mockWorkflowClient) GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string) (string, error) {
+func (m *mockWorkflowClient) GetWorkflowLogs(ctx context.Context, workflowName, nodeId, namespace string, opts argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
 	m.lastLogNodeID = nodeId
+	m.lastLogOpts = opts
 	if m.logsFn != nil {
-		return m.logsFn(ctx, workflowName, nodeId, namespace)
+		return m.logsFn(ctx, workflowName, nodeId, namespace, opts)
 	}
-	return "", nil
+	return argo.WorkflowLogResult{}, nil
 }
-func (m *mockWorkflowClient) GetWorkflowLogStream(ctx context.Context, workflowName, podName, container, namespace string) (io.ReadCloser, error) {
+func (m *mockWorkflowClient) GetWorkflowLogStream(ctx context.Context, workflowName, podName, namespace string, opts argo.WorkflowLogOptions) (io.ReadCloser, error) {
 	m.lastStreamPod = podName
+	m.lastStreamOpts = opts
 	if m.streamFn != nil {
-		return m.streamFn(ctx, workflowName, podName, container, namespace)
+		return m.streamFn(ctx, workflowName, podName, namespace, opts)
 	}
 	return io.NopCloser(strings.NewReader("")), nil
 }
@@ -145,6 +149,8 @@ func setupRouter(h *Handler) *gin.Engine {
 	r := gin.New()
 	r.GET("/workflows", h.ListWorkflows)
 	r.GET("/workflows/:name/logs", h.GetWorkflowLogs)
+	r.GET("/workflows/:name/logs/stream", h.StreamWorkflowLogs)
+	r.GET("/workflows/:name/log/stream", h.StreamWorkflowLogs)
 	r.GET("/workflows/:name", h.GetWorkflow)
 	r.POST("/workflows/:name/retry", h.RetryWorkflow)
 	r.POST("/workflows/:name/resubmit", h.ResubmitWorkflow)
@@ -634,8 +640,13 @@ func TestGetWorkflowLogs_Success(t *testing.T) {
 		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
 			return wf, nil
 		},
-		logsFn: func(_ context.Context, _, nodeId, _ string) (string, error) {
-			return "log output for node " + nodeId, nil
+		logsFn: func(_ context.Context, _, nodeId, _ string, opts argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
+			return argo.WorkflowLogResult{
+				Logs:       "log output for node " + nodeId,
+				LineCount:  1,
+				Truncated:  false,
+				LimitBytes: *opts.LimitBytes,
+			}, nil
 		},
 	}
 	h := New(client, "default")
@@ -656,8 +667,57 @@ func TestGetWorkflowLogs_Success(t *testing.T) {
 	if !ok || logs != "log output for node test-wf-step-emit-123" {
 		t.Errorf("unexpected logs: %v", resp["logs"])
 	}
+	if resp["workflowName"] != "test-wf" || resp["podName"] != "test-wf-step-emit-123" {
+		t.Fatalf("unexpected log metadata: %#v", resp)
+	}
 	if client.lastLogNodeID != "test-wf-step-emit-123" {
 		t.Fatalf("expected resolved pod name, got %q", client.lastLogNodeID)
+	}
+	if client.lastLogOpts.TailLines == nil || *client.lastLogOpts.TailLines != defaultWorkflowLogTailLines {
+		t.Fatalf("expected default tailLines %d, got %#v", defaultWorkflowLogTailLines, client.lastLogOpts.TailLines)
+	}
+	if client.lastLogOpts.LimitBytes == nil || *client.lastLogOpts.LimitBytes != defaultWorkflowLogLimitBytes {
+		t.Fatalf("expected default limitBytes %d, got %#v", defaultWorkflowLogLimitBytes, client.lastLogOpts.LimitBytes)
+	}
+}
+
+func TestGetWorkflowLogs_ClampsBounds(t *testing.T) {
+	wf := makeWorkflow("test-wf", "Succeeded", 1)
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return wf, nil
+		},
+		logsFn: func(_ context.Context, _, _, _ string, opts argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
+			return argo.WorkflowLogResult{Logs: "ok\n", LineCount: 1, Truncated: true, LimitBytes: *opts.LimitBytes}, nil
+		},
+	}
+	h := New(client, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/logs?nodeId=a&tailLines=999999&limitBytes=99999999", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if client.lastLogOpts.TailLines == nil || *client.lastLogOpts.TailLines != maxWorkflowLogTailLines {
+		t.Fatalf("tailLines was not clamped: %#v", client.lastLogOpts.TailLines)
+	}
+	if client.lastLogOpts.LimitBytes == nil || *client.lastLogOpts.LimitBytes != maxWorkflowLogLimitBytes {
+		t.Fatalf("limitBytes was not clamped: %#v", client.lastLogOpts.LimitBytes)
+	}
+	var resp struct {
+		Truncation struct {
+			TailLinesClamped  bool `json:"tailLinesClamped"`
+			LimitBytesClamped bool `json:"limitBytesClamped"`
+		} `json:"truncation"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.Truncation.TailLinesClamped || !resp.Truncation.LimitBytesClamped {
+		t.Fatalf("expected clamp metadata, got %#v", resp.Truncation)
 	}
 }
 
@@ -724,6 +784,49 @@ func TestGetWorkflowLogs_EmptyName(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for empty name, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestStreamWorkflowLogs_StructuredEvents(t *testing.T) {
+	wf := makeWorkflow("test-wf", "Running", 1)
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return wf, nil
+		},
+		streamFn: func(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(`{"result":{"podName":"a","content":"hello\n"}}` + "\n")), nil
+		},
+	}
+	h := New(client, "default")
+	r := setupRouter(h)
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/workflows/test-wf/logs/stream?nodeId=a")
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("expected event-stream content type, got %q", ct)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read stream body: %v", err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "event: heartbeat") || !strings.Contains(body, "event: log") {
+		t.Fatalf("expected structured SSE events, got %q", body)
+	}
+	if !strings.Contains(body, `"podName":"a"`) || !strings.Contains(body, `"container":"main"`) {
+		t.Fatalf("expected log event metadata, got %q", body)
+	}
+	if client.lastStreamOpts.TailLines == nil || *client.lastStreamOpts.TailLines != defaultWorkflowLogTailLines {
+		t.Fatalf("expected default stream tailLines, got %#v", client.lastStreamOpts.TailLines)
 	}
 }
 

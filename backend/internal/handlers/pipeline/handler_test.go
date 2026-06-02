@@ -13,6 +13,7 @@ import (
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	"github.com/gin-gonic/gin"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
@@ -106,6 +107,15 @@ func (m *mockAssetRepo) Get(_ context.Context, assetID string) (*models.Asset, e
 	}
 	return a, nil
 }
+func (m *mockAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	for _, assetID := range assetIDs {
+		if _, ok := m.assets[assetID]; ok {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
 func (m *mockAssetRepo) GetAll(_ context.Context, _ string) (*models.Asset, error) { return nil, nil }
 func (m *mockAssetRepo) InsertNew(_ context.Context, _ *models.Asset) error        { return nil }
 func (m *mockAssetRepo) Set(_ context.Context, _ *models.Asset) error              { return nil }
@@ -144,10 +154,10 @@ func (m *mockWorkflowClient) GetWorkflow(_ context.Context, _, _ string) (*wfv1.
 func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
 	return nil
 }
-func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string) (string, error) {
-	return "test logs", nil
+func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
+	return argo.WorkflowLogResult{Logs: "test logs"}, nil
 }
-func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _, _ string) (io.ReadCloser, error) {
+func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
 func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error     { return nil }
@@ -203,6 +213,8 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.POST("/api/v1/deployments/:id/stop", h.StopDeployment)
 	r.POST("/api/v1/deployments/:id/save-template", h.SaveFromDeployment)
 	r.GET("/api/v1/deployments/:id/resources", h.GetResourceUsage)
+	r.GET("/api/v1/workflows/:name/resources", h.GetWorkflowResourceUsage)
+	r.GET("/api/v1/workflows/:name/nodes/:nodeId/resources", h.GetWorkflowNodeResourceUsage)
 	r.POST("/api/v1/pipeline-assets", h.RegisterOutput)
 	r.GET("/api/v1/assets/:id/pipeline-lineage", h.GetLineage)
 	return r
@@ -852,6 +864,34 @@ func TestGetResourceUsage_NotFound(t *testing.T) {
 	}
 }
 
+func TestGetWorkflowResourceUsage_Success(t *testing.T) {
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	h := New(uc)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/wf-1/resources", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		WorkflowName         string                         `json:"workflow_name"`
+		LiveMetricsAvailable bool                           `json:"live_metrics_available"`
+		Source               pipelineUC.ResourceUsageSource `json:"source"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.WorkflowName != "wf-1" || resp.LiveMetricsAvailable {
+		t.Fatalf("unexpected resource response: %#v", resp)
+	}
+	if resp.Source.Workflow != "argo-live" || resp.Source.Metrics != "unavailable" {
+		t.Fatalf("unexpected source: %#v", resp.Source)
+	}
+}
+
 // ── Diff / RegisterOutput / Lineage Tests ────────────────────────────────────
 
 func TestDiffTemplates_Success(t *testing.T) {
@@ -1005,6 +1045,23 @@ func TestDeploy_WithAssetValidation(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for missing asset, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code    string         `json:"code"`
+		Details map[string]any `json:"details"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("code=%q", resp.Code)
+	}
+	if resp.Details["field"] != "asset_ids" {
+		t.Fatalf("field detail=%v", resp.Details["field"])
+	}
+	missing, ok := resp.Details["missing_asset_ids"].([]any)
+	if !ok || len(missing) != 1 || missing[0] != "non-existent" {
+		t.Fatalf("missing detail=%#v", resp.Details["missing_asset_ids"])
 	}
 }
 
