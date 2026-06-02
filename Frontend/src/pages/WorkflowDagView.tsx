@@ -353,6 +353,8 @@ function WorkflowDagViewInner({
 		<div className="workflow-dag-view">
 			<div className="workflow-dag-view__toolbar">
 				<Input.Search
+					id="workflow-dag-node-search"
+					name="workflow-dag-node-search"
 					placeholder="搜索节点..."
 					allowClear
 					value={nodeSearch}

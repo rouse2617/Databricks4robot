@@ -142,14 +142,16 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				return;
 			}
 			setSelectedNodeId(node.id);
-			setLogState((current) => ({
-				...current,
-				content: "",
-				loading: false,
-				error: null,
-			}));
+			if (node.id !== selectedNodeId) {
+				setLogState((current) => ({
+					...current,
+					content: "",
+					loading: false,
+					error: null,
+				}));
+			}
 		},
-		[name],
+		[name, selectedNodeId],
 	);
 
 	const selectedNode = useMemo(() => {

@@ -2,6 +2,7 @@ import {
 	ApartmentOutlined,
 	ArrowLeftOutlined,
 	BarsOutlined,
+	CopyOutlined,
 } from "@ant-design/icons";
 import Ansi from "ansi-to-react";
 import {
@@ -15,7 +16,6 @@ import {
 	Segmented,
 	Space,
 	Spin,
-	Table,
 	Tag,
 	Tooltip,
 	Typography,
@@ -36,7 +36,6 @@ import {
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
-import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 import { useWorkflowDetail } from "./useWorkflowDetail";
 import type { WorkflowDagNodeAction } from "./WorkflowDagNode";
 import { WorkflowDagView } from "./WorkflowDagView";
@@ -126,12 +125,9 @@ function WorkflowLogPanel({
 				padding: 16,
 			}}
 		>
-			<h4 style={{ margin: "0 0 10px 0", fontSize: 14 }}>
-				{selectedNode
-					? `${getWorkflowNodeDisplayText(selectedNode)} 日志`
-					: "日志查看器"}
-			</h4>
 			<Input.Search
+				id="workflow-log-search"
+				name="workflow-log-search"
 				placeholder="日志关键字搜索"
 				value={search}
 				onChange={(event) => onSearch(event.target.value)}
@@ -164,6 +160,34 @@ function WorkflowLogPanel({
 							description="完整大日志需要后端 tail、分页或流式接口支持；当前视图会限制渲染量以避免浏览器卡顿。"
 						/>
 					)}
+					<div
+						style={{
+							display: "flex",
+							alignItems: "center",
+							justifyContent: "space-between",
+							gap: 12,
+							marginBottom: 8,
+							fontSize: 12,
+							color: "#64748b",
+						}}
+					>
+						<span>
+							显示 {visibleLog?.content.length.toLocaleString()} 字符 /{" "}
+							{visibleLog?.totalLines.toLocaleString()} 行
+							{search.trim() ? `，搜索：${search.trim()}` : ""}
+						</span>
+						<Button
+							size="small"
+							icon={<CopyOutlined />}
+							onClick={async () => {
+								if (!visibleLog) return;
+								await navigator.clipboard.writeText(visibleLog.content);
+								message.success("已复制当前可见日志");
+							}}
+						>
+							复制可见日志
+						</Button>
+					</div>
 					<div
 						ref={logBodyRef}
 						style={{
@@ -266,24 +290,24 @@ function WorkflowRunContextPanel({
 
 function WorkflowAssetNodePanel() {
 	return (
-		<Card
-			size="small"
-			title="资产 × 节点明细"
-			style={{ margin: "0 16px 12px" }}
+		<div
+			style={{
+				margin: "0 16px 12px",
+				padding: "8px 12px",
+				border: "1px dashed #cbd5e1",
+				borderRadius: 8,
+				background: "#f8fafc",
+				color: "#64748b",
+				fontSize: 12,
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "space-between",
+				gap: 12,
+			}}
 		>
-			<Table
-				size="small"
-				dataSource={[]}
-				columns={[
-					{ title: "资产", dataIndex: "asset", key: "asset" },
-					{ title: "节点", dataIndex: "node", key: "node" },
-					{ title: "状态", dataIndex: "status", key: "status" },
-					{ title: "日志", dataIndex: "logs", key: "logs" },
-				]}
-				pagination={false}
-				locale={{ emptyText: "后端待接入 asset × node 状态明细" }}
-			/>
-		</Card>
+			<strong style={{ color: "#334155" }}>资产 × 节点明细</strong>
+			<span>后端接入后展示每个资产在每个步骤的状态、日志和资源信息。</span>
+		</div>
 	);
 }
 
@@ -301,6 +325,7 @@ export default function WorkflowDetailPage({
 		useState<WorkflowOperationConfig | null>(null);
 	const [nodeDetailTab, setNodeDetailTab] =
 		useState<WorkflowNodeDetailTabKey>("summary");
+	const [nodePanelOpen, setNodePanelOpen] = useState(false);
 
 	const {
 		workflow,
@@ -364,6 +389,7 @@ export default function WorkflowDetailPage({
 	);
 
 	const closeNodeDetailPanel = useCallback(() => {
+		setNodePanelOpen(false);
 		setShowNodeLogs(false);
 		selectNode(null);
 	}, [selectNode]);
@@ -371,6 +397,7 @@ export default function WorkflowDetailPage({
 	const handleSelectNode = useCallback(
 		(node: WorkflowNodeStatus | null) => {
 			setNodeDetailTab("summary");
+			setNodePanelOpen(!!node);
 			selectNode(node);
 		},
 		[selectNode],
@@ -389,6 +416,12 @@ export default function WorkflowDetailPage({
 			};
 			setNodeDetailTab(tabByAction[action]);
 			selectNode(node);
+			if (action === "logs") {
+				setNodePanelOpen(false);
+				setShowNodeLogs(true);
+				return;
+			}
+			setNodePanelOpen(true);
 		},
 		[selectNode],
 	);
@@ -427,6 +460,7 @@ export default function WorkflowDetailPage({
 	useEffect(() => {
 		if (!selectedNode) {
 			setShowNodeLogs(false);
+			setNodePanelOpen(false);
 		}
 	}, [selectedNode]);
 
@@ -596,7 +630,7 @@ export default function WorkflowDetailPage({
 			<WorkflowNodeDetailPanel
 				node={selectedNode}
 				workflow={workflow}
-				open={!!selectedNode}
+				open={nodePanelOpen}
 				onClose={closeNodeDetailPanel}
 				canRetryWorkflow={canRetryWorkflow}
 				onRetryWorkflow={handleRetryWorkflow}
@@ -639,6 +673,8 @@ export default function WorkflowDetailPage({
 				width="80%"
 				onCancel={handleCloseNodeLogs}
 				footer={null}
+				style={{ top: 32 }}
+				styles={{ body: { height: "calc(100vh - 180px)", padding: 0 } }}
 			>
 				<WorkflowLogPanel
 					selectedNode={selectedNode}
