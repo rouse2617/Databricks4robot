@@ -105,52 +105,86 @@ export default function RegistryCenterPage() {
 							key: "lifecycle",
 							label: `Lifecycle (${states.length})`,
 							children: (
-								<Space wrap>
-									{states.map((s) => (
-										<Tag key={s} color="blue">
-											{s}
-										</Tag>
-									))}
-								</Space>
+								<>
+									<Typography.Paragraph
+										type="secondary"
+										style={{ margin: 0, marginBottom: 8, fontSize: 12 }}
+									>
+										资产生命周期状态枚举，源自 <code>lifecycle_states</code>{" "}
+										配置； 后端 <code>chk_lifecycle_state</code>{" "}
+										约束以此为口径。
+									</Typography.Paragraph>
+									<Space wrap>
+										{states.map((s) => (
+											<Tag key={s} color="blue">
+												{s}
+											</Tag>
+										))}
+									</Space>
+								</>
 							),
 						},
 						{
 							key: "metrics",
 							label: `Metrics (${metrics.length})`,
 							children: (
-								<Table
-									rowKey="key"
-									pagination={false}
-									size="small"
-									columns={metricCols}
-									dataSource={metrics}
-								/>
+								<>
+									<Typography.Paragraph
+										type="secondary"
+										style={{ margin: 0, marginBottom: 8, fontSize: 12 }}
+									>
+										评估指标定义。queryable=yes 的指标在「指标检索」页面可用。
+									</Typography.Paragraph>
+									<Table
+										rowKey="key"
+										pagination={false}
+										size="small"
+										columns={metricCols}
+										dataSource={metrics}
+									/>
+								</>
 							),
 						},
 						{
 							key: "tags",
 							label: `Tags (${tags.length})`,
 							children: (
-								<Table
-									rowKey="key"
-									pagination={false}
-									size="small"
-									columns={tagCols}
-									dataSource={tags}
-								/>
+								<>
+									<Typography.Paragraph
+										type="secondary"
+										style={{ margin: 0, marginBottom: 8, fontSize: 12 }}
+									>
+										资产标签类型与允许取值，可由资产管理界面写入。
+									</Typography.Paragraph>
+									<Table
+										rowKey="key"
+										pagination={false}
+										size="small"
+										columns={tagCols}
+										dataSource={tags}
+									/>
+								</>
 							),
 						},
 						{
 							key: "algos",
 							label: `Algos (${algos.length})`,
 							children: (
-								<Table
-									rowKey="key"
-									pagination={false}
-									size="small"
-									columns={algoCols}
-									dataSource={algos}
-								/>
+								<>
+									<Typography.Paragraph
+										type="secondary"
+										style={{ margin: 0, marginBottom: 8, fontSize: 12 }}
+									>
+										算法注册项与依赖关系，决定 pipeline 节点可引用的算法版本。
+									</Typography.Paragraph>
+									<Table
+										rowKey="key"
+										pagination={false}
+										size="small"
+										columns={algoCols}
+										dataSource={algos}
+									/>
+								</>
 							),
 						},
 					]}

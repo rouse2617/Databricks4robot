@@ -1,4 +1,4 @@
-import { Table } from "antd";
+import { Button, Empty, Space, Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useNavigate } from "react-router-dom";
 import type { AlgoRegistryItem } from "../../api/algoRegistry";
@@ -20,6 +20,7 @@ interface AlgoMatrixGridProps {
 	pageSize: number;
 	onPageChange: (page: number, pageSize: number) => void;
 	onRefresh: () => void;
+	onResetFilters?: () => void;
 }
 
 export default function AlgoMatrixGrid({
@@ -31,6 +32,7 @@ export default function AlgoMatrixGrid({
 	pageSize,
 	onPageChange,
 	onRefresh,
+	onResetFilters,
 }: AlgoMatrixGridProps) {
 	const navigate = useNavigate();
 	const columns: ColumnsType<Asset> = [
@@ -91,24 +93,61 @@ export default function AlgoMatrixGrid({
 		})),
 	];
 
+	const hasResults = assets.length > 0;
+
 	return (
-		<Table<Asset>
-			columns={columns}
-			dataSource={assets}
-			rowKey="asset_id"
-			loading={loading}
-			scroll={{ x: 220 + algorithms.length * 80 }}
-			size="small"
-			pagination={{
-				current: page,
-				pageSize,
-				total,
-				showSizeChanger: true,
-				showQuickJumper: total > 200,
-				pageSizeOptions: ["20", "50", "100"],
-				showTotal: (t) => `共 ${t} 条`,
-				onChange: onPageChange,
-			}}
-		/>
+		<>
+			<Table<Asset>
+				columns={columns}
+				dataSource={assets}
+				rowKey="asset_id"
+				loading={loading}
+				scroll={{ x: 220 + algorithms.length * 80 }}
+				size="small"
+				locale={{
+					emptyText: (
+						<Empty
+							image={Empty.PRESENTED_IMAGE_SIMPLE}
+							description={
+								<Space direction="vertical" size={4}>
+									<span>暂无匹配的资产。</span>
+									<span style={{ color: "#94a3b8", fontSize: 12 }}>
+										请尝试调整状态过滤或翻页。
+									</span>
+								</Space>
+							}
+						>
+							{onResetFilters ? (
+								<Button size="small" onClick={onResetFilters}>
+									清除筛选
+								</Button>
+							) : null}
+						</Empty>
+					),
+				}}
+				pagination={{
+					current: page,
+					pageSize,
+					total,
+					showSizeChanger: true,
+					showQuickJumper: total > 200,
+					pageSizeOptions: ["20", "50", "100"],
+					showTotal: (t) => `共 ${t} 条`,
+					onChange: onPageChange,
+				}}
+			/>
+			{!hasResults && algorithms.length > 0 ? (
+				<div
+					style={{
+						textAlign: "center",
+						color: "#94a3b8",
+						fontSize: 12,
+						marginTop: 8,
+					}}
+				>
+					共加载 {algorithms.length} 个算法 · 当前分页 {total} 条资产
+				</div>
+			) : null}
+		</>
 	);
 }

@@ -24,12 +24,12 @@ import { type CellStatus, getAlgoStatusFromResults } from "../lib/algoStatus";
 
 const { Title } = Typography;
 
-const STATUS_OPTIONS: { label: string; value: CellStatus }[] = [
-	{ label: "成功", value: "ok" },
-	{ label: "失败", value: "failed" },
-	{ label: "运行中", value: "running" },
-	{ label: "待处理", value: "pending" },
-	{ label: "已阻塞", value: "blocked" },
+const STATUS_OPTIONS: { label: string; value: CellStatus; color: string }[] = [
+	{ label: "成功", value: "ok", color: "#16a34a" },
+	{ label: "失败", value: "failed", color: "#dc2626" },
+	{ label: "运行中", value: "running", color: "#d97706" },
+	{ label: "待处理", value: "pending", color: "#64748b" },
+	{ label: "已阻塞", value: "blocked", color: "#64748b" },
 ];
 
 export default function AlgoProcessingPage() {
@@ -120,10 +120,17 @@ export default function AlgoProcessingPage() {
 
 	return (
 		<div>
-			<Title level={4} style={{ margin: 0, marginBottom: 16 }}>
+			<Title level={4} style={{ margin: 0, marginBottom: 8 }}>
 				<RobotOutlined style={{ marginRight: 8 }} />
 				算法处理矩阵
 			</Title>
+			<Typography.Paragraph
+				type="secondary"
+				style={{ margin: 0, marginBottom: 12, fontSize: 12 }}
+			>
+				每个单元格显示该 asset
+				对应算法的处理结果。鼠标悬停查看详情，点击有运行历史的格子可查看日志/参数。
+			</Typography.Paragraph>
 
 			{error && (
 				<Alert
@@ -140,6 +147,36 @@ export default function AlgoProcessingPage() {
 				style={{ marginBottom: 16 }}
 				styles={{ body: { padding: "8px 16px" } }}
 			>
+				<Space
+					wrap
+					style={{ width: "100%", marginBottom: 8 }}
+					aria-label="状态图例"
+				>
+					<span style={{ fontWeight: 500, fontSize: 12 }}>图例：</span>
+					{STATUS_OPTIONS.map((opt) => (
+						<span
+							key={opt.value}
+							style={{
+								display: "inline-flex",
+								alignItems: "center",
+								gap: 4,
+								fontSize: 12,
+								color: opt.color,
+							}}
+						>
+							<span
+								style={{
+									display: "inline-block",
+									width: 8,
+									height: 8,
+									borderRadius: 2,
+									backgroundColor: opt.color,
+								}}
+							/>
+							{opt.label}
+						</span>
+					))}
+				</Space>
 				<Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
 					<Space wrap>
 						<span style={{ fontWeight: 500 }}>状态过滤：</span>
@@ -201,6 +238,7 @@ export default function AlgoProcessingPage() {
 					pageSize={pageSize}
 					onPageChange={handlePageChange}
 					onRefresh={fetchAssets}
+					onResetFilters={() => setStatusFilter([])}
 				/>
 			)}
 		</div>
