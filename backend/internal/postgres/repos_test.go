@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"pgregory.net/rapid"
 )
 
@@ -60,6 +61,43 @@ func (f *fakeDB) ExecResult(_ context.Context, _ string, _ ...any) (int64, error
 }
 func (f *fakeDB) Ping(_ context.Context) error { return f.pingErr }
 func (f *fakeDB) Close()                       { f.closed = true }
+
+func TestPipelineRunRepoSaveUsesExplicitEmptyAssetArray(t *testing.T) {
+	db := &fakeDB{}
+	repo := NewPipelineRunRepo(&Client{db: db})
+	run := &models.PipelineRun{
+		ID:                "run-1",
+		PipelineName:      "no-asset",
+		WorkflowName:      "no-asset-abc123",
+		ExecutionTargetID: "default",
+		Status:            "Pending",
+		PipelineJSON:      map[string]interface{}{"name": "no-asset"},
+		TargetSnapshot:    map[string]interface{}{"id": "default"},
+	}
+
+	if err := repo.Save(context.Background(), run); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if len(db.execArgs) != 1 {
+		t.Fatalf("expected 1 exec call, got %d", len(db.execArgs))
+	}
+	got, ok := db.execArgs[0][9].(pgtype.FlatArray[string])
+	if !ok {
+		t.Fatalf("asset_ids arg type = %T, want pgtype.FlatArray[string]", db.execArgs[0][9])
+	}
+	if got == nil {
+		t.Fatal("asset_ids arg is nil, want explicit empty array")
+	}
+	if len(got) != 0 {
+		t.Fatalf("asset_ids arg = %#v, want empty array", got)
+	}
+	if run.AssetIDs == nil {
+		t.Fatal("run.AssetIDs is nil after Save(), want empty slice")
+	}
+	if !run.NoAssetRun {
+		t.Fatal("run.NoAssetRun = false, want true")
+	}
+}
 
 type fakeRow struct {
 	values []any

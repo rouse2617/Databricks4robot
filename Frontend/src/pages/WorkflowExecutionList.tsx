@@ -21,6 +21,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { listDeployments } from "../api/pipelineApi";
 import {
 	deleteWorkflow,
 	type ListWorkflowsParams,
@@ -35,6 +36,7 @@ import {
 	STATUS_ICONS,
 	WORKFLOW_PHASES,
 } from "../lib/constants";
+import { toAssetStyleId } from "../lib/idDisplay";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationMenuItems,
@@ -123,6 +125,9 @@ export function WorkflowExecutionList({
 }: WorkflowExecutionListProps) {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<WorkflowSummary[]>([]);
+	const [runIdsByWorkflowName, setRunIdsByWorkflowName] = useState<
+		Record<string, string>
+	>({});
 	const [loading, setLoading] = useState(false);
 	const [initializedOnce, setInitializedOnce] = useState(false);
 	const [error, setError] = useState<WorkflowErrorState | null>(null);
@@ -256,7 +261,17 @@ export function WorkflowExecutionList({
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
-			const res = await listWorkflows(params);
+			const [res, deployments] = await Promise.all([
+				listWorkflows(params),
+				listDeployments().catch(() => []),
+			]);
+			setRunIdsByWorkflowName(
+				Object.fromEntries(
+					deployments
+						.filter((deployment) => deployment.workflowName && deployment.id)
+						.map((deployment) => [deployment.workflowName, deployment.id]),
+				),
+			);
 			setItems(res.items || []);
 			setSelectedWorkflowNames((prev) =>
 				prev.filter((name) =>
@@ -430,7 +445,26 @@ export function WorkflowExecutionList({
 			dataIndex: "name",
 			key: "name",
 			width: 260,
-			ellipsis: true,
+			render: (name: string, record: WorkflowSummary) => {
+				const runId = runIdsByWorkflowName[record.name];
+				const displayId = toAssetStyleId(runId ?? name);
+				const copyId = runId ?? name;
+				return (
+					<div style={{ minWidth: 0 }}>
+						<Typography.Text strong ellipsis={{ tooltip: name }}>
+							{name}
+						</Typography.Text>
+						<Typography.Text
+							type="secondary"
+							copyable={{ text: copyId }}
+							style={{ display: "block", fontSize: 12 }}
+							ellipsis={{ tooltip: runId ? `完整任务 ID: ${runId}` : name }}
+						>
+							ID: {displayId}
+						</Typography.Text>
+					</div>
+				);
+			},
 		},
 		{
 			title: "状态",

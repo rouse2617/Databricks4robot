@@ -30,6 +30,8 @@ const { TextArea } = Input;
 
 import {
 	type DragEvent,
+	type FocusEvent,
+	type MutableRefObject,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -97,6 +99,14 @@ type CanvasMenuState = {
 	node: PipelineFlowNode | null;
 };
 
+function replaceAppendedValue(previous: string, next: string) {
+	if (!previous || next === previous) return next;
+	if (next.startsWith(previous) && next.length > previous.length) {
+		return next.slice(previous.length);
+	}
+	return next;
+}
+
 function PipelineCanvas() {
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
@@ -110,6 +120,8 @@ function PipelineCanvas() {
 	const [nodes, setNodes] = useState<PipelineFlowNode[]>([]);
 	const [edges, setEdges] = useState<PipelineFlowEdge[]>([]);
 	const [pipelineName, setPipelineName] = useState("my-pipeline");
+	const pipelineNameReplaceRef = useRef(false);
+	const workflowNameReplaceRef = useRef(false);
 	const [selectedNode, setSelectedNode] = useState<PipelineFlowNode | null>(
 		null,
 	);
@@ -156,6 +168,7 @@ function PipelineCanvas() {
 	// Asset selection for deploy modal
 	const [selectedAssetIds, setSelectedAssetIds] =
 		useState<string[]>(queryAssetIds);
+	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
 	const [executionTargets, setExecutionTargets] = useState<ExecutionTarget[]>(
 		[],
 	);
@@ -274,6 +287,27 @@ function PipelineCanvas() {
 		event.dataTransfer.dropEffect = "copy";
 	}, []);
 
+	const addComponentToCanvas = useCallback(
+		(comp: RegisteredComponent, clientPosition?: { x: number; y: number }) => {
+			const bounds = wrapperRef.current?.getBoundingClientRect();
+			const screenPosition =
+				clientPosition ??
+				(bounds
+					? {
+							x: bounds.left + bounds.width / 2 + nodes.length * 24,
+							y: bounds.top + 140 + nodes.length * 24,
+						}
+					: { x: 360 + nodes.length * 24, y: 240 + nodes.length * 24 });
+			const position = editor.screenToFlowPosition(screenPosition);
+			const newNode = createPipelineNode(comp, position.x, position.y);
+			editor.addNode(newNode);
+			editor.selectElements([newNode.id]);
+			setSelectedNode(newNode);
+			setEditingNodeId(null);
+		},
+		[editor, nodes.length],
+	);
+
 	const onDrop = useCallback(
 		(event: DragEvent) => {
 			event.preventDefault();
@@ -284,19 +318,12 @@ function PipelineCanvas() {
 			if (!componentId) return;
 			const comp = componentById.get(componentId);
 			if (!comp) return;
-			const bounds = wrapperRef.current?.getBoundingClientRect();
-			if (!bounds) return;
-			const position = editor.screenToFlowPosition({
+			addComponentToCanvas(comp, {
 				x: event.clientX,
 				y: event.clientY,
 			});
-			const newNode = createPipelineNode(comp, position.x, position.y);
-			editor.addNode(newNode);
-			editor.selectElements([newNode.id]);
-			setSelectedNode(newNode);
-			setEditingNodeId(null);
 		},
-		[componentById, editor],
+		[addComponentToCanvas, componentById],
 	);
 
 	const selectNodeWithEdges = useCallback(
@@ -590,6 +617,7 @@ function PipelineCanvas() {
 			name: pipelineName,
 		});
 		setSelectedAssetIds([]);
+		setAssetPickerResetKey((key) => key + 1);
 	}, [pipelineName, nodes.length]);
 
 	const closeDeployDialog = useCallback(() => {
@@ -600,6 +628,8 @@ function PipelineCanvas() {
 			name: "",
 			mode: "edit",
 		});
+		setSelectedAssetIds([]);
+		setAssetPickerResetKey((key) => key + 1);
 	}, []);
 
 	usePipelineKeyboardShortcuts({
@@ -687,6 +717,13 @@ function PipelineCanvas() {
 	const deployDisabledReason = canDeploy
 		? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
 		: "请先从左侧拖入至少一个组件到画布，再保存或部署";
+	const markReplaceOnNextEdit = (
+		event: FocusEvent<HTMLInputElement>,
+		replaceRef: MutableRefObject<boolean>,
+	) => {
+		replaceRef.current = true;
+		event.target.select();
+	};
 
 	return (
 		<div className="pipeline-page">
@@ -704,8 +741,18 @@ function PipelineCanvas() {
 						id="pipeline-name-input"
 						name="pipelineName"
 						value={pipelineName}
-						onChange={(e) => setPipelineName(e.target.value)}
-						onFocus={(e) => e.target.select()}
+						onChange={(e) => {
+							const next = pipelineNameReplaceRef.current
+								? replaceAppendedValue(pipelineName, e.target.value)
+								: e.target.value;
+							pipelineNameReplaceRef.current = false;
+							setPipelineName(next);
+						}}
+						onFocus={(e) => markReplaceOnNextEdit(e, pipelineNameReplaceRef)}
+						onBlur={() => {
+							pipelineNameReplaceRef.current = false;
+						}}
+						maxLength={48}
 						placeholder="输入流水线名称"
 						aria-label="流水线名称"
 						autoComplete="off"
@@ -771,6 +818,7 @@ function PipelineCanvas() {
 				<ComponentPalette
 					components={registeredComponents}
 					onDragStart={onDragStart}
+					onAddComponent={addComponentToCanvas}
 					loading={componentsLoading}
 					error={componentsError}
 					onRetry={reloadComponents}
@@ -1108,9 +1156,18 @@ function PipelineCanvas() {
 										onChange={(e) =>
 											setDeployDialog((prev) => ({
 												...prev,
-												name: e.target.value,
+												name: workflowNameReplaceRef.current
+													? replaceAppendedValue(prev.name, e.target.value)
+													: e.target.value,
 											}))
 										}
+										onFocus={(e) =>
+											markReplaceOnNextEdit(e, workflowNameReplaceRef)
+										}
+										onBlur={() => {
+											workflowNameReplaceRef.current = false;
+										}}
+										maxLength={48}
 										placeholder="留空则使用当前流水线名称"
 										size="small"
 									/>
@@ -1169,6 +1226,7 @@ function PipelineCanvas() {
 									selectedIds={selectedAssetIds}
 									onSelectionChange={setSelectedAssetIds}
 									maxHeight={180}
+									resetKey={assetPickerResetKey}
 								/>
 							</div>
 							<div

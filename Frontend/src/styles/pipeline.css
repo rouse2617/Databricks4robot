@@ -787,6 +787,16 @@
 	overflow-wrap: anywhere;
 }
 
+.dep-card-id {
+	font-family: "SF Mono", "Menlo", monospace;
+	font-size: 10px;
+	color: var(--color-text-tertiary, #94a3b8);
+	line-height: 1.25;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .dep-card-meta {
 	font-size: 10px;
 	color: var(--color-text-secondary, #64748b);
@@ -1004,6 +1014,15 @@
 	font-weight: 500;
 	font-size: 13px;
 	color: var(--color-text, #1e293b);
+}
+
+.cm-item-id {
+	font-family: "SF Mono", "Menlo", monospace;
+	font-size: 10px;
+	color: var(--color-text-tertiary, #94a3b8);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .cm-item-image {

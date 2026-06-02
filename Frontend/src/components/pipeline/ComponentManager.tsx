@@ -1,6 +1,7 @@
 import { PlusOutlined } from "@ant-design/icons";
 import { Alert, Button, Collapse, Input, Typography } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toAssetStyleId } from "../../lib/idDisplay";
 import type { RegisteredComponent } from "./types";
 
 const { Text } = Typography;
@@ -204,6 +205,9 @@ export function ComponentManager({
 											}}
 										>
 											<div className="cm-item-name">{c.name}</div>
+											<div className="cm-item-id" title={`完整 ID: ${c.id}`}>
+												ID: {toAssetStyleId(c.id)}
+											</div>
 											<div className="cm-item-image">{c.image}</div>
 										</button>
 									))}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -647,9 +648,10 @@ ON CONFLICT (id) DO UPDATE SET
   finished_at = EXCLUDED.finished_at`
 
 	db := dbFromCtx(ctx, r.c.db)
+	assetIDs := pgtype.FlatArray[string](run.AssetIDs)
 	if err := db.Exec(ctx, q,
 		run.ID, templateID, run.PipelineName, templateVersion, run.WorkflowName,
-		run.ExecutionTargetID, targetSnapshot, run.Status, run.NodeCount, run.AssetIDs, run.AssetCount, run.NoAssetRun,
+		run.ExecutionTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
 		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message,
 		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt,
 	); err != nil {

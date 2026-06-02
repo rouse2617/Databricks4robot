@@ -30,6 +30,7 @@ import {
 	listPipelines,
 	type PipelineTemplate,
 } from "../../api/pipelineApi";
+import { toAssetStyleId } from "../../lib/idDisplay";
 import AssetPicker from "./AssetPicker";
 import {
 	COMPACT_TEMPLATE_LIMIT,
@@ -99,6 +100,9 @@ function TemplateCard({
 			<div className="dep-card-info">
 				<div className="dep-card-name" title={template.name}>
 					{template.name}
+				</div>
+				<div className="dep-card-id" title={`完整 ID: ${template.id}`}>
+					ID: {toAssetStyleId(template.id)}
 				</div>
 				{!compactActions ? (
 					<div className="dep-card-meta">
@@ -209,6 +213,7 @@ export function DeployPanel({
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
 	const [deploying, setDeploying] = useState(false);
+	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
 
 	const displayTemplates = useMemo(
 		() => dedupeTemplatesByName(templates),
@@ -261,10 +266,17 @@ export function DeployPanel({
 	const handleDeployClick = (templateId: string) => {
 		setDeployTargetId(templateId);
 		setSelectedAssetIds([]);
+		setAssetPickerResetKey((key) => key + 1);
 		const defaultTarget =
 			targets.find((target) => target.isDefault) ?? targets[0];
 		setSelectedTargetId(defaultTarget?.id ?? "default");
 		setAssetModalOpen(true);
+	};
+
+	const closeAssetModal = () => {
+		setAssetModalOpen(false);
+		setSelectedAssetIds([]);
+		setAssetPickerResetKey((key) => key + 1);
 	};
 
 	const handleDeployConfirm = async () => {
@@ -273,7 +285,7 @@ export function DeployPanel({
 		try {
 			await deployTemplate(deployTargetId, selectedAssetIds, selectedTargetId);
 			message.success("部署成功");
-			setAssetModalOpen(false);
+			closeAssetModal();
 			refresh();
 		} catch (err) {
 			message.error(`部署失败: ${String(err)}`);
@@ -600,7 +612,7 @@ export function DeployPanel({
 			<Modal
 				title="运行流水线"
 				open={assetModalOpen}
-				onCancel={() => setAssetModalOpen(false)}
+				onCancel={closeAssetModal}
 				onOk={handleDeployConfirm}
 				confirmLoading={deploying}
 				okText={selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
@@ -646,6 +658,7 @@ export function DeployPanel({
 					selectedIds={selectedAssetIds}
 					onSelectionChange={setSelectedAssetIds}
 					maxHeight={300}
+					resetKey={assetPickerResetKey}
 				/>
 			</Modal>
 		</div>

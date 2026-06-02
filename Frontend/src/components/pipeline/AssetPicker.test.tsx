@@ -126,6 +126,60 @@ describe("AssetPicker", () => {
 		expect(screen.getByText("model")).toBeTruthy();
 	});
 
+	it("replaces the controlled search value instead of appending stale text", () => {
+		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
+		const input = screen.getByPlaceholderText(
+			"搜索资产（输入 asset_id 或名称）",
+		) as HTMLInputElement;
+
+		fireEvent.change(input, { target: { value: "old-asset" } });
+		expect(input.value).toBe("old-asset");
+
+		fireEvent.change(input, { target: { value: "new-asset" } });
+		expect(input.value).toBe("new-asset");
+	});
+
+	it("resets query and results when resetKey changes", async () => {
+		vi.mocked(searchApi.searchAssets).mockResolvedValue({
+			items: mockResults,
+			total: 2,
+			page: 1,
+			page_size: 50,
+		});
+
+		const { rerender } = render(
+			<AssetPicker
+				selectedIds={[]}
+				onSelectionChange={() => {}}
+				resetKey={1}
+			/>,
+		);
+		const input = screen.getByPlaceholderText(
+			"搜索资产（输入 asset_id 或名称）",
+		) as HTMLInputElement;
+		const searchButton = input.parentElement?.querySelector("button");
+		fireEvent.change(input, { target: { value: "ast" } });
+		if (searchButton) fireEvent.click(searchButton);
+
+		await waitFor(() => {
+			expect(screen.getByText("ast-001")).toBeTruthy();
+		});
+
+		rerender(
+			<AssetPicker
+				selectedIds={[]}
+				onSelectionChange={() => {}}
+				resetKey={2}
+			/>,
+		);
+
+		expect(input.value).toBe("");
+		expect(screen.queryByText("ast-001")).toBeNull();
+		expect(
+			screen.getByText("输入关键字搜索资产，不选择则直接部署"),
+		).toBeTruthy();
+	});
+
 	it("truncates long storage_uri values", async () => {
 		vi.mocked(searchApi.searchAssets).mockResolvedValue({
 			items: mockResults,

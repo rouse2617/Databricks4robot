@@ -33,6 +33,7 @@ import {
 	type PipelineComponentType,
 	updateComponent,
 } from "../api/pipelineComponentApi";
+import { toAssetStyleId } from "../lib/idDisplay";
 import {
 	dedupePipelineComponentsByName,
 	formatComponentImage,
@@ -301,8 +302,12 @@ export function ComponentManager() {
 			render: (name: string, record) => (
 				<Space direction="vertical" size={0}>
 					<Typography.Text strong>{name}</Typography.Text>
-					<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-						{record.id}
+					<Typography.Text
+						type="secondary"
+						copyable={{ text: record.id }}
+						style={{ fontSize: 12 }}
+					>
+						ID: {toAssetStyleId(record.id)}
 					</Typography.Text>
 				</Space>
 			),

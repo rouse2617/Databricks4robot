@@ -12,6 +12,8 @@ interface AssetPickerProps {
 	placeholder?: string;
 	/** Table max height for scroll */
 	maxHeight?: number;
+	/** Changes to this value reset transient search text/results. */
+	resetKey?: string | number;
 }
 
 /** Shared asset search + multi-select table.
@@ -22,18 +24,31 @@ export default function AssetPicker({
 	onSelectionChange,
 	placeholder = "搜索资产（输入 asset_id 或名称）",
 	maxHeight = 200,
+	resetKey,
 }: AssetPickerProps) {
 	const [results, setResults] = useState<SearchAssetResult[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [query, setQuery] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const abortRef = useRef<AbortController | null>(null);
+	const previousResetKeyRef = useRef(resetKey);
 
 	useEffect(() => {
 		return () => {
 			abortRef.current?.abort();
 		};
 	}, []);
+
+	useEffect(() => {
+		if (previousResetKeyRef.current === resetKey) return;
+		previousResetKeyRef.current = resetKey;
+		abortRef.current?.abort();
+		abortRef.current = null;
+		setQuery("");
+		setResults([]);
+		setError(null);
+		setLoading(false);
+	}, [resetKey]);
 
 	const isAbortError = (err: unknown) =>
 		(err instanceof DOMException && err.name === "AbortError") ||
@@ -45,7 +60,15 @@ export default function AssetPicker({
 
 	const handleSearch = async (value: string) => {
 		const trimmed = value.trim();
-		if (!trimmed) return;
+		if (!trimmed) {
+			abortRef.current?.abort();
+			abortRef.current = null;
+			setQuery("");
+			setResults([]);
+			setError(null);
+			setLoading(false);
+			return;
+		}
 		abortRef.current?.abort();
 		const controller = new AbortController();
 		abortRef.current = controller;
@@ -75,6 +98,8 @@ export default function AssetPicker({
 		<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
 			<Input.Search
 				placeholder={placeholder}
+				value={query}
+				onChange={(event) => setQuery(event.target.value)}
 				onSearch={handleSearch}
 				loading={loading}
 				size="small"

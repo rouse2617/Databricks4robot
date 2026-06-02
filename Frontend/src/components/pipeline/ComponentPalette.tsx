@@ -6,6 +6,7 @@ import type { RegisteredComponent } from "./types";
 interface Props {
 	components: RegisteredComponent[];
 	onDragStart: (e: React.DragEvent, comp: RegisteredComponent) => void;
+	onAddComponent?: (comp: RegisteredComponent) => void;
 	loading?: boolean;
 	error?: string | null;
 	onRetry?: () => void;
@@ -14,6 +15,7 @@ interface Props {
 export function ComponentPalette({
 	components,
 	onDragStart,
+	onAddComponent,
 	loading = false,
 	error = null,
 	onRetry,
@@ -53,6 +55,7 @@ export function ComponentPalette({
 					draggable={!loading}
 					aria-label={`拖入组件 ${c.name}`}
 					onDragStart={(e) => onDragStart(e, c)}
+					onClick={() => onAddComponent?.(c)}
 				>
 					<div className="pi-content">
 						<div className="pi-label">{c.name}</div>
