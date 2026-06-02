@@ -44,6 +44,10 @@ DB_PASSWORD_SECRET="${DB_PASSWORD_SECRET:-}"
 DB_PASSWORD_SECRET_VERSION="${DB_PASSWORD_SECRET_VERSION:-latest}"
 DB_NAME_OVERRIDE="${DB_NAME_OVERRIDE:-}"
 DATABREW_TOKEN_OVERRIDE="${DATABREW_TOKEN_OVERRIDE:-}"
+# Argo Workflows server lives in the dev K8s cluster, not on Cloud Run.
+# The Cloud Run service cyber-databrew-pipeline-ui-dev is a separate UI proxy
+# (SSO/OIDC) and rejects K8s SA tokens with "unexpected signing method: RS256".
+ARGO_SERVER_URL_OVERRIDE="${ARGO_SERVER_URL_OVERRIDE:-http://10.2.1.211:2746}"
 LAKEHOUSE_BACKEND_OVERRIDE="${LAKEHOUSE_BACKEND_OVERRIDE:-}"
 LAKEHOUSE_BQ_PROJECT_OVERRIDE="${LAKEHOUSE_BQ_PROJECT_OVERRIDE:-}"
 LAKEHOUSE_BQ_DATASET_OVERRIDE="${LAKEHOUSE_BQ_DATASET_OVERRIDE:-}"
@@ -235,6 +239,16 @@ fi
 [[ -n "${OUTBOX_ES_SUBSCRIPTION_OVERRIDE}" ]] && upsert_env "OUTBOX_ES_SUBSCRIPTION" "${OUTBOX_ES_SUBSCRIPTION_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${ELASTICSEARCH_URL_OVERRIDE}" ]] && upsert_env "ELASTICSEARCH_URL" "${ELASTICSEARCH_URL_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${ELASTICSEARCH_PASSWORD_OVERRIDE}" ]] && upsert_env "ELASTICSEARCH_PASSWORD" "${ELASTICSEARCH_PASSWORD_OVERRIDE}" "${ENV_KV_FILE}"
+
+# Argo Workflows server lives in K8s, not on Cloud Run. Drop any K8s-merged
+# ARGO_BASE_URL (which points at the Cloud Run pipeline-ui proxy) and force
+# ARGO_SERVER_URL to the in-cluster Argo API. No ARGO_TOKEN needed with
+# --auth-mode=server (anonymous access).
+remove_env "ARGO_BASE_URL" "${ENV_KV_FILE}"
+remove_env "ARGO_SERVER_URL" "${ENV_KV_FILE}"
+remove_env "ARGO_TOKEN" "${ENV_KV_FILE}"
+remove_env "ARGO_AUTH_TOKEN" "${ENV_KV_FILE}"
+[[ -n "${ARGO_SERVER_URL_OVERRIDE}" ]] && upsert_env "ARGO_SERVER_URL" "${ARGO_SERVER_URL_OVERRIDE}" "${ENV_KV_FILE}"
 
 apply_cloudrun_env_fix "${ENV_KV_FILE}"
 
