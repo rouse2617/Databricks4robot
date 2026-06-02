@@ -84,11 +84,11 @@ func streamWorkflowLogs(
 			if line == "" {
 				continue
 			}
-			lineBytes := int64(len([]byte(line)))
+			lineBytes := int64(len(line))
 			if limitBytes >= 0 && emittedBytes+lineBytes > limitBytes {
 				remaining := limitBytes - emittedBytes
 				if remaining > 0 {
-					line = string([]byte(line)[:remaining])
+					line = line[:remaining]
 					if !writeWorkflowSSEEvent(writer, "log", gin.H{
 						"podName":    podName,
 						"container":  container,

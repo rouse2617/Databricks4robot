@@ -1323,7 +1323,16 @@ func (uc *Usecase) getWorkflowResourceUsage(ctx context.Context, workflowName, n
 
 	var manifest *string
 	var deploymentID string
-	if uc.deploymentRepo != nil {
+	// Prefer the first-class pipeline_runs table (workflow_name UNIQUE) so we
+	// avoid a full table scan over pipeline_deployments. Fall back to the
+	// legacy compatibility read only when the run repo has no matching row.
+	if uc.runRepo != nil {
+		if run, err := uc.runRepo.FindByWorkflowName(ctx, workflowName); err == nil && run != nil {
+			manifest = run.Manifest
+			deploymentID = run.ID
+		}
+	}
+	if manifest == nil && uc.deploymentRepo != nil {
 		if deployments, err := uc.deploymentRepo.FindAll(ctx); err == nil {
 			for i := range deployments {
 				if deployments[i].WorkflowName == workflowName {

@@ -535,3 +535,183 @@ func TestRetryDeployment_PreservesInputAssetIDs(t *testing.T) {
 		t.Fatalf("unexpected asset ids: %#v", raw)
 	}
 }
+
+// ── CYB-1537 — PR #77 review follow-up: runRepo primary lookup ─────────────
+
+type mockRunRepo struct {
+	byID         map[string]*models.PipelineRun
+	byWf         map[string]*models.PipelineRun
+	findAllCalls int
+}
+
+func (m *mockRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
+	if m.byID == nil {
+		m.byID = map[string]*models.PipelineRun{}
+	}
+	if m.byWf == nil {
+		m.byWf = map[string]*models.PipelineRun{}
+	}
+	m.byID[r.ID] = r
+	m.byWf[r.WorkflowName] = r
+	return nil
+}
+func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
+	m.findAllCalls++
+	out := make([]models.PipelineRun, 0, len(m.byID))
+	for _, r := range m.byID {
+		out = append(out, *r)
+	}
+	return out, nil
+}
+func (m *mockRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	if m.byID == nil {
+		return nil, nil
+	}
+	return m.byID[id], nil
+}
+func (m *mockRunRepo) FindByWorkflowName(_ context.Context, name string) (*models.PipelineRun, error) {
+	if m.byWf == nil {
+		return nil, nil
+	}
+	return m.byWf[name], nil
+}
+func (m *mockRunRepo) Delete(_ context.Context, id string) error {
+	if r, ok := m.byID[id]; ok {
+		delete(m.byID, id)
+		delete(m.byWf, r.WorkflowName)
+	}
+	return nil
+}
+func (m *mockRunRepo) DeleteByTemplateID(_ context.Context, _ string) error {
+	return nil
+}
+func (m *mockRunRepo) UpdateStatus(_ context.Context, id, status string, finishedAt *time.Time) error {
+	if r, ok := m.byID[id]; ok {
+		r.Status = status
+		r.FinishedAt = finishedAt
+	}
+	return nil
+}
+
+// trackingDeploymentRepo wraps mockDeploymentRepo to count FindAll calls so
+// the CYB-1537 tests can assert whether the legacy scan ran.
+type trackingDeploymentRepo struct {
+	*mockDeploymentRepo
+	findAllCalls int
+}
+
+func (t *trackingDeploymentRepo) FindAll(_ context.Context) ([]models.PipelineDeployment, error) {
+	t.findAllCalls++
+	return t.mockDeploymentRepo.FindAll(nil)
+}
+
+func TestGetWorkflowResourceUsage_UsesRunRepo(t *testing.T) {
+	ctx := context.Background()
+	manifest := "kind: Workflow\nspec: {}\n"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				Manifest:     &manifest,
+			},
+		},
+		byWf: map[string]*models.PipelineRun{
+			"wf-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				Manifest:     &manifest,
+			},
+		},
+	}
+	depRepo := &trackingDeploymentRepo{mockDeploymentRepo: &mockDeploymentRepo{}}
+	// Intentionally also seed the legacy table; if the fix is wrong, the
+	// fallback would return this row.
+	dep := &models.PipelineDeployment{ID: "dep-legacy", WorkflowName: "wf-1", Status: "Running"}
+	if err := depRepo.Save(ctx, dep); err != nil {
+		t.Fatalf("save legacy deployment: %v", err)
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		wf := &wfv1.Workflow{}
+		wf.Status.Phase = wfv1.WorkflowRunning
+		return wf, nil
+	}
+
+	uc := New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	report, err := uc.GetWorkflowResourceUsage(ctx, "wf-1")
+	if err != nil {
+		t.Fatalf("GetWorkflowResourceUsage: %v", err)
+	}
+	if report.DeploymentID != "run-1" {
+		t.Fatalf("expected deploymentID from runRepo (run-1), got %q", report.DeploymentID)
+	}
+	if depRepo.findAllCalls != 0 {
+		t.Fatalf("expected deploymentRepo.FindAll NOT to be called when runRepo has the row, got %d calls", depRepo.findAllCalls)
+	}
+}
+
+func TestGetWorkflowResourceUsage_FallsBackToDeploymentRepo(t *testing.T) {
+	ctx := context.Background()
+	manifest := "kind: Workflow\nspec: {}\n"
+	runRepo := &mockRunRepo{} // empty
+	depRepo := &trackingDeploymentRepo{mockDeploymentRepo: &mockDeploymentRepo{}}
+	dep := &models.PipelineDeployment{
+		ID:           "dep-legacy",
+		WorkflowName: "wf-legacy",
+		Status:       "Running",
+		Manifest:     &manifest,
+	}
+	if err := depRepo.Save(ctx, dep); err != nil {
+		t.Fatalf("save legacy deployment: %v", err)
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		wf := &wfv1.Workflow{}
+		wf.Status.Phase = wfv1.WorkflowRunning
+		return wf, nil
+	}
+
+	uc := New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	report, err := uc.GetWorkflowResourceUsage(ctx, "wf-legacy")
+	if err != nil {
+		t.Fatalf("GetWorkflowResourceUsage: %v", err)
+	}
+	if report.DeploymentID != "dep-legacy" {
+		t.Fatalf("expected fallback deploymentID dep-legacy, got %q", report.DeploymentID)
+	}
+	if depRepo.findAllCalls == 0 {
+		t.Fatal("expected deploymentRepo.FindAll to be called as fallback, got 0 calls")
+	}
+}
+
+// No-op mocks for SetRunRepositories arguments. The tests in this block do
+// not exercise target or node persistence.
+type mockTargetRepo struct{}
+
+func (mockTargetRepo) Save(_ context.Context, _ *models.ExecutionTarget) error { return nil }
+func (mockTargetRepo) FindAll(_ context.Context) ([]models.ExecutionTarget, error) {
+	return nil, nil
+}
+func (mockTargetRepo) FindByID(_ context.Context, _ string) (*models.ExecutionTarget, error) {
+	return nil, nil
+}
+func (mockTargetRepo) FindDefault(_ context.Context) (*models.ExecutionTarget, error) {
+	return nil, nil
+}
+
+type mockRunNodeRepo struct{}
+
+func (mockRunNodeRepo) ReplaceByRunID(_ context.Context, _ string, _ []models.PipelineRunNode) error {
+	return nil
+}
+func (mockRunNodeRepo) FindByRunID(_ context.Context, _ string) ([]models.PipelineRunNode, error) {
+	return nil, nil
+}
+func (mockRunNodeRepo) DeleteByRunID(_ context.Context, _ string) error { return nil }

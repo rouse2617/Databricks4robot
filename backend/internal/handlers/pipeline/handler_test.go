@@ -215,6 +215,10 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.GET("/api/v1/deployments/:id/resources", h.GetResourceUsage)
 	r.GET("/api/v1/workflows/:name/resources", h.GetWorkflowResourceUsage)
 	r.GET("/api/v1/workflows/:name/nodes/:nodeId/resources", h.GetWorkflowNodeResourceUsage)
+	r.POST("/api/v1/pipeline-runs", h.CreateRun)
+	r.POST("/api/v1/pipeline-runs/template/:id", h.CreateRunByTemplate)
+	r.GET("/api/v1/pipeline-runs", h.ListRuns)
+	r.GET("/api/v1/pipeline-runs/:id", h.GetRun)
 	r.POST("/api/v1/pipeline-assets", h.RegisterOutput)
 	r.GET("/api/v1/assets/:id/pipeline-lineage", h.GetLineage)
 	return r
@@ -1078,5 +1082,42 @@ func TestDeployByTemplate_TemplateNotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for non-existent template, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ── CYB-1537 — PR #77 review follow-up: CreateRunByTemplate body binding ──
+
+func TestCreateRunByTemplate_MalformedBody(t *testing.T) {
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	h := New(uc)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-runs/template/tmpl-1", strings.NewReader("not-json"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed body, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "invalid request body") {
+		t.Fatalf("expected 'invalid request body' in response, got %s", w.Body.String())
+	}
+}
+
+func TestCreateRunByTemplate_EmptyBody_OK(t *testing.T) {
+	// Empty body must still reach the usecase (not rejected by binding).
+	// We use a non-existent template id so the usecase returns 4xx/5xx,
+	// but the binding path must not produce 400.
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	h := New(uc)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-runs/template/missing-tmpl", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusBadRequest {
+		t.Fatalf("empty body should not be rejected as 400, got 400: %s", w.Body.String())
 	}
 }

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -197,7 +198,13 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		AssetIDs []string `json:"asset_ids"`
 		TargetID string   `json:"target_id"`
 	}
-	_ = c.ShouldBindJSON(&req)
+	// Body is optional: empty body is fine, but a non-empty body that fails to
+	// bind (malformed JSON, wrong content type) is a client error and must not
+	// silently fall through to the usecase.
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
 	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID})
 	if err != nil {
 		mapDeployError(c, err)
