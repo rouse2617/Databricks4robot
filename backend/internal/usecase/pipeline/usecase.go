@@ -47,6 +47,7 @@ type Usecase struct {
 	logicalRepo    repository.LogicalAssetRepository
 	wfClient       argo.WorkflowClient
 	namespace      string
+	pricing        *PricingConfig
 }
 
 type DeployOptions struct {
@@ -81,6 +82,11 @@ func (uc *Usecase) SetRunRepositories(
 	uc.targetRepo = targetRepo
 	uc.runRepo = runRepo
 	uc.runNodeRepo = runNodeRepo
+}
+
+// SetPricing wires the GCP pricing config for cost estimation.
+func (uc *Usecase) SetPricing(p *PricingConfig) {
+	uc.pricing = p
 }
 
 func logPipelineSideEffect(op string, err error) {
@@ -443,6 +449,11 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	logPipelineSideEffect("update pipeline run status", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
 	if uc.runNodeRepo != nil && len(wf.Status.Nodes) > 0 {
 		nodes := runNodesFromWorkflow(run.ID, run.WorkflowName, wf.Status.Nodes)
+		for i := range nodes {
+			if uc.pricing != nil {
+				nodes[i].EstimatedCostUSD = resourcesDurationToCost(nodes[i].ResourcesDuration, uc.pricing)
+			}
+		}
 		logPipelineSideEffect("replace pipeline run nodes", uc.runNodeRepo.ReplaceByRunID(ctx, run.ID, nodes))
 		run.Nodes = nodes
 	}

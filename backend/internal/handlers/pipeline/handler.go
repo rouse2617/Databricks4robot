@@ -17,11 +17,19 @@ import (
 
 // Handler bundles the pipeline endpoints.
 type Handler struct {
-	uc *pipelineUC.Usecase
+	uc      *pipelineUC.Usecase
+	pricing *pipelineUC.PricingConfig
 }
 
-// New constructs a Handler.
-func New(uc *pipelineUC.Usecase) *Handler { return &Handler{uc: uc} }
+// New constructs a Handler. When pricingPath is non-empty the GCP pricing
+// YAML is loaded at construction time for cost estimation.
+func New(uc *pipelineUC.Usecase, pricingPath string) *Handler {
+	var pricing *pipelineUC.PricingConfig
+	if strings.TrimSpace(pricingPath) != "" {
+		pricing, _ = pipelineUC.LoadPricing(pricingPath)
+	}
+	return &Handler{uc: uc, pricing: pricing}
+}
 
 // SaveTemplate handles POST /api/v1/pipelines.
 func (h *Handler) SaveTemplate(c *gin.Context) {
@@ -238,6 +246,9 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	if items == nil {
 		items = []models.PipelineRun{}
 	}
+	for i := range items {
+		items[i].TotalEstimatedCost = pipelineUC.ComputeRunCost(&items[i], h.pricing)
+	}
 	c.JSON(200, gin.H{"items": items})
 }
 
@@ -257,6 +268,7 @@ func (h *Handler) GetRun(c *gin.Context) {
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
 		return
 	}
+	run.TotalEstimatedCost = pipelineUC.ComputeRunCost(run, h.pricing)
 	c.JSON(200, run)
 }
 

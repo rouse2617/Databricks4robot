@@ -798,7 +798,7 @@ var _ repository.PipelineRunNodeRepository = (*PipelineRunNodeRepo)(nil)
 
 const pipelineRunNodeSelectCols = `id, run_id, pipeline_node_id, argo_node_id, argo_node_name,
   display_name, template_name, type, phase, message, pod_name, host_node_name, children,
-  inputs, outputs, resources_duration, resource_summary, log_ref,
+  inputs, outputs, resources_duration, resource_summary, log_ref, estimated_cost_usd,
   started_at, finished_at, created_at, updated_at`
 
 func scanPipelineRunNode(rs rowScanner) (*models.PipelineRunNode, error) {
@@ -809,11 +809,12 @@ func scanPipelineRunNode(rs rowScanner) (*models.PipelineRunNode, error) {
 		outputs           []byte
 		resourcesDuration []byte
 		resourceSummary   []byte
+		estimatedCost     *float64
 	)
 	if err := rs.Scan(
 		&n.ID, &n.RunID, &n.PipelineNodeID, &n.ArgoNodeID, &n.ArgoNodeName,
 		&n.DisplayName, &n.TemplateName, &n.Type, &n.Phase, &n.Message, &n.PodName, &n.HostNodeName, &children,
-		&inputs, &outputs, &resourcesDuration, &resourceSummary, &n.LogRef,
+		&inputs, &outputs, &resourcesDuration, &resourceSummary, &n.LogRef, &estimatedCost,
 		&n.StartedAt, &n.FinishedAt, &n.CreatedAt, &n.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -823,6 +824,7 @@ func scanPipelineRunNode(rs rowScanner) (*models.PipelineRunNode, error) {
 	n.Outputs = mapFromJSON(outputs)
 	n.ResourcesDuration = mapFromJSON(resourcesDuration)
 	n.ResourceSummary = mapFromJSON(resourceSummary)
+	n.EstimatedCostUSD = estimatedCost
 	return &n, nil
 }
 
@@ -838,13 +840,13 @@ func (r *PipelineRunNodeRepo) ReplaceByRunID(ctx context.Context, runID string, 
 INSERT INTO pipeline_run_nodes (
   id, run_id, pipeline_node_id, argo_node_id, argo_node_name,
   display_name, template_name, type, phase, message, pod_name, host_node_name, children,
-  inputs, outputs, resources_duration, resource_summary, log_ref,
+  inputs, outputs, resources_duration, resource_summary, log_ref, estimated_cost_usd,
   started_at, finished_at, created_at, updated_at
 ) VALUES (
   $1, $2, $3, $4, $5,
   $6, $7, $8, $9, $10, $11, $12, $13,
-  $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18,
-  $19, $20, $21, $22
+  $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19,
+  $20, $21, $22, $23
 )`
 	db := dbFromCtx(ctx, r.c.db)
 	now := time.Now().UTC()
@@ -879,7 +881,7 @@ INSERT INTO pipeline_run_nodes (
 		if err := db.Exec(ctx, q,
 			n.ID, n.RunID, n.PipelineNodeID, n.ArgoNodeID, n.ArgoNodeName,
 			n.DisplayName, n.TemplateName, n.Type, n.Phase, n.Message, n.PodName, n.HostNodeName, n.Children,
-			inputs, outputs, resourcesDuration, resourceSummary, n.LogRef,
+			inputs, outputs, resourcesDuration, resourceSummary, n.LogRef, n.EstimatedCostUSD,
 			n.StartedAt, n.FinishedAt, n.CreatedAt, n.UpdatedAt,
 		); err != nil {
 			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID insert: %w", err)

@@ -1891,6 +1891,11 @@ components:
           type: object
           additionalProperties: true
         logRef: { type: string, description: Relative logs endpoint for this pod when available }
+        estimatedCostUsd:
+          type: number
+          format: double
+          nullable: true
+          description: Best-effort estimated node cost in USD.
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
@@ -1926,6 +1931,11 @@ components:
         nodes:
           type: array
           items: { $ref: '#/components/schemas/PipelineRunNode' }
+        totalEstimatedCost:
+          type: number
+          format: double
+          nullable: true
+          description: Sum of node estimated costs in USD when pricing data is available.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }

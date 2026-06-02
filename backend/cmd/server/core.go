@@ -103,7 +103,14 @@ func setupCore(inf *infra) *coreHandlers {
 	puc.SetAssetEventRepo(assetEventRepo)
 	puc.SetRelationWriter(assetRepo)
 	puc.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
-	pipelineHandler := pipelineH.New(puc)
+	if inf.cfg.PricingConfigPath != "" {
+		priceCfg, err := pipelineUC.LoadPricing(inf.cfg.PricingConfigPath)
+		if err != nil {
+			slog.Warn("load pricing config", "err", err)
+		}
+		puc.SetPricing(priceCfg)
+	}
+	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath)
 
 	// Pipeline component registry
 	pipelineComponentRepo := postgres.NewPipelineComponentRepo(pg)

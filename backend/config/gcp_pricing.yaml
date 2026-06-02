@@ -1,0 +1,51 @@
+# GCP node hourly USD list prices, us-central1, on-demand and spot.
+#
+# Used by cyber-databrew to render best-effort per-Pod cost estimates.
+# Prices sourced from GCP public list prices (May 2026). Re-check quarterly.
+#
+# What is NOT modeled:
+#   - GCP CUD (committed-use discount) and SUD (sustained-use discount)
+#   - Network egress, storage I/O, GCS / Filestore costs
+#   - Node scale-down idle time (~10 min after last Pod)
+#
+# To compensate for CUD / SUD without changing per-instance prices, set
+# `calibration_factor` to (actual GCP invoice $) / (sum of list-price $)
+# from a recent month of billing. 1.00 means "use list price".
+
+region: us-central1
+calibration_factor: 1.00
+
+# Lookup key shape: prices[instance_type][accelerator_or_"none"][provisioning]
+# - instance_type   from node label  node.kubernetes.io/instance-type
+# - accelerator     from node label  cloud.google.com/gke-accelerator
+#                   ("none" when absent)
+# - provisioning    from node label  cloud.google.com/gke-provisioning
+#                   ("standard" or "spot")
+prices:
+  # GPU pool — all GPU pipeline tasks
+  g2-standard-16:
+    nvidia-l4:
+      standard: 1.20
+
+  # High-tier CPU pool — delivery tasks
+  c3d-standard-8-lssd:
+    none:
+      standard: 0.45
+      spot: 0.14
+
+  # Med-tier CPU pool — stats tasks (spot)
+  t2d-standard-8:
+    none:
+      standard: 0.31
+      spot: 0.09
+
+  # Low-tier (kept so lookup never misses)
+  e2-standard-4:
+    none:
+      standard: 0.13
+      spot: 0.04
+
+  # GKE system pool (never runs business Pods — kept for safety)
+  e2-standard-2:
+    none:
+      standard: 0.07

@@ -69,6 +69,23 @@ const parseDate = (value: string | null): Dayjs | null => {
 	return parsed.isValid() ? parsed : null;
 };
 
+const renderTimestamp = (value?: string) => {
+	if (!value) return "-";
+	const parsed = dayjs(value);
+	if (!parsed.isValid()) return new Date(value).toLocaleString();
+	const absolute = parsed.format("YYYY-MM-DD HH:mm:ss");
+	return (
+		<Tooltip title={parsed.toDate().toLocaleString()}>
+			<div style={{ lineHeight: 1.35 }}>
+				<div>{absolute}</div>
+				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+					{parsed.fromNow()}
+				</Typography.Text>
+			</div>
+		</Tooltip>
+	);
+};
+
 const datesEqual = (a: Dayjs | null, b: Dayjs | null): boolean => {
 	if (!a && !b) return true;
 	if (!a || !b) return false;
@@ -557,33 +574,15 @@ export function WorkflowExecutionList({
 			title: "创建时间",
 			dataIndex: "createdAt",
 			key: "createdAt",
-			width: 180,
-			render: (t: string) => {
-				if (!t) return "-";
-				const created = dayjs(t);
-				if (!created.isValid()) return new Date(t).toLocaleString();
-				return (
-					<Tooltip title={created.toLocaleString()}>
-						{created.fromNow()}
-					</Tooltip>
-				);
-			},
+			width: 190,
+			render: renderTimestamp,
 		},
 		{
 			title: "完成时间",
 			dataIndex: "finishedAt",
 			key: "finishedAt",
-			width: 180,
-			render: (t?: string) => {
-				if (!t) return "-";
-				const finished = dayjs(t);
-				if (!finished.isValid()) return new Date(t).toLocaleString();
-				return (
-					<Tooltip title={finished.toLocaleString()}>
-						{finished.fromNow()}
-					</Tooltip>
-				);
-			},
+			width: 190,
+			render: renderTimestamp,
 		},
 		{
 			title: "操作",

@@ -132,6 +132,10 @@ type Config struct {
 
 	// DeliveryEligibilityProjector
 	DeliveryEligibilityProjectorEnabled string
+
+	// PricingConfigPath points to the GCP pricing YAML for cost estimation.
+	// Empty means cost estimation is skipped.
+	PricingConfigPath string
 }
 
 func Load() *Config {
@@ -210,7 +214,7 @@ func Load() *Config {
 		OutboxESCheckpointShards:            getenv("OUTBOX_ES_CHECKPOINT_SHARDS", "16"),
 		OutboxESCheckpointIdleAfterSec:      getenv("OUTBOX_ES_CHECKPOINT_IDLE_AFTER_SEC", "300"),
 
-		AdminToken:               getenv("ADMIN_TOKEN", ""),
+		AdminToken:                getenv("ADMIN_TOKEN", ""),
 		OpenLineageEmitterEnabled: getenv("OPENLINEAGE_EMITTER_ENABLED", ""),
 		OpenLineageEndpoint:       getenv("OPENLINEAGE_ENDPOINT", ""),
 		OpenLineageSubscription:   getenv("OPENLINEAGE_SUBSCRIPTION", ""),
@@ -218,6 +222,8 @@ func Load() *Config {
 		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", ""),
 		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", ""),
 		ArgoWorkflowsNamespace:    getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
+
+		PricingConfigPath: getenv("PRICING_CONFIG_PATH", ""),
 	}
 }
 

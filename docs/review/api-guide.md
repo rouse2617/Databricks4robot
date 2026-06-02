@@ -2439,6 +2439,10 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
 
 查询 first-class run 列表和详情。详情会尽量刷新 Argo phase，并在 workflow
 包含节点状态时返回 `nodes`；每个 pod 节点会带 `logRef`，供前端跳转日志。
+当后端设置 `PRICING_CONFIG_PATH` 且节点存在 Argo `resourcesDuration` 时，
+节点会返回 `estimatedCostUsd`，run 详情会返回 `totalEstimatedCost`。未配置
+pricing、节点无资源耗时或迁移未填充历史数据时，这两个字段会省略或为 `null`，
+接口不会失败。
 
 ```bash
 curl -s "$BASE/api/v1/pipeline-runs" \

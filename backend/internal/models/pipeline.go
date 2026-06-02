@@ -63,29 +63,30 @@ type ExecutionTarget struct {
 // PipelineRun is the first-class execution record for a pipeline run. Legacy
 // deployment endpoints can still project this data as PipelineDeployment.
 type PipelineRun struct {
-	ID                string                 `json:"id"`
-	TemplateID        *string                `json:"templateId,omitempty"`
-	PipelineName      string                 `json:"pipelineName"`
-	TemplateVersion   *int                   `json:"templateVersion,omitempty"`
-	WorkflowName      string                 `json:"workflowName"`
-	ExecutionTargetID string                 `json:"executionTargetId"`
-	TargetSnapshot    map[string]interface{} `json:"targetSnapshot,omitempty"`
-	Status            string                 `json:"status"`
-	NodeCount         int                    `json:"nodeCount"`
-	AssetIDs          []string               `json:"assetIds,omitempty"`
-	AssetCount        int                    `json:"assetCount"`
-	NoAssetRun        bool                   `json:"noAssetRun"`
-	Manifest          *string                `json:"manifest,omitempty"`
-	PipelineJSON      map[string]interface{} `json:"pipelineJSON,omitempty"`
-	ArgoNamespace     string                 `json:"argoNamespace"`
-	ArgoWorkflowUID   string                 `json:"argoWorkflowUid,omitempty"`
-	Message           string                 `json:"message,omitempty"`
-	ExecutionTarget   *ExecutionTarget       `json:"executionTarget,omitempty"`
-	Nodes             []PipelineRunNode      `json:"nodes,omitempty"`
-	CreatedAt         time.Time              `json:"createdAt"`
-	UpdatedAt         time.Time              `json:"updatedAt"`
-	StartedAt         *time.Time             `json:"startedAt,omitempty"`
-	FinishedAt        *time.Time             `json:"finishedAt,omitempty"`
+	ID                 string                 `json:"id"`
+	TemplateID         *string                `json:"templateId,omitempty"`
+	PipelineName       string                 `json:"pipelineName"`
+	TemplateVersion    *int                   `json:"templateVersion,omitempty"`
+	WorkflowName       string                 `json:"workflowName"`
+	ExecutionTargetID  string                 `json:"executionTargetId"`
+	TargetSnapshot     map[string]interface{} `json:"targetSnapshot,omitempty"`
+	Status             string                 `json:"status"`
+	NodeCount          int                    `json:"nodeCount"`
+	AssetIDs           []string               `json:"assetIds,omitempty"`
+	AssetCount         int                    `json:"assetCount"`
+	NoAssetRun         bool                   `json:"noAssetRun"`
+	Manifest           *string                `json:"manifest,omitempty"`
+	PipelineJSON       map[string]interface{} `json:"pipelineJSON,omitempty"`
+	ArgoNamespace      string                 `json:"argoNamespace"`
+	ArgoWorkflowUID    string                 `json:"argoWorkflowUid,omitempty"`
+	Message            string                 `json:"message,omitempty"`
+	ExecutionTarget    *ExecutionTarget       `json:"executionTarget,omitempty"`
+	Nodes              []PipelineRunNode      `json:"nodes,omitempty"`
+	TotalEstimatedCost *float64               `json:"totalEstimatedCost,omitempty"`
+	CreatedAt          time.Time              `json:"createdAt"`
+	UpdatedAt          time.Time              `json:"updatedAt"`
+	StartedAt          *time.Time             `json:"startedAt,omitempty"`
+	FinishedAt         *time.Time             `json:"finishedAt,omitempty"`
 }
 
 // PipelineRunNode captures per-node Argo state for a pipeline run.
@@ -108,6 +109,7 @@ type PipelineRunNode struct {
 	ResourcesDuration map[string]interface{} `json:"resourcesDuration,omitempty"`
 	ResourceSummary   map[string]interface{} `json:"resourceSummary,omitempty"`
 	LogRef            string                 `json:"logRef,omitempty"`
+	EstimatedCostUSD  *float64               `json:"estimatedCostUsd,omitempty"`
 	StartedAt         *time.Time             `json:"startedAt,omitempty"`
 	FinishedAt        *time.Time             `json:"finishedAt,omitempty"`
 	CreatedAt         time.Time              `json:"createdAt"`
