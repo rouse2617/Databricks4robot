@@ -26,6 +26,7 @@ Skills are reusable expert workflows. Read and follow the SKILL.md file when a m
 | Handing off context to another agent | handoff | `.agents/skills/handoff/SKILL.md` |
 | Converting context into a PRD | to-prd | `.agents/skills/to-prd/SKILL.md` |
 | Triaging incoming issues | triage | `.agents/skills/triage/SKILL.md` |
+| Generating user-facing changelogs from commits | changelog-generator | [`skills/changelog-generator/SKILL.md`](skills/changelog-generator/SKILL.md) |
 
 ## Restricted (conditional use only)
 
