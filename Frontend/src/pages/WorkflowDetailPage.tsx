@@ -29,6 +29,7 @@ import {
 	WorkflowNodeDetailPanel,
 	type WorkflowNodeDetailTabKey,
 } from "../components/pipeline/WorkflowNodeDetailPanel";
+import { WorkflowNodeSummaryTable } from "../components/pipeline/WorkflowNodeSummaryTable";
 import { STATUS_COLORS } from "../lib/constants";
 import {
 	getAvailableWorkflowOperationConfigs,
@@ -426,6 +427,36 @@ export default function WorkflowDetailPage({
 		[selectNode],
 	);
 
+	const handleInspectNodeFromSummary = useCallback(
+		(node: WorkflowNodeStatus) => {
+			setNodeDetailTab("summary");
+			selectNode(node);
+			setShowNodeLogs(false);
+			setNodePanelOpen(true);
+		},
+		[selectNode],
+	);
+
+	const handleOpenNodeLogsFromSummary = useCallback(
+		(node: WorkflowNodeStatus) => {
+			setNodeDetailTab("logs");
+			selectNode(node);
+			setNodePanelOpen(false);
+			setShowNodeLogs(true);
+		},
+		[selectNode],
+	);
+
+	const handleOpenNodeRuntimeFromSummary = useCallback(
+		(node: WorkflowNodeStatus) => {
+			setNodeDetailTab("runtime");
+			selectNode(node);
+			setShowNodeLogs(false);
+			setNodePanelOpen(true);
+		},
+		[selectNode],
+	);
+
 	const handleShowNodeLogs = useCallback(() => {
 		if (!selectedNode) {
 			return;
@@ -606,6 +637,13 @@ export default function WorkflowDetailPage({
 				</div>
 			</div>
 			<WorkflowRunContextPanel workflow={workflow} />
+			<WorkflowNodeSummaryTable
+				nodes={workflow.nodes}
+				selectedNodeId={selectedNode?.id ?? null}
+				onInspectNode={handleInspectNodeFromSummary}
+				onOpenLogs={handleOpenNodeLogsFromSummary}
+				onOpenRuntime={handleOpenNodeRuntimeFromSummary}
+			/>
 			<div style={{ flex: 1, display: "flex", minHeight: 0, minWidth: 0 }}>
 				{viewMode === "dag" ? (
 					<WorkflowDagView

@@ -251,7 +251,11 @@ if [[ -n "${K8S_BEARER_TOKEN_SECRET}" ]]; then
 fi
 if [[ -n "${K8S_CA_DATA_SECRET}" ]]; then
   remove_env "K8S_CA_DATA" "${ENV_KV_FILE}"
+  remove_env "K8S_CA_B64" "${ENV_KV_FILE}"
   secret_mappings+=("K8S_CA_DATA=${K8S_CA_DATA_SECRET}:${K8S_CA_DATA_SECRET_VERSION}")
+  # Keep K8S_CA_B64 bound to the same base64 PEM secret so revisions running
+  # the older buildTLSConfig path still verify the GKE API certificate.
+  secret_mappings+=("K8S_CA_B64=${K8S_CA_DATA_SECRET}:${K8S_CA_DATA_SECRET_VERSION}")
 fi
 
 # Argo Workflows server lives in K8s, not on Cloud Run. Drop any K8s-merged

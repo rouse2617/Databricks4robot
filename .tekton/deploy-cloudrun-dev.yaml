@@ -12,7 +12,9 @@
 ##   - iam.serviceAccounts.actAs for the Cloud Run runtime service account
 ##
 ## Deploy step matches live `cyber-databrew-backend-dev` (memory/VPC/CPU); no `--set-env-vars`
-## so existing revision env and Secret Manager bindings are preserved on rollout.
+## so existing revision env and most Secret Manager bindings are preserved on rollout.
+## K8s CA bindings are refreshed explicitly because both K8S_CA_DATA (new path)
+## and K8S_CA_B64 (legacy buildTLSConfig path) must point at the same base64 PEM.
 ##
 ## yaml-language-server: $schema=https://raw.githubusercontent.com/redhat-developer/vscode-tekton/refs/heads/main/scheme/tekton.dev/v1beta1_PipelineRun.json
 apiVersion: tekton.dev/v1beta1
@@ -143,7 +145,8 @@ spec:
                   --no-cpu-throttling \
                   --cpu-boost \
                   --vpc-connector=cr-central-conn \
-                  --vpc-egress=private-ranges-only
+                  --vpc-egress=private-ranges-only \
+                  --update-secrets=K8S_CA_DATA=cyber-databrew-dev-k8s-ca-data:latest,K8S_CA_B64=cyber-databrew-dev-k8s-ca-data:latest # pragma: allowlist secret
     finally:
       - name: notify-feishu-open
         params:

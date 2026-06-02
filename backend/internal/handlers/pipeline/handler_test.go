@@ -104,6 +104,74 @@ func (m *mockDeploymentRepo) DeleteByTemplateID(_ context.Context, templateID st
 }
 func (m *mockDeploymentRepo) UpdateStatus(_ context.Context, _, _ string) error { return nil }
 
+type mockPipelineRunRepo struct {
+	byID map[string]*models.PipelineRun
+}
+
+func (m *mockPipelineRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
+	if m.byID == nil {
+		m.byID = make(map[string]*models.PipelineRun)
+	}
+	m.byID[r.ID] = r
+	return nil
+}
+func (m *mockPipelineRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
+	out := make([]models.PipelineRun, 0, len(m.byID))
+	for _, r := range m.byID {
+		out = append(out, *r)
+	}
+	return out, nil
+}
+func (m *mockPipelineRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	return m.byID[id], nil
+}
+func (m *mockPipelineRunRepo) FindByWorkflowName(_ context.Context, workflowName string) (*models.PipelineRun, error) {
+	for _, r := range m.byID {
+		if r.WorkflowName == workflowName {
+			return r, nil
+		}
+	}
+	return nil, nil
+}
+func (m *mockPipelineRunRepo) Delete(_ context.Context, id string) error {
+	delete(m.byID, id)
+	return nil
+}
+func (m *mockPipelineRunRepo) DeleteByTemplateID(_ context.Context, templateID string) error {
+	for id, r := range m.byID {
+		if r.TemplateID != nil && *r.TemplateID == templateID {
+			delete(m.byID, id)
+		}
+	}
+	return nil
+}
+func (m *mockPipelineRunRepo) UpdateStatus(_ context.Context, id, status string, finishedAt *time.Time) error {
+	if r := m.byID[id]; r != nil {
+		r.Status = status
+		r.FinishedAt = finishedAt
+	}
+	return nil
+}
+
+type mockPipelineRunNodeRepo struct {
+	byRunID map[string][]models.PipelineRunNode
+}
+
+func (m *mockPipelineRunNodeRepo) ReplaceByRunID(_ context.Context, runID string, nodes []models.PipelineRunNode) error {
+	if m.byRunID == nil {
+		m.byRunID = make(map[string][]models.PipelineRunNode)
+	}
+	m.byRunID[runID] = nodes
+	return nil
+}
+func (m *mockPipelineRunNodeRepo) FindByRunID(_ context.Context, runID string) ([]models.PipelineRunNode, error) {
+	return m.byRunID[runID], nil
+}
+func (m *mockPipelineRunNodeRepo) DeleteByRunID(_ context.Context, runID string) error {
+	delete(m.byRunID, runID)
+	return nil
+}
+
 type mockAssetRepo struct {
 	assets map[string]*models.Asset
 }
@@ -202,6 +270,21 @@ func makeDeployment(id, name, status string) *models.PipelineDeployment {
 	}
 }
 
+func makePipelineRun(id, workflowName string) *models.PipelineRun {
+	return &models.PipelineRun{
+		ID:                id,
+		PipelineName:      "cost-demo",
+		WorkflowName:      workflowName,
+		ExecutionTargetID: "default",
+		Status:            "Succeeded",
+		NodeCount:         2,
+		NoAssetRun:        true,
+		ArgoNamespace:     "cyber-databrew-dev",
+		CreatedAt:         now(),
+		UpdatedAt:         now(),
+	}
+}
+
 func setupRouter(h *Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -255,6 +338,87 @@ func TestListExecutionTargets_Default(t *testing.T) {
 	}
 	if resp.Items[0].ID != "default" || resp.Items[0].Namespace != "cyber-databrew-dev" {
 		t.Fatalf("unexpected target: %+v", resp.Items[0])
+	}
+}
+
+func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
+	run := makePipelineRun("run-1", "wf-cost")
+	emitCost := 1.25
+	finalCost := 0.75
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{run.ID: run},
+	}, &mockPipelineRunNodeRepo{
+		byRunID: map[string][]models.PipelineRunNode{
+			run.ID: {
+				{ID: "node-1", RunID: run.ID, DisplayName: "emit", EstimatedCostUSD: &emitCost},
+				{ID: "node-2", RunID: run.ID, DisplayName: "final", EstimatedCostUSD: &finalCost},
+			},
+		},
+	})
+	h := New(uc, "")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.PipelineRun `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(resp.Items))
+	}
+	if resp.Items[0].TotalEstimatedCost == nil || *resp.Items[0].TotalEstimatedCost != 2.0 {
+		t.Fatalf("totalEstimatedCost=%v, want 2.0", resp.Items[0].TotalEstimatedCost)
+	}
+	if len(resp.Items[0].Nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(resp.Items[0].Nodes))
+	}
+}
+
+func TestGetRun_ReturnsTotalEstimatedCost(t *testing.T) {
+	run := makePipelineRun("run-1", "wf-cost")
+	expensiveCost := 3.5
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{run.ID: run},
+	}, &mockPipelineRunNodeRepo{
+		byRunID: map[string][]models.PipelineRunNode{
+			run.ID: {
+				{ID: "node-1", RunID: run.ID, DisplayName: "expensive", EstimatedCostUSD: &expensiveCost},
+				{ID: "node-2", RunID: run.ID, DisplayName: "free"},
+			},
+		},
+	})
+	h := New(uc, "")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs/run-1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp models.PipelineRun
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.TotalEstimatedCost == nil || *resp.TotalEstimatedCost != 3.5 {
+		t.Fatalf("totalEstimatedCost=%v, want 3.5", resp.TotalEstimatedCost)
+	}
+	if len(resp.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(resp.Nodes))
+	}
+	if resp.Nodes[0].EstimatedCostUSD == nil && resp.Nodes[1].EstimatedCostUSD == nil {
+		t.Fatalf("expected at least one node estimatedCostUsd in response")
 	}
 }
 

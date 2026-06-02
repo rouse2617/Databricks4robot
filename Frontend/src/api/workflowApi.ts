@@ -7,6 +7,8 @@ export interface WorkflowSummary {
 	createdAt: string;
 	finishedAt?: string;
 	labels?: Record<string, string>;
+	estimatedCostUsd?: number | null;
+	totalEstimatedCost?: number | null;
 }
 
 export interface ListWorkflowsParams {
@@ -42,6 +44,7 @@ export interface WorkflowNodeStatus {
 	podEvents?: WorkflowPodEvent[];
 	metrics?: WorkflowPodMetrics;
 	cost?: WorkflowPodCost;
+	estimatedCostUsd?: number;
 	debug?: WorkflowPodDebugCapabilities;
 	outputs?: {
 		parameters?: Array<{ name: string; value?: string }>;

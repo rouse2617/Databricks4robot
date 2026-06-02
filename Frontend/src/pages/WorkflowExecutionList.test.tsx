@@ -22,6 +22,8 @@ import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const mockListWorkflows = vi.fn();
 const mockDeleteWorkflow = vi.fn();
+const mockListDeployments = vi.fn();
+const mockListPipelineRuns = vi.fn();
 
 vi.mock("../api/workflowApi", () => ({
 	listWorkflows: (...args: unknown[]) => mockListWorkflows(...args),
@@ -32,6 +34,11 @@ vi.mock("../api/workflowApi", () => ({
 	suspendWorkflow: vi.fn(),
 	resumeWorkflow: vi.fn(),
 	terminateWorkflow: vi.fn(),
+}));
+
+vi.mock("../api/pipelineApi", () => ({
+	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
+	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
 }));
 
 vi.mock("antd", async (importOriginal) => {
@@ -94,6 +101,18 @@ describe("WorkflowExecutionList", () => {
 			});
 		});
 		mockDeleteWorkflow.mockResolvedValue({ message: "deleted" });
+		mockListDeployments.mockResolvedValue([]);
+		mockListPipelineRuns.mockResolvedValue([
+			{
+				id: "run-1",
+				pipelineName: "successful-run",
+				workflowName: "successful-run",
+				status: "Succeeded",
+				nodeCount: 2,
+				totalEstimatedCost: 1.25,
+				createdAt: "2026-06-02T01:00:00Z",
+			},
+		]);
 	});
 
 	afterEach(() => {
@@ -149,5 +168,18 @@ describe("WorkflowExecutionList", () => {
 			expect(screen.getByText("successful-run")).toBeInTheDocument();
 			expect(screen.getByText("failed-run")).toBeInTheDocument();
 		});
+	});
+
+	it("merges run-level estimated cost from pipeline runs and shows a quiet empty state otherwise", async () => {
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("successful-run")).toBeInTheDocument();
+		});
+
+		expect(mockListPipelineRuns).toHaveBeenCalled();
+		expect(screen.getAllByText("总成本").length).toBeGreaterThan(0);
+		expect(screen.getByText("$1.25")).toBeInTheDocument();
+		expect(screen.getAllByText("—").length).toBeGreaterThan(0);
 	});
 });

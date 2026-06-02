@@ -289,6 +289,7 @@ function PodTab({
 	const [podDiagError, setPodDiagError] = useState<string | null>(null);
 	const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: refreshTrigger intentionally re-runs pod diagnostics.
 	useEffect(() => {
 		if (!workflowName || !node.id) return undefined;
 		let cancelled = false;

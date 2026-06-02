@@ -29,6 +29,23 @@ export interface Deployment {
 	pipelineJSON?: Pipeline;
 }
 
+export interface PipelineRun {
+	id: string;
+	templateId?: string;
+	templateVersion?: number;
+	pipelineName: string;
+	workflowName: string;
+	status: string;
+	nodeCount: number;
+	assetIds?: string[];
+	assetCount?: number;
+	noAssetRun?: boolean;
+	totalEstimatedCost?: number | null;
+	createdAt: string;
+	startedAt?: string;
+	finishedAt?: string;
+}
+
 export interface ExecutionTarget {
 	id: string;
 	name: string;
@@ -93,6 +110,12 @@ export function deployTemplate(
 
 export function listDeployments(): Promise<Deployment[]> {
 	return request<{ items: Deployment[] }>("GET", "/deployments").then(
+		(r) => r.items,
+	);
+}
+
+export function listPipelineRuns(): Promise<PipelineRun[]> {
+	return request<{ items: PipelineRun[] }>("GET", "/pipeline-runs").then(
 		(r) => r.items,
 	);
 }

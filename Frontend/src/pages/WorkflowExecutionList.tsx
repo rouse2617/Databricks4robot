@@ -21,7 +21,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { listDeployments } from "../api/pipelineApi";
+import { listDeployments, listPipelineRuns } from "../api/pipelineApi";
 import {
 	deleteWorkflow,
 	type ListWorkflowsParams,
@@ -82,6 +82,34 @@ const renderTimestamp = (value?: string) => {
 					{parsed.fromNow()}
 				</Typography.Text>
 			</div>
+		</Tooltip>
+	);
+};
+
+const getWorkflowEstimatedCost = (record: WorkflowSummary): number | null => {
+	if (typeof record.estimatedCostUsd === "number") {
+		return record.estimatedCostUsd;
+	}
+	if (typeof record.totalEstimatedCost === "number") {
+		return record.totalEstimatedCost;
+	}
+	return null;
+};
+
+const renderEstimatedCost = (_: unknown, record: WorkflowSummary) => {
+	const cost = getWorkflowEstimatedCost(record);
+	if (cost == null) {
+		return (
+			<Tooltip title="本次运行暂无成本数据，后端返回汇总后会显示估算金额">
+				<Typography.Text type="secondary">—</Typography.Text>
+			</Tooltip>
+		);
+	}
+	return (
+		<Tooltip title="估算总成本，非 GCP Billing 最终对账金额">
+			<Typography.Text strong>
+				${cost.toFixed(cost < 0.01 ? 4 : 2)}
+			</Typography.Text>
 		</Tooltip>
 	);
 };
@@ -283,41 +311,72 @@ export function WorkflowExecutionList({
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
-			const [res, deployments] = await Promise.all([
+			const [res, deployments, pipelineRuns] = await Promise.all([
 				listWorkflows(params),
 				listDeployments().catch(() => []),
+				listPipelineRuns().catch(() => []),
 			]);
+			const runsByWorkflowName = new Map(
+				pipelineRuns
+					.filter((run) => run.workflowName)
+					.map((run) => [run.workflowName, run]),
+			);
 			setRunIdsByWorkflowName(
-				Object.fromEntries(
-					deployments
+				Object.fromEntries([
+					...deployments
 						.filter((deployment) => deployment.workflowName && deployment.id)
-						.map((deployment) => [deployment.workflowName, deployment.id]),
-				),
+						.map(
+							(deployment) => [deployment.workflowName, deployment.id] as const,
+						),
+					...pipelineRuns
+						.filter((run) => run.workflowName && run.id)
+						.map((run) => [run.workflowName, run.id] as const),
+				]),
 			);
 			setTemplateVersionsByWorkflowName(
-				Object.fromEntries(
-					deployments
+				Object.fromEntries([
+					...deployments
 						.filter(
 							(deployment) =>
 								deployment.workflowName && deployment.templateVersion,
 						)
-						.map((deployment) => [
-							deployment.workflowName,
-							deployment.templateVersion as number,
-						]),
-				),
+						.map(
+							(deployment) =>
+								[
+									deployment.workflowName,
+									deployment.templateVersion as number,
+								] as const,
+						),
+					...pipelineRuns
+						.filter((run) => run.workflowName && run.templateVersion)
+						.map(
+							(run) =>
+								[run.workflowName, run.templateVersion as number] as const,
+						),
+				]),
 			);
 			setNodeCountsByWorkflowName(
-				Object.fromEntries(
-					deployments
+				Object.fromEntries([
+					...deployments
 						.filter((deployment) => deployment.workflowName)
-						.map((deployment) => [
-							deployment.workflowName,
-							deployment.nodeCount,
-						]),
-				),
+						.map(
+							(deployment) =>
+								[deployment.workflowName, deployment.nodeCount] as const,
+						),
+					...pipelineRuns
+						.filter((run) => run.workflowName)
+						.map((run) => [run.workflowName, run.nodeCount] as const),
+				]),
 			);
-			setItems(res.items || []);
+			const enrichedItems = (res.items || []).map((item) => {
+				const run = runsByWorkflowName.get(item.name);
+				if (!run || typeof run.totalEstimatedCost !== "number") return item;
+				return {
+					...item,
+					totalEstimatedCost: run.totalEstimatedCost,
+				};
+			});
+			setItems(enrichedItems);
 			setSelectedWorkflowNames((prev) =>
 				prev.filter((name) =>
 					(res.items || []).some((item) => item.name === name),
@@ -571,6 +630,20 @@ export function WorkflowExecutionList({
 					finishedAt={record.finishedAt}
 				/>
 			),
+		},
+		{
+			title: (
+				<Tooltip title="按节点成本汇总的估算总成本">
+					<span>总成本</span>
+				</Tooltip>
+			),
+			key: "estimatedCostUsd",
+			width: 120,
+			align: "right" as const,
+			render: renderEstimatedCost,
+			sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+				(getWorkflowEstimatedCost(a) ?? -1) -
+				(getWorkflowEstimatedCost(b) ?? -1),
 		},
 		{
 			title: "创建时间",
