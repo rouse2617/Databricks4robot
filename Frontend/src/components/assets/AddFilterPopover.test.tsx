@@ -24,7 +24,7 @@ describe("AddFilterPopover", () => {
 		render(<AddFilterPopover onAddFilter={vi.fn()} />);
 		const trigger = screen.getByRole("button", { name: /添加筛选/ });
 		fireEvent.click(trigger);
-		fireEvent.click(screen.getByText("生命周期"));
+		fireEvent.click(screen.getByText(/\+ 生命周期/));
 		expect(screen.getByText("选择操作符")).toBeTruthy();
 		fireEvent.click(screen.getByRole("button", { name: /取\s*消/ }));
 		expect(trigger.className.includes("ant-popover-open")).toBe(false);

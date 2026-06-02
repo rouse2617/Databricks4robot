@@ -399,10 +399,12 @@ export function WorkflowExecutionList({
 				const value =
 					separatorIndex >= 0 ? label.slice(separatorIndex + 1) : "";
 				return (
-					<Tag>
-						{formatWorkflowLabelKey(key)}
-						{value ? ` · ${value}` : ""}
-					</Tag>
+					<Tooltip title={value ? `${key}=${value}` : key}>
+						<Tag>
+							{formatWorkflowLabelKey(key)}
+							{value ? ` · ${value}` : ""}
+						</Tag>
+					</Tooltip>
 				);
 			})(),
 			value: label,
@@ -739,6 +741,7 @@ export function WorkflowExecutionList({
 					}))}
 				/>
 				<Input.Search
+					id="workflow-execution-name-search"
 					allowClear
 					placeholder="按名称搜索"
 					style={{ minWidth: 220, flex: "1 1 220px" }}

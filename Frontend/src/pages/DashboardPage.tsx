@@ -274,6 +274,13 @@ interface EndpointErrors {
 	failureClusters?: string;
 }
 
+function formatDashboardError(message: string): string {
+	if (/lakehouse backend not configured/i.test(message)) {
+		return "数据湖服务未配置，当前只展示可用的本地页面状态。";
+	}
+	return message;
+}
+
 interface LakeTableCountRow {
 	key: string;
 	table_name: string;
@@ -1336,7 +1343,7 @@ export default function DashboardPage() {
 										{k}
 									</Text>
 									{" — "}
-									{m}
+									{formatDashboardError(m)}
 								</li>
 							))}
 						</ul>

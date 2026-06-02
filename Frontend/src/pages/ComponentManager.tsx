@@ -8,6 +8,7 @@ import {
 import {
 	Alert,
 	Button,
+	Descriptions,
 	Empty,
 	Form,
 	Input,
@@ -67,6 +68,9 @@ const TYPE_COLORS: Record<PipelineComponentType, string> = {
 	resource: "green",
 	suspend: "orange",
 };
+
+const formatDateTime = (value?: string): string =>
+	value ? new Date(value).toLocaleString() : "-";
 
 const splitInputItems = (value?: string): string[] =>
 	(value || "")
@@ -141,6 +145,72 @@ function toPayload(
 			env,
 		},
 	};
+}
+
+function ComponentDetail({ component }: { component: PipelineComponentAPI }) {
+	const envEntries = Object.entries(component.env || {});
+	const imageText = formatComponentImage(component.image, component.tag);
+
+	return (
+		<Space direction="vertical" size={16} style={{ width: "100%" }}>
+			<Descriptions bordered column={2} size="small">
+				<Descriptions.Item label="名称" span={2}>
+					<Typography.Text strong>{component.name}</Typography.Text>
+				</Descriptions.Item>
+				<Descriptions.Item label="ID" span={2}>
+					<Typography.Text copyable={{ text: component.id }}>
+						{toAssetStyleId(component.id)}
+					</Typography.Text>
+				</Descriptions.Item>
+				<Descriptions.Item label="类型">
+					<Tag color={TYPE_COLORS[component.type] || "default"}>
+						{component.type || "container"}
+					</Tag>
+				</Descriptions.Item>
+				<Descriptions.Item label="来源">
+					<Tag color={component.source === "system" ? "gold" : "default"}>
+						{component.source || "-"}
+					</Tag>
+				</Descriptions.Item>
+				<Descriptions.Item label="镜像" span={2}>
+					<Typography.Text copyable={{ text: imageText }}>
+						{imageText || "-"}
+					</Typography.Text>
+				</Descriptions.Item>
+				<Descriptions.Item label="描述" span={2}>
+					{component.description || "-"}
+				</Descriptions.Item>
+				<Descriptions.Item label="创建时间">
+					{formatDateTime(component.createdAt)}
+				</Descriptions.Item>
+				<Descriptions.Item label="更新时间">
+					{formatDateTime(component.updatedAt)}
+				</Descriptions.Item>
+			</Descriptions>
+
+			<Descriptions bordered column={1} size="small">
+				<Descriptions.Item label="命令">
+					{component.command?.length ? component.command.join(", ") : "-"}
+				</Descriptions.Item>
+				<Descriptions.Item label="参数">
+					{component.args?.length ? component.args.join(", ") : "-"}
+				</Descriptions.Item>
+				<Descriptions.Item label="环境变量">
+					{envEntries.length > 0 ? (
+						<Space direction="vertical" size={4}>
+							{envEntries.map(([name, value]) => (
+								<Typography.Text key={name} code>
+									{name}={value}
+								</Typography.Text>
+							))}
+						</Space>
+					) : (
+						"-"
+					)}
+				</Descriptions.Item>
+			</Descriptions>
+		</Space>
+	);
 }
 
 export function ComponentManager() {
@@ -519,7 +589,7 @@ export function ComponentManager() {
 				onOk={handleSave}
 				onCancel={closeModal}
 				width={760}
-				destroyOnClose
+				destroyOnHidden
 				footer={
 					isViewMode
 						? [
@@ -530,137 +600,119 @@ export function ComponentManager() {
 						: undefined
 				}
 			>
-				<Form
-					form={form}
-					layout="vertical"
-					style={{ marginTop: 16 }}
-					preserve={false}
-				>
-					<div
-						style={{
-							display: "grid",
-							gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-							gap: 12,
-						}}
+				{isViewMode && activeComponent ? (
+					<ComponentDetail component={activeComponent} />
+				) : (
+					<Form
+						form={form}
+						layout="vertical"
+						style={{ marginTop: 16 }}
+						preserve={false}
 					>
-						<Form.Item
-							name="name"
-							label="名称"
-							rules={[{ required: true, message: "请输入组件名称" }]}
+						<div
+							style={{
+								display: "grid",
+								gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+								gap: 12,
+							}}
 						>
-							<Input
-								placeholder="normalize-mcap"
-								disabled={isViewMode}
-								ref={nameInputRef}
-								autoComplete="off"
-								onFocus={(e) => e.target.select()}
+							<Form.Item
+								name="name"
+								label="名称"
+								rules={[{ required: true, message: "请输入组件名称" }]}
+							>
+								<Input
+									placeholder="normalize-mcap"
+									ref={nameInputRef}
+									autoComplete="off"
+									onFocus={(e) => e.target.select()}
+								/>
+							</Form.Item>
+							<Form.Item
+								name="type"
+								label="类型"
+								rules={[{ required: true, message: "请选择组件类型" }]}
+							>
+								<Select options={TYPE_OPTIONS} />
+							</Form.Item>
+						</div>
+
+						<div
+							style={{
+								display: "grid",
+								gridTemplateColumns: "minmax(260px, 1fr) 160px",
+								gap: 12,
+							}}
+						>
+							<Form.Item
+								name="image"
+								label="镜像"
+								rules={[{ required: true, message: "请输入镜像" }]}
+							>
+								<Input
+									placeholder="registry.example.com/databrew/worker"
+									autoComplete="off"
+									onFocus={(e) => e.target.select()}
+								/>
+							</Form.Item>
+							<Form.Item name="tag" label="标签">
+								<Input
+									placeholder="latest"
+									autoComplete="off"
+									onFocus={(e) => e.target.select()}
+								/>
+							</Form.Item>
+						</div>
+
+						<Form.Item name="description" label="描述">
+							<Input.TextArea rows={3} maxLength={500} showCount />
+						</Form.Item>
+
+						<Form.Item name="command" label="命令">
+							<Input.TextArea
+								rows={2}
+								placeholder="例如: python, /app/main.py"
 							/>
 						</Form.Item>
-						<Form.Item
-							name="type"
-							label="类型"
-							rules={[{ required: true, message: "请选择组件类型" }]}
-						>
-							<Select options={TYPE_OPTIONS} disabled={isViewMode} />
-						</Form.Item>
-					</div>
 
-					<div
-						style={{
-							display: "grid",
-							gridTemplateColumns: "minmax(260px, 1fr) 160px",
-							gap: 12,
-						}}
-					>
-						<Form.Item
-							name="image"
-							label="镜像"
-							rules={[{ required: true, message: "请输入镜像" }]}
-						>
-							<Input
-								placeholder="registry.example.com/databrew/worker"
-								disabled={isViewMode}
-								autoComplete="off"
-								onFocus={(e) => e.target.select()}
+						<Form.Item name="args" label="参数">
+							<Input.TextArea
+								rows={2}
+								placeholder="例如: --input, {{inputs.asset}}"
 							/>
 						</Form.Item>
-						<Form.Item name="tag" label="标签">
-							<Input
-								placeholder="latest"
-								disabled={isViewMode}
-								autoComplete="off"
-								onFocus={(e) => e.target.select()}
-							/>
-						</Form.Item>
-					</div>
 
-					<Form.Item name="description" label="描述">
-						<Input.TextArea
-							rows={3}
-							maxLength={500}
-							showCount
-							disabled={isViewMode}
-						/>
-					</Form.Item>
-
-					<Form.Item name="command" label="命令">
-						<Input.TextArea
-							rows={2}
-							placeholder="例如: python, /app/main.py"
-							disabled={isViewMode}
-						/>
-					</Form.Item>
-
-					<Form.Item name="args" label="参数">
-						<Input.TextArea
-							rows={2}
-							placeholder="例如: --input, {{inputs.asset}}"
-							disabled={isViewMode}
-						/>
-					</Form.Item>
-
-					<Form.List name="envRows">
-						{(fields, { add, remove }) => (
-							<div>
-								<div
-									style={{
-										display: "flex",
-										alignItems: "center",
-										justifyContent: "space-between",
-										marginBottom: 8,
-									}}
-								>
-									<Typography.Text>环境变量</Typography.Text>
-									{!isViewMode ? (
+						<Form.List name="envRows">
+							{(fields, { add, remove }) => (
+								<div>
+									<div
+										style={{
+											display: "flex",
+											alignItems: "center",
+											justifyContent: "space-between",
+											marginBottom: 8,
+										}}
+									>
+										<Typography.Text>环境变量</Typography.Text>
 										<Button size="small" onClick={() => add({})}>
 											添加变量
 										</Button>
-									) : null}
-								</div>
-								{fields.map((field, index) => (
-									<Space
-										key={field.key}
-										align="baseline"
-										style={{ display: "flex", marginBottom: 8 }}
-									>
-										<span style={{ width: 20, color: "rgba(0,0,0,0.45)" }}>
-											{index + 1}.
-										</span>
-										<Form.Item {...field} name={[field.name, "name"]}>
-											<Input
-												placeholder="KEY"
-												style={{ width: 220 }}
-												disabled={isViewMode}
-											/>
-										</Form.Item>
-										<Form.Item {...field} name={[field.name, "value"]}>
-											<Input
-												placeholder="value"
-												style={{ width: 320 }}
-												disabled={isViewMode}
-											/>
-										</Form.Item>
-										{!isViewMode ? (
+									</div>
+									{fields.map((field, index) => (
+										<Space
+											key={field.key}
+											align="baseline"
+											style={{ display: "flex", marginBottom: 8 }}
+										>
+											<span style={{ width: 20, color: "rgba(0,0,0,0.45)" }}>
+												{index + 1}.
+											</span>
+											<Form.Item {...field} name={[field.name, "name"]}>
+												<Input placeholder="KEY" style={{ width: 220 }} />
+											</Form.Item>
+											<Form.Item {...field} name={[field.name, "value"]}>
+												<Input placeholder="value" style={{ width: 320 }} />
+											</Form.Item>
 											<Button
 												type="text"
 												danger
@@ -668,13 +720,13 @@ export function ComponentManager() {
 												aria-label="移除环境变量"
 												onClick={() => remove(field.name)}
 											/>
-										) : null}
-									</Space>
-								))}
-							</div>
-						)}
-					</Form.List>
-				</Form>
+										</Space>
+									))}
+								</div>
+							)}
+						</Form.List>
+					</Form>
+				)}
 			</Modal>
 		</div>
 	);

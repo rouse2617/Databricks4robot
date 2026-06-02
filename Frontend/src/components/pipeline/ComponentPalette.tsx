@@ -53,7 +53,8 @@ export function ComponentPalette({
 					type="button"
 					className="palette-item"
 					draggable={!loading}
-					aria-label={`拖入组件 ${c.name}`}
+					aria-label={`添加组件 ${c.name}`}
+					title="点击添加到画布，也可以拖拽放置"
 					onDragStart={(e) => onDragStart(e, c)}
 					onClick={() => onAddComponent?.(c)}
 				>

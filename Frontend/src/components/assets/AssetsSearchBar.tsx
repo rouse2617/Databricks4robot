@@ -406,6 +406,7 @@ export default function AssetsSearchBar({
 			<div style={{ flex: 1, minWidth: 0 }}>
 				{/* Search Input */}
 				<Input
+					id="assets-search-input"
 					placeholder="搜索 Asset、MCAP、Owner、Tag，或输入 env:warehouse algo_status:failed…"
 					prefix={<SearchOutlined />}
 					value={draftText}

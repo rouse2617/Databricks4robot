@@ -15,11 +15,13 @@ import {
 	Alert,
 	App,
 	Button,
+	Collapse,
 	Input,
 	Menu,
 	Modal,
 	message,
 	Select,
+	Space,
 	Spin,
 	Tabs,
 	Tooltip,
@@ -190,6 +192,11 @@ function PipelineCanvas() {
 	const [selectedNodeAssetError, setSelectedNodeAssetError] = useState<
 		string | null
 	>(null);
+	const selectedExecutionTarget = useMemo(
+		() =>
+			executionTargets.find((target) => target.id === selectedTargetId) ?? null,
+		[executionTargets, selectedTargetId],
+	);
 
 	const flattenNodes = useMemo(() => toRecord(nodes), [nodes]);
 	const flattenEdges = useMemo(() => toRecord(edges), [edges]);
@@ -897,8 +904,8 @@ function PipelineCanvas() {
 					{isCanvasEmpty && !templateLoading ? (
 						<PipelineEmptyState
 							variant="canvas"
-							title="拖入组件开始设计"
-							description="从左侧组件栏拖入步骤，连接节点后保存。"
+							title="添加组件开始设计"
+							description="从左侧组件栏点击或拖拽步骤，连接节点后保存。"
 							hint="保存后可在「流水线」页签打开、运行或继续编辑。"
 						/>
 					) : null}
@@ -1257,7 +1264,7 @@ function PipelineCanvas() {
 												]
 										).map((target) => ({
 											value: target.id,
-											label: `${target.name} · ${target.cluster}/${target.namespace}`,
+											label: `${target.isDefault ? "默认目标" : target.name} · ${target.namespace}`,
 											disabled: target.status !== "available",
 										}))}
 									/>
@@ -1318,7 +1325,7 @@ function PipelineCanvas() {
 								type="secondary"
 								style={{ fontSize: 12, marginBottom: 12 }}
 							>
-								以下为 dry-run 结果，仅用于确认。
+								先确认运行摘要；需要排查 Argo 配置时再展开原始 YAML。
 							</Typography.Paragraph>
 							{deployDialog.previewLoading ? (
 								<div style={{ textAlign: "center", padding: 20 }}>
@@ -1335,24 +1342,87 @@ function PipelineCanvas() {
 									style={{ marginBottom: 16 }}
 								/>
 							) : (
-								<pre
-									style={{
-										margin: 0,
-										padding: 12,
-										background: "#0f172a",
-										color: "#e2e8f0",
-										borderRadius: 8,
-										overflow: "auto",
-										maxHeight: 360,
-										fontSize: 12,
-										fontFamily:
-											'"SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-										lineHeight: 1.5,
-										whiteSpace: "pre",
-									}}
-								>
-									{deployDialog.previewManifest || "（暂无内容）"}
-								</pre>
+								<Space direction="vertical" size={12} style={{ width: "100%" }}>
+									<div
+										style={{
+											display: "grid",
+											gridTemplateColumns:
+												"repeat(auto-fit, minmax(150px, 1fr))",
+											gap: 8,
+										}}
+									>
+										{[
+											["模板", currentTemplateLabel],
+											["步骤", `${nodes.length} 个`],
+											["连线", `${edges.length} 条`],
+											[
+												"资产",
+												selectedAssetIds.length > 0
+													? `${selectedAssetIds.length} 个`
+													: "无资产运行",
+											],
+											[
+												"目标",
+												selectedExecutionTarget
+													? `${selectedExecutionTarget.namespace}`
+													: "默认目标",
+											],
+										].map(([label, value]) => (
+											<div
+												key={label}
+												style={{
+													border: "1px solid #e2e8f0",
+													borderRadius: 8,
+													padding: "10px 12px",
+													background: "#f8fafc",
+												}}
+											>
+												<Typography.Text
+													type="secondary"
+													style={{ display: "block", fontSize: 12 }}
+												>
+													{label}
+												</Typography.Text>
+												<Typography.Text strong>{value}</Typography.Text>
+											</div>
+										))}
+									</div>
+									{selectedExecutionTarget ? (
+										<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+											执行目标：{selectedExecutionTarget.cluster}/
+											{selectedExecutionTarget.namespace}
+										</Typography.Text>
+									) : null}
+									<Collapse
+										size="small"
+										items={[
+											{
+												key: "manifest",
+												label: "原始 Argo YAML",
+												children: (
+													<pre
+														style={{
+															margin: 0,
+															padding: 12,
+															background: "#0f172a",
+															color: "#e2e8f0",
+															borderRadius: 8,
+															overflow: "auto",
+															maxHeight: 300,
+															fontSize: 12,
+															fontFamily:
+																'"SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+															lineHeight: 1.5,
+															whiteSpace: "pre",
+														}}
+													>
+														{deployDialog.previewManifest || "（暂无内容）"}
+													</pre>
+												),
+											},
+										]}
+									/>
+								</Space>
 							)}
 							<div
 								style={{

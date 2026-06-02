@@ -95,13 +95,16 @@ export default function BulkActionBar({
 				</Button>
 
 				{selectionMode === "explicit_rows" && totalFiltered > selectedCount && (
-					<button
-						type="button"
-						onClick={onSelectAllFiltered}
-						style={{ fontSize: 13 }}
-					>
-						选择全部 {totalFiltered} 条筛选结果
-					</button>
+					<Tooltip title="会把当前筛选命中的所有资产都加入本次批量操作，请确认筛选条件正确。">
+						<Button
+							size="small"
+							type="link"
+							danger={totalFiltered > 1000}
+							onClick={onSelectAllFiltered}
+						>
+							选择全部 {totalFiltered} 条筛选结果
+						</Button>
+					</Tooltip>
 				)}
 			</Space>
 

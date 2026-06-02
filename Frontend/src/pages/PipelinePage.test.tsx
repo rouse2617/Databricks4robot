@@ -368,7 +368,7 @@ describe("PipelinePage", () => {
 	it("disables toolbar deploy when canvas is empty", () => {
 		renderPage();
 		expect(screen.getByRole("button", { name: /play-circle/i })).toBeDisabled();
-		expect(screen.getByText("拖入组件开始设计")).toBeInTheDocument();
+		expect(screen.getByText("添加组件开始设计")).toBeInTheDocument();
 	});
 
 	it("adds a node when a palette component is dropped on the canvas wrapper", async () => {
@@ -389,7 +389,7 @@ describe("PipelinePage", () => {
 		renderPage();
 
 		const component = await screen.findByRole("button", {
-			name: /拖入组件 Drag Component/,
+			name: /添加组件 Drag Component/,
 		});
 		const canvas = screen.getByRole("application", { name: "流水线画布" });
 		const dataTransfer = {
