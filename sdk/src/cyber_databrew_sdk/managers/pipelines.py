@@ -82,6 +82,69 @@ class PipelineManager(BaseManager):
     def get_run(self, run_id: str) -> dict[str, Any]:
         return self._request("GET", self._endpoint("pipeline_run_get", run_id=run_id))
 
+    def list_run_events(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        cursor: int | None = None,
+        subject_type: str | None = None,
+        event_type: str | None = None,
+        status: str | None = None,
+        q: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        if subject_type is not None:
+            params["subjectType"] = subject_type
+        if event_type is not None:
+            params["eventType"] = event_type
+        if status is not None:
+            params["status"] = status
+        if q is not None:
+            params["q"] = q
+        return self._request(
+            "GET",
+            self._endpoint("pipeline_run_events", run_id=run_id),
+            params=params or None,
+        )
+
+    def list_run_asset_nodes(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        asset_id: str | None = None,
+        node_id: str | None = None,
+        status: str | None = None,
+        order_by: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if asset_id is not None:
+            params["assetId"] = asset_id
+        if node_id is not None:
+            params["nodeId"] = node_id
+        if status is not None:
+            params["status"] = status
+        if order_by is not None:
+            params["orderBy"] = order_by
+        return self._request(
+            "GET",
+            self._endpoint("pipeline_run_asset_nodes", run_id=run_id),
+            params=params or None,
+        )
+
+    def get_run_cost_summary(self, run_id: str) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            self._endpoint("pipeline_run_cost_summary", run_id=run_id),
+        )
+
     def retry_run(self, run_id: str) -> dict[str, Any]:
         return self._request("POST", self._endpoint("pipeline_run_retry", run_id=run_id))
 

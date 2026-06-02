@@ -93,3 +93,27 @@ type PipelineRunNodeRepository interface {
 	FindByRunID(ctx context.Context, runID string) ([]models.PipelineRunNode, error)
 	DeleteByRunID(ctx context.Context, runID string) error
 }
+
+// PipelineRunEventRepository defines durable timeline event operations for
+// first-class pipeline runs.
+type PipelineRunEventRepository interface {
+	Append(ctx context.Context, event *models.PipelineRunEvent) error
+	ListByRunID(ctx context.Context, runID string, opts models.PipelineRunEventListOptions) (*models.PipelineRunEventListResult, error)
+}
+
+// PipelineRunAssetNodeRepository stores derived asset × node execution rows.
+type PipelineRunAssetNodeRepository interface {
+	ReplaceByRunID(ctx context.Context, runID string, rows []models.PipelineRunAssetNode) error
+	ListByRunID(ctx context.Context, runID string, opts models.PipelineRunAssetNodeListOptions) (*models.PipelineRunAssetNodeListResult, error)
+}
+
+// PipelineRunNotificationRepository stores idempotent notification candidates.
+type PipelineRunNotificationRepository interface {
+	AppendCandidate(ctx context.Context, candidate *models.PipelineRunNotificationCandidate) error
+}
+
+// PipelineRunWatcherStateRepository persists watcher progress and diagnostics.
+type PipelineRunWatcherStateRepository interface {
+	Save(ctx context.Context, state *models.PipelineRunWatcherState) error
+	FindByID(ctx context.Context, id string) (*models.PipelineRunWatcherState, error)
+}

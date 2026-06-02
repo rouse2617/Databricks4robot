@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -270,6 +271,124 @@ func (h *Handler) GetRun(c *gin.Context) {
 	}
 	run.TotalEstimatedCost = pipelineUC.ComputeRunCost(run, h.pricing)
 	c.JSON(200, run)
+}
+
+// ListRunEvents handles GET /api/v1/pipeline-runs/:id/events.
+func (h *Handler) ListRunEvents(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	limit := 100
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 || v > 500 {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "limit must be between 1 and 500", nil)
+			return
+		}
+		limit = v
+	}
+	var cursor int64
+	if raw := strings.TrimSpace(c.Query("cursor")); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 0 {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "cursor must be a non-negative sequence", nil)
+			return
+		}
+		cursor = v
+	}
+	var from *time.Time
+	if raw := strings.TrimSpace(c.Query("from")); raw != "" {
+		v, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "from must be RFC3339", nil)
+			return
+		}
+		from = &v
+	}
+	var to *time.Time
+	if raw := strings.TrimSpace(c.Query("to")); raw != "" {
+		v, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "to must be RFC3339", nil)
+			return
+		}
+		to = &v
+	}
+	result, err := h.uc.ListRunEvents(c.Request.Context(), id, models.PipelineRunEventListOptions{
+		Limit:       limit,
+		Cursor:      cursor,
+		SubjectType: strings.TrimSpace(c.Query("subjectType")),
+		EventType:   strings.TrimSpace(c.Query("eventType")),
+		Status:      strings.TrimSpace(c.Query("status")),
+		Query:       strings.TrimSpace(c.Query("q")),
+		From:        from,
+		To:          to,
+	})
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, result)
+}
+
+// ListRunAssetNodes handles GET /api/v1/pipeline-runs/:id/asset-nodes.
+func (h *Handler) ListRunAssetNodes(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	limit := 100
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 || v > 500 {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "limit must be between 1 and 500", nil)
+			return
+		}
+		limit = v
+	}
+	result, err := h.uc.ListRunAssetNodes(c.Request.Context(), id, models.PipelineRunAssetNodeListOptions{
+		Limit:   limit,
+		Cursor:  strings.TrimSpace(c.Query("cursor")),
+		AssetID: strings.TrimSpace(c.Query("assetId")),
+		NodeID:  strings.TrimSpace(c.Query("nodeId")),
+		Status:  strings.TrimSpace(c.Query("status")),
+		OrderBy: strings.TrimSpace(c.Query("orderBy")),
+	})
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, result)
+}
+
+// GetRunCostSummary handles GET /api/v1/pipeline-runs/:id/cost-summary.
+func (h *Handler) GetRunCostSummary(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	result, err := h.uc.GetRunCostSummary(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, result)
 }
 
 // RetryRun handles POST /api/v1/pipeline-runs/:id/retry.

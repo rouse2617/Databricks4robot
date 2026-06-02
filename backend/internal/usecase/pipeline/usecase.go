@@ -41,6 +41,10 @@ type Usecase struct {
 	targetRepo     repository.ExecutionTargetRepository
 	runRepo        repository.PipelineRunRepository
 	runNodeRepo    repository.PipelineRunNodeRepository
+	runEventRepo   repository.PipelineRunEventRepository
+	assetNodeRepo  repository.PipelineRunAssetNodeRepository
+	notifyRepo     repository.PipelineRunNotificationRepository
+	watcherRepo    repository.PipelineRunWatcherStateRepository
 	assetRepo      repository.AssetRepository
 	assetEventRepo repository.AssetEventRepository
 	relationWriter repository.AssetRelationWriter
@@ -84,6 +88,23 @@ func (uc *Usecase) SetRunRepositories(
 	uc.runNodeRepo = runNodeRepo
 }
 
+// SetRunEventRepo wires durable pipeline run event persistence.
+func (uc *Usecase) SetRunEventRepo(r repository.PipelineRunEventRepository) {
+	uc.runEventRepo = r
+}
+
+// SetObservabilityRepositories wires optional pipeline observability
+// persistence for asset-node snapshots, notification candidates, and watcher state.
+func (uc *Usecase) SetObservabilityRepositories(
+	assetNodeRepo repository.PipelineRunAssetNodeRepository,
+	notifyRepo repository.PipelineRunNotificationRepository,
+	watcherRepo repository.PipelineRunWatcherStateRepository,
+) {
+	uc.assetNodeRepo = assetNodeRepo
+	uc.notifyRepo = notifyRepo
+	uc.watcherRepo = watcherRepo
+}
+
 // SetPricing wires the GCP pricing config for cost estimation.
 func (uc *Usecase) SetPricing(p *PricingConfig) {
 	uc.pricing = p
@@ -94,6 +115,24 @@ func logPipelineSideEffect(op string, err error) {
 		slog.Warn("pipeline side effect failed", "op", op, "err", err)
 	}
 }
+
+const (
+	runEventSubmitted            = "run_submitted"
+	runEventWorkflowObserved     = "workflow_observed"
+	runEventWorkflowPhaseChanged = "workflow_phase_changed"
+	runEventNodeStarted          = "node_started"
+	runEventNodeSucceeded        = "node_succeeded"
+	runEventNodeFailed           = "node_failed"
+	runEventNodeError            = "node_error"
+	runEventPodCreated           = "pod_created"
+	runEventPodPhaseChanged      = "pod_phase_changed"
+	runEventCompleted            = "run_completed"
+	runEventFailed               = "run_failed"
+	runEventRetryRequested       = "run_retry_requested"
+	runEventResubmitted          = "run_resubmitted"
+	runEventStopRequested        = "run_stop_requested"
+	runEventDeleted              = "run_deleted"
+)
 
 // New creates a Usecase.
 func New(
@@ -320,6 +359,21 @@ func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDepl
 	if err := uc.runRepo.Save(ctx, run); err != nil {
 		return err
 	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventSubmitted,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "pipeline run submitted",
+		OccurredAt:     run.CreatedAt,
+		IdempotencyKey: fmt.Sprintf("run_submitted:%s", run.ID),
+		Payload: map[string]interface{}{
+			"pipelineName": run.PipelineName,
+			"templateId":   run.TemplateID,
+			"assetCount":   run.AssetCount,
+			"targetId":     run.ExecutionTargetID,
+		},
+	})
 	return nil
 }
 
@@ -348,6 +402,7 @@ func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
 			run.Nodes = nodes
 		}
 	}
+	uc.refreshAssetNodes(ctx, run)
 }
 
 func timePtrFromMeta(t time.Time) *time.Time {
@@ -368,6 +423,287 @@ func structToMap(v interface{}) map[string]interface{} {
 		return map[string]interface{}{}
 	}
 	return out
+}
+
+func phaseRunTerminalEvent(phase wfv1.WorkflowPhase) string {
+	switch phase {
+	case wfv1.WorkflowSucceeded:
+		return runEventCompleted
+	case wfv1.WorkflowFailed:
+		return runEventFailed
+	case wfv1.WorkflowError:
+		return runEventFailed
+	default:
+		return ""
+	}
+}
+
+func phaseNodeEvent(phase wfv1.NodePhase) string {
+	switch phase {
+	case wfv1.NodeSucceeded:
+		return runEventNodeSucceeded
+	case wfv1.NodeFailed:
+		return runEventNodeFailed
+	case wfv1.NodeError:
+		return runEventNodeError
+	default:
+		return ""
+	}
+}
+
+func ptrTimeOrNow(t *time.Time) time.Time {
+	if t != nil && !t.IsZero() {
+		return t.UTC()
+	}
+	return time.Now().UTC()
+}
+
+func argoTimeOrZero(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	out := t.UTC()
+	return &out
+}
+
+func (uc *Usecase) appendRunEvent(ctx context.Context, run *models.PipelineRun, event models.PipelineRunEvent) {
+	if uc.runEventRepo == nil || run == nil {
+		return
+	}
+	event.RunID = run.ID
+	if event.WorkflowName == "" {
+		event.WorkflowName = run.WorkflowName
+	}
+	if event.SubjectType == "" {
+		event.SubjectType = "run"
+	}
+	if event.SubjectID == "" {
+		event.SubjectID = run.ID
+	}
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = time.Now().UTC()
+	}
+	if event.ObservedAt.IsZero() {
+		event.ObservedAt = time.Now().UTC()
+	}
+	if event.IdempotencyKey == "" {
+		event.IdempotencyKey = strings.Join([]string{
+			event.EventType,
+			event.SubjectType,
+			event.SubjectID,
+			event.Status,
+			event.OccurredAt.UTC().Format(time.RFC3339Nano),
+		}, ":")
+	}
+	logPipelineSideEffect("append pipeline run event", uc.runEventRepo.Append(ctx, &event))
+	uc.createNotificationCandidate(ctx, run, &event)
+}
+
+func isFailureEvent(eventType, status string) bool {
+	normalized := strings.ToLower(eventType + " " + status)
+	return strings.Contains(normalized, "failed") || strings.Contains(normalized, "error")
+}
+
+func (uc *Usecase) createNotificationCandidate(ctx context.Context, run *models.PipelineRun, event *models.PipelineRunEvent) {
+	if uc.notifyRepo == nil || run == nil || event == nil || !isFailureEvent(event.EventType, event.Status) {
+		return
+	}
+	eventID := event.IdempotencyKey
+	if eventID == "" {
+		eventID = event.ID
+	}
+	logPipelineSideEffect("append pipeline run notification candidate", uc.notifyRepo.AppendCandidate(ctx, &models.PipelineRunNotificationCandidate{
+		RunID:          run.ID,
+		EventID:        eventID,
+		EventType:      event.EventType,
+		SubjectType:    event.SubjectType,
+		SubjectID:      event.SubjectID,
+		Status:         event.Status,
+		Message:        event.Message,
+		SinkType:       "candidate",
+		DeliveryStatus: "pending",
+		IdempotencyKey: fmt.Sprintf("notify:%s:%s", run.ID, eventID),
+	}))
+}
+
+func deriveAssetNodeRows(run *models.PipelineRun, nodes []models.PipelineRunNode) []models.PipelineRunAssetNode {
+	if run == nil || len(nodes) == 0 {
+		return nil
+	}
+	assetIDs := run.AssetIDs
+	if len(assetIDs) == 0 {
+		assetIDs = []string{"no-asset"}
+	}
+	rows := make([]models.PipelineRunAssetNode, 0, len(assetIDs)*len(nodes))
+	now := time.Now().UTC()
+	for _, assetID := range assetIDs {
+		if strings.TrimSpace(assetID) == "" {
+			continue
+		}
+		for _, node := range nodes {
+			nodeID := node.PipelineNodeID
+			if nodeID == "" {
+				nodeID = node.ArgoNodeID
+			}
+			if nodeID == "" {
+				nodeID = node.DisplayName
+			}
+			if nodeID == "" {
+				continue
+			}
+			costSource := "not_available"
+			if node.EstimatedCostUSD != nil {
+				costSource = "estimated_resource_duration"
+			}
+			rows = append(rows, models.PipelineRunAssetNode{
+				RunID:            run.ID,
+				AssetID:          assetID,
+				PipelineNodeID:   nodeID,
+				ArgoNodeID:       node.ArgoNodeID,
+				DisplayName:      node.DisplayName,
+				Status:           node.Phase,
+				Message:          node.Message,
+				PodName:          node.PodName,
+				LogRef:           node.LogRef,
+				EstimatedCostUSD: node.EstimatedCostUSD,
+				CostSource:       costSource,
+				StartedAt:        node.StartedAt,
+				FinishedAt:       node.FinishedAt,
+				UpdatedAt:        now,
+			})
+		}
+	}
+	return rows
+}
+
+func (uc *Usecase) refreshAssetNodes(ctx context.Context, run *models.PipelineRun) {
+	if uc.assetNodeRepo == nil || run == nil {
+		return
+	}
+	nodes := run.Nodes
+	if len(nodes) == 0 && uc.runNodeRepo != nil {
+		if stored, err := uc.runNodeRepo.FindByRunID(ctx, run.ID); err == nil {
+			nodes = stored
+		}
+	}
+	rows := deriveAssetNodeRows(run, nodes)
+	logPipelineSideEffect("replace pipeline run asset nodes", uc.assetNodeRepo.ReplaceByRunID(ctx, run.ID, rows))
+}
+
+func (uc *Usecase) appendWorkflowEvents(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow) {
+	if run == nil || wf == nil {
+		return
+	}
+	workflowUID := string(wf.UID)
+	workflowName := wf.Name
+	if workflowName == "" {
+		workflowName = run.WorkflowName
+	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventWorkflowObserved,
+		SubjectType:    "workflow",
+		SubjectID:      workflowName,
+		Status:         string(wf.Status.Phase),
+		Message:        wf.Status.Message,
+		OccurredAt:     ptrTimeOrNow(argoTimeOrZero(wf.CreationTimestamp.Time)),
+		IdempotencyKey: fmt.Sprintf("workflow_observed:%s:%s", workflowName, workflowUID),
+		Payload: map[string]interface{}{
+			"workflowUid": workflowUID,
+			"namespace":   wf.Namespace,
+		},
+	})
+	if wf.Status.Phase != "" {
+		occurredAt := ptrTimeOrNow(argoTimeOrZero(wf.Status.FinishedAt.Time))
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      runEventWorkflowPhaseChanged,
+			SubjectType:    "workflow",
+			SubjectID:      workflowName,
+			Status:         string(wf.Status.Phase),
+			Message:        wf.Status.Message,
+			OccurredAt:     occurredAt,
+			IdempotencyKey: fmt.Sprintf("workflow_phase:%s:%s", workflowName, wf.Status.Phase),
+			Payload: map[string]interface{}{
+				"workflowUid": workflowUID,
+				"namespace":   wf.Namespace,
+			},
+		})
+	}
+	if terminalEvent := phaseRunTerminalEvent(wf.Status.Phase); terminalEvent != "" {
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      terminalEvent,
+			SubjectType:    "run",
+			SubjectID:      run.ID,
+			Status:         string(wf.Status.Phase),
+			Message:        wf.Status.Message,
+			OccurredAt:     ptrTimeOrNow(argoTimeOrZero(wf.Status.FinishedAt.Time)),
+			IdempotencyKey: fmt.Sprintf("run_terminal:%s:%s", run.ID, wf.Status.Phase),
+		})
+	}
+}
+
+func (uc *Usecase) appendNodeEvents(ctx context.Context, run *models.PipelineRun, nodes map[string]wfv1.NodeStatus) {
+	for id, node := range nodes {
+		displayName := node.DisplayName
+		if displayName == "" {
+			displayName = node.Name
+		}
+		payload := map[string]interface{}{
+			"nodeId":       id,
+			"name":         node.Name,
+			"displayName":  displayName,
+			"templateName": node.TemplateName,
+			"type":         string(node.Type),
+		}
+		if !node.StartedAt.Time.IsZero() {
+			uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+				EventType:      runEventNodeStarted,
+				SubjectType:    "node",
+				SubjectID:      id,
+				Status:         string(node.Phase),
+				Message:        node.Message,
+				OccurredAt:     node.StartedAt.Time.UTC(),
+				IdempotencyKey: fmt.Sprintf("node_started:%s:%s", id, node.StartedAt.Time.UTC().Format(time.RFC3339Nano)),
+				Payload:        payload,
+			})
+		}
+		if eventType := phaseNodeEvent(node.Phase); eventType != "" {
+			occurredAt := ptrTimeOrNow(argoTimeOrZero(node.FinishedAt.Time))
+			uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+				EventType:      eventType,
+				SubjectType:    "node",
+				SubjectID:      id,
+				Status:         string(node.Phase),
+				Message:        node.Message,
+				OccurredAt:     occurredAt,
+				IdempotencyKey: fmt.Sprintf("node_phase:%s:%s", id, node.Phase),
+				Payload:        payload,
+			})
+		}
+		if node.Type == wfv1.NodeTypePod && node.Name != "" {
+			uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+				EventType:      runEventPodCreated,
+				SubjectType:    "pod",
+				SubjectID:      node.Name,
+				Status:         string(node.Phase),
+				Message:        node.Message,
+				OccurredAt:     ptrTimeOrNow(argoTimeOrZero(node.StartedAt.Time)),
+				IdempotencyKey: fmt.Sprintf("pod_created:%s", node.Name),
+				Payload:        payload,
+			})
+			if node.Phase != "" {
+				uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+					EventType:      runEventPodPhaseChanged,
+					SubjectType:    "pod",
+					SubjectID:      node.Name,
+					Status:         string(node.Phase),
+					Message:        node.Message,
+					OccurredAt:     ptrTimeOrNow(argoTimeOrZero(node.FinishedAt.Time)),
+					IdempotencyKey: fmt.Sprintf("pod_phase:%s:%s", node.Name, node.Phase),
+					Payload:        payload,
+				})
+			}
+		}
+	}
 }
 
 func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.NodeStatus) []models.PipelineRunNode {
@@ -436,6 +772,7 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if wf == nil {
 		return
 	}
+	uc.appendWorkflowEvents(ctx, run, wf)
 	if wf.Status.Phase != "" {
 		run.Status = string(wf.Status.Phase)
 	}
@@ -448,6 +785,7 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	}
 	logPipelineSideEffect("update pipeline run status", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
 	if uc.runNodeRepo != nil && len(wf.Status.Nodes) > 0 {
+		uc.appendNodeEvents(ctx, run, wf.Status.Nodes)
 		nodes := runNodesFromWorkflow(run.ID, run.WorkflowName, wf.Status.Nodes)
 		for i := range nodes {
 			if uc.pricing != nil {
@@ -456,6 +794,7 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 		}
 		logPipelineSideEffect("replace pipeline run nodes", uc.runNodeRepo.ReplaceByRunID(ctx, run.ID, nodes))
 		run.Nodes = nodes
+		uc.refreshAssetNodes(ctx, run)
 	}
 }
 
@@ -464,6 +803,75 @@ func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.Pip
 		return
 	}
 	uc.refreshRunStatus(ctx, run)
+}
+
+// SyncActiveRunEvents refreshes active runs from Argo and records durable
+// workflow/node/pod transition events. It is safe to call repeatedly because
+// event writes are idempotent.
+func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, error) {
+	if uc.runRepo == nil || uc.wfClient == nil || uc.runEventRepo == nil {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if uc.watcherRepo != nil {
+		if state, err := uc.watcherRepo.FindByID(ctx, "default"); err == nil && state != nil && state.ActiveScanLimit > 0 {
+			limit = state.ActiveScanLimit
+		}
+	}
+	runs, err := uc.runRepo.FindAll(ctx)
+	if err != nil {
+		if uc.watcherRepo != nil {
+			logPipelineSideEffect("save pipeline watcher state", uc.watcherRepo.Save(ctx, &models.PipelineRunWatcherState{
+				ID:              "default",
+				ActiveScanLimit: limit,
+				LastError:       err.Error(),
+			}))
+		}
+		return 0, err
+	}
+	synced := 0
+	for i := range runs {
+		if synced >= limit {
+			break
+		}
+		if !isActiveDeploymentStatus(runs[i].Status) {
+			continue
+		}
+		uc.refreshPipelineRunStatus(ctx, &runs[i])
+		synced++
+	}
+	if uc.watcherRepo != nil {
+		now := time.Now().UTC()
+		logPipelineSideEffect("save pipeline watcher state", uc.watcherRepo.Save(ctx, &models.PipelineRunWatcherState{
+			ID:              "default",
+			LastSyncedAt:    &now,
+			ActiveScanLimit: limit,
+		}))
+	}
+	return synced, nil
+}
+
+// StartRunEventWatcher starts a polling watcher for active pipeline runs.
+func (uc *Usecase) StartRunEventWatcher(ctx context.Context, interval time.Duration, limit int) {
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := uc.SyncActiveRunEvents(ctx, limit); err != nil {
+					slog.Warn("pipeline run event watcher sync failed", "err", err)
+				}
+			}
+		}
+	}()
 }
 
 func (uc *Usecase) resolveExecutionTargetForCompatibility(targetID string) (*models.ExecutionTarget, error) {
@@ -886,6 +1294,14 @@ func (uc *Usecase) DeleteRun(ctx context.Context, id string) error {
 	if run == nil {
 		return ErrDeploymentNotFound
 	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventDeleted,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "pipeline run delete requested",
+		IdempotencyKey: fmt.Sprintf("run_deleted:%s", run.ID),
+	})
 	if uc.wfClient != nil {
 		namespace := run.ArgoNamespace
 		if namespace == "" {
@@ -913,11 +1329,33 @@ func (uc *Usecase) RetryRun(ctx context.Context, id string) (*models.PipelineRun
 	if run == nil {
 		return nil, ErrDeploymentNotFound
 	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventRetryRequested,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "pipeline run retry requested",
+		IdempotencyKey: fmt.Sprintf("run_retry_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+	})
 	targetID := run.ExecutionTargetID
 	if targetID == "" && run.ExecutionTarget != nil {
 		targetID = run.ExecutionTarget.ID
 	}
-	return uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-retry", run.AssetIDs, DeployOptions{TargetID: targetID})
+	next, err := uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-retry", run.AssetIDs, DeployOptions{TargetID: targetID})
+	if err == nil && next != nil {
+		uc.appendRunEvent(ctx, next, models.PipelineRunEvent{
+			EventType:      runEventResubmitted,
+			SubjectType:    "run",
+			SubjectID:      next.ID,
+			Status:         next.Status,
+			Message:        "pipeline run created from retry",
+			IdempotencyKey: fmt.Sprintf("run_resubmitted:%s:%s", next.ID, run.ID),
+			Payload: map[string]interface{}{
+				"sourceRunId": run.ID,
+			},
+		})
+	}
+	return next, err
 }
 
 // StopRun stops a run's workflow.
@@ -932,11 +1370,156 @@ func (uc *Usecase) StopRun(ctx context.Context, id string) error {
 	if uc.wfClient == nil {
 		return fmt.Errorf("workflow client not available")
 	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventStopRequested,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "pipeline run stop requested",
+		IdempotencyKey: fmt.Sprintf("run_stop_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+	})
 	namespace := run.ArgoNamespace
 	if namespace == "" {
 		namespace = uc.namespace
 	}
 	return uc.wfClient.StopWorkflow(ctx, run.WorkflowName, namespace)
+}
+
+// ListRunEvents returns a chronological page of stored events for a run.
+func (uc *Usecase) ListRunEvents(ctx context.Context, id string, opts models.PipelineRunEventListOptions) (*models.PipelineRunEventListResult, error) {
+	if uc.runRepo == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	run, err := uc.runRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	uc.refreshPipelineRunStatus(ctx, run)
+	if uc.runEventRepo == nil {
+		return &models.PipelineRunEventListResult{Items: []models.PipelineRunEvent{}}, nil
+	}
+	result, err := uc.runEventRepo.ListByRunID(ctx, id, opts)
+	if err != nil {
+		return nil, err
+	}
+	if result.Items == nil {
+		result.Items = []models.PipelineRunEvent{}
+	}
+	return result, nil
+}
+
+// ListRunAssetNodes returns derived asset × node snapshots for a run.
+func (uc *Usecase) ListRunAssetNodes(ctx context.Context, id string, opts models.PipelineRunAssetNodeListOptions) (*models.PipelineRunAssetNodeListResult, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	if uc.assetNodeRepo == nil {
+		rows := deriveAssetNodeRows(run, run.Nodes)
+		summary := models.PipelineRunAssetNodeSummary{
+			Statuses:   map[string]int{},
+			CostSource: "not_available",
+		}
+		assets := map[string]bool{}
+		nodes := map[string]bool{}
+		var totalCost float64
+		hasCost := false
+		for _, row := range rows {
+			summary.Statuses[row.Status]++
+			assets[row.AssetID] = true
+			nodes[row.PipelineNodeID] = true
+			if row.EstimatedCostUSD != nil {
+				totalCost += *row.EstimatedCostUSD
+				hasCost = true
+			}
+		}
+		summary.AssetCount = len(assets)
+		summary.NodeCount = len(nodes)
+		if hasCost {
+			summary.TotalEstimatedCostUSD = &totalCost
+			summary.CostSource = "estimated_resource_duration"
+		}
+		return &models.PipelineRunAssetNodeListResult{Items: rows, Total: len(rows), Summary: summary}, nil
+	}
+	return uc.assetNodeRepo.ListByRunID(ctx, id, opts)
+}
+
+func durationSeconds(startedAt, finishedAt *time.Time) *int64 {
+	if startedAt == nil || finishedAt == nil || finishedAt.Before(*startedAt) {
+		return nil
+	}
+	seconds := int64(finishedAt.Sub(*startedAt).Seconds())
+	return &seconds
+}
+
+// GetRunCostSummary returns estimated cost and duration summaries for a run.
+func (uc *Usecase) GetRunCostSummary(ctx context.Context, id string) (*models.PipelineRunCostSummary, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	summary := &models.PipelineRunCostSummary{
+		RunID:              id,
+		CostSource:         "not_available",
+		NodeSummaries:      []models.PipelineRunNodeCostSummary{},
+		AssetNodeSummaries: []models.PipelineRunAssetNodeCostSummary{},
+		GeneratedAt:        time.Now().UTC(),
+	}
+	var total float64
+	hasCost := false
+	for _, node := range run.Nodes {
+		if node.EstimatedCostUSD != nil {
+			total += *node.EstimatedCostUSD
+			hasCost = true
+		}
+		podCount := 0
+		if node.PodName != "" {
+			podCount = 1
+		}
+		summary.NodeSummaries = append(summary.NodeSummaries, models.PipelineRunNodeCostSummary{
+			NodeID:           node.PipelineNodeID,
+			DisplayName:      node.DisplayName,
+			Status:           node.Phase,
+			PodCount:         podCount,
+			EstimatedCostUSD: node.EstimatedCostUSD,
+			CostSource:       costSourceFromPtr(node.EstimatedCostUSD),
+			DurationSeconds:  durationSeconds(node.StartedAt, node.FinishedAt),
+		})
+	}
+	assetNodes, err := uc.ListRunAssetNodes(ctx, id, models.PipelineRunAssetNodeListOptions{Limit: 500})
+	if err == nil && assetNodes != nil {
+		for _, row := range assetNodes.Items {
+			summary.AssetNodeSummaries = append(summary.AssetNodeSummaries, models.PipelineRunAssetNodeCostSummary{
+				AssetID:          row.AssetID,
+				NodeID:           row.PipelineNodeID,
+				DisplayName:      row.DisplayName,
+				Status:           row.Status,
+				EstimatedCostUSD: row.EstimatedCostUSD,
+				CostSource:       row.CostSource,
+			})
+		}
+	}
+	if hasCost {
+		summary.TotalEstimatedCostUSD = &total
+		summary.CostSource = "estimated_resource_duration"
+	}
+	return summary, nil
+}
+
+func costSourceFromPtr(v *float64) string {
+	if v == nil {
+		return "not_available"
+	}
+	return "estimated_resource_duration"
 }
 
 // SaveFromDeployment creates a new template from a deployment's pipeline JSON (F7.8).

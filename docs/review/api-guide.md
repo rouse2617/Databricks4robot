@@ -2454,6 +2454,103 @@ curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>" \
 # 404: run 不存在
 ```
 
+查询 run 事件时间线。事件由 DataBrew 的 `pipeline_run_events` 账本返回，
+按 `sequence` 正序排列；刷新或 watcher 重启不会重复写入相同状态变化。
+`cursor` 使用上一页返回的 `nextCursor`，`limit` 范围为 1-500。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?limit=100" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "items": [
+#     {
+#       "id": "evt-123",
+#       "runId": "run-123",
+#       "workflowName": "asset-pipeline-a1b2c3",
+#       "eventType": "run_submitted",
+#       "subjectType": "run",
+#       "subjectId": "run-123",
+#       "status": "Pending",
+#       "message": "pipeline run submitted",
+#       "sequence": 1,
+#       "occurredAt": "2026-06-03T10:01:00Z",
+#       "observedAt": "2026-06-03T10:01:00Z",
+#       "createdAt": "2026-06-03T10:01:00Z"
+#     },
+#     {
+#       "id": "evt-124",
+#       "runId": "run-123",
+#       "workflowName": "asset-pipeline-a1b2c3",
+#       "eventType": "node_failed",
+#       "subjectType": "node",
+#       "subjectId": "asset-pipeline-a1b2c3-123456",
+#       "status": "Failed",
+#       "message": "image pull failed",
+#       "sequence": 2,
+#       "occurredAt": "2026-06-03T10:03:00Z",
+#       "observedAt": "2026-06-03T10:03:05Z",
+#       "createdAt": "2026-06-03T10:03:05Z"
+#     }
+#   ],
+#   "total": 2
+# }
+
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?subjectType=node&eventType=node_failed" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?status=Failed&q=image" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 400: limit/cursor 非法
+# 404: run 不存在
+```
+
+查询资产 × 节点明细。当前 P0.2 使用 `run.assetIds × pipeline_run_nodes`
+派生明细；no-asset run 会返回 `assetId=no-asset`。成本字段是估算值，
+`costSource=estimated_resource_duration` 表示来自 Argo resource duration
+和 DataBrew pricing 配置，`not_available` 表示没有足够数据。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/asset-nodes?limit=100&orderBy=cost" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "items": [
+#     {
+#       "id": "an-123",
+#       "runId": "run-123",
+#       "assetId": "SDKT0202",
+#       "pipelineNodeId": "step-a",
+#       "status": "Succeeded",
+#       "podName": "asset-pipeline-step-a",
+#       "logRef": "/api/v1/workflows/asset-pipeline/logs?podName=...",
+#       "estimatedCostUsd": 0.0123,
+#       "costSource": "estimated_resource_duration"
+#     }
+#   ],
+#   "total": 1,
+#   "summary": {
+#     "assetCount": 1,
+#     "nodeCount": 1,
+#     "statuses": {"Succeeded": 1},
+#     "totalEstimatedCostUsd": 0.0123,
+#     "costSource": "estimated_resource_duration"
+#   }
+# }
+```
+
+查询 run 级成本汇总。该接口是估算和审计视图，不是 GCP Billing 对账。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/cost-summary" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 404: run 不存在
+```
+
 旧 deployment API 仍可用。它返回兼容字段，并会从 first-class run 投影状态。
 
 ```bash

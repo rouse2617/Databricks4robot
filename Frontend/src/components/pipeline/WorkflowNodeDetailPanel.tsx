@@ -292,7 +292,6 @@ function PodTab({
 		0,
 	);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: refreshTrigger intentionally re-runs pod diagnostics.
 	useEffect(() => {
 		if (!workflowName || !node.id) return undefined;
 		let cancelled = false;

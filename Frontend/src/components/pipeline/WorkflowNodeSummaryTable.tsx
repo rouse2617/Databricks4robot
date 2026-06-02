@@ -309,7 +309,7 @@ export function WorkflowNodeSummaryTable({
 					<Space size={6}>
 						<DollarOutlined />
 						<Typography.Text>
-							{hasCost ? formatCost(totalCost) : "成本待接入"}
+							{hasCost ? formatCost(totalCost) : "暂无成本数据"}
 						</Typography.Text>
 					</Space>
 				</Space>

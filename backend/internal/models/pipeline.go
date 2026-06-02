@@ -115,3 +115,143 @@ type PipelineRunNode struct {
 	CreatedAt         time.Time              `json:"createdAt"`
 	UpdatedAt         time.Time              `json:"updatedAt"`
 }
+
+// PipelineRunEvent is a durable, append-only event in a pipeline run timeline.
+type PipelineRunEvent struct {
+	ID             string                 `json:"id"`
+	RunID          string                 `json:"runId"`
+	WorkflowName   string                 `json:"workflowName,omitempty"`
+	EventType      string                 `json:"eventType"`
+	SubjectType    string                 `json:"subjectType"`
+	SubjectID      string                 `json:"subjectId"`
+	Status         string                 `json:"status,omitempty"`
+	Message        string                 `json:"message,omitempty"`
+	Reason         string                 `json:"reason,omitempty"`
+	Payload        map[string]interface{} `json:"payload,omitempty"`
+	IdempotencyKey string                 `json:"idempotencyKey,omitempty"`
+	Sequence       int64                  `json:"sequence"`
+	OccurredAt     time.Time              `json:"occurredAt"`
+	ObservedAt     time.Time              `json:"observedAt"`
+	CreatedAt      time.Time              `json:"createdAt"`
+}
+
+// PipelineRunEventListOptions controls run event pagination and filtering.
+type PipelineRunEventListOptions struct {
+	Limit       int
+	Cursor      int64
+	SubjectType string
+	EventType   string
+	Status      string
+	Query       string
+	From        *time.Time
+	To          *time.Time
+}
+
+// PipelineRunEventListResult is the API response for a run event timeline page.
+type PipelineRunEventListResult struct {
+	Items      []PipelineRunEvent `json:"items"`
+	NextCursor *int64             `json:"nextCursor,omitempty"`
+	Total      int                `json:"total"`
+}
+
+// PipelineRunAssetNode is a derived execution snapshot for one asset at one
+// pipeline node. For no-asset runs AssetID is "no-asset".
+type PipelineRunAssetNode struct {
+	ID               string     `json:"id"`
+	RunID            string     `json:"runId"`
+	AssetID          string     `json:"assetId"`
+	PipelineNodeID   string     `json:"pipelineNodeId"`
+	ArgoNodeID       string     `json:"argoNodeId,omitempty"`
+	DisplayName      string     `json:"displayName,omitempty"`
+	Status           string     `json:"status,omitempty"`
+	Message          string     `json:"message,omitempty"`
+	PodName          string     `json:"podName,omitempty"`
+	LogRef           string     `json:"logRef,omitempty"`
+	EstimatedCostUSD *float64   `json:"estimatedCostUsd,omitempty"`
+	CostSource       string     `json:"costSource"`
+	StartedAt        *time.Time `json:"startedAt,omitempty"`
+	FinishedAt       *time.Time `json:"finishedAt,omitempty"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+}
+
+// PipelineRunAssetNodeListOptions controls asset-node pagination/filtering.
+type PipelineRunAssetNodeListOptions struct {
+	Limit    int
+	Cursor   string
+	AssetID  string
+	NodeID   string
+	Status   string
+	OrderBy  string
+	OrderDir string
+}
+
+// PipelineRunAssetNodeListResult is the API response for asset-node rows.
+type PipelineRunAssetNodeListResult struct {
+	Items      []PipelineRunAssetNode      `json:"items"`
+	NextCursor *string                     `json:"nextCursor,omitempty"`
+	Total      int                         `json:"total"`
+	Summary    PipelineRunAssetNodeSummary `json:"summary"`
+}
+
+// PipelineRunAssetNodeSummary contains compact matrix totals.
+type PipelineRunAssetNodeSummary struct {
+	AssetCount            int            `json:"assetCount"`
+	NodeCount             int            `json:"nodeCount"`
+	Statuses              map[string]int `json:"statuses"`
+	TotalEstimatedCostUSD *float64       `json:"totalEstimatedCostUsd,omitempty"`
+	CostSource            string         `json:"costSource"`
+}
+
+// PipelineRunCostSummary is an estimated cost/audit view for a run.
+type PipelineRunCostSummary struct {
+	RunID                 string                            `json:"runId"`
+	TotalEstimatedCostUSD *float64                          `json:"totalEstimatedCostUsd,omitempty"`
+	CostSource            string                            `json:"costSource"`
+	NodeSummaries         []PipelineRunNodeCostSummary      `json:"nodeSummaries"`
+	AssetNodeSummaries    []PipelineRunAssetNodeCostSummary `json:"assetNodeSummaries"`
+	GeneratedAt           time.Time                         `json:"generatedAt"`
+}
+
+type PipelineRunNodeCostSummary struct {
+	NodeID           string   `json:"nodeId"`
+	DisplayName      string   `json:"displayName,omitempty"`
+	Status           string   `json:"status,omitempty"`
+	PodCount         int      `json:"podCount"`
+	EstimatedCostUSD *float64 `json:"estimatedCostUsd,omitempty"`
+	CostSource       string   `json:"costSource"`
+	DurationSeconds  *int64   `json:"durationSeconds,omitempty"`
+}
+
+type PipelineRunAssetNodeCostSummary struct {
+	AssetID          string   `json:"assetId"`
+	NodeID           string   `json:"nodeId"`
+	DisplayName      string   `json:"displayName,omitempty"`
+	Status           string   `json:"status,omitempty"`
+	EstimatedCostUSD *float64 `json:"estimatedCostUsd,omitempty"`
+	CostSource       string   `json:"costSource"`
+}
+
+// PipelineRunNotificationCandidate is an idempotent notification work item.
+type PipelineRunNotificationCandidate struct {
+	ID             string    `json:"id"`
+	RunID          string    `json:"runId"`
+	EventID        string    `json:"eventId"`
+	EventType      string    `json:"eventType"`
+	SubjectType    string    `json:"subjectType"`
+	SubjectID      string    `json:"subjectId"`
+	Status         string    `json:"status,omitempty"`
+	Message        string    `json:"message,omitempty"`
+	SinkType       string    `json:"sinkType"`
+	DeliveryStatus string    `json:"deliveryStatus"`
+	IdempotencyKey string    `json:"idempotencyKey"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// PipelineRunWatcherState stores coarse watcher progress and diagnostics.
+type PipelineRunWatcherState struct {
+	ID              string     `json:"id"`
+	LastSyncedAt    *time.Time `json:"lastSyncedAt,omitempty"`
+	ActiveScanLimit int        `json:"activeScanLimit"`
+	LastError       string     `json:"lastError,omitempty"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+}

@@ -10,6 +10,7 @@ import (
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
@@ -734,3 +735,103 @@ func (mockRunNodeRepo) FindByRunID(_ context.Context, _ string) ([]models.Pipeli
 	return nil, nil
 }
 func (mockRunNodeRepo) DeleteByRunID(_ context.Context, _ string) error { return nil }
+
+type mockRunEventRepo struct {
+	events []models.PipelineRunEvent
+}
+
+func (m *mockRunEventRepo) Append(_ context.Context, event *models.PipelineRunEvent) error {
+	if event == nil {
+		return nil
+	}
+	m.events = append(m.events, *event)
+	return nil
+}
+
+func (m *mockRunEventRepo) ListByRunID(_ context.Context, runID string, _ models.PipelineRunEventListOptions) (*models.PipelineRunEventListResult, error) {
+	out := []models.PipelineRunEvent{}
+	for _, event := range m.events {
+		if event.RunID == runID {
+			out = append(out, event)
+		}
+	}
+	return &models.PipelineRunEventListResult{Items: out, Total: len(out)}, nil
+}
+
+func TestListRunEvents_ReturnsStoredEvents(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {ID: "run-1", WorkflowName: "wf-1", Status: "Succeeded"},
+		},
+	}
+	eventRepo := &mockRunEventRepo{
+		events: []models.PipelineRunEvent{
+			{ID: "evt-1", RunID: "run-1", EventType: runEventSubmitted, SubjectType: "run", SubjectID: "run-1"},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	result, err := uc.ListRunEvents(ctx, "run-1", models.PipelineRunEventListOptions{Limit: 20})
+	if err != nil {
+		t.Fatalf("ListRunEvents: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].ID != "evt-1" {
+		t.Fatalf("unexpected events: %#v", result.Items)
+	}
+}
+
+func TestGetRun_AppendsWorkflowAndNodeEvents(t *testing.T) {
+	ctx := context.Background()
+	started := time.Date(2026, 6, 3, 1, 2, 3, 0, time.UTC)
+	finished := started.Add(10 * time.Second)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {ID: "run-1", WorkflowName: "wf-1", Status: "Running"},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-1" || namespace != "default" {
+			t.Fatalf("unexpected workflow lookup name=%q namespace=%q", name, namespace)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase:      wfv1.WorkflowSucceeded,
+				FinishedAt: metav1.Time{Time: finished},
+				Nodes: map[string]wfv1.NodeStatus{
+					"node-1": {
+						ID:           "node-1",
+						Name:         "wf-1-step",
+						DisplayName:  "step",
+						Type:         wfv1.NodeTypePod,
+						Phase:        wfv1.NodeSucceeded,
+						StartedAt:    metav1.Time{Time: started},
+						FinishedAt:   metav1.Time{Time: finished},
+						TemplateName: "step",
+					},
+				},
+			},
+		}, nil
+	}
+	eventRepo := &mockRunEventRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	if _, err := uc.GetRun(ctx, "run-1"); err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, event := range eventRepo.events {
+		seen[event.EventType] = true
+	}
+	for _, eventType := range []string{runEventWorkflowObserved, runEventWorkflowPhaseChanged, runEventCompleted, runEventNodeStarted, runEventNodeSucceeded, runEventPodCreated, runEventPodPhaseChanged} {
+		if !seen[eventType] {
+			t.Fatalf("expected event type %s in %#v", eventType, eventRepo.events)
+		}
+	}
+}

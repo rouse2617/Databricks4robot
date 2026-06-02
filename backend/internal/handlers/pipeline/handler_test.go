@@ -310,6 +310,9 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.POST("/api/v1/pipeline-runs/template/:id", h.CreateRunByTemplate)
 	r.GET("/api/v1/pipeline-runs", h.ListRuns)
 	r.GET("/api/v1/pipeline-runs/:id", h.GetRun)
+	r.GET("/api/v1/pipeline-runs/:id/events", h.ListRunEvents)
+	r.GET("/api/v1/pipeline-runs/:id/asset-nodes", h.ListRunAssetNodes)
+	r.GET("/api/v1/pipeline-runs/:id/cost-summary", h.GetRunCostSummary)
 	r.POST("/api/v1/pipeline-assets", h.RegisterOutput)
 	r.GET("/api/v1/assets/:id/pipeline-lineage", h.GetLineage)
 	return r

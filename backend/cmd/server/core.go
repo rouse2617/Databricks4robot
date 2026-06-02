@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"time"
+
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
@@ -98,8 +100,14 @@ func setupCore(inf *infra) *coreHandlers {
 	executionTargetRepo := postgres.NewExecutionTargetRepo(pg)
 	pipelineRunRepo := postgres.NewPipelineRunRepo(pg)
 	pipelineRunNodeRepo := postgres.NewPipelineRunNodeRepo(pg)
+	pipelineRunEventRepo := postgres.NewPipelineRunEventRepo(pg)
+	pipelineRunAssetNodeRepo := postgres.NewPipelineRunAssetNodeRepo(pg)
+	pipelineRunNotificationRepo := postgres.NewPipelineRunNotificationRepo(pg)
+	pipelineRunWatcherStateRepo := postgres.NewPipelineRunWatcherStateRepo(pg)
 	puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
 	puc.SetRunRepositories(executionTargetRepo, pipelineRunRepo, pipelineRunNodeRepo)
+	puc.SetRunEventRepo(pipelineRunEventRepo)
+	puc.SetObservabilityRepositories(pipelineRunAssetNodeRepo, pipelineRunNotificationRepo, pipelineRunWatcherStateRepo)
 	puc.SetAssetEventRepo(assetEventRepo)
 	puc.SetRelationWriter(assetRepo)
 	puc.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
@@ -110,6 +118,7 @@ func setupCore(inf *infra) *coreHandlers {
 		}
 		puc.SetPricing(priceCfg)
 	}
+	puc.StartRunEventWatcher(context.Background(), 10*time.Second, 100)
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath)
 
 	// Pipeline component registry

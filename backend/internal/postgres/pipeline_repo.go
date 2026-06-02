@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -921,4 +922,448 @@ func (r *PipelineRunNodeRepo) DeleteByRunID(ctx context.Context, runID string) e
 		return fmt.Errorf("postgres PipelineRunNodeRepo.DeleteByRunID: %w", err)
 	}
 	return nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PipelineRunEventRepo
+// ──────────────────────────────────────────────────────────────────────────────
+
+// PipelineRunEventRepo persists durable timeline events for pipeline runs.
+type PipelineRunEventRepo struct {
+	c *Client
+}
+
+// NewPipelineRunEventRepo creates a PipelineRunEventRepo bound to c.
+func NewPipelineRunEventRepo(c *Client) *PipelineRunEventRepo { return &PipelineRunEventRepo{c: c} }
+
+var _ repository.PipelineRunEventRepository = (*PipelineRunEventRepo)(nil)
+
+const pipelineRunEventSelectCols = `id, run_id, workflow_name, event_type, subject_type, subject_id,
+  status, message, reason, payload, idempotency_key, sequence, occurred_at, observed_at, created_at`
+
+func scanPipelineRunEvent(rs rowScanner) (*models.PipelineRunEvent, error) {
+	var (
+		e       models.PipelineRunEvent
+		payload []byte
+	)
+	if err := rs.Scan(
+		&e.ID, &e.RunID, &e.WorkflowName, &e.EventType, &e.SubjectType, &e.SubjectID,
+		&e.Status, &e.Message, &e.Reason, &payload, &e.IdempotencyKey, &e.Sequence,
+		&e.OccurredAt, &e.ObservedAt, &e.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	e.Payload = mapFromJSON(payload)
+	return &e, nil
+}
+
+// Append inserts an event unless its idempotency key already exists for the run.
+func (r *PipelineRunEventRepo) Append(ctx context.Context, event *models.PipelineRunEvent) error {
+	if event == nil {
+		return errors.New("postgres PipelineRunEventRepo.Append: nil event")
+	}
+	now := time.Now().UTC()
+	if event.ID == "" {
+		event.ID = uuid.New().String()
+	}
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = now
+	}
+	if event.ObservedAt.IsZero() {
+		event.ObservedAt = now
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = now
+	}
+	if event.SubjectID == "" {
+		event.SubjectID = event.RunID
+	}
+	if event.IdempotencyKey == "" {
+		event.IdempotencyKey = strings.Join([]string{
+			event.EventType,
+			event.SubjectType,
+			event.SubjectID,
+			event.Status,
+			event.OccurredAt.UTC().Format(time.RFC3339Nano),
+		}, ":")
+	}
+	payload, err := marshalMapForJSONB(event.Payload)
+	if err != nil {
+		return fmt.Errorf("postgres PipelineRunEventRepo.Append marshal payload: %w", err)
+	}
+	const q = `
+INSERT INTO pipeline_run_events (
+  id, run_id, workflow_name, event_type, subject_type, subject_id,
+  status, message, reason, payload, idempotency_key,
+  occurred_at, observed_at, created_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6,
+  $7, $8, $9, $10::jsonb, $11,
+  $12, $13, $14
+)
+ON CONFLICT (run_id, idempotency_key) DO NOTHING`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q,
+		event.ID, event.RunID, event.WorkflowName, event.EventType, event.SubjectType, event.SubjectID,
+		event.Status, event.Message, event.Reason, payload, event.IdempotencyKey,
+		event.OccurredAt, event.ObservedAt, event.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("postgres PipelineRunEventRepo.Append: %w", err)
+	}
+	return nil
+}
+
+// ListByRunID returns chronological run events with cursor pagination.
+func (r *PipelineRunEventRepo) ListByRunID(ctx context.Context, runID string, opts models.PipelineRunEventListOptions) (*models.PipelineRunEventListResult, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	args := []any{runID, limit + 1}
+	clauses := []string{"run_id = $1"}
+	if opts.Cursor > 0 {
+		args = append(args, opts.Cursor)
+		clauses = append(clauses, fmt.Sprintf("sequence > $%d", len(args)))
+	}
+	if strings.TrimSpace(opts.SubjectType) != "" {
+		args = append(args, strings.TrimSpace(opts.SubjectType))
+		clauses = append(clauses, fmt.Sprintf("subject_type = $%d", len(args)))
+	}
+	if strings.TrimSpace(opts.EventType) != "" {
+		args = append(args, strings.TrimSpace(opts.EventType))
+		clauses = append(clauses, fmt.Sprintf("event_type = $%d", len(args)))
+	}
+	if strings.TrimSpace(opts.Status) != "" {
+		args = append(args, strings.TrimSpace(opts.Status))
+		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
+	}
+	if strings.TrimSpace(opts.Query) != "" {
+		args = append(args, "%"+strings.TrimSpace(opts.Query)+"%")
+		clauses = append(clauses, fmt.Sprintf("(message ILIKE $%d OR subject_id ILIKE $%d OR event_type ILIKE $%d)", len(args), len(args), len(args)))
+	}
+	if opts.From != nil {
+		args = append(args, *opts.From)
+		clauses = append(clauses, fmt.Sprintf("occurred_at >= $%d", len(args)))
+	}
+	if opts.To != nil {
+		args = append(args, *opts.To)
+		clauses = append(clauses, fmt.Sprintf("occurred_at <= $%d", len(args)))
+	}
+	q := `SELECT ` + pipelineRunEventSelectCols + `
+FROM pipeline_run_events
+WHERE ` + strings.Join(clauses, " AND ") + `
+ORDER BY sequence ASC
+LIMIT $2`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunEventRepo.ListByRunID: %w", err)
+	}
+	defer rows.Close()
+	items := make([]models.PipelineRunEvent, 0, limit)
+	var nextCursor *int64
+	for rows.Next() {
+		event, err := scanPipelineRunEvent(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunEventRepo.ListByRunID scan: %w", err)
+		}
+		if len(items) >= limit {
+			cursor := event.Sequence - 1
+			nextCursor = &cursor
+			break
+		}
+		items = append(items, *event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunEventRepo.ListByRunID rows: %w", err)
+	}
+	return &models.PipelineRunEventListResult{
+		Items:      items,
+		NextCursor: nextCursor,
+		Total:      len(items),
+	}, nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PipelineRunAssetNodeRepo
+// ──────────────────────────────────────────────────────────────────────────────
+
+type PipelineRunAssetNodeRepo struct {
+	c *Client
+}
+
+func NewPipelineRunAssetNodeRepo(c *Client) *PipelineRunAssetNodeRepo {
+	return &PipelineRunAssetNodeRepo{c: c}
+}
+
+var _ repository.PipelineRunAssetNodeRepository = (*PipelineRunAssetNodeRepo)(nil)
+
+const pipelineRunAssetNodeSelectCols = `id, run_id, asset_id, pipeline_node_id, argo_node_id,
+  display_name, status, message, pod_name, log_ref, estimated_cost_usd, cost_source,
+  started_at, finished_at, updated_at`
+
+func scanPipelineRunAssetNode(rs rowScanner) (*models.PipelineRunAssetNode, error) {
+	var row models.PipelineRunAssetNode
+	if err := rs.Scan(
+		&row.ID, &row.RunID, &row.AssetID, &row.PipelineNodeID, &row.ArgoNodeID,
+		&row.DisplayName, &row.Status, &row.Message, &row.PodName, &row.LogRef,
+		&row.EstimatedCostUSD, &row.CostSource, &row.StartedAt, &row.FinishedAt, &row.UpdatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *PipelineRunAssetNodeRepo) ReplaceByRunID(ctx context.Context, runID string, rows []models.PipelineRunAssetNode) error {
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, `DELETE FROM pipeline_run_asset_nodes WHERE run_id = $1`, runID); err != nil {
+		return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID delete: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	const q = `
+INSERT INTO pipeline_run_asset_nodes (
+  id, run_id, asset_id, pipeline_node_id, argo_node_id, display_name, status,
+  message, pod_name, log_ref, estimated_cost_usd, cost_source,
+  started_at, finished_at, updated_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7,
+  $8, $9, $10, $11, $12,
+  $13, $14, $15
+)`
+	now := time.Now().UTC()
+	for i := range rows {
+		row := &rows[i]
+		if row.ID == "" {
+			row.ID = uuid.New().String()
+		}
+		if row.RunID == "" {
+			row.RunID = runID
+		}
+		if row.CostSource == "" {
+			row.CostSource = "not_available"
+			if row.EstimatedCostUSD != nil {
+				row.CostSource = "estimated_resource_duration"
+			}
+		}
+		if row.UpdatedAt.IsZero() {
+			row.UpdatedAt = now
+		}
+		if err := db.Exec(ctx, q,
+			row.ID, row.RunID, row.AssetID, row.PipelineNodeID, row.ArgoNodeID, row.DisplayName, row.Status,
+			row.Message, row.PodName, row.LogRef, row.EstimatedCostUSD, row.CostSource,
+			row.StartedAt, row.FinishedAt, row.UpdatedAt,
+		); err != nil {
+			return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID insert: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *PipelineRunAssetNodeRepo) ListByRunID(ctx context.Context, runID string, opts models.PipelineRunAssetNodeListOptions) (*models.PipelineRunAssetNodeListResult, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	args := []any{runID, limit + 1}
+	clauses := []string{"run_id = $1"}
+	if strings.TrimSpace(opts.Cursor) != "" {
+		args = append(args, strings.TrimSpace(opts.Cursor))
+		clauses = append(clauses, fmt.Sprintf("id > $%d", len(args)))
+	}
+	if strings.TrimSpace(opts.AssetID) != "" {
+		args = append(args, strings.TrimSpace(opts.AssetID))
+		clauses = append(clauses, fmt.Sprintf("asset_id = $%d", len(args)))
+	}
+	if strings.TrimSpace(opts.NodeID) != "" {
+		args = append(args, strings.TrimSpace(opts.NodeID))
+		clauses = append(clauses, fmt.Sprintf("(pipeline_node_id = $%d OR argo_node_id = $%d)", len(args), len(args)))
+	}
+	if strings.TrimSpace(opts.Status) != "" {
+		args = append(args, strings.TrimSpace(opts.Status))
+		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
+	}
+	orderBy := "asset_id ASC, pipeline_node_id ASC"
+	switch strings.TrimSpace(opts.OrderBy) {
+	case "cost":
+		orderBy = "estimated_cost_usd DESC NULLS LAST, asset_id ASC"
+	case "duration":
+		orderBy = "finished_at - started_at DESC NULLS LAST, asset_id ASC"
+	case "status":
+		orderBy = "status ASC, asset_id ASC"
+	}
+	q := `SELECT ` + pipelineRunAssetNodeSelectCols + `
+FROM pipeline_run_asset_nodes
+WHERE ` + strings.Join(clauses, " AND ") + `
+ORDER BY ` + orderBy + `
+LIMIT $2`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunAssetNodeRepo.ListByRunID: %w", err)
+	}
+	defer rows.Close()
+	items := make([]models.PipelineRunAssetNode, 0, limit)
+	var nextCursor *string
+	statuses := map[string]int{}
+	assets := map[string]bool{}
+	nodes := map[string]bool{}
+	var totalCost float64
+	hasCost := false
+	for rows.Next() {
+		row, err := scanPipelineRunAssetNode(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunAssetNodeRepo.ListByRunID scan: %w", err)
+		}
+		if len(items) >= limit {
+			cursor := row.ID
+			nextCursor = &cursor
+			break
+		}
+		items = append(items, *row)
+		statuses[row.Status]++
+		assets[row.AssetID] = true
+		nodes[row.PipelineNodeID] = true
+		if row.EstimatedCostUSD != nil {
+			totalCost += *row.EstimatedCostUSD
+			hasCost = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunAssetNodeRepo.ListByRunID rows: %w", err)
+	}
+	var totalCostPtr *float64
+	costSource := "not_available"
+	if hasCost {
+		totalCostPtr = &totalCost
+		costSource = "estimated_resource_duration"
+	}
+	return &models.PipelineRunAssetNodeListResult{
+		Items:      items,
+		NextCursor: nextCursor,
+		Total:      len(items),
+		Summary: models.PipelineRunAssetNodeSummary{
+			AssetCount:            len(assets),
+			NodeCount:             len(nodes),
+			Statuses:              statuses,
+			TotalEstimatedCostUSD: totalCostPtr,
+			CostSource:            costSource,
+		},
+	}, nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PipelineRunNotificationRepo
+// ──────────────────────────────────────────────────────────────────────────────
+
+type PipelineRunNotificationRepo struct {
+	c *Client
+}
+
+func NewPipelineRunNotificationRepo(c *Client) *PipelineRunNotificationRepo {
+	return &PipelineRunNotificationRepo{c: c}
+}
+
+var _ repository.PipelineRunNotificationRepository = (*PipelineRunNotificationRepo)(nil)
+
+func (r *PipelineRunNotificationRepo) AppendCandidate(ctx context.Context, candidate *models.PipelineRunNotificationCandidate) error {
+	if candidate == nil {
+		return errors.New("postgres PipelineRunNotificationRepo.AppendCandidate: nil candidate")
+	}
+	now := time.Now().UTC()
+	if candidate.ID == "" {
+		candidate.ID = uuid.New().String()
+	}
+	if candidate.CreatedAt.IsZero() {
+		candidate.CreatedAt = now
+	}
+	if candidate.SinkType == "" {
+		candidate.SinkType = "candidate"
+	}
+	if candidate.DeliveryStatus == "" {
+		candidate.DeliveryStatus = "pending"
+	}
+	if candidate.IdempotencyKey == "" {
+		candidate.IdempotencyKey = fmt.Sprintf("notify:%s:%s", candidate.RunID, candidate.EventID)
+	}
+	const q = `
+INSERT INTO pipeline_run_notification_candidates (
+  id, run_id, event_id, event_type, subject_type, subject_id, status, message,
+  sink_type, delivery_status, idempotency_key, created_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8,
+  $9, $10, $11, $12
+)
+ON CONFLICT (idempotency_key) DO NOTHING`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q,
+		candidate.ID, candidate.RunID, candidate.EventID, candidate.EventType, candidate.SubjectType, candidate.SubjectID,
+		candidate.Status, candidate.Message, candidate.SinkType, candidate.DeliveryStatus, candidate.IdempotencyKey, candidate.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("postgres PipelineRunNotificationRepo.AppendCandidate: %w", err)
+	}
+	return nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PipelineRunWatcherStateRepo
+// ──────────────────────────────────────────────────────────────────────────────
+
+type PipelineRunWatcherStateRepo struct {
+	c *Client
+}
+
+func NewPipelineRunWatcherStateRepo(c *Client) *PipelineRunWatcherStateRepo {
+	return &PipelineRunWatcherStateRepo{c: c}
+}
+
+var _ repository.PipelineRunWatcherStateRepository = (*PipelineRunWatcherStateRepo)(nil)
+
+func (r *PipelineRunWatcherStateRepo) Save(ctx context.Context, state *models.PipelineRunWatcherState) error {
+	if state == nil {
+		return errors.New("postgres PipelineRunWatcherStateRepo.Save: nil state")
+	}
+	if state.ID == "" {
+		state.ID = "default"
+	}
+	if state.ActiveScanLimit <= 0 {
+		state.ActiveScanLimit = 100
+	}
+	state.UpdatedAt = time.Now().UTC()
+	const q = `
+INSERT INTO pipeline_run_watcher_state (id, last_synced_at, active_scan_limit, last_error, updated_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (id) DO UPDATE SET
+  last_synced_at = EXCLUDED.last_synced_at,
+  active_scan_limit = EXCLUDED.active_scan_limit,
+  last_error = EXCLUDED.last_error,
+  updated_at = EXCLUDED.updated_at`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, state.ID, state.LastSyncedAt, state.ActiveScanLimit, state.LastError, state.UpdatedAt); err != nil {
+		return fmt.Errorf("postgres PipelineRunWatcherStateRepo.Save: %w", err)
+	}
+	return nil
+}
+
+func (r *PipelineRunWatcherStateRepo) FindByID(ctx context.Context, id string) (*models.PipelineRunWatcherState, error) {
+	if id == "" {
+		id = "default"
+	}
+	const q = `SELECT id, last_synced_at, active_scan_limit, last_error, updated_at FROM pipeline_run_watcher_state WHERE id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	var state models.PipelineRunWatcherState
+	if err := db.QueryRow(ctx, q, id).Scan(&state.ID, &state.LastSyncedAt, &state.ActiveScanLimit, &state.LastError, &state.UpdatedAt); err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres PipelineRunWatcherStateRepo.FindByID: %w", err)
+	}
+	return &state, nil
 }

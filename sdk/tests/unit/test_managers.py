@@ -356,6 +356,15 @@ class TestPipelineManager:
         respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1").mock(
             return_value=httpx.Response(200, json={"id": "run-1"})
         )
+        events_route = respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1/events").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "evt-1"}], "total": 1})
+        )
+        asset_nodes_route = respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1/asset-nodes").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "an-1"}], "total": 1})
+        )
+        respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1/cost-summary").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "costSource": "not_available"})
+        )
         respx.post(f"{BASE_URL}/api/v1/pipeline-runs/run-1/retry").mock(
             return_value=httpx.Response(201, json={"id": "run-2"})
         )
@@ -367,6 +376,33 @@ class TestPipelineManager:
         )
         assert client.pipelines.list_runs() == {"items": []}
         assert client.pipelines.get_run("run-1")["id"] == "run-1"
+        assert client.pipelines.list_run_events(
+            "run-1",
+            limit=50,
+            subject_type="node",
+            event_type="node_failed",
+            status="Failed",
+            q="image",
+        )["items"][0]["id"] == "evt-1"
+        assert dict(events_route.calls.last.request.url.params) == {
+            "limit": "50",
+            "subjectType": "node",
+            "eventType": "node_failed",
+            "status": "Failed",
+            "q": "image",
+        }
+        assert client.pipelines.list_run_asset_nodes(
+            "run-1",
+            limit=20,
+            asset_id="asset-1",
+            order_by="cost",
+        )["items"][0]["id"] == "an-1"
+        assert dict(asset_nodes_route.calls.last.request.url.params) == {
+            "limit": "20",
+            "assetId": "asset-1",
+            "orderBy": "cost",
+        }
+        assert client.pipelines.get_run_cost_summary("run-1")["runId"] == "run-1"
         assert client.pipelines.retry_run("run-1")["id"] == "run-2"
         assert client.pipelines.stop_run("run-1")["message"] == "pipeline run stopped"
         assert client.pipelines.delete_run("run-1") == {}

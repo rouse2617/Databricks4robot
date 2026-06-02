@@ -1940,6 +1940,131 @@ components:
         updatedAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
+    PipelineRunEvent:
+      type: object
+      properties:
+        id: { type: string, description: Event ID }
+        runId: { type: string, description: Pipeline run ID }
+        workflowName: { type: string, description: Argo workflow name when known }
+        eventType:
+          type: string
+          description: Machine-readable event type such as run_submitted or node_failed.
+        subjectType:
+          type: string
+          enum: [run, workflow, node, pod]
+        subjectId: { type: string }
+        status: { type: string }
+        message: { type: string }
+        reason: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        idempotencyKey:
+          type: string
+          description: Deterministic key used by the backend to deduplicate watcher observations.
+        sequence:
+          type: integer
+          format: int64
+          description: Monotonic run event sequence used for chronological pagination.
+        occurredAt: { type: string, format: date-time }
+        observedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    PipelineRunEventList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRunEvent' }
+        nextCursor:
+          type: integer
+          format: int64
+          nullable: true
+        total:
+          type: integer
+          description: Number of events returned in this page.
+    PipelineRunAssetNode:
+      type: object
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        assetId: { type: string }
+        pipelineNodeId: { type: string }
+        argoNodeId: { type: string }
+        displayName: { type: string }
+        status: { type: string }
+        message: { type: string }
+        podName: { type: string }
+        logRef: { type: string }
+        estimatedCostUsd:
+          type: number
+          format: double
+          nullable: true
+        costSource:
+          type: string
+          enum: [estimated_resource_duration, not_available]
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    PipelineRunAssetNodeList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRunAssetNode' }
+        nextCursor:
+          type: string
+          nullable: true
+        total: { type: integer }
+        summary:
+          type: object
+          properties:
+            assetCount: { type: integer }
+            nodeCount: { type: integer }
+            statuses:
+              type: object
+              additionalProperties: { type: integer }
+            totalEstimatedCostUsd:
+              type: number
+              format: double
+              nullable: true
+            costSource:
+              type: string
+              enum: [estimated_resource_duration, not_available]
+    PipelineRunCostSummary:
+      type: object
+      properties:
+        runId: { type: string }
+        totalEstimatedCostUsd:
+          type: number
+          format: double
+          nullable: true
+        costSource:
+          type: string
+          enum: [estimated_resource_duration, not_available]
+        nodeSummaries:
+          type: array
+          items:
+            type: object
+            properties:
+              nodeId: { type: string }
+              displayName: { type: string }
+              status: { type: string }
+              podCount: { type: integer }
+              estimatedCostUsd: { type: number, format: double, nullable: true }
+              costSource: { type: string }
+              durationSeconds: { type: integer, format: int64, nullable: true }
+        assetNodeSummaries:
+          type: array
+          items:
+            type: object
+            properties:
+              assetId: { type: string }
+              nodeId: { type: string }
+              displayName: { type: string }
+              status: { type: string }
+              estimatedCostUsd: { type: number, format: double, nullable: true }
+              costSource: { type: string }
+        generatedAt: { type: string, format: date-time }
     PipelineComponent:
       type: object
       properties:
@@ -5162,6 +5287,137 @@ paths:
           schema: { type: string }
       responses:
         '204': { description: Deleted successfully }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}/events:
+    get:
+      tags: [Pipeline]
+      summary: List pipeline run events
+      description: Returns stored DataBrew timeline events for a pipeline run in chronological order.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Pipeline run ID
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+          description: Maximum number of events to return.
+        - in: query
+          name: cursor
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Sequence cursor returned by the previous page.
+        - in: query
+          name: subjectType
+          schema: { type: string, enum: [run, workflow, node, pod] }
+          description: Optional subject type filter.
+        - in: query
+          name: eventType
+          schema: { type: string }
+          description: Optional event type filter.
+        - in: query
+          name: status
+          schema: { type: string }
+          description: Optional event status/phase filter.
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Optional text search across message, subject, and event type.
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+          description: Optional lower bound for occurredAt.
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+          description: Optional upper bound for occurredAt.
+      responses:
+        '200':
+          description: Pipeline run event page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunEventList' }
+        '400':
+          description: Invalid pagination or filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}/asset-nodes:
+    get:
+      tags: [Pipeline]
+      summary: List pipeline run asset-node snapshots
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: assetId
+          schema: { type: string }
+        - in: query
+          name: nodeId
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: orderBy
+          schema: { type: string, enum: [cost, duration, status] }
+      responses:
+        '200':
+          description: Asset-node snapshot page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunAssetNodeList' }
+        '400':
+          description: Invalid pagination or filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Pipeline run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-runs/{id}/cost-summary:
+    get:
+      tags: [Pipeline]
+      summary: Get pipeline run estimated cost summary
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estimated cost summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunCostSummary' }
         '404':
           description: Pipeline run not found
           content:
