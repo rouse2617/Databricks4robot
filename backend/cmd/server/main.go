@@ -23,6 +23,7 @@ import (
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -46,6 +47,7 @@ type infra struct {
 	queryFieldReg  *config.QueryFieldRegistry
 	actionLabelReg *config.ActionLabelRegistry
 	workflowClient argo.WorkflowClient
+	podClient      k8s.PodClient
 }
 
 func (inf *infra) close() {

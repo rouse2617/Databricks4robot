@@ -2487,6 +2487,48 @@ curl -X POST "$BASE/api/v1/deploy/template/<TEMPLATE_ID>" \
 Argo Workflow CR 已被 TTL 清理，API 会返回 `Expired`，避免历史记录长期显示
 过期的 `Running`/`Pending` 状态；这类记录可以通过 retry 重新提交。
 
+### Workflow 节点 Pod 诊断（CYB-1559）
+
+DataBrew 通过后端代理读取 GKE/Kubernetes Pod 诊断信息，前端不直接持有
+kubeconfig 或 Kubernetes token。Cloud Run 后端需要配置可访问目标 GKE API 的
+后端凭据和 namespace 级 RBAC，至少允许读取 `pods` 与 `events`。
+
+```bash
+curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/nodes/<NODE_ID>/pod" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "cluster": "dev-gke",
+#   "namespace": "cyber-databrew-dev",
+#   "podName": "my-workflow-step-a-123456",
+#   "podIp": "10.2.3.4",
+#   "serviceAccountName": "workflow",
+#   "restartCount": 1,
+#   "containers": [
+#     {"name": "main", "image": "alpine:3.20", "ready": true, "restartCount": 1, "state": "Running"}
+#   ],
+#   "podConditions": [
+#     {"type": "Ready", "status": "True", "reason": "ContainersReady"}
+#   ],
+#   "podEvents": [
+#     {"type": "Normal", "reason": "Pulled", "message": "container image pulled", "count": 1}
+#   ]
+# }
+```
+
+错误语义：
+
+- `404 WORKFLOW_NOT_FOUND`：Argo workflow 不存在。
+- `404 NODE_NOT_FOUND`：workflow 存在，但节点不存在或不是 Pod 节点。
+- `404 POD_NOT_FOUND`：节点解析出的 Pod 不存在，常见于尚未创建或已 TTL 清理。
+- `403 K8S_FORBIDDEN`：后端 Kubernetes 凭据缺少当前 namespace 的 Pod/Event 读取权限。
+- `503 K8S_UNAVAILABLE`：Cloud Run 到 GKE API 不通，或 Kubernetes client 未配置。
+
+临时 dev bridge 可以使用后端 secret 注入 `K8S_API_ENDPOINT`、
+`K8S_BEARER_TOKEN`、可选 `K8S_CA_FILE` 与 `K8S_CLUSTER_NAME`；长期生产方案
+应使用 GCP identity/RBAC，而不是把长效 token 暴露给浏览器或前端配置。
+
 ### 查询资源用量元数据（F5.8）
 
 查询 workflow 各 pod 的 Argo resource duration、manifest request/limit，以及数据来源。

@@ -2088,6 +2088,53 @@ components:
           items: { type: string }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
+    WorkflowNodePodDiagnostics:
+      type: object
+      required: [namespace, podName, restartCount, containers, podConditions, podEvents]
+      properties:
+        cluster: { type: string, description: Optional Kubernetes cluster display label }
+        namespace: { type: string, description: Kubernetes namespace }
+        podName: { type: string, description: Kubernetes Pod name backing this workflow node }
+        podIp: { type: string, description: Kubernetes Pod IP }
+        serviceAccountName: { type: string, description: Pod service account name }
+        restartCount: { type: integer, format: int32, description: Sum of all container restart counts }
+        containers:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowNodePodContainer' }
+        podConditions:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowNodePodCondition' }
+        podEvents:
+          type: array
+          items: { $ref: '#/components/schemas/WorkflowNodePodEvent' }
+    WorkflowNodePodContainer:
+      type: object
+      required: [name, ready, restartCount]
+      properties:
+        name: { type: string }
+        image: { type: string }
+        ready: { type: boolean }
+        restartCount: { type: integer, format: int32 }
+        state: { type: string, description: Running, Waiting, Terminated, or empty when unknown }
+    WorkflowNodePodCondition:
+      type: object
+      required: [type, status]
+      properties:
+        type: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        message: { type: string }
+        lastTransitionTime: { type: string, format: date-time, nullable: true }
+    WorkflowNodePodEvent:
+      type: object
+      required: [type, reason, message]
+      properties:
+        type: { type: string }
+        reason: { type: string }
+        message: { type: string }
+        count: { type: integer, format: int32 }
+        firstTimestamp: { type: string, format: date-time, nullable: true }
+        lastTimestamp: { type: string, format: date-time, nullable: true }
     WorkflowOperationResponse:
       type: object
       properties:
@@ -4364,6 +4411,49 @@ paths:
                 $ref: '#/components/schemas/ResourceUsageReport'
         '404':
           description: Workflow or node not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/workflows/{name}/nodes/{nodeId}/pod:
+    get:
+      tags: [Pipeline]
+      summary: Get Kubernetes Pod diagnostics for one workflow node
+      description: >
+        Resolves the Argo workflow node to its Kubernetes Pod and returns
+        backend-mediated Pod metadata, container statuses, conditions, and
+        Kubernetes events. The browser never receives Kubernetes credentials.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+        - in: path
+          name: nodeId
+          required: true
+          schema: { type: string }
+          description: Workflow Pod node ID
+      responses:
+        '200':
+          description: Pod diagnostics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowNodePodDiagnostics' }
+        '403':
+          description: Kubernetes credentials cannot read Pod diagnostics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Workflow, node, or Pod not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Kubernetes diagnostics unavailable
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

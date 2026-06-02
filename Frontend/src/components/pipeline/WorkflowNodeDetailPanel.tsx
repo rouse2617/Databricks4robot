@@ -24,7 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
 	WorkflowDetail,
 	WorkflowNodeContainer,
@@ -33,6 +33,10 @@ import type {
 	WorkflowPodCost,
 	WorkflowPodEvent,
 	WorkflowPodMetrics,
+} from "../../api/workflowApi";
+import {
+	getNodePodDiagnostics,
+	type NodePodDiagnostics,
 } from "../../api/workflowApi";
 import { STATUS_COLORS } from "../../lib/constants";
 import {
@@ -272,45 +276,113 @@ function ContainersTab({ node }: { node: WorkflowNodeStatus }) {
 	);
 }
 
-function PodTab({ node }: { node: WorkflowNodeStatus }) {
+function PodTab({
+	node,
+	workflowName,
+}: {
+	node: WorkflowNodeStatus;
+	workflowName: string;
+}) {
 	const podName = getWorkflowNodePodName(node);
-	const conditionRows = (node.podConditions ?? []).map((condition, index) => ({
+	const [podDiag, setPodDiag] = useState<NodePodDiagnostics | null>(null);
+	const [podDiagLoading, setPodDiagLoading] = useState(false);
+	const [podDiagError, setPodDiagError] = useState<string | null>(null);
+
+	const loadPodDiagnostics = useCallback(() => {
+		if (!workflowName || !node.id) return undefined;
+		let cancelled = false;
+		setPodDiagLoading(true);
+		setPodDiagError(null);
+		getNodePodDiagnostics(workflowName, node.id)
+			.then((data) => {
+				if (!cancelled) setPodDiag(data);
+			})
+			.catch((err) => {
+				if (!cancelled) {
+					setPodDiag(null);
+					setPodDiagError(String(err));
+				}
+			})
+			.finally(() => {
+				if (!cancelled) setPodDiagLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [workflowName, node.id]);
+
+	useEffect(() => loadPodDiagnostics(), [loadPodDiagnostics]);
+
+	const cluster = podDiag?.cluster ?? node.cluster;
+	const namespace = podDiag?.namespace ?? node.namespace;
+	const displayPodName = podDiag?.podName ?? podName;
+	const podIp = podDiag?.podIp ?? node.podIp;
+	const serviceAccountName =
+		podDiag?.serviceAccountName ?? node.serviceAccountName;
+	const restartCount = podDiag?.restartCount ?? node.restartCount;
+	const containers = podDiag?.containers ?? node.containers ?? [];
+	const conditions = podDiag?.podConditions ?? node.podConditions ?? [];
+	const events = podDiag?.podEvents ?? node.podEvents ?? [];
+
+	const conditionRows = conditions.map((condition, index) => ({
 		key: `${condition.type}-${index}`,
 		...condition,
 	}));
-	const eventRows = (node.podEvents ?? []).map((event, index) => ({
+	const eventRows = events.map((event, index) => ({
 		key: `${event.reason}-${index}`,
 		...event,
 	}));
 
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
-			<Alert
-				type="info"
-				showIcon
-				message="Pod 诊断接口待接入"
-				description="前端已预留 Pod describe、conditions、events、container 状态和 namespace/cluster 字段；后端接 Kubernetes API 后即可填充。"
-			/>
+			{podDiagError ? (
+				<Alert
+					type="warning"
+					showIcon
+					message="Pod 诊断数据不可用"
+					description="已保留 Argo 节点元数据；请检查 K8s API 连通性、RBAC 权限，或等待 Pod 创建完成。"
+					action={
+						<Button
+							size="small"
+							icon={<ReloadOutlined />}
+							loading={podDiagLoading}
+							onClick={() => {
+								loadPodDiagnostics();
+							}}
+						>
+							重试
+						</Button>
+					}
+				/>
+			) : podDiagLoading ? (
+				<Alert type="info" showIcon message="正在加载 Pod 诊断数据" />
+			) : podDiag ? (
+				<Alert type="success" showIcon message="Pod 诊断数据已加载" />
+			) : null}
 			<Descriptions size="small" column={1} layout="vertical" bordered>
-				<Descriptions.Item label="Cluster">
-					{node.cluster || "—"}
-				</Descriptions.Item>
+				<Descriptions.Item label="Cluster">{cluster || "—"}</Descriptions.Item>
 				<Descriptions.Item label="Namespace">
-					{node.namespace || "—"}
+					{namespace || "—"}
 				</Descriptions.Item>
 				<Descriptions.Item label="Pod">
-					{podName ? <CopyableEllipsisText text={podName} /> : "—"}
+					{displayPodName ? (
+						<CopyableEllipsisText text={displayPodName} />
+					) : (
+						"—"
+					)}
 				</Descriptions.Item>
-				<Descriptions.Item label="Pod IP">
-					{node.podIp || "—"}
-				</Descriptions.Item>
+				<Descriptions.Item label="Pod IP">{podIp || "—"}</Descriptions.Item>
 				<Descriptions.Item label="Service Account">
-					{node.serviceAccountName || "—"}
+					{serviceAccountName || "—"}
 				</Descriptions.Item>
 				<Descriptions.Item label="重启次数">
-					{node.restartCount ?? "—"}
+					{restartCount ?? "—"}
 				</Descriptions.Item>
 			</Descriptions>
+			<div>
+				<div style={{ marginBottom: 8, fontWeight: 600 }}>Containers</div>
+				<ContainersTab node={{ ...node, containers }} />
+			</div>
 			<div>
 				<div style={{ marginBottom: 8, fontWeight: 600 }}>Conditions</div>
 				{conditionRows.length === 0 ? (
@@ -579,14 +651,17 @@ function RuntimeSection({
 	);
 }
 
-function RuntimeTab({ node }: { node: WorkflowNodeStatus }) {
+function RuntimeTab({
+	node,
+	workflowName,
+}: {
+	node: WorkflowNodeStatus;
+	workflowName: string;
+}) {
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<RuntimeSection title="Pod 与事件">
-				<PodTab node={node} />
-			</RuntimeSection>
-			<RuntimeSection title="容器">
-				<ContainersTab node={node} />
+				<PodTab node={node} workflowName={workflowName} />
 			</RuntimeSection>
 			<RuntimeSection title="监控">
 				<MonitoringTab metrics={node.metrics} />
@@ -672,7 +747,8 @@ function OutputsTab({ node }: { node: WorkflowNodeStatus }) {
 				</Col>
 				<Col span={24}>
 					<Card size="small" title="退出码">
-						{typeof node.outputs?.exitCode === "number"
+						{typeof node.outputs?.exitCode === "number" ||
+						typeof node.outputs?.exitCode === "string"
 							? node.outputs.exitCode
 							: "—"}
 					</Card>
@@ -869,7 +945,7 @@ export function WorkflowNodeDetailPanel({
 								<CloudServerOutlined /> 运行环境
 							</>
 						),
-						children: <RuntimeTab node={node} />,
+						children: <RuntimeTab node={node} workflowName={workflow.name} />,
 					},
 					{
 						key: "io",

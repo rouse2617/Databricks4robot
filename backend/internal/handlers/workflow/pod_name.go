@@ -19,8 +19,11 @@ func resolveWorkflowPodName(wf *wfv1.Workflow, nodeID string) (string, bool) {
 	}
 
 	workflowName := strings.TrimSpace(wf.Name)
-	displayName := strings.TrimSpace(node.DisplayName)
-	if workflowName == "" || displayName == "" {
+	stepName := strings.TrimSpace(node.TemplateName)
+	if stepName == "" {
+		stepName = strings.TrimSpace(node.DisplayName)
+	}
+	if workflowName == "" || stepName == "" {
 		return node.ID, true
 	}
 
@@ -28,7 +31,7 @@ func resolveWorkflowPodName(wf *wfv1.Workflow, nodeID string) (string, bool) {
 	if suffix == "" || suffix == node.ID {
 		return node.ID, true
 	}
-	return workflowName + "-" + sanitizePodNamePart(displayName) + "-" + suffix, true
+	return workflowName + "-" + sanitizePodNamePart(stepName) + "-" + suffix, true
 }
 
 func sanitizePodNamePart(value string) string {

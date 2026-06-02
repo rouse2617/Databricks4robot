@@ -199,6 +199,26 @@ describe("WorkflowNodeDetailPanel", () => {
 		expect(screen.getByText("lr")).toBeTruthy();
 	});
 
+	it("renders string exit code in i/o tab", () => {
+		const node: WorkflowNodeStatus = {
+			...baseNode,
+			outputs: {
+				exitCode: "0",
+			},
+		};
+		render(
+			<WorkflowNodeDetailPanel
+				node={node}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByText("输入/输出"));
+		expect(screen.getByText("0")).toBeTruthy();
+	});
+
 	it("renders memoization info", () => {
 		const node: WorkflowNodeStatus = {
 			...baseNode,

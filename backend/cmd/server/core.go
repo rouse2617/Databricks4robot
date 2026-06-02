@@ -126,6 +126,7 @@ func setupCore(inf *infra) *coreHandlers {
 
 	// ── Workflow monitoring ──
 	workflowHandler := workflowH.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
+	workflowHandler.SetPodClient(inf.podClient)
 
 	return &coreHandlers{
 		asset:             assetHandler,

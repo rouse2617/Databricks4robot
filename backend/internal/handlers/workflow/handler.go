@@ -14,6 +14,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 )
 
 const (
@@ -26,11 +27,16 @@ const (
 
 type Handler struct {
 	wfClient  argo.WorkflowClient
+	podClient k8s.PodClient
 	namespace string
 }
 
 func New(wfClient argo.WorkflowClient, namespace string) *Handler {
 	return &Handler{wfClient: wfClient, namespace: namespace}
+}
+
+func (h *Handler) SetPodClient(podClient k8s.PodClient) {
+	h.podClient = podClient
 }
 
 // ListWorkflows handles GET /api/v1/workflows

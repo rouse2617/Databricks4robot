@@ -13,9 +13,12 @@ import (
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	"github.com/gin-gonic/gin"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 )
 
 // ── Mock WorkflowClient ─────────────────────────────────────────────────────
@@ -31,6 +34,17 @@ type mockWorkflowClient struct {
 	lastStreamPod  string
 	lastLogOpts    argo.WorkflowLogOptions
 	lastStreamOpts argo.WorkflowLogOptions
+}
+
+type mockPodClient struct {
+	diagFn func(ctx context.Context, namespace, podName string) (*k8s.PodDiagnostics, error)
+}
+
+func (m *mockPodClient) GetPodDiagnostics(ctx context.Context, namespace, podName string) (*k8s.PodDiagnostics, error) {
+	if m.diagFn != nil {
+		return m.diagFn(ctx, namespace, podName)
+	}
+	return nil, errors.New("not implemented")
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
@@ -151,6 +165,7 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.GET("/workflows/:name/logs", h.GetWorkflowLogs)
 	r.GET("/workflows/:name/logs/stream", h.StreamWorkflowLogs)
 	r.GET("/workflows/:name/log/stream", h.StreamWorkflowLogs)
+	r.GET("/workflows/:name/nodes/:nodeId/pod", h.GetNodePodDiagnostics)
 	r.GET("/workflows/:name", h.GetWorkflow)
 	r.POST("/workflows/:name/retry", h.RetryWorkflow)
 	r.POST("/workflows/:name/resubmit", h.ResubmitWorkflow)
@@ -869,5 +884,221 @@ func TestWorkflowOperations(t *testing.T) {
 				t.Fatalf("expected ok message, got %q", resp["message"])
 			}
 		})
+	}
+}
+
+func TestGetNodePodDiagnostics_Success(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+			if name != "test-wf" || namespace != "default" {
+				t.Fatalf("unexpected workflow lookup %s/%s", namespace, name)
+			}
+			return makeWorkflow("test-wf", "Running", 2), nil
+		},
+	}, "default")
+	h.SetPodClient(&mockPodClient{
+		diagFn: func(_ context.Context, namespace, podName string) (*k8s.PodDiagnostics, error) {
+			if namespace != "default" {
+				t.Fatalf("unexpected namespace %s", namespace)
+			}
+			if podName != "a" {
+				t.Fatalf("unexpected pod name %s", podName)
+			}
+			return &k8s.PodDiagnostics{
+				Cluster:            "dev-gke",
+				Namespace:          namespace,
+				PodName:            podName,
+				PodIP:              "10.1.2.3",
+				ServiceAccountName: "workflow-sa",
+				RestartCount:       1,
+				Containers: []k8s.ContainerInfo{
+					{Name: "main", Image: "alpine:3.20", Ready: true, RestartCount: 1, State: "Running"},
+				},
+				Conditions: []k8s.PodConditionInfo{{Type: "Ready", Status: "True"}},
+				Events:     []k8s.EventInfo{{Type: "Normal", Reason: "Pulled", Message: "pulled"}},
+			}, nil
+		},
+	})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/nodes/a/pod", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["podName"] != "a" {
+		t.Fatalf("expected podName a, got %v", resp["podName"])
+	}
+	if resp["cluster"] != "dev-gke" {
+		t.Fatalf("expected cluster dev-gke, got %v", resp["cluster"])
+	}
+}
+
+func TestGetNodePodDiagnostics_Unconfigured(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/nodes/a/pod", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
+	}
+	assertErrorCode(t, w.Body.Bytes(), "K8S_UNAVAILABLE")
+}
+
+func TestGetNodePodDiagnostics_WorkflowNotFoundBeforeKubernetesAvailability(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return nil, argo.ErrNotFound
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/missing-wf/nodes/a/pod", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+	assertErrorCode(t, w.Body.Bytes(), "WORKFLOW_NOT_FOUND")
+}
+
+func TestGetNodePodDiagnostics_UsesTemplateNameForParameterizedPod(t *testing.T) {
+	wf := &wfv1.Workflow{}
+	wf.Name = "fanout-demo"
+	wf.Status.Nodes = wfv1.Nodes{
+		"fanout-demo-3231058135": {
+			ID:           "fanout-demo-3231058135",
+			Name:         "fanout-demo.process-asset(0:seg_001)",
+			DisplayName:  "process-asset(0:seg_001)",
+			Type:         wfv1.NodeTypePod,
+			TemplateName: "process-one",
+			Phase:        wfv1.NodeSucceeded,
+		},
+	}
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return wf, nil
+		},
+	}, "default")
+	h.SetPodClient(&mockPodClient{
+		diagFn: func(_ context.Context, _, podName string) (*k8s.PodDiagnostics, error) {
+			if podName != "fanout-demo-process-one-3231058135" {
+				t.Fatalf("unexpected pod name %s", podName)
+			}
+			return &k8s.PodDiagnostics{
+				Namespace:    "default",
+				PodName:      podName,
+				RestartCount: 0,
+				Containers:   []k8s.ContainerInfo{},
+				Conditions:   []k8s.PodConditionInfo{},
+				Events:       []k8s.EventInfo{},
+			}, nil
+		},
+	})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/fanout-demo/nodes/fanout-demo-3231058135/pod", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetNodePodDiagnostics_NodeNotFound(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	h.SetPodClient(&mockPodClient{})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/nodes/missing/pod", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+	assertErrorCode(t, w.Body.Bytes(), "NODE_NOT_FOUND")
+}
+
+func TestGetNodePodDiagnostics_KubernetesErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code int
+		want string
+	}{
+		{
+			name: "pod not found",
+			err:  apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "pod-a"),
+			code: http.StatusNotFound,
+			want: "POD_NOT_FOUND",
+		},
+		{
+			name: "forbidden",
+			err:  apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "pod-a", errors.New("no rbac")),
+			code: http.StatusForbidden,
+			want: "K8S_FORBIDDEN",
+		},
+		{
+			name: "unavailable",
+			err:  k8s.ErrUnavailable,
+			code: http.StatusServiceUnavailable,
+			want: "K8S_UNAVAILABLE",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := New(&mockWorkflowClient{
+				getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+					return makeWorkflow("test-wf", "Running", 1), nil
+				},
+			}, "default")
+			h.SetPodClient(&mockPodClient{
+				diagFn: func(_ context.Context, _, _ string) (*k8s.PodDiagnostics, error) {
+					return nil, tt.err
+				},
+			})
+			r := setupRouter(h)
+
+			req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/nodes/a/pod", nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.code {
+				t.Fatalf("expected %d, got %d: %s", tt.code, w.Code, w.Body.String())
+			}
+			assertErrorCode(t, w.Body.Bytes(), tt.want)
+		})
+	}
+}
+
+func assertErrorCode(t *testing.T, body []byte, want string) {
+	t.Helper()
+	var resp map[string]any
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("unmarshal error body: %v", err)
+	}
+	if resp["code"] != want {
+		t.Fatalf("expected error code %s, got %v", want, resp["code"])
 	}
 }

@@ -47,7 +47,7 @@ export interface WorkflowNodeStatus {
 		parameters?: Array<{ name: string; value?: string }>;
 		artifacts?: Array<{ name: string; path?: string }>;
 		result?: string;
-		exitCode?: number;
+		exitCode?: number | string;
 	};
 	inputs?: {
 		parameters?: Array<{ name: string; value?: string }>;
@@ -183,6 +183,28 @@ export function getWorkflowLogs(
 
 export function getWorkflowLogStreamUrl(name: string, nodeId: string): string {
 	return `/api/v1/workflows/${encodeURIComponent(name)}/log/stream?nodeId=${encodeURIComponent(nodeId)}`;
+}
+
+export interface NodePodDiagnostics {
+	cluster?: string;
+	namespace: string;
+	podName: string;
+	podIp?: string;
+	serviceAccountName?: string;
+	restartCount: number;
+	containers: WorkflowNodeContainer[];
+	podConditions: WorkflowPodCondition[];
+	podEvents: WorkflowPodEvent[];
+}
+
+export function getNodePodDiagnostics(
+	workflowName: string,
+	nodeId: string,
+): Promise<NodePodDiagnostics> {
+	return request(
+		"GET",
+		`/workflows/${encodeURIComponent(workflowName)}/nodes/${encodeURIComponent(nodeId)}/pod`,
+	);
 }
 
 function postWorkflowOperation(

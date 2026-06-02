@@ -381,7 +381,15 @@ func RegisterAll(
 		api.GET("/workflows/:name/log/stream", workflowHandler.StreamWorkflowLogs)
 		api.GET("/workflows/:name/resources", pipelineHandler.GetWorkflowResourceUsage)
 		api.GET("/workflows/:name/nodes/:nodeId/resources", pipelineHandler.GetWorkflowNodeResourceUsage)
+		api.GET("/workflows/:name/nodes/:nodeId/pod", workflowHandler.GetNodePodDiagnostics)
 		api.GET("/workflows/:name", workflowHandler.GetWorkflow)
+		api.POST("/workflows/:name/retry", workflowHandler.RetryWorkflow)
+		api.POST("/workflows/:name/resubmit", workflowHandler.ResubmitWorkflow)
+		api.POST("/workflows/:name/suspend", workflowHandler.SuspendWorkflow)
+		api.POST("/workflows/:name/stop", workflowHandler.StopWorkflow)
+		api.POST("/workflows/:name/resume", workflowHandler.ResumeWorkflow)
+		api.POST("/workflows/:name/terminate", workflowHandler.TerminateWorkflow)
+		api.DELETE("/workflows/:name", workflowHandler.DeleteWorkflow)
 
 		// Backfill jobs
 		if backfillHandler != nil {
