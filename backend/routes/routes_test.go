@@ -32,6 +32,9 @@ func (r *routeAssetRepo) Get(ctx context.Context, id string) (*models.Asset, err
 func (r *routeAssetRepo) GetAll(context.Context, string) (*models.Asset, error) {
 	return &models.Asset{AssetID: "aaaaaaaa", Tags: map[string]string{}}, nil
 }
+func (r *routeAssetRepo) FindExistingIDs(context.Context, []string) (map[string]struct{}, error) {
+	return map[string]struct{}{"aaaaaaaa": {}}, nil
+}
 func (r *routeAssetRepo) InsertNew(context.Context, *models.Asset) error { return nil }
 func (r *routeAssetRepo) Set(context.Context, *models.Asset) error       { return nil }
 func (r *routeAssetRepo) SoftDelete(context.Context, string) error       { return nil }

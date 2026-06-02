@@ -114,6 +114,19 @@ func (r *readModelAssetRepo) Get(ctx context.Context, assetID string) (*models.A
 func (r *readModelAssetRepo) GetAll(ctx context.Context, assetID string) (*models.Asset, error) {
 	return r.getFn(ctx, assetID)
 }
+func (r *readModelAssetRepo) FindExistingIDs(ctx context.Context, assetIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	for _, assetID := range assetIDs {
+		a, err := r.Get(ctx, assetID)
+		if err != nil {
+			return nil, err
+		}
+		if a != nil {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
 func (r *readModelAssetRepo) Set(context.Context, *models.Asset) error { return nil }
 func (r *readModelAssetRepo) SoftDelete(context.Context, string) error { return nil }
 func (r *readModelAssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error) {

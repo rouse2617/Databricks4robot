@@ -16,7 +16,7 @@ type templateResourceSpec struct {
 	MemoryLimit   string
 }
 
-func buildPodResourceUsageReport(wf *wfv1.Workflow, manifest *string) []PodResourceUsage {
+func buildPodResourceUsageReport(wf *wfv1.Workflow, manifest *string, observedAt, onlyNodeID string) []PodResourceUsage {
 	if wf == nil {
 		return []PodResourceUsage{}
 	}
@@ -26,24 +26,45 @@ func buildPodResourceUsageReport(wf *wfv1.Workflow, manifest *string) []PodResou
 		if node.Type != wfv1.NodeTypePod {
 			continue
 		}
+		if onlyNodeID != "" && node.ID != onlyNodeID {
+			continue
+		}
 		podName := node.ID
 		if podName == "" {
 			podName = node.Name
 		}
 		entry := PodResourceUsage{
-			PodName:  podName,
-			NodeName: node.HostNodeName,
+			PodName:              podName,
+			NodeID:               node.ID,
+			NodeName:             node.HostNodeName,
+			TemplateName:         node.TemplateName,
+			ObservedAt:           observedAt,
+			LiveMetricsAvailable: false,
 		}
-		entry.CPUUsage, entry.MemoryUsage = formatResourcesDuration(node.ResourcesDuration)
+		durationCPU, durationMemory := formatResourcesDuration(node.ResourcesDuration)
+		entry.CPUUsage = durationCPU
+		entry.MemoryUsage = durationMemory
+		entry.CPUResourceDuration = durationCPU
+		entry.MemoryResourceDuration = durationMemory
+		entry.ResourceDuration = ResourceValues{CPU: durationCPU, Memory: durationMemory}
 		if spec, ok := reqs[node.TemplateName]; ok {
 			entry.CPURequest = spec.CPURequest
 			entry.MemoryRequest = spec.MemoryRequest
 			entry.CPULimit = spec.CPULimit
 			entry.MemoryLimit = spec.MemoryLimit
+			entry.Requests = ResourceValues{CPU: spec.CPURequest, Memory: spec.MemoryRequest}
+			entry.Limits = ResourceValues{CPU: spec.CPULimit, Memory: spec.MemoryLimit}
 		}
 		pods = append(pods, entry)
 	}
 	return pods
+}
+
+func specSource(manifest *string) string {
+	if manifest == nil || strings.TrimSpace(*manifest) == "" {
+		return "unavailable"
+	}
+	return "stored-manifest"
 }
 
 func formatResourcesDuration(d wfv1.ResourcesDuration) (cpu, mem string) {

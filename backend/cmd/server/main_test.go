@@ -21,6 +21,18 @@ func (r *testAssetRepo) Get(ctx context.Context, id string) (*models.Asset, erro
 func (r *testAssetRepo) GetAll(_ context.Context, _ string) (*models.Asset, error) {
 	return r.asset, nil
 }
+func (r *testAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	if r.asset == nil {
+		return out, nil
+	}
+	for _, assetID := range assetIDs {
+		if assetID == r.asset.AssetID {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
 
 func (r *testAssetRepo) InsertNew(_ context.Context, a *models.Asset) error {
 	return r.Set(context.Background(), a)

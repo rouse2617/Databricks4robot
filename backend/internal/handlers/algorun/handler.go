@@ -12,6 +12,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 )
 
 // Handler exposes algo_runs HTTP API.
@@ -226,6 +227,11 @@ type CancelRequest struct {
 }
 
 func mapAlgoRunErr(c *gin.Context, err error) {
+	var assetErr *assetvalidation.ValidationError
+	if errors.As(err, &assetErr) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, assetErr.Message(), assetErr.Details())
+		return
+	}
 	switch {
 	case errors.Is(err, algorunUC.ErrInvalidRunID),
 		errors.Is(err, algorunUC.ErrInvalidAlgoKind),

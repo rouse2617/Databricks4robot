@@ -2,12 +2,15 @@ package algorun_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 )
 
 type memAlgoRunRepo struct {
@@ -90,6 +93,38 @@ func (m *memAlgoRunRepo) GetAffectedAssets(_ context.Context, _ string) ([]*repo
 	return nil, nil
 }
 
+type memAssetRepo struct {
+	existing map[string]struct{}
+}
+
+func (m *memAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	for _, assetID := range assetIDs {
+		if _, ok := m.existing[assetID]; ok {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
+func (m *memAssetRepo) Get(context.Context, string) (*models.Asset, error)    { return nil, nil }
+func (m *memAssetRepo) GetAll(context.Context, string) (*models.Asset, error) { return nil, nil }
+func (m *memAssetRepo) InsertNew(context.Context, *models.Asset) error        { return nil }
+func (m *memAssetRepo) Set(context.Context, *models.Asset) error              { return nil }
+func (m *memAssetRepo) SoftDelete(context.Context, string) error              { return nil }
+func (m *memAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
+func (m *memAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
+func (m *memAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (m *memAssetRepo) ListWithFilters(context.Context, string, []interface{}, int, int, filter.OrderByClause) ([]*models.Asset, int64, error) {
+	return nil, 0, nil
+}
+func (m *memAssetRepo) ListDescendants(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
+
 func TestAlgoRunLifecycle(t *testing.T) {
 	repo := newMemAlgoRunRepo()
 	uc := algorunUC.New(repo)
@@ -122,6 +157,73 @@ func TestAlgoRunLifecycle(t *testing.T) {
 	if err != nil || finished.Status != models.AlgoRunStatusOK {
 		t.Fatalf("finish: err=%v status=%s", err, finished.Status)
 	}
+}
+
+func TestCreate_ValidatesInputAssetIDs(t *testing.T) {
+	ctx := context.Background()
+	baseInput := algorunUC.CreateInput{
+		RunID:       "R001abc123def456",
+		AlgoName:    "hand_track",
+		AlgoVersion: "2.0",
+		TriggeredBy: "manual:ops",
+	}
+
+	t.Run("missing asset fails before insert", func(t *testing.T) {
+		runRepo := newMemAlgoRunRepo()
+		uc := algorunUC.New(runRepo)
+		uc.SetAssetRepo(&memAssetRepo{existing: map[string]struct{}{"asset-1": {}}})
+
+		in := baseInput
+		in.InputAssetIDs = []string{"asset-1", "missing"}
+		_, err := uc.Create(ctx, in)
+		if err == nil {
+			t.Fatal("expected missing asset error")
+		}
+		var validationErr *assetvalidation.ValidationError
+		if !errors.As(err, &validationErr) {
+			t.Fatalf("expected ValidationError, got %T %[1]v", err)
+		}
+		if len(validationErr.MissingIDs) != 1 || validationErr.MissingIDs[0] != "missing" {
+			t.Fatalf("missing IDs = %v", validationErr.MissingIDs)
+		}
+		if len(runRepo.byID) != 0 {
+			t.Fatalf("expected no run inserted, got %d", len(runRepo.byID))
+		}
+	})
+
+	t.Run("duplicate asset ID fails with details", func(t *testing.T) {
+		uc := algorunUC.New(newMemAlgoRunRepo())
+		uc.SetAssetRepo(&memAssetRepo{existing: map[string]struct{}{"asset-1": {}}})
+
+		in := baseInput
+		in.InputAssetIDs = []string{"asset-1", "asset-1"}
+		_, err := uc.Create(ctx, in)
+		if err == nil {
+			t.Fatal("expected duplicate asset error")
+		}
+		var validationErr *assetvalidation.ValidationError
+		if !errors.As(err, &validationErr) {
+			t.Fatalf("expected ValidationError, got %T %[1]v", err)
+		}
+		if len(validationErr.DuplicateIDs) != 1 || validationErr.DuplicateIDs[0] != "asset-1" {
+			t.Fatalf("duplicate IDs = %v", validationErr.DuplicateIDs)
+		}
+	})
+
+	t.Run("valid assets are normalized", func(t *testing.T) {
+		uc := algorunUC.New(newMemAlgoRunRepo())
+		uc.SetAssetRepo(&memAssetRepo{existing: map[string]struct{}{"asset-1": {}}})
+
+		in := baseInput
+		in.InputAssetIDs = []string{" asset-1 "}
+		run, err := uc.Create(ctx, in)
+		if err != nil {
+			t.Fatalf("Create err=%v", err)
+		}
+		if len(run.InputAssetIDs) != 1 || run.InputAssetIDs[0] != "asset-1" {
+			t.Fatalf("input asset IDs = %v", run.InputAssetIDs)
+		}
+	})
 }
 
 func TestCreate_DuplicateRunIDReturnsConflict(t *testing.T) {

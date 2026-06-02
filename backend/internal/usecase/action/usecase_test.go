@@ -26,6 +26,21 @@ func (r *stubAssetRepo) Get(ctx context.Context, id string) (*models.Asset, erro
 func (r *stubAssetRepo) GetAll(_ context.Context, _ string) (*models.Asset, error) {
 	return r.parent, r.err
 }
+func (r *stubAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (map[string]struct{}, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := make(map[string]struct{})
+	if r.parent == nil {
+		return out, nil
+	}
+	for _, assetID := range assetIDs {
+		if assetID == r.parent.AssetID {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
 func (r *stubAssetRepo) InsertNew(context.Context, *models.Asset) error { return nil }
 func (r *stubAssetRepo) Set(context.Context, *models.Asset) error       { return nil }
 func (r *stubAssetRepo) SoftDelete(context.Context, string) error       { return nil }

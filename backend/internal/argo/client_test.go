@@ -20,20 +20,58 @@ func TestClientGetWorkflowLogsUsesPodNameWithoutGrep(t *testing.T) {
 		if got := r.URL.Query().Get("grep"); got != "" {
 			t.Fatalf("grep query = %q, want empty", got)
 		}
+		if got := r.URL.Query().Get("logOptions.tailLines"); got != "200" {
+			t.Fatalf("tailLines query = %q, want 200", got)
+		}
+		if got := r.URL.Query().Get("logOptions.limitBytes"); got != "1024" {
+			t.Fatalf("limitBytes query = %q, want 1024", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"result":{"podName":"wf-1-step-123","content":"hello\n"}}`))
 	}))
 	defer server.Close()
 
 	client := NewClientFromConfig(&Config{ServerURL: server.URL})
-	logs, err := client.GetWorkflowLogs(context.Background(), "wf-1", "wf-1-step-123", "cyber-databrew-dev")
+	tailLines := int64(200)
+	limitBytes := int64(1024)
+	result, err := client.GetWorkflowLogs(context.Background(), "wf-1", "wf-1-step-123", "cyber-databrew-dev", WorkflowLogOptions{
+		Container:  "main",
+		TailLines:  &tailLines,
+		LimitBytes: &limitBytes,
+	})
 	if err != nil {
 		t.Fatalf("GetWorkflowLogs returned error: %v", err)
 	}
-	if logs != "wf-1-step-123 hello\n" {
-		t.Fatalf("logs = %q, want pod-prefixed log content", logs)
+	if result.Logs != "wf-1-step-123 hello\n" {
+		t.Fatalf("logs = %q, want pod-prefixed log content", result.Logs)
+	}
+	if result.LineCount != 1 || result.Truncated {
+		t.Fatalf("unexpected result metadata: %#v", result)
 	}
 	if gotQuery == "" {
 		t.Fatal("server did not receive query string")
+	}
+}
+
+func TestClientGetWorkflowLogsDetectsLimitBytesTruncation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"result":{"podName":"pod","content":"first\n"}}` + "\n" +
+				`{"result":{"podName":"pod","content":"second\n"}}` + "\n",
+		))
+	}))
+	defer server.Close()
+
+	client := NewClientFromConfig(&Config{ServerURL: server.URL})
+	limitBytes := int64(55)
+	result, err := client.GetWorkflowLogs(context.Background(), "wf-1", "pod", "cyber-databrew-dev", WorkflowLogOptions{
+		LimitBytes: &limitBytes,
+	})
+	if err != nil {
+		t.Fatalf("GetWorkflowLogs returned error: %v", err)
+	}
+	if !result.Truncated {
+		t.Fatalf("expected truncated result, got %#v", result)
 	}
 }

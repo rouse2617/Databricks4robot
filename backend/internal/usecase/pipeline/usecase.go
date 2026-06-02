@@ -13,10 +13,13 @@ import (
 
 	"log/slog"
 
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,6 +37,9 @@ var (
 type Usecase struct {
 	templateRepo   repository.PipelineTemplateRepository
 	deploymentRepo repository.PipelineDeploymentRepository
+	targetRepo     repository.ExecutionTargetRepository
+	runRepo        repository.PipelineRunRepository
+	runNodeRepo    repository.PipelineRunNodeRepository
 	assetRepo      repository.AssetRepository
 	assetEventRepo repository.AssetEventRepository
 	relationWriter repository.AssetRelationWriter
@@ -43,9 +49,10 @@ type Usecase struct {
 }
 
 type DeployOptions struct {
-	DryRun     bool
-	TemplateID string
-	TargetID   string
+	DryRun          bool
+	TemplateID      string
+	TemplateVersion int
+	TargetID        string
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -61,6 +68,18 @@ func (uc *Usecase) SetRelationWriter(r repository.AssetRelationWriter) {
 // SetLogicalAssetRepo wires logical_assets persistence (CYB-1013 pipeline outputs).
 func (uc *Usecase) SetLogicalAssetRepo(r repository.LogicalAssetRepository) {
 	uc.logicalRepo = r
+}
+
+// SetRunRepositories wires first-class pipeline run persistence. The legacy
+// deployment repo remains required for compatibility endpoints.
+func (uc *Usecase) SetRunRepositories(
+	targetRepo repository.ExecutionTargetRepository,
+	runRepo repository.PipelineRunRepository,
+	runNodeRepo repository.PipelineRunNodeRepository,
+) {
+	uc.targetRepo = targetRepo
+	uc.runRepo = runRepo
+	uc.runNodeRepo = runNodeRepo
 }
 
 func logPipelineSideEffect(op string, err error) {
@@ -87,8 +106,21 @@ func New(
 }
 
 // ListExecutionTargets returns currently available runtime destinations.
-func (uc *Usecase) ListExecutionTargets(_ context.Context) []models.ExecutionTarget {
-	return []models.ExecutionTarget{uc.defaultExecutionTarget()}
+func (uc *Usecase) ListExecutionTargets(ctx context.Context) ([]models.ExecutionTarget, error) {
+	if uc.targetRepo == nil {
+		return []models.ExecutionTarget{uc.defaultExecutionTarget()}, nil
+	}
+	if err := uc.ensureDefaultExecutionTarget(ctx); err != nil {
+		return nil, err
+	}
+	targets, err := uc.targetRepo.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range targets {
+		uc.normalizeExecutionTarget(&targets[i])
+	}
+	return targets, nil
 }
 
 func (uc *Usecase) defaultExecutionTarget() models.ExecutionTarget {
@@ -103,13 +135,324 @@ func (uc *Usecase) defaultExecutionTarget() models.ExecutionTarget {
 		Namespace:            uc.namespace,
 		ArgoServerConfigured: uc.wfClient != nil,
 		Status:               status,
+		Enabled:              true,
 		IsDefault:            true,
 		Description:          "Current backend-configured Argo workflow namespace.",
+		ResourceDefaults:     map[string]interface{}{},
+		QuotaPolicy:          map[string]interface{}{},
+		Labels:               map[string]interface{}{"source": "backend-default"},
 	}
 }
 
-func (uc *Usecase) resolveExecutionTarget(targetID string) (*models.ExecutionTarget, error) {
+func (uc *Usecase) ensureDefaultExecutionTarget(ctx context.Context) error {
+	if uc.targetRepo == nil {
+		return nil
+	}
+	existing, err := uc.targetRepo.FindDefault(ctx)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	target := uc.defaultExecutionTarget()
+	return uc.targetRepo.Save(ctx, &target)
+}
+
+func (uc *Usecase) normalizeExecutionTarget(target *models.ExecutionTarget) {
+	if target == nil {
+		return
+	}
+	if target.Status == "" {
+		target.Status = "available"
+	}
+	if target.ID == "default" && uc.wfClient == nil {
+		target.Status = "unavailable"
+	}
+	if target.ID == "default" && target.Namespace == "" {
+		target.Namespace = uc.namespace
+	}
+	if target.ResourceDefaults == nil {
+		target.ResourceDefaults = map[string]interface{}{}
+	}
+	if target.QuotaPolicy == nil {
+		target.QuotaPolicy = map[string]interface{}{}
+	}
+	if target.Labels == nil {
+		target.Labels = map[string]interface{}{}
+	}
+	target.ArgoServerConfigured = target.ArgoServerURL != "" || uc.wfClient != nil
+}
+
+func (uc *Usecase) resolveExecutionTarget(ctx context.Context, targetID string) (*models.ExecutionTarget, error) {
 	targetID = strings.TrimSpace(targetID)
+	if uc.targetRepo == nil {
+		if targetID == "" || targetID == "default" {
+			target := uc.defaultExecutionTarget()
+			return &target, nil
+		}
+		return nil, fmt.Errorf("%w: target_id=%q", ErrExecutionTargetNotFound, targetID)
+	}
+	if err := uc.ensureDefaultExecutionTarget(ctx); err != nil {
+		return nil, err
+	}
+	var (
+		target *models.ExecutionTarget
+		err    error
+	)
+	if targetID == "" || targetID == "default" {
+		target, err = uc.targetRepo.FindDefault(ctx)
+	} else {
+		target, err = uc.targetRepo.FindByID(ctx, targetID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, fmt.Errorf("%w: target_id=%q", ErrExecutionTargetNotFound, targetID)
+	}
+	uc.normalizeExecutionTarget(target)
+	if !target.Enabled {
+		return nil, fmt.Errorf("%w: target_id=%q is disabled", ErrExecutionTargetNotFound, targetID)
+	}
+	return target, nil
+}
+
+func executionTargetSnapshot(target *models.ExecutionTarget) map[string]interface{} {
+	if target == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"id":                     target.ID,
+		"name":                   target.Name,
+		"cluster":                target.Cluster,
+		"namespace":              target.Namespace,
+		"serviceAccount":         target.ServiceAccount,
+		"argoServerConfigured":   target.ArgoServerConfigured,
+		"status":                 target.Status,
+		"isDefault":              target.IsDefault,
+		"resourceDefaults":       target.ResourceDefaults,
+		"quotaPolicy":            target.QuotaPolicy,
+		"labels":                 target.Labels,
+		"argoAuthSecretRef":      target.ArgoAuthSecretRef,
+		"argoInsecureSkipTls":    target.ArgoInsecureSkipTLS,
+		"argoCaCertRef":          target.ArgoCACertRef,
+		"argoServerUrlRedacted":  target.ArgoServerURL != "",
+		"argoAuthSecretRedacted": target.ArgoAuthSecretRef != "",
+	}
+}
+
+func (uc *Usecase) deploymentToRun(dep *models.PipelineDeployment) *models.PipelineRun {
+	if dep == nil {
+		return nil
+	}
+	target := uc.defaultExecutionTarget()
+	if dep.ExecutionTarget != nil {
+		target = *dep.ExecutionTarget
+	}
+	run := &models.PipelineRun{
+		ID:                dep.ID,
+		TemplateID:        dep.TemplateID,
+		PipelineName:      dep.PipelineName,
+		WorkflowName:      dep.WorkflowName,
+		ExecutionTargetID: target.ID,
+		TargetSnapshot:    executionTargetSnapshot(&target),
+		Status:            dep.Status,
+		NodeCount:         dep.NodeCount,
+		AssetIDs:          dep.AssetIDs,
+		AssetCount:        dep.AssetCount,
+		NoAssetRun:        len(dep.AssetIDs) == 0,
+		Manifest:          dep.Manifest,
+		PipelineJSON:      dep.PipelineJSON,
+		ArgoNamespace:     target.Namespace,
+		ExecutionTarget:   &target,
+		CreatedAt:         dep.CreatedAt,
+		UpdatedAt:         dep.UpdatedAt,
+		FinishedAt:        dep.FinishedAt,
+	}
+	if run.ArgoNamespace == "" {
+		run.ArgoNamespace = uc.namespace
+	}
+	return run
+}
+
+func runToDeployment(run *models.PipelineRun) *models.PipelineDeployment {
+	if run == nil {
+		return nil
+	}
+	dep := &models.PipelineDeployment{
+		ID:              run.ID,
+		TemplateID:      run.TemplateID,
+		PipelineName:    run.PipelineName,
+		WorkflowName:    run.WorkflowName,
+		Status:          run.Status,
+		NodeCount:       run.NodeCount,
+		AssetIDs:        run.AssetIDs,
+		AssetCount:      run.AssetCount,
+		ExecutionTarget: run.ExecutionTarget,
+		Manifest:        run.Manifest,
+		PipelineJSON:    run.PipelineJSON,
+		CreatedAt:       run.CreatedAt,
+		UpdatedAt:       run.UpdatedAt,
+		FinishedAt:      run.FinishedAt,
+	}
+	return dep
+}
+
+func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDeployment, templateVersion int, wfUID string) error {
+	if uc.runRepo == nil || dep == nil {
+		return nil
+	}
+	run := uc.deploymentToRun(dep)
+	if templateVersion > 0 {
+		run.TemplateVersion = &templateVersion
+	}
+	run.ArgoWorkflowUID = wfUID
+	if err := uc.runRepo.Save(ctx, run); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
+	if run == nil {
+		return
+	}
+	if len(run.AssetIDs) == 0 {
+		run.AssetIDs = assetIDsFromPipelineJSON(run.PipelineJSON)
+	}
+	run.AssetCount = len(run.AssetIDs)
+	if run.ExecutionTarget == nil {
+		if uc.targetRepo != nil && run.ExecutionTargetID != "" {
+			if target, err := uc.targetRepo.FindByID(ctx, run.ExecutionTargetID); err == nil && target != nil {
+				uc.normalizeExecutionTarget(target)
+				run.ExecutionTarget = target
+			}
+		}
+		if run.ExecutionTarget == nil {
+			target := uc.defaultExecutionTarget()
+			run.ExecutionTarget = &target
+		}
+	}
+	if uc.runNodeRepo != nil {
+		if nodes, err := uc.runNodeRepo.FindByRunID(ctx, run.ID); err == nil {
+			run.Nodes = nodes
+		}
+	}
+}
+
+func timePtrFromMeta(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	out := t.UTC()
+	return &out
+}
+
+func structToMap(v interface{}) map[string]interface{} {
+	raw, err := json.Marshal(v)
+	if err != nil || len(raw) == 0 || string(raw) == "null" {
+		return map[string]interface{}{}
+	}
+	out := map[string]interface{}{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return map[string]interface{}{}
+	}
+	return out
+}
+
+func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.NodeStatus) []models.PipelineRunNode {
+	out := make([]models.PipelineRunNode, 0, len(nodes))
+	for id, node := range nodes {
+		podName := ""
+		if node.Type == wfv1.NodeTypePod {
+			podName = node.Name
+		}
+		displayName := node.DisplayName
+		if displayName == "" {
+			displayName = node.Name
+		}
+		pipelineNodeID := node.TemplateName
+		if pipelineNodeID == "" {
+			pipelineNodeID = displayName
+		}
+		logRef := ""
+		if podName != "" {
+			logRef = fmt.Sprintf("/api/v1/workflows/%s/logs?podName=%s", wfName, podName)
+		}
+		out = append(out, models.PipelineRunNode{
+			ID:                uuid.New().String(),
+			RunID:             runID,
+			PipelineNodeID:    pipelineNodeID,
+			ArgoNodeID:        id,
+			ArgoNodeName:      node.Name,
+			DisplayName:       displayName,
+			TemplateName:      node.TemplateName,
+			Type:              string(node.Type),
+			Phase:             string(node.Phase),
+			Message:           node.Message,
+			PodName:           podName,
+			HostNodeName:      node.HostNodeName,
+			Children:          node.Children,
+			Inputs:            structToMap(node.Inputs),
+			Outputs:           structToMap(node.Outputs),
+			ResourcesDuration: structToMap(node.ResourcesDuration),
+			ResourceSummary:   map[string]interface{}{},
+			LogRef:            logRef,
+			StartedAt:         timePtrFromMeta(node.StartedAt.Time),
+			FinishedAt:        timePtrFromMeta(node.FinishedAt.Time),
+			CreatedAt:         time.Now().UTC(),
+			UpdatedAt:         time.Now().UTC(),
+		})
+	}
+	return out
+}
+
+func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
+	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
+		return
+	}
+	namespace := run.ArgoNamespace
+	if namespace == "" {
+		namespace = uc.namespace
+	}
+	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	if err != nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			run.Status = deploymentStatusExpired
+			logPipelineSideEffect("mark expired pipeline run", uc.runRepo.UpdateStatus(ctx, run.ID, deploymentStatusExpired, nil))
+		}
+		return
+	}
+	if wf == nil {
+		return
+	}
+	if wf.Status.Phase != "" {
+		run.Status = string(wf.Status.Phase)
+	}
+	if string(wf.UID) != "" {
+		run.ArgoWorkflowUID = string(wf.UID)
+	}
+	if wf.Status.Phase == "Succeeded" || wf.Status.Phase == "Failed" || wf.Status.Phase == "Error" {
+		now := time.Now().UTC()
+		run.FinishedAt = &now
+	}
+	logPipelineSideEffect("update pipeline run status", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
+	if uc.runNodeRepo != nil && len(wf.Status.Nodes) > 0 {
+		nodes := runNodesFromWorkflow(run.ID, run.WorkflowName, wf.Status.Nodes)
+		logPipelineSideEffect("replace pipeline run nodes", uc.runNodeRepo.ReplaceByRunID(ctx, run.ID, nodes))
+		run.Nodes = nodes
+	}
+}
+
+func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.PipelineRun) {
+	if uc.runRepo == nil {
+		return
+	}
+	uc.refreshRunStatus(ctx, run)
+}
+
+func (uc *Usecase) resolveExecutionTargetForCompatibility(targetID string) (*models.ExecutionTarget, error) {
 	if targetID == "" || targetID == "default" {
 		target := uc.defaultExecutionTarget()
 		return &target, nil
@@ -159,6 +502,11 @@ func (uc *Usecase) GetTemplate(ctx context.Context, id string) (*models.Pipeline
 
 // DeleteTemplate removes a pipeline template.
 func (uc *Usecase) DeleteTemplate(ctx context.Context, id string) error {
+	if uc.runRepo != nil {
+		if err := uc.runRepo.DeleteByTemplateID(ctx, id); err != nil {
+			return fmt.Errorf("delete template runs: %w", err)
+		}
+	}
 	if err := uc.deploymentRepo.DeleteByTemplateID(ctx, id); err != nil {
 		return fmt.Errorf("delete template deployments: %w", err)
 	}
@@ -196,28 +544,30 @@ func (uc *Usecase) Deploy(
 	wfName := pipeName + "-" + uuid.New().String()[:6]
 	depID := uuid.New().String()
 	templateID := ""
+	templateVersion := 0
 	dryRun := false
 	if len(opts) > 0 {
 		templateID = opts[0].TemplateID
+		templateVersion = opts[0].TemplateVersion
 		dryRun = opts[0].DryRun
 	}
-	target, err := uc.resolveExecutionTarget("")
+	target, err := uc.resolveExecutionTarget(ctx, "")
 	if len(opts) > 0 {
-		target, err = uc.resolveExecutionTarget(opts[0].TargetID)
+		target, err = uc.resolveExecutionTarget(ctx, opts[0].TargetID)
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	// Validate all asset IDs exist before proceeding (T-12).
-	if len(assetIDs) > 0 && uc.assetRepo != nil {
-		for _, aid := range assetIDs {
-			a, err := uc.assetRepo.Get(ctx, aid)
-			if err != nil || a == nil {
-				return nil, fmt.Errorf("%w: asset_id=%q", ErrAssetNotFound, aid)
-			}
-		}
+	targetNamespace := target.Namespace
+	if targetNamespace == "" {
+		targetNamespace = uc.namespace
 	}
+
+	normalizedAssetIDs, err := assetvalidation.Validate(ctx, uc.assetRepo, "asset_ids", assetIDs)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrAssetNotFound, err)
+	}
+	assetIDs = normalizedAssetIDs
 
 	// Assemble workflow-level params and global env vars from asset IDs.
 	var wfParams []transpiler.Param
@@ -253,7 +603,7 @@ func (uc *Usecase) Deploy(
 	// Transpile to Argo Workflow.
 	wfOpts := &transpiler.Options{
 		Name:            wfName,
-		Namespace:       uc.namespace,
+		Namespace:       targetNamespace,
 		TTLSecondsAfter: 3600,
 		WorkflowParams:  wfParams,
 		GlobalEnv:       globalEnv,
@@ -294,15 +644,22 @@ func (uc *Usecase) Deploy(
 		return nil, ErrWorkflowUnavailable
 	}
 	status := "Pending"
-	if err := uc.wfClient.CreateWorkflow(ctx, wf, uc.namespace); err != nil {
+	if err := uc.wfClient.CreateWorkflow(ctx, wf, targetNamespace); err != nil {
 		if strings.Contains(err.Error(), "argo server URL is empty") {
 			return nil, fmt.Errorf("%w: create workflow", ErrWorkflowUnavailable)
 		}
 		return nil, fmt.Errorf("create workflow: %w", err)
 	}
-	phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, uc.namespace)
+	wfUID := ""
+	phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, targetNamespace)
 	if err == nil && phase != "" {
 		status = string(phase)
+	}
+	if wfDetail, err := uc.wfClient.GetWorkflow(ctx, wfName, targetNamespace); err == nil && wfDetail != nil {
+		wfUID = string(wfDetail.UID)
+		if wfDetail.Status.Phase != "" {
+			status = string(wfDetail.Status.Phase)
+		}
 	}
 
 	dep := &models.PipelineDeployment{
@@ -328,6 +685,9 @@ func (uc *Usecase) Deploy(
 
 	if err := uc.deploymentRepo.Save(ctx, dep); err != nil {
 		return nil, fmt.Errorf("save deployment: %w", err)
+	}
+	if err := uc.savePipelineRun(ctx, dep, templateVersion, wfUID); err != nil {
+		return nil, fmt.Errorf("save pipeline run: %w", err)
 	}
 
 	// Record asset_events for input assets (F4.4).
@@ -363,11 +723,179 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	if name == "" {
 		name = t.Name
 	}
-	deployOpts := DeployOptions{TemplateID: templateID}
+	deployOpts := DeployOptions{TemplateID: templateID, TemplateVersion: t.Version}
 	if len(opts) > 0 {
 		deployOpts.TargetID = opts[0].TargetID
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
+}
+
+// ── Pipeline Runs ───────────────────────────────────────────────────────
+
+// CreateRun creates a first-class pipeline run while keeping deployment
+// compatibility storage in sync.
+func (uc *Usecase) CreateRun(
+	ctx context.Context,
+	pipelineArg map[string]interface{},
+	name string,
+	assetIDs []string,
+	opts ...DeployOptions,
+) (*models.PipelineRun, error) {
+	dep, err := uc.Deploy(ctx, pipelineArg, name, assetIDs, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if uc.runRepo == nil {
+		return uc.deploymentToRun(dep), nil
+	}
+	run, err := uc.runRepo.FindByID(ctx, dep.ID)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return uc.deploymentToRun(dep), nil
+	}
+	uc.enrichRun(ctx, run)
+	return run, nil
+}
+
+// CreateRunByTemplateID creates a first-class pipeline run from a saved template.
+func (uc *Usecase) CreateRunByTemplateID(ctx context.Context, templateID, name string, assetIDs []string, opts ...DeployOptions) (*models.PipelineRun, error) {
+	dep, err := uc.DeployByTemplateID(ctx, templateID, name, assetIDs, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if uc.runRepo == nil {
+		return uc.deploymentToRun(dep), nil
+	}
+	run, err := uc.runRepo.FindByID(ctx, dep.ID)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return uc.deploymentToRun(dep), nil
+	}
+	uc.enrichRun(ctx, run)
+	return run, nil
+}
+
+// ListRuns returns all first-class pipeline runs. When the run table is not
+// wired, it projects legacy deployments for compatibility.
+func (uc *Usecase) ListRuns(ctx context.Context) ([]models.PipelineRun, error) {
+	if uc.runRepo == nil {
+		deps, err := uc.ListDeployments(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]models.PipelineRun, 0, len(deps))
+		for i := range deps {
+			out = append(out, *uc.deploymentToRun(&deps[i]))
+		}
+		return out, nil
+	}
+	list, err := uc.runRepo.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if uc.wfClient != nil {
+		refreshed := 0
+		for i := range list {
+			if refreshed >= maxActiveDeploymentStatusRefresh {
+				break
+			}
+			if isActiveDeploymentStatus(list[i].Status) {
+				refreshed++
+				uc.refreshPipelineRunStatus(ctx, &list[i])
+			}
+		}
+	}
+	for i := range list {
+		uc.enrichRun(ctx, &list[i])
+	}
+	return list, nil
+}
+
+// GetRun returns a single first-class pipeline run.
+func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, error) {
+	if uc.runRepo == nil {
+		dep, err := uc.GetDeployment(ctx, id)
+		if err != nil || dep == nil {
+			return nil, err
+		}
+		return uc.deploymentToRun(dep), nil
+	}
+	run, err := uc.runRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, nil
+	}
+	uc.refreshPipelineRunStatus(ctx, run)
+	uc.enrichRun(ctx, run)
+	return run, nil
+}
+
+// DeleteRun removes a first-class run and the legacy deployment record.
+func (uc *Usecase) DeleteRun(ctx context.Context, id string) error {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return ErrDeploymentNotFound
+	}
+	if uc.wfClient != nil {
+		namespace := run.ArgoNamespace
+		if namespace == "" {
+			namespace = uc.namespace
+		}
+		logPipelineSideEffect("delete workflow", uc.wfClient.DeleteWorkflow(ctx, run.WorkflowName, namespace))
+	}
+	if uc.runNodeRepo != nil {
+		logPipelineSideEffect("delete pipeline run nodes", uc.runNodeRepo.DeleteByRunID(ctx, id))
+	}
+	if uc.runRepo != nil {
+		if err := uc.runRepo.Delete(ctx, id); err != nil {
+			return err
+		}
+	}
+	return uc.deploymentRepo.Delete(ctx, id)
+}
+
+// RetryRun re-runs a first-class pipeline run.
+func (uc *Usecase) RetryRun(ctx context.Context, id string) (*models.PipelineRun, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	targetID := run.ExecutionTargetID
+	if targetID == "" && run.ExecutionTarget != nil {
+		targetID = run.ExecutionTarget.ID
+	}
+	return uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-retry", run.AssetIDs, DeployOptions{TargetID: targetID})
+}
+
+// StopRun stops a run's workflow.
+func (uc *Usecase) StopRun(ctx context.Context, id string) error {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return ErrDeploymentNotFound
+	}
+	if uc.wfClient == nil {
+		return fmt.Errorf("workflow client not available")
+	}
+	namespace := run.ArgoNamespace
+	if namespace == "" {
+		namespace = uc.namespace
+	}
+	return uc.wfClient.StopWorkflow(ctx, run.WorkflowName, namespace)
 }
 
 // SaveFromDeployment creates a new template from a deployment's pipeline JSON (F7.8).
@@ -452,6 +980,13 @@ func (uc *Usecase) GetDeployment(ctx context.Context, id string) (*models.Pipeli
 		return nil, err
 	}
 	if d == nil {
+		if uc.runRepo != nil {
+			run, err := uc.GetRun(ctx, id)
+			if err != nil || run == nil {
+				return nil, err
+			}
+			return runToDeployment(run), nil
+		}
 		return nil, nil
 	}
 	uc.refreshDeploymentStatus(ctx, d)
@@ -473,6 +1008,9 @@ func (uc *Usecase) enrichDeployment(d *models.PipelineDeployment) {
 
 // DeleteDeployment removes a deployment record and optionally deletes the K8s workflow.
 func (uc *Usecase) DeleteDeployment(ctx context.Context, id string) error {
+	if uc.runRepo != nil {
+		return uc.DeleteRun(ctx, id)
+	}
 	if uc.wfClient != nil {
 		d, err := uc.deploymentRepo.FindByID(ctx, id)
 		if err == nil && d != nil {
@@ -484,6 +1022,13 @@ func (uc *Usecase) DeleteDeployment(ctx context.Context, id string) error {
 
 // RetryDeployment re-deploys from a saved deployment's pipeline JSON.
 func (uc *Usecase) RetryDeployment(ctx context.Context, id string) (*models.PipelineDeployment, error) {
+	if uc.runRepo != nil {
+		run, err := uc.RetryRun(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return runToDeployment(run), nil
+	}
 	d, err := uc.deploymentRepo.FindByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("find deployment: %w", err)
@@ -497,6 +1042,9 @@ func (uc *Usecase) RetryDeployment(ctx context.Context, id string) (*models.Pipe
 
 // StopDeployment stops a running workflow by setting its Shutdown strategy.
 func (uc *Usecase) StopDeployment(ctx context.Context, id string) error {
+	if uc.runRepo != nil {
+		return uc.StopRun(ctx, id)
+	}
 	d, err := uc.deploymentRepo.FindByID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("find deployment: %w", err)
@@ -671,22 +1219,47 @@ func (uc *Usecase) GetLineage(ctx context.Context, assetID string) (*AssetLineag
 
 // ResourceUsageReport describes per-pod resource usage for a deployment.
 type ResourceUsageReport struct {
-	DeploymentID string             `json:"deployment_id"`
-	WorkflowName string             `json:"workflow_name"`
-	Status       string             `json:"status"`
-	Pods         []PodResourceUsage `json:"pods"`
+	DeploymentID         string              `json:"deployment_id,omitempty"`
+	WorkflowName         string              `json:"workflow_name"`
+	Status               string              `json:"status"`
+	ObservedAt           string              `json:"observed_at"`
+	Source               ResourceUsageSource `json:"source"`
+	LiveMetricsAvailable bool                `json:"live_metrics_available"`
+	Pods                 []PodResourceUsage  `json:"pods"`
+}
+
+// ResourceUsageSource describes where each resource signal came from.
+type ResourceUsageSource struct {
+	Workflow string `json:"workflow"`
+	Metrics  string `json:"metrics"`
+	Spec     string `json:"spec"`
+}
+
+// ResourceValues carries CPU and memory resource quantities.
+type ResourceValues struct {
+	CPU    string `json:"cpu,omitempty"`
+	Memory string `json:"memory,omitempty"`
 }
 
 // PodResourceUsage summarizes per-pod runtime duration and template resource requests.
 type PodResourceUsage struct {
-	PodName       string `json:"pod_name"`
-	NodeName      string `json:"node_name,omitempty"`
-	CPUUsage      string `json:"cpu_usage"`
-	MemoryUsage   string `json:"memory_usage"`
-	CPURequest    string `json:"cpu_request"`
-	MemoryRequest string `json:"memory_request"`
-	CPULimit      string `json:"cpu_limit"`
-	MemoryLimit   string `json:"memory_limit"`
+	PodName                string         `json:"pod_name"`
+	NodeID                 string         `json:"node_id,omitempty"`
+	NodeName               string         `json:"node_name,omitempty"`
+	TemplateName           string         `json:"template_name,omitempty"`
+	ObservedAt             string         `json:"observed_at,omitempty"`
+	LiveMetricsAvailable   bool           `json:"live_metrics_available"`
+	Requests               ResourceValues `json:"requests"`
+	Limits                 ResourceValues `json:"limits"`
+	ResourceDuration       ResourceValues `json:"resource_duration"`
+	CPUUsage               string         `json:"cpu_usage"`
+	MemoryUsage            string         `json:"memory_usage"`
+	CPUResourceDuration    string         `json:"cpu_resource_duration,omitempty"`
+	MemoryResourceDuration string         `json:"memory_resource_duration,omitempty"`
+	CPURequest             string         `json:"cpu_request"`
+	MemoryRequest          string         `json:"memory_request"`
+	CPULimit               string         `json:"cpu_limit"`
+	MemoryLimit            string         `json:"memory_limit"`
 }
 
 // GetResourceUsage returns resource usage for pods belonging to a deployment.
@@ -703,7 +1276,14 @@ func (uc *Usecase) GetResourceUsage(ctx context.Context, deploymentID string) (*
 		DeploymentID: deploymentID,
 		WorkflowName: d.WorkflowName,
 		Status:       d.Status,
-		Pods:         []PodResourceUsage{},
+		ObservedAt:   time.Now().UTC().Format(time.RFC3339),
+		Source: ResourceUsageSource{
+			Workflow: "unavailable",
+			Metrics:  "unavailable",
+			Spec:     specSource(d.Manifest),
+		},
+		LiveMetricsAvailable: false,
+		Pods:                 []PodResourceUsage{},
 	}
 
 	if uc.wfClient != nil && d.WorkflowName != "" {
@@ -715,10 +1295,67 @@ func (uc *Usecase) GetResourceUsage(ctx context.Context, deploymentID string) (*
 			if wf.Status.Phase != "" {
 				report.Status = string(wf.Status.Phase)
 			}
-			report.Pods = buildPodResourceUsageReport(wf, d.Manifest)
+			report.Source.Workflow = "argo-live"
+			report.Pods = buildPodResourceUsageReport(wf, d.Manifest, report.ObservedAt, "")
 		}
 	}
 
+	return report, nil
+}
+
+// GetWorkflowResourceUsage returns resource usage metadata for a workflow.
+func (uc *Usecase) GetWorkflowResourceUsage(ctx context.Context, workflowName string) (*ResourceUsageReport, error) {
+	return uc.getWorkflowResourceUsage(ctx, workflowName, "")
+}
+
+// GetWorkflowNodeResourceUsage returns resource usage metadata for one workflow node.
+func (uc *Usecase) GetWorkflowNodeResourceUsage(ctx context.Context, workflowName, nodeID string) (*ResourceUsageReport, error) {
+	return uc.getWorkflowResourceUsage(ctx, workflowName, nodeID)
+}
+
+func (uc *Usecase) getWorkflowResourceUsage(ctx context.Context, workflowName, nodeID string) (*ResourceUsageReport, error) {
+	if strings.TrimSpace(workflowName) == "" {
+		return nil, ErrInvalidArgument
+	}
+	if uc.wfClient == nil {
+		return nil, ErrWorkflowUnavailable
+	}
+
+	var manifest *string
+	var deploymentID string
+	if uc.deploymentRepo != nil {
+		if deployments, err := uc.deploymentRepo.FindAll(ctx); err == nil {
+			for i := range deployments {
+				if deployments[i].WorkflowName == workflowName {
+					manifest = deployments[i].Manifest
+					deploymentID = deployments[i].ID
+					break
+				}
+			}
+		}
+	}
+
+	wf, err := uc.wfClient.GetWorkflow(ctx, workflowName, uc.namespace)
+	if err != nil {
+		return nil, fmt.Errorf("get workflow: %w", err)
+	}
+	observedAt := time.Now().UTC().Format(time.RFC3339)
+	report := &ResourceUsageReport{
+		DeploymentID: deploymentID,
+		WorkflowName: workflowName,
+		Status:       string(wf.Status.Phase),
+		ObservedAt:   observedAt,
+		Source: ResourceUsageSource{
+			Workflow: "argo-live",
+			Metrics:  "unavailable",
+			Spec:     specSource(manifest),
+		},
+		LiveMetricsAvailable: false,
+		Pods:                 buildPodResourceUsageReport(wf, manifest, observedAt, nodeID),
+	}
+	if nodeID != "" && len(report.Pods) == 0 {
+		return nil, ErrDeploymentNotFound
+	}
 	return report, nil
 }
 

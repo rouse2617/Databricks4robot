@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 
@@ -12,6 +14,14 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+)
+
+const (
+	defaultWorkflowLogTailLines  int64 = 200
+	maxWorkflowLogTailLines      int64 = 2000
+	defaultWorkflowLogLimitBytes int64 = 262144
+	maxWorkflowLogLimitBytes     int64 = 2097152
+	workflowLogSourceArgoLive          = "argo-live"
 )
 
 type Handler struct {
@@ -221,12 +231,29 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
 		return
 	}
-	logs, err := h.wfClient.GetWorkflowLogs(c.Request.Context(), name, podName, namespace)
+	opts, meta, ok := parseWorkflowLogOptions(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.wfClient.GetWorkflowLogs(c.Request.Context(), name, podName, namespace, opts)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	c.JSON(200, gin.H{"logs": logs})
+	meta["bytesTruncated"] = result.Truncated
+	c.JSON(200, gin.H{
+		"workflowName": name,
+		"nodeId":       nodeId,
+		"podName":      podName,
+		"container":    opts.Container,
+		"source":       workflowLogSourceArgoLive,
+		"logs":         result.Logs,
+		"lineCount":    result.LineCount,
+		"truncated":    result.Truncated,
+		"nextCursor":   nil,
+		"truncation":   meta,
+	})
 }
 
 // RetryWorkflow handles POST /api/v1/workflows/:name/retry
@@ -282,4 +309,97 @@ func (h *Handler) namespaceFor(c *gin.Context) string {
 		return namespace
 	}
 	return h.namespace
+}
+
+func parseWorkflowLogOptions(c *gin.Context) (argo.WorkflowLogOptions, gin.H, bool) {
+	tailLines, tailClamped, ok := parseBoundedInt64Query(
+		c,
+		"tailLines",
+		defaultWorkflowLogTailLines,
+		maxWorkflowLogTailLines,
+		false,
+	)
+	if !ok {
+		return argo.WorkflowLogOptions{}, nil, false
+	}
+	limitBytes, limitClamped, ok := parseBoundedInt64Query(
+		c,
+		"limitBytes",
+		defaultWorkflowLogLimitBytes,
+		maxWorkflowLogLimitBytes,
+		false,
+	)
+	if !ok {
+		return argo.WorkflowLogOptions{}, nil, false
+	}
+	opts := argo.WorkflowLogOptions{
+		Container:  strings.TrimSpace(c.DefaultQuery("container", defaultWorkflowLogContainer)),
+		TailLines:  &tailLines,
+		LimitBytes: &limitBytes,
+	}
+	if opts.Container == "" {
+		opts.Container = defaultWorkflowLogContainer
+	}
+	if raw := strings.TrimSpace(c.Query("sinceSeconds")); raw != "" {
+		seconds, _, parsed := parseBoundedInt64Query(c, "sinceSeconds", 0, 0, true)
+		if !parsed {
+			return argo.WorkflowLogOptions{}, nil, false
+		}
+		opts.SinceSeconds = &seconds
+	}
+	if raw := strings.TrimSpace(c.Query("sinceTime")); raw != "" {
+		if _, err := time.Parse(time.RFC3339, raw); err != nil {
+			httpresp.BadRequest(c, "INVALID_ARGUMENT", "sinceTime must be RFC3339", nil)
+			return argo.WorkflowLogOptions{}, nil, false
+		}
+		opts.SinceTime = raw
+	}
+	if raw := strings.TrimSpace(c.Query("previous")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			httpresp.BadRequest(c, "INVALID_ARGUMENT", "previous must be a boolean", nil)
+			return argo.WorkflowLogOptions{}, nil, false
+		}
+		opts.Previous = value
+	}
+	if raw := strings.TrimSpace(c.Query("timestamps")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			httpresp.BadRequest(c, "INVALID_ARGUMENT", "timestamps must be a boolean", nil)
+			return argo.WorkflowLogOptions{}, nil, false
+		}
+		opts.Timestamps = value
+	}
+	meta := gin.H{
+		"bounded":           true,
+		"tailLines":         tailLines,
+		"maxTailLines":      maxWorkflowLogTailLines,
+		"tailLinesClamped":  tailClamped,
+		"limitBytes":        limitBytes,
+		"maxLimitBytes":     maxWorkflowLogLimitBytes,
+		"limitBytesClamped": limitClamped,
+	}
+	return opts, meta, true
+}
+
+func parseBoundedInt64Query(
+	c *gin.Context,
+	name string,
+	defaultValue int64,
+	maxValue int64,
+	allowNoMax bool,
+) (int64, bool, bool) {
+	raw := strings.TrimSpace(c.Query(name))
+	if raw == "" {
+		return defaultValue, false, true
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 0 {
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", name+" must be a non-negative integer", nil)
+		return 0, false, false
+	}
+	if !allowNoMax && value > maxValue {
+		return maxValue, true, true
+	}
+	return value, false, true
 }

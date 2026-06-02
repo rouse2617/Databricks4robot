@@ -30,6 +30,15 @@ func (r *reindexAssetRepo) Get(ctx context.Context, assetID string) (*models.Ass
 func (r *reindexAssetRepo) GetAll(_ context.Context, assetID string) (*models.Asset, error) {
 	return r.get[assetID], nil
 }
+func (r *reindexAssetRepo) FindExistingIDs(_ context.Context, assetIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	for _, assetID := range assetIDs {
+		if r.get[assetID] != nil {
+			out[assetID] = struct{}{}
+		}
+	}
+	return out, nil
+}
 func (r *reindexAssetRepo) Set(context.Context, *models.Asset) error { return nil }
 func (r *reindexAssetRepo) SoftDelete(context.Context, string) error { return nil }
 func (r *reindexAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {

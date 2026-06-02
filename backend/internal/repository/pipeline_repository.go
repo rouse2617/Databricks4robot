@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
@@ -58,4 +59,33 @@ type PipelineDeploymentRepository interface {
 	// UpdateStatus sets the status for a pipeline deployment. It is a no-op
 	// when the row does not exist.
 	UpdateStatus(ctx context.Context, id, status string) error
+}
+
+// ExecutionTargetRepository defines persistence operations for runtime
+// destinations used by pipeline runs.
+type ExecutionTargetRepository interface {
+	Save(ctx context.Context, t *models.ExecutionTarget) error
+	FindAll(ctx context.Context) ([]models.ExecutionTarget, error)
+	FindByID(ctx context.Context, id string) (*models.ExecutionTarget, error)
+	FindDefault(ctx context.Context) (*models.ExecutionTarget, error)
+}
+
+// PipelineRunRepository defines persistence operations for first-class
+// pipeline run records.
+type PipelineRunRepository interface {
+	Save(ctx context.Context, r *models.PipelineRun) error
+	FindAll(ctx context.Context) ([]models.PipelineRun, error)
+	FindByID(ctx context.Context, id string) (*models.PipelineRun, error)
+	FindByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error)
+	Delete(ctx context.Context, id string) error
+	DeleteByTemplateID(ctx context.Context, templateID string) error
+	UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time) error
+}
+
+// PipelineRunNodeRepository defines persistence operations for Argo node
+// snapshots attached to a first-class pipeline run.
+type PipelineRunNodeRepository interface {
+	ReplaceByRunID(ctx context.Context, runID string, nodes []models.PipelineRunNode) error
+	FindByRunID(ctx context.Context, runID string) ([]models.PipelineRunNode, error)
+	DeleteByRunID(ctx context.Context, runID string) error
 }
