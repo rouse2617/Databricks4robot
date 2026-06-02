@@ -84,6 +84,10 @@ function WorkflowLogPanel({
 	error,
 	search,
 	onSearch,
+	following,
+	onFollow,
+	onStop,
+	onDownload,
 }: {
 	selectedNode: WorkflowNodeStatus | null;
 	loading: boolean;
@@ -91,6 +95,10 @@ function WorkflowLogPanel({
 	error: string | null;
 	search: string;
 	onSearch: (value: string) => void;
+	following: boolean;
+	onFollow: () => void;
+	onStop: () => void;
+	onDownload: () => void;
 }) {
 	const logBodyRef = useRef<HTMLDivElement | null>(null);
 	const visibleLog = useMemo(
@@ -126,15 +134,36 @@ function WorkflowLogPanel({
 				padding: 16,
 			}}
 		>
-			<Input.Search
-				id="workflow-log-search"
-				name="workflow-log-search"
-				placeholder="日志关键字搜索"
-				value={search}
-				onChange={(event) => onSearch(event.target.value)}
-				allowClear
-				style={{ marginBottom: 12 }}
-			/>
+			<div
+				style={{
+					marginBottom: 12,
+					display: "flex",
+					gap: 8,
+					alignItems: "center",
+				}}
+			>
+				<Input.Search
+					id="workflow-log-search"
+					name="workflow-log-search"
+					placeholder="日志关键字搜索"
+					value={search}
+					onChange={(event) => onSearch(event.target.value)}
+					allowClear
+					style={{ flex: 1 }}
+				/>
+				{!following ? (
+					<Button size="small" type="primary" onClick={onFollow}>
+						实时日志
+					</Button>
+				) : (
+					<Button size="small" danger onClick={onStop}>
+						停止
+					</Button>
+				)}
+				<Button size="small" onClick={onDownload}>
+					下载
+				</Button>
+			</div>
 
 			{!selectedNode ? (
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>
@@ -337,6 +366,9 @@ export default function WorkflowDetailPage({
 		loadWorkflow,
 		logState,
 		setLogSearch,
+		startFollowLogs,
+		stopFollowLogs,
+		downloadLogs,
 	} = useWorkflowDetail(name);
 	const [showNodeLogs, setShowNodeLogs] = useState(false);
 	const operations = useMemo(
@@ -466,7 +498,8 @@ export default function WorkflowDetailPage({
 
 	const handleCloseNodeLogs = useCallback(() => {
 		setShowNodeLogs(false);
-	}, []);
+		stopFollowLogs();
+	}, [stopFollowLogs]);
 
 	const handleRetryWorkflow = useCallback(() => {
 		if (!workflow) return;
@@ -720,6 +753,10 @@ export default function WorkflowDetailPage({
 					logContent={logState.content}
 					error={logState.error}
 					search={logState.search}
+					following={logState.following}
+					onFollow={startFollowLogs}
+					onStop={stopFollowLogs}
+					onDownload={downloadLogs}
 					onSearch={setLogSearch}
 				/>
 			</Modal>

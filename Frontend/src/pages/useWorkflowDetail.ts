@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../api/pipelineClient";
 import {
 	getWorkflow,
+	getWorkflowLogStreamUrl,
 	getWorkflowLogs,
 	type WorkflowDetail,
 	type WorkflowNodeStatus,
@@ -12,6 +13,7 @@ interface WorkflowLogState {
 	loading: boolean;
 	error: string | null;
 	search: string;
+	following: boolean;
 }
 
 export type WorkflowLoadErrorKind = "not_found" | "error";
@@ -30,6 +32,9 @@ interface UseWorkflowDetailResult {
 	loadWorkflow: () => void;
 	logState: WorkflowLogState;
 	setLogSearch: (query: string) => void;
+	startFollowLogs: () => void;
+	stopFollowLogs: () => void;
+	downloadLogs: () => void;
 }
 
 const EMPTY_LOG_STATE: WorkflowLogState = {
@@ -37,6 +42,7 @@ const EMPTY_LOG_STATE: WorkflowLogState = {
 	loading: false,
 	error: null,
 	search: "",
+	following: false,
 };
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(["Running", "Pending"]);
@@ -62,6 +68,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const [loadError, setLoadError] = useState<WorkflowLoadError | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [logState, setLogState] = useState<WorkflowLogState>(EMPTY_LOG_STATE);
+	const followSourceRef = useRef<EventSource | null>(null);
 
 	const loadWorkflow = useCallback(() => {
 		if (!name) return;
@@ -118,6 +125,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 					loading: false,
 					error: null,
 					search: current.search,
+					following: current.following,
 				}));
 			} catch (err) {
 				setLogState((current) => ({
@@ -125,6 +133,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 					loading: false,
 					error: toErrorMessage(err),
 					search: current.search,
+					following: current.following,
 				}));
 			}
 		},
@@ -159,6 +168,58 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		return workflow.nodes.find((node) => node.id === selectedNodeId) ?? null;
 	}, [workflow, selectedNodeId]);
 
+	const stopFollowLogs = useCallback(() => {
+		if (followSourceRef.current) {
+			followSourceRef.current.close();
+			followSourceRef.current = null;
+		}
+		setLogState((prev) => ({ ...prev, following: false }));
+	}, []);
+
+	const startFollowLogs = useCallback(() => {
+		if (!name || !selectedNodeId || followSourceRef.current) return;
+
+		stopFollowLogs();
+
+		const url = getWorkflowLogStreamUrl(name, selectedNodeId);
+		const source = new EventSource(url);
+		followSourceRef.current = source;
+
+		setLogState((prev) => ({ ...prev, following: true, error: null }));
+
+		source.addEventListener("log", (event: MessageEvent) => {
+			try {
+				const data = JSON.parse(event.data);
+				if (data.content) {
+					setLogState((prev) => ({
+						...prev,
+						content: (prev.content ?? "") + data.content,
+						loading: false,
+					}));
+				}
+			} catch {
+				// ignore malformed events
+			}
+		});
+
+		source.onerror = () => {
+			stopFollowLogs();
+		};
+	}, [name, selectedNodeId, stopFollowLogs]);
+
+	const downloadLogs = useCallback(() => {
+		const content = logState.content;
+		const selNode = selectedNode;
+		if (!content || !name || !selNode?.displayName) return;
+		const blob = new Blob([content], { type: "text/plain" });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `${name}-${selNode.displayName}.log`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}, [logState.content, name, selectedNode]);
+
 	useEffect(() => {
 		if (!selectedNodeId || !name) {
 			return;
@@ -187,6 +248,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		selectedNode,
 		loadWorkflow,
 		selectNode,
+		startFollowLogs,
+		stopFollowLogs,
+		downloadLogs,
 		logState: {
 			...logState,
 		},

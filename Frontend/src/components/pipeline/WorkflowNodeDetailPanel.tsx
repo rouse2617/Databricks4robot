@@ -24,7 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import type {
 	WorkflowDetail,
 	WorkflowNodeContainer,
@@ -287,26 +287,31 @@ function PodTab({
 	const [podDiag, setPodDiag] = useState<NodePodDiagnostics | null>(null);
 	const [podDiagLoading, setPodDiagLoading] = useState(false);
 	const [podDiagError, setPodDiagError] = useState<string | null>(null);
-	const [refreshTrigger, setRefreshTrigger] = useState(0);
+	const [refreshTrigger, refreshPodDiagnostics] = useReducer(
+		(count) => count + 1,
+		0,
+	);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: refreshTrigger intentionally re-runs pod diagnostics.
 	useEffect(() => {
 		if (!workflowName || !node.id) return undefined;
 		let cancelled = false;
+		const requestSeq = refreshTrigger;
 		setPodDiagLoading(true);
 		setPodDiagError(null);
 		getNodePodDiagnostics(workflowName, node.id)
 			.then((data) => {
-				if (!cancelled) setPodDiag(data);
+				if (!cancelled && requestSeq === refreshTrigger) setPodDiag(data);
 			})
 			.catch((err) => {
-				if (!cancelled) {
+				if (!cancelled && requestSeq === refreshTrigger) {
 					setPodDiag(null);
 					setPodDiagError(err instanceof Error ? err.message : String(err));
 				}
 			})
 			.finally(() => {
-				if (!cancelled) setPodDiagLoading(false);
+				if (!cancelled && requestSeq === refreshTrigger)
+					setPodDiagLoading(false);
 			});
 		return () => {
 			cancelled = true;
@@ -346,9 +351,7 @@ function PodTab({
 							size="small"
 							icon={<ReloadOutlined />}
 							loading={podDiagLoading}
-							onClick={() => {
-								setRefreshTrigger((prev) => prev + 1);
-							}}
+							onClick={refreshPodDiagnostics}
 						>
 							重试
 						</Button>

@@ -193,6 +193,20 @@ export function WorkflowDagNode({
 							<span>{messageSummary}</span>
 						</div>
 					</Tooltip>
+				) : isFailed ? (
+					<div
+						className="workflow-dag-node__failed-actions"
+						style={{ marginTop: 4 }}
+					>
+						<Button
+							size="small"
+							danger
+							icon={<FileTextOutlined />}
+							onClick={openAction("logs")}
+						>
+							查看失败日志
+						</Button>
+					</div>
 				) : null}
 
 				<div className="workflow-dag-node__actions">
