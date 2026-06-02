@@ -318,6 +318,16 @@ func (r *PipelineDeploymentRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteByTemplateID removes all pipeline deployments for a pipeline template.
+func (r *PipelineDeploymentRepo) DeleteByTemplateID(ctx context.Context, templateID string) error {
+	const q = `DELETE FROM pipeline_deployments WHERE template_id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, templateID); err != nil {
+		return fmt.Errorf("postgres PipelineDeploymentRepo.DeleteByTemplateID: %w", err)
+	}
+	return nil
+}
+
 // UpdateStatus sets the status for a pipeline deployment. It is a no-op when
 // the row does not exist.
 func (r *PipelineDeploymentRepo) UpdateStatus(ctx context.Context, id, status string) error {

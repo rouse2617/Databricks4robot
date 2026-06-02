@@ -159,6 +159,9 @@ func (uc *Usecase) GetTemplate(ctx context.Context, id string) (*models.Pipeline
 
 // DeleteTemplate removes a pipeline template.
 func (uc *Usecase) DeleteTemplate(ctx context.Context, id string) error {
+	if err := uc.deploymentRepo.DeleteByTemplateID(ctx, id); err != nil {
+		return fmt.Errorf("delete template deployments: %w", err)
+	}
 	return uc.templateRepo.Delete(ctx, id)
 }
 
