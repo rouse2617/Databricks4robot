@@ -103,6 +103,11 @@
 	font-size: var(--pipeline-font-base);
 }
 
+.pipeline-toolbar__version-select {
+	width: 92px;
+	flex-shrink: 0;
+}
+
 .pipeline-toolbar__actions {
 	display: flex;
 	align-items: center;
@@ -1158,6 +1163,10 @@
 	.pipeline-toolbar__name-input {
 		width: 180px;
 	}
+
+	.pipeline-toolbar__version-select {
+		width: 84px;
+	}
 }
 
 @media (max-width: 960px) {
@@ -1215,6 +1224,10 @@
 		flex: 1;
 		width: auto;
 		min-width: 0;
+	}
+
+	.pipeline-toolbar__version-select {
+		width: 76px;
 	}
 
 	.deploy-dialog {

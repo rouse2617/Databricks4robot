@@ -85,11 +85,19 @@ ON CONFLICT (id) DO UPDATE SET
 	return nil
 }
 
-// FindAll returns all pipeline templates ordered by created_at DESC.
+// FindAll returns the latest version of each pipeline template ordered by
+// updated_at DESC.
 func (r *PipelineTemplateRepo) FindAll(ctx context.Context) ([]models.PipelineTemplate, error) {
 	q := `SELECT ` + pipelineTemplateSelectCols + `
-FROM pipeline_templates
-ORDER BY created_at DESC`
+       , version_count
+FROM (
+	SELECT ` + pipelineTemplateSelectCols + `,
+	       ROW_NUMBER() OVER (PARTITION BY name ORDER BY version DESC, updated_at DESC) AS rn,
+	       COUNT(*) OVER (PARTITION BY name) AS version_count
+	FROM pipeline_templates
+) latest
+WHERE rn = 1
+ORDER BY updated_at DESC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q)
 	if err != nil {
@@ -98,11 +106,22 @@ ORDER BY created_at DESC`
 	defer rows.Close()
 	var out []models.PipelineTemplate
 	for rows.Next() {
-		t, err := scanPipelineTemplate(rows)
-		if err != nil {
+		var (
+			t            models.PipelineTemplate
+			pipelineJSON []byte
+		)
+		if err := rows.Scan(
+			&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.CreatedAt, &t.UpdatedAt, &t.VersionCount,
+		); err != nil {
 			return nil, fmt.Errorf("postgres PipelineTemplateRepo.FindAll scan: %w", err)
 		}
-		out = append(out, *t)
+		if len(pipelineJSON) > 0 {
+			_ = json.Unmarshal(pipelineJSON, &t.Pipeline)
+		}
+		if t.Pipeline == nil {
+			t.Pipeline = map[string]interface{}{}
+		}
+		out = append(out, t)
 	}
 	return out, nil
 }
@@ -119,6 +138,23 @@ WHERE id = $1`
 			return nil, nil
 		}
 		return nil, fmt.Errorf("postgres PipelineTemplateRepo.FindByID: %w", err)
+	}
+	return t, nil
+}
+
+// FindByNameAndVersion returns a pipeline template snapshot by name and
+// version, or (nil, nil) when not found.
+func (r *PipelineTemplateRepo) FindByNameAndVersion(ctx context.Context, name string, version int) (*models.PipelineTemplate, error) {
+	q := `SELECT ` + pipelineTemplateSelectCols + `
+FROM pipeline_templates
+WHERE name = $1 AND version = $2`
+	db := dbFromCtx(ctx, r.c.db)
+	t, err := scanPipelineTemplate(db.QueryRow(ctx, q, name, version))
+	if err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres PipelineTemplateRepo.FindByNameAndVersion: %w", err)
 	}
 	return t, nil
 }
@@ -154,6 +190,9 @@ func (r *PipelineTemplateRepo) FindVersionsByName(ctx context.Context, name stri
 			return nil, fmt.Errorf("postgres PipelineTemplateRepo.FindVersionsByName scan: %w", err)
 		}
 		out = append(out, *t)
+	}
+	for i := range out {
+		out[i].VersionCount = len(out)
 	}
 	return out, nil
 }

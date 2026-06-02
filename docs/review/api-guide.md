@@ -2359,7 +2359,48 @@ curl -s "$BASE/api/v1/execution-targets" \
 `asset_ids` 可为空，但 UI 应把空资产运行标识为 no-asset run。显式 `asset_ids`
 必须存在且未被软删除；重复或未知 ID 返回 `400 INVALID_ARGUMENT`，`details.field`
 为 `asset_ids`。该接口会同时写入兼容 deployment 记录，旧前端 `/deployments`
-仍可读取。
+仍可读取。模板保存是快照式版本管理：同名 pipeline 每次保存都会生成新的
+`version`；列表默认只返回同名模板的最新版本，`/pipelines/<ID>/versions`
+返回该模板名称下的全部历史版本。运行时可传 `version` 选择历史版本；响应会返回
+实际绑定的 `templateId` 与 `templateVersion`。
+
+```bash
+# 保存同名模板两次，会得到 v1 / v2 两个 snapshot。
+curl -X POST "$BASE/api/v1/pipelines" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "daily-ingest",
+    "pipeline": {
+      "name": "daily-ingest",
+      "nodes": [
+        {
+          "id": "step-1",
+          "component": {
+            "name": "echo",
+            "image": "alpine:3.18",
+            "command": ["sh", "-c"],
+            "args": [{"name": "script", "value": "echo ok"}]
+          },
+          "inputs": [],
+          "outputs": []
+        }
+      ],
+      "edges": []
+    }
+  }'
+
+curl -s "$BASE/api/v1/pipelines/<TEMPLATE_ID>/versions" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "items": [
+#     {"id": "tpl-v2", "name": "daily-ingest", "version": 2, "nodeCount": 1},
+#     {"id": "tpl-v1", "name": "daily-ingest", "version": 1, "nodeCount": 1}
+#   ]
+# }
+```
 
 ```bash
 curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
@@ -2367,6 +2408,7 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
   -H "Content-Type: application/json" \
   -d '{
     "target_id": "default",
+    "version": 1,
     "asset_ids": ["SDKT0202", "SDKT0101"]
   }'
 
@@ -2374,6 +2416,7 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
 # {
 #   "id": "run-123",
 #   "templateId": "tpl-123",
+#   "templateVersion": 1,
 #   "pipelineName": "asset-pipeline",
 #   "workflowName": "asset-pipeline-a1b2c3",
 #   "executionTargetId": "default",

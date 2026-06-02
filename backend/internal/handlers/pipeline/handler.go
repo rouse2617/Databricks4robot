@@ -92,13 +92,13 @@ func (h *Handler) DeleteTemplate(c *gin.Context) {
 
 // ListVersions handles GET /api/v1/pipelines/:id/versions.
 func (h *Handler) ListVersions(c *gin.Context) {
-	name := strings.TrimSpace(c.Param("id"))
-	if name == "" {
-		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "name is required", nil)
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "template id is required", nil)
 		return
 	}
 
-	items, err := h.uc.ListVersions(c.Request.Context(), name)
+	items, err := h.uc.ListVersions(c.Request.Context(), id)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -155,10 +155,14 @@ func (h *Handler) DeployByTemplate(c *gin.Context) {
 		Name     string   `json:"name"`
 		AssetIDs []string `json:"asset_ids"`
 		TargetID string   `json:"target_id"`
+		Version  int      `json:"version"`
 	}
-	_ = c.ShouldBindJSON(&req) // name and asset_ids are optional
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
 
-	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID})
+	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -197,6 +201,7 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		Name     string   `json:"name"`
 		AssetIDs []string `json:"asset_ids"`
 		TargetID string   `json:"target_id"`
+		Version  int      `json:"version"`
 	}
 	// Body is optional: empty body is fine, but a non-empty body that fails to
 	// bind (malformed JSON, wrong content type) is a client error and must not
@@ -205,7 +210,7 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
-	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID})
+	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version})
 	if err != nil {
 		mapDeployError(c, err)
 		return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -253,6 +254,7 @@ func (uc *Usecase) deploymentToRun(dep *models.PipelineDeployment) *models.Pipel
 	run := &models.PipelineRun{
 		ID:                dep.ID,
 		TemplateID:        dep.TemplateID,
+		TemplateVersion:   dep.TemplateVersion,
 		PipelineName:      dep.PipelineName,
 		WorkflowName:      dep.WorkflowName,
 		ExecutionTargetID: target.ID,
@@ -283,6 +285,7 @@ func runToDeployment(run *models.PipelineRun) *models.PipelineDeployment {
 	dep := &models.PipelineDeployment{
 		ID:              run.ID,
 		TemplateID:      run.TemplateID,
+		TemplateVersion: run.TemplateVersion,
 		PipelineName:    run.PipelineName,
 		WorkflowName:    run.WorkflowName,
 		Status:          run.Status,
@@ -485,8 +488,16 @@ func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[s
 	return t, nil
 }
 
-// ListVersions returns all versions of a named pipeline template.
-func (uc *Usecase) ListVersions(ctx context.Context, name string) ([]models.PipelineTemplate, error) {
+// ListVersions returns all versions of a pipeline template. The identifier is
+// normally a template id; name fallback preserves compatibility with older
+// callers that used the route param as a template name.
+func (uc *Usecase) ListVersions(ctx context.Context, templateIDOrName string) ([]models.PipelineTemplate, error) {
+	name := templateIDOrName
+	if t, err := uc.templateRepo.FindByID(ctx, templateIDOrName); err != nil {
+		return nil, fmt.Errorf("find template: %w", err)
+	} else if t != nil {
+		name = t.Name
+	}
 	return uc.templateRepo.FindVersionsByName(ctx, name)
 }
 
@@ -623,11 +634,16 @@ func (uc *Usecase) Deploy(
 	}
 
 	if dryRun {
+		var templateVersionPtr *int
+		if templateVersion > 0 {
+			templateVersionPtr = &templateVersion
+		}
 		return &models.PipelineDeployment{
 			ID:              depID,
 			PipelineName:    pipeName,
 			WorkflowName:    wfName,
 			Status:          "Preview",
+			TemplateVersion: templateVersionPtr,
 			NodeCount:       nodeCount,
 			Manifest:        &manifest,
 			PipelineJSON:    pipelineArg,
@@ -678,6 +694,9 @@ func (uc *Usecase) Deploy(
 	if templateID != "" {
 		dep.TemplateID = &templateID
 	}
+	if templateVersion > 0 {
+		dep.TemplateVersion = &templateVersion
+	}
 	// Embed input asset IDs into PipelineJSON for lineage queries (F4.7).
 	if len(assetIDs) > 0 {
 		pipelineArg["_input_asset_ids"] = assetIDs
@@ -719,6 +738,17 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	}
 	if t == nil {
 		return nil, ErrTemplateNotFound
+	}
+	if len(opts) > 0 && opts[0].TemplateVersion > 0 && opts[0].TemplateVersion != t.Version {
+		versioned, err := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, opts[0].TemplateVersion)
+		if err != nil {
+			return nil, fmt.Errorf("find template version: %w", err)
+		}
+		if versioned == nil {
+			return nil, ErrTemplateNotFound
+		}
+		t = versioned
+		templateID = t.ID
 	}
 	if name == "" {
 		name = t.Name
@@ -950,6 +980,34 @@ func (uc *Usecase) refreshDeploymentStatus(ctx context.Context, d *models.Pipeli
 
 // ListDeployments returns all deployments, optionally refreshing active statuses.
 func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeployment, error) {
+	if uc.runRepo != nil {
+		runs, err := uc.ListRuns(ctx)
+		if err != nil {
+			return nil, err
+		}
+		legacy, err := uc.deploymentRepo.FindAll(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]models.PipelineDeployment, 0, len(runs)+len(legacy))
+		seen := make(map[string]struct{}, len(runs))
+		for i := range runs {
+			dep := runToDeployment(&runs[i])
+			out = append(out, *dep)
+			seen[dep.ID] = struct{}{}
+		}
+		for i := range legacy {
+			if _, ok := seen[legacy[i].ID]; ok {
+				continue
+			}
+			uc.enrichDeployment(&legacy[i])
+			out = append(out, legacy[i])
+		}
+		sort.SliceStable(out, func(i, j int) bool {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		})
+		return out, nil
+	}
 	list, err := uc.deploymentRepo.FindAll(ctx)
 	if err != nil {
 		return nil, err

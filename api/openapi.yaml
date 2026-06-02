@@ -1796,6 +1796,7 @@ components:
         id: { type: string, description: Template ID }
         name: { type: string, description: Template name }
         version: { type: integer, description: Template version number }
+        versionCount: { type: integer, description: Number of saved versions for the same template name }
         pipeline:
           type: object
           description: Full pipeline definition (nodes + edges)
@@ -1807,6 +1808,7 @@ components:
       properties:
         id: { type: string, description: Deployment ID }
         templateId: { type: string, nullable: true, description: Optional linked template ID }
+        templateVersion: { type: integer, nullable: true, description: Version of the linked template snapshot }
         pipelineName: { type: string, description: Pipeline name from the deployed pipeline }
         workflowName: { type: string, description: Resulting Argo workflow name }
         status: { type: string, description: Deployment/workflow status (Succeeded, Running, Failed, Error, Expired, etc.). Expired means the deployment record remains but the Argo Workflow CR is no longer available, usually due to TTL cleanup. }
@@ -4677,7 +4679,7 @@ paths:
     get:
       tags: [Pipeline]
       summary: List pipeline templates
-      description: Returns all saved pipeline templates.
+      description: Returns the latest version of each saved pipeline template.
       security:
         - DatabrewToken: []
       responses:
@@ -4736,6 +4738,7 @@ paths:
     get:
       tags: [Pipeline]
       summary: List all versions of a pipeline template
+      description: Returns all saved snapshots for the same template name as the provided template ID, ordered by version descending.
       security:
         - DatabrewToken: []
       parameters:
@@ -4743,7 +4746,7 @@ paths:
           name: id
           required: true
           schema: { type: string }
-          description: Template name (the `id` param maps to name for version listing)
+          description: Template ID
       responses:
         '200':
           description: Version list
@@ -4794,6 +4797,9 @@ paths:
                 target_id:
                   type: string
                   description: Execution target ID. Defaults to the dev target when omitted.
+                version:
+                  type: integer
+                  description: Optional template version to run. Defaults to the template ID's own version.
       responses:
         '200':
           description: Dry-run preview generated
@@ -4851,6 +4857,9 @@ paths:
                 target_id:
                   type: string
                   description: Execution target ID. Defaults to the dev target when omitted.
+                version:
+                  type: integer
+                  description: Optional template version to run. Defaults to the template ID's own version.
       responses:
         '201':
           description: Deployment created

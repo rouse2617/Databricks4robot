@@ -46,6 +46,8 @@ import {
 	type ExecutionTarget,
 	getPipeline,
 	listExecutionTargets,
+	listPipelineVersions,
+	type PipelineTemplate,
 	previewDeploy,
 	savePipeline,
 } from "../api/pipelineApi";
@@ -112,6 +114,7 @@ function PipelineCanvas() {
 	const [searchParams] = useSearchParams();
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const editor = useFlowEditor();
+	const editorRef = useRef(editor);
 	const { modal } = App.useApp();
 	const queryAssetIds = useMemo(
 		() => parseAssetIds(searchParams.get("asset_ids")),
@@ -139,6 +142,12 @@ function PipelineCanvas() {
 		reload: reloadComponents,
 	} = usePipelineComponents(apiToRegistered, dedupeComponentsByName);
 	const [templateLoading, setTemplateLoading] = useState(false);
+	const [templateVersions, setTemplateVersions] = useState<PipelineTemplate[]>(
+		[],
+	);
+	const [selectedTemplateVersionId, setSelectedTemplateVersionId] = useState<
+		string | null
+	>(null);
 	const templateId = useMemo(
 		() => searchParams.get("templateId") || null,
 		[searchParams],
@@ -187,6 +196,10 @@ function PipelineCanvas() {
 	const nodeTypes = useMemo(() => PIPELINE_NODE_TYPES, []);
 
 	useEffect(() => {
+		editorRef.current = editor;
+	}, [editor]);
+
+	useEffect(() => {
 		setSelectedAssetIds(queryAssetIds);
 	}, [queryAssetIds]);
 
@@ -216,19 +229,16 @@ function PipelineCanvas() {
 		});
 	}, [nodes]);
 
-	const loadPipelineToCanvas = useCallback(
-		(pipeline: Pipeline) => {
-			const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
-			setNodes(n);
-			setEdges(e);
-			setEditingNodeId(null);
-			if (pipeline.name) setPipelineName(pipeline.name);
-			setSelectedNode(null);
-			editor.deselectAll();
-			setJsonOutput(null);
-		},
-		[editor],
-	);
+	const loadPipelineToCanvas = useCallback((pipeline: Pipeline) => {
+		const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
+		setNodes(n);
+		setEdges(e);
+		setEditingNodeId(null);
+		if (pipeline.name) setPipelineName(pipeline.name);
+		setSelectedNode(null);
+		editorRef.current.deselectAll();
+		setJsonOutput(null);
+	}, []);
 
 	const loadPipelineFromSessionStorage = useCallback(() => {
 		const raw = sessionStorage.getItem("pipeline-edit");
@@ -243,20 +253,27 @@ function PipelineCanvas() {
 
 	useEffect(() => {
 		if (!templateId) {
+			setTemplateVersions((prev) => (prev.length > 0 ? [] : prev));
+			setSelectedTemplateVersionId((prev) => (prev !== null ? null : prev));
 			loadPipelineFromSessionStorage();
 			return;
 		}
 
 		let cancelled = false;
 		setTemplateLoading(true);
-		getPipeline(templateId)
-			.then((template) => {
+		Promise.all([getPipeline(templateId), listPipelineVersions(templateId)])
+			.then(([template, versions]) => {
 				if (cancelled) return;
 				loadPipelineToCanvas(template.pipeline);
+				setPipelineName(template.name);
+				setTemplateVersions(versions);
+				setSelectedTemplateVersionId(template.id);
 			})
 			.catch((err) => {
 				if (cancelled) return;
 				message.error(`模板加载失败: ${String(err)}`);
+				setTemplateVersions([]);
+				setSelectedTemplateVersionId(null);
 				loadPipelineFromSessionStorage();
 			})
 			.finally(() => {
@@ -267,6 +284,20 @@ function PipelineCanvas() {
 			cancelled = true;
 		};
 	}, [loadPipelineFromSessionStorage, loadPipelineToCanvas, templateId]);
+
+	const handleTemplateVersionChange = useCallback(
+		(versionId: string) => {
+			const version = templateVersions.find((item) => item.id === versionId);
+			if (!version) return;
+			setSelectedTemplateVersionId(versionId);
+			loadPipelineToCanvas(version.pipeline);
+			setPipelineName(version.name);
+			navigate(`/pipeline?templateId=${encodeURIComponent(versionId)}`, {
+				replace: true,
+			});
+		},
+		[loadPipelineToCanvas, navigate, templateVersions],
+	);
 
 	const componentById = useMemo(() => {
 		const map = new Map<string, RegisteredComponent>();
@@ -595,12 +626,20 @@ function PipelineCanvas() {
 
 	const handleSave = useCallback(async () => {
 		try {
-			await savePipeline(pipelineName, buildPipelineJSON());
-			message.success("已保存，可在「流水线」页签管理");
+			const saved = await savePipeline(pipelineName, buildPipelineJSON());
+			setSelectedTemplateVersionId(saved.id);
+			setTemplateVersions((prev) => {
+				const withoutSaved = prev.filter((item) => item.id !== saved.id);
+				return [saved, ...withoutSaved].sort((a, b) => b.version - a.version);
+			});
+			navigate(`/pipeline?templateId=${encodeURIComponent(saved.id)}`, {
+				replace: true,
+			});
+			message.success(`已保存为 v${saved.version}，可在「流水线」页签管理`);
 		} catch (err) {
 			message.error(`保存失败: ${String(err)}`);
 		}
-	}, [pipelineName, buildPipelineJSON]);
+	}, [pipelineName, buildPipelineJSON, navigate]);
 
 	const canDeploy = nodes.length > 0;
 
@@ -759,6 +798,19 @@ function PipelineCanvas() {
 						className="pipeline-toolbar__name-input"
 						size="small"
 					/>
+					{templateVersions.length > 0 ? (
+						<Select
+							size="small"
+							className="pipeline-toolbar__version-select"
+							value={selectedTemplateVersionId ?? undefined}
+							onChange={handleTemplateVersionChange}
+							options={templateVersions.map((version) => ({
+								value: version.id,
+								label: `v${version.version}`,
+							}))}
+							aria-label="流水线模板版本"
+						/>
+					) : null}
 				</div>
 				<div className="pipeline-toolbar__actions">
 					<Tooltip title={deployDisabledReason}>

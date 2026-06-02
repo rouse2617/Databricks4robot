@@ -17,6 +17,7 @@ import PipelinePage from "./PipelinePage";
 const mockSavePipeline = vi.fn();
 const mockDeployTemplate = vi.fn();
 const mockListPipelines = vi.fn().mockResolvedValue([]);
+const mockListPipelineVersions = vi.fn().mockResolvedValue([]);
 const mockListDeployments = vi.fn().mockResolvedValue([]);
 const mockGetPipeline = vi.fn();
 const mockDeletePipeline = vi.fn();
@@ -39,6 +40,8 @@ vi.mock("../api/pipelineApi", () => ({
 	savePipeline: (...args: unknown[]) => mockSavePipeline(...args),
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
+	listPipelineVersions: (...args: unknown[]) =>
+		mockListPipelineVersions(...args),
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
 	listExecutionTargets: (...args: unknown[]) =>
 		mockListExecutionTargets(...args),
@@ -188,6 +191,7 @@ function resetPipelineMocks() {
 	mockSavePipeline.mockReset();
 	mockDeployTemplate.mockReset();
 	mockListPipelines.mockResolvedValue([]);
+	mockListPipelineVersions.mockResolvedValue([]);
 	mockListDeployments.mockResolvedValue([]);
 	mockGetPipeline.mockReset();
 	mockDeletePipeline.mockReset();

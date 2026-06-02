@@ -43,6 +43,14 @@ func (m *mockTemplateRepo) FindAll(_ context.Context) ([]models.PipelineTemplate
 func (m *mockTemplateRepo) FindByID(_ context.Context, id string) (*models.PipelineTemplate, error) {
 	return m.byID[id], nil
 }
+func (m *mockTemplateRepo) FindByNameAndVersion(_ context.Context, name string, version int) (*models.PipelineTemplate, error) {
+	for _, t := range m.byID {
+		if t.Name == name && t.Version == version {
+			return t, nil
+		}
+	}
+	return nil, nil
+}
 func (m *mockTemplateRepo) FindVersionsByName(_ context.Context, name string) ([]models.PipelineTemplate, error) {
 	out := make([]models.PipelineTemplate, 0)
 	for _, t := range m.byID {
@@ -544,6 +552,49 @@ func TestDeployByTemplate_Success(t *testing.T) {
 	}
 	if resp.PipelineName != "from-template" {
 		t.Errorf("expected pipelineName 'from-template', got %q", resp.PipelineName)
+	}
+	if resp.TemplateVersion == nil || *resp.TemplateVersion != 1 {
+		t.Fatalf("expected template version 1, got %v", resp.TemplateVersion)
+	}
+}
+
+func TestDeployByTemplate_UsesRequestedVersion(t *testing.T) {
+	templateRepo := &mockTemplateRepo{}
+	v1 := makeTemplate("tpl-v1", "my-pipeline", 1)
+	v1.Pipeline["nodes"] = []interface{}{
+		map[string]interface{}{"id": "step-1", "component": map[string]interface{}{"name": "a", "image": "alpine:3.20"}},
+	}
+	v2 := makeTemplate("tpl-v2", "my-pipeline", 2)
+	v2.Pipeline["nodes"] = []interface{}{
+		map[string]interface{}{"id": "step-1", "component": map[string]interface{}{"name": "a", "image": "alpine:latest"}},
+		map[string]interface{}{"id": "step-2", "component": map[string]interface{}{"name": "b", "image": "alpine:latest"}},
+	}
+	_ = templateRepo.Save(context.Background(), v1)
+	_ = templateRepo.Save(context.Background(), v2)
+	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	h := New(uc)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/deploy/template/tpl-v2", strings.NewReader(`{"version":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp models.PipelineDeployment
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.TemplateID == nil || *resp.TemplateID != "tpl-v1" {
+		t.Fatalf("expected v1 template id, got %v", resp.TemplateID)
+	}
+	if resp.TemplateVersion == nil || *resp.TemplateVersion != 1 {
+		t.Fatalf("expected template version 1, got %v", resp.TemplateVersion)
+	}
+	if resp.NodeCount != 1 {
+		t.Fatalf("expected v1 node count 1, got %d", resp.NodeCount)
 	}
 }
 

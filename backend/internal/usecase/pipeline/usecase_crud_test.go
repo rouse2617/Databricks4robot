@@ -339,6 +339,47 @@ func TestDeployByTemplateID(t *testing.T) {
 			t.Fatalf("expected pipeline name 'custom-name', got %q", dep.PipelineName)
 		}
 	})
+
+	t.Run("deploys requested saved version snapshot", func(t *testing.T) {
+		uc := newUsecase(newMockAssetRepo())
+		v1Pipe := map[string]interface{}{
+			"name": "versioned",
+			"nodes": []interface{}{
+				map[string]interface{}{"id": "s1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+			},
+			"edges": []interface{}{},
+		}
+		v1, err := uc.SaveTemplate(ctx, "versioned", v1Pipe)
+		if err != nil {
+			t.Fatalf("SaveTemplate v1: %v", err)
+		}
+		v2Pipe := map[string]interface{}{
+			"name": "versioned",
+			"nodes": []interface{}{
+				map[string]interface{}{"id": "s1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+				map[string]interface{}{"id": "s2", "component": map[string]interface{}{"name": "b", "image": "img"}},
+			},
+			"edges": []interface{}{},
+		}
+		v2, err := uc.SaveTemplate(ctx, "versioned", v2Pipe)
+		if err != nil {
+			t.Fatalf("SaveTemplate v2: %v", err)
+		}
+
+		dep, err := uc.DeployByTemplateID(ctx, v2.ID, "", nil, DeployOptions{TemplateVersion: 1})
+		if err != nil {
+			t.Fatalf("DeployByTemplateID: %v", err)
+		}
+		if dep.TemplateID == nil || *dep.TemplateID != v1.ID {
+			t.Fatalf("expected v1 templateID %q, got %v", v1.ID, dep.TemplateID)
+		}
+		if dep.TemplateVersion == nil || *dep.TemplateVersion != 1 {
+			t.Fatalf("expected template version 1, got %v", dep.TemplateVersion)
+		}
+		if dep.NodeCount != 1 {
+			t.Fatalf("expected v1 node count 1, got %d", dep.NodeCount)
+		}
+	})
 }
 
 // ── SaveFromDeployment ────────────────────────────────────────────────────

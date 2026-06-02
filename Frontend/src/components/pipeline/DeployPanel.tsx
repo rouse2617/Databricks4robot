@@ -28,6 +28,7 @@ import {
 	listDeployments,
 	listExecutionTargets,
 	listPipelines,
+	listPipelineVersions,
 	type PipelineTemplate,
 } from "../../api/pipelineApi";
 import { toAssetStyleId } from "../../lib/idDisplay";
@@ -106,12 +107,20 @@ function TemplateCard({
 				</div>
 				{!compactActions ? (
 					<div className="dep-card-meta">
+						<Tag color="blue">v{template.version}</Tag>
+						{template.versionCount && template.versionCount > 1 ? (
+							<span>{template.versionCount} 个版本</span>
+						) : null}
 						<span>{template.nodeCount} 个节点</span>
 						<span className="dot">•</span>
 						<span>{new Date(template.createdAt).toLocaleString()}</span>
 					</div>
 				) : (
 					<div className="dep-card-meta dep-card-meta--compact">
+						<Tag color="blue">v{template.version}</Tag>
+						{template.versionCount && template.versionCount > 1 ? (
+							<span>{template.versionCount} 版</span>
+						) : null}
 						<span>{template.nodeCount} 个节点</span>
 						<span className="dot">•</span>
 						<span>{new Date(template.createdAt).toLocaleDateString()}</span>
@@ -214,6 +223,10 @@ export function DeployPanel({
 	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
 	const [deploying, setDeploying] = useState(false);
 	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
+	const [deployVersions, setDeployVersions] = useState<PipelineTemplate[]>([]);
+	const [selectedDeployVersion, setSelectedDeployVersion] = useState<
+		number | undefined
+	>();
 
 	const displayTemplates = useMemo(
 		() => dedupeTemplatesByName(templates),
@@ -264,18 +277,37 @@ export function DeployPanel({
 	}, []);
 
 	const handleDeployClick = (templateId: string) => {
+		const currentTemplate = templates.find(
+			(template) => template.id === templateId,
+		);
 		setDeployTargetId(templateId);
+		setDeployVersions(currentTemplate ? [currentTemplate] : []);
+		setSelectedDeployVersion(currentTemplate?.version);
 		setSelectedAssetIds([]);
 		setAssetPickerResetKey((key) => key + 1);
 		const defaultTarget =
 			targets.find((target) => target.isDefault) ?? targets[0];
 		setSelectedTargetId(defaultTarget?.id ?? "default");
 		setAssetModalOpen(true);
+		listPipelineVersions(templateId)
+			.then((versions) => {
+				setDeployVersions(versions);
+				if (versions.length > 0) {
+					setSelectedDeployVersion(
+						currentTemplate?.version ?? versions[0]?.version,
+					);
+				}
+			})
+			.catch((err) => {
+				message.warning(`版本列表加载失败，将运行当前版本: ${String(err)}`);
+			});
 	};
 
 	const closeAssetModal = () => {
 		setAssetModalOpen(false);
 		setSelectedAssetIds([]);
+		setDeployVersions([]);
+		setSelectedDeployVersion(undefined);
 		setAssetPickerResetKey((key) => key + 1);
 	};
 
@@ -283,13 +315,18 @@ export function DeployPanel({
 		if (!deployTargetId) return;
 		setDeploying(true);
 		try {
-			await deployTemplate(deployTargetId, selectedAssetIds, selectedTargetId);
+			await deployTemplate(
+				deployTargetId,
+				selectedAssetIds,
+				selectedTargetId,
+				selectedDeployVersion,
+			);
 			message.success("部署成功");
 			closeAssetModal();
-			refresh();
+			setDeploying(false);
+			void refresh();
 		} catch (err) {
 			message.error(`部署失败: ${String(err)}`);
-		} finally {
 			setDeploying(false);
 		}
 	};
@@ -628,6 +665,20 @@ export function DeployPanel({
 					showIcon
 					style={{ marginBottom: 16, fontSize: 12 }}
 				/>
+				<div className="deploy-run-field">
+					<div className="deploy-run-field__label">模板版本</div>
+					<Select
+						value={selectedDeployVersion}
+						onChange={setSelectedDeployVersion}
+						style={{ width: "100%", marginBottom: 12 }}
+						options={deployVersions.map((version) => ({
+							value: version.version,
+							label: `v${version.version} · ${version.nodeCount} 个节点 · ${new Date(
+								version.createdAt,
+							).toLocaleString()}`,
+						}))}
+					/>
+				</div>
 				<div className="deploy-run-field">
 					<div className="deploy-run-field__label">执行目标</div>
 					<Select

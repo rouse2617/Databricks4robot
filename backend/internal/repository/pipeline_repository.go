@@ -22,6 +22,10 @@ type PipelineTemplateRepository interface {
 	// not found.
 	FindByID(ctx context.Context, id string) (*models.PipelineTemplate, error)
 
+	// FindByNameAndVersion returns one saved version of a named pipeline
+	// template, or (nil, nil) when not found.
+	FindByNameAndVersion(ctx context.Context, name string, version int) (*models.PipelineTemplate, error)
+
 	// FindVersionsByName returns all versions of a named pipeline template
 	// ordered by version DESC.
 	FindVersionsByName(ctx context.Context, name string) ([]models.PipelineTemplate, error)

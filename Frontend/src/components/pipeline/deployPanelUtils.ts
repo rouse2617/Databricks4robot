@@ -22,7 +22,9 @@ export function dedupeTemplatesByName(
 		const prev = byName.get(key);
 		if (
 			!prev ||
-			new Date(item.createdAt).getTime() > new Date(prev.createdAt).getTime()
+			item.version > prev.version ||
+			(item.version === prev.version &&
+				new Date(item.createdAt).getTime() > new Date(prev.createdAt).getTime())
 		) {
 			byName.set(key, item);
 		}

@@ -128,6 +128,11 @@ export function WorkflowExecutionList({
 	const [runIdsByWorkflowName, setRunIdsByWorkflowName] = useState<
 		Record<string, string>
 	>({});
+	const [templateVersionsByWorkflowName, setTemplateVersionsByWorkflowName] =
+		useState<Record<string, number>>({});
+	const [nodeCountsByWorkflowName, setNodeCountsByWorkflowName] = useState<
+		Record<string, number>
+	>({});
 	const [loading, setLoading] = useState(false);
 	const [initializedOnce, setInitializedOnce] = useState(false);
 	const [error, setError] = useState<WorkflowErrorState | null>(null);
@@ -270,6 +275,29 @@ export function WorkflowExecutionList({
 					deployments
 						.filter((deployment) => deployment.workflowName && deployment.id)
 						.map((deployment) => [deployment.workflowName, deployment.id]),
+				),
+			);
+			setTemplateVersionsByWorkflowName(
+				Object.fromEntries(
+					deployments
+						.filter(
+							(deployment) =>
+								deployment.workflowName && deployment.templateVersion,
+						)
+						.map((deployment) => [
+							deployment.workflowName,
+							deployment.templateVersion as number,
+						]),
+				),
+			);
+			setNodeCountsByWorkflowName(
+				Object.fromEntries(
+					deployments
+						.filter((deployment) => deployment.workflowName)
+						.map((deployment) => [
+							deployment.workflowName,
+							deployment.nodeCount,
+						]),
 				),
 			);
 			setItems(res.items || []);
@@ -457,6 +485,7 @@ export function WorkflowExecutionList({
 			width: 260,
 			render: (name: string, record: WorkflowSummary) => {
 				const runId = runIdsByWorkflowName[record.name];
+				const templateVersion = templateVersionsByWorkflowName[record.name];
 				const displayId = toAssetStyleId(runId ?? name);
 				const copyId = runId ?? name;
 				return (
@@ -472,6 +501,11 @@ export function WorkflowExecutionList({
 						>
 							ID: {displayId}
 						</Typography.Text>
+						{templateVersion ? (
+							<Tag color="blue" style={{ marginTop: 4 }}>
+								模板 v{templateVersion}
+							</Tag>
+						) : null}
 					</div>
 				);
 			},
@@ -495,6 +529,8 @@ export function WorkflowExecutionList({
 			dataIndex: "nodeCount",
 			key: "nodeCount",
 			width: 100,
+			render: (nodeCount: number, record: WorkflowSummary) =>
+				nodeCountsByWorkflowName[record.name] ?? nodeCount,
 		},
 		{
 			title: "标签",
@@ -668,7 +704,9 @@ export function WorkflowExecutionList({
 										},
 									}}
 									style={{
-										background: isActive ? `color-mix(in srgb, ${accentColor} 6%, transparent)` : undefined,
+										background: isActive
+											? `color-mix(in srgb, ${accentColor} 6%, transparent)`
+											: undefined,
 										borderColor: accentColor,
 										borderLeft: `4px solid ${accentColor}`,
 										boxShadow: isActive

@@ -32,6 +32,10 @@ func (m *mockTemplateRepo) Save(_ context.Context, t *models.PipelineTemplate) e
 		m.byID = make(map[string]*models.PipelineTemplate)
 	}
 	m.byID[t.ID] = t
+	if m.byName == nil {
+		m.byName = make(map[string][]models.PipelineTemplate)
+	}
+	m.byName[t.Name] = append(m.byName[t.Name], *t)
 	return nil
 }
 func (m *mockTemplateRepo) FindAll(_ context.Context) ([]models.PipelineTemplate, error) {
@@ -44,8 +48,23 @@ func (m *mockTemplateRepo) FindAll(_ context.Context) ([]models.PipelineTemplate
 func (m *mockTemplateRepo) FindByID(_ context.Context, id string) (*models.PipelineTemplate, error) {
 	return m.byID[id], nil
 }
-func (m *mockTemplateRepo) FindVersionsByName(_ context.Context, _ string) ([]models.PipelineTemplate, error) {
+func (m *mockTemplateRepo) FindByNameAndVersion(_ context.Context, name string, version int) (*models.PipelineTemplate, error) {
+	for _, t := range m.byName[name] {
+		if t.Version == version {
+			copy := t
+			return &copy, nil
+		}
+	}
+	for _, t := range m.byID {
+		if t.Name == name && t.Version == version {
+			return t, nil
+		}
+	}
 	return nil, nil
+}
+func (m *mockTemplateRepo) FindVersionsByName(_ context.Context, name string) ([]models.PipelineTemplate, error) {
+	out := append([]models.PipelineTemplate(nil), m.byName[name]...)
+	return out, nil
 }
 func (m *mockTemplateRepo) GetNextVersion(_ context.Context, _ string) (int, error) {
 	m.ver++

@@ -4,13 +4,18 @@ import { request } from "./pipelineClient";
 export interface PipelineTemplate {
 	id: string;
 	name: string;
+	version: number;
+	versionCount?: number;
 	pipeline: Pipeline;
 	nodeCount: number;
 	createdAt: string;
+	updatedAt?: string;
 }
 
 export interface Deployment {
 	id: string;
+	templateId?: string;
+	templateVersion?: number;
 	pipelineName: string;
 	workflowName: string;
 	status: string;
@@ -53,6 +58,15 @@ export function getPipeline(id: string): Promise<PipelineTemplate> {
 	return request<PipelineTemplate>("GET", `/pipelines/${id}`);
 }
 
+export function listPipelineVersions(
+	templateId: string,
+): Promise<PipelineTemplate[]> {
+	return request<{ items: PipelineTemplate[] }>(
+		"GET",
+		`/pipelines/${templateId}/versions`,
+	).then((r) => r.items);
+}
+
 export function savePipeline(
 	name: string,
 	pipeline: Pipeline,
@@ -68,10 +82,12 @@ export function deployTemplate(
 	templateId: string,
 	assetIds?: string[],
 	targetId?: string,
+	version?: number,
 ): Promise<Deployment> {
 	return request<Deployment>("POST", `/pipeline-runs/template/${templateId}`, {
 		asset_ids: assetIds ?? [],
 		target_id: targetId,
+		version,
 	});
 }
 

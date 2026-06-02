@@ -33,6 +33,7 @@ vi.mock("react-router-dom", async (importOriginal) => {
 
 // Mock pipeline API
 const mockListPipelines = vi.fn();
+const mockListPipelineVersions = vi.fn();
 const mockListDeployments = vi.fn();
 const mockDeployTemplate = vi.fn();
 const mockDeletePipeline = vi.fn();
@@ -41,6 +42,8 @@ const mockListExecutionTargets = vi.fn();
 
 vi.mock("../../api/pipelineApi", () => ({
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
+	listPipelineVersions: (...args: unknown[]) =>
+		mockListPipelineVersions(...args),
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
 	listExecutionTargets: (...args: unknown[]) =>
 		mockListExecutionTargets(...args),
@@ -88,6 +91,7 @@ const mockTemplate = (
 ): PipelineTemplate => ({
 	id: "tmpl-001",
 	name: "test-pipeline",
+	version: 1,
 	pipeline: { name: "test-pipeline", version: "1", nodes: [], edges: [] },
 	nodeCount: 3,
 	createdAt: "2026-05-27T12:00:00Z",
@@ -147,6 +151,7 @@ afterEach(() => {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockListPipelineVersions.mockResolvedValue([]);
 	mockListExecutionTargets.mockResolvedValue([
 		{
 			id: "default",
@@ -211,8 +216,10 @@ describe("DeployPanel", () => {
 				"tmpl-001",
 				[],
 				"default",
+				1,
 			);
 		});
+		expect(mockListPipelineVersions).toHaveBeenCalledWith("tmpl-001");
 	});
 
 	it("shows error toast when direct deploy fails", async () => {
@@ -272,6 +279,7 @@ describe("DeployPanel", () => {
 				"tmpl-001",
 				["ast-001", "ast-002"],
 				"default",
+				1,
 			);
 		});
 	});
@@ -307,6 +315,7 @@ describe("DeployPanel", () => {
 				"tmpl-002",
 				[],
 				"default",
+				1,
 			);
 		});
 	});
@@ -437,6 +446,7 @@ describe("DeployPanel", () => {
 				"tmpl-001",
 				[],
 				"default",
+				1,
 			);
 		});
 
