@@ -231,6 +231,13 @@ The `end-of-file-fixer` pre-commit hook fails when a file has trailing blank lin
 
 **Check:** `pre-commit run end-of-file-fixer --all-files` before committing, or manually verify the file ends with a single `\n` (no extra blank lines). When using the Edit/Write tools, ensure the last line of content is not followed by an empty line.
 
+### P8. Argo Server lives in K8s, not Cloud Run — use ARGO_SERVER_URL
+Argo Workflows API server runs inside the dev K8s cluster (e.g. `http://10.2.1.211:2746`), NOT on Cloud Run. The Cloud Run service `cyber-databrew-pipeline-ui-dev` is a separate UI proxy, not the Argo API.
+
+**Symptoms of confusion:** `ARGO_BASE_URL` pointing at the Cloud Run pipeline-ui returns `{"code":"UNAUTHORIZED","message":"invalid token: ... unexpected signing method: RS256"}` because that proxy uses different auth (SSO/OIDC) and can't verify K8s SA tokens.
+
+**Check:** On Cloud Run dev backend, `ARGO_SERVER_URL` should be the K8s in-cluster IP (e.g. `http://10.2.1.211:2746`) and `ARGO_WORKFLOWS_NAMESPACE=cyber-databrew-dev`. K8s ServiceAccount tokens (RS256) work because the K8s-based Argo server verifies them via TokenReview. `deploy/cloudrun/backend-dev.sh` does NOT wire `ARGO_TOKEN` or `ARGO_SERVER_URL` — both must be added manually on Cloud Run. The token lives in Secret Manager `cyber-databrew-backend-argo-token`.
+
 ## What NOT to do
 
 - Do NOT ask users to run a ritual prompt like "prepare environment per project standards"
