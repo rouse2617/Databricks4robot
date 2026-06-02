@@ -41,3 +41,9 @@
 - **Decision**: Keep this reminder in the change log for future dev deploys. `ARGO_SERVER_URL` is the internal Argo API endpoint used by the backend; `ARGO_BASE_URL` remains present for the pipeline UI URL.
 - **Alternatives**: Rely on memory or deployment script defaults only.
 - **Rationale**: Missing `ARGO_SERVER_URL` was the root cause of workflow/log verification failures.
+
+## 2026-06-02 — Frontend debug workbench pushed before dev deploy
+- **Context**: The frontend-only Pod debug workbench change normally requires frontend dev deploy verification before commit/push. The user explicitly requested submitting the PR to `dev` after local MCP verification.
+- **Decision**: Commit and push this frontend iteration to the existing PR before Cloud Run frontend dev deployment. Record local verification and the deploy gap in the PR comment.
+- **Alternatives**: Build and deploy the frontend dev image before pushing.
+- **Rationale**: Current user instruction prioritizes getting the PR update ready for review/testing; the change has local MCP verification and does not add backend API calls beyond removing a known 404 stream probe.

@@ -34,6 +34,10 @@ import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 import { useWorkflowDetail } from "./useWorkflowDetail";
 import { WorkflowDagView } from "./WorkflowDagView";
 import { WorkflowTimelineView } from "./WorkflowTimelineView";
+import {
+	LOG_MAX_RENDER_LINES,
+	prepareVisibleLogContent,
+} from "./workflowLogView";
 
 function buildHighlightedLogNodes(logContent: string, keyword: string) {
 	const normalized = keyword.trim();
@@ -82,20 +86,29 @@ function WorkflowLogPanel({
 	onSearch: (value: string) => void;
 }) {
 	const logBodyRef = useRef<HTMLDivElement | null>(null);
+	const visibleLog = useMemo(
+		() =>
+			logContent === null
+				? null
+				: prepareVisibleLogContent(logContent, selectedNode),
+		[logContent, selectedNode],
+	);
 	const logElement =
-		logContent === null ? null : buildHighlightedLogNodes(logContent, search);
+		visibleLog === null
+			? null
+			: buildHighlightedLogNodes(visibleLog.content, search);
 
 	useEffect(() => {
 		if (
 			selectedNode &&
 			!loading &&
 			!error &&
-			logContent !== null &&
+			visibleLog !== null &&
 			logBodyRef.current
 		) {
 			logBodyRef.current.scrollTop = logBodyRef.current.scrollHeight;
 		}
-	}, [selectedNode, loading, error, logContent]);
+	}, [selectedNode, loading, error, visibleLog]);
 
 	return (
 		<div
@@ -134,24 +147,36 @@ function WorkflowLogPanel({
 			) : logContent === null ? (
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>暂无日志</div>
 			) : (
-				<div
-					ref={logBodyRef}
-					style={{
-						flex: 1,
-						fontSize: 11,
-						fontFamily: '"SF Mono", "Fira Code", monospace',
-						whiteSpace: "pre-wrap",
-						wordBreak: "break-all",
-						overflow: "auto",
-						background: "#f8f9fa",
-						padding: 12,
-						borderRadius: 6,
-						border: "1px solid #e5e7eb",
-						minHeight: 0,
-					}}
-				>
-					{logElement}
-				</div>
+				<>
+					{visibleLog?.truncated && (
+						<Alert
+							type="warning"
+							showIcon
+							style={{ marginBottom: 8 }}
+							message={`日志较大，当前仅显示尾部 ${visibleLog.content.length.toLocaleString()} 字符 / ${Math.min(visibleLog.totalLines, LOG_MAX_RENDER_LINES).toLocaleString()} 行。`}
+							description="完整大日志需要后端 tail、分页或流式接口支持；当前视图会限制渲染量以避免浏览器卡顿。"
+						/>
+					)}
+					<div
+						ref={logBodyRef}
+						style={{
+							flex: 1,
+							fontSize: 11,
+							fontFamily: '"SF Mono", "Fira Code", monospace',
+							whiteSpace: "pre-wrap",
+							wordBreak: "break-word",
+							overflow: "auto",
+							background: "#f8f9fa",
+							padding: 12,
+							borderRadius: 6,
+							border: "1px solid #e5e7eb",
+							minHeight: 0,
+							lineHeight: 1.55,
+						}}
+					>
+						{logElement}
+					</div>
+				</>
 			)}
 			{selectedNode && (
 				<div style={{ marginTop: 12 }}>

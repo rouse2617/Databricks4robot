@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError } from "../api/pipelineClient";
 import {
 	getWorkflow,
-	getWorkflowLogStreamUrl,
 	getWorkflowLogs,
 	type WorkflowDetail,
 	type WorkflowNodeStatus,
@@ -63,7 +62,6 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const [loadError, setLoadError] = useState<WorkflowLoadError | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [logState, setLogState] = useState<WorkflowLogState>(EMPTY_LOG_STATE);
-	const eventSourceRef = useRef<EventSource | null>(null);
 
 	const loadWorkflow = useCallback(() => {
 		if (!name) return;
@@ -105,14 +103,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		return () => window.clearInterval(timer);
 	}, [name, workflow?.status, workflow]);
 
-	const stopNodeLogStream = useCallback(() => {
-		if (eventSourceRef.current) {
-			eventSourceRef.current.close();
-			eventSourceRef.current = null;
-		}
-	}, []);
-
-	const fallbackToLogsApi = useCallback(
+	const loadNodeLogs = useCallback(
 		async (nodeId: string) => {
 			if (!name) return;
 			setLogState((current) => ({
@@ -140,62 +131,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		[name],
 	);
 
-	const loadNodeLogs = useCallback(
-		async (nodeId: string) => {
-			if (!name) return;
-			stopNodeLogStream();
-			setLogState((current) => ({
-				...current,
-				loading: true,
-				error: null,
-				content: "",
-			}));
-
-			if (typeof EventSource === "undefined") {
-				await fallbackToLogsApi(nodeId);
-				return;
-			}
-
-			const stream = new EventSource(getWorkflowLogStreamUrl(name, nodeId), {
-				withCredentials: true,
-			});
-			eventSourceRef.current = stream;
-			let receivedLine = false;
-
-			stream.onmessage = (event) => {
-				receivedLine = true;
-				setLogState((current) => ({
-					...current,
-					loading: false,
-					error: null,
-					content: current.content
-						? `${current.content}\n${event.data}`
-						: event.data,
-				}));
-			};
-
-			stream.onerror = () => {
-				if (eventSourceRef.current !== stream) {
-					return;
-				}
-				stopNodeLogStream();
-				if (!receivedLine) {
-					void fallbackToLogsApi(nodeId);
-					return;
-				}
-				setLogState((current) => ({
-					...current,
-					loading: false,
-				}));
-			};
-		},
-		[fallbackToLogsApi, name, stopNodeLogStream],
-	);
-
 	const selectNode = useCallback(
 		(node: WorkflowNodeStatus | null) => {
 			if (!node || !name) {
-				stopNodeLogStream();
 				setSelectedNodeId(null);
 				setLogState((current) => ({
 					...EMPTY_LOG_STATE,
@@ -211,7 +149,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				error: null,
 			}));
 		},
-		[name, stopNodeLogStream],
+		[name],
 	);
 
 	const selectedNode = useMemo(() => {
@@ -221,20 +159,10 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 
 	useEffect(() => {
 		if (!selectedNodeId || !name) {
-			stopNodeLogStream();
 			return;
 		}
 		void loadNodeLogs(selectedNodeId);
-		return () => {
-			stopNodeLogStream();
-		};
-	}, [loadNodeLogs, name, selectedNodeId, stopNodeLogStream]);
-
-	useEffect(() => {
-		return () => {
-			stopNodeLogStream();
-		};
-	}, [stopNodeLogStream]);
+	}, [loadNodeLogs, name, selectedNodeId]);
 
 	useEffect(() => {
 		if (!workflow || !selectedNodeId) return;
