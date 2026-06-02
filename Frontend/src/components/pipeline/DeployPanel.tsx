@@ -464,7 +464,9 @@ export function DeployPanel({
 								<Button
 									size="small"
 									icon={<LinkOutlined />}
-									onClick={() => navigate(`/workflows/${d.workflowName}`)}
+									onClick={() =>
+										navigate(`/pipeline/executions/${d.workflowName}`)
+									}
 								>
 									查看
 								</Button>
@@ -695,7 +697,9 @@ export function DeployPanel({
 										<Button
 											size="small"
 											icon={<EyeOutlined />}
-											onClick={() => navigate(`/workflows/${d.workflowName}`)}
+											onClick={() =>
+												navigate(`/pipeline/executions/${d.workflowName}`)
+											}
 										>
 											查看
 										</Button>

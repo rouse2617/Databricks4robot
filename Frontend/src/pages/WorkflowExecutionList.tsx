@@ -40,11 +40,14 @@ import {
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
+import {
+	formatWorkflowLabelKey,
+	getDisplayLabelEntries,
+	serializeWorkflowLabel,
+} from "../lib/workflowLabels";
 
 const { RangePicker } = DatePicker;
 dayjs.extend(relativeTime);
-
-const LABEL_SEPARATOR = "=";
 
 interface WorkflowExecutionListProps {
 	active?: boolean;
@@ -62,9 +65,6 @@ const parseDate = (value: string | null): Dayjs | null => {
 	const parsed = dayjs(value);
 	return parsed.isValid() ? parsed : null;
 };
-
-const serializeLabel = (key: string, value: string): string =>
-	`${key}${LABEL_SEPARATOR}${value}`;
 
 const datesEqual = (a: Dayjs | null, b: Dayjs | null): boolean => {
 	if (!a && !b) return true;
@@ -128,13 +128,22 @@ export function WorkflowExecutionList({
 	const [statusFilter, setStatusFilter] = useState<string | undefined>(
 		normalizeStatus(searchParams.get("status")),
 	);
+	const [draftStatusFilter, setDraftStatusFilter] = useState<
+		string | undefined
+	>(normalizeStatus(searchParams.get("status")));
 	const [nameSearch, setNameSearch] = useState(
 		searchParams.get("name")?.trim() ?? "",
 	);
-	const [debouncedNameSearch, setDebouncedNameSearch] = useState(
-		searchParams.get("name")?.trim().toLowerCase() ?? "",
+	const [draftNameSearch, setDraftNameSearch] = useState(
+		searchParams.get("name")?.trim() ?? "",
 	);
 	const [labelFilter, setLabelFilter] = useState<string[]>(() => {
+		const labels = searchParams.getAll("label");
+		return Array.from(
+			new Set(labels.map((label) => label.trim()).filter(Boolean)),
+		);
+	});
+	const [draftLabelFilter, setDraftLabelFilter] = useState<string[]>(() => {
 		const labels = searchParams.getAll("label");
 		return Array.from(
 			new Set(labels.map((label) => label.trim()).filter(Boolean)),
@@ -144,7 +153,17 @@ export function WorkflowExecutionList({
 		parseDate(searchParams.get("createdAfter")),
 		parseDate(searchParams.get("finishedBefore")),
 	]);
+	const [draftDateRange, setDraftDateRange] = useState<
+		[Dayjs | null, Dayjs | null]
+	>([
+		parseDate(searchParams.get("createdAfter")),
+		parseDate(searchParams.get("finishedBefore")),
+	]);
 	const [operationLoading, setOperationLoading] = useState<string | null>(null);
+	const [pendingOperation, setPendingOperation] = useState<{
+		record: WorkflowSummary;
+		operation: WorkflowOperationConfig;
+	} | null>(null);
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
 	const navigate = useNavigate();
@@ -164,12 +183,13 @@ export function WorkflowExecutionList({
 		const nextFinishedBefore = parseDate(searchParams.get("finishedBefore"));
 
 		setStatusFilter((prev) => (prev === nextStatus ? prev : nextStatus));
+		setDraftStatusFilter((prev) => (prev === nextStatus ? prev : nextStatus));
 		setNameSearch((prev) => (prev === nextName ? prev : nextName));
-		setDebouncedNameSearch((prev) => {
-			const normalized = nextName.toLowerCase();
-			return prev === normalized ? prev : normalized;
-		});
+		setDraftNameSearch((prev) => (prev === nextName ? prev : nextName));
 		setLabelFilter((prev) =>
+			arraysEqual(prev, nextLabelFilter) ? prev : nextLabelFilter,
+		);
+		setDraftLabelFilter((prev) =>
 			arraysEqual(prev, nextLabelFilter) ? prev : nextLabelFilter,
 		);
 		setDateRange((prev) => {
@@ -181,9 +201,18 @@ export function WorkflowExecutionList({
 			}
 			return [nextCreatedAfter, nextFinishedBefore];
 		});
+		setDraftDateRange((prev) => {
+			if (
+				datesEqual(prev[0], nextCreatedAfter) &&
+				datesEqual(prev[1], nextFinishedBefore)
+			) {
+				return prev;
+			}
+			return [nextCreatedAfter, nextFinishedBefore];
+		});
 	}, [searchParams]);
 
-	useEffect(() => {
+	const syncAppliedFiltersToUrl = useCallback(() => {
 		const next = new URLSearchParams(searchParams);
 		if (statusFilter) next.set("status", statusFilter);
 		else next.delete("status");
@@ -216,7 +245,7 @@ export function WorkflowExecutionList({
 		try {
 			const params: ListWorkflowsParams = {
 				status: statusFilter,
-				name: debouncedNameSearch || undefined,
+				name: nameSearch.trim().toLowerCase() || undefined,
 				label: labelFilter.length ? labelFilter : undefined,
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
@@ -231,7 +260,7 @@ export function WorkflowExecutionList({
 			setLoading(false);
 			setInitializedOnce(true);
 		}
-	}, [statusFilter, debouncedNameSearch, labelFilter, dateRange]);
+	}, [statusFilter, nameSearch, labelFilter, dateRange]);
 
 	useEffect(() => {
 		if (active) {
@@ -240,29 +269,61 @@ export function WorkflowExecutionList({
 	}, [active, refresh]);
 
 	useEffect(() => {
-		const timer = window.setTimeout(() => {
-			setDebouncedNameSearch(nameSearch.trim().toLowerCase());
-		}, 300);
+		setPage(1);
+		syncAppliedFiltersToUrl();
+	}, [syncAppliedFiltersToUrl]);
 
-		return () => window.clearTimeout(timer);
-	}, [nameSearch]);
+	const filtersDirty =
+		draftStatusFilter !== statusFilter ||
+		draftNameSearch !== nameSearch ||
+		!arraysEqual(draftLabelFilter, labelFilter) ||
+		!datesEqual(draftDateRange[0], dateRange[0]) ||
+		!datesEqual(draftDateRange[1], dateRange[1]);
 
-	useEffect(() => {
+	const applyFilters = useCallback(() => {
+		setStatusFilter(draftStatusFilter);
+		setNameSearch(draftNameSearch.trim());
+		setLabelFilter(draftLabelFilter);
+		setDateRange(draftDateRange);
+		setPage(1);
+	}, [draftDateRange, draftLabelFilter, draftNameSearch, draftStatusFilter]);
+
+	const resetFilters = useCallback(() => {
+		setDraftStatusFilter(undefined);
+		setDraftNameSearch("");
+		setDraftLabelFilter([]);
+		setDraftDateRange([null, null]);
+		setStatusFilter(undefined);
+		setNameSearch("");
+		setLabelFilter([]);
+		setDateRange([null, null]);
 		setPage(1);
 	}, []);
 
 	const labelCheckboxOptions = useMemo(() => {
 		const labels = new Set<string>();
 		for (const item of items) {
-			for (const [key, value] of Object.entries(item.labels ?? {})) {
-				labels.add(serializeLabel(key, value));
+			for (const [key, value] of getDisplayLabelEntries(item.labels)) {
+				labels.add(serializeWorkflowLabel(key, value));
 			}
 		}
 		const availableLabelOptions = Array.from(labels).sort((a, b) =>
 			a.localeCompare(b),
 		);
 		return availableLabelOptions.map((label) => ({
-			label: <Tag>{label}</Tag>,
+			label: (() => {
+				const separatorIndex = label.indexOf("=");
+				const key =
+					separatorIndex >= 0 ? label.slice(0, separatorIndex) : label;
+				const value =
+					separatorIndex >= 0 ? label.slice(separatorIndex + 1) : "";
+				return (
+					<Tag>
+						{formatWorkflowLabelKey(key)}
+						{value ? ` · ${value}` : ""}
+					</Tag>
+				);
+			})(),
 			value: label,
 		}));
 	}, [items]);
@@ -308,21 +369,27 @@ export function WorkflowExecutionList({
 			);
 			if (!operation) return;
 
-			if (operation.key === "delete" || operation.key === "terminate") {
-				Modal.confirm({
-					title: `确认${operation.title} ${record.name}?`,
-					okText: operation.title,
-					okButtonProps: { danger: operation.danger },
-					cancelText: "取消",
-					onOk: () => executeOperation(record, operation),
-				});
+			if (
+				operation.key === "delete" ||
+				operation.key === "terminate" ||
+				operation.key === "resubmit" ||
+				operation.key === "retry"
+			) {
+				setPendingOperation({ record, operation });
 				return;
 			}
 
-			executeOperation(record, operation);
+			void executeOperation(record, operation);
 		},
 		[executeOperation],
 	);
+
+	const confirmPendingOperation = useCallback(async () => {
+		if (!pendingOperation) return;
+		const { record, operation } = pendingOperation;
+		setPendingOperation(null);
+		await executeOperation(record, operation);
+	}, [executeOperation, pendingOperation]);
 
 	const columns = [
 		{
@@ -422,7 +489,7 @@ export function WorkflowExecutionList({
 							size="small"
 							onClick={(event) => {
 								event.stopPropagation();
-								navigate(`/workflows/${record.name}`);
+								navigate(`/pipeline/executions/${record.name}`);
 							}}
 						>
 							查看
@@ -430,17 +497,23 @@ export function WorkflowExecutionList({
 						<Dropdown
 							menu={{
 								items: menuItems,
-								onClick: ({ key }) =>
-									runOperation(record, key as WorkflowOperationKey),
+								onClick: ({ key, domEvent }) => {
+									domEvent.stopPropagation();
+									runOperation(record, key as WorkflowOperationKey);
+								},
 							}}
 							trigger={["click"]}
-							disabled={menuItems.length === 0}
 						>
 							<Button
 								size="small"
 								icon={<MoreOutlined />}
 								loading={hasOperationLoading}
-								onClick={(event) => event.stopPropagation()}
+								onClick={(event) => {
+									event.stopPropagation();
+									if (menuItems.length === 0) {
+										message.info("当前状态暂无可用操作");
+									}
+								}}
 							>
 								操作
 							</Button>
@@ -517,8 +590,8 @@ export function WorkflowExecutionList({
 					allowClear
 					placeholder="状态筛选"
 					style={{ minWidth: 140, flex: "1 1 160px" }}
-					value={statusFilter}
-					onChange={(val) => setStatusFilter(val)}
+					value={draftStatusFilter}
+					onChange={(val) => setDraftStatusFilter(val)}
 					options={WORKFLOW_PHASES.map((status) => ({
 						label: status,
 						value: status,
@@ -528,20 +601,22 @@ export function WorkflowExecutionList({
 					allowClear
 					placeholder="按名称搜索"
 					style={{ minWidth: 220, flex: "1 1 220px" }}
-					value={nameSearch}
-					onChange={(event) => setNameSearch(event.target.value)}
-					onSearch={(value) =>
-						setDebouncedNameSearch(value.trim().toLowerCase())
-					}
+					value={draftNameSearch}
+					onChange={(event) => setDraftNameSearch(event.target.value)}
+					onSearch={applyFilters}
 				/>
 				<RangePicker
-					value={dateRange}
+					value={draftDateRange}
 					placeholder={["创建开始时间", "完成截止时间"]}
 					onChange={(values) =>
-						setDateRange([values?.[0] ?? null, values?.[1] ?? null])
+						setDraftDateRange([values?.[0] ?? null, values?.[1] ?? null])
 					}
 					style={{ minWidth: 320, flex: "1 1 260px" }}
 				/>
+				<Button type="primary" onClick={applyFilters} disabled={!filtersDirty}>
+					应用
+				</Button>
+				<Button onClick={resetFilters}>重置</Button>
 			</div>
 
 			<div
@@ -556,8 +631,8 @@ export function WorkflowExecutionList({
 				<Typography.Text type="secondary">标签筛选：</Typography.Text>
 				<Checkbox.Group
 					options={labelCheckboxOptions}
-					value={labelFilter}
-					onChange={(values) => setLabelFilter(values as string[])}
+					value={draftLabelFilter}
+					onChange={(values) => setDraftLabelFilter(values as string[])}
 				/>
 			</div>
 
@@ -604,7 +679,7 @@ export function WorkflowExecutionList({
 								) {
 									return;
 								}
-								navigate(`/workflows/${record.name}`);
+								navigate(`/pipeline/executions/${record.name}`);
 							},
 							style: { cursor: "pointer" },
 						})}
@@ -612,8 +687,10 @@ export function WorkflowExecutionList({
 							current: page,
 							pageSize,
 							showSizeChanger: true,
+							showQuickJumper: true,
 							pageSizeOptions: ["10", "20", "50", "100"],
-							showTotal: (total) => `共 ${total} 条`,
+							showTotal: (total, range) =>
+								`第 ${range[0]}-${range[1]} 条 / 共 ${total} 条 · 共 ${Math.max(1, Math.ceil(total / pageSize))} 页`,
 							onChange: (nextPage, nextPageSize) => {
 								setPage(nextPage);
 								setPageSize(nextPageSize);
@@ -622,6 +699,24 @@ export function WorkflowExecutionList({
 					/>
 				</div>
 			)}
+			<Modal
+				open={!!pendingOperation}
+				title={
+					pendingOperation
+						? `确认${pendingOperation.operation.title} ${pendingOperation.record.name}?`
+						: ""
+				}
+				okText={pendingOperation?.operation.title}
+				cancelText="取消"
+				okButtonProps={{ danger: pendingOperation?.operation.danger }}
+				onOk={confirmPendingOperation}
+				onCancel={() => setPendingOperation(null)}
+			>
+				{pendingOperation?.operation.key === "resubmit" ||
+				pendingOperation?.operation.key === "retry" ? (
+					<p>将基于当前工作流再次提交执行。</p>
+				) : null}
+			</Modal>
 		</div>
 	);
 }
