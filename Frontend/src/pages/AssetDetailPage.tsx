@@ -463,12 +463,12 @@ export default function AssetDetailPage() {
 					onClick={() => {
 						if (asset?.asset_id) {
 							navigate(
-								`/pipeline?asset_ids=${encodeURIComponent(asset.asset_id)}`,
+								`/pipeline?tab=pipelines&asset_ids=${encodeURIComponent(asset.asset_id)}`,
 							);
 						}
 					}}
 				>
-					以此资产创建流水线
+					用此资产运行 Pipeline
 				</Button>
 			</div>
 

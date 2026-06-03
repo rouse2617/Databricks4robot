@@ -24,6 +24,7 @@ import {
 	Space,
 	Spin,
 	Tabs,
+	Tag,
 	Tooltip,
 	Typography,
 } from "antd";
@@ -112,9 +113,98 @@ function replaceAppendedValue(previous: string, next: string) {
 	return next;
 }
 
+function AssetRunSummary({
+	assetIds,
+	onClear,
+}: {
+	assetIds: string[];
+	onClear: () => void;
+}) {
+	if (assetIds.length === 0) {
+		return (
+			<Alert
+				type="warning"
+				showIcon
+				message="无资产运行"
+				description="本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。"
+			/>
+		);
+	}
+
+	const visibleIds = assetIds.slice(0, 8);
+	const hiddenCount = Math.max(assetIds.length - visibleIds.length, 0);
+
+	return (
+		<Alert
+			type="success"
+			showIcon
+			message={`将处理 ${assetIds.length} 个资产`}
+			description={
+				<div style={{ display: "grid", gap: 8 }}>
+					<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+						{visibleIds.map((assetId) => (
+							<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
+								{assetId}
+							</Tag>
+						))}
+						{hiddenCount > 0 ? <Tag>+{hiddenCount}</Tag> : null}
+					</div>
+					<Button size="small" onClick={onClear}>
+						转为无资产运行
+					</Button>
+				</div>
+			}
+		/>
+	);
+}
+
+function AssetRunContextBanner({
+	assetIds,
+	isCanvasEmpty,
+	onClear,
+}: {
+	assetIds: string[];
+	isCanvasEmpty: boolean;
+	onClear: () => void;
+}) {
+	if (assetIds.length === 0) return null;
+
+	const visibleIds = assetIds.slice(0, 4);
+	const hiddenCount = Math.max(assetIds.length - visibleIds.length, 0);
+	const message = `已选择 ${assetIds.length} 个资产`;
+	const description = isCanvasEmpty
+		? "资产已就绪，请添加组件后部署。"
+		: "部署时会把这些资产注入本次运行。";
+
+	return (
+		<Alert
+			className="pipeline-asset-context"
+			type="info"
+			showIcon
+			message={message}
+			description={
+				<div className="pipeline-asset-context__body">
+					<span>{description}</span>
+					<div className="pipeline-asset-context__assets">
+						{visibleIds.map((assetId) => (
+							<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
+								{assetId}
+							</Tag>
+						))}
+						{hiddenCount > 0 ? <Tag>+{hiddenCount}</Tag> : null}
+					</div>
+					<Button size="small" onClick={onClear}>
+						转为无资产运行
+					</Button>
+				</div>
+			}
+		/>
+	);
+}
+
 function PipelineCanvas() {
 	const navigate = useNavigate();
-	const [searchParams] = useSearchParams();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const editor = useFlowEditor();
 	const editorRef = useRef(editor);
@@ -210,6 +300,20 @@ function PipelineCanvas() {
 	useEffect(() => {
 		setSelectedAssetIds(queryAssetIds);
 	}, [queryAssetIds]);
+
+	const updateSelectedAssetIds = useCallback(
+		(nextIds: string[]) => {
+			setSelectedAssetIds(nextIds);
+			const nextParams = new URLSearchParams(searchParams);
+			if (nextIds.length > 0) {
+				nextParams.set("asset_ids", nextIds.join(","));
+			} else {
+				nextParams.delete("asset_ids");
+			}
+			setSearchParams(nextParams, { replace: true });
+		},
+		[searchParams, setSearchParams],
+	);
 
 	useEffect(() => {
 		let alive = true;
@@ -677,7 +781,6 @@ function PipelineCanvas() {
 			mode: "edit",
 			name: pipelineName,
 		});
-		setSelectedAssetIds([]);
 		setAssetPickerResetKey((key) => key + 1);
 	}, [pipelineName, nodes.length, buildPipelineJSON, assertPipelineRunnable]);
 
@@ -689,7 +792,6 @@ function PipelineCanvas() {
 			name: "",
 			mode: "edit",
 		});
-		setSelectedAssetIds([]);
 		setAssetPickerResetKey((key) => key + 1);
 	}, []);
 
@@ -924,6 +1026,11 @@ function PipelineCanvas() {
 					role="application"
 					aria-label="流水线画布"
 				>
+					<AssetRunContextBanner
+						assetIds={selectedAssetIds}
+						isCanvasEmpty={isCanvasEmpty}
+						onClear={() => updateSelectedAssetIds([])}
+					/>
 					{templateLoading ? (
 						<div className="pipeline-canvas-loading" aria-busy="true">
 							<Spin tip="正在加载模板..." />
@@ -1197,16 +1304,12 @@ function PipelineCanvas() {
 								选择执行目标和资产后，将流水线转换为 Argo Workflow 并提交到
 								Kubernetes 集群。
 							</Typography.Paragraph>
-							<Alert
-								type={selectedAssetIds.length > 0 ? "success" : "warning"}
-								showIcon
-								message={
-									selectedAssetIds.length > 0
-										? `将处理 ${selectedAssetIds.length} 个资产`
-										: "当前是 no-asset run：不会注入资产环境变量。"
-								}
-								style={{ marginBottom: 16 }}
-							/>
+							<div style={{ marginBottom: 16 }}>
+								<AssetRunSummary
+									assetIds={selectedAssetIds}
+									onClear={() => updateSelectedAssetIds([])}
+								/>
+							</div>
 							{!canDeploy && (
 								<Alert
 									type="warning"
@@ -1311,7 +1414,7 @@ function PipelineCanvas() {
 								</div>
 								<AssetPicker
 									selectedIds={selectedAssetIds}
-									onSelectionChange={setSelectedAssetIds}
+									onSelectionChange={updateSelectedAssetIds}
 									maxHeight={180}
 									resetKey={assetPickerResetKey}
 								/>

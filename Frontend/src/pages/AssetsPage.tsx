@@ -123,6 +123,19 @@ export default function AssetsPage() {
 	const hasAlgoStatusWarning = resultWarnings.some((w) =>
 		w.includes("algo_status"),
 	);
+	const selectedAssetIds = Array.from(state.selectionState.selectedIds);
+	const canRunPipelineForSelection =
+		state.selectionState.mode === "explicit_rows" &&
+		selectedAssetIds.length > 0;
+	const runPipelineForSelectedAssets = () => {
+		if (!canRunPipelineForSelection) {
+			msg.warning("请先逐行选择要处理的资产，再运行 Pipeline");
+			return;
+		}
+		navigate(
+			`/pipeline?tab=pipelines&asset_ids=${encodeURIComponent(selectedAssetIds.join(","))}`,
+		);
+	};
 
 	return (
 		<div ref={containerRef}>
@@ -425,7 +438,7 @@ export default function AssetsPage() {
 						selectionMode={state.selectionState.mode}
 						totalFiltered={state.resultsState.total}
 						onCreateDelivery={() => setDeliveryModalOpen(true)}
-						onRunAlgo={() => msg.warning("批量触发算法功能开发中，敬请期待")}
+						onRunPipeline={runPipelineForSelectedAssets}
 						onBatchTag={() => setBatchTagModalOpen(true)}
 						onBatchDeleteTag={() => setBatchDeleteTagModalOpen(true)}
 						onExportIds={() => setExportModalOpen(true)}
@@ -433,7 +446,7 @@ export default function AssetsPage() {
 							dispatch({ type: "SELECT_ALL_FILTERED" })
 						}
 						onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
-						disabledRunAlgo
+						disabledRunPipeline={!canRunPipelineForSelection}
 					/>
 					<AssetsResultsPane
 						items={state.resultsState.items}
@@ -586,7 +599,7 @@ export default function AssetsPage() {
 				<Suspense fallback={null}>
 					<CreateDeliveryModal
 						open={deliveryModalOpen}
-						assetIds={Array.from(state.selectionState.selectedIds)}
+						assetIds={selectedAssetIds}
 						onClose={() => setDeliveryModalOpen(false)}
 						onSuccess={async (deliveryId) => {
 							setDeliveryModalOpen(false);
@@ -598,7 +611,7 @@ export default function AssetsPage() {
 			) : null}
 			<BatchTagModal
 				open={batchTagModalOpen}
-				assetIds={Array.from(state.selectionState.selectedIds)}
+				assetIds={selectedAssetIds}
 				onClose={() => setBatchTagModalOpen(false)}
 				onComplete={(result) => {
 					setBatchTagModalOpen(false);
@@ -608,7 +621,7 @@ export default function AssetsPage() {
 			/>
 			<BatchDeleteTagModal
 				open={batchDeleteTagModalOpen}
-				assetIds={Array.from(state.selectionState.selectedIds)}
+				assetIds={selectedAssetIds}
 				onClose={() => setBatchDeleteTagModalOpen(false)}
 				onComplete={(result) => {
 					setBatchDeleteTagModalOpen(false);

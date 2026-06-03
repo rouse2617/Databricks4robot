@@ -16,7 +16,7 @@ function renderBar(
 		selectionMode: "explicit_rows" as const,
 		totalFiltered: 128,
 		onCreateDelivery: noop,
-		onRunAlgo: noop,
+		onRunPipeline: noop,
 		onBatchTag: noop,
 		onExportIds: noop,
 		onSelectAllFiltered: noop,
@@ -40,7 +40,7 @@ describe("BulkActionBar", () => {
 	it("renders all action buttons", () => {
 		renderBar();
 		expect(screen.getByText("创建交付")).toBeTruthy();
-		expect(screen.getByText("触发算法")).toBeTruthy();
+		expect(screen.getByText("运行 Pipeline")).toBeTruthy();
 		expect(screen.getByText("批量打 Tag")).toBeTruthy();
 		expect(screen.getByText("导出 ID")).toBeTruthy();
 		expect(screen.getByText("取消选择")).toBeTruthy();
@@ -53,10 +53,10 @@ describe("BulkActionBar", () => {
 		expect(fn).toHaveBeenCalledOnce();
 	});
 
-	it("calls onRunAlgo when 触发算法 is clicked", () => {
+	it("calls onRunPipeline when 运行 Pipeline is clicked", () => {
 		const fn = vi.fn();
-		renderBar({ onRunAlgo: fn });
-		fireEvent.click(screen.getByText("触发算法"));
+		renderBar({ onRunPipeline: fn });
+		fireEvent.click(screen.getByText("运行 Pipeline"));
 		expect(fn).toHaveBeenCalledOnce();
 	});
 

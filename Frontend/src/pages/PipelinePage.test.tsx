@@ -19,7 +19,7 @@ const mockDeployTemplate = vi.fn();
 const mockListPipelines = vi.fn().mockResolvedValue([]);
 const mockListPipelineVersions = vi.fn().mockResolvedValue([]);
 const mockListDeployments = vi.fn().mockResolvedValue([]);
-const mockListPipelineRuns = vi.fn().mockResolvedValue({ items: [] });
+const mockListPipelineRuns = vi.fn().mockResolvedValue([]);
 const mockGetPipelineRunWatcherStatus = vi.fn().mockResolvedValue({
 	healthy: true,
 	lastSyncedRunCount: 0,
@@ -188,7 +188,7 @@ function getModalDeployBtn(): HTMLButtonElement {
 	const modal = screen.getByText("部署流水线").closest(".ant-modal");
 	expect(modal).toBeTruthy();
 	const btn = within(modal as HTMLElement).getByRole("button", {
-		name: /运行/,
+		name: /^(运行资产|无资产运行)$/,
 	});
 	expect(btn).not.toBeNull();
 	expect(btn).not.toBeDisabled();
@@ -536,6 +536,66 @@ describe("PipelinePage", () => {
 			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-001", "ast-002"],
+				"default",
+			);
+		});
+	});
+
+	it("preserves asset_ids from url when opening deploy modal", async () => {
+		mockSavePipeline.mockResolvedValueOnce({
+			id: "tmpl-001",
+			name: "with-assets",
+		});
+		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+
+		renderPage("/pipeline?asset_ids=asset-a,asset-b");
+		await importOneNodePipeline("with-assets");
+		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText("将处理 2 个资产")).toBeInTheDocument();
+			expect(screen.getAllByText("asset-a").length).toBeGreaterThan(0);
+			expect(screen.getAllByText("asset-b").length).toBeGreaterThan(0);
+			expect(screen.getByText("Selected: asset-a,asset-b")).toBeInTheDocument();
+		});
+
+		fireEvent.click(getModalDeployBtn());
+
+		await waitFor(() => {
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-001",
+				["asset-a", "asset-b"],
+				"default",
+			);
+		});
+	});
+
+	it("allows clearing url assets into an explicit no-asset run", async () => {
+		mockSavePipeline.mockResolvedValueOnce({
+			id: "tmpl-001",
+			name: "with-assets",
+		});
+		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+
+		renderPage("/pipeline?asset_ids=asset-a");
+		await importOneNodePipeline("with-assets");
+		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
+
+		fireEvent.click(
+			screen.getAllByText("转为无资产运行").at(-1) as HTMLElement,
+		);
+
+		await waitFor(() => {
+			expect(screen.getAllByText("无资产运行").length).toBeGreaterThan(0);
+			expect(screen.getByText("Selected: (none)")).toBeInTheDocument();
+		});
+
+		fireEvent.click(getModalDeployBtn());
+
+		await waitFor(() => {
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-001",
+				[],
 				"default",
 			);
 		});

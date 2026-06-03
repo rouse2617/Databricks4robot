@@ -501,7 +501,7 @@ function BillingTab({ cost }: { cost?: WorkflowPodCost }) {
 				description={
 					cost
 						? `窗口：${cost.window || "—"} · 来源：${cost.provider || "—"}`
-						: "当前运行未返回该步骤的成本拆分。"
+						: "本次运行没有记录该步骤的成本拆分；这通常出现在历史工作流、外部提交工作流或未开启计费采集的执行目标。"
 				}
 			/>
 			<Row gutter={[12, 12]}>
@@ -646,7 +646,12 @@ function RuntimeTab({
 				<BillingTab cost={node.cost} />
 			</RuntimeSection>
 			<RuntimeSection title="调试">
-				<Alert type="info" showIcon message="终端调试" description="终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。" />
+				<Alert
+					type="info"
+					showIcon
+					message="终端调试"
+					description="终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。"
+				/>
 			</RuntimeSection>
 		</Space>
 	);

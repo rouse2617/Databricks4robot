@@ -238,3 +238,33 @@ code,
 	cursor: pointer;
 	font: inherit;
 }
+
+.assets-bulk-action-bar__content {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.assets-bulk-action-bar__count {
+	white-space: nowrap;
+}
+
+.assets-bulk-action-bar__actions {
+	min-width: min(100%, 520px);
+	flex: 1 1 auto;
+}
+
+.assets-bulk-action-bar__select-all {
+	white-space: normal;
+	text-align: left;
+	height: auto;
+	padding-top: 2px;
+	padding-bottom: 2px;
+}
+
+@media (max-width: 720px) {
+	.assets-bulk-action-bar__content {
+		align-items: flex-start;
+	}
+}

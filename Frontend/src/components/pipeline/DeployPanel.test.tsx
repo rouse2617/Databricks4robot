@@ -111,9 +111,10 @@ const mockDeployment = (overrides: Partial<Deployment> = {}): Deployment => ({
 
 function renderDeployPanel(
 	onEditTemplate?: (pipeline: PipelineTemplate["pipeline"]) => void,
+	initialEntry = "/pipeline",
 ) {
 	return render(
-		<MemoryRouter>
+		<MemoryRouter initialEntries={[initialEntry]}>
 			<DeployPanel onEditTemplate={onEditTemplate} />
 		</MemoryRouter>,
 	);
@@ -280,6 +281,53 @@ describe("DeployPanel", () => {
 				["ast-001", "ast-002"],
 				"default",
 				1,
+			);
+		});
+	});
+
+	it("uses asset ids from pipeline url when running a saved template", async () => {
+		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
+		mockListDeployments.mockResolvedValue([]);
+		mockListPipelineVersions.mockResolvedValue([
+			mockTemplate({ id: "tmpl-v2", version: 2, nodeCount: 5 }),
+			mockTemplate({ id: "tmpl-001", version: 1, nodeCount: 3 }),
+		]);
+		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-005" }));
+
+		renderDeployPanel(
+			undefined,
+			"/pipeline?tab=pipelines&asset_ids=ast-a,ast-b",
+		);
+
+		expect(await screen.findByText("已选择 2 个资产")).toBeTruthy();
+		expect(
+			screen.getByText("请选择要运行的流水线和版本，确认后即可提交运行。"),
+		).toBeTruthy();
+		fireEvent.click(screen.getByText("运行"));
+
+		await waitFor(() => {
+			expect(screen.getByText("运行流水线")).toBeTruthy();
+			expect(screen.getByText("将处理 2 个资产")).toBeTruthy();
+			expect(screen.getByTestId("mock-asset-picker").textContent).toContain(
+				"Selected: ast-a,ast-b",
+			);
+		});
+
+		fireEvent.mouseDown(screen.getByRole("combobox", { name: /模板版本/i }));
+		fireEvent.click(await screen.findByText(/版本 v2/));
+
+		const deployBtn = document.querySelector(
+			".ant-modal-footer .ant-btn-primary",
+		);
+		expect(deployBtn).toBeTruthy();
+		if (deployBtn) fireEvent.click(deployBtn);
+
+		await waitFor(() => {
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
+				"tmpl-001",
+				["ast-a", "ast-b"],
+				"default",
+				2,
 			);
 		});
 	});
@@ -464,8 +512,11 @@ describe("DeployPanel", () => {
 		fireEvent.click(screen.getByText("运行"));
 
 		await waitFor(() => {
+			expect(screen.getAllByText("无资产运行").length).toBeGreaterThan(0);
 			expect(
-				screen.getByText("当前是 no-asset run：不会注入资产环境变量。"),
+				screen.getByText(
+					"本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。",
+				),
 			).toBeTruthy();
 			expect(screen.getByText("运行流水线")).toBeTruthy();
 		});

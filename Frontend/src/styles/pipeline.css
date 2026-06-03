@@ -1425,6 +1425,32 @@
 	min-width: 0;
 }
 
+.pipeline-asset-context {
+	position: absolute;
+	top: 12px;
+	left: 12px;
+	right: 12px;
+	z-index: 5;
+	max-width: 720px;
+	box-shadow: var(--elevation-1);
+}
+
+.pipeline-asset-context__body,
+.deploy-panel__asset-context-body {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.pipeline-asset-context__assets,
+.deploy-panel__asset-context-assets {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
 .workflow-run-context__event-list {
 	display: grid;
 	gap: 6px;

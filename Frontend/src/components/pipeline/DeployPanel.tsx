@@ -19,7 +19,7 @@ import {
 	Tag,
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
 	type Deployment,
 	deletePipeline,
@@ -46,7 +46,6 @@ import { PipelineEmptyState } from "./PipelineEmptyState";
 import type { Pipeline } from "./types";
 import { VersionHistoryDrawer } from "./VersionHistoryDrawer";
 
-
 const STATUS_COLORS: Record<string, string> = {
 	Succeeded: "success",
 	Running: "processing",
@@ -58,6 +57,14 @@ const STATUS_COLORS: Record<string, string> = {
 
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
 
+function parseAssetIdsParam(raw: string | null): string[] {
+	if (!raw) return [];
+	return raw
+		.split(",")
+		.map((item) => item.trim())
+		.filter(Boolean);
+}
+
 function PanelSkeleton({ rows = 3 }: { rows?: number }) {
 	const keys = Array.from({ length: rows }, (_, i) => `skel-${i}`);
 	return (
@@ -66,6 +73,53 @@ function PanelSkeleton({ rows = 3 }: { rows?: number }) {
 				<Skeleton key={key} active paragraph={{ rows: 1 }} title={false} />
 			))}
 		</div>
+	);
+}
+
+function AssetRunSummary({
+	assetIds,
+	onClear,
+}: {
+	assetIds: string[];
+	onClear: () => void;
+}) {
+	if (assetIds.length === 0) {
+		return (
+			<Alert
+				type="warning"
+				showIcon
+				message="无资产运行"
+				description="本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。"
+				style={{ fontSize: 12 }}
+			/>
+		);
+	}
+
+	const visibleIds = assetIds.slice(0, 8);
+	const hiddenCount = Math.max(assetIds.length - visibleIds.length, 0);
+
+	return (
+		<Alert
+			type="success"
+			showIcon
+			message={`将处理 ${assetIds.length} 个资产`}
+			description={
+				<div style={{ display: "grid", gap: 8 }}>
+					<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+						{visibleIds.map((assetId) => (
+							<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
+								{assetId}
+							</Tag>
+						))}
+						{hiddenCount > 0 ? <Tag>+{hiddenCount}</Tag> : null}
+					</div>
+					<Button size="small" onClick={onClear}>
+						转为无资产运行
+					</Button>
+				</div>
+			}
+			style={{ fontSize: 12 }}
+		/>
 	);
 }
 
@@ -245,6 +299,11 @@ export function DeployPanel({
 	const resolvedVariant: DeployPanelVariant =
 		variant ?? (compact ? "compact" : "full");
 	const navigate = useNavigate();
+	const [searchParams, setSearchParams] = useSearchParams();
+	const queryAssetIds = useMemo(
+		() => parseAssetIdsParam(searchParams.get("asset_ids")),
+		[searchParams],
+	);
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
@@ -271,6 +330,20 @@ export function DeployPanel({
 	const [activeVersionByTemplate, setActiveVersionByTemplate] = useState<
 		Record<string, number>
 	>({});
+
+	const updateSelectedAssetIds = useCallback(
+		(nextIds: string[]) => {
+			setSelectedAssetIds(nextIds);
+			const nextParams = new URLSearchParams(searchParams);
+			if (nextIds.length > 0) {
+				nextParams.set("asset_ids", nextIds.join(","));
+			} else {
+				nextParams.delete("asset_ids");
+			}
+			setSearchParams(nextParams, { replace: true });
+		},
+		[searchParams, setSearchParams],
+	);
 
 	const displayTemplates = useMemo(
 		() => dedupeTemplatesByName(templates),
@@ -336,7 +409,7 @@ export function DeployPanel({
 		setDeployVersions(currentTemplate ? [currentTemplate] : []);
 		const activeVersion = activeVersionByTemplate[currentTemplate?.name ?? ""];
 		setSelectedDeployVersion(activeVersion ?? currentTemplate?.version);
-		setSelectedAssetIds([]);
+		setSelectedAssetIds(queryAssetIds);
 		setAssetPickerResetKey((key) => key + 1);
 		const defaultTarget =
 			targets.find((target) => target.isDefault) ?? targets[0];
@@ -357,7 +430,7 @@ export function DeployPanel({
 
 	const closeAssetModal = () => {
 		setAssetModalOpen(false);
-		setSelectedAssetIds([]);
+		setSelectedAssetIds(queryAssetIds);
 		setDeployVersions([]);
 		setSelectedDeployVersion(undefined);
 		setAssetPickerResetKey((key) => key + 1);
@@ -440,11 +513,9 @@ export function DeployPanel({
 		version: number,
 	) => {
 		try {
-			await request(
-				"PATCH",
-				`/pipelines/${template.id}/active-version`,
-				{ activeVersion: version },
-			);
+			await request("PATCH", `/pipelines/${template.id}/active-version`, {
+				activeVersion: version,
+			});
 			setActiveVersionByTemplate((prev) => ({
 				...prev,
 				[template.name]: version,
@@ -630,6 +701,11 @@ export function DeployPanel({
 		selectableTemplateIds.every((id) => selectedTemplateIdSet.has(id));
 	const someTemplatesSelected =
 		selectedTemplateIds.length > 0 && !allTemplatesSelected;
+	const visibleQueryAssetIds = queryAssetIds.slice(0, 6);
+	const hiddenQueryAssetCount = Math.max(
+		queryAssetIds.length - visibleQueryAssetIds.length,
+		0,
+	);
 
 	return (
 		<div className="deploy-panel">
@@ -661,6 +737,36 @@ export function DeployPanel({
 					message="加载失败"
 					description={error}
 					style={{ marginBottom: 16, fontSize: 12 }}
+				/>
+			) : null}
+			{queryAssetIds.length > 0 ? (
+				<Alert
+					type="info"
+					showIcon
+					message={`已选择 ${queryAssetIds.length} 个资产`}
+					description={
+						<div className="deploy-panel__asset-context-body">
+							<span>请选择要运行的流水线和版本，确认后即可提交运行。</span>
+							<div className="deploy-panel__asset-context-assets">
+								{visibleQueryAssetIds.map((assetId) => (
+									<Tag
+										key={assetId}
+										color="blue"
+										style={{ marginInlineEnd: 0 }}
+									>
+										{assetId}
+									</Tag>
+								))}
+								{hiddenQueryAssetCount > 0 ? (
+									<Tag>+{hiddenQueryAssetCount}</Tag>
+								) : null}
+							</div>
+							<Button size="small" onClick={() => updateSelectedAssetIds([])}>
+								转为无资产运行
+							</Button>
+						</div>
+					}
+					style={{ marginBottom: 12 }}
 				/>
 			) : null}
 
@@ -736,19 +842,16 @@ export function DeployPanel({
 				okText={selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
 				width={640}
 			>
-				<Alert
-					type={selectedAssetIds.length > 0 ? "success" : "warning"}
-					message={
-						selectedAssetIds.length > 0
-							? `将处理 ${selectedAssetIds.length} 个资产`
-							: "当前是 no-asset run：不会注入资产环境变量。"
-					}
-					showIcon
-					style={{ marginBottom: 16, fontSize: 12 }}
-				/>
+				<div style={{ marginBottom: 16 }}>
+					<AssetRunSummary
+						assetIds={selectedAssetIds}
+						onClear={() => updateSelectedAssetIds([])}
+					/>
+				</div>
 				<div className="deploy-run-field">
 					<div className="deploy-run-field__label">模板版本</div>
 					<Select
+						aria-label="模板版本"
 						value={selectedDeployVersion}
 						onChange={setSelectedDeployVersion}
 						style={{ width: "100%", marginBottom: 12 }}
@@ -763,6 +866,7 @@ export function DeployPanel({
 				<div className="deploy-run-field">
 					<div className="deploy-run-field__label">执行目标</div>
 					<Select
+						aria-label="执行目标"
 						value={selectedTargetId}
 						onChange={setSelectedTargetId}
 						style={{ width: "100%" }}
@@ -788,7 +892,7 @@ export function DeployPanel({
 				</div>
 				<AssetPicker
 					selectedIds={selectedAssetIds}
-					onSelectionChange={setSelectedAssetIds}
+					onSelectionChange={updateSelectedAssetIds}
 					maxHeight={300}
 					resetKey={assetPickerResetKey}
 				/>

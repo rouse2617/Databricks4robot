@@ -24,7 +24,7 @@ import {
 	Typography,
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import type {
 	PipelineRunAssetNode,
 	PipelineRunEvent,
@@ -446,7 +446,18 @@ function WorkflowSummaryCards({
 		? getWorkflowLabel(workflow.labels, "asset-ids") ||
 			getWorkflowLabel(workflow.labels, "asset_ids")
 		: undefined;
-	const assetCount = assetIds ? assetIds.split(",").filter(Boolean).length : 0;
+	const assetIdList = assetIds
+		? assetIds
+				.split(",")
+				.map((item) => item.trim())
+				.filter(Boolean)
+		: [];
+	const assetCount = assetIdList.length;
+	const visibleAssetIds = assetIdList.slice(0, 4);
+	const hiddenAssetCount = Math.max(
+		assetIdList.length - visibleAssetIds.length,
+		0,
+	);
 
 	const cards = [
 		{
@@ -454,7 +465,24 @@ function WorkflowSummaryCards({
 			value: templateName || "—",
 			extra: templateVersion ? `v${templateVersion}` : undefined,
 		},
-		{ label: "资产", value: assetCount > 0 ? `${assetCount} 个` : "无" },
+		{
+			label: "资产",
+			value:
+				assetCount > 0 ? (
+					<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+						{visibleAssetIds.map((assetId) => (
+							<Link key={assetId} to={`/assets/${encodeURIComponent(assetId)}`}>
+								<Tag color="blue" style={{ marginInlineEnd: 0 }}>
+									{assetId}
+								</Tag>
+							</Link>
+						))}
+						{hiddenAssetCount > 0 ? <Tag>+{hiddenAssetCount}</Tag> : null}
+					</div>
+				) : (
+					"无资产"
+				),
+		},
 		{
 			label: "节点",
 			value:
@@ -620,11 +648,13 @@ function WorkflowRunContextPanel({
 					type="info"
 					showIcon
 					message="事件暂不可用"
-					description={formatRunEventError(runEventState.error)}
+					description={`这是历史工作流或外部提交的工作流，暂时没有 DataBrew 运行事件。${formatRunEventError(runEventState.error)}`}
 					style={{ marginBottom: 8 }}
 				/>
 			) : null}
-			{runEventState.loading && latestEvents.length === 0 && !runEventState.error ? (
+			{runEventState.loading &&
+			latestEvents.length === 0 &&
+			!runEventState.error ? (
 				<Spin size="small" />
 			) : latestEvents.length === 0 && !runEventState.error ? (
 				<Typography.Text type="secondary">暂无运行事件</Typography.Text>
@@ -742,7 +772,9 @@ function ExpiredWorkflowLedgerView({
 							message="运行账本暂不可用"
 							description={runEventState.error}
 						/>
-					) : runEventState.loading && latestEvents.length === 0 && !runEventState.error ? (
+					) : runEventState.loading &&
+						latestEvents.length === 0 &&
+						!runEventState.error ? (
 						<Spin size="small" />
 					) : latestEvents.length === 0 && !runEventState.error ? (
 						<Typography.Text type="secondary">暂无运行事件</Typography.Text>
