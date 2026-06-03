@@ -39,6 +39,10 @@ import {
 	dedupePipelineComponentsByName,
 	formatComponentImage,
 } from "../lib/pipelineComponentDisplay";
+import {
+	normalizeComponentArgs,
+	normalizeShellCommandArgs,
+} from "../lib/pipelineContract";
 
 type EnvRow = { name?: string; value?: string };
 
@@ -124,7 +128,12 @@ function toPayload(
 	}
 
 	const command = splitInputItems(values.command);
-	const args = splitInputItems(values.args);
+	const args = normalizeShellCommandArgs(
+		command,
+		normalizeComponentArgs(splitInputItems(values.args)),
+	)
+		.map((arg) => arg.value || arg.name)
+		.filter(Boolean);
 
 	return {
 		name: values.name.trim(),
@@ -682,14 +691,22 @@ export function ComponentManager() {
 							<Input.TextArea rows={3} maxLength={500} showCount />
 						</Form.Item>
 
-						<Form.Item name="command" label="命令">
+						<Form.Item
+							name="command"
+							label="命令"
+							extra="例如 sh, -c；如果使用 shell 执行脚本，参数只填写脚本本体。"
+						>
 							<Input.TextArea
 								rows={2}
 								placeholder="例如: python, /app/main.py"
 							/>
 						</Form.Item>
 
-						<Form.Item name="args" label="参数">
+						<Form.Item
+							name="args"
+							label="参数"
+							extra="连接下游输出时，脚本需要写入 /tmp/outputs/output；多个输出端口分别写入对应文件名。"
+						>
 							<Input.TextArea
 								rows={2}
 								placeholder="例如: --input, {{inputs.asset}}"

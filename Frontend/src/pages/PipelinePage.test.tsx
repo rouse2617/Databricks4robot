@@ -19,6 +19,13 @@ const mockDeployTemplate = vi.fn();
 const mockListPipelines = vi.fn().mockResolvedValue([]);
 const mockListPipelineVersions = vi.fn().mockResolvedValue([]);
 const mockListDeployments = vi.fn().mockResolvedValue([]);
+const mockListPipelineRuns = vi.fn().mockResolvedValue({ items: [] });
+const mockGetPipelineRunWatcherStatus = vi.fn().mockResolvedValue({
+	healthy: true,
+	lastSyncedRunCount: 0,
+	scanLimit: 100,
+	scanDelaySeconds: 6,
+});
 const mockGetPipeline = vi.fn();
 const mockDeletePipeline = vi.fn();
 const mockDeleteDeployment = vi.fn();
@@ -43,6 +50,9 @@ vi.mock("../api/pipelineApi", () => ({
 	listPipelineVersions: (...args: unknown[]) =>
 		mockListPipelineVersions(...args),
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
+	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
+	getPipelineRunWatcherStatus: (...args: unknown[]) =>
+		mockGetPipelineRunWatcherStatus(...args),
 	listExecutionTargets: (...args: unknown[]) =>
 		mockListExecutionTargets(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
@@ -50,6 +60,21 @@ vi.mock("../api/pipelineApi", () => ({
 	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
 	previewDeploy: (...args: unknown[]) => mockPreviewDeploy(...args),
 	retryDeployment: (...args: unknown[]) => mockRetryDeployment(...args),
+}));
+
+// ── Mock workflowApi ──────────────────────────────────────────────
+const mockListWorkflows = vi.fn().mockResolvedValue({ items: [] });
+const mockDeleteWorkflow = vi.fn();
+
+vi.mock("../api/workflowApi", () => ({
+	listWorkflows: (...args: unknown[]) => mockListWorkflows(...args),
+	deleteWorkflow: (...args: unknown[]) => mockDeleteWorkflow(...args),
+	resubmitWorkflow: vi.fn(),
+	retryWorkflow: vi.fn(),
+	stopWorkflow: vi.fn(),
+	suspendWorkflow: vi.fn(),
+	resumeWorkflow: vi.fn(),
+	terminateWorkflow: vi.fn(),
 }));
 
 // ── Mock pipelineComponentApi ─────────────────────────────────────
@@ -89,7 +114,7 @@ vi.mock("antd", async (importOriginal) => {
 	const actual = await importOriginal<Record<string, unknown>>();
 	return {
 		...actual,
-		message: { success: vi.fn(), error: vi.fn() },
+		message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 	};
 });
 
@@ -193,6 +218,15 @@ function resetPipelineMocks() {
 	mockListPipelines.mockResolvedValue([]);
 	mockListPipelineVersions.mockResolvedValue([]);
 	mockListDeployments.mockResolvedValue([]);
+	mockListPipelineRuns.mockResolvedValue({ items: [] });
+	mockGetPipelineRunWatcherStatus.mockResolvedValue({
+		healthy: true,
+		lastSyncedRunCount: 0,
+		scanLimit: 100,
+		scanDelaySeconds: 6,
+	});
+	mockListWorkflows.mockResolvedValue({ items: [] });
+	mockDeleteWorkflow.mockReset();
 	mockGetPipeline.mockReset();
 	mockDeletePipeline.mockReset();
 	mockDeleteDeployment.mockReset();

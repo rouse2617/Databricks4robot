@@ -174,6 +174,101 @@ func TestSaveTemplate(t *testing.T) {
 			t.Fatalf("expected nodeCount 0, got %d", tmpl.NodeCount)
 		}
 	})
+
+	t.Run("rejects duplicate fan-in target input", func(t *testing.T) {
+		uc := newUsecase(newMockAssetRepo())
+		pipe := map[string]interface{}{
+			"name": "bad-fanin",
+			"nodes": []interface{}{
+				map[string]interface{}{
+					"id": "a",
+					"component": map[string]interface{}{
+						"name":    "a",
+						"image":   "busybox",
+						"command": []interface{}{"sh", "-c"},
+						"args": []interface{}{
+							map[string]interface{}{"name": "script", "value": "echo a > /tmp/outputs/output"},
+						},
+					},
+					"outputs": []interface{}{map[string]interface{}{"name": "output", "type": "string"}},
+				},
+				map[string]interface{}{
+					"id": "b",
+					"component": map[string]interface{}{
+						"name":    "b",
+						"image":   "busybox",
+						"command": []interface{}{"sh", "-c"},
+						"args": []interface{}{
+							map[string]interface{}{"name": "script", "value": "echo b > /tmp/outputs/output"},
+						},
+					},
+					"outputs": []interface{}{map[string]interface{}{"name": "output", "type": "string"}},
+				},
+				map[string]interface{}{
+					"id": "join",
+					"component": map[string]interface{}{
+						"name":    "join",
+						"image":   "busybox",
+						"command": []interface{}{"sh", "-c"},
+						"args": []interface{}{
+							map[string]interface{}{"name": "script", "value": "echo join"},
+						},
+					},
+					"inputs": []interface{}{map[string]interface{}{"name": "input", "type": "string"}},
+				},
+			},
+			"edges": []interface{}{
+				map[string]interface{}{"source": "a.output", "target": "join.input"},
+				map[string]interface{}{"source": "b.output", "target": "join.input"},
+			},
+		}
+
+		_, err := uc.SaveTemplate(ctx, "bad-fanin", pipe)
+		if !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("expected ErrInvalidArgument, got %v", err)
+		}
+	})
+
+	t.Run("normalizes duplicated shell args before saving", func(t *testing.T) {
+		uc := newUsecase(newMockAssetRepo())
+		pipe := map[string]interface{}{
+			"name": "normalize-shell",
+			"nodes": []interface{}{
+				map[string]interface{}{
+					"id": "step-1",
+					"component": map[string]interface{}{
+						"name":    "a",
+						"image":   "busybox",
+						"command": []interface{}{"sh", "-c"},
+						"args": []interface{}{
+							map[string]interface{}{"name": "sh", "value": "sh"},
+							map[string]interface{}{"name": "-c", "value": "-c"},
+							map[string]interface{}{"name": "script", "value": "echo ok"},
+						},
+					},
+				},
+			},
+			"edges": []interface{}{},
+		}
+
+		tmpl, err := uc.SaveTemplate(ctx, "normalize-shell", pipe)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		nodes, ok := tmpl.Pipeline["nodes"].([]interface{})
+		if !ok || len(nodes) != 1 {
+			t.Fatalf("nodes = %#v", tmpl.Pipeline["nodes"])
+		}
+		component := nodes[0].(map[string]interface{})["component"].(map[string]interface{})
+		args := component["args"].([]interface{})
+		if len(args) != 1 {
+			t.Fatalf("args = %#v, want one script arg", args)
+		}
+		value := args[0].(map[string]interface{})["value"]
+		if value != "echo ok" {
+			t.Fatalf("arg value = %#v, want echo ok", value)
+		}
+	})
 }
 
 // ── Template CRUD ─────────────────────────────────────────────────────────

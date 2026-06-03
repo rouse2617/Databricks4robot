@@ -1,6 +1,7 @@
 package transpiler
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -14,7 +15,7 @@ func TestTranspileEdgePorts(t *testing.T) {
 					Name:    "a",
 					Image:   "busybox:latest",
 					Command: []string{"sh", "-c"},
-					Args:    []Argument{{Name: "script", Value: "echo a"}},
+					Args:    []Argument{{Name: "script", Value: "echo a > /tmp/outputs/out"}},
 				},
 				Outputs: []Port{{Name: "out", Type: "string"}},
 			},
@@ -39,6 +40,172 @@ func TestTranspileEdgePorts(t *testing.T) {
 	if wf.Spec.Entrypoint != "dag" {
 		t.Fatalf("entrypoint = %q", wf.Spec.Entrypoint)
 	}
+}
+
+func TestTranspileRejectsDuplicateTargetInputs(t *testing.T) {
+	p := &Pipeline{
+		Name: "dup-target",
+		Nodes: []Node{
+			{
+				ID: "a",
+				Component: Component{
+					Name:    "a",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo a > /tmp/outputs/out"}},
+				},
+				Outputs: []Port{{Name: "out", Type: "string"}},
+			},
+			{
+				ID: "b",
+				Component: Component{
+					Name:    "b",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo b > /tmp/outputs/out"}},
+				},
+				Outputs: []Port{{Name: "out", Type: "string"}},
+			},
+			{
+				ID: "join",
+				Component: Component{
+					Name:    "join",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo join"}},
+				},
+				Inputs: []Port{{Name: "input", Type: "string"}},
+			},
+		},
+		Edges: []Edge{
+			{Source: "a.out", Target: "join.input"},
+			{Source: "b.out", Target: "join.input"},
+		},
+	}
+
+	_, err := Transpile(p, &Options{Name: "dup-target"})
+	if err == nil {
+		t.Fatal("expected duplicate target input error")
+	}
+	if !strings.Contains(err.Error(), "join.input") {
+		t.Fatalf("error = %q, want join.input detail", err.Error())
+	}
+}
+
+func TestTranspileAllowsDistinctFanInInputs(t *testing.T) {
+	p := &Pipeline{
+		Name: "distinct-target",
+		Nodes: []Node{
+			{
+				ID: "left",
+				Component: Component{
+					Name:    "left",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo left > /tmp/outputs/out"}},
+				},
+				Outputs: []Port{{Name: "out", Type: "string"}},
+			},
+			{
+				ID: "right",
+				Component: Component{
+					Name:    "right",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo right > /tmp/outputs/out"}},
+				},
+				Outputs: []Port{{Name: "out", Type: "string"}},
+			},
+			{
+				ID: "join",
+				Component: Component{
+					Name:    "join",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo join"}},
+				},
+				Inputs: []Port{{Name: "left", Type: "string"}, {Name: "right", Type: "string"}},
+			},
+		},
+		Edges: []Edge{
+			{Source: "left.out", Target: "join.left"},
+			{Source: "right.out", Target: "join.right"},
+		},
+	}
+
+	if _, err := Transpile(p, &Options{Name: "distinct-target"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTranspileRejectsConsumedOutputWithoutFileWrite(t *testing.T) {
+	p := &Pipeline{
+		Name: "missing-output",
+		Nodes: []Node{
+			{
+				ID: "a",
+				Component: Component{
+					Name:    "a",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo a"}},
+				},
+				Outputs: []Port{{Name: "output", Type: "string"}},
+			},
+			{
+				ID: "b",
+				Component: Component{
+					Name:    "b",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo b"}},
+				},
+				Inputs: []Port{{Name: "input", Type: "string"}},
+			},
+		},
+		Edges: []Edge{{Source: "a.output", Target: "b.input"}},
+	}
+
+	_, err := Transpile(p, &Options{Name: "missing-output"})
+	if err == nil {
+		t.Fatal("expected consumed output file error")
+	}
+	if !strings.Contains(err.Error(), "/tmp/outputs/output") {
+		t.Fatalf("error = %q, want output path detail", err.Error())
+	}
+}
+
+func TestTranspileNormalizesDuplicatedShellArgs(t *testing.T) {
+	p := &Pipeline{
+		Name: "normalized-shell",
+		Nodes: []Node{{
+			ID: "n1",
+			Component: Component{
+				Name:    "n",
+				Image:   "busybox:latest",
+				Command: []string{"sh", "-c"},
+				Args: []Argument{
+					{Name: "sh", Value: "sh"},
+					{Name: "-c", Value: "-c"},
+					{Name: "script", Value: "echo ok"},
+				},
+			},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "normalized-shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "step-n1" {
+			if got := tmpl.Container.Args; len(got) != 1 || got[0] != "echo ok" {
+				t.Fatalf("args = %#v, want single script body", got)
+			}
+			return
+		}
+	}
+	t.Fatal("step-n1 template not found")
 }
 
 func TestTranspileSkipsUnconsumedOutputFileContract(t *testing.T) {

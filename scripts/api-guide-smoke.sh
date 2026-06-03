@@ -221,6 +221,7 @@ if [[ "$RESP_CODE" == "200" ]]; then
 		bad "pipeline-runs response shape"
 	fi
 fi
+expect_code_post "pipeline save duplicate fan-in -> 400" "/api/v1/pipelines" '{"name":"smoke-invalid-fanin","pipeline":{"name":"smoke-invalid-fanin","nodes":[{"id":"a","component":{"name":"a","image":"busybox","command":["sh","-c"],"args":[{"name":"script","value":"echo a > /tmp/outputs/output"}]},"outputs":[{"name":"output","type":"string"}]},{"id":"b","component":{"name":"b","image":"busybox","command":["sh","-c"],"args":[{"name":"script","value":"echo b > /tmp/outputs/output"}]},"outputs":[{"name":"output","type":"string"}]},{"id":"join","component":{"name":"join","image":"busybox"},"inputs":[{"name":"input","type":"string"}]}],"edges":[{"source":"a.output","target":"join.input"},{"source":"b.output","target":"join.input"}]}}}' "400" >/dev/null
 
 echo ""
 echo "--- § Lakehouse / Trino 验证 ---"

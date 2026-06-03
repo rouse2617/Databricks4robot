@@ -2360,7 +2360,10 @@ curl -s "$BASE/api/v1/execution-targets" \
 必须存在且未被软删除；重复或未知 ID 返回 `400 INVALID_ARGUMENT`，`details.field`
 为 `asset_ids`。该接口会同时写入兼容 deployment 记录，旧前端 `/deployments`
 仍可读取。模板保存是快照式版本管理：同名 pipeline 每次保存都会生成新的
-`version`；列表默认只返回同名模板的最新版本，`/pipelines/<ID>/versions`
+`version`；保存模板前会按运行契约做校验：同一个目标输入端口不能被多个上游同时连接
+（fan-in 需要给 join 节点配置不同输入端口），被下游消费的输出端口必须由生产节点写入
+`/tmp/outputs/<port>`。校验失败返回 `400 INVALID_ARGUMENT`，避免无效 Workflow 提交到
+Argo。列表默认只返回同名模板的最新版本，`/pipelines/<ID>/versions`
 返回该模板名称下的全部历史版本。运行时可传 `version` 选择历史版本；响应会返回
 实际绑定的 `templateId` 与 `templateVersion`。
 

@@ -992,6 +992,27 @@ func (uc *Usecase) resolveExecutionTargetForCompatibility(targetID string) (*mod
 
 // SaveTemplate persists a pipeline template with auto-incremented version.
 func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[string]interface{}) (*models.PipelineTemplate, error) {
+	raw, err := json.Marshal(pipeline)
+	if err != nil {
+		return nil, fmt.Errorf("marshal pipeline: %w", err)
+	}
+	pipe, _, err := rawToPipeline(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: parse pipeline: %v", ErrInvalidArgument, err)
+	}
+	transpiler.NormalizePipeline(pipe)
+	if err := transpiler.ValidatePipeline(pipe); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+	normalizedRaw, err := json.Marshal(pipe)
+	if err != nil {
+		return nil, fmt.Errorf("marshal normalized pipeline: %w", err)
+	}
+	normalizedPipeline := map[string]interface{}{}
+	if err := json.Unmarshal(normalizedRaw, &normalizedPipeline); err != nil {
+		return nil, fmt.Errorf("unmarshal normalized pipeline: %w", err)
+	}
+
 	version, err := uc.templateRepo.GetNextVersion(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("get next version: %w", err)
@@ -1000,13 +1021,11 @@ func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[s
 		ID:        uuid.New().String(),
 		Name:      name,
 		Version:   version,
-		Pipeline:  pipeline,
+		Pipeline:  normalizedPipeline,
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}
-	if nodes, ok := pipeline["nodes"].([]interface{}); ok {
-		t.NodeCount = len(nodes)
-	}
+	t.NodeCount = len(pipe.Nodes)
 	if err := uc.templateRepo.Save(ctx, t); err != nil {
 		return nil, fmt.Errorf("save template: %w", err)
 	}
@@ -1070,6 +1089,17 @@ func (uc *Usecase) Deploy(
 	pipe, nodeCount, err := rawToPipeline(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parse pipeline: %w", err)
+	}
+	transpiler.NormalizePipeline(pipe)
+	if err := transpiler.ValidatePipeline(pipe); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+	normalizedRaw, err := json.Marshal(pipe)
+	if err != nil {
+		return nil, fmt.Errorf("marshal normalized pipeline: %w", err)
+	}
+	if err := json.Unmarshal(normalizedRaw, &pipelineArg); err != nil {
+		return nil, fmt.Errorf("unmarshal normalized pipeline: %w", err)
 	}
 
 	pipeName := pipe.Name

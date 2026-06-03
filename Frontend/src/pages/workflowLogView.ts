@@ -22,17 +22,41 @@ function countLines(value: string): number {
 	return lines;
 }
 
+function escapeRegex(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function splitRepeatedPrefix(value: string, prefix: string) {
+	const trimmed = prefix.trim();
+	if (!trimmed || value.includes("\n")) return value;
+	return value.replace(
+		new RegExp(`(?!^)(${escapeRegex(trimmed)})`, "g"),
+		"\n$1",
+	);
+}
+
+function inferRepeatedLogPrefix(value: string) {
+	const match = value.match(/^([A-Za-z0-9_.:-]+)\s/);
+	if (!match) return "";
+	const prefix = match[1];
+	const occurrences =
+		value.match(new RegExp(escapeRegex(prefix), "g"))?.length ?? 0;
+	return occurrences > 1 ? prefix : "";
+}
+
 export function normalizeLogContent(
 	logContent: string,
 	selectedNode: Pick<WorkflowNodeStatus, "podName"> | null,
 ) {
 	const normalized = logContent.replace(/\r\n?/g, "\n");
-	const podName = selectedNode?.podName?.trim();
-	if (!podName || normalized.includes("\n")) {
+	if (normalized.includes("\n")) {
 		return normalized;
 	}
-	const escaped = podName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	return normalized.replace(new RegExp(`(?!^)(${escaped})`, "g"), "\n$1");
+	const podName = selectedNode?.podName?.trim();
+	if (podName) {
+		return splitRepeatedPrefix(normalized, podName);
+	}
+	return splitRepeatedPrefix(normalized, inferRepeatedLogPrefix(normalized));
 }
 
 export function prepareVisibleLogContent(

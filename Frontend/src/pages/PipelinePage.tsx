@@ -72,6 +72,7 @@ import {
 	fromTranspilerPipeline,
 	toTranspilerPipeline,
 } from "../lib/pipelineContract";
+import { validatePipelineForRun } from "../lib/pipelineValidation";
 import { ComponentManager } from "./ComponentManager";
 import {
 	apiToRegistered,
@@ -510,6 +511,15 @@ function PipelineCanvas() {
 		(): Pipeline => toTranspilerPipeline(nodes, edges, { name: pipelineName }),
 		[nodes, edges, pipelineName],
 	);
+	const assertPipelineRunnable = useCallback(
+		(pipeline: Pipeline, actionLabel: string) => {
+			const validation = validatePipelineForRun(pipeline);
+			if (validation.valid) return true;
+			message.error(`${actionLabel}失败: ${validation.errors[0]}`);
+			return false;
+		},
+		[],
+	);
 
 	const pipelineAssetIds = useMemo(
 		() => extractPipelineAssetIds(buildPipelineJSON()),
@@ -633,7 +643,9 @@ function PipelineCanvas() {
 
 	const handleSave = useCallback(async () => {
 		try {
-			const saved = await savePipeline(pipelineName, buildPipelineJSON());
+			const pipeline = buildPipelineJSON();
+			if (!assertPipelineRunnable(pipeline, "保存")) return;
+			const saved = await savePipeline(pipelineName, pipeline);
 			setSelectedTemplateVersionId(saved.id);
 			setTemplateVersions((prev) => {
 				const withoutSaved = prev.filter((item) => item.id !== saved.id);
@@ -646,13 +658,16 @@ function PipelineCanvas() {
 		} catch (err) {
 			message.error(`保存失败: ${String(err)}`);
 		}
-	}, [pipelineName, buildPipelineJSON, navigate]);
+	}, [pipelineName, buildPipelineJSON, navigate, assertPipelineRunnable]);
 
 	const canDeploy = nodes.length > 0;
 
 	const openDeployDialog = useCallback(() => {
 		if (nodes.length === 0) {
 			message.warning("请先从左侧拖入至少一个组件到画布");
+			return;
+		}
+		if (!assertPipelineRunnable(buildPipelineJSON(), "部署")) {
 			return;
 		}
 		setDeployDialog({
@@ -664,7 +679,7 @@ function PipelineCanvas() {
 		});
 		setSelectedAssetIds([]);
 		setAssetPickerResetKey((key) => key + 1);
-	}, [pipelineName, nodes.length]);
+	}, [pipelineName, nodes.length, buildPipelineJSON, assertPipelineRunnable]);
 
 	const closeDeployDialog = useCallback(() => {
 		setDeployDialog({
@@ -704,6 +719,10 @@ function PipelineCanvas() {
 		setDeployDialog((prev) => ({ ...prev, deploying: true, done: false }));
 		try {
 			const pipeline = buildPipelineJSON();
+			if (!assertPipelineRunnable(pipeline, "运行")) {
+				setDeployDialog((prev) => ({ ...prev, deploying: false }));
+				return;
+			}
 			const name = deployDialog.name || pipelineName;
 			const saved = await savePipeline(name, pipeline);
 			const result = await deployTemplate(
@@ -727,6 +746,7 @@ function PipelineCanvas() {
 		}
 	}, [
 		buildPipelineJSON,
+		assertPipelineRunnable,
 		deployDialog.name,
 		pipelineName,
 		selectedAssetIds,
@@ -743,6 +763,14 @@ function PipelineCanvas() {
 		}));
 		try {
 			const pipeline = buildPipelineJSON();
+			if (!assertPipelineRunnable(pipeline, "预览")) {
+				setDeployDialog((prev) => ({
+					...prev,
+					previewLoading: false,
+					mode: "edit",
+				}));
+				return;
+			}
 			const { manifest } = await previewDeploy(pipeline);
 			setDeployDialog((prev) => ({
 				...prev,
@@ -756,7 +784,7 @@ function PipelineCanvas() {
 				previewError: String(err),
 			}));
 		}
-	}, [buildPipelineJSON]);
+	}, [buildPipelineJSON, assertPipelineRunnable]);
 
 	const isCanvasEmpty = nodes.length === 0;
 	const currentTemplateLabel = pipelineName || "未命名流水线";
