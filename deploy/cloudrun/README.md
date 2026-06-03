@@ -63,9 +63,17 @@ from GKE to Cloud Run.
 - If K8s secret uses `DB_HOST=postgres`, Cloud Run revision will fail because
   that DNS name is cluster-internal. Set `DB_HOST_OVERRIDE` (and optionally
   `VPC_CONNECTOR`) to a reachable PostgreSQL endpoint before rollout.
-- `backend-dev.sh` now auto-falls back to the PostgreSQL pod IP when it sees
-  `DB_HOST=postgres` and no `DB_HOST_OVERRIDE` is provided. This is a temporary
-  migration convenience, not a stable long-term endpoint.
+- `backend-dev.sh` defaults to the current dev Cloud Run wiring:
+  `DB_HOST_OVERRIDE=172.27.160.7`, `DB_NAME_OVERRIDE=cyber_databrew_dev`,
+  `DB_PASSWORD_SECRET=cyber-databrew-dev-postgres-password`,
+  `VPC_CONNECTOR=cr-central-conn`, `ARGO_SERVER_URL_OVERRIDE=http://10.2.1.211:2746`,
+  `K8S_API_ENDPOINT_OVERRIDE=https://34.59.48.233`,
+  `K8S_BEARER_TOKEN_SECRET=cyber-databrew-dev-k8s-bearer-token`, and
+  `K8S_CA_DATA_SECRET=cyber-databrew-dev-k8s-ca-data`. Override these variables
+  only when deploying to a different dev topology.
+- `backend-dev.sh` still auto-falls back to the PostgreSQL pod IP if you clear
+  `DB_HOST_OVERRIDE` and the merged K8s env says `DB_HOST=postgres`. This is a
+  temporary migration convenience, not a stable long-term endpoint.
 - Cloud Run target database name is now `cyber_databrew_dev`. Override with
   `DB_NAME` via the script when K8s-sourced env points to a
   different database than the one Cloud Run should target.

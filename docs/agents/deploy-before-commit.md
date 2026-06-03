@@ -63,9 +63,27 @@ docker push "${BACKEND_LATEST}"
 
 USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
   IMAGE="${BACKEND_IMAGE}" \
-  DB_PASSWORD_SECRET=cyber-databrew-dev-postgres-password \
   bash deploy/cloudrun/backend-dev.sh
 ```
+
+`backend-dev.sh` carries the dev Cloud Run reachability defaults for DB, VPC,
+Argo, and Kubernetes Pod diagnostics. Override only when targeting a different
+dev environment:
+
+| Setting | Default |
+|---------|---------|
+| `DB_HOST_OVERRIDE` | `172.27.160.7` |
+| `DB_NAME_OVERRIDE` | `cyber_databrew_dev` |
+| `DB_PASSWORD_SECRET` | `cyber-databrew-dev-postgres-password` |
+| `VPC_CONNECTOR` | `cr-central-conn` |
+| `ARGO_SERVER_URL_OVERRIDE` | `http://10.2.1.211:2746` |
+| `K8S_API_ENDPOINT_OVERRIDE` | `https://34.59.48.233` |
+| `K8S_BEARER_TOKEN_SECRET` | `cyber-databrew-dev-k8s-bearer-token` |
+| `K8S_CA_DATA_SECRET` | `cyber-databrew-dev-k8s-ca-data` |
+
+Do not hand-edit Cloud Run Console env vars for these keys. The next scripted
+deploy will replace the revision template; keep the canonical values in this
+script or pass explicit overrides.
 
 ### Frontend — build, push, deploy
 
