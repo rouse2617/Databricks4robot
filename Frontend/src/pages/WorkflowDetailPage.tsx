@@ -617,16 +617,16 @@ function WorkflowRunContextPanel({
 			</div>
 			{runEventState.error ? (
 				<Alert
-					type="warning"
+					type="info"
 					showIcon
 					message="事件暂不可用"
 					description={formatRunEventError(runEventState.error)}
 					style={{ marginBottom: 8 }}
 				/>
 			) : null}
-			{runEventState.loading && latestEvents.length === 0 ? (
+			{runEventState.loading && latestEvents.length === 0 && !runEventState.error ? (
 				<Spin size="small" />
-			) : latestEvents.length === 0 ? (
+			) : latestEvents.length === 0 && !runEventState.error ? (
 				<Typography.Text type="secondary">暂无运行事件</Typography.Text>
 			) : (
 				<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -737,14 +737,14 @@ function ExpiredWorkflowLedgerView({
 				>
 					{runEventState.error ? (
 						<Alert
-							type="warning"
+							type="info"
 							showIcon
 							message="运行账本暂不可用"
 							description={runEventState.error}
 						/>
-					) : runEventState.loading && latestEvents.length === 0 ? (
+					) : runEventState.loading && latestEvents.length === 0 && !runEventState.error ? (
 						<Spin size="small" />
-					) : latestEvents.length === 0 ? (
+					) : latestEvents.length === 0 && !runEventState.error ? (
 						<Typography.Text type="secondary">暂无运行事件</Typography.Text>
 					) : (
 						<Space direction="vertical" size={8} style={{ width: "100%" }}>
