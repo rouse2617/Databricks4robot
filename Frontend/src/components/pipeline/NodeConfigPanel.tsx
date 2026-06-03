@@ -98,15 +98,25 @@ function PortConfigList({
 	return (
 		<Form.List name={name} initialValue={[emptyPort]}>
 			{(fields, { add, remove }) => (
-				<div style={{ display: "grid", gap: 8 }}>
+				<div
+					style={{
+						display: "grid",
+						gap: 8,
+						border: "1px solid #e2e8f0",
+						borderRadius: 8,
+						padding: 12,
+						minWidth: 0,
+					}}
+				>
 					<div
 						style={{
 							display: "flex",
 							justifyContent: "space-between",
 							alignItems: "center",
+							gap: 8,
 						}}
 					>
-						<span>{title}</span>
+						<strong>{title}</strong>
 						<Button
 							size="small"
 							icon={<PlusOutlined />}
@@ -120,8 +130,10 @@ function PortConfigList({
 							key={key}
 							style={{
 								display: "grid",
-								gridTemplateColumns: "1fr 96px auto",
+								gridTemplateColumns: "minmax(0, 1fr) 96px 32px",
 								gap: 8,
+								alignItems: "center",
+								minWidth: 0,
 							}}
 						>
 							<Form.Item
@@ -150,7 +162,8 @@ function PortConfigList({
 					))}
 					{outputPathHint ? (
 						<span style={{ fontSize: 12, color: "#64748b" }}>
-							输出端口被连接时，需要写入 /tmp/outputs/端口名。
+							结果要传给后续步骤时，例如输出名为 output，就写入
+							{" /tmp/outputs/output"}。
 						</span>
 					) : null}
 				</div>
@@ -251,19 +264,19 @@ export function NodeConfigPanel({
 				<div
 					style={{
 						display: "grid",
-						gridTemplateColumns: "1fr 1fr",
+						gridTemplateColumns: "1fr",
 						gap: 12,
 						marginBottom: 16,
 					}}
 				>
 					<PortConfigList
 						name="inputPorts"
-						title="输入端口"
+						title="输入数据"
 						emptyPort={{ name: "input", type: "asset" }}
 					/>
 					<PortConfigList
 						name="outputPorts"
-						title="输出端口"
+						title="输出结果"
 						emptyPort={{ name: "output", type: "asset" }}
 						outputPathHint
 					/>

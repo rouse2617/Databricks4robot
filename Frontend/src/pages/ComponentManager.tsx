@@ -301,16 +301,35 @@ function PortFormList({
 	return (
 		<Form.List name={name} initialValue={[emptyPort]}>
 			{(fields, { add, remove }) => (
-				<div>
+				<div
+					style={{
+						border: "1px solid #e2e8f0",
+						borderRadius: 8,
+						padding: 12,
+						background: "#fff",
+						minWidth: 0,
+					}}
+				>
 					<div
 						style={{
 							display: "flex",
 							alignItems: "center",
 							justifyContent: "space-between",
-							marginBottom: 8,
+							gap: 12,
+							marginBottom: 12,
 						}}
 					>
-						<Typography.Text>{title}</Typography.Text>
+						<div>
+							<Typography.Text strong>{title}</Typography.Text>
+							<Typography.Text
+								type="secondary"
+								style={{ display: "block", fontSize: 12, marginTop: 2 }}
+							>
+								{showOutputPath
+									? "这个步骤产出的结果，可连接给后续步骤使用。"
+									: "这个步骤运行前需要接收的数据。"}
+							</Typography.Text>
+						</div>
 						<Button
 							size="small"
 							icon={<PlusOutlined />}
@@ -324,30 +343,39 @@ function PortFormList({
 							key={key}
 							style={{
 								display: "grid",
-								gridTemplateColumns: "140px 120px minmax(180px, 1fr) auto",
+								gridTemplateColumns:
+									"minmax(120px, 1fr) minmax(96px, 140px) minmax(160px, 1.4fr) 32px",
 								gap: 8,
-								alignItems: "start",
+								alignItems: "center",
 								marginBottom: 8,
+								maxWidth: "100%",
+								minWidth: 0,
 							}}
 						>
 							<Form.Item
 								{...field}
 								name={[field.name, "name"]}
 								rules={[{ required: true, message: "请输入端口名" }]}
+								style={{ marginBottom: 0, minWidth: 0 }}
 							>
-								<Input placeholder="input" />
+								<Input placeholder={showOutputPath ? "output" : "input"} />
 							</Form.Item>
 							<Form.Item
 								{...field}
 								name={[field.name, "type"]}
 								rules={[{ required: true, message: "请输入类型" }]}
+								style={{ marginBottom: 0, minWidth: 0 }}
 							>
 								<Input placeholder="asset" />
 							</Form.Item>
-							<Form.Item {...field} name={[field.name, "desc"]}>
+							<Form.Item
+								{...field}
+								name={[field.name, "desc"]}
+								style={{ marginBottom: 0, minWidth: 0 }}
+							>
 								<Input
 									placeholder={
-										showOutputPath ? "写入 /tmp/outputs/<端口名>" : "端口说明"
+										showOutputPath ? "结果说明，可选" : "端口说明，可选"
 									}
 								/>
 							</Form.Item>
@@ -362,7 +390,10 @@ function PortFormList({
 					))}
 					{showOutputPath ? (
 						<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-							输出被下游消费时，容器脚本必须写入 /tmp/outputs/端口名。
+							要把结果传给后续步骤时，请把结果写入对应文件。例如输出名为{" "}
+							<Typography.Text code>output</Typography.Text>
+							，就写入{" "}
+							<Typography.Text code>/tmp/outputs/output</Typography.Text>。
 						</Typography.Text>
 					) : null}
 				</div>
@@ -865,19 +896,19 @@ export function ComponentManager() {
 						<div
 							style={{
 								display: "grid",
-								gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-								gap: 16,
+								gridTemplateColumns: "1fr",
+								gap: 12,
 								marginBottom: 16,
 							}}
 						>
 							<PortFormList
 								name="inputPorts"
-								title="输入端口"
+								title="输入数据"
 								emptyPort={{ name: "input", type: "asset" }}
 							/>
 							<PortFormList
 								name="outputPorts"
-								title="输出端口"
+								title="输出结果"
 								emptyPort={{ name: "output", type: "asset" }}
 								showOutputPath
 							/>
