@@ -16,11 +16,36 @@ class WorkflowManager(BaseManager):
     def get(self, workflow_name: str) -> dict[str, Any]:
         return self._request("GET", self._endpoint("workflow_get", workflow_name=workflow_name))
 
-    def logs(self, workflow_name: str, node_id: str) -> dict[str, Any]:
+    def logs(
+        self,
+        workflow_name: str,
+        node_id: str,
+        *,
+        tail_lines: int | None = None,
+        limit_bytes: int | None = None,
+        cursor: str | None = None,
+        container: str | None = None,
+        since_seconds: int | None = None,
+        since_time: str | None = None,
+        previous: bool | None = None,
+        timestamps: bool | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"nodeId": node_id}
+        optional = {
+            "tailLines": tail_lines,
+            "limitBytes": limit_bytes,
+            "cursor": cursor,
+            "container": container,
+            "sinceSeconds": since_seconds,
+            "sinceTime": since_time,
+            "previous": previous,
+            "timestamps": timestamps,
+        }
+        params.update({key: value for key, value in optional.items() if value is not None})
         return self._request(
             "GET",
             self._endpoint("workflow_logs", workflow_name=workflow_name),
-            params={"nodeId": node_id},
+            params=params,
         )
 
     def retry(self, workflow_name: str) -> dict[str, Any]:

@@ -27,6 +27,8 @@ const (
 	workflowLogSourceArgoLive          = "argo-live"
 )
 
+const workflowLogPaginationUnavailableReason = "live Argo logs do not provide stable historical cursor pagination"
+
 type Handler struct {
 	wfClient        argo.WorkflowClient
 	podClient       k8s.PodClient
@@ -336,6 +338,21 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		return
 	}
 	meta["bytesTruncated"] = result.Truncated
+	pagination := gin.H{
+		"available":  false,
+		"nextCursor": nil,
+		"reason":     workflowLogPaginationUnavailableReason,
+	}
+	window := gin.H{
+		"mode":         "tail",
+		"tailLines":    meta["tailLines"],
+		"limitBytes":   meta["limitBytes"],
+		"sinceSeconds": meta["sinceSeconds"],
+		"sinceTime":    meta["sinceTime"],
+		"previous":     opts.Previous,
+		"timestamps":   opts.Timestamps,
+		"scope":        "bounded-live-window",
+	}
 	c.JSON(200, gin.H{
 		"workflowName": name,
 		"nodeId":       nodeId,
@@ -347,6 +364,8 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		"truncated":    result.Truncated,
 		"nextCursor":   nil,
 		"truncation":   meta,
+		"pagination":   pagination,
+		"window":       window,
 	})
 }
 
@@ -406,6 +425,12 @@ func (h *Handler) namespaceFor(c *gin.Context) string {
 }
 
 func parseWorkflowLogOptions(c *gin.Context) (argo.WorkflowLogOptions, gin.H, bool) {
+	if cursor := strings.TrimSpace(c.Query("cursor")); cursor != "" {
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "cursor pagination is not available for live Argo logs", gin.H{
+			"reason": workflowLogPaginationUnavailableReason,
+		})
+		return argo.WorkflowLogOptions{}, nil, false
+	}
 	tailLines, tailClamped, ok := parseBoundedInt64Query(
 		c,
 		"tailLines",
@@ -472,6 +497,12 @@ func parseWorkflowLogOptions(c *gin.Context) (argo.WorkflowLogOptions, gin.H, bo
 		"limitBytes":        limitBytes,
 		"maxLimitBytes":     maxWorkflowLogLimitBytes,
 		"limitBytesClamped": limitClamped,
+	}
+	if opts.SinceSeconds != nil {
+		meta["sinceSeconds"] = *opts.SinceSeconds
+	}
+	if opts.SinceTime != "" {
+		meta["sinceTime"] = opts.SinceTime
 	}
 	return opts, meta, true
 }

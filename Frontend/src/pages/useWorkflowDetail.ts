@@ -15,8 +15,16 @@ import {
 	getWorkflowLogStreamUrl,
 	getWorkflowLogs,
 	type WorkflowDetail,
+	type WorkflowLogResponse,
 	type WorkflowNodeStatus,
 } from "../api/workflowApi";
+
+export type WorkflowLogFollowStatus =
+	| "idle"
+	| "connecting"
+	| "connected"
+	| "ended"
+	| "error";
 
 interface WorkflowLogState {
 	content: string | null;
@@ -24,6 +32,10 @@ interface WorkflowLogState {
 	error: string | null;
 	search: string;
 	following: boolean;
+	followStatus: WorkflowLogFollowStatus;
+	followMessage: string | null;
+	response: WorkflowLogResponse | null;
+	clientTruncated: boolean;
 }
 
 interface RunEventState {
@@ -93,6 +105,10 @@ const EMPTY_LOG_STATE: WorkflowLogState = {
 	error: null,
 	search: "",
 	following: false,
+	followStatus: "idle",
+	followMessage: null,
+	response: null,
+	clientTruncated: false,
 };
 
 const EMPTY_RUN_EVENT_STATE: RunEventState = {
@@ -117,6 +133,7 @@ const EMPTY_COST_SUMMARY_STATE: CostSummaryState = {
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(["Running", "Pending"]);
 const WORKFLOW_POLL_INTERVAL_MS = 8_000;
+const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
 
 function toErrorMessage(err: unknown): string {
 	if (err instanceof Error) {
@@ -130,6 +147,21 @@ function toLoadError(err: unknown): WorkflowLoadError {
 		return { kind: "not_found", message: err.message };
 	}
 	return { kind: "error", message: toErrorMessage(err) };
+}
+
+function appendBoundedLogContent(
+	current: string | null,
+	line: string,
+): { content: string; truncated: boolean } {
+	const prefix = current && !current.endsWith("\n") ? "\n" : "";
+	const next = `${current ?? ""}${prefix}${line}\n`;
+	if (next.length <= LOG_CLIENT_BUFFER_CHARS) {
+		return { content: next, truncated: false };
+	}
+	return {
+		content: next.slice(-LOG_CLIENT_BUFFER_CHARS),
+		truncated: true,
+	};
 }
 
 export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
@@ -291,6 +323,10 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 					error: null,
 					search: current.search,
 					following: current.following,
+					followStatus: current.followStatus,
+					followMessage: current.followMessage,
+					response: res,
+					clientTruncated: false,
 				}));
 			} catch (err) {
 				setLogState((current) => ({
@@ -299,6 +335,10 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 					error: toErrorMessage(err),
 					search: current.search,
 					following: current.following,
+					followStatus: current.followStatus,
+					followMessage: current.followMessage,
+					response: null,
+					clientTruncated: false,
 				}));
 			}
 		},
@@ -322,6 +362,8 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 					content: "",
 					loading: false,
 					error: null,
+					response: null,
+					clientTruncated: false,
 				}));
 			}
 		},
@@ -338,11 +380,16 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			followSourceRef.current.close();
 			followSourceRef.current = null;
 		}
-		setLogState((prev) => ({ ...prev, following: false }));
+		setLogState((prev) => ({
+			...prev,
+			following: false,
+			followStatus: "idle",
+			followMessage: "实时日志已停止",
+		}));
 	}, []);
 
 	const startFollowLogs = useCallback(() => {
-		if (!name || !selectedNodeId || followSourceRef.current) return;
+		if (!name || !selectedNodeId) return;
 
 		stopFollowLogs();
 
@@ -350,16 +397,45 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		const source = new EventSource(url);
 		followSourceRef.current = source;
 
-		setLogState((prev) => ({ ...prev, following: true, error: null }));
+		setLogState((prev) => ({
+			...prev,
+			following: true,
+			followStatus: "connecting",
+			followMessage: "正在连接实时日志",
+			error: null,
+		}));
+
+		source.onopen = () => {
+			setLogState((prev) => ({
+				...prev,
+				following: true,
+				followStatus: "connected",
+				followMessage: "实时日志已连接",
+			}));
+		};
 
 		source.addEventListener("log", (event: MessageEvent) => {
 			try {
 				const data = JSON.parse(event.data);
-				if (data.content) {
+				const line =
+					typeof data.line === "string"
+						? data.line
+						: typeof data.content === "string"
+							? data.content
+							: "";
+				if (line) {
 					setLogState((prev) => ({
 						...prev,
-						content: (prev.content ?? "") + data.content,
+						...(() => {
+							const next = appendBoundedLogContent(prev.content, line);
+							return {
+								content: next.content,
+								clientTruncated: prev.clientTruncated || next.truncated,
+							};
+						})(),
 						loading: false,
+						followStatus: "connected",
+						followMessage: "实时日志已连接",
 					}));
 				}
 			} catch {
@@ -367,8 +443,42 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			}
 		});
 
+		source.addEventListener("end", (event: MessageEvent) => {
+			let reason = "实时日志已结束";
+			try {
+				const data = JSON.parse(event.data);
+				if (typeof data.reason === "string" && data.reason) {
+					reason =
+						data.reason === "limit-bytes"
+							? "已达到本次实时日志字节上限"
+							: "实时日志已结束";
+				}
+			} catch {
+				// ignore malformed events
+			}
+			source.close();
+			if (followSourceRef.current === source) {
+				followSourceRef.current = null;
+			}
+			setLogState((prev) => ({
+				...prev,
+				following: false,
+				followStatus: "ended",
+				followMessage: reason,
+			}));
+		});
+
 		source.onerror = () => {
-			stopFollowLogs();
+			source.close();
+			if (followSourceRef.current === source) {
+				followSourceRef.current = null;
+			}
+			setLogState((prev) => ({
+				...prev,
+				following: false,
+				followStatus: "error",
+				followMessage: "实时日志连接已断开",
+			}));
 		};
 	}, [name, selectedNodeId, stopFollowLogs]);
 
@@ -377,14 +487,25 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		const selNode = selectedNode;
 		if (!content || !name || !selNode) return;
 		const nodeName = selNode.displayName || selNode.name || selNode.id;
-		const blob = new Blob([content], { type: "text/plain" });
+		const response = logState.response;
+		const header = [
+			`# workflow: ${name}`,
+			`# node: ${nodeName}`,
+			`# container: ${response?.container ?? "main"}`,
+			`# scope: ${response?.window?.scope ?? "loaded-log-window"}`,
+			`# tailLines: ${response?.truncation?.tailLines ?? "unknown"}`,
+			`# limitBytes: ${response?.truncation?.limitBytes ?? "unknown"}`,
+			`# generatedAt: ${new Date().toISOString()}`,
+			"",
+		].join("\n");
+		const blob = new Blob([header, content], { type: "text/plain" });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement("a");
 		a.href = url;
 		a.download = `${name}-${nodeName}.log`;
 		a.click();
 		URL.revokeObjectURL(url);
-	}, [logState.content, name, selectedNode]);
+	}, [logState.content, logState.response, name, selectedNode]);
 
 	useEffect(() => {
 		return () => {

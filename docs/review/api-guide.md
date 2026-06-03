@@ -2876,6 +2876,7 @@ curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
 
 # 查看节点日志。nodeId 传 workflow detail 返回的节点 id；后端会解析实际 Kubernetes podName。
 # 默认 tailLines=200、limitBytes=262144；超过服务端最大值会 clamp。
+# live Argo/Kubernetes 日志没有稳定历史 cursor，因此响应会明确标记 pagination.available=false。
 curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>&tailLines=200&limitBytes=262144" \
   -H "X-Databrew-Token: $TOKEN"
 
@@ -2890,6 +2891,17 @@ curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>&tailLines=
 #   "lineCount": 42,
 #   "truncated": false,
 #   "nextCursor": null,
+#   "pagination": {
+#     "available": false,
+#     "nextCursor": null,
+#     "reason": "live Argo logs do not provide stable historical cursor pagination"
+#   },
+#   "window": {
+#     "mode": "tail",
+#     "tailLines": 200,
+#     "limitBytes": 262144,
+#     "scope": "bounded-live-window"
+#   },
 #   "truncation": {
 #     "bounded": true,
 #     "tailLines": 200,
@@ -2899,6 +2911,10 @@ curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>&tailLines=
 #     "bytesTruncated": false
 #   }
 # }
+
+# 错误路径示例：live Argo 日志不支持稳定历史 cursor，传 cursor 返回 400。
+curl -i "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs?nodeId=<NODE_ID>&cursor=older" \
+  -H "X-Databrew-Token: $TOKEN"
 
 # 流式日志。canonical endpoint 是 /logs/stream；旧 /log/stream 仅作为兼容 alias。
 curl -N "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs/stream?nodeId=<NODE_ID>&tailLines=200&limitBytes=262144" \

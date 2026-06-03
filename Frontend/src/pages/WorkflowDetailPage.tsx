@@ -29,7 +29,10 @@ import type {
 	PipelineRunAssetNode,
 	PipelineRunEvent,
 } from "../api/pipelineApi";
-import type { WorkflowNodeStatus } from "../api/workflowApi";
+import type {
+	WorkflowLogResponse,
+	WorkflowNodeStatus,
+} from "../api/workflowApi";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { LinkifiedText } from "../components/common/LinkifiedText";
 import {
@@ -43,7 +46,10 @@ import {
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
-import { useWorkflowDetail } from "./useWorkflowDetail";
+import {
+	useWorkflowDetail,
+	type WorkflowLogFollowStatus,
+} from "./useWorkflowDetail";
 import type { WorkflowDagNodeAction } from "./WorkflowDagNode";
 import {
 	countDisplayableWorkflowNodes,
@@ -94,6 +100,10 @@ function WorkflowLogPanel({
 	error,
 	search,
 	following,
+	followStatus,
+	followMessage,
+	logResponse,
+	clientTruncated,
 	onSearch,
 	onFollow,
 	onStop,
@@ -105,6 +115,10 @@ function WorkflowLogPanel({
 	error: string | null;
 	search: string;
 	following: boolean;
+	followStatus: WorkflowLogFollowStatus;
+	followMessage: string | null;
+	logResponse: WorkflowLogResponse | null;
+	clientTruncated: boolean;
 	onSearch: (value: string) => void;
 	onFollow: () => void;
 	onStop: () => void;
@@ -122,6 +136,19 @@ function WorkflowLogPanel({
 		visibleLog === null
 			? null
 			: buildHighlightedLogNodes(visibleLog.content, search);
+	const followStatusMeta: Record<
+		WorkflowLogFollowStatus,
+		{ color: string; label: string }
+	> = {
+		idle: { color: "default", label: "未连接" },
+		connecting: { color: "processing", label: "连接中" },
+		connected: { color: "green", label: "实时中" },
+		ended: { color: "blue", label: "已结束" },
+		error: { color: "red", label: "已断开" },
+	};
+	const followMeta = followStatusMeta[followStatus];
+	const paginationUnavailable =
+		logResponse?.pagination && logResponse.pagination.available === false;
 
 	useEffect(() => {
 		if (
@@ -166,13 +193,47 @@ function WorkflowLogPanel({
 						停止实时日志
 					</Button>
 				) : (
-					<Button disabled={!selectedNode} onClick={onFollow}>
+					<Button
+						disabled={!selectedNode}
+						loading={followStatus === "connecting"}
+						onClick={onFollow}
+					>
 						实时日志
 					</Button>
 				)}
 				<Button disabled={!selectedNode || !logContent} onClick={onDownload}>
-					下载
+					下载当前窗口
 				</Button>
+			</div>
+			<div
+				style={{
+					display: "flex",
+					flexWrap: "wrap",
+					gap: 8,
+					alignItems: "center",
+					marginBottom: 8,
+				}}
+			>
+				<Tag color={followMeta.color}>实时状态：{followMeta.label}</Tag>
+				{logResponse ? (
+					<>
+						<Tag color="blue">
+							tail {logResponse.truncation.tailLines.toLocaleString()} 行
+						</Tag>
+						<Tag color="purple">
+							上限 {logResponse.truncation.limitBytes.toLocaleString()} bytes
+						</Tag>
+						<Tag color="default">
+							来源 {logResponse.source} /{" "}
+							{logResponse.window?.scope ?? "bounded"}
+						</Tag>
+					</>
+				) : null}
+				{followMessage ? (
+					<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+						{followMessage}
+					</Typography.Text>
+				) : null}
 			</div>
 
 			{!selectedNode ? (
@@ -191,6 +252,18 @@ function WorkflowLogPanel({
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>暂无日志</div>
 			) : (
 				<>
+					{paginationUnavailable && (
+						<Alert
+							type="info"
+							showIcon
+							style={{ marginBottom: 8 }}
+							message="当前日志源不支持稳定历史分页"
+							description={
+								logResponse?.pagination?.reason ||
+								"实时 Argo 日志只提供 tail/since/follow 窗口；完整历史归档需要后续接入持久化日志。"
+							}
+						/>
+					)}
 					{visibleLog?.truncated && (
 						<Alert
 							type="warning"
@@ -198,6 +271,15 @@ function WorkflowLogPanel({
 							style={{ marginBottom: 8 }}
 							message={`日志较大，当前仅显示尾部 ${visibleLog.content.length.toLocaleString()} 字符 / ${Math.min(visibleLog.totalLines, LOG_MAX_RENDER_LINES).toLocaleString()} 行。`}
 							description="完整大日志需要后端 tail、分页或流式接口支持；当前视图会限制渲染量以避免浏览器卡顿。"
+						/>
+					)}
+					{clientTruncated && (
+						<Alert
+							type="warning"
+							showIcon
+							style={{ marginBottom: 8 }}
+							message="实时日志已限制浏览器内存缓冲"
+							description="为了避免页面卡顿，前端仅保留最近一段实时日志。需要完整日志时请下载当前窗口或使用后续归档能力。"
 						/>
 					)}
 					<div
@@ -214,6 +296,7 @@ function WorkflowLogPanel({
 						<span>
 							显示 {visibleLog?.content.length.toLocaleString()} 字符 /{" "}
 							{visibleLog?.totalLines.toLocaleString()} 行
+							{logResponse?.truncated ? "，服务端已按字节上限截断" : ""}
 							{search.trim() ? `，搜索：${search.trim()}` : ""}
 						</span>
 						<Button
@@ -1409,6 +1492,10 @@ export default function WorkflowDetailPage({
 					error={logState.error}
 					search={logState.search}
 					following={logState.following}
+					followStatus={logState.followStatus}
+					followMessage={logState.followMessage}
+					logResponse={logState.response}
+					clientTruncated={logState.clientTruncated}
 					onSearch={setLogSearch}
 					onFollow={startFollowLogs}
 					onStop={stopFollowLogs}

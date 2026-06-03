@@ -282,9 +282,36 @@ class TestWorkflowManager:
 
     def test_logs(self, client):
         respx.get(f"{BASE_URL}/api/v1/workflows/wf1/logs").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "logs": "hello",
+                    "pagination": {"available": False, "nextCursor": None},
+                    "window": {"mode": "tail", "scope": "bounded-live-window"},
+                },
+            )
+        )
+        assert client.workflows.logs("wf1", "n1")["logs"] == "hello"
+
+    def test_logs_with_window_params(self, client):
+        route = respx.get(f"{BASE_URL}/api/v1/workflows/wf1/logs").mock(
             return_value=httpx.Response(200, json={"logs": "hello"})
         )
-        assert client.workflows.logs("wf1", "n1") == {"logs": "hello"}
+        client.workflows.logs(
+            "wf1",
+            "n1",
+            tail_lines=50,
+            limit_bytes=65536,
+            container="main",
+            timestamps=True,
+        )
+
+        request = route.calls.last.request
+        assert request.url.params["nodeId"] == "n1"
+        assert request.url.params["tailLines"] == "50"
+        assert request.url.params["limitBytes"] == "65536"
+        assert request.url.params["container"] == "main"
+        assert request.url.params["timestamps"] == "true"
 
     def test_operations(self, client):
         for operation in ("retry", "resubmit", "suspend", "resume", "terminate"):

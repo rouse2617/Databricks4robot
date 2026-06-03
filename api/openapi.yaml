@@ -87,7 +87,7 @@ components:
           additionalProperties: true
     WorkflowLogResponse:
       type: object
-      required: [workflowName, nodeId, podName, container, source, logs, lineCount, truncated, truncation]
+      required: [workflowName, nodeId, podName, container, source, logs, lineCount, truncated, truncation, pagination, window]
       properties:
         workflowName: { type: string }
         nodeId: { type: string }
@@ -103,6 +103,38 @@ components:
           type: string
           nullable: true
           description: Always null; live Argo logs do not provide stable cursor pagination.
+        pagination:
+          type: object
+          required: [available, nextCursor]
+          properties:
+            available:
+              type: boolean
+              example: false
+              description: Whether this log source can return another historical page through nextCursor.
+            nextCursor:
+              type: string
+              nullable: true
+              description: Cursor for the next historical window when available. Null for live Argo logs.
+            reason:
+              type: string
+              example: live Argo logs do not provide stable historical cursor pagination
+        window:
+          type: object
+          required: [mode, scope]
+          properties:
+            mode:
+              type: string
+              enum: [tail, since, cursor]
+              example: tail
+            tailLines: { type: integer, format: int64, example: 200 }
+            limitBytes: { type: integer, format: int64, example: 262144 }
+            sinceSeconds: { type: integer, format: int64, nullable: true }
+            sinceTime: { type: string, format: date-time, nullable: true }
+            previous: { type: boolean }
+            timestamps: { type: boolean }
+            scope:
+              type: string
+              example: bounded-live-window
         truncation:
           type: object
           required: [bounded, tailLines, maxTailLines, limitBytes, maxLimitBytes, bytesTruncated]
@@ -4981,6 +5013,11 @@ paths:
           name: timestamps
           schema:
             type: boolean
+        - in: query
+          name: cursor
+          schema:
+            type: string
+          description: Reserved for persisted log pagination. Live Argo logs return 400 when cursor is provided.
       responses:
         '200':
           description: Bounded log content and truncation metadata

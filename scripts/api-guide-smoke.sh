@@ -300,11 +300,12 @@ if [[ -n "${WORKFLOW_NAME:-}" ]]; then
 	expect_code_get "workflow logs missing nodeId -> 400" "/api/v1/workflows/${WORKFLOW_NAME}/logs" "400" >/dev/null
 	if [[ -n "${WORKFLOW_NODE_ID:-}" ]]; then
 		get "workflow node logs bounded" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}&tailLines=50&limitBytes=65536"
-		if echo "$RESP_BODY" | python3 -c 'import sys,json; data=json.load(sys.stdin); assert data.get("truncation", {}).get("bounded") is True; assert "lineCount" in data' 2>/dev/null; then
+		if echo "$RESP_BODY" | python3 -c 'import sys,json; data=json.load(sys.stdin); assert data.get("truncation", {}).get("bounded") is True; assert data.get("pagination", {}).get("available") is False; assert data.get("window", {}).get("scope") == "bounded-live-window"; assert "lineCount" in data' 2>/dev/null; then
 			ok "workflow logs bounded metadata"
 		else
 			bad "workflow logs bounded metadata"
 		fi
+		expect_code_get "workflow logs cursor unavailable -> 400" "/api/v1/workflows/${WORKFLOW_NAME}/logs?nodeId=${WORKFLOW_NODE_ID}&cursor=older" "400" >/dev/null
 		raw=$(curl -sS -N --max-time 3 -D - -o /dev/null "${API_HDR[@]}" "${BASE}/api/v1/workflows/${WORKFLOW_NAME}/logs/stream?nodeId=${WORKFLOW_NODE_ID}&tailLines=1&limitBytes=4096" 2>/dev/null || true)
 		if echo "$raw" | grep -qi "Content-Type: text/event-stream"; then
 			ok "workflow logs stream content-type"

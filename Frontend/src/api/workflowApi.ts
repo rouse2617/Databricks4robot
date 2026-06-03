@@ -154,6 +154,62 @@ export interface WorkflowOperationResponse {
 	message: string;
 }
 
+export interface WorkflowLogTruncation {
+	bounded: boolean;
+	tailLines: number;
+	maxTailLines: number;
+	tailLinesClamped?: boolean;
+	limitBytes: number;
+	maxLimitBytes: number;
+	limitBytesClamped?: boolean;
+	bytesTruncated?: boolean;
+	sinceSeconds?: number;
+	sinceTime?: string;
+}
+
+export interface WorkflowLogPagination {
+	available: boolean;
+	nextCursor?: string | null;
+	reason?: string;
+}
+
+export interface WorkflowLogWindow {
+	mode: "tail" | "since" | "cursor";
+	tailLines?: number;
+	limitBytes?: number;
+	sinceSeconds?: number;
+	sinceTime?: string;
+	previous?: boolean;
+	timestamps?: boolean;
+	scope?: string;
+}
+
+export interface WorkflowLogResponse {
+	workflowName: string;
+	nodeId: string;
+	podName: string;
+	container: string;
+	source: "argo-live";
+	logs: string;
+	lineCount: number;
+	truncated: boolean;
+	nextCursor?: string | null;
+	truncation: WorkflowLogTruncation;
+	pagination?: WorkflowLogPagination;
+	window?: WorkflowLogWindow;
+}
+
+export interface WorkflowLogQuery {
+	tailLines?: number;
+	limitBytes?: number;
+	cursor?: string;
+	container?: string;
+	sinceSeconds?: number;
+	sinceTime?: string;
+	previous?: boolean;
+	timestamps?: boolean;
+}
+
 export function listWorkflows(
 	params: ListWorkflowsParams = {},
 ): Promise<{ items: WorkflowSummary[] }> {
@@ -179,15 +235,29 @@ export function getWorkflow(name: string): Promise<WorkflowDetail> {
 export function getWorkflowLogs(
 	name: string,
 	nodeId: string,
-): Promise<{ logs: string }> {
-	return request(
-		"GET",
-		`/workflows/${encodeURIComponent(name)}/logs?nodeId=${encodeURIComponent(nodeId)}`,
-	);
+	params: WorkflowLogQuery = {},
+): Promise<WorkflowLogResponse> {
+	const sp = new URLSearchParams();
+	sp.set("nodeId", nodeId);
+	for (const [key, value] of Object.entries(params)) {
+		if (value === undefined || value === null || value === "") continue;
+		sp.set(key, String(value));
+	}
+	return request("GET", `/workflows/${encodeURIComponent(name)}/logs?${sp}`);
 }
 
-export function getWorkflowLogStreamUrl(name: string, nodeId: string): string {
-	return `/api/v1/workflows/${encodeURIComponent(name)}/log/stream?nodeId=${encodeURIComponent(nodeId)}`;
+export function getWorkflowLogStreamUrl(
+	name: string,
+	nodeId: string,
+	params: WorkflowLogQuery = {},
+): string {
+	const sp = new URLSearchParams();
+	sp.set("nodeId", nodeId);
+	for (const [key, value] of Object.entries(params)) {
+		if (value === undefined || value === null || value === "") continue;
+		sp.set(key, String(value));
+	}
+	return `/api/v1/workflows/${encodeURIComponent(name)}/logs/stream?${sp}`;
 }
 
 export interface NodePodDiagnostics {

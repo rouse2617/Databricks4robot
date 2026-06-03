@@ -881,6 +881,20 @@ func TestGetWorkflowLogs_Success(t *testing.T) {
 	if resp["workflowName"] != "test-wf" || resp["podName"] != "test-wf-step-emit-123" {
 		t.Fatalf("unexpected log metadata: %#v", resp)
 	}
+	pagination, ok := resp["pagination"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected pagination metadata, got %#v", resp["pagination"])
+	}
+	if pagination["available"] != false || pagination["nextCursor"] != nil {
+		t.Fatalf("unexpected pagination metadata: %#v", pagination)
+	}
+	window, ok := resp["window"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected window metadata, got %#v", resp["window"])
+	}
+	if window["mode"] != "tail" || window["scope"] != "bounded-live-window" {
+		t.Fatalf("unexpected window metadata: %#v", window)
+	}
 	if client.lastLogNodeID != "test-wf-step-emit-123" {
 		t.Fatalf("expected resolved pod name, got %q", client.lastLogNodeID)
 	}
@@ -995,6 +1009,28 @@ func TestGetWorkflowLogs_EmptyName(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for empty name, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetWorkflowLogs_RejectsCursor(t *testing.T) {
+	wf := makeWorkflow("test-wf", "Succeeded", 1)
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return wf, nil
+		},
+	}
+	h := New(client, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/test-wf/logs?nodeId=a&cursor=older", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for cursor, got %d: %s", w.Code, w.Body.String())
+	}
+	if client.lastLogNodeID != "" {
+		t.Fatalf("cursor request should not fetch logs, got node %q", client.lastLogNodeID)
 	}
 }
 
