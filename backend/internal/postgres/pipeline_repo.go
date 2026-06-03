@@ -25,7 +25,7 @@ func NewPipelineTemplateRepo(c *Client) *PipelineTemplateRepo { return &Pipeline
 
 var _ repository.PipelineTemplateRepository = (*PipelineTemplateRepo)(nil)
 
-const pipelineTemplateSelectCols = `id, name, version, pipeline, node_count, created_at, updated_at`
+const pipelineTemplateSelectCols = `id, name, version, pipeline, node_count, active_version, created_at, updated_at`
 
 func scanPipelineTemplate(rs rowScanner) (*models.PipelineTemplate, error) {
 	var (
@@ -33,7 +33,7 @@ func scanPipelineTemplate(rs rowScanner) (*models.PipelineTemplate, error) {
 		pipelineJSON []byte
 	)
 	if err := rs.Scan(
-		&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.CreatedAt, &t.UpdatedAt,
+		&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.ActiveVersion, &t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -70,17 +70,18 @@ func (r *PipelineTemplateRepo) Save(ctx context.Context, t *models.PipelineTempl
 	}
 
 	const q = `
-INSERT INTO pipeline_templates (id, name, version, pipeline, node_count, created_at, updated_at)
-VALUES ($1, $2, $7, $3::jsonb, $4, $5, $6)
+INSERT INTO pipeline_templates (id, name, version, pipeline, node_count, active_version, created_at, updated_at)
+VALUES ($1, $2, $7, $3::jsonb, $4, $8, $5, $6)
 ON CONFLICT (id) DO UPDATE SET
-    name       = EXCLUDED.name,
-    version    = EXCLUDED.version,
-    pipeline   = EXCLUDED.pipeline,
-    node_count = EXCLUDED.node_count,
-    updated_at = EXCLUDED.updated_at`
+    name           = EXCLUDED.name,
+    version        = EXCLUDED.version,
+    pipeline       = EXCLUDED.pipeline,
+    node_count     = EXCLUDED.node_count,
+    active_version = EXCLUDED.active_version,
+    updated_at     = EXCLUDED.updated_at`
 
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, q, t.ID, t.Name, pipelineJSON, t.NodeCount, t.CreatedAt, t.UpdatedAt, t.Version); err != nil {
+	if err := db.Exec(ctx, q, t.ID, t.Name, pipelineJSON, t.NodeCount, t.CreatedAt, t.UpdatedAt, t.Version, t.ActiveVersion); err != nil {
 		return fmt.Errorf("postgres PipelineTemplateRepo.Save: %w", err)
 	}
 	return nil
@@ -112,7 +113,7 @@ ORDER BY updated_at DESC`
 			pipelineJSON []byte
 		)
 		if err := rows.Scan(
-			&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.CreatedAt, &t.UpdatedAt, &t.VersionCount,
+			&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.ActiveVersion, &t.CreatedAt, &t.UpdatedAt, &t.VersionCount,
 		); err != nil {
 			return nil, fmt.Errorf("postgres PipelineTemplateRepo.FindAll scan: %w", err)
 		}
@@ -207,6 +208,16 @@ func (r *PipelineTemplateRepo) GetNextVersion(ctx context.Context, name string) 
 		return 0, fmt.Errorf("postgres PipelineTemplateRepo.GetNextVersion: %w", err)
 	}
 	return v, nil
+}
+
+// SetActiveVersion updates the active_version on all rows for a named pipeline.
+func (r *PipelineTemplateRepo) SetActiveVersion(ctx context.Context, name string, version int) error {
+	const q = `UPDATE pipeline_templates SET active_version = $2, updated_at = NOW() WHERE name = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, name, version); err != nil {
+		return fmt.Errorf("postgres PipelineTemplateRepo.SetActiveVersion: %w", err)
+	}
+	return nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ export interface PipelineTemplate {
 	name: string;
 	version: number;
 	versionCount?: number;
+	activeVersion?: number;
 	pipeline: Pipeline;
 	nodeCount: number;
 	createdAt: string;

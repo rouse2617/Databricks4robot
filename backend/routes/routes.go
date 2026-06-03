@@ -344,6 +344,7 @@ func RegisterAll(
 		api.GET("/pipelines/:id", pipelineHandler.GetTemplate)
 		api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
 		api.GET("/pipelines/:id/versions", pipelineHandler.ListVersions)
+		api.PATCH("/pipelines/:id/active-version", pipelineHandler.SetActiveVersion)
 		api.GET("/pipelines/:id/diff/:id2", pipelineHandler.DiffTemplates)
 		api.POST("/deploy", pipelineHandler.Deploy)
 		api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)

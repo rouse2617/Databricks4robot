@@ -10,7 +10,6 @@ import {
 	message,
 	Select,
 	Skeleton,
-	Space,
 	Table,
 	Tag,
 	Tooltip,
@@ -21,10 +20,9 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-	getPipelineRunWatcherStatus,
 	listDeployments,
 	listPipelineRuns,
-	type PipelineRunWatcherState,
+	listPipelines,
 } from "../api/pipelineApi";
 import {
 	deleteWorkflow,
@@ -51,6 +49,7 @@ import {
 	getDisplayLabelEntries,
 	serializeWorkflowLabel,
 } from "../lib/workflowLabels";
+import { RunComparisonModal } from "./RunComparisonModal";
 
 const { RangePicker } = DatePicker;
 dayjs.extend(relativeTime);
@@ -75,12 +74,16 @@ const parseDate = (value: string | null): Dayjs | null => {
 const renderTimestamp = (value?: string) => {
 	if (!value) return "-";
 	const parsed = dayjs(value);
-	if (!parsed.isValid()) return "-";
+	if (!parsed.isValid()) return new Date(value).toLocaleString();
+	const absolute = parsed.format("YYYY-MM-DD HH:mm:ss");
 	return (
-		<Tooltip title={parsed.format("YYYY-MM-DD HH:mm:ss")}>
-			<Typography.Text style={{ fontSize: 13 }}>
-				{parsed.fromNow()}
-			</Typography.Text>
+		<Tooltip title={parsed.toDate().toLocaleString()}>
+			<div style={{ lineHeight: 1.35 }}>
+				<div>{absolute}</div>
+				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+					{parsed.fromNow()}
+				</Typography.Text>
+			</div>
 		</Tooltip>
 	);
 };
@@ -205,6 +208,12 @@ export function WorkflowExecutionList({
 			new Set(labels.map((label) => label.trim()).filter(Boolean)),
 		);
 	});
+	const [versionFilter, setVersionFilter] = useState<string | undefined>(
+		searchParams.get("templateVersion")?.trim() || undefined,
+	);
+	const [draftVersionFilter, setDraftVersionFilter] = useState<
+		string | undefined
+	>(searchParams.get("templateVersion")?.trim() || undefined);
 	const [draftLabelFilter, setDraftLabelFilter] = useState<string[]>(() => {
 		const labels = searchParams.getAll("label");
 		return Array.from(
@@ -227,13 +236,12 @@ export function WorkflowExecutionList({
 	);
 	const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 	const [bulkDeleting, setBulkDeleting] = useState(false);
+	const [compareOpen, setCompareOpen] = useState(false);
+	const [compareItems, setCompareItems] = useState<WorkflowSummary[]>([]);
 	const [pendingOperation, setPendingOperation] = useState<{
 		record: WorkflowSummary;
 		operation: WorkflowOperationConfig;
 	} | null>(null);
-	const [watcherState, setWatcherState] =
-		useState<PipelineRunWatcherState | null>(null);
-	const [watcherError, setWatcherError] = useState<string | null>(null);
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
 	const navigate = useNavigate();
@@ -261,6 +269,12 @@ export function WorkflowExecutionList({
 		);
 		setDraftLabelFilter((prev) =>
 			arraysEqual(prev, nextLabelFilter) ? prev : nextLabelFilter,
+		);
+		const nextVersion =
+			searchParams.get("templateVersion")?.trim() || undefined;
+		setVersionFilter((prev) => (prev === nextVersion ? prev : nextVersion));
+		setDraftVersionFilter((prev) =>
+			prev === nextVersion ? prev : nextVersion,
 		);
 		setDateRange((prev) => {
 			if (
@@ -292,6 +306,8 @@ export function WorkflowExecutionList({
 		for (const label of labelFilter) {
 			if (label) next.append("label", label);
 		}
+		if (versionFilter) next.set("templateVersion", versionFilter);
+		else next.delete("templateVersion");
 		if (dateRange[0]) next.set("createdAfter", dateRange[0].toISOString());
 		else next.delete("createdAfter");
 		if (dateRange[1]) next.set("finishedBefore", dateRange[1].toISOString());
@@ -304,6 +320,7 @@ export function WorkflowExecutionList({
 		dateRange,
 		labelFilter,
 		nameSearch,
+		versionFilter,
 		searchParams,
 		setSearchParams,
 		statusFilter,
@@ -320,10 +337,11 @@ export function WorkflowExecutionList({
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
-			const [res, deployments, pipelineRuns] = await Promise.all([
+			const [res, deployments, pipelineRuns, templates] = await Promise.all([
 				listWorkflows(params),
 				listDeployments().catch(() => []),
 				listPipelineRuns().catch(() => []),
+				listPipelines().catch(() => []),
 			]);
 			const runsByWorkflowName = new Map(
 				pipelineRuns
@@ -361,6 +379,13 @@ export function WorkflowExecutionList({
 						.map(
 							(run) =>
 								[run.workflowName, run.templateVersion as number] as const,
+						),
+					...templates
+						.filter((t) => t.name)
+						.flatMap((t) =>
+							(res.items || [])
+								.filter((item) => item.name.startsWith(t.name + "-"))
+								.map((item) => [item.name, t.version] as const),
 						),
 				]),
 			);
@@ -413,6 +438,7 @@ export function WorkflowExecutionList({
 	}, [syncAppliedFiltersToUrl]);
 
 	const filtersDirty =
+		draftVersionFilter !== versionFilter ||
 		draftStatusFilter !== statusFilter ||
 		draftNameSearch !== nameSearch ||
 		!arraysEqual(draftLabelFilter, labelFilter) ||
@@ -420,12 +446,19 @@ export function WorkflowExecutionList({
 		!datesEqual(draftDateRange[1], dateRange[1]);
 
 	const applyFilters = useCallback(() => {
+		setVersionFilter(draftVersionFilter);
 		setStatusFilter(draftStatusFilter);
 		setNameSearch(draftNameSearch.trim());
 		setLabelFilter(draftLabelFilter);
 		setDateRange(draftDateRange);
 		setPage(1);
-	}, [draftDateRange, draftLabelFilter, draftNameSearch, draftStatusFilter]);
+	}, [
+		draftDateRange,
+		draftLabelFilter,
+		draftNameSearch,
+		draftStatusFilter,
+		draftVersionFilter,
+	]);
 
 	const resetFilters = useCallback(() => {
 		setDraftStatusFilter(undefined);
@@ -540,6 +573,15 @@ export function WorkflowExecutionList({
 		}
 	}, [refresh, selectedWorkflowNames]);
 
+	const displayItems = useMemo(() => {
+		if (!versionFilter) return items;
+		const targetVersion = Number(versionFilter);
+		if (Number.isNaN(targetVersion)) return items;
+		return items.filter(
+			(item) => templateVersionsByWorkflowName[item.name] === targetVersion,
+		);
+	}, [items, versionFilter, templateVersionsByWorkflowName]);
+
 	const columns = [
 		{
 			title: "名称",
@@ -647,17 +689,15 @@ export function WorkflowExecutionList({
 		{
 			title: "操作",
 			key: "actions",
-			width: 170,
+			width: 110,
 			render: (_: unknown, record: WorkflowSummary) => {
 				const menuItems = getWorkflowOperationMenuItems(record);
 				const hasOperationLoading = operationLoading?.startsWith(
 					`${record.name}:`,
 				);
-				const isFailed =
-					record.status === "Failed" || record.status === "Error";
 
 				return (
-					<Space size={4} style={{ whiteSpace: "nowrap" }}>
+					<div style={{ display: "flex", gap: 4 }}>
 						<Button
 							type="link"
 							size="small"
@@ -668,19 +708,6 @@ export function WorkflowExecutionList({
 						>
 							查看
 						</Button>
-						{isFailed ? (
-							<Button
-								type="link"
-								size="small"
-								danger
-								onClick={(event) => {
-									event.stopPropagation();
-									navigate(`/pipeline/executions/${record.name}?tab=logs`);
-								}}
-							>
-								日志
-							</Button>
-						) : null}
 						<Dropdown
 							menu={{
 								items: menuItems,
@@ -701,31 +728,17 @@ export function WorkflowExecutionList({
 										message.info("当前状态暂无可用操作");
 									}
 								}}
-							/>
+							>
+								操作
+							</Button>
 						</Dropdown>
-					</Space>
+					</div>
 				);
 			},
 		},
 	];
 
 	const showSkeleton = loading && !initializedOnce;
-
-	const loadWatcherStatus = useCallback(() => {
-		getPipelineRunWatcherStatus()
-			.then((state) => {
-				setWatcherState(state);
-				setWatcherError(null);
-			})
-			.catch((err: unknown) => {
-				setWatcherError(err instanceof Error ? err.message : String(err));
-			});
-	}, []);
-
-	useEffect(() => {
-		if (!active) return;
-		loadWatcherStatus();
-	}, [active, loadWatcherStatus]);
 
 	return (
 		<div className="pipeline-execution-list">
@@ -740,37 +753,6 @@ export function WorkflowExecutionList({
 				<Typography.Title level={4} style={{ margin: 0 }}>
 					流水线执行记录
 				</Typography.Title>
-				{watcherState ? (
-					<Tooltip
-						title={
-							watcherState.lastError
-								? `最近错误：${watcherState.lastError}`
-								: undefined
-						}
-					>
-						<Typography.Text
-							type={
-								watcherState.healthy && !watcherState.stale
-									? "success"
-									: "warning"
-							}
-							style={{ fontSize: 12 }}
-						>
-							账本 ·{" "}
-							{watcherState.healthy && !watcherState.stale ? "正常" : "关注"}
-							{" · "}最近 {watcherState.lastSyncedRunCount} 个运行
-							{watcherState.scanLagSeconds != null &&
-								` · 延迟 ${watcherState.scanLagSeconds}s`}
-						</Typography.Text>
-					</Tooltip>
-				) : watcherError ? (
-					<Tooltip title={watcherError}>
-						<Typography.Text type="warning" style={{ fontSize: 12 }}>
-							账本 · 不可用
-						</Typography.Text>
-					</Tooltip>
-				) : null}
-				<div style={{ flex: 1 }} />
 				<Button
 					danger
 					disabled={selectedWorkflowNames.length === 0}
@@ -784,6 +766,32 @@ export function WorkflowExecutionList({
 				<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
+				<Button
+					type="default"
+					disabled={
+						selectedWorkflowNames.length < 2 || selectedWorkflowNames.length > 3
+					}
+					title={
+						selectedWorkflowNames.length < 2
+							? "勾选 2-3 条运行进行对比"
+							: selectedWorkflowNames.length > 3
+								? "最多选择 3 条运行"
+								: undefined
+					}
+					onClick={() => {
+						setCompareItems(
+							displayItems.filter((item) =>
+								selectedWorkflowNames.includes(item.name),
+							),
+						);
+						setCompareOpen(true);
+					}}
+				>
+					对比选中
+					{selectedWorkflowNames.length > 0
+						? `（${selectedWorkflowNames.length}）`
+						: ""}
+				</Button>
 			</div>
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
@@ -796,6 +804,22 @@ export function WorkflowExecutionList({
 						label: status,
 						value: status,
 					}))}
+				/>
+				<Select
+					allowClear
+					placeholder="模板版本"
+					style={{ minWidth: 120, flex: "0 0 120px" }}
+					value={draftVersionFilter}
+					onChange={(val) => setDraftVersionFilter(val)}
+					options={Array.from(
+						new Set(
+							Object.values(templateVersionsByWorkflowName).filter(
+								(v): v is number => typeof v === "number",
+							),
+						),
+					)
+						.sort((a, b) => b - a)
+						.map((v) => ({ label: `v${v}`, value: String(v) }))}
 				/>
 				<Input.Search
 					id="workflow-execution-name-search"
@@ -857,7 +881,7 @@ export function WorkflowExecutionList({
 			) : (
 				<div className="pipeline-execution-table">
 					<Table
-						dataSource={items}
+						dataSource={displayItems}
 						columns={columns}
 						rowKey="name"
 						loading={loading}
@@ -926,6 +950,11 @@ export function WorkflowExecutionList({
 			>
 				<p>删除后不可恢复。正在运行的工作流请先确认不再需要。</p>
 			</Modal>
+			<RunComparisonModal
+				open={compareOpen}
+				items={compareItems}
+				onClose={() => setCompareOpen(false)}
+			/>
 		</div>
 	);
 }

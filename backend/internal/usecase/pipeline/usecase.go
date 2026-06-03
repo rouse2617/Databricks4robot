@@ -1087,13 +1087,19 @@ func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[s
 	if err != nil {
 		return nil, fmt.Errorf("get next version: %w", err)
 	}
+	// Propagate active version from the existing latest (if any).
+	activeVersion := 0
+	if prev, _ := uc.templateRepo.FindByNameAndVersion(ctx, name, version-1); prev != nil {
+		activeVersion = prev.ActiveVersion
+	}
 	t := &models.PipelineTemplate{
-		ID:        uuid.New().String(),
-		Name:      name,
-		Version:   version,
-		Pipeline:  normalizedPipeline,
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		ID:            uuid.New().String(),
+		Name:          name,
+		Version:       version,
+		ActiveVersion: activeVersion,
+		Pipeline:      normalizedPipeline,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 	t.NodeCount = len(pipe.Nodes)
 	if err := uc.templateRepo.Save(ctx, t); err != nil {
@@ -1113,6 +1119,19 @@ func (uc *Usecase) ListVersions(ctx context.Context, templateIDOrName string) ([
 		name = t.Name
 	}
 	return uc.templateRepo.FindVersionsByName(ctx, name)
+}
+
+// SetActiveVersion pins a pipeline's default run version. When version is 0,
+// the pin is cleared (latest = active).
+func (uc *Usecase) SetActiveVersion(ctx context.Context, templateIDOrName string, version int) error {
+	t, err := uc.templateRepo.FindByID(ctx, templateIDOrName)
+	if err != nil {
+		return fmt.Errorf("find template: %w", err)
+	}
+	if t == nil {
+		return ErrTemplateNotFound
+	}
+	return uc.templateRepo.SetActiveVersion(ctx, t.Name, version)
 }
 
 // ListTemplates returns all pipeline templates.
@@ -1364,8 +1383,19 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	if t == nil {
 		return nil, ErrTemplateNotFound
 	}
-	if len(opts) > 0 && opts[0].TemplateVersion > 0 && opts[0].TemplateVersion != t.Version {
-		versioned, err := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, opts[0].TemplateVersion)
+	requestedVersion := 0
+	if len(opts) > 0 {
+		requestedVersion = opts[0].TemplateVersion
+	}
+	// Resolve which version to deploy: explicit request > active pin > latest.
+	resolvedVersion := t.Version
+	if requestedVersion > 0 && requestedVersion != t.Version {
+		resolvedVersion = requestedVersion
+	} else if requestedVersion == 0 && t.ActiveVersion > 0 && t.ActiveVersion != t.Version {
+		resolvedVersion = t.ActiveVersion
+	}
+	if resolvedVersion != t.Version {
+		versioned, err := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, resolvedVersion)
 		if err != nil {
 			return nil, fmt.Errorf("find template version: %w", err)
 		}

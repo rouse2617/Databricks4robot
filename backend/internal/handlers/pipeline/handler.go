@@ -103,6 +103,31 @@ func (h *Handler) DeleteTemplate(c *gin.Context) {
 	c.Status(204)
 }
 
+// SetActiveVersion handles PATCH /api/v1/pipelines/:id/active-version.
+func (h *Handler) SetActiveVersion(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "template id is required", nil)
+		return
+	}
+	var req struct {
+		ActiveVersion int `json:"activeVersion"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if req.ActiveVersion < 0 {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "activeVersion must be >= 0", nil)
+		return
+	}
+	if err := h.uc.SetActiveVersion(c.Request.Context(), id, req.ActiveVersion); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, gin.H{"message": "ok", "activeVersion": req.ActiveVersion})
+}
+
 // ListVersions handles GET /api/v1/pipelines/:id/versions.
 func (h *Handler) ListVersions(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))

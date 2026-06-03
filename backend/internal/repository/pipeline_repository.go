@@ -33,6 +33,10 @@ type PipelineTemplateRepository interface {
 	// GetNextVersion returns the next version number for a template name.
 	GetNextVersion(ctx context.Context, name string) (int, error)
 
+	// SetActiveVersion sets the active version for all rows of a named pipeline
+	// template. When version is 0, the active version is cleared (latest = active).
+	SetActiveVersion(ctx context.Context, name string, version int) error
+
 	// Delete removes a pipeline template by id. It is a no-op when the row
 	// does not exist.
 	Delete(ctx context.Context, id string) error

@@ -76,6 +76,15 @@ func (m *mockTemplateRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *mockTemplateRepo) SetActiveVersion(_ context.Context, name string, version int) error {
+	for _, t := range m.byID {
+		if t.Name == name {
+			t.ActiveVersion = version
+		}
+	}
+	return nil
+}
+
 type mockDeploymentRepo struct {
 	saved []*models.PipelineDeployment
 	byID  map[string]*models.PipelineDeployment
