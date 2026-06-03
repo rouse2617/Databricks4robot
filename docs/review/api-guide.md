@@ -2863,10 +2863,11 @@ curl -s "$BASE/api/v1/workflows" \
   -H "X-Databrew-Token: $TOKEN"
 
 # 查看 workflow 详情（含 labels、progress、estimatedDuration、nodes、Pod 节点 podName，以及标准化 DAG edges）
+# nodes 会合并 Argo runtime 节点和 spec 中尚未启动的 DAG task；未启动 task 以 Pending 返回，便于前端立即渲染完整 DAG。
 curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
   -H "X-Databrew-Token: $TOKEN"
 
-# edges 示例：用于前端绘制 DAG 连线；Failed -> Omitted 等逻辑依赖也会保留
+# edges 示例：用于前端绘制 DAG 连线；Failed -> Omitted 以及 runtime 尚未创建的下游 Pending task 依赖也会保留
 # {
 #   "edges": [
 #     {"id":"e-step-1-step-2","source":"step-1","target":"step-2","kind":"dag"}

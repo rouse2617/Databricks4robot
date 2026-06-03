@@ -15,6 +15,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
@@ -35,6 +36,27 @@ type Handler struct {
 	runEventRepo    repository.PipelineRunEventRepository
 	terminalStore   *terminalSessionStore
 	terminalNowFunc func() time.Time
+}
+
+type workflowNodeItem struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	DisplayName       string   `json:"displayName"`
+	Type              string   `json:"type"`
+	TemplateName      string   `json:"templateName"`
+	Phase             string   `json:"phase"`
+	Message           string   `json:"message,omitempty"`
+	PodName           string   `json:"podName,omitempty"`
+	Inputs            any      `json:"inputs,omitempty"`
+	Outputs           any      `json:"outputs,omitempty"`
+	ResourcesDuration any      `json:"resourcesDuration,omitempty"`
+	HostNodeName      string   `json:"hostNodeName,omitempty"`
+	Progress          string   `json:"progress,omitempty"`
+	EstimatedDuration int64    `json:"estimatedDuration,omitempty"`
+	Children          []string `json:"children,omitempty"`
+	StartedAt         *string  `json:"startedAt,omitempty"`
+	FinishedAt        *string  `json:"finishedAt,omitempty"`
+	Debug             any      `json:"debug,omitempty"`
 }
 
 func New(wfClient argo.WorkflowClient, namespace string) *Handler {
@@ -133,7 +155,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 	}
 	items := make([]item, 0, len(filtered))
 	for _, wf := range filtered {
-		created := wf.CreationTimestamp.Time.Format("2006-01-02T15:04:05Z")
+		created := workflowTimeString(wf.CreationTimestamp.Time)
 		it := item{
 			Name:      wf.Name,
 			Status:    string(wf.Status.Phase),
@@ -144,7 +166,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		if wf.Status.FinishedAt.IsZero() {
 			it.FinishedAt = nil
 		} else {
-			t := wf.Status.FinishedAt.Time.Format("2006-01-02T15:04:05Z")
+			t := workflowTimeString(wf.Status.FinishedAt.Time)
 			it.FinishedAt = &t
 		}
 		items = append(items, it)
@@ -168,30 +190,40 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	type nodeItem struct {
-		ID                string   `json:"id"`
-		Name              string   `json:"name"`
-		DisplayName       string   `json:"displayName"`
-		Type              string   `json:"type"`
-		TemplateName      string   `json:"templateName"`
-		Phase             string   `json:"phase"`
-		Message           string   `json:"message,omitempty"`
-		PodName           string   `json:"podName,omitempty"`
-		Inputs            any      `json:"inputs,omitempty"`
-		Outputs           any      `json:"outputs,omitempty"`
-		ResourcesDuration any      `json:"resourcesDuration,omitempty"`
-		HostNodeName      string   `json:"hostNodeName,omitempty"`
-		Progress          string   `json:"progress,omitempty"`
-		EstimatedDuration int64    `json:"estimatedDuration,omitempty"`
-		Children          []string `json:"children,omitempty"`
-		StartedAt         *string  `json:"startedAt,omitempty"`
-		FinishedAt        *string  `json:"finishedAt,omitempty"`
-		Debug             any      `json:"debug,omitempty"`
-	}
 	run, _ := h.findPipelineRunByWorkflow(c.Request.Context(), wf.Name)
-	nodes := make([]nodeItem, 0, len(wf.Status.Nodes))
+	nodes := buildWorkflowDetailNodes(h, run, wf)
+	created := workflowTimeString(wf.CreationTimestamp.Time)
+	resp := gin.H{
+		"name":              wf.Name,
+		"status":            string(wf.Status.Phase),
+		"message":           wf.Status.Message,
+		"nodes":             nodes,
+		"edges":             buildWorkflowDagEdges(wf),
+		"createdAt":         created,
+		"labels":            wf.Labels,
+		"estimatedDuration": int64(wf.Status.EstimatedDuration),
+		"progress":          string(wf.Status.Progress),
+	}
+	if !wf.Status.FinishedAt.IsZero() {
+		t := workflowTimeString(wf.Status.FinishedAt.Time)
+		resp["finishedAt"] = t
+	}
+	c.JSON(200, resp)
+}
+
+func buildWorkflowDetailNodes(h *Handler, run *models.PipelineRun, wf *wfv1.Workflow) []workflowNodeItem {
+	if wf == nil {
+		return nil
+	}
+	templatesByName := make(map[string]*wfv1.Template, len(wf.Spec.Templates))
+	for i := range wf.Spec.Templates {
+		tmpl := &wf.Spec.Templates[i]
+		templatesByName[tmpl.Name] = tmpl
+	}
+	nodes := make([]workflowNodeItem, 0, len(wf.Status.Nodes))
+	seenTaskNames := make(map[string]struct{})
 	for _, n := range wf.Status.Nodes {
-		ni := nodeItem{
+		ni := workflowNodeItem{
 			ID:                n.ID,
 			Name:              n.Name,
 			DisplayName:       n.DisplayName,
@@ -209,36 +241,69 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 			Children:          n.Children,
 		}
 		if !n.StartedAt.IsZero() {
-			t := n.StartedAt.Time.Format("2006-01-02T15:04:05Z")
+			t := workflowTimeString(n.StartedAt.Time)
 			ni.StartedAt = &t
 		}
 		if !n.FinishedAt.IsZero() {
-			t := n.FinishedAt.Time.Format("2006-01-02T15:04:05Z")
+			t := workflowTimeString(n.FinishedAt.Time)
 			ni.FinishedAt = &t
 		}
 		if podName, ok := resolveWorkflowPodName(wf, n.ID); ok {
 			ni.PodName = podName
 		}
-		ni.Debug = h.terminalCapabilityForNode(run, wf, n, ni.PodName)
+		if h != nil {
+			ni.Debug = h.terminalCapabilityForNode(run, wf, n, ni.PodName)
+		}
 		nodes = append(nodes, ni)
+		for _, taskName := range workflowNodeTaskNameCandidates(n) {
+			seenTaskNames[taskName] = struct{}{}
+		}
 	}
-	created := wf.CreationTimestamp.Time.Format("2006-01-02T15:04:05Z")
-	resp := gin.H{
-		"name":              wf.Name,
-		"status":            string(wf.Status.Phase),
-		"message":           wf.Status.Message,
-		"nodes":             nodes,
-		"edges":             buildWorkflowDagEdges(wf),
-		"createdAt":         created,
-		"labels":            wf.Labels,
-		"estimatedDuration": int64(wf.Status.EstimatedDuration),
-		"progress":          string(wf.Status.Progress),
+	for _, task := range workflowStaticDAGTasks(wf) {
+		taskName := strings.TrimSpace(task.Name)
+		if taskName == "" {
+			continue
+		}
+		if _, ok := seenTaskNames[taskName]; ok {
+			continue
+		}
+		nodes = append(nodes, workflowStaticTaskNodeItem(task, templatesByName))
+		seenTaskNames[taskName] = struct{}{}
 	}
-	if !wf.Status.FinishedAt.IsZero() {
-		t := wf.Status.FinishedAt.Time.Format("2006-01-02T15:04:05Z")
-		resp["finishedAt"] = t
+	return nodes
+}
+
+func workflowStaticTaskNodeItem(task wfv1.DAGTask, templatesByName map[string]*wfv1.Template) workflowNodeItem {
+	taskName := strings.TrimSpace(task.Name)
+	templateName := strings.TrimSpace(task.Template)
+	nodeType := string(wfv1.NodeTypePod)
+	if tmpl := templatesByName[templateName]; tmpl != nil {
+		nodeType = workflowTemplateDisplayType(*tmpl)
 	}
-	c.JSON(200, resp)
+	return workflowNodeItem{
+		ID:           taskName,
+		Name:         taskName,
+		DisplayName:  taskName,
+		Type:         nodeType,
+		TemplateName: templateName,
+		Phase:        string(wfv1.NodePending),
+		Inputs:       task.Arguments,
+	}
+}
+
+func workflowTemplateDisplayType(t wfv1.Template) string {
+	switch {
+	case t.DAG != nil:
+		return string(wfv1.NodeTypeDAG)
+	case t.Steps != nil:
+		return string(wfv1.NodeTypeSteps)
+	default:
+		return string(wfv1.NodeTypePod)
+	}
+}
+
+func workflowTimeString(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
 }
 
 // GetWorkflowLogs handles GET /api/v1/workflows/:name/logs?nodeId=xxx
