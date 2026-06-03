@@ -356,6 +356,9 @@ class TestPipelineManager:
         respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1").mock(
             return_value=httpx.Response(200, json={"id": "run-1"})
         )
+        respx.get(f"{BASE_URL}/api/v1/pipeline-runs/watcher/status").mock(
+            return_value=httpx.Response(200, json={"id": "default", "healthy": True})
+        )
         events_route = respx.get(f"{BASE_URL}/api/v1/pipeline-runs/run-1/events").mock(
             return_value=httpx.Response(200, json={"items": [{"id": "evt-1"}], "total": 1})
         )
@@ -376,6 +379,7 @@ class TestPipelineManager:
         )
         assert client.pipelines.list_runs() == {"items": []}
         assert client.pipelines.get_run("run-1")["id"] == "run-1"
+        assert client.pipelines.get_run_watcher_status()["healthy"] is True
         assert client.pipelines.list_run_events(
             "run-1",
             limit=50,

@@ -249,9 +249,20 @@ type PipelineRunNotificationCandidate struct {
 
 // PipelineRunWatcherState stores coarse watcher progress and diagnostics.
 type PipelineRunWatcherState struct {
-	ID              string     `json:"id"`
-	LastSyncedAt    *time.Time `json:"lastSyncedAt,omitempty"`
-	ActiveScanLimit int        `json:"activeScanLimit"`
-	LastError       string     `json:"lastError,omitempty"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ID                  string     `json:"id"`
+	LastSyncedAt        *time.Time `json:"lastSyncedAt,omitempty"`
+	LastScanStartedAt   *time.Time `json:"lastScanStartedAt,omitempty"`
+	LastScanFinishedAt  *time.Time `json:"lastScanFinishedAt,omitempty"`
+	LastSuccessAt       *time.Time `json:"lastSuccessAt,omitempty"`
+	LastErrorAt         *time.Time `json:"lastErrorAt,omitempty"`
+	ActiveScanLimit     int        `json:"activeScanLimit"`
+	LastSyncedRunCount  int        `json:"lastSyncedRunCount"`
+	ConsecutiveFailures int        `json:"consecutiveFailures"`
+	TotalScans          int64      `json:"totalScans"`
+	TotalErrors         int64      `json:"totalErrors"`
+	ScanLagSeconds      *int64     `json:"scanLagSeconds,omitempty"`
+	LastError           string     `json:"lastError,omitempty"`
+	Healthy             bool       `json:"healthy"`
+	Stale               bool       `json:"stale"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
 }

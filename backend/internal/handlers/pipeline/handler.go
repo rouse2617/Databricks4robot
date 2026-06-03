@@ -391,6 +391,16 @@ func (h *Handler) GetRunCostSummary(c *gin.Context) {
 	c.JSON(200, result)
 }
 
+// GetRunWatcherStatus handles GET /api/v1/pipeline-runs/watcher/status.
+func (h *Handler) GetRunWatcherStatus(c *gin.Context) {
+	state, err := h.uc.GetRunWatcherStatus(c.Request.Context())
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, state)
+}
+
 // RetryRun handles POST /api/v1/pipeline-runs/:id/retry.
 func (h *Handler) RetryRun(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))

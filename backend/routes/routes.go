@@ -351,6 +351,7 @@ func RegisterAll(
 		api.POST("/pipeline-runs", pipelineHandler.CreateRun)
 		api.POST("/pipeline-runs/template/:id", pipelineHandler.CreateRunByTemplate)
 		api.GET("/pipeline-runs", pipelineHandler.ListRuns)
+		api.GET("/pipeline-runs/watcher/status", pipelineHandler.GetRunWatcherStatus)
 		api.GET("/pipeline-runs/:id", pipelineHandler.GetRun)
 		api.GET("/pipeline-runs/:id/events", pipelineHandler.ListRunEvents)
 		api.GET("/pipeline-runs/:id/asset-nodes", pipelineHandler.ListRunAssetNodes)

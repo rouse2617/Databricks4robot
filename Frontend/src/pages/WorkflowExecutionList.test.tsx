@@ -24,6 +24,7 @@ const mockListWorkflows = vi.fn();
 const mockDeleteWorkflow = vi.fn();
 const mockListDeployments = vi.fn();
 const mockListPipelineRuns = vi.fn();
+const mockGetPipelineRunWatcherStatus = vi.fn();
 
 vi.mock("../api/workflowApi", () => ({
 	listWorkflows: (...args: unknown[]) => mockListWorkflows(...args),
@@ -37,6 +38,8 @@ vi.mock("../api/workflowApi", () => ({
 }));
 
 vi.mock("../api/pipelineApi", () => ({
+	getPipelineRunWatcherStatus: (...args: unknown[]) =>
+		mockGetPipelineRunWatcherStatus(...args),
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
 	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
 }));
@@ -113,6 +116,17 @@ describe("WorkflowExecutionList", () => {
 				createdAt: "2026-06-02T01:00:00Z",
 			},
 		]);
+		mockGetPipelineRunWatcherStatus.mockResolvedValue({
+			id: "default",
+			activeScanLimit: 100,
+			lastSyncedRunCount: 2,
+			consecutiveFailures: 0,
+			totalScans: 5,
+			totalErrors: 0,
+			scanLagSeconds: 8,
+			healthy: true,
+			stale: false,
+		});
 	});
 
 	afterEach(() => {
@@ -139,6 +153,15 @@ describe("WorkflowExecutionList", () => {
 			expect(screen.queryByText("successful-run")).not.toBeInTheDocument();
 			expect(screen.getByText("failed-run")).toBeInTheDocument();
 		});
+	});
+
+	it("shows pipeline run ledger watcher health", async () => {
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("运行账本同步正常")).toBeInTheDocument();
+		});
+		expect(screen.getByText(/最近同步 2 个运行/)).toBeInTheDocument();
 	});
 
 	it("clears the status filter when the active status card is clicked again", async () => {

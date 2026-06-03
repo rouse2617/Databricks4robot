@@ -63,6 +63,25 @@ export interface PipelineRunEventsResponse {
 	total: number;
 }
 
+export interface PipelineRunWatcherState {
+	id: string;
+	lastSyncedAt?: string;
+	lastScanStartedAt?: string;
+	lastScanFinishedAt?: string;
+	lastSuccessAt?: string;
+	lastErrorAt?: string;
+	activeScanLimit: number;
+	lastSyncedRunCount: number;
+	consecutiveFailures: number;
+	totalScans: number;
+	totalErrors: number;
+	scanLagSeconds?: number;
+	lastError?: string;
+	healthy: boolean;
+	stale: boolean;
+	updatedAt?: string;
+}
+
 export interface PipelineRunAssetNode {
 	id: string;
 	runId: string;
@@ -218,6 +237,13 @@ export function listPipelineRunEvents(
 	return request<PipelineRunEventsResponse>(
 		"GET",
 		`/pipeline-runs/${runId}/events${suffix}`,
+	);
+}
+
+export function getPipelineRunWatcherStatus(): Promise<PipelineRunWatcherState> {
+	return request<PipelineRunWatcherState>(
+		"GET",
+		"/pipeline-runs/watcher/status",
 	);
 }
 

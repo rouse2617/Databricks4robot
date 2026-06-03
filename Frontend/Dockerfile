@@ -1,5 +1,5 @@
 # BuildKit cache mount speeds up repeat `npm ci` (persists tarballs across builds).
-FROM node:20-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
 WORKDIR /app
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}

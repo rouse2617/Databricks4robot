@@ -24,7 +24,7 @@ import {
 	useState,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { listDeployments, listPipelineRuns } from "../api/pipelineApi";
+import { getPipelineRunWatcherStatus, listDeployments, listPipelineRuns, type PipelineRunWatcherState } from "../api/pipelineApi";
 import {
 	deleteWorkflow,
 	type ListWorkflowsParams,
@@ -234,6 +234,9 @@ export function WorkflowExecutionList({
 		record: WorkflowSummary;
 		operation: WorkflowOperationConfig;
 	} | null>(null);
+	const [watcherState, setWatcherState] =
+		useState<PipelineRunWatcherState | null>(null);
+	const [watcherError, setWatcherError] = useState<string | null>(null);
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
 	const navigate = useNavigate();
@@ -698,6 +701,22 @@ export function WorkflowExecutionList({
 
 	const showSkeleton = loading && !initializedOnce;
 
+	const loadWatcherStatus = useCallback(() => {
+		getPipelineRunWatcherStatus()
+			.then((state) => {
+				setWatcherState(state);
+				setWatcherError(null);
+			})
+			.catch((err: unknown) => {
+				setWatcherError(err instanceof Error ? err.message : String(err));
+			});
+	}, []);
+
+	useEffect(() => {
+		if (!active) return;
+		loadWatcherStatus();
+	}, [active, loadWatcherStatus]);
+
 	return (
 		<div className="pipeline-execution-list">
 			<div
@@ -725,6 +744,40 @@ export function WorkflowExecutionList({
 					刷新
 				</Button>
 			</div>
+			{watcherState ? (
+				<Alert
+					type={
+						watcherState.healthy && !watcherState.stale ? "success" : "warning"
+					}
+					showIcon
+					style={{ marginBottom: 16 }}
+					message={
+						watcherState.healthy && !watcherState.stale
+							? "运行账本同步正常"
+							: "运行账本同步需要关注"
+					}
+					description={
+						<span>
+							最近同步 {watcherState.lastSyncedRunCount} 个运行，扫描上限{" "}
+							{watcherState.activeScanLimit}
+							{watcherState.scanLagSeconds != null
+								? `，延迟 ${watcherState.scanLagSeconds}s`
+								: ""}
+							{watcherState.lastError
+								? `。最近错误：${watcherState.lastError}`
+								: ""}
+						</span>
+					}
+				/>
+			) : watcherError ? (
+				<Alert
+					type="warning"
+					showIcon
+					style={{ marginBottom: 16 }}
+					message="运行账本同步状态不可用"
+					description={watcherError}
+				/>
+			) : null}
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
 					allowClear

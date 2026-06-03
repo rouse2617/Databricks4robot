@@ -561,6 +561,7 @@ func TestRetryDeployment_PreservesInputAssetIDs(t *testing.T) {
 type mockRunRepo struct {
 	byID         map[string]*models.PipelineRun
 	byWf         map[string]*models.PipelineRun
+	findAllErr   error
 	findAllCalls int
 }
 
@@ -577,6 +578,9 @@ func (m *mockRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
 }
 func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 	m.findAllCalls++
+	if m.findAllErr != nil {
+		return nil, m.findAllErr
+	}
 	out := make([]models.PipelineRun, 0, len(m.byID))
 	for _, r := range m.byID {
 		out = append(out, *r)
@@ -758,6 +762,27 @@ func (m *mockRunEventRepo) ListByRunID(_ context.Context, runID string, _ models
 	return &models.PipelineRunEventListResult{Items: out, Total: len(out)}, nil
 }
 
+type mockWatcherStateRepo struct {
+	state *models.PipelineRunWatcherState
+}
+
+func (m *mockWatcherStateRepo) Save(_ context.Context, state *models.PipelineRunWatcherState) error {
+	if state == nil {
+		return nil
+	}
+	copy := *state
+	m.state = &copy
+	return nil
+}
+
+func (m *mockWatcherStateRepo) FindByID(_ context.Context, _ string) (*models.PipelineRunWatcherState, error) {
+	if m.state == nil {
+		return nil, nil
+	}
+	copy := *m.state
+	return &copy, nil
+}
+
 func TestListRunEvents_ReturnsStoredEvents(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
@@ -833,5 +858,76 @@ func TestGetRun_AppendsWorkflowAndNodeEvents(t *testing.T) {
 		if !seen[eventType] {
 			t.Fatalf("expected event type %s in %#v", eventType, eventRepo.events)
 		}
+	}
+}
+
+func TestSavePipelineRun_AppendsScheduledAndWorkflowCreatedEvents(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{}
+	eventRepo := &mockRunEventRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	templateVersion := 1
+	dep := &models.PipelineDeployment{
+		ID:              "run-1",
+		TemplateVersion: &templateVersion,
+		PipelineName:    "pipe",
+		WorkflowName:    "wf-1",
+		Status:          "Pending",
+		NodeCount:       1,
+		CreatedAt:       time.Now().UTC(),
+		ExecutionTarget: &models.ExecutionTarget{ID: "default", Namespace: "default"},
+	}
+	if err := uc.savePipelineRun(ctx, dep, templateVersion, "uid-1"); err != nil {
+		t.Fatalf("savePipelineRun: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, event := range eventRepo.events {
+		seen[event.EventType] = true
+	}
+	for _, eventType := range []string{runEventSubmitted, runEventScheduled, runEventWorkflowCreated} {
+		if !seen[eventType] {
+			t.Fatalf("expected event type %s in %#v", eventType, eventRepo.events)
+		}
+	}
+}
+
+func TestSyncActiveRunEvents_SavesWatcherHealth(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {ID: "run-1", WorkflowName: "wf-1", Status: "Running"},
+		},
+	}
+	watcherRepo := &mockWatcherStateRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+	uc.SetObservabilityRepositories(nil, nil, watcherRepo)
+
+	synced, err := uc.SyncActiveRunEvents(ctx, 25)
+	if err != nil {
+		t.Fatalf("SyncActiveRunEvents: %v", err)
+	}
+	if synced != 1 {
+		t.Fatalf("expected synced=1, got %d", synced)
+	}
+	if watcherRepo.state == nil {
+		t.Fatal("expected watcher state to be saved")
+	}
+	if watcherRepo.state.LastSuccessAt == nil || watcherRepo.state.LastScanStartedAt == nil || watcherRepo.state.LastScanFinishedAt == nil {
+		t.Fatalf("expected watcher timestamps, got %#v", watcherRepo.state)
+	}
+	if watcherRepo.state.LastSyncedRunCount != 1 || watcherRepo.state.ConsecutiveFailures != 0 || watcherRepo.state.TotalScans != 1 {
+		t.Fatalf("unexpected watcher counters: %#v", watcherRepo.state)
+	}
+	status, err := uc.GetRunWatcherStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetRunWatcherStatus: %v", err)
+	}
+	if !status.Healthy || status.Stale {
+		t.Fatalf("expected healthy non-stale watcher, got %#v", status)
 	}
 }

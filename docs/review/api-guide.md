@@ -2457,6 +2457,12 @@ curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>" \
 查询 run 事件时间线。事件由 DataBrew 的 `pipeline_run_events` 账本返回，
 按 `sequence` 正序排列；刷新或 watcher 重启不会重复写入相同状态变化。
 `cursor` 使用上一页返回的 `nextCursor`，`limit` 范围为 1-500。
+常见事件包括 `run_submitted`、`run_scheduled`、`workflow_created`、
+`workflow_observed`、`workflow_phase_changed`、`pod_created`、
+`pod_phase_changed`、`node_started`、`node_succeeded`、`node_failed`、
+`node_error`、`run_completed`、`run_failed`、`run_retry_requested`、
+`run_resubmitted`、`run_delete_requested`、`run_deleted` 和
+`run_delete_failed`。
 
 ```bash
 curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?limit=100" \
@@ -2505,6 +2511,33 @@ curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?status=Failed&q=image" \
 
 # 400: limit/cursor 非法
 # 404: run 不存在
+```
+
+查询 watcher 健康状态。该状态用于判断 DataBrew run ledger 是否仍在从
+Argo 同步运行状态；当 Argo Workflow 被 TTL 清理后，详情页仍应优先展示
+DataBrew 已落库的 run/node/event 历史。
+
+```bash
+curl -s "$BASE/api/v1/pipeline-runs/watcher/status" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "id": "default",
+#   "lastSyncedAt": "2026-06-03T10:03:10Z",
+#   "lastScanStartedAt": "2026-06-03T10:03:10Z",
+#   "lastScanFinishedAt": "2026-06-03T10:03:11Z",
+#   "lastSuccessAt": "2026-06-03T10:03:11Z",
+#   "activeScanLimit": 100,
+#   "lastSyncedRunCount": 4,
+#   "consecutiveFailures": 0,
+#   "totalScans": 128,
+#   "totalErrors": 1,
+#   "scanLagSeconds": 10,
+#   "healthy": true,
+#   "stale": false,
+#   "updatedAt": "2026-06-03T10:03:11Z"
+# }
 ```
 
 查询资产 × 节点明细。当前 P0.2 使用 `run.assetIds × pipeline_run_nodes`

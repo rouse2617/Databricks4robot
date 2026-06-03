@@ -1338,15 +1338,39 @@ func (r *PipelineRunWatcherStateRepo) Save(ctx context.Context, state *models.Pi
 	}
 	state.UpdatedAt = time.Now().UTC()
 	const q = `
-INSERT INTO pipeline_run_watcher_state (id, last_synced_at, active_scan_limit, last_error, updated_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO pipeline_run_watcher_state (
+  id, last_synced_at, last_scan_started_at, last_scan_finished_at,
+  last_success_at, last_error_at, active_scan_limit, last_synced_run_count,
+  consecutive_failures, total_scans, total_errors, scan_lag_seconds,
+  last_error, updated_at
+)
+VALUES (
+  $1, $2, $3, $4,
+  $5, $6, $7, $8,
+  $9, $10, $11, $12,
+  $13, $14
+)
 ON CONFLICT (id) DO UPDATE SET
   last_synced_at = EXCLUDED.last_synced_at,
+  last_scan_started_at = EXCLUDED.last_scan_started_at,
+  last_scan_finished_at = EXCLUDED.last_scan_finished_at,
+  last_success_at = EXCLUDED.last_success_at,
+  last_error_at = EXCLUDED.last_error_at,
   active_scan_limit = EXCLUDED.active_scan_limit,
+  last_synced_run_count = EXCLUDED.last_synced_run_count,
+  consecutive_failures = EXCLUDED.consecutive_failures,
+  total_scans = EXCLUDED.total_scans,
+  total_errors = EXCLUDED.total_errors,
+  scan_lag_seconds = EXCLUDED.scan_lag_seconds,
   last_error = EXCLUDED.last_error,
   updated_at = EXCLUDED.updated_at`
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, q, state.ID, state.LastSyncedAt, state.ActiveScanLimit, state.LastError, state.UpdatedAt); err != nil {
+	if err := db.Exec(ctx, q,
+		state.ID, state.LastSyncedAt, state.LastScanStartedAt, state.LastScanFinishedAt,
+		state.LastSuccessAt, state.LastErrorAt, state.ActiveScanLimit, state.LastSyncedRunCount,
+		state.ConsecutiveFailures, state.TotalScans, state.TotalErrors, state.ScanLagSeconds,
+		state.LastError, state.UpdatedAt,
+	); err != nil {
 		return fmt.Errorf("postgres PipelineRunWatcherStateRepo.Save: %w", err)
 	}
 	return nil
@@ -1356,10 +1380,21 @@ func (r *PipelineRunWatcherStateRepo) FindByID(ctx context.Context, id string) (
 	if id == "" {
 		id = "default"
 	}
-	const q = `SELECT id, last_synced_at, active_scan_limit, last_error, updated_at FROM pipeline_run_watcher_state WHERE id = $1`
+	const q = `
+SELECT id, last_synced_at, last_scan_started_at, last_scan_finished_at,
+  last_success_at, last_error_at, active_scan_limit, last_synced_run_count,
+  consecutive_failures, total_scans, total_errors, scan_lag_seconds,
+  last_error, updated_at
+FROM pipeline_run_watcher_state
+WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	var state models.PipelineRunWatcherState
-	if err := db.QueryRow(ctx, q, id).Scan(&state.ID, &state.LastSyncedAt, &state.ActiveScanLimit, &state.LastError, &state.UpdatedAt); err != nil {
+	if err := db.QueryRow(ctx, q, id).Scan(
+		&state.ID, &state.LastSyncedAt, &state.LastScanStartedAt, &state.LastScanFinishedAt,
+		&state.LastSuccessAt, &state.LastErrorAt, &state.ActiveScanLimit, &state.LastSyncedRunCount,
+		&state.ConsecutiveFailures, &state.TotalScans, &state.TotalErrors, &state.ScanLagSeconds,
+		&state.LastError, &state.UpdatedAt,
+	); err != nil {
 		if errors.Is(err, errNoRows) {
 			return nil, nil
 		}

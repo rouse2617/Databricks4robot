@@ -1982,6 +1982,25 @@ components:
         total:
           type: integer
           description: Number of events returned in this page.
+    PipelineRunWatcherState:
+      type: object
+      properties:
+        id: { type: string }
+        lastSyncedAt: { type: string, format: date-time, nullable: true }
+        lastScanStartedAt: { type: string, format: date-time, nullable: true }
+        lastScanFinishedAt: { type: string, format: date-time, nullable: true }
+        lastSuccessAt: { type: string, format: date-time, nullable: true }
+        lastErrorAt: { type: string, format: date-time, nullable: true }
+        activeScanLimit: { type: integer }
+        lastSyncedRunCount: { type: integer }
+        consecutiveFailures: { type: integer }
+        totalScans: { type: integer, format: int64 }
+        totalErrors: { type: integer, format: int64 }
+        scanLagSeconds: { type: integer, format: int64, nullable: true }
+        lastError: { type: string }
+        healthy: { type: boolean }
+        stale: { type: boolean }
+        updatedAt: { type: string, format: date-time }
     PipelineRunAssetNode:
       type: object
       properties:
@@ -5211,6 +5230,20 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/PipelineRun' }
+
+  /api/v1/pipeline-runs/watcher/status:
+    get:
+      tags: [Pipeline]
+      summary: Get pipeline run watcher status
+      description: Returns the durable DataBrew watcher health snapshot used to synchronize Argo workflow state into pipeline run ledger tables.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Pipeline run watcher status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunWatcherState' }
 
   /api/v1/pipeline-runs/template/{id}:
     post:

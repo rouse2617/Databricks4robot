@@ -137,6 +137,7 @@ ENDPOINTS: dict[str, str] = {
     "pipeline_run_create_template": "/api/v1/pipeline-runs/template/{template_id}",
     "pipeline_run_list": "/api/v1/pipeline-runs",
     "pipeline_run_get": "/api/v1/pipeline-runs/{run_id}",
+    "pipeline_run_watcher_status": "/api/v1/pipeline-runs/watcher/status",
     "pipeline_run_events": "/api/v1/pipeline-runs/{run_id}/events",
     "pipeline_run_asset_nodes": "/api/v1/pipeline-runs/{run_id}/asset-nodes",
     "pipeline_run_cost_summary": "/api/v1/pipeline-runs/{run_id}/cost-summary",

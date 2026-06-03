@@ -82,6 +82,9 @@ class PipelineManager(BaseManager):
     def get_run(self, run_id: str) -> dict[str, Any]:
         return self._request("GET", self._endpoint("pipeline_run_get", run_id=run_id))
 
+    def get_run_watcher_status(self) -> dict[str, Any]:
+        return self._request("GET", self._endpoint("pipeline_run_watcher_status"))
+
     def list_run_events(
         self,
         run_id: str,

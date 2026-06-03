@@ -851,12 +851,44 @@ PG 里的 Platform Catalog 只保留 `catalog_objects + catalog_object_versions`
 
 ---
 
-## 6. Iceberg 表映射
+## 6. Pipeline Run Ledger
+
+### `pipeline_run_watcher_state`
+
+用途：记录 DataBrew pipeline run watcher 的持久健康状态，判断 run
+ledger 是否仍在同步 Argo 状态。
+
+关键字段：
+
+- `id`：watcher 实例 ID，当前默认 `default`
+- `last_synced_at`
+- `last_scan_started_at`
+- `last_scan_finished_at`
+- `last_success_at`
+- `last_error_at`
+- `active_scan_limit`
+- `last_synced_run_count`
+- `consecutive_failures`
+- `total_scans`
+- `total_errors`
+- `scan_lag_seconds`
+- `last_error`
+- `updated_at`
+
+语义：
+
+- `last_synced_at` / `last_success_at` 表示最近一次成功同步。
+- `consecutive_failures` 和 `total_errors` 用于判断 watcher 是否持续失败。
+- `scan_lag_seconds` 用于 UI 展示账本同步延迟。
+
+---
+
+## 7. Iceberg 表映射
 
 已合并到 [`data-platform-design.md` §5.6.2 / §5.6.4](https://www.feishu.cn/wiki/QiNWwqLlWinHQpkf9Pbcy0pfniB)。本文件只保留 `datasets`、`training_runs`、`catalog_objects` 等 PG 元数据表本身，不再重复 Bronze/Silver/Gold 分层与同步阶段说明。
 
 ---
 
-## 7. 典型问题与推荐查询路径一览
+## 8. 典型问题与推荐查询路径一览
 
 已合并到 [`api-guide.md`](https://www.feishu.cn/wiki/OEG4wYA48i3Kvpk0N1XccwW8nqe) 与 [`use-cases.md`](https://www.feishu.cn/wiki/RqiIwqJGAigsM9k2AZecJ4punce)。查询路径的维护粒度更适合放在 API / use case 文档，而不是 schema companion。

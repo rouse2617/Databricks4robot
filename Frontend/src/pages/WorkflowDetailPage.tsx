@@ -9,6 +9,7 @@ import Ansi from "ansi-to-react";
 import {
 	Alert,
 	Button,
+	Card,
 	Descriptions,
 	Input,
 	Modal,
@@ -285,6 +286,8 @@ function getWorkflowLabel(
 
 const RUN_EVENT_LABELS: Record<string, string> = {
 	run_submitted: "提交",
+	run_scheduled: "已进入调度",
+	workflow_created: "Workflow 已创建",
 	workflow_observed: "发现 Workflow",
 	workflow_phase_changed: "Workflow 状态",
 	node_started: "节点开始",
@@ -298,7 +301,9 @@ const RUN_EVENT_LABELS: Record<string, string> = {
 	run_retry_requested: "请求重试",
 	run_resubmitted: "重新提交",
 	run_stop_requested: "请求停止",
-	run_deleted: "请求删除",
+	run_delete_requested: "请求删除",
+	run_deleted: "删除完成",
+	run_delete_failed: "删除失败",
 };
 
 function formatEventTime(value: string) {
@@ -525,6 +530,111 @@ function WorkflowRunContextPanel({
 		</div>
 	);
 }
+function ExpiredWorkflowLedgerView({
+	name,
+	runEventState,
+	onBack,
+	onRefreshEvents,
+}: {
+	name?: string;
+	runEventState: ReturnType<typeof useWorkflowDetail>["runEventState"];
+	onBack: () => void;
+	onRefreshEvents: () => void;
+}) {
+	const latestEvents = runEventState.items.slice(-10);
+
+	return (
+		<div style={{ padding: 24 }}>
+			<Space direction="vertical" size={16} style={{ width: "100%" }}>
+				<Space>
+					<Button icon={<ArrowLeftOutlined />} onClick={onBack}>
+						返回
+					</Button>
+					<Typography.Title level={4} style={{ margin: 0 }}>
+						{name || "运行详情"}
+					</Typography.Title>
+					{runEventState.run?.status ? (
+						<Tag color={STATUS_COLORS[runEventState.run.status] || "default"}>
+							{runEventState.run.status}
+						</Tag>
+					) : null}
+				</Space>
+				<Alert
+					type="warning"
+					showIcon
+					message="Argo 工作流已不可用，正在展示 DataBrew 历史"
+					description="Workflow 可能已被 Argo TTL 清理，DAG、Pod 实时状态和实时日志暂不可用；提交记录、状态变化和节点事件会继续保留在 DataBrew 运行账本中。"
+					action={
+						<Button size="small" onClick={onRefreshEvents}>
+							刷新事件
+						</Button>
+					}
+				/>
+				<Card
+					title="运行账本"
+					extra={
+						runEventState.run ? (
+							<Space size={8}>
+								<Typography.Text type="secondary">
+									ID {runEventState.run.id}
+								</Typography.Text>
+								{runEventState.run.templateVersion ? (
+									<Tag>模板 v{runEventState.run.templateVersion}</Tag>
+								) : null}
+							</Space>
+						) : null
+					}
+				>
+					{runEventState.error ? (
+						<Alert
+							type="warning"
+							showIcon
+							message="运行账本暂不可用"
+							description={runEventState.error}
+						/>
+					) : runEventState.loading && latestEvents.length === 0 ? (
+						<Spin size="small" />
+					) : latestEvents.length === 0 ? (
+						<Typography.Text type="secondary">暂无运行事件</Typography.Text>
+					) : (
+						<Space direction="vertical" size={8} style={{ width: "100%" }}>
+							{latestEvents.map((event) => (
+								<div
+									key={event.id}
+									style={{
+										border: "1px solid #e5e7eb",
+										borderRadius: 6,
+										padding: "8px 10px",
+										background: "#fff",
+									}}
+								>
+									<Space size={8} wrap>
+										<Tag color={eventTagColor(event)}>
+											{RUN_EVENT_LABELS[event.eventType] || event.eventType}
+										</Tag>
+										<Typography.Text strong>
+											{shortEventSubject(event)}
+										</Typography.Text>
+										<Typography.Text type="secondary">
+											{formatEventTime(event.occurredAt)}
+										</Typography.Text>
+									</Space>
+									<Typography.Text
+										type="secondary"
+										style={{ display: "block", marginTop: 4 }}
+									>
+										{event.message || event.status || event.subjectId}
+									</Typography.Text>
+								</div>
+							))}
+						</Space>
+					)}
+				</Card>
+			</Space>
+		</div>
+	);
+}
+
 
 function formatCost(value?: number | null) {
 	if (typeof value !== "number") return "未生成快照";
@@ -950,6 +1060,16 @@ export default function WorkflowDetailPage({
 	}
 
 	if (!loading && loadError?.kind === "not_found") {
+		if (runEventState.run || runEventState.items.length > 0) {
+			return (
+				<ExpiredWorkflowLedgerView
+					name={name}
+					runEventState={runEventState}
+					onBack={() => navigate("/pipeline?tab=executions")}
+					onRefreshEvents={loadRunEvents}
+				/>
+			);
+		}
 		return <div style={{ padding: 24 }}>未找到工作流</div>;
 	}
 

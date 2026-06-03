@@ -118,6 +118,8 @@ func logPipelineSideEffect(op string, err error) {
 
 const (
 	runEventSubmitted            = "run_submitted"
+	runEventScheduled            = "run_scheduled"
+	runEventWorkflowCreated      = "workflow_created"
 	runEventWorkflowObserved     = "workflow_observed"
 	runEventWorkflowPhaseChanged = "workflow_phase_changed"
 	runEventNodeStarted          = "node_started"
@@ -131,7 +133,9 @@ const (
 	runEventRetryRequested       = "run_retry_requested"
 	runEventResubmitted          = "run_resubmitted"
 	runEventStopRequested        = "run_stop_requested"
+	runEventDeleteRequested      = "run_delete_requested"
 	runEventDeleted              = "run_deleted"
+	runEventDeleteFailed         = "run_delete_failed"
 )
 
 // New creates a Usecase.
@@ -374,6 +378,35 @@ func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDepl
 			"targetId":     run.ExecutionTargetID,
 		},
 	})
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventScheduled,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "pipeline run scheduled",
+		OccurredAt:     run.CreatedAt,
+		IdempotencyKey: fmt.Sprintf("run_scheduled:%s", run.ID),
+		Payload: map[string]interface{}{
+			"workflowName": run.WorkflowName,
+			"namespace":    run.ArgoNamespace,
+			"targetId":     run.ExecutionTargetID,
+		},
+	})
+	if run.WorkflowName != "" {
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      runEventWorkflowCreated,
+			SubjectType:    "workflow",
+			SubjectID:      run.WorkflowName,
+			Status:         run.Status,
+			Message:        "argo workflow created",
+			OccurredAt:     run.CreatedAt,
+			IdempotencyKey: fmt.Sprintf("workflow_created:%s:%s", run.ID, run.WorkflowName),
+			Payload: map[string]interface{}{
+				"workflowUid": run.ArgoWorkflowUID,
+				"namespace":   run.ArgoNamespace,
+			},
+		})
+	}
 	return nil
 }
 
@@ -524,6 +557,41 @@ func (uc *Usecase) createNotificationCandidate(ctx context.Context, run *models.
 		DeliveryStatus: "pending",
 		IdempotencyKey: fmt.Sprintf("notify:%s:%s", run.ID, eventID),
 	}))
+}
+
+func watcherStateWithHealth(state *models.PipelineRunWatcherState) *models.PipelineRunWatcherState {
+	if state == nil {
+		return nil
+	}
+	state.Healthy = state.ConsecutiveFailures == 0 && state.LastError == ""
+	if state.LastSuccessAt != nil {
+		lag := int64(time.Since(*state.LastSuccessAt).Seconds())
+		if lag < 0 {
+			lag = 0
+		}
+		state.ScanLagSeconds = &lag
+		state.Stale = lag > int64(3*time.Minute/time.Second)
+	} else {
+		state.Stale = true
+	}
+	return state
+}
+
+func cloneWatcherState(state *models.PipelineRunWatcherState, limit int) models.PipelineRunWatcherState {
+	out := models.PipelineRunWatcherState{ID: "default", ActiveScanLimit: limit}
+	if state != nil {
+		out = *state
+	}
+	if out.ID == "" {
+		out.ID = "default"
+	}
+	if out.ActiveScanLimit <= 0 {
+		out.ActiveScanLimit = limit
+	}
+	if out.ActiveScanLimit <= 0 {
+		out.ActiveScanLimit = 100
+	}
+	return out
 }
 
 func deriveAssetNodeRows(run *models.PipelineRun, nodes []models.PipelineRunNode) []models.PipelineRunAssetNode {
@@ -815,19 +883,28 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 	if limit <= 0 {
 		limit = 100
 	}
+	var prior *models.PipelineRunWatcherState
 	if uc.watcherRepo != nil {
 		if state, err := uc.watcherRepo.FindByID(ctx, "default"); err == nil && state != nil && state.ActiveScanLimit > 0 {
 			limit = state.ActiveScanLimit
+			prior = state
 		}
 	}
+	scanStartedAt := time.Now().UTC()
+	nextState := cloneWatcherState(prior, limit)
+	nextState.LastScanStartedAt = &scanStartedAt
+	nextState.ActiveScanLimit = limit
+	nextState.TotalScans++
 	runs, err := uc.runRepo.FindAll(ctx)
 	if err != nil {
 		if uc.watcherRepo != nil {
-			logPipelineSideEffect("save pipeline watcher state", uc.watcherRepo.Save(ctx, &models.PipelineRunWatcherState{
-				ID:              "default",
-				ActiveScanLimit: limit,
-				LastError:       err.Error(),
-			}))
+			now := time.Now().UTC()
+			nextState.LastScanFinishedAt = &now
+			nextState.LastErrorAt = &now
+			nextState.LastError = err.Error()
+			nextState.ConsecutiveFailures++
+			nextState.TotalErrors++
+			logPipelineSideEffect("save pipeline watcher state", uc.watcherRepo.Save(ctx, &nextState))
 		}
 		return 0, err
 	}
@@ -844,13 +921,42 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 	}
 	if uc.watcherRepo != nil {
 		now := time.Now().UTC()
-		logPipelineSideEffect("save pipeline watcher state", uc.watcherRepo.Save(ctx, &models.PipelineRunWatcherState{
-			ID:              "default",
-			LastSyncedAt:    &now,
-			ActiveScanLimit: limit,
-		}))
+		lag := int64(0)
+		if nextState.LastSuccessAt != nil {
+			lag = int64(now.Sub(*nextState.LastSuccessAt).Seconds())
+			if lag < 0 {
+				lag = 0
+			}
+		}
+		nextState.LastSyncedAt = &now
+		nextState.LastScanFinishedAt = &now
+		nextState.LastSuccessAt = &now
+		nextState.LastSyncedRunCount = synced
+		nextState.ConsecutiveFailures = 0
+		nextState.LastError = ""
+		nextState.ScanLagSeconds = &lag
+		logPipelineSideEffect("save pipeline watcher state", uc.watcherRepo.Save(ctx, &nextState))
 	}
 	return synced, nil
+}
+
+// GetRunWatcherStatus returns the persisted pipeline watcher health snapshot.
+func (uc *Usecase) GetRunWatcherStatus(ctx context.Context) (*models.PipelineRunWatcherState, error) {
+	if uc.watcherRepo == nil {
+		return watcherStateWithHealth(&models.PipelineRunWatcherState{
+			ID:              "default",
+			ActiveScanLimit: 100,
+			LastError:       "pipeline run watcher state repository is not configured",
+		}), nil
+	}
+	state, err := uc.watcherRepo.FindByID(ctx, "default")
+	if err != nil {
+		return nil, err
+	}
+	if state == nil {
+		state = &models.PipelineRunWatcherState{ID: "default", ActiveScanLimit: 100}
+	}
+	return watcherStateWithHealth(state), nil
 }
 
 // StartRunEventWatcher starts a polling watcher for active pipeline runs.
@@ -1295,19 +1401,47 @@ func (uc *Usecase) DeleteRun(ctx context.Context, id string) error {
 		return ErrDeploymentNotFound
 	}
 	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
-		EventType:      runEventDeleted,
+		EventType:      runEventDeleteRequested,
 		SubjectType:    "run",
 		SubjectID:      run.ID,
 		Status:         run.Status,
 		Message:        "pipeline run delete requested",
-		IdempotencyKey: fmt.Sprintf("run_deleted:%s", run.ID),
+		IdempotencyKey: fmt.Sprintf("run_delete_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
 	})
 	if uc.wfClient != nil {
 		namespace := run.ArgoNamespace
 		if namespace == "" {
 			namespace = uc.namespace
 		}
-		logPipelineSideEffect("delete workflow", uc.wfClient.DeleteWorkflow(ctx, run.WorkflowName, namespace))
+		if err := uc.wfClient.DeleteWorkflow(ctx, run.WorkflowName, namespace); err != nil {
+			uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+				EventType:      runEventDeleteFailed,
+				SubjectType:    "run",
+				SubjectID:      run.ID,
+				Status:         run.Status,
+				Message:        "pipeline run delete failed",
+				Reason:         err.Error(),
+				IdempotencyKey: fmt.Sprintf("run_delete_failed:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+				Payload: map[string]interface{}{
+					"workflowName": run.WorkflowName,
+					"namespace":    namespace,
+				},
+			})
+			logPipelineSideEffect("delete workflow", err)
+		} else {
+			uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+				EventType:      runEventDeleted,
+				SubjectType:    "run",
+				SubjectID:      run.ID,
+				Status:         "Deleted",
+				Message:        "pipeline run deleted",
+				IdempotencyKey: fmt.Sprintf("run_deleted:%s", run.ID),
+				Payload: map[string]interface{}{
+					"workflowName": run.WorkflowName,
+					"namespace":    namespace,
+				},
+			})
+		}
 	}
 	if uc.runNodeRepo != nil {
 		logPipelineSideEffect("delete pipeline run nodes", uc.runNodeRepo.DeleteByRunID(ctx, id))
