@@ -617,6 +617,13 @@ func (m *mockRunRepo) UpdateStatus(_ context.Context, id, status string, finishe
 	return nil
 }
 
+func (m *mockRunRepo) UpdateLedgerState(_ context.Context, id, ledgerState string) error {
+	if r, ok := m.byID[id]; ok {
+		r.LedgerState = ledgerState
+	}
+	return nil
+}
+
 // trackingDeploymentRepo wraps mockDeploymentRepo to count FindAll calls so
 // the CYB-1537 tests can assert whether the legacy scan ran.
 type trackingDeploymentRepo struct {

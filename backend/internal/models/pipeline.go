@@ -83,6 +83,7 @@ type PipelineRun struct {
 	ExecutionTarget    *ExecutionTarget       `json:"executionTarget,omitempty"`
 	Nodes              []PipelineRunNode      `json:"nodes,omitempty"`
 	TotalEstimatedCost *float64               `json:"totalEstimatedCost,omitempty"`
+	LedgerState        string                 `json:"ledgerState"`
 	CreatedAt          time.Time              `json:"createdAt"`
 	UpdatedAt          time.Time              `json:"updatedAt"`
 	StartedAt          *time.Time             `json:"startedAt,omitempty"`
@@ -265,4 +266,13 @@ type PipelineRunWatcherState struct {
 	Healthy             bool       `json:"healthy"`
 	Stale               bool       `json:"stale"`
 	UpdatedAt           time.Time  `json:"updatedAt"`
+	LedgerHealth        LedgerHealth `json:"ledgerHealth,omitempty"`
+}
+
+// LedgerHealth reports how many pipeline runs have ledger events.
+type LedgerHealth struct {
+	TotalRuns       int        `json:"totalRuns"`
+	RunsWithEvents  int        `json:"runsWithEvents"`
+	RunsWithout     int        `json:"runsWithout"`
+	LastBackfillAt  *time.Time `json:"lastBackfillAt,omitempty"`
 }

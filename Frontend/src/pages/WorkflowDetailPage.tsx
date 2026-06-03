@@ -411,7 +411,7 @@ function eventTagColor(event: PipelineRunEvent) {
 
 function formatRunEventError(error: string) {
 	if (error.includes("未找到关联的 DataBrew pipeline run")) {
-		return "这是历史工作流或外部提交的工作流，暂时没有 DataBrew 运行事件记录。";
+		return "暂无 DataBrew 运行事件。该工作流可能由 Argo 外部提交，仍可查看 DAG、Pod 和日志。";
 	}
 	return error;
 }
@@ -1301,6 +1301,11 @@ export default function WorkflowDetailPage({
 				<Tag color={STATUS_COLORS[workflow.status] || "default"}>
 					{workflow.status}
 				</Tag>
+				{runEventState.run || runEventState.items.length > 0 ? (
+					<Tag color="green">DataBrew 运行</Tag>
+				) : (
+					<Tag color="orange">外部 Workflow</Tag>
+				)}
 				{workflow.message ? (
 					<Tooltip title={workflow.message}>
 						<span
@@ -1421,11 +1426,22 @@ export default function WorkflowDetailPage({
 						/>
 					)}
 				</div>
-				<WorkflowAssetNodePanel
-					assetNodeState={assetNodeState}
-					costSummaryState={costSummaryState}
-					onSelectAssetNode={handleSelectAssetNode}
-				/>
+				{runEventState.run || runEventState.items.length > 0 ? (
+					<WorkflowAssetNodePanel
+						assetNodeState={assetNodeState}
+						costSummaryState={costSummaryState}
+						onSelectAssetNode={handleSelectAssetNode}
+					/>
+				) : (
+					<div style={{ padding: "12px 24px" }}>
+						<Alert
+							type="info"
+							showIcon
+							message="暂无资产节点明细"
+							description="此工作流不是由 DataBrew 部署，没有资产绑定信息。仍可使用 DAG、Pod 日志和终端调试。"
+						/>
+					</div>
+				)}
 				<WorkflowRunContextPanel
 					runEventState={runEventState}
 					runEventFilters={runEventFilters}

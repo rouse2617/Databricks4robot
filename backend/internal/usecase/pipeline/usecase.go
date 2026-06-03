@@ -873,6 +873,36 @@ func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.Pip
 	uc.refreshRunStatus(ctx, run)
 }
 
+// backfillRunStatus refreshes a run from Argo regardless of its current status.
+// Unlike refreshRunStatus, this does NOT skip completed runs — it's used by the
+// watcher backfill to sync events for runs that completed before the watcher scanned them.
+func (uc *Usecase) backfillRunStatus(ctx context.Context, run *models.PipelineRun) {
+	if uc.wfClient == nil || run == nil {
+		return
+	}
+	namespace := run.ArgoNamespace
+	if namespace == "" {
+		namespace = uc.namespace
+	}
+	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	if err != nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			run.LedgerState = "no_ledger"
+			logPipelineSideEffect("update pipeline run ledger state",
+				uc.runRepo.UpdateLedgerState(ctx, run.ID, "no_ledger"))
+		}
+		return
+	}
+	if wf == nil {
+		return
+	}
+	uc.appendWorkflowEvents(ctx, run, wf)
+	uc.appendNodeEvents(ctx, run, wf.Status.Nodes)
+	run.LedgerState = "has_ledger"
+	logPipelineSideEffect("update pipeline run ledger state + backfill completed",
+		uc.runRepo.UpdateLedgerState(ctx, run.ID, "has_ledger"))
+}
+
 // SyncActiveRunEvents refreshes active runs from Argo and records durable
 // workflow/node/pod transition events. It is safe to call repeatedly because
 // event writes are idempotent.
@@ -919,6 +949,31 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		uc.refreshPipelineRunStatus(ctx, &runs[i])
 		synced++
 	}
+	// Backfill: scan completed runs (within the last 7 days) that may be
+	// missing their ledger events (e.g. they completed before watcher scan).
+	backfillLimit := limit / 2
+	if backfillLimit < 5 {
+		backfillLimit = 5
+	}
+	backfilled := 0
+	since := time.Now().UTC().AddDate(0, 0, -7)
+	for i := range runs {
+		if backfilled >= backfillLimit {
+			break
+		}
+		if isActiveDeploymentStatus(runs[i].Status) {
+			continue
+		}
+		if runs[i].FinishedAt == nil || runs[i].FinishedAt.Before(since) {
+			continue
+		}
+		if runs[i].LedgerState == "has_ledger" {
+			continue
+		}
+		uc.backfillRunStatus(ctx, &runs[i])
+		backfilled++
+	}
+	synced += backfilled
 	if uc.watcherRepo != nil {
 		now := time.Now().UTC()
 		lag := int64(0)
@@ -955,6 +1010,21 @@ func (uc *Usecase) GetRunWatcherStatus(ctx context.Context) (*models.PipelineRun
 	}
 	if state == nil {
 		state = &models.PipelineRunWatcherState{ID: "default", ActiveScanLimit: 100}
+	}
+	if runs, err := uc.runRepo.FindAll(ctx); err == nil {
+		total := len(runs)
+		hasEvents := 0
+		for _, r := range runs {
+			if r.LedgerState == "has_ledger" {
+				hasEvents++
+			}
+		}
+		state.LedgerHealth = models.LedgerHealth{
+			TotalRuns:      total,
+			RunsWithEvents: hasEvents,
+			RunsWithout:    total - hasEvents,
+			LastBackfillAt: state.LastSyncedAt,
+		}
 	}
 	return watcherStateWithHealth(state), nil
 }

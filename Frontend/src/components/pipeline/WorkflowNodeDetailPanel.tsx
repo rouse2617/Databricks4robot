@@ -662,16 +662,24 @@ function DebugTab({
 		}
 	};
 
+	if (!execEnabled) {
+		return (
+			<Alert
+				type="info"
+				showIcon
+				message="当前执行目标未开启 Pod 终端"
+				description="可在 设置 → 执行目标 中开启 Pod 终端 policy"
+			/>
+		);
+	}
+
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<Alert
-				type={execEnabled ? "warning" : "info"}
+				type="warning"
 				showIcon
-				message={execEnabled ? "Pod 终端可用" : "Pod 终端未启用"}
-				description={
-					node.debug?.reason ||
-					"需要在执行目标上开启 Pod terminal policy 后，才能在页面里进入该节点 Pod。"
-				}
+				message="Pod 终端可用"
+				description={node.debug?.reason || ""}
 			/>
 			{terminalError ? (
 				<Alert
@@ -687,7 +695,7 @@ function DebugTab({
 						key={command}
 						size="small"
 						type={selectedCommand === command ? "primary" : "default"}
-						disabled={!execEnabled || starting}
+						disabled={starting}
 						onClick={() => startSession(command)}
 					>
 						{command}
@@ -696,7 +704,6 @@ function DebugTab({
 				<Button
 					type="primary"
 					size="small"
-					disabled={!execEnabled}
 					loading={starting}
 					onClick={() => startSession()}
 				>
@@ -744,9 +751,7 @@ function DebugTab({
 						}}
 					>
 						<LockOutlined style={{ fontSize: 22 }} />
-						<span>
-							{execEnabled ? "点击命令按钮打开终端" : "Pod 终端未启用"}
-						</span>
+						<span>点击命令按钮打开终端</span>
 					</Space>
 				)}
 			</div>
@@ -832,7 +837,7 @@ function RuntimeTab({
 				<BillingTab cost={node.cost} />
 			</RuntimeSection>
 			<RuntimeSection title="调试">
-				<DebugTab node={node} workflowName={workflowName} />
+				<Alert type="info" showIcon message="终端调试" description="终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。" />
 			</RuntimeSection>
 		</Space>
 	);

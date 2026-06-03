@@ -783,6 +783,18 @@ WHERE id = $1`
 	return nil
 }
 
+func (r *PipelineRunRepo) UpdateLedgerState(ctx context.Context, id, ledgerState string) error {
+	const q = `
+	UPDATE pipeline_runs
+	SET ledger_state = $2, updated_at = NOW()
+	WHERE id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, id, ledgerState); err != nil {
+		return fmt.Errorf("postgres PipelineRunRepo.UpdateLedgerState: %w", err)
+	}
+	return nil
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // PipelineRunNodeRepo
 // ──────────────────────────────────────────────────────────────────────────────

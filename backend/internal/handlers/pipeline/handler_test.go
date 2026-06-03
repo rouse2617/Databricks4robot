@@ -153,6 +153,13 @@ func (m *mockPipelineRunRepo) UpdateStatus(_ context.Context, id, status string,
 	return nil
 }
 
+func (m *mockPipelineRunRepo) UpdateLedgerState(_ context.Context, id, ledgerState string) error {
+	if r := m.byID[id]; r != nil {
+		r.LedgerState = ledgerState
+	}
+	return nil
+}
+
 type mockPipelineRunNodeRepo struct {
 	byRunID map[string][]models.PipelineRunNode
 }

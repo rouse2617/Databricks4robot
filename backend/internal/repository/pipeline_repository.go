@@ -84,6 +84,7 @@ type PipelineRunRepository interface {
 	Delete(ctx context.Context, id string) error
 	DeleteByTemplateID(ctx context.Context, templateID string) error
 	UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time) error
+	UpdateLedgerState(ctx context.Context, id, ledgerState string) error
 }
 
 // PipelineRunNodeRepository defines persistence operations for Argo node
