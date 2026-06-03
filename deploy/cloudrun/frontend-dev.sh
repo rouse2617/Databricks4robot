@@ -7,6 +7,8 @@ SERVICE_NAME="${SERVICE_NAME:-cyber-databrew-frontend-dev}"
 BASE_IMAGE="${BASE_IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:dev-latest}"
 IMAGE="${IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:cloudrun-dev-latest}"
 USE_CLOUD_BUILD="${USE_CLOUD_BUILD:-false}"
+BUILD_ARGO_UI="${BUILD_ARGO_UI:-auto}" # auto | true | false
+ARGO_UI_DIST_SOURCE="${ARGO_UI_DIST_SOURCE:-}"
 
 # ── Auto-detect version info from git ──
 GIT_SHA="${GIT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
@@ -20,6 +22,47 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLOUDBUILD_CFG="${SCRIPT_DIR}/frontend-cloudbuild.yaml"
 FRONTEND_DOCKERFILE="${REPO_ROOT}/Frontend/Dockerfile"
 FRONTEND_CLOUDRUN_DOCKERFILE="${SCRIPT_DIR}/frontend-cloudrun.Dockerfile"
+ARGO_UI_DIR="${REPO_ROOT}/databrew-pipeline/argo-ui"
+ARGO_UI_DIST="${ARGO_UI_DIR}/dist"
+
+ensure_argo_ui_dist() {
+  if [[ "${BUILD_ARGO_UI}" == "false" ]]; then
+    echo "Skipping Argo UI dist check (BUILD_ARGO_UI=false)."
+    return 0
+  fi
+
+  if [[ -n "${ARGO_UI_DIST_SOURCE}" ]]; then
+    if [[ ! -f "${ARGO_UI_DIST_SOURCE}/index.html" ]]; then
+      echo "ERROR: ARGO_UI_DIST_SOURCE does not look like a built Argo UI dist: ${ARGO_UI_DIST_SOURCE}" >&2
+      exit 1
+    fi
+    echo "Using Argo UI dist from ARGO_UI_DIST_SOURCE=${ARGO_UI_DIST_SOURCE}"
+    rm -rf "${ARGO_UI_DIST}"
+    mkdir -p "$(dirname "${ARGO_UI_DIST}")"
+    cp -R "${ARGO_UI_DIST_SOURCE}" "${ARGO_UI_DIST}"
+    return 0
+  fi
+
+  if [[ -f "${ARGO_UI_DIST}/index.html" && "${BUILD_ARGO_UI}" != "true" ]]; then
+    echo "Argo UI dist already exists: ${ARGO_UI_DIST}"
+    return 0
+  fi
+
+  if ! command -v yarn >/dev/null 2>&1; then
+    echo "ERROR: databrew-pipeline/argo-ui/dist is missing and yarn is not installed." >&2
+    echo "       Install yarn, set ARGO_UI_DIST_SOURCE=/path/to/dist, or set BUILD_ARGO_UI=false only if /argo is intentionally omitted." >&2
+    exit 1
+  fi
+
+  echo "Building Argo UI dist for /argo route..."
+  (
+    cd "${ARGO_UI_DIR}"
+    yarn install --frozen-lockfile
+    yarn build
+  )
+}
+
+ensure_argo_ui_dist
 
 echo "Building SPA base image: ${BASE_IMAGE}"
 echo "  Version: ${APP_VERSION}, Ref: ${BUILD_REF}"
