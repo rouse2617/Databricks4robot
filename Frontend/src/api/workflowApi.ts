@@ -124,6 +124,8 @@ export interface WorkflowPodDebugCapabilities {
 	metricsEnabled?: boolean;
 	costEnabled?: boolean;
 	reason?: string;
+	allowedCommands?: string[];
+	maxSessionSeconds?: number;
 }
 
 export type WorkflowDagEdgeKind = "runtime" | "dag" | "fallback";
@@ -208,6 +210,71 @@ export function getNodePodDiagnostics(
 		"GET",
 		`/workflows/${encodeURIComponent(workflowName)}/nodes/${encodeURIComponent(nodeId)}/pod`,
 	);
+}
+
+export interface TerminalSession {
+	id: string;
+	runId?: string;
+	workflowName: string;
+	nodeId: string;
+	podName: string;
+	containerName?: string;
+	executionTargetId?: string;
+	cluster?: string;
+	namespace: string;
+	command: string;
+	status: string;
+	attachUrl?: string;
+	expiresAt: string;
+	createdAt: string;
+	attachedAt?: string;
+	endedAt?: string;
+	errorCode?: string;
+	errorMessage?: string;
+}
+
+export interface CreateTerminalSessionRequest {
+	containerName?: string;
+	command: string;
+}
+
+export function createTerminalSession(
+	workflowName: string,
+	nodeId: string,
+	body: CreateTerminalSessionRequest,
+): Promise<TerminalSession> {
+	return request(
+		"POST",
+		`/workflows/${encodeURIComponent(workflowName)}/nodes/${encodeURIComponent(nodeId)}/terminal-sessions`,
+		body,
+	);
+}
+
+export function getTerminalSession(
+	sessionId: string,
+): Promise<TerminalSession> {
+	return request(
+		"GET",
+		`/pod-terminal/sessions/${encodeURIComponent(sessionId)}`,
+	);
+}
+
+export function terminateTerminalSession(
+	sessionId: string,
+): Promise<TerminalSession> {
+	return request(
+		"POST",
+		`/pod-terminal/sessions/${encodeURIComponent(sessionId)}/terminate`,
+		{},
+	);
+}
+
+export function getTerminalAttachUrl(attachUrl: string): string {
+	if (attachUrl.startsWith("ws://") || attachUrl.startsWith("wss://")) {
+		return attachUrl;
+	}
+	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+	return `${protocol}//${window.location.host}${attachUrl}`;
 }
 
 function postWorkflowOperation(

@@ -371,7 +371,9 @@ export function ComponentManager() {
 			width: 220,
 			render: (name: string, record) => (
 				<Space direction="vertical" size={0}>
-					<Typography.Text strong>{name}</Typography.Text>
+					<Typography.Text strong ellipsis={{ tooltip: name }}>
+						{name}
+					</Typography.Text>
 					<Typography.Text
 						type="secondary"
 						copyable={{ text: record.id }}
@@ -386,7 +388,7 @@ export function ComponentManager() {
 			title: "类型",
 			dataIndex: "type",
 			key: "type",
-			width: 120,
+			width: 92,
 			render: (type: PipelineComponentType) => (
 				<Tag color={TYPE_COLORS[type] || "default"}>{type || "container"}</Tag>
 			),
@@ -394,14 +396,14 @@ export function ComponentManager() {
 		{
 			title: "镜像",
 			key: "image",
-			width: 240,
+			width: 180,
 			render: (_, record) => {
 				const imageText = formatComponentImage(record.image, record.tag);
 				return (
 					<Tooltip title={imageText}>
 						<div
 							style={{
-								maxWidth: 220,
+								maxWidth: 160,
 								overflow: "hidden",
 								textOverflow: "ellipsis",
 								whiteSpace: "nowrap",
@@ -417,15 +419,19 @@ export function ComponentManager() {
 			title: "描述",
 			dataIndex: "description",
 			key: "description",
-			width: 220,
+			width: 260,
 			ellipsis: true,
-			render: (value: string) => value || "-",
+			render: (value: string) => (
+				<Typography.Text ellipsis={{ tooltip: value || "-" }}>
+					{value || "-"}
+				</Typography.Text>
+			),
 		},
 		{
 			title: "来源",
 			dataIndex: "source",
 			key: "source",
-			width: 110,
+			width: 88,
 			render: (source: string) => (
 				<Tag color={source === "system" ? "gold" : "default"}>{source}</Tag>
 			),
@@ -434,7 +440,7 @@ export function ComponentManager() {
 			title: "创建时间",
 			dataIndex: "createdAt",
 			key: "createdAt",
-			width: 170,
+			width: 150,
 			render: (value: string) =>
 				value ? new Date(value).toLocaleString() : "-",
 		},
@@ -442,30 +448,36 @@ export function ComponentManager() {
 			title: "更新时间",
 			dataIndex: "updatedAt",
 			key: "updatedAt",
-			width: 170,
+			width: 150,
 			render: (value: string) =>
 				value ? new Date(value).toLocaleString() : "-",
 		},
 		{
 			title: "操作",
 			key: "actions",
-			width: 170,
+			width: 210,
 			render: (_, record) => {
 				const isSystemComponent = record.source === "system";
 				return (
-					<Space>
+					<Space size={4} style={{ whiteSpace: "nowrap" }}>
 						<Button
-							type="text"
+							type="link"
+							size="small"
 							icon={<EyeOutlined />}
 							aria-label="查看组件"
 							onClick={() => openView(record)}
-						/>
+						>
+							查看
+						</Button>
 						<Button
-							type="text"
+							type="link"
+							size="small"
 							icon={<EditOutlined />}
 							aria-label="编辑组件"
 							onClick={() => openEdit(record)}
-						/>
+						>
+							编辑
+						</Button>
 						<Tooltip
 							title={isSystemComponent ? "系统来源组件禁止删除" : "删除组件"}
 						>
@@ -478,12 +490,15 @@ export function ComponentManager() {
 								onConfirm={() => handleDelete(record)}
 							>
 								<Button
-									type="text"
+									type="link"
+									size="small"
 									danger
 									disabled={isSystemComponent}
 									icon={<DeleteOutlined />}
 									aria-label="删除组件"
-								/>
+								>
+									删除
+								</Button>
 							</Popconfirm>
 						</Tooltip>
 					</Space>
@@ -576,7 +591,6 @@ export function ComponentManager() {
 						}),
 					}}
 					pagination={{ pageSize: 12, showSizeChanger: true }}
-					scroll={{ x: 900 }}
 				/>
 			)}
 

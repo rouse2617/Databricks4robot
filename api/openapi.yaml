@@ -2232,6 +2232,20 @@ components:
           items: { type: string }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
+        debug:
+          $ref: '#/components/schemas/WorkflowNodeDebugCapabilities'
+    WorkflowNodeDebugCapabilities:
+      type: object
+      properties:
+        execEnabled: { type: boolean, description: Whether Pod terminal exec is enabled for this node and target. }
+        logStreamEnabled: { type: boolean }
+        metricsEnabled: { type: boolean }
+        costEnabled: { type: boolean }
+        reason: { type: string, description: Human-readable terminal availability reason. }
+        allowedCommands:
+          type: array
+          items: { type: string }
+        maxSessionSeconds: { type: integer }
     WorkflowNodePodDiagnostics:
       type: object
       required: [namespace, podName, restartCount, containers, podConditions, podEvents]
@@ -2251,6 +2265,42 @@ components:
         podEvents:
           type: array
           items: { $ref: '#/components/schemas/WorkflowNodePodEvent' }
+    CreatePodTerminalSessionRequest:
+      type: object
+      properties:
+        containerName:
+          type: string
+          description: Optional container name. Defaults to the workflow node's main container when omitted.
+        command:
+          type: string
+          description: Allowed command preset such as `sh`, `pwd`, `ls`, or `env`.
+          default: sh
+    PodTerminalSession:
+      type: object
+      required: [id, workflowName, nodeId, podName, namespace, command, status, expiresAt, createdAt]
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        workflowName: { type: string }
+        nodeId: { type: string }
+        podName: { type: string }
+        containerName: { type: string }
+        executionTargetId: { type: string }
+        cluster: { type: string }
+        namespace: { type: string }
+        command: { type: string }
+        status:
+          type: string
+          enum: [created, attached, terminated, failed, timed_out]
+        attachUrl:
+          type: string
+          description: One-time backend attach URL. Does not expose Kubernetes credentials.
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        attachedAt: { type: string, format: date-time, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+        errorCode: { type: string }
+        errorMessage: { type: string }
     WorkflowNodePodContainer:
       type: object
       required: [name, ready, restartCount]
@@ -4598,6 +4648,134 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '503':
           description: Kubernetes diagnostics unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/workflows/{name}/nodes/{nodeId}/terminal-sessions:
+    post:
+      tags: [Pipeline]
+      summary: Create a backend-owned Pod terminal session
+      description: >
+        Resolves a workflow node to its Kubernetes Pod, validates execution
+        target terminal policy, and creates a short-lived backend-owned
+        terminal session. The response may include a one-time attach URL but
+        never exposes Kubernetes credentials.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+          description: Workflow name
+        - in: path
+          name: nodeId
+          required: true
+          schema: { type: string }
+          description: Workflow Pod node ID
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePodTerminalSessionRequest' }
+      responses:
+        '201':
+          description: Terminal session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PodTerminalSession' }
+        '403':
+          description: Terminal disabled or command denied by policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Workflow, node, or Pod not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Pod is completed or otherwise unavailable for exec
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pod-terminal/sessions/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get Pod terminal session metadata
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Terminal session metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PodTerminalSession' }
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pod-terminal/sessions/{id}/terminate:
+    post:
+      tags: [Pipeline]
+      summary: Terminate a Pod terminal session
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Terminal session terminated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PodTerminalSession' }
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pod-terminal/sessions/{id}/attach:
+    get:
+      tags: [Pipeline]
+      summary: Attach to a Pod terminal WebSocket stream
+      description: >
+        Upgrades to a WebSocket when a valid one-time attach token is provided.
+        Frames are JSON text messages. When the backend has a Kubernetes exec
+        client configured, stdout/stderr/exit frames are proxied from the Pod
+        exec stream. If exec is not configured, the stream returns a controlled
+        `POD_EXEC_UNAVAILABLE` frame without exposing Kubernetes credentials.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        '101':
+          description: WebSocket upgrade accepted
+        '403':
+          description: Attach token invalid, expired, or reused
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Session not found
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

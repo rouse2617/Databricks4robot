@@ -148,6 +148,45 @@ class PipelineManager(BaseManager):
             self._endpoint("pipeline_run_cost_summary", run_id=run_id),
         )
 
+    def create_pod_terminal_session(
+        self,
+        workflow_name: str,
+        node_id: str,
+        *,
+        command: str = "sh",
+        container_name: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"command": command}
+        if container_name is not None:
+            payload["containerName"] = container_name
+        return self._request(
+            "POST",
+            self._endpoint(
+                "workflow_terminal_create",
+                workflow_name=workflow_name,
+                node_id=node_id,
+            ),
+            json_body=payload,
+        )
+
+    def get_pod_terminal_session(self, session_id: str) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            self._endpoint("pod_terminal_session_get", session_id=session_id),
+        )
+
+    def terminate_pod_terminal_session(self, session_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            self._endpoint("pod_terminal_session_terminate", session_id=session_id),
+        )
+
+    def pod_terminal_attach_path(self, session_id: str, token: str) -> str:
+        return (
+            self._endpoint("pod_terminal_session_attach", session_id=session_id)
+            + f"?token={token}"
+        )
+
     def retry_run(self, run_id: str) -> dict[str, Any]:
         return self._request("POST", self._endpoint("pipeline_run_retry", run_id=run_id))
 

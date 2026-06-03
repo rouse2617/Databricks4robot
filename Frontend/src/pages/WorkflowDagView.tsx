@@ -32,7 +32,7 @@ const DISPLAYABLE_NODE_TYPES = new Set(["pod", "template"]);
 const DAG_NODE_WIDTH = 240;
 const DAG_NODE_HEIGHT = 112;
 const DAG_RANK_DIR = "LR" as const;
-const DAG_NODE_GAP = 72;
+const DAG_NODE_GAP = 40;
 const DAG_FIT_MIN_ZOOM = 0.72;
 const DAG_FIT_MAX_ZOOM = 1;
 
@@ -189,7 +189,7 @@ export function buildDagElements(
 	graph.setGraph({
 		rankdir: DAG_RANK_DIR,
 		nodesep: DAG_NODE_GAP,
-		ranksep: 80,
+		ranksep: 28,
 		marginx: 20,
 		marginy: 20,
 	});
@@ -267,7 +267,7 @@ function FitViewOnGraphChange({ graphKey }: { graphKey: string }): null {
 		if (!graphKey) return;
 		const frame = requestAnimationFrame(() => {
 			void fitView({
-				padding: 0.18,
+				padding: 0.08,
 				minZoom: DAG_FIT_MIN_ZOOM,
 				maxZoom: DAG_FIT_MAX_ZOOM,
 				duration: 200,

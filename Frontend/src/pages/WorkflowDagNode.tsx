@@ -1,5 +1,6 @@
 import {
 	CloudServerOutlined,
+	CodeOutlined,
 	FileTextOutlined,
 	InfoCircleOutlined,
 	WarningOutlined,
@@ -20,7 +21,12 @@ import "./WorkflowDagNode.css";
 const PROGRESS_RING_SIZE = 18;
 const PROGRESS_RING_STROKE = 2.5;
 
-export type WorkflowDagNodeAction = "summary" | "logs" | "runtime" | "io";
+export type WorkflowDagNodeAction =
+	| "summary"
+	| "logs"
+	| "runtime"
+	| "io"
+	| "terminal";
 
 export interface WorkflowDagNodeData extends Record<string, unknown> {
 	workflowNode: WorkflowNodeStatus;
@@ -240,6 +246,16 @@ export function WorkflowDagNode({
 						>
 							IO
 						</Button>
+					</Tooltip>
+					<Tooltip title="终端">
+						<Button
+							type="text"
+							size="small"
+							shape="circle"
+							icon={<CodeOutlined />}
+							aria-label="终端"
+							onClick={openAction("terminal")}
+						/>
 					</Tooltip>
 					<Tooltip title="详情">
 						<Button

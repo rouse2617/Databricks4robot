@@ -2659,6 +2659,74 @@ curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/nodes/<NODE_ID>/pod" \
 `K8S_BEARER_TOKEN`、可选 `K8S_CA_FILE` 与 `K8S_CLUSTER_NAME`；长期生产方案
 应使用 GCP identity/RBAC，而不是把长效 token 暴露给浏览器或前端配置。
 
+### Workflow 节点 Pod 终端会话（CYB-1569）
+
+Pod terminal 是后端持有 Kubernetes 凭据的受控调试入口。默认关闭；只有
+pipeline run 的 execution target snapshot 显式配置 terminal policy 后，后端才会
+创建 session。浏览器只拿 DataBrew session id 和一次性 attach URL，不会拿
+kubeconfig、ServiceAccount token 或 GKE 凭据。
+
+创建会话：
+
+```bash
+curl -s -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/nodes/<NODE_ID>/terminal-sessions" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"command":"sh"}'
+
+# 201:
+# {
+#   "id": "7f0d...",
+#   "workflowName": "my-workflow",
+#   "nodeId": "my-workflow-123",
+#   "podName": "my-workflow-step-a-123456",
+#   "namespace": "cyber-databrew-dev",
+#   "command": "sh",
+#   "status": "created",
+#   "attachUrl": "/api/v1/pod-terminal/sessions/7f0d.../attach?token=...",
+#   "expiresAt": "2026-06-03T03:00:00Z",
+#   "createdAt": "2026-06-03T02:45:00Z"
+# }
+```
+
+查询与终止：
+
+```bash
+curl -s "$BASE/api/v1/pod-terminal/sessions/<SESSION_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/pod-terminal/sessions/<SESSION_ID>/terminate" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+WebSocket attach：
+
+```text
+GET /api/v1/pod-terminal/sessions/<SESSION_ID>/attach?token=<ONE_TIME_TOKEN>
+```
+
+Frame 是 JSON 文本：
+
+```json
+{"type":"status","status":"attached"}
+{"type":"stdout","data":"..."}
+{"type":"stderr","data":"..."}
+{"type":"exit","exitCode":0,"reason":"completed"}
+{"type":"error","code":"POD_EXEC_UNAVAILABLE","message":"..."}
+```
+
+当后端配置了 Kubernetes exec client 时，attach 会把允许命令的 stdout/stderr/exit
+以 JSON frame 返回给前端。未配置或不可达时，attach 返回受控的
+`POD_EXEC_UNAVAILABLE` / `POD_EXEC_FAILED` frame，而不是暴露底层 Kubernetes
+凭据或原始敏感信息。
+
+错误语义：
+
+- `403 POD_EXEC_FORBIDDEN`：execution target 未启用 terminal，或命令不在 allowlist。
+- `404 WORKFLOW_NOT_FOUND` / `NODE_NOT_FOUND` / `POD_NOT_FOUND`：无法定位 workflow、节点或 Pod。
+- `409 POD_EXEC_UNAVAILABLE`：Pod 已完成、删除或不支持 exec。
+- `503 K8S_UNAVAILABLE`：后端 Kubernetes exec path 未配置或不可达。
+
 ### 查询资源用量元数据（F5.8）
 
 查询 workflow 各 pod 的 Argo resource duration、manifest request/limit，以及数据来源。

@@ -313,9 +313,32 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
-		expect(screen.getByText("Pod 调试暂未启用")).toBeTruthy();
-		expect(screen.getByText("Pod 调试未启用")).toBeTruthy();
+		expect(screen.getAllByText("Pod 终端未启用").length).toBeGreaterThan(0);
 		expect(screen.getByRole("button", { name: "pwd" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "打开终端" })).toBeDisabled();
+	});
+
+	it("enables terminal command presets when backend marks exec enabled", () => {
+		render(
+			<WorkflowNodeDetailPanel
+				node={{
+					...baseNode,
+					debug: {
+						execEnabled: true,
+						allowedCommands: ["sh", "pwd"],
+						reason: "Pod terminal is available for this running node.",
+					},
+				}}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
+		expect(screen.getByText("Pod 终端可用")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "sh" })).not.toBeDisabled();
+		expect(screen.getByRole("button", { name: "打开终端" })).not.toBeDisabled();
 	});
 
 	it("opens the requested compact tab", () => {

@@ -27,6 +27,7 @@ BACKEND_PORT="${BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5176}"
 ARGO_PORT="${ARGO_PORT:-12746}"
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-argo}"
+ARGO_SERVER_SERVICE="${ARGO_SERVER_SERVICE:-}"
 
 # ── 1. 切分支 ─────────────────────────────
 if [[ -n "${BRANCH}" ]]; then
@@ -79,12 +80,19 @@ else
 fi
 
 # Argo port-forward
-  ARGO_PF=$(ps aux | grep "port-forward.*argo-workflows-server.*${ARGO_PORT}" | grep -v grep | awk '{print $2}' || true)
+if [[ -z "${ARGO_SERVER_SERVICE}" ]]; then
+  if kubectl --context kind-argo-local -n "${ARGO_NAMESPACE}" get svc argo-workflows-server >/dev/null 2>&1; then
+    ARGO_SERVER_SERVICE="argo-workflows-server"
+  else
+    ARGO_SERVER_SERVICE="argo-server"
+  fi
+fi
+ARGO_PF=$(ps aux | grep "port-forward.*${ARGO_SERVER_SERVICE}.*${ARGO_PORT}" | grep -v grep | awk '{print $2}' || true)
 if [[ -n "${ARGO_PF}" ]]; then
   echo "  Argo port-forward ✅ (PID ${ARGO_PF})"
 else
   echo -e "${YELLOW}  Argo port-forward 未运行,启动中...${NC}"
-  nohup kubectl --context kind-argo-local -n "${ARGO_NAMESPACE}" port-forward --address 0.0.0.0 svc/argo-workflows-server "${ARGO_PORT}:2746" > /tmp/argo-portforward.log 2>&1 &
+  nohup kubectl --context kind-argo-local -n "${ARGO_NAMESPACE}" port-forward --address 0.0.0.0 "svc/${ARGO_SERVER_SERVICE}" "${ARGO_PORT}:2746" > /tmp/argo-portforward.log 2>&1 &
   echo "  Argo port-forward PID=$!"
 fi
 

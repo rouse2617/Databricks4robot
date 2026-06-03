@@ -141,6 +141,13 @@ func setupInfra() *infra {
 	} else {
 		slog.Info("k8s pod diagnostics client configured")
 	}
+	execClient, err := k8s.NewExecClient("")
+	if err != nil {
+		slog.Warn("k8s pod exec disabled", "err", err)
+		execClient = nil
+	} else {
+		slog.Info("k8s pod exec client configured")
+	}
 
 	// ── Optional: Elasticsearch ──
 	var esClient *espkg.Client
@@ -169,5 +176,6 @@ func setupInfra() *infra {
 		actionLabelReg:  actionLabelReg,
 		workflowClient:  workflowClient,
 		podClient:       podClient,
+		execClient:      execClient,
 	}
 }

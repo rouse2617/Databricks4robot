@@ -45,7 +45,10 @@ import {
 } from "../lib/workflow-operations";
 import { useWorkflowDetail } from "./useWorkflowDetail";
 import type { WorkflowDagNodeAction } from "./WorkflowDagNode";
-import { WorkflowDagView } from "./WorkflowDagView";
+import {
+	countDisplayableWorkflowNodes,
+	WorkflowDagView,
+} from "./WorkflowDagView";
 import { WorkflowTimelineView } from "./WorkflowTimelineView";
 import {
 	LOG_MAX_RENDER_LINES,
@@ -159,7 +162,7 @@ function WorkflowLogPanel({
 					style={{ flex: 1 }}
 				/>
 				{following ? (
-					<Button disabled={!selectedNode} onClick={onStop}>
+					<Button type="primary" disabled={!selectedNode} onClick={onStop}>
 						停止实时日志
 					</Button>
 				) : (
@@ -338,8 +341,107 @@ function shortEventSubject(event: PipelineRunEvent) {
 	return event.subjectType || "对象";
 }
 
-function WorkflowRunContextPanel({
+function WorkflowSummaryCards({
 	workflow,
+	runEventState,
+	assetNodeState,
+	costSummaryState,
+}: {
+	workflow: NonNullable<ReturnType<typeof useWorkflowDetail>["workflow"]>;
+	runEventState: ReturnType<typeof useWorkflowDetail>["runEventState"];
+	assetNodeState: ReturnType<typeof useWorkflowDetail>["assetNodeState"];
+	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"];
+}) {
+	const templateName = workflow.labels
+		? getWorkflowLabel(workflow.labels, "template-name") ||
+			getWorkflowLabel(workflow.labels, "pipeline-name")
+		: undefined;
+	const templateVersion = workflow.labels
+		? Number(getWorkflowLabel(workflow.labels, "template-version"))
+		: undefined;
+	const assetIds = workflow.labels
+		? getWorkflowLabel(workflow.labels, "asset-ids") ||
+			getWorkflowLabel(workflow.labels, "asset_ids")
+		: undefined;
+	const assetCount = assetIds ? assetIds.split(",").filter(Boolean).length : 0;
+
+	const cards = [
+		{
+			label: "模板",
+			value: templateName || "—",
+			extra: templateVersion ? `v${templateVersion}` : undefined,
+		},
+		{ label: "资产", value: assetCount > 0 ? `${assetCount} 个` : "无" },
+		{
+			label: "节点",
+			value:
+				assetNodeState.summary?.nodeCount ??
+				countDisplayableWorkflowNodes(workflow.nodes),
+		},
+		{
+			label: "耗时",
+			value: (
+				<DurationPanel
+					phase={workflow.status}
+					startedAt={workflow.createdAt}
+					finishedAt={workflow.finishedAt}
+				/>
+			),
+		},
+		{
+			label: "事件",
+			value: runEventState.items.length,
+		},
+		{
+			label: "成本",
+			value:
+				costSummaryState.item?.totalEstimatedCostUsd != null
+					? `~$${costSummaryState.item.totalEstimatedCostUsd?.toFixed(4)}`
+					: "—",
+		},
+	];
+
+	return (
+		<div
+			style={{
+				display: "flex",
+				gap: 12,
+				padding: "8px 24px",
+				borderBottom: "1px solid #e5e7eb",
+				background: "#fff",
+				flexWrap: "wrap",
+			}}
+		>
+			{cards.map((card) => (
+				<div
+					key={card.label}
+					style={{
+						flex: "1 1 100px",
+						minWidth: 80,
+						padding: "6px 10px",
+						background: "#f8fafc",
+						borderRadius: 6,
+						border: "1px solid #e5e7eb",
+					}}
+				>
+					<div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 2 }}>
+						{card.label}
+					</div>
+					<div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a" }}>
+						{card.value}
+						{card.extra ? (
+							<Tag color="blue" style={{ marginInlineStart: 4, fontSize: 10 }}>
+								{card.extra}
+							</Tag>
+						) : null}
+					</div>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function WorkflowRunContextPanel({
 	runEventState,
 	runEventFilters,
 	onFilterEvents,
@@ -347,7 +449,6 @@ function WorkflowRunContextPanel({
 	onLoadMoreEvents,
 	onSelectNodeEvent,
 }: {
-	workflow: NonNullable<ReturnType<typeof useWorkflowDetail>["workflow"]>;
 	runEventState: ReturnType<typeof useWorkflowDetail>["runEventState"];
 	runEventFilters: ReturnType<typeof useWorkflowDetail>["runEventFilters"];
 	onFilterEvents: (
@@ -357,122 +458,95 @@ function WorkflowRunContextPanel({
 	onLoadMoreEvents: () => void;
 	onSelectNodeEvent: (event: PipelineRunEvent) => void;
 }) {
-	const templateName =
-		getWorkflowLabel(workflow.labels, "pipeline-template") ||
-		getWorkflowLabel(workflow.labels, "template");
-	const templateVersion = getWorkflowLabel(
-		workflow.labels,
-		"pipeline-template-version",
-	);
-	const assetIds =
-		getWorkflowLabel(workflow.labels, "asset-ids") ||
-		getWorkflowLabel(workflow.labels, "assets");
-
 	const latestEvents = runEventState.items.slice(-5);
 
 	return (
-		<div className="workflow-run-context">
-			<div className="workflow-run-context__summary">
-				<div className="workflow-run-context__meta">
-					<span className="workflow-run-context__label">模板</span>
-					{templateName ? (
-						<span className="workflow-run-context__value">
-							{templateName}
-							{templateVersion ? (
-								<Tag color="blue" style={{ marginInlineStart: 6 }}>
-									v{templateVersion}
-								</Tag>
-							) : null}
-						</span>
-					) : (
-						<Typography.Text type="secondary">未绑定模板</Typography.Text>
-					)}
-					<span className="workflow-run-context__divider" />
-					<span className="workflow-run-context__label">资产</span>
-					<Typography.Text
-						type={assetIds ? undefined : "secondary"}
-						ellipsis={{ tooltip: assetIds || "本次运行未绑定资产" }}
-						style={{ maxWidth: 320 }}
-					>
-						{assetIds || "无资产运行"}
-					</Typography.Text>
-					<span className="workflow-run-context__divider" />
-					<span className="workflow-run-context__label">事件</span>
-					<Typography.Text>{runEventState.items.length}</Typography.Text>
-				</div>
-				<Space wrap size={6}>
-					<Select
-						size="small"
-						placeholder="事件类型"
-						allowClear
-						style={{ width: 118 }}
-						value={runEventFilters.eventType}
-						onChange={(value) =>
-							onFilterEvents({ ...runEventFilters, eventType: value })
-						}
-						options={[
-							{ value: "node_failed", label: "节点失败" },
-							{ value: "node_succeeded", label: "节点成功" },
-							{ value: "pod_phase_changed", label: "Pod 状态" },
-							{ value: "run_submitted", label: "提交" },
-						]}
-					/>
-					<Select
-						size="small"
-						placeholder="状态"
-						allowClear
-						style={{ width: 108 }}
-						value={runEventFilters.status}
-						onChange={(value) =>
-							onFilterEvents({ ...runEventFilters, status: value })
-						}
-						options={[
-							{ value: "Failed", label: "Failed" },
-							{ value: "Error", label: "Error" },
-							{ value: "Succeeded", label: "Succeeded" },
-							{ value: "Running", label: "Running" },
-						]}
-					/>
-					<Input.Search
-						size="small"
-						placeholder="搜索消息/ID"
-						allowClear
-						style={{ width: 180 }}
-						value={runEventFilters.q}
-						onChange={(event) =>
-							onFilterEvents({ ...runEventFilters, q: event.target.value })
-						}
-						onSearch={() => onRefreshEvents()}
-					/>
-					<Button
-						size="small"
-						icon={<ReloadOutlined />}
-						loading={runEventState.loading}
-						onClick={onRefreshEvents}
-					>
-						刷新
-					</Button>
-				</Space>
+		<div
+			style={{
+				margin: "0 24px 12px",
+				border: "1px solid #e5e7eb",
+				borderRadius: 8,
+				background: "#fff",
+				overflow: "hidden",
+				padding: 10,
+			}}
+		>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 8,
+					marginBottom: 8,
+					flexWrap: "wrap",
+				}}
+			>
+				<Typography.Text strong style={{ fontSize: 13 }}>
+					事件时间线
+				</Typography.Text>
+				<Tag>{runEventState.items.length}</Tag>
+				<Select
+					size="small"
+					placeholder="事件类型"
+					allowClear
+					style={{ width: 130 }}
+					value={runEventFilters.eventType}
+					onChange={(val) =>
+						onFilterEvents({ ...runEventFilters, eventType: val })
+					}
+					options={Object.entries(RUN_EVENT_LABELS).map(([key, label]) => ({
+						label,
+						value: key,
+					}))}
+				/>
+				<Select
+					size="small"
+					placeholder="状态"
+					allowClear
+					style={{ width: 100 }}
+					value={runEventFilters.status}
+					onChange={(val) =>
+						onFilterEvents({ ...runEventFilters, status: val })
+					}
+					options={["Succeeded", "Failed", "Error", "Running"].map((s) => ({
+						label: s,
+						value: s,
+					}))}
+				/>
+				<Input.Search
+					size="small"
+					placeholder="搜索消息/ID"
+					allowClear
+					style={{ width: 180 }}
+					value={runEventFilters.q}
+					onChange={(event) =>
+						onFilterEvents({ ...runEventFilters, q: event.target.value })
+					}
+					onSearch={() => onRefreshEvents()}
+				/>
+				<Button
+					size="small"
+					icon={<ReloadOutlined />}
+					loading={runEventState.loading}
+					onClick={onRefreshEvents}
+				>
+					刷新
+				</Button>
 			</div>
-			<div className="workflow-run-context__events">
-				{runEventState.error ? (
-					<Alert
-						type="warning"
-						showIcon
-						message="事件暂不可用"
-						description={formatRunEventError(runEventState.error)}
-						style={{ marginBottom: 8 }}
-					/>
-				) : null}
-				{runEventState.loading && latestEvents.length === 0 ? (
-					<Spin size="small" />
-				) : null}
-				{!runEventState.loading &&
-				!runEventState.error &&
-				latestEvents.length === 0 ? (
-					<Typography.Text type="secondary">暂无运行事件</Typography.Text>
-				) : null}
-				<div className="workflow-run-context__event-list">
+			{runEventState.error ? (
+				<Alert
+					type="warning"
+					showIcon
+					message="事件暂不可用"
+					description={formatRunEventError(runEventState.error)}
+					style={{ marginBottom: 8 }}
+				/>
+			) : null}
+			{runEventState.loading && latestEvents.length === 0 ? (
+				<Spin size="small" />
+			) : latestEvents.length === 0 ? (
+				<Typography.Text type="secondary">暂无运行事件</Typography.Text>
+			) : (
+				<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
 					{latestEvents.map((event) => (
 						<button
 							key={event.id}
@@ -485,51 +559,44 @@ function WorkflowRunContextPanel({
 									: "workflow-run-event workflow-run-event--static"
 							}
 						>
-							<div
-								style={{
-									display: "flex",
-									alignItems: "center",
-									justifyContent: "space-between",
-									gap: 8,
-								}}
-							>
-								<Space size={6}>
-									<Tag color={eventTagColor(event)} style={{ margin: 0 }}>
-										{RUN_EVENT_LABELS[event.eventType] || event.eventType}
-									</Tag>
-									<Typography.Text strong style={{ fontSize: 12 }}>
-										{shortEventSubject(event)}
-									</Typography.Text>
-								</Space>
-								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+							<div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+								<Tag color={eventTagColor(event)} style={{ fontSize: 10 }}>
+									{RUN_EVENT_LABELS[event.eventType] || event.eventType}
+								</Tag>
+								<Typography.Text strong style={{ fontSize: 12 }}>
+									{shortEventSubject(event)}
+								</Typography.Text>
+								<Typography.Text type="secondary" style={{ fontSize: 11 }}>
 									{formatEventTime(event.occurredAt)}
 								</Typography.Text>
 							</div>
-							<Typography.Text
-								type="secondary"
-								style={{ display: "block", marginTop: 4, fontSize: 12 }}
-								ellipsis
-							>
-								{event.message || event.status || event.subjectId}
-							</Typography.Text>
+							{event.message ? (
+								<Typography.Text
+									type="secondary"
+									style={{ display: "block", marginTop: 2, fontSize: 11 }}
+									ellipsis={{ tooltip: event.message }}
+								>
+									{event.message}
+								</Typography.Text>
+							) : null}
 						</button>
 					))}
 				</div>
-				{runEventState.nextCursor ? (
-					<Button
-						size="small"
-						type="link"
-						loading={runEventState.loading}
-						onClick={onLoadMoreEvents}
-						style={{ padding: 0, marginTop: 6 }}
-					>
-						加载更多事件
-					</Button>
-				) : null}
-			</div>
+			)}
+			{runEventState.nextCursor ? (
+				<Button
+					size="small"
+					type="link"
+					onClick={onLoadMoreEvents}
+					style={{ marginTop: 6 }}
+				>
+					加载更多事件
+				</Button>
+			) : null}
 		</div>
 	);
 }
+
 function ExpiredWorkflowLedgerView({
 	name,
 	runEventState,
@@ -635,7 +702,6 @@ function ExpiredWorkflowLedgerView({
 	);
 }
 
-
 function formatCost(value?: number | null) {
 	if (typeof value !== "number") return "未生成快照";
 	if (value < 0.01) return `$${value.toFixed(4)}`;
@@ -679,7 +745,7 @@ function WorkflowAssetNodePanel({
 	return (
 		<div
 			style={{
-				margin: "0 16px 12px",
+				margin: "0 24px 12px",
 				border: "1px solid #e5e7eb",
 				borderRadius: 8,
 				background: "#fff",
@@ -692,7 +758,7 @@ function WorkflowAssetNodePanel({
 					alignItems: "center",
 					justifyContent: "space-between",
 					gap: 12,
-					padding: "10px 12px",
+					padding: "8px 10px",
 					borderBottom: "1px solid #e5e7eb",
 				}}
 			>
@@ -731,7 +797,7 @@ function WorkflowAssetNodePanel({
 				rowKey="id"
 				loading={assetNodeState.loading}
 				dataSource={assetNodeState.items}
-				pagination={{ pageSize: 8, size: "small" }}
+				pagination={{ pageSize: 5, size: "small" }}
 				locale={{
 					emptyText: assetNodeState.error || "暂无资产节点明细",
 				}}
@@ -948,6 +1014,7 @@ export default function WorkflowDetailPage({
 				logs: "logs",
 				runtime: "runtime",
 				io: "io",
+				terminal: "runtime",
 			};
 			setNodeDetailTab(tabByAction[action]);
 			selectNode(node);
@@ -1095,30 +1162,38 @@ export default function WorkflowDetailPage({
 		return null;
 	}
 
+	const displayableNodeCount = countDisplayableWorkflowNodes(workflow.nodes);
+	const graphHeight =
+		displayableNodeCount <= 1 ? 320 : displayableNodeCount <= 5 ? 420 : 500;
+
 	return (
 		<div
 			style={{
 				height: "calc(100vh - 49px)",
 				display: "flex",
 				flexDirection: "column",
+				maxWidth: 1400,
+				margin: "0 auto",
 			}}
 		>
 			<div
 				style={{
-					padding: "12px 24px",
+					padding: "8px 24px",
 					borderBottom: "1px solid #e5e7eb",
 					display: "flex",
 					alignItems: "center",
 					gap: 12,
+					flexWrap: "wrap",
 				}}
 			>
 				<Button
 					icon={<ArrowLeftOutlined />}
+					size="small"
 					onClick={() => navigate("/pipeline?tab=executions")}
 				>
 					返回
 				</Button>
-				<h3 style={{ margin: 0 }}>{workflow.name}</h3>
+				<h3 style={{ margin: 0, fontSize: 15 }}>{workflow.name}</h3>
 				<Tag color={STATUS_COLORS[workflow.status] || "default"}>
 					{workflow.status}
 				</Tag>
@@ -1128,7 +1203,7 @@ export default function WorkflowDetailPage({
 							style={{
 								color: "#dc2626",
 								fontSize: 12,
-								maxWidth: 420,
+								maxWidth: 280,
 								overflow: "hidden",
 								textOverflow: "ellipsis",
 								whiteSpace: "nowrap",
@@ -1138,18 +1213,20 @@ export default function WorkflowDetailPage({
 						</span>
 					</Tooltip>
 				) : null}
-				<span style={{ color: "#6b7280", fontSize: 12 }}>
-					创建: {new Date(workflow.createdAt).toLocaleString()}
-					{workflow.finishedAt &&
-						` | 完成: ${new Date(workflow.finishedAt).toLocaleString()}`}
-					{" | 耗时: "}
-					<DurationPanel
-						phase={workflow.status}
-						startedAt={workflow.createdAt}
-						finishedAt={workflow.finishedAt}
-						progress={workflow.progress}
-					/>
-				</span>
+				<DurationPanel
+					phase={workflow.status}
+					startedAt={workflow.createdAt}
+					finishedAt={workflow.finishedAt}
+					progress={workflow.progress}
+				/>
+				{costSummaryState.item &&
+				typeof costSummaryState.item.totalEstimatedCostUsd === "number" ? (
+					<Tooltip title="估算成本，非 GCP Billing 最终账单">
+						<Tag color="blue">
+							~${costSummaryState.item.totalEstimatedCostUsd?.toFixed(4)}
+						</Tag>
+					</Tooltip>
+				) : null}
 				<div
 					style={{
 						marginLeft: "auto",
@@ -1196,39 +1273,64 @@ export default function WorkflowDetailPage({
 					/>
 				</div>
 			</div>
-			<WorkflowRunContextPanel
+			<WorkflowSummaryCards
 				workflow={workflow}
 				runEventState={runEventState}
-				runEventFilters={runEventFilters}
-				onFilterEvents={handleFilterEvents}
-				onRefreshEvents={loadRunEvents}
-				onLoadMoreEvents={handleLoadMoreEvents}
-				onSelectNodeEvent={handleSelectEventNode}
-			/>
-			<div style={{ flex: 1, display: "flex", minHeight: 0, minWidth: 0 }}>
-				{viewMode === "dag" ? (
-					<WorkflowDagView
-						nodes={workflow.nodes}
-						workflowEdges={workflow.edges}
-						selectedNodeId={selectedNode?.id ?? null}
-						onNodeSelect={handleSelectNode}
-						onNodeAction={handleNodeAction}
-						emptyMessage={workflow.message}
-						workflowStatus={workflow.status}
-					/>
-				) : (
-					<WorkflowTimelineView
-						nodes={workflow.nodes}
-						selectedNodeId={selectedNode?.id ?? null}
-						onNodeSelect={handleSelectNode}
-					/>
-				)}
-			</div>
-			<WorkflowAssetNodePanel
 				assetNodeState={assetNodeState}
 				costSummaryState={costSummaryState}
-				onSelectAssetNode={handleSelectAssetNode}
 			/>
+			<div
+				style={{
+					flex: 1,
+					minHeight: 0,
+					minWidth: 0,
+					overflowY: "auto",
+					background: "#f8fafc",
+					paddingTop: 12,
+				}}
+			>
+				<div
+					style={{
+						height: graphHeight,
+						margin: "0 24px 12px",
+						border: "1px solid #dbe3ee",
+						borderRadius: 8,
+						overflow: "hidden",
+						background: "#eef2f6",
+					}}
+				>
+					{viewMode === "dag" ? (
+						<WorkflowDagView
+							nodes={workflow.nodes}
+							workflowEdges={workflow.edges}
+							selectedNodeId={selectedNode?.id ?? null}
+							onNodeSelect={handleSelectNode}
+							onNodeAction={handleNodeAction}
+							emptyMessage={workflow.message}
+							workflowStatus={workflow.status}
+						/>
+					) : (
+						<WorkflowTimelineView
+							nodes={workflow.nodes}
+							selectedNodeId={selectedNode?.id ?? null}
+							onNodeSelect={handleSelectNode}
+						/>
+					)}
+				</div>
+				<WorkflowAssetNodePanel
+					assetNodeState={assetNodeState}
+					costSummaryState={costSummaryState}
+					onSelectAssetNode={handleSelectAssetNode}
+				/>
+				<WorkflowRunContextPanel
+					runEventState={runEventState}
+					runEventFilters={runEventFilters}
+					onFilterEvents={handleFilterEvents}
+					onRefreshEvents={loadRunEvents}
+					onLoadMoreEvents={handleLoadMoreEvents}
+					onSelectNodeEvent={handleSelectEventNode}
+				/>
+			</div>
 
 			<WorkflowNodeDetailPanel
 				node={selectedNode}

@@ -24,7 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
 	WorkflowDetail,
 	WorkflowNodeContainer,
@@ -35,8 +35,12 @@ import type {
 	WorkflowPodMetrics,
 } from "../../api/workflowApi";
 import {
+	createTerminalSession,
 	getNodePodDiagnostics,
+	getTerminalAttachUrl,
 	type NodePodDiagnostics,
+	type TerminalSession,
+	terminateTerminalSession,
 } from "../../api/workflowApi";
 import { STATUS_COLORS } from "../../lib/constants";
 import {
@@ -541,35 +545,178 @@ function BillingTab({ cost }: { cost?: WorkflowPodCost }) {
 	);
 }
 
-function DebugTab({ node }: { node: WorkflowNodeStatus }) {
+type TerminalFrame =
+	| { type: "stdout" | "stderr"; data?: string }
+	| { type: "status"; status?: string }
+	| { type: "exit"; exitCode?: number; reason?: string }
+	| { type: "error"; code?: string; message?: string };
+
+function terminalFrameText(frame: TerminalFrame): string {
+	switch (frame.type) {
+		case "stdout":
+		case "stderr":
+			return frame.data || "";
+		case "status":
+			return `\n[status] ${frame.status || "connected"}\n`;
+		case "exit":
+			return `\n[exit] ${frame.reason || "closed"}${typeof frame.exitCode === "number" ? ` (${frame.exitCode})` : ""}\n`;
+		case "error":
+			return `\n[error] ${frame.code || "POD_EXEC_ERROR"} ${frame.message || ""}\n`;
+		default:
+			return "";
+	}
+}
+
+function DebugTab({
+	node,
+	workflowName,
+}: {
+	node: WorkflowNodeStatus;
+	workflowName: string;
+}) {
 	const execEnabled = node.debug?.execEnabled === true;
-	const commandTemplates = [
-		"pwd",
-		"ls -lah",
-		"env",
-		"cat /tmp/outputs/output",
-		"df -h",
-		"ps aux",
-	];
+	const commandTemplates =
+		node.debug?.allowedCommands && node.debug.allowedCommands.length > 0
+			? node.debug.allowedCommands
+			: ["sh", "pwd", "ls", "env"];
+	const [selectedCommand, setSelectedCommand] = useState(commandTemplates[0]);
+	const [session, setSession] = useState<TerminalSession | null>(null);
+	const [starting, setStarting] = useState(false);
+	const [terminating, setTerminating] = useState(false);
+	const [terminalText, setTerminalText] = useState("");
+	const [terminalError, setTerminalError] = useState<string | null>(null);
+	const socketRef = useRef<WebSocket | null>(null);
+
+	useEffect(() => {
+		if (!commandTemplates.includes(selectedCommand)) {
+			setSelectedCommand(commandTemplates[0] || "sh");
+		}
+	}, [commandTemplates, selectedCommand]);
+
+	useEffect(() => {
+		return () => {
+			socketRef.current?.close();
+			socketRef.current = null;
+		};
+	}, []);
+
+	const appendTerminalText = (text: string) => {
+		setTerminalText((prev) => `${prev}${text}`);
+	};
+
+	const startSession = async (command?: string) => {
+		const cmd = command ?? selectedCommand;
+		if (!execEnabled || !workflowName || !node.id) return;
+		if (command) setSelectedCommand(command);
+		socketRef.current?.close();
+		socketRef.current = null;
+		setStarting(true);
+		setTerminalError(null);
+		setTerminalText(`$ ${cmd}\n`);
+		try {
+			const created = await createTerminalSession(workflowName, node.id, {
+				command: cmd,
+			});
+			setSession(created);
+			if (!created.attachUrl) {
+				appendTerminalText("[error] 后端未返回终端连接地址\n");
+				return;
+			}
+			const socket = new WebSocket(getTerminalAttachUrl(created.attachUrl));
+			socketRef.current = socket;
+			socket.onopen = () => appendTerminalText("[status] connected\n");
+			socket.onmessage = (event) => {
+				try {
+					const frame = JSON.parse(String(event.data)) as TerminalFrame;
+					appendTerminalText(terminalFrameText(frame));
+				} catch {
+					appendTerminalText(String(event.data));
+				}
+			};
+			socket.onerror = () => {
+				setTerminalError("终端连接失败，请检查后端 exec 配置或稍后重试。");
+			};
+			socket.onclose = () => appendTerminalText("[status] disconnected\n");
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			setTerminalError(message);
+			appendTerminalText(`[error] ${message}\n`);
+		} finally {
+			setStarting(false);
+		}
+	};
+
+	const terminateSession = async () => {
+		if (!session) return;
+		setTerminating(true);
+		try {
+			socketRef.current?.close();
+			socketRef.current = null;
+			const updated = await terminateTerminalSession(session.id);
+			setSession(updated);
+			appendTerminalText("[status] terminated\n");
+		} catch (err) {
+			setTerminalError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setTerminating(false);
+		}
+	};
 
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<Alert
 				type={execEnabled ? "warning" : "info"}
 				showIcon
-				message={execEnabled ? "调试终端待确认" : "Pod 调试暂未启用"}
+				message={execEnabled ? "Pod 终端可用" : "Pod 终端未启用"}
 				description={
 					node.debug?.reason ||
-					"需要具备对应权限并开启命令审计后，才能在页面里进入 Pod 执行调试命令。"
+					"需要在执行目标上开启 Pod terminal policy 后，才能在页面里进入该节点 Pod。"
 				}
 			/>
+			{terminalError ? (
+				<Alert
+					type="error"
+					showIcon
+					message="终端会话失败"
+					description={terminalError}
+				/>
+			) : null}
 			<Space wrap>
 				{commandTemplates.map((command) => (
-					<Button key={command} size="small" disabled={!execEnabled}>
+					<Button
+						key={command}
+						size="small"
+						type={selectedCommand === command ? "primary" : "default"}
+						disabled={!execEnabled || starting}
+						onClick={() => startSession(command)}
+					>
 						{command}
 					</Button>
 				))}
+				<Button
+					type="primary"
+					size="small"
+					disabled={!execEnabled}
+					loading={starting}
+					onClick={() => startSession()}
+				>
+					打开终端
+				</Button>
+				<Button
+					size="small"
+					disabled={!session || session.status === "terminated"}
+					loading={terminating}
+					onClick={terminateSession}
+				>
+					终止
+				</Button>
 			</Space>
+			{session ? (
+				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+					会话 {session.id.slice(0, 8)} · Pod {session.podName} ·{" "}
+					{session.command} · 状态 {session.status}
+				</Typography.Text>
+			) : null}
 			<div
 				style={{
 					height: 220,
@@ -579,16 +726,29 @@ function DebugTab({ node }: { node: WorkflowNodeStatus }) {
 					padding: 12,
 					fontFamily: '"SF Mono", "Fira Code", monospace',
 					fontSize: 12,
-					display: "flex",
-					alignItems: "center",
-					justifyContent: "center",
-					textAlign: "center",
+					whiteSpace: "pre-wrap",
+					overflow: "auto",
 				}}
 			>
-				<Space direction="vertical" align="center">
-					<LockOutlined style={{ fontSize: 22 }} />
-					<span>Pod 调试未启用</span>
-				</Space>
+				{terminalText ? (
+					terminalText
+				) : (
+					<Space
+						direction="vertical"
+						align="center"
+						style={{
+							width: "100%",
+							height: "100%",
+							justifyContent: "center",
+							textAlign: "center",
+						}}
+					>
+						<LockOutlined style={{ fontSize: 22 }} />
+						<span>
+							{execEnabled ? "点击命令按钮打开终端" : "Pod 终端未启用"}
+						</span>
+					</Space>
+				)}
 			</div>
 		</Space>
 	);
@@ -672,7 +832,7 @@ function RuntimeTab({
 				<BillingTab cost={node.cost} />
 			</RuntimeSection>
 			<RuntimeSection title="调试">
-				<DebugTab node={node} />
+				<DebugTab node={node} workflowName={workflowName} />
 			</RuntimeSection>
 		</Space>
 	);

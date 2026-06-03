@@ -48,6 +48,7 @@ type infra struct {
 	actionLabelReg *config.ActionLabelRegistry
 	workflowClient argo.WorkflowClient
 	podClient      k8s.PodClient
+	execClient     k8s.ExecClient
 }
 
 func (inf *infra) close() {

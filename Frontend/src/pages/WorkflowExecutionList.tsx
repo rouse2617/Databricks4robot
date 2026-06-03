@@ -10,6 +10,7 @@ import {
 	message,
 	Select,
 	Skeleton,
+	Space,
 	Table,
 	Tag,
 	Tooltip,
@@ -17,14 +18,14 @@ import {
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import {
-	useCallback,
-	useEffect,
-	useMemo,
-	useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getPipelineRunWatcherStatus, listDeployments, listPipelineRuns, type PipelineRunWatcherState } from "../api/pipelineApi";
+import {
+	getPipelineRunWatcherStatus,
+	listDeployments,
+	listPipelineRuns,
+	type PipelineRunWatcherState,
+} from "../api/pipelineApi";
 import {
 	deleteWorkflow,
 	type ListWorkflowsParams,
@@ -74,16 +75,12 @@ const parseDate = (value: string | null): Dayjs | null => {
 const renderTimestamp = (value?: string) => {
 	if (!value) return "-";
 	const parsed = dayjs(value);
-	if (!parsed.isValid()) return new Date(value).toLocaleString();
-	const absolute = parsed.format("YYYY-MM-DD HH:mm:ss");
+	if (!parsed.isValid()) return "-";
 	return (
-		<Tooltip title={parsed.toDate().toLocaleString()}>
-			<div style={{ lineHeight: 1.35 }}>
-				<div>{absolute}</div>
-				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-					{parsed.fromNow()}
-				</Typography.Text>
-			</div>
+		<Tooltip title={parsed.format("YYYY-MM-DD HH:mm:ss")}>
+			<Typography.Text style={{ fontSize: 13 }}>
+				{parsed.fromNow()}
+			</Typography.Text>
 		</Tooltip>
 	);
 };
@@ -650,15 +647,17 @@ export function WorkflowExecutionList({
 		{
 			title: "操作",
 			key: "actions",
-			width: 110,
+			width: 170,
 			render: (_: unknown, record: WorkflowSummary) => {
 				const menuItems = getWorkflowOperationMenuItems(record);
 				const hasOperationLoading = operationLoading?.startsWith(
 					`${record.name}:`,
 				);
+				const isFailed =
+					record.status === "Failed" || record.status === "Error";
 
 				return (
-					<div style={{ display: "flex", gap: 4 }}>
+					<Space size={4} style={{ whiteSpace: "nowrap" }}>
 						<Button
 							type="link"
 							size="small"
@@ -669,6 +668,19 @@ export function WorkflowExecutionList({
 						>
 							查看
 						</Button>
+						{isFailed ? (
+							<Button
+								type="link"
+								size="small"
+								danger
+								onClick={(event) => {
+									event.stopPropagation();
+									navigate(`/pipeline/executions/${record.name}?tab=logs`);
+								}}
+							>
+								日志
+							</Button>
+						) : null}
 						<Dropdown
 							menu={{
 								items: menuItems,
@@ -689,11 +701,9 @@ export function WorkflowExecutionList({
 										message.info("当前状态暂无可用操作");
 									}
 								}}
-							>
-								操作
-							</Button>
+							/>
 						</Dropdown>
-					</div>
+					</Space>
 				);
 			},
 		},
@@ -730,6 +740,37 @@ export function WorkflowExecutionList({
 				<Typography.Title level={4} style={{ margin: 0 }}>
 					流水线执行记录
 				</Typography.Title>
+				{watcherState ? (
+					<Tooltip
+						title={
+							watcherState.lastError
+								? `最近错误：${watcherState.lastError}`
+								: undefined
+						}
+					>
+						<Typography.Text
+							type={
+								watcherState.healthy && !watcherState.stale
+									? "success"
+									: "warning"
+							}
+							style={{ fontSize: 12 }}
+						>
+							账本 ·{" "}
+							{watcherState.healthy && !watcherState.stale ? "正常" : "关注"}
+							{" · "}最近 {watcherState.lastSyncedRunCount} 个运行
+							{watcherState.scanLagSeconds != null &&
+								` · 延迟 ${watcherState.scanLagSeconds}s`}
+						</Typography.Text>
+					</Tooltip>
+				) : watcherError ? (
+					<Tooltip title={watcherError}>
+						<Typography.Text type="warning" style={{ fontSize: 12 }}>
+							账本 · 不可用
+						</Typography.Text>
+					</Tooltip>
+				) : null}
+				<div style={{ flex: 1 }} />
 				<Button
 					danger
 					disabled={selectedWorkflowNames.length === 0}
@@ -744,40 +785,6 @@ export function WorkflowExecutionList({
 					刷新
 				</Button>
 			</div>
-			{watcherState ? (
-				<Alert
-					type={
-						watcherState.healthy && !watcherState.stale ? "success" : "warning"
-					}
-					showIcon
-					style={{ marginBottom: 16 }}
-					message={
-						watcherState.healthy && !watcherState.stale
-							? "运行账本同步正常"
-							: "运行账本同步需要关注"
-					}
-					description={
-						<span>
-							最近同步 {watcherState.lastSyncedRunCount} 个运行，扫描上限{" "}
-							{watcherState.activeScanLimit}
-							{watcherState.scanLagSeconds != null
-								? `，延迟 ${watcherState.scanLagSeconds}s`
-								: ""}
-							{watcherState.lastError
-								? `。最近错误：${watcherState.lastError}`
-								: ""}
-						</span>
-					}
-				/>
-			) : watcherError ? (
-				<Alert
-					type="warning"
-					showIcon
-					style={{ marginBottom: 16 }}
-					message="运行账本同步状态不可用"
-					description={watcherError}
-				/>
-			) : null}
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
 					allowClear

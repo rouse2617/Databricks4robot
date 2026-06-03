@@ -136,6 +136,8 @@ func setupCore(inf *infra) *coreHandlers {
 	// ── Workflow monitoring ──
 	workflowHandler := workflowH.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
 	workflowHandler.SetPodClient(inf.podClient)
+	workflowHandler.SetExecClient(inf.execClient)
+	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo)
 
 	return &coreHandlers{
 		asset:             assetHandler,

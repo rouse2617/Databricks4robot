@@ -15,6 +15,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
 
 const (
@@ -26,17 +27,36 @@ const (
 )
 
 type Handler struct {
-	wfClient  argo.WorkflowClient
-	podClient k8s.PodClient
-	namespace string
+	wfClient        argo.WorkflowClient
+	podClient       k8s.PodClient
+	execClient      k8s.ExecClient
+	namespace       string
+	runRepo         repository.PipelineRunRepository
+	runEventRepo    repository.PipelineRunEventRepository
+	terminalStore   *terminalSessionStore
+	terminalNowFunc func() time.Time
 }
 
 func New(wfClient argo.WorkflowClient, namespace string) *Handler {
-	return &Handler{wfClient: wfClient, namespace: namespace}
+	return &Handler{
+		wfClient:        wfClient,
+		namespace:       namespace,
+		terminalStore:   newTerminalSessionStore(),
+		terminalNowFunc: time.Now,
+	}
 }
 
 func (h *Handler) SetPodClient(podClient k8s.PodClient) {
 	h.podClient = podClient
+}
+
+func (h *Handler) SetExecClient(execClient k8s.ExecClient) {
+	h.execClient = execClient
+}
+
+func (h *Handler) SetRunRepositories(runRepo repository.PipelineRunRepository, eventRepo repository.PipelineRunEventRepository) {
+	h.runRepo = runRepo
+	h.runEventRepo = eventRepo
 }
 
 // ListWorkflows handles GET /api/v1/workflows
@@ -166,7 +186,9 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		Children          []string `json:"children,omitempty"`
 		StartedAt         *string  `json:"startedAt,omitempty"`
 		FinishedAt        *string  `json:"finishedAt,omitempty"`
+		Debug             any      `json:"debug,omitempty"`
 	}
+	run, _ := h.findPipelineRunByWorkflow(c.Request.Context(), wf.Name)
 	nodes := make([]nodeItem, 0, len(wf.Status.Nodes))
 	for _, n := range wf.Status.Nodes {
 		ni := nodeItem{
@@ -197,6 +219,7 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		if podName, ok := resolveWorkflowPodName(wf, n.ID); ok {
 			ni.PodName = podName
 		}
+		ni.Debug = h.terminalCapabilityForNode(run, wf, n, ni.PodName)
 		nodes = append(nodes, ni)
 	}
 	created := wf.CreationTimestamp.Time.Format("2006-01-02T15:04:05Z")

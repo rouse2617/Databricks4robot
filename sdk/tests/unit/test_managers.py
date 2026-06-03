@@ -411,6 +411,37 @@ class TestPipelineManager:
         assert client.pipelines.stop_run("run-1")["message"] == "pipeline run stopped"
         assert client.pipelines.delete_run("run-1") == {}
 
+    def test_pod_terminal_session_helpers(self, client):
+        create_route = respx.post(
+            f"{BASE_URL}/api/v1/workflows/wf-1/nodes/node-1/terminal-sessions"
+        ).mock(return_value=httpx.Response(201, json={"id": "sess-1", "status": "created"}))
+        respx.get(f"{BASE_URL}/api/v1/pod-terminal/sessions/sess-1").mock(
+            return_value=httpx.Response(200, json={"id": "sess-1", "status": "created"})
+        )
+        respx.post(f"{BASE_URL}/api/v1/pod-terminal/sessions/sess-1/terminate").mock(
+            return_value=httpx.Response(200, json={"id": "sess-1", "status": "terminated"})
+        )
+
+        created = client.pipelines.create_pod_terminal_session(
+            "wf-1",
+            "node-1",
+            command="pwd",
+            container_name="main",
+        )
+        assert created["id"] == "sess-1"
+        body = create_route.calls.last.request.read()
+        assert b'"command":"pwd"' in body
+        assert b'"containerName":"main"' in body
+        assert client.pipelines.get_pod_terminal_session("sess-1")["status"] == "created"
+        assert (
+            client.pipelines.terminate_pod_terminal_session("sess-1")["status"]
+            == "terminated"
+        )
+        assert (
+            client.pipelines.pod_terminal_attach_path("sess-1", "tok")
+            == "/api/v1/pod-terminal/sessions/sess-1/attach?token=tok"
+        )
+
     def test_list_deployments(self, client):
         respx.get(f"{BASE_URL}/api/v1/deployments").mock(
             return_value=httpx.Response(200, json={"items": []})

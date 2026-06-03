@@ -19,6 +19,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
 
 // ── Mock WorkflowClient ─────────────────────────────────────────────────────
@@ -45,6 +46,46 @@ func (m *mockPodClient) GetPodDiagnostics(ctx context.Context, namespace, podNam
 		return m.diagFn(ctx, namespace, podName)
 	}
 	return nil, errors.New("not implemented")
+}
+
+type mockExecClient struct {
+	reqs []k8s.PodExecRequest
+	err  error
+}
+
+func (m *mockExecClient) ExecPod(_ context.Context, req k8s.PodExecRequest, stdout, _ io.Writer) error {
+	m.reqs = append(m.reqs, req)
+	if m.err != nil {
+		return m.err
+	}
+	_, _ = stdout.Write([]byte("ok\n"))
+	return nil
+}
+
+type mockRunRepo struct {
+	run *models.PipelineRun
+}
+
+func (m *mockRunRepo) Save(context.Context, *models.PipelineRun) error               { return nil }
+func (m *mockRunRepo) FindAll(context.Context) ([]models.PipelineRun, error)         { return nil, nil }
+func (m *mockRunRepo) FindByID(context.Context, string) (*models.PipelineRun, error) { return nil, nil }
+func (m *mockRunRepo) FindByWorkflowName(context.Context, string) (*models.PipelineRun, error) {
+	return m.run, nil
+}
+func (m *mockRunRepo) Delete(context.Context, string) error                           { return nil }
+func (m *mockRunRepo) DeleteByTemplateID(context.Context, string) error               { return nil }
+func (m *mockRunRepo) UpdateStatus(context.Context, string, string, *time.Time) error { return nil }
+
+type mockRunEventRepo struct {
+	events []models.PipelineRunEvent
+}
+
+func (m *mockRunEventRepo) Append(_ context.Context, event *models.PipelineRunEvent) error {
+	m.events = append(m.events, *event)
+	return nil
+}
+func (m *mockRunEventRepo) ListByRunID(context.Context, string, models.PipelineRunEventListOptions) (*models.PipelineRunEventListResult, error) {
+	return &models.PipelineRunEventListResult{}, nil
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
@@ -166,6 +207,10 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.GET("/workflows/:name/logs/stream", h.StreamWorkflowLogs)
 	r.GET("/workflows/:name/log/stream", h.StreamWorkflowLogs)
 	r.GET("/workflows/:name/nodes/:nodeId/pod", h.GetNodePodDiagnostics)
+	r.POST("/workflows/:name/nodes/:nodeId/terminal-sessions", h.CreateTerminalSession)
+	r.GET("/pod-terminal/sessions/:id", h.GetTerminalSession)
+	r.POST("/pod-terminal/sessions/:id/terminate", h.TerminateTerminalSession)
+	r.GET("/pod-terminal/sessions/:id/attach", h.AttachTerminalSession)
 	r.GET("/workflows/:name", h.GetWorkflow)
 	r.POST("/workflows/:name/retry", h.RetryWorkflow)
 	r.POST("/workflows/:name/resubmit", h.ResubmitWorkflow)
@@ -1088,6 +1133,159 @@ func TestGetNodePodDiagnostics_KubernetesErrors(t *testing.T) {
 				t.Fatalf("expected %d, got %d: %s", tt.code, w.Code, w.Body.String())
 			}
 			assertErrorCode(t, w.Body.Bytes(), tt.want)
+		})
+	}
+}
+
+func TestCreateTerminalSession_DisabledByDefault(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	h.SetRunRepositories(&mockRunRepo{run: &models.PipelineRun{
+		ID:             "run-1",
+		WorkflowName:   "test-wf",
+		TargetSnapshot: map[string]interface{}{},
+	}}, &mockRunEventRepo{})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"sh"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	assertErrorCode(t, w.Body.Bytes(), "POD_EXEC_FORBIDDEN")
+}
+
+func TestCreateTerminalSession_AllowedPolicyCreatesSession(t *testing.T) {
+	eventRepo := &mockRunEventRepo{}
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	h.SetRunRepositories(&mockRunRepo{run: &models.PipelineRun{
+		ID:                "run-1",
+		WorkflowName:      "test-wf",
+		ExecutionTargetID: "target-1",
+		TargetSnapshot: map[string]interface{}{
+			"cluster":   "gke-dev",
+			"namespace": "default",
+			"terminal": map[string]interface{}{
+				"enabled":         true,
+				"allowedCommands": []interface{}{"sh", "pwd"},
+			},
+		},
+	}}, eventRepo)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"pwd"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["id"] == "" || resp["attachUrl"] == "" {
+		t.Fatalf("expected id and attachUrl, got %#v", resp)
+	}
+	if resp["podName"] == "" || resp["command"] != "pwd" {
+		t.Fatalf("unexpected terminal response %#v", resp)
+	}
+	if len(eventRepo.events) != 1 || eventRepo.events[0].EventType != "pod_terminal_session_created" {
+		t.Fatalf("expected created run event, got %#v", eventRepo.events)
+	}
+}
+
+func TestCreateTerminalSession_InvalidJSON(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	assertErrorCode(t, w.Body.Bytes(), "INVALID_ARGUMENT")
+}
+
+func TestTerminateTerminalSession(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	h.SetRunRepositories(&mockRunRepo{run: &models.PipelineRun{
+		ID:                "run-1",
+		WorkflowName:      "test-wf",
+		ExecutionTargetID: "target-1",
+		TargetSnapshot: map[string]interface{}{
+			"terminal": map[string]interface{}{"enabled": true},
+		},
+	}}, &mockRunEventRepo{})
+	r := setupRouter(h)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"sh"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	r.ServeHTTP(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("expected create 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+	var created map[string]any
+	_ = json.Unmarshal(createW.Body.Bytes(), &created)
+	id, _ := created["id"].(string)
+
+	req := httptest.NewRequest(http.MethodPost, "/pod-terminal/sessions/"+id+"/terminate", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "terminated" {
+		t.Fatalf("expected terminated status, got %#v", resp)
+	}
+}
+
+func TestTerminalCommandArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{name: "single", in: "pwd", want: []string{"pwd"}},
+		{name: "shell", in: "ls -lah /tmp", want: []string{"sh", "-lc", "ls -lah /tmp"}},
+		{name: "empty", in: "  ", want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := terminalCommandArgs(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("len = %d, want %d: %#v", len(got), len(tt.want), got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %#v, want %#v", got, tt.want)
+				}
+			}
 		})
 	}
 }
