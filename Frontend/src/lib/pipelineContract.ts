@@ -130,6 +130,29 @@ const defaultOutputs = (): Port[] => [
 	{ name: DEFAULT_OUTPUT_PORT, type: "string" },
 ];
 
+function normalizePorts(
+	ports: Port[] | undefined,
+	fallback: () => Port[],
+): Port[] {
+	if (!ports || ports.length === 0) return fallback();
+	const seen = new Set<string>();
+	const normalized: Port[] = [];
+	for (const port of ports) {
+		const name = port.name?.trim();
+		if (!name || seen.has(name)) continue;
+		seen.add(name);
+		normalized.push({
+			name,
+			type: port.type?.trim() || "string",
+			...(port.desc?.trim() ? { desc: port.desc.trim() } : {}),
+			...(port.default_value?.trim()
+				? { default_value: port.default_value.trim() }
+				: {}),
+		});
+	}
+	return normalized.length > 0 ? normalized : fallback();
+}
+
 /** Format React Flow edge endpoints for the transpiler (node-id.port-name). */
 export function formatEdgeEndpoint(
 	nodeId: string,
@@ -185,8 +208,8 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 						}
 					: undefined,
 		},
-		inputs: defaultInputs(),
-		outputs: defaultOutputs(),
+		inputs: normalizePorts(d.inputPorts, defaultInputs),
+		outputs: normalizePorts(d.outputPorts, defaultOutputs),
 	};
 }
 
@@ -217,6 +240,8 @@ export function fromTranspilerPipeline(pipeline: Pipeline): {
 			cpu: pn.component.resources?.cpu || "",
 			memory: pn.component.resources?.memory || "",
 			disk: pn.component.resources?.disk || "",
+			inputPorts: normalizePorts(pn.inputs, defaultInputs),
+			outputPorts: normalizePorts(pn.outputs, defaultOutputs),
 		},
 	}));
 

@@ -43,6 +43,8 @@ export interface PipelineEdgeDef {
 export interface Port {
 	name: string;
 	type: string;
+	desc?: string;
+	default_value?: string;
 }
 
 export interface ResourceRequirements {
@@ -63,6 +65,8 @@ export interface RegisteredComponent {
 	command: string[];
 	args: Argument[];
 	env?: Argument[];
+	inputPorts?: Port[];
+	outputPorts?: Port[];
 	cpu: string;
 	memory: string;
 	disk: string;
@@ -76,6 +80,8 @@ export interface PipelineNodeData {
 	command: string[];
 	args: Argument[];
 	env?: Argument[];
+	inputPorts?: Port[];
+	outputPorts?: Port[];
 	cpu: string;
 	memory: string;
 	disk: string;

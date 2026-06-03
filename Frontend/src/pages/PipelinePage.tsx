@@ -73,6 +73,11 @@ import {
 	fromTranspilerPipeline,
 	toTranspilerPipeline,
 } from "../lib/pipelineContract";
+import {
+	getPipelineExample,
+	PIPELINE_EXAMPLES,
+	type PipelineExample,
+} from "../lib/pipelineExamples";
 import { validatePipelineForRun } from "../lib/pipelineValidation";
 import { ComponentManager } from "./ComponentManager";
 import {
@@ -104,6 +109,23 @@ type CanvasMenuState = {
 	y: number;
 	node: PipelineFlowNode | null;
 };
+
+const DEFAULT_TARGET_PORT = "input";
+
+function findDuplicateTargetInput(edges: PipelineFlowEdge[]) {
+	const seen = new Map<string, PipelineFlowEdge>();
+	for (const edge of edges) {
+		if (!edge.target) continue;
+		const targetPort = edge.targetHandle || DEFAULT_TARGET_PORT;
+		const key = `${edge.target}.${targetPort}`;
+		const existing = seen.get(key);
+		if (existing && existing.id !== edge.id) {
+			return { key, existing, incoming: edge };
+		}
+		seen.set(key, edge);
+	}
+	return null;
+}
 
 function replaceAppendedValue(previous: string, next: string) {
 	if (!previous || next === previous) return next;
@@ -292,6 +314,16 @@ function PipelineCanvas() {
 	const flattenNodes = useMemo(() => toRecord(nodes), [nodes]);
 	const flattenEdges = useMemo(() => toRecord(edges), [edges]);
 	const nodeTypes = useMemo(() => PIPELINE_NODE_TYPES, []);
+	const applyCanvasEdges = useCallback((nextEdges: PipelineFlowEdge[]) => {
+		const duplicate = findDuplicateTargetInput(nextEdges);
+		if (duplicate) {
+			message.warning(
+				`输入端口 ${duplicate.key} 已有连线，请在 join 节点配置不同输入端口后再连接。`,
+			);
+			return;
+		}
+		setEdges(nextEdges);
+	}, []);
 
 	useEffect(() => {
 		editorRef.current = editor;
@@ -727,6 +759,49 @@ function PipelineCanvas() {
 		}
 	}, []);
 
+	const applyExampleToCanvas = useCallback(
+		(example: PipelineExample) => {
+			const { nodes: exampleNodes, edges: exampleEdges } =
+				fromTranspilerPipeline(example.pipeline);
+			setNodes(
+				exampleNodes.map((node) => ({
+					...node,
+					position: example.layout[node.id] ?? node.position,
+				})),
+			);
+			setEdges(exampleEdges);
+			setPipelineName(example.pipeline.name);
+			setSelectedTemplateVersionId(null);
+			setTemplateVersions([]);
+			setSelectedNode(null);
+			setEditingNodeId(null);
+			editor.deselectAll();
+			setJsonOutput(null);
+			message.success(`已载入示例: ${example.label}`);
+		},
+		[editor],
+	);
+
+	const loadExample = useCallback(
+		(exampleKey: string) => {
+			const example = getPipelineExample(exampleKey);
+			if (!example) return;
+			const load = () => applyExampleToCanvas(example);
+			if (nodes.length > 0 || edges.length > 0) {
+				modal.confirm({
+					title: "载入示例",
+					content: "将覆盖当前画布。请确认当前修改已保存或不再需要。",
+					okText: "载入",
+					cancelText: "取消",
+					onOk: load,
+				});
+				return;
+			}
+			load();
+		},
+		[applyExampleToCanvas, edges.length, modal.confirm, nodes.length],
+	);
+
 	const clearCanvas = useCallback(() => {
 		modal.confirm({
 			title: "清空画布",
@@ -950,6 +1025,19 @@ function PipelineCanvas() {
 					) : null}
 				</div>
 				<div className="pipeline-toolbar__actions">
+					<Select
+						size="small"
+						placeholder="载入示例"
+						style={{ width: 180 }}
+						value={undefined}
+						onChange={loadExample}
+						options={PIPELINE_EXAMPLES.map((example) => ({
+							value: example.key,
+							label: example.label,
+							title: example.description,
+						}))}
+						aria-label="载入标准流水线示例"
+					/>
 					<Tooltip title={deployDisabledReason}>
 						<span>
 							<Button
@@ -1056,7 +1144,7 @@ function PipelineCanvas() {
 								setNodes(Object.values(nextNodes) as PipelineFlowNode[])
 							}
 							onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
-								setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
+								applyCanvasEdges(Object.values(nextEdges) as PipelineFlowEdge[])
 							}
 							contextMenuEnabled={false}
 							flowProps={{

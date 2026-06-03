@@ -32,6 +32,7 @@ import {
 	type PipelineComponentAPI,
 	type PipelineComponentPayload,
 	type PipelineComponentType,
+	type PortDef,
 	updateComponent,
 } from "../api/pipelineComponentApi";
 import { toAssetStyleId } from "../lib/idDisplay";
@@ -45,6 +46,12 @@ import {
 } from "../lib/pipelineContract";
 
 type EnvRow = { name?: string; value?: string };
+type PortRow = {
+	name?: string;
+	type?: string;
+	desc?: string;
+	default_value?: string;
+};
 
 type ModalMode = "create" | "edit" | "view";
 
@@ -57,6 +64,8 @@ interface ComponentFormValues {
 	command?: string;
 	args?: string;
 	envRows?: EnvRow[];
+	inputPorts?: PortRow[];
+	outputPorts?: PortRow[];
 }
 
 const TYPE_OPTIONS: Array<{ label: string; value: PipelineComponentType }> = [
@@ -73,6 +82,9 @@ const TYPE_COLORS: Record<PipelineComponentType, string> = {
 	suspend: "orange",
 };
 
+const DEFAULT_INPUT_PORTS: PortDef[] = [{ name: "input", type: "asset" }];
+const DEFAULT_OUTPUT_PORTS: PortDef[] = [{ name: "output", type: "asset" }];
+
 const formatDateTime = (value?: string): string =>
 	value ? new Date(value).toLocaleString() : "-";
 
@@ -88,6 +100,29 @@ const joinInputItems = (value?: string[]): string =>
 		.filter(Boolean)
 		.join(", ");
 
+function normalizePortRows(
+	rows: PortRow[] | undefined,
+	fallback: PortDef[],
+): PortDef[] {
+	if (!rows || rows.length === 0) return fallback;
+	const seen = new Set<string>();
+	const next: PortDef[] = [];
+	for (const row of rows) {
+		const name = row.name?.trim();
+		if (!name || seen.has(name)) continue;
+		seen.add(name);
+		next.push({
+			name,
+			type: row.type?.trim() || "string",
+			...(row.desc?.trim() ? { desc: row.desc.trim() } : {}),
+			...(row.default_value?.trim()
+				? { default_value: row.default_value.trim() }
+				: {}),
+		});
+	}
+	return next.length > 0 ? next : fallback;
+}
+
 function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 	if (!component) {
 		return {
@@ -99,6 +134,8 @@ function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 			command: "",
 			args: "",
 			envRows: [],
+			inputPorts: DEFAULT_INPUT_PORTS,
+			outputPorts: DEFAULT_OUTPUT_PORTS,
 		};
 	}
 
@@ -114,6 +151,8 @@ function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 			name,
 			value,
 		})),
+		inputPorts: normalizePortRows(component.inputPorts, DEFAULT_INPUT_PORTS),
+		outputPorts: normalizePortRows(component.outputPorts, DEFAULT_OUTPUT_PORTS),
 	};
 }
 
@@ -145,8 +184,8 @@ function toPayload(
 		command,
 		args,
 		env,
-		inputPorts: [{ name: "input", type: "asset" }],
-		outputPorts: [{ name: "output", type: "asset" }],
+		inputPorts: normalizePortRows(values.inputPorts, DEFAULT_INPUT_PORTS),
+		outputPorts: normalizePortRows(values.outputPorts, DEFAULT_OUTPUT_PORTS),
 		resources: {
 			type: values.type,
 			command,
@@ -217,8 +256,118 @@ function ComponentDetail({ component }: { component: PipelineComponentAPI }) {
 						"-"
 					)}
 				</Descriptions.Item>
+				<Descriptions.Item label="输入端口">
+					{component.inputPorts?.length ? (
+						<Space wrap size={4}>
+							{component.inputPorts.map((port) => (
+								<Tag key={port.name}>
+									{port.name}:{port.type}
+								</Tag>
+							))}
+						</Space>
+					) : (
+						"-"
+					)}
+				</Descriptions.Item>
+				<Descriptions.Item label="输出端口">
+					{component.outputPorts?.length ? (
+						<Space direction="vertical" size={4}>
+							{component.outputPorts.map((port) => (
+								<Typography.Text key={port.name} code>
+									{port.name}:{port.type} /tmp/outputs/{port.name}
+								</Typography.Text>
+							))}
+						</Space>
+					) : (
+						"-"
+					)}
+				</Descriptions.Item>
 			</Descriptions>
 		</Space>
+	);
+}
+
+function PortFormList({
+	name,
+	title,
+	emptyPort,
+	showOutputPath = false,
+}: {
+	name: "inputPorts" | "outputPorts";
+	title: string;
+	emptyPort: PortRow;
+	showOutputPath?: boolean;
+}) {
+	return (
+		<Form.List name={name} initialValue={[emptyPort]}>
+			{(fields, { add, remove }) => (
+				<div>
+					<div
+						style={{
+							display: "flex",
+							alignItems: "center",
+							justifyContent: "space-between",
+							marginBottom: 8,
+						}}
+					>
+						<Typography.Text>{title}</Typography.Text>
+						<Button
+							size="small"
+							icon={<PlusOutlined />}
+							onClick={() => add(emptyPort)}
+						>
+							添加端口
+						</Button>
+					</div>
+					{fields.map(({ key, ...field }) => (
+						<div
+							key={key}
+							style={{
+								display: "grid",
+								gridTemplateColumns: "140px 120px minmax(180px, 1fr) auto",
+								gap: 8,
+								alignItems: "start",
+								marginBottom: 8,
+							}}
+						>
+							<Form.Item
+								{...field}
+								name={[field.name, "name"]}
+								rules={[{ required: true, message: "请输入端口名" }]}
+							>
+								<Input placeholder="input" />
+							</Form.Item>
+							<Form.Item
+								{...field}
+								name={[field.name, "type"]}
+								rules={[{ required: true, message: "请输入类型" }]}
+							>
+								<Input placeholder="asset" />
+							</Form.Item>
+							<Form.Item {...field} name={[field.name, "desc"]}>
+								<Input
+									placeholder={
+										showOutputPath ? "写入 /tmp/outputs/<端口名>" : "端口说明"
+									}
+								/>
+							</Form.Item>
+							<Button
+								type="text"
+								danger
+								icon={<DeleteOutlined />}
+								aria-label={`移除${title}`}
+								onClick={() => remove(field.name)}
+							/>
+						</div>
+					))}
+					{showOutputPath ? (
+						<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+							输出被下游消费时，容器脚本必须写入 /tmp/outputs/端口名。
+						</Typography.Text>
+					) : null}
+				</div>
+			)}
+		</Form.List>
 	);
 }
 
@@ -713,6 +862,27 @@ export function ComponentManager() {
 							/>
 						</Form.Item>
 
+						<div
+							style={{
+								display: "grid",
+								gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+								gap: 16,
+								marginBottom: 16,
+							}}
+						>
+							<PortFormList
+								name="inputPorts"
+								title="输入端口"
+								emptyPort={{ name: "input", type: "asset" }}
+							/>
+							<PortFormList
+								name="outputPorts"
+								title="输出端口"
+								emptyPort={{ name: "output", type: "asset" }}
+								showOutputPath
+							/>
+						</div>
+
 						<Form.List name="envRows">
 							{(fields, { add, remove }) => (
 								<div>
@@ -729,9 +899,9 @@ export function ComponentManager() {
 											添加变量
 										</Button>
 									</div>
-									{fields.map((field, index) => (
+									{fields.map(({ key, ...field }, index) => (
 										<Space
-											key={field.key}
+											key={key}
 											align="baseline"
 											style={{ display: "flex", marginBottom: 8 }}
 										>

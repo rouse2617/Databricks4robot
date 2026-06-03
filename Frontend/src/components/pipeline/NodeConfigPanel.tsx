@@ -2,7 +2,7 @@ import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
 import type { Node } from "@ant-design/pro-flow";
 import { Button, Form, Input, Modal, Select } from "antd";
 import { useEffect } from "react";
-import type { Argument, PipelineNodeData } from "./types";
+import type { Argument, PipelineNodeData, Port } from "./types";
 
 interface NodeConfigPanelProps {
 	open: boolean;
@@ -12,6 +12,12 @@ interface NodeConfigPanelProps {
 }
 
 type EnvFormItem = { name?: string; value?: string };
+type PortFormItem = {
+	name?: string;
+	type?: string;
+	desc?: string;
+	default_value?: string;
+};
 
 type FormValues = {
 	label: string;
@@ -19,10 +25,15 @@ type FormValues = {
 	source?: string;
 	args: string[];
 	env?: EnvFormItem[];
+	inputPorts?: PortFormItem[];
+	outputPorts?: PortFormItem[];
 	cpu: string;
 	memory: string;
 	disk: string;
 };
+
+const DEFAULT_INPUT_PORTS: Port[] = [{ name: "input", type: "asset" }];
+const DEFAULT_OUTPUT_PORTS: Port[] = [{ name: "output", type: "asset" }];
 
 function normalizeArgs(args: Argument[] | undefined): string[] {
 	if (!args || args.length === 0) return [];
@@ -49,6 +60,105 @@ function formPairsToEnv(items: EnvFormItem[]): Argument[] {
 		}));
 }
 
+function normalizePorts(ports: Port[] | undefined, fallback: Port[]): Port[] {
+	return ports?.length ? ports : fallback;
+}
+
+function formPortsToPorts(items: PortFormItem[], fallback: Port[]): Port[] {
+	if (!items || items.length === 0) return fallback;
+	const seen = new Set<string>();
+	const next: Port[] = [];
+	for (const item of items) {
+		const name = item.name?.trim();
+		if (!name || seen.has(name)) continue;
+		seen.add(name);
+		next.push({
+			name,
+			type: item.type?.trim() || "string",
+			...(item.desc?.trim() ? { desc: item.desc.trim() } : {}),
+			...(item.default_value?.trim()
+				? { default_value: item.default_value.trim() }
+				: {}),
+		});
+	}
+	return next.length > 0 ? next : fallback;
+}
+
+function PortConfigList({
+	name,
+	title,
+	emptyPort,
+	outputPathHint = false,
+}: {
+	name: "inputPorts" | "outputPorts";
+	title: string;
+	emptyPort: PortFormItem;
+	outputPathHint?: boolean;
+}) {
+	return (
+		<Form.List name={name} initialValue={[emptyPort]}>
+			{(fields, { add, remove }) => (
+				<div style={{ display: "grid", gap: 8 }}>
+					<div
+						style={{
+							display: "flex",
+							justifyContent: "space-between",
+							alignItems: "center",
+						}}
+					>
+						<span>{title}</span>
+						<Button
+							size="small"
+							icon={<PlusOutlined />}
+							onClick={() => add(emptyPort)}
+						>
+							新增端口
+						</Button>
+					</div>
+					{fields.map(({ key, ...field }) => (
+						<div
+							key={key}
+							style={{
+								display: "grid",
+								gridTemplateColumns: "1fr 96px auto",
+								gap: 8,
+							}}
+						>
+							<Form.Item
+								{...field}
+								name={[field.name, "name"]}
+								rules={[{ required: true, message: "请输入端口名" }]}
+								noStyle
+							>
+								<Input placeholder={emptyPort.name || "input"} />
+							</Form.Item>
+							<Form.Item
+								{...field}
+								name={[field.name, "type"]}
+								rules={[{ required: true, message: "请输入类型" }]}
+								noStyle
+							>
+								<Input placeholder={emptyPort.type || "asset"} />
+							</Form.Item>
+							<Button
+								type="text"
+								icon={<MinusCircleOutlined />}
+								onClick={() => remove(field.name)}
+								danger
+							/>
+						</div>
+					))}
+					{outputPathHint ? (
+						<span style={{ fontSize: 12, color: "#64748b" }}>
+							输出端口被连接时，需要写入 /tmp/outputs/端口名。
+						</span>
+					) : null}
+				</div>
+			)}
+		</Form.List>
+	);
+}
+
 export function NodeConfigPanel({
 	open,
 	node,
@@ -68,6 +178,8 @@ export function NodeConfigPanel({
 			command: node.data.command || [],
 			args: normalizeArgs(node.data.args),
 			env: envToPairs(node.data.env),
+			inputPorts: normalizePorts(node.data.inputPorts, DEFAULT_INPUT_PORTS),
+			outputPorts: normalizePorts(node.data.outputPorts, DEFAULT_OUTPUT_PORTS),
 			cpu: node.data.cpu || "",
 			memory: node.data.memory || "",
 			disk: node.data.disk || "",
@@ -85,6 +197,14 @@ export function NodeConfigPanel({
 				value,
 			})),
 			env: formPairsToEnv(values.env || []),
+			inputPorts: formPortsToPorts(
+				values.inputPorts || [],
+				DEFAULT_INPUT_PORTS,
+			),
+			outputPorts: formPortsToPorts(
+				values.outputPorts || [],
+				DEFAULT_OUTPUT_PORTS,
+			),
 			cpu: values.cpu || "",
 			memory: values.memory || "",
 			disk: values.disk || "",
@@ -128,13 +248,33 @@ export function NodeConfigPanel({
 				<Form.Item label="参数" name="args">
 					<Select mode="tags" options={[]} placeholder="按 Enter 添加参数" />
 				</Form.Item>
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: "1fr 1fr",
+						gap: 12,
+						marginBottom: 16,
+					}}
+				>
+					<PortConfigList
+						name="inputPorts"
+						title="输入端口"
+						emptyPort={{ name: "input", type: "asset" }}
+					/>
+					<PortConfigList
+						name="outputPorts"
+						title="输出端口"
+						emptyPort={{ name: "output", type: "asset" }}
+						outputPathHint
+					/>
+				</div>
 				<Form.Item label="环境变量">
 					<Form.List name="env">
 						{(fields, { add, remove }) => (
 							<div style={{ display: "grid", gap: 8 }}>
-								{fields.map((field) => (
+								{fields.map(({ key, ...field }) => (
 									<div
-										key={field.key}
+										key={key}
 										style={{
 											display: "grid",
 											gridTemplateColumns: "1fr 1fr auto",

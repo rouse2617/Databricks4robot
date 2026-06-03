@@ -138,6 +138,38 @@ describe("toTranspilerPipeline", () => {
 		expect(result.nodes[0].outputs?.[0].name).toBe("output");
 	});
 
+	it("preserves custom input and output ports from canvas node data", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "join",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "join",
+					image: "busybox:latest",
+					command: ["sh", "-c"],
+					args: [{ name: "script", value: "echo ok > /tmp/outputs/summary" }],
+					inputPorts: [
+						{ name: "left", type: "string" },
+						{ name: "right", type: "string" },
+					],
+					outputPorts: [{ name: "summary", type: "string" }],
+					cpu: "",
+					memory: "",
+					disk: "",
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].inputs).toEqual([
+			{ name: "left", type: "string" },
+			{ name: "right", type: "string" },
+		]);
+		expect(result.nodes[0].outputs).toEqual([
+			{ name: "summary", type: "string" },
+		]);
+	});
+
 	it("includes resources when CPU/memory/disk are set", () => {
 		const nodes: Node<PipelineNodeData>[] = [
 			{
@@ -254,6 +286,12 @@ describe("fromTranspilerPipeline", () => {
 		expect(nodes[0].data.image).toBe("busybox:latest");
 		expect(nodes[0].data.command).toEqual(["sh", "-c"]);
 		expect(nodes[0].data.args).toEqual([{ name: "args", value: "hello" }]);
+		expect(nodes[0].data.inputPorts).toEqual([
+			{ name: "input", type: "string" },
+		]);
+		expect(nodes[0].data.outputPorts).toEqual([
+			{ name: "output", type: "string" },
+		]);
 		expect(edges).toHaveLength(1);
 		expect(edges[0].source).toBe("step-1");
 		expect(edges[0].target).toBe("step-2");
@@ -344,6 +382,33 @@ describe("fromTranspilerPipeline", () => {
 		const { edges } = fromTranspilerPipeline(pipeline);
 		expect(edges[0].id).toBe("e-0");
 		expect(edges[1].id).toBe("e-1");
+	});
+
+	it("restores custom node ports from pipeline JSON", () => {
+		const pipeline: Pipeline = {
+			name: "fan-in",
+			version: "1",
+			nodes: [
+				{
+					id: "join",
+					component: { name: "join", image: "busybox" },
+					inputs: [
+						{ name: "left", type: "string" },
+						{ name: "right", type: "string" },
+					],
+					outputs: [{ name: "summary", type: "string" }],
+				},
+			],
+			edges: [],
+		};
+		const { nodes } = fromTranspilerPipeline(pipeline);
+		expect(nodes[0].data.inputPorts).toEqual([
+			{ name: "left", type: "string" },
+			{ name: "right", type: "string" },
+		]);
+		expect(nodes[0].data.outputPorts).toEqual([
+			{ name: "summary", type: "string" },
+		]);
 	});
 });
 

@@ -6,6 +6,7 @@ import type {
 import type {
 	Pipeline,
 	PipelineNodeData,
+	Port,
 	RegisteredComponent,
 } from "../../components/pipeline/types";
 import { formatComponentImage as formatImage } from "../../lib/pipelineComponentDisplay";
@@ -48,6 +49,26 @@ function normalizeComponentType(
 		default:
 			return "container";
 	}
+}
+
+function normalizePorts(ports: Port[] | undefined, fallback: Port[]): Port[] {
+	if (!ports || ports.length === 0) return fallback;
+	const seen = new Set<string>();
+	const next: Port[] = [];
+	for (const port of ports) {
+		const name = port.name?.trim();
+		if (!name || seen.has(name)) continue;
+		seen.add(name);
+		next.push({
+			name,
+			type: port.type?.trim() || "string",
+			...(port.desc?.trim() ? { desc: port.desc.trim() } : {}),
+			...(port.default_value?.trim()
+				? { default_value: port.default_value.trim() }
+				: {}),
+		});
+	}
+	return next.length > 0 ? next : fallback;
 }
 
 export function uniqSorted(values: string[]): string[] {
@@ -236,6 +257,12 @@ export function apiToRegistered(
 					: undefined) as unknown[],
 		),
 		env: envFromObject.length > 0 ? envFromObject : envFromResource,
+		inputPorts: normalizePorts(api.inputPorts, [
+			{ name: "input", type: "asset" },
+		]),
+		outputPorts: normalizePorts(api.outputPorts, [
+			{ name: "output", type: "asset" },
+		]),
 		cpu: (resources.cpu as string) ?? "",
 		memory: (resources.memory as string) ?? "",
 		disk: (resources.disk as string) ?? "",
@@ -262,6 +289,8 @@ export function createPipelineNode(
 			command: comp.command,
 			args: comp.args || [],
 			env: comp.env || [],
+			inputPorts: comp.inputPorts || [{ name: "input", type: "asset" }],
+			outputPorts: comp.outputPorts || [{ name: "output", type: "asset" }],
 			cpu: comp.cpu || "",
 			memory: comp.memory || "",
 			disk: comp.disk || "",
