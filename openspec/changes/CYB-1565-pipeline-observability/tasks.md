@@ -15,6 +15,7 @@
 - [x] [Frontend] Replace asset-node placeholder with usable table/matrix and node action links.
 - [x] [Frontend] Upgrade run events UI with filters, search, and load-more.
 - [x] [Frontend] Show estimated cost source labels clearly.
+- [x] [Frontend] Compact execution list and run detail observability UI to reduce redundant cards, disabled actions, and engineering copy.
 - [x] [sdk] Add pipeline asset-node/cost/event filter methods and tests.
 
 ## API contract sync
@@ -30,6 +31,7 @@
 - [x] `cd backend && go test ./...`
 - [x] `cd Frontend && npm run lint`
 - [x] `cd Frontend && npm run test -- --run WorkflowDetail pipelineApi useWorkflowDetail`
+- [x] `cd Frontend && npm run test -- --run WorkflowExecutionList useWorkflowDetail WorkflowNodeDetailPanel`
 - [x] `cd Frontend && npm run build`
 - [x] `cd sdk && uv run pytest tests/unit/`
 - [x] `pre-commit run --all-files`
@@ -39,6 +41,10 @@
 - [ ] Deploy backend and frontend dev.
 - [ ] Run smoke script against dev.
 - [ ] Chrome DevTools MCP: verify run detail timeline filters/load-more and asset-node table actions.
+- [x] Chrome DevTools MCP local verification: `http://127.0.0.1:5179/pipeline?tab=executions` and `my-pipeline-306ecf` detail show compact status filters, inline label filter, cost `$0.0013`, no-asset node row, timeline toggle, node detail drawer, log viewer, IO tab, and no UI regression.
+- [x] Chrome DevTools MCP local verification: Failed workflow `databrew-pl-6d523d56-c1-test-pipeline-njt24` shows invalid spec prominently with non-blank DAG/asset-node empty states.
+- [ ] Follow-up: Pod diagnostics endpoint still returns 503 for a valid Pod node in local/dev verification; UI shows a fallback, but backend/K8s connectivity or RBAC needs separate investigation.
+- [ ] Follow-up: Event search currently searches backend event message/ID fields, not translated UI labels such as “节点”; placeholder now says “搜索消息/ID”, but richer subject/type search should be designed separately.
 
 ## PR
 - [ ] Include CYB-1564 and CYB-1565 in PR body.

@@ -2,8 +2,6 @@ import { MoreOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
 	Alert,
 	Button,
-	Card,
-	Checkbox,
 	DatePicker,
 	Dropdown,
 	Empty,
@@ -19,7 +17,12 @@ import {
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { listDeployments, listPipelineRuns } from "../api/pipelineApi";
 import {
@@ -33,7 +36,6 @@ import { WorkflowLabels } from "../components/common/WorkflowLabels";
 import {
 	STATUS_ACCENT_COLORS,
 	STATUS_COLORS,
-	STATUS_ICONS,
 	WORKFLOW_PHASES,
 } from "../lib/constants";
 import { toAssetStyleId } from "../lib/idDisplay";
@@ -99,8 +101,15 @@ const getWorkflowEstimatedCost = (record: WorkflowSummary): number | null => {
 const renderEstimatedCost = (_: unknown, record: WorkflowSummary) => {
 	const cost = getWorkflowEstimatedCost(record);
 	if (cost == null) {
+		const pendingCost = ["Running", "Pending"].includes(record.status);
 		return (
-			<Tooltip title="本次运行暂无成本数据，后端返回汇总后会显示估算金额">
+			<Tooltip
+				title={
+					pendingCost
+						? "运行完成并写入节点快照后会显示估算成本"
+						: "未生成成本快照。历史运行需要回填，失败或无 Pod 的运行可能没有可计费节点"
+				}
+			>
 				<Typography.Text type="secondary">—</Typography.Text>
 			</Tooltip>
 		);
@@ -418,16 +427,6 @@ export function WorkflowExecutionList({
 		setPage(1);
 	}, [draftDateRange, draftLabelFilter, draftNameSearch, draftStatusFilter]);
 
-	const applyStatusCardFilter = useCallback(
-		(status: (typeof WORKFLOW_PHASES)[number]) => {
-			const nextStatus = statusFilter === status ? undefined : status;
-			setStatusFilter(nextStatus);
-			setDraftStatusFilter(nextStatus);
-			setPage(1);
-		},
-		[statusFilter],
-	);
-
 	const resetFilters = useCallback(() => {
 		setDraftStatusFilter(undefined);
 		setDraftNameSearch("");
@@ -440,7 +439,7 @@ export function WorkflowExecutionList({
 		setPage(1);
 	}, []);
 
-	const labelCheckboxOptions = useMemo(() => {
+	const labelSelectOptions = useMemo(() => {
 		const labels = new Set<string>();
 		for (const item of items) {
 			for (const [key, value] of getDisplayLabelEntries(item.labels)) {
@@ -468,20 +467,6 @@ export function WorkflowExecutionList({
 			})(),
 			value: label,
 		}));
-	}, [items]);
-
-	const statusCounts = useMemo(() => {
-		const counts = Object.fromEntries(
-			WORKFLOW_PHASES.map((status) => [status, 0]),
-		) as Record<(typeof WORKFLOW_PHASES)[number], number>;
-
-		for (const item of items) {
-			if (item.status in counts) {
-				counts[item.status as (typeof WORKFLOW_PHASES)[number]] += 1;
-			}
-		}
-
-		return counts;
 	}, [items]);
 
 	const executeOperation = useCallback(
@@ -740,72 +725,11 @@ export function WorkflowExecutionList({
 					刷新
 				</Button>
 			</div>
-			<div
-				style={{
-					display: "grid",
-					gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-					gap: 12,
-					marginBottom: 16,
-				}}
-			>
-				{showSkeleton
-					? WORKFLOW_PHASES.map((status) => <Card key={status} loading />)
-					: WORKFLOW_PHASES.map((status) => {
-							const accentColor = STATUS_ACCENT_COLORS[status];
-							const isActive = statusFilter === status;
-
-							return (
-								<Card
-									key={status}
-									role="button"
-									tabIndex={0}
-									aria-pressed={isActive}
-									aria-label={`筛选 ${status} 执行记录`}
-									size="small"
-									onClick={() => applyStatusCardFilter(status)}
-									onKeyDown={(event) => {
-										if (event.key === "Enter" || event.key === " ") {
-											event.preventDefault();
-											applyStatusCardFilter(status);
-										}
-									}}
-									styles={{
-										body: {
-											alignItems: "center",
-											display: "flex",
-											gap: 10,
-											padding: "10px 12px",
-										},
-									}}
-									style={{
-										background: isActive
-											? `color-mix(in srgb, ${accentColor} 6%, transparent)`
-											: undefined,
-										borderColor: accentColor,
-										borderLeft: `4px solid ${accentColor}`,
-										boxShadow: isActive
-											? `0 0 0 2px color-mix(in srgb, ${accentColor} 20%, transparent)`
-											: undefined,
-										cursor: "pointer",
-									}}
-								>
-									<span style={{ color: accentColor, fontSize: 18 }}>
-										{STATUS_ICONS[status]}
-									</span>
-									<span style={{ color: "rgba(0, 0, 0, 0.65)" }}>{status}</span>
-									<strong style={{ fontSize: 18, marginLeft: "auto" }}>
-										{statusCounts[status]}
-									</strong>
-								</Card>
-							);
-						})}
-			</div>
-
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
 					allowClear
-					placeholder="状态筛选"
-					style={{ minWidth: 140, flex: "1 1 160px" }}
+					placeholder="状态"
+					style={{ minWidth: 130, flex: "0 0 130px" }}
 					value={draftStatusFilter}
 					onChange={(val) => setDraftStatusFilter(val)}
 					options={WORKFLOW_PHASES.map((status) => ({
@@ -817,7 +741,7 @@ export function WorkflowExecutionList({
 					id="workflow-execution-name-search"
 					allowClear
 					placeholder="按名称搜索"
-					style={{ minWidth: 220, flex: "1 1 220px" }}
+					style={{ minWidth: 200, flex: "1 1 200px" }}
 					value={draftNameSearch}
 					onChange={(event) => setDraftNameSearch(event.target.value)}
 					onSearch={applyFilters}
@@ -828,29 +752,22 @@ export function WorkflowExecutionList({
 					onChange={(values) =>
 						setDraftDateRange([values?.[0] ?? null, values?.[1] ?? null])
 					}
-					style={{ minWidth: 320, flex: "1 1 260px" }}
+					style={{ minWidth: 300, flex: "1 1 280px" }}
+				/>
+				<Select
+					mode="multiple"
+					allowClear
+					maxTagCount="responsive"
+					placeholder="标签筛选"
+					style={{ minWidth: 220, flex: "1 1 240px" }}
+					value={draftLabelFilter}
+					onChange={(values) => setDraftLabelFilter(values)}
+					options={labelSelectOptions}
 				/>
 				<Button type="primary" onClick={applyFilters} disabled={!filtersDirty}>
 					应用
 				</Button>
 				<Button onClick={resetFilters}>重置</Button>
-			</div>
-
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					flexWrap: "wrap",
-					gap: 8,
-					marginBottom: 16,
-				}}
-			>
-				<Typography.Text type="secondary">标签筛选：</Typography.Text>
-				<Checkbox.Group
-					options={labelCheckboxOptions}
-					value={draftLabelFilter}
-					onChange={(values) => setDraftLabelFilter(values as string[])}
-				/>
 			</div>
 
 			{error ? (

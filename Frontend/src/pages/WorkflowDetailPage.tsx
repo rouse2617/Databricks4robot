@@ -9,7 +9,6 @@ import Ansi from "ansi-to-react";
 import {
 	Alert,
 	Button,
-	Card,
 	Descriptions,
 	Input,
 	Modal,
@@ -51,6 +50,7 @@ import {
 	LOG_MAX_RENDER_LINES,
 	prepareVisibleLogContent,
 } from "./workflowLogView";
+import "../styles/pipeline.css";
 
 function buildHighlightedLogNodes(logContent: string, keyword: string) {
 	const normalized = keyword.trim();
@@ -318,6 +318,13 @@ function eventTagColor(event: PipelineRunEvent) {
 	return "default";
 }
 
+function formatRunEventError(error: string) {
+	if (error.includes("未找到关联的 DataBrew pipeline run")) {
+		return "这是历史工作流或外部提交的工作流，暂时没有 DataBrew 运行事件记录。";
+	}
+	return error;
+}
+
 function shortEventSubject(event: PipelineRunEvent) {
 	if (event.subjectType === "run") return "运行";
 	if (event.subjectType === "workflow") return "Workflow";
@@ -359,53 +366,36 @@ function WorkflowRunContextPanel({
 	const latestEvents = runEventState.items.slice(-5);
 
 	return (
-		<div
-			style={{
-				display: "grid",
-				gridTemplateColumns:
-					"minmax(260px, 1fr) minmax(260px, 1fr) minmax(420px, 1.4fr)",
-				gap: 12,
-				padding: "12px 16px",
-				borderBottom: "1px solid #e5e7eb",
-				background: "#fff",
-			}}
-		>
-			<Card size="small" title="Pipeline Template">
-				{templateName ? (
-					<Space direction="vertical" size={0}>
-						<Typography.Text>{templateName}</Typography.Text>
-						{templateVersion && (
-							<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-								版本 {templateVersion}
-							</Typography.Text>
-						)}
-					</Space>
-				) : (
-					<Typography.Text type="secondary">
-						本次运行未绑定流水线模板
-					</Typography.Text>
-				)}
-			</Card>
-			<Card size="small" title="关联资产">
-				<Typography.Text type={assetIds ? undefined : "secondary"}>
-					{assetIds || "本次运行未绑定资产"}
-				</Typography.Text>
-			</Card>
-			<Card
-				size="small"
-				title="运行事件"
-				extra={
-					<Button
-						size="small"
-						icon={<ReloadOutlined />}
-						loading={runEventState.loading}
-						onClick={onRefreshEvents}
+		<div className="workflow-run-context">
+			<div className="workflow-run-context__summary">
+				<div className="workflow-run-context__meta">
+					<span className="workflow-run-context__label">模板</span>
+					{templateName ? (
+						<span className="workflow-run-context__value">
+							{templateName}
+							{templateVersion ? (
+								<Tag color="blue" style={{ marginInlineStart: 6 }}>
+									v{templateVersion}
+								</Tag>
+							) : null}
+						</span>
+					) : (
+						<Typography.Text type="secondary">未绑定模板</Typography.Text>
+					)}
+					<span className="workflow-run-context__divider" />
+					<span className="workflow-run-context__label">资产</span>
+					<Typography.Text
+						type={assetIds ? undefined : "secondary"}
+						ellipsis={{ tooltip: assetIds || "本次运行未绑定资产" }}
+						style={{ maxWidth: 320 }}
 					>
-						刷新
-					</Button>
-				}
-			>
-				<Space wrap size={6} style={{ marginBottom: 8 }}>
+						{assetIds || "无资产运行"}
+					</Typography.Text>
+					<span className="workflow-run-context__divider" />
+					<span className="workflow-run-context__label">事件</span>
+					<Typography.Text>{runEventState.items.length}</Typography.Text>
+				</div>
+				<Space wrap size={6}>
 					<Select
 						size="small"
 						placeholder="事件类型"
@@ -440,22 +430,32 @@ function WorkflowRunContextPanel({
 					/>
 					<Input.Search
 						size="small"
-						placeholder="搜索事件"
+						placeholder="搜索消息/ID"
 						allowClear
-						style={{ width: 150 }}
+						style={{ width: 180 }}
 						value={runEventFilters.q}
 						onChange={(event) =>
 							onFilterEvents({ ...runEventFilters, q: event.target.value })
 						}
 						onSearch={() => onRefreshEvents()}
 					/>
+					<Button
+						size="small"
+						icon={<ReloadOutlined />}
+						loading={runEventState.loading}
+						onClick={onRefreshEvents}
+					>
+						刷新
+					</Button>
 				</Space>
+			</div>
+			<div className="workflow-run-context__events">
 				{runEventState.error ? (
 					<Alert
 						type="warning"
 						showIcon
 						message="事件暂不可用"
-						description={runEventState.error}
+						description={formatRunEventError(runEventState.error)}
 						style={{ marginBottom: 8 }}
 					/>
 				) : null}
@@ -467,21 +467,18 @@ function WorkflowRunContextPanel({
 				latestEvents.length === 0 ? (
 					<Typography.Text type="secondary">暂无运行事件</Typography.Text>
 				) : null}
-				<div style={{ display: "grid", gap: 6 }}>
+				<div className="workflow-run-context__event-list">
 					{latestEvents.map((event) => (
 						<button
 							key={event.id}
 							type="button"
 							onClick={() => onSelectNodeEvent(event)}
 							disabled={event.subjectType !== "node"}
-							style={{
-								border: "1px solid #e5e7eb",
-								background: event.subjectType === "node" ? "#fff" : "#f8fafc",
-								borderRadius: 6,
-								padding: "6px 8px",
-								textAlign: "left",
-								cursor: event.subjectType === "node" ? "pointer" : "default",
-							}}
+							className={
+								event.subjectType === "node"
+									? "workflow-run-event"
+									: "workflow-run-event workflow-run-event--static"
+							}
 						>
 							<div
 								style={{
@@ -524,15 +521,19 @@ function WorkflowRunContextPanel({
 						加载更多事件
 					</Button>
 				) : null}
-			</Card>
+			</div>
 		</div>
 	);
 }
 
-function formatCost(value?: number) {
-	if (typeof value !== "number") return "暂无数据";
+function formatCost(value?: number | null) {
+	if (typeof value !== "number") return "未生成快照";
 	if (value < 0.01) return `$${value.toFixed(4)}`;
 	return `$${value.toFixed(2)}`;
+}
+
+function formatCostSource(value?: string) {
+	return value === "estimated_resource_duration" ? "估算" : "未生成";
 }
 
 function formatDurationSeconds(startedAt?: string, finishedAt?: string) {
@@ -559,6 +560,12 @@ function WorkflowAssetNodePanel({
 	) => void;
 }) {
 	const summary = assetNodeState.summary;
+	const noAssetOnly =
+		assetNodeState.items.length > 0 &&
+		assetNodeState.items.every((row) => row.assetId === "no-asset");
+	const displayAssetCount = noAssetOnly
+		? "无资产运行"
+		: (summary?.assetCount ?? 0);
 	return (
 		<div
 			style={{
@@ -580,17 +587,17 @@ function WorkflowAssetNodePanel({
 				}}
 			>
 				<div>
-					<Typography.Text strong>资产 × 节点明细</Typography.Text>
+					<Typography.Text strong>节点明细</Typography.Text>
 					<Typography.Text
 						type="secondary"
 						style={{ display: "block", fontSize: 12 }}
 					>
-						按资产和步骤定位状态、日志、Pod 与估算成本。
+						按资产和步骤定位状态、日志、Pod 与成本快照。
 					</Typography.Text>
 				</div>
 				<Space wrap size={12}>
 					<Typography.Text type="secondary">
-						资产 {summary?.assetCount ?? 0}
+						资产 {displayAssetCount}
 					</Typography.Text>
 					<Typography.Text type="secondary">
 						节点 {summary?.nodeCount ?? 0}
@@ -603,10 +610,9 @@ function WorkflowAssetNodePanel({
 						)}
 					</Typography.Text>
 					<Tag color="blue">
-						{(costSummaryState.item?.costSource ?? summary?.costSource) ===
-						"estimated_resource_duration"
-							? "estimated"
-							: "not available"}
+						{formatCostSource(
+							costSummaryState.item?.costSource ?? summary?.costSource,
+						)}
 					</Tag>
 				</Space>
 			</div>
@@ -626,14 +632,17 @@ function WorkflowAssetNodePanel({
 						width: 170,
 						render: (value: string) => (
 							<Tag color={value === "no-asset" ? "default" : "blue"}>
-								{value}
+								{value === "no-asset" ? "无资产" : value}
 							</Tag>
 						),
 					},
 					{
 						title: "节点",
 						dataIndex: "displayName",
-						render: (_, row) => row.displayName || row.pipelineNodeId,
+						render: (_, row) =>
+							row.pipelineNodeId === "dag"
+								? "运行汇总"
+								: row.displayName || row.pipelineNodeId,
 					},
 					{
 						title: "状态",
@@ -659,38 +668,58 @@ function WorkflowAssetNodePanel({
 					{
 						title: "估算成本",
 						width: 120,
-						render: (_, row) => formatCost(row.estimatedCostUsd),
+						render: (_, row) => (
+							<Tooltip
+								title={
+									typeof row.estimatedCostUsd === "number"
+										? "估算成本，非 GCP Billing 最终账单"
+										: "该节点未生成成本快照"
+								}
+							>
+								<span>{formatCost(row.estimatedCostUsd)}</span>
+							</Tooltip>
+						),
 					},
 					{
 						title: "操作",
 						width: 190,
-						render: (_, row) => (
-							<Space size={6}>
+						render: (_, row) => {
+							const actions = [
 								<Button
+									key="summary"
 									size="small"
 									type="link"
 									onClick={() => onSelectAssetNode(row, "summary")}
 								>
 									节点
-								</Button>
-								<Button
-									size="small"
-									type="link"
-									onClick={() => onSelectAssetNode(row, "logs")}
-									disabled={!row.logRef}
-								>
-									日志
-								</Button>
-								<Button
-									size="small"
-									type="link"
-									onClick={() => onSelectAssetNode(row, "runtime")}
-									disabled={!row.podName}
-								>
-									Pod
-								</Button>
-							</Space>
-						),
+								</Button>,
+							];
+							if (row.logRef) {
+								actions.push(
+									<Button
+										key="logs"
+										size="small"
+										type="link"
+										onClick={() => onSelectAssetNode(row, "logs")}
+									>
+										日志
+									</Button>,
+								);
+							}
+							if (row.podName) {
+								actions.push(
+									<Button
+										key="pod"
+										size="small"
+										type="link"
+										onClick={() => onSelectAssetNode(row, "runtime")}
+									>
+										Pod
+									</Button>,
+								);
+							}
+							return <Space size={6}>{actions}</Space>;
+						},
 					},
 				]}
 			/>
