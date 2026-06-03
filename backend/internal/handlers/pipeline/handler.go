@@ -45,6 +45,10 @@ func (h *Handler) SaveTemplate(c *gin.Context) {
 
 	t, err := h.uc.SaveTemplate(c.Request.Context(), req.Name, req.Pipeline)
 	if err != nil {
+		if errors.Is(err, pipelineUC.ErrInvalidArgument) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -515,6 +519,10 @@ func mapDeployError(c *gin.Context, err error) {
 		return
 	}
 	if errors.Is(err, pipelineUC.ErrAssetNotFound) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+	if errors.Is(err, pipelineUC.ErrInvalidArgument) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 		return
 	}

@@ -27,6 +27,43 @@ export function normalizeComponentArgs(
 	});
 }
 
+function isShellBinary(value: string) {
+	return [
+		"sh",
+		"bash",
+		"dash",
+		"zsh",
+		"/bin/sh",
+		"/bin/bash",
+		"/usr/bin/sh",
+		"/usr/bin/bash",
+	].includes(value.trim());
+}
+
+export function normalizeShellCommandArgs(
+	command: string[],
+	args: Argument[],
+): Argument[] {
+	if (
+		command.length !== 2 ||
+		!isShellBinary(command[0]) ||
+		command[1] !== "-c" ||
+		args.length === 0
+	) {
+		return args;
+	}
+	const values = args.map((arg) => arg.value?.trim() || "");
+	if (values.length >= 3 && isShellBinary(values[0]) && values[1] === "-c") {
+		const last = args[args.length - 1];
+		return [{ name: last.name || "script", value: last.value || "" }];
+	}
+	if (values.length >= 2 && values[0] === "-c") {
+		const last = args[args.length - 1];
+		return [{ name: last.name || "script", value: last.value || "" }];
+	}
+	return args;
+}
+
 function envToRecords(
 	resources: unknown,
 ): Array<{ name: string; value: string }> {
@@ -132,7 +169,10 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 			type: d.type || "container",
 			source: d.source || "custom",
 			command: d.command || [],
-			args: normalizeComponentArgs(d.args as unknown[]),
+			args: normalizeShellCommandArgs(
+				d.command || [],
+				normalizeComponentArgs(d.args as unknown[]),
+			),
 			resources:
 				d.cpu || d.memory || d.disk || (d.env && d.env.length > 0)
 					? {

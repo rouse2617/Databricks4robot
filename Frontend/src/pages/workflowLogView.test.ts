@@ -17,6 +17,14 @@ describe("workflowLogView", () => {
 		);
 	});
 
+	it("infers and splits repeated log prefixes when pod name is unavailable", () => {
+		const content = "worker-01 message 1worker-01 message 2worker-01 message 3";
+
+		expect(normalizeLogContent(content, null)).toBe(
+			"worker-01 message 1\nworker-01 message 2\nworker-01 message 3",
+		);
+	});
+
 	it("renders only the tail of very long logs by character and line limits", () => {
 		const lines = Array.from({ length: 10 }, (_, index) => `line-${index + 1}`);
 		const visible = prepareVisibleLogContent(lines.join("\n"), null, 30, 3);

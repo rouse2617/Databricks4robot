@@ -5072,7 +5072,7 @@ paths:
     post:
       tags: [Pipeline]
       summary: Save a new pipeline template
-      description: Creates a new reusable pipeline template from a pipeline definition.
+      description: Creates a new reusable pipeline template from a pipeline definition. The pipeline is normalized before saving, and Argo-facing validation rejects duplicate fan-in target inputs or consumed output ports whose producer does not write the matching /tmp/outputs/<port> file.
       security:
         - DatabrewToken: []
       requestBody:
@@ -5094,7 +5094,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PipelineTemplate' }
         '400':
-          description: Invalid request body
+          description: Invalid request body or invalid pipeline definition
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

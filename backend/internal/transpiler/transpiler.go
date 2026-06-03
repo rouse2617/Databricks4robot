@@ -47,6 +47,10 @@ type RetryStrategy struct {
 
 // Transpile converts a Pipeline definition into an Argo Workflow CRD.
 func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
+	NormalizePipeline(p)
+	if err := ValidatePipeline(p); err != nil {
+		return nil, err
+	}
 	if opts == nil {
 		opts = &Options{}
 	}

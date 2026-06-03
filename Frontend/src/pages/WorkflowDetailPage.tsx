@@ -742,6 +742,20 @@ function WorkflowAssetNodePanel({
 	const displayAssetCount = noAssetOnly
 		? "无资产运行"
 		: (summary?.assetCount ?? 0);
+	const totalEstimatedCost =
+		costSummaryState.item?.totalEstimatedCostUsd ??
+		summary?.totalEstimatedCostUsd;
+	const costSource = costSummaryState.item?.costSource ?? summary?.costSource;
+	const expectedNodeCount = summary?.nodeCount ?? 0;
+	const syncedNodeCount = costSummaryState.item?.nodeSummaries?.length ?? 0;
+	const costSyncPartial =
+		expectedNodeCount > 0 &&
+		syncedNodeCount > 0 &&
+		syncedNodeCount < expectedNodeCount;
+	const costSyncPending =
+		costSummaryState.loading ||
+		(expectedNodeCount > 0 &&
+			(totalEstimatedCost == null || costSource === "not_available"));
 	return (
 		<div
 			style={{
@@ -779,19 +793,26 @@ function WorkflowAssetNodePanel({
 						节点 {summary?.nodeCount ?? 0}
 					</Typography.Text>
 					<Typography.Text type="secondary">
-						总成本{" "}
-						{formatCost(
-							costSummaryState.item?.totalEstimatedCostUsd ??
-								summary?.totalEstimatedCostUsd,
-						)}
+						总成本 {costSyncPending ? "同步中" : formatCost(totalEstimatedCost)}
 					</Typography.Text>
-					<Tag color="blue">
-						{formatCostSource(
-							costSummaryState.item?.costSource ?? summary?.costSource,
-						)}
+					<Tag color={costSyncPending || costSyncPartial ? "orange" : "blue"}>
+						{costSyncPending
+							? "同步中"
+							: costSyncPartial
+								? `部分同步 ${syncedNodeCount}/${expectedNodeCount}`
+								: formatCostSource(costSource)}
 					</Tag>
 				</Space>
 			</div>
+			{costSyncPending || costSyncPartial ? (
+				<Alert
+					type="info"
+					showIcon
+					message="成本快照仍在同步"
+					description="Argo 节点状态会先返回，DataBrew 成本汇总可能延迟几秒；刷新后会补齐节点耗时与估算成本。"
+					style={{ margin: "8px 10px 0" }}
+				/>
+			) : null}
 			<Table<PipelineRunAssetNode>
 				size="small"
 				rowKey="id"
