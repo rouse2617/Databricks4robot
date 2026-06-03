@@ -13,6 +13,7 @@ import (
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	"github.com/gin-gonic/gin"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -667,6 +668,156 @@ func TestGetWorkflow_NormalizedEdgesForOmittedDAGStep(t *testing.T) {
 	}
 	if edge["kind"] != "dag" {
 		t.Fatalf("expected dag edge, got %#v", edge)
+	}
+}
+
+func TestGetWorkflow_IncludesStaticPendingDAGTasks(t *testing.T) {
+	localTZ := time.FixedZone("CST", 8*60*60)
+	wf := &wfv1.Workflow{}
+	wf.CreationTimestamp = metav1.Now()
+	wf.Name = "cyb1613-full-dag"
+	wf.Status.Phase = wfv1.WorkflowRunning
+	wf.Spec.Entrypoint = "dag"
+	wf.Spec.Templates = []wfv1.Template{
+		{
+			Name: "dag",
+			DAG: &wfv1.DAGTemplate{
+				Tasks: []wfv1.DAGTask{
+					{Name: "step-prepare", Template: "step-prepare"},
+					{
+						Name:         "step-checksum",
+						Template:     "step-checksum",
+						Dependencies: []string{"step-prepare"},
+					},
+					{
+						Name:         "step-validate",
+						Template:     "step-validate",
+						Dependencies: []string{"step-checksum"},
+					},
+					{
+						Name:         "step-store",
+						Template:     "step-store",
+						Dependencies: []string{"step-validate"},
+					},
+				},
+			},
+		},
+		{Name: "step-prepare", Container: &corev1.Container{Image: "alpine:3.20"}},
+		{Name: "step-checksum", Container: &corev1.Container{Image: "alpine:3.20"}},
+		{Name: "step-validate", Container: &corev1.Container{Image: "alpine:3.20"}},
+		{Name: "step-store", Container: &corev1.Container{Image: "alpine:3.20"}},
+	}
+	wf.Status.Nodes = wfv1.Nodes{
+		"root": {
+			ID:          "root",
+			Name:        "cyb1613-full-dag",
+			DisplayName: "cyb1613-full-dag",
+			Type:        wfv1.NodeTypeDAG,
+			Phase:       wfv1.NodeRunning,
+			Children:    []string{"prepare", "checksum"},
+		},
+		"prepare": {
+			ID:           "prepare",
+			Name:         "cyb1613-full-dag.step-prepare",
+			DisplayName:  "step-prepare",
+			Type:         wfv1.NodeTypePod,
+			TemplateName: "step-prepare",
+			Phase:        wfv1.NodeSucceeded,
+			BoundaryID:   "root",
+			StartedAt:    metav1.NewTime(time.Date(2026, 6, 3, 14, 38, 19, 0, localTZ)),
+		},
+		"checksum": {
+			ID:           "checksum",
+			Name:         "cyb1613-full-dag.step-checksum",
+			DisplayName:  "step-checksum",
+			Type:         wfv1.NodeTypePod,
+			TemplateName: "step-checksum",
+			Phase:        wfv1.NodeRunning,
+			BoundaryID:   "root",
+		},
+	}
+
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return wf, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/cyb1613-full-dag", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Nodes []struct {
+			ID           string `json:"id"`
+			DisplayName  string `json:"displayName"`
+			Type         string `json:"type"`
+			TemplateName string `json:"templateName"`
+			Phase        string `json:"phase"`
+			PodName      string `json:"podName"`
+			StartedAt    string `json:"startedAt"`
+		} `json:"nodes"`
+		Edges []workflowDagEdge `json:"edges"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	type workflowNodeTestItem struct {
+		ID           string
+		DisplayName  string
+		Type         string
+		TemplateName string
+		Phase        string
+		PodName      string
+		StartedAt    string
+	}
+	nodesByDisplayName := map[string]workflowNodeTestItem{}
+	for _, node := range resp.Nodes {
+		nodesByDisplayName[node.DisplayName] = workflowNodeTestItem{
+			ID:           node.ID,
+			DisplayName:  node.DisplayName,
+			Type:         node.Type,
+			TemplateName: node.TemplateName,
+			Phase:        node.Phase,
+			PodName:      node.PodName,
+			StartedAt:    node.StartedAt,
+		}
+	}
+	for _, name := range []string{"step-prepare", "step-checksum", "step-validate", "step-store"} {
+		if _, ok := nodesByDisplayName[name]; !ok {
+			t.Fatalf("expected node %q in response, got %#v", name, resp.Nodes)
+		}
+	}
+	if nodesByDisplayName["step-prepare"].Phase != string(wfv1.NodeSucceeded) {
+		t.Fatalf("runtime phase was not preserved: %#v", nodesByDisplayName["step-prepare"])
+	}
+	if nodesByDisplayName["step-prepare"].StartedAt != "2026-06-03T06:38:19Z" {
+		t.Fatalf("expected runtime time to be UTC RFC3339, got %#v", nodesByDisplayName["step-prepare"])
+	}
+	if nodesByDisplayName["step-validate"].Phase != string(wfv1.NodePending) {
+		t.Fatalf("expected static task pending, got %#v", nodesByDisplayName["step-validate"])
+	}
+	if nodesByDisplayName["step-store"].Type != "Pod" {
+		t.Fatalf("expected static task to resolve template type Pod, got %#v", nodesByDisplayName["step-store"])
+	}
+	if nodesByDisplayName["step-store"].PodName != "" {
+		t.Fatalf("static pending task should not have a pod name: %#v", nodesByDisplayName["step-store"])
+	}
+
+	edgeSet := map[string]bool{}
+	for _, edge := range resp.Edges {
+		edgeSet[edge.Source+"->"+edge.Target] = true
+	}
+	if !edgeSet["checksum->step-validate"] {
+		t.Fatalf("expected edge checksum->step-validate, got %#v", resp.Edges)
+	}
+	if !edgeSet["step-validate->step-store"] {
+		t.Fatalf("expected edge step-validate->step-store, got %#v", resp.Edges)
 	}
 }
 

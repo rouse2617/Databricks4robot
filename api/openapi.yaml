@@ -2184,10 +2184,11 @@ components:
         progress: { type: string, description: Workflow progress, e.g. 1/2 }
         nodes:
           type: array
+          description: Runtime workflow nodes plus static pending DAG task placeholders for not-yet-started tasks.
           items: { $ref: '#/components/schemas/WorkflowNodeStatus' }
         edges:
           type: array
-          description: Normalized workflow DAG edges between renderable workflow nodes.
+          description: Normalized workflow DAG edges between runtime nodes and static pending DAG task placeholders.
           items: { $ref: '#/components/schemas/WorkflowDagEdge' }
         createdAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time, nullable: true }
@@ -5998,7 +5999,7 @@ paths:
     get:
       tags: [Pipeline]
       summary: Get workflow details
-      description: Returns full workflow details including node statuses.
+      description: Returns full workflow details including runtime node statuses and static pending DAG tasks.
       security:
         - DatabrewToken: []
       parameters:

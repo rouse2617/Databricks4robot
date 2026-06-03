@@ -57,6 +57,15 @@ func buildWorkflowDagEdges(wf *wfv1.Workflow) []workflowDagEdge {
 	}
 
 	taskNodes := workflowTaskVisibleNodeIDs(nodes)
+	for _, task := range workflowStaticDAGTasks(wf) {
+		taskName := strings.TrimSpace(task.Name)
+		if taskName == "" {
+			continue
+		}
+		if _, exists := taskNodes[taskName]; !exists {
+			taskNodes[taskName] = taskName
+		}
+	}
 	for _, tmpl := range wf.Spec.Templates {
 		if tmpl.DAG == nil {
 			continue
@@ -178,7 +187,7 @@ func workflowTaskVisibleNodeIDs(nodes wfv1.Nodes) map[string]string {
 		if !isWorkflowDagDisplayableNode(node) {
 			continue
 		}
-		for _, key := range []string{node.DisplayName, node.TemplateName} {
+		for _, key := range workflowNodeTaskNameCandidates(node) {
 			key = strings.TrimSpace(key)
 			if key == "" {
 				continue
@@ -187,14 +196,61 @@ func workflowTaskVisibleNodeIDs(nodes wfv1.Nodes) map[string]string {
 				taskNodes[key] = node.ID
 			}
 		}
-		if idx := strings.LastIndex(node.Name, "."); idx >= 0 && idx < len(node.Name)-1 {
-			key := node.Name[idx+1:]
-			if _, exists := taskNodes[key]; !exists {
-				taskNodes[key] = node.ID
-			}
-		}
 	}
 	return taskNodes
+}
+
+func workflowNodeTaskNameCandidates(node wfv1.NodeStatus) []string {
+	candidates := make([]string, 0, 3)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == value {
+				return
+			}
+		}
+		candidates = append(candidates, value)
+	}
+
+	add(node.DisplayName)
+	if idx := strings.LastIndex(node.Name, "."); idx >= 0 && idx < len(node.Name)-1 {
+		add(node.Name[idx+1:])
+	}
+	add(node.TemplateName)
+	return candidates
+}
+
+func workflowStaticDAGTasks(wf *wfv1.Workflow) []wfv1.DAGTask {
+	if wf == nil {
+		return nil
+	}
+	tasks := make([]wfv1.DAGTask, 0)
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.DAG == nil {
+			continue
+		}
+		tasks = append(tasks, tmpl.DAG.Tasks...)
+	}
+	return tasks
+}
+
+func workflowTemplateByName(wf *wfv1.Workflow, name string) *wfv1.Template {
+	if wf == nil {
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	for i := range wf.Spec.Templates {
+		if wf.Spec.Templates[i].Name == name {
+			return &wf.Spec.Templates[i]
+		}
+	}
+	return nil
 }
 
 func nearestVisibleNameParentID(
