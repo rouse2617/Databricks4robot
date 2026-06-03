@@ -37,6 +37,7 @@ const DAG_FIT_MIN_ZOOM = 0.72;
 const DAG_FIT_MAX_ZOOM = 1;
 
 const nodeTypes = { workflowStep: WorkflowDagNode };
+const edgeTypes = {};
 
 function getProgressPercent(progress: string | undefined): number | null {
 	if (!progress) return null;
@@ -370,6 +371,7 @@ function WorkflowDagViewInner({
 					nodes={nodes}
 					edges={edges}
 					nodeTypes={nodeTypes}
+					edgeTypes={edgeTypes}
 					onNodesChange={onNodesChange}
 					onEdgesChange={onEdgesChange}
 					onNodeClick={onNodeClick}

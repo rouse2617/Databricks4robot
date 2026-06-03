@@ -1,3 +1,4 @@
+import "@ant-design/v5-patch-for-react-19";
 import { App as AntdApp, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import dayjs from "dayjs";
@@ -7,9 +8,11 @@ import ReactDOM from "react-dom/client";
 import "dayjs/locale/zh-cn";
 import App from "./App";
 import "./index.css";
+import { installConsoleWarningFilter } from "./lib/consoleWarningFilter";
 
 dayjs.extend(relativeTime);
 dayjs.locale("zh-cn");
+installConsoleWarningFilter();
 
 const appTheme = {
 	token: {

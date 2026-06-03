@@ -8,10 +8,10 @@ import {
 } from "@ant-design/icons";
 import {
 	Alert,
+	App,
 	Button,
 	Checkbox,
 	Modal,
-	message,
 	Popconfirm,
 	Select,
 	Skeleton,
@@ -295,6 +295,7 @@ export function DeployPanel({
 	variant?: DeployPanelVariant;
 	onViewAll?: () => void;
 }) {
+	const { message: messageApi } = App.useApp();
 	void _refreshKey;
 	const resolvedVariant: DeployPanelVariant =
 		variant ?? (compact ? "compact" : "full");
@@ -424,7 +425,7 @@ export function DeployPanel({
 				);
 			})
 			.catch((err) => {
-				message.warning(`版本列表加载失败，将运行当前版本: ${String(err)}`);
+				messageApi.warning(`版本列表加载失败，将运行当前版本: ${String(err)}`);
 			});
 	};
 
@@ -446,12 +447,12 @@ export function DeployPanel({
 				selectedTargetId,
 				selectedDeployVersion,
 			);
-			message.success("部署成功");
+			messageApi.success("部署成功");
 			closeAssetModal();
 			setDeploying(false);
 			void refresh();
 		} catch (err) {
-			message.error(`部署失败: ${String(err)}`);
+			messageApi.error(`部署失败: ${String(err)}`);
 			setDeploying(false);
 		}
 	};
@@ -459,10 +460,10 @@ export function DeployPanel({
 	const handleDeleteTemplate = async (id: string) => {
 		try {
 			await deletePipeline(id);
-			message.success("已删除流水线模板");
+			messageApi.success("已删除流水线模板");
 			refresh();
 		} catch (err) {
-			message.error(`删除失败: ${String(err)}`);
+			messageApi.error(`删除失败: ${String(err)}`);
 		}
 	};
 
@@ -478,10 +479,10 @@ export function DeployPanel({
 			).length;
 			const deletedCount = results.length - failedCount;
 			if (deletedCount > 0) {
-				message.success(`已删除 ${deletedCount} 条流水线`);
+				messageApi.success(`已删除 ${deletedCount} 条流水线`);
 			}
 			if (failedCount > 0) {
-				message.error(`${failedCount} 条流水线删除失败`);
+				messageApi.error(`${failedCount} 条流水线删除失败`);
 			}
 			setSelectedTemplateIds([]);
 			await refresh();
@@ -499,7 +500,7 @@ export function DeployPanel({
 				navigate(`/pipeline?templateId=${encodeURIComponent(id)}`);
 			}
 		} catch (err) {
-			message.error(`加载模板失败: ${String(err)}`);
+			messageApi.error(`加载模板失败: ${String(err)}`);
 		}
 	};
 
@@ -520,11 +521,11 @@ export function DeployPanel({
 				...prev,
 				[template.name]: version,
 			}));
-			message.success(
+			messageApi.success(
 				`已将 ${template.name} 的活跃版本设为 v${version}，下次运行将默认使用此版本`,
 			);
 		} catch (err) {
-			message.error(`设置活跃版本失败: ${String(err)}`);
+			messageApi.error(`设置活跃版本失败: ${String(err)}`);
 		}
 	};
 

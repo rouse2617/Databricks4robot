@@ -19,7 +19,6 @@ import {
 	Input,
 	Menu,
 	Modal,
-	message,
 	Select,
 	Space,
 	Spin,
@@ -100,6 +99,7 @@ import { WorkflowExecutionList } from "./WorkflowExecutionList";
 import "../styles/pipeline.css";
 
 const PIPELINE_NODE_TYPES = { pipelineStep: PipelineStepNode };
+const PIPELINE_EDGE_TYPES = {};
 
 type DeployMode = "edit" | "preview";
 
@@ -230,7 +230,7 @@ function PipelineCanvas() {
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const editor = useFlowEditor();
 	const editorRef = useRef(editor);
-	const { modal } = App.useApp();
+	const { message: messageApi, modal } = App.useApp();
 	const queryAssetIds = useMemo(
 		() => parseAssetIds(searchParams.get("asset_ids")),
 		[searchParams],
@@ -305,6 +305,10 @@ function PipelineCanvas() {
 	const [selectedNodeAssetError, setSelectedNodeAssetError] = useState<
 		string | null
 	>(null);
+	const handleFlowError = useCallback((code: string, flowMessage: string) => {
+		if (code === "002") return;
+		console.warn(`[React Flow]: ${flowMessage}`);
+	}, []);
 	const selectedExecutionTarget = useMemo(
 		() =>
 			executionTargets.find((target) => target.id === selectedTargetId) ?? null,
@@ -313,17 +317,19 @@ function PipelineCanvas() {
 
 	const flattenNodes = useMemo(() => toRecord(nodes), [nodes]);
 	const flattenEdges = useMemo(() => toRecord(edges), [edges]);
-	const nodeTypes = useMemo(() => PIPELINE_NODE_TYPES, []);
-	const applyCanvasEdges = useCallback((nextEdges: PipelineFlowEdge[]) => {
-		const duplicate = findDuplicateTargetInput(nextEdges);
-		if (duplicate) {
-			message.warning(
-				`输入端口 ${duplicate.key} 已有连线，请在 join 节点配置不同输入端口后再连接。`,
-			);
-			return;
-		}
-		setEdges(nextEdges);
-	}, []);
+	const applyCanvasEdges = useCallback(
+		(nextEdges: PipelineFlowEdge[]) => {
+			const duplicate = findDuplicateTargetInput(nextEdges);
+			if (duplicate) {
+				messageApi.warning(
+					`输入端口 ${duplicate.key} 已有连线，请在 join 节点配置不同输入端口后再连接。`,
+				);
+				return;
+			}
+			setEdges(nextEdges);
+		},
+		[messageApi],
+	);
 
 	useEffect(() => {
 		editorRef.current = editor;
@@ -415,7 +421,7 @@ function PipelineCanvas() {
 			})
 			.catch((err) => {
 				if (cancelled) return;
-				message.error(`模板加载失败: ${String(err)}`);
+				messageApi.error(`模板加载失败: ${String(err)}`);
 				setTemplateVersions([]);
 				setSelectedTemplateVersionId(null);
 				loadPipelineFromSessionStorage();
@@ -427,7 +433,12 @@ function PipelineCanvas() {
 		return () => {
 			cancelled = true;
 		};
-	}, [loadPipelineFromSessionStorage, loadPipelineToCanvas, templateId]);
+	}, [
+		loadPipelineFromSessionStorage,
+		loadPipelineToCanvas,
+		messageApi,
+		templateId,
+	]);
 
 	const handleTemplateVersionChange = useCallback(
 		(versionId: string) => {
@@ -605,7 +616,7 @@ function PipelineCanvas() {
 					window.setTimeout(() => {
 						void editor
 							.copySelection()
-							.catch(() => message.warning("浏览器未允许读取剪贴板"));
+							.catch(() => messageApi.warning("浏览器未允许读取剪贴板"));
 					}, 0);
 					return;
 				}
@@ -625,7 +636,7 @@ function PipelineCanvas() {
 			if (key === "paste") {
 				void editor
 					.paste()
-					.catch(() => message.warning("浏览器未允许读取剪贴板"));
+					.catch(() => messageApi.warning("浏览器未允许读取剪贴板"));
 			}
 			if (key === "selectAll") {
 				editor.selectAll();
@@ -640,7 +651,7 @@ function PipelineCanvas() {
 				editor.reactflow?.fitView();
 			}
 		},
-		[contextMenu.node, editor, selectNodeWithEdges],
+		[contextMenu.node, editor, messageApi, selectNodeWithEdges],
 	);
 
 	const buildPipelineJSON = useCallback(
@@ -651,10 +662,10 @@ function PipelineCanvas() {
 		(pipeline: Pipeline, actionLabel: string) => {
 			const validation = validatePipelineForRun(pipeline);
 			if (validation.valid) return true;
-			message.error(`${actionLabel}失败: ${validation.errors[0]}`);
+			messageApi.error(`${actionLabel}失败: ${validation.errors[0]}`);
 			return false;
 		},
-		[],
+		[messageApi],
 	);
 
 	const pipelineAssetIds = useMemo(
@@ -737,7 +748,7 @@ function PipelineCanvas() {
 				) as HTMLTextAreaElement | null
 			)?.value?.trim() || importTextRef.current.trim();
 		if (!text) {
-			message.warning("请粘贴 Pipeline JSON");
+			messageApi.warning("请粘贴 Pipeline JSON");
 			return;
 		}
 		try {
@@ -753,11 +764,11 @@ function PipelineCanvas() {
 			setJsonOutput(null);
 			setImportModalOpen(false);
 			setImportText("");
-			message.success("导入成功");
+			messageApi.success("导入成功");
 		} catch {
-			message.error("无效的 JSON");
+			messageApi.error("无效的 JSON");
 		}
-	}, []);
+	}, [messageApi]);
 
 	const applyExampleToCanvas = useCallback(
 		(example: PipelineExample) => {
@@ -777,9 +788,9 @@ function PipelineCanvas() {
 			setEditingNodeId(null);
 			editor.deselectAll();
 			setJsonOutput(null);
-			message.success(`已载入示例: ${example.label}`);
+			messageApi.success(`已载入示例: ${example.label}`);
 		},
-		[editor],
+		[editor, messageApi],
 	);
 
 	const loadExample = useCallback(
@@ -833,17 +844,23 @@ function PipelineCanvas() {
 			navigate(`/pipeline?templateId=${encodeURIComponent(saved.id)}`, {
 				replace: true,
 			});
-			message.success(`已保存为 v${saved.version}，可在「流水线」页签管理`);
+			messageApi.success(`已保存为 v${saved.version}，可在「流水线」页签管理`);
 		} catch (err) {
-			message.error(`保存失败: ${String(err)}`);
+			messageApi.error(`保存失败: ${String(err)}`);
 		}
-	}, [pipelineName, buildPipelineJSON, navigate, assertPipelineRunnable]);
+	}, [
+		pipelineName,
+		buildPipelineJSON,
+		navigate,
+		assertPipelineRunnable,
+		messageApi,
+	]);
 
 	const canDeploy = nodes.length > 0;
 
 	const openDeployDialog = useCallback(() => {
 		if (nodes.length === 0) {
-			message.warning("请先从左侧拖入至少一个组件到画布");
+			messageApi.warning("请先从左侧拖入至少一个组件到画布");
 			return;
 		}
 		if (!assertPipelineRunnable(buildPipelineJSON(), "部署")) {
@@ -857,7 +874,13 @@ function PipelineCanvas() {
 			name: pipelineName,
 		});
 		setAssetPickerResetKey((key) => key + 1);
-	}, [pipelineName, nodes.length, buildPipelineJSON, assertPipelineRunnable]);
+	}, [
+		pipelineName,
+		nodes.length,
+		buildPipelineJSON,
+		assertPipelineRunnable,
+		messageApi,
+	]);
 
 	const closeDeployDialog = useCallback(() => {
 		setDeployDialog({
@@ -1121,7 +1144,8 @@ function PipelineCanvas() {
 					/>
 					{templateLoading ? (
 						<div className="pipeline-canvas-loading" aria-busy="true">
-							<Spin tip="正在加载模板..." />
+							<Spin />
+							<span className="pipeline-loading-text">正在加载模板...</span>
 						</div>
 					) : null}
 					{isCanvasEmpty && !templateLoading ? (
@@ -1137,7 +1161,7 @@ function PipelineCanvas() {
 						subTitle="流水线画布出现异常，可重试或刷新页面"
 					>
 						<FlowEditor
-							nodeTypes={nodeTypes}
+							nodeTypes={PIPELINE_NODE_TYPES}
 							flattenNodes={flattenNodes}
 							flattenEdges={flattenEdges}
 							onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
@@ -1148,12 +1172,14 @@ function PipelineCanvas() {
 							}
 							contextMenuEnabled={false}
 							flowProps={{
+								edgeTypes: PIPELINE_EDGE_TYPES,
 								onDrop,
 								onDragOver,
 								onNodeClick,
 								onNodeContextMenu,
 								onPaneClick,
 								onPaneContextMenu,
+								onError: handleFlowError,
 								onlyRenderVisibleElements: true,
 								minZoom: 0.2,
 								maxZoom: 2,

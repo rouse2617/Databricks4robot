@@ -28,7 +28,8 @@ export function ComponentPalette({
 			</div>
 			{loading ? (
 				<div className="pipeline-palette-loading" aria-busy="true">
-					<Spin size="small" tip="加载组件..." />
+					<Spin size="small" />
+					<span className="pipeline-loading-text">加载组件...</span>
 				</div>
 			) : null}
 			{error ? (

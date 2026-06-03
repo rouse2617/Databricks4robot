@@ -22,7 +22,10 @@ export default function PageLoading({
 			aria-live="polite"
 			aria-busy="true"
 		>
-			<Spin size="large" tip={tip} />
+			<div style={{ display: "grid", gap: 8, justifyItems: "center" }}>
+				<Spin size="large" />
+				{tip ? <span>{tip}</span> : null}
+			</div>
 		</div>
 	);
 }

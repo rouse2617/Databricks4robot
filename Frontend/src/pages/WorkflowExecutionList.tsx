@@ -1,13 +1,13 @@
 import { MoreOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
 	Alert,
+	App,
 	Button,
 	DatePicker,
 	Dropdown,
 	Empty,
 	Input,
 	Modal,
-	message,
 	Select,
 	Skeleton,
 	Table,
@@ -177,6 +177,7 @@ const getErrorTitle = (kind: WorkflowErrorKind): string =>
 export function WorkflowExecutionList({
 	active = true,
 }: WorkflowExecutionListProps) {
+	const { message: messageApi } = App.useApp();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<WorkflowSummary[]>([]);
 	const [runIdsByWorkflowName, setRunIdsByWorkflowName] = useState<
@@ -384,7 +385,7 @@ export function WorkflowExecutionList({
 						.filter((t) => t.name)
 						.flatMap((t) =>
 							(res.items || [])
-								.filter((item) => item.name.startsWith(t.name + "-"))
+								.filter((item) => item.name.startsWith(`${t.name}-`))
 								.map((item) => [item.name, t.version] as const),
 						),
 				]),
@@ -511,15 +512,15 @@ export function WorkflowExecutionList({
 			setOperationLoading(loadingKey);
 			try {
 				await operation.run();
-				message.success(`${operation.title}已提交`);
+				messageApi.success(`${operation.title}已提交`);
 				await refresh();
 			} catch (err) {
-				message.error(`${operation.title}失败: ${String(err)}`);
+				messageApi.error(`${operation.title}失败: ${String(err)}`);
 			} finally {
 				setOperationLoading(null);
 			}
 		},
-		[refresh],
+		[messageApi, refresh],
 	);
 
 	const runOperation = useCallback(
@@ -563,15 +564,16 @@ export function WorkflowExecutionList({
 			).length;
 			const deletedCount = results.length - failedCount;
 			if (deletedCount > 0)
-				message.success(`已删除 ${deletedCount} 条执行记录`);
-			if (failedCount > 0) message.error(`${failedCount} 条执行记录删除失败`);
+				messageApi.success(`已删除 ${deletedCount} 条执行记录`);
+			if (failedCount > 0)
+				messageApi.error(`${failedCount} 条执行记录删除失败`);
 			setSelectedWorkflowNames([]);
 			setBulkDeleteOpen(false);
 			await refresh();
 		} finally {
 			setBulkDeleting(false);
 		}
-	}, [refresh, selectedWorkflowNames]);
+	}, [messageApi, refresh, selectedWorkflowNames]);
 
 	const displayItems = useMemo(() => {
 		if (!versionFilter) return items;
@@ -725,7 +727,7 @@ export function WorkflowExecutionList({
 								onClick={(event) => {
 									event.stopPropagation();
 									if (menuItems.length === 0) {
-										message.info("当前状态暂无可用操作");
+										messageApi.info("当前状态暂无可用操作");
 									}
 								}}
 							>

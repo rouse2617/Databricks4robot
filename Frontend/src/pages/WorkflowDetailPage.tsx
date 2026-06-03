@@ -8,12 +8,12 @@ import {
 import Ansi from "ansi-to-react";
 import {
 	Alert,
+	App,
 	Button,
 	Card,
 	Descriptions,
 	Input,
 	Modal,
-	message,
 	Segmented,
 	Select,
 	Space,
@@ -124,6 +124,7 @@ function WorkflowLogPanel({
 	onStop: () => void;
 	onDownload: () => void;
 }) {
+	const { message: messageApi } = App.useApp();
 	const logBodyRef = useRef<HTMLDivElement | null>(null);
 	const visibleLog = useMemo(
 		() =>
@@ -305,7 +306,7 @@ function WorkflowLogPanel({
 							onClick={async () => {
 								if (!visibleLog) return;
 								await navigator.clipboard.writeText(visibleLog.content);
-								message.success("已复制当前可见日志");
+								messageApi.success("已复制当前可见日志");
 							}}
 						>
 							复制可见日志
@@ -1044,6 +1045,7 @@ export default function WorkflowDetailPage({
 }: {
 	legacyRoute?: boolean;
 }) {
+	const { message: messageApi } = App.useApp();
 	const { name } = useParams<{ name: string }>();
 	const navigate = useNavigate();
 	const [viewMode, setViewMode] = useState<"dag" | "timeline">("dag");
@@ -1094,19 +1096,19 @@ export default function WorkflowDetailPage({
 			setOperationLoading(operation.key);
 			try {
 				await operation.run();
-				message.success(`${operation.title}已提交`);
+				messageApi.success(`${operation.title}已提交`);
 				if (operation.key === "delete") {
 					navigate("/workflows");
 					return;
 				}
 				loadWorkflow();
 			} catch (err) {
-				message.error(`${operation.title}失败: ${String(err)}`);
+				messageApi.error(`${operation.title}失败: ${String(err)}`);
 			} finally {
 				setOperationLoading(null);
 			}
 		},
-		[loadWorkflow, navigate, workflow],
+		[loadWorkflow, messageApi, navigate, workflow],
 	);
 
 	const runOperation = useCallback(
@@ -1171,12 +1173,12 @@ export default function WorkflowDetailPage({
 			}
 			const node = workflow.nodes.find((item) => item.id === event.subjectId);
 			if (!node) {
-				message.warning("事件关联的节点不在当前 DAG 中");
+				messageApi.warning("事件关联的节点不在当前 DAG 中");
 				return;
 			}
 			handleSelectNode(node);
 		},
-		[handleSelectNode, workflow],
+		[handleSelectNode, messageApi, workflow],
 	);
 
 	const handleFilterEvents = useCallback(
@@ -1202,12 +1204,12 @@ export default function WorkflowDetailPage({
 					item.name === row.displayName,
 			);
 			if (!node) {
-				message.warning("资产节点关联的 DAG 节点暂不可见");
+				messageApi.warning("资产节点关联的 DAG 节点暂不可见");
 				return;
 			}
 			handleNodeAction(node, action);
 		},
-		[handleNodeAction, workflow],
+		[handleNodeAction, messageApi, workflow],
 	);
 
 	const handleShowNodeLogs = useCallback(() => {
@@ -1227,11 +1229,11 @@ export default function WorkflowDetailPage({
 			(operation) => operation.key === "retry",
 		);
 		if (!retryConfig || retryConfig.disabled) {
-			message.warning("当前工作流状态不可重试");
+			messageApi.warning("当前工作流状态不可重试");
 			return;
 		}
 		runOperation(retryConfig);
-	}, [operations, runOperation, workflow]);
+	}, [messageApi, operations, runOperation, workflow]);
 
 	useEffect(() => {
 		if (legacyRoute && name) {
