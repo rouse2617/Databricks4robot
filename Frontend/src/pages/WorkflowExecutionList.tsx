@@ -23,6 +23,7 @@ import {
 	listDeployments,
 	listPipelineRuns,
 	listPipelines,
+	type PipelineRun,
 } from "../api/pipelineApi";
 import {
 	deleteWorkflow,
@@ -65,6 +66,11 @@ type WorkflowErrorState = {
 	message: string;
 };
 
+const activeWorkflowStatuses = new Set(["Running", "Pending", "Suspended"]);
+
+const isActiveWorkflowStatus = (status?: string): boolean =>
+	activeWorkflowStatuses.has(status ?? "");
+
 const parseDate = (value: string | null): Dayjs | null => {
 	if (!value) return null;
 	const parsed = dayjs(value);
@@ -98,18 +104,21 @@ const getWorkflowEstimatedCost = (record: WorkflowSummary): number | null => {
 	return null;
 };
 
+const getEstimatedCostTooltip = (record: WorkflowSummary): string => {
+	if (isActiveWorkflowStatus(record.status)) {
+		return "运行完成并写入节点快照后会显示估算成本";
+	}
+	if (record.nodeCount === 0) {
+		return "本次运行没有可计费节点";
+	}
+	return "本次运行尚未生成成本快照，可能是历史运行、无可计费 Pod，或节点资源耗时未回填";
+};
+
 const renderEstimatedCost = (_: unknown, record: WorkflowSummary) => {
 	const cost = getWorkflowEstimatedCost(record);
 	if (cost == null) {
-		const pendingCost = ["Running", "Pending"].includes(record.status);
 		return (
-			<Tooltip
-				title={
-					pendingCost
-						? "运行完成并写入节点快照后会显示估算成本"
-						: "未生成成本快照。历史运行需要回填，失败或无 Pod 的运行可能没有可计费节点"
-				}
-			>
+			<Tooltip title={getEstimatedCostTooltip(record)}>
 				<Typography.Text type="secondary">—</Typography.Text>
 			</Tooltip>
 		);
@@ -140,6 +149,108 @@ const normalizeStatus = (value: string | null): string | undefined => {
 	return WORKFLOW_PHASES.includes(trimmed as (typeof WORKFLOW_PHASES)[number])
 		? trimmed
 		: undefined;
+};
+
+const workflowNameForRun = (run: PipelineRun): string =>
+	run.workflowName || run.pipelineName || run.id;
+
+const runMatchesFilters = (
+	run: PipelineRun,
+	liveWorkflow: WorkflowSummary | undefined,
+	params: ListWorkflowsParams,
+): boolean => {
+	const status = liveWorkflow?.status ?? run.status;
+	if (params.status && status !== params.status) {
+		return false;
+	}
+
+	const name = workflowNameForRun(run).toLowerCase();
+	const pipelineName = (run.pipelineName ?? "").toLowerCase();
+	const runID = (run.id ?? "").toLowerCase();
+	if (
+		params.name &&
+		!name.includes(params.name) &&
+		!pipelineName.includes(params.name) &&
+		!runID.includes(params.name)
+	) {
+		return false;
+	}
+
+	if (params.createdAfter) {
+		const createdAt = dayjs(liveWorkflow?.createdAt ?? run.createdAt);
+		if (createdAt.isValid() && createdAt.isBefore(dayjs(params.createdAfter))) {
+			return false;
+		}
+	}
+
+	if (params.finishedBefore) {
+		const finishedAt = dayjs(liveWorkflow?.finishedAt ?? run.finishedAt);
+		if (
+			finishedAt.isValid() &&
+			finishedAt.isAfter(dayjs(params.finishedBefore))
+		) {
+			return false;
+		}
+	}
+
+	if (params.label?.length) {
+		const labels = liveWorkflow?.labels ?? {};
+		return params.label.every((filter) => {
+			const separatorIndex = filter.indexOf("=");
+			if (separatorIndex < 0) {
+				return filter in labels;
+			}
+			const key = filter.slice(0, separatorIndex);
+			const value = filter.slice(separatorIndex + 1);
+			return labels[key] === value;
+		});
+	}
+
+	return true;
+};
+
+const workflowSummaryFromRun = (
+	run: PipelineRun,
+	liveWorkflow?: WorkflowSummary,
+): WorkflowSummary => ({
+	name: workflowNameForRun(run),
+	status: liveWorkflow?.status ?? run.status,
+	nodeCount: run.nodeCount ?? liveWorkflow?.nodeCount ?? 0,
+	createdAt: liveWorkflow?.createdAt ?? run.createdAt,
+	finishedAt: liveWorkflow?.finishedAt ?? run.finishedAt,
+	labels: liveWorkflow?.labels,
+	estimatedCostUsd: liveWorkflow?.estimatedCostUsd,
+	totalEstimatedCost:
+		typeof run.totalEstimatedCost === "number"
+			? run.totalEstimatedCost
+			: liveWorkflow?.totalEstimatedCost,
+});
+
+const mergeLedgerRunsWithLiveWorkflows = (
+	liveWorkflows: WorkflowSummary[],
+	pipelineRuns: PipelineRun[],
+	params: ListWorkflowsParams,
+): WorkflowSummary[] => {
+	const liveByName = new Map(liveWorkflows.map((item) => [item.name, item]));
+	const seen = new Set<string>();
+	const ledgerItems = pipelineRuns
+		.filter((run) =>
+			runMatchesFilters(run, liveByName.get(run.workflowName), params),
+		)
+		.map((run) => {
+			const name = workflowNameForRun(run);
+			seen.add(name);
+			if (run.workflowName) {
+				seen.add(run.workflowName);
+			}
+			return workflowSummaryFromRun(run, liveByName.get(run.workflowName));
+		});
+	const liveOnlyItems = liveWorkflows.filter((item) => !seen.has(item.name));
+	return [...ledgerItems, ...liveOnlyItems].sort((a, b) => {
+		const left = dayjs(a.createdAt).valueOf();
+		const right = dayjs(b.createdAt).valueOf();
+		return right - left;
+	});
 };
 
 const describeWorkflowError = (err: unknown): WorkflowErrorState => {
@@ -339,16 +450,14 @@ export function WorkflowExecutionList({
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
 			const [res, deployments, pipelineRuns, templates] = await Promise.all([
-				listWorkflows(params),
+				listWorkflows(params).catch((err) => {
+					console.warn("live workflow list unavailable", err);
+					return { items: [] };
+				}),
 				listDeployments().catch(() => []),
 				listPipelineRuns().catch(() => []),
 				listPipelines().catch(() => []),
 			]);
-			const runsByWorkflowName = new Map(
-				pipelineRuns
-					.filter((run) => run.workflowName)
-					.map((run) => [run.workflowName, run]),
-			);
 			setRunIdsByWorkflowName(
 				Object.fromEntries([
 					...deployments
@@ -403,19 +512,14 @@ export function WorkflowExecutionList({
 						.map((run) => [run.workflowName, run.nodeCount] as const),
 				]),
 			);
-			const enrichedItems = (res.items || []).map((item) => {
-				const run = runsByWorkflowName.get(item.name);
-				if (!run || typeof run.totalEstimatedCost !== "number") return item;
-				return {
-					...item,
-					totalEstimatedCost: run.totalEstimatedCost,
-				};
-			});
+			const enrichedItems = mergeLedgerRunsWithLiveWorkflows(
+				res.items || [],
+				pipelineRuns,
+				params,
+			);
 			setItems(enrichedItems);
 			setSelectedWorkflowNames((prev) =>
-				prev.filter((name) =>
-					(res.items || []).some((item) => item.name === name),
-				),
+				prev.filter((name) => enrichedItems.some((item) => item.name === name)),
 			);
 		} catch (err) {
 			console.error(err);

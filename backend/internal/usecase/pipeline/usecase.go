@@ -1472,7 +1472,7 @@ func (uc *Usecase) Deploy(
 	wfOpts := &transpiler.Options{
 		Name:            wfName,
 		Namespace:       targetNamespace,
-		TTLSecondsAfter: 3600,
+		TTLSecondsAfter: transpiler.DefaultTTLSecondsAfterCompletion,
 		WorkflowParams:  wfParams,
 		GlobalEnv:       globalEnv,
 	}
