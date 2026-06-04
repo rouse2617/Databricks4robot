@@ -24,6 +24,22 @@ FRONTEND_DOCKERFILE="${REPO_ROOT}/Frontend/Dockerfile"
 FRONTEND_CLOUDRUN_DOCKERFILE="${SCRIPT_DIR}/frontend-cloudrun.Dockerfile"
 ARGO_UI_DIR="${REPO_ROOT}/databrew-pipeline/argo-ui"
 ARGO_UI_DIST="${ARGO_UI_DIR}/dist"
+ARGO_UI_DIST_FALLBACKS=(
+  "${REPO_ROOT}/site/argo"
+)
+
+copy_argo_ui_dist() {
+  local source="$1"
+  local reason="$2"
+  if [[ ! -f "${source}/index.html" ]]; then
+    echo "ERROR: ${reason} does not look like a built Argo UI dist: ${source}" >&2
+    exit 1
+  fi
+  echo "Using Argo UI dist from ${reason}: ${source}"
+  rm -rf "${ARGO_UI_DIST}"
+  mkdir -p "$(dirname "${ARGO_UI_DIST}")"
+  cp -R "${source}" "${ARGO_UI_DIST}"
+}
 
 ensure_argo_ui_dist() {
   if [[ "${BUILD_ARGO_UI}" == "false" ]]; then
@@ -32,14 +48,7 @@ ensure_argo_ui_dist() {
   fi
 
   if [[ -n "${ARGO_UI_DIST_SOURCE}" ]]; then
-    if [[ ! -f "${ARGO_UI_DIST_SOURCE}/index.html" ]]; then
-      echo "ERROR: ARGO_UI_DIST_SOURCE does not look like a built Argo UI dist: ${ARGO_UI_DIST_SOURCE}" >&2
-      exit 1
-    fi
-    echo "Using Argo UI dist from ARGO_UI_DIST_SOURCE=${ARGO_UI_DIST_SOURCE}"
-    rm -rf "${ARGO_UI_DIST}"
-    mkdir -p "$(dirname "${ARGO_UI_DIST}")"
-    cp -R "${ARGO_UI_DIST_SOURCE}" "${ARGO_UI_DIST}"
+    copy_argo_ui_dist "${ARGO_UI_DIST_SOURCE}" "ARGO_UI_DIST_SOURCE"
     return 0
   fi
 
@@ -48,9 +57,18 @@ ensure_argo_ui_dist() {
     return 0
   fi
 
+  if [[ "${BUILD_ARGO_UI}" != "true" ]]; then
+    for fallback in "${ARGO_UI_DIST_FALLBACKS[@]}"; do
+      if [[ -f "${fallback}/index.html" ]]; then
+        copy_argo_ui_dist "${fallback}" "repo fallback"
+        return 0
+      fi
+    done
+  fi
+
   if ! command -v yarn >/dev/null 2>&1; then
     echo "ERROR: databrew-pipeline/argo-ui/dist is missing and yarn is not installed." >&2
-    echo "       Install yarn, set ARGO_UI_DIST_SOURCE=/path/to/dist, or set BUILD_ARGO_UI=false only if /argo is intentionally omitted." >&2
+    echo "       Install yarn, add a valid site/argo bundle, set ARGO_UI_DIST_SOURCE=/path/to/dist, or set BUILD_ARGO_UI=false only if /argo is intentionally omitted." >&2
     exit 1
   fi
 
