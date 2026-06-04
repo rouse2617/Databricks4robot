@@ -604,12 +604,16 @@ func deriveAssetNodeRows(run *models.PipelineRun, nodes []models.PipelineRunNode
 		assetIDs = []string{"no-asset"}
 	}
 	rows := make([]models.PipelineRunAssetNode, 0, len(assetIDs)*len(nodes))
+	rowIndexes := make(map[string]int, len(assetIDs)*len(nodes))
 	now := time.Now().UTC()
 	for _, assetID := range assetIDs {
 		if strings.TrimSpace(assetID) == "" {
 			continue
 		}
 		for _, node := range nodes {
+			if isWorkflowControlRunNode(node) {
+				continue
+			}
 			nodeID := node.PipelineNodeID
 			if nodeID == "" {
 				nodeID = node.ArgoNodeID
@@ -624,7 +628,7 @@ func deriveAssetNodeRows(run *models.PipelineRun, nodes []models.PipelineRunNode
 			if node.EstimatedCostUSD != nil {
 				costSource = "estimated_resource_duration"
 			}
-			rows = append(rows, models.PipelineRunAssetNode{
+			row := models.PipelineRunAssetNode{
 				RunID:            run.ID,
 				AssetID:          assetID,
 				PipelineNodeID:   nodeID,
@@ -639,10 +643,55 @@ func deriveAssetNodeRows(run *models.PipelineRun, nodes []models.PipelineRunNode
 				StartedAt:        node.StartedAt,
 				FinishedAt:       node.FinishedAt,
 				UpdatedAt:        now,
-			})
+			}
+			key := assetID + "\x00" + nodeID
+			if existingIndex, ok := rowIndexes[key]; ok {
+				if assetNodeRowScore(row) > assetNodeRowScore(rows[existingIndex]) {
+					rows[existingIndex] = row
+				}
+				continue
+			}
+			rowIndexes[key] = len(rows)
+			rows = append(rows, row)
 		}
 	}
 	return rows
+}
+
+func isWorkflowControlRunNode(node models.PipelineRunNode) bool {
+	if node.Type == string(wfv1.NodeTypeDAG) || node.Type == string(wfv1.NodeTypeSteps) {
+		return true
+	}
+	id := strings.TrimSpace(node.PipelineNodeID)
+	return id == "dag"
+}
+
+func assetNodeRowScore(row models.PipelineRunAssetNode) int {
+	score := 0
+	if row.PodName != "" {
+		score += 10
+	}
+	if row.EstimatedCostUSD != nil {
+		score += 8
+	}
+	if row.StartedAt != nil {
+		score += 4
+	}
+	if row.FinishedAt != nil {
+		score += 4
+	}
+	switch row.Status {
+	case string(wfv1.NodeSucceeded), string(wfv1.NodeFailed), string(wfv1.NodeError):
+		score += 3
+	case string(wfv1.NodeRunning):
+		score += 2
+	case string(wfv1.NodePending), "":
+		score--
+	}
+	if row.ArgoNodeID != "" && !strings.HasPrefix(row.ArgoNodeID, "static:") {
+		score++
+	}
+	return score
 }
 
 func (uc *Usecase) refreshAssetNodes(ctx context.Context, run *models.PipelineRun) {
@@ -822,6 +871,145 @@ func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.Nod
 	return out
 }
 
+func workflowTaskNameCandidates(node models.PipelineRunNode) []string {
+	candidates := []string{
+		strings.TrimSpace(node.PipelineNodeID),
+		strings.TrimSpace(node.TemplateName),
+		strings.TrimSpace(node.DisplayName),
+	}
+	if node.ArgoNodeName != "" {
+		parts := strings.Split(node.ArgoNodeName, ".")
+		candidates = append(candidates, strings.TrimSpace(parts[len(parts)-1]))
+	}
+	out := make([]string, 0, len(candidates))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func templateNodeType(tmpl *wfv1.Template) string {
+	if tmpl == nil {
+		return string(wfv1.NodeTypePod)
+	}
+	switch {
+	case tmpl.DAG != nil:
+		return string(wfv1.NodeTypeDAG)
+	case tmpl.Steps != nil:
+		return string(wfv1.NodeTypeSteps)
+	case tmpl.Container != nil || tmpl.Script != nil:
+		return string(wfv1.NodeTypePod)
+	case tmpl.Suspend != nil:
+		return string(wfv1.NodeTypeSuspend)
+	default:
+		return string(wfv1.NodeTypePod)
+	}
+}
+
+func appendMissingStaticRunNodesFromWorkflow(runID string, wf *wfv1.Workflow, nodes []models.PipelineRunNode) []models.PipelineRunNode {
+	if wf == nil || len(wf.Spec.Templates) == 0 {
+		return nodes
+	}
+	templatesByName := make(map[string]*wfv1.Template, len(wf.Spec.Templates))
+	for i := range wf.Spec.Templates {
+		tmpl := &wf.Spec.Templates[i]
+		templatesByName[tmpl.Name] = tmpl
+	}
+	seen := map[string]struct{}{}
+	for _, node := range nodes {
+		for _, candidate := range workflowTaskNameCandidates(node) {
+			seen[candidate] = struct{}{}
+		}
+	}
+	now := time.Now().UTC()
+	for i := range wf.Spec.Templates {
+		tmpl := &wf.Spec.Templates[i]
+		if tmpl.DAG == nil {
+			continue
+		}
+		for _, task := range tmpl.DAG.Tasks {
+			taskName := strings.TrimSpace(task.Name)
+			if taskName == "" {
+				continue
+			}
+			if _, ok := seen[taskName]; ok {
+				continue
+			}
+			templateName := strings.TrimSpace(task.Template)
+			phase := "Pending"
+			if wf.Status.Phase == wfv1.WorkflowSucceeded {
+				phase = string(wfv1.NodeSucceeded)
+			}
+			nodes = append(nodes, models.PipelineRunNode{
+				ID:              uuid.New().String(),
+				RunID:           runID,
+				PipelineNodeID:  taskName,
+				ArgoNodeID:      fmt.Sprintf("static:%s", taskName),
+				DisplayName:     taskName,
+				TemplateName:    templateName,
+				Type:            templateNodeType(templatesByName[templateName]),
+				Phase:           phase,
+				Children:        []string{},
+				ResourceSummary: map[string]interface{}{},
+				CreatedAt:       now,
+				UpdatedAt:       now,
+			})
+			seen[taskName] = struct{}{}
+		}
+	}
+	return nodes
+}
+
+func (uc *Usecase) replaceRunNodesFromWorkflow(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow) {
+	if uc.runNodeRepo == nil || run == nil || wf == nil {
+		return
+	}
+	uc.appendNodeEvents(ctx, run, wf.Status.Nodes)
+	nodes := runNodesFromWorkflow(run.ID, run.WorkflowName, wf.Status.Nodes)
+	nodes = appendMissingStaticRunNodesFromWorkflow(run.ID, wf, nodes)
+	if len(nodes) == 0 {
+		return
+	}
+	for i := range nodes {
+		if uc.pricing != nil {
+			nodes[i].EstimatedCostUSD = resourcesDurationToCost(nodes[i].ResourcesDuration, uc.pricing)
+		}
+	}
+	logPipelineSideEffect("replace pipeline run nodes", uc.runNodeRepo.ReplaceByRunID(ctx, run.ID, nodes))
+	run.Nodes = nodes
+	uc.refreshAssetNodes(ctx, run)
+}
+
+func (uc *Usecase) runCostSnapshotMissing(run *models.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	if len(run.Nodes) == 0 {
+		return true
+	}
+	businessNodeCount := 0
+	for _, node := range run.Nodes {
+		if node.PipelineNodeID != "dag" {
+			businessNodeCount++
+		}
+		if uc.pricing != nil && len(node.ResourcesDuration) > 0 && node.EstimatedCostUSD == nil {
+			return true
+		}
+	}
+	if run.NodeCount > 0 && businessNodeCount < run.NodeCount {
+		return true
+	}
+	return false
+}
+
 func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
 	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
 		return
@@ -853,18 +1041,7 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 		run.FinishedAt = &now
 	}
 	logPipelineSideEffect("update pipeline run status", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
-	if uc.runNodeRepo != nil && len(wf.Status.Nodes) > 0 {
-		uc.appendNodeEvents(ctx, run, wf.Status.Nodes)
-		nodes := runNodesFromWorkflow(run.ID, run.WorkflowName, wf.Status.Nodes)
-		for i := range nodes {
-			if uc.pricing != nil {
-				nodes[i].EstimatedCostUSD = resourcesDurationToCost(nodes[i].ResourcesDuration, uc.pricing)
-			}
-		}
-		logPipelineSideEffect("replace pipeline run nodes", uc.runNodeRepo.ReplaceByRunID(ctx, run.ID, nodes))
-		run.Nodes = nodes
-		uc.refreshAssetNodes(ctx, run)
-	}
+	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
 }
 
 func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.PipelineRun) {
@@ -898,7 +1075,7 @@ func (uc *Usecase) backfillRunStatus(ctx context.Context, run *models.PipelineRu
 		return
 	}
 	uc.appendWorkflowEvents(ctx, run, wf)
-	uc.appendNodeEvents(ctx, run, wf.Status.Nodes)
+	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
 	run.LedgerState = "has_ledger"
 	logPipelineSideEffect("update pipeline run ledger state + backfill completed",
 		uc.runRepo.UpdateLedgerState(ctx, run.ID, "has_ledger"))
@@ -1774,6 +1951,14 @@ func (uc *Usecase) GetRunCostSummary(ctx context.Context, id string) (*models.Pi
 	if run == nil {
 		return nil, ErrDeploymentNotFound
 	}
+	if uc.runCostSnapshotMissing(run) {
+		if isActiveDeploymentStatus(run.Status) {
+			uc.refreshRunStatus(ctx, run)
+		} else {
+			uc.backfillRunStatus(ctx, run)
+		}
+		uc.enrichRun(ctx, run)
+	}
 	summary := &models.PipelineRunCostSummary{
 		RunID:              id,
 		CostSource:         "not_available",
@@ -1784,6 +1969,9 @@ func (uc *Usecase) GetRunCostSummary(ctx context.Context, id string) (*models.Pi
 	var total float64
 	hasCost := false
 	for _, node := range run.Nodes {
+		if isWorkflowControlRunNode(node) {
+			continue
+		}
 		if node.EstimatedCostUSD != nil {
 			total += *node.EstimatedCostUSD
 			hasCost = true

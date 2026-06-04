@@ -24,26 +24,28 @@ type Node struct {
 
 // Component is a pipeline step backed by a container image.
 type Component struct {
-	Name            string                `json:"name" yaml:"name"`
-	Image           string                `json:"image" yaml:"image"`
-	ImagePullPolicy string                `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
-	Command         []string              `json:"command,omitempty" yaml:"command,omitempty"`
-	Args            []Argument            `json:"args,omitempty" yaml:"args,omitempty"`
+	Name            string     `json:"name" yaml:"name"`
+	Image           string     `json:"image" yaml:"image"`
+	ImagePullPolicy string     `json:"imagePullPolicy,omitempty" yaml:"imagePullPolicy,omitempty"`
+	Command         []string   `json:"command,omitempty" yaml:"command,omitempty"`
+	Args            []Argument `json:"args,omitempty" yaml:"args,omitempty"`
 	// Mode controls the template type: "container" (default) or "script".
 	// "container" emits an Argo container template (suitable for any image).
 	// "script" emits an Argo script template: Source is injected as inline script,
 	// and Command is treated as the interpreter (default: ["sh"]).
-	Mode   string `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Source string `json:"source,omitempty" yaml:"source,omitempty"` // inline script body (script mode only)
-	Env             []EnvVar              `json:"env,omitempty" yaml:"env,omitempty"`
-	Resources       *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Mode      string                `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Source    string                `json:"source,omitempty" yaml:"source,omitempty"` // inline script body (script mode only)
+	Env       []EnvVar              `json:"env,omitempty" yaml:"env,omitempty"`
+	Resources *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
 }
 
 // ResourceRequirements defines compute resources for a component.
 type ResourceRequirements struct {
-	CPU    string `json:"cpu,omitempty" yaml:"cpu,omitempty"`       // e.g. "500m", "2"
-	Memory string `json:"memory,omitempty" yaml:"memory,omitempty"` // e.g. "256Mi", "1Gi"
-	Disk   string `json:"disk,omitempty" yaml:"disk,omitempty"`     // ephemeral storage, e.g. "1Gi"
+	CPU         string `json:"cpu,omitempty" yaml:"cpu,omitempty"`                 // e.g. "500m", "2"
+	Memory      string `json:"memory,omitempty" yaml:"memory,omitempty"`           // e.g. "256Mi", "1Gi"
+	Disk        string `json:"disk,omitempty" yaml:"disk,omitempty"`               // ephemeral storage, e.g. "1Gi"
+	GPU         string `json:"gpu,omitempty" yaml:"gpu,omitempty"`                 // Kubernetes nvidia.com/gpu quantity, e.g. "1"
+	ComputeTier string `json:"computeTier,omitempty" yaml:"computeTier,omitempty"` // DataBrew scheduling/cost metadata
 }
 
 // Param is a key-value pair for workflow-level parameters.

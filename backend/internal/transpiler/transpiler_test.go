@@ -3,6 +3,8 @@ package transpiler
 import (
 	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestTranspileEdgePorts(t *testing.T) {
@@ -136,6 +138,54 @@ func TestTranspileAllowsDistinctFanInInputs(t *testing.T) {
 	if _, err := Transpile(p, &Options{Name: "distinct-target"}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
+	p := &Pipeline{
+		Name: "gpu-pipeline",
+		Nodes: []Node{{
+			ID: "gpu-step",
+			Component: Component{
+				Name:    "gpu",
+				Image:   "nvidia/cuda:12.4.1-base-ubuntu22.04",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "nvidia-smi"}},
+				Resources: &ResourceRequirements{
+					CPU:         "4000m",
+					Memory:      "16Gi",
+					Disk:        "50Gi",
+					GPU:         "1",
+					ComputeTier: "gpu-l4",
+				},
+			},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "gpu-pipeline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-gpu-step" {
+			continue
+		}
+		if tmpl.Container == nil {
+			t.Fatal("expected container template")
+		}
+		gpu := tmpl.Container.Resources.Limits[corev1.ResourceName("nvidia.com/gpu")]
+		if gpu.String() != "1" {
+			t.Fatalf("gpu limit = %q, want 1", gpu.String())
+		}
+		if _, ok := tmpl.Container.Resources.Requests[corev1.ResourceName("nvidia.com/gpu")]; ok {
+			t.Fatal("gpu must not be emitted as a request")
+		}
+		disk := tmpl.Container.Resources.Limits[corev1.ResourceEphemeralStorage]
+		if got := disk.String(); got != "50Gi" {
+			t.Fatalf("disk limit = %q, want 50Gi", got)
+		}
+		return
+	}
+	t.Fatal("step-gpu-step template not found")
 }
 
 func TestTranspileRejectsConsumedOutputWithoutFileWrite(t *testing.T) {

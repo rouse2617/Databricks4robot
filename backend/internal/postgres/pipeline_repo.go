@@ -856,12 +856,6 @@ func scanPipelineRunNode(rs rowScanner) (*models.PipelineRunNode, error) {
 
 // ReplaceByRunID replaces a run's node snapshot.
 func (r *PipelineRunNodeRepo) ReplaceByRunID(ctx context.Context, runID string, nodes []models.PipelineRunNode) error {
-	if err := r.DeleteByRunID(ctx, runID); err != nil {
-		return err
-	}
-	if len(nodes) == 0 {
-		return nil
-	}
 	const q = `
 INSERT INTO pipeline_run_nodes (
   id, run_id, pipeline_node_id, argo_node_id, argo_node_name,
@@ -874,46 +868,57 @@ INSERT INTO pipeline_run_nodes (
   $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19,
   $20, $21, $22, $23
 )`
-	db := dbFromCtx(ctx, r.c.db)
-	now := time.Now().UTC()
-	for i := range nodes {
-		n := &nodes[i]
-		if n.ID == "" {
-			n.ID = uuid.New().String()
+	return r.c.WithTx(ctx, func(txCtx context.Context) error {
+		db := dbFromCtx(txCtx, r.c.db)
+		if err := db.Exec(txCtx, `DELETE FROM pipeline_run_nodes WHERE run_id = $1`, runID); err != nil {
+			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID delete: %w", err)
 		}
-		if n.RunID == "" {
-			n.RunID = runID
+		if len(nodes) == 0 {
+			return nil
 		}
-		if n.CreatedAt.IsZero() {
-			n.CreatedAt = now
+		now := time.Now().UTC()
+		for i := range nodes {
+			n := &nodes[i]
+			if n.ID == "" {
+				n.ID = uuid.New().String()
+			}
+			if n.RunID == "" {
+				n.RunID = runID
+			}
+			if n.CreatedAt.IsZero() {
+				n.CreatedAt = now
+			}
+			n.UpdatedAt = now
+			if n.Children == nil {
+				n.Children = []string{}
+			}
+			inputs, err := marshalMapForJSONB(n.Inputs)
+			if err != nil {
+				return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID marshal inputs: %w", err)
+			}
+			outputs, err := marshalMapForJSONB(n.Outputs)
+			if err != nil {
+				return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID marshal outputs: %w", err)
+			}
+			resourcesDuration, err := marshalMapForJSONB(n.ResourcesDuration)
+			if err != nil {
+				return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID marshal resources_duration: %w", err)
+			}
+			resourceSummary, err := marshalMapForJSONB(n.ResourceSummary)
+			if err != nil {
+				return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID marshal resource_summary: %w", err)
+			}
+			if err := db.Exec(txCtx, q,
+				n.ID, n.RunID, n.PipelineNodeID, n.ArgoNodeID, n.ArgoNodeName,
+				n.DisplayName, n.TemplateName, n.Type, n.Phase, n.Message, n.PodName, n.HostNodeName, n.Children,
+				inputs, outputs, resourcesDuration, resourceSummary, n.LogRef, n.EstimatedCostUSD,
+				n.StartedAt, n.FinishedAt, n.CreatedAt, n.UpdatedAt,
+			); err != nil {
+				return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID insert: %w", err)
+			}
 		}
-		n.UpdatedAt = now
-		inputs, err := marshalMapForJSONB(n.Inputs)
-		if err != nil {
-			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID marshal inputs: %w", err)
-		}
-		outputs, err := marshalMapForJSONB(n.Outputs)
-		if err != nil {
-			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID marshal outputs: %w", err)
-		}
-		resourcesDuration, err := marshalMapForJSONB(n.ResourcesDuration)
-		if err != nil {
-			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID marshal resources_duration: %w", err)
-		}
-		resourceSummary, err := marshalMapForJSONB(n.ResourceSummary)
-		if err != nil {
-			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID marshal resource_summary: %w", err)
-		}
-		if err := db.Exec(ctx, q,
-			n.ID, n.RunID, n.PipelineNodeID, n.ArgoNodeID, n.ArgoNodeName,
-			n.DisplayName, n.TemplateName, n.Type, n.Phase, n.Message, n.PodName, n.HostNodeName, n.Children,
-			inputs, outputs, resourcesDuration, resourceSummary, n.LogRef, n.EstimatedCostUSD,
-			n.StartedAt, n.FinishedAt, n.CreatedAt, n.UpdatedAt,
-		); err != nil {
-			return fmt.Errorf("postgres PipelineRunNodeRepo.ReplaceByRunID insert: %w", err)
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // FindByRunID returns node snapshots for a run.
@@ -935,6 +940,9 @@ ORDER BY created_at ASC`
 			return nil, fmt.Errorf("postgres PipelineRunNodeRepo.FindByRunID scan: %w", err)
 		}
 		out = append(out, *n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunNodeRepo.FindByRunID rows: %w", err)
 	}
 	return out, nil
 }
@@ -1143,13 +1151,6 @@ func scanPipelineRunAssetNode(rs rowScanner) (*models.PipelineRunAssetNode, erro
 }
 
 func (r *PipelineRunAssetNodeRepo) ReplaceByRunID(ctx context.Context, runID string, rows []models.PipelineRunAssetNode) error {
-	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, `DELETE FROM pipeline_run_asset_nodes WHERE run_id = $1`, runID); err != nil {
-		return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID delete: %w", err)
-	}
-	if len(rows) == 0 {
-		return nil
-	}
 	const q = `
 INSERT INTO pipeline_run_asset_nodes (
   id, run_id, asset_id, pipeline_node_id, argo_node_id, display_name, status,
@@ -1160,33 +1161,42 @@ INSERT INTO pipeline_run_asset_nodes (
   $8, $9, $10, $11, $12,
   $13, $14, $15
 )`
-	now := time.Now().UTC()
-	for i := range rows {
-		row := &rows[i]
-		if row.ID == "" {
-			row.ID = uuid.New().String()
+	return r.c.WithTx(ctx, func(txCtx context.Context) error {
+		db := dbFromCtx(txCtx, r.c.db)
+		if err := db.Exec(txCtx, `DELETE FROM pipeline_run_asset_nodes WHERE run_id = $1`, runID); err != nil {
+			return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID delete: %w", err)
 		}
-		if row.RunID == "" {
-			row.RunID = runID
+		if len(rows) == 0 {
+			return nil
 		}
-		if row.CostSource == "" {
-			row.CostSource = "not_available"
-			if row.EstimatedCostUSD != nil {
-				row.CostSource = "estimated_resource_duration"
+		now := time.Now().UTC()
+		for i := range rows {
+			row := &rows[i]
+			if row.ID == "" {
+				row.ID = uuid.New().String()
+			}
+			if row.RunID == "" {
+				row.RunID = runID
+			}
+			if row.CostSource == "" {
+				row.CostSource = "not_available"
+				if row.EstimatedCostUSD != nil {
+					row.CostSource = "estimated_resource_duration"
+				}
+			}
+			if row.UpdatedAt.IsZero() {
+				row.UpdatedAt = now
+			}
+			if err := db.Exec(txCtx, q,
+				row.ID, row.RunID, row.AssetID, row.PipelineNodeID, row.ArgoNodeID, row.DisplayName, row.Status,
+				row.Message, row.PodName, row.LogRef, row.EstimatedCostUSD, row.CostSource,
+				row.StartedAt, row.FinishedAt, row.UpdatedAt,
+			); err != nil {
+				return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID insert: %w", err)
 			}
 		}
-		if row.UpdatedAt.IsZero() {
-			row.UpdatedAt = now
-		}
-		if err := db.Exec(ctx, q,
-			row.ID, row.RunID, row.AssetID, row.PipelineNodeID, row.ArgoNodeID, row.DisplayName, row.Status,
-			row.Message, row.PodName, row.LogRef, row.EstimatedCostUSD, row.CostSource,
-			row.StartedAt, row.FinishedAt, row.UpdatedAt,
-		); err != nil {
-			return fmt.Errorf("postgres PipelineRunAssetNodeRepo.ReplaceByRunID insert: %w", err)
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (r *PipelineRunAssetNodeRepo) ListByRunID(ctx context.Context, runID string, opts models.PipelineRunAssetNodeListOptions) (*models.PipelineRunAssetNodeListResult, error) {

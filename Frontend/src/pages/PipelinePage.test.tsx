@@ -112,9 +112,19 @@ vi.mock("../components/pipeline/AssetPicker", () => ({
 // ── Mock antd (message as spies inside factory) ───────────────────
 vi.mock("antd", async (importOriginal) => {
 	const actual = await importOriginal<Record<string, unknown>>();
+	const messageApi = { success: vi.fn(), error: vi.fn(), warning: vi.fn() };
 	return {
 		...actual,
-		message: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+		App: {
+			...(actual.App as Record<string, unknown>),
+			useApp: () => ({
+				message: messageApi,
+				modal: {
+					confirm: vi.fn(),
+				},
+			}),
+		},
+		message: messageApi,
 	};
 });
 

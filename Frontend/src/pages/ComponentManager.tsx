@@ -63,6 +63,11 @@ interface ComponentFormValues {
 	description?: string;
 	command?: string;
 	args?: string;
+	cpu?: string;
+	memory?: string;
+	disk?: string;
+	gpu?: string;
+	computeTier?: string;
 	envRows?: EnvRow[];
 	inputPorts?: PortRow[];
 	outputPorts?: PortRow[];
@@ -100,6 +105,14 @@ const joinInputItems = (value?: string[]): string =>
 		.filter(Boolean)
 		.join(", ");
 
+const resourceString = (
+	resources: Record<string, unknown> | undefined,
+	key: string,
+): string => {
+	const value = resources?.[key];
+	return typeof value === "string" ? value : "";
+};
+
 function normalizePortRows(
 	rows: PortRow[] | undefined,
 	fallback: PortDef[],
@@ -133,11 +146,17 @@ function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 			description: "",
 			command: "",
 			args: "",
+			cpu: "",
+			memory: "",
+			disk: "",
+			gpu: "",
+			computeTier: "",
 			envRows: [],
 			inputPorts: DEFAULT_INPUT_PORTS,
 			outputPorts: DEFAULT_OUTPUT_PORTS,
 		};
 	}
+	const resources = component.resources || {};
 
 	return {
 		name: component.name,
@@ -147,6 +166,11 @@ function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 		description: component.description || "",
 		command: joinInputItems(component.command || []),
 		args: joinInputItems(component.args || []),
+		cpu: resourceString(resources, "cpu"),
+		memory: resourceString(resources, "memory"),
+		disk: resourceString(resources, "disk"),
+		gpu: resourceString(resources, "gpu"),
+		computeTier: resourceString(resources, "computeTier"),
 		envRows: Object.entries(component.env || {}).map(([name, value]) => ({
 			name,
 			value,
@@ -191,6 +215,13 @@ function toPayload(
 			command,
 			args,
 			env,
+			...(values.cpu?.trim() ? { cpu: values.cpu.trim() } : {}),
+			...(values.memory?.trim() ? { memory: values.memory.trim() } : {}),
+			...(values.disk?.trim() ? { disk: values.disk.trim() } : {}),
+			...(values.gpu?.trim() ? { gpu: values.gpu.trim() } : {}),
+			...(values.computeTier?.trim()
+				? { computeTier: values.computeTier.trim() }
+				: {}),
 		},
 	};
 }
@@ -198,6 +229,7 @@ function toPayload(
 function ComponentDetail({ component }: { component: PipelineComponentAPI }) {
 	const envEntries = Object.entries(component.env || {});
 	const imageText = formatComponentImage(component.image, component.tag);
+	const resources = component.resources || {};
 
 	return (
 		<Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -281,6 +313,17 @@ function ComponentDetail({ component }: { component: PipelineComponentAPI }) {
 					) : (
 						"-"
 					)}
+				</Descriptions.Item>
+				<Descriptions.Item label="资源">
+					<Space wrap size={4}>
+						<Tag>CPU: {resourceString(resources, "cpu") || "-"}</Tag>
+						<Tag>内存: {resourceString(resources, "memory") || "-"}</Tag>
+						<Tag>磁盘: {resourceString(resources, "disk") || "-"}</Tag>
+						<Tag>GPU: {resourceString(resources, "gpu") || "-"}</Tag>
+						<Tag>
+							计算档位: {resourceString(resources, "computeTier") || "-"}
+						</Tag>
+					</Space>
 				</Descriptions.Item>
 			</Descriptions>
 		</Space>
@@ -954,6 +997,59 @@ export function ComponentManager() {
 									placeholder="例如: --input, {{inputs.asset}}"
 								/>
 							</Form.Item>
+
+							<div
+								style={{
+									display: "grid",
+									gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+									gap: 12,
+								}}
+							>
+								<Form.Item name="cpu" label="CPU" extra="例如 500m、4">
+									<Input
+										data-testid="component-resource-cpu"
+										placeholder="500m"
+										autoComplete="off"
+										onFocus={(e) => e.target.select()}
+									/>
+								</Form.Item>
+								<Form.Item name="memory" label="内存" extra="例如 256Mi、16Gi">
+									<Input
+										data-testid="component-resource-memory"
+										placeholder="256Mi"
+										autoComplete="off"
+										onFocus={(e) => e.target.select()}
+									/>
+								</Form.Item>
+								<Form.Item name="disk" label="磁盘" extra="临时存储，例如 20Gi">
+									<Input
+										data-testid="component-resource-disk"
+										placeholder="20Gi"
+										autoComplete="off"
+										onFocus={(e) => e.target.select()}
+									/>
+								</Form.Item>
+								<Form.Item name="gpu" label="GPU" extra="数量，例如 1、2">
+									<Input
+										data-testid="component-resource-gpu"
+										placeholder="1"
+										autoComplete="off"
+										onFocus={(e) => e.target.select()}
+									/>
+								</Form.Item>
+								<Form.Item
+									name="computeTier"
+									label="计算档位"
+									extra="用于后续调度、成本和配额策略"
+								>
+									<Input
+										data-testid="component-resource-compute-tier"
+										placeholder="gpu-l4"
+										autoComplete="off"
+										onFocus={(e) => e.target.select()}
+									/>
+								</Form.Item>
+							</div>
 
 							<div
 								style={{

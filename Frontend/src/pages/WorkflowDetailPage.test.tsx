@@ -148,4 +148,90 @@ describe("WorkflowDetailPage", () => {
 			screen.getByText(/这是历史工作流或外部提交的工作流/),
 		).toBeInTheDocument();
 	});
+
+	it("shows workflow node count and explicit unavailable cost copy", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Succeeded",
+				nodes: [
+					{
+						id: "step-1",
+						name: "wf-asset.step-1",
+						displayName: "step-1",
+						type: "Pod",
+						phase: "Succeeded",
+					},
+					{
+						id: "step-2",
+						name: "wf-asset.step-2",
+						displayName: "step-2",
+						type: "Pod",
+						phase: "Succeeded",
+					},
+				],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"asset-ids": "asset-a",
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: { id: "run-1" },
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+			assetNodeState: {
+				items: [
+					{
+						id: "row-1",
+						runId: "run-1",
+						assetId: "asset-a",
+						pipelineNodeId: "step-1",
+						displayName: "step-1",
+						status: "Succeeded",
+						costSource: "not_available",
+						updatedAt: "2026-06-03T00:00:00Z",
+					},
+				],
+				total: 1,
+				loading: false,
+				error: null,
+				summary: {
+					assetCount: 1,
+					nodeCount: 1,
+					statuses: { Succeeded: 1 },
+					costSource: "not_available",
+				},
+			},
+			costSummaryState: {
+				item: {
+					runId: "run-1",
+					costSource: "not_available",
+					nodeSummaries: [
+						{
+							nodeId: "step-1",
+							displayName: "step-1",
+							status: "Succeeded",
+							podCount: 1,
+							costSource: "not_available",
+						},
+					],
+					assetNodeSummaries: [],
+					generatedAt: "2026-06-03T00:00:00Z",
+				},
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText("节点 2")).toBeInTheDocument();
+		expect(screen.getByText("暂无估算成本")).toBeInTheDocument();
+		expect(screen.getByText("暂无计费配置")).toBeInTheDocument();
+	});
 });

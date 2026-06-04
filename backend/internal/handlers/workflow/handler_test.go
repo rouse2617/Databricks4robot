@@ -76,6 +76,7 @@ func (m *mockRunRepo) FindByWorkflowName(context.Context, string) (*models.Pipel
 func (m *mockRunRepo) Delete(context.Context, string) error                           { return nil }
 func (m *mockRunRepo) DeleteByTemplateID(context.Context, string) error               { return nil }
 func (m *mockRunRepo) UpdateStatus(context.Context, string, string, *time.Time) error { return nil }
+func (m *mockRunRepo) UpdateLedgerState(context.Context, string, string) error        { return nil }
 
 type mockRunEventRepo struct {
 	events []models.PipelineRunEvent

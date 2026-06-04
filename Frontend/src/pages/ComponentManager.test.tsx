@@ -50,6 +50,13 @@ const components: PipelineComponentAPI[] = [
 		command: ["sh", "-c"],
 		args: ["echo ok"],
 		env: {},
+		resources: {
+			cpu: "4000m",
+			memory: "16Gi",
+			disk: "50Gi",
+			gpu: "1",
+			computeTier: "gpu-l4",
+		},
 		inputPorts: [{ name: "summary", type: "string" }],
 		outputPorts: [{ name: "report", type: "string" }],
 		createdAt: "2026-06-02T15:04:20+08:00",
@@ -76,6 +83,14 @@ beforeAll(() => {
 function getInputByPlaceholder(container: HTMLElement, placeholder: string) {
 	const input = container.querySelector<HTMLInputElement>(
 		`input[placeholder="${placeholder}"]`,
+	);
+	expect(input).toBeTruthy();
+	return input as HTMLInputElement;
+}
+
+function getResourceInput(container: HTMLElement, name: string) {
+	const input = container.querySelector<HTMLInputElement>(
+		`input[data-testid="component-resource-${name}"]`,
 	);
 	expect(input).toBeTruthy();
 	return input as HTMLInputElement;
@@ -110,6 +125,42 @@ describe("page ComponentManager", () => {
 					"registry.example.com/databrew/worker",
 				).value,
 			).toBe("alpine:3.18");
+			expect(getResourceInput(document.body, "cpu").value).toBe("4000m");
+			expect(getResourceInput(document.body, "memory").value).toBe("16Gi");
+			expect(getResourceInput(document.body, "disk").value).toBe("50Gi");
+			expect(getResourceInput(document.body, "gpu").value).toBe("1");
+			expect(getResourceInput(document.body, "compute-tier").value).toBe(
+				"gpu-l4",
+			);
+		});
+	});
+
+	it("saves gpu and compute tier resource fields", async () => {
+		render(<ComponentManager />);
+
+		expect(await screen.findByText("报告生成")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: /编辑组件/ }));
+
+		await waitFor(() => {
+			expect(getResourceInput(document.body, "gpu").value).toBe("1");
+		});
+		fireEvent.change(getResourceInput(document.body, "gpu"), {
+			target: { value: "2" },
+		});
+		fireEvent.change(getResourceInput(document.body, "compute-tier"), {
+			target: { value: "gpu-a100" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "保 存" }));
+
+		await waitFor(() => {
+			expect(apiMocks.updateComponent).toHaveBeenCalled();
+		});
+		expect(apiMocks.updateComponent.mock.calls[0][1].resources).toMatchObject({
+			cpu: "4000m",
+			memory: "16Gi",
+			disk: "50Gi",
+			gpu: "2",
+			computeTier: "gpu-a100",
 		});
 	});
 

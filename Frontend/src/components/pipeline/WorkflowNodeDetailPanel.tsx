@@ -2,7 +2,6 @@
 import {
 	CloudServerOutlined,
 	FileTextOutlined,
-	LockOutlined,
 	ReloadOutlined,
 } from "@ant-design/icons";
 import {
@@ -25,7 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import type {
 	WorkflowDetail,
 	WorkflowNodeContainer,
@@ -36,12 +35,8 @@ import type {
 	WorkflowPodMetrics,
 } from "../../api/workflowApi";
 import {
-	createTerminalSession,
 	getNodePodDiagnostics,
-	getTerminalAttachUrl,
 	type NodePodDiagnostics,
-	type TerminalSession,
-	terminateTerminalSession,
 } from "../../api/workflowApi";
 import { STATUS_COLORS } from "../../lib/constants";
 import {
@@ -544,28 +539,6 @@ function BillingTab({ cost }: { cost?: WorkflowPodCost }) {
 			</Row>
 		</Space>
 	);
-}
-
-type TerminalFrame =
-	| { type: "stdout" | "stderr"; data?: string }
-	| { type: "status"; status?: string }
-	| { type: "exit"; exitCode?: number; reason?: string }
-	| { type: "error"; code?: string; message?: string };
-
-function terminalFrameText(frame: TerminalFrame): string {
-	switch (frame.type) {
-		case "stdout":
-		case "stderr":
-			return frame.data || "";
-		case "status":
-			return `\n[status] ${frame.status || "connected"}\n`;
-		case "exit":
-			return `\n[exit] ${frame.reason || "closed"}${typeof frame.exitCode === "number" ? ` (${frame.exitCode})` : ""}\n`;
-		case "error":
-			return `\n[error] ${frame.code || "POD_EXEC_ERROR"} ${frame.message || ""}\n`;
-		default:
-			return "";
-	}
 }
 
 function LogsTab({

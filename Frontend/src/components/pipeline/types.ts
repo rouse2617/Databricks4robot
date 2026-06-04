@@ -51,6 +51,8 @@ export interface ResourceRequirements {
 	cpu?: string;
 	memory?: string;
 	disk?: string;
+	gpu?: string;
+	computeTier?: string;
 	type?: string;
 	source?: string;
 	env?: Record<string, string>;
@@ -70,6 +72,8 @@ export interface RegisteredComponent {
 	cpu: string;
 	memory: string;
 	disk: string;
+	gpu?: string;
+	computeTier?: string;
 }
 
 export interface PipelineNodeData {
@@ -85,5 +89,7 @@ export interface PipelineNodeData {
 	cpu: string;
 	memory: string;
 	disk: string;
+	gpu?: string;
+	computeTier?: string;
 	[key: string]: unknown;
 }

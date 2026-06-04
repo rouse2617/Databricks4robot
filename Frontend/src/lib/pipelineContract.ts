@@ -197,11 +197,18 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 				normalizeComponentArgs(d.args as unknown[]),
 			),
 			resources:
-				d.cpu || d.memory || d.disk || (d.env && d.env.length > 0)
+				d.cpu ||
+				d.memory ||
+				d.disk ||
+				d.gpu ||
+				d.computeTier ||
+				(d.env && d.env.length > 0)
 					? {
 							cpu: d.cpu,
 							memory: d.memory,
 							disk: d.disk,
+							gpu: d.gpu,
+							computeTier: d.computeTier,
 							type: d.type || "container",
 							source: d.source || "custom",
 							env: d.env ? envToMap(d.env) : undefined,
@@ -240,6 +247,8 @@ export function fromTranspilerPipeline(pipeline: Pipeline): {
 			cpu: pn.component.resources?.cpu || "",
 			memory: pn.component.resources?.memory || "",
 			disk: pn.component.resources?.disk || "",
+			gpu: pn.component.resources?.gpu || "",
+			computeTier: pn.component.resources?.computeTier || "",
 			inputPorts: normalizePorts(pn.inputs, defaultInputs),
 			outputPorts: normalizePorts(pn.outputs, defaultOutputs),
 		},

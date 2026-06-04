@@ -2144,8 +2144,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PortDef' }
         resources:
-          type: object
-          description: Container resource requirements
+          $ref: '#/components/schemas/PipelineComponentResources'
         envVars:
           type: array
           items: { $ref: '#/components/schemas/EnvVarDef' }
@@ -2179,10 +2178,47 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PortDef' }
         resources:
-          type: object
+          $ref: '#/components/schemas/PipelineComponentResources'
         envVars:
           type: array
           items: { $ref: '#/components/schemas/EnvVarDef' }
+    PipelineComponentResources:
+      type: object
+      description: Container resource requirements and DataBrew scheduling metadata.
+      properties:
+        cpu:
+          type: string
+          description: Kubernetes CPU quantity, for example "500m" or "4".
+          example: "4000m"
+        memory:
+          type: string
+          description: Kubernetes memory quantity.
+          example: "16Gi"
+        disk:
+          type: string
+          description: Kubernetes ephemeral storage quantity.
+          example: "50Gi"
+        gpu:
+          type: string
+          description: Kubernetes nvidia.com/gpu quantity emitted as a GPU limit.
+          example: "1"
+        computeTier:
+          type: string
+          description: DataBrew compute tier metadata for future scheduling, quota, and cost policy.
+          example: "gpu-l4"
+        type:
+          type: string
+          description: Component runtime type mirror.
+        command:
+          type: array
+          items: { type: string }
+        args:
+          type: array
+          items: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
     PortDef:
       type: object
       properties:

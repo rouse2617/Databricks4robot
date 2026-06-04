@@ -341,34 +341,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 		},
 	}
 
-	// Resources
-	if node.Component.Resources != nil {
-		res := node.Component.Resources
-		limits := corev1.ResourceList{}
-		requests := corev1.ResourceList{}
-
-		if res.CPU != "" {
-			if q, err := resource.ParseQuantity(res.CPU); err == nil {
-				limits[corev1.ResourceCPU] = q
-				requests[corev1.ResourceCPU] = q
-			}
-		}
-		if res.Memory != "" {
-			if q, err := resource.ParseQuantity(res.Memory); err == nil {
-				limits[corev1.ResourceMemory] = q
-				requests[corev1.ResourceMemory] = q
-			}
-		}
-		if res.Disk != "" {
-			if q, err := resource.ParseQuantity(res.Disk); err == nil {
-				limits[corev1.ResourceEphemeralStorage] = q
-				requests[corev1.ResourceEphemeralStorage] = q
-			}
-		}
-		if len(limits) > 0 || len(requests) > 0 {
-			tmpl.Container.Resources = corev1.ResourceRequirements{Limits: limits, Requests: requests}
-		}
-	}
+	tmpl.Container.Resources = buildK8sResources(node.Component.Resources)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -615,34 +588,7 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 		},
 	}
 
-	// Resources
-	if node.Component.Resources != nil {
-		res := node.Component.Resources
-		limits := corev1.ResourceList{}
-		requests := corev1.ResourceList{}
-
-		if res.CPU != "" {
-			if q, err := resource.ParseQuantity(res.CPU); err == nil {
-				limits[corev1.ResourceCPU] = q
-				requests[corev1.ResourceCPU] = q
-			}
-		}
-		if res.Memory != "" {
-			if q, err := resource.ParseQuantity(res.Memory); err == nil {
-				limits[corev1.ResourceMemory] = q
-				requests[corev1.ResourceMemory] = q
-			}
-		}
-		if res.Disk != "" {
-			if q, err := resource.ParseQuantity(res.Disk); err == nil {
-				limits[corev1.ResourceEphemeralStorage] = q
-				requests[corev1.ResourceEphemeralStorage] = q
-			}
-		}
-		if len(limits) > 0 || len(requests) > 0 {
-			tmpl.Script.Resources = corev1.ResourceRequirements{Limits: limits, Requests: requests}
-		}
-	}
+	tmpl.Script.Resources = buildK8sResources(node.Component.Resources)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -717,6 +663,42 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 }
 
 // --- helpers ---
+
+func buildK8sResources(res *ResourceRequirements) corev1.ResourceRequirements {
+	if res == nil {
+		return corev1.ResourceRequirements{}
+	}
+	limits := corev1.ResourceList{}
+	requests := corev1.ResourceList{}
+
+	if res.CPU != "" {
+		if q, err := resource.ParseQuantity(res.CPU); err == nil {
+			limits[corev1.ResourceCPU] = q
+			requests[corev1.ResourceCPU] = q
+		}
+	}
+	if res.Memory != "" {
+		if q, err := resource.ParseQuantity(res.Memory); err == nil {
+			limits[corev1.ResourceMemory] = q
+			requests[corev1.ResourceMemory] = q
+		}
+	}
+	if res.Disk != "" {
+		if q, err := resource.ParseQuantity(res.Disk); err == nil {
+			limits[corev1.ResourceEphemeralStorage] = q
+			requests[corev1.ResourceEphemeralStorage] = q
+		}
+	}
+	if res.GPU != "" {
+		if q, err := resource.ParseQuantity(res.GPU); err == nil {
+			limits[corev1.ResourceName("nvidia.com/gpu")] = q
+		}
+	}
+	if len(limits) == 0 && len(requests) == 0 {
+		return corev1.ResourceRequirements{}
+	}
+	return corev1.ResourceRequirements{Limits: limits, Requests: requests}
+}
 
 // isShellName reports whether cmd is a single shell name (e.g. ["sh"], ["/bin/sh"]).
 func isShellBinary(name string) bool {

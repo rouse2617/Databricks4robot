@@ -12,6 +12,19 @@ export interface EnvVarDef {
 	value?: string;
 }
 
+export interface PipelineComponentResources {
+	cpu?: string;
+	memory?: string;
+	disk?: string;
+	gpu?: string;
+	computeTier?: string;
+	type?: string;
+	command?: string[];
+	args?: string[];
+	env?: Record<string, string> | EnvVarDef[];
+	[key: string]: unknown;
+}
+
 export type PipelineComponentType =
 	| "container"
 	| "script"
@@ -32,7 +45,7 @@ export interface PipelineComponentAPI {
 	env?: Record<string, string>;
 	inputPorts: PortDef[];
 	outputPorts: PortDef[];
-	resources?: Record<string, unknown>;
+	resources?: PipelineComponentResources;
 	envVars?: EnvVarDef[];
 	createdAt: string;
 	updatedAt: string;

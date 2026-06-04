@@ -2285,10 +2285,18 @@ curl -X POST "$BASE/api/v1/pipeline-components" \
     "env": {"MODE": "batch"},
     "inputPorts": [{"name": "input", "type": "asset"}],
     "outputPorts": [{"name": "output", "type": "asset"}],
-    "resources": {"cpu": "500m", "memory": "256Mi"}
+    "resources": {
+      "cpu": "4000m",
+      "memory": "16Gi",
+      "disk": "50Gi",
+      "gpu": "1",
+      "computeTier": "gpu-l4"
+    }
   }'
 # 响应: 201 + Component 对象
 # 必填字段: name, type(container|script|resource|suspend), image
+# resources.gpu 会在部署时映射为 Argo/Kubernetes `limits.nvidia.com/gpu`；
+# resources.computeTier 是 DataBrew 调度、配额、成本策略使用的元数据，当前不强制选择节点池。
 
 # 获取组件详情
 curl -s "$BASE/api/v1/pipeline-components/<ID>" \

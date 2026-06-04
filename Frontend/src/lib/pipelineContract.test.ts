@@ -170,7 +170,7 @@ describe("toTranspilerPipeline", () => {
 		]);
 	});
 
-	it("includes resources when CPU/memory/disk are set", () => {
+	it("includes resources when CPU/memory/disk/gpu/compute tier are set", () => {
 		const nodes: Node<PipelineNodeData>[] = [
 			{
 				id: "step-1",
@@ -184,6 +184,8 @@ describe("toTranspilerPipeline", () => {
 					cpu: "1000m",
 					memory: "512Mi",
 					disk: "10Gi",
+					gpu: "1",
+					computeTier: "gpu-l4",
 				},
 			},
 		];
@@ -192,6 +194,8 @@ describe("toTranspilerPipeline", () => {
 			cpu: "1000m",
 			memory: "512Mi",
 			disk: "10Gi",
+			gpu: "1",
+			computeTier: "gpu-l4",
 			type: "container",
 			source: "custom",
 		});
@@ -311,7 +315,13 @@ describe("fromTranspilerPipeline", () => {
 						image: "python:3.11",
 						command: ["python", "train.py"],
 						args: [],
-						resources: { cpu: "2000m", memory: "2Gi", disk: "20Gi" },
+						resources: {
+							cpu: "2000m",
+							memory: "2Gi",
+							disk: "20Gi",
+							gpu: "1",
+							computeTier: "gpu-l4",
+						},
 					},
 				},
 			],
@@ -321,6 +331,8 @@ describe("fromTranspilerPipeline", () => {
 		expect(nodes[0].data.cpu).toBe("2000m");
 		expect(nodes[0].data.memory).toBe("2Gi");
 		expect(nodes[0].data.disk).toBe("20Gi");
+		expect(nodes[0].data.gpu).toBe("1");
+		expect(nodes[0].data.computeTier).toBe("gpu-l4");
 	});
 
 	it("defaults empty resources to empty strings", () => {

@@ -28,6 +28,8 @@ function blank(): RegisteredComponent {
 		cpu: "",
 		memory: "",
 		disk: "",
+		gpu: "",
+		computeTier: "",
 	};
 }
 
@@ -298,6 +300,28 @@ export function ComponentManager({
 									setEditing({ ...editing, disk: e.target.value })
 								}
 								placeholder="1Gi"
+							/>
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-gpu">GPU</label>
+							<Input
+								id="cm-gpu"
+								value={editing.gpu}
+								onChange={(e) =>
+									setEditing({ ...editing, gpu: e.target.value })
+								}
+								placeholder="1"
+							/>
+						</div>
+						<div className="cm-field">
+							<label htmlFor="cm-compute-tier">计算档位</label>
+							<Input
+								id="cm-compute-tier"
+								value={editing.computeTier}
+								onChange={(e) =>
+									setEditing({ ...editing, computeTier: e.target.value })
+								}
+								placeholder="gpu-l4"
 							/>
 						</div>
 					</div>

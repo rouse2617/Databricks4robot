@@ -266,6 +266,8 @@ export function apiToRegistered(
 		cpu: (resources.cpu as string) ?? "",
 		memory: (resources.memory as string) ?? "",
 		disk: (resources.disk as string) ?? "",
+		gpu: (resources.gpu as string) ?? "",
+		computeTier: (resources.computeTier as string) ?? "",
 	};
 }
 
@@ -294,6 +296,8 @@ export function createPipelineNode(
 			cpu: comp.cpu || "",
 			memory: comp.memory || "",
 			disk: comp.disk || "",
+			gpu: comp.gpu || "",
+			computeTier: comp.computeTier || "",
 			selectType: SelectType.DEFAULT,
 		},
 	};

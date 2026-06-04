@@ -428,12 +428,10 @@ function shortEventSubject(event: PipelineRunEvent) {
 function WorkflowSummaryCards({
 	workflow,
 	runEventState,
-	assetNodeState,
 	costSummaryState,
 }: {
 	workflow: NonNullable<ReturnType<typeof useWorkflowDetail>["workflow"]>;
 	runEventState: ReturnType<typeof useWorkflowDetail>["runEventState"];
-	assetNodeState: ReturnType<typeof useWorkflowDetail>["assetNodeState"];
 	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"];
 }) {
 	const templateName = workflow.labels
@@ -486,9 +484,7 @@ function WorkflowSummaryCards({
 		},
 		{
 			label: "节点",
-			value:
-				assetNodeState.summary?.nodeCount ??
-				countDisplayableWorkflowNodes(workflow.nodes),
+			value: countDisplayableWorkflowNodes(workflow.nodes),
 		},
 		{
 			label: "耗时",
@@ -825,7 +821,9 @@ function formatCost(value?: number | null) {
 }
 
 function formatCostSource(value?: string) {
-	return value === "estimated_resource_duration" ? "估算" : "未生成";
+	if (value === "estimated_resource_duration") return "估算";
+	if (value === "not_available") return "暂无计费配置";
+	return "未生成";
 }
 
 function formatDurationSeconds(startedAt?: string, finishedAt?: string) {
@@ -842,10 +840,12 @@ function formatDurationSeconds(startedAt?: string, finishedAt?: string) {
 function WorkflowAssetNodePanel({
 	assetNodeState,
 	costSummaryState,
+	workflowNodeCount,
 	onSelectAssetNode,
 }: {
 	assetNodeState: ReturnType<typeof useWorkflowDetail>["assetNodeState"];
 	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"];
+	workflowNodeCount: number;
 	onSelectAssetNode: (
 		row: PipelineRunAssetNode,
 		action: WorkflowDagNodeAction,
@@ -862,16 +862,27 @@ function WorkflowAssetNodePanel({
 		costSummaryState.item?.totalEstimatedCostUsd ??
 		summary?.totalEstimatedCostUsd;
 	const costSource = costSummaryState.item?.costSource ?? summary?.costSource;
-	const expectedNodeCount = summary?.nodeCount ?? 0;
+	const expectedNodeCount = workflowNodeCount || summary?.nodeCount || 0;
 	const syncedNodeCount = costSummaryState.item?.nodeSummaries?.length ?? 0;
+	const syncedAssetNodeCount =
+		costSummaryState.item?.assetNodeSummaries?.length ?? 0;
+	const hasCostRows =
+		syncedNodeCount > 0 ||
+		syncedAssetNodeCount > 0 ||
+		assetNodeState.items.length > 0;
+	const costUnavailable =
+		!costSummaryState.loading &&
+		costSource === "not_available" &&
+		hasCostRows &&
+		totalEstimatedCost == null;
 	const costSyncPartial =
+		!costUnavailable &&
 		expectedNodeCount > 0 &&
 		syncedNodeCount > 0 &&
 		syncedNodeCount < expectedNodeCount;
 	const costSyncPending =
 		costSummaryState.loading ||
-		(expectedNodeCount > 0 &&
-			(totalEstimatedCost == null || costSource === "not_available"));
+		(expectedNodeCount > 0 && !hasCostRows && totalEstimatedCost == null);
 	return (
 		<div
 			style={{
@@ -906,12 +917,25 @@ function WorkflowAssetNodePanel({
 						资产 {displayAssetCount}
 					</Typography.Text>
 					<Typography.Text type="secondary">
-						节点 {summary?.nodeCount ?? 0}
+						节点 {expectedNodeCount}
 					</Typography.Text>
 					<Typography.Text type="secondary">
-						总成本 {costSyncPending ? "同步中" : formatCost(totalEstimatedCost)}
+						总成本{" "}
+						{costSyncPending
+							? "同步中"
+							: costUnavailable
+								? "暂无估算"
+								: formatCost(totalEstimatedCost)}
 					</Typography.Text>
-					<Tag color={costSyncPending || costSyncPartial ? "orange" : "blue"}>
+					<Tag
+						color={
+							costSyncPending || costSyncPartial
+								? "orange"
+								: costUnavailable
+									? "default"
+									: "blue"
+						}
+					>
 						{costSyncPending
 							? "同步中"
 							: costSyncPartial
@@ -928,13 +952,25 @@ function WorkflowAssetNodePanel({
 					description="Argo 节点状态会先返回，DataBrew 成本汇总可能延迟几秒；刷新后会补齐节点耗时与估算成本。"
 					style={{ margin: "8px 10px 0" }}
 				/>
+			) : costUnavailable ? (
+				<Alert
+					type="warning"
+					showIcon
+					message="暂无估算成本"
+					description="后端未加载计费配置，或当前资源组合没有价格映射；节点状态、日志和 Pod 诊断不受影响。"
+					style={{ margin: "8px 10px 0" }}
+				/>
 			) : null}
 			<Table<PipelineRunAssetNode>
 				size="small"
 				rowKey="id"
 				loading={assetNodeState.loading}
 				dataSource={assetNodeState.items}
-				pagination={{ pageSize: 5, size: "small" }}
+				pagination={
+					assetNodeState.items.length > 10
+						? { pageSize: 10, size: "small", showSizeChanger: false }
+						: false
+				}
 				locale={{
 					emptyText: assetNodeState.error || "暂无资产节点明细",
 				}}
@@ -1419,7 +1455,6 @@ export default function WorkflowDetailPage({
 			<WorkflowSummaryCards
 				workflow={workflow}
 				runEventState={runEventState}
-				assetNodeState={assetNodeState}
 				costSummaryState={costSummaryState}
 			/>
 			<div
@@ -1464,6 +1499,7 @@ export default function WorkflowDetailPage({
 					<WorkflowAssetNodePanel
 						assetNodeState={assetNodeState}
 						costSummaryState={costSummaryState}
+						workflowNodeCount={displayableNodeCount}
 						onSelectAssetNode={handleSelectAssetNode}
 					/>
 				) : (
