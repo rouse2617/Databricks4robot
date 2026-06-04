@@ -149,7 +149,90 @@ describe("WorkflowDetailPage", () => {
 		).toBeInTheDocument();
 	});
 
-	it("shows workflow node count and explicit unavailable cost copy", () => {
+	it("shows waiting resource snapshot copy for pending cost rows", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Running",
+				nodes: [
+					{
+						id: "step-1",
+						name: "wf-asset.step-1",
+						displayName: "step-1",
+						type: "Pod",
+						phase: "Pending",
+					},
+				],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"asset-ids": "asset-a",
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: { id: "run-1" },
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+			assetNodeState: {
+				items: [
+					{
+						id: "row-1",
+						runId: "run-1",
+						assetId: "asset-a",
+						pipelineNodeId: "step-1",
+						displayName: "step-1",
+						status: "Pending",
+						costSource: "not_available",
+						updatedAt: "2026-06-03T00:00:00Z",
+					},
+				],
+				total: 1,
+				loading: false,
+				error: null,
+				summary: {
+					assetCount: 1,
+					nodeCount: 1,
+					statuses: { Pending: 1 },
+					costSource: "not_available",
+				},
+			},
+			costSummaryState: {
+				item: {
+					runId: "run-1",
+					costSource: "not_available",
+					nodeSummaries: [
+						{
+							nodeId: "step-1",
+							displayName: "step-1",
+							status: "Pending",
+							podCount: 0,
+							costSource: "not_available",
+						},
+					],
+					assetNodeSummaries: [],
+					generatedAt: "2026-06-03T00:00:00Z",
+				},
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getAllByText("等待资源快照").length).toBeGreaterThan(0);
+		expect(
+			screen.getByText(
+				/节点还在排队或运行中，资源耗时生成后会自动补齐估算成本/,
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText("暂无计费配置")).not.toBeInTheDocument();
+	});
+
+	it("shows workflow node count and quiet missing cost copy", () => {
 		mockWorkflowDetailState({
 			workflow: {
 				name: "wf-asset",
@@ -231,7 +314,10 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getByText("节点 2")).toBeInTheDocument();
-		expect(screen.getByText("暂无估算成本")).toBeInTheDocument();
-		expect(screen.getByText("暂无计费配置")).toBeInTheDocument();
+		expect(screen.getAllByText("暂无成本数据").length).toBeGreaterThan(0);
+		expect(
+			screen.getByText(/本次运行已有节点结果，但没有生成成本快照/),
+		).toBeInTheDocument();
+		expect(screen.queryByText("暂无计费配置")).not.toBeInTheDocument();
 	});
 });
