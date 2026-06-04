@@ -44,6 +44,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../api/assets";
 import {
 	type Deployment,
+	batchDeployTemplate,
 	deployTemplate,
 	type ExecutionTarget,
 	getPipeline,
@@ -274,6 +275,7 @@ function PipelineCanvas() {
 		name: string;
 		mode: DeployMode;
 		result?: Deployment;
+		batchSummary?: { batchId: string; count: number; failedCount: number };
 		error?: string;
 		previewManifest?: string;
 		previewLoading?: boolean;
@@ -925,17 +927,37 @@ function PipelineCanvas() {
 			}
 			const name = deployDialog.name || pipelineName;
 			const saved = await savePipeline(name, pipeline);
-			const result = await deployTemplate(
-				saved.id,
-				selectedAssetIds,
-				selectedTargetId,
-			);
-			setDeployDialog((prev) => ({
-				...prev,
-				deploying: false,
-				done: true,
-				result,
-			}));
+			if (selectedAssetIds.length > 1) {
+				const batch = await batchDeployTemplate(
+					saved.id,
+					selectedAssetIds,
+					selectedTargetId,
+				);
+				const failedCount = batch.failed?.length ?? 0;
+				setDeployDialog((prev) => ({
+					...prev,
+					deploying: false,
+					done: true,
+					result: batch.items[0],
+					batchSummary: {
+						batchId: batch.batchId,
+						count: batch.items.length,
+						failedCount,
+					},
+				}));
+			} else {
+				const result = await deployTemplate(
+					saved.id,
+					selectedAssetIds,
+					selectedTargetId,
+				);
+				setDeployDialog((prev) => ({
+					...prev,
+					deploying: false,
+					done: true,
+					result,
+				}));
+			}
 		} catch (err) {
 			setDeployDialog((prev) => ({
 				...prev,
@@ -1638,6 +1660,14 @@ function PipelineCanvas() {
 											{selectedExecutionTarget.namespace}
 										</Typography.Text>
 									) : null}
+									{selectedAssetIds.length > 1 ? (
+										<Alert
+											type="info"
+											showIcon
+											message={`将为 ${selectedAssetIds.length} 个资产各创建 1 个独立 Workflow`}
+											style={{ fontSize: 12 }}
+										/>
+									) : null}
 									<Collapse
 										size="small"
 										items={[
@@ -1728,22 +1758,44 @@ function PipelineCanvas() {
 								</Typography.Text>
 								<br />
 								<Typography.Text type="success" strong>
-									部署成功
+									{deployDialog.batchSummary
+										? deployDialog.batchSummary.failedCount > 0
+											? "部分部署成功"
+											: "批量部署成功"
+										: "部署成功"}
 								</Typography.Text>
-								<p
-									style={{
-										fontFamily: '"SF Mono",monospace',
-										fontSize: 12,
-										color: "#64748b",
-										marginTop: 8,
-									}}
-								>
-									{deployDialog.result.workflowName}
-								</p>
+								{deployDialog.batchSummary ? (
+									<p
+										style={{
+											fontSize: 12,
+											color: "#64748b",
+											marginTop: 8,
+										}}
+									>
+										已提交 {deployDialog.batchSummary.count} 个 Workflow
+										{deployDialog.batchSummary.failedCount > 0
+											? `，${deployDialog.batchSummary.failedCount} 个失败`
+											: ""}
+										（批次 {deployDialog.batchSummary.batchId.slice(0, 8)}）
+									</p>
+								) : (
+									<p
+										style={{
+											fontFamily: '"SF Mono",monospace',
+											fontSize: 12,
+											color: "#64748b",
+											marginTop: 8,
+										}}
+									>
+										{deployDialog.result.workflowName}
+									</p>
+								)}
 								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-									{deployDialog.result.assetCount
-										? `${deployDialog.result.assetCount} 个资产`
-										: "无资产"}
+									{deployDialog.batchSummary
+										? `${deployDialog.batchSummary.count} 个独立 Workflow`
+										: deployDialog.result.assetCount
+											? `${deployDialog.result.assetCount} 个资产`
+											: "无资产"}
 									{deployDialog.result.executionTarget
 										? ` · ${deployDialog.result.executionTarget.cluster}/${deployDialog.result.executionTarget.namespace}`
 										: ""}
@@ -1784,12 +1836,18 @@ function PipelineCanvas() {
 										type="primary"
 										onClick={() => {
 											closeDeployDialog();
+											if (deployDialog.batchSummary) {
+												navigate("/pipeline?tab=executions");
+												return;
+											}
 											navigate(
 												`/pipeline/executions/${deployDialog.result?.workflowName}`,
 											);
 										}}
 									>
-										查看 Workflow
+										{deployDialog.batchSummary
+											? "查看执行记录"
+											: "查看 Workflow"}
 									</Button>
 									<Button
 										onClick={() => {
