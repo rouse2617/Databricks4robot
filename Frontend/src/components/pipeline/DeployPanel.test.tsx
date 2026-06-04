@@ -515,7 +515,7 @@ describe("DeployPanel", () => {
 		expect(await screen.findByText("查看")).toBeTruthy();
 		fireEvent.click(screen.getByText("查看"));
 		expect(mockNavigate).toHaveBeenCalledWith(
-			"/pipeline/executions/wf-my-workflow",
+			"/pipeline/executions/wf-my-workflow?runId=dep-001",
 		);
 	});
 

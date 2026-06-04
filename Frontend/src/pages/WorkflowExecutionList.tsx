@@ -50,6 +50,7 @@ import {
 	getDisplayLabelEntries,
 	serializeWorkflowLabel,
 } from "../lib/workflowLabels";
+import { buildWorkflowExecutionUrl } from "../lib/workflowNavigation";
 import { RunComparisonModal } from "./RunComparisonModal";
 
 const { RangePicker } = DatePicker;
@@ -141,6 +142,74 @@ const datesEqual = (a: Dayjs | null, b: Dayjs | null): boolean => {
 const arraysEqual = (a: string[], b: string[]): boolean => {
 	if (a.length !== b.length) return false;
 	return a.every((value, idx) => value === b[idx]);
+};
+
+const normalizeInput = (value?: string): string | undefined =>
+	value?.trim() || undefined;
+
+const isRunUpdatedAtLater = (runA: PipelineRun, runB: PipelineRun): boolean => {
+	const parsedA = dayjs(runA.createdAt);
+	const parsedB = dayjs(runB.createdAt);
+
+	if (!parsedA.isValid() && !parsedB.isValid()) return false;
+	if (!parsedA.isValid()) return false;
+	if (!parsedB.isValid()) return true;
+	return parsedA.isAfter(parsedB);
+};
+
+const buildLatestRunLookupByWorkflowName = (runs: PipelineRun[]) => {
+	const runByAlias = new Map<string, PipelineRun>();
+
+	const addAlias = (alias: string | undefined, run: PipelineRun): void => {
+		if (!alias) return;
+		const existing = runByAlias.get(alias);
+		if (existing && !isRunUpdatedAtLater(run, existing)) return;
+		runByAlias.set(alias, run);
+	};
+
+	for (const run of runs) {
+		const canonicalAlias =
+			normalizeInput(run.workflowName) ||
+			normalizeInput(run.pipelineName) ||
+			normalizeInput(run.id);
+		if (!canonicalAlias) continue;
+
+		addAlias(canonicalAlias, run);
+		addAlias(normalizeInput(run.workflowName), run);
+		addAlias(normalizeInput(run.pipelineName), run);
+		addAlias(normalizeInput(run.id), run);
+	}
+
+	const runIdsByAlias: Record<string, string> = {};
+	const templateVersionsByAlias: Record<string, number> = {};
+	const nodeCountsByAlias: Record<string, number> = {};
+	const scopeByAlias: Record<string, string> = {};
+	const runNameByAlias: Record<string, string> = {};
+
+	for (const [alias, run] of runByAlias) {
+		runIdsByAlias[alias] = run.id;
+		if (run.templateVersion != null) {
+			templateVersionsByAlias[alias] = run.templateVersion;
+		}
+		if (run.nodeCount != null) {
+			nodeCountsByAlias[alias] = run.nodeCount;
+		}
+		if (run.scope) {
+			scopeByAlias[alias] = run.scope;
+		}
+		runNameByAlias[alias] =
+			normalizeInput(run.workflowName) ||
+			normalizeInput(run.pipelineName) ||
+			alias;
+	}
+
+	return {
+		runIdsByAlias,
+		runNameByAlias,
+		templateVersionsByAlias,
+		nodeCountsByAlias,
+		scopeByAlias,
+	};
 };
 
 const normalizeStatus = (value: string | null): string | undefined => {
@@ -293,6 +362,9 @@ export function WorkflowExecutionList({
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<WorkflowSummary[]>([]);
 	const [runIdsByWorkflowName, setRunIdsByWorkflowName] = useState<
+		Record<string, string>
+	>({});
+	const [workflowNameByWorkflowName, setWorkflowNameByWorkflowName] = useState<
 		Record<string, string>
 	>({});
 	const [templateVersionsByWorkflowName, setTemplateVersionsByWorkflowName] =
@@ -462,6 +534,13 @@ export function WorkflowExecutionList({
 				listPipelineRuns().catch(() => []),
 				listPipelines().catch(() => []),
 			]);
+			const {
+				runIdsByAlias: latestRunIdsByWorkflowName,
+				runNameByAlias: latestRunNamesByWorkflowName,
+				templateVersionsByAlias: latestTemplateVersionsByWorkflowName,
+				nodeCountsByAlias: latestNodeCountsByWorkflowName,
+				scopeByAlias: latestScopesByWorkflowName,
+			} = buildLatestRunLookupByWorkflowName(pipelineRuns);
 			setRunIdsByWorkflowName(
 				Object.fromEntries([
 					...deployments
@@ -469,13 +548,23 @@ export function WorkflowExecutionList({
 						.map(
 							(deployment) => [deployment.workflowName, deployment.id] as const,
 						),
-					...pipelineRuns
-						.filter((run) => run.workflowName && run.id)
-						.map((run) => [run.workflowName, run.id] as const),
+					...Object.entries(latestRunIdsByWorkflowName),
+				]),
+			);
+			setWorkflowNameByWorkflowName(
+				Object.fromEntries([
+					...Object.entries(latestRunNamesByWorkflowName),
+					...deployments
+						.filter((deployment) => deployment.workflowName)
+						.map(
+							(deployment) =>
+								[deployment.workflowName, deployment.workflowName] as const,
+						),
 				]),
 			);
 			setTemplateVersionsByWorkflowName(
 				Object.fromEntries([
+					...Object.entries(latestTemplateVersionsByWorkflowName),
 					...deployments
 						.filter(
 							(deployment) =>
@@ -505,6 +594,7 @@ export function WorkflowExecutionList({
 			);
 			setNodeCountsByWorkflowName(
 				Object.fromEntries([
+					...Object.entries(latestNodeCountsByWorkflowName),
 					...deployments
 						.filter((deployment) => deployment.workflowName)
 						.map(
@@ -518,6 +608,7 @@ export function WorkflowExecutionList({
 			);
 			setScopeByWorkflowName(
 				Object.fromEntries([
+					...Object.entries(latestScopesByWorkflowName),
 					...deployments
 						.filter((deployment) => deployment.workflowName && deployment.scope)
 						.map(
@@ -566,6 +657,18 @@ export function WorkflowExecutionList({
 		!arraysEqual(draftLabelFilter, labelFilter) ||
 		!datesEqual(draftDateRange[0], dateRange[0]) ||
 		!datesEqual(draftDateRange[1], dateRange[1]);
+
+	const getExecutionLink = useCallback(
+		(recordName: string): string => {
+			const targetWorkflowName =
+				workflowNameByWorkflowName[recordName] || recordName;
+			const runId =
+				runIdsByWorkflowName[recordName] ||
+				runIdsByWorkflowName[targetWorkflowName];
+			return buildWorkflowExecutionUrl(targetWorkflowName, runId);
+		},
+		[runIdsByWorkflowName, workflowNameByWorkflowName],
+	);
 
 	const applyFilters = useCallback(() => {
 		setVersionFilter(draftVersionFilter);
@@ -730,7 +833,14 @@ export function WorkflowExecutionList({
 						>
 							ID: {displayId}
 						</Typography.Text>
-						<div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 4 }}>
+						<div
+							style={{
+								marginTop: 4,
+								display: "flex",
+								flexWrap: "wrap",
+								gap: 4,
+							}}
+						>
 							{templateVersion ? (
 								<Tag color="blue">模板 v{templateVersion}</Tag>
 							) : null}
@@ -844,7 +954,7 @@ export function WorkflowExecutionList({
 							size="small"
 							onClick={(event) => {
 								event.stopPropagation();
-								navigate(`/pipeline/executions/${record.name}`);
+								navigate(getExecutionLink(record.name));
 							}}
 						>
 							查看
@@ -1042,7 +1152,7 @@ export function WorkflowExecutionList({
 								) {
 									return;
 								}
-								navigate(`/pipeline/executions/${record.name}`);
+								navigate(getExecutionLink(record.name));
 							},
 							style: { cursor: "pointer" },
 						})}

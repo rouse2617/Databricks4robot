@@ -94,8 +94,6 @@ services:
         condition: service_healthy
       elasticsearch-init:
         condition: service_completed_successfully
-      lakehouse-mvp-init:
-        condition: service_completed_successfully
     command:
       - /bin/sh
       - -lc

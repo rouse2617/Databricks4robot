@@ -24,7 +24,12 @@ import {
 	Typography,
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+	Link,
+	useNavigate,
+	useParams,
+	useSearchParams,
+} from "react-router-dom";
 import type {
 	PipelineRunAssetNode,
 	PipelineRunEvent,
@@ -1242,6 +1247,8 @@ export default function WorkflowDetailPage({
 }) {
 	const { message: messageApi } = App.useApp();
 	const { name } = useParams<{ name: string }>();
+	const [searchParams] = useSearchParams();
+	const runId = searchParams.get("runId")?.trim() || undefined;
 	const navigate = useNavigate();
 	const [viewMode, setViewMode] = useState<"dag" | "timeline">("dag");
 	const [operationLoading, setOperationLoading] =
@@ -1270,7 +1277,7 @@ export default function WorkflowDetailPage({
 		startFollowLogs,
 		stopFollowLogs,
 		downloadLogs,
-	} = useWorkflowDetail(name);
+	} = useWorkflowDetail(name, runId);
 	const [showNodeLogs, setShowNodeLogs] = useState(false);
 	const operations = useMemo(
 		() => (workflow ? getWorkflowOperationConfigs(workflow) : []),

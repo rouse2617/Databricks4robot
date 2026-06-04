@@ -13,11 +13,11 @@ import {
 	App,
 	Button,
 	Checkbox,
-	Modal,
-		Segmented,
-	Popconfirm,
 	Input,
-		Select,
+	Modal,
+	Popconfirm,
+	Segmented,
+	Select,
 	Skeleton,
 	Space,
 	Tag,
@@ -25,10 +25,10 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
+	batchDeployTemplate,
 	type Deployment,
 	deletePipeline,
 	deployTemplate,
-	batchDeployTemplate,
 	type ExecutionTarget,
 	getPipeline,
 	listDeployments,
@@ -40,6 +40,7 @@ import {
 } from "../../api/pipelineApi";
 import { request } from "../../api/pipelineClient";
 import { toAssetStyleId } from "../../lib/idDisplay";
+import { buildWorkflowExecutionUrl } from "../../lib/workflowNavigation";
 import AssetPicker from "./AssetPicker";
 import {
 	COMPACT_TEMPLATE_LIMIT,
@@ -71,14 +72,25 @@ function parseAssetIdsParam(raw: string | null): string[] {
 		.filter(Boolean);
 }
 
-function parsePastedAssetIds(raw: string): { ids: string[]; unique: number; duplicates: number } {
-	const lines = raw.split(/[\n,;\t ]+/).map((s) => s.trim()).filter(Boolean);
+function parsePastedAssetIds(raw: string): {
+	ids: string[];
+	unique: number;
+	duplicates: number;
+} {
+	const lines = raw
+		.split(/[\n,;\t ]+/)
+		.map((s) => s.trim())
+		.filter(Boolean);
 	const seen = new Set<string>();
 	const ids: string[] = [];
 	let duplicates = 0;
 	for (const line of lines) {
-		if (line.toLowerCase() === "asset_id" || line.toLowerCase() === "video_id") continue;
-		if (seen.has(line)) { duplicates++; continue; }
+		if (line.toLowerCase() === "asset_id" || line.toLowerCase() === "video_id")
+			continue;
+		if (seen.has(line)) {
+			duplicates++;
+			continue;
+		}
 		seen.add(line);
 		ids.push(line);
 	}
@@ -157,8 +169,8 @@ function TemplateCard({
 	activeVersion,
 	compactActions,
 	selectable,
-		selected,
-		onSelect,
+	selected,
+	onSelect,
 }: {
 	template: PipelineTemplate;
 	onRun: (id: string) => void;
@@ -767,9 +779,9 @@ export function DeployPanel({
 								<Button
 									size="small"
 									icon={<LinkOutlined />}
-									onClick={() =>
-										navigate(`/pipeline/executions/${d.workflowName}`)
-									}
+									onClick={() => {
+										navigate(buildWorkflowExecutionUrl(d.workflowName, d.id));
+									}}
 								>
 									查看
 								</Button>
@@ -877,7 +889,13 @@ export function DeployPanel({
 			) : null}
 
 			<div className="deploy-panel__section-card">
-				<div style={{ marginBottom: 12, display: "flex", justifyContent: "center" }}>
+				<div
+					style={{
+						marginBottom: 12,
+						display: "flex",
+						justifyContent: "center",
+					}}
+				>
 					<Segmented
 						options={[
 							{ value: "all", label: "全部" },
@@ -1037,7 +1055,10 @@ export function DeployPanel({
 							style={{ fontFamily: "monospace", fontSize: 12 }}
 						/>
 						<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-							<label className="ant-btn ant-btn-default" style={{ cursor: "pointer" }}>
+							<label
+								className="ant-btn ant-btn-default"
+								style={{ cursor: "pointer" }}
+							>
 								上传 CSV
 								<input
 									type="file"
@@ -1055,16 +1076,24 @@ export function DeployPanel({
 									}}
 								/>
 							</label>
-							{pasteText ? (
-								(() => {
-									const parsed = parsePastedAssetIds(pasteText);
-									return (
-										<span style={{ fontSize: 12, color: parsed.unique > 0 ? "#16a34a" : "#999" }}>
-											{parsed.unique} 个资产{parsed.duplicates > 0 ? `（${parsed.duplicates} 个重复已移除）` : ""}
-										</span>
-									);
-								})()
-							) : null}
+							{pasteText
+								? (() => {
+										const parsed = parsePastedAssetIds(pasteText);
+										return (
+											<span
+												style={{
+													fontSize: 12,
+													color: parsed.unique > 0 ? "#16a34a" : "#999",
+												}}
+											>
+												{parsed.unique} 个资产
+												{parsed.duplicates > 0
+													? `（${parsed.duplicates} 个重复已移除）`
+													: ""}
+											</span>
+										);
+									})()
+								: null}
 						</div>
 					</div>
 				) : (
