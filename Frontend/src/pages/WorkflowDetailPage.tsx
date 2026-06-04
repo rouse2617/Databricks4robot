@@ -150,6 +150,8 @@ function WorkflowLogPanel({
 	const followMeta = followStatusMeta[followStatus];
 	const paginationUnavailable =
 		logResponse?.pagination && logResponse.pagination.available === false;
+	const noVisibleLogs = visibleLog !== null && visibleLog.totalLines === 0;
+	const emptyLogState = getWorkflowLogEmptyState(selectedNode);
 
 	useEffect(() => {
 		if (
@@ -258,11 +260,20 @@ function WorkflowLogPanel({
 							type="info"
 							showIcon
 							style={{ marginBottom: 8 }}
-							message="当前日志源不支持稳定历史分页"
-							description={
-								logResponse?.pagination?.reason ||
-								"实时 Argo 日志只提供 tail/since/follow 窗口；完整历史归档需要后续接入持久化日志。"
-							}
+							message="当前是实时日志窗口"
+							description={getWorkflowLogPaginationDescription(
+								selectedNode,
+								logResponse?.pagination?.reason,
+							)}
+						/>
+					)}
+					{noVisibleLogs && (
+						<Alert
+							type="info"
+							showIcon
+							style={{ marginBottom: 8 }}
+							message={emptyLogState.message}
+							description={emptyLogState.description}
 						/>
 					)}
 					{visibleLog?.truncated && (
@@ -303,8 +314,9 @@ function WorkflowLogPanel({
 						<Button
 							size="small"
 							icon={<CopyOutlined />}
+							disabled={!visibleLog?.content}
 							onClick={async () => {
-								if (!visibleLog) return;
+								if (!visibleLog?.content) return;
 								await navigator.clipboard.writeText(visibleLog.content);
 								messageApi.success("已复制当前可见日志");
 							}}
@@ -875,6 +887,65 @@ function costSnapshotMessage(row: {
 	return "成本快照未生成";
 }
 
+function formatCostCellValue(row: {
+	estimatedCostUsd?: number | null;
+	status?: string;
+}) {
+	if (typeof row.estimatedCostUsd === "number") {
+		return formatCost(row.estimatedCostUsd);
+	}
+	if (isWaitingForRuntimeResources(row.status)) {
+		return "等待资源快照";
+	}
+	if (isTerminalCostStatus(row.status)) {
+		return "暂无成本数据";
+	}
+	return "成本快照未生成";
+}
+
+export function getWorkflowLogEmptyState(
+	node?: Pick<WorkflowNodeStatus, "phase" | "message"> | null,
+) {
+	if (!node) {
+		return {
+			message: "暂无日志",
+			description: "当前节点暂未返回可展示的日志内容。",
+		};
+	}
+	if (isWaitingForRuntimeResources(node.phase)) {
+		return {
+			message: "等待日志输出",
+			description: node.message
+				? `节点还在调度、排队或启动中；开始运行后会逐步输出日志。当前状态：${node.message}`
+				: "节点还在调度、排队或启动中；开始运行后会逐步输出日志。",
+		};
+	}
+	if (isTerminalCostStatus(node.phase)) {
+		return {
+			message: "暂无日志输出",
+			description:
+				"这个步骤没有返回可展示的日志内容；可继续查看 Pod 事件、节点消息和运行环境。",
+		};
+	}
+	return {
+		message: "暂无日志",
+		description: "当前节点暂未返回可展示的日志内容。",
+	};
+}
+
+function getWorkflowLogPaginationDescription(
+	node?: Pick<WorkflowNodeStatus, "phase"> | null,
+	serverReason?: string,
+) {
+	if (serverReason && !/live argo logs/i.test(serverReason)) {
+		return serverReason;
+	}
+	if (node && isWaitingForRuntimeResources(node.phase)) {
+		return "当前展示的是实时日志窗口，历史翻页暂不可用。节点开始运行后可继续 follow、刷新或下载当前窗口。";
+	}
+	return "当前展示的是实时日志窗口，历史翻页暂不可用。可继续 follow、刷新或下载当前窗口。";
+}
+
 function formatDurationSeconds(startedAt?: string, finishedAt?: string) {
 	if (!startedAt || !finishedAt) return "-";
 	const start = new Date(startedAt).getTime();
@@ -1113,7 +1184,7 @@ function WorkflowAssetNodePanel({
 						width: 120,
 						render: (_, row) => (
 							<Tooltip title={costSnapshotMessage(row)}>
-								<span>{formatCost(row.estimatedCostUsd)}</span>
+								<span>{formatCostCellValue(row)}</span>
 							</Tooltip>
 						),
 					},

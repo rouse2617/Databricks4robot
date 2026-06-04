@@ -30,9 +30,7 @@ import type {
 	WorkflowNodeContainer,
 	WorkflowNodeStatus,
 	WorkflowPodCondition,
-	WorkflowPodCost,
 	WorkflowPodEvent,
-	WorkflowPodMetrics,
 } from "../../api/workflowApi";
 import {
 	getNodePodDiagnostics,
@@ -220,6 +218,140 @@ function formatBytes(value?: number) {
 function formatCost(value?: number) {
 	if (typeof value !== "number" || Number.isNaN(value)) return "—";
 	return `$${value.toFixed(value >= 1 ? 2 : 4)}`;
+}
+
+const WAITING_NODE_PHASES = new Set([
+	"pending",
+	"running",
+	"waiting",
+	"queued",
+]);
+const TERMINAL_NODE_PHASES = new Set([
+	"succeeded",
+	"failed",
+	"error",
+	"skipped",
+	"omitted",
+	"terminated",
+	"stopped",
+]);
+
+function normalizeNodePhase(value?: string) {
+	return (value || "").trim().toLowerCase();
+}
+
+function isWaitingNodePhase(value?: string) {
+	return WAITING_NODE_PHASES.has(normalizeNodePhase(value));
+}
+
+function isTerminalNodePhase(value?: string) {
+	return TERMINAL_NODE_PHASES.has(normalizeNodePhase(value));
+}
+
+function renderRuntimeDescription(
+	primary: string,
+	nodeMessage?: string,
+	extra?: string,
+) {
+	return (
+		<Space direction="vertical" size={4}>
+			<Typography.Text>{primary}</Typography.Text>
+			{nodeMessage ? (
+				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+					当前状态：{nodeMessage}
+				</Typography.Text>
+			) : null}
+			{extra ? (
+				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+					{extra}
+				</Typography.Text>
+			) : null}
+		</Space>
+	);
+}
+
+function getMonitoringState(node: WorkflowNodeStatus) {
+	if (node.metrics) {
+		return {
+			type: "success" as const,
+			message: "监控快照",
+			description: node.metrics.sampledAt
+				? `采样时间：${formatRelativeTime(node.metrics.sampledAt)}`
+				: "当前节点已返回运行指标快照。",
+		};
+	}
+	if (node.debug && node.debug.metricsEnabled === false) {
+		return {
+			type: "warning" as const,
+			message: "监控采集未启用",
+			description:
+				node.debug.reason || "当前执行目标没有返回 CPU、内存、GPU 或网络指标。",
+		};
+	}
+	if (isWaitingNodePhase(node.phase)) {
+		return {
+			type: "info" as const,
+			message: "等待运行指标",
+			description: renderRuntimeDescription(
+				"当前节点还在调度、排队或启动中；开始运行后会返回 CPU、内存、GPU 与网络指标。",
+				node.message,
+			),
+		};
+	}
+	if (isTerminalNodePhase(node.phase)) {
+		return {
+			type: "info" as const,
+			message: "暂无监控快照",
+			description:
+				"当前节点已结束，但没有记录到可展示的运行指标；可继续查看 Pod、日志和事件。",
+		};
+	}
+	return {
+		type: "warning" as const,
+		message: "监控数据暂不可用",
+		description: "当前节点暂未返回可展示的运行指标。",
+	};
+}
+
+function getBillingState(node: WorkflowNodeStatus) {
+	if (node.cost) {
+		return {
+			type: "success" as const,
+			message: "计费快照",
+			description: `窗口：${node.cost.window || "—"} · 来源：${node.cost.provider || "—"}`,
+		};
+	}
+	if (node.debug && node.debug.costEnabled === false) {
+		return {
+			type: "warning" as const,
+			message: "计费采集未启用",
+			description:
+				node.debug.reason || "当前执行目标没有返回该节点的成本拆分。",
+		};
+	}
+	if (isWaitingNodePhase(node.phase)) {
+		return {
+			type: "info" as const,
+			message: "等待资源快照",
+			description: renderRuntimeDescription(
+				"当前节点还在排队或运行中；资源耗时生成后会自动补齐估算成本。",
+				node.message,
+			),
+		};
+	}
+	if (isTerminalNodePhase(node.phase)) {
+		return {
+			type: "info" as const,
+			message: "暂无成本数据",
+			description:
+				"当前节点已结束，但没有记录到该步骤的成本拆分；Pod、日志和事件仍可继续查看。",
+		};
+	}
+	return {
+		type: "warning" as const,
+		message: "成本数据暂不可用",
+		description: "当前节点暂未返回可展示的成本信息。",
+	};
 }
 
 function getMetricPercent(used?: number, limit?: number) {
@@ -417,7 +549,8 @@ function PodTab({
 	);
 }
 
-function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
+function MonitoringTab({ node }: { node: WorkflowNodeStatus }) {
+	const metrics = node.metrics;
 	const cpuPercent = getMetricPercent(
 		metrics?.cpuCores,
 		metrics?.cpuLimitCores || metrics?.cpuRequestCores,
@@ -426,18 +559,15 @@ function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
 		metrics?.memoryBytes,
 		metrics?.memoryLimitBytes || metrics?.memoryRequestBytes,
 	);
+	const state = getMonitoringState(node);
 
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<Alert
-				type={metrics ? "success" : "info"}
+				type={state.type}
 				showIcon
-				message={metrics ? "监控快照" : "暂无监控数据"}
-				description={
-					metrics
-						? `采样时间：${metrics.sampledAt ? formatRelativeTime(metrics.sampledAt) : "—"}`
-						: "当前运行未返回 CPU、内存、GPU、网络或存储指标。"
-				}
+				message={state.message}
+				description={state.description}
 			/>
 			<Row gutter={[12, 12]}>
 				<Col span={12}>
@@ -486,18 +616,16 @@ function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
 	);
 }
 
-function BillingTab({ cost }: { cost?: WorkflowPodCost }) {
+function BillingTab({ node }: { node: WorkflowNodeStatus }) {
+	const cost = node.cost;
+	const state = getBillingState(node);
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<Alert
-				type={cost ? "success" : "info"}
+				type={state.type}
 				showIcon
-				message={cost ? "计费快照" : "暂无计费数据"}
-				description={
-					cost
-						? `窗口：${cost.window || "—"} · 来源：${cost.provider || "—"}`
-						: "本次运行没有记录该步骤的成本拆分；这通常出现在历史工作流、外部提交工作流或未开启计费采集的执行目标。"
-				}
+				message={state.message}
+				description={state.description}
 			/>
 			<Row gutter={[12, 12]}>
 				<Col span={12}>
@@ -613,17 +741,21 @@ function RuntimeTab({
 				<PodTab node={node} workflowName={workflowName} />
 			</RuntimeSection>
 			<RuntimeSection title="监控">
-				<MonitoringTab metrics={node.metrics} />
+				<MonitoringTab node={node} />
 			</RuntimeSection>
 			<RuntimeSection title="计费">
-				<BillingTab cost={node.cost} />
+				<BillingTab node={node} />
 			</RuntimeSection>
 			<RuntimeSection title="调试">
 				<Alert
 					type="info"
 					showIcon
-					message="终端调试"
-					description="终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。"
+					message="终端入口在节点卡片上"
+					description={
+						node.debug?.execEnabled
+							? "返回 DAG 后点击节点上的终端按钮，即可进入调试会话。"
+							: "当前面板只展示运行快照；如需终端调试，请回到 DAG 使用节点卡片入口。"
+					}
 				/>
 			</RuntimeSection>
 		</Space>

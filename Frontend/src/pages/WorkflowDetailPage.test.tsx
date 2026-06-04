@@ -3,7 +3,9 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import WorkflowDetailPage from "./WorkflowDetailPage";
+import WorkflowDetailPage, {
+	getWorkflowLogEmptyState,
+} from "./WorkflowDetailPage";
 
 const mockUseWorkflowDetail = vi.fn();
 
@@ -319,5 +321,30 @@ describe("WorkflowDetailPage", () => {
 			screen.getByText(/本次运行已有节点结果，但没有生成成本快照/),
 		).toBeInTheDocument();
 		expect(screen.queryByText("暂无计费配置")).not.toBeInTheDocument();
+	});
+
+	it("returns waiting log copy for pending nodes", () => {
+		expect(
+			getWorkflowLogEmptyState({
+				phase: "Pending",
+				message: "0/3 nodes are available: Insufficient cpu.",
+			}),
+		).toEqual({
+			message: "等待日志输出",
+			description:
+				"节点还在调度、排队或启动中；开始运行后会逐步输出日志。当前状态：0/3 nodes are available: Insufficient cpu.",
+		});
+	});
+
+	it("returns quiet log copy for completed nodes", () => {
+		expect(
+			getWorkflowLogEmptyState({
+				phase: "Succeeded",
+			}),
+		).toEqual({
+			message: "暂无日志输出",
+			description:
+				"这个步骤没有返回可展示的日志内容；可继续查看 Pod 事件、节点消息和运行环境。",
+		});
 	});
 });

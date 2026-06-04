@@ -302,10 +302,14 @@ describe("WorkflowNodeDetailPanel", () => {
 		expect(screen.getByText("$0.1200")).toBeTruthy();
 	});
 
-	it("renders disabled debug terminal shell before backend exec is available", () => {
+	it("shows waiting runtime copy for pending nodes", () => {
 		render(
 			<WorkflowNodeDetailPanel
-				node={baseNode}
+				node={{
+					...baseNode,
+					phase: "Pending",
+					message: "0/3 nodes are available: Insufficient cpu.",
+				}}
 				workflow={baseWorkflow}
 				open
 				onClose={vi.fn()}
@@ -313,20 +317,44 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
-		expect(screen.getAllByText("Pod 终端未启用").length).toBeGreaterThan(0);
-		expect(screen.getByRole("button", { name: "pwd" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "打开终端" })).toBeDisabled();
+		expect(screen.getByText("等待运行指标")).toBeTruthy();
+		expect(
+			screen.getByText(/开始运行后会返回 CPU、内存、GPU 与网络指标/),
+		).toBeTruthy();
+		expect(screen.getByText("等待资源快照")).toBeTruthy();
+		expect(screen.getByText(/资源耗时生成后会自动补齐估算成本/)).toBeTruthy();
+		expect(screen.getAllByText(/Insufficient cpu/).length).toBeGreaterThan(0);
 	});
 
-	it("enables terminal command presets when backend marks exec enabled", () => {
+	it("shows quiet completed no-snapshot copy and condensed terminal guidance", () => {
+		render(
+			<WorkflowNodeDetailPanel
+				node={{
+					...baseNode,
+				}}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
+		expect(screen.getByText("暂无监控快照")).toBeTruthy();
+		expect(screen.getByText("暂无成本数据")).toBeTruthy();
+		expect(screen.getByText("终端入口在节点卡片上")).toBeTruthy();
+		expect(screen.getByText(/请回到 DAG 使用节点卡片入口/)).toBeTruthy();
+	});
+
+	it("shows explicit collection-disabled copy when backend marks metrics or cost unavailable", () => {
 		render(
 			<WorkflowNodeDetailPanel
 				node={{
 					...baseNode,
 					debug: {
+						metricsEnabled: false,
+						costEnabled: false,
 						execEnabled: true,
-						allowedCommands: ["sh", "pwd"],
-						reason: "Pod terminal is available for this running node.",
+						reason: "execution target diagnostics disabled",
 					},
 				}}
 				workflow={baseWorkflow}
@@ -336,9 +364,14 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
-		expect(screen.getByText("Pod 终端可用")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "sh" })).not.toBeDisabled();
-		expect(screen.getByRole("button", { name: "打开终端" })).not.toBeDisabled();
+		expect(screen.getByText("监控采集未启用")).toBeTruthy();
+		expect(screen.getByText("计费采集未启用")).toBeTruthy();
+		expect(
+			screen.getAllByText("execution target diagnostics disabled").length,
+		).toBeGreaterThan(0);
+		expect(
+			screen.getByText(/点击节点上的终端按钮，即可进入调试会话/),
+		).toBeTruthy();
 	});
 
 	it("opens the requested compact tab", () => {
