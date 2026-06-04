@@ -822,8 +822,57 @@ function formatCost(value?: number | null) {
 
 function formatCostSource(value?: string) {
 	if (value === "estimated_resource_duration") return "估算";
-	if (value === "not_available") return "暂无计费配置";
+	if (value === "not_available") return "暂无成本数据";
 	return "未生成";
+}
+
+const COST_WAITING_STATUSES = new Set([
+	"pending",
+	"running",
+	"waiting",
+	"queued",
+]);
+const COST_TERMINAL_STATUSES = new Set([
+	"succeeded",
+	"failed",
+	"error",
+	"skipped",
+	"omitted",
+]);
+
+function normalizeStatus(value?: string) {
+	return (value || "").trim().toLowerCase();
+}
+
+function isWaitingForRuntimeResources(status?: string) {
+	return COST_WAITING_STATUSES.has(normalizeStatus(status));
+}
+
+function isTerminalCostStatus(status?: string) {
+	return COST_TERMINAL_STATUSES.has(normalizeStatus(status));
+}
+
+function rowMissingCost(row: {
+	estimatedCostUsd?: number | null;
+	status?: string;
+}) {
+	return typeof row.estimatedCostUsd !== "number";
+}
+
+function costSnapshotMessage(row: {
+	estimatedCostUsd?: number | null;
+	status?: string;
+}) {
+	if (typeof row.estimatedCostUsd === "number") {
+		return "估算成本，非 GCP Billing 最终账单";
+	}
+	if (isWaitingForRuntimeResources(row.status)) {
+		return "等待资源快照，节点运行后生成估算成本";
+	}
+	if (isTerminalCostStatus(row.status)) {
+		return "暂无成本数据";
+	}
+	return "成本快照未生成";
 }
 
 function formatDurationSeconds(startedAt?: string, finishedAt?: string) {
@@ -866,6 +915,24 @@ function WorkflowAssetNodePanel({
 	const syncedNodeCount = costSummaryState.item?.nodeSummaries?.length ?? 0;
 	const syncedAssetNodeCount =
 		costSummaryState.item?.assetNodeSummaries?.length ?? 0;
+	const assetBusinessRows = assetNodeState.items.filter(
+		(row) => row.pipelineNodeId !== "dag",
+	);
+	const costSummaryRows = costSummaryState.item?.nodeSummaries ?? [];
+	const allCostRows = [...assetBusinessRows, ...costSummaryRows];
+	const waitingForResourceSnapshot =
+		!costSummaryState.loading &&
+		totalEstimatedCost == null &&
+		allCostRows.some(
+			(row) => rowMissingCost(row) && isWaitingForRuntimeResources(row.status),
+		);
+	const completedMissingCost =
+		!costSummaryState.loading &&
+		totalEstimatedCost == null &&
+		allCostRows.length > 0 &&
+		!waitingForResourceSnapshot &&
+		allCostRows.every((row) => rowMissingCost(row)) &&
+		allCostRows.some((row) => isTerminalCostStatus(row.status));
 	const hasCostRows =
 		syncedNodeCount > 0 ||
 		syncedAssetNodeCount > 0 ||
@@ -874,15 +941,45 @@ function WorkflowAssetNodePanel({
 		!costSummaryState.loading &&
 		costSource === "not_available" &&
 		hasCostRows &&
-		totalEstimatedCost == null;
+		totalEstimatedCost == null &&
+		!waitingForResourceSnapshot &&
+		!completedMissingCost;
 	const costSyncPartial =
 		!costUnavailable &&
+		!waitingForResourceSnapshot &&
+		!completedMissingCost &&
 		expectedNodeCount > 0 &&
 		syncedNodeCount > 0 &&
 		syncedNodeCount < expectedNodeCount;
 	const costSyncPending =
 		costSummaryState.loading ||
-		(expectedNodeCount > 0 && !hasCostRows && totalEstimatedCost == null);
+		(!waitingForResourceSnapshot &&
+			!completedMissingCost &&
+			expectedNodeCount > 0 &&
+			!hasCostRows &&
+			totalEstimatedCost == null);
+	const costStateLabel = costSyncPending
+		? "同步中"
+		: waitingForResourceSnapshot
+			? "等待资源快照"
+			: completedMissingCost || costUnavailable
+				? "暂无成本数据"
+				: formatCost(totalEstimatedCost);
+	const costSourceLabel = costSyncPending
+		? "同步中"
+		: costSyncPartial
+			? `部分同步 ${syncedNodeCount}/${expectedNodeCount}`
+			: waitingForResourceSnapshot
+				? "等待资源快照"
+				: completedMissingCost
+					? "暂无成本数据"
+					: formatCostSource(costSource);
+	const costTagColor =
+		costSyncPending || costSyncPartial || waitingForResourceSnapshot
+			? "orange"
+			: completedMissingCost || costUnavailable
+				? "default"
+				: "blue";
 	return (
 		<div
 			style={{
@@ -920,28 +1017,9 @@ function WorkflowAssetNodePanel({
 						节点 {expectedNodeCount}
 					</Typography.Text>
 					<Typography.Text type="secondary">
-						总成本{" "}
-						{costSyncPending
-							? "同步中"
-							: costUnavailable
-								? "暂无估算"
-								: formatCost(totalEstimatedCost)}
+						总成本 {costStateLabel}
 					</Typography.Text>
-					<Tag
-						color={
-							costSyncPending || costSyncPartial
-								? "orange"
-								: costUnavailable
-									? "default"
-									: "blue"
-						}
-					>
-						{costSyncPending
-							? "同步中"
-							: costSyncPartial
-								? `部分同步 ${syncedNodeCount}/${expectedNodeCount}`
-								: formatCostSource(costSource)}
-					</Tag>
+					<Tag color={costTagColor}>{costSourceLabel}</Tag>
 				</Space>
 			</div>
 			{costSyncPending || costSyncPartial ? (
@@ -952,12 +1030,28 @@ function WorkflowAssetNodePanel({
 					description="Argo 节点状态会先返回，DataBrew 成本汇总可能延迟几秒；刷新后会补齐节点耗时与估算成本。"
 					style={{ margin: "8px 10px 0" }}
 				/>
+			) : waitingForResourceSnapshot ? (
+				<Alert
+					type="info"
+					showIcon
+					message="等待资源快照"
+					description="节点还在排队或运行中，资源耗时生成后会自动补齐估算成本；节点状态、日志和 Pod 诊断不受影响。"
+					style={{ margin: "8px 10px 0" }}
+				/>
+			) : completedMissingCost ? (
+				<Alert
+					type="info"
+					showIcon
+					message="暂无成本数据"
+					description="本次运行已有节点结果，但没有生成成本快照；节点状态、日志和 Pod 诊断仍可继续查看。"
+					style={{ margin: "8px 10px 0" }}
+				/>
 			) : costUnavailable ? (
 				<Alert
 					type="warning"
 					showIcon
-					message="暂无估算成本"
-					description="后端未加载计费配置，或当前资源组合没有价格映射；节点状态、日志和 Pod 诊断不受影响。"
+					message="成本数据暂不可用"
+					description="后端暂未返回可用的成本快照；节点状态、日志和 Pod 诊断不受影响。"
 					style={{ margin: "8px 10px 0" }}
 				/>
 			) : null}
@@ -1018,13 +1112,7 @@ function WorkflowAssetNodePanel({
 						title: "估算成本",
 						width: 120,
 						render: (_, row) => (
-							<Tooltip
-								title={
-									typeof row.estimatedCostUsd === "number"
-										? "估算成本，非 GCP Billing 最终账单"
-										: "该节点未生成成本快照"
-								}
-							>
+							<Tooltip title={costSnapshotMessage(row)}>
 								<span>{formatCost(row.estimatedCostUsd)}</span>
 							</Tooltip>
 						),
