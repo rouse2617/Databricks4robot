@@ -26,7 +26,7 @@ func NewPipelineComponentRepo(c *Client) *PipelineComponentRepo {
 
 var _ repository.PipelineComponentRepository = (*PipelineComponentRepo)(nil)
 
-const pipelineComponentSelectCols = `id, name, description, image, tag, source,
+const pipelineComponentSelectCols = `id, name, description, image, tag, source, scope, owner,
   input_ports, output_ports, resources, env_vars, created_at, updated_at`
 
 func scanPipelineComponent(rs rowScanner) (*models.PipelineComponent, error) {
@@ -38,7 +38,7 @@ func scanPipelineComponent(rs rowScanner) (*models.PipelineComponent, error) {
 		envVars   []byte
 	)
 	if err := rs.Scan(
-		&pc.ID, &pc.Name, &pc.Description, &pc.Image, &pc.Tag, &pc.Source,
+		&pc.ID, &pc.Name, &pc.Description, &pc.Image, &pc.Tag, &pc.Source, &pc.Scope, &pc.Owner,
 		&inPorts, &outPorts, &resources, &envVars, &pc.CreatedAt, &pc.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -138,13 +138,13 @@ func (r *PipelineComponentRepo) Save(ctx context.Context, pc *models.PipelineCom
 	envVars, _ := json.Marshal(pc.EnvVars)
 
 	const q = `
-	INSERT INTO pipeline_components (id, name, description, image, tag, source,
+	INSERT INTO pipeline_components (id, name, description, image, tag, source, scope, owner,
 	  input_ports, output_ports, resources, env_vars, created_at, updated_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12)`
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14)`
 
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
-		pc.ID, pc.Name, pc.Description, pc.Image, pc.Tag, pc.Source,
+		pc.ID, pc.Name, pc.Description, pc.Image, pc.Tag, pc.Source, pc.Scope, pc.Owner,
 		inPorts, outPorts, resources, envVars, pc.CreatedAt, pc.UpdatedAt,
 	); err != nil {
 		return fmt.Errorf("postgres PipelineComponentRepo.Save: %w", err)
@@ -221,14 +221,14 @@ func (r *PipelineComponentRepo) Update(ctx context.Context, pc *models.PipelineC
 	envVars, _ := json.Marshal(pc.EnvVars)
 
 	const q = `UPDATE pipeline_components SET
-	  name = $2, description = $3, image = $4, tag = $5, source = $6,
-	  input_ports = $7::jsonb, output_ports = $8::jsonb,
-	  resources = $9::jsonb, env_vars = $10::jsonb, updated_at = $11
+	  name = $2, description = $3, image = $4, tag = $5, source = $6, scope = $7, owner = $8,
+	  input_ports = $9::jsonb, output_ports = $10::jsonb,
+	  resources = $11::jsonb, env_vars = $12::jsonb, updated_at = $13
 	WHERE id = $1`
 
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
-		pc.ID, pc.Name, pc.Description, pc.Image, pc.Tag, pc.Source,
+		pc.ID, pc.Name, pc.Description, pc.Image, pc.Tag, pc.Source, pc.Scope, pc.Owner,
 		inPorts, outPorts, resources, envVars, pc.UpdatedAt,
 	); err != nil {
 		return fmt.Errorf("postgres PipelineComponentRepo.Update: %w", err)

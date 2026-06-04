@@ -607,6 +607,35 @@ func TestDeploymentCRUD(t *testing.T) {
 		}
 	})
 
+	t.Run("get preserves scope and owner", func(t *testing.T) {
+		repo := newMockAssetRepo()
+		uc := newUsecase(repo)
+		pipe := map[string]interface{}{
+			"name": "scope-test", "nodes": []interface{}{}, "edges": []interface{}{},
+		}
+		dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{Owner: "test@example.com"})
+		if err != nil {
+			t.Fatalf("Deploy: %v", err)
+		}
+		if dep.Scope != "dev" {
+			t.Fatalf("expected scope dev, got %q", dep.Scope)
+		}
+		if dep.Owner != "test@example.com" {
+			t.Fatalf("expected owner test@example.com, got %q", dep.Owner)
+		}
+
+		got, err := uc.GetDeployment(ctx, dep.ID)
+		if err != nil {
+			t.Fatalf("GetDeployment: %v", err)
+		}
+		if got.Scope != "dev" {
+			t.Fatalf("expected persisted scope dev, got %q", got.Scope)
+		}
+		if got.Owner != "test@example.com" {
+			t.Fatalf("expected persisted owner test@example.com, got %q", got.Owner)
+		}
+	})
+
 	t.Run("get returns nil for missing", func(t *testing.T) {
 		repo := newMockAssetRepo()
 		uc := newUsecase(repo)

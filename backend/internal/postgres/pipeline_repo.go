@@ -239,7 +239,7 @@ func NewPipelineDeploymentRepo(c *Client) *PipelineDeploymentRepo {
 var _ repository.PipelineDeploymentRepository = (*PipelineDeploymentRepo)(nil)
 
 const pipelineDeploymentSelectCols = `id, template_id, pipeline_name, workflow_name,
-  status, node_count, manifest, pipeline_json, created_at, updated_at, finished_at`
+  status, node_count, scope, owner, manifest, pipeline_json, created_at, updated_at, finished_at`
 
 func scanPipelineDeployment(rs rowScanner) (*models.PipelineDeployment, error) {
 	var (
@@ -250,7 +250,7 @@ func scanPipelineDeployment(rs rowScanner) (*models.PipelineDeployment, error) {
 	)
 	if err := rs.Scan(
 		&d.ID, &templateID, &d.PipelineName, &d.WorkflowName,
-		&d.Status, &d.NodeCount, &manifest, &pipelineJSON, &d.CreatedAt, &d.UpdatedAt, &d.FinishedAt,
+		&d.Status, &d.NodeCount, &d.Scope, &d.Owner, &manifest, &pipelineJSON, &d.CreatedAt, &d.UpdatedAt, &d.FinishedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -295,14 +295,16 @@ func (r *PipelineDeploymentRepo) Save(ctx context.Context, d *models.PipelineDep
 	}
 
 	const q = `
-INSERT INTO pipeline_deployments (id, template_id, pipeline_name, workflow_name, status, node_count, manifest, pipeline_json, created_at, updated_at, finished_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
+INSERT INTO pipeline_deployments (id, template_id, pipeline_name, workflow_name, status, node_count, scope, owner, manifest, pipeline_json, created_at, updated_at, finished_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13)
 ON CONFLICT (id) DO UPDATE SET
     template_id   = EXCLUDED.template_id,
     pipeline_name = EXCLUDED.pipeline_name,
     workflow_name = EXCLUDED.workflow_name,
     status        = EXCLUDED.status,
     node_count    = EXCLUDED.node_count,
+    scope         = EXCLUDED.scope,
+    owner         = EXCLUDED.owner,
     manifest      = EXCLUDED.manifest,
     pipeline_json = EXCLUDED.pipeline_json,
     updated_at    = EXCLUDED.updated_at,
@@ -315,7 +317,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
-		d.ID, templateID, d.PipelineName, d.WorkflowName, d.Status, d.NodeCount,
+		d.ID, templateID, d.PipelineName, d.WorkflowName, d.Status, d.NodeCount, d.Scope, d.Owner,
 		manifest, pipelineJSON, d.CreatedAt, now, d.FinishedAt,
 	); err != nil {
 		return fmt.Errorf("postgres PipelineDeploymentRepo.Save: %w", err)
@@ -596,7 +598,7 @@ var _ repository.PipelineRunRepository = (*PipelineRunRepo)(nil)
 
 const pipelineRunSelectCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, target_snapshot, status, node_count, asset_ids, asset_count, no_asset_run,
-  manifest, pipeline_json, argo_namespace, argo_workflow_uid, message,
+  manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner,
   created_at, updated_at, started_at, finished_at`
 
 func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
@@ -613,7 +615,7 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
 		&r.ExecutionTargetID, &targetSnapshot, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&manifest, &pipelineJSON, &r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
-		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.Scope, &r.Owner, &r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -671,13 +673,13 @@ func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) err
 INSERT INTO pipeline_runs (
   id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, target_snapshot, status, node_count, asset_ids, asset_count, no_asset_run,
-  manifest, pipeline_json, argo_namespace, argo_workflow_uid, message,
+  manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner,
   created_at, updated_at, started_at, finished_at
 ) VALUES (
   $1, $2, $3, $4, $5,
   $6, $7::jsonb, $8, $9, $10::text[], $11, $12,
-  $13, $14::jsonb, $15, $16, $17,
-  $18, $19, $20, $21
+  $13, $14::jsonb, $15, $16, $17, $18, $19,
+  $20, $21, $22, $23
 )
 ON CONFLICT (id) DO UPDATE SET
   template_id = EXCLUDED.template_id,
@@ -696,6 +698,8 @@ ON CONFLICT (id) DO UPDATE SET
   argo_namespace = EXCLUDED.argo_namespace,
   argo_workflow_uid = EXCLUDED.argo_workflow_uid,
   message = EXCLUDED.message,
+  scope = EXCLUDED.scope,
+  owner = EXCLUDED.owner,
   updated_at = EXCLUDED.updated_at,
   started_at = EXCLUDED.started_at,
   finished_at = EXCLUDED.finished_at`
@@ -705,7 +709,7 @@ ON CONFLICT (id) DO UPDATE SET
 	if err := db.Exec(ctx, q,
 		run.ID, templateID, run.PipelineName, templateVersion, run.WorkflowName,
 		run.ExecutionTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
-		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message,
+		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message, run.Scope, run.Owner,
 		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt,
 	); err != nil {
 		return fmt.Errorf("postgres PipelineRunRepo.Save: %w", err)

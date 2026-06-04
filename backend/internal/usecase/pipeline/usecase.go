@@ -318,6 +318,8 @@ func (uc *Usecase) deploymentToRun(dep *models.PipelineDeployment) *models.Pipel
 		PipelineJSON:      dep.PipelineJSON,
 		ArgoNamespace:     target.Namespace,
 		ExecutionTarget:   &target,
+		Scope:             dep.Scope,
+		Owner:             dep.Owner,
 		CreatedAt:         dep.CreatedAt,
 		UpdatedAt:         dep.UpdatedAt,
 		FinishedAt:        dep.FinishedAt,
@@ -343,6 +345,8 @@ func runToDeployment(run *models.PipelineRun) *models.PipelineDeployment {
 		AssetIDs:        run.AssetIDs,
 		AssetCount:      run.AssetCount,
 		ExecutionTarget: run.ExecutionTarget,
+		Scope:           run.Scope,
+		Owner:           run.Owner,
 		Manifest:        run.Manifest,
 		PipelineJSON:    run.PipelineJSON,
 		CreatedAt:       run.CreatedAt,
@@ -1328,7 +1332,7 @@ func (uc *Usecase) Promote(ctx context.Context, templateID string) (*models.Pipe
 	if t.Scope == "prod" {
 		return nil, fmt.Errorf("template %s is already in prod scope", t.Name)
 	}
-	return uc.SaveTemplate(ctx, t.Name, t.Pipeline, "prod", "")
+	return uc.SaveTemplate(ctx, t.Name, t.Pipeline, "prod", t.Owner)
 }
 
 // ListTemplates returns all pipeline templates.
@@ -1535,9 +1539,9 @@ func (uc *Usecase) Deploy(
 		}
 	}
 
-	var runScope, runOwner string
+	runScope := "dev"
+	runOwner := ""
 	if len(opts) > 0 {
-		runScope = "dev"
 		runOwner = opts[0].Owner
 	}
 	dep := &models.PipelineDeployment{

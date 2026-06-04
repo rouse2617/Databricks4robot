@@ -707,6 +707,15 @@ export function DeployPanel({
 										<Tag color={STATUS_COLORS[d.status] || "default"}>
 											{d.status}
 										</Tag>
+										{d.scope === "prod" ? (
+											<Tag color="green" style={{ fontSize: 11 }}>
+												<LockOutlined /> 正式版
+											</Tag>
+										) : d.scope ? (
+											<Tag color="blue" style={{ fontSize: 11 }}>
+												Dev 草稿
+											</Tag>
+										) : null}
 									</div>
 								</div>
 								<Button
