@@ -7,6 +7,8 @@ export interface PipelineTemplate {
 	version: number;
 	versionCount?: number;
 	activeVersion?: number;
+	scope?: string;
+	owner?: string;
 	pipeline: Pipeline;
 	nodeCount: number;
 	createdAt: string;
@@ -185,6 +187,10 @@ export function savePipeline(
 
 export function deletePipeline(id: string): Promise<void> {
 	return request<void>("DELETE", `/pipelines/${id}`);
+}
+
+export function promotePipeline(id: string): Promise<PipelineTemplate> {
+	return request<PipelineTemplate>("POST", `/pipelines/${id}/promote`);
 }
 
 export function deployTemplate(

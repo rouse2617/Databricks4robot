@@ -1,0 +1,13 @@
+-- 051: Add scope and owner to pipeline entities for dev/prod isolation.
+
+ALTER TABLE pipeline_templates
+  ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'dev',
+  ADD COLUMN IF NOT EXISTS owner VARCHAR(255) NOT NULL DEFAULT '';
+
+ALTER TABLE pipeline_components
+  ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'dev',
+  ADD COLUMN IF NOT EXISTS owner VARCHAR(255) NOT NULL DEFAULT '';
+
+ALTER TABLE pipeline_runs
+  ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'dev',
+  ADD COLUMN IF NOT EXISTS owner VARCHAR(255) NOT NULL DEFAULT '';

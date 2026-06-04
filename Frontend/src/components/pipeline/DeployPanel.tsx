@@ -3,8 +3,10 @@ import {
 	EditOutlined,
 	HistoryOutlined,
 	LinkOutlined,
+	LockOutlined,
 	PlayCircleOutlined,
 	ReloadOutlined,
+	RocketOutlined,
 } from "@ant-design/icons";
 import {
 	Alert,
@@ -31,6 +33,7 @@ import {
 	listPipelines,
 	listPipelineVersions,
 	type PipelineTemplate,
+	promotePipeline,
 } from "../../api/pipelineApi";
 import { request } from "../../api/pipelineClient";
 import { toAssetStyleId } from "../../lib/idDisplay";
@@ -129,6 +132,7 @@ function TemplateCard({
 	onEdit,
 	onDelete,
 	onVersionHistory,
+	onPromote,
 	activeVersion,
 	compactActions,
 	selectable,
@@ -140,6 +144,7 @@ function TemplateCard({
 	onEdit: (id: string) => void;
 	onDelete: (id: string) => void;
 	onVersionHistory?: (template: PipelineTemplate) => void;
+	onPromote?: (template: PipelineTemplate) => void;
 	activeVersion?: number;
 	compactActions?: boolean;
 	selectable?: boolean;
@@ -180,6 +185,15 @@ function TemplateCard({
 						>
 							v{template.version} <HistoryOutlined />
 						</Tag>
+						{template.scope === "prod" ? (
+							<Tag color="green" style={{ fontSize: 11 }}>
+								<LockOutlined /> 正式版
+							</Tag>
+						) : (
+							<Tag color="blue" style={{ fontSize: 11 }}>
+								Dev 草稿
+							</Tag>
+						)}
 						{activeVersion != null && activeVersion < template.version ? (
 							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
 								活跃: v{activeVersion}
@@ -205,6 +219,15 @@ function TemplateCard({
 						>
 							v{template.version} <HistoryOutlined />
 						</Tag>
+						{template.scope === "prod" ? (
+							<Tag color="green" style={{ fontSize: 11 }}>
+								<LockOutlined /> 正式版
+							</Tag>
+						) : (
+							<Tag color="blue" style={{ fontSize: 11 }}>
+								Dev 草稿
+							</Tag>
+						)}
 						{activeVersion != null && activeVersion < template.version ? (
 							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
 								活跃: v{activeVersion}
@@ -255,27 +278,41 @@ function TemplateCard({
 							运行
 						</Button>
 					</Space.Compact>
-					<Button
-						size="small"
-						icon={<EditOutlined />}
-						onClick={() => onEdit(template.id)}
-					>
-						编辑
-					</Button>
-					<Popconfirm
-						title="删除此流水线？"
-						description="删除后不可恢复"
-						okText="删除"
-						cancelText="取消"
-						onConfirm={() => onDelete(template.id)}
-					>
+					{template.scope !== "prod" ? (
 						<Button
 							size="small"
-							danger
-							icon={<DeleteOutlined />}
-							aria-label="删除流水线"
-						/>
-					</Popconfirm>
+							icon={<RocketOutlined />}
+							onClick={() => onPromote?.(template)}
+							title="发布到正式版"
+						>
+							发布
+						</Button>
+					) : null}
+					{template.scope !== "prod" ? (
+						<Button
+							size="small"
+							icon={<EditOutlined />}
+							onClick={() => onEdit(template.id)}
+						>
+							编辑
+						</Button>
+					) : null}
+					{template.scope !== "prod" ? (
+						<Popconfirm
+							title="删除此流水线？"
+							description="删除后不可恢复"
+							okText="删除"
+							cancelText="取消"
+							onConfirm={() => onDelete(template.id)}
+						>
+							<Button
+								size="small"
+								danger
+								icon={<DeleteOutlined />}
+								aria-label="删除流水线"
+							/>
+						</Popconfirm>
+					) : null}
 				</div>
 			)}
 		</div>
@@ -509,6 +546,16 @@ export function DeployPanel({
 		setVersionDrawerOpen(true);
 	};
 
+	const handlePromote = async (template: PipelineTemplate) => {
+		try {
+			const promoted = await promotePipeline(template.id);
+			message.success(`已发布 ${template.name} v${promoted.version} 到正式版（prod）`);
+			refresh();
+		} catch (err) {
+			message.error(`发布失败: ${String(err)}`);
+		}
+	};
+
 	const handleSetActiveVersion = async (
 		template: PipelineTemplate,
 		version: number,
@@ -552,6 +599,7 @@ export function DeployPanel({
 				onEdit={handleEditTemplate}
 				onDelete={handleDeleteTemplate}
 				onVersionHistory={handleVersionHistory}
+				onPromote={handlePromote}
 				activeVersion={activeVersionByTemplate[t.name]}
 				compactActions={options?.compactActions}
 				selectable={resolvedVariant === "full"}

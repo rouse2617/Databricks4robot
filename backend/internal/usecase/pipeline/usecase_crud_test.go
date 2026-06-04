@@ -110,7 +110,7 @@ func TestSaveTemplate(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		tmpl, err := uc.SaveTemplate(ctx, "test-pipe", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "test-pipe", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -141,7 +141,7 @@ func TestSaveTemplate(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		t1, err := uc.SaveTemplate(ctx, "multi-ver", pipe)
+		t1, err := uc.SaveTemplate(ctx, "multi-ver", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("first save: %v", err)
 		}
@@ -149,7 +149,7 @@ func TestSaveTemplate(t *testing.T) {
 			t.Fatalf("expected version 1, got %d", t1.Version)
 		}
 
-		t2, err := uc.SaveTemplate(ctx, "multi-ver", pipe)
+		t2, err := uc.SaveTemplate(ctx, "multi-ver", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("second save: %v", err)
 		}
@@ -166,7 +166,7 @@ func TestSaveTemplate(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		tmpl, err := uc.SaveTemplate(ctx, "empty", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "empty", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -223,7 +223,7 @@ func TestSaveTemplate(t *testing.T) {
 			},
 		}
 
-		_, err := uc.SaveTemplate(ctx, "bad-fanin", pipe)
+		_, err := uc.SaveTemplate(ctx, "bad-fanin", pipe, "dev", "legacy")
 		if !errors.Is(err, ErrInvalidArgument) {
 			t.Fatalf("expected ErrInvalidArgument, got %v", err)
 		}
@@ -251,7 +251,7 @@ func TestSaveTemplate(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		tmpl, err := uc.SaveTemplate(ctx, "normalize-shell", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "normalize-shell", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -290,7 +290,7 @@ func TestTemplateCRUD(t *testing.T) {
 	pipe := map[string]interface{}{
 		"name": "crud-test", "nodes": []interface{}{}, "edges": []interface{}{},
 	}
-	tmpl, err := uc.SaveTemplate(ctx, "crud-test", pipe)
+	tmpl, err := uc.SaveTemplate(ctx, "crud-test", pipe, "dev", "legacy")
 	if err != nil {
 		t.Fatalf("SaveTemplate: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestTemplateCRUD(t *testing.T) {
 	}
 
 	// DeleteTemplate.
-	if err := uc.DeleteTemplate(ctx, tmpl.ID); err != nil {
+	if err := uc.DeleteTemplate(ctx, tmpl.ID, ""); err != nil {
 		t.Fatalf("DeleteTemplate: %v", err)
 	}
 
@@ -339,7 +339,7 @@ func TestDeleteTemplateRemovesAssociatedDeployments(t *testing.T) {
 		},
 		"edges": []interface{}{},
 	}
-	tmpl, err := uc.SaveTemplate(ctx, "delete-with-deployments", pipe)
+	tmpl, err := uc.SaveTemplate(ctx, "delete-with-deployments", pipe, "dev", "legacy")
 	if err != nil {
 		t.Fatalf("SaveTemplate: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestDeleteTemplateRemovesAssociatedDeployments(t *testing.T) {
 		t.Fatalf("expected deployment templateID %q, got %v", tmpl.ID, dep.TemplateID)
 	}
 
-	if err := uc.DeleteTemplate(ctx, tmpl.ID); err != nil {
+	if err := uc.DeleteTemplate(ctx, tmpl.ID, ""); err != nil {
 		t.Fatalf("DeleteTemplate: %v", err)
 	}
 	if got, err := uc.GetTemplate(ctx, tmpl.ID); err != nil || got != nil {
@@ -380,7 +380,7 @@ func TestDeployByTemplateID(t *testing.T) {
 			},
 			"edges": []interface{}{},
 		}
-		tmpl, err := uc.SaveTemplate(ctx, "tmpl-deploy", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "tmpl-deploy", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("SaveTemplate: %v", err)
 		}
@@ -421,7 +421,7 @@ func TestDeployByTemplateID(t *testing.T) {
 			},
 			"edges": []interface{}{},
 		}
-		tmpl, err := uc.SaveTemplate(ctx, "original", pipe)
+		tmpl, err := uc.SaveTemplate(ctx, "original", pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("SaveTemplate: %v", err)
 		}
@@ -444,7 +444,7 @@ func TestDeployByTemplateID(t *testing.T) {
 			},
 			"edges": []interface{}{},
 		}
-		v1, err := uc.SaveTemplate(ctx, "versioned", v1Pipe)
+		v1, err := uc.SaveTemplate(ctx, "versioned", v1Pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("SaveTemplate v1: %v", err)
 		}
@@ -456,7 +456,7 @@ func TestDeployByTemplateID(t *testing.T) {
 			},
 			"edges": []interface{}{},
 		}
-		v2, err := uc.SaveTemplate(ctx, "versioned", v2Pipe)
+		v2, err := uc.SaveTemplate(ctx, "versioned", v2Pipe, "dev", "legacy")
 		if err != nil {
 			t.Fatalf("SaveTemplate v2: %v", err)
 		}
@@ -875,8 +875,8 @@ func TestDiffTemplates(t *testing.T) {
 			},
 			"edges": []interface{}{},
 		}
-		t1, _ := uc.SaveTemplate(ctx, "diff-test", pipe)
-		t2, _ := uc.SaveTemplate(ctx, "diff-test", pipe)
+		t1, _ := uc.SaveTemplate(ctx, "diff-test", pipe, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-test", pipe, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -921,8 +921,8 @@ func TestDiffTemplates(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		t1, _ := uc.SaveTemplate(ctx, "diff-add", basePipe)
-		t2, _ := uc.SaveTemplate(ctx, "diff-add", extendedPipe)
+		t1, _ := uc.SaveTemplate(ctx, "diff-add", basePipe, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-add", extendedPipe, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -952,8 +952,8 @@ func TestDiffTemplates(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		t1, _ := uc.SaveTemplate(ctx, "diff-rem", fullPipe)
-		t2, _ := uc.SaveTemplate(ctx, "diff-rem", reducedPipe)
+		t1, _ := uc.SaveTemplate(ctx, "diff-rem", fullPipe, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-rem", reducedPipe, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -982,8 +982,8 @@ func TestDiffTemplates(t *testing.T) {
 			"edges": []interface{}{},
 		}
 
-		t1, _ := uc.SaveTemplate(ctx, "diff-mod", oldPipe)
-		t2, _ := uc.SaveTemplate(ctx, "diff-mod", newPipe)
+		t1, _ := uc.SaveTemplate(ctx, "diff-mod", oldPipe, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-mod", newPipe, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -1016,8 +1016,8 @@ func TestDiffTemplates(t *testing.T) {
 			},
 		}
 
-		t1, _ := uc.SaveTemplate(ctx, "diff-edge", noEdge)
-		t2, _ := uc.SaveTemplate(ctx, "diff-edge", withEdge)
+		t1, _ := uc.SaveTemplate(ctx, "diff-edge", noEdge, "dev", "legacy")
+		t2, _ := uc.SaveTemplate(ctx, "diff-edge", withEdge, "dev", "legacy")
 
 		diff, err := uc.DiffTemplates(ctx, t1.ID, t2.ID)
 		if err != nil {
@@ -1037,7 +1037,7 @@ func TestDiffTemplates(t *testing.T) {
 		pipe := map[string]interface{}{
 			"name": "err", "nodes": []interface{}{}, "edges": []interface{}{},
 		}
-		t1, _ := uc.SaveTemplate(ctx, "err", pipe)
+		t1, _ := uc.SaveTemplate(ctx, "err", pipe, "dev", "legacy")
 
 		_, err := uc.DiffTemplates(ctx, t1.ID, "nonexistent")
 		if err == nil {

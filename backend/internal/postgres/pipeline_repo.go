@@ -25,7 +25,7 @@ func NewPipelineTemplateRepo(c *Client) *PipelineTemplateRepo { return &Pipeline
 
 var _ repository.PipelineTemplateRepository = (*PipelineTemplateRepo)(nil)
 
-const pipelineTemplateSelectCols = `id, name, version, pipeline, node_count, active_version, created_at, updated_at`
+const pipelineTemplateSelectCols = `id, name, version, pipeline, node_count, active_version, scope, owner, created_at, updated_at`
 
 func scanPipelineTemplate(rs rowScanner) (*models.PipelineTemplate, error) {
 	var (
@@ -33,7 +33,7 @@ func scanPipelineTemplate(rs rowScanner) (*models.PipelineTemplate, error) {
 		pipelineJSON []byte
 	)
 	if err := rs.Scan(
-		&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.ActiveVersion, &t.CreatedAt, &t.UpdatedAt,
+		&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.ActiveVersion, &t.Scope, &t.Owner, &t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -70,18 +70,20 @@ func (r *PipelineTemplateRepo) Save(ctx context.Context, t *models.PipelineTempl
 	}
 
 	const q = `
-INSERT INTO pipeline_templates (id, name, version, pipeline, node_count, active_version, created_at, updated_at)
-VALUES ($1, $2, $7, $3::jsonb, $4, $8, $5, $6)
+INSERT INTO pipeline_templates (id, name, version, pipeline, node_count, active_version, scope, owner, created_at, updated_at)
+VALUES ($1, $2, $7, $3::jsonb, $4, $8, $9, $10, $5, $6)
 ON CONFLICT (id) DO UPDATE SET
     name           = EXCLUDED.name,
     version        = EXCLUDED.version,
     pipeline       = EXCLUDED.pipeline,
     node_count     = EXCLUDED.node_count,
     active_version = EXCLUDED.active_version,
+    scope          = EXCLUDED.scope,
+    owner          = EXCLUDED.owner,
     updated_at     = EXCLUDED.updated_at`
 
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, q, t.ID, t.Name, pipelineJSON, t.NodeCount, t.CreatedAt, t.UpdatedAt, t.Version, t.ActiveVersion); err != nil {
+	if err := db.Exec(ctx, q, t.ID, t.Name, pipelineJSON, t.NodeCount, t.CreatedAt, t.UpdatedAt, t.Version, t.ActiveVersion, t.Scope, t.Owner); err != nil {
 		return fmt.Errorf("postgres PipelineTemplateRepo.Save: %w", err)
 	}
 	return nil
@@ -113,7 +115,7 @@ ORDER BY updated_at DESC`
 			pipelineJSON []byte
 		)
 		if err := rows.Scan(
-			&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.ActiveVersion, &t.CreatedAt, &t.UpdatedAt, &t.VersionCount,
+			&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.ActiveVersion, &t.Scope, &t.Owner, &t.CreatedAt, &t.UpdatedAt, &t.VersionCount,
 		); err != nil {
 			return nil, fmt.Errorf("postgres PipelineTemplateRepo.FindAll scan: %w", err)
 		}

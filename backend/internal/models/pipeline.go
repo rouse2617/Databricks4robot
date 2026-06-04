@@ -11,6 +11,8 @@ type PipelineTemplate struct {
 	Version       int                    `json:"version"`
 	VersionCount  int                    `json:"versionCount,omitempty"`
 	ActiveVersion int                    `json:"activeVersion,omitempty"`
+	Scope         string                 `json:"scope,omitempty"`
+	Owner         string                 `json:"owner,omitempty"`
 	Pipeline      map[string]interface{} `json:"pipeline"`
 	NodeCount     int                    `json:"nodeCount"`
 	CreatedAt     time.Time              `json:"createdAt"`
@@ -31,6 +33,8 @@ type PipelineDeployment struct {
 	AssetIDs        []string               `json:"assetIds,omitempty"`
 	AssetCount      int                    `json:"assetCount"`
 	ExecutionTarget *ExecutionTarget       `json:"executionTarget,omitempty"`
+	Scope           string                 `json:"scope,omitempty"`
+	Owner           string                 `json:"owner,omitempty"`
 	Manifest        *string                `json:"manifest,omitempty"`
 	PipelineJSON    map[string]interface{} `json:"pipelineJSON,omitempty"`
 	CreatedAt       time.Time              `json:"createdAt"`
@@ -84,6 +88,8 @@ type PipelineRun struct {
 	ExecutionTarget    *ExecutionTarget       `json:"executionTarget,omitempty"`
 	Nodes              []PipelineRunNode      `json:"nodes,omitempty"`
 	TotalEstimatedCost *float64               `json:"totalEstimatedCost,omitempty"`
+	Scope              string                 `json:"scope,omitempty"`
+	Owner              string                 `json:"owner,omitempty"`
 	LedgerState        string                 `json:"ledgerState"`
 	CreatedAt          time.Time              `json:"createdAt"`
 	UpdatedAt          time.Time              `json:"updatedAt"`

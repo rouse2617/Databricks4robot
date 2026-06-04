@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
@@ -43,10 +44,29 @@ func (h *Handler) SaveTemplate(c *gin.Context) {
 		return
 	}
 
-	t, err := h.uc.SaveTemplate(c.Request.Context(), req.Name, req.Pipeline)
+	t, err := h.uc.SaveTemplate(c.Request.Context(), req.Name, req.Pipeline, "dev", middleware.GetUserEmail(c))
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrInvalidArgument) {
 			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(201, t)
+}
+
+// Promote handles POST /api/v1/pipelines/:id/promote.
+func (h *Handler) Promote(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "template id is required", nil)
+		return
+	}
+	t, err := h.uc.Promote(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrTemplateNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 			return
 		}
 		httpresp.Internal(c, err.Error())
@@ -96,7 +116,11 @@ func (h *Handler) DeleteTemplate(c *gin.Context) {
 		return
 	}
 
-	if err := h.uc.DeleteTemplate(c.Request.Context(), id); err != nil {
+	if err := h.uc.DeleteTemplate(c.Request.Context(), id, middleware.GetUserEmail(c)); err != nil {
+		if errors.Is(err, pipelineUC.ErrProdLocked) || errors.Is(err, pipelineUC.ErrTemplateNotOwned) {
+			httpresp.Error(c, http.StatusForbidden, httpresp.CodeInvalidArgument, err.Error(), nil)
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -169,7 +193,7 @@ func (h *Handler) Deploy(c *gin.Context) {
 		dryRun = v
 	}
 
-	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{DryRun: dryRun, TargetID: req.TargetID})
+	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{DryRun: dryRun, TargetID: req.TargetID, Owner: middleware.GetUserEmail(c)})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -200,7 +224,7 @@ func (h *Handler) DeployByTemplate(c *gin.Context) {
 		return
 	}
 
-	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version})
+	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c)})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -248,7 +272,7 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
-	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version})
+	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c)})
 	if err != nil {
 		mapDeployError(c, err)
 		return

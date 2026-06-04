@@ -59,6 +59,7 @@ type DeployOptions struct {
 	TemplateID      string
 	TemplateVersion int
 	TargetID        string
+	Owner           string
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -1061,7 +1062,7 @@ func (uc *Usecase) resolveExecutionTargetForCompatibility(targetID string) (*mod
 // ── Templates ─────────────────────────────────────────────────────
 
 // SaveTemplate persists a pipeline template with auto-incremented version.
-func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[string]interface{}) (*models.PipelineTemplate, error) {
+func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[string]interface{}, scope string, owner string) (*models.PipelineTemplate, error) {
 	raw, err := json.Marshal(pipeline)
 	if err != nil {
 		return nil, fmt.Errorf("marshal pipeline: %w", err)
@@ -1097,6 +1098,8 @@ func (uc *Usecase) SaveTemplate(ctx context.Context, name string, pipeline map[s
 		Name:          name,
 		Version:       version,
 		ActiveVersion: activeVersion,
+		Scope:         scope,
+		Owner:         owner,
 		Pipeline:      normalizedPipeline,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
@@ -1134,6 +1137,24 @@ func (uc *Usecase) SetActiveVersion(ctx context.Context, templateIDOrName string
 	return uc.templateRepo.SetActiveVersion(ctx, t.Name, version)
 }
 
+// Promote copies a dev template to the prod scope.
+var ErrProdLocked = errors.New("prod templates are read-only")
+
+func (uc *Usecase) Promote(ctx context.Context, templateID string) (*models.PipelineTemplate, error) {
+	t, err := uc.templateRepo.FindByID(ctx, templateID)
+	if err != nil {
+		return nil, fmt.Errorf("find template: %w", err)
+	}
+	if t == nil {
+		return nil, ErrTemplateNotFound
+	}
+	if t.Scope == "prod" {
+		return nil, fmt.Errorf("template %s is already in prod scope", t.Name)
+	}
+	return uc.SaveTemplate(ctx, t.Name, t.Pipeline, "prod", "")
+}
+
+// ListTemplates returns all pipeline templates.
 // ListTemplates returns all pipeline templates.
 func (uc *Usecase) ListTemplates(ctx context.Context) ([]models.PipelineTemplate, error) {
 	return uc.templateRepo.FindAll(ctx)
@@ -1145,7 +1166,22 @@ func (uc *Usecase) GetTemplate(ctx context.Context, id string) (*models.Pipeline
 }
 
 // DeleteTemplate removes a pipeline template.
-func (uc *Usecase) DeleteTemplate(ctx context.Context, id string) error {
+var ErrTemplateNotOwned = errors.New("template is not owned by current user")
+
+func (uc *Usecase) DeleteTemplate(ctx context.Context, id, owner string) error {
+	t, err := uc.templateRepo.FindByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("find template: %w", err)
+	}
+	if t == nil {
+		return nil
+	}
+	if t.Scope == "prod" {
+		return ErrProdLocked
+	}
+	if owner != "" && t.Owner != "" && t.Owner != owner {
+		return ErrTemplateNotOwned
+	}
 	if uc.runRepo != nil {
 		if err := uc.runRepo.DeleteByTemplateID(ctx, id); err != nil {
 			return fmt.Errorf("delete template runs: %w", err)
@@ -1322,6 +1358,11 @@ func (uc *Usecase) Deploy(
 		}
 	}
 
+	var runScope, runOwner string
+	if len(opts) > 0 {
+		runScope = "dev"
+		runOwner = opts[0].Owner
+	}
 	dep := &models.PipelineDeployment{
 		ID:              depID,
 		PipelineName:    pipeName,
@@ -1333,6 +1374,8 @@ func (uc *Usecase) Deploy(
 		AssetIDs:        assetIDs,
 		AssetCount:      len(assetIDs),
 		ExecutionTarget: target,
+		Scope:           runScope,
+		Owner:           runOwner,
 		CreatedAt:       time.Now().UTC(),
 	}
 	if templateID != "" {
@@ -1802,7 +1845,7 @@ func (uc *Usecase) SaveFromDeployment(ctx context.Context, deploymentID, templat
 	if name == "" {
 		name = d.PipelineName + "-from-deployment"
 	}
-	return uc.SaveTemplate(ctx, name, d.PipelineJSON)
+	return uc.SaveTemplate(ctx, name, d.PipelineJSON, "dev", "")
 }
 
 // ── Deployments ───────────────────────────────────────────────────

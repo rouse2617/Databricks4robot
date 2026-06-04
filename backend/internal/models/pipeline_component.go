@@ -11,6 +11,8 @@ type PipelineComponent struct {
 	Image       string                 `json:"image"`
 	Tag         string                 `json:"tag"`
 	Source      string                 `json:"source"`
+	Scope       string                 `json:"scope,omitempty"`
+	Owner       string                 `json:"owner,omitempty"`
 	Command     []string               `json:"command,omitempty"`
 	Args        []string               `json:"args,omitempty"`
 	Env         map[string]string      `json:"env,omitempty"`
