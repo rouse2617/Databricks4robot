@@ -959,30 +959,33 @@ export function WorkflowExecutionList({
 						>
 							查看
 						</Button>
-						<Dropdown
-							menu={{
-								items: menuItems,
-								onClick: ({ key, domEvent }) => {
-									domEvent.stopPropagation();
-									runOperation(record, key as WorkflowOperationKey);
-								},
-							}}
-							trigger={["click"]}
-						>
-							<Button
-								size="small"
-								icon={<MoreOutlined />}
-								loading={hasOperationLoading}
-								onClick={(event) => {
-									event.stopPropagation();
-									if (menuItems.length === 0) {
-										messageApi.info("当前状态暂无可用操作");
-									}
+						{menuItems.length > 0 ? (
+							<Dropdown
+								menu={{
+									items: menuItems,
+									onClick: ({ key, domEvent }) => {
+										domEvent.stopPropagation();
+										runOperation(record, key as WorkflowOperationKey);
+									},
 								}}
+								trigger={["click"]}
 							>
+								<Button
+									size="small"
+									icon={<MoreOutlined />}
+									loading={hasOperationLoading}
+									onClick={(event) => {
+										event.stopPropagation();
+									}}
+								>
+									操作
+								</Button>
+							</Dropdown>
+						) : (
+							<Button size="small" disabled icon={<MoreOutlined />}>
 								操作
 							</Button>
-						</Dropdown>
+						)}
 					</div>
 				);
 			},

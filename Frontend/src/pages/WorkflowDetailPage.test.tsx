@@ -234,6 +234,90 @@ describe("WorkflowDetailPage", () => {
 		expect(screen.queryByText("暂无计费配置")).not.toBeInTheDocument();
 	});
 
+	it("renders explicit failure summary for failed nodes", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-fail",
+				status: "Failed",
+				nodes: [
+					{
+						id: "step-1",
+						name: "wf-fail.step-1",
+						displayName: "step-1",
+						type: "Pod",
+						phase: "Failed",
+						message: "ImagePullBackOff",
+					},
+				],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+				},
+			},
+			runEventState: {
+				run: { id: "run-fail" },
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText("检测到失败节点")).toBeInTheDocument();
+		expect(screen.getByText(/ImagePullBackOff/)).toBeInTheDocument();
+	});
+
+	it("shows logs action for failed asset nodes even when logRef is missing", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Failed",
+				nodes: [],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: { id: "run-1" },
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+			assetNodeState: {
+				items: [
+					{
+						id: "row-1",
+						runId: "run-1",
+						assetId: "asset-a",
+						pipelineNodeId: "step-1",
+						displayName: "step-1",
+						status: "Failed",
+						costSource: "not_available",
+						updatedAt: "2026-06-03T00:00:00Z",
+					},
+				],
+				total: 1,
+				loading: false,
+				error: null,
+				summary: {
+					assetCount: 1,
+					nodeCount: 1,
+					statuses: { Failed: 1 },
+					costSource: "not_available",
+				},
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByRole("button", { name: "日志" })).toBeInTheDocument();
+	});
+
 	it("shows workflow node count and quiet missing cost copy", () => {
 		mockWorkflowDetailState({
 			workflow: {
