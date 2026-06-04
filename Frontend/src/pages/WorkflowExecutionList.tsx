@@ -1,4 +1,4 @@
-import { MoreOutlined, ReloadOutlined } from "@ant-design/icons";
+import { LockOutlined, MoreOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
 	Alert,
 	App,
@@ -299,6 +299,9 @@ export function WorkflowExecutionList({
 	const [nodeCountsByWorkflowName, setNodeCountsByWorkflowName] = useState<
 		Record<string, number>
 	>({});
+	const [scopeByWorkflowName, setScopeByWorkflowName] = useState<
+		Record<string, string>
+	>({});
 	const [loading, setLoading] = useState(false);
 	const [initializedOnce, setInitializedOnce] = useState(false);
 	const [error, setError] = useState<WorkflowErrorState | null>(null);
@@ -512,6 +515,19 @@ export function WorkflowExecutionList({
 						.map((run) => [run.workflowName, run.nodeCount] as const),
 				]),
 			);
+			setScopeByWorkflowName(
+				Object.fromEntries([
+					...deployments
+						.filter((deployment) => deployment.workflowName && deployment.scope)
+						.map(
+							(deployment) =>
+								[deployment.workflowName, deployment.scope as string] as const,
+						),
+					...pipelineRuns
+						.filter((run) => run.workflowName && run.scope)
+						.map((run) => [run.workflowName, run.scope as string] as const),
+				]),
+			);
 			const enrichedItems = mergeLedgerRunsWithLiveWorkflows(
 				res.items || [],
 				pipelineRuns,
@@ -697,6 +713,7 @@ export function WorkflowExecutionList({
 			render: (name: string, record: WorkflowSummary) => {
 				const runId = runIdsByWorkflowName[record.name];
 				const templateVersion = templateVersionsByWorkflowName[record.name];
+				const scope = scopeByWorkflowName[record.name];
 				const displayId = toAssetStyleId(runId ?? name);
 				const copyId = runId ?? name;
 				return (
@@ -712,11 +729,20 @@ export function WorkflowExecutionList({
 						>
 							ID: {displayId}
 						</Typography.Text>
-						{templateVersion ? (
-							<Tag color="blue" style={{ marginTop: 4 }}>
-								模板 v{templateVersion}
-							</Tag>
-						) : null}
+						<div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 4 }}>
+							{templateVersion ? (
+								<Tag color="blue">模板 v{templateVersion}</Tag>
+							) : null}
+							{scope === "prod" ? (
+								<Tag color="green" style={{ fontSize: 11 }}>
+									<LockOutlined /> 正式版
+								</Tag>
+							) : scope ? (
+								<Tag color="blue" style={{ fontSize: 11 }}>
+									Dev 草稿
+								</Tag>
+							) : null}
+						</div>
 					</div>
 				);
 			},

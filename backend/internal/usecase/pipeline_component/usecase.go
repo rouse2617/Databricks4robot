@@ -128,6 +128,9 @@ func normalizeComponent(pc *models.PipelineComponent, preserveID bool) error {
 	if pc.Tag == "" {
 		pc.Tag = "latest"
 	}
+	if pc.Scope == "" {
+		pc.Scope = "dev"
+	}
 	if pc.Source == "" {
 		pc.Source = "custom"
 	}

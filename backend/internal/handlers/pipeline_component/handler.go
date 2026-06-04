@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	uc "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
 )
@@ -25,6 +26,8 @@ func (h *Handler) CreateComponent(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	pc.Scope = "dev"
+	pc.Owner = middleware.GetUserEmail(c)
 	created, err := h.uc.Create(c.Request.Context(), &pc)
 	if err != nil {
 		writeComponentError(c, err)

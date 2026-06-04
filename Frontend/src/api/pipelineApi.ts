@@ -23,6 +23,8 @@ export interface Deployment {
 	workflowName: string;
 	status: string;
 	nodeCount: number;
+	scope?: string;
+	owner?: string;
 	assetIds?: string[];
 	assetCount?: number;
 	executionTarget?: ExecutionTarget;
