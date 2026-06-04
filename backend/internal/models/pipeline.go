@@ -259,29 +259,29 @@ type PipelineRunNotificationCandidate struct {
 
 // PipelineRunWatcherState stores coarse watcher progress and diagnostics.
 type PipelineRunWatcherState struct {
-	ID                  string     `json:"id"`
-	LastSyncedAt        *time.Time `json:"lastSyncedAt,omitempty"`
-	LastScanStartedAt   *time.Time `json:"lastScanStartedAt,omitempty"`
-	LastScanFinishedAt  *time.Time `json:"lastScanFinishedAt,omitempty"`
-	LastSuccessAt       *time.Time `json:"lastSuccessAt,omitempty"`
-	LastErrorAt         *time.Time `json:"lastErrorAt,omitempty"`
-	ActiveScanLimit     int        `json:"activeScanLimit"`
-	LastSyncedRunCount  int        `json:"lastSyncedRunCount"`
-	ConsecutiveFailures int        `json:"consecutiveFailures"`
-	TotalScans          int64      `json:"totalScans"`
-	TotalErrors         int64      `json:"totalErrors"`
-	ScanLagSeconds      *int64     `json:"scanLagSeconds,omitempty"`
-	LastError           string     `json:"lastError,omitempty"`
-	Healthy             bool       `json:"healthy"`
-	Stale               bool       `json:"stale"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	ID                  string       `json:"id"`
+	LastSyncedAt        *time.Time   `json:"lastSyncedAt,omitempty"`
+	LastScanStartedAt   *time.Time   `json:"lastScanStartedAt,omitempty"`
+	LastScanFinishedAt  *time.Time   `json:"lastScanFinishedAt,omitempty"`
+	LastSuccessAt       *time.Time   `json:"lastSuccessAt,omitempty"`
+	LastErrorAt         *time.Time   `json:"lastErrorAt,omitempty"`
+	ActiveScanLimit     int          `json:"activeScanLimit"`
+	LastSyncedRunCount  int          `json:"lastSyncedRunCount"`
+	ConsecutiveFailures int          `json:"consecutiveFailures"`
+	TotalScans          int64        `json:"totalScans"`
+	TotalErrors         int64        `json:"totalErrors"`
+	ScanLagSeconds      *int64       `json:"scanLagSeconds,omitempty"`
+	LastError           string       `json:"lastError,omitempty"`
+	Healthy             bool         `json:"healthy"`
+	Stale               bool         `json:"stale"`
+	UpdatedAt           time.Time    `json:"updatedAt"`
 	LedgerHealth        LedgerHealth `json:"ledgerHealth,omitempty"`
 }
 
 // LedgerHealth reports how many pipeline runs have ledger events.
 type LedgerHealth struct {
-	TotalRuns       int        `json:"totalRuns"`
-	RunsWithEvents  int        `json:"runsWithEvents"`
-	RunsWithout     int        `json:"runsWithout"`
-	LastBackfillAt  *time.Time `json:"lastBackfillAt,omitempty"`
+	TotalRuns      int        `json:"totalRuns"`
+	RunsWithEvents int        `json:"runsWithEvents"`
+	RunsWithout    int        `json:"runsWithout"`
+	LastBackfillAt *time.Time `json:"lastBackfillAt,omitempty"`
 }

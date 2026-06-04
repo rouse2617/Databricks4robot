@@ -439,6 +439,34 @@ func TestTranspileRetryAndTimeout(t *testing.T) {
 	t.Fatal("step-n1 template not found")
 }
 
+func TestTranspileDefaultActiveDeadlineSeconds(t *testing.T) {
+	p := &Pipeline{
+		Name: "default-timeout-test",
+		Nodes: []Node{{
+			ID:        "n1",
+			Component: Component{Name: "n", Image: "busybox:latest"},
+		}},
+	}
+	opts := &Options{Name: "default-timeout-test"}
+	wf, err := Transpile(p, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "step-n1" {
+			if tmpl.ActiveDeadlineSeconds == nil {
+				t.Fatal("expected default activeDeadlineSeconds")
+			}
+			if tmpl.ActiveDeadlineSeconds.IntValue() != int(DefaultActiveDeadlineSeconds) {
+				t.Fatalf("activeDeadlineSeconds = %d, want %d", tmpl.ActiveDeadlineSeconds.IntValue(), DefaultActiveDeadlineSeconds)
+			}
+			return
+		}
+	}
+	t.Fatal("step-n1 template not found")
+}
+
 func TestTranspileWorkflowParams(t *testing.T) {
 	p := &Pipeline{
 		Name: "wf-params",

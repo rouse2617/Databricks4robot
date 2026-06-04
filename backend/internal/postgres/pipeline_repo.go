@@ -805,14 +805,17 @@ func (r *PipelineRunRepo) DeleteByTemplateID(ctx context.Context, templateID str
 	return nil
 }
 
-// UpdateStatus sets run status and optional finished_at timestamp.
-func (r *PipelineRunRepo) UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time) error {
+// UpdateStatus sets run status, optional finished_at timestamp, and optional message.
+func (r *PipelineRunRepo) UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time, message string) error {
 	const q = `
 UPDATE pipeline_runs
-SET status = $2, finished_at = COALESCE($3, finished_at), updated_at = NOW()
+SET status = $2,
+    message = CASE WHEN $4 <> '' THEN $4 ELSE message END,
+    finished_at = COALESCE($3, finished_at),
+    updated_at = NOW()
 WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
-	if err := db.Exec(ctx, q, id, status, finishedAt); err != nil {
+	if err := db.Exec(ctx, q, id, status, finishedAt, message); err != nil {
 		return fmt.Errorf("postgres PipelineRunRepo.UpdateStatus: %w", err)
 	}
 	return nil

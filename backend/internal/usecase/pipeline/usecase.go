@@ -154,6 +154,17 @@ const (
 	runEventDeleteFailed         = "run_delete_failed"
 )
 
+// Staleness detection thresholds for pipeline runs whose Argo workflows are stuck.
+const (
+	// stuckPodGracePeriod is the minimum time a pod must be stuck in Pending
+	// with a non-transient error before the backend marks the run as Error.
+	stuckPodGracePeriod = 30 * time.Minute
+
+	// workflowHardTimeout is the maximum total time a workflow may remain in a
+	// non-terminal phase before the backend marks the run as Error.
+	workflowHardTimeout = 6 * time.Hour
+)
+
 // New creates a Usecase.
 func New(
 	templateRepo repository.PipelineTemplateRepository,
@@ -1031,6 +1042,64 @@ func (uc *Usecase) runCostSnapshotMissing(run *models.PipelineRun) bool {
 	return false
 }
 
+// detectStuckWorkflow checks whether a Running workflow has made no meaningful
+// progress. Returns a descriptive error message, or empty string if the workflow
+// appears healthy.
+func detectStuckWorkflow(run *models.PipelineRun, wf *wfv1.Workflow) string {
+	now := time.Now().UTC()
+
+	// Reference time: prefer the workflow's recorded start time, else fall back
+	// to the pipeline run's creation time.
+	refTime := wf.Status.StartedAt.Time
+	if refTime.IsZero() {
+		refTime = run.CreatedAt
+	}
+	if refTime.IsZero() {
+		// No reference time available — cannot determine staleness.
+		return ""
+	}
+	elapsed := now.Sub(refTime)
+
+	// 1. Check pod-level nodes for known stuck conditions.
+	for _, node := range wf.Status.Nodes {
+		if node.Type != wfv1.NodeTypePod || node.Phase != wfv1.NodePending {
+			continue
+		}
+
+		var reason string
+		m := strings.ToLower(node.Message)
+		switch {
+		case strings.Contains(m, "unschedulable"):
+			reason = "unschedulable"
+		case strings.Contains(m, "imagepullbackoff"):
+			reason = "image pull backoff"
+		case strings.Contains(m, "errimagepull"):
+			reason = "image pull backoff"
+		case strings.Contains(m, "crashloopbackoff"):
+			reason = "crash loop backoff"
+		}
+
+		if reason == "" {
+			continue
+		}
+
+		// Only act when the condition has persisted beyond the grace period.
+		nodeAge := now.Sub(node.StartedAt.Time)
+		if nodeAge >= stuckPodGracePeriod || elapsed >= stuckPodGracePeriod {
+			return fmt.Sprintf("pipeline step stuck: pod %q %s for %s",
+				node.Name, reason, nodeAge.Round(time.Second))
+		}
+	}
+
+	// 2. Hard overall timeout: running too long regardless of node details.
+	if elapsed >= workflowHardTimeout {
+		return fmt.Sprintf("workflow running for %s without completing",
+			elapsed.Round(time.Second))
+	}
+
+	return ""
+}
+
 func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
 	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
 		return
@@ -1043,7 +1112,7 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			run.Status = deploymentStatusExpired
-			logPipelineSideEffect("mark expired pipeline run", uc.runRepo.UpdateStatus(ctx, run.ID, deploymentStatusExpired, nil))
+			logPipelineSideEffect("mark expired pipeline run", uc.runRepo.UpdateStatus(ctx, run.ID, deploymentStatusExpired, nil, ""))
 		}
 		return
 	}
@@ -1054,6 +1123,20 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if wf.Status.Phase != "" {
 		run.Status = string(wf.Status.Phase)
 	}
+
+	// Staleness detection — intercept workflows stuck in Running/Pending.
+	if isActiveDeploymentStatus(run.Status) {
+		if reason := detectStuckWorkflow(run, wf); reason != "" {
+			run.Status = string(wfv1.WorkflowError)
+			run.Message = reason
+			now := time.Now().UTC()
+			run.FinishedAt = &now
+			logPipelineSideEffect("mark stuck pipeline run", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt, reason))
+			uc.replaceRunNodesFromWorkflow(ctx, run, wf)
+			return
+		}
+	}
+
 	if string(wf.UID) != "" {
 		run.ArgoWorkflowUID = string(wf.UID)
 	}
@@ -1061,7 +1144,7 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 		now := time.Now().UTC()
 		run.FinishedAt = &now
 	}
-	logPipelineSideEffect("update pipeline run status", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
+	logPipelineSideEffect("update pipeline run status", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt, ""))
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
 }
 

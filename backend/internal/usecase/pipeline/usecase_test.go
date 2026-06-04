@@ -618,10 +618,13 @@ func (m *mockRunRepo) Delete(_ context.Context, id string) error {
 func (m *mockRunRepo) DeleteByTemplateID(_ context.Context, _ string) error {
 	return nil
 }
-func (m *mockRunRepo) UpdateStatus(_ context.Context, id, status string, finishedAt *time.Time) error {
+func (m *mockRunRepo) UpdateStatus(_ context.Context, id, status string, finishedAt *time.Time, message string) error {
 	if r, ok := m.byID[id]; ok {
 		r.Status = status
 		r.FinishedAt = finishedAt
+		if message != "" {
+			r.Message = message
+		}
 	}
 	return nil
 }

@@ -87,7 +87,7 @@ type PipelineRunRepository interface {
 	FindByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error)
 	Delete(ctx context.Context, id string) error
 	DeleteByTemplateID(ctx context.Context, templateID string) error
-	UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time) error
+	UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time, message string) error
 	UpdateLedgerState(ctx context.Context, id, ledgerState string) error
 }
 

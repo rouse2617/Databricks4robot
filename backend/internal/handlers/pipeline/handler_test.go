@@ -154,9 +154,12 @@ func (m *mockPipelineRunRepo) DeleteByTemplateID(_ context.Context, templateID s
 	}
 	return nil
 }
-func (m *mockPipelineRunRepo) UpdateStatus(_ context.Context, id, status string, finishedAt *time.Time) error {
+func (m *mockPipelineRunRepo) UpdateStatus(_ context.Context, id, status string, finishedAt *time.Time, message string) error {
 	if r := m.byID[id]; r != nil {
 		r.Status = status
+		if message != "" {
+			r.Message = message
+		}
 		r.FinishedAt = finishedAt
 	}
 	return nil
