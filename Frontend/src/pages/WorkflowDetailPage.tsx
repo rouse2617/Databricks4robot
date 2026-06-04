@@ -566,6 +566,25 @@ function WorkflowSummaryCards({
 	);
 }
 
+function dedupeConsecutiveEvents(
+	events: PipelineRunEvent[],
+): PipelineRunEvent[] {
+	const result: PipelineRunEvent[] = [];
+	for (const event of events) {
+		const last = result[result.length - 1];
+		if (
+			last &&
+			last.eventType === event.eventType &&
+			last.subjectType === event.subjectType
+		) {
+			// Skip duplicate consecutive same-type events (e.g. repeated PodInitializing)
+			continue;
+		}
+		result.push(event);
+	}
+	return result;
+}
+
 function WorkflowRunContextPanel({
 	runEventState,
 	runEventFilters,
@@ -583,7 +602,7 @@ function WorkflowRunContextPanel({
 	onLoadMoreEvents: () => void;
 	onSelectNodeEvent: (event: PipelineRunEvent) => void;
 }) {
-	const latestEvents = runEventState.items.slice(-5);
+	const latestEvents = dedupeConsecutiveEvents(runEventState.items).slice(-5);
 
 	return (
 		<div
@@ -1452,6 +1471,41 @@ export default function WorkflowDetailPage({
 		}
 	}, [selectedNode]);
 
+	const failedNodes = useMemo(
+		() =>
+			workflow?.nodes.filter((node) => {
+				return node.phase === "Failed" || node.phase === "Error";
+			}) ?? [],
+		[workflow?.nodes],
+	);
+	const failureSummaryText = useMemo(
+		() => {
+			if (failedNodes.length === 0) return "";
+			const allSameMessage = failedNodes.every(
+				(n) => n.message === failedNodes[0].message,
+			);
+			if (allSameMessage && failedNodes[0].message) {
+				const trigger = failedNodes[0].message;
+				if (/shutdown|terminate/i.test(trigger)) {
+					return `工作流终止导致的级联失败 — ${failedNodes.length} 个节点均因「${trigger}」停止`;
+				}
+				return `${failedNodes.length} 个节点一致: ${trigger}`;
+			}
+			return failedNodes
+				.slice(0, 3)
+				.map((node) => {
+					const nodeName = node.displayName || node.name || node.id;
+					return `${nodeName}${node.message ? ` - ${node.message}` : ""}`;
+				})
+				.join("；");
+		},
+		[failedNodes],
+	);
+	const moreFailureCount = useMemo(
+		() => Math.max(0, failedNodes.length - 3),
+		[failedNodes.length],
+	);
+
 	if (loading) {
 		return (
 			<div
@@ -1534,9 +1588,22 @@ export default function WorkflowDetailPage({
 					返回
 				</Button>
 				<h3 style={{ margin: 0, fontSize: 15 }}>{workflow.name}</h3>
-				<Tag color={STATUS_COLORS[workflow.status] || "default"}>
-					{workflow.status}
-				</Tag>
+				{(() => {
+					const nodePhases = workflow.nodes
+						.filter((n) => n.type !== "DAG")
+						.map((n) => n.phase);
+					const allTerminal = nodePhases.length > 0 && nodePhases.every(
+						(p) => ["Failed","Error","Succeeded","Skipped","Omitted"].includes(p),
+					);
+					const hasFailures = failedNodes.length > 0;
+					const effectiveColor = (allTerminal && hasFailures)
+						? "error"
+						: (STATUS_COLORS[workflow.status] || "default");
+					const effectiveLabel = (allTerminal && hasFailures && workflow.status === "Running")
+						? `${workflow.status}（节点已终止）`
+						: workflow.status;
+					return <Tag color={effectiveColor}>{effectiveLabel}</Tag>;
+				})()}
 				{runEventState.run || runEventState.items.length > 0 ? (
 					<Tag color="green">DataBrew 运行</Tag>
 				) : (
@@ -1581,18 +1648,29 @@ export default function WorkflowDetailPage({
 					}}
 				>
 					<Space size={4} wrap>
-						{availableOperations.map((operation) => (
-							<Button
-								key={operation.key}
-								size="small"
-								icon={operation.icon}
-								danger={operation.danger}
-								loading={operationLoading === operation.key}
-								onClick={() => runOperation(operation)}
-							>
-								{operation.title}
-							</Button>
-						))}
+						{(() => {
+							const nodePhases = workflow.nodes
+								.filter((n) => n.type !== "DAG")
+								.map((n) => n.phase);
+							const allTerminal = nodePhases.length > 0 && nodePhases.every(
+								(p) => ["Failed","Error","Succeeded","Skipped","Omitted"].includes(p),
+							);
+							const HIDE_WHEN_TERMINAL = new Set(["stop","suspend","terminate"]);
+							return availableOperations
+								.filter((op) => !(allTerminal && HIDE_WHEN_TERMINAL.has(op.key)))
+								.map((operation) => (
+								<Button
+									key={operation.key}
+									size="small"
+									icon={operation.icon}
+									danger={operation.danger}
+									loading={operationLoading === operation.key}
+									onClick={() => runOperation(operation)}
+								>
+									{operation.title}
+								</Button>
+							));
+						})()}
 					</Space>
 					<Segmented
 						value={viewMode}

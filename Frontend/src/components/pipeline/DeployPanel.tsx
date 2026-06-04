@@ -386,15 +386,18 @@ export function DeployPanel({
 	const [bulkDeletingTemplates, setBulkDeletingTemplates] = useState(false);
 
 	const [assetModalOpen, setAssetModalOpen] = useState(false);
-	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
-	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
-	const [deploying, setDeploying] = useState(false);
-	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
-	const [deployVersions, setDeployVersions] = useState<PipelineTemplate[]>([]);
-	const [selectedDeployVersion, setSelectedDeployVersion] = useState<
-		number | undefined
-	>();
+const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
+const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
+const [deploying, setDeploying] = useState(false);
+const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
+const [deployVersions, setDeployVersions] = useState<PipelineTemplate[]>([]);
+const [selectedDeployVersion, setSelectedDeployVersion] = useState<
+	number | undefined
+>();
+const [deployVersionActiveVersion, setDeployVersionActiveVersion] = useState<
+	number | undefined
+>();
 	const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
 	const [versionDrawerTemplate, setVersionDrawerTemplate] =
 		useState<PipelineTemplate | null>(null);
@@ -484,6 +487,9 @@ export function DeployPanel({
 		);
 		setDeployTargetId(templateId);
 		setDeployVersions(currentTemplate ? [currentTemplate] : []);
+		setDeployVersionActiveVersion(
+			currentTemplate ? (activeVersionByTemplate[currentTemplate.name] ?? currentTemplate.activeVersion) : undefined,
+		);
 		const activeVersion = activeVersionByTemplate[currentTemplate?.name ?? ""];
 		setSelectedDeployVersion(activeVersion ?? currentTemplate?.version);
 		setSelectedAssetIds(queryAssetIds);
@@ -990,12 +996,17 @@ export function DeployPanel({
 						value={selectedDeployVersion}
 						onChange={setSelectedDeployVersion}
 						style={{ width: "100%", marginBottom: 12 }}
-						options={deployVersions.map((version) => ({
-							value: version.version,
-							label: `版本 v${version.version} · ${version.nodeCount} 个步骤 · 保存于 ${new Date(
-								version.createdAt,
-							).toLocaleString()}`,
-						}))}
+						options={deployVersions.map((version) => {
+							const isUndeployed =
+								deployVersionActiveVersion != null &&
+								version.version > deployVersionActiveVersion;
+							return {
+								value: version.version,
+								label: `版本 v${version.version} · ${version.nodeCount} 个步骤 · 保存于 ${new Date(
+									version.createdAt,
+								).toLocaleString()}${isUndeployed ? " · 未部署" : ""}`,
+							};
+						})}
 					/>
 				</div>
 				<div className="deploy-run-field">
