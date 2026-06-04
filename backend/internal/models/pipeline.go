@@ -35,6 +35,7 @@ type PipelineDeployment struct {
 	ExecutionTarget *ExecutionTarget       `json:"executionTarget,omitempty"`
 	Scope           string                 `json:"scope,omitempty"`
 	Owner           string                 `json:"owner,omitempty"`
+	BatchRunID      string                 `json:"batchRunId,omitempty"`
 	Manifest        *string                `json:"manifest,omitempty"`
 	PipelineJSON    map[string]interface{} `json:"pipelineJSON,omitempty"`
 	CreatedAt       time.Time              `json:"createdAt"`
@@ -90,6 +91,7 @@ type PipelineRun struct {
 	TotalEstimatedCost *float64               `json:"totalEstimatedCost,omitempty"`
 	Scope              string                 `json:"scope,omitempty"`
 	Owner              string                 `json:"owner,omitempty"`
+	BatchRunID         string                 `json:"batchRunId,omitempty"`
 	LedgerState        string                 `json:"ledgerState"`
 	CreatedAt          time.Time              `json:"createdAt"`
 	UpdatedAt          time.Time              `json:"updatedAt"`

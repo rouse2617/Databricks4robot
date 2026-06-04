@@ -18,6 +18,7 @@ import {
 	it,
 	vi,
 } from "vitest";
+import { App } from "antd";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 
@@ -36,6 +37,7 @@ const mockListPipelines = vi.fn();
 const mockListPipelineVersions = vi.fn();
 const mockListDeployments = vi.fn();
 const mockDeployTemplate = vi.fn();
+const mockBatchDeployTemplate = vi.fn();
 const mockDeletePipeline = vi.fn();
 const mockGetPipeline = vi.fn();
 const mockListExecutionTargets = vi.fn();
@@ -48,6 +50,7 @@ vi.mock("../../api/pipelineApi", () => ({
 	listExecutionTargets: (...args: unknown[]) =>
 		mockListExecutionTargets(...args),
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
+	batchDeployTemplate: (...args: unknown[]) => mockBatchDeployTemplate(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
 }));
@@ -114,17 +117,21 @@ function renderDeployPanel(
 	initialEntry = "/pipeline",
 ) {
 	return render(
-		<MemoryRouter initialEntries={[initialEntry]}>
-			<DeployPanel onEditTemplate={onEditTemplate} />
-		</MemoryRouter>,
+		<App>
+			<MemoryRouter initialEntries={[initialEntry]}>
+				<DeployPanel onEditTemplate={onEditTemplate} />
+			</MemoryRouter>
+		</App>,
 	);
 }
 
 function renderCompactDeployPanel() {
 	return render(
-		<MemoryRouter>
-			<DeployPanel variant="compact" />
-		</MemoryRouter>,
+		<App>
+			<MemoryRouter>
+				<DeployPanel variant="compact" />
+			</MemoryRouter>
+		</App>,
 	);
 }
 
@@ -227,6 +234,18 @@ describe("DeployPanel", () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
 		mockDeployTemplate.mockRejectedValue(new Error("K8s error"));
+		const messageError = vi.fn();
+		const useAppSpy = vi.spyOn(App, "useApp").mockReturnValue({
+			message: {
+				success: vi.fn(),
+				error: messageError,
+				warning: vi.fn(),
+				info: vi.fn(),
+				loading: vi.fn(),
+				open: vi.fn(),
+				destroy: vi.fn(),
+			},
+		} as ReturnType<typeof App.useApp>);
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
@@ -238,18 +257,24 @@ describe("DeployPanel", () => {
 		expect(deployBtn).toBeTruthy();
 		if (deployBtn) fireEvent.click(deployBtn);
 
-		const { message } = await import("antd");
 		await waitFor(() => {
-			expect(message.error).toHaveBeenCalledWith(
+			expect(messageError).toHaveBeenCalledWith(
 				expect.stringContaining("部署失败"),
 			);
 		});
+		useAppSpy.mockRestore();
 	});
 
 	it("opens run modal and deploys with asset ids", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-003" }));
+		mockBatchDeployTemplate.mockResolvedValue({
+			batchId: "batch-001",
+			items: [
+				mockDeployment({ id: "dep-003a" }),
+				mockDeployment({ id: "dep-003b" }),
+			],
+		});
 		renderDeployPanel();
 
 		// Wait for template to render
@@ -276,13 +301,14 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockBatchDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-001", "ast-002"],
 				"default",
 				1,
 			);
 		});
+		expect(mockDeployTemplate).not.toHaveBeenCalled();
 	});
 
 	it("uses asset ids from pipeline url when running a saved template", async () => {
@@ -292,7 +318,13 @@ describe("DeployPanel", () => {
 			mockTemplate({ id: "tmpl-v2", version: 2, nodeCount: 5 }),
 			mockTemplate({ id: "tmpl-001", version: 1, nodeCount: 3 }),
 		]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-005" }));
+		mockBatchDeployTemplate.mockResolvedValue({
+			batchId: "batch-002",
+			items: [
+				mockDeployment({ id: "dep-005a" }),
+				mockDeployment({ id: "dep-005b" }),
+			],
+		});
 
 		renderDeployPanel(
 			undefined,
@@ -307,7 +339,9 @@ describe("DeployPanel", () => {
 
 		await waitFor(() => {
 			expect(screen.getByText("运行流水线")).toBeTruthy();
-			expect(screen.getByText("将处理 2 个资产")).toBeTruthy();
+			expect(
+				screen.getByText("将为 2 个资产各创建 1 个独立 Workflow"),
+			).toBeTruthy();
 			expect(screen.getByTestId("mock-asset-picker").textContent).toContain(
 				"Selected: ast-a,ast-b",
 			);
@@ -323,7 +357,7 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockBatchDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-a", "ast-b"],
 				"default",
@@ -425,17 +459,29 @@ describe("DeployPanel", () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
 		mockGetPipeline.mockRejectedValue(new Error("not found"));
+		const messageError = vi.fn();
+		const useAppSpy = vi.spyOn(App, "useApp").mockReturnValue({
+			message: {
+				success: vi.fn(),
+				error: messageError,
+				warning: vi.fn(),
+				info: vi.fn(),
+				loading: vi.fn(),
+				open: vi.fn(),
+				destroy: vi.fn(),
+			},
+		} as ReturnType<typeof App.useApp>);
 		renderDeployPanel();
 
 		expect(await screen.findByText("编辑")).toBeTruthy();
 		fireEvent.click(screen.getByText("编辑"));
 
-		const { message } = await import("antd");
 		await waitFor(() => {
-			expect(message.error).toHaveBeenCalledWith(
+			expect(messageError).toHaveBeenCalledWith(
 				expect.stringContaining("加载模板失败"),
 			);
 		});
+		useAppSpy.mockRestore();
 	});
 
 	it("deletes a template", async () => {

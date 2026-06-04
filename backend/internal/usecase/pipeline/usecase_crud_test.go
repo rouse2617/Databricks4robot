@@ -579,6 +579,47 @@ func TestListDeployments(t *testing.T) {
 	})
 }
 
+func TestBatchCreateRunsByTemplateID(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockAssetRepo()
+	repo.assets["asset-a"] = &models.Asset{AssetID: "asset-a", AssetType: "dataset"}
+	repo.assets["asset-b"] = &models.Asset{AssetID: "asset-b", AssetType: "dataset"}
+	uc := newUsecase(repo)
+	pipe := map[string]interface{}{
+		"name": "batch-tmpl",
+		"nodes": []interface{}{
+			map[string]interface{}{"id": "s1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+		},
+		"edges": []interface{}{},
+	}
+	tmpl, err := uc.SaveTemplate(ctx, "batch-tmpl", pipe, "dev", "tester")
+	if err != nil {
+		t.Fatalf("SaveTemplate: %v", err)
+	}
+
+	result, err := uc.BatchCreateRunsByTemplateID(ctx, tmpl.ID, "", []string{"asset-a", "asset-b"})
+	if err != nil {
+		t.Fatalf("BatchCreateRunsByTemplateID: %v", err)
+	}
+	if result.BatchID == "" {
+		t.Fatal("expected batch id")
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(result.Items))
+	}
+	for _, run := range result.Items {
+		if run.BatchRunID != result.BatchID {
+			t.Fatalf("expected batchRunId %q on run %s, got %q", result.BatchID, run.ID, run.BatchRunID)
+		}
+		if len(run.AssetIDs) != 1 {
+			t.Fatalf("expected 1 asset per run, got %v", run.AssetIDs)
+		}
+	}
+	if result.Items[0].WorkflowName == result.Items[1].WorkflowName {
+		t.Fatal("expected distinct workflow names per asset fan-out")
+	}
+}
+
 // ── GetDeployment / DeleteDeployment ──────────────────────────────────────
 
 func TestDeploymentCRUD(t *testing.T) {

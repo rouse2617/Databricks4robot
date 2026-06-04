@@ -60,6 +60,21 @@ type DeployOptions struct {
 	TemplateVersion int
 	TargetID        string
 	Owner           string
+	BatchRunID      string
+}
+
+// BatchCreateRunFailure records a per-asset fan-out error.
+type BatchCreateRunFailure struct {
+	AssetID string `json:"assetId"`
+	Error   string `json:"error"`
+}
+
+// BatchCreateRunsResult is returned when one template is run against many assets
+// as separate Argo workflows (CyberPipe batch-run alignment).
+type BatchCreateRunsResult struct {
+	BatchID string                  `json:"batchId"`
+	Items   []models.PipelineRun    `json:"items"`
+	Failed  []BatchCreateRunFailure `json:"failed,omitempty"`
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -320,6 +335,7 @@ func (uc *Usecase) deploymentToRun(dep *models.PipelineDeployment) *models.Pipel
 		ExecutionTarget:   &target,
 		Scope:             dep.Scope,
 		Owner:             dep.Owner,
+		BatchRunID:        dep.BatchRunID,
 		CreatedAt:         dep.CreatedAt,
 		UpdatedAt:         dep.UpdatedAt,
 		FinishedAt:        dep.FinishedAt,
@@ -347,6 +363,7 @@ func runToDeployment(run *models.PipelineRun) *models.PipelineDeployment {
 		ExecutionTarget: run.ExecutionTarget,
 		Scope:           run.Scope,
 		Owner:           run.Owner,
+		BatchRunID:      run.BatchRunID,
 		Manifest:        run.Manifest,
 		PipelineJSON:    run.PipelineJSON,
 		CreatedAt:       run.CreatedAt,
@@ -1559,6 +1576,9 @@ func (uc *Usecase) Deploy(
 		Owner:           runOwner,
 		CreatedAt:       time.Now().UTC(),
 	}
+	if len(opts) > 0 && opts[0].BatchRunID != "" {
+		dep.BatchRunID = opts[0].BatchRunID
+	}
 	if templateID != "" {
 		dep.TemplateID = &templateID
 	}
@@ -1635,6 +1655,9 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	deployOpts := DeployOptions{TemplateID: templateID, TemplateVersion: t.Version}
 	if len(opts) > 0 {
 		deployOpts.TargetID = opts[0].TargetID
+		deployOpts.Owner = opts[0].Owner
+		deployOpts.BatchRunID = opts[0].BatchRunID
+		deployOpts.DryRun = opts[0].DryRun
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }
@@ -1686,6 +1709,75 @@ func (uc *Usecase) CreateRunByTemplateID(ctx context.Context, templateID, name s
 	}
 	uc.enrichRun(ctx, run)
 	return run, nil
+}
+
+func mergeDeployOptions(opts []DeployOptions, patch DeployOptions) []DeployOptions {
+	if len(opts) == 0 {
+		return []DeployOptions{patch}
+	}
+	merged := opts[0]
+	if patch.BatchRunID != "" {
+		merged.BatchRunID = patch.BatchRunID
+	}
+	if patch.Owner != "" {
+		merged.Owner = patch.Owner
+	}
+	if patch.TargetID != "" {
+		merged.TargetID = patch.TargetID
+	}
+	if patch.TemplateVersion > 0 {
+		merged.TemplateVersion = patch.TemplateVersion
+	}
+	if patch.TemplateID != "" {
+		merged.TemplateID = patch.TemplateID
+	}
+	merged.DryRun = patch.DryRun || merged.DryRun
+	return []DeployOptions{merged}
+}
+
+// BatchCreateRunsByTemplateID submits one Argo workflow per asset ID, linking
+// them with a shared batch_run_id (CYB-1639 / CyberPipe batch-run).
+func (uc *Usecase) BatchCreateRunsByTemplateID(
+	ctx context.Context,
+	templateID, name string,
+	assetIDs []string,
+	opts ...DeployOptions,
+) (*BatchCreateRunsResult, error) {
+	if strings.TrimSpace(templateID) == "" {
+		return nil, fmt.Errorf("%w: template id is required", ErrInvalidArgument)
+	}
+	normalizedAssetIDs, err := assetvalidation.Validate(ctx, uc.assetRepo, "asset_ids", assetIDs)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrAssetNotFound, err)
+	}
+	if len(normalizedAssetIDs) == 0 {
+		return nil, fmt.Errorf("%w: at least one asset id is required for batch run", ErrInvalidArgument)
+	}
+
+	batchID := uuid.New().String()
+	result := &BatchCreateRunsResult{
+		BatchID: batchID,
+		Items:   make([]models.PipelineRun, 0, len(normalizedAssetIDs)),
+	}
+	batchOpts := mergeDeployOptions(opts, DeployOptions{BatchRunID: batchID})
+
+	for _, assetID := range normalizedAssetIDs {
+		run, err := uc.CreateRunByTemplateID(ctx, templateID, name, []string{assetID}, batchOpts...)
+		if err != nil {
+			result.Failed = append(result.Failed, BatchCreateRunFailure{
+				AssetID: assetID,
+				Error:   err.Error(),
+			})
+			continue
+		}
+		if run != nil {
+			result.Items = append(result.Items, *run)
+		}
+	}
+	if len(result.Items) == 0 {
+		return result, fmt.Errorf("%w: all batch runs failed", ErrInvalidArgument)
+	}
+	return result, nil
 }
 
 // ListRuns returns all first-class pipeline runs. When the run table is not
