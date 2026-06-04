@@ -28,10 +28,12 @@ from GKE to Cloud Run.
   the Dockerfile default (`dev-latest`).
 - `frontend-dev.sh` also ensures the embedded Argo UI static bundle exists
   before building the Cloud Run nginx wrapper. By default `BUILD_ARGO_UI=auto`
-  reuses `databrew-pipeline/argo-ui/dist` when present and otherwise runs
+  reuses `databrew-pipeline/argo-ui/dist` when present, then falls back to a
+  repo-local `site/argo` bundle when present, and only then runs
   `yarn install && yarn build` in `databrew-pipeline/argo-ui`. If another
-  worktree or CI artifact already has the bundle, set
-  `ARGO_UI_DIST_SOURCE=/path/to/dist` to copy it into place.
+  worktree or CI artifact has the bundle, set `ARGO_UI_DIST_SOURCE=/path/to/dist`
+  to copy it into place; explicit `ARGO_UI_DIST_SOURCE` takes precedence over
+  repo-local fallbacks.
 - `backend-dev.sh` defaults to local `docker build && docker push`; set
   `USE_CLOUD_BUILD=true` for remote build, or `USE_EXISTING_IMAGE=true` to
   skip build and deploy the provided image directly.
