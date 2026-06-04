@@ -14,8 +14,10 @@ import {
 	Button,
 	Checkbox,
 	Modal,
+		Segmented,
 	Popconfirm,
-	Select,
+	Input,
+		Select,
 	Skeleton,
 	Space,
 	Tag,
@@ -67,6 +69,20 @@ function parseAssetIdsParam(raw: string | null): string[] {
 		.split(",")
 		.map((item) => item.trim())
 		.filter(Boolean);
+}
+
+function parsePastedAssetIds(raw: string): { ids: string[]; unique: number; duplicates: number } {
+	const lines = raw.split(/[\n,;\t ]+/).map((s) => s.trim()).filter(Boolean);
+	const seen = new Set<string>();
+	const ids: string[] = [];
+	let duplicates = 0;
+	for (const line of lines) {
+		if (line.toLowerCase() === "asset_id" || line.toLowerCase() === "video_id") continue;
+		if (seen.has(line)) { duplicates++; continue; }
+		seen.add(line);
+		ids.push(line);
+	}
+	return { ids, unique: ids.length, duplicates };
 }
 
 function PanelSkeleton({ rows = 3 }: { rows?: number }) {
@@ -141,8 +157,8 @@ function TemplateCard({
 	activeVersion,
 	compactActions,
 	selectable,
-	selected,
-	onSelect,
+		selected,
+		onSelect,
 }: {
 	template: PipelineTemplate;
 	onRun: (id: string) => void;
@@ -373,6 +389,10 @@ export function DeployPanel({
 	const [activeVersionByTemplate, setActiveVersionByTemplate] = useState<
 		Record<string, number>
 	>({});
+	const [scopeTab, setScopeTab] = useState<string>("all");
+	const [assetMode, setAssetMode] = useState<"search" | "paste">("search");
+	const [pasteText, setPasteText] = useState("");
+	const [pasteFileKey] = useState(0);
 
 	const updateSelectedAssetIds = useCallback(
 		(nextIds: string[]) => {
@@ -388,10 +408,12 @@ export function DeployPanel({
 		[searchParams, setSearchParams],
 	);
 
-	const displayTemplates = useMemo(
-		() => dedupeTemplatesByName(templates),
-		[templates],
-	);
+	const displayTemplates = useMemo(() => {
+		const deduped = dedupeTemplatesByName(templates);
+		if (scopeTab === "dev") return deduped.filter((t) => t.scope !== "prod");
+		if (scopeTab === "prod") return deduped.filter((t) => t.scope === "prod");
+		return deduped;
+	}, [templates, scopeTab]);
 	const displayDeployments = useMemo(
 		() => prepareDeployments(deployments),
 		[deployments],
@@ -855,6 +877,17 @@ export function DeployPanel({
 			) : null}
 
 			<div className="deploy-panel__section-card">
+				<div style={{ marginBottom: 12, display: "flex", justifyContent: "center" }}>
+					<Segmented
+						options={[
+							{ value: "all", label: "全部" },
+							{ value: "dev", label: "我的 Dev" },
+							{ value: "prod", label: "共享正式版" },
+						]}
+						value={scopeTab}
+						onChange={(v) => setScopeTab(v as string)}
+					/>
+				</div>
 				<div className="deploy-section-title">
 					<div>
 						已保存的流水线
@@ -974,12 +1007,74 @@ export function DeployPanel({
 						}))}
 					/>
 				</div>
-				<AssetPicker
-					selectedIds={selectedAssetIds}
-					onSelectionChange={updateSelectedAssetIds}
-					maxHeight={300}
-					resetKey={assetPickerResetKey}
-				/>
+				<div style={{ marginBottom: 12 }}>
+					<Segmented
+						options={[
+							{ value: "search", label: "搜索资产" },
+							{ value: "paste", label: "粘贴资产 ID" },
+						]}
+						value={assetMode}
+						onChange={(v) => {
+							setAssetMode(v as "search" | "paste");
+							if (v === "paste") {
+								const parsed = parsePastedAssetIds(pasteText);
+								updateSelectedAssetIds(parsed.ids);
+							}
+						}}
+					/>
+				</div>
+				{assetMode === "paste" ? (
+					<div style={{ display: "grid", gap: 8 }}>
+						<Input.TextArea
+							rows={6}
+							value={pasteText}
+							onChange={(e) => {
+								setPasteText(e.target.value);
+								const parsed = parsePastedAssetIds(e.target.value);
+								updateSelectedAssetIds(parsed.ids);
+							}}
+							placeholder="粘贴 asset ID，每行一个，或粘贴 CSV"
+							style={{ fontFamily: "monospace", fontSize: 12 }}
+						/>
+						<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+							<label className="ant-btn ant-btn-default" style={{ cursor: "pointer" }}>
+								上传 CSV
+								<input
+									type="file"
+									accept=".csv,.txt"
+									key={pasteFileKey}
+									style={{ display: "none" }}
+									onChange={(e) => {
+										const file = e.target.files?.[0];
+										if (!file) return;
+										file.text().then((text) => {
+											setPasteText(text);
+											const parsed = parsePastedAssetIds(text);
+											updateSelectedAssetIds(parsed.ids);
+										});
+									}}
+								/>
+							</label>
+							{pasteText ? (
+								(() => {
+									const parsed = parsePastedAssetIds(pasteText);
+									return (
+										<span style={{ fontSize: 12, color: parsed.unique > 0 ? "#16a34a" : "#999" }}>
+											{parsed.unique} 个资产{parsed.duplicates > 0 ? `（${parsed.duplicates} 个重复已移除）` : ""}
+										</span>
+									);
+								})()
+							) : null}
+						</div>
+					</div>
+				) : (
+					<AssetPicker
+						selectedIds={selectedAssetIds}
+						onSelectionChange={updateSelectedAssetIds}
+						maxHeight={300}
+						resetKey={assetPickerResetKey}
+					/>
+				)}
 			</Modal>
 			{versionDrawerTemplate ? (
 				<VersionHistoryDrawer

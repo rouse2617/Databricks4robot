@@ -216,6 +216,7 @@ const workflowSummaryFromRun = (
 	name: workflowNameForRun(run),
 	status: liveWorkflow?.status ?? run.status,
 	nodeCount: run.nodeCount ?? liveWorkflow?.nodeCount ?? 0,
+	assetCount: run.assetCount ?? liveWorkflow?.assetCount,
 	createdAt: liveWorkflow?.createdAt ?? run.createdAt,
 	finishedAt: liveWorkflow?.finishedAt ?? run.finishedAt,
 	labels: liveWorkflow?.labels,
@@ -768,6 +769,14 @@ export function WorkflowExecutionList({
 			width: 100,
 			render: (nodeCount: number, record: WorkflowSummary) =>
 				nodeCountsByWorkflowName[record.name] ?? nodeCount,
+		},
+		{
+			title: "资产数",
+			dataIndex: "assetCount",
+			key: "assetCount",
+			width: 100,
+			render: (assetCount: number | undefined) =>
+				assetCount != null ? assetCount : "—",
 		},
 		{
 			title: "标签",

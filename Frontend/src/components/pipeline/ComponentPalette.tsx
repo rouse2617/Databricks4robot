@@ -1,5 +1,6 @@
-import { Alert, Button, Spin } from "antd";
+import { Alert, Button, Input, Spin } from "antd";
 import { Link } from "react-router-dom";
+import { useMemo, useState } from "react";
 import { PipelineEmptyState } from "./PipelineEmptyState";
 import type { RegisteredComponent } from "./types";
 
@@ -20,12 +21,30 @@ export function ComponentPalette({
 	error = null,
 	onRetry,
 }: Props) {
+	const [search, setSearch] = useState("");
+	const filtered = useMemo(() => {
+		const q = search.toLowerCase().trim();
+		if (!q) return components;
+		return components.filter(
+			(c) =>
+				c.name.toLowerCase().includes(q) ||
+				(c.image || "").toLowerCase().includes(q),
+		);
+	}, [components, search]);
+
 	return (
 		<aside className="palette" aria-label="组件面板">
 			<div className="palette-header">
 				<h3>组件</h3>
-				<span className="palette-count">{components.length}</span>
+				<span className="palette-count">{filtered.length}</span>
 			</div>
+			<Input.Search
+				placeholder="搜索组件..."
+				value={search}
+				onChange={(e) => setSearch(e.target.value)}
+				allowClear
+				style={{ marginBottom: 8 }}
+			/>
 			{loading ? (
 				<div className="pipeline-palette-loading" aria-busy="true">
 					<Spin size="small" />
@@ -37,7 +56,7 @@ export function ComponentPalette({
 					type="warning"
 					showIcon
 					message="组件加载失败"
-					description={error}
+					description={search ? undefined : error}
 					action={
 						onRetry ? (
 							<Button size="small" type="link" onClick={onRetry}>
@@ -48,7 +67,7 @@ export function ComponentPalette({
 					style={{ marginBottom: 8 }}
 				/>
 			) : null}
-			{components.map((c) => (
+			{filtered.map((c) => (
 				<button
 					key={c.id}
 					type="button"
@@ -65,10 +84,10 @@ export function ComponentPalette({
 					</div>
 				</button>
 			))}
-			{!loading && components.length === 0 ? (
+			{!loading && filtered.length === 0 && search ? (
 				<PipelineEmptyState
 					variant="palette"
-					title="暂无组件"
+					title={search ? "无匹配组件" : "暂无组件"}
 					description={
 						<>
 							请先在 <Link to="/components">步骤组件</Link> 中创建。

@@ -108,3 +108,4 @@ argo-ui/
 # Task / planning files
 TASK-*
 .hermes/TASK-*
+Frontend/node_modules

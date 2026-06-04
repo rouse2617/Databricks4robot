@@ -4,6 +4,7 @@ export interface WorkflowSummary {
 	name: string;
 	status: string;
 	nodeCount: number;
+	assetCount?: number;
 	createdAt: string;
 	finishedAt?: string;
 	labels?: Record<string, string>;
