@@ -30,6 +30,7 @@ export interface Deployment {
 	executionTarget?: ExecutionTarget;
 	createdAt: string;
 	finishedAt?: string;
+	batchRunId?: string;
 	manifest?: string;
 	pipelineJSON?: Pipeline;
 }
@@ -195,6 +196,12 @@ export function promotePipeline(id: string): Promise<PipelineTemplate> {
 	return request<PipelineTemplate>("POST", `/pipelines/${id}/promote`);
 }
 
+export interface BatchDeployResult {
+	batchId: string;
+	items: PipelineRun[];
+	failed?: Array<{ assetId: string; error: string }>;
+}
+
 export function deployTemplate(
 	templateId: string,
 	assetIds?: string[],
@@ -206,6 +213,23 @@ export function deployTemplate(
 		target_id: targetId,
 		version,
 	});
+}
+
+export function batchDeployTemplate(
+	templateId: string,
+	assetIds: string[],
+	targetId?: string,
+	version?: number,
+): Promise<BatchDeployResult> {
+	return request<BatchDeployResult>(
+		"POST",
+		`/pipeline-runs/template/${templateId}/batch`,
+		{
+			asset_ids: assetIds,
+			target_id: targetId,
+			version,
+		},
+	);
 }
 
 export function listDeployments(): Promise<Deployment[]> {

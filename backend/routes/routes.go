@@ -352,6 +352,7 @@ func RegisterAll(
 		api.GET("/execution-targets", pipelineHandler.ListExecutionTargets)
 		api.POST("/pipeline-runs", pipelineHandler.CreateRun)
 		api.POST("/pipeline-runs/template/:id", pipelineHandler.CreateRunByTemplate)
+		api.POST("/pipeline-runs/template/:id/batch", pipelineHandler.BatchCreateRunsByTemplate)
 		api.GET("/pipeline-runs", pipelineHandler.ListRuns)
 		api.GET("/pipeline-runs/watcher/status", pipelineHandler.GetRunWatcherStatus)
 		api.GET("/pipeline-runs/:id", pipelineHandler.GetRun)

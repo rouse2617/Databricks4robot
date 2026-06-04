@@ -280,6 +280,45 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 	c.JSON(http.StatusCreated, run)
 }
 
+// BatchCreateRunsByTemplate handles POST /api/v1/pipeline-runs/template/:id/batch.
+// Submits one Argo workflow per asset (CYB-1639).
+func (h *Handler) BatchCreateRunsByTemplate(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "template id is required", nil)
+		return
+	}
+	var req struct {
+		Name     string   `json:"name"`
+		AssetIDs []string `json:"asset_ids"`
+		TargetID string   `json:"target_id"`
+		Version  int      `json:"version"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	result, err := h.uc.BatchCreateRunsByTemplateID(
+		c.Request.Context(),
+		id,
+		req.Name,
+		req.AssetIDs,
+		pipelineUC.DeployOptions{
+			TargetID:        req.TargetID,
+			TemplateVersion: req.Version,
+			Owner:           middleware.GetUserEmail(c),
+		},
+	)
+	if err != nil {
+		mapDeployError(c, err)
+		return
+	}
+	for i := range result.Items {
+		result.Items[i].TotalEstimatedCost = pipelineUC.ComputeRunCost(&result.Items[i], h.pricing)
+	}
+	c.JSON(http.StatusCreated, result)
+}
+
 // ListExecutionTargets handles GET /api/v1/execution-targets.
 func (h *Handler) ListExecutionTargets(c *gin.Context) {
 	items, err := h.uc.ListExecutionTargets(c.Request.Context())

@@ -26,6 +26,7 @@ import {
 	type Deployment,
 	deletePipeline,
 	deployTemplate,
+	batchDeployTemplate,
 	type ExecutionTarget,
 	getPipeline,
 	listDeployments,
@@ -105,7 +106,11 @@ function AssetRunSummary({
 		<Alert
 			type="success"
 			showIcon
-			message={`将处理 ${assetIds.length} 个资产`}
+			message={
+				assetIds.length > 1
+					? `将为 ${assetIds.length} 个资产各创建 1 个独立 Workflow`
+					: `将处理 ${assetIds.length} 个资产`
+			}
 			description={
 				<div style={{ display: "grid", gap: 8 }}>
 					<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -478,13 +483,32 @@ export function DeployPanel({
 		if (!deployTargetId) return;
 		setDeploying(true);
 		try {
-			await deployTemplate(
-				deployTargetId,
-				selectedAssetIds,
-				selectedTargetId,
-				selectedDeployVersion,
-			);
-			messageApi.success("部署成功");
+			if (selectedAssetIds.length > 1) {
+				const result = await batchDeployTemplate(
+					deployTargetId,
+					selectedAssetIds,
+					selectedTargetId,
+					selectedDeployVersion,
+				);
+				const failedCount = result.failed?.length ?? 0;
+				if (failedCount > 0) {
+					messageApi.warning(
+						`已提交 ${result.items.length} 个 Workflow，${failedCount} 个资产失败`,
+					);
+				} else {
+					messageApi.success(
+						`已提交 ${result.items.length} 个独立 Workflow（批次 ${result.batchId.slice(0, 8)}）`,
+					);
+				}
+			} else {
+				await deployTemplate(
+					deployTargetId,
+					selectedAssetIds,
+					selectedTargetId,
+					selectedDeployVersion,
+				);
+				messageApi.success("部署成功");
+			}
 			closeAssetModal();
 			setDeploying(false);
 			void refresh();
