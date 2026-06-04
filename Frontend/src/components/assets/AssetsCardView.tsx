@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Asset } from "../../api/types";
 import { formatDurationSeconds } from "../../lib/assetPresentation";
 import type { FetchStatus } from "../../lib/assets/assetsDiscoveryTypes";
+import { AlgoFailedIndicator } from "./AlgoSummaryCell";
 import ResultsEmptyState from "./ResultsEmptyState";
 
 const { Text } = Typography;
@@ -411,6 +412,7 @@ export default function AssetsCardView({
 											>
 												{state}
 											</Text>
+											<AlgoFailedIndicator algoResults={asset.algo_results} />
 											{asset.retention_tier && (
 												<Text
 													style={{

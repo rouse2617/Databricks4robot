@@ -18,7 +18,7 @@ import type {
 	ViewMode,
 } from "../../lib/assets/assetsDiscoveryTypes";
 import { formatDateTime } from "../../lib/dateTime";
-import AlgoSummaryCell from "./AlgoSummaryCell";
+import AlgoSummaryCell, { AlgoFailedIndicator } from "./AlgoSummaryCell";
 import AssetsCardView from "./AssetsCardView";
 import ResultsEmptyState from "./ResultsEmptyState";
 
@@ -208,9 +208,12 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	}),
 	lifecycle_state: () => ({
 		title: "生命周期",
-		width: 90,
+		width: 170,
 		render: (_: unknown, r: Asset) => (
-			<Tag color={getAssetStateColor(r)}>{getLifecycleState(r) || "—"}</Tag>
+			<Space size={4} wrap>
+				<Tag color={getAssetStateColor(r)}>{getLifecycleState(r) || "—"}</Tag>
+				<AlgoFailedIndicator algoResults={r.algo_results} />
+			</Space>
 		),
 	}),
 	algo: () => ({

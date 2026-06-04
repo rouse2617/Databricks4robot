@@ -2,7 +2,7 @@
 // Renders "N ok / M failed / K pending" summary with hover popover.
 // Validates: Requirements R6
 
-import { Popover, Typography } from "antd";
+import { Popover, Tag, Typography } from "antd";
 import type { Asset } from "../../api/types";
 
 const { Text } = Typography;
@@ -51,6 +51,32 @@ export function countStatuses(entries: AlgoEntry[]): Record<string, number> {
 		counts[e.status] = (counts[e.status] ?? 0) + 1;
 	}
 	return counts;
+}
+
+const FAILED_ALGO_STATUSES = new Set(["failed", "error"]);
+
+export function countFailedAlgos(
+	algoResults: Record<string, string> | undefined,
+): number {
+	return parseAlgoEntries(algoResults).filter((entry) =>
+		FAILED_ALGO_STATUSES.has(entry.status),
+	).length;
+}
+
+export function AlgoFailedIndicator({
+	algoResults,
+}: {
+	algoResults?: Record<string, string>;
+}) {
+	const failedCount = countFailedAlgos(algoResults);
+	if (failedCount <= 0) {
+		return null;
+	}
+	return (
+		<Tag color="red" style={{ marginInlineEnd: 0 }}>
+			{failedCount} 算法失败
+		</Tag>
+	);
 }
 
 // ─── Popover Content ───

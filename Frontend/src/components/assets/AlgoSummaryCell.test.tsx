@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { countStatuses, parseAlgoEntries } from "./AlgoSummaryCell";
+import { countFailedAlgos, countStatuses, parseAlgoEntries } from "./AlgoSummaryCell";
 
 // ─── parseAlgoEntries ───
 
@@ -56,5 +56,25 @@ describe("countStatuses", () => {
 			{ key: "d", status: "pending" },
 		];
 		expect(countStatuses(entries)).toEqual({ ok: 2, failed: 1, pending: 1 });
+	});
+});
+
+describe("countFailedAlgos", () => {
+	it("returns 0 when no failed statuses", () => {
+		expect(
+			countFailedAlgos({
+				"hand_tracking@1.0.0:status": "ok",
+			}),
+		).toBe(0);
+	});
+
+	it("counts failed and error statuses", () => {
+		expect(
+			countFailedAlgos({
+				"hand_tracking@1.0.0:status": "failed",
+				"body_tracking@1.0.0:status": "error",
+				"sam2@1.0.0:status": "ok",
+			}),
+		).toBe(2);
 	});
 });

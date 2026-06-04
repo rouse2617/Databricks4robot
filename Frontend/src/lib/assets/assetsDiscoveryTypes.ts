@@ -213,6 +213,7 @@ export const DEFAULT_COLUMNS: string[] = [
 	"asset_id",
 	"asset_type",
 	"lifecycle_state",
+	"algo",
 	"owner",
 	"duration",
 	"updated_at",
