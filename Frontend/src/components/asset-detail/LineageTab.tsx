@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { assetsApi } from "../../api/assets";
 import type { PipelineLineage } from "../../api/types";
+import { buildWorkflowExecutionUrl } from "../../lib/workflowNavigation";
 
 const { Text } = Typography;
 
@@ -128,7 +129,10 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 										const wf = pipelineLineage?.workflow_name;
 										if (wf) {
 											navigate(
-												`/pipeline/executions/${encodeURIComponent(wf)}`,
+												buildWorkflowExecutionUrl(
+													wf,
+													pipelineLineage?.deployment_id,
+												),
 											);
 										}
 									}}

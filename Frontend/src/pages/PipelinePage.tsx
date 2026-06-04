@@ -43,8 +43,8 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../api/assets";
 import {
-	type Deployment,
 	batchDeployTemplate,
+	type Deployment,
 	deployTemplate,
 	type ExecutionTarget,
 	getPipeline,
@@ -79,6 +79,7 @@ import {
 	type PipelineExample,
 } from "../lib/pipelineExamples";
 import { validatePipelineForRun } from "../lib/pipelineValidation";
+import { buildWorkflowExecutionUrl } from "../lib/workflowNavigation";
 import { ComponentManager } from "./ComponentManager";
 import {
 	apiToRegistered,
@@ -1841,7 +1842,10 @@ function PipelineCanvas() {
 												return;
 											}
 											navigate(
-												`/pipeline/executions/${deployDialog.result?.workflowName}`,
+												buildWorkflowExecutionUrl(
+													deployDialog.result?.workflowName ?? "",
+													deployDialog.result?.id,
+												),
 											);
 										}}
 									>

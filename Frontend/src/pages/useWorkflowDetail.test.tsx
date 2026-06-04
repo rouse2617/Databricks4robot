@@ -7,6 +7,7 @@ import { ApiError } from "../api/pipelineClient";
 const mockGetWorkflow = vi.fn();
 const mockGetWorkflowLogs = vi.fn();
 const mockListPipelineRuns = vi.fn(() => Promise.resolve([]));
+const mockGetPipelineRun = vi.fn();
 
 class MockEventSource extends EventTarget {
 	static instances: MockEventSource[] = [];
@@ -33,9 +34,27 @@ vi.mock("../api/workflowApi", () => ({
 }));
 
 vi.mock("../api/pipelineApi", () => ({
-	getPipelineRunCostSummary: vi.fn(),
-	listPipelineRunAssetNodes: vi.fn(),
-	listPipelineRunEvents: vi.fn(),
+	getPipelineRunCostSummary: vi.fn(() => Promise.resolve(null)),
+	listPipelineRunAssetNodes: vi.fn(() =>
+		Promise.resolve({
+			items: [],
+			total: 0,
+			summary: {
+				assetCount: 0,
+				nodeCount: 0,
+				statuses: {},
+				costSource: "unavailable",
+			},
+		}),
+	),
+	listPipelineRunEvents: vi.fn(() =>
+		Promise.resolve({
+			items: [],
+			total: 0,
+			nextCursor: undefined,
+		}),
+	),
+	getPipelineRun: (...args: unknown[]) => mockGetPipelineRun(...args),
 	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
 }));
 
@@ -45,6 +64,9 @@ describe("useWorkflowDetail", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		MockEventSource.instances = [];
+		mockGetPipelineRun.mockRejectedValue(
+			new ApiError(404, "PIPELINE_RUN_NOT_FOUND", "pipeline run not found"),
+		);
 		vi.stubGlobal("EventSource", MockEventSource);
 	});
 
@@ -204,5 +226,78 @@ describe("useWorkflowDetail", () => {
 			expect(result.current.logState.content).toContain("hello\n"),
 		);
 		expect(result.current.logState.followStatus).toBe("connected");
+	});
+
+	it("prefers runId in workflow lookup candidates", async () => {
+		mockGetPipelineRun.mockResolvedValue({
+			id: "run-202",
+			workflowName: "actual-workflow",
+			pipelineName: "legacy-run",
+			status: "Failed",
+			createdAt: "2026-06-04T00:00:00Z",
+		});
+		mockGetWorkflow.mockImplementation((identifier: string) => {
+			if (identifier === "run-202") {
+				return Promise.resolve({
+					name: "actual-workflow",
+					status: "Failed",
+					createdAt: "2026-06-04T00:00:00Z",
+					nodes: [
+						{
+							id: "step-1",
+							name: "step-1",
+							displayName: "step-1",
+							phase: "Failed",
+							message: "ImagePullBackOff",
+						},
+					],
+				});
+			}
+			return Promise.reject(
+				new ApiError(404, "WORKFLOW_NOT_FOUND", "workflow not found"),
+			);
+		});
+
+		const { result } = renderHook(() =>
+			useWorkflowDetail("legacy-run", "run-202"),
+		);
+
+		await waitFor(() => expect(result.current.loading).toBe(false));
+
+		expect(mockGetPipelineRun).toHaveBeenCalledWith("run-202");
+		expect(mockGetWorkflow).toHaveBeenCalledWith("run-202");
+	});
+
+	it("warns when ledger status and workflow status diverge", async () => {
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-ledger",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [
+				{
+					id: "node-1",
+					name: "node-1",
+					displayName: "node-1",
+					phase: "Running",
+				},
+			],
+		});
+		mockGetPipelineRun.mockResolvedValue({
+			id: "run-ledger",
+			workflowName: "wf-ledger",
+			pipelineName: "wf-ledger",
+			status: "Succeeded",
+			createdAt: "2026-06-03T00:00:00Z",
+		});
+
+		const { result } = renderHook(() =>
+			useWorkflowDetail("wf-ledger", "run-ledger"),
+		);
+
+		await waitFor(() =>
+			expect(result.current.statusSyncWarning).toContain(
+				"DataBrew 记录状态为 Succeeded",
+			),
+		);
 	});
 });

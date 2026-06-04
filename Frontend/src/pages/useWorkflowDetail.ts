@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+	getPipelineRun,
 	getPipelineRunCostSummary,
 	listPipelineRunAssetNodes,
 	listPipelineRunEvents,
@@ -83,8 +84,16 @@ function normalizeWorkflowStatus(status: string): string {
 	return status.toLowerCase().trim();
 }
 
-function buildStatusSyncWarning(workflow: WorkflowDetail): string | undefined {
+function buildStatusSyncWarning(
+	workflow: WorkflowDetail,
+	runStatus?: string,
+): string | undefined {
 	const workflowStatus = normalizeWorkflowStatus(workflow.status);
+	const ledgerStatus = normalizeWorkflowStatus(runStatus || "");
+	if (ledgerStatus && ledgerStatus !== workflowStatus) {
+		return `DataBrew 记录状态为 ${runStatus}，但工作流当前状态为 ${workflow.status}，存在状态回写延迟，请以事件时间线确认。`;
+	}
+
 	const failedNodes = workflow.nodes.filter((node) =>
 		FAILED_NODE_PHASES.has(node.phase),
 	);
@@ -304,6 +313,48 @@ function buildWorkflowRunLookup(
 	return pickWorkflowLookupName(runs, name, runId);
 }
 
+async function resolveWorkflowLookupFromRunId(
+	runId?: string,
+): Promise<WorkflowRunLookup | null> {
+	const normalizedRunId = normalizeInput(runId);
+	if (!normalizedRunId) return null;
+	try {
+		const run = await getPipelineRun(normalizedRunId);
+		return {
+			workflowName:
+				normalizeInput(run.workflowName) ??
+				normalizeInput(run.pipelineName) ??
+				normalizedRunId,
+			runId: normalizedRunId,
+			normalizedName: normalizeInput(run.pipelineName) ?? normalizedRunId,
+			runIdSource: "run-id",
+		};
+	} catch (err) {
+		if (err instanceof ApiError && err.status === 404) {
+			return {
+				workflowName: normalizedRunId,
+				runId: normalizedRunId,
+				normalizedName: normalizedRunId,
+				runIdSource: "run-id",
+			};
+		}
+		throw err;
+	}
+}
+
+function getWorkflowLookupCandidates(
+	lookup: WorkflowRunLookup | null,
+	name?: string,
+): string[] {
+	if (!lookup) return [];
+	return uniqueLookupCandidates([
+		lookup.runId,
+		lookup.workflowName,
+		lookup.normalizedName,
+		name,
+	]);
+}
+
 function findRunByLookup(
 	runs: PipelineRun[],
 	lookup: WorkflowRunLookup | null,
@@ -321,7 +372,11 @@ function findRunByLookup(
 	);
 	if (byWorkflowOrPipeline) return byWorkflowOrPipeline;
 
-	return runs.find((run) => run.id === lookup.workflowName) ?? null;
+	const byWorkflowNameAsRunId = runs.find(
+		(run) => run.id === lookup.workflowName,
+	);
+	if (byWorkflowNameAsRunId) return byWorkflowNameAsRunId;
+	return null;
 }
 
 function toErrorMessage(err: unknown): string {
@@ -383,6 +438,12 @@ export function useWorkflowDetail(
 
 	const resolveWorkflowLookup = useCallback(async () => {
 		try {
+			const resolvedFromRunId = await resolveWorkflowLookupFromRunId(runId);
+			if (resolvedFromRunId) {
+				setWorkflowLookup(resolvedFromRunId);
+				return resolvedFromRunId;
+			}
+
 			const runs = await listPipelineRuns();
 			const lookup = buildWorkflowRunLookup(name, runId, runs);
 			setWorkflowLookup(lookup);
@@ -412,7 +473,7 @@ export function useWorkflowDetail(
 	}, [name, runId, resolveWorkflowLookup]);
 
 	const fetchWorkflowByCandidates = useCallback(
-		async (candidates: string[]): Promise<WorkflowDetail | null> => {
+		async (candidates: string[]): Promise<WorkflowDetail> => {
 			let lastError: unknown;
 			for (const candidate of candidates) {
 				try {
@@ -436,17 +497,22 @@ export function useWorkflowDetail(
 		setLoading(true);
 		setLoadError(null);
 		try {
-			const candidates = uniqueLookupCandidates([
-				workflowLookup.workflowName,
-				workflowLookup.runId,
-				name,
-				workflowLookup.normalizedName,
-			]);
+			const candidates = getWorkflowLookupCandidates(workflowLookup, name);
 			const detail = await fetchWorkflowByCandidates(candidates);
 			setWorkflow(detail);
+			setWorkflowLookup((current) =>
+				current && detail.name && detail.name !== current.workflowName
+					? {
+							...current,
+							workflowName: detail.name,
+						}
+					: current,
+			);
 			setLoadError(null);
 		} catch (err) {
-			console.error(err);
+			if (!(err instanceof ApiError && err.status === 404)) {
+				console.error(err);
+			}
 			setWorkflow(null);
 			setLoadError(toLoadError(err));
 		} finally {
@@ -467,9 +533,26 @@ export function useWorkflowDetail(
 				loading: true,
 				error: null,
 			}));
-			listPipelineRuns()
-				.then((runs) => {
-					const run = findRunByLookup(runs, workflowLookup);
+			const resolveRunForEvents = async () => {
+				try {
+					if (!workflowLookup?.runId) {
+						const runs = await listPipelineRuns();
+						return findRunByLookup(runs, workflowLookup);
+					}
+					const directRun = await getPipelineRun(workflowLookup.runId);
+					if (directRun) return directRun;
+				} catch (err) {
+					if (!(err instanceof ApiError && err.status === 404)) {
+						throw err;
+					}
+					const runs = await listPipelineRuns();
+					return findRunByLookup(runs, workflowLookup);
+				}
+				return null;
+			};
+
+			resolveRunForEvents()
+				.then((run) => {
 					if (!run) {
 						setRunEventState({
 							run: null,
@@ -489,23 +572,34 @@ export function useWorkflowDetail(
 						listPipelineRunAssetNodes(run.id, { limit: 500 }),
 						getPipelineRunCostSummary(run.id),
 					]).then(([events, assetNodes, costSummary]) => {
+						const safeEvents = events ?? {
+							items: [],
+							nextCursor: undefined,
+							total: 0,
+						};
+						const safeAssetNodes = assetNodes ?? {
+							items: [],
+							summary: null,
+							total: 0,
+						};
+
 						setRunEventState((current) => ({
 							run,
 							items: opts?.append
-								? [...current.items, ...(events.items ?? [])]
-								: (events.items ?? []),
-							nextCursor: events.nextCursor,
+								? [...current.items, ...(safeEvents.items ?? [])]
+								: (safeEvents.items ?? []),
+							nextCursor: safeEvents.nextCursor,
 							loading: false,
 							error: null,
 						}));
 						setAssetNodeState({
-							items: assetNodes.items ?? [],
+							items: safeAssetNodes.items ?? [],
 							loading: false,
 							error: null,
-							summary: assetNodes.summary ?? null,
+							summary: safeAssetNodes.summary ?? null,
 						});
 						setCostSummaryState({
-							item: costSummary,
+							item: costSummary ?? null,
 							loading: false,
 							error: null,
 						});
@@ -551,9 +645,11 @@ export function useWorkflowDetail(
 		) {
 			return;
 		}
+		const candidates = getWorkflowLookupCandidates(workflowLookup, name);
+		if (candidates.length === 0) return;
 
 		const timer = window.setInterval(() => {
-			getWorkflow(workflowLookup.workflowName)
+			void fetchWorkflowByCandidates(candidates)
 				.then((detail) => {
 					setWorkflow(detail);
 					setLoadError(null);
@@ -564,12 +660,12 @@ export function useWorkflowDetail(
 		}, WORKFLOW_POLL_INTERVAL_MS);
 
 		return () => window.clearInterval(timer);
-	}, [lookupReady, workflowLookup?.workflowName, workflow?.status, workflow]);
+	}, [fetchWorkflowByCandidates, lookupReady, workflowLookup, name, workflow]);
 
 	const loadNodeLogs = useCallback(
 		async (nodeId: string) => {
-			if (!workflowLookup?.workflowName) return;
-			const workflowName = workflowLookup.workflowName;
+			const workflowName = workflow?.name || workflowLookup?.workflowName;
+			if (!workflowName) return;
 			setLogState((current) => ({
 				...current,
 				loading: true,
@@ -602,7 +698,7 @@ export function useWorkflowDetail(
 				}));
 			}
 		},
-		[workflowLookup?.workflowName],
+		[workflow?.name, workflowLookup?.workflowName],
 	);
 
 	const selectNode = useCallback(
@@ -649,14 +745,12 @@ export function useWorkflowDetail(
 	}, []);
 
 	const startFollowLogs = useCallback(() => {
-		if (!workflowLookup?.workflowName || !selectedNodeId) return;
+		const workflowName = workflow?.name || workflowLookup?.workflowName;
+		if (!workflowName || !selectedNodeId) return;
 
 		stopFollowLogs();
 
-		const url = getWorkflowLogStreamUrl(
-			workflowLookup.workflowName,
-			selectedNodeId,
-		);
+		const url = getWorkflowLogStreamUrl(workflowName, selectedNodeId);
 		const source = new EventSource(url);
 		followSourceRef.current = source;
 
@@ -743,16 +837,22 @@ export function useWorkflowDetail(
 				followMessage: "实时日志连接已断开",
 			}));
 		};
-	}, [workflowLookup?.workflowName, selectedNodeId, stopFollowLogs]);
+	}, [
+		workflow?.name,
+		workflowLookup?.workflowName,
+		selectedNodeId,
+		stopFollowLogs,
+	]);
 
 	const downloadLogs = useCallback(() => {
 		const content = logState.content;
 		const selNode = selectedNode;
-		if (!content || !workflowLookup?.workflowName || !selNode) return;
+		const workflowName = workflow?.name || workflowLookup?.workflowName;
+		if (!content || !workflowName || !selNode) return;
 		const nodeName = selNode.displayName || selNode.name || selNode.id;
 		const response = logState.response;
 		const header = [
-			`# workflow: ${workflowLookup.workflowName}`,
+			`# workflow: ${workflowName}`,
 			`# node: ${nodeName}`,
 			`# container: ${response?.container ?? "main"}`,
 			`# scope: ${response?.window?.scope ?? "loaded-log-window"}`,
@@ -765,13 +865,14 @@ export function useWorkflowDetail(
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement("a");
 		a.href = url;
-		a.download = `${workflowLookup.workflowName}-${nodeName}.log`;
+		a.download = `${workflowName}-${nodeName}.log`;
 		a.click();
 		URL.revokeObjectURL(url);
 	}, [
 		logState.content,
 		logState.response,
 		selectedNode,
+		workflow?.name,
 		workflowLookup?.workflowName,
 	]);
 
@@ -804,10 +905,11 @@ export function useWorkflowDetail(
 			}));
 		}
 	}, [selectedNodeId, workflow]);
-	const statusSyncWarning = useMemo(
-		() => (workflow ? buildStatusSyncWarning(workflow) : undefined),
-		[workflow],
-	);
+	const statusSyncWarning = useMemo(() => {
+		return workflow
+			? buildStatusSyncWarning(workflow, runEventState.run?.status)
+			: undefined;
+	}, [runEventState.run?.status, workflow]);
 
 	return {
 		workflow,

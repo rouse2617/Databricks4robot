@@ -244,6 +244,13 @@ export function listPipelineRuns(): Promise<PipelineRun[]> {
 	);
 }
 
+export function getPipelineRun(runId: string): Promise<PipelineRun> {
+	return request<PipelineRun>(
+		"GET",
+		`/pipeline-runs/${encodeURIComponent(runId)}`,
+	);
+}
+
 export function listPipelineRunEvents(
 	runId: string,
 	params?: {

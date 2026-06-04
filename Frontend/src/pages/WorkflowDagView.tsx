@@ -420,7 +420,13 @@ function WorkflowDagViewInner({
 										<button
 											key={node.id}
 											type="button"
-											onClick={() => onNodeSelect(node)}
+											onClick={() => {
+												if (onNodeAction) {
+													onNodeAction(node, "logs");
+													return;
+												}
+												onNodeSelect(node);
+											}}
 										>
 											查看失败节点：{getWorkflowNodeDisplayText(node)}
 										</button>

@@ -1207,7 +1207,15 @@ function WorkflowAssetNodePanel({
 									节点
 								</Button>,
 							];
-							if (row.logRef) {
+							const shouldShowLogAction =
+								row.logRef ||
+								(() => {
+									const status = (row.status || "").toLowerCase();
+									return ["failed", "error", "terminated", "stopped"].includes(
+										status,
+									);
+								})();
+							if (shouldShowLogAction) {
 								actions.push(
 									<Button
 										key="logs"
@@ -1263,6 +1271,7 @@ export default function WorkflowDetailPage({
 		workflow,
 		loading,
 		loadError,
+		statusSyncWarning,
 		selectedNode,
 		selectNode,
 		loadWorkflow,
@@ -1300,7 +1309,7 @@ export default function WorkflowDetailPage({
 				await operation.run();
 				messageApi.success(`${operation.title}已提交`);
 				if (operation.key === "delete") {
-					navigate("/workflows");
+					navigate("/pipeline?tab=executions");
 					return;
 				}
 				loadWorkflow();
@@ -1439,11 +1448,15 @@ export default function WorkflowDetailPage({
 
 	useEffect(() => {
 		if (legacyRoute && name) {
-			navigate(`/pipeline/executions/${encodeURIComponent(name)}`, {
-				replace: true,
-			});
+			const search = searchParams.toString().trim();
+			navigate(
+				`/pipeline/executions/${encodeURIComponent(name)}${search ? `?${search}` : ""}`,
+				{
+					replace: true,
+				},
+			);
 		}
-	}, [legacyRoute, name, navigate]);
+	}, [legacyRoute, name, navigate, searchParams]);
 
 	useEffect(() => {
 		if (!selectedNode) {
@@ -1451,6 +1464,29 @@ export default function WorkflowDetailPage({
 			setNodePanelOpen(false);
 		}
 	}, [selectedNode]);
+
+	const failedNodes = useMemo(
+		() =>
+			workflow?.nodes.filter((node) => {
+				return node.phase === "Failed" || node.phase === "Error";
+			}) ?? [],
+		[workflow?.nodes],
+	);
+	const failureSummaryText = useMemo(
+		() =>
+			failedNodes
+				.slice(0, 3)
+				.map((node) => {
+					const nodeName = node.displayName || node.name || node.id;
+					return `${nodeName}${node.message ? ` - ${node.message}` : ""}`;
+				})
+				.join("；"),
+		[failedNodes],
+	);
+	const moreFailureCount = useMemo(
+		() => Math.max(0, failedNodes.length - 3),
+		[failedNodes.length],
+	);
 
 	if (loading) {
 		return (
@@ -1564,6 +1600,44 @@ export default function WorkflowDetailPage({
 					finishedAt={workflow.finishedAt}
 					progress={workflow.progress}
 				/>
+				{failedNodes.length > 0 ? (
+					<Alert
+						type="error"
+						showIcon
+						message="检测到失败节点"
+						description={
+							<div>
+								<div>
+									<span>
+										发现 {failedNodes.length} 个失败/错误节点：
+										{failureSummaryText}
+									</span>
+									{moreFailureCount > 0 ? (
+										<span style={{ display: "block" }}>
+											以及后续 {moreFailureCount} 个失败节点
+										</span>
+									) : null}
+								</div>
+							</div>
+						}
+						style={{
+							maxWidth: 560,
+							marginRight: 12,
+						}}
+					/>
+				) : null}
+				{statusSyncWarning ? (
+					<Alert
+						type="warning"
+						showIcon
+						message="状态同步告警"
+						description={statusSyncWarning}
+						style={{
+							maxWidth: 520,
+							marginRight: 12,
+						}}
+					/>
+				) : null}
 				{costSummaryState.item &&
 				typeof costSummaryState.item.totalEstimatedCostUsd === "number" ? (
 					<Tooltip title="估算成本，非 GCP Billing 最终账单">
