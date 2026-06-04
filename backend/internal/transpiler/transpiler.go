@@ -41,7 +41,8 @@ type Options struct {
 	WorkflowParams        []Param // workflow-level parameters (e.g. asset_ids)
 	// GlobalEnv are environment variables injected into every node container (e.g. asset paths).
 	GlobalEnv    []EnvVar
-	ExtraVolumes []Volume // additional workflow-level volumes
+	ExtraVolumes        []Volume // additional workflow-level volumes
+	SkipOutputArtifacts bool     // when true, edges create dag order without /tmp/outputs artifacts
 }
 
 // RetryStrategy defines automatic retry policy for each step.
@@ -356,8 +357,11 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 		tmpl.Inputs = wfv1.Inputs{Parameters: inputParams}
 	}
 
-	// Output parameters (captured from file paths)
-	outputParams := outputParamDecls(node, consumedOutputs)
+	// Output parameters — skipped when SkipOutputArtifacts is set
+	var outputParams []wfv1.Parameter
+	if !opts.SkipOutputArtifacts {
+		outputParams = outputParamDecls(node, consumedOutputs)
+	}
 	if len(outputParams) > 0 {
 		tmpl.Outputs = wfv1.Outputs{Parameters: outputParams}
 	}
@@ -377,7 +381,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 	// and the container is running a shell command (sh -c).
 	// Typical case: Command=["sh"], Args=[{Value:"-c"}, {Value:"echo ... > /tmp/outputs/output"}]
 	// → containerArgs = ["-c", "echo ..."]
-	if len(outputParams) > 0 {
+	if len(outputParams) > 0 && !opts.SkipOutputArtifacts {
 		if scriptArgIndex := shellScriptArgIndex(node.Component.Command, containerArgs); scriptArgIndex >= 0 {
 			containerArgs[scriptArgIndex] = "mkdir -p /tmp/outputs && " + containerArgs[scriptArgIndex]
 		}

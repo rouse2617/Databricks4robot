@@ -1495,7 +1495,8 @@ func (uc *Usecase) Deploy(
 		Namespace:       targetNamespace,
 		TTLSecondsAfter: transpiler.DefaultTTLSecondsAfterCompletion,
 		WorkflowParams:  wfParams,
-		GlobalEnv:       globalEnv,
+		GlobalEnv:            globalEnv,
+		SkipOutputArtifacts: true,
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
