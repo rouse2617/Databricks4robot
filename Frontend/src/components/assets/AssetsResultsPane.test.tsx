@@ -141,6 +141,47 @@ describe("AssetsResultsPane", () => {
 		expect(screen.getByText(/1 failed/)).toBeTruthy();
 	});
 
+	it("shows failed algo indicator beside lifecycle when algos failed", () => {
+		const asset = makeAsset({
+			lifecycle_state: "ready",
+			algo_results: {
+				"hand_tracking@1.2.0:status": "failed",
+				"env_analysis@1.0.0:status": "failed",
+				"body_tracking@1.0.0:status": "ok",
+			},
+		});
+		render(
+			<AssetsResultsPane
+				{...defaultProps}
+				items={[asset]}
+				selectedColumns={[
+					"asset_id",
+					"lifecycle_state",
+					"updated_at",
+				]}
+			/>,
+		);
+		expect(screen.getByText("ready")).toBeTruthy();
+		expect(screen.getByText("2 算法失败")).toBeTruthy();
+	});
+
+	it("hides failed algo indicator when all algos are healthy", () => {
+		const asset = makeAsset({
+			lifecycle_state: "ready",
+			algo_results: {
+				"hand_tracking@1.0.0:status": "ok",
+			},
+		});
+		render(
+			<AssetsResultsPane
+				{...defaultProps}
+				items={[asset]}
+				selectedColumns={["asset_id", "lifecycle_state", "updated_at"]}
+			/>,
+		);
+		expect(screen.queryByText(/算法失败/)).toBeNull();
+	});
+
 	it("highlights active preview row", () => {
 		const { container } = render(
 			<AssetsResultsPane {...defaultProps} activePreviewId="asset_001" />,
