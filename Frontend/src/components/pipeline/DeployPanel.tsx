@@ -549,12 +549,12 @@ export function DeployPanel({
 	const handlePromote = async (template: PipelineTemplate) => {
 		try {
 			const promoted = await promotePipeline(template.id);
-			message.success(
+			messageApi.success(
 				`已发布 ${template.name} v${promoted.version} 到正式版（prod）`,
 			);
 			refresh();
 		} catch (err) {
-			message.error(`发布失败: ${String(err)}`);
+			messageApi.error(`发布失败: ${String(err)}`);
 		}
 	};
 

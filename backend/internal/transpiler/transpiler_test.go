@@ -339,8 +339,8 @@ func TestTranspileDefaultTTL(t *testing.T) {
 	if wf.Spec.TTLStrategy == nil || wf.Spec.TTLStrategy.SecondsAfterCompletion == nil {
 		t.Fatal("expected TTL strategy")
 	}
-	if *wf.Spec.TTLStrategy.SecondsAfterCompletion != 3600 {
-		t.Fatalf("ttl = %d, want 3600", *wf.Spec.TTLStrategy.SecondsAfterCompletion)
+	if *wf.Spec.TTLStrategy.SecondsAfterCompletion != DefaultTTLSecondsAfterCompletion {
+		t.Fatalf("ttl = %d, want %d", *wf.Spec.TTLStrategy.SecondsAfterCompletion, DefaultTTLSecondsAfterCompletion)
 	}
 }
 

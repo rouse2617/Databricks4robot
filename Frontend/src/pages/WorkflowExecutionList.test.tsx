@@ -24,6 +24,7 @@ const mockListWorkflows = vi.fn();
 const mockDeleteWorkflow = vi.fn();
 const mockListDeployments = vi.fn();
 const mockListPipelineRuns = vi.fn();
+const mockListPipelines = vi.fn();
 const mockGetPipelineRunWatcherStatus = vi.fn();
 
 vi.mock("../api/workflowApi", () => ({
@@ -42,6 +43,7 @@ vi.mock("../api/pipelineApi", () => ({
 		mockGetPipelineRunWatcherStatus(...args),
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
 	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
+	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
 }));
 
 vi.mock("antd", async (importOriginal) => {
@@ -116,6 +118,7 @@ describe("WorkflowExecutionList", () => {
 				createdAt: "2026-06-02T01:00:00Z",
 			},
 		]);
+		mockListPipelines.mockResolvedValue([]);
 		mockGetPipelineRunWatcherStatus.mockResolvedValue({
 			id: "default",
 			activeScanLimit: 100,
@@ -134,17 +137,8 @@ describe("WorkflowExecutionList", () => {
 		vi.clearAllMocks();
 	});
 
-	it("filters immediately when a status summary card is clicked", async () => {
-		renderList();
-
-		await waitFor(() => {
-			expect(screen.getByText("successful-run")).toBeInTheDocument();
-			expect(screen.getByText("failed-run")).toBeInTheDocument();
-		});
-
-		fireEvent.click(
-			screen.getByRole("button", { name: "筛选 Failed 执行记录" }),
-		);
+	it("applies status filters from the URL", async () => {
+		renderList("/pipeline?tab=executions&status=Failed");
 
 		await waitFor(() => {
 			expect(mockListWorkflows).toHaveBeenLastCalledWith(
@@ -155,34 +149,14 @@ describe("WorkflowExecutionList", () => {
 		});
 	});
 
-	it("shows pipeline run ledger watcher health", async () => {
-		renderList();
+	it("clears status filters when reset is clicked", async () => {
+		renderList("/pipeline?tab=executions&status=Failed");
 
 		await waitFor(() => {
-			expect(screen.getByText("运行账本同步正常")).toBeInTheDocument();
-		});
-		expect(screen.getByText(/最近同步 2 个运行/)).toBeInTheDocument();
-	});
-
-	it("clears the status filter when the active status card is clicked again", async () => {
-		renderList();
-
-		await waitFor(() => {
-			expect(screen.getByText("successful-run")).toBeInTheDocument();
+			expect(screen.getByText("failed-run")).toBeInTheDocument();
 		});
 
-		const failedCard = screen.getByRole("button", {
-			name: "筛选 Failed 执行记录",
-		});
-		fireEvent.click(failedCard);
-
-		await waitFor(() => {
-			expect(mockListWorkflows).toHaveBeenLastCalledWith(
-				expect.objectContaining({ status: "Failed" }),
-			);
-		});
-
-		fireEvent.click(failedCard);
+		fireEvent.click(screen.getByRole("button", { name: "重 置" }));
 
 		await waitFor(() => {
 			expect(mockListWorkflows).toHaveBeenLastCalledWith(
@@ -204,5 +178,53 @@ describe("WorkflowExecutionList", () => {
 		expect(screen.getAllByText("总成本").length).toBeGreaterThan(0);
 		expect(screen.getByText("$1.25")).toBeInTheDocument();
 		expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+	});
+
+	it("shows ledger-only runs with estimated cost after live Argo workflow TTL cleanup", async () => {
+		mockListWorkflows.mockResolvedValue({ items: [] });
+		mockListPipelineRuns.mockResolvedValue([
+			{
+				id: "run-ledger-1",
+				pipelineName: "ttl-cleaned-pipeline",
+				workflowName: "ttl-cleaned-workflow",
+				status: "Succeeded",
+				nodeCount: 5,
+				totalEstimatedCost: 0.009,
+				createdAt: "2026-06-03T19:16:51Z",
+				finishedAt: "2026-06-03T19:18:09Z",
+			},
+		]);
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("ttl-cleaned-workflow")).toBeInTheDocument();
+		});
+		expect(screen.getByText("$0.0090")).toBeInTheDocument();
+		expect(screen.getByText("ID: runledge")).toBeInTheDocument();
+	});
+
+	it("keeps ledger records visible when live workflow listing is unavailable", async () => {
+		mockListWorkflows.mockRejectedValue(new Error("argo unavailable"));
+		mockListPipelineRuns.mockResolvedValue([
+			{
+				id: "run-ledger-2",
+				pipelineName: "ledger-pipeline",
+				workflowName: "ledger-workflow",
+				status: "Succeeded",
+				nodeCount: 2,
+				totalEstimatedCost: 1.5,
+				createdAt: "2026-06-03T10:00:00Z",
+				finishedAt: "2026-06-03T10:01:00Z",
+			},
+		]);
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("ledger-workflow")).toBeInTheDocument();
+		});
+		expect(screen.queryByText("服务不可用")).not.toBeInTheDocument();
+		expect(screen.getByText("$1.50")).toBeInTheDocument();
 	});
 });

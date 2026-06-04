@@ -11,6 +11,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+// DefaultTTLSecondsAfterCompletion keeps Argo workflow objects available long
+// enough for operator diagnostics while DataBrew keeps the durable run ledger.
+const DefaultTTLSecondsAfterCompletion int32 = 30 * 24 * 60 * 60
+
 // inputSpec describes one input parameter that comes from an upstream node's output.
 type inputSpec struct {
 	paramName string
@@ -55,7 +59,7 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 		opts = &Options{}
 	}
 	if opts.TTLSecondsAfter == 0 {
-		opts.TTLSecondsAfter = 3600
+		opts.TTLSecondsAfter = DefaultTTLSecondsAfterCompletion
 	}
 	name := opts.Name
 	if name == "" {
