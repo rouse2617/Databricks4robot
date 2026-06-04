@@ -615,8 +615,11 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 		tmpl.Inputs = wfv1.Inputs{Parameters: inputParams}
 	}
 
-	// Output parameters (captured from file paths)
-	outputParams := outputParamDecls(node, consumedOutputs)
+	// Output parameters — skipped when SkipOutputArtifacts is set
+	var outputParams []wfv1.Parameter
+	if !opts.SkipOutputArtifacts {
+		outputParams = outputParamDecls(node, consumedOutputs)
+	}
 	if len(outputParams) > 0 {
 		tmpl.Outputs = wfv1.Outputs{Parameters: outputParams}
 		// Auto-create /tmp/outputs/ directory in the script source
