@@ -122,9 +122,15 @@ func Transpile(p *Pipeline, opts *Options) (*wfv1.Workflow, error) {
 		wf.Spec.Arguments = wfv1.Arguments{Parameters: params}
 	}
 
-	// Build node input specs: for each node, which input params come from where
-	nodeInputs := buildInputSpecs(p)
-	outputConsumers := buildOutputConsumers(p)
+	// Build node input specs: for each node, which input params come from where.
+	// Deploy mode skips output artifacts, so explicit From bindings must also be
+	// skipped or Argo will reject references to undeclared upstream outputs.
+	nodeInputs := map[string][]inputSpec{}
+	outputConsumers := map[string]map[string]bool{}
+	if !opts.SkipOutputArtifacts {
+		nodeInputs = buildInputSpecs(p)
+		outputConsumers = buildOutputConsumers(p)
+	}
 	nodeTemplates := make(map[string]string)
 	allTmpls, err := buildAllNodeTemplates(p.Nodes, nodeInputs, outputConsumers, opts)
 	if err != nil {
@@ -369,7 +375,11 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 	// Container args
 	var containerArgs []string
 	for _, arg := range node.Component.Args {
-		if arg.From != "" {
+		if arg.From != "" && opts.SkipOutputArtifacts {
+			if arg.Value != "" {
+				containerArgs = append(containerArgs, arg.Value)
+			}
+		} else if arg.From != "" {
 			containerArgs = append(containerArgs, fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(arg.Name)))
 		} else if arg.Value != "" {
 			containerArgs = append(containerArgs, arg.Value)
@@ -391,7 +401,11 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 	// Environment variables
 	var envVars []corev1.EnvVar
 	for _, env := range node.Component.Env {
-		if env.From != "" {
+		if env.From != "" && opts.SkipOutputArtifacts {
+			if env.Value != "" {
+				envVars = append(envVars, corev1.EnvVar{Name: env.Name, Value: env.Value})
+			}
+		} else if env.From != "" {
 			envVars = append(envVars, corev1.EnvVar{
 				Name:  env.Name,
 				Value: fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(env.Name)),
@@ -531,8 +545,12 @@ func buildNodeTemplates(node Node, inputs []inputSpec, consumedOutputs map[strin
 // Returns container templates for sub-nodes plus the DAG template.
 func buildSubGraphTemplates(node Node, inputs []inputSpec, opts *Options) ([]wfv1.Template, error) {
 	subPipe := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
-	subInputs := buildInputSpecs(subPipe)
-	subOutputConsumers := buildOutputConsumers(subPipe)
+	subInputs := map[string][]inputSpec{}
+	subOutputConsumers := map[string]map[string]bool{}
+	if !opts.SkipOutputArtifacts {
+		subInputs = buildInputSpecs(subPipe)
+		subOutputConsumers = buildOutputConsumers(subPipe)
+	}
 
 	var templates []wfv1.Template
 	for _, subNode := range node.SubNodes {

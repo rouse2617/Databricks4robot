@@ -333,6 +333,63 @@ func TestTranspileExplicitArgumentFromCreatesDataBinding(t *testing.T) {
 	}
 }
 
+func TestTranspileSkipOutputArtifactsDisablesExplicitArgumentFrom(t *testing.T) {
+	p := &Pipeline{
+		Name: "deploy-binding",
+		Nodes: []Node{
+			{
+				ID: "step-6",
+				Component: Component{
+					Name:    "producer",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo value"}},
+				},
+				Outputs: []Port{{Name: "output", Type: "string"}},
+			},
+			{
+				ID: "step-7",
+				Component: Component{
+					Name:    "consumer",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args: []Argument{
+						{Name: "input", From: "step-6.output"},
+						{Name: "script", Value: "echo consumer"},
+					},
+				},
+				Inputs: []Port{{Name: "input", Type: "string"}},
+			},
+		},
+		Edges: []Edge{{Source: "step-6.output", Target: "step-7.input"}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "deploy-binding", SkipOutputArtifacts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := findDAGTask(t, wf, "step-step-7")
+	if got := task.Dependencies; len(got) != 1 || got[0] != "step-step-6" {
+		t.Fatalf("dependencies = %#v, want [step-step-6]", got)
+	}
+	if len(task.Arguments.Parameters) != 0 {
+		t.Fatalf("task arguments = %+v, want none in output-skipping mode", task.Arguments.Parameters)
+	}
+	producer := findTemplate(t, wf, "step-step-6")
+	if len(producer.Outputs.Parameters) != 0 {
+		t.Fatalf("producer outputs = %+v, want none in output-skipping mode", producer.Outputs.Parameters)
+	}
+	consumer := findTemplate(t, wf, "step-step-7")
+	if len(consumer.Inputs.Parameters) != 0 {
+		t.Fatalf("consumer inputs = %+v, want none in output-skipping mode", consumer.Inputs.Parameters)
+	}
+	for _, arg := range consumer.Container.Args {
+		if arg == "{{inputs.parameters.input}}" {
+			t.Fatalf("consumer args = %+v, must not reference skipped input parameter", consumer.Container.Args)
+		}
+	}
+}
+
 func TestTranspileNormalizesDuplicatedShellArgs(t *testing.T) {
 	p := &Pipeline{
 		Name: "normalized-shell",
