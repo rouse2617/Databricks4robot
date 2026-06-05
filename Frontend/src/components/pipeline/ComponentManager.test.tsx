@@ -295,7 +295,7 @@ describe("ComponentManager", () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
-	it("parses command JSON on blur", async () => {
+	it("parses command JSON on change and saves without blur", async () => {
 		const onChange = vi.fn();
 		render(
 			<ComponentManager components={sampleComponents} onChange={onChange} />,
@@ -310,7 +310,7 @@ describe("ComponentManager", () => {
 		fireEvent.change(commandInput, {
 			target: { value: '["bash", "-c", "echo hello"]' },
 		});
-		fireEvent.blur(commandInput);
+		expect(commandInput.value).toBe('["bash", "-c", "echo hello"]');
 
 		// Save and verify command was parsed
 		fireEvent.click(getButton("保存"));
@@ -321,6 +321,34 @@ describe("ComponentManager", () => {
 			const edited = updated.find((c) => c.id === "c-001");
 			expect(edited?.command).toEqual(["bash", "-c", "echo hello"]);
 		});
+	});
+
+	it("shows inline error on invalid command", async () => {
+		const onChange = vi.fn();
+		render(
+			<ComponentManager components={sampleComponents} onChange={onChange} />,
+		);
+
+		openComponentByName("step-a");
+
+		const commandInput = screen.getByPlaceholderText(
+			'["sh", "-c"]',
+		) as HTMLInputElement;
+		fireEvent.change(commandInput, {
+			target: { value: "python src/main.py" },
+		});
+
+		expect(screen.getByRole("alert")).toHaveTextContent("命令必须是合法 JSON");
+		expect(commandInput.className).toContain("ant-input-status-error");
+
+		fireEvent.click(getButton("保存"));
+
+		await waitFor(() => {
+			expect(screen.getAllByText(/命令必须是合法 JSON/).length).toBeGreaterThan(
+				0,
+			);
+		});
+		expect(onChange).not.toHaveBeenCalled();
 	});
 
 	it("closes the form on cancel", () => {

@@ -106,6 +106,14 @@ function getResourceInput(container: HTMLElement, name: string) {
 	return input as HTMLInputElement;
 }
 
+function getCommandInput(container: HTMLElement) {
+	const input = container.querySelector<HTMLTextAreaElement>(
+		'textarea[name="command"]',
+	);
+	expect(input).toBeTruthy();
+	return input as HTMLTextAreaElement;
+}
+
 beforeEach(() => {
 	apiMocks.createComponent.mockReset();
 	apiMocks.deleteComponent.mockReset();
@@ -275,6 +283,69 @@ describe("page ComponentManager", () => {
 					document.body.querySelector('input[placeholder="normalize-mcap"]'),
 				).toBeNull();
 				expect(screen.queryByText("请输入组件名称")).toBeNull();
+			});
+		},
+		ANT_DESIGN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"parses json array command input before create",
+		async () => {
+			render(<ComponentManager />);
+
+			expect(await screen.findByText("报告生成")).toBeTruthy();
+			fireEvent.click(screen.getByRole("button", { name: /新建组件/ }));
+			fireEvent.change(getInputByPlaceholder(document.body, "normalize-mcap"), {
+				target: { value: "json-command" },
+			});
+			fireEvent.change(
+				getInputByPlaceholder(
+					document.body,
+					"registry.example.com/databrew/worker",
+				),
+				{ target: { value: "python:3.12-alpine" } },
+			);
+			fireEvent.change(getCommandInput(document.body), {
+				target: { value: '["python", "/app/main.py"]' },
+			});
+			fireEvent.click(screen.getByRole("button", { name: "创 建" }));
+
+			await waitFor(() => {
+				expect(apiMocks.createComponent).toHaveBeenCalled();
+			});
+			expect(apiMocks.createComponent.mock.calls[0][0].command).toEqual([
+				"python",
+				"/app/main.py",
+			]);
+		},
+		ANT_DESIGN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"rejects malformed json command input before create",
+		async () => {
+			render(<ComponentManager />);
+
+			expect(await screen.findByText("报告生成")).toBeTruthy();
+			fireEvent.click(screen.getByRole("button", { name: /新建组件/ }));
+			fireEvent.change(getInputByPlaceholder(document.body, "normalize-mcap"), {
+				target: { value: "bad-json-command" },
+			});
+			fireEvent.change(
+				getInputByPlaceholder(
+					document.body,
+					"registry.example.com/databrew/worker",
+				),
+				{ target: { value: "python:3.12-alpine" } },
+			);
+			fireEvent.change(getCommandInput(document.body), {
+				target: { value: '["python"' },
+			});
+			fireEvent.click(screen.getByRole("button", { name: "创 建" }));
+
+			await waitFor(() => {
+				expect(apiMocks.createComponent).not.toHaveBeenCalled();
+				expect(document.body.textContent).toContain("命令必须是合法 JSON 数组");
 			});
 		},
 		ANT_DESIGN_TEST_TIMEOUT_MS,

@@ -109,6 +109,29 @@ const splitInputItems = (value?: string): string[] =>
 		.map((v) => v.trim())
 		.filter(Boolean);
 
+function parseCommandItems(value?: string): string[] {
+	const raw = (value || "").trim();
+	if (!raw) return [];
+	if (raw.startsWith("[")) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(raw);
+		} catch {
+			throw new Error(
+				'命令必须是合法 JSON 数组，例如 ["python", "/app/main.py"]',
+			);
+		}
+		if (
+			!Array.isArray(parsed) ||
+			!parsed.every((item) => typeof item === "string")
+		) {
+			throw new Error("命令 JSON 必须是字符串数组");
+		}
+		return parsed.map((item) => item.trim()).filter(Boolean);
+	}
+	return splitInputItems(raw);
+}
+
 const joinInputItems = (value?: string[]): string =>
 	(value || [])
 		.map((item) => item.trim())
@@ -264,7 +287,7 @@ function toPayload(
 		if (name) env[name] = row.value || "";
 	}
 
-	const command = splitInputItems(values.command);
+	const command = parseCommandItems(values.command);
 	const args = normalizeShellCommandArgs(
 		command,
 		normalizeComponentArgs(splitInputItems(values.args)),
@@ -1117,7 +1140,14 @@ export function ComponentManager() {
 							<Form.Item
 								name="command"
 								label="命令"
-								extra="例如 sh, -c；如果使用 shell 执行脚本，参数只填写脚本本体。"
+								extra='例如 sh, -c 或 ["python", "/app/main.py"]；如果使用 shell 执行脚本，参数只填写脚本本体。'
+								rules={[
+									{
+										validator: async (_, value?: string) => {
+											parseCommandItems(value);
+										},
+									},
+								]}
 							>
 								<Input.TextArea
 									id="component-command"

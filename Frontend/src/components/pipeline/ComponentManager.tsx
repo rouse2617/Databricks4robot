@@ -1,6 +1,6 @@
 import { PlusOutlined } from "@ant-design/icons";
 import { Alert, Button, Collapse, Input, Typography } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toAssetStyleId } from "../../lib/idDisplay";
 import { validateResourceMap } from "../../lib/pipelineResourceValidation";
 import type { RegisteredComponent } from "./types";
@@ -65,6 +65,7 @@ export function ComponentManager({
 	const [editing, setEditing] = useState<RegisteredComponent | null>(null);
 	const [isNew, setIsNew] = useState(false);
 	const [commandText, setCommandText] = useState("");
+	const [commandError, setCommandError] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 	const [deleting, setDeleting] = useState(false);
@@ -101,17 +102,44 @@ export function ComponentManager({
 			}));
 	}, [filtered]);
 
-	useEffect(() => {
-		if (editing) {
-			setCommandText(JSON.stringify(editing.command));
+	const startEditing = useCallback(
+		(component: RegisteredComponent, nextIsNew: boolean) => {
+			setEditing(component);
+			setIsNew(nextIsNew);
+			setCommandText(JSON.stringify(component.command ?? []));
+			setCommandError(null);
+		},
+		[],
+	);
+
+	const updateCommandText = useCallback((value: string) => {
+		setCommandText(value);
+		try {
+			const parsed = JSON.parse(value);
+			if (
+				!Array.isArray(parsed) ||
+				!parsed.every((item) => typeof item === "string")
+			) {
+				setCommandError('命令必须是 JSON 字符串数组，例如 ["sh", "-c"]');
+				return;
+			}
+			setCommandError(null);
+			setEditing((current) =>
+				current ? { ...current, command: parsed } : current,
+			);
+		} catch {
+			setCommandError('命令必须是合法 JSON，例如 ["sh", "-c"]');
 		}
-	}, [editing]);
+	}, []);
 
 	const save = useCallback(
 		async (c: RegisteredComponent) => {
 			setSaving(true);
 			setError(null);
 			try {
+				if (commandError) {
+					throw new Error(commandError);
+				}
 				const resourceErrors = validateResourceMap(
 					{
 						cpu: c.cpu,
@@ -142,7 +170,7 @@ export function ComponentManager({
 				setSaving(false);
 			}
 		},
-		[components, isNew, onChange, onSaveApi],
+		[commandError, components, isNew, onChange, onSaveApi],
 	);
 
 	const remove = useCallback(
@@ -174,8 +202,7 @@ export function ComponentManager({
 					size="small"
 					icon={<PlusOutlined />}
 					onClick={() => {
-						setEditing(blank());
-						setIsNew(true);
+						startEditing(blank(), true);
 					}}
 				>
 					新建
@@ -215,8 +242,7 @@ export function ComponentManager({
 											type="button"
 											className={`cm-item ${editing?.id === c.id ? "active" : ""}`}
 											onClick={() => {
-												setEditing(c);
-												setIsNew(false);
+												startEditing(c, false);
 											}}
 										>
 											<div className="cm-item-name">{c.name}</div>
@@ -264,19 +290,15 @@ export function ComponentManager({
 							<Input
 								id="cm-command"
 								value={commandText}
-								onChange={(e) => setCommandText(e.target.value)}
-								onBlur={() => {
-									try {
-										const parsed = JSON.parse(commandText);
-										if (Array.isArray(parsed)) {
-											setEditing({ ...editing, command: parsed });
-										}
-									} catch {
-										/* ignore */
-									}
-								}}
+								status={commandError ? "error" : undefined}
+								onChange={(e) => updateCommandText(e.target.value)}
 								placeholder='["sh", "-c"]'
 							/>
+							{commandError && (
+								<Text type="danger" className="cm-field-hint" role="alert">
+									{commandError}
+								</Text>
+							)}
 							<Text type="secondary" className="cm-field-hint">
 								声明输出的组件需要在运行时写入 /tmp/outputs/output，否则 Argo
 								会将节点标记为失败。
