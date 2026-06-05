@@ -80,6 +80,7 @@ import {
 	extractNodeAssetIds,
 	extractPipelineAssetIds,
 	formatBytes,
+	getAutoAddNodeScreenPosition,
 	type PipelineFlowEdge,
 	type PipelineFlowNode,
 	parseAssetIds,
@@ -331,13 +332,7 @@ function PipelineCanvas() {
 		(comp: RegisteredComponent, clientPosition?: { x: number; y: number }) => {
 			const bounds = wrapperRef.current?.getBoundingClientRect();
 			const screenPosition =
-				clientPosition ??
-				(bounds
-					? {
-							x: bounds.left + bounds.width / 2 + nodes.length * 24,
-							y: bounds.top + 140 + nodes.length * 24,
-						}
-					: { x: 360 + nodes.length * 24, y: 240 + nodes.length * 24 });
+				clientPosition ?? getAutoAddNodeScreenPosition(nodes.length, bounds);
 			const position = editor.screenToFlowPosition(screenPosition);
 			const newNode = createPipelineNode(comp, position.x, position.y);
 			editor.addNode(newNode);
@@ -1004,15 +999,8 @@ function PipelineCanvas() {
 						</div>
 					)}
 				</div>
-				<aside
-					className={[
-						"config-panel",
-						selectedNode ? "config-panel--with-node" : "config-panel--empty",
-					]
-						.filter(Boolean)
-						.join(" ")}
-				>
-					{selectedNode ? (
+				{selectedNode ? (
+					<aside className="config-panel config-panel--with-node">
 						<div className="config-panel__node">
 							<div>
 								<div className="config-panel-header">
@@ -1120,15 +1108,8 @@ function PipelineCanvas() {
 								</div>
 							</div>
 						</div>
-					) : (
-						<PipelineEmptyState
-							variant="config"
-							title="节点配置"
-							description="选中画布节点后，在此查看关联资产与节点详情。"
-							hint="已保存流水线请到「流水线」页签管理。"
-						/>
-					)}
-				</aside>
+					</aside>
+				) : null}
 				{editingNode && (
 					<NodeConfigPanel
 						open={Boolean(editingNode)}

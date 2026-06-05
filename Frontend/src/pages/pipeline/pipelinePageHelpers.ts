@@ -36,6 +36,29 @@ export function dedupeComponentsByName(
 	});
 }
 
+const AUTO_ADD_NODE_WIDTH = 260;
+const AUTO_ADD_NODE_X_GAP = 80;
+const AUTO_ADD_NODE_Y_GAP = 64;
+const AUTO_ADD_START_X = 180;
+const AUTO_ADD_START_Y = 140;
+
+export function getAutoAddNodeScreenPosition(
+	nodeCount: number,
+	bounds?: Pick<DOMRect, "left" | "top" | "width"> | null,
+): { x: number; y: number } {
+	const stepX = AUTO_ADD_NODE_WIDTH + AUTO_ADD_NODE_X_GAP;
+	const stepY = 120 + AUTO_ADD_NODE_Y_GAP;
+	const availableWidth = Math.max(0, (bounds?.width ?? 0) - AUTO_ADD_START_X);
+	const columns = Math.max(1, Math.floor(availableWidth / stepX));
+	const column = nodeCount % columns;
+	const row = Math.floor(nodeCount / columns);
+
+	return {
+		x: (bounds?.left ?? 0) + AUTO_ADD_START_X + column * stepX,
+		y: (bounds?.top ?? 0) + AUTO_ADD_START_Y + row * stepY,
+	};
+}
+
 function normalizeComponentType(
 	type: string | undefined,
 ): PipelineComponentType {
