@@ -294,6 +294,61 @@ func TestListWorkflows_WithItems(t *testing.T) {
 	}
 }
 
+func TestListWorkflows_NodeCountExcludesArgoDAGRoot(t *testing.T) {
+	wf := makeWorkflow("test-77705a", "Succeeded", 0)
+	wf.Status.Nodes = wfv1.Nodes{
+		"test-77705a": {
+			ID:          "test-77705a",
+			Name:        "test-77705a",
+			DisplayName: "test-77705a",
+			Type:        wfv1.NodeTypeDAG,
+			Phase:       wfv1.NodeSucceeded,
+			Children:    []string{"step-2", "step-3"},
+		},
+		"step-2": {
+			ID:           "step-2",
+			Name:         "test-77705a.step-step-2",
+			DisplayName:  "step-step-2",
+			Type:         wfv1.NodeTypePod,
+			TemplateName: "step-step-2",
+			Phase:        wfv1.NodeSucceeded,
+			BoundaryID:   "test-77705a",
+		},
+		"step-3": {
+			ID:           "step-3",
+			Name:         "test-77705a.step-step-3",
+			DisplayName:  "step-step-3",
+			Type:         wfv1.NodeTypePod,
+			TemplateName: "step-step-3",
+			Phase:        wfv1.NodeSucceeded,
+			BoundaryID:   "test-77705a",
+		},
+	}
+	h := New(&mockWorkflowClient{
+		listFn: func(_ context.Context, _, _ string) ([]wfv1.Workflow, error) {
+			return []wfv1.Workflow{*wf}, nil
+		},
+	}, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items := resp["items"].([]interface{})
+	first := items[0].(map[string]interface{})
+	if first["nodeCount"] != float64(2) {
+		t.Fatalf("expected business nodeCount 2, got %v", first["nodeCount"])
+	}
+}
+
 func TestListWorkflows_FilterByName(t *testing.T) {
 	base := time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC)
 	h := New(&mockWorkflowClient{

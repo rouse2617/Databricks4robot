@@ -2895,6 +2895,7 @@ curl -X POST "$BASE/api/v1/deploy/template/<TEMPLATE_ID>" \
 
 ```bash
 # 列出 workflows
+# nodeCount 为业务步骤数，不包含 Argo DAG/root/controller 节点。
 curl -s "$BASE/api/v1/workflows" \
   -H "X-Databrew-Token: $TOKEN"
 

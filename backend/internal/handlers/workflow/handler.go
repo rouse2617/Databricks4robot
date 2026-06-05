@@ -161,7 +161,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		it := item{
 			Name:      wf.Name,
 			Status:    string(wf.Status.Phase),
-			NodeCount: len(wf.Status.Nodes),
+			NodeCount: workflowSummaryNodeCount(wf),
 			CreatedAt: &created,
 			Labels:    wf.Labels,
 		}
@@ -174,6 +174,16 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		items = append(items, it)
 	}
 	c.JSON(200, gin.H{"items": items})
+}
+
+func workflowSummaryNodeCount(wf wfv1.Workflow) int {
+	count := 0
+	for _, node := range wf.Status.Nodes {
+		if isWorkflowDagDisplayableNode(node) {
+			count++
+		}
+	}
+	return count
 }
 
 // GetWorkflow handles GET /api/v1/workflows/:name

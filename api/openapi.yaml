@@ -6086,7 +6086,7 @@ paths:
     get:
       tags: [Pipeline]
       summary: List all Argo workflows
-      description: Returns all Argo Workflows in the pipeline namespace.
+      description: Returns all Argo Workflows in the pipeline namespace. Summary nodeCount excludes Argo DAG/root/controller nodes and counts business step nodes.
       security:
         - DatabrewToken: []
       responses:
