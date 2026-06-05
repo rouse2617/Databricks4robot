@@ -11,6 +11,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/resourcevalidation"
 )
 
 // Usecase orchestrates pipeline component registry operations.
@@ -151,6 +152,15 @@ func normalizeComponent(pc *models.PipelineComponent, preserveID bool) error {
 	}
 	if pc.Resources == nil {
 		pc.Resources = map[string]interface{}{}
+	}
+	if problems := resourcevalidation.ValidateResourceStrings(
+		fmt.Sprintf("component %q", pc.Name),
+		readResourceString(pc.Resources, "cpu"),
+		readResourceString(pc.Resources, "memory"),
+		readResourceString(pc.Resources, "disk"),
+		readResourceString(pc.Resources, "gpu"),
+	); len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
 	}
 	pc.Resources["type"] = pc.Type
 	if len(pc.Command) > 0 {

@@ -1,6 +1,7 @@
 package transpiler
 
 import (
+	"strings"
 	"testing"
 
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
@@ -248,6 +249,36 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 		return
 	}
 	t.Fatal("step-gpu-step template not found")
+}
+
+func TestTranspileRejectsBareMemoryAndDiskQuantities(t *testing.T) {
+	p := &Pipeline{
+		Name: "bad-resources",
+		Nodes: []Node{{
+			ID: "bad-step",
+			Component: Component{
+				Name:  "bad",
+				Image: "busybox:latest",
+				Resources: &ResourceRequirements{
+					CPU:    "1",
+					Memory: "1",
+					Disk:   "1",
+					GPU:    "0",
+				},
+			},
+		}},
+	}
+
+	_, err := Transpile(p, &Options{Name: "bad-resources"})
+	if err == nil {
+		t.Fatal("expected resource validation error")
+	}
+	if !strings.Contains(err.Error(), "Memory") && !strings.Contains(err.Error(), "内存") {
+		t.Fatalf("error = %q, want memory detail", err.Error())
+	}
+	if !strings.Contains(err.Error(), "Disk") && !strings.Contains(err.Error(), "磁盘") {
+		t.Fatalf("error = %q, want disk detail", err.Error())
+	}
 }
 
 func TestTranspileAcceptsConsumedOutputWithoutFileWrite(t *testing.T) {

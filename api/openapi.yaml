@@ -2196,15 +2196,15 @@ components:
       properties:
         cpu:
           type: string
-          description: Kubernetes CPU quantity, for example "500m" or "4".
+          description: Positive Kubernetes CPU quantity, for example "500m" or "4".
           example: "4000m"
         memory:
           type: string
-          description: Kubernetes memory quantity.
+          description: Positive Kubernetes memory quantity. DataBrew requires an explicit unit such as Mi or Gi; bare numbers are rejected because Kubernetes treats them as bytes.
           example: "16Gi"
         disk:
           type: string
-          description: Kubernetes ephemeral storage quantity.
+          description: Positive Kubernetes ephemeral storage quantity. DataBrew requires an explicit unit such as Gi; bare numbers are rejected because Kubernetes treats them as bytes.
           example: "50Gi"
         gpu:
           type: string

@@ -2,6 +2,7 @@ import { PlusOutlined } from "@ant-design/icons";
 import { Alert, Button, Collapse, Input, Typography } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toAssetStyleId } from "../../lib/idDisplay";
+import { validateResourceMap } from "../../lib/pipelineResourceValidation";
 import type { RegisteredComponent } from "./types";
 
 const { Text } = Typography;
@@ -111,6 +112,18 @@ export function ComponentManager({
 			setSaving(true);
 			setError(null);
 			try {
+				const resourceErrors = validateResourceMap(
+					{
+						cpu: c.cpu,
+						memory: c.memory,
+						disk: c.disk,
+						gpu: c.gpu,
+					},
+					"组件资源",
+				);
+				if (resourceErrors.length > 0) {
+					throw new Error(resourceErrors[0]);
+				}
 				if (onSaveApi) {
 					await onSaveApi(c, isNew);
 				}

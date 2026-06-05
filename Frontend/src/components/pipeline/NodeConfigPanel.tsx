@@ -2,6 +2,7 @@ import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
 import type { Node } from "@ant-design/pro-flow";
 import { Button, Form, Input, Modal, Select } from "antd";
 import { useEffect } from "react";
+import { resourceQuantityRule } from "../../lib/pipelineResourceValidation";
 import type { Argument, PipelineNodeData } from "./types";
 
 interface NodeConfigPanelProps {
@@ -128,7 +129,14 @@ export function NodeConfigPanel({
 				<Form.Item label="参数" name="args">
 					<Select mode="tags" options={[]} placeholder="按 Enter 添加参数" />
 				</Form.Item>
-				<div style={{ fontSize: 12, color: "#64748b", marginBottom: 16, lineHeight: 1.5 }}>
+				<div
+					style={{
+						fontSize: 12,
+						color: "#64748b",
+						marginBottom: 16,
+						lineHeight: 1.5,
+					}}
+				>
 					输出组件需写入 /tmp/outputs/output，否则 Argo 会将节点标记为失败
 				</div>
 				<Form.Item label="环境变量">
@@ -183,13 +191,28 @@ export function NodeConfigPanel({
 						gap: 12,
 					}}
 				>
-					<Form.Item label="CPU" name="cpu">
+					<Form.Item
+						label="CPU"
+						name="cpu"
+						extra="例如 500m、1"
+						rules={[resourceQuantityRule("cpu")]}
+					>
 						<Input placeholder="500m" />
 					</Form.Item>
-					<Form.Item label="内存" name="memory">
+					<Form.Item
+						label="内存"
+						name="memory"
+						extra="必须带单位，例如 512Mi、1Gi"
+						rules={[resourceQuantityRule("memory")]}
+					>
 						<Input placeholder="256Mi" />
 					</Form.Item>
-					<Form.Item label="磁盘" name="disk">
+					<Form.Item
+						label="磁盘"
+						name="disk"
+						extra="必须带单位，例如 1Gi、20Gi"
+						rules={[resourceQuantityRule("disk")]}
+					>
 						<Input placeholder="1Gi" />
 					</Form.Item>
 				</div>

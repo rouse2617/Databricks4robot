@@ -3,6 +3,7 @@ package pipeline_component
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -147,6 +148,52 @@ func TestCreate(t *testing.T) {
 	}
 	if found.Name != "test-component" {
 		t.Errorf("Got name %q, want %q", found.Name, "test-component")
+	}
+}
+
+func TestCreateRejectsBareMemoryAndDiskQuantities(t *testing.T) {
+	repo := newMockComponentRepo()
+	uc := New(repo)
+
+	_, err := uc.Create(context.Background(), &models.PipelineComponent{
+		Name:  "bad-resources",
+		Type:  "container",
+		Image: "busybox",
+		Resources: map[string]interface{}{
+			"cpu":    "1",
+			"memory": "1",
+			"disk":   "1",
+			"gpu":    "0",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected resource validation error")
+	}
+	if !strings.Contains(err.Error(), "must include a unit") {
+		t.Fatalf("error = %q, want unit detail", err.Error())
+	}
+}
+
+func TestCreateAcceptsExplicitResourceUnits(t *testing.T) {
+	repo := newMockComponentRepo()
+	uc := New(repo)
+
+	created, err := uc.Create(context.Background(), &models.PipelineComponent{
+		Name:  "good-resources",
+		Type:  "container",
+		Image: "busybox",
+		Resources: map[string]interface{}{
+			"cpu":    "500m",
+			"memory": "512Mi",
+			"disk":   "20Gi",
+			"gpu":    "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if created.Resources["memory"] != "512Mi" {
+		t.Fatalf("memory = %v, want 512Mi", created.Resources["memory"])
 	}
 }
 

@@ -3,6 +3,8 @@ package transpiler
 import (
 	"fmt"
 	"strings"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/resourcevalidation"
 )
 
 // ValidationError describes a user-correctable pipeline definition problem.
@@ -29,10 +31,34 @@ func ValidatePipeline(p *Pipeline) error {
 		return &ValidationError{Problems: []string{"pipeline is required"}}
 	}
 	var problems []string
+	problems = append(problems, validateResourceQuantities(p)...)
 	if len(problems) > 0 {
 		return &ValidationError{Problems: problems}
 	}
 	return nil
+}
+
+func validateResourceQuantities(p *Pipeline) []string {
+	var problems []string
+	for _, node := range p.Nodes {
+		if node.Component.Resources != nil {
+			problems = append(problems, resourcevalidation.ValidateResourceStrings(
+				fmt.Sprintf("node %q", node.ID),
+				node.Component.Resources.CPU,
+				node.Component.Resources.Memory,
+				node.Component.Resources.Disk,
+				node.Component.Resources.GPU,
+			)...)
+		}
+		if len(node.SubNodes) == 0 {
+			continue
+		}
+		sub := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
+		for _, problem := range validateResourceQuantities(sub) {
+			problems = append(problems, fmt.Sprintf("%s: %s", node.ID, problem))
+		}
+	}
+	return problems
 }
 
 func validatePortTypes(p *Pipeline) []string {

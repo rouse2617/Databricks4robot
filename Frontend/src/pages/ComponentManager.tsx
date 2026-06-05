@@ -44,6 +44,7 @@ import {
 	normalizeComponentArgs,
 	normalizeShellCommandArgs,
 } from "../lib/pipelineContract";
+import { resourceQuantityRule } from "../lib/pipelineResourceValidation";
 
 type EnvRow = { name?: string; value?: string };
 type PortRow = {
@@ -469,18 +470,16 @@ export function ComponentManager() {
 		setLoading(true);
 		setError(null);
 		try {
-		const res = await listComponents();
-		const nextItems = dedupePipelineComponentsByName(res.items || []);
-		// #24: Sort by creation date descending (newest first)
-		nextItems.sort(
-			(a, b) => {
+			const res = await listComponents();
+			const nextItems = dedupePipelineComponentsByName(res.items || []);
+			// #24: Sort by creation date descending (newest first)
+			nextItems.sort((a, b) => {
 				const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
 				const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
 				return dateB - dateA;
-			},
-		);
-		setItems(nextItems);
-		setSelectedComponentIds((prev) =>
+			});
+			setItems(nextItems);
+			setSelectedComponentIds((prev) =>
 				prev.filter((id) =>
 					nextItems.some((item) => item.id === id && item.source !== "system"),
 				),
@@ -1015,7 +1014,12 @@ export function ComponentManager() {
 									gap: 12,
 								}}
 							>
-								<Form.Item name="cpu" label="CPU" extra="例如 500m、4">
+								<Form.Item
+									name="cpu"
+									label="CPU"
+									extra="例如 500m、4"
+									rules={[resourceQuantityRule("cpu")]}
+								>
 									<Input
 										data-testid="component-resource-cpu"
 										placeholder="500m"
@@ -1023,7 +1027,12 @@ export function ComponentManager() {
 										onFocus={(e) => e.target.select()}
 									/>
 								</Form.Item>
-								<Form.Item name="memory" label="内存" extra="例如 256Mi、16Gi">
+								<Form.Item
+									name="memory"
+									label="内存"
+									extra="必须带单位，例如 256Mi、16Gi"
+									rules={[resourceQuantityRule("memory")]}
+								>
 									<Input
 										data-testid="component-resource-memory"
 										placeholder="256Mi"
@@ -1031,7 +1040,12 @@ export function ComponentManager() {
 										onFocus={(e) => e.target.select()}
 									/>
 								</Form.Item>
-								<Form.Item name="disk" label="磁盘" extra="临时存储，例如 20Gi">
+								<Form.Item
+									name="disk"
+									label="磁盘"
+									extra="必须带单位，例如 1Gi、20Gi"
+									rules={[resourceQuantityRule("disk")]}
+								>
 									<Input
 										data-testid="component-resource-disk"
 										placeholder="20Gi"
@@ -1039,7 +1053,12 @@ export function ComponentManager() {
 										onFocus={(e) => e.target.select()}
 									/>
 								</Form.Item>
-								<Form.Item name="gpu" label="GPU" extra="数量，例如 1、2">
+								<Form.Item
+									name="gpu"
+									label="GPU"
+									extra="数量，例如 0、1、2"
+									rules={[resourceQuantityRule("gpu")]}
+								>
 									<Input
 										data-testid="component-resource-gpu"
 										placeholder="1"

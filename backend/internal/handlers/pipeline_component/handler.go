@@ -109,7 +109,7 @@ func writeComponentError(c *gin.Context, err error) {
 	switch {
 	case strings.Contains(msg, "not found"):
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "component not found")
-	case strings.Contains(msg, "required") || strings.Contains(msg, "type must be"):
+	case strings.Contains(msg, "required") || strings.Contains(msg, "type must be") || strings.Contains(msg, "must include a unit") || strings.Contains(msg, "quantity") || strings.Contains(msg, "non-negative integer"):
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
 	case strings.Contains(msg, "system components cannot"):
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)

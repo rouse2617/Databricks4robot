@@ -70,6 +70,7 @@ import {
 	fromTranspilerPipeline,
 	toTranspilerPipeline,
 } from "../lib/pipelineContract";
+import { validatePipelineForRun } from "../lib/pipelineValidation";
 import { ComponentManager } from "./ComponentManager";
 import {
 	apiToRegistered,
@@ -635,7 +636,13 @@ function PipelineCanvas() {
 
 	const handleSave = useCallback(async () => {
 		try {
-			const saved = await savePipeline(pipelineName, buildPipelineJSON());
+			const pipeline = buildPipelineJSON();
+			const validation = validatePipelineForRun(pipeline);
+			if (!validation.valid) {
+				message.error(validation.errors[0]);
+				return;
+			}
+			const saved = await savePipeline(pipelineName, pipeline);
 			setSelectedTemplateVersionId(saved.id);
 			setTemplateVersions((prev) => {
 				const withoutSaved = prev.filter((item) => item.id !== saved.id);
@@ -706,6 +713,12 @@ function PipelineCanvas() {
 		setDeployDialog((prev) => ({ ...prev, deploying: true, done: false }));
 		try {
 			const pipeline = buildPipelineJSON();
+			const validation = validatePipelineForRun(pipeline);
+			if (!validation.valid) {
+				message.error(validation.errors[0]);
+				setDeployDialog((prev) => ({ ...prev, deploying: false }));
+				return;
+			}
 			const name = deployDialog.name || pipelineName;
 			const saved = await savePipeline(name, pipeline);
 			const result = await deployTemplate(
@@ -746,6 +759,15 @@ function PipelineCanvas() {
 		}));
 		try {
 			const pipeline = buildPipelineJSON();
+			const validation = validatePipelineForRun(pipeline);
+			if (!validation.valid) {
+				setDeployDialog((prev) => ({
+					...prev,
+					previewLoading: false,
+					previewError: validation.errors[0],
+				}));
+				return;
+			}
 			const { manifest } = await previewDeploy(pipeline);
 			setDeployDialog((prev) => ({
 				...prev,

@@ -2295,6 +2295,10 @@ curl -X POST "$BASE/api/v1/pipeline-components" \
   }'
 # 响应: 201 + Component 对象
 # 必填字段: name, type(container|script|resource|suspend), image
+# 资源字段:
+# - resources.cpu 必须是大于 0 的 Kubernetes CPU quantity，例如 500m、1、4
+# - resources.memory / resources.disk 必须是大于 0 且带单位的值，例如 512Mi、1Gi、20Gi；裸数字会被拒绝，避免 Kubernetes 按 bytes 解释
+# - resources.gpu 必须是非负整数，例如 0、1、2
 # resources.gpu 会在部署时映射为 Argo/Kubernetes `limits.nvidia.com/gpu`；
 # resources.computeTier 是 DataBrew 调度、配额、成本策略使用的元数据，当前不强制选择节点池。
 
@@ -2317,6 +2321,12 @@ curl -i -X POST "$BASE/api/v1/pipeline-components" \
   -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"missing-image","type":"container"}'
 # 响应: 400 + 标准错误体
+
+# 资源单位校验失败示例
+curl -i -X POST "$BASE/api/v1/pipeline-components" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"bad-memory","type":"container","image":"busybox","resources":{"memory":"1"}}'
+# 响应: 400 + 标准错误体；memory/disk 需要 512Mi、1Gi 这类显式单位
 ```
 
 ### Pipeline 版本对比（F2.12）

@@ -135,6 +135,51 @@ describe("pipeline validation", () => {
 		expect(result.valid).toBe(true);
 		expect(result.warnings[0]).toContain("/tmp/outputs/output");
 	});
+
+	it("rejects bare memory and disk resource quantities", () => {
+		const result = validatePipelineForRun(
+			basePipeline({
+				nodes: [
+					{
+						id: "bad-resource",
+						component: {
+							name: "bad-resource",
+							image: "busybox",
+							resources: { cpu: "1", memory: "1", disk: "1", gpu: "0" },
+						},
+					},
+				],
+			}),
+		);
+
+		expect(result.valid).toBe(false);
+		expect(result.errors.join("\n")).toContain("内存必须是大于 0 且带单位");
+		expect(result.errors.join("\n")).toContain("磁盘必须是大于 0 且带单位");
+	});
+
+	it("accepts valid resource quantities", () => {
+		const result = validatePipelineForRun(
+			basePipeline({
+				nodes: [
+					{
+						id: "good-resource",
+						component: {
+							name: "good-resource",
+							image: "busybox",
+							resources: {
+								cpu: "500m",
+								memory: "512Mi",
+								disk: "20Gi",
+								gpu: "1",
+							},
+						},
+					},
+				],
+			}),
+		);
+
+		expect(result.valid).toBe(true);
+	});
 });
 
 describe("pipeline shell argument normalization", () => {

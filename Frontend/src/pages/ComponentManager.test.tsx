@@ -64,6 +64,8 @@ const components: PipelineComponentAPI[] = [
 	},
 ];
 
+const ANT_DESIGN_TEST_TIMEOUT_MS = 60_000;
+
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {
 		writable: true,
@@ -109,78 +111,156 @@ afterEach(() => {
 });
 
 describe("page ComponentManager", () => {
-	it("prefills the edit form with the selected component", async () => {
-		render(<ComponentManager />);
+	it(
+		"prefills the edit form with the selected component",
+		async () => {
+			render(<ComponentManager />);
 
-		expect(await screen.findByText("报告生成")).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: /编辑组件/ }));
+			expect(await screen.findByText("报告生成")).toBeTruthy();
+			fireEvent.click(screen.getByRole("button", { name: /编辑组件/ }));
 
-		await waitFor(() => {
-			expect(getInputByPlaceholder(document.body, "normalize-mcap").value).toBe(
-				"报告生成",
+			await waitFor(() => {
+				expect(
+					getInputByPlaceholder(document.body, "normalize-mcap").value,
+				).toBe("报告生成");
+				expect(
+					getInputByPlaceholder(
+						document.body,
+						"registry.example.com/databrew/worker",
+					).value,
+				).toBe("alpine:3.18");
+				expect(getResourceInput(document.body, "cpu").value).toBe("4000m");
+				expect(getResourceInput(document.body, "memory").value).toBe("16Gi");
+				expect(getResourceInput(document.body, "disk").value).toBe("50Gi");
+				expect(getResourceInput(document.body, "gpu").value).toBe("1");
+				expect(getResourceInput(document.body, "compute-tier").value).toBe(
+					"gpu-l4",
+				);
+			});
+		},
+		ANT_DESIGN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"saves gpu and compute tier resource fields",
+		async () => {
+			render(<ComponentManager />);
+
+			expect(await screen.findByText("报告生成")).toBeTruthy();
+			fireEvent.click(screen.getByRole("button", { name: /编辑组件/ }));
+
+			await waitFor(() => {
+				expect(getResourceInput(document.body, "gpu").value).toBe("1");
+			});
+			fireEvent.change(getResourceInput(document.body, "gpu"), {
+				target: { value: "2" },
+			});
+			fireEvent.change(getResourceInput(document.body, "compute-tier"), {
+				target: { value: "gpu-a100" },
+			});
+			fireEvent.click(screen.getByRole("button", { name: "保 存" }));
+
+			await waitFor(() => {
+				expect(apiMocks.updateComponent).toHaveBeenCalled();
+			});
+			expect(apiMocks.updateComponent.mock.calls[0][1].resources).toMatchObject(
+				{
+					cpu: "4000m",
+					memory: "16Gi",
+					disk: "50Gi",
+					gpu: "2",
+					computeTier: "gpu-a100",
+				},
 			);
-			expect(
+		},
+		ANT_DESIGN_TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"rejects bare memory resource values before create",
+		async () => {
+			render(<ComponentManager />);
+
+			expect(await screen.findByText("报告生成")).toBeTruthy();
+			fireEvent.click(screen.getByRole("button", { name: /新建组件/ }));
+			fireEvent.change(getInputByPlaceholder(document.body, "normalize-mcap"), {
+				target: { value: "bad-memory" },
+			});
+			fireEvent.change(
 				getInputByPlaceholder(
 					document.body,
 					"registry.example.com/databrew/worker",
-				).value,
-			).toBe("alpine:3.18");
-			expect(getResourceInput(document.body, "cpu").value).toBe("4000m");
-			expect(getResourceInput(document.body, "memory").value).toBe("16Gi");
-			expect(getResourceInput(document.body, "disk").value).toBe("50Gi");
-			expect(getResourceInput(document.body, "gpu").value).toBe("1");
-			expect(getResourceInput(document.body, "compute-tier").value).toBe(
-				"gpu-l4",
+				),
+				{ target: { value: "alpine:latest" } },
 			);
-		});
-	});
+			fireEvent.change(getResourceInput(document.body, "memory"), {
+				target: { value: "1" },
+			});
+			fireEvent.click(screen.getByRole("button", { name: "创 建" }));
 
-	it("saves gpu and compute tier resource fields", async () => {
-		render(<ComponentManager />);
+			await waitFor(() => {
+				expect(apiMocks.createComponent).not.toHaveBeenCalled();
+				expect(document.body.textContent).toContain("内存必须带单位");
+			});
+		},
+		ANT_DESIGN_TEST_TIMEOUT_MS,
+	);
 
-		expect(await screen.findByText("报告生成")).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: /编辑组件/ }));
+	it(
+		"allows explicit memory units on create",
+		async () => {
+			render(<ComponentManager />);
 
-		await waitFor(() => {
-			expect(getResourceInput(document.body, "gpu").value).toBe("1");
-		});
-		fireEvent.change(getResourceInput(document.body, "gpu"), {
-			target: { value: "2" },
-		});
-		fireEvent.change(getResourceInput(document.body, "compute-tier"), {
-			target: { value: "gpu-a100" },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "保 存" }));
+			expect(await screen.findByText("报告生成")).toBeTruthy();
+			fireEvent.click(screen.getByRole("button", { name: /新建组件/ }));
+			fireEvent.change(getInputByPlaceholder(document.body, "normalize-mcap"), {
+				target: { value: "good-memory" },
+			});
+			fireEvent.change(
+				getInputByPlaceholder(
+					document.body,
+					"registry.example.com/databrew/worker",
+				),
+				{ target: { value: "alpine:latest" } },
+			);
+			fireEvent.change(getResourceInput(document.body, "memory"), {
+				target: { value: "512Mi" },
+			});
+			fireEvent.click(screen.getByRole("button", { name: "创 建" }));
 
-		await waitFor(() => {
-			expect(apiMocks.updateComponent).toHaveBeenCalled();
-		});
-		expect(apiMocks.updateComponent.mock.calls[0][1].resources).toMatchObject({
-			cpu: "4000m",
-			memory: "16Gi",
-			disk: "50Gi",
-			gpu: "2",
-			computeTier: "gpu-a100",
-		});
-	});
+			await waitFor(() => {
+				expect(apiMocks.createComponent).toHaveBeenCalled();
+			});
+			expect(apiMocks.createComponent.mock.calls[0][0].resources).toMatchObject(
+				{
+					memory: "512Mi",
+				},
+			);
+		},
+		ANT_DESIGN_TEST_TIMEOUT_MS,
+	);
 
-	it("keeps validation errors local and still allows closing the create modal", async () => {
-		render(<ComponentManager />);
+	it(
+		"keeps validation errors local and still allows closing the create modal",
+		async () => {
+			render(<ComponentManager />);
 
-		expect(await screen.findByText("报告生成")).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: /新建组件/ }));
-		fireEvent.click(screen.getByRole("button", { name: "创 建" }));
+			expect(await screen.findByText("报告生成")).toBeTruthy();
+			fireEvent.click(screen.getByRole("button", { name: /新建组件/ }));
+			fireEvent.click(screen.getByRole("button", { name: "创 建" }));
 
-		expect(await screen.findByText("请输入组件名称")).toBeTruthy();
-		expect(apiMocks.createComponent).not.toHaveBeenCalled();
+			expect(await screen.findByText("请输入组件名称")).toBeTruthy();
+			expect(apiMocks.createComponent).not.toHaveBeenCalled();
 
-		fireEvent.click(screen.getByRole("button", { name: "关 闭" }));
+			fireEvent.click(screen.getByRole("button", { name: "关 闭" }));
 
-		await waitFor(() => {
-			expect(
-				document.body.querySelector('input[placeholder="normalize-mcap"]'),
-			).toBeNull();
-			expect(screen.queryByText("请输入组件名称")).toBeNull();
-		});
-	});
+			await waitFor(() => {
+				expect(
+					document.body.querySelector('input[placeholder="normalize-mcap"]'),
+				).toBeNull();
+				expect(screen.queryByText("请输入组件名称")).toBeNull();
+			});
+		},
+		ANT_DESIGN_TEST_TIMEOUT_MS,
+	);
 });

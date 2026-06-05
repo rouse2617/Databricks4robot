@@ -148,6 +148,26 @@ describe("ComponentManager", () => {
 		});
 	});
 
+	it("blocks saving when memory is a bare number", async () => {
+		const onChange = vi.fn();
+		render(<ComponentManager components={[]} onChange={onChange} />);
+
+		fireEvent.click(getButton("新建"));
+		fireEvent.change(screen.getByPlaceholderText("my-component"), {
+			target: { value: "bad-memory" },
+		});
+		fireEvent.change(screen.getByPlaceholderText("repo/image:tag"), {
+			target: { value: "alpine:latest" },
+		});
+		fireEvent.change(screen.getByPlaceholderText("256Mi"), {
+			target: { value: "1" },
+		});
+		fireEvent.click(getButton("创建"));
+
+		expect(await screen.findByText(/内存必须是大于 0 且带单位/)).toBeTruthy();
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
 	it("calls onSaveApi when saving a new component", async () => {
 		const onSaveApi = vi.fn().mockResolvedValue(undefined);
 		const onChange = vi.fn();

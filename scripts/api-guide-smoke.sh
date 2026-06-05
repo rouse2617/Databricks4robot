@@ -259,6 +259,7 @@ echo ""
 echo "--- § pipeline component registry ---"
 get "pipeline-components list" "/api/v1/pipeline-components"
 expect_code_post "pipeline-components missing image -> 400" "/api/v1/pipeline-components" '{"name":"smoke-missing-image","type":"container"}' "400" >/dev/null
+expect_code_post "pipeline-components bare memory -> 400" "/api/v1/pipeline-components" '{"name":"smoke-bare-memory","type":"container","image":"busybox","resources":{"memory":"1"}}' "400" >/dev/null
 if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	component_name="smoke-component-$(date +%s)"
 	component_body='{"name":"'"${component_name}"'","type":"container","description":"api guide smoke","image":"busybox","tag":"latest","command":["sh","-c"],"args":["echo ok"],"env":{"MODE":"smoke"}}'

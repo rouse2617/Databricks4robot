@@ -1,4 +1,5 @@
 import type { Pipeline } from "../components/pipeline/types";
+import { validateResourceMap } from "./pipelineResourceValidation";
 
 export type PipelineValidationResult = {
 	valid: boolean;
@@ -97,6 +98,12 @@ export function validatePipelineForRun(
 	}
 
 	for (const node of pipeline.nodes || []) {
+		errors.push(
+			...validateResourceMap(
+				node.component.resources,
+				`节点 ${node.id} 资源配置`,
+			),
+		);
 		for (const output of node.outputs || []) {
 			if (!componentWritesOutputPath(node.component, output.name)) {
 				warnings.push(

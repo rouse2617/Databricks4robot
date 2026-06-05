@@ -90,7 +90,7 @@ export default function ActionsTimelineTab({
 				)
 				.finally(() => setLoading(false));
 		},
-		[assetId],
+		[assetId, isSegmentAsset],
 	);
 
 	useEffect(() => {
