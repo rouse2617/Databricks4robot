@@ -71,8 +71,10 @@ type ExecutionTarget struct {
 type PipelineRun struct {
 	ID                 string                 `json:"id"`
 	TemplateID         *string                `json:"templateId,omitempty"`
+	TemplateName       string                 `json:"templateName,omitempty"`
 	PipelineName       string                 `json:"pipelineName"`
 	TemplateVersion    *int                   `json:"templateVersion,omitempty"`
+	TriggerSource      string                 `json:"triggerSource,omitempty"`
 	WorkflowName       string                 `json:"workflowName"`
 	ExecutionTargetID  string                 `json:"executionTargetId"`
 	TargetSnapshot     map[string]interface{} `json:"targetSnapshot,omitempty"`

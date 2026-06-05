@@ -290,9 +290,13 @@ func makeDeployment(id, name, status string) *models.PipelineDeployment {
 }
 
 func makePipelineRun(id, workflowName string) *models.PipelineRun {
+	templateID := "tmpl-v2"
+	templateVersion := 2
 	return &models.PipelineRun{
 		ID:                id,
+		TemplateID:        &templateID,
 		PipelineName:      "cost-demo",
+		TemplateVersion:   &templateVersion,
 		WorkflowName:      workflowName,
 		ExecutionTargetID: "default",
 		Status:            "Succeeded",
@@ -367,7 +371,9 @@ func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
 	run := makePipelineRun("run-1", "wf-cost")
 	emitCost := 1.25
 	finalCost := 0.75
-	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc := pipelineUC.New(&mockTemplateRepo{byID: map[string]*models.PipelineTemplate{
+		"tmpl-v2": makeTemplate("tmpl-v2", "cost-template", 2),
+	}}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
 	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
 		byID: map[string]*models.PipelineRun{run.ID: run},
 	}, &mockPipelineRunNodeRepo{
@@ -400,6 +406,12 @@ func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
 	if resp.Items[0].TotalEstimatedCost == nil || *resp.Items[0].TotalEstimatedCost != 2.0 {
 		t.Fatalf("totalEstimatedCost=%v, want 2.0", resp.Items[0].TotalEstimatedCost)
 	}
+	if resp.Items[0].TemplateName != "cost-template" {
+		t.Fatalf("templateName=%q, want cost-template", resp.Items[0].TemplateName)
+	}
+	if resp.Items[0].TriggerSource != pipelineUC.RunTriggerSourceManual {
+		t.Fatalf("triggerSource=%q, want %q", resp.Items[0].TriggerSource, pipelineUC.RunTriggerSourceManual)
+	}
 	if len(resp.Items[0].Nodes) != 2 {
 		t.Fatalf("expected 2 nodes, got %d", len(resp.Items[0].Nodes))
 	}
@@ -408,7 +420,9 @@ func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
 func TestGetRun_ReturnsTotalEstimatedCost(t *testing.T) {
 	run := makePipelineRun("run-1", "wf-cost")
 	expensiveCost := 3.5
-	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc := pipelineUC.New(&mockTemplateRepo{byID: map[string]*models.PipelineTemplate{
+		"tmpl-v2": makeTemplate("tmpl-v2", "cost-template", 2),
+	}}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
 	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
 		byID: map[string]*models.PipelineRun{run.ID: run},
 	}, &mockPipelineRunNodeRepo{
@@ -435,6 +449,12 @@ func TestGetRun_ReturnsTotalEstimatedCost(t *testing.T) {
 	}
 	if resp.TotalEstimatedCost == nil || *resp.TotalEstimatedCost != 3.5 {
 		t.Fatalf("totalEstimatedCost=%v, want 3.5", resp.TotalEstimatedCost)
+	}
+	if resp.TemplateName != "cost-template" {
+		t.Fatalf("templateName=%q, want cost-template", resp.TemplateName)
+	}
+	if resp.TriggerSource != pipelineUC.RunTriggerSourceManual {
+		t.Fatalf("triggerSource=%q, want %q", resp.TriggerSource, pipelineUC.RunTriggerSourceManual)
 	}
 	if len(resp.Nodes) != 2 {
 		t.Fatalf("expected 2 nodes, got %d", len(resp.Nodes))

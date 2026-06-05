@@ -1937,8 +1937,16 @@ components:
       properties:
         id: { type: string, description: Pipeline run ID }
         templateId: { type: string, nullable: true }
+        templateName:
+          type: string
+          nullable: true
+          description: Historical pipeline template name resolved from the saved template snapshot when available.
         pipelineName: { type: string }
         templateVersion: { type: integer, nullable: true }
+        triggerSource:
+          type: string
+          nullable: true
+          description: High-level execution source such as manual, asset_run, batch, or api.
         workflowName: { type: string }
         executionTargetId: { type: string }
         targetSnapshot:

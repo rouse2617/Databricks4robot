@@ -45,6 +45,7 @@ import {
 	type WorkflowNodeDetailTabKey,
 } from "../components/pipeline/WorkflowNodeDetailPanel";
 import { STATUS_COLORS } from "../lib/constants";
+import { toAssetStyleId } from "../lib/idDisplay";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationConfigs,
@@ -451,17 +452,23 @@ function WorkflowSummaryCards({
 	runEventState: ReturnType<typeof useWorkflowDetail>["runEventState"];
 	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"];
 }) {
-	const templateName = workflow.labels
-		? getWorkflowLabel(workflow.labels, "template-name") ||
-			getWorkflowLabel(workflow.labels, "pipeline-name")
-		: undefined;
-	const templateVersion = workflow.labels
-		? Number(getWorkflowLabel(workflow.labels, "template-version"))
-		: undefined;
-	const assetIds = workflow.labels
-		? getWorkflowLabel(workflow.labels, "asset-ids") ||
-			getWorkflowLabel(workflow.labels, "asset_ids")
-		: undefined;
+	const templateName =
+		runEventState.run?.templateName ||
+		(workflow.labels
+			? getWorkflowLabel(workflow.labels, "template-name") ||
+				getWorkflowLabel(workflow.labels, "pipeline-name")
+			: undefined);
+	const templateVersion =
+		runEventState.run?.templateVersion ??
+		(workflow.labels
+			? Number(getWorkflowLabel(workflow.labels, "template-version"))
+			: undefined);
+	const assetIds =
+		runEventState.run?.assetIds?.join(",") ||
+		(workflow.labels
+			? getWorkflowLabel(workflow.labels, "asset-ids") ||
+				getWorkflowLabel(workflow.labels, "asset_ids")
+			: undefined);
 	const assetIdList = assetIds
 		? assetIds
 				.split(",")
@@ -474,12 +481,33 @@ function WorkflowSummaryCards({
 		assetIdList.length - visibleAssetIds.length,
 		0,
 	);
+	const templateSnapshotId = runEventState.run?.templateId;
+	const triggerSourceLabel = (() => {
+		switch (runEventState.run?.triggerSource) {
+			case "manual":
+				return "手动运行";
+			case "asset_run":
+				return "资产运行";
+			case "batch":
+				return "批量运行";
+			case "api":
+				return "API 运行";
+			default:
+				return undefined;
+		}
+	})();
 
 	const cards = [
 		{
-			label: "模板",
+			label: "流水线",
 			value: templateName || "—",
 			extra: templateVersion ? `v${templateVersion}` : undefined,
+			meta: [
+				templateSnapshotId ? `快照 ${toAssetStyleId(templateSnapshotId)}` : "",
+				triggerSourceLabel || "",
+			]
+				.filter(Boolean)
+				.join(" · "),
 		},
 		{
 			label: "资产",
@@ -516,6 +544,9 @@ function WorkflowSummaryCards({
 		{
 			label: "事件",
 			value: runEventState.items.length,
+			meta: runEventState.run?.id
+				? `运行 ID ${toAssetStyleId(runEventState.run.id)}`
+				: undefined,
 		},
 		{
 			label: "成本",
@@ -560,6 +591,18 @@ function WorkflowSummaryCards({
 							</Tag>
 						) : null}
 					</div>
+					{card.meta ? (
+						<div
+							style={{
+								fontSize: 11,
+								color: "#64748b",
+								marginTop: 4,
+								lineHeight: 1.35,
+							}}
+						>
+							{card.meta}
+						</div>
+					) : null}
 				</div>
 			))}
 		</div>
@@ -791,8 +834,27 @@ function ExpiredWorkflowLedgerView({
 								<Typography.Text type="secondary">
 									ID {runEventState.run.id}
 								</Typography.Text>
+								{runEventState.run.templateName ? (
+									<Tag>{runEventState.run.templateName}</Tag>
+								) : null}
 								{runEventState.run.templateVersion ? (
 									<Tag>模板 v{runEventState.run.templateVersion}</Tag>
+								) : null}
+								{runEventState.run.templateId ? (
+									<Tag>{`快照 ${toAssetStyleId(runEventState.run.templateId)}`}</Tag>
+								) : null}
+								{runEventState.run.triggerSource ? (
+									<Tag color="gold">
+										{runEventState.run.triggerSource === "manual"
+											? "手动运行"
+											: runEventState.run.triggerSource === "asset_run"
+												? "资产运行"
+												: runEventState.run.triggerSource === "batch"
+													? "批量运行"
+													: runEventState.run.triggerSource === "api"
+														? "API 运行"
+														: runEventState.run.triggerSource}
+									</Tag>
 								) : null}
 							</Space>
 						) : null

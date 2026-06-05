@@ -11,6 +11,7 @@ import {
 	message,
 	Select,
 	Skeleton,
+	Space,
 	Table,
 	Tag,
 	Tooltip,
@@ -20,7 +21,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { listDeployments } from "../api/pipelineApi";
+import { listPipelineRuns, type PipelineRun } from "../api/pipelineApi";
 import {
 	deleteWorkflow,
 	type ListWorkflowsParams,
@@ -53,6 +54,18 @@ dayjs.extend(relativeTime);
 
 interface WorkflowExecutionListProps {
 	active?: boolean;
+}
+
+interface ExecutionListRow extends WorkflowSummary {
+	key: string;
+	runId?: string;
+	templateId?: string;
+	templateName?: string;
+	templateVersion?: number;
+	triggerSource?: string;
+	failureSummary?: string;
+	liveAvailable: boolean;
+	historyOnly: boolean;
 }
 
 type WorkflowErrorKind = "network" | "service-unavailable";
@@ -136,19 +149,141 @@ const describeWorkflowError = (err: unknown): WorkflowErrorState => {
 const getErrorTitle = (kind: WorkflowErrorKind): string =>
 	kind === "network" ? "网络错误" : "服务不可用";
 
+const normalizeSearchValue = (value: string) => value.trim().toLowerCase();
+
+const isFailedExecutionStatus = (status?: string) => {
+	const normalized = (status || "").trim().toLowerCase();
+	return normalized === "failed" || normalized === "error";
+};
+
+const formatTriggerSource = (value?: string) => {
+	switch ((value || "").trim()) {
+		case "manual":
+			return "手动运行";
+		case "asset_run":
+			return "资产运行";
+		case "batch":
+			return "批量运行";
+		case "api":
+			return "API 运行";
+		default:
+			return "";
+	}
+};
+
+const buildExecutionRows = (
+	runs: PipelineRun[],
+	workflows: WorkflowSummary[],
+): ExecutionListRow[] => {
+	const workflowByName = new Map(
+		workflows.map((workflow) => [workflow.name, workflow] as const),
+	);
+	const seenWorkflowNames = new Set<string>();
+	const rows: ExecutionListRow[] = [];
+
+	for (const run of runs) {
+		const workflowName = run.workflowName || run.pipelineName || run.id;
+		const live = workflowByName.get(workflowName);
+		if (workflowName) {
+			seenWorkflowNames.add(workflowName);
+		}
+		rows.push({
+			key: run.id || workflowName,
+			name: workflowName,
+			status: live?.status || run.status,
+			nodeCount: live?.nodeCount ?? run.nodeCount,
+			assetCount: run.assetCount,
+			createdAt: run.createdAt,
+			finishedAt: run.finishedAt,
+			labels: live?.labels,
+			totalEstimatedCost:
+				run.totalEstimatedCost ?? live?.totalEstimatedCost ?? null,
+			runId: run.id,
+			templateId: run.templateId,
+			templateName: run.templateName || run.pipelineName,
+			templateVersion: run.templateVersion ?? undefined,
+			triggerSource: run.triggerSource,
+			failureSummary: run.message || undefined,
+			liveAvailable: !!live,
+			historyOnly: !live,
+		});
+	}
+
+	for (const workflow of workflows) {
+		if (seenWorkflowNames.has(workflow.name)) continue;
+		rows.push({
+			key: workflow.name,
+			name: workflow.name,
+			status: workflow.status,
+			nodeCount: workflow.nodeCount,
+			assetCount: workflow.assetCount,
+			createdAt: workflow.createdAt,
+			finishedAt: workflow.finishedAt,
+			labels: workflow.labels,
+			totalEstimatedCost:
+				workflow.totalEstimatedCost ?? workflow.estimatedCostUsd ?? null,
+			liveAvailable: true,
+			historyOnly: false,
+		});
+	}
+
+	rows.sort((a, b) => {
+		const left = new Date(a.createdAt).getTime();
+		const right = new Date(b.createdAt).getTime();
+		return right - left;
+	});
+	return rows;
+};
+
+const filterExecutionRows = (
+	rows: ExecutionListRow[],
+	params: {
+		status?: string;
+		name?: string;
+		label?: string[];
+		createdAfter?: string;
+		finishedBefore?: string;
+	},
+) => {
+	const status = params.status?.trim();
+	const name = normalizeSearchValue(params.name || "");
+	const createdAfter = params.createdAfter
+		? new Date(params.createdAfter)
+		: null;
+	const finishedBefore = params.finishedBefore
+		? new Date(params.finishedBefore)
+		: null;
+
+	return rows.filter((row) => {
+		if (status && row.status !== status) return false;
+		if (name && !row.name.toLowerCase().includes(name)) {
+			const templateName = (row.templateName || "").toLowerCase();
+			if (!templateName.includes(name)) return false;
+		}
+		if (createdAfter && new Date(row.createdAt) < createdAfter) return false;
+		if (finishedBefore) {
+			if (!row.finishedAt) return false;
+			if (new Date(row.finishedAt) > finishedBefore) return false;
+		}
+		if (params.label && params.label.length > 0) {
+			const rowLabels = new Set(
+				getDisplayLabelEntries(row.labels).map(([key, value]) =>
+					serializeWorkflowLabel(key, value),
+				),
+			);
+			for (const label of params.label) {
+				if (!rowLabels.has(label)) return false;
+			}
+		}
+		return true;
+	});
+};
+
 export function WorkflowExecutionList({
 	active = true,
 }: WorkflowExecutionListProps) {
 	const [searchParams, setSearchParams] = useSearchParams();
-	const [items, setItems] = useState<WorkflowSummary[]>([]);
-	const [runIdsByWorkflowName, setRunIdsByWorkflowName] = useState<
-		Record<string, string>
-	>({});
-	const [templateVersionsByWorkflowName, setTemplateVersionsByWorkflowName] =
-		useState<Record<string, number>>({});
-	const [nodeCountsByWorkflowName, setNodeCountsByWorkflowName] = useState<
-		Record<string, number>
-	>({});
+	const [items, setItems] = useState<ExecutionListRow[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [initializedOnce, setInitializedOnce] = useState(false);
 	const [error, setError] = useState<WorkflowErrorState | null>(null);
@@ -187,13 +322,11 @@ export function WorkflowExecutionList({
 		parseDate(searchParams.get("finishedBefore")),
 	]);
 	const [operationLoading, setOperationLoading] = useState<string | null>(null);
-	const [selectedWorkflowNames, setSelectedWorkflowNames] = useState<string[]>(
-		[],
-	);
+	const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
 	const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 	const [bulkDeleting, setBulkDeleting] = useState(false);
 	const [pendingOperation, setPendingOperation] = useState<{
-		record: WorkflowSummary;
+		record: ExecutionListRow;
 		operation: WorkflowOperationConfig;
 	} | null>(null);
 	const [page, setPage] = useState(1);
@@ -278,50 +411,31 @@ export function WorkflowExecutionList({
 		try {
 			const params: ListWorkflowsParams = {
 				status: statusFilter,
-				name: nameSearch.trim().toLowerCase() || undefined,
+				name: normalizeSearchValue(nameSearch) || undefined,
 				label: labelFilter.length ? labelFilter : undefined,
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
-			const [res, deployments] = await Promise.all([
+			const [workflowsResult, runsResult] = await Promise.allSettled([
 				listWorkflows(params),
-				listDeployments().catch(() => []),
+				listPipelineRuns(),
 			]);
-			setRunIdsByWorkflowName(
-				Object.fromEntries(
-					deployments
-						.filter((deployment) => deployment.workflowName && deployment.id)
-						.map((deployment) => [deployment.workflowName, deployment.id]),
-				),
-			);
-			setTemplateVersionsByWorkflowName(
-				Object.fromEntries(
-					deployments
-						.filter(
-							(deployment) =>
-								deployment.workflowName && deployment.templateVersion,
-						)
-						.map((deployment) => [
-							deployment.workflowName,
-							deployment.templateVersion as number,
-						]),
-				),
-			);
-			setNodeCountsByWorkflowName(
-				Object.fromEntries(
-					deployments
-						.filter((deployment) => deployment.workflowName)
-						.map((deployment) => [
-							deployment.workflowName,
-							deployment.nodeCount,
-						]),
-				),
-			);
-			setItems(res.items || []);
-			setSelectedWorkflowNames((prev) =>
-				prev.filter((name) =>
-					(res.items || []).some((item) => item.name === name),
-				),
+			const workflows =
+				workflowsResult.status === "fulfilled"
+					? workflowsResult.value.items || []
+					: [];
+			const runs = runsResult.status === "fulfilled" ? runsResult.value : [];
+			const merged = buildExecutionRows(runs, workflows);
+			const filtered = filterExecutionRows(merged, params);
+			if (
+				workflowsResult.status === "rejected" &&
+				runsResult.status === "rejected"
+			) {
+				throw workflowsResult.reason;
+			}
+			setItems(filtered);
+			setSelectedRowKeys((prev) =>
+				prev.filter((key) => filtered.some((item) => item.key === key)),
 			);
 		} catch (err) {
 			console.error(err);
@@ -399,9 +513,27 @@ export function WorkflowExecutionList({
 		}));
 	}, [items]);
 
+	const selectedRows = useMemo(
+		() => items.filter((item) => selectedRowKeys.includes(item.key)),
+		[items, selectedRowKeys],
+	);
+	const selectedLiveRows = useMemo(
+		() => selectedRows.filter((item) => item.liveAvailable),
+		[selectedRows],
+	);
+	const executionSummary = useMemo(() => {
+		const counts = new Map<string, number>();
+		for (const item of items) {
+			counts.set(item.status, (counts.get(item.status) || 0) + 1);
+		}
+		return Array.from(counts.entries()).sort((a, b) =>
+			a[0].localeCompare(b[0]),
+		);
+	}, [items]);
+
 	const executeOperation = useCallback(
 		async (
-			record: WorkflowSummary,
+			record: ExecutionListRow,
 			operation: WorkflowOperationConfig,
 		): Promise<void> => {
 			const loadingKey = `${record.name}:${operation.key}`;
@@ -420,7 +552,7 @@ export function WorkflowExecutionList({
 	);
 
 	const runOperation = useCallback(
-		(record: WorkflowSummary, key: WorkflowOperationKey) => {
+		(record: ExecutionListRow, key: WorkflowOperationKey) => {
 			const operation = getAvailableWorkflowOperationConfigs(record).find(
 				(item) => item.key === key,
 			);
@@ -449,11 +581,11 @@ export function WorkflowExecutionList({
 	}, [executeOperation, pendingOperation]);
 
 	const confirmBulkDelete = useCallback(async () => {
-		if (selectedWorkflowNames.length === 0) return;
+		if (selectedLiveRows.length === 0) return;
 		setBulkDeleting(true);
 		try {
 			const results = await Promise.allSettled(
-				selectedWorkflowNames.map((name) => deleteWorkflow(name)),
+				selectedLiveRows.map((row) => deleteWorkflow(row.name)),
 			);
 			const failedCount = results.filter(
 				(result) => result.status === "rejected",
@@ -462,13 +594,13 @@ export function WorkflowExecutionList({
 			if (deletedCount > 0)
 				message.success(`已删除 ${deletedCount} 条执行记录`);
 			if (failedCount > 0) message.error(`${failedCount} 条执行记录删除失败`);
-			setSelectedWorkflowNames([]);
+			setSelectedRowKeys([]);
 			setBulkDeleteOpen(false);
 			await refresh();
 		} finally {
 			setBulkDeleting(false);
 		}
-	}, [refresh, selectedWorkflowNames]);
+	}, [refresh, selectedLiveRows]);
 
 	const columns = [
 		{
@@ -476,11 +608,20 @@ export function WorkflowExecutionList({
 			dataIndex: "name",
 			key: "name",
 			width: 260,
-			render: (name: string, record: WorkflowSummary) => {
-				const runId = runIdsByWorkflowName[record.name];
-				const templateVersion = templateVersionsByWorkflowName[record.name];
-				const displayId = toAssetStyleId(runId ?? name);
-				const copyId = runId ?? name;
+			render: (name: string, record: ExecutionListRow) => {
+				const displayId = toAssetStyleId(record.runId ?? name);
+				const copyId = record.runId ?? name;
+				const traceLabel = [
+					record.templateName ? `流水线 ${record.templateName}` : "",
+					record.templateVersion ? `v${record.templateVersion}` : "",
+				]
+					.filter(Boolean)
+					.join(" · ");
+				const triggerLabel = formatTriggerSource(record.triggerSource);
+				const failedSummary =
+					isFailedExecutionStatus(record.status) && record.failureSummary
+						? record.failureSummary
+						: undefined;
 				return (
 					<div style={{ minWidth: 0 }}>
 						<Typography.Text strong ellipsis={{ tooltip: name }}>
@@ -490,14 +631,46 @@ export function WorkflowExecutionList({
 							type="secondary"
 							copyable={{ text: copyId }}
 							style={{ display: "block", fontSize: 12 }}
-							ellipsis={{ tooltip: runId ? `完整任务 ID: ${runId}` : name }}
+							ellipsis={{
+								tooltip: record.runId ? `完整任务 ID: ${record.runId}` : name,
+							}}
 						>
 							ID: {displayId}
 						</Typography.Text>
-						{templateVersion ? (
-							<Tag color="blue" style={{ marginTop: 4 }}>
-								模板 v{templateVersion}
-							</Tag>
+						{traceLabel ? (
+							<Typography.Text
+								type="secondary"
+								style={{ display: "block", fontSize: 12 }}
+								ellipsis={{ tooltip: traceLabel }}
+							>
+								{traceLabel}
+							</Typography.Text>
+						) : null}
+						<Space size={[6, 6]} wrap style={{ marginTop: 4 }}>
+							{record.templateVersion ? (
+								<Tag color="blue">模板 v{record.templateVersion}</Tag>
+							) : null}
+							{record.templateId ? (
+								<Tag>{`快照 ${toAssetStyleId(record.templateId)}`}</Tag>
+							) : null}
+							{triggerLabel ? <Tag color="gold">{triggerLabel}</Tag> : null}
+							{record.historyOnly ? <Tag>历史账本</Tag> : null}
+						</Space>
+						{failedSummary ? (
+							<Typography.Text
+								type="danger"
+								style={{ display: "block", fontSize: 12, marginTop: 6 }}
+								ellipsis={{ tooltip: failedSummary }}
+							>
+								失败原因：{failedSummary}
+							</Typography.Text>
+						) : isFailedExecutionStatus(record.status) ? (
+							<Typography.Text
+								type="danger"
+								style={{ display: "block", fontSize: 12, marginTop: 6 }}
+							>
+								失败，请查看详情定位原因
+							</Typography.Text>
 						) : null}
 					</div>
 				);
@@ -522,8 +695,7 @@ export function WorkflowExecutionList({
 			dataIndex: "nodeCount",
 			key: "nodeCount",
 			width: 100,
-			render: (nodeCount: number, record: WorkflowSummary) =>
-				nodeCountsByWorkflowName[record.name] ?? nodeCount,
+			render: (nodeCount: number) => nodeCount,
 		},
 		{
 			title: "标签",
@@ -564,11 +736,16 @@ export function WorkflowExecutionList({
 			title: "操作",
 			key: "actions",
 			width: 110,
-			render: (_: unknown, record: WorkflowSummary) => {
-				const menuItems = getWorkflowOperationMenuItems(record);
+			render: (_: unknown, record: ExecutionListRow) => {
+				const menuItems = record.liveAvailable
+					? getWorkflowOperationMenuItems(record)
+					: [];
 				const hasOperationLoading = operationLoading?.startsWith(
 					`${record.name}:`,
 				);
+				const detailHref = record.runId
+					? `/pipeline/executions/${encodeURIComponent(record.name)}?runId=${encodeURIComponent(record.runId)}`
+					: `/pipeline/executions/${encodeURIComponent(record.name)}`;
 
 				return (
 					<div style={{ display: "flex", gap: 4 }}>
@@ -577,12 +754,7 @@ export function WorkflowExecutionList({
 							size="small"
 							onClick={(event) => {
 								event.stopPropagation();
-								navigate(
-									buildWorkflowExecutionUrl(
-										record.name,
-										runIdsByWorkflowName[record.name],
-									),
-								);
+								navigate(detailHref);
 							}}
 						>
 							查看
@@ -609,7 +781,11 @@ export function WorkflowExecutionList({
 								onClick={(event) => {
 									event.stopPropagation();
 									if (menuItems.length === 0) {
-										message.info("当前状态暂无可用操作");
+										message.info(
+											record.historyOnly
+												? "该记录只保留 DataBrew 历史账本，暂无可用运行操作"
+												: "当前状态暂无可用操作",
+										);
 									}
 								}}
 							>
@@ -637,20 +813,55 @@ export function WorkflowExecutionList({
 				<Typography.Title level={4} style={{ margin: 0 }}>
 					流水线执行记录
 				</Typography.Title>
-				<Button
-					danger
-					disabled={selectedWorkflowNames.length === 0}
-					onClick={() => setBulkDeleteOpen(true)}
+				<Tooltip
+					title={
+						selectedRowKeys.length === 0
+							? "请先选择执行记录"
+							: selectedLiveRows.length === 0
+								? "当前选中项只保留历史账本，无法直接删除 Argo 工作流"
+								: undefined
+					}
 				>
-					批量删除
-					{selectedWorkflowNames.length > 0
-						? `（${selectedWorkflowNames.length}）`
-						: ""}
-				</Button>
+					<Button
+						danger
+						disabled={selectedLiveRows.length === 0}
+						onClick={() => setBulkDeleteOpen(true)}
+					>
+						批量删除
+						{selectedLiveRows.length > 0
+							? `（${selectedLiveRows.length}）`
+							: ""}
+					</Button>
+				</Tooltip>
 				<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
 			</div>
+
+			{items.length > 0 ? (
+				<div
+					style={{
+						display: "flex",
+						flexWrap: "wrap",
+						gap: 8,
+						marginBottom: 16,
+					}}
+				>
+					<Tag>共 {items.length} 条</Tag>
+					{executionSummary.map(([status, count]) => (
+						<Tag
+							key={status}
+							color={
+								STATUS_COLORS[status] ||
+								STATUS_ACCENT_COLORS[status] ||
+								"default"
+							}
+						>
+							{status} {count}
+						</Tag>
+					))}
+				</div>
+			) : null}
 
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
@@ -686,22 +897,24 @@ export function WorkflowExecutionList({
 				<Button onClick={resetFilters}>重置</Button>
 			</div>
 
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					flexWrap: "wrap",
-					gap: 8,
-					marginBottom: 16,
-				}}
-			>
-				<Typography.Text type="secondary">标签筛选：</Typography.Text>
-				<Checkbox.Group
-					options={labelCheckboxOptions}
-					value={draftLabelFilter}
-					onChange={(values) => setDraftLabelFilter(values as string[])}
-				/>
-			</div>
+			{labelCheckboxOptions.length > 0 ? (
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						flexWrap: "wrap",
+						gap: 8,
+						marginBottom: 16,
+					}}
+				>
+					<Typography.Text type="secondary">标签筛选：</Typography.Text>
+					<Checkbox.Group
+						options={labelCheckboxOptions}
+						value={draftLabelFilter}
+						onChange={(values) => setDraftLabelFilter(values as string[])}
+					/>
+				</div>
+			) : null}
 
 			{error ? (
 				<Alert
@@ -732,11 +945,17 @@ export function WorkflowExecutionList({
 					<Table
 						dataSource={items}
 						columns={columns}
-						rowKey="name"
+						rowKey="key"
 						loading={loading}
 						rowSelection={{
-							selectedRowKeys: selectedWorkflowNames,
-							onChange: (keys) => setSelectedWorkflowNames(keys as string[]),
+							selectedRowKeys,
+							onChange: (keys) => setSelectedRowKeys(keys as string[]),
+							getCheckboxProps: (record) => ({
+								disabled: !record.liveAvailable,
+								title: record.liveAvailable
+									? undefined
+									: "该记录只保留历史账本，当前不支持直接删除 Argo 工作流",
+							}),
 						}}
 						scroll={{ x: 1200 }}
 						rowClassName={() => "pipeline-execution-table-row"}
@@ -750,12 +969,7 @@ export function WorkflowExecutionList({
 								) {
 									return;
 								}
-								navigate(
-									buildWorkflowExecutionUrl(
-										record.name,
-										runIdsByWorkflowName[record.name],
-									),
-								);
+								navigate(buildWorkflowExecutionUrl(record.name, record.runId));
 							},
 							style: { cursor: "pointer" },
 						})}
@@ -795,7 +1009,7 @@ export function WorkflowExecutionList({
 			</Modal>
 			<Modal
 				open={bulkDeleteOpen}
-				title={`删除选中的 ${selectedWorkflowNames.length} 条执行记录？`}
+				title={`删除选中的 ${selectedLiveRows.length} 条执行记录？`}
 				okText="删除"
 				cancelText="取消"
 				okButtonProps={{ danger: true, loading: bulkDeleting }}

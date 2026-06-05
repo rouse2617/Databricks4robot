@@ -6,6 +6,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import {
@@ -132,7 +133,11 @@ describe("WorkflowExecutionList", () => {
 		mockListPipelineRuns.mockResolvedValue([
 			{
 				id: "run-1",
-				pipelineName: "successful-run",
+				pipelineName: "daily-pipeline",
+				templateName: "daily-pipeline",
+				templateId: "tpl-v2",
+				templateVersion: 2,
+				triggerSource: "manual",
 				workflowName: "successful-run",
 				status: "Succeeded",
 				nodeCount: 2,
@@ -189,18 +194,18 @@ describe("WorkflowExecutionList", () => {
 		});
 	});
 
-	it("merges deployment metadata for display ids and template versions", async () => {
+	it("renders execution traceability from pipeline runs", async () => {
 		renderList();
 
 		await waitFor(() => {
 			expect(screen.getByText("successful-run")).toBeInTheDocument();
 		});
 
-		expect(mockListDeployments).toHaveBeenCalled();
-		await waitFor(() => {
-			expect(screen.getByText("ID: run1")).toBeInTheDocument();
-			expect(screen.getByText("模板 v3")).toBeInTheDocument();
-		});
+		expect(mockListPipelineRuns).toHaveBeenCalled();
+		expect(screen.getByText("流水线 daily-pipeline · v2")).toBeInTheDocument();
+		expect(screen.getByText("模板 v2")).toBeInTheDocument();
+		expect(screen.getByText("快照 tplv2")).toBeInTheDocument();
+		expect(screen.getByText("手动运行")).toBeInTheDocument();
 	});
 
 	it("opens execution detail with durable run id when available", async () => {
@@ -210,7 +215,13 @@ describe("WorkflowExecutionList", () => {
 			expect(screen.getByText("successful-run")).toBeInTheDocument();
 		});
 
-		fireEvent.click(screen.getAllByRole("button", { name: "查看" })[0]);
+		const successfulRow = screen.getByText("successful-run").closest("tr");
+		expect(successfulRow).not.toBeNull();
+		fireEvent.click(
+			within(successfulRow as HTMLElement).getByRole("button", {
+				name: "查看",
+			}),
+		);
 
 		expect(screen.getByTestId("location")).toHaveTextContent(
 			"/pipeline/executions/successful-run?runId=run-1",
@@ -219,25 +230,60 @@ describe("WorkflowExecutionList", () => {
 
 	it("shows an empty state when live workflow listing has no records", async () => {
 		mockListWorkflows.mockResolvedValue({ items: [] });
-		mockListDeployments.mockResolvedValue([]);
+		mockListPipelineRuns.mockResolvedValue([
+			{
+				id: "run-ledger-1",
+				pipelineName: "ttl-cleaned-pipeline",
+				templateName: "ttl-cleaned-template",
+				templateId: "tpl-ledger-1",
+				templateVersion: 4,
+				triggerSource: "batch",
+				workflowName: "ttl-cleaned-workflow",
+				status: "Succeeded",
+				nodeCount: 5,
+				totalEstimatedCost: 0.009,
+				createdAt: "2026-06-03T19:16:51Z",
+				finishedAt: "2026-06-03T19:18:09Z",
+			},
+		]);
 
 		renderList();
 
 		await waitFor(() => {
-			expect(
-				screen.getByText("暂无执行记录，部署流水线后将自动生成"),
-			).toBeInTheDocument();
+			expect(screen.getByText("ttl-cleaned-workflow")).toBeInTheDocument();
 		});
+		expect(screen.getByText("ID: runledge")).toBeInTheDocument();
+		expect(
+			screen.getByText("流水线 ttl-cleaned-template · v4"),
+		).toBeInTheDocument();
+		expect(screen.getByText("历史账本")).toBeInTheDocument();
+		expect(screen.getByText("批量运行")).toBeInTheDocument();
 	});
 
 	it("shows a service error when live workflow listing is unavailable", async () => {
 		mockListWorkflows.mockRejectedValue(new Error("argo unavailable"));
+		mockListPipelineRuns.mockResolvedValue([
+			{
+				id: "run-ledger-2",
+				pipelineName: "ledger-pipeline",
+				templateName: "ledger-template",
+				templateVersion: 1,
+				triggerSource: "api",
+				workflowName: "ledger-workflow",
+				status: "Succeeded",
+				nodeCount: 2,
+				createdAt: "2026-06-03T10:00:00Z",
+				finishedAt: "2026-06-03T10:01:00Z",
+			},
+		]);
 
 		renderList();
 
 		await waitFor(() => {
-			expect(screen.getByText("服务不可用")).toBeInTheDocument();
+			expect(screen.getByText("ledger-workflow")).toBeInTheDocument();
 		});
-		expect(screen.getByText("argo unavailable")).toBeInTheDocument();
+		expect(screen.queryByText("服务不可用")).not.toBeInTheDocument();
+		expect(screen.getByText("流水线 ledger-template · v1")).toBeInTheDocument();
+		expect(screen.getByText("API 运行")).toBeInTheDocument();
 	});
 });

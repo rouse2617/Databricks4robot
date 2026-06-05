@@ -2427,7 +2427,9 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
 # {
 #   "id": "run-123",
 #   "templateId": "tpl-123",
+#   "templateName": "asset-pipeline",
 #   "templateVersion": 1,
+#   "triggerSource": "asset_run",
 #   "pipelineName": "asset-pipeline",
 #   "workflowName": "asset-pipeline-a1b2c3",
 #   "executionTargetId": "default",
@@ -2453,7 +2455,13 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
 当后端设置 `PRICING_CONFIG_PATH` 且节点存在 Argo `resourcesDuration` 时，
 节点会返回 `estimatedCostUsd`，run 详情会返回 `totalEstimatedCost`。未配置
 pricing、节点无资源耗时或迁移未填充历史数据时，这两个字段会省略或为 `null`，
-接口不会失败。
+接口不会失败。为了让执行记录支持稳定追溯，`/pipeline-runs` 和
+`/pipeline-runs/<RUN_ID>` 会直接返回：
+
+- `templateName`
+- `templateVersion`
+- `templateId`（可作为模板快照 ID 使用）
+- `triggerSource`（`manual` / `asset_run` / `batch` / `api`）
 
 ```bash
 curl -s "$BASE/api/v1/pipeline-runs" \

@@ -63,6 +63,13 @@ type DeployOptions struct {
 	BatchRunID      string
 }
 
+const (
+	RunTriggerSourceManual   = "manual"
+	RunTriggerSourceAssetRun = "asset_run"
+	RunTriggerSourceBatch    = "batch"
+	RunTriggerSourceAPI      = "api"
+)
+
 // BatchCreateRunFailure records a per-asset fan-out error.
 type BatchCreateRunFailure struct {
 	AssetID string `json:"assetId"`
@@ -351,6 +358,8 @@ func (uc *Usecase) deploymentToRun(dep *models.PipelineDeployment) *models.Pipel
 		UpdatedAt:         dep.UpdatedAt,
 		FinishedAt:        dep.FinishedAt,
 	}
+	run.TemplateName = uc.resolveRunTemplateName(context.Background(), run)
+	run.TriggerSource = inferRunTriggerSource(run)
 	if run.ArgoNamespace == "" {
 		run.ArgoNamespace = uc.namespace
 	}
@@ -405,10 +414,13 @@ func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDepl
 		OccurredAt:     run.CreatedAt,
 		IdempotencyKey: fmt.Sprintf("run_submitted:%s", run.ID),
 		Payload: map[string]interface{}{
-			"pipelineName": run.PipelineName,
-			"templateId":   run.TemplateID,
-			"assetCount":   run.AssetCount,
-			"targetId":     run.ExecutionTargetID,
+			"pipelineName":    run.PipelineName,
+			"templateId":      run.TemplateID,
+			"templateName":    run.TemplateName,
+			"templateVersion": run.TemplateVersion,
+			"triggerSource":   run.TriggerSource,
+			"assetCount":      run.AssetCount,
+			"targetId":        run.ExecutionTargetID,
 		},
 	})
 	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
@@ -451,6 +463,8 @@ func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
 		run.AssetIDs = assetIDsFromPipelineJSON(run.PipelineJSON)
 	}
 	run.AssetCount = len(run.AssetIDs)
+	run.TemplateName = uc.resolveRunTemplateName(ctx, run)
+	run.TriggerSource = inferRunTriggerSource(run)
 	if run.ExecutionTarget == nil {
 		if uc.targetRepo != nil && run.ExecutionTargetID != "" {
 			if target, err := uc.targetRepo.FindByID(ctx, run.ExecutionTargetID); err == nil && target != nil {
@@ -474,6 +488,36 @@ func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
 		}
 	}
 	uc.refreshAssetNodes(ctx, run)
+}
+
+func inferRunTriggerSource(run *models.PipelineRun) string {
+	if run == nil {
+		return ""
+	}
+	if strings.TrimSpace(run.BatchRunID) != "" {
+		return RunTriggerSourceBatch
+	}
+	if run.AssetCount > 0 || len(run.AssetIDs) > 0 {
+		return RunTriggerSourceAssetRun
+	}
+	if run.TemplateID != nil && strings.TrimSpace(*run.TemplateID) != "" {
+		return RunTriggerSourceManual
+	}
+	return RunTriggerSourceAPI
+}
+
+func (uc *Usecase) resolveRunTemplateName(ctx context.Context, run *models.PipelineRun) string {
+	if run == nil {
+		return ""
+	}
+	if run.TemplateID != nil && strings.TrimSpace(*run.TemplateID) != "" && uc.templateRepo != nil {
+		if tmpl, err := uc.templateRepo.FindByID(ctx, strings.TrimSpace(*run.TemplateID)); err == nil && tmpl != nil {
+			if strings.TrimSpace(tmpl.Name) != "" {
+				return strings.TrimSpace(tmpl.Name)
+			}
+		}
+	}
+	return strings.TrimSpace(run.PipelineName)
 }
 
 func timePtrFromMeta(t time.Time) *time.Time {

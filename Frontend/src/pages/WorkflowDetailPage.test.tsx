@@ -63,6 +63,14 @@ function mockWorkflowDetailState(
 			followError: null,
 		},
 		runEventState: {
+			run: {
+				id: "run-asset-1",
+				templateId: "tpl-v3-id",
+				templateName: "asset-pipeline",
+				templateVersion: 3,
+				triggerSource: "asset_run",
+				assetIds: ["asset-a", "asset-b"],
+			},
 			items: [],
 			total: 0,
 			loading: false,
@@ -121,6 +129,7 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getByText("asset-pipeline")).toBeInTheDocument();
+		expect(screen.getByText(/快照 tplv3id · 资产运行/)).toBeInTheDocument();
 		expect(screen.getByText("asset-a")).toBeInTheDocument();
 		expect(screen.getByText("asset-b")).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "asset-a" })).toHaveAttribute(

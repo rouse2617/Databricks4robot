@@ -37,9 +37,11 @@ export interface Deployment {
 
 export interface PipelineRun extends Deployment {
 	executionTargetId?: string;
+	templateName?: string;
 	targetSnapshot?: Record<string, unknown>;
 	argoNamespace?: string;
 	argoWorkflowUid?: string;
+	triggerSource?: "manual" | "asset_run" | "batch" | "api" | string;
 	message?: string;
 	noAssetRun?: boolean;
 	startedAt?: string;
