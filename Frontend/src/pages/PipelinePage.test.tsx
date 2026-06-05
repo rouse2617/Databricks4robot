@@ -16,6 +16,7 @@ import PipelinePage from "./PipelinePage";
 // ── Mock pipelineApi ──────────────────────────────────────────────
 const mockSavePipeline = vi.fn();
 const mockDeployTemplate = vi.fn();
+const mockBatchDeployTemplate = vi.fn();
 const mockListPipelines = vi.fn().mockResolvedValue([]);
 const mockListPipelineVersions = vi.fn().mockResolvedValue([]);
 const mockListDeployments = vi.fn().mockResolvedValue([]);
@@ -46,6 +47,7 @@ const mockListExecutionTargets = vi.fn().mockResolvedValue([
 vi.mock("../api/pipelineApi", () => ({
 	savePipeline: (...args: unknown[]) => mockSavePipeline(...args),
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
+	batchDeployTemplate: (...args: unknown[]) => mockBatchDeployTemplate(...args),
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
 	listPipelineVersions: (...args: unknown[]) =>
 		mockListPipelineVersions(...args),
@@ -149,6 +151,14 @@ function mockDeployResult(overrides: Partial<Deployment> = {}): Deployment {
 	};
 }
 
+function mockBatchDeployResult(items: Deployment[] = [mockDeployResult()]) {
+	return {
+		batchId: "batch-001",
+		items,
+		failed: [],
+	};
+}
+
 /** Import a pipeline with one node so canvas is non-empty for deploy tests. */
 async function importOneNodePipeline(customName = "test-pipeline") {
 	const pipeline = {
@@ -205,6 +215,15 @@ function getModalDeployBtn(): HTMLButtonElement {
 	return btn as HTMLButtonElement;
 }
 
+function getPipelineNameInput(): HTMLInputElement {
+	return screen.getByLabelText("流水线名称") as HTMLInputElement;
+}
+
+function expectGeneratedPipelineName(value: string) {
+	expect(value).toMatch(/^pipeline-\d{8}-\d{6}$/);
+	expect(value).not.toBe("my-pipeline");
+}
+
 // ── Suite ─────────────────────────────────────────────────────────
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {
@@ -225,6 +244,7 @@ beforeAll(() => {
 function resetPipelineMocks() {
 	mockSavePipeline.mockReset();
 	mockDeployTemplate.mockReset();
+	mockBatchDeployTemplate.mockReset();
 	mockListPipelines.mockResolvedValue([]);
 	mockListPipelineVersions.mockResolvedValue([]);
 	mockListDeployments.mockResolvedValue([]);
@@ -285,9 +305,9 @@ describe("PipelinePage", () => {
 		expect(screen.getByText("导入")).toBeInTheDocument();
 	});
 
-	it("shows the pipeline name input with default value", () => {
+	it("shows the pipeline name input with a generated default value", () => {
 		renderPage();
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
+		expectGeneratedPipelineName(getPipelineNameInput().value);
 	});
 
 	// ── Tab switching ───────────────────────────────────────────────
@@ -370,27 +390,29 @@ describe("PipelinePage", () => {
 
 	it("does nothing on cancelled import", () => {
 		renderPage();
+		const defaultName = getPipelineNameInput().value;
 		fireEvent.click(screen.getByText("导入"));
 		const modal = document.querySelector(".ant-modal");
 		expect(modal).toBeTruthy();
 		fireEvent.click(
 			within(modal as HTMLElement).getByRole("button", { name: /取.*消/ }),
 		);
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
+		expect(screen.getByDisplayValue(defaultName)).toBeInTheDocument();
 	});
 
 	// ── Save ────────────────────────────────────────────────────────
 	it("saves pipeline on save button click", async () => {
+		renderPage();
+		const defaultName = getPipelineNameInput().value;
 		mockSavePipeline.mockResolvedValueOnce({
 			id: "tmpl-001",
-			name: "my-pipeline",
+			name: defaultName,
 		});
-		renderPage();
 		fireEvent.click(screen.getByText("保存"));
 		await waitFor(() => expect(mockSavePipeline).toHaveBeenCalledTimes(1));
 		expect(mockSavePipeline).toHaveBeenCalledWith(
-			"my-pipeline",
-			expect.objectContaining({ name: "my-pipeline" }),
+			defaultName,
+			expect.objectContaining({ name: defaultName }),
 		);
 		const msg = await getMockMessage();
 		expect(msg.success).toHaveBeenCalledWith(expect.stringContaining("已保存"));
@@ -529,7 +551,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-nodes",
 		});
-		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+		mockBatchDeployTemplate.mockResolvedValueOnce(mockBatchDeployResult());
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
@@ -543,7 +565,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockBatchDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-001", "ast-002"],
 				"default",
@@ -556,7 +578,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-assets",
 		});
-		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+		mockBatchDeployTemplate.mockResolvedValueOnce(mockBatchDeployResult());
 
 		renderPage("/pipeline?asset_ids=asset-a,asset-b");
 		await importOneNodePipeline("with-assets");
@@ -572,7 +594,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockBatchDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["asset-a", "asset-b"],
 				"default",
@@ -720,12 +742,12 @@ describe("PipelinePage", () => {
 
 	it("handles empty sessionStorage gracefully", () => {
 		renderPage();
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
+		expectGeneratedPipelineName(getPipelineNameInput().value);
 	});
 
 	it("handles invalid JSON in sessionStorage gracefully", () => {
 		sessionStorage.setItem("pipeline-edit", "{bad json");
 		renderPage();
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
+		expectGeneratedPipelineName(getPipelineNameInput().value);
 	});
 });

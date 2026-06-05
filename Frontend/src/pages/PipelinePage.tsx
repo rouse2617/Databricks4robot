@@ -92,6 +92,18 @@ import "../styles/pipeline.css";
 
 const PIPELINE_NODE_TYPES = { pipelineStep: PipelineStepNode };
 
+const padDatePart = (value: number) => String(value).padStart(2, "0");
+
+function generateDefaultPipelineName(now = new Date()): string {
+	const year = now.getFullYear();
+	const month = padDatePart(now.getMonth() + 1);
+	const day = padDatePart(now.getDate());
+	const hour = padDatePart(now.getHours());
+	const minute = padDatePart(now.getMinutes());
+	const second = padDatePart(now.getSeconds());
+	return `pipeline-${year}${month}${day}-${hour}${minute}${second}`;
+}
+
 type DeployMode = "edit" | "preview";
 
 type CanvasMenuState = {
@@ -118,7 +130,7 @@ function PipelineCanvas() {
 	);
 	const [nodes, setNodes] = useState<PipelineFlowNode[]>([]);
 	const [edges, setEdges] = useState<PipelineFlowEdge[]>([]);
-	const [pipelineName, setPipelineName] = useState("my-pipeline");
+	const [pipelineName, setPipelineName] = useState(generateDefaultPipelineName);
 	const pipelineNameReplaceRef = useRef(false);
 	const workflowNameReplaceRef = useRef(false);
 	const [selectedNode, setSelectedNode] = useState<PipelineFlowNode | null>(
@@ -1156,7 +1168,9 @@ function PipelineCanvas() {
 								type="secondary"
 								style={{ fontSize: 12, display: "block", marginBottom: 4 }}
 							>
-								当前模板：{currentTemplateLabel}{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} · 模板版本选择在工具栏
+								当前模板：{currentTemplateLabel}
+								{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} ·
+								模板版本选择在工具栏
 							</Typography.Text>
 							<Typography.Paragraph
 								type="secondary"
@@ -1294,14 +1308,22 @@ function PipelineCanvas() {
 								}}
 							>
 								<Button onClick={closeDeployDialog}>取消</Button>
-								<Tooltip title={!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined}>
+								<Tooltip
+									title={
+										!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined
+									}
+								>
 									<span>
 										<Button onClick={handlePreviewDeploy} disabled={!canDeploy}>
 											预览
 										</Button>
 									</span>
 								</Tooltip>
-								<Tooltip title={!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined}>
+								<Tooltip
+									title={
+										!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined
+									}
+								>
 									<span>
 										<Button
 											type="primary"
@@ -1323,7 +1345,9 @@ function PipelineCanvas() {
 								type="secondary"
 								style={{ fontSize: 12, display: "block", marginBottom: 4 }}
 							>
-								当前模板：{currentTemplateLabel}{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} · 模板版本选择在工具栏
+								当前模板：{currentTemplateLabel}
+								{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} ·
+								模板版本选择在工具栏
 							</Typography.Text>
 							<Typography.Paragraph
 								type="secondary"
@@ -1382,7 +1406,11 @@ function PipelineCanvas() {
 								>
 									返回编辑
 								</Button>
-								<Tooltip title={!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined}>
+								<Tooltip
+									title={
+										!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined
+									}
+								>
 									<span>
 										<Button
 											type="primary"
@@ -1424,7 +1452,9 @@ function PipelineCanvas() {
 						) : deployDialog.result ? (
 							<>
 								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-									当前模板：{currentTemplateLabel}{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} · 模板版本选择在工具栏
+									当前模板：{currentTemplateLabel}
+									{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} ·
+									模板版本选择在工具栏
 								</Typography.Text>
 								<br />
 								<Typography.Text type="success" strong>

@@ -583,12 +583,14 @@ export function WorkflowExecutionList({
 						</Button>
 						<Dropdown
 							open={openDropdown === record.name}
-							onOpenChange={(open) => setOpenDropdown(open ? record.name : null)}
+							onOpenChange={(open) =>
+								setOpenDropdown(open ? record.name : null)
+							}
 							menu={{
 								items: menuItems,
 								onClick: ({ key, domEvent }) => {
 									domEvent.stopPropagation();
-								setOpenDropdown(null);
+									setOpenDropdown(null);
 									runOperation(record, key as WorkflowOperationKey);
 								},
 							}}
