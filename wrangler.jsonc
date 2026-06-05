@@ -12,7 +12,10 @@
     // Host-aware routing in _worker.js routes /api/* to the dev backend
     // when served from cyber-databrew-dev.cyberorigin.ai.
     "dev": {
-      "name": "cyber-databrew-dev"
+      "name": "cyber-databrew-dev",
+      "routes": [
+        { "pattern": "cyber-databrew-dev.cyberorigin.ai", "custom_domain": true }
+      ]
     }
   }
 }
