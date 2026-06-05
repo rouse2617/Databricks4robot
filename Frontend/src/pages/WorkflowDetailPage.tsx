@@ -1494,7 +1494,7 @@ export default function WorkflowDetailPage({
 
 	const maxFailureDisplayCount = 3;
 	const failedNodeNames = failedNodes.map(
-		(node) => node.name ?? node.template?.name ?? node.id,
+		(node) => node.name ?? node.templateName ?? node.id,
 	);
 	const shownFailedNodeNames = failedNodeNames.slice(0, maxFailureDisplayCount);
 	const failureSummaryText = shownFailedNodeNames.length

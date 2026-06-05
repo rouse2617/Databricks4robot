@@ -401,7 +401,21 @@ func (h *Handler) TerminateWorkflow(c *gin.Context) {
 
 // DeleteWorkflow handles DELETE /api/v1/workflows/:name
 func (h *Handler) DeleteWorkflow(c *gin.Context) {
-	h.workflowOperation(c, h.wfClient.DeleteWorkflow)
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
+		return
+	}
+	if err := h.wfClient.DeleteWorkflow(c.Request.Context(), name, h.namespaceFor(c)); err != nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			// Argo resource already cleaned up by TTL — treat as success
+			c.JSON(http.StatusOK, gin.H{"message": "ok"})
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
 func (h *Handler) workflowOperation(c *gin.Context, fn func(context.Context, string, string) error) {
