@@ -1,6 +1,7 @@
 import {
 	DeleteOutlined,
 	EditOutlined,
+	HistoryOutlined,
 	LinkOutlined,
 	PlayCircleOutlined,
 	ReloadOutlined,
@@ -30,6 +31,7 @@ import {
 	listPipelines,
 	listPipelineVersions,
 	type PipelineTemplate,
+	setPipelineActiveVersion,
 } from "../../api/pipelineApi";
 import { toAssetStyleId } from "../../lib/idDisplay";
 import AssetPicker from "./AssetPicker";
@@ -42,6 +44,7 @@ import {
 } from "./deployPanelUtils";
 import { PipelineEmptyState } from "./PipelineEmptyState";
 import type { Pipeline } from "./types";
+import { VersionHistoryDrawer } from "./VersionHistoryDrawer";
 
 const STATUS_COLORS: Record<string, string> = {
 	Succeeded: "success",
@@ -70,6 +73,8 @@ function TemplateCard({
 	onRun,
 	onEdit,
 	onDelete,
+	onVersionHistory,
+	activeVersion,
 	compactActions,
 	selectable,
 	selected,
@@ -79,6 +84,8 @@ function TemplateCard({
 	onRun: (id: string) => void;
 	onEdit: (id: string) => void;
 	onDelete: (id: string) => void;
+	onVersionHistory?: (template: PipelineTemplate) => void;
+	activeVersion?: number;
 	compactActions?: boolean;
 	selectable?: boolean;
 	selected?: boolean;
@@ -107,7 +114,22 @@ function TemplateCard({
 				</div>
 				{!compactActions ? (
 					<div className="dep-card-meta">
-						<Tag color="blue">v{template.version}</Tag>
+						<Tag
+							color="blue"
+							style={{ cursor: "pointer" }}
+							onClick={(event) => {
+								event.stopPropagation();
+								onVersionHistory?.(template);
+							}}
+							title="点击查看版本历史"
+						>
+							v{template.version} <HistoryOutlined />
+						</Tag>
+						{activeVersion != null && activeVersion < template.version ? (
+							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
+								活跃: v{activeVersion}
+							</Tag>
+						) : null}
 						{template.versionCount && template.versionCount > 1 ? (
 							<span>{template.versionCount} 个版本</span>
 						) : null}
@@ -117,7 +139,22 @@ function TemplateCard({
 					</div>
 				) : (
 					<div className="dep-card-meta dep-card-meta--compact">
-						<Tag color="blue">v{template.version}</Tag>
+						<Tag
+							color="blue"
+							style={{ cursor: "pointer" }}
+							onClick={(event) => {
+								event.stopPropagation();
+								onVersionHistory?.(template);
+							}}
+							title="点击查看版本历史"
+						>
+							v{template.version} <HistoryOutlined />
+						</Tag>
+						{activeVersion != null && activeVersion < template.version ? (
+							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
+								活跃: v{activeVersion}
+							</Tag>
+						) : null}
 						{template.versionCount && template.versionCount > 1 ? (
 							<span>{template.versionCount} 版</span>
 						) : null}
@@ -231,6 +268,12 @@ export function DeployPanel({
 	const [selectedDeployVersion, setSelectedDeployVersion] = useState<
 		number | undefined
 	>();
+	const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
+	const [versionDrawerTemplate, setVersionDrawerTemplate] =
+		useState<PipelineTemplate | null>(null);
+	const [activeVersionByTemplate, setActiveVersionByTemplate] = useState<
+		Record<string, number>
+	>({});
 
 	const displayTemplates = useMemo(
 		() => dedupeTemplatesByName(templates),
@@ -253,6 +296,17 @@ export function DeployPanel({
 			]);
 			setDeployments(d);
 			setTemplates(t);
+			const activeMap: Record<string, number> = {};
+			for (const template of t) {
+				if (
+					template.activeVersion != null &&
+					template.activeVersion > 0 &&
+					template.activeVersion < template.version
+				) {
+					activeMap[template.name] = template.activeVersion;
+				}
+			}
+			setActiveVersionByTemplate(activeMap);
 			setSelectedTemplateIds((prev) =>
 				prev.filter((id) => t.some((template) => template.id === id)),
 			);
@@ -286,7 +340,8 @@ export function DeployPanel({
 		);
 		setDeployTargetId(templateId);
 		setDeployVersions(currentTemplate ? [currentTemplate] : []);
-		setSelectedDeployVersion(currentTemplate?.version);
+		const activeVersion = activeVersionByTemplate[currentTemplate?.name ?? ""];
+		setSelectedDeployVersion(activeVersion ?? currentTemplate?.version);
 		setSelectedAssetIds([]);
 		setAssetPickerResetKey((key) => key + 1);
 		const defaultTarget =
@@ -298,7 +353,7 @@ export function DeployPanel({
 				setDeployVersions(versions);
 				if (versions.length > 0) {
 					setSelectedDeployVersion(
-						currentTemplate?.version ?? versions[0]?.version,
+						activeVersion ?? currentTemplate?.version ?? versions[0]?.version,
 					);
 				}
 			})
@@ -382,6 +437,30 @@ export function DeployPanel({
 		}
 	};
 
+	const handleVersionHistory = (template: PipelineTemplate) => {
+		setVersionDrawerTemplate(template);
+		setVersionDrawerOpen(true);
+	};
+
+	const handleSetActiveVersion = async (
+		template: PipelineTemplate,
+		version: number,
+	) => {
+		try {
+			await setPipelineActiveVersion(template.id, version);
+			setActiveVersionByTemplate((prev) => ({
+				...prev,
+				[template.name]: version,
+			}));
+			message.success(
+				`已将 ${template.name} 的活跃版本设为 v${version}，下次运行将默认使用此版本`,
+			);
+			await refresh();
+		} catch (err) {
+			message.error(`设置活跃版本失败: ${String(err)}`);
+		}
+	};
+
 	const renderTemplateSection = (
 		items: PipelineTemplate[],
 		options?: { compactActions?: boolean; emptyLabel?: string },
@@ -404,6 +483,8 @@ export function DeployPanel({
 				onRun={handleDeployClick}
 				onEdit={handleEditTemplate}
 				onDelete={handleDeleteTemplate}
+				onVersionHistory={handleVersionHistory}
+				activeVersion={activeVersionByTemplate[t.name]}
 				compactActions={options?.compactActions}
 				selectable={resolvedVariant === "full"}
 				selected={selectedTemplateIds.includes(t.id)}
@@ -724,6 +805,21 @@ export function DeployPanel({
 					resetKey={assetPickerResetKey}
 				/>
 			</Modal>
+			{versionDrawerTemplate ? (
+				<VersionHistoryDrawer
+					open={versionDrawerOpen}
+					pipelineName={versionDrawerTemplate.name}
+					templateId={versionDrawerTemplate.id}
+					activeVersion={activeVersionByTemplate[versionDrawerTemplate.name]}
+					onClose={() => {
+						setVersionDrawerOpen(false);
+						setVersionDrawerTemplate(null);
+					}}
+					onSetActive={(version) =>
+						handleSetActiveVersion(versionDrawerTemplate, version)
+					}
+				/>
+			) : null}
 		</div>
 	);
 }

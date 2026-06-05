@@ -194,6 +194,17 @@ export function deletePipeline(id: string): Promise<void> {
 	return request<void>("DELETE", `/pipelines/${id}`);
 }
 
+export function setPipelineActiveVersion(
+	id: string,
+	activeVersion: number,
+): Promise<{ message: string; activeVersion: number }> {
+	return request<{ message: string; activeVersion: number }>(
+		"PATCH",
+		`/pipelines/${id}/active-version`,
+		{ activeVersion },
+	);
+}
+
 export function promotePipeline(id: string): Promise<PipelineTemplate> {
 	return request<PipelineTemplate>("POST", `/pipelines/${id}/promote`);
 }
