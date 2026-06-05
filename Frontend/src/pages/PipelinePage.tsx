@@ -837,6 +837,7 @@ function PipelineCanvas() {
 					/>
 					{templateVersions.length > 0 ? (
 						<Select
+							id="pipeline-template-version"
 							size="small"
 							className="pipeline-toolbar__version-select"
 							value={selectedTemplateVersionId ?? undefined}
@@ -1243,6 +1244,7 @@ function PipelineCanvas() {
 									工作流名称
 									<Input
 										id="pp-workflow-name"
+										name="workflowName"
 										value={deployDialog.name}
 										onChange={(e) =>
 											setDeployDialog((prev) => ({

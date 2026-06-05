@@ -244,6 +244,7 @@ export default function McapFilesPage() {
 				<Space>
 					<Input
 						id="mcap-owner-filter"
+						name="mcapOwner"
 						placeholder="搜索 Owner"
 						value={ownerFilter}
 						onChange={(e) => setOwnerFilter(e.target.value)}
@@ -260,6 +261,7 @@ export default function McapFilesPage() {
 					/>
 					<Select
 						id="mcap-state-filter"
+						aria-label="MCAP 状态筛选"
 						value={stateFilter}
 						onChange={(v) => {
 							setStateFilter(v);

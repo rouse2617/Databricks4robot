@@ -112,22 +112,33 @@ export function NodeConfigPanel({
 		>
 			<Form form={form} layout="vertical" onFinish={handleSubmit}>
 				<Form.Item label="名称" name="label">
-					<Input placeholder="节点名称" />
+					<Input id="node-config-label" name="label" placeholder="节点名称" />
 				</Form.Item>
 				{isScriptType && (
 					<Form.Item label="source" name="source">
-						<Input.TextArea rows={3} placeholder="Python 脚本 source" />
+						<Input.TextArea
+							id="node-config-source"
+							name="source"
+							rows={3}
+							placeholder="Python 脚本 source"
+						/>
 					</Form.Item>
 				)}
 				<Form.Item label="命令" name="command">
 					<Select
+						id="node-config-command"
 						mode="tags"
 						options={[]}
 						placeholder="按 Enter 添加命令片段"
 					/>
 				</Form.Item>
 				<Form.Item label="参数" name="args">
-					<Select mode="tags" options={[]} placeholder="按 Enter 添加参数" />
+					<Select
+						id="node-config-args"
+						mode="tags"
+						options={[]}
+						placeholder="按 Enter 添加参数"
+					/>
 				</Form.Item>
 				<div
 					style={{
@@ -158,10 +169,18 @@ export function NodeConfigPanel({
 											rules={[{ required: true, message: "请输入环境变量名" }]}
 											noStyle
 										>
-											<Input placeholder="KEY" />
+											<Input
+												id={`node-config-env-name-${field.key}`}
+												name={`env-${field.key}-name`}
+												placeholder="KEY"
+											/>
 										</Form.Item>
 										<Form.Item {...field} name={[field.name, "value"]} noStyle>
-											<Input placeholder="VALUE" />
+											<Input
+												id={`node-config-env-value-${field.key}`}
+												name={`env-${field.key}-value`}
+												placeholder="VALUE"
+											/>
 										</Form.Item>
 										<Button
 											type="text"
@@ -197,7 +216,7 @@ export function NodeConfigPanel({
 						extra="例如 500m、1"
 						rules={[resourceQuantityRule("cpu")]}
 					>
-						<Input placeholder="500m" />
+						<Input id="node-config-cpu" name="cpu" placeholder="500m" />
 					</Form.Item>
 					<Form.Item
 						label="内存"
@@ -205,7 +224,7 @@ export function NodeConfigPanel({
 						extra="必须带单位，例如 512Mi、1Gi"
 						rules={[resourceQuantityRule("memory")]}
 					>
-						<Input placeholder="256Mi" />
+						<Input id="node-config-memory" name="memory" placeholder="256Mi" />
 					</Form.Item>
 					<Form.Item
 						label="磁盘"
@@ -213,7 +232,7 @@ export function NodeConfigPanel({
 						extra="必须带单位，例如 1Gi、20Gi"
 						rules={[resourceQuantityRule("disk")]}
 					>
-						<Input placeholder="1Gi" />
+						<Input id="node-config-disk" name="disk" placeholder="1Gi" />
 					</Form.Item>
 				</div>
 			</Form>
