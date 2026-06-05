@@ -653,7 +653,8 @@ export function WorkflowExecutionList({
 			title: "名称",
 			dataIndex: "name",
 			key: "name",
-			width: 260,
+			width: 300,
+			fixed: "left" as const,
 			render: (name: string, record: ExecutionListRow) => {
 				const displayId = toAssetStyleId(record.runId ?? name);
 				const copyId = record.runId ?? name;
@@ -662,6 +663,7 @@ export function WorkflowExecutionList({
 					isFailedExecutionStatus(record.status) && record.failureSummary
 						? record.failureSummary
 						: undefined;
+				const detailHref = buildWorkflowExecutionUrl(record.name, record.runId);
 				return (
 					<div style={{ minWidth: 0 }}>
 						<Typography.Text strong ellipsis={{ tooltip: name }}>
@@ -682,20 +684,40 @@ export function WorkflowExecutionList({
 							{record.historyOnly ? <Tag>已归档</Tag> : null}
 						</Space>
 						{failedSummary ? (
-							<Typography.Text
-								type="danger"
-								style={{ display: "block", fontSize: 12, marginTop: 6 }}
-								ellipsis={{ tooltip: failedSummary }}
-							>
-								失败原因：{failedSummary}
-							</Typography.Text>
+							<div className="pipeline-execution-failure">
+								<Typography.Text
+									type="danger"
+									style={{ fontSize: 12 }}
+									ellipsis={{ tooltip: failedSummary }}
+								>
+									失败原因：{failedSummary}
+								</Typography.Text>
+								<Button
+									type="link"
+									danger
+									size="small"
+									className="pipeline-execution-failure__link"
+									onClick={(event) => {
+										event.stopPropagation();
+										navigate(detailHref);
+									}}
+								>
+									查看失败详情
+								</Button>
+							</div>
 						) : isFailedExecutionStatus(record.status) ? (
-							<Typography.Text
-								type="danger"
-								style={{ display: "block", fontSize: 12, marginTop: 6 }}
+							<Button
+								type="link"
+								danger
+								size="small"
+								className="pipeline-execution-failure__link pipeline-execution-failure__link--standalone"
+								onClick={(event) => {
+									event.stopPropagation();
+									navigate(detailHref);
+								}}
 							>
-								失败，请查看详情定位原因
-							</Typography.Text>
+								查看失败详情
+							</Button>
 						) : null}
 					</div>
 				);
@@ -767,7 +789,8 @@ export function WorkflowExecutionList({
 		{
 			title: "操作",
 			key: "actions",
-			width: 96,
+			width: 128,
+			fixed: "right" as const,
 			render: (_: unknown, record: ExecutionListRow) => {
 				const menuItems = record.liveAvailable
 					? getWorkflowOperationMenuItems(record)
@@ -853,16 +876,18 @@ export function WorkflowExecutionList({
 								: undefined
 					}
 				>
-					<Button
-						danger
-						disabled={selectedLiveRows.length === 0}
-						onClick={() => setBulkDeleteOpen(true)}
-					>
-						批量删除
-						{selectedLiveRows.length > 0
-							? `（${selectedLiveRows.length}）`
-							: ""}
-					</Button>
+					<span>
+						<Button
+							danger
+							disabled={selectedLiveRows.length === 0}
+							onClick={() => setBulkDeleteOpen(true)}
+						>
+							批量删除
+							{selectedLiveRows.length > 0
+								? `（${selectedLiveRows.length}）`
+								: ""}
+						</Button>
+					</span>
 				</Tooltip>
 				<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
@@ -992,7 +1017,7 @@ export function WorkflowExecutionList({
 									: "该记录已归档，当前不支持直接删除 Argo Workflow",
 							}),
 						}}
-						scroll={{ x: 1480 }}
+						scroll={{ x: 1660 }}
 						rowClassName={() => "pipeline-execution-table-row"}
 						onRow={(record) => ({
 							onClick: (event) => {

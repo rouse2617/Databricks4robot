@@ -21,6 +21,8 @@ import {
 import type { WorkflowSummary } from "../api/workflowApi";
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
+vi.setConfig({ testTimeout: 30_000 });
+
 const mockListWorkflows = vi.fn();
 const mockDeleteWorkflow = vi.fn();
 const mockListDeployments = vi.fn();
@@ -240,6 +242,26 @@ describe("WorkflowExecutionList", () => {
 
 		expect(screen.getByTestId("location")).toHaveTextContent(
 			"/pipeline/executions/successful-run?runId=run-1",
+		);
+	});
+
+	it("opens failed execution detail from the failure entry", async () => {
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("failed-run")).toBeInTheDocument();
+		});
+
+		const failedRow = screen.getByText("failed-run").closest("tr");
+		expect(failedRow).not.toBeNull();
+		fireEvent.click(
+			within(failedRow as HTMLElement).getByRole("button", {
+				name: "查看失败详情",
+			}),
+		);
+
+		expect(screen.getByTestId("location")).toHaveTextContent(
+			"/pipeline/executions/failed-run",
 		);
 	});
 

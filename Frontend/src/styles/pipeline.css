@@ -1279,7 +1279,10 @@
 	flex-direction: column;
 	padding: 16px 20px;
 	min-height: 100%;
+	min-width: 0;
+	width: 100%;
 	box-sizing: border-box;
+	overflow: hidden;
 }
 
 .pipeline-tabs-page .ant-tabs-nav {
@@ -1335,6 +1338,7 @@
 
 .pipeline-tabs-page .ant-tabs-tabpane {
 	animation: pipelineTabFadeIn 0.2s ease-out;
+	min-width: 0;
 }
 
 @keyframes pipelineTabFadeIn {
@@ -1352,11 +1356,18 @@
 	max-width: none;
 }
 
+.pipeline-tab-content--executions {
+	min-width: 0;
+	overflow: hidden;
+}
+
 .pipeline-execution-list {
 	width: 100%;
+	min-width: 0;
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
+	overflow: hidden;
 }
 
 .pipeline-execution-filters {
@@ -1365,6 +1376,7 @@
 	row-gap: 8px;
 	column-gap: 8px;
 	align-items: center;
+	min-width: 0;
 }
 
 .pipeline-execution-statusbar {
@@ -1411,8 +1423,25 @@
 	background: #f6faff;
 }
 
+.pipeline-execution-table {
+	width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	border-radius: 6px;
+	box-shadow: 0 0 0 1px #edf1f7;
+}
+
 .pipeline-execution-table .ant-table {
 	width: 100%;
+}
+
+.pipeline-execution-table .ant-table-container,
+.pipeline-execution-table .ant-table-content {
+	min-width: 0;
+}
+
+.pipeline-execution-table .ant-table-body {
+	overflow-x: auto;
 }
 
 .pipeline-execution-table .ant-table-cell {
@@ -1433,6 +1462,24 @@
 	align-items: center;
 	gap: 4px;
 	white-space: nowrap;
+}
+
+.pipeline-execution-failure {
+	display: grid;
+	gap: 2px;
+	margin-top: 6px;
+}
+
+.pipeline-execution-failure__link {
+	width: fit-content;
+	height: 20px;
+	padding: 0;
+	font-size: 12px;
+	line-height: 20px;
+}
+
+.pipeline-execution-failure__link--standalone {
+	margin-top: 6px;
 }
 
 .workflow-run-context {
