@@ -402,7 +402,11 @@ function PortFormList({
 								rules={[{ required: true, message: "请输入端口名" }]}
 								style={{ marginBottom: 0, minWidth: 0 }}
 							>
-								<Input placeholder={showOutputPath ? "output" : "input"} />
+								<Input
+									id={`component-${name}-${key}-name`}
+									name={`${name}-${key}-name`}
+									placeholder={showOutputPath ? "output" : "input"}
+								/>
 							</Form.Item>
 							<Form.Item
 								{...field}
@@ -410,7 +414,11 @@ function PortFormList({
 								rules={[{ required: true, message: "请输入类型" }]}
 								style={{ marginBottom: 0, minWidth: 0 }}
 							>
-								<Input placeholder="asset" />
+								<Input
+									id={`component-${name}-${key}-type`}
+									name={`${name}-${key}-type`}
+									placeholder="asset"
+								/>
 							</Form.Item>
 							<Form.Item
 								{...field}
@@ -418,6 +426,8 @@ function PortFormList({
 								style={{ marginBottom: 0, minWidth: 0 }}
 							>
 								<Input
+									id={`component-${name}-${key}-desc`}
+									name={`${name}-${key}-desc`}
 									placeholder={
 										showOutputPath ? "结果说明，可选" : "端口说明，可选"
 									}
@@ -939,6 +949,8 @@ export function ComponentManager() {
 									rules={[{ required: true, message: "请输入组件名称" }]}
 								>
 									<Input
+										id="component-name"
+										name="name"
 										placeholder="normalize-mcap"
 										ref={nameInputRef}
 										autoComplete="off"
@@ -950,7 +962,7 @@ export function ComponentManager() {
 									label="类型"
 									rules={[{ required: true, message: "请选择组件类型" }]}
 								>
-									<Select options={TYPE_OPTIONS} />
+									<Select id="component-type" options={TYPE_OPTIONS} />
 								</Form.Item>
 							</div>
 
@@ -967,6 +979,8 @@ export function ComponentManager() {
 									rules={[{ required: true, message: "请输入镜像" }]}
 								>
 									<Input
+										id="component-image"
+										name="image"
 										placeholder="registry.example.com/databrew/worker"
 										autoComplete="off"
 										onFocus={(e) => e.target.select()}
@@ -974,6 +988,8 @@ export function ComponentManager() {
 								</Form.Item>
 								<Form.Item name="tag" label="标签">
 									<Input
+										id="component-tag"
+										name="tag"
 										placeholder="latest"
 										autoComplete="off"
 										onFocus={(e) => e.target.select()}
@@ -982,7 +998,13 @@ export function ComponentManager() {
 							</div>
 
 							<Form.Item name="description" label="描述">
-								<Input.TextArea rows={3} maxLength={500} showCount />
+								<Input.TextArea
+									id="component-description"
+									name="description"
+									rows={3}
+									maxLength={500}
+									showCount
+								/>
 							</Form.Item>
 
 							<Form.Item
@@ -991,6 +1013,8 @@ export function ComponentManager() {
 								extra="例如 sh, -c；如果使用 shell 执行脚本，参数只填写脚本本体。"
 							>
 								<Input.TextArea
+									id="component-command"
+									name="command"
 									rows={2}
 									placeholder="例如: python, /app/main.py"
 								/>
@@ -1002,6 +1026,8 @@ export function ComponentManager() {
 								extra="连接下游输出时，脚本需要写入 /tmp/outputs/output；多个输出端口分别写入对应文件名。"
 							>
 								<Input.TextArea
+									id="component-args"
+									name="args"
 									rows={2}
 									placeholder="例如: --input, {{inputs.asset}}"
 								/>
@@ -1021,6 +1047,8 @@ export function ComponentManager() {
 									rules={[resourceQuantityRule("cpu")]}
 								>
 									<Input
+										id="component-cpu"
+										name="cpu"
 										data-testid="component-resource-cpu"
 										placeholder="500m"
 										autoComplete="off"
@@ -1034,6 +1062,8 @@ export function ComponentManager() {
 									rules={[resourceQuantityRule("memory")]}
 								>
 									<Input
+										id="component-memory"
+										name="memory"
 										data-testid="component-resource-memory"
 										placeholder="256Mi"
 										autoComplete="off"
@@ -1047,6 +1077,8 @@ export function ComponentManager() {
 									rules={[resourceQuantityRule("disk")]}
 								>
 									<Input
+										id="component-disk"
+										name="disk"
 										data-testid="component-resource-disk"
 										placeholder="20Gi"
 										autoComplete="off"
@@ -1060,6 +1092,8 @@ export function ComponentManager() {
 									rules={[resourceQuantityRule("gpu")]}
 								>
 									<Input
+										id="component-gpu"
+										name="gpu"
 										data-testid="component-resource-gpu"
 										placeholder="1"
 										autoComplete="off"
@@ -1072,6 +1106,8 @@ export function ComponentManager() {
 									extra="用于后续调度、成本和配额策略"
 								>
 									<Input
+										id="component-compute-tier"
+										name="computeTier"
 										data-testid="component-resource-compute-tier"
 										placeholder="gpu-l4"
 										autoComplete="off"

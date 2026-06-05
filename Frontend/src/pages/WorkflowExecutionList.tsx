@@ -896,6 +896,7 @@ export function WorkflowExecutionList({
 
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
+					id="workflow-execution-status-filter"
 					allowClear
 					placeholder="状态筛选"
 					style={{ minWidth: 140, flex: "1 1 160px" }}
@@ -907,6 +908,8 @@ export function WorkflowExecutionList({
 					}))}
 				/>
 				<Input.Search
+					id="workflow-execution-name-search"
+					name="workflowExecutionName"
 					allowClear
 					placeholder="按名称搜索"
 					style={{ minWidth: 220, flex: "1 1 220px" }}
@@ -915,6 +918,7 @@ export function WorkflowExecutionList({
 					onSearch={applyFilters}
 				/>
 				<RangePicker
+					id="workflow-execution-date-range"
 					value={draftDateRange}
 					placeholder={["创建开始时间", "完成截止时间"]}
 					onChange={(values) =>

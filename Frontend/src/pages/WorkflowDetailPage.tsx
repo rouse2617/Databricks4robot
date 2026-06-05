@@ -1656,14 +1656,18 @@ export default function WorkflowDetailPage({
 	const failedNodes = useMemo(
 		() =>
 			workflow?.nodes.filter((node) => {
-				return node.phase === "Failed" || node.phase === "Error";
+				if (node.phase !== "Failed" && node.phase !== "Error") return false;
+				const nodeType = node.type?.toLowerCase();
+				if (nodeType === "dag" || nodeType === "steps") return false;
+				if ((node.children?.length ?? 0) > 0 && !node.podName) return false;
+				return true;
 			}) ?? [],
 		[workflow?.nodes],
 	);
 
 	const maxFailureDisplayCount = 3;
 	const failedNodeNames = failedNodes.map(
-		(node) => node.name ?? node.templateName ?? node.id,
+		(node) => node.displayName ?? node.templateName ?? node.name ?? node.id,
 	);
 	const shownFailedNodeNames = failedNodeNames.slice(0, maxFailureDisplayCount);
 	const failureSummaryText = shownFailedNodeNames.length

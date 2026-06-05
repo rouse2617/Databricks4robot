@@ -336,9 +336,18 @@ describe("WorkflowDetailPage", () => {
 				status: "Failed",
 				nodes: [
 					{
+						id: "wf-fail",
+						name: "wf-fail",
+						displayName: "wf-fail",
+						type: "DAG",
+						phase: "Failed",
+						children: ["step-1"],
+					},
+					{
 						id: "step-1",
 						name: "wf-fail.step-1",
-						displayName: "step-1",
+						displayName: "business-step",
+						technicalDisplayName: "step-1",
 						type: "Pod",
 						phase: "Failed",
 						message: "ImagePullBackOff",
@@ -361,7 +370,9 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getByText("检测到失败节点")).toBeInTheDocument();
-		expect(screen.getByText(/wf-fail\.step-1/)).toBeInTheDocument();
+		expect(screen.getByText(/发现 1 个失败\/错误节点/)).toBeInTheDocument();
+		expect(screen.getByText(/business-step/)).toBeInTheDocument();
+		expect(screen.queryByText(/wf-fail\.step-1/)).not.toBeInTheDocument();
 	});
 
 	it("shows logs action for failed asset nodes even when logRef is missing", () => {

@@ -223,6 +223,7 @@ export default function CreateDeliveryModal({
 					>
 						<Input.TextArea
 							id="delivery-asset-ids"
+							name="asset_ids"
 							rows={4}
 							value={manualAssetIdsText}
 							onChange={(e) => {
@@ -240,18 +241,29 @@ export default function CreateDeliveryModal({
 					rules={[{ required: true, message: "请输入客户 ID" }]}
 				>
 					<Input
+						id="delivery-customer-id"
+						name="customer_id"
 						placeholder="请输入客户 ID"
 						onChange={() => setSubmitError(null)}
 					/>
 				</Form.Item>
 				<Form.Item name="contract_id" label="合同号">
-					<Input placeholder="可选" />
+					<Input
+						id="delivery-contract-id"
+						name="contract_id"
+						placeholder="可选"
+					/>
 				</Form.Item>
 				<Form.Item name="note" label="备注">
-					<Input.TextArea rows={3} placeholder="可选" />
+					<Input.TextArea
+						id="delivery-note"
+						name="note"
+						rows={3}
+						placeholder="可选"
+					/>
 				</Form.Item>
 				<Form.Item name="owner" label="Owner">
-					<Input placeholder="可选" />
+					<Input id="delivery-owner" name="owner" placeholder="可选" />
 				</Form.Item>
 			</Form>
 		</Modal>
