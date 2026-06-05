@@ -468,6 +468,11 @@ func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
 			run.Nodes = nodes
 		}
 	}
+	if uc.pricing != nil {
+		for i := range run.Nodes {
+			run.Nodes[i].EstimatedCostUSD = resourcesDurationToCost(run.Nodes[i].ResourcesDuration, uc.pricing)
+		}
+	}
 	uc.refreshAssetNodes(ctx, run)
 }
 
@@ -1032,7 +1037,9 @@ func (uc *Usecase) runCostSnapshotMissing(run *models.PipelineRun) bool {
 		if node.PipelineNodeID != "dag" {
 			businessNodeCount++
 		}
-		if uc.pricing != nil && len(node.ResourcesDuration) > 0 && node.EstimatedCostUSD == nil {
+		if uc.pricing != nil &&
+			resourcesDurationToCost(node.ResourcesDuration, uc.pricing) != nil &&
+			node.EstimatedCostUSD == nil {
 			return true
 		}
 	}

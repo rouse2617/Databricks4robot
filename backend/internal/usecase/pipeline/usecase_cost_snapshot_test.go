@@ -21,8 +21,13 @@ func TestRunCostSnapshotMissing(t *testing.T) {
 		NodeCount: 2,
 		Nodes: []models.PipelineRunNode{
 			{
-				PipelineNodeID:    "step-1",
-				ResourcesDuration: map[string]interface{}{"cpu": 10},
+				PipelineNodeID: "step-1",
+				ResourcesDuration: map[string]interface{}{
+					"cpu":           10,
+					"instance_type": "t2d-standard-8",
+					"gpu_type":      "none",
+					"provisioning":  "spot",
+				},
 			},
 		},
 	}) {
@@ -34,13 +39,30 @@ func TestRunCostSnapshotMissing(t *testing.T) {
 		NodeCount: 1,
 		Nodes: []models.PipelineRunNode{
 			{
-				PipelineNodeID:    "step-1",
-				ResourcesDuration: map[string]interface{}{"cpu": 10},
-				EstimatedCostUSD:  &cost,
+				PipelineNodeID: "step-1",
+				ResourcesDuration: map[string]interface{}{
+					"cpu":           10,
+					"instance_type": "t2d-standard-8",
+					"gpu_type":      "none",
+					"provisioning":  "spot",
+				},
+				EstimatedCostUSD: &cost,
 			},
 		},
 	}) {
 		t.Fatalf("expected populated estimated cost snapshot to be considered present")
+	}
+
+	if uc.runCostSnapshotMissing(&models.PipelineRun{
+		NodeCount: 1,
+		Nodes: []models.PipelineRunNode{
+			{
+				PipelineNodeID:    "step-1",
+				ResourcesDuration: map[string]interface{}{"memory": 3_000_000_000},
+			},
+		},
+	}) {
+		t.Fatalf("expected non-estimable resource duration to be treated as not-applicable, not missing")
 	}
 
 	ucWithoutPricing := &Usecase{}

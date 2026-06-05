@@ -65,30 +65,20 @@ func resetPricingCache() {
 // produce the same cost.
 //
 // The resourcesDuration keys are resource names ("cpu", "memory",
-// "nvidia.com/gpu") with values in seconds of usage. Pricing lookup uses
-// the instance_type and provisioning_mode keys when present; when absent
-// it falls back to the "g2-standard-16" / "nvidia-l4" / "standard" path
-// as the default GPU pipeline configuration.
+// "nvidia.com/gpu") plus optional pricing metadata fields. Argo's
+// resourcesDuration is only an indicative runtime proxy, so we estimate cost
+// conservatively:
+//   - only CPU / GPU durations are treated as runtime seconds
+//   - pricing requires explicit instance metadata
+//   - memory-only durations do not produce a node cost estimate
 func resourcesDurationToCost(rd map[string]any, pricing *PricingConfig) *float64 {
 	if pricing == nil || len(rd) == 0 {
 		return nil
 	}
 
-	// Default instance specs for the primary GPU node pool.
-	instanceType := "g2-standard-16"
-	gpuType := "nvidia-l4"
-	provisioning := "standard"
-
-	// If the node has explicit instance info embedded (set during Argo refresh),
-	// use that instead. For now we default to the GPU pool.
-	if v, ok := rd["instance_type"].(string); ok && v != "" {
-		instanceType = v
-	}
-	if v, ok := rd["gpu_type"].(string); ok && v != "" {
-		gpuType = v
-	}
-	if v, ok := rd["provisioning"].(string); ok && v != "" {
-		provisioning = v
+	instanceType, gpuType, provisioning, ok := pricingProfileFromResourceDuration(rd)
+	if !ok {
+		return nil
 	}
 
 	hourlyRate := lookupHourlyRate(pricing, instanceType, gpuType, provisioning)
@@ -96,17 +86,8 @@ func resourcesDurationToCost(rd map[string]any, pricing *PricingConfig) *float64
 		return nil
 	}
 
-	// Argo tracks each resource independently. Use the dominant resource
-	// duration as wall-clock runtime; short pods can report cpu=0 while memory
-	// still has a positive duration.
-	var totalSec float64
-	if gpuSec, ok := toFloat64(rd["nvidia.com/gpu"]); ok && gpuSec > 0 {
-		totalSec = gpuSec
-	} else if cpuSec, ok := toFloat64(rd["cpu"]); ok && cpuSec > 0 {
-		totalSec = cpuSec
-	} else if maxSec := maxResourceDurationSeconds(rd); maxSec > 0 {
-		totalSec = maxSec
-	} else {
+	totalSec, ok := runtimeSecondsFromResourceDuration(rd, gpuType)
+	if !ok || totalSec <= 0 {
 		return nil
 	}
 
@@ -117,19 +98,60 @@ func resourcesDurationToCost(rd map[string]any, pricing *PricingConfig) *float64
 	return &cost
 }
 
-func maxResourceDurationSeconds(rd map[string]any) float64 {
-	var maxSec float64
-	for key, raw := range rd {
-		switch key {
-		case "instance_type", "gpu_type", "provisioning":
-			continue
-		}
-		sec, ok := toFloat64(raw)
-		if ok && sec > maxSec {
-			maxSec = sec
+func pricingProfileFromResourceDuration(rd map[string]any) (instanceType, gpuType, provisioning string, ok bool) {
+	instanceType, _ = rd["instance_type"].(string)
+	instanceType = strings.TrimSpace(instanceType)
+	if instanceType == "" {
+		return "", "", "", false
+	}
+
+	gpuType, _ = rd["gpu_type"].(string)
+	gpuType = strings.TrimSpace(gpuType)
+	if gpuType == "" {
+		gpuType = "none"
+	}
+
+	provisioning, _ = rd["provisioning"].(string)
+	provisioning = strings.TrimSpace(provisioning)
+	if provisioning == "" {
+		provisioning = "standard"
+	}
+
+	return instanceType, gpuType, provisioning, true
+}
+
+func runtimeSecondsFromResourceDuration(rd map[string]any, gpuType string) (float64, bool) {
+	cpuSec, cpuOK := positiveFloat64(rd["cpu"])
+	gpuSec, gpuOK := positiveFloat64(rd["nvidia.com/gpu"])
+
+	if gpuType != "" && gpuType != "none" {
+		switch {
+		case gpuOK && cpuOK:
+			if gpuSec > cpuSec {
+				return gpuSec, true
+			}
+			return cpuSec, true
+		case gpuOK:
+			return gpuSec, true
+		case cpuOK:
+			return cpuSec, true
+		default:
+			return 0, false
 		}
 	}
-	return maxSec
+
+	if cpuOK {
+		return cpuSec, true
+	}
+	return 0, false
+}
+
+func positiveFloat64(v any) (float64, bool) {
+	value, ok := toFloat64(v)
+	if !ok || value <= 0 {
+		return 0, false
+	}
+	return value, true
 }
 
 // lookupHourlyRate resolves (instance_type, gpu_type, provisioning) → $/hr.
