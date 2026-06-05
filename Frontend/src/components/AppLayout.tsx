@@ -23,6 +23,19 @@ import CmdKSearch from "./CmdKSearch";
 const { Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
 
+// Visually hidden but accessible to screen readers
+const srOnlyStyle: React.CSSProperties = {
+	position: "absolute",
+	width: 1,
+	height: 1,
+	padding: 0,
+	margin: -1,
+	overflow: "hidden",
+	clip: "rect(0, 0, 0, 0)",
+	whiteSpace: "nowrap",
+	borderWidth: 0,
+};
+
 const menuItems = [
 	{ key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
 	{ type: "divider" as const },
@@ -82,6 +95,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
 	return (
 		<Layout style={{ minHeight: "100vh" }}>
+			<h1 style={srOnlyStyle}>Cyber Databrew</h1>
 			<Sider
 				width={siderWidth}
 				breakpoint="lg"

@@ -141,6 +141,7 @@ export default function MetricsSearchPage() {
 						value={value}
 						onChange={(v) => setValue(typeof v === "number" ? v : 0)}
 						step={0.01}
+						precision={2}
 					/>
 					<Select
 						allowClear

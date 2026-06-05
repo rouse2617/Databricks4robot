@@ -469,10 +469,18 @@ export function ComponentManager() {
 		setLoading(true);
 		setError(null);
 		try {
-			const res = await listComponents();
-			const nextItems = dedupePipelineComponentsByName(res.items || []);
-			setItems(nextItems);
-			setSelectedComponentIds((prev) =>
+		const res = await listComponents();
+		const nextItems = dedupePipelineComponentsByName(res.items || []);
+		// #24: Sort by creation date descending (newest first)
+		nextItems.sort(
+			(a, b) => {
+				const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+				const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+				return dateB - dateA;
+			},
+		);
+		setItems(nextItems);
+		setSelectedComponentIds((prev) =>
 				prev.filter((id) =>
 					nextItems.some((item) => item.id === id && item.source !== "system"),
 				),
@@ -552,6 +560,7 @@ export function ComponentManager() {
 
 	const handleSave = async () => {
 		if (isViewMode) {
+			messageApi.success("查看完成");
 			closeModal();
 			return;
 		}
@@ -822,7 +831,8 @@ export function ComponentManager() {
 						)
 					) : null}
 					<Input.Search
-						id="component-manager-search"
+						id="cm-search"
+						name="component-search"
 						allowClear
 						placeholder="搜索名称、镜像或描述"
 						value={search}

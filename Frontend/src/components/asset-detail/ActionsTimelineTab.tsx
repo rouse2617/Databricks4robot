@@ -74,6 +74,12 @@ export default function ActionsTimelineTab({
 
 	const load = useCallback(
 		(label?: string) => {
+			if (!isSegmentAsset) {
+				setItems([]);
+				setError(null);
+				setLoading(false);
+				return;
+			}
 			setLoading(true);
 			setError(null);
 			actionsApi

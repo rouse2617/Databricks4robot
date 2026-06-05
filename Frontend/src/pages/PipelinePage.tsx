@@ -15,15 +15,13 @@ import {
 	Alert,
 	App,
 	Button,
-	Collapse,
 	Input,
 	Menu,
 	Modal,
+	message,
 	Select,
-	Space,
 	Spin,
 	Tabs,
-	Tag,
 	Tooltip,
 	Typography,
 } from "antd";
@@ -43,7 +41,6 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../api/assets";
 import {
-	batchDeployTemplate,
 	type Deployment,
 	deployTemplate,
 	type ExecutionTarget,
@@ -73,13 +70,6 @@ import {
 	fromTranspilerPipeline,
 	toTranspilerPipeline,
 } from "../lib/pipelineContract";
-import {
-	getPipelineExample,
-	PIPELINE_EXAMPLES,
-	type PipelineExample,
-} from "../lib/pipelineExamples";
-import { validatePipelineForRun } from "../lib/pipelineValidation";
-import { buildWorkflowExecutionUrl } from "../lib/workflowNavigation";
 import { ComponentManager } from "./ComponentManager";
 import {
 	apiToRegistered,
@@ -101,7 +91,6 @@ import { WorkflowExecutionList } from "./WorkflowExecutionList";
 import "../styles/pipeline.css";
 
 const PIPELINE_NODE_TYPES = { pipelineStep: PipelineStepNode };
-const PIPELINE_EDGE_TYPES = {};
 
 type DeployMode = "edit" | "preview";
 
@@ -112,127 +101,17 @@ type CanvasMenuState = {
 	node: PipelineFlowNode | null;
 };
 
-const DEFAULT_TARGET_PORT = "input";
-
-function findDuplicateTargetInput(edges: PipelineFlowEdge[]) {
-	const seen = new Map<string, PipelineFlowEdge>();
-	for (const edge of edges) {
-		if (!edge.target) continue;
-		const targetPort = edge.targetHandle || DEFAULT_TARGET_PORT;
-		const key = `${edge.target}.${targetPort}`;
-		const existing = seen.get(key);
-		if (existing && existing.id !== edge.id) {
-			return { key, existing, incoming: edge };
-		}
-		seen.set(key, edge);
-	}
-	return null;
-}
-
-function replaceAppendedValue(previous: string, next: string) {
-	if (!previous || next === previous) return next;
-	if (next.startsWith(previous) && next.length > previous.length) {
-		return next.slice(previous.length);
-	}
+function replaceAppendedValue(_previous: string, next: string) {
 	return next;
-}
-
-function AssetRunSummary({
-	assetIds,
-	onClear,
-}: {
-	assetIds: string[];
-	onClear: () => void;
-}) {
-	if (assetIds.length === 0) {
-		return (
-			<Alert
-				type="warning"
-				showIcon
-				message="无资产运行"
-				description="本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。"
-			/>
-		);
-	}
-
-	const visibleIds = assetIds.slice(0, 8);
-	const hiddenCount = Math.max(assetIds.length - visibleIds.length, 0);
-
-	return (
-		<Alert
-			type="success"
-			showIcon
-			message={`将处理 ${assetIds.length} 个资产`}
-			description={
-				<div style={{ display: "grid", gap: 8 }}>
-					<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-						{visibleIds.map((assetId) => (
-							<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
-								{assetId}
-							</Tag>
-						))}
-						{hiddenCount > 0 ? <Tag>+{hiddenCount}</Tag> : null}
-					</div>
-					<Button size="small" onClick={onClear}>
-						转为无资产运行
-					</Button>
-				</div>
-			}
-		/>
-	);
-}
-
-function AssetRunContextBanner({
-	assetIds,
-	isCanvasEmpty,
-	onClear,
-}: {
-	assetIds: string[];
-	isCanvasEmpty: boolean;
-	onClear: () => void;
-}) {
-	if (assetIds.length === 0) return null;
-
-	const visibleIds = assetIds.slice(0, 4);
-	const hiddenCount = Math.max(assetIds.length - visibleIds.length, 0);
-	const message = `已选择 ${assetIds.length} 个资产`;
-	const description = isCanvasEmpty
-		? "资产已就绪，请添加组件后部署。"
-		: "部署时会把这些资产注入本次运行。";
-
-	return (
-		<Alert
-			className="pipeline-asset-context"
-			type="info"
-			showIcon
-			message={message}
-			description={
-				<div className="pipeline-asset-context__body">
-					<span>{description}</span>
-					<div className="pipeline-asset-context__assets">
-						{visibleIds.map((assetId) => (
-							<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
-								{assetId}
-							</Tag>
-						))}
-						{hiddenCount > 0 ? <Tag>+{hiddenCount}</Tag> : null}
-					</div>
-					<Button size="small" onClick={onClear}>
-						转为无资产运行
-					</Button>
-				</div>
-			}
-		/>
-	);
 }
 
 function PipelineCanvas() {
 	const navigate = useNavigate();
-	const [searchParams, setSearchParams] = useSearchParams();
+	const [searchParams] = useSearchParams();
 	const wrapperRef = useRef<HTMLDivElement>(null);
 	const editor = useFlowEditor();
 	const editorRef = useRef(editor);
-	const { message: messageApi, modal } = App.useApp();
+	const { modal } = App.useApp();
 	const queryAssetIds = useMemo(
 		() => parseAssetIds(searchParams.get("asset_ids")),
 		[searchParams],
@@ -240,6 +119,7 @@ function PipelineCanvas() {
 	const [nodes, setNodes] = useState<PipelineFlowNode[]>([]);
 	const [edges, setEdges] = useState<PipelineFlowEdge[]>([]);
 	const [pipelineName, setPipelineName] = useState("my-pipeline");
+	const pipelineNameReplaceRef = useRef(false);
 	const workflowNameReplaceRef = useRef(false);
 	const [selectedNode, setSelectedNode] = useState<PipelineFlowNode | null>(
 		null,
@@ -275,7 +155,6 @@ function PipelineCanvas() {
 		name: string;
 		mode: DeployMode;
 		result?: Deployment;
-		batchSummary?: { batchId: string; count: number; failedCount: number };
 		error?: string;
 		previewManifest?: string;
 		previewLoading?: boolean;
@@ -307,31 +186,10 @@ function PipelineCanvas() {
 	const [selectedNodeAssetError, setSelectedNodeAssetError] = useState<
 		string | null
 	>(null);
-	const handleFlowError = useCallback((code: string, flowMessage: string) => {
-		if (code === "002") return;
-		console.warn(`[React Flow]: ${flowMessage}`);
-	}, []);
-	const selectedExecutionTarget = useMemo(
-		() =>
-			executionTargets.find((target) => target.id === selectedTargetId) ?? null,
-		[executionTargets, selectedTargetId],
-	);
 
 	const flattenNodes = useMemo(() => toRecord(nodes), [nodes]);
 	const flattenEdges = useMemo(() => toRecord(edges), [edges]);
-	const applyCanvasEdges = useCallback(
-		(nextEdges: PipelineFlowEdge[]) => {
-			const duplicate = findDuplicateTargetInput(nextEdges);
-			if (duplicate) {
-				messageApi.warning(
-					`输入端口 ${duplicate.key} 已有连线，请在 join 节点配置不同输入端口后再连接。`,
-				);
-				return;
-			}
-			setEdges(nextEdges);
-		},
-		[messageApi],
-	);
+	const nodeTypes = useMemo(() => PIPELINE_NODE_TYPES, []);
 
 	useEffect(() => {
 		editorRef.current = editor;
@@ -340,20 +198,6 @@ function PipelineCanvas() {
 	useEffect(() => {
 		setSelectedAssetIds(queryAssetIds);
 	}, [queryAssetIds]);
-
-	const updateSelectedAssetIds = useCallback(
-		(nextIds: string[]) => {
-			setSelectedAssetIds(nextIds);
-			const nextParams = new URLSearchParams(searchParams);
-			if (nextIds.length > 0) {
-				nextParams.set("asset_ids", nextIds.join(","));
-			} else {
-				nextParams.delete("asset_ids");
-			}
-			setSearchParams(nextParams, { replace: true });
-		},
-		[searchParams, setSearchParams],
-	);
 
 	useEffect(() => {
 		let alive = true;
@@ -423,7 +267,7 @@ function PipelineCanvas() {
 			})
 			.catch((err) => {
 				if (cancelled) return;
-				messageApi.error(`模板加载失败: ${String(err)}`);
+				message.error(`模板加载失败: ${String(err)}`);
 				setTemplateVersions([]);
 				setSelectedTemplateVersionId(null);
 				loadPipelineFromSessionStorage();
@@ -435,12 +279,7 @@ function PipelineCanvas() {
 		return () => {
 			cancelled = true;
 		};
-	}, [
-		loadPipelineFromSessionStorage,
-		loadPipelineToCanvas,
-		messageApi,
-		templateId,
-	]);
+	}, [loadPipelineFromSessionStorage, loadPipelineToCanvas, templateId]);
 
 	const handleTemplateVersionChange = useCallback(
 		(versionId: string) => {
@@ -618,7 +457,7 @@ function PipelineCanvas() {
 					window.setTimeout(() => {
 						void editor
 							.copySelection()
-							.catch(() => messageApi.warning("浏览器未允许读取剪贴板"));
+							.catch(() => message.warning("浏览器未允许读取剪贴板"));
 					}, 0);
 					return;
 				}
@@ -638,7 +477,7 @@ function PipelineCanvas() {
 			if (key === "paste") {
 				void editor
 					.paste()
-					.catch(() => messageApi.warning("浏览器未允许读取剪贴板"));
+					.catch(() => message.warning("浏览器未允许读取剪贴板"));
 			}
 			if (key === "selectAll") {
 				editor.selectAll();
@@ -653,21 +492,12 @@ function PipelineCanvas() {
 				editor.reactflow?.fitView();
 			}
 		},
-		[contextMenu.node, editor, messageApi, selectNodeWithEdges],
+		[contextMenu.node, editor, selectNodeWithEdges],
 	);
 
 	const buildPipelineJSON = useCallback(
 		(): Pipeline => toTranspilerPipeline(nodes, edges, { name: pipelineName }),
 		[nodes, edges, pipelineName],
-	);
-	const assertPipelineRunnable = useCallback(
-		(pipeline: Pipeline, actionLabel: string) => {
-			const validation = validatePipelineForRun(pipeline);
-			if (validation.valid) return true;
-			messageApi.error(`${actionLabel}失败: ${validation.errors[0]}`);
-			return false;
-		},
-		[messageApi],
 	);
 
 	const pipelineAssetIds = useMemo(
@@ -734,6 +564,7 @@ function PipelineCanvas() {
 
 	const exportPipeline = useCallback(() => {
 		setJsonOutput(JSON.stringify(buildPipelineJSON(), null, 2));
+		message.success("已导出为 JSON");
 	}, [buildPipelineJSON]);
 
 	const importPipeline = useCallback(() => {
@@ -750,7 +581,7 @@ function PipelineCanvas() {
 				) as HTMLTextAreaElement | null
 			)?.value?.trim() || importTextRef.current.trim();
 		if (!text) {
-			messageApi.warning("请粘贴 Pipeline JSON");
+			message.warning("请粘贴 Pipeline JSON");
 			return;
 		}
 		try {
@@ -766,54 +597,11 @@ function PipelineCanvas() {
 			setJsonOutput(null);
 			setImportModalOpen(false);
 			setImportText("");
-			messageApi.success("导入成功");
+			message.success("导入成功");
 		} catch {
-			messageApi.error("无效的 JSON");
+			message.error("无效的 JSON");
 		}
-	}, [messageApi]);
-
-	const applyExampleToCanvas = useCallback(
-		(example: PipelineExample) => {
-			const { nodes: exampleNodes, edges: exampleEdges } =
-				fromTranspilerPipeline(example.pipeline);
-			setNodes(
-				exampleNodes.map((node) => ({
-					...node,
-					position: example.layout[node.id] ?? node.position,
-				})),
-			);
-			setEdges(exampleEdges);
-			setPipelineName(example.pipeline.name);
-			setSelectedTemplateVersionId(null);
-			setTemplateVersions([]);
-			setSelectedNode(null);
-			setEditingNodeId(null);
-			editor.deselectAll();
-			setJsonOutput(null);
-			messageApi.success(`已载入示例: ${example.label}`);
-		},
-		[editor, messageApi],
-	);
-
-	const loadExample = useCallback(
-		(exampleKey: string) => {
-			const example = getPipelineExample(exampleKey);
-			if (!example) return;
-			const load = () => applyExampleToCanvas(example);
-			if (nodes.length > 0 || edges.length > 0) {
-				modal.confirm({
-					title: "载入示例",
-					content: "将覆盖当前画布。请确认当前修改已保存或不再需要。",
-					okText: "载入",
-					cancelText: "取消",
-					onOk: load,
-				});
-				return;
-			}
-			load();
-		},
-		[applyExampleToCanvas, edges.length, modal.confirm, nodes.length],
-	);
+	}, []);
 
 	const clearCanvas = useCallback(() => {
 		modal.confirm({
@@ -835,9 +623,7 @@ function PipelineCanvas() {
 
 	const handleSave = useCallback(async () => {
 		try {
-			const pipeline = buildPipelineJSON();
-			if (!assertPipelineRunnable(pipeline, "保存")) return;
-			const saved = await savePipeline(pipelineName, pipeline);
+			const saved = await savePipeline(pipelineName, buildPipelineJSON());
 			setSelectedTemplateVersionId(saved.id);
 			setTemplateVersions((prev) => {
 				const withoutSaved = prev.filter((item) => item.id !== saved.id);
@@ -846,26 +632,17 @@ function PipelineCanvas() {
 			navigate(`/pipeline?templateId=${encodeURIComponent(saved.id)}`, {
 				replace: true,
 			});
-			messageApi.success(`已保存为 v${saved.version}，可在「流水线」页签管理`);
+			message.success(`已保存为 v${saved.version}，可在「流水线」页签管理`);
 		} catch (err) {
-			messageApi.error(`保存失败: ${String(err)}`);
+			message.error(`保存失败: ${String(err)}`);
 		}
-	}, [
-		pipelineName,
-		buildPipelineJSON,
-		navigate,
-		assertPipelineRunnable,
-		messageApi,
-	]);
+	}, [pipelineName, buildPipelineJSON, navigate]);
 
 	const canDeploy = nodes.length > 0;
 
 	const openDeployDialog = useCallback(() => {
 		if (nodes.length === 0) {
-			messageApi.warning("请先从左侧拖入至少一个组件到画布");
-			return;
-		}
-		if (!assertPipelineRunnable(buildPipelineJSON(), "部署")) {
+			message.warning("请先从左侧拖入至少一个组件到画布");
 			return;
 		}
 		setDeployDialog({
@@ -875,14 +652,9 @@ function PipelineCanvas() {
 			mode: "edit",
 			name: pipelineName,
 		});
+		setSelectedAssetIds([]);
 		setAssetPickerResetKey((key) => key + 1);
-	}, [
-		pipelineName,
-		nodes.length,
-		buildPipelineJSON,
-		assertPipelineRunnable,
-		messageApi,
-	]);
+	}, [pipelineName, nodes.length]);
 
 	const closeDeployDialog = useCallback(() => {
 		setDeployDialog({
@@ -892,6 +664,7 @@ function PipelineCanvas() {
 			name: "",
 			mode: "edit",
 		});
+		setSelectedAssetIds([]);
 		setAssetPickerResetKey((key) => key + 1);
 	}, []);
 
@@ -921,44 +694,21 @@ function PipelineCanvas() {
 		setDeployDialog((prev) => ({ ...prev, deploying: true, done: false }));
 		try {
 			const pipeline = buildPipelineJSON();
-			if (!assertPipelineRunnable(pipeline, "运行")) {
-				setDeployDialog((prev) => ({ ...prev, deploying: false }));
-				return;
-			}
 			const name = deployDialog.name || pipelineName;
 			const saved = await savePipeline(name, pipeline);
-			if (selectedAssetIds.length > 1) {
-				const batch = await batchDeployTemplate(
-					saved.id,
-					selectedAssetIds,
-					selectedTargetId,
-				);
-				const failedCount = batch.failed?.length ?? 0;
-				setDeployDialog((prev) => ({
-					...prev,
-					deploying: false,
-					done: true,
-					result: batch.items[0],
-					batchSummary: {
-						batchId: batch.batchId,
-						count: batch.items.length,
-						failedCount,
-					},
-				}));
-			} else {
-				const result = await deployTemplate(
-					saved.id,
-					selectedAssetIds,
-					selectedTargetId,
-				);
-				setDeployDialog((prev) => ({
-					...prev,
-					deploying: false,
-					done: true,
-					result,
-				}));
-			}
+			const result = await deployTemplate(
+				saved.id,
+				selectedAssetIds,
+				selectedTargetId,
+			);
+			setDeployDialog((prev) => ({
+				...prev,
+				deploying: false,
+				done: true,
+				result,
+			}));
 		} catch (err) {
+			message.error(String(err));
 			setDeployDialog((prev) => ({
 				...prev,
 				deploying: false,
@@ -968,7 +718,6 @@ function PipelineCanvas() {
 		}
 	}, [
 		buildPipelineJSON,
-		assertPipelineRunnable,
 		deployDialog.name,
 		pipelineName,
 		selectedAssetIds,
@@ -985,14 +734,6 @@ function PipelineCanvas() {
 		}));
 		try {
 			const pipeline = buildPipelineJSON();
-			if (!assertPipelineRunnable(pipeline, "预览")) {
-				setDeployDialog((prev) => ({
-					...prev,
-					previewLoading: false,
-					mode: "edit",
-				}));
-				return;
-			}
 			const { manifest } = await previewDeploy(pipeline);
 			setDeployDialog((prev) => ({
 				...prev,
@@ -1006,17 +747,13 @@ function PipelineCanvas() {
 				previewError: String(err),
 			}));
 		}
-	}, [buildPipelineJSON, assertPipelineRunnable]);
+	}, [buildPipelineJSON]);
 
 	const isCanvasEmpty = nodes.length === 0;
-	const currentTemplate = templateVersions.find(
-		(item) => item.id === selectedTemplateVersionId,
-	);
-	const currentTemplateLabel = pipelineName
-		? currentTemplate?.version
-			? `${pipelineName} v${currentTemplate.version}`
-			: pipelineName
-		: "未命名流水线";
+	const currentTemplateLabel = pipelineName || "未命名流水线";
+	const activeVersionLabel = selectedTemplateVersionId
+		? templateVersions.find((v) => v.id === selectedTemplateVersionId)?.version
+		: null;
 	const deployDisabledReason = canDeploy
 		? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
 		: "请先从左侧拖入至少一个组件到画布，再保存或部署";
@@ -1045,8 +782,18 @@ function PipelineCanvas() {
 						name="pipelineName"
 						value={pipelineName}
 						onChange={(e) => {
-							setPipelineName(e.target.value);
+							const next = pipelineNameReplaceRef.current
+								? replaceAppendedValue(pipelineName, e.target.value)
+								: e.target.value;
+							pipelineNameReplaceRef.current = false;
+							setPipelineName(next);
 						}}
+						onFocus={(e) => markReplaceOnNextEdit(e, pipelineNameReplaceRef)}
+						onBlur={() => {
+							pipelineNameReplaceRef.current = false;
+						}}
+						pattern="[a-zA-Z0-9_\u4e00-\u9fff\-]+( [a-zA-Z0-9_\u4e00-\u9fff\-]+)*"
+						title="2-48个字符，支持中文、字母、数字、下划线和中划线"
 						maxLength={48}
 						placeholder="输入流水线名称"
 						aria-label="流水线名称"
@@ -1069,19 +816,6 @@ function PipelineCanvas() {
 					) : null}
 				</div>
 				<div className="pipeline-toolbar__actions">
-					<Select
-						size="small"
-						placeholder="载入示例"
-						style={{ width: 180 }}
-						value={undefined}
-						onChange={loadExample}
-						options={PIPELINE_EXAMPLES.map((example) => ({
-							value: example.key,
-							label: example.label,
-							title: example.description,
-						}))}
-						aria-label="载入标准流水线示例"
-					/>
 					<Tooltip title={deployDisabledReason}>
 						<span>
 							<Button
@@ -1158,22 +892,16 @@ function PipelineCanvas() {
 					role="application"
 					aria-label="流水线画布"
 				>
-					<AssetRunContextBanner
-						assetIds={selectedAssetIds}
-						isCanvasEmpty={isCanvasEmpty}
-						onClear={() => updateSelectedAssetIds([])}
-					/>
 					{templateLoading ? (
 						<div className="pipeline-canvas-loading" aria-busy="true">
-							<Spin />
-							<span className="pipeline-loading-text">正在加载模板...</span>
+							<Spin tip="正在加载模板..." />
 						</div>
 					) : null}
 					{isCanvasEmpty && !templateLoading ? (
 						<PipelineEmptyState
 							variant="canvas"
-							title="添加组件开始设计"
-							description="从左侧组件栏点击或拖拽步骤，连接节点后保存。"
+							title="拖入组件开始设计"
+							description="从左侧组件栏拖入步骤，连接节点后保存。"
 							hint="保存后可在「流水线」页签打开、运行或继续编辑。"
 						/>
 					) : null}
@@ -1182,50 +910,23 @@ function PipelineCanvas() {
 						subTitle="流水线画布出现异常，可重试或刷新页面"
 					>
 						<FlowEditor
-							nodeTypes={PIPELINE_NODE_TYPES}
+							nodeTypes={nodeTypes}
 							flattenNodes={flattenNodes}
 							flattenEdges={flattenEdges}
 							onFlattenNodesChange={(nextNodes: Record<string, unknown>) =>
 								setNodes(Object.values(nextNodes) as PipelineFlowNode[])
 							}
 							onFlattenEdgesChange={(nextEdges: Record<string, unknown>) =>
-								applyCanvasEdges(Object.values(nextEdges) as PipelineFlowEdge[])
+								setEdges(Object.values(nextEdges) as PipelineFlowEdge[])
 							}
 							contextMenuEnabled={false}
-							beforeConnect={(connection) => {
-								const sourceNode = nodes.find(
-									(n) => n.id === connection.source,
-								);
-								const targetNode = nodes.find(
-									(n) => n.id === connection.target,
-								);
-								if (!sourceNode || !targetNode) return true;
-
-								const sourcePort = sourceNode.data.outputPorts?.find(
-									(p) => p.name === connection.sourceHandle,
-								);
-								const targetPort = targetNode.data.inputPorts?.find(
-									(p) => p.name === connection.targetHandle,
-								);
-								if (!sourcePort || !targetPort) return true;
-
-								if (sourcePort.type !== targetPort.type) {
-									messageApi.warning(
-										`端口类型不匹配：${sourcePort.name}(${sourcePort.type}) → ${targetPort.name}(${targetPort.type})`,
-									);
-									return false;
-								}
-								return true;
-							}}
 							flowProps={{
-								edgeTypes: PIPELINE_EDGE_TYPES,
 								onDrop,
 								onDragOver,
 								onNodeClick,
 								onNodeContextMenu,
 								onPaneClick,
 								onPaneContextMenu,
-								onError: handleFlowError,
 								onlyRenderVisibleElements: true,
 								minZoom: 0.2,
 								maxZoom: 2,
@@ -1455,7 +1156,7 @@ function PipelineCanvas() {
 								type="secondary"
 								style={{ fontSize: 12, display: "block", marginBottom: 4 }}
 							>
-								当前模板：{currentTemplateLabel}
+								当前模板：{currentTemplateLabel}{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} · 模板版本选择在工具栏
 							</Typography.Text>
 							<Typography.Paragraph
 								type="secondary"
@@ -1464,12 +1165,16 @@ function PipelineCanvas() {
 								选择执行目标和资产后，将流水线转换为 Argo Workflow 并提交到
 								Kubernetes 集群。
 							</Typography.Paragraph>
-							<div style={{ marginBottom: 16 }}>
-								<AssetRunSummary
-									assetIds={selectedAssetIds}
-									onClear={() => updateSelectedAssetIds([])}
-								/>
-							</div>
+							<Alert
+								type={selectedAssetIds.length > 0 ? "success" : "warning"}
+								showIcon
+								message={
+									selectedAssetIds.length > 0
+										? `将处理 ${selectedAssetIds.length} 个资产`
+										: "当前是 no-asset run：不会注入资产环境变量。"
+								}
+								style={{ marginBottom: 16 }}
+							/>
 							{!canDeploy && (
 								<Alert
 									type="warning"
@@ -1555,7 +1260,7 @@ function PipelineCanvas() {
 												]
 										).map((target) => ({
 											value: target.id,
-											label: `${target.isDefault ? "默认目标" : target.name} · ${target.namespace}`,
+											label: `${target.name} · ${target.cluster}/${target.namespace}`,
 											disabled: target.status !== "available",
 										}))}
 									/>
@@ -1574,7 +1279,7 @@ function PipelineCanvas() {
 								</div>
 								<AssetPicker
 									selectedIds={selectedAssetIds}
-									onSelectionChange={updateSelectedAssetIds}
+									onSelectionChange={setSelectedAssetIds}
 									maxHeight={180}
 									resetKey={assetPickerResetKey}
 								/>
@@ -1589,16 +1294,24 @@ function PipelineCanvas() {
 								}}
 							>
 								<Button onClick={closeDeployDialog}>取消</Button>
-								<Button onClick={handlePreviewDeploy} disabled={!canDeploy}>
-									预览
-								</Button>
-								<Button
-									type="primary"
-									onClick={handleDeploy}
-									disabled={!canDeploy}
-								>
-									{selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
-								</Button>
+								<Tooltip title={!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined}>
+									<span>
+										<Button onClick={handlePreviewDeploy} disabled={!canDeploy}>
+											预览
+										</Button>
+									</span>
+								</Tooltip>
+								<Tooltip title={!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined}>
+									<span>
+										<Button
+											type="primary"
+											onClick={handleDeploy}
+											disabled={!canDeploy}
+										>
+											{selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
+										</Button>
+									</span>
+								</Tooltip>
 							</div>
 						</>
 					)}
@@ -1610,13 +1323,13 @@ function PipelineCanvas() {
 								type="secondary"
 								style={{ fontSize: 12, display: "block", marginBottom: 4 }}
 							>
-								当前模板：{currentTemplateLabel}
+								当前模板：{currentTemplateLabel}{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} · 模板版本选择在工具栏
 							</Typography.Text>
 							<Typography.Paragraph
 								type="secondary"
 								style={{ fontSize: 12, marginBottom: 12 }}
 							>
-								先确认运行摘要；需要排查 Argo 配置时再展开原始 YAML。
+								以下为 dry-run 结果，仅用于确认。
 							</Typography.Paragraph>
 							{deployDialog.previewLoading ? (
 								<div style={{ textAlign: "center", padding: 20 }}>
@@ -1633,95 +1346,24 @@ function PipelineCanvas() {
 									style={{ marginBottom: 16 }}
 								/>
 							) : (
-								<Space direction="vertical" size={12} style={{ width: "100%" }}>
-									<div
-										style={{
-											display: "grid",
-											gridTemplateColumns:
-												"repeat(auto-fit, minmax(150px, 1fr))",
-											gap: 8,
-										}}
-									>
-										{[
-											["模板", currentTemplateLabel],
-											["步骤", `${nodes.length} 个`],
-											["连线", `${edges.length} 条`],
-											[
-												"资产",
-												selectedAssetIds.length > 0
-													? `${selectedAssetIds.length} 个`
-													: "无资产运行",
-											],
-											[
-												"目标",
-												selectedExecutionTarget
-													? `${selectedExecutionTarget.namespace}`
-													: "默认目标",
-											],
-										].map(([label, value]) => (
-											<div
-												key={label}
-												style={{
-													border: "1px solid #e2e8f0",
-													borderRadius: 8,
-													padding: "10px 12px",
-													background: "#f8fafc",
-												}}
-											>
-												<Typography.Text
-													type="secondary"
-													style={{ display: "block", fontSize: 12 }}
-												>
-													{label}
-												</Typography.Text>
-												<Typography.Text strong>{value}</Typography.Text>
-											</div>
-										))}
-									</div>
-									{selectedExecutionTarget ? (
-										<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-											执行目标：{selectedExecutionTarget.cluster}/
-											{selectedExecutionTarget.namespace}
-										</Typography.Text>
-									) : null}
-									{selectedAssetIds.length > 1 ? (
-										<Alert
-											type="info"
-											showIcon
-											message={`将为 ${selectedAssetIds.length} 个资产各创建 1 个独立 Workflow`}
-											style={{ fontSize: 12 }}
-										/>
-									) : null}
-									<Collapse
-										size="small"
-										items={[
-											{
-												key: "manifest",
-												label: "原始 Argo YAML",
-												children: (
-													<pre
-														style={{
-															margin: 0,
-															padding: 12,
-															background: "#0f172a",
-															color: "#e2e8f0",
-															borderRadius: 8,
-															overflow: "auto",
-															maxHeight: 300,
-															fontSize: 12,
-															fontFamily:
-																'"SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-															lineHeight: 1.5,
-															whiteSpace: "pre",
-														}}
-													>
-														{deployDialog.previewManifest || "（暂无内容）"}
-													</pre>
-												),
-											},
-										]}
-									/>
-								</Space>
+								<pre
+									style={{
+										margin: 0,
+										padding: 12,
+										background: "#0f172a",
+										color: "#e2e8f0",
+										borderRadius: 8,
+										overflow: "auto",
+										maxHeight: 360,
+										fontSize: 12,
+										fontFamily:
+											'"SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+										lineHeight: 1.5,
+										whiteSpace: "pre",
+									}}
+								>
+									{deployDialog.previewManifest || "（暂无内容）"}
+								</pre>
 							)}
 							<div
 								style={{
@@ -1740,13 +1382,17 @@ function PipelineCanvas() {
 								>
 									返回编辑
 								</Button>
-								<Button
-									type="primary"
-									onClick={handleDeploy}
-									disabled={!canDeploy}
-								>
-									{selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
-								</Button>
+								<Tooltip title={!canDeploy ? "请先从左侧拖入至少一个组件到画布" : undefined}>
+									<span>
+										<Button
+											type="primary"
+											onClick={handleDeploy}
+											disabled={!canDeploy}
+										>
+											{selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
+										</Button>
+									</span>
+								</Tooltip>
 							</div>
 						</>
 					)}
@@ -1778,48 +1424,26 @@ function PipelineCanvas() {
 						) : deployDialog.result ? (
 							<>
 								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-									当前模板：{currentTemplateLabel}
+									当前模板：{currentTemplateLabel}{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} · 模板版本选择在工具栏
 								</Typography.Text>
 								<br />
 								<Typography.Text type="success" strong>
-									{deployDialog.batchSummary
-										? deployDialog.batchSummary.failedCount > 0
-											? "部分部署成功"
-											: "批量部署成功"
-										: "部署成功"}
+									部署成功
 								</Typography.Text>
-								{deployDialog.batchSummary ? (
-									<p
-										style={{
-											fontSize: 12,
-											color: "#64748b",
-											marginTop: 8,
-										}}
-									>
-										已提交 {deployDialog.batchSummary.count} 个 Workflow
-										{deployDialog.batchSummary.failedCount > 0
-											? `，${deployDialog.batchSummary.failedCount} 个失败`
-											: ""}
-										（批次 {deployDialog.batchSummary.batchId.slice(0, 8)}）
-									</p>
-								) : (
-									<p
-										style={{
-											fontFamily: '"SF Mono",monospace',
-											fontSize: 12,
-											color: "#64748b",
-											marginTop: 8,
-										}}
-									>
-										{deployDialog.result.workflowName}
-									</p>
-								)}
+								<p
+									style={{
+										fontFamily: '"SF Mono",monospace',
+										fontSize: 12,
+										color: "#64748b",
+										marginTop: 8,
+									}}
+								>
+									{deployDialog.result.workflowName}
+								</p>
 								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-									{deployDialog.batchSummary
-										? `${deployDialog.batchSummary.count} 个独立 Workflow`
-										: deployDialog.result.assetCount
-											? `${deployDialog.result.assetCount} 个资产`
-											: "无资产"}
+									{deployDialog.result.assetCount
+										? `${deployDialog.result.assetCount} 个资产`
+										: "无资产"}
 									{deployDialog.result.executionTarget
 										? ` · ${deployDialog.result.executionTarget.cluster}/${deployDialog.result.executionTarget.namespace}`
 										: ""}
@@ -1860,21 +1484,12 @@ function PipelineCanvas() {
 										type="primary"
 										onClick={() => {
 											closeDeployDialog();
-											if (deployDialog.batchSummary) {
-												navigate("/pipeline?tab=executions");
-												return;
-											}
 											navigate(
-												buildWorkflowExecutionUrl(
-													deployDialog.result?.workflowName ?? "",
-													deployDialog.result?.id,
-												),
+												`/pipeline/executions/${deployDialog.result?.workflowName}`,
 											);
 										}}
 									>
-										{deployDialog.batchSummary
-											? "查看执行记录"
-											: "查看 Workflow"}
+										查看 Workflow
 									</Button>
 									<Button
 										onClick={() => {
@@ -1899,6 +1514,8 @@ type PipelineTab = "design" | "pipelines" | "executions" | "components";
 
 function resolvePipelineTab(raw: string | null): PipelineTab {
 	switch (raw) {
+		case "runs":
+			return "executions";
 		case "templates":
 		case "pipelines":
 			return "pipelines";
@@ -1944,7 +1561,7 @@ export default function PipelinePage() {
 			<Tabs
 				activeKey={activeTab}
 				onChange={onTabChange}
-				destroyOnHidden={false}
+				destroyOnHidden={true}
 				animated={{ inkBar: true, tabPane: true }}
 				items={[
 					{

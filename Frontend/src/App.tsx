@@ -29,6 +29,8 @@ const EventsPage = lazy(() => import("./pages/EventsPage"));
 const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
+const McapFileDetailPage = lazy(() => import("./pages/McapFileDetailPage"));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 
 const pathTitles: Record<string, string> = {
 	"/dashboard": "概览 - Cyber Databrew",
@@ -79,6 +81,7 @@ function ProtectedRoutes() {
 						<Route path="/assets" element={<AssetsPage />} />
 						<Route path="/assets/:id" element={<AssetDetailPage />} />
 						<Route path="/mcap-files" element={<McapFilesPage />} />
+						<Route path="/mcap-files/:id" element={<McapFileDetailPage />} />
 						<Route path="/algo" element={<AlgoProcessingPage />} />
 						<Route path="/algo-runs" element={<AlgoRunsPage />} />
 						<Route path="/algo-runs/:run_id" element={<AlgoRunDetailPage />} />
@@ -114,7 +117,7 @@ function ProtectedRoutes() {
 							element={<WorkflowDetailPage />}
 						/>
 						<Route path="/settings" element={<SettingsPage />} />
-						<Route path="*" element={<Navigate to="/dashboard" replace />} />
+						<Route path="*" element={<NotFoundPage />} />
 					</Routes>
 				</Suspense>
 			</ErrorBoundary>

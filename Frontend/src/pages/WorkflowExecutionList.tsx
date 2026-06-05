@@ -1,13 +1,15 @@
-import { LockOutlined, MoreOutlined, ReloadOutlined } from "@ant-design/icons";
+import { MoreOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
 	Alert,
-	App,
 	Button,
+	Card,
+	Checkbox,
 	DatePicker,
 	Dropdown,
 	Empty,
 	Input,
 	Modal,
+	message,
 	Select,
 	Skeleton,
 	Table,
@@ -19,12 +21,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import {
-	listDeployments,
-	listPipelineRuns,
-	listPipelines,
-	type PipelineRun,
-} from "../api/pipelineApi";
+import { listDeployments } from "../api/pipelineApi";
 import {
 	deleteWorkflow,
 	type ListWorkflowsParams,
@@ -36,6 +33,7 @@ import { WorkflowLabels } from "../components/common/WorkflowLabels";
 import {
 	STATUS_ACCENT_COLORS,
 	STATUS_COLORS,
+	STATUS_ICONS,
 	WORKFLOW_PHASES,
 } from "../lib/constants";
 import { toAssetStyleId } from "../lib/idDisplay";
@@ -50,8 +48,6 @@ import {
 	getDisplayLabelEntries,
 	serializeWorkflowLabel,
 } from "../lib/workflowLabels";
-import { buildWorkflowExecutionUrl } from "../lib/workflowNavigation";
-import { RunComparisonModal } from "./RunComparisonModal";
 
 const { RangePicker } = DatePicker;
 dayjs.extend(relativeTime);
@@ -66,11 +62,6 @@ type WorkflowErrorState = {
 	kind: WorkflowErrorKind;
 	message: string;
 };
-
-const activeWorkflowStatuses = new Set(["Running", "Pending", "Suspended"]);
-
-const isActiveWorkflowStatus = (status?: string): boolean =>
-	activeWorkflowStatuses.has(status ?? "");
 
 const parseDate = (value: string | null): Dayjs | null => {
 	if (!value) return null;
@@ -95,44 +86,6 @@ const renderTimestamp = (value?: string) => {
 	);
 };
 
-const getWorkflowEstimatedCost = (record: WorkflowSummary): number | null => {
-	if (typeof record.estimatedCostUsd === "number") {
-		return record.estimatedCostUsd;
-	}
-	if (typeof record.totalEstimatedCost === "number") {
-		return record.totalEstimatedCost;
-	}
-	return null;
-};
-
-const getEstimatedCostTooltip = (record: WorkflowSummary): string => {
-	if (isActiveWorkflowStatus(record.status)) {
-		return "运行完成并写入节点快照后会显示估算成本";
-	}
-	if (record.nodeCount === 0) {
-		return "本次运行没有可计费节点";
-	}
-	return "本次运行尚未生成成本快照，可能是历史运行、无可计费 Pod，或节点资源耗时未回填";
-};
-
-const renderEstimatedCost = (_: unknown, record: WorkflowSummary) => {
-	const cost = getWorkflowEstimatedCost(record);
-	if (cost == null) {
-		return (
-			<Tooltip title={getEstimatedCostTooltip(record)}>
-				<Typography.Text type="secondary">—</Typography.Text>
-			</Tooltip>
-		);
-	}
-	return (
-		<Tooltip title="估算总成本，非 GCP Billing 最终对账金额">
-			<Typography.Text strong>
-				${cost.toFixed(cost < 0.01 ? 4 : 2)}
-			</Typography.Text>
-		</Tooltip>
-	);
-};
-
 const datesEqual = (a: Dayjs | null, b: Dayjs | null): boolean => {
 	if (!a && !b) return true;
 	if (!a || !b) return false;
@@ -144,183 +97,12 @@ const arraysEqual = (a: string[], b: string[]): boolean => {
 	return a.every((value, idx) => value === b[idx]);
 };
 
-const normalizeInput = (value?: string): string | undefined =>
-	value?.trim() || undefined;
-
-const isRunUpdatedAtLater = (runA: PipelineRun, runB: PipelineRun): boolean => {
-	const parsedA = dayjs(runA.createdAt);
-	const parsedB = dayjs(runB.createdAt);
-
-	if (!parsedA.isValid() && !parsedB.isValid()) return false;
-	if (!parsedA.isValid()) return false;
-	if (!parsedB.isValid()) return true;
-	return parsedA.isAfter(parsedB);
-};
-
-const buildLatestRunLookupByWorkflowName = (runs: PipelineRun[]) => {
-	const runByAlias = new Map<string, PipelineRun>();
-
-	const addAlias = (alias: string | undefined, run: PipelineRun): void => {
-		if (!alias) return;
-		const existing = runByAlias.get(alias);
-		if (existing && !isRunUpdatedAtLater(run, existing)) return;
-		runByAlias.set(alias, run);
-	};
-
-	for (const run of runs) {
-		const canonicalAlias =
-			normalizeInput(run.workflowName) ||
-			normalizeInput(run.pipelineName) ||
-			normalizeInput(run.id);
-		if (!canonicalAlias) continue;
-
-		addAlias(canonicalAlias, run);
-		addAlias(normalizeInput(run.workflowName), run);
-		addAlias(normalizeInput(run.pipelineName), run);
-		addAlias(normalizeInput(run.id), run);
-	}
-
-	const runIdsByAlias: Record<string, string> = {};
-	const templateVersionsByAlias: Record<string, number> = {};
-	const nodeCountsByAlias: Record<string, number> = {};
-	const scopeByAlias: Record<string, string> = {};
-	const runNameByAlias: Record<string, string> = {};
-
-	for (const [alias, run] of runByAlias) {
-		runIdsByAlias[alias] = run.id;
-		if (run.templateVersion != null) {
-			templateVersionsByAlias[alias] = run.templateVersion;
-		}
-		if (run.nodeCount != null) {
-			nodeCountsByAlias[alias] = run.nodeCount;
-		}
-		if (run.scope) {
-			scopeByAlias[alias] = run.scope;
-		}
-		runNameByAlias[alias] =
-			normalizeInput(run.workflowName) ||
-			normalizeInput(run.pipelineName) ||
-			alias;
-	}
-
-	return {
-		runIdsByAlias,
-		runNameByAlias,
-		templateVersionsByAlias,
-		nodeCountsByAlias,
-		scopeByAlias,
-	};
-};
-
 const normalizeStatus = (value: string | null): string | undefined => {
 	const trimmed = value?.trim();
 	if (!trimmed) return undefined;
 	return WORKFLOW_PHASES.includes(trimmed as (typeof WORKFLOW_PHASES)[number])
 		? trimmed
 		: undefined;
-};
-
-const workflowNameForRun = (run: PipelineRun): string =>
-	run.workflowName || run.pipelineName || run.id;
-
-const runMatchesFilters = (
-	run: PipelineRun,
-	liveWorkflow: WorkflowSummary | undefined,
-	params: ListWorkflowsParams,
-): boolean => {
-	const status = liveWorkflow?.status ?? run.status;
-	if (params.status && status !== params.status) {
-		return false;
-	}
-
-	const name = workflowNameForRun(run).toLowerCase();
-	const pipelineName = (run.pipelineName ?? "").toLowerCase();
-	const runID = (run.id ?? "").toLowerCase();
-	if (
-		params.name &&
-		!name.includes(params.name) &&
-		!pipelineName.includes(params.name) &&
-		!runID.includes(params.name)
-	) {
-		return false;
-	}
-
-	if (params.createdAfter) {
-		const createdAt = dayjs(liveWorkflow?.createdAt ?? run.createdAt);
-		if (createdAt.isValid() && createdAt.isBefore(dayjs(params.createdAfter))) {
-			return false;
-		}
-	}
-
-	if (params.finishedBefore) {
-		const finishedAt = dayjs(liveWorkflow?.finishedAt ?? run.finishedAt);
-		if (
-			finishedAt.isValid() &&
-			finishedAt.isAfter(dayjs(params.finishedBefore))
-		) {
-			return false;
-		}
-	}
-
-	if (params.label?.length) {
-		const labels = liveWorkflow?.labels ?? {};
-		return params.label.every((filter) => {
-			const separatorIndex = filter.indexOf("=");
-			if (separatorIndex < 0) {
-				return filter in labels;
-			}
-			const key = filter.slice(0, separatorIndex);
-			const value = filter.slice(separatorIndex + 1);
-			return labels[key] === value;
-		});
-	}
-
-	return true;
-};
-
-const workflowSummaryFromRun = (
-	run: PipelineRun,
-	liveWorkflow?: WorkflowSummary,
-): WorkflowSummary => ({
-	name: workflowNameForRun(run),
-	status: liveWorkflow?.status ?? run.status,
-	nodeCount: run.nodeCount ?? liveWorkflow?.nodeCount ?? 0,
-	assetCount: run.assetCount ?? liveWorkflow?.assetCount,
-	createdAt: liveWorkflow?.createdAt ?? run.createdAt,
-	finishedAt: liveWorkflow?.finishedAt ?? run.finishedAt,
-	labels: liveWorkflow?.labels,
-	estimatedCostUsd: liveWorkflow?.estimatedCostUsd,
-	totalEstimatedCost:
-		typeof run.totalEstimatedCost === "number"
-			? run.totalEstimatedCost
-			: liveWorkflow?.totalEstimatedCost,
-});
-
-const mergeLedgerRunsWithLiveWorkflows = (
-	liveWorkflows: WorkflowSummary[],
-	pipelineRuns: PipelineRun[],
-	params: ListWorkflowsParams,
-): WorkflowSummary[] => {
-	const liveByName = new Map(liveWorkflows.map((item) => [item.name, item]));
-	const seen = new Set<string>();
-	const ledgerItems = pipelineRuns
-		.filter((run) =>
-			runMatchesFilters(run, liveByName.get(run.workflowName), params),
-		)
-		.map((run) => {
-			const name = workflowNameForRun(run);
-			seen.add(name);
-			if (run.workflowName) {
-				seen.add(run.workflowName);
-			}
-			return workflowSummaryFromRun(run, liveByName.get(run.workflowName));
-		});
-	const liveOnlyItems = liveWorkflows.filter((item) => !seen.has(item.name));
-	return [...ledgerItems, ...liveOnlyItems].sort((a, b) => {
-		const left = dayjs(a.createdAt).valueOf();
-		const right = dayjs(b.createdAt).valueOf();
-		return right - left;
-	});
 };
 
 const describeWorkflowError = (err: unknown): WorkflowErrorState => {
@@ -358,22 +140,15 @@ const getErrorTitle = (kind: WorkflowErrorKind): string =>
 export function WorkflowExecutionList({
 	active = true,
 }: WorkflowExecutionListProps) {
-	const { message: messageApi } = App.useApp();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<WorkflowSummary[]>([]);
 	const [runIdsByWorkflowName, setRunIdsByWorkflowName] = useState<
-		Record<string, string>
-	>({});
-	const [workflowNameByWorkflowName, setWorkflowNameByWorkflowName] = useState<
 		Record<string, string>
 	>({});
 	const [templateVersionsByWorkflowName, setTemplateVersionsByWorkflowName] =
 		useState<Record<string, number>>({});
 	const [nodeCountsByWorkflowName, setNodeCountsByWorkflowName] = useState<
 		Record<string, number>
-	>({});
-	const [scopeByWorkflowName, setScopeByWorkflowName] = useState<
-		Record<string, string>
 	>({});
 	const [loading, setLoading] = useState(false);
 	const [initializedOnce, setInitializedOnce] = useState(false);
@@ -396,12 +171,6 @@ export function WorkflowExecutionList({
 			new Set(labels.map((label) => label.trim()).filter(Boolean)),
 		);
 	});
-	const [versionFilter, setVersionFilter] = useState<string | undefined>(
-		searchParams.get("templateVersion")?.trim() || undefined,
-	);
-	const [draftVersionFilter, setDraftVersionFilter] = useState<
-		string | undefined
-	>(searchParams.get("templateVersion")?.trim() || undefined);
 	const [draftLabelFilter, setDraftLabelFilter] = useState<string[]>(() => {
 		const labels = searchParams.getAll("label");
 		return Array.from(
@@ -424,15 +193,13 @@ export function WorkflowExecutionList({
 	);
 	const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 	const [bulkDeleting, setBulkDeleting] = useState(false);
-	const [compareOpen, setCompareOpen] = useState(false);
-	const [compareItems, setCompareItems] = useState<WorkflowSummary[]>([]);
 	const [pendingOperation, setPendingOperation] = useState<{
 		record: WorkflowSummary;
 		operation: WorkflowOperationConfig;
 	} | null>(null);
-	const [openDropdownName, setOpenDropdownName] = useState<string | null>(null);
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
+	const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 	const navigate = useNavigate();
 
 	useEffect(() => {
@@ -458,12 +225,6 @@ export function WorkflowExecutionList({
 		);
 		setDraftLabelFilter((prev) =>
 			arraysEqual(prev, nextLabelFilter) ? prev : nextLabelFilter,
-		);
-		const nextVersion =
-			searchParams.get("templateVersion")?.trim() || undefined;
-		setVersionFilter((prev) => (prev === nextVersion ? prev : nextVersion));
-		setDraftVersionFilter((prev) =>
-			prev === nextVersion ? prev : nextVersion,
 		);
 		setDateRange((prev) => {
 			if (
@@ -495,8 +256,6 @@ export function WorkflowExecutionList({
 		for (const label of labelFilter) {
 			if (label) next.append("label", label);
 		}
-		if (versionFilter) next.set("templateVersion", versionFilter);
-		else next.delete("templateVersion");
 		if (dateRange[0]) next.set("createdAfter", dateRange[0].toISOString());
 		else next.delete("createdAfter");
 		if (dateRange[1]) next.set("finishedBefore", dateRange[1].toISOString());
@@ -509,7 +268,6 @@ export function WorkflowExecutionList({
 		dateRange,
 		labelFilter,
 		nameSearch,
-		versionFilter,
 		searchParams,
 		setSearchParams,
 		statusFilter,
@@ -526,109 +284,45 @@ export function WorkflowExecutionList({
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
-			const [res, deployments, pipelineRuns, templates] = await Promise.all([
-				listWorkflows(params).catch((err) => {
-					console.warn("live workflow list unavailable", err);
-					return { items: [] };
-				}),
+			const [res, deployments] = await Promise.all([
+				listWorkflows(params),
 				listDeployments().catch(() => []),
-				listPipelineRuns().catch(() => []),
-				listPipelines().catch(() => []),
 			]);
-			const {
-				runIdsByAlias: latestRunIdsByWorkflowName,
-				runNameByAlias: latestRunNamesByWorkflowName,
-				templateVersionsByAlias: latestTemplateVersionsByWorkflowName,
-				nodeCountsByAlias: latestNodeCountsByWorkflowName,
-				scopeByAlias: latestScopesByWorkflowName,
-			} = buildLatestRunLookupByWorkflowName(pipelineRuns);
 			setRunIdsByWorkflowName(
-				Object.fromEntries([
-					...deployments
+				Object.fromEntries(
+					deployments
 						.filter((deployment) => deployment.workflowName && deployment.id)
-						.map(
-							(deployment) => [deployment.workflowName, deployment.id] as const,
-						),
-					...Object.entries(latestRunIdsByWorkflowName),
-				]),
-			);
-			setWorkflowNameByWorkflowName(
-				Object.fromEntries([
-					...Object.entries(latestRunNamesByWorkflowName),
-					...deployments
-						.filter((deployment) => deployment.workflowName)
-						.map(
-							(deployment) =>
-								[deployment.workflowName, deployment.workflowName] as const,
-						),
-				]),
+						.map((deployment) => [deployment.workflowName, deployment.id]),
+				),
 			);
 			setTemplateVersionsByWorkflowName(
-				Object.fromEntries([
-					...Object.entries(latestTemplateVersionsByWorkflowName),
-					...deployments
+				Object.fromEntries(
+					deployments
 						.filter(
 							(deployment) =>
 								deployment.workflowName && deployment.templateVersion,
 						)
-						.map(
-							(deployment) =>
-								[
-									deployment.workflowName,
-									deployment.templateVersion as number,
-								] as const,
-						),
-					...pipelineRuns
-						.filter((run) => run.workflowName && run.templateVersion)
-						.map(
-							(run) =>
-								[run.workflowName, run.templateVersion as number] as const,
-						),
-					...templates
-						.filter((t) => t.name)
-						.flatMap((t) =>
-							(res.items || [])
-								.filter((item) => item.name.startsWith(`${t.name}-`))
-								.map((item) => [item.name, t.version] as const),
-						),
-				]),
+						.map((deployment) => [
+							deployment.workflowName,
+							deployment.templateVersion as number,
+						]),
+				),
 			);
 			setNodeCountsByWorkflowName(
-				Object.fromEntries([
-					...Object.entries(latestNodeCountsByWorkflowName),
-					...deployments
+				Object.fromEntries(
+					deployments
 						.filter((deployment) => deployment.workflowName)
-						.map(
-							(deployment) =>
-								[deployment.workflowName, deployment.nodeCount] as const,
-						),
-					...pipelineRuns
-						.filter((run) => run.workflowName)
-						.map((run) => [run.workflowName, run.nodeCount] as const),
-				]),
+						.map((deployment) => [
+							deployment.workflowName,
+							deployment.nodeCount,
+						]),
+				),
 			);
-			setScopeByWorkflowName(
-				Object.fromEntries([
-					...Object.entries(latestScopesByWorkflowName),
-					...deployments
-						.filter((deployment) => deployment.workflowName && deployment.scope)
-						.map(
-							(deployment) =>
-								[deployment.workflowName, deployment.scope as string] as const,
-						),
-					...pipelineRuns
-						.filter((run) => run.workflowName && run.scope)
-						.map((run) => [run.workflowName, run.scope as string] as const),
-				]),
-			);
-			const enrichedItems = mergeLedgerRunsWithLiveWorkflows(
-				res.items || [],
-				pipelineRuns,
-				params,
-			);
-			setItems(enrichedItems);
+			setItems(res.items || []);
 			setSelectedWorkflowNames((prev) =>
-				prev.filter((name) => enrichedItems.some((item) => item.name === name)),
+				prev.filter((name) =>
+					(res.items || []).some((item) => item.name === name),
+				),
 			);
 		} catch (err) {
 			console.error(err);
@@ -652,39 +346,29 @@ export function WorkflowExecutionList({
 	}, [syncAppliedFiltersToUrl]);
 
 	const filtersDirty =
-		draftVersionFilter !== versionFilter ||
 		draftStatusFilter !== statusFilter ||
 		draftNameSearch !== nameSearch ||
 		!arraysEqual(draftLabelFilter, labelFilter) ||
 		!datesEqual(draftDateRange[0], dateRange[0]) ||
 		!datesEqual(draftDateRange[1], dateRange[1]);
 
-	const getExecutionLink = useCallback(
-		(recordName: string): string => {
-			const targetWorkflowName =
-				workflowNameByWorkflowName[recordName] || recordName;
-			const runId =
-				runIdsByWorkflowName[recordName] ||
-				runIdsByWorkflowName[targetWorkflowName];
-			return buildWorkflowExecutionUrl(targetWorkflowName, runId);
-		},
-		[runIdsByWorkflowName, workflowNameByWorkflowName],
-	);
-
 	const applyFilters = useCallback(() => {
-		setVersionFilter(draftVersionFilter);
 		setStatusFilter(draftStatusFilter);
 		setNameSearch(draftNameSearch.trim());
 		setLabelFilter(draftLabelFilter);
 		setDateRange(draftDateRange);
 		setPage(1);
-	}, [
-		draftDateRange,
-		draftLabelFilter,
-		draftNameSearch,
-		draftStatusFilter,
-		draftVersionFilter,
-	]);
+	}, [draftDateRange, draftLabelFilter, draftNameSearch, draftStatusFilter]);
+
+	const applyStatusCardFilter = useCallback(
+		(status: (typeof WORKFLOW_PHASES)[number]) => {
+			const nextStatus = statusFilter === status ? undefined : status;
+			setStatusFilter(nextStatus);
+			setDraftStatusFilter(nextStatus);
+			setPage(1);
+		},
+		[statusFilter],
+	);
 
 	const resetFilters = useCallback(() => {
 		setDraftStatusFilter(undefined);
@@ -698,7 +382,7 @@ export function WorkflowExecutionList({
 		setPage(1);
 	}, []);
 
-	const labelSelectOptions = useMemo(() => {
+	const labelCheckboxOptions = useMemo(() => {
 		const labels = new Set<string>();
 		for (const item of items) {
 			for (const [key, value] of getDisplayLabelEntries(item.labels)) {
@@ -716,16 +400,28 @@ export function WorkflowExecutionList({
 				const value =
 					separatorIndex >= 0 ? label.slice(separatorIndex + 1) : "";
 				return (
-					<Tooltip title={value ? `${key}=${value}` : key}>
-						<Tag>
-							{formatWorkflowLabelKey(key)}
-							{value ? ` · ${value}` : ""}
-						</Tag>
-					</Tooltip>
+					<Tag>
+						{formatWorkflowLabelKey(key)}
+						{value ? ` · ${value}` : ""}
+					</Tag>
 				);
 			})(),
 			value: label,
 		}));
+	}, [items]);
+
+	const statusCounts = useMemo(() => {
+		const counts = Object.fromEntries(
+			WORKFLOW_PHASES.map((status) => [status, 0]),
+		) as Record<(typeof WORKFLOW_PHASES)[number], number>;
+
+		for (const item of items) {
+			if (item.status in counts) {
+				counts[item.status as (typeof WORKFLOW_PHASES)[number]] += 1;
+			}
+		}
+
+		return counts;
 	}, [items]);
 
 	const executeOperation = useCallback(
@@ -737,21 +433,15 @@ export function WorkflowExecutionList({
 			setOperationLoading(loadingKey);
 			try {
 				await operation.run();
-				messageApi.success(`${operation.title}已提交`);
-				if (operation.key === "delete" || operation.key === "terminate") {
-					setItems((prev) => prev.filter((item) => item.name !== record.name));
-					setSelectedWorkflowNames((prev) =>
-						prev.filter((name) => name !== record.name),
-					);
-				}
+				message.success(`${operation.title}已提交`);
 				await refresh();
 			} catch (err) {
-				messageApi.error(`${operation.title}失败: ${String(err)}`);
+				message.error(`${operation.title}失败: ${String(err)}`);
 			} finally {
 				setOperationLoading(null);
 			}
 		},
-		[messageApi, refresh],
+		[refresh],
 	);
 
 	const runOperation = useCallback(
@@ -795,25 +485,15 @@ export function WorkflowExecutionList({
 			).length;
 			const deletedCount = results.length - failedCount;
 			if (deletedCount > 0)
-				messageApi.success(`已删除 ${deletedCount} 条执行记录`);
-			if (failedCount > 0)
-				messageApi.error(`${failedCount} 条执行记录删除失败`);
+				message.success(`已删除 ${deletedCount} 条执行记录`);
+			if (failedCount > 0) message.error(`${failedCount} 条执行记录删除失败`);
 			setSelectedWorkflowNames([]);
 			setBulkDeleteOpen(false);
 			await refresh();
 		} finally {
 			setBulkDeleting(false);
 		}
-	}, [messageApi, refresh, selectedWorkflowNames]);
-
-	const displayItems = useMemo(() => {
-		if (!versionFilter) return items;
-		const targetVersion = Number(versionFilter);
-		if (Number.isNaN(targetVersion)) return items;
-		return items.filter(
-			(item) => templateVersionsByWorkflowName[item.name] === targetVersion,
-		);
-	}, [items, versionFilter, templateVersionsByWorkflowName]);
+	}, [refresh, selectedWorkflowNames]);
 
 	const columns = [
 		{
@@ -824,7 +504,6 @@ export function WorkflowExecutionList({
 			render: (name: string, record: WorkflowSummary) => {
 				const runId = runIdsByWorkflowName[record.name];
 				const templateVersion = templateVersionsByWorkflowName[record.name];
-				const scope = scopeByWorkflowName[record.name];
 				const displayId = toAssetStyleId(runId ?? name);
 				const copyId = runId ?? name;
 				return (
@@ -840,27 +519,11 @@ export function WorkflowExecutionList({
 						>
 							ID: {displayId}
 						</Typography.Text>
-						<div
-							style={{
-								marginTop: 4,
-								display: "flex",
-								flexWrap: "wrap",
-								gap: 4,
-							}}
-						>
-							{templateVersion ? (
-								<Tag color="blue">模板 v{templateVersion}</Tag>
-							) : null}
-							{scope === "prod" ? (
-								<Tag color="green" style={{ fontSize: 11 }}>
-									<LockOutlined /> 正式版
-								</Tag>
-							) : scope ? (
-								<Tag color="blue" style={{ fontSize: 11 }}>
-									Dev 草稿
-								</Tag>
-							) : null}
-						</div>
+						{templateVersion ? (
+							<Tag color="blue" style={{ marginTop: 4 }}>
+								模板 v{templateVersion}
+							</Tag>
+						) : null}
 					</div>
 				);
 			},
@@ -888,14 +551,6 @@ export function WorkflowExecutionList({
 				nodeCountsByWorkflowName[record.name] ?? nodeCount,
 		},
 		{
-			title: "资产数",
-			dataIndex: "assetCount",
-			key: "assetCount",
-			width: 100,
-			render: (assetCount: number | undefined) =>
-				assetCount != null ? assetCount : "—",
-		},
-		{
 			title: "标签",
 			dataIndex: "labels",
 			key: "labels",
@@ -915,20 +570,6 @@ export function WorkflowExecutionList({
 					finishedAt={record.finishedAt}
 				/>
 			),
-		},
-		{
-			title: (
-				<Tooltip title="按节点成本汇总的估算总成本">
-					<span>总成本</span>
-				</Tooltip>
-			),
-			key: "estimatedCostUsd",
-			width: 120,
-			align: "right" as const,
-			render: renderEstimatedCost,
-			sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
-				(getWorkflowEstimatedCost(a) ?? -1) -
-				(getWorkflowEstimatedCost(b) ?? -1),
 		},
 		{
 			title: "创建时间",
@@ -953,7 +594,6 @@ export function WorkflowExecutionList({
 				const hasOperationLoading = operationLoading?.startsWith(
 					`${record.name}:`,
 				);
-				const isDropdownOpen = openDropdownName === record.name;
 
 				return (
 					<div style={{ display: "flex", gap: 4 }}>
@@ -962,43 +602,38 @@ export function WorkflowExecutionList({
 							size="small"
 							onClick={(event) => {
 								event.stopPropagation();
-								navigate(getExecutionLink(record.name));
+								navigate(`/pipeline/executions/${record.name}`);
 							}}
 						>
 							查看
 						</Button>
-						{menuItems.length > 0 ? (
-							<Dropdown
-								open={isDropdownOpen}
-								onOpenChange={(open) => {
-									setOpenDropdownName(open ? record.name : null);
+						<Dropdown
+							open={openDropdown === record.name}
+							onOpenChange={(open) => setOpenDropdown(open ? record.name : null)}
+							menu={{
+								items: menuItems,
+								onClick: ({ key, domEvent }) => {
+									domEvent.stopPropagation();
+								setOpenDropdown(null);
+									runOperation(record, key as WorkflowOperationKey);
+								},
+							}}
+							trigger={["click"]}
+						>
+							<Button
+								size="small"
+								icon={<MoreOutlined />}
+								loading={hasOperationLoading}
+								onClick={(event) => {
+									event.stopPropagation();
+									if (menuItems.length === 0) {
+										message.info("当前状态暂无可用操作");
+									}
 								}}
-								menu={{
-									items: menuItems,
-									onClick: ({ key, domEvent }) => {
-										domEvent.stopPropagation();
-										setOpenDropdownName(null);
-										runOperation(record, key as WorkflowOperationKey);
-									},
-								}}
-								trigger={["click"]}
 							>
-								<Button
-									size="small"
-									icon={<MoreOutlined />}
-									loading={hasOperationLoading}
-									onClick={(event) => {
-										event.stopPropagation();
-									}}
-								>
-									操作
-								</Button>
-							</Dropdown>
-						) : (
-							<Button size="small" disabled icon={<MoreOutlined />}>
 								操作
 							</Button>
-						)}
+						</Dropdown>
 					</div>
 				);
 			},
@@ -1033,38 +668,73 @@ export function WorkflowExecutionList({
 				<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
-				<Button
-					type="default"
-					disabled={
-						selectedWorkflowNames.length < 2 || selectedWorkflowNames.length > 3
-					}
-					title={
-						selectedWorkflowNames.length < 2
-							? "勾选 2-3 条运行进行对比"
-							: selectedWorkflowNames.length > 3
-								? "最多选择 3 条运行"
-								: undefined
-					}
-					onClick={() => {
-						setCompareItems(
-							displayItems.filter((item) =>
-								selectedWorkflowNames.includes(item.name),
-							),
-						);
-						setCompareOpen(true);
-					}}
-				>
-					对比选中
-					{selectedWorkflowNames.length > 0
-						? `（${selectedWorkflowNames.length}）`
-						: ""}
-				</Button>
 			</div>
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+					gap: 12,
+					marginBottom: 16,
+				}}
+			>
+				{showSkeleton
+					? WORKFLOW_PHASES.map((status) => <Card key={status} loading />)
+					: WORKFLOW_PHASES.map((status) => {
+							const accentColor = STATUS_ACCENT_COLORS[status];
+							const isActive = statusFilter === status;
+
+							return (
+								<Card
+									key={status}
+									role="button"
+									tabIndex={0}
+									aria-pressed={isActive}
+									aria-label={`筛选 ${status} 执行记录`}
+									size="small"
+									onClick={() => applyStatusCardFilter(status)}
+									onKeyDown={(event) => {
+										if (event.key === "Enter" || event.key === " ") {
+											event.preventDefault();
+											applyStatusCardFilter(status);
+										}
+									}}
+									styles={{
+										body: {
+											alignItems: "center",
+											display: "flex",
+											gap: 10,
+											padding: "10px 12px",
+										},
+									}}
+									style={{
+										background: isActive
+											? `color-mix(in srgb, ${accentColor} 6%, transparent)`
+											: undefined,
+										borderColor: accentColor,
+										borderLeft: `4px solid ${accentColor}`,
+										boxShadow: isActive
+											? `0 0 0 2px color-mix(in srgb, ${accentColor} 20%, transparent)`
+											: undefined,
+										cursor: "pointer",
+									}}
+								>
+									<span style={{ color: accentColor, fontSize: 18 }}>
+										{STATUS_ICONS[status]}
+									</span>
+									<span style={{ color: "rgba(0, 0, 0, 0.65)" }}>{status}</span>
+									<strong style={{ fontSize: 18, marginLeft: "auto" }}>
+										{statusCounts[status]}
+									</strong>
+								</Card>
+							);
+						})}
+			</div>
+
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
 					allowClear
-					placeholder="状态"
-					style={{ minWidth: 130, flex: "0 0 130px" }}
+					placeholder="状态筛选"
+					style={{ minWidth: 140, flex: "1 1 160px" }}
 					value={draftStatusFilter}
 					onChange={(val) => setDraftStatusFilter(val)}
 					options={WORKFLOW_PHASES.map((status) => ({
@@ -1072,27 +742,10 @@ export function WorkflowExecutionList({
 						value: status,
 					}))}
 				/>
-				<Select
-					allowClear
-					placeholder="模板版本"
-					style={{ minWidth: 120, flex: "0 0 120px" }}
-					value={draftVersionFilter}
-					onChange={(val) => setDraftVersionFilter(val)}
-					options={Array.from(
-						new Set(
-							Object.values(templateVersionsByWorkflowName).filter(
-								(v): v is number => typeof v === "number",
-							),
-						),
-					)
-						.sort((a, b) => b - a)
-						.map((v) => ({ label: `v${v}`, value: String(v) }))}
-				/>
 				<Input.Search
-					id="workflow-execution-name-search"
 					allowClear
 					placeholder="按名称搜索"
-					style={{ minWidth: 200, flex: "1 1 200px" }}
+					style={{ minWidth: 220, flex: "1 1 220px" }}
 					value={draftNameSearch}
 					onChange={(event) => setDraftNameSearch(event.target.value)}
 					onSearch={applyFilters}
@@ -1103,22 +756,29 @@ export function WorkflowExecutionList({
 					onChange={(values) =>
 						setDraftDateRange([values?.[0] ?? null, values?.[1] ?? null])
 					}
-					style={{ minWidth: 300, flex: "1 1 280px" }}
-				/>
-				<Select
-					mode="multiple"
-					allowClear
-					maxTagCount="responsive"
-					placeholder="标签筛选"
-					style={{ minWidth: 220, flex: "1 1 240px" }}
-					value={draftLabelFilter}
-					onChange={(values) => setDraftLabelFilter(values)}
-					options={labelSelectOptions}
+					style={{ minWidth: 320, flex: "1 1 260px" }}
 				/>
 				<Button type="primary" onClick={applyFilters} disabled={!filtersDirty}>
 					应用
 				</Button>
 				<Button onClick={resetFilters}>重置</Button>
+			</div>
+
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					flexWrap: "wrap",
+					gap: 8,
+					marginBottom: 16,
+				}}
+			>
+				<Typography.Text type="secondary">标签筛选：</Typography.Text>
+				<Checkbox.Group
+					options={labelCheckboxOptions}
+					value={draftLabelFilter}
+					onChange={(values) => setDraftLabelFilter(values as string[])}
+				/>
 			</div>
 
 			{error ? (
@@ -1148,7 +808,7 @@ export function WorkflowExecutionList({
 			) : (
 				<div className="pipeline-execution-table">
 					<Table
-						dataSource={displayItems}
+						dataSource={items}
 						columns={columns}
 						rowKey="name"
 						loading={loading}
@@ -1168,7 +828,7 @@ export function WorkflowExecutionList({
 								) {
 									return;
 								}
-								navigate(getExecutionLink(record.name));
+								navigate(`/pipeline/executions/${record.name}`);
 							},
 							style: { cursor: "pointer" },
 						})}
@@ -1217,11 +877,6 @@ export function WorkflowExecutionList({
 			>
 				<p>删除后不可恢复。正在运行的工作流请先确认不再需要。</p>
 			</Modal>
-			<RunComparisonModal
-				open={compareOpen}
-				items={compareItems}
-				onClose={() => setCompareOpen(false)}
-			/>
 		</div>
 	);
 }

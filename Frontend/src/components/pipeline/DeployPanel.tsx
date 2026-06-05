@@ -1,31 +1,25 @@
 import {
 	DeleteOutlined,
 	EditOutlined,
-	HistoryOutlined,
 	LinkOutlined,
-	LockOutlined,
 	PlayCircleOutlined,
 	ReloadOutlined,
-	RocketOutlined,
 } from "@ant-design/icons";
 import {
 	Alert,
-	App,
 	Button,
 	Checkbox,
-	Input,
 	Modal,
+	message,
 	Popconfirm,
-	Segmented,
 	Select,
 	Skeleton,
 	Space,
 	Tag,
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
-	batchDeployTemplate,
 	type Deployment,
 	deletePipeline,
 	deployTemplate,
@@ -36,11 +30,8 @@ import {
 	listPipelines,
 	listPipelineVersions,
 	type PipelineTemplate,
-	promotePipeline,
 } from "../../api/pipelineApi";
-import { request } from "../../api/pipelineClient";
 import { toAssetStyleId } from "../../lib/idDisplay";
-import { buildWorkflowExecutionUrl } from "../../lib/workflowNavigation";
 import AssetPicker from "./AssetPicker";
 import {
 	COMPACT_TEMPLATE_LIMIT,
@@ -51,7 +42,6 @@ import {
 } from "./deployPanelUtils";
 import { PipelineEmptyState } from "./PipelineEmptyState";
 import type { Pipeline } from "./types";
-import { VersionHistoryDrawer } from "./VersionHistoryDrawer";
 
 const STATUS_COLORS: Record<string, string> = {
 	Succeeded: "success",
@@ -64,39 +54,6 @@ const STATUS_COLORS: Record<string, string> = {
 
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
 
-function parseAssetIdsParam(raw: string | null): string[] {
-	if (!raw) return [];
-	return raw
-		.split(",")
-		.map((item) => item.trim())
-		.filter(Boolean);
-}
-
-function parsePastedAssetIds(raw: string): {
-	ids: string[];
-	unique: number;
-	duplicates: number;
-} {
-	const lines = raw
-		.split(/[\n,;\t ]+/)
-		.map((s) => s.trim())
-		.filter(Boolean);
-	const seen = new Set<string>();
-	const ids: string[] = [];
-	let duplicates = 0;
-	for (const line of lines) {
-		if (line.toLowerCase() === "asset_id" || line.toLowerCase() === "video_id")
-			continue;
-		if (seen.has(line)) {
-			duplicates++;
-			continue;
-		}
-		seen.add(line);
-		ids.push(line);
-	}
-	return { ids, unique: ids.length, duplicates };
-}
-
 function PanelSkeleton({ rows = 3 }: { rows?: number }) {
 	const keys = Array.from({ length: rows }, (_, i) => `skel-${i}`);
 	return (
@@ -108,65 +65,11 @@ function PanelSkeleton({ rows = 3 }: { rows?: number }) {
 	);
 }
 
-function AssetRunSummary({
-	assetIds,
-	onClear,
-}: {
-	assetIds: string[];
-	onClear: () => void;
-}) {
-	if (assetIds.length === 0) {
-		return (
-			<Alert
-				type="warning"
-				showIcon
-				message="无资产运行"
-				description="本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。"
-				style={{ fontSize: 12 }}
-			/>
-		);
-	}
-
-	const visibleIds = assetIds.slice(0, 8);
-	const hiddenCount = Math.max(assetIds.length - visibleIds.length, 0);
-
-	return (
-		<Alert
-			type="success"
-			showIcon
-			message={
-				assetIds.length > 1
-					? `将为 ${assetIds.length} 个资产各创建 1 个独立 Workflow`
-					: `将处理 ${assetIds.length} 个资产`
-			}
-			description={
-				<div style={{ display: "grid", gap: 8 }}>
-					<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-						{visibleIds.map((assetId) => (
-							<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
-								{assetId}
-							</Tag>
-						))}
-						{hiddenCount > 0 ? <Tag>+{hiddenCount}</Tag> : null}
-					</div>
-					<Button size="small" onClick={onClear}>
-						转为无资产运行
-					</Button>
-				</div>
-			}
-			style={{ fontSize: 12 }}
-		/>
-	);
-}
-
 function TemplateCard({
 	template,
 	onRun,
 	onEdit,
 	onDelete,
-	onVersionHistory,
-	onPromote,
-	activeVersion,
 	compactActions,
 	selectable,
 	selected,
@@ -176,9 +79,6 @@ function TemplateCard({
 	onRun: (id: string) => void;
 	onEdit: (id: string) => void;
 	onDelete: (id: string) => void;
-	onVersionHistory?: (template: PipelineTemplate) => void;
-	onPromote?: (template: PipelineTemplate) => void;
-	activeVersion?: number;
 	compactActions?: boolean;
 	selectable?: boolean;
 	selected?: boolean;
@@ -207,31 +107,7 @@ function TemplateCard({
 				</div>
 				{!compactActions ? (
 					<div className="dep-card-meta">
-						<Tag
-							color="blue"
-							style={{ cursor: "pointer" }}
-							onClick={(e) => {
-								e.stopPropagation();
-								onVersionHistory?.(template);
-							}}
-							title="点击查看版本历史"
-						>
-							v{template.version} <HistoryOutlined />
-						</Tag>
-						{template.scope === "prod" ? (
-							<Tag color="green" style={{ fontSize: 11 }}>
-								<LockOutlined /> 正式版
-							</Tag>
-						) : (
-							<Tag color="blue" style={{ fontSize: 11 }}>
-								Dev 草稿
-							</Tag>
-						)}
-						{activeVersion != null && activeVersion < template.version ? (
-							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
-								活跃: v{activeVersion}
-							</Tag>
-						) : null}
+						<Tag color="blue">v{template.version}</Tag>
 						{template.versionCount && template.versionCount > 1 ? (
 							<span>{template.versionCount} 个版本</span>
 						) : null}
@@ -241,31 +117,7 @@ function TemplateCard({
 					</div>
 				) : (
 					<div className="dep-card-meta dep-card-meta--compact">
-						<Tag
-							color="blue"
-							style={{ cursor: "pointer" }}
-							onClick={(e) => {
-								e.stopPropagation();
-								onVersionHistory?.(template);
-							}}
-							title="点击查看版本历史"
-						>
-							v{template.version} <HistoryOutlined />
-						</Tag>
-						{template.scope === "prod" ? (
-							<Tag color="green" style={{ fontSize: 11 }}>
-								<LockOutlined /> 正式版
-							</Tag>
-						) : (
-							<Tag color="blue" style={{ fontSize: 11 }}>
-								Dev 草稿
-							</Tag>
-						)}
-						{activeVersion != null && activeVersion < template.version ? (
-							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
-								活跃: v{activeVersion}
-							</Tag>
-						) : null}
+						<Tag color="blue">v{template.version}</Tag>
 						{template.versionCount && template.versionCount > 1 ? (
 							<span>{template.versionCount} 版</span>
 						) : null}
@@ -284,6 +136,8 @@ function TemplateCard({
 					>
 						打开
 					</Button>
+					{/* #22: Ant Design Popconfirm's description text leaks into aria-describedby.
+					   Known Ant Design Popover ARIA propagation issue. */}
 					<Popconfirm
 						title="删除此流水线？"
 						description="删除后不可恢复"
@@ -311,41 +165,29 @@ function TemplateCard({
 							运行
 						</Button>
 					</Space.Compact>
-					{template.scope !== "prod" ? (
+					<Button
+						size="small"
+						icon={<EditOutlined />}
+						onClick={() => onEdit(template.id)}
+					>
+						编辑
+					</Button>
+					{/* #22: Ant Design Popconfirm's description text leaks into aria-describedby.
+					   Known Ant Design Popover ARIA propagation issue. */}
+					<Popconfirm
+						title="删除此流水线？"
+						description="删除后不可恢复"
+						okText="删除"
+						cancelText="取消"
+						onConfirm={() => onDelete(template.id)}
+					>
 						<Button
 							size="small"
-							icon={<RocketOutlined />}
-							onClick={() => onPromote?.(template)}
-							title="发布到正式版"
-						>
-							发布
-						</Button>
-					) : null}
-					{template.scope !== "prod" ? (
-						<Button
-							size="small"
-							icon={<EditOutlined />}
-							onClick={() => onEdit(template.id)}
-						>
-							编辑
-						</Button>
-					) : null}
-					{template.scope !== "prod" ? (
-						<Popconfirm
-							title="删除此流水线？"
-							description="删除后不可恢复"
-							okText="删除"
-							cancelText="取消"
-							onConfirm={() => onDelete(template.id)}
-						>
-							<Button
-								size="small"
-								danger
-								icon={<DeleteOutlined />}
-								aria-label="删除流水线"
-							/>
-						</Popconfirm>
-					) : null}
+							danger
+							icon={<DeleteOutlined />}
+							aria-label="删除流水线"
+						/>
+					</Popconfirm>
 				</div>
 			)}
 		</div>
@@ -365,16 +207,10 @@ export function DeployPanel({
 	variant?: DeployPanelVariant;
 	onViewAll?: () => void;
 }) {
-	const { message: messageApi } = App.useApp();
 	void _refreshKey;
 	const resolvedVariant: DeployPanelVariant =
 		variant ?? (compact ? "compact" : "full");
 	const navigate = useNavigate();
-	const [searchParams, setSearchParams] = useSearchParams();
-	const queryAssetIds = useMemo(
-		() => parseAssetIdsParam(searchParams.get("asset_ids")),
-		[searchParams],
-	);
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
@@ -395,40 +231,11 @@ export function DeployPanel({
 	const [selectedDeployVersion, setSelectedDeployVersion] = useState<
 		number | undefined
 	>();
-	const [deployVersionActiveVersion, setDeployVersionActiveVersion] = useState<
-		number | undefined
-	>();
-	const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
-	const [versionDrawerTemplate, setVersionDrawerTemplate] =
-		useState<PipelineTemplate | null>(null);
-	const [activeVersionByTemplate, setActiveVersionByTemplate] = useState<
-		Record<string, number>
-	>({});
-	const [scopeTab, setScopeTab] = useState<string>("all");
-	const [assetMode, setAssetMode] = useState<"search" | "paste">("search");
-	const [pasteText, setPasteText] = useState("");
-	const [pasteFileKey] = useState(0);
 
-	const updateSelectedAssetIds = useCallback(
-		(nextIds: string[]) => {
-			setSelectedAssetIds(nextIds);
-			const nextParams = new URLSearchParams(searchParams);
-			if (nextIds.length > 0) {
-				nextParams.set("asset_ids", nextIds.join(","));
-			} else {
-				nextParams.delete("asset_ids");
-			}
-			setSearchParams(nextParams, { replace: true });
-		},
-		[searchParams, setSearchParams],
+	const displayTemplates = useMemo(
+		() => dedupeTemplatesByName(templates),
+		[templates],
 	);
-
-	const displayTemplates = useMemo(() => {
-		const deduped = dedupeTemplatesByName(templates);
-		if (scopeTab === "dev") return deduped.filter((t) => t.scope !== "prod");
-		if (scopeTab === "prod") return deduped.filter((t) => t.scope === "prod");
-		return deduped;
-	}, [templates, scopeTab]);
 	const displayDeployments = useMemo(
 		() => prepareDeployments(deployments),
 		[deployments],
@@ -446,14 +253,6 @@ export function DeployPanel({
 			]);
 			setDeployments(d);
 			setTemplates(t);
-			const activeMap: Record<string, number> = {};
-			for (const tmpl of t) {
-				const av = tmpl.activeVersion;
-				if (av != null && av > 0 && av < tmpl.version) {
-					activeMap[tmpl.name] = av;
-				}
-			}
-			setActiveVersionByTemplate(activeMap);
 			setSelectedTemplateIds((prev) =>
 				prev.filter((id) => t.some((template) => template.id === id)),
 			);
@@ -487,14 +286,8 @@ export function DeployPanel({
 		);
 		setDeployTargetId(templateId);
 		setDeployVersions(currentTemplate ? [currentTemplate] : []);
-		setDeployVersionActiveVersion(
-			currentTemplate
-				? (activeVersionByTemplate[currentTemplate.name] ??
-						currentTemplate.activeVersion)
-				: undefined,
-		);
 		setSelectedDeployVersion(currentTemplate?.version);
-		setSelectedAssetIds(queryAssetIds);
+		setSelectedAssetIds([]);
 		setAssetPickerResetKey((key) => key + 1);
 		const defaultTarget =
 			targets.find((target) => target.isDefault) ?? targets[0];
@@ -503,18 +296,20 @@ export function DeployPanel({
 		listPipelineVersions(templateId)
 			.then((versions) => {
 				setDeployVersions(versions);
-				setSelectedDeployVersion(
-					currentTemplate?.version ?? versions[0]?.version,
-				);
+				if (versions.length > 0) {
+					setSelectedDeployVersion(
+						currentTemplate?.version ?? versions[0]?.version,
+					);
+				}
 			})
 			.catch((err) => {
-				messageApi.warning(`版本列表加载失败，将运行当前版本: ${String(err)}`);
+				message.warning(`版本列表加载失败，将运行当前版本: ${String(err)}`);
 			});
 	};
 
 	const closeAssetModal = () => {
 		setAssetModalOpen(false);
-		setSelectedAssetIds(queryAssetIds);
+		setSelectedAssetIds([]);
 		setDeployVersions([]);
 		setSelectedDeployVersion(undefined);
 		setAssetPickerResetKey((key) => key + 1);
@@ -524,37 +319,18 @@ export function DeployPanel({
 		if (!deployTargetId) return;
 		setDeploying(true);
 		try {
-			if (selectedAssetIds.length > 1) {
-				const result = await batchDeployTemplate(
-					deployTargetId,
-					selectedAssetIds,
-					selectedTargetId,
-					selectedDeployVersion,
-				);
-				const failedCount = result.failed?.length ?? 0;
-				if (failedCount > 0) {
-					messageApi.warning(
-						`已提交 ${result.items.length} 个 Workflow，${failedCount} 个资产失败`,
-					);
-				} else {
-					messageApi.success(
-						`已提交 ${result.items.length} 个独立 Workflow（批次 ${result.batchId.slice(0, 8)}）`,
-					);
-				}
-			} else {
-				await deployTemplate(
-					deployTargetId,
-					selectedAssetIds,
-					selectedTargetId,
-					selectedDeployVersion,
-				);
-				messageApi.success("部署成功");
-			}
+			await deployTemplate(
+				deployTargetId,
+				selectedAssetIds,
+				selectedTargetId,
+				selectedDeployVersion,
+			);
+			message.success("部署成功");
 			closeAssetModal();
 			setDeploying(false);
 			void refresh();
 		} catch (err) {
-			messageApi.error(`部署失败: ${String(err)}`);
+			message.error(`部署失败: ${String(err)}`);
 			setDeploying(false);
 		}
 	};
@@ -562,10 +338,10 @@ export function DeployPanel({
 	const handleDeleteTemplate = async (id: string) => {
 		try {
 			await deletePipeline(id);
-			messageApi.success("已删除流水线模板");
+			message.success("已删除流水线模板");
 			refresh();
 		} catch (err) {
-			messageApi.error(`删除失败: ${String(err)}`);
+			message.error(`删除失败: ${String(err)}`);
 		}
 	};
 
@@ -581,10 +357,10 @@ export function DeployPanel({
 			).length;
 			const deletedCount = results.length - failedCount;
 			if (deletedCount > 0) {
-				messageApi.success(`已删除 ${deletedCount} 条流水线`);
+				message.success(`已删除 ${deletedCount} 条流水线`);
 			}
 			if (failedCount > 0) {
-				messageApi.error(`${failedCount} 条流水线删除失败`);
+				message.error(`${failedCount} 条流水线删除失败`);
 			}
 			setSelectedTemplateIds([]);
 			await refresh();
@@ -602,44 +378,7 @@ export function DeployPanel({
 				navigate(`/pipeline?templateId=${encodeURIComponent(id)}`);
 			}
 		} catch (err) {
-			messageApi.error(`加载模板失败: ${String(err)}`);
-		}
-	};
-
-	const handleVersionHistory = (template: PipelineTemplate) => {
-		setVersionDrawerTemplate(template);
-		setVersionDrawerOpen(true);
-	};
-
-	const handlePromote = async (template: PipelineTemplate) => {
-		try {
-			const promoted = await promotePipeline(template.id);
-			messageApi.success(
-				`已发布 ${template.name} v${promoted.version} 到正式版（prod）`,
-			);
-			refresh();
-		} catch (err) {
-			messageApi.error(`发布失败: ${String(err)}`);
-		}
-	};
-
-	const handleSetActiveVersion = async (
-		template: PipelineTemplate,
-		version: number,
-	) => {
-		try {
-			await request("PATCH", `/pipelines/${template.id}/active-version`, {
-				activeVersion: version,
-			});
-			setActiveVersionByTemplate((prev) => ({
-				...prev,
-				[template.name]: version,
-			}));
-			messageApi.success(
-				`已将 ${template.name} 的活跃版本设为 v${version}，下次运行将默认使用此版本`,
-			);
-		} catch (err) {
-			messageApi.error(`设置活跃版本失败: ${String(err)}`);
+			message.error(`加载模板失败: ${String(err)}`);
 		}
 	};
 
@@ -665,9 +404,6 @@ export function DeployPanel({
 				onRun={handleDeployClick}
 				onEdit={handleEditTemplate}
 				onDelete={handleDeleteTemplate}
-				onVersionHistory={handleVersionHistory}
-				onPromote={handlePromote}
-				activeVersion={activeVersionByTemplate[t.name]}
 				compactActions={options?.compactActions}
 				selectable={resolvedVariant === "full"}
 				selected={selectedTemplateIds.includes(t.id)}
@@ -772,23 +508,14 @@ export function DeployPanel({
 										<Tag color={STATUS_COLORS[d.status] || "default"}>
 											{d.status}
 										</Tag>
-										{d.scope === "prod" ? (
-											<Tag color="green" style={{ fontSize: 11 }}>
-												<LockOutlined /> 正式版
-											</Tag>
-										) : d.scope ? (
-											<Tag color="blue" style={{ fontSize: 11 }}>
-												Dev 草稿
-											</Tag>
-										) : null}
 									</div>
 								</div>
 								<Button
 									size="small"
 									icon={<LinkOutlined />}
-									onClick={() => {
-										navigate(buildWorkflowExecutionUrl(d.workflowName, d.id));
-									}}
+									onClick={() =>
+										navigate(`/pipeline/executions/${d.workflowName}`)
+									}
 								>
 									查看
 								</Button>
@@ -826,11 +553,6 @@ export function DeployPanel({
 		selectableTemplateIds.every((id) => selectedTemplateIdSet.has(id));
 	const someTemplatesSelected =
 		selectedTemplateIds.length > 0 && !allTemplatesSelected;
-	const visibleQueryAssetIds = queryAssetIds.slice(0, 6);
-	const hiddenQueryAssetCount = Math.max(
-		queryAssetIds.length - visibleQueryAssetIds.length,
-		0,
-	);
 
 	return (
 		<div className="deploy-panel">
@@ -864,55 +586,8 @@ export function DeployPanel({
 					style={{ marginBottom: 16, fontSize: 12 }}
 				/>
 			) : null}
-			{queryAssetIds.length > 0 ? (
-				<Alert
-					type="info"
-					showIcon
-					message={`已选择 ${queryAssetIds.length} 个资产`}
-					description={
-						<div className="deploy-panel__asset-context-body">
-							<span>请选择要运行的流水线和版本，确认后即可提交运行。</span>
-							<div className="deploy-panel__asset-context-assets">
-								{visibleQueryAssetIds.map((assetId) => (
-									<Tag
-										key={assetId}
-										color="blue"
-										style={{ marginInlineEnd: 0 }}
-									>
-										{assetId}
-									</Tag>
-								))}
-								{hiddenQueryAssetCount > 0 ? (
-									<Tag>+{hiddenQueryAssetCount}</Tag>
-								) : null}
-							</div>
-							<Button size="small" onClick={() => updateSelectedAssetIds([])}>
-								转为无资产运行
-							</Button>
-						</div>
-					}
-					style={{ marginBottom: 12 }}
-				/>
-			) : null}
 
 			<div className="deploy-panel__section-card">
-				<div
-					style={{
-						marginBottom: 12,
-						display: "flex",
-						justifyContent: "center",
-					}}
-				>
-					<Segmented
-						options={[
-							{ value: "all", label: "全部" },
-							{ value: "dev", label: "我的 Dev" },
-							{ value: "prod", label: "共享正式版" },
-						]}
-						value={scopeTab}
-						onChange={(v) => setScopeTab(v as string)}
-					/>
-				</div>
 				<div className="deploy-section-title">
 					<div>
 						已保存的流水线
@@ -933,6 +608,8 @@ export function DeployPanel({
 							>
 								全选
 							</Checkbox>
+							{/* #22: Ant Design Popconfirm's description text leaks into aria-describedby.
+							   Known Ant Design Popover ARIA propagation issue. */}
 							<Popconfirm
 								title={`删除选中的 ${selectedTemplateIds.length} 条流水线？`}
 								description="删除后不可恢复"
@@ -965,9 +642,15 @@ export function DeployPanel({
 						type="link"
 						size="small"
 						className="deploy-panel__load-more"
-						onClick={() =>
-							setTemplateVisibleCount((count) => count + TEMPLATE_PAGE_SIZE)
-						}
+						onClick={() => {
+							const remaining =
+								displayTemplates.length - visibleTemplates.length;
+							setTemplateVisibleCount(
+								remaining <= TEMPLATE_PAGE_SIZE
+									? displayTemplates.length
+									: (count) => count + TEMPLATE_PAGE_SIZE,
+							);
+						}}
 					>
 						加载更多模板（还剩{" "}
 						{displayTemplates.length - visibleTemplates.length} 条）
@@ -984,36 +667,33 @@ export function DeployPanel({
 				okText={selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
 				width={640}
 			>
-				<div style={{ marginBottom: 16 }}>
-					<AssetRunSummary
-						assetIds={selectedAssetIds}
-						onClear={() => updateSelectedAssetIds([])}
-					/>
-				</div>
+				<Alert
+					type={selectedAssetIds.length > 0 ? "success" : "warning"}
+					message={
+						selectedAssetIds.length > 0
+							? `将处理 ${selectedAssetIds.length} 个资产`
+							: "当前是 no-asset run：不会注入资产环境变量。"
+					}
+					showIcon
+					style={{ marginBottom: 16, fontSize: 12 }}
+				/>
 				<div className="deploy-run-field">
 					<div className="deploy-run-field__label">模板版本</div>
 					<Select
-						aria-label="模板版本"
 						value={selectedDeployVersion}
 						onChange={setSelectedDeployVersion}
 						style={{ width: "100%", marginBottom: 12 }}
-						options={deployVersions.map((version) => {
-							const isUndeployed =
-								deployVersionActiveVersion != null &&
-								version.version > deployVersionActiveVersion;
-							return {
-								value: version.version,
-								label: `版本 v${version.version} · ${version.nodeCount} 个步骤 · 保存于 ${new Date(
-									version.createdAt,
-								).toLocaleString()}${isUndeployed ? " · 未部署" : ""}`,
-							};
-						})}
+						options={deployVersions.map((version) => ({
+							value: version.version,
+							label: `版本 v${version.version} · ${version.nodeCount} 个步骤 · 保存于 ${new Date(
+								version.createdAt,
+							).toLocaleString()}`,
+						}))}
 					/>
 				</div>
 				<div className="deploy-run-field">
 					<div className="deploy-run-field__label">执行目标</div>
 					<Select
-						aria-label="执行目标"
 						value={selectedTargetId}
 						onChange={setSelectedTargetId}
 						style={{ width: "100%" }}
@@ -1037,101 +717,13 @@ export function DeployPanel({
 						}))}
 					/>
 				</div>
-				<div style={{ marginBottom: 12 }}>
-					<Segmented
-						options={[
-							{ value: "search", label: "搜索资产" },
-							{ value: "paste", label: "粘贴资产 ID" },
-						]}
-						value={assetMode}
-						onChange={(v) => {
-							setAssetMode(v as "search" | "paste");
-							if (v === "paste") {
-								const parsed = parsePastedAssetIds(pasteText);
-								updateSelectedAssetIds(parsed.ids);
-							}
-						}}
-					/>
-				</div>
-				{assetMode === "paste" ? (
-					<div style={{ display: "grid", gap: 8 }}>
-						<Input.TextArea
-							rows={6}
-							value={pasteText}
-							onChange={(e) => {
-								setPasteText(e.target.value);
-								const parsed = parsePastedAssetIds(e.target.value);
-								updateSelectedAssetIds(parsed.ids);
-							}}
-							placeholder="粘贴 asset ID，每行一个，或粘贴 CSV"
-							style={{ fontFamily: "monospace", fontSize: 12 }}
-						/>
-						<div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-							<label
-								className="ant-btn ant-btn-default"
-								style={{ cursor: "pointer" }}
-							>
-								上传 CSV
-								<input
-									type="file"
-									accept=".csv,.txt"
-									key={pasteFileKey}
-									style={{ display: "none" }}
-									onChange={(e) => {
-										const file = e.target.files?.[0];
-										if (!file) return;
-										file.text().then((text) => {
-											setPasteText(text);
-											const parsed = parsePastedAssetIds(text);
-											updateSelectedAssetIds(parsed.ids);
-										});
-									}}
-								/>
-							</label>
-							{pasteText
-								? (() => {
-										const parsed = parsePastedAssetIds(pasteText);
-										return (
-											<span
-												style={{
-													fontSize: 12,
-													color: parsed.unique > 0 ? "#16a34a" : "#999",
-												}}
-											>
-												{parsed.unique} 个资产
-												{parsed.duplicates > 0
-													? `（${parsed.duplicates} 个重复已移除）`
-													: ""}
-											</span>
-										);
-									})()
-								: null}
-						</div>
-					</div>
-				) : (
-					<AssetPicker
-						selectedIds={selectedAssetIds}
-						onSelectionChange={updateSelectedAssetIds}
-						maxHeight={300}
-						resetKey={assetPickerResetKey}
-					/>
-				)}
-			</Modal>
-			{versionDrawerTemplate ? (
-				<VersionHistoryDrawer
-					open={versionDrawerOpen}
-					pipelineName={versionDrawerTemplate.name}
-					templateId={versionDrawerTemplate.id}
-					activeVersion={activeVersionByTemplate[versionDrawerTemplate.name]}
-					onClose={() => {
-						setVersionDrawerOpen(false);
-						setVersionDrawerTemplate(null);
-					}}
-					onSetActive={(version) =>
-						handleSetActiveVersion(versionDrawerTemplate, version)
-					}
+				<AssetPicker
+					selectedIds={selectedAssetIds}
+					onSelectionChange={setSelectedAssetIds}
+					maxHeight={300}
+					resetKey={assetPickerResetKey}
 				/>
-			) : null}
+			</Modal>
 		</div>
 	);
 }

@@ -34,7 +34,7 @@ export default function LoginPage() {
 							{ type: "email", message: "请输入有效的邮箱地址" },
 						]}
 					>
-						<Input placeholder="name@cyberorigin.ai" size="large" />
+						<Input placeholder="name@cyberorigin.ai" size="large" autoComplete="email" />
 					</Form.Item>
 					<Button type="primary" htmlType="submit" block size="large">
 						登录
