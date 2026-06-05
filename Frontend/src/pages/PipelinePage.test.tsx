@@ -456,7 +456,7 @@ describe("PipelinePage", () => {
 		renderPage();
 
 		const component = await screen.findByRole("button", {
-			name: /添加组件 Drag Component/,
+			name: /拖入组件 Drag Component/,
 		});
 		const canvas = screen.getByRole("application", { name: "流水线画布" });
 		const dataTransfer = {

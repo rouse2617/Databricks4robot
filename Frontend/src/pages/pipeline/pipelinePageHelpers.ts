@@ -271,6 +271,7 @@ export function apiToRegistered(
 		type: normalizedType,
 		source: normalizedSource,
 		image: formatImage(api.image, api.tag),
+		tag: api.tag,
 		command: api.command ?? ((resources.command as string[]) || ["sh", "-c"]),
 		args: normalizeComponentArgs(
 			(api.args && api.args.length > 0

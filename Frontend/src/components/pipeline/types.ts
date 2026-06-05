@@ -64,6 +64,7 @@ export interface RegisteredComponent {
 	type?: string;
 	source?: string;
 	image: string;
+	tag?: string;
 	command: string[];
 	args: Argument[];
 	env?: Argument[];

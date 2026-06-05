@@ -1,4 +1,6 @@
-import { Alert, Button, Spin } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
+import { Alert, Button, Input, Spin } from "antd";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { PipelineEmptyState } from "./PipelineEmptyState";
 import type { RegisteredComponent } from "./types";
@@ -20,12 +22,43 @@ export function ComponentPalette({
 	error = null,
 	onRetry,
 }: Props) {
+	const [query, setQuery] = useState("");
+	const normalizedQuery = query.trim().toLowerCase();
+	const filteredComponents = useMemo(() => {
+		if (!normalizedQuery) return components;
+		return components.filter((component) => {
+			const haystack = [
+				component.name,
+				component.image,
+				component.tag,
+				component.computeTier,
+			]
+				.filter(Boolean)
+				.join(" ")
+				.toLowerCase();
+			return haystack.includes(normalizedQuery);
+		});
+	}, [components, normalizedQuery]);
+	const hasSearch = normalizedQuery.length > 0;
+
 	return (
 		<aside className="palette" aria-label="组件面板">
 			<div className="palette-header">
 				<h4>组件</h4>
-				<span className="palette-count">{components.length}</span>
+				<span className="palette-count">
+					{filteredComponents.length}
+					{hasSearch ? ` / ${components.length}` : ""}
+				</span>
 			</div>
+			<Input
+				allowClear
+				size="small"
+				prefix={<SearchOutlined />}
+				placeholder="搜索组件名称、镜像、标签或算力层"
+				value={query}
+				onChange={(event) => setQuery(event.target.value)}
+				aria-label="搜索组件"
+			/>
 			{loading ? (
 				<div className="pipeline-palette-loading" aria-busy="true">
 					<Spin size="small" tip="加载组件..." />
@@ -47,7 +80,7 @@ export function ComponentPalette({
 					style={{ marginBottom: 8 }}
 				/>
 			) : null}
-			{components.map((c) => (
+			{filteredComponents.map((c) => (
 				<button
 					key={c.id}
 					type="button"
@@ -72,6 +105,17 @@ export function ComponentPalette({
 							请先在 <Link to="/components">步骤组件</Link> 中创建。
 						</>
 					}
+				/>
+			) : null}
+			{!loading && components.length > 0 && filteredComponents.length === 0 ? (
+				<PipelineEmptyState
+					variant="palette"
+					title="未找到匹配组件"
+					description="换个关键词试试，或清空搜索后查看全部组件。"
+					action={{
+						label: "清空搜索",
+						onClick: () => setQuery(""),
+					}}
 				/>
 			) : null}
 		</aside>
