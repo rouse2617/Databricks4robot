@@ -81,6 +81,18 @@ const TERMINAL_WORKFLOW_PHASES = new Set([
 	"omitted",
 ]);
 
+function isActionableFailedNode(node: WorkflowNodeStatus): boolean {
+	if (!FAILED_NODE_PHASES.has(node.phase)) return false;
+	const nodeType = node.type?.toLowerCase();
+	if (nodeType === "dag" || nodeType === "steps") return false;
+	if ((node.children?.length ?? 0) > 0 && !node.podName) return false;
+	return true;
+}
+
+function getNodeDisplayName(node: WorkflowNodeStatus): string {
+	return node.displayName || node.templateName || node.name || node.id;
+}
+
 function normalizeWorkflowStatus(status: string): string {
 	return status.toLowerCase().trim();
 }
@@ -95,9 +107,7 @@ function buildStatusSyncWarning(
 		return `DataBrew 记录状态为 ${runStatus}，但工作流当前状态为 ${workflow.status}，存在状态回写延迟，请以事件时间线确认。`;
 	}
 
-	const failedNodes = workflow.nodes.filter((node) =>
-		FAILED_NODE_PHASES.has(node.phase),
-	);
+	const failedNodes = workflow.nodes.filter(isActionableFailedNode);
 	const activeNodes = workflow.nodes.filter((node) =>
 		ACTIVE_NODE_PHASES.has(node.phase),
 	);
@@ -112,7 +122,7 @@ function buildStatusSyncWarning(
 	) {
 		const firstFailedNode = failedNodes[0];
 		const reason = firstFailedNode?.message
-			? `，先失败节点: ${firstFailedNode.displayName || firstFailedNode.id}，原因: ${firstFailedNode.message}`
+			? `，首个失败节点: ${getNodeDisplayName(firstFailedNode)}，原因: ${firstFailedNode.message}`
 			: "";
 		return `工作流状态仍为 Running，但检测到 ${failedNodes.length} 个失败/错误节点${reason}。请确认是否已发生状态回写延迟。`;
 	}

@@ -20,3 +20,10 @@
 - **Decision**: Leave Chrome DevTools MCP smoke pending until the change is deployed or an authenticated local session is available.
 - **Alternatives**: Mock auth in application code or bypass protected routing.
 - **Rationale**: The route behavior is covered by component tests and build; bypassing auth in runtime code would be inappropriate for this fix.
+
+## 2026-06-05 - PR follow-up for failed node labels
+
+- **Context**: After PR creation, dev UI still showed Argo technical node names such as `workflow.step-step-1` in the failed-node summary, while the DAG cards displayed mapped business labels.
+- **Decision**: Push a follow-up commit to the same PR that filters non-actionable DAG/Steps parent nodes and uses `displayName` for failed-node summaries and status sync warnings.
+- **Alternatives**: Leave the PR unchanged and open a separate issue.
+- **Rationale**: This is the same workflow-detail failure-diagnosis surface already covered by the PR, and the user asked about it before deployment verification.
