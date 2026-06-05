@@ -234,6 +234,92 @@ describe("WorkflowDetailPage", () => {
 		expect(screen.queryByText("暂无计费配置")).not.toBeInTheDocument();
 	});
 
+	it("uses live dag status when asset-node ledger rows lag behind", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Succeeded",
+				nodes: [
+					{
+						id: "step-1",
+						name: "wf-asset.step-1",
+						displayName: "step-1",
+						type: "Pod",
+						phase: "Succeeded",
+						startedAt: "2026-06-03T00:00:00Z",
+						finishedAt: "2026-06-03T00:00:10Z",
+					},
+				],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"asset-ids": "asset-a",
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: { id: "run-1" },
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+			assetNodeState: {
+				items: [
+					{
+						id: "row-1",
+						runId: "run-1",
+						assetId: "asset-a",
+						pipelineNodeId: "step-1",
+						displayName: "step-1",
+						status: "Pending",
+						costSource: "not_available",
+						updatedAt: "2026-06-03T00:00:00Z",
+					},
+				],
+				total: 1,
+				loading: false,
+				error: null,
+				summary: {
+					assetCount: 1,
+					nodeCount: 1,
+					statuses: { Pending: 1 },
+					costSource: "not_available",
+				},
+			},
+			costSummaryState: {
+				item: {
+					runId: "run-1",
+					costSource: "not_available",
+					nodeSummaries: [
+						{
+							nodeId: "step-1",
+							displayName: "step-1",
+							status: "Pending",
+							podCount: 0,
+							costSource: "not_available",
+						},
+					],
+					assetNodeSummaries: [],
+					generatedAt: "2026-06-03T00:00:00Z",
+				},
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getAllByText("Succeeded").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("暂无成本数据").length).toBeGreaterThan(0);
+		expect(screen.queryByText("等待资源快照")).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(
+				/节点还在排队或运行中，资源耗时生成后会自动补齐估算成本/,
+			),
+		).not.toBeInTheDocument();
+	});
+
 	it("renders explicit failure summary for failed nodes", () => {
 		mockWorkflowDetailState({
 			workflow: {

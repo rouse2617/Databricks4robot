@@ -7,7 +7,7 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import {
 	afterEach,
 	beforeAll,
@@ -75,7 +75,18 @@ function renderList(initialEntry = "/pipeline?tab=executions") {
 	return render(
 		<MemoryRouter initialEntries={[initialEntry]}>
 			<WorkflowExecutionList />
+			<LocationProbe />
 		</MemoryRouter>,
+	);
+}
+
+function LocationProbe() {
+	const location = useLocation();
+	return (
+		<div data-testid="location">
+			{location.pathname}
+			{location.search}
+		</div>
 	);
 }
 
@@ -106,7 +117,18 @@ describe("WorkflowExecutionList", () => {
 			});
 		});
 		mockDeleteWorkflow.mockResolvedValue({ message: "deleted" });
-		mockListDeployments.mockResolvedValue([]);
+		mockListDeployments.mockResolvedValue([
+			{
+				id: "run-1",
+				pipelineName: "successful-run",
+				workflowName: "successful-run",
+				status: "Succeeded",
+				nodeCount: 2,
+				templateVersion: 3,
+				createdAt: "2026-06-02T01:00:00Z",
+				finishedAt: "2026-06-02T01:00:20Z",
+			},
+		]);
 		mockListPipelineRuns.mockResolvedValue([
 			{
 				id: "run-1",
@@ -167,64 +189,55 @@ describe("WorkflowExecutionList", () => {
 		});
 	});
 
-	it("merges run-level estimated cost from pipeline runs and shows a quiet empty state otherwise", async () => {
+	it("merges deployment metadata for display ids and template versions", async () => {
 		renderList();
 
 		await waitFor(() => {
 			expect(screen.getByText("successful-run")).toBeInTheDocument();
 		});
 
-		expect(mockListPipelineRuns).toHaveBeenCalled();
-		expect(screen.getAllByText("总成本").length).toBeGreaterThan(0);
-		expect(screen.getByText("$1.25")).toBeInTheDocument();
-		expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+		expect(mockListDeployments).toHaveBeenCalled();
+		await waitFor(() => {
+			expect(screen.getByText("ID: run1")).toBeInTheDocument();
+			expect(screen.getByText("模板 v3")).toBeInTheDocument();
+		});
 	});
 
-	it("shows ledger-only runs with estimated cost after live Argo workflow TTL cleanup", async () => {
+	it("opens execution detail with durable run id when available", async () => {
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("successful-run")).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getAllByRole("button", { name: "查看" })[0]);
+
+		expect(screen.getByTestId("location")).toHaveTextContent(
+			"/pipeline/executions/successful-run?runId=run-1",
+		);
+	});
+
+	it("shows an empty state when live workflow listing has no records", async () => {
 		mockListWorkflows.mockResolvedValue({ items: [] });
-		mockListPipelineRuns.mockResolvedValue([
-			{
-				id: "run-ledger-1",
-				pipelineName: "ttl-cleaned-pipeline",
-				workflowName: "ttl-cleaned-workflow",
-				status: "Succeeded",
-				nodeCount: 5,
-				totalEstimatedCost: 0.009,
-				createdAt: "2026-06-03T19:16:51Z",
-				finishedAt: "2026-06-03T19:18:09Z",
-			},
-		]);
+		mockListDeployments.mockResolvedValue([]);
 
 		renderList();
 
 		await waitFor(() => {
-			expect(screen.getByText("ttl-cleaned-workflow")).toBeInTheDocument();
+			expect(
+				screen.getByText("暂无执行记录，部署流水线后将自动生成"),
+			).toBeInTheDocument();
 		});
-		expect(screen.getByText("$0.0090")).toBeInTheDocument();
-		expect(screen.getByText("ID: runledge")).toBeInTheDocument();
 	});
 
-	it("keeps ledger records visible when live workflow listing is unavailable", async () => {
+	it("shows a service error when live workflow listing is unavailable", async () => {
 		mockListWorkflows.mockRejectedValue(new Error("argo unavailable"));
-		mockListPipelineRuns.mockResolvedValue([
-			{
-				id: "run-ledger-2",
-				pipelineName: "ledger-pipeline",
-				workflowName: "ledger-workflow",
-				status: "Succeeded",
-				nodeCount: 2,
-				totalEstimatedCost: 1.5,
-				createdAt: "2026-06-03T10:00:00Z",
-				finishedAt: "2026-06-03T10:01:00Z",
-			},
-		]);
 
 		renderList();
 
 		await waitFor(() => {
-			expect(screen.getByText("ledger-workflow")).toBeInTheDocument();
+			expect(screen.getByText("服务不可用")).toBeInTheDocument();
 		});
-		expect(screen.queryByText("服务不可用")).not.toBeInTheDocument();
-		expect(screen.getByText("$1.50")).toBeInTheDocument();
+		expect(screen.getByText("argo unavailable")).toBeInTheDocument();
 	});
 });

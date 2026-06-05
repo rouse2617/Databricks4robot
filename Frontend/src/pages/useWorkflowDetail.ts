@@ -257,7 +257,11 @@ interface UseWorkflowDetailResult {
 	runEventState: RunEventState;
 	runEventFilters: RunEventFilters;
 	setRunEventFilters: (filters: RunEventFilters) => void;
-	loadRunEvents: (opts?: { append?: boolean; cursor?: number }) => void;
+	loadRunEvents: (opts?: {
+		append?: boolean;
+		cursor?: number;
+		quiet?: boolean;
+	}) => void;
 	assetNodeState: AssetNodeState;
 	costSummaryState: CostSummaryState;
 	setLogSearch: (query: string) => void;
@@ -349,10 +353,10 @@ function getWorkflowLookupCandidates(
 ): string[] {
 	if (!lookup) return [];
 	return uniqueLookupCandidates([
-		lookup.runId,
 		lookup.workflowName,
 		lookup.normalizedName,
 		name,
+		lookup.runId,
 	]);
 }
 
@@ -419,6 +423,7 @@ export function useWorkflowDetail(
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [logState, setLogState] = useState<WorkflowLogState>(EMPTY_LOG_STATE);
 	const followSourceRef = useRef<EventSource | null>(null);
+	const previousWorkflowStatusRef = useRef<string | null>(null);
 	const [runEventState, setRunEventState] = useState<RunEventState>(
 		EMPTY_RUN_EVENT_STATE,
 	);
@@ -527,13 +532,15 @@ export function useWorkflowDetail(
 	}, [loadWorkflow, lookupReady]);
 
 	const loadRunEvents = useCallback(
-		(opts?: { append?: boolean; cursor?: number }) => {
+		(opts?: { append?: boolean; cursor?: number; quiet?: boolean }) => {
 			if (!lookupReady || !workflowLookup?.workflowName) return;
-			setRunEventState((current) => ({
-				...current,
-				loading: true,
-				error: null,
-			}));
+			if (!opts?.quiet) {
+				setRunEventState((current) => ({
+					...current,
+					loading: true,
+					error: null,
+				}));
+			}
 			const resolveRunForEvents = async () => {
 				try {
 					if (!workflowLookup?.runId) {
@@ -555,12 +562,13 @@ export function useWorkflowDetail(
 			resolveRunForEvents()
 				.then((run) => {
 					if (!run) {
-						setRunEventState({
+						setRunEventState((current) => ({
 							run: null,
-							items: [],
+							items: opts?.quiet ? current.items : [],
+							nextCursor: opts?.quiet ? current.nextCursor : undefined,
 							loading: false,
 							error: "未找到关联的 DataBrew pipeline run",
-						});
+						}));
 						return;
 					}
 					const cursor = opts?.append ? opts.cursor : undefined;
@@ -654,6 +662,7 @@ export function useWorkflowDetail(
 				.then((detail) => {
 					setWorkflow(detail);
 					setLoadError(null);
+					loadRunEvents({ quiet: true });
 				})
 				.catch((err) => {
 					console.error(err);
@@ -661,7 +670,38 @@ export function useWorkflowDetail(
 		}, WORKFLOW_POLL_INTERVAL_MS);
 
 		return () => window.clearInterval(timer);
-	}, [fetchWorkflowByCandidates, lookupReady, workflowLookup, name, workflow]);
+	}, [
+		fetchWorkflowByCandidates,
+		loadRunEvents,
+		lookupReady,
+		workflowLookup,
+		name,
+		workflow,
+	]);
+
+	useEffect(() => {
+		const previousStatus = previousWorkflowStatusRef.current;
+		const nextStatus = workflow?.status ?? null;
+		previousWorkflowStatusRef.current = nextStatus;
+		if (!nextStatus || !previousStatus) return;
+
+		const wasActive = ACTIVE_WORKFLOW_STATUSES.has(previousStatus);
+		const isNowTerminal = TERMINAL_WORKFLOW_PHASES.has(
+			normalizeWorkflowStatus(nextStatus),
+		);
+		if (!wasActive || !isNowTerminal) return;
+
+		loadRunEvents({ quiet: true });
+		const timers = [
+			window.setTimeout(() => loadRunEvents({ quiet: true }), 2_000),
+			window.setTimeout(() => loadRunEvents({ quiet: true }), 8_000),
+		];
+		return () => {
+			timers.forEach((timer) => {
+				window.clearTimeout(timer);
+			});
+		};
+	}, [loadRunEvents, workflow?.status]);
 
 	const loadNodeLogs = useCallback(
 		async (nodeId: string) => {

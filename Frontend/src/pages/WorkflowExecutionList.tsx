@@ -46,6 +46,7 @@ import {
 	getDisplayLabelEntries,
 	serializeWorkflowLabel,
 } from "../lib/workflowLabels";
+import { buildWorkflowExecutionUrl } from "../lib/workflowNavigation";
 
 const { RangePicker } = DatePicker;
 dayjs.extend(relativeTime);
@@ -576,7 +577,12 @@ export function WorkflowExecutionList({
 							size="small"
 							onClick={(event) => {
 								event.stopPropagation();
-								navigate(`/pipeline/executions/${record.name}`);
+								navigate(
+									buildWorkflowExecutionUrl(
+										record.name,
+										runIdsByWorkflowName[record.name],
+									),
+								);
 							}}
 						>
 							查看
@@ -744,7 +750,12 @@ export function WorkflowExecutionList({
 								) {
 									return;
 								}
-								navigate(`/pipeline/executions/${record.name}`);
+								navigate(
+									buildWorkflowExecutionUrl(
+										record.name,
+										runIdsByWorkflowName[record.name],
+									),
+								);
 							},
 							style: { cursor: "pointer" },
 						})}

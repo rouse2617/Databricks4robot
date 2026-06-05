@@ -1,13 +1,33 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/pipelineClient";
 
 const mockGetWorkflow = vi.fn();
 const mockGetWorkflowLogs = vi.fn();
 const mockListPipelineRuns = vi.fn(() => Promise.resolve([]));
 const mockGetPipelineRun = vi.fn();
+const mockGetPipelineRunCostSummary = vi.fn(() => Promise.resolve(null));
+const mockListPipelineRunAssetNodes = vi.fn(() =>
+	Promise.resolve({
+		items: [],
+		total: 0,
+		summary: {
+			assetCount: 0,
+			nodeCount: 0,
+			statuses: {},
+			costSource: "unavailable",
+		},
+	}),
+);
+const mockListPipelineRunEvents = vi.fn(() =>
+	Promise.resolve({
+		items: [],
+		total: 0,
+		nextCursor: undefined,
+	}),
+);
 
 class MockEventSource extends EventTarget {
 	static instances: MockEventSource[] = [];
@@ -34,26 +54,12 @@ vi.mock("../api/workflowApi", () => ({
 }));
 
 vi.mock("../api/pipelineApi", () => ({
-	getPipelineRunCostSummary: vi.fn(() => Promise.resolve(null)),
-	listPipelineRunAssetNodes: vi.fn(() =>
-		Promise.resolve({
-			items: [],
-			total: 0,
-			summary: {
-				assetCount: 0,
-				nodeCount: 0,
-				statuses: {},
-				costSource: "unavailable",
-			},
-		}),
-	),
-	listPipelineRunEvents: vi.fn(() =>
-		Promise.resolve({
-			items: [],
-			total: 0,
-			nextCursor: undefined,
-		}),
-	),
+	getPipelineRunCostSummary: (...args: unknown[]) =>
+		mockGetPipelineRunCostSummary(...args),
+	listPipelineRunAssetNodes: (...args: unknown[]) =>
+		mockListPipelineRunAssetNodes(...args),
+	listPipelineRunEvents: (...args: unknown[]) =>
+		mockListPipelineRunEvents(...args),
 	getPipelineRun: (...args: unknown[]) => mockGetPipelineRun(...args),
 	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
 }));
@@ -62,12 +68,34 @@ import { useWorkflowDetail } from "./useWorkflowDetail";
 
 describe("useWorkflowDetail", () => {
 	beforeEach(() => {
+		vi.useRealTimers();
 		vi.clearAllMocks();
 		MockEventSource.instances = [];
+		mockGetPipelineRunCostSummary.mockResolvedValue(null);
+		mockListPipelineRunAssetNodes.mockResolvedValue({
+			items: [],
+			total: 0,
+			summary: {
+				assetCount: 0,
+				nodeCount: 0,
+				statuses: {},
+				costSource: "unavailable",
+			},
+		});
+		mockListPipelineRunEvents.mockResolvedValue({
+			items: [],
+			total: 0,
+			nextCursor: undefined,
+		});
 		mockGetPipelineRun.mockRejectedValue(
 			new ApiError(404, "PIPELINE_RUN_NOT_FOUND", "pipeline run not found"),
 		);
 		vi.stubGlobal("EventSource", MockEventSource);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
 	it("maps 404 to not_found load error", async () => {
@@ -228,7 +256,7 @@ describe("useWorkflowDetail", () => {
 		expect(result.current.logState.followStatus).toBe("connected");
 	});
 
-	it("prefers runId in workflow lookup candidates", async () => {
+	it("prefers resolved workflow name before runId workflow lookup fallback", async () => {
 		mockGetPipelineRun.mockResolvedValue({
 			id: "run-202",
 			workflowName: "actual-workflow",
@@ -237,7 +265,7 @@ describe("useWorkflowDetail", () => {
 			createdAt: "2026-06-04T00:00:00Z",
 		});
 		mockGetWorkflow.mockImplementation((identifier: string) => {
-			if (identifier === "run-202") {
+			if (identifier === "actual-workflow") {
 				return Promise.resolve({
 					name: "actual-workflow",
 					status: "Failed",
@@ -265,7 +293,7 @@ describe("useWorkflowDetail", () => {
 		await waitFor(() => expect(result.current.loading).toBe(false));
 
 		expect(mockGetPipelineRun).toHaveBeenCalledWith("run-202");
-		expect(mockGetWorkflow).toHaveBeenCalledWith("run-202");
+		expect(mockGetWorkflow).toHaveBeenCalledWith("actual-workflow");
 	});
 
 	it("warns when ledger status and workflow status diverge", async () => {
@@ -299,5 +327,67 @@ describe("useWorkflowDetail", () => {
 				"DataBrew 记录状态为 Succeeded",
 			),
 		);
+	});
+
+	it("refreshes run ledger data during active workflow polling", async () => {
+		const intervalCallbacks: Array<() => void> = [];
+		const originalSetInterval = window.setInterval.bind(window);
+		const originalClearInterval = window.clearInterval.bind(window);
+		const setIntervalSpy = vi
+			.spyOn(window, "setInterval")
+			.mockImplementation(
+				(handler: TimerHandler, timeout?: number, ...args) => {
+					if (timeout === 8_000 && typeof handler === "function") {
+						intervalCallbacks.push(handler as () => void);
+					}
+					return originalSetInterval(handler, timeout, ...args);
+				},
+			);
+		const clearIntervalSpy = vi
+			.spyOn(window, "clearInterval")
+			.mockImplementation((handle?: number) => originalClearInterval(handle));
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-active",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [
+				{
+					id: "step-1",
+					name: "wf-active.step-1",
+					displayName: "step-1",
+					phase: "Running",
+				},
+			],
+		});
+		mockGetPipelineRun.mockResolvedValue({
+			id: "run-active",
+			workflowName: "wf-active",
+			pipelineName: "wf-active",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+		});
+
+		const { unmount } = renderHook(() =>
+			useWorkflowDetail("wf-active", "run-active"),
+		);
+
+		await waitFor(() =>
+			expect(mockListPipelineRunAssetNodes).toHaveBeenCalledTimes(1),
+		);
+		expect(intervalCallbacks).toHaveLength(1);
+
+		await act(async () => {
+			intervalCallbacks[0]?.();
+		});
+
+		await waitFor(() =>
+			expect(mockListPipelineRunAssetNodes).toHaveBeenCalledTimes(2),
+		);
+		expect(mockListPipelineRunEvents).toHaveBeenCalledTimes(2);
+		expect(mockGetPipelineRunCostSummary).toHaveBeenCalledTimes(2);
+
+		unmount();
+		setIntervalSpy.mockRestore();
+		clearIntervalSpy.mockRestore();
 	});
 });

@@ -888,6 +888,65 @@ function isTerminalCostStatus(status?: string) {
 	return COST_TERMINAL_STATUSES.has(normalizeStatus(status));
 }
 
+function workflowNodeLookupKeys(node: WorkflowNodeStatus): string[] {
+	return [
+		node.id,
+		node.name,
+		node.displayName,
+		node.templateName,
+		node.name?.split(".").pop(),
+	]
+		.map((value) => value?.trim())
+		.filter((value): value is string => !!value);
+}
+
+function buildWorkflowNodeLookup(nodes: WorkflowNodeStatus[]) {
+	const lookup = new Map<string, WorkflowNodeStatus>();
+	for (const node of nodes) {
+		for (const key of workflowNodeLookupKeys(node)) {
+			if (!lookup.has(key)) {
+				lookup.set(key, node);
+			}
+		}
+	}
+	return lookup;
+}
+
+function findLiveWorkflowNode(
+	lookup: Map<string, WorkflowNodeStatus>,
+	row: {
+		argoNodeId?: string;
+		pipelineNodeId?: string;
+		nodeId?: string;
+		displayName?: string;
+	},
+) {
+	const candidates = [
+		row.argoNodeId,
+		row.pipelineNodeId,
+		row.nodeId,
+		row.displayName,
+	]
+		.map((value) => value?.trim())
+		.filter((value): value is string => !!value);
+	for (const candidate of candidates) {
+		const direct = lookup.get(candidate);
+		if (direct) return direct;
+		const suffix = candidate.split(".").pop();
+		if (suffix) {
+			const bySuffix = lookup.get(suffix);
+			if (bySuffix) return bySuffix;
+		}
+	}
+	return null;
+}
+
+function shouldUseLiveWorkflowStatus(rowStatus?: string, liveStatus?: string) {
+	return (
+		isWaitingForRuntimeResources(rowStatus) && isTerminalCostStatus(liveStatus)
+	);
+}
+
 function rowMissingCost(row: {
 	estimatedCostUsd?: number | null;
 	status?: string;
@@ -985,20 +1044,69 @@ function WorkflowAssetNodePanel({
 	assetNodeState,
 	costSummaryState,
 	workflowNodeCount,
+	workflowNodes,
 	onSelectAssetNode,
 }: {
 	assetNodeState: ReturnType<typeof useWorkflowDetail>["assetNodeState"];
 	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"];
 	workflowNodeCount: number;
+	workflowNodes: WorkflowNodeStatus[];
 	onSelectAssetNode: (
 		row: PipelineRunAssetNode,
 		action: WorkflowDagNodeAction,
 	) => void;
 }) {
+	const liveWorkflowNodeByKey = useMemo(
+		() => buildWorkflowNodeLookup(workflowNodes),
+		[workflowNodes],
+	);
+	const displayAssetNodeItems = useMemo(
+		() =>
+			assetNodeState.items.map((row) => {
+				const liveNode = findLiveWorkflowNode(liveWorkflowNodeByKey, row);
+				if (
+					!liveNode ||
+					!shouldUseLiveWorkflowStatus(row.status, liveNode.phase)
+				) {
+					return row;
+				}
+				return {
+					...row,
+					status: liveNode.phase,
+					message: liveNode.message ?? row.message,
+					podName: liveNode.podName ?? row.podName,
+					startedAt: liveNode.startedAt ?? row.startedAt,
+					finishedAt: liveNode.finishedAt ?? row.finishedAt,
+					estimatedCostUsd: liveNode.estimatedCostUsd ?? row.estimatedCostUsd,
+				};
+			}),
+		[assetNodeState.items, liveWorkflowNodeByKey],
+	);
+	const displayCostSummaryRows = useMemo(
+		() =>
+			(costSummaryState.item?.nodeSummaries ?? []).map((row) => {
+				const liveNode = findLiveWorkflowNode(liveWorkflowNodeByKey, {
+					nodeId: row.nodeId,
+					displayName: row.displayName,
+				});
+				if (
+					!liveNode ||
+					!shouldUseLiveWorkflowStatus(row.status, liveNode.phase)
+				) {
+					return row;
+				}
+				return {
+					...row,
+					status: liveNode.phase,
+					estimatedCostUsd: liveNode.estimatedCostUsd ?? row.estimatedCostUsd,
+				};
+			}),
+		[costSummaryState.item?.nodeSummaries, liveWorkflowNodeByKey],
+	);
 	const summary = assetNodeState.summary;
 	const noAssetOnly =
-		assetNodeState.items.length > 0 &&
-		assetNodeState.items.every((row) => row.assetId === "no-asset");
+		displayAssetNodeItems.length > 0 &&
+		displayAssetNodeItems.every((row) => row.assetId === "no-asset");
 	const displayAssetCount = noAssetOnly
 		? "无资产运行"
 		: (summary?.assetCount ?? 0);
@@ -1010,11 +1118,10 @@ function WorkflowAssetNodePanel({
 	const syncedNodeCount = costSummaryState.item?.nodeSummaries?.length ?? 0;
 	const syncedAssetNodeCount =
 		costSummaryState.item?.assetNodeSummaries?.length ?? 0;
-	const assetBusinessRows = assetNodeState.items.filter(
+	const assetBusinessRows = displayAssetNodeItems.filter(
 		(row) => row.pipelineNodeId !== "dag",
 	);
-	const costSummaryRows = costSummaryState.item?.nodeSummaries ?? [];
-	const allCostRows = [...assetBusinessRows, ...costSummaryRows];
+	const allCostRows = [...assetBusinessRows, ...displayCostSummaryRows];
 	const waitingForResourceSnapshot =
 		!costSummaryState.loading &&
 		totalEstimatedCost == null &&
@@ -1031,7 +1138,7 @@ function WorkflowAssetNodePanel({
 	const hasCostRows =
 		syncedNodeCount > 0 ||
 		syncedAssetNodeCount > 0 ||
-		assetNodeState.items.length > 0;
+		displayAssetNodeItems.length > 0;
 	const costUnavailable =
 		!costSummaryState.loading &&
 		costSource === "not_available" &&
@@ -1154,9 +1261,9 @@ function WorkflowAssetNodePanel({
 				size="small"
 				rowKey="id"
 				loading={assetNodeState.loading}
-				dataSource={assetNodeState.items}
+				dataSource={displayAssetNodeItems}
 				pagination={
-					assetNodeState.items.length > 10
+					displayAssetNodeItems.length > 10
 						? { pageSize: 10, size: "small", showSizeChanger: false }
 						: false
 				}
@@ -1801,6 +1908,7 @@ export default function WorkflowDetailPage({
 						assetNodeState={assetNodeState}
 						costSummaryState={costSummaryState}
 						workflowNodeCount={displayableNodeCount}
+						workflowNodes={workflow.nodes}
 						onSelectAssetNode={handleSelectAssetNode}
 					/>
 				) : (
