@@ -1,5 +1,5 @@
 {
-  "name": "cyber-databrew",
+  "name": "cyber-databrew-dev",
   "compatibility_date": "2026-05-27",
   "main": "_worker.js",
   "assets": {
