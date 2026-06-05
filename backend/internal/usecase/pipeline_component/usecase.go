@@ -98,6 +98,14 @@ var validComponentTypes = map[string]struct{}{
 	"suspend":   {},
 }
 
+type componentToleration struct {
+	Key               string
+	Operator          string
+	Value             string
+	Effect            string
+	TolerationSeconds *int64
+}
+
 func normalizeComponent(pc *models.PipelineComponent, preserveID bool) error {
 	if pc == nil {
 		return errors.New("component is required")
@@ -177,6 +185,15 @@ func normalizeComponent(pc *models.PipelineComponent, preserveID bool) error {
 		pc.Resources["env"] = pc.Env
 		pc.EnvVars = envMapToDefs(pc.Env)
 	}
+	tolerations := normalizeTolerations(readTolerations(pc.Resources))
+	if strings.EqualFold(readResourceString(pc.Resources, "computeTier"), "gpu-l4") {
+		tolerations = ensureGPUTolerationPreset(tolerations)
+	}
+	if len(tolerations) > 0 {
+		pc.Resources["tolerations"] = tolerationsToResourceValue(tolerations)
+	} else {
+		delete(pc.Resources, "tolerations")
+	}
 	return nil
 }
 
@@ -224,6 +241,135 @@ func envMapToDefs(env map[string]string) []models.EnvVarDef {
 		out = append(out, models.EnvVarDef{Name: name, Value: value})
 	}
 	return out
+}
+
+func readTolerations(resources map[string]interface{}) []componentToleration {
+	if resources == nil {
+		return nil
+	}
+	raw, ok := resources["tolerations"]
+	if !ok || raw == nil {
+		return nil
+	}
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]componentToleration, 0, len(items))
+	for _, item := range items {
+		record, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		var seconds *int64
+		switch value := record["tolerationSeconds"].(type) {
+		case int64:
+			seconds = &value
+		case int:
+			v := int64(value)
+			seconds = &v
+		case float64:
+			v := int64(value)
+			seconds = &v
+		}
+		out = append(out, componentToleration{
+			Key:               strings.TrimSpace(readStringValue(record["key"])),
+			Operator:          strings.TrimSpace(readStringValue(record["operator"])),
+			Value:             strings.TrimSpace(readStringValue(record["value"])),
+			Effect:            strings.TrimSpace(readStringValue(record["effect"])),
+			TolerationSeconds: seconds,
+		})
+	}
+	return out
+}
+
+func normalizeTolerations(items []componentToleration) []componentToleration {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]componentToleration, 0, len(items))
+	seen := make(map[string]bool)
+	for _, item := range items {
+		key := strings.TrimSpace(item.Key)
+		operator := strings.TrimSpace(item.Operator)
+		value := strings.TrimSpace(item.Value)
+		effect := strings.TrimSpace(item.Effect)
+		if key == "" && operator == "" && value == "" && effect == "" && item.TolerationSeconds == nil {
+			continue
+		}
+		if operator == "" {
+			operator = "Equal"
+		}
+		dedupeKey := strings.Join([]string{
+			strings.ToLower(key),
+			strings.ToLower(operator),
+			strings.ToLower(value),
+			strings.ToLower(effect),
+		}, "|")
+		if seen[dedupeKey] {
+			continue
+		}
+		seen[dedupeKey] = true
+		out = append(out, componentToleration{
+			Key:               key,
+			Operator:          operator,
+			Value:             value,
+			Effect:            effect,
+			TolerationSeconds: item.TolerationSeconds,
+		})
+	}
+	return out
+}
+
+func ensureGPUTolerationPreset(items []componentToleration) []componentToleration {
+	for _, item := range items {
+		if item.Key == "nvidia.com/gpu" &&
+			strings.EqualFold(item.Operator, "Equal") &&
+			item.Value == "present" &&
+			strings.EqualFold(item.Effect, "NoSchedule") {
+			return items
+		}
+	}
+	return append(items, componentToleration{
+		Key:      "nvidia.com/gpu",
+		Operator: "Equal",
+		Value:    "present",
+		Effect:   "NoSchedule",
+	})
+}
+
+func tolerationsToResourceValue(items []componentToleration) []map[string]interface{} {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		record := map[string]interface{}{}
+		if item.Key != "" {
+			record["key"] = item.Key
+		}
+		if item.Operator != "" {
+			record["operator"] = item.Operator
+		}
+		if item.Value != "" {
+			record["value"] = item.Value
+		}
+		if item.Effect != "" {
+			record["effect"] = item.Effect
+		}
+		if item.TolerationSeconds != nil {
+			record["tolerationSeconds"] = *item.TolerationSeconds
+		}
+		out = append(out, record)
+	}
+	return out
+}
+
+func readStringValue(value interface{}) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // systemComponents are built-in components seeded at startup.

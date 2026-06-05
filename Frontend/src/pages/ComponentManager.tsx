@@ -33,6 +33,7 @@ import {
 	type PipelineComponentPayload,
 	type PipelineComponentType,
 	type PortDef,
+	type TolerationDef,
 	updateComponent,
 } from "../api/pipelineComponentApi";
 import { toAssetStyleId } from "../lib/idDisplay";
@@ -53,6 +54,13 @@ type PortRow = {
 	desc?: string;
 	default_value?: string;
 };
+type TolerationRow = {
+	key?: string;
+	operator?: string;
+	value?: string;
+	effect?: string;
+	tolerationSeconds?: string;
+};
 
 type ModalMode = "create" | "edit" | "view";
 
@@ -72,6 +80,7 @@ interface ComponentFormValues {
 	envRows?: EnvRow[];
 	inputPorts?: PortRow[];
 	outputPorts?: PortRow[];
+	tolerations?: TolerationRow[];
 }
 
 const TYPE_OPTIONS: Array<{ label: string; value: PipelineComponentType }> = [
@@ -137,6 +146,57 @@ function normalizePortRows(
 	return next.length > 0 ? next : fallback;
 }
 
+function normalizeTolerationRows(
+	rows: TolerationRow[] | undefined,
+): TolerationDef[] {
+	if (!rows || rows.length === 0) return [];
+	const next: TolerationDef[] = [];
+	for (const row of rows) {
+		const key = row.key?.trim() || "";
+		const operator = row.operator?.trim() || "";
+		const value = row.value?.trim() || "";
+		const effect = row.effect?.trim() || "";
+		const tolerationSeconds = row.tolerationSeconds?.trim() || "";
+		if (!key && !operator && !value && !effect && !tolerationSeconds) continue;
+		const parsedSeconds =
+			tolerationSeconds !== "" ? Number(tolerationSeconds) : undefined;
+		next.push({
+			...(key ? { key } : {}),
+			...(operator ? { operator } : {}),
+			...(value ? { value } : {}),
+			...(effect ? { effect } : {}),
+			...(parsedSeconds !== undefined && Number.isFinite(parsedSeconds)
+				? { tolerationSeconds: parsedSeconds }
+				: {}),
+		});
+	}
+	return next;
+}
+
+function ensureGpuPresetToleration(
+	items: TolerationDef[],
+	computeTier?: string,
+): TolerationDef[] {
+	if ((computeTier || "").trim().toLowerCase() !== "gpu-l4") return items;
+	const exists = items.some(
+		(item) =>
+			item.key === "nvidia.com/gpu" &&
+			(item.operator || "Equal") === "Equal" &&
+			item.value === "present" &&
+			item.effect === "NoSchedule",
+	);
+	if (exists) return items;
+	return [
+		...items,
+		{
+			key: "nvidia.com/gpu",
+			operator: "Equal",
+			value: "present",
+			effect: "NoSchedule",
+		},
+	];
+}
+
 function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 	if (!component) {
 		return {
@@ -155,6 +215,7 @@ function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 			envRows: [],
 			inputPorts: DEFAULT_INPUT_PORTS,
 			outputPorts: DEFAULT_OUTPUT_PORTS,
+			tolerations: [],
 		};
 	}
 	const resources = component.resources || {};
@@ -178,6 +239,18 @@ function toFormValues(component?: PipelineComponentAPI): ComponentFormValues {
 		})),
 		inputPorts: normalizePortRows(component.inputPorts, DEFAULT_INPUT_PORTS),
 		outputPorts: normalizePortRows(component.outputPorts, DEFAULT_OUTPUT_PORTS),
+		tolerations: Array.isArray(resources.tolerations)
+			? (resources.tolerations as TolerationDef[]).map((item) => ({
+					key: item.key || "",
+					operator: item.operator || "",
+					value: item.value || "",
+					effect: item.effect || "",
+					tolerationSeconds:
+						item.tolerationSeconds !== undefined
+							? String(item.tolerationSeconds)
+							: "",
+				}))
+			: [],
 	};
 }
 
@@ -198,6 +271,10 @@ function toPayload(
 	)
 		.map((arg) => arg.value || arg.name)
 		.filter(Boolean);
+	const tolerations = ensureGpuPresetToleration(
+		normalizeTolerationRows(values.tolerations),
+		values.computeTier,
+	);
 
 	return {
 		name: values.name.trim(),
@@ -223,6 +300,7 @@ function toPayload(
 			...(values.computeTier?.trim()
 				? { computeTier: values.computeTier.trim() }
 				: {}),
+			...(tolerations.length > 0 ? { tolerations } : {}),
 		},
 	};
 }
@@ -325,6 +403,35 @@ function ComponentDetail({ component }: { component: PipelineComponentAPI }) {
 							计算档位: {resourceString(resources, "computeTier") || "-"}
 						</Tag>
 					</Space>
+				</Descriptions.Item>
+				<Descriptions.Item label="容忍规则">
+					{Array.isArray(resources.tolerations) &&
+					resources.tolerations.length > 0 ? (
+						<Space wrap size={4}>
+							{(resources.tolerations as TolerationDef[]).map((item) => (
+								<Tag
+									key={[
+										item.key || "*",
+										item.operator || "Equal",
+										item.value || "",
+										item.effect || "",
+										String(item.tolerationSeconds || ""),
+									].join("|")}
+								>
+									{[
+										item.key || "*",
+										item.operator || "Equal",
+										item.value || "",
+										item.effect || "",
+									]
+										.filter(Boolean)
+										.join(" / ")}
+								</Tag>
+							))}
+						</Space>
+					) : (
+						"-"
+					)}
 				</Descriptions.Item>
 			</Descriptions>
 		</Space>
@@ -1115,6 +1222,123 @@ export function ComponentManager() {
 									/>
 								</Form.Item>
 							</div>
+
+							<Form.List name="tolerations">
+								{(fields, { add, remove }) => (
+									<div
+										style={{
+											border: "1px solid #e2e8f0",
+											borderRadius: 8,
+											padding: 12,
+											background: "#fff",
+											marginBottom: 16,
+										}}
+									>
+										<div
+											style={{
+												display: "flex",
+												alignItems: "center",
+												justifyContent: "space-between",
+												marginBottom: 8,
+												gap: 12,
+											}}
+										>
+											<div>
+												<Typography.Text strong>容忍规则</Typography.Text>
+												<Typography.Text
+													type="secondary"
+													style={{
+														display: "block",
+														fontSize: 12,
+														marginTop: 2,
+													}}
+												>
+													用于允许步骤调度到带 taint 的节点，例如 GPU 节点。
+												</Typography.Text>
+											</div>
+											<Button size="small" onClick={() => add({})}>
+												添加规则
+											</Button>
+										</div>
+										{fields.map(({ key, ...field }) => (
+											<div
+												key={key}
+												style={{
+													display: "grid",
+													gridTemplateColumns:
+														"minmax(120px, 1fr) minmax(110px, 140px) minmax(120px, 1fr) minmax(120px, 140px) minmax(120px, 140px) 32px",
+													gap: 8,
+													alignItems: "center",
+													marginBottom: 8,
+												}}
+											>
+												<Form.Item
+													{...field}
+													name={[field.name, "key"]}
+													style={{ marginBottom: 0 }}
+												>
+													<Input placeholder="nvidia.com/gpu" />
+												</Form.Item>
+												<Form.Item
+													{...field}
+													name={[field.name, "operator"]}
+													style={{ marginBottom: 0 }}
+												>
+													<Select
+														options={[
+															{ label: "Equal", value: "Equal" },
+															{ label: "Exists", value: "Exists" },
+														]}
+														placeholder="操作符"
+													/>
+												</Form.Item>
+												<Form.Item
+													{...field}
+													name={[field.name, "value"]}
+													style={{ marginBottom: 0 }}
+												>
+													<Input placeholder="present" />
+												</Form.Item>
+												<Form.Item
+													{...field}
+													name={[field.name, "effect"]}
+													style={{ marginBottom: 0 }}
+												>
+													<Select
+														options={[
+															{ label: "NoSchedule", value: "NoSchedule" },
+															{
+																label: "PreferNoSchedule",
+																value: "PreferNoSchedule",
+															},
+															{ label: "NoExecute", value: "NoExecute" },
+														]}
+														placeholder="Effect"
+													/>
+												</Form.Item>
+												<Form.Item
+													{...field}
+													name={[field.name, "tolerationSeconds"]}
+													style={{ marginBottom: 0 }}
+												>
+													<Input placeholder="秒数，可选" />
+												</Form.Item>
+												<Button
+													type="text"
+													danger
+													icon={<DeleteOutlined />}
+													aria-label="移除容忍规则"
+													onClick={() => remove(field.name)}
+												/>
+											</div>
+										))}
+										<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+											gpu-l4 计算档位会自动补一条 GPU 容忍规则；环境级
+											toleration 不在这里写死。
+										</Typography.Text>
+									</div>
+								)}
+							</Form.List>
 
 							<div
 								style={{

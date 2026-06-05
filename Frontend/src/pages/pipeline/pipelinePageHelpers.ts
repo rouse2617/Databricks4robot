@@ -8,6 +8,7 @@ import type {
 	PipelineNodeData,
 	Port,
 	RegisteredComponent,
+	Toleration,
 } from "../../components/pipeline/types";
 import { formatComponentImage as formatImage } from "../../lib/pipelineComponentDisplay";
 import { normalizeComponentArgs } from "../../lib/pipelineContract";
@@ -96,6 +97,48 @@ function normalizePorts(ports: Port[] | undefined, fallback: Port[]): Port[] {
 
 export function uniqSorted(values: string[]): string[] {
 	return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function normalizeTolerations(items: unknown): Toleration[] {
+	if (!Array.isArray(items)) return [];
+	return items
+		.map((item) => {
+			if (!item || typeof item !== "object") return null;
+			const record = item as Record<string, unknown>;
+			const key = typeof record.key === "string" ? record.key.trim() : "";
+			const operator =
+				typeof record.operator === "string" ? record.operator.trim() : "";
+			const value = typeof record.value === "string" ? record.value.trim() : "";
+			const effect =
+				typeof record.effect === "string" ? record.effect.trim() : "";
+			const rawSeconds = record.tolerationSeconds;
+			const tolerationSeconds =
+				typeof rawSeconds === "number" && Number.isFinite(rawSeconds)
+					? rawSeconds
+					: typeof rawSeconds === "string" && rawSeconds.trim() !== ""
+						? Number(rawSeconds)
+						: undefined;
+			if (
+				!key &&
+				!operator &&
+				!value &&
+				!effect &&
+				tolerationSeconds === undefined
+			) {
+				return null;
+			}
+			return {
+				...(key ? { key } : {}),
+				...(operator ? { operator } : {}),
+				...(value ? { value } : {}),
+				...(effect ? { effect } : {}),
+				...(tolerationSeconds !== undefined &&
+				Number.isFinite(tolerationSeconds)
+					? { tolerationSeconds }
+					: {}),
+			};
+		})
+		.filter((item): item is Toleration => Boolean(item));
 }
 
 export function toStringArray(value: unknown): string[] {
@@ -292,6 +335,7 @@ export function apiToRegistered(
 		disk: (resources.disk as string) ?? "",
 		gpu: (resources.gpu as string) ?? "",
 		computeTier: (resources.computeTier as string) ?? "",
+		tolerations: normalizeTolerations(resources.tolerations),
 	};
 }
 
@@ -322,6 +366,7 @@ export function createPipelineNode(
 			disk: comp.disk || "",
 			gpu: comp.gpu || "",
 			computeTier: comp.computeTier || "",
+			tolerations: comp.tolerations || [],
 			selectType: SelectType.DEFAULT,
 		},
 	};

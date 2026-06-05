@@ -5,6 +5,7 @@ import type {
 	PipelineNodeData,
 	PipelineNodeDef,
 	Port,
+	Toleration,
 } from "../components/pipeline/types";
 
 /** Coerce API/canvas args (string[] or Argument[]) into transpiler Argument objects. */
@@ -103,6 +104,49 @@ function envToMap(
 		out[item.name] = item.value;
 	}
 	return out;
+}
+
+function normalizeTolerations(value: unknown): Toleration[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item) => {
+			if (!item || typeof item !== "object") return null;
+			const record = item as Record<string, unknown>;
+			const key = typeof record.key === "string" ? record.key.trim() : "";
+			const operator =
+				typeof record.operator === "string" ? record.operator.trim() : "";
+			const itemValue =
+				typeof record.value === "string" ? record.value.trim() : "";
+			const effect =
+				typeof record.effect === "string" ? record.effect.trim() : "";
+			const rawSeconds = record.tolerationSeconds;
+			const tolerationSeconds =
+				typeof rawSeconds === "number" && Number.isFinite(rawSeconds)
+					? rawSeconds
+					: typeof rawSeconds === "string" && rawSeconds.trim() !== ""
+						? Number(rawSeconds)
+						: undefined;
+			if (
+				!key &&
+				!operator &&
+				!itemValue &&
+				!effect &&
+				tolerationSeconds === undefined
+			) {
+				return null;
+			}
+			return {
+				...(key ? { key } : {}),
+				...(operator ? { operator } : {}),
+				...(itemValue ? { value: itemValue } : {}),
+				...(effect ? { effect } : {}),
+				...(tolerationSeconds !== undefined &&
+				Number.isFinite(tolerationSeconds)
+					? { tolerationSeconds }
+					: {}),
+			};
+		})
+		.filter((item): item is Toleration => Boolean(item));
 }
 
 const DEFAULT_INPUT_PORT = "input";
@@ -214,9 +258,15 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 							env: d.env ? envToMap(d.env) : undefined,
 						}
 					: undefined,
+			...(d.tolerations && d.tolerations.length > 0
+				? { tolerations: normalizeTolerations(d.tolerations) }
+				: {}),
 		},
 		inputs: normalizePorts(d.inputPorts, defaultInputs),
 		outputs: normalizePorts(d.outputPorts, defaultOutputs),
+		...(d.tolerations && d.tolerations.length > 0
+			? { tolerations: normalizeTolerations(d.tolerations) }
+			: {}),
 	};
 }
 
@@ -249,6 +299,9 @@ export function fromTranspilerPipeline(pipeline: Pipeline): {
 			disk: pn.component.resources?.disk || "",
 			gpu: pn.component.resources?.gpu || "",
 			computeTier: pn.component.resources?.computeTier || "",
+			tolerations: normalizeTolerations(
+				pn.tolerations || pn.component.tolerations,
+			),
 			inputPorts: normalizePorts(pn.inputs, defaultInputs),
 			outputPorts: normalizePorts(pn.outputs, defaultOutputs),
 		},

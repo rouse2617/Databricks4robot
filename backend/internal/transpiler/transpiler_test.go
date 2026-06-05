@@ -281,6 +281,73 @@ func TestTranspileRejectsBareMemoryAndDiskQuantities(t *testing.T) {
 	}
 }
 
+func TestTranspileEmitsNodeTolerations(t *testing.T) {
+	p := &Pipeline{
+		Name: "gpu-pipeline",
+		Nodes: []Node{{
+			ID: "gpu-step",
+			Component: Component{
+				Name:    "gpu",
+				Image:   "nvidia/cuda:12.4.1-base-ubuntu22.04",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "nvidia-smi"}},
+			},
+			Tolerations: []Toleration{{
+				Key:      "nvidia.com/gpu",
+				Operator: "Equal",
+				Value:    "present",
+				Effect:   "NoSchedule",
+			}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "gpu-pipeline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := findTemplate(t, wf, "step-gpu-step")
+	if len(tmpl.Tolerations) != 1 {
+		t.Fatalf("tolerations len = %d, want 1", len(tmpl.Tolerations))
+	}
+	got := tmpl.Tolerations[0]
+	if got.Key != "nvidia.com/gpu" || got.Operator != corev1.TolerationOpEqual || got.Value != "present" || got.Effect != corev1.TaintEffectNoSchedule {
+		t.Fatalf("unexpected toleration: %+v", got)
+	}
+}
+
+func TestTranspileFallsBackToComponentTolerations(t *testing.T) {
+	p := &Pipeline{
+		Name: "gpu-pipeline",
+		Nodes: []Node{{
+			ID: "gpu-step",
+			Component: Component{
+				Name:    "gpu",
+				Image:   "nvidia/cuda:12.4.1-base-ubuntu22.04",
+				Command: []string{"sh", "-c"},
+				Args:    []Argument{{Name: "script", Value: "nvidia-smi"}},
+				Tolerations: []Toleration{{
+					Key:      "nvidia.com/gpu",
+					Operator: "Equal",
+					Value:    "present",
+					Effect:   "NoSchedule",
+				}},
+			},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "gpu-pipeline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := findTemplate(t, wf, "step-gpu-step")
+	if len(tmpl.Tolerations) != 1 {
+		t.Fatalf("tolerations len = %d, want 1", len(tmpl.Tolerations))
+	}
+	if tmpl.Tolerations[0].Key != "nvidia.com/gpu" {
+		t.Fatalf("unexpected toleration: %+v", tmpl.Tolerations[0])
+	}
+}
+
 func TestTranspileAcceptsConsumedOutputWithoutFileWrite(t *testing.T) {
 	p := &Pipeline{
 		Name: "missing-output",

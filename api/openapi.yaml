@@ -2226,6 +2226,10 @@ components:
         env:
           type: object
           additionalProperties: { type: string }
+        tolerations:
+          type: array
+          description: Default node tolerations persisted with the component. gpu-l4 presets inject the GPU toleration automatically.
+          items: { $ref: '#/components/schemas/TolerationDef' }
       additionalProperties: true
     PortDef:
       type: object
@@ -2239,6 +2243,26 @@ components:
       properties:
         name: { type: string }
         value: { type: string }
+    TolerationDef:
+      type: object
+      description: Kubernetes toleration expressed in DataBrew-owned API shape.
+      properties:
+        key: { type: string, description: Taint key to tolerate }
+        operator:
+          type: string
+          description: Toleration operator.
+          enum: [Equal, Exists]
+        value:
+          type: string
+          description: Taint value when operator is Equal.
+        effect:
+          type: string
+          description: Taint effect to tolerate.
+          enum: [NoSchedule, PreferNoSchedule, NoExecute]
+        tolerationSeconds:
+          type: integer
+          format: int64
+          description: Optional grace period used with NoExecute tolerations.
     WorkflowSummary:
       type: object
       properties:

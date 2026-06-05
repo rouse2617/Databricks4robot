@@ -3,7 +3,7 @@ import type { Node } from "@ant-design/pro-flow";
 import { Button, Form, Input, Modal, Select } from "antd";
 import { useEffect } from "react";
 import { resourceQuantityRule } from "../../lib/pipelineResourceValidation";
-import type { Argument, PipelineNodeData } from "./types";
+import type { Argument, PipelineNodeData, Toleration } from "./types";
 
 interface NodeConfigPanelProps {
 	open: boolean;
@@ -13,6 +13,13 @@ interface NodeConfigPanelProps {
 }
 
 type EnvFormItem = { name?: string; value?: string };
+type TolerationFormItem = {
+	key?: string;
+	operator?: string;
+	value?: string;
+	effect?: string;
+	tolerationSeconds?: string;
+};
 
 type FormValues = {
 	label: string;
@@ -23,6 +30,7 @@ type FormValues = {
 	cpu: string;
 	memory: string;
 	disk: string;
+	tolerations?: TolerationFormItem[];
 };
 
 function normalizeArgs(args: Argument[] | undefined): string[] {
@@ -50,6 +58,48 @@ function formPairsToEnv(items: EnvFormItem[]): Argument[] {
 		}));
 }
 
+function tolerationsToForm(
+	items: Toleration[] | undefined,
+): TolerationFormItem[] {
+	if (!items || items.length === 0) return [];
+	return items.map((item) => ({
+		key: item.key || "",
+		operator: item.operator || "",
+		value: item.value || "",
+		effect: item.effect || "",
+		tolerationSeconds:
+			item.tolerationSeconds !== undefined
+				? String(item.tolerationSeconds)
+				: "",
+	}));
+}
+
+function formToTolerations(
+	items: TolerationFormItem[] | undefined,
+): Toleration[] {
+	if (!items || items.length === 0) return [];
+	return items
+		.map((item) => {
+			const key = item.key?.trim() || "";
+			const operator = item.operator?.trim() || "";
+			const value = item.value?.trim() || "";
+			const effect = item.effect?.trim() || "";
+			const rawSeconds = item.tolerationSeconds?.trim() || "";
+			if (!key && !operator && !value && !effect && !rawSeconds) return null;
+			const parsedSeconds = rawSeconds !== "" ? Number(rawSeconds) : undefined;
+			return {
+				...(key ? { key } : {}),
+				...(operator ? { operator } : {}),
+				...(value ? { value } : {}),
+				...(effect ? { effect } : {}),
+				...(parsedSeconds !== undefined && Number.isFinite(parsedSeconds)
+					? { tolerationSeconds: parsedSeconds }
+					: {}),
+			};
+		})
+		.filter((item): item is Toleration => Boolean(item));
+}
+
 export function NodeConfigPanel({
 	open,
 	node,
@@ -72,6 +122,7 @@ export function NodeConfigPanel({
 			cpu: node.data.cpu || "",
 			memory: node.data.memory || "",
 			disk: node.data.disk || "",
+			tolerations: tolerationsToForm(node.data.tolerations),
 		});
 	}, [form, node.data, open]);
 
@@ -89,6 +140,7 @@ export function NodeConfigPanel({
 			cpu: values.cpu || "",
 			memory: values.memory || "",
 			disk: values.disk || "",
+			tolerations: formToTolerations(values.tolerations),
 		};
 
 		onSave(node.id, nextData);
@@ -198,6 +250,80 @@ export function NodeConfigPanel({
 									onClick={() => add()}
 								>
 									新增环境变量
+								</Button>
+							</div>
+						)}
+					</Form.List>
+				</Form.Item>
+				<Form.Item label="容忍规则">
+					<Form.List name="tolerations">
+						{(fields, { add, remove }) => (
+							<div style={{ display: "grid", gap: 8 }}>
+								{fields.map((field) => (
+									<div
+										key={field.key}
+										style={{
+											display: "grid",
+											gridTemplateColumns:
+												"minmax(120px, 1fr) minmax(110px, 140px) minmax(120px, 1fr) minmax(120px, 140px) minmax(120px, 140px) auto",
+											gap: 8,
+										}}
+									>
+										<Form.Item {...field} name={[field.name, "key"]} noStyle>
+											<Input placeholder="nvidia.com/gpu" />
+										</Form.Item>
+										<Form.Item
+											{...field}
+											name={[field.name, "operator"]}
+											noStyle
+										>
+											<Select
+												options={[
+													{ label: "Equal", value: "Equal" },
+													{ label: "Exists", value: "Exists" },
+												]}
+												placeholder="操作符"
+											/>
+										</Form.Item>
+										<Form.Item {...field} name={[field.name, "value"]} noStyle>
+											<Input placeholder="present" />
+										</Form.Item>
+										<Form.Item {...field} name={[field.name, "effect"]} noStyle>
+											<Select
+												options={[
+													{ label: "NoSchedule", value: "NoSchedule" },
+													{
+														label: "PreferNoSchedule",
+														value: "PreferNoSchedule",
+													},
+													{ label: "NoExecute", value: "NoExecute" },
+												]}
+												placeholder="Effect"
+											/>
+										</Form.Item>
+										<Form.Item
+											{...field}
+											name={[field.name, "tolerationSeconds"]}
+											noStyle
+										>
+											<Input placeholder="秒数，可选" />
+										</Form.Item>
+										<Button
+											type="text"
+											icon={<MinusCircleOutlined />}
+											onClick={() => remove(field.name)}
+											danger
+										>
+											移除
+										</Button>
+									</div>
+								))}
+								<Button
+									type="dashed"
+									icon={<PlusOutlined />}
+									onClick={() => add()}
+								>
+									新增容忍规则
 								</Button>
 							</div>
 						)}

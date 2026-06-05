@@ -56,6 +56,14 @@ const components: PipelineComponentAPI[] = [
 			disk: "50Gi",
 			gpu: "1",
 			computeTier: "gpu-l4",
+			tolerations: [
+				{
+					key: "nvidia.com/gpu",
+					operator: "Equal",
+					value: "present",
+					effect: "NoSchedule",
+				},
+			],
 		},
 		inputPorts: [{ name: "summary", type: "string" }],
 		outputPorts: [{ name: "report", type: "string" }],
@@ -136,6 +144,7 @@ describe("page ComponentManager", () => {
 				expect(getResourceInput(document.body, "compute-tier").value).toBe(
 					"gpu-l4",
 				);
+				expect(screen.getByDisplayValue("nvidia.com/gpu")).toBeTruthy();
 			});
 		},
 		ANT_DESIGN_TEST_TIMEOUT_MS,
@@ -170,6 +179,13 @@ describe("page ComponentManager", () => {
 					disk: "50Gi",
 					gpu: "2",
 					computeTier: "gpu-a100",
+					tolerations: [
+						expect.objectContaining({
+							key: "nvidia.com/gpu",
+							value: "present",
+							effect: "NoSchedule",
+						}),
+					],
 				},
 			);
 		},

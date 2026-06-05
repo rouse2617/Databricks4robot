@@ -2,6 +2,7 @@ package pipeline_component
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -194,6 +195,87 @@ func TestCreateAcceptsExplicitResourceUnits(t *testing.T) {
 	}
 	if created.Resources["memory"] != "512Mi" {
 		t.Fatalf("memory = %v, want 512Mi", created.Resources["memory"])
+	}
+}
+
+func TestCreateInjectsGPUPresetTolerationForComputeTier(t *testing.T) {
+	repo := newMockComponentRepo()
+	uc := New(repo)
+
+	created, err := uc.Create(context.Background(), &models.PipelineComponent{
+		Name:  "gpu-component",
+		Type:  "container",
+		Image: "busybox",
+		Resources: map[string]interface{}{
+			"computeTier": "gpu-l4",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	raw, ok := created.Resources["tolerations"].([]map[string]interface{})
+	if !ok || len(raw) != 1 {
+		t.Fatalf("tolerations = %#v, want one preset", created.Resources["tolerations"])
+	}
+	if raw[0]["key"] != "nvidia.com/gpu" || raw[0]["value"] != "present" || raw[0]["effect"] != "NoSchedule" {
+		t.Fatalf("unexpected preset: %#v", raw[0])
+	}
+}
+
+func TestCreatePreservesExplicitTolerations(t *testing.T) {
+	repo := newMockComponentRepo()
+	uc := New(repo)
+
+	created, err := uc.Create(context.Background(), &models.PipelineComponent{
+		Name:  "gpu-component",
+		Type:  "container",
+		Image: "busybox",
+		Resources: map[string]interface{}{
+			"computeTier": "gpu-l4",
+			"tolerations": []interface{}{
+				map[string]interface{}{
+					"key":      "dedicated",
+					"operator": "Equal",
+					"value":    "video",
+					"effect":   "NoSchedule",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	raw, ok := created.Resources["tolerations"].([]map[string]interface{})
+	if !ok || len(raw) != 2 {
+		t.Fatalf("tolerations = %#v, want explicit + gpu preset", created.Resources["tolerations"])
+	}
+}
+
+func TestCreateInjectsGPUPresetFromJSONDecodedResources(t *testing.T) {
+	repo := newMockComponentRepo()
+	uc := New(repo)
+
+	var pc models.PipelineComponent
+	body := []byte(`{
+		"name":"gpu-component",
+		"type":"container",
+		"image":"busybox",
+		"resources":{
+			"computeTier":"gpu-l4",
+			"tolerations":[{"key":"dedicated","operator":"Equal","value":"video","effect":"NoSchedule"}]
+		}
+	}`)
+	if err := json.Unmarshal(body, &pc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	created, err := uc.Create(context.Background(), &pc)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	raw, ok := created.Resources["tolerations"].([]map[string]interface{})
+	if !ok || len(raw) != 2 {
+		t.Fatalf("tolerations = %#v, want explicit + gpu preset", created.Resources["tolerations"])
 	}
 }
 

@@ -313,6 +313,39 @@ func outputParamDecls(node Node, consumed map[string]bool) []wfv1.Parameter {
 	return outputParams
 }
 
+func buildTemplateTolerations(node Node) []corev1.Toleration {
+	source := node.Tolerations
+	if len(source) == 0 {
+		source = node.Component.Tolerations
+	}
+	if len(source) == 0 {
+		return nil
+	}
+	out := make([]corev1.Toleration, 0, len(source))
+	for _, item := range source {
+		t := corev1.Toleration{}
+		if item.Key != "" {
+			t.Key = item.Key
+		}
+		if item.Operator != "" {
+			t.Operator = corev1.TolerationOperator(item.Operator)
+		} else if item.Key != "" || item.Value != "" || item.Effect != "" {
+			t.Operator = corev1.TolerationOpEqual
+		}
+		if item.Value != "" {
+			t.Value = item.Value
+		}
+		if item.Effect != "" {
+			t.Effect = corev1.TaintEffect(item.Effect)
+		}
+		if item.TolerationSeconds != nil {
+			t.TolerationSeconds = item.TolerationSeconds
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 func componentWritesOutputPath(c Component, outputName string) bool {
 	path := fmt.Sprintf("/tmp/outputs/%s", outputName)
 	if strings.Contains(c.Source, path) {
@@ -452,6 +485,9 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 	if opts.ActiveDeadlineSeconds > 0 {
 		d := intstr.FromInt(int(opts.ActiveDeadlineSeconds))
 		tmpl.ActiveDeadlineSeconds = &d
+	}
+	if tolerations := buildTemplateTolerations(node); len(tolerations) > 0 {
+		tmpl.Tolerations = tolerations
 	}
 
 	return &tmpl
@@ -695,6 +731,9 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 	if opts.ActiveDeadlineSeconds > 0 {
 		d := intstr.FromInt(int(opts.ActiveDeadlineSeconds))
 		tmpl.ActiveDeadlineSeconds = &d
+	}
+	if tolerations := buildTemplateTolerations(node); len(tolerations) > 0 {
+		tmpl.Tolerations = tolerations
 	}
 
 	return &tmpl

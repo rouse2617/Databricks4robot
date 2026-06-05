@@ -12,6 +12,14 @@ export interface EnvVarDef {
 	value?: string;
 }
 
+export interface TolerationDef {
+	key?: string;
+	operator?: string;
+	value?: string;
+	effect?: string;
+	tolerationSeconds?: number;
+}
+
 export interface PipelineComponentResources {
 	cpu?: string;
 	memory?: string;
@@ -22,6 +30,7 @@ export interface PipelineComponentResources {
 	command?: string[];
 	args?: string[];
 	env?: Record<string, string> | EnvVarDef[];
+	tolerations?: TolerationDef[];
 	[key: string]: unknown;
 }
 

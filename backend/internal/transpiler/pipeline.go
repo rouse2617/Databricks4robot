@@ -17,6 +17,7 @@ type Node struct {
 	Component    Component     `json:"component" yaml:"component"`
 	Inputs       []Port        `json:"inputs,omitempty" yaml:"inputs,omitempty"`
 	Outputs      []Port        `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	Tolerations  []Toleration  `json:"tolerations,omitempty" yaml:"tolerations,omitempty"`
 	SubNodes     []Node        `json:"sub_nodes,omitempty" yaml:"sub_nodes,omitempty"`
 	SubEdges     []Edge        `json:"sub_edges,omitempty" yaml:"sub_edges,omitempty"`
 	VolumeMounts []VolumeMount `json:"volume_mounts,omitempty" yaml:"volume_mounts,omitempty"`
@@ -33,10 +34,11 @@ type Component struct {
 	// "container" emits an Argo container template (suitable for any image).
 	// "script" emits an Argo script template: Source is injected as inline script,
 	// and Command is treated as the interpreter (default: ["sh"]).
-	Mode      string                `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Source    string                `json:"source,omitempty" yaml:"source,omitempty"` // inline script body (script mode only)
-	Env       []EnvVar              `json:"env,omitempty" yaml:"env,omitempty"`
-	Resources *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Mode        string                `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Source      string                `json:"source,omitempty" yaml:"source,omitempty"` // inline script body (script mode only)
+	Env         []EnvVar              `json:"env,omitempty" yaml:"env,omitempty"`
+	Resources   *ResourceRequirements `json:"resources,omitempty" yaml:"resources,omitempty"`
+	Tolerations []Toleration          `json:"tolerations,omitempty" yaml:"tolerations,omitempty"`
 }
 
 // ResourceRequirements defines compute resources for a component.
@@ -46,6 +48,15 @@ type ResourceRequirements struct {
 	Disk        string `json:"disk,omitempty" yaml:"disk,omitempty"`               // ephemeral storage, e.g. "1Gi"
 	GPU         string `json:"gpu,omitempty" yaml:"gpu,omitempty"`                 // Kubernetes nvidia.com/gpu quantity, e.g. "1"
 	ComputeTier string `json:"computeTier,omitempty" yaml:"computeTier,omitempty"` // DataBrew scheduling/cost metadata
+}
+
+// Toleration describes a Kubernetes toleration in a DataBrew-owned API shape.
+type Toleration struct {
+	Key               string `json:"key,omitempty" yaml:"key,omitempty"`
+	Operator          string `json:"operator,omitempty" yaml:"operator,omitempty"`
+	Value             string `json:"value,omitempty" yaml:"value,omitempty"`
+	Effect            string `json:"effect,omitempty" yaml:"effect,omitempty"`
+	TolerationSeconds *int64 `json:"tolerationSeconds,omitempty" yaml:"tolerationSeconds,omitempty"`
 }
 
 // Param is a key-value pair for workflow-level parameters.

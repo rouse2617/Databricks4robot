@@ -16,6 +16,7 @@ export interface PipelineNodeDef {
 	component: Component;
 	inputs?: Port[];
 	outputs?: Port[];
+	tolerations?: Toleration[];
 }
 
 export interface Component {
@@ -27,6 +28,7 @@ export interface Component {
 	args?: Argument[];
 	env?: Record<string, string>;
 	resources?: ResourceRequirements;
+	tolerations?: Toleration[];
 }
 
 export interface Argument {
@@ -58,6 +60,14 @@ export interface ResourceRequirements {
 	env?: Record<string, string>;
 }
 
+export interface Toleration {
+	key?: string;
+	operator?: string;
+	value?: string;
+	effect?: string;
+	tolerationSeconds?: number;
+}
+
 export interface RegisteredComponent {
 	id: string;
 	name: string;
@@ -75,6 +85,7 @@ export interface RegisteredComponent {
 	disk: string;
 	gpu?: string;
 	computeTier?: string;
+	tolerations?: Toleration[];
 }
 
 export interface PipelineNodeData {
@@ -92,5 +103,6 @@ export interface PipelineNodeData {
 	disk: string;
 	gpu?: string;
 	computeTier?: string;
+	tolerations?: Toleration[];
 	[key: string]: unknown;
 }

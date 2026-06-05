@@ -122,7 +122,7 @@ func TestCreateComponent_Success(t *testing.T) {
 	h := New(usecase)
 	r := setupRouter(h)
 
-	body := `{"name":"my-component","type":"container","description":"my desc","image":"docker.io/test/my-component","tag":"v1","command":["python"],"args":["main.py"],"env":{"MODE":"test"}}`
+	body := `{"name":"my-component","type":"container","description":"my desc","image":"docker.io/test/my-component","tag":"v1","command":["python"],"args":["main.py"],"env":{"MODE":"test"},"resources":{"computeTier":"gpu-l4","tolerations":[{"key":"dedicated","operator":"Equal","value":"video","effect":"NoSchedule"}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-components", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -146,6 +146,9 @@ func TestCreateComponent_Success(t *testing.T) {
 	}
 	if len(resp.Command) != 1 || resp.Command[0] != "python" {
 		t.Fatalf("expected command to round trip, got %#v", resp.Command)
+	}
+	if tolerations, ok := resp.Resources["tolerations"].([]interface{}); !ok || len(tolerations) != 2 {
+		t.Fatalf("expected tolerations to round trip, got %#v", resp.Resources["tolerations"])
 	}
 }
 

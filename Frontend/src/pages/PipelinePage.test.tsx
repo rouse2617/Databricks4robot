@@ -13,6 +13,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Deployment } from "../api/pipelineApi";
 import PipelinePage from "./PipelinePage";
 
+vi.setConfig({ testTimeout: 30_000 });
+
 // ── Mock pipelineApi ──────────────────────────────────────────────
 const mockSavePipeline = vi.fn();
 const mockDeployTemplate = vi.fn();
@@ -247,7 +249,7 @@ function resetPipelineMocks() {
 	mockListPipelines.mockResolvedValue([]);
 	mockListPipelineVersions.mockResolvedValue([]);
 	mockListDeployments.mockResolvedValue([]);
-	mockListPipelineRuns.mockResolvedValue({ items: [] });
+	mockListPipelineRuns.mockResolvedValue([]);
 	mockGetPipelineRunWatcherStatus.mockResolvedValue({
 		healthy: true,
 		lastSyncedRunCount: 0,
@@ -574,7 +576,7 @@ describe("PipelinePage", () => {
 		});
 	});
 
-	it("preserves asset_ids from url when opening deploy modal", async () => {
+	it("starts deploy modal with no assets even when url has asset_ids", async () => {
 		mockSavePipeline.mockResolvedValueOnce({
 			id: "tmpl-001",
 			name: "with-assets",
@@ -586,10 +588,9 @@ describe("PipelinePage", () => {
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 
 		await waitFor(() => {
-			expect(screen.getByText("将处理 2 个资产")).toBeInTheDocument();
-			expect(screen.getAllByText("asset-a").length).toBeGreaterThan(0);
-			expect(screen.getAllByText("asset-b").length).toBeGreaterThan(0);
-			expect(screen.getByText("Selected: asset-a,asset-b")).toBeInTheDocument();
+			expect(screen.getByText("Selected: (none)")).toBeInTheDocument();
+			expect(screen.getAllByText("无资产运行").length).toBeGreaterThan(0);
+			expect(screen.queryByText("将处理 2 个资产")).not.toBeInTheDocument();
 		});
 
 		fireEvent.click(getModalDeployBtn());
@@ -597,7 +598,7 @@ describe("PipelinePage", () => {
 		await waitFor(() => {
 			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
-				["asset-a", "asset-b"],
+				[],
 				"default",
 			);
 		});

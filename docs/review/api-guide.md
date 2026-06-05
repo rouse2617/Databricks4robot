@@ -2290,7 +2290,15 @@ curl -X POST "$BASE/api/v1/pipeline-components" \
       "memory": "16Gi",
       "disk": "50Gi",
       "gpu": "1",
-      "computeTier": "gpu-l4"
+      "computeTier": "gpu-l4",
+      "tolerations": [
+        {
+          "key": "nvidia.com/gpu",
+          "operator": "Equal",
+          "value": "present",
+          "effect": "NoSchedule"
+        }
+      ]
     }
   }'
 # 响应: 201 + Component 对象
@@ -2301,6 +2309,8 @@ curl -X POST "$BASE/api/v1/pipeline-components" \
 # - resources.gpu 必须是非负整数，例如 0、1、2
 # resources.gpu 会在部署时映射为 Argo/Kubernetes `limits.nvidia.com/gpu`；
 # resources.computeTier 是 DataBrew 调度、配额、成本策略使用的元数据，当前不强制选择节点池。
+# resources.tolerations 是组件默认容忍规则；gpu-l4 计算档位会自动补 GPU toleration，
+# 但不会自动注入 environment=dev 这类环境级 taint，环境相关调度策略留给 execution target。
 
 # 获取组件详情
 curl -s "$BASE/api/v1/pipeline-components/<ID>" \

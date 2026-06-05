@@ -201,6 +201,50 @@ describe("toTranspilerPipeline", () => {
 		});
 	});
 
+	it("serializes node tolerations", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "compute",
+					image: "python:3.11",
+					command: ["python", "main.py"],
+					args: [],
+					cpu: "",
+					memory: "",
+					disk: "",
+					tolerations: [
+						{
+							key: "nvidia.com/gpu",
+							operator: "Equal",
+							value: "present",
+							effect: "NoSchedule",
+						},
+					],
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].tolerations).toEqual([
+			{
+				key: "nvidia.com/gpu",
+				operator: "Equal",
+				value: "present",
+				effect: "NoSchedule",
+			},
+		]);
+		expect(result.nodes[0].component.tolerations).toEqual([
+			{
+				key: "nvidia.com/gpu",
+				operator: "Equal",
+				value: "present",
+				effect: "NoSchedule",
+			},
+		]);
+	});
+
 	it("omits resources when all are empty", () => {
 		const nodes: Node<PipelineNodeData>[] = [
 			{
@@ -333,6 +377,42 @@ describe("fromTranspilerPipeline", () => {
 		expect(nodes[0].data.disk).toBe("20Gi");
 		expect(nodes[0].data.gpu).toBe("1");
 		expect(nodes[0].data.computeTier).toBe("gpu-l4");
+	});
+
+	it("restores tolerations from pipeline JSON", () => {
+		const pipeline: Pipeline = {
+			name: "compute",
+			version: "1",
+			nodes: [
+				{
+					id: "step-1",
+					tolerations: [
+						{
+							key: "nvidia.com/gpu",
+							operator: "Equal",
+							value: "present",
+							effect: "NoSchedule",
+						},
+					],
+					component: {
+						name: "ai-model",
+						image: "python:3.11",
+						command: ["python", "train.py"],
+						args: [],
+					},
+				},
+			],
+			edges: [],
+		};
+		const { nodes } = fromTranspilerPipeline(pipeline);
+		expect(nodes[0].data.tolerations).toEqual([
+			{
+				key: "nvidia.com/gpu",
+				operator: "Equal",
+				value: "present",
+				effect: "NoSchedule",
+			},
+		]);
 	});
 
 	it("defaults empty resources to empty strings", () => {
