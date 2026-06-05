@@ -107,6 +107,13 @@ vi.mock("../components/pipeline/AssetPicker", () => ({
 			>
 				MockSelect
 			</button>
+			<button
+				type="button"
+				data-testid="clear-assets-btn"
+				onClick={() => onSelectionChange([])}
+			>
+				MockClear
+			</button>
 		</div>
 	),
 }));
@@ -148,14 +155,6 @@ function mockDeployResult(overrides: Partial<Deployment> = {}): Deployment {
 		nodeCount: 3,
 		createdAt: "2026-05-28T12:00:00Z",
 		...overrides,
-	};
-}
-
-function mockBatchDeployResult(items: Deployment[] = [mockDeployResult()]) {
-	return {
-		batchId: "batch-001",
-		items,
-		failed: [],
 	};
 }
 
@@ -279,6 +278,8 @@ function resetPipelineMocks() {
 describe("PipelinePage", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		localStorage.clear();
+		sessionStorage.clear();
 		resetPipelineMocks();
 	});
 
@@ -434,11 +435,11 @@ describe("PipelinePage", () => {
 	it("disables toolbar deploy when canvas is empty", () => {
 		renderPage();
 		expect(screen.getByRole("button", { name: /play-circle/i })).toBeDisabled();
-		expect(screen.getByText("添加组件开始设计")).toBeInTheDocument();
+		expect(screen.getByText("拖入组件开始设计")).toBeInTheDocument();
 	});
 
 	it("adds a node when a palette component is dropped on the canvas wrapper", async () => {
-		mockListComponents.mockResolvedValueOnce({
+		mockListComponents.mockResolvedValue({
 			items: [
 				{
 					id: "comp-drag",
@@ -551,7 +552,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-nodes",
 		});
-		mockBatchDeployTemplate.mockResolvedValueOnce(mockBatchDeployResult());
+		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
@@ -565,7 +566,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() => {
-			expect(mockBatchDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-001", "ast-002"],
 				"default",
@@ -578,7 +579,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-assets",
 		});
-		mockBatchDeployTemplate.mockResolvedValueOnce(mockBatchDeployResult());
+		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage("/pipeline?asset_ids=asset-a,asset-b");
 		await importOneNodePipeline("with-assets");
@@ -594,7 +595,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() => {
-			expect(mockBatchDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["asset-a", "asset-b"],
 				"default",
@@ -613,9 +614,10 @@ describe("PipelinePage", () => {
 		await importOneNodePipeline("with-assets");
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 
-		fireEvent.click(
-			screen.getAllByText("转为无资产运行").at(-1) as HTMLElement,
+		await waitFor(() =>
+			expect(screen.getByTestId("mock-asset-picker")).toBeInTheDocument(),
 		);
+		fireEvent.click(screen.getByTestId("clear-assets-btn"));
 
 		await waitFor(() => {
 			expect(screen.getAllByText("无资产运行").length).toBeGreaterThan(0);

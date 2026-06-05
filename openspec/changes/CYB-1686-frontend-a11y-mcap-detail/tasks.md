@@ -5,4 +5,4 @@
 - [x] Reuse existing MCAP metadata and related-asset presentation where practical.
 - [x] Add focused frontend tests for MCAP detail route.
 - [x] Run frontend lint, tests, and build.
-- [ ] Run Chrome DevTools MCP smoke after dev deployment.
+- [x] Run Chrome DevTools MCP smoke after dev deployment.

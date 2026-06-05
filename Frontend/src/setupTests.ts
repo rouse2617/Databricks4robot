@@ -7,6 +7,34 @@ const PSEUDO_STYLE_WARNING =
 const originalConsoleError = console.error;
 const originalGetComputedStyle = window.getComputedStyle.bind(window);
 
+class MemoryStorage implements Storage {
+	private store = new Map<string, string>();
+
+	get length() {
+		return this.store.size;
+	}
+
+	clear() {
+		this.store.clear();
+	}
+
+	getItem(key: string) {
+		return this.store.get(key) ?? null;
+	}
+
+	key(index: number) {
+		return Array.from(this.store.keys())[index] ?? null;
+	}
+
+	removeItem(key: string) {
+		this.store.delete(key);
+	}
+
+	setItem(key: string, value: string) {
+		this.store.set(key, String(value));
+	}
+}
+
 class MockResizeObserver {
 	observe() {}
 	unobserve() {}
@@ -14,6 +42,22 @@ class MockResizeObserver {
 }
 
 beforeAll(() => {
+	for (const key of ["localStorage", "sessionStorage"] as const) {
+		const storage = window[key] ?? new MemoryStorage();
+		if (window[key] == null) {
+			Object.defineProperty(window, key, {
+				configurable: true,
+				value: storage,
+			});
+		}
+		if (globalThis[key] == null) {
+			Object.defineProperty(globalThis, key, {
+				configurable: true,
+				value: storage,
+			});
+		}
+	}
+
 	Object.defineProperty(window, "getComputedStyle", {
 		configurable: true,
 		value: ((elt: Element, _pseudoElt?: string) => {
