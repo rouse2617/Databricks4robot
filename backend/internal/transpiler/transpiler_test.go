@@ -1,13 +1,13 @@
 package transpiler
 
 import (
-	"strings"
 	"testing"
 
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
 
-func TestTranspileEdgePorts(t *testing.T) {
+func TestTranspileEdgesCreateDependenciesOnly(t *testing.T) {
 	p := &Pipeline{
 		Name: "test",
 		Nodes: []Node{
@@ -17,7 +17,7 @@ func TestTranspileEdgePorts(t *testing.T) {
 					Name:    "a",
 					Image:   "busybox:latest",
 					Command: []string{"sh", "-c"},
-					Args:    []Argument{{Name: "script", Value: "echo a > /tmp/outputs/out"}},
+					Args:    []Argument{{Name: "script", Value: "echo a"}},
 				},
 				Outputs: []Port{{Name: "out", Type: "string"}},
 			},
@@ -27,7 +27,7 @@ func TestTranspileEdgePorts(t *testing.T) {
 					Name:    "b",
 					Image:   "busybox:latest",
 					Command: []string{"sh", "-c"},
-					Args:    []Argument{{Name: "script", Value: "echo {{inputs.parameters.in}}"}},
+					Args:    []Argument{{Name: "script", Value: "echo b"}},
 				},
 				Inputs: []Port{{Name: "in", Type: "string"}},
 			},
@@ -42,9 +42,67 @@ func TestTranspileEdgePorts(t *testing.T) {
 	if wf.Spec.Entrypoint != "dag" {
 		t.Fatalf("entrypoint = %q", wf.Spec.Entrypoint)
 	}
+	task := findDAGTask(t, wf, "step-b")
+	if got := task.Dependencies; len(got) != 1 || got[0] != "step-a" {
+		t.Fatalf("dependencies = %#v, want [step-a]", got)
+	}
+	if len(task.Arguments.Parameters) != 0 {
+		t.Fatalf("task arguments = %+v, want none for dependency-only edge", task.Arguments.Parameters)
+	}
+	tmpl := findTemplate(t, wf, "step-a")
+	if len(tmpl.Outputs.Parameters) != 0 {
+		t.Fatalf("upstream outputs = %+v, want none for dependency-only edge", tmpl.Outputs.Parameters)
+	}
 }
 
-func TestTranspileRejectsDuplicateTargetInputs(t *testing.T) {
+func TestTranspileMismatchedPortEdgeIsDependencyOnly(t *testing.T) {
+	p := &Pipeline{
+		Name: "mismatched-edge",
+		Nodes: []Node{
+			{
+				ID: "step-1",
+				Component: Component{
+					Name:    "cloudrun-e2e-test",
+					Image:   "alpine:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo '[E2E] OK'"}},
+				},
+				Inputs:  []Port{{Name: "input", Type: "asset"}},
+				Outputs: []Port{{Name: "output", Type: "asset"}},
+			},
+			{
+				ID: "step-2",
+				Component: Component{
+					Name:    "codex-smoke-output",
+					Image:   "alpine:3.20",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "mkdir -p /tmp/outputs && echo ok | tee /tmp/outputs/output"}},
+				},
+				Inputs:  []Port{{Name: "input", Type: "string"}},
+				Outputs: []Port{{Name: "output", Type: "string"}},
+			},
+		},
+		Edges: []Edge{{Source: "step-1.output", Target: "step-2.input"}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "mismatched-edge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := findDAGTask(t, wf, "step-step-2")
+	if got := task.Dependencies; len(got) != 1 || got[0] != "step-step-1" {
+		t.Fatalf("dependencies = %#v, want [step-step-1]", got)
+	}
+	if len(task.Arguments.Parameters) != 0 {
+		t.Fatalf("task arguments = %+v, want none for dependency-only edge", task.Arguments.Parameters)
+	}
+	upstream := findTemplate(t, wf, "step-step-1")
+	if len(upstream.Outputs.Parameters) != 0 {
+		t.Fatalf("upstream outputs = %+v, want no implicit output parameter", upstream.Outputs.Parameters)
+	}
+}
+
+func TestTranspileAllowsDuplicateTargetInputsForDependencyEdges(t *testing.T) {
 	p := &Pipeline{
 		Name: "dup-target",
 		Nodes: []Node{
@@ -85,12 +143,16 @@ func TestTranspileRejectsDuplicateTargetInputs(t *testing.T) {
 		},
 	}
 
-	_, err := Transpile(p, &Options{Name: "dup-target"})
-	if err == nil {
-		t.Fatal("expected duplicate target input error")
+	wf, err := Transpile(p, &Options{Name: "dup-target"})
+	if err != nil {
+		t.Fatalf("expected dependency-only edges to allow duplicate target handles, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "join.input") {
-		t.Fatalf("error = %q, want join.input detail", err.Error())
+	task := findDAGTask(t, wf, "step-join")
+	if got := task.Dependencies; len(got) != 2 || got[0] != "step-a" || got[1] != "step-b" {
+		t.Fatalf("dependencies = %#v, want [step-a step-b]", got)
+	}
+	if len(task.Arguments.Parameters) != 0 {
+		t.Fatalf("task arguments = %+v, want none for dependency-only edges", task.Arguments.Parameters)
 	}
 }
 
@@ -219,6 +281,55 @@ func TestTranspileAcceptsConsumedOutputWithoutFileWrite(t *testing.T) {
 	_, err := Transpile(p, &Options{Name: "missing-output"})
 	if err != nil {
 		t.Fatalf("expected pipeline to transpile without output file check, got error = %q", err.Error())
+	}
+}
+
+func TestTranspileExplicitArgumentFromCreatesDataBinding(t *testing.T) {
+	p := &Pipeline{
+		Name: "explicit-binding",
+		Nodes: []Node{
+			{
+				ID: "a",
+				Component: Component{
+					Name:    "a",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args:    []Argument{{Name: "script", Value: "echo value > /tmp/outputs/output"}},
+				},
+				Outputs: []Port{{Name: "output", Type: "string"}},
+			},
+			{
+				ID: "b",
+				Component: Component{
+					Name:    "b",
+					Image:   "busybox:latest",
+					Command: []string{"sh", "-c"},
+					Args: []Argument{
+						{Name: "input", From: "a.output"},
+					},
+				},
+			},
+		},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "explicit-binding"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := findDAGTask(t, wf, "step-b")
+	if got := task.Dependencies; len(got) != 1 || got[0] != "step-a" {
+		t.Fatalf("dependencies = %#v, want [step-a]", got)
+	}
+	if len(task.Arguments.Parameters) != 1 {
+		t.Fatalf("task arguments = %+v, want one parameter", task.Arguments.Parameters)
+	}
+	param := task.Arguments.Parameters[0]
+	if param.Name != "input" || param.Value == nil || param.Value.String() != "{{tasks.step-a.outputs.parameters.output}}" {
+		t.Fatalf("argument = %+v, want explicit output binding", param)
+	}
+	tmpl := findTemplate(t, wf, "step-a")
+	if len(tmpl.Outputs.Parameters) != 1 || tmpl.Outputs.Parameters[0].Name != "output" {
+		t.Fatalf("upstream outputs = %+v, want explicit output parameter", tmpl.Outputs.Parameters)
 	}
 }
 
@@ -537,4 +648,30 @@ func TestTranspileParallelismZero(t *testing.T) {
 	if wf.Spec.Parallelism != nil {
 		t.Fatal("expected Parallelism to be nil when not set")
 	}
+}
+
+func findTemplate(t *testing.T, wf *wfv1.Workflow, name string) wfv1.Template {
+	t.Helper()
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == name {
+			return tmpl
+		}
+	}
+	t.Fatalf("template %q not found", name)
+	return wfv1.Template{}
+}
+
+func findDAGTask(t *testing.T, wf *wfv1.Workflow, name string) wfv1.DAGTask {
+	t.Helper()
+	dag := findTemplate(t, wf, "dag")
+	if dag.DAG == nil {
+		t.Fatal("dag template has nil DAG")
+	}
+	for _, task := range dag.DAG.Tasks {
+		if task.Name == name {
+			return task
+		}
+	}
+	t.Fatalf("dag task %q not found", name)
+	return wfv1.DAGTask{}
 }

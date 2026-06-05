@@ -29,7 +29,6 @@ func ValidatePipeline(p *Pipeline) error {
 		return &ValidationError{Problems: []string{"pipeline is required"}}
 	}
 	var problems []string
-	problems = append(problems, validateDuplicateTargetInputs(p)...)
 	if len(problems) > 0 {
 		return &ValidationError{Problems: problems}
 	}

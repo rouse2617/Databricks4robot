@@ -175,10 +175,10 @@ func TestSaveTemplate(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects duplicate fan-in target input", func(t *testing.T) {
+	t.Run("allows duplicate fan-in target input as dependency edges", func(t *testing.T) {
 		uc := newUsecase(newMockAssetRepo())
 		pipe := map[string]interface{}{
-			"name": "bad-fanin",
+			"name": "dependency-fanin",
 			"nodes": []interface{}{
 				map[string]interface{}{
 					"id": "a",
@@ -223,9 +223,12 @@ func TestSaveTemplate(t *testing.T) {
 			},
 		}
 
-		_, err := uc.SaveTemplate(ctx, "bad-fanin", pipe, "dev", "legacy")
-		if !errors.Is(err, ErrInvalidArgument) {
-			t.Fatalf("expected ErrInvalidArgument, got %v", err)
+		tmpl, err := uc.SaveTemplate(ctx, "dependency-fanin", pipe, "dev", "legacy")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tmpl.NodeCount != 3 {
+			t.Fatalf("expected nodeCount 3, got %d", tmpl.NodeCount)
 		}
 	})
 

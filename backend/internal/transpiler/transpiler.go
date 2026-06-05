@@ -20,7 +20,9 @@ const DefaultTTLSecondsAfterCompletion int32 = 30 * 24 * 60 * 60
 // pipeline steps complete within minutes.
 const DefaultActiveDeadlineSeconds int64 = 7200
 
-// inputSpec describes one input parameter that comes from an upstream node's output.
+// inputSpec describes one explicit input parameter that comes from an upstream
+// node's output. Canvas edges are dependency-only by default and do not create
+// input specs.
 type inputSpec struct {
 	paramName string
 	srcNode   string
@@ -47,7 +49,7 @@ type Options struct {
 	// GlobalEnv are environment variables injected into every node container (e.g. asset paths).
 	GlobalEnv           []EnvVar
 	ExtraVolumes        []Volume // additional workflow-level volumes
-	SkipOutputArtifacts bool     // when true, edges only define order and skip /tmp/outputs artifacts
+	SkipOutputArtifacts bool     // when true, skip output parameter declarations and /tmp/outputs artifacts
 }
 
 // RetryStrategy defines automatic retry policy for each step.
@@ -208,21 +210,11 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 	return vols
 }
 
-// buildInputSpecs collects all input parameter specs from edges and arg.From references.
+// buildInputSpecs collects explicit input parameter specs from arg.From and
+// env.From references. Canvas edges only define execution order; they do not
+// imply output-to-input data binding.
 func buildInputSpecs(p *Pipeline) map[string][]inputSpec {
 	m := make(map[string][]inputSpec)
-	for _, edge := range p.Edges {
-		targetNode, targetPort := edge.ResolveTarget()
-		srcNode, srcPort := edge.ResolveSource()
-		if targetPort == "" {
-			continue
-		}
-		m[targetNode] = append(m[targetNode], inputSpec{
-			paramName: safeParamName(targetPort),
-			srcNode:   srcNode,
-			srcPort:   safeParamName(srcPort),
-		})
-	}
 	for _, node := range p.Nodes {
 		for _, arg := range node.Component.Args {
 			if arg.From == "" {
@@ -288,13 +280,13 @@ func buildOutputConsumers(p *Pipeline) map[string]map[string]bool {
 		m[nodeID][port] = true
 		m[nodeID][safeParamName(port)] = true
 	}
-	for _, edge := range p.Edges {
-		nodeID, port := edge.ResolveSource()
-		mark(nodeID, port)
-	}
 	for _, node := range p.Nodes {
 		for _, arg := range node.Component.Args {
 			refNode, refPort := splitRef(arg.From)
+			mark(refNode, refPort)
+		}
+		for _, env := range node.Component.Env {
+			refNode, refPort := splitRef(env.From)
 			mark(refNode, refPort)
 		}
 	}
@@ -451,8 +443,9 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 	return &tmpl
 }
 
-// buildDAGTemplate creates the entrypoint DAG. Parameter values are set as task
-// arguments so Argo resolves cross-task references correctly.
+// buildDAGTemplate creates the entrypoint DAG. Canvas edges become task
+// dependencies. Explicit arg.From/env.From data bindings become task arguments
+// and also contribute dependencies.
 func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]string, nodeInputs map[string][]inputSpec) *wfv1.Template {
 	var tasks []wfv1.DAGTask
 
@@ -474,6 +467,14 @@ func buildDAGTemplate(nodes []Node, edges []Edge, nodeTemplates map[string]strin
 			deps = append(deps, nodeTemplates[srcNode])
 		}
 		deps = unique(deps)
+		if inputs, ok := nodeInputs[node.ID]; ok {
+			for _, is := range inputs {
+				if tmplName, ok := nodeTemplates[is.srcNode]; ok {
+					deps = append(deps, tmplName)
+				}
+			}
+			deps = unique(deps)
+		}
 		if len(deps) > 0 {
 			task.Dependencies = deps
 		}
