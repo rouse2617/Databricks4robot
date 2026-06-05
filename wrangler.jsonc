@@ -5,5 +5,14 @@
   "assets": {
     "directory": "./site",
     "binding": "ASSETS"
+  },
+  "env": {
+    // Deploy with: wrangler deploy --env dev
+    // Produces an independent Worker service named "cyber-databrew-dev".
+    // Host-aware routing in _worker.js routes /api/* to the dev backend
+    // when served from cyber-databrew-dev.cyberorigin.ai.
+    "dev": {
+      "name": "cyber-databrew-dev"
+    }
   }
 }

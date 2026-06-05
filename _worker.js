@@ -1,10 +1,15 @@
-// Proxy /api/* requests to Cloud Run backend
+// Proxy /api/* requests to Cloud Run backend.
+// Routes to dev backend when served from a *-dev.* hostname
+// (e.g. cyber-databrew-dev.cyberorigin.ai); otherwise prod.
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/api/")) {
-      const backendHost = "cyber-databrew-backend-prod-wtttm6suaq-uc.a.run.app";
+      const isDev = url.hostname.includes("-dev.");
+      const backendHost = isDev
+        ? "cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app"
+        : "cyber-databrew-backend-prod-wtttm6suaq-uc.a.run.app";
       const targetUrl = "https://" + backendHost + url.pathname + url.search;
 
       const headers = new Headers(request.headers);
