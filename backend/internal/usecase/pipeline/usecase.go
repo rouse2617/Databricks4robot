@@ -1564,6 +1564,10 @@ func (uc *Usecase) Deploy(
 		for i, aid := range assetIDs {
 			prefix := fmt.Sprintf("ASSET_%d_", i)
 			globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "ID", Value: aid})
+			if i == 0 {
+				// CyberPipe algorithm compat: first asset is the primary video
+				globalEnv = append(globalEnv, transpiler.EnvVar{Name: "VIDEO_ID", Value: aid})
+			}
 			if uc.assetRepo != nil {
 				a, err := uc.assetRepo.Get(ctx, aid)
 				if err == nil && a != nil {
@@ -1577,14 +1581,16 @@ func (uc *Usecase) Deploy(
 			}
 		}
 	}
+	// CyberPipe algorithm compat: REQUEST_ID = pipeline workflow name
+	globalEnv = append(globalEnv, transpiler.EnvVar{Name: "REQUEST_ID", Value: wfName})
 
 	// Transpile to Argo Workflow.
 	wfOpts := &transpiler.Options{
-		Name:            wfName,
-		Namespace:       targetNamespace,
-		TTLSecondsAfter: transpiler.DefaultTTLSecondsAfterCompletion,
-		WorkflowParams:  wfParams,
-		GlobalEnv:            globalEnv,
+		Name:                wfName,
+		Namespace:           targetNamespace,
+		TTLSecondsAfter:     transpiler.DefaultTTLSecondsAfterCompletion,
+		WorkflowParams:      wfParams,
+		GlobalEnv:           globalEnv,
 		SkipOutputArtifacts: true,
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
