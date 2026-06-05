@@ -45,9 +45,9 @@ type Options struct {
 	ActiveDeadlineSeconds int64
 	WorkflowParams        []Param // workflow-level parameters (e.g. asset_ids)
 	// GlobalEnv are environment variables injected into every node container (e.g. asset paths).
-	GlobalEnv    []EnvVar
+	GlobalEnv           []EnvVar
 	ExtraVolumes        []Volume // additional workflow-level volumes
-	SkipOutputArtifacts bool     // when true, edges create dag order without /tmp/outputs artifacts
+	SkipOutputArtifacts bool     // when true, edges only define order and skip /tmp/outputs artifacts
 }
 
 // RetryStrategy defines automatic retry policy for each step.
@@ -365,7 +365,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 		tmpl.Inputs = wfv1.Inputs{Parameters: inputParams}
 	}
 
-	// Output parameters — skipped when SkipOutputArtifacts is set
+	// Output parameters (captured from file paths) — skipped when SkipOutputArtifacts is set
 	var outputParams []wfv1.Parameter
 	if !opts.SkipOutputArtifacts {
 		outputParams = outputParamDecls(node, consumedOutputs)

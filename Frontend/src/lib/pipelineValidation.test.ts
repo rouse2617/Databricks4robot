@@ -108,7 +108,7 @@ describe("pipeline validation", () => {
 		expect(result.valid).toBe(true);
 	});
 
-	it("rejects consumed output ports without matching /tmp/outputs file writes", () => {
+	it("warns when consumed output ports lack matching /tmp/outputs file writes", () => {
 		const result = validatePipelineForRun(
 			basePipeline({
 				nodes: [
@@ -132,8 +132,8 @@ describe("pipeline validation", () => {
 			}),
 		);
 
-		expect(result.valid).toBe(false);
-		expect(result.errors[0]).toContain("/tmp/outputs/output");
+		expect(result.valid).toBe(true);
+		expect(result.warnings[0]).toContain("/tmp/outputs/output");
 	});
 });
 

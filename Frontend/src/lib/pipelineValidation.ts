@@ -68,9 +68,31 @@ export function validatePipelineForRun(
 			sourceNode &&
 			!componentWritesOutputPath(sourceNode.component, source.port)
 		) {
-			errors.push(
-				`输出 ${edge.source} 被 ${edge.target} 消费，但组件脚本没有写入 /tmp/outputs/${source.port}。`,
+			warnings.push(
+				`输出 ${edge.source} 被 ${edge.target} 消费，但组件脚本没有写入 /tmp/outputs/${source.port}；运行时实际写入由容器决定，此检查为静态推测。`,
 			);
+		}
+
+		// Check port type compatibility
+		if (sourceNode && target.nodeId && target.port) {
+			const targetNode = nodesById.get(target.nodeId);
+			if (targetNode) {
+				const srcPort = (sourceNode.outputs || []).find(
+					(p) =>
+						p.name === source.port ||
+						safeParamName(p.name) === safeParamName(source.port),
+				);
+				const tgtPort = (targetNode.inputs || []).find(
+					(p) =>
+						p.name === target.port ||
+						safeParamName(p.name) === safeParamName(target.port),
+				);
+				if (srcPort && tgtPort && srcPort.type !== tgtPort.type) {
+					warnings.push(
+						`端口类型不匹配：${edge.source}(${srcPort.type}) → ${edge.target}(${tgtPort.type})`,
+					);
+				}
+			}
 		}
 	}
 

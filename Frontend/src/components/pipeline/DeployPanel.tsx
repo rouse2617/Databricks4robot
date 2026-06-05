@@ -386,18 +386,18 @@ export function DeployPanel({
 	const [bulkDeletingTemplates, setBulkDeletingTemplates] = useState(false);
 
 	const [assetModalOpen, setAssetModalOpen] = useState(false);
-const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
-const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
-const [deploying, setDeploying] = useState(false);
-const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
-const [deployVersions, setDeployVersions] = useState<PipelineTemplate[]>([]);
-const [selectedDeployVersion, setSelectedDeployVersion] = useState<
-	number | undefined
->();
-const [deployVersionActiveVersion, setDeployVersionActiveVersion] = useState<
-	number | undefined
->();
+	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
+	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
+	const [deploying, setDeploying] = useState(false);
+	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
+	const [deployVersions, setDeployVersions] = useState<PipelineTemplate[]>([]);
+	const [selectedDeployVersion, setSelectedDeployVersion] = useState<
+		number | undefined
+	>();
+	const [deployVersionActiveVersion, setDeployVersionActiveVersion] = useState<
+		number | undefined
+	>();
 	const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
 	const [versionDrawerTemplate, setVersionDrawerTemplate] =
 		useState<PipelineTemplate | null>(null);
@@ -488,10 +488,12 @@ const [deployVersionActiveVersion, setDeployVersionActiveVersion] = useState<
 		setDeployTargetId(templateId);
 		setDeployVersions(currentTemplate ? [currentTemplate] : []);
 		setDeployVersionActiveVersion(
-			currentTemplate ? (activeVersionByTemplate[currentTemplate.name] ?? currentTemplate.activeVersion) : undefined,
+			currentTemplate
+				? (activeVersionByTemplate[currentTemplate.name] ??
+						currentTemplate.activeVersion)
+				: undefined,
 		);
-		const activeVersion = activeVersionByTemplate[currentTemplate?.name ?? ""];
-		setSelectedDeployVersion(activeVersion ?? currentTemplate?.version);
+		setSelectedDeployVersion(currentTemplate?.version);
 		setSelectedAssetIds(queryAssetIds);
 		setAssetPickerResetKey((key) => key + 1);
 		const defaultTarget =
@@ -501,9 +503,8 @@ const [deployVersionActiveVersion, setDeployVersionActiveVersion] = useState<
 		listPipelineVersions(templateId)
 			.then((versions) => {
 				setDeployVersions(versions);
-				const av = activeVersionByTemplate[currentTemplate?.name ?? ""];
 				setSelectedDeployVersion(
-					av ?? currentTemplate?.version ?? versions[0]?.version,
+					currentTemplate?.version ?? versions[0]?.version,
 				);
 			})
 			.catch((err) => {

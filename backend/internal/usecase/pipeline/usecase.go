@@ -1111,8 +1111,14 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
-			run.Status = deploymentStatusExpired
-			logPipelineSideEffect("mark expired pipeline run", uc.runRepo.UpdateStatus(ctx, run.ID, deploymentStatusExpired, nil, ""))
+			run.Status = string(wfv1.WorkflowError)
+			run.Message = "Argo 工作流已被 TTL 清理"
+			now := time.Now().UTC()
+			run.FinishedAt = &now
+			logPipelineSideEffect("mark expired pipeline run (argo workflow not found)",
+				uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt, run.Message))
+		} else {
+			slog.Warn("refresh run status: get workflow failed", "run", run.ID, "workflow", run.WorkflowName, "err", err)
 		}
 		return
 	}

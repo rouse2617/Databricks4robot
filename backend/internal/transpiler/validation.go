@@ -30,11 +30,60 @@ func ValidatePipeline(p *Pipeline) error {
 	}
 	var problems []string
 	problems = append(problems, validateDuplicateTargetInputs(p)...)
-	problems = append(problems, validateConsumedOutputFiles(p)...)
 	if len(problems) > 0 {
 		return &ValidationError{Problems: problems}
 	}
 	return nil
+}
+
+func validatePortTypes(p *Pipeline) []string {
+	nodes := map[string]Node{}
+	for _, node := range p.Nodes {
+		nodes[node.ID] = node
+	}
+	var problems []string
+	for _, edge := range p.Edges {
+		sourceNode, sourcePort := edge.ResolveSource()
+		targetNode, targetPort := edge.ResolveTarget()
+		if sourceNode == "" || sourcePort == "" || targetNode == "" || targetPort == "" {
+			continue
+		}
+		srcNode, ok := nodes[sourceNode]
+		if !ok {
+			continue
+		}
+		tgtNode, ok := nodes[targetNode]
+		if !ok {
+			continue
+		}
+		var srcType, tgtType string
+		for _, port := range srcNode.Outputs {
+			if port.Name == sourcePort {
+				srcType = port.Type
+				break
+			}
+		}
+		for _, port := range tgtNode.Inputs {
+			if port.Name == targetPort {
+				tgtType = port.Type
+				break
+			}
+		}
+		if srcType != "" && tgtType != "" && srcType != tgtType {
+			problems = append(problems, fmt.Sprintf(
+				"port type mismatch: %s.%s (%s) → %s.%s (%s)",
+				sourceNode, sourcePort, srcType, targetNode, targetPort, tgtType,
+			))
+		}
+	}
+	for _, node := range p.Nodes {
+		if len(node.SubNodes) == 0 {
+			continue
+		}
+		sub := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
+		problems = append(problems, validatePortTypes(sub)...)
+	}
+	return problems
 }
 
 // NormalizePipeline mutates a pipeline into the canonical shape accepted by

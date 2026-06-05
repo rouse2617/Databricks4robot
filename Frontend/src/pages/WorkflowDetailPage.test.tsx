@@ -266,7 +266,7 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getByText("检测到失败节点")).toBeInTheDocument();
-		expect(screen.getByText(/ImagePullBackOff/)).toBeInTheDocument();
+		expect(screen.getByText(/wf-fail\.step-1/)).toBeInTheDocument();
 	});
 
 	it("shows logs action for failed asset nodes even when logRef is missing", () => {

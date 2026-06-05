@@ -430,6 +430,7 @@ export function WorkflowExecutionList({
 		record: WorkflowSummary;
 		operation: WorkflowOperationConfig;
 	} | null>(null);
+	const [openDropdownName, setOpenDropdownName] = useState<string | null>(null);
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
 	const navigate = useNavigate();
@@ -737,6 +738,12 @@ export function WorkflowExecutionList({
 			try {
 				await operation.run();
 				messageApi.success(`${operation.title}已提交`);
+				if (operation.key === "delete" || operation.key === "terminate") {
+					setItems((prev) => prev.filter((item) => item.name !== record.name));
+					setSelectedWorkflowNames((prev) =>
+						prev.filter((name) => name !== record.name),
+					);
+				}
 				await refresh();
 			} catch (err) {
 				messageApi.error(`${operation.title}失败: ${String(err)}`);
@@ -946,6 +953,7 @@ export function WorkflowExecutionList({
 				const hasOperationLoading = operationLoading?.startsWith(
 					`${record.name}:`,
 				);
+				const isDropdownOpen = openDropdownName === record.name;
 
 				return (
 					<div style={{ display: "flex", gap: 4 }}>
@@ -961,10 +969,15 @@ export function WorkflowExecutionList({
 						</Button>
 						{menuItems.length > 0 ? (
 							<Dropdown
+								open={isDropdownOpen}
+								onOpenChange={(open) => {
+									setOpenDropdownName(open ? record.name : null);
+								}}
 								menu={{
 									items: menuItems,
 									onClick: ({ key, domEvent }) => {
 										domEvent.stopPropagation();
+										setOpenDropdownName(null);
 										runOperation(record, key as WorkflowOperationKey);
 									},
 								}}

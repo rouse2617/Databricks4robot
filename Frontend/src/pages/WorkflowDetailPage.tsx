@@ -1491,32 +1491,18 @@ export default function WorkflowDetailPage({
 			}) ?? [],
 		[workflow?.nodes],
 	);
-	const failureSummaryText = useMemo(
-		() => {
-			if (failedNodes.length === 0) return "";
-			const allSameMessage = failedNodes.every(
-				(n) => n.message === failedNodes[0].message,
-			);
-			if (allSameMessage && failedNodes[0].message) {
-				const trigger = failedNodes[0].message;
-				if (/shutdown|terminate/i.test(trigger)) {
-					return `工作流终止导致的级联失败 — ${failedNodes.length} 个节点均因「${trigger}」停止`;
-				}
-				return `${failedNodes.length} 个节点一致: ${trigger}`;
-			}
-			return failedNodes
-				.slice(0, 3)
-				.map((node) => {
-					const nodeName = node.displayName || node.name || node.id;
-					return `${nodeName}${node.message ? ` - ${node.message}` : ""}`;
-				})
-				.join("；");
-		},
-		[failedNodes],
+
+	const maxFailureDisplayCount = 3;
+	const failedNodeNames = failedNodes.map(
+		(node) => node.name ?? node.template?.name ?? node.id,
 	);
-	const moreFailureCount = useMemo(
-		() => Math.max(0, failedNodes.length - 3),
-		[failedNodes.length],
+	const shownFailedNodeNames = failedNodeNames.slice(0, maxFailureDisplayCount);
+	const failureSummaryText = shownFailedNodeNames.length
+		? ` ${shownFailedNodeNames.join("、")}`
+		: "";
+	const moreFailureCount = Math.max(
+		0,
+		failedNodeNames.length - maxFailureDisplayCount,
 	);
 
 	if (loading) {
@@ -1605,16 +1591,22 @@ export default function WorkflowDetailPage({
 					const nodePhases = workflow.nodes
 						.filter((n) => n.type !== "DAG")
 						.map((n) => n.phase);
-					const allTerminal = nodePhases.length > 0 && nodePhases.every(
-						(p) => ["Failed","Error","Succeeded","Skipped","Omitted"].includes(p),
-					);
+					const allTerminal =
+						nodePhases.length > 0 &&
+						nodePhases.every((p) =>
+							["Failed", "Error", "Succeeded", "Skipped", "Omitted"].includes(
+								p,
+							),
+						);
 					const hasFailures = failedNodes.length > 0;
-					const effectiveColor = (allTerminal && hasFailures)
-						? "error"
-						: (STATUS_COLORS[workflow.status] || "default");
-					const effectiveLabel = (allTerminal && hasFailures && workflow.status === "Running")
-						? `${workflow.status}（节点已终止）`
-						: workflow.status;
+					const effectiveColor =
+						allTerminal && hasFailures
+							? "error"
+							: STATUS_COLORS[workflow.status] || "default";
+					const effectiveLabel =
+						allTerminal && hasFailures && workflow.status === "Running"
+							? `${workflow.status}（节点已终止）`
+							: workflow.status;
 					return <Tag color={effectiveColor}>{effectiveLabel}</Tag>;
 				})()}
 				{runEventState.run || runEventState.items.length > 0 ? (
@@ -1703,24 +1695,38 @@ export default function WorkflowDetailPage({
 							const nodePhases = workflow.nodes
 								.filter((n) => n.type !== "DAG")
 								.map((n) => n.phase);
-							const allTerminal = nodePhases.length > 0 && nodePhases.every(
-								(p) => ["Failed","Error","Succeeded","Skipped","Omitted"].includes(p),
-							);
-							const HIDE_WHEN_TERMINAL = new Set(["stop","suspend","terminate"]);
+							const allTerminal =
+								nodePhases.length > 0 &&
+								nodePhases.every((p) =>
+									[
+										"Failed",
+										"Error",
+										"Succeeded",
+										"Skipped",
+										"Omitted",
+									].includes(p),
+								);
+							const HIDE_WHEN_TERMINAL = new Set([
+								"stop",
+								"suspend",
+								"terminate",
+							]);
 							return availableOperations
-								.filter((op) => !(allTerminal && HIDE_WHEN_TERMINAL.has(op.key)))
+								.filter(
+									(op) => !(allTerminal && HIDE_WHEN_TERMINAL.has(op.key)),
+								)
 								.map((operation) => (
-								<Button
-									key={operation.key}
-									size="small"
-									icon={operation.icon}
-									danger={operation.danger}
-									loading={operationLoading === operation.key}
-									onClick={() => runOperation(operation)}
-								>
-									{operation.title}
-								</Button>
-							));
+									<Button
+										key={operation.key}
+										size="small"
+										icon={operation.icon}
+										danger={operation.danger}
+										loading={operationLoading === operation.key}
+										onClick={() => runOperation(operation)}
+									>
+										{operation.title}
+									</Button>
+								));
 						})()}
 					</Space>
 					<Segmented

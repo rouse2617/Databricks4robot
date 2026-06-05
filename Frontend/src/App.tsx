@@ -1,5 +1,5 @@
 import { Spin } from "antd";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import {
 	BrowserRouter,
 	Navigate,
@@ -30,6 +30,20 @@ const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
+const pathTitles: Record<string, string> = {
+	"/dashboard": "概览 - Cyber Databrew",
+	"/assets": "资产管理 - Cyber Databrew",
+	"/mcap-files": "MCAP 文件 - Cyber Databrew",
+	"/algo": "算法处理 - Cyber Databrew",
+	"/algo-runs": "运行记录 - Cyber Databrew",
+	"/deliveries": "交付管理 - Cyber Databrew",
+	"/registry": "注册中心 - Cyber Databrew",
+	"/metrics": "指标检索 - Cyber Databrew",
+	"/events": "事件流 - Cyber Databrew",
+	"/pipeline": "流水线设计 - Cyber Databrew",
+	"/settings": "设置 - Cyber Databrew",
+};
+
 function PageLoader() {
 	return (
 		<div
@@ -44,6 +58,15 @@ function PageLoader() {
 function ProtectedRoutes() {
 	const { isAuthenticated, loading } = useAuth();
 	const location = useLocation();
+
+	useEffect(() => {
+		const matchedPath = Object.keys(pathTitles).find(
+			(path) =>
+				location.pathname === path || location.pathname.startsWith(`${path}/`),
+		);
+		document.title = matchedPath ? pathTitles[matchedPath] : "Cyber Databrew";
+	}, [location.pathname]);
+
 	if (loading) return <PageLoader />;
 	if (!isAuthenticated) return <Navigate to="/login" replace />;
 	return (
@@ -61,6 +84,10 @@ function ProtectedRoutes() {
 						<Route path="/algo-runs/:run_id" element={<AlgoRunDetailPage />} />
 						<Route path="/deliveries" element={<DeliveriesPage />} />
 						<Route path="/deliveries/:id" element={<DeliveryDetailPage />} />
+						<Route
+							path="/delivery"
+							element={<Navigate to="/deliveries" replace />}
+						/>
 						<Route
 							path="/lakehouse"
 							element={<Navigate to="/dashboard" replace />}

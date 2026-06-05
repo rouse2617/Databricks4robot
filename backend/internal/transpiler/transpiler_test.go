@@ -188,7 +188,7 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 	t.Fatal("step-gpu-step template not found")
 }
 
-func TestTranspileRejectsConsumedOutputWithoutFileWrite(t *testing.T) {
+func TestTranspileAcceptsConsumedOutputWithoutFileWrite(t *testing.T) {
 	p := &Pipeline{
 		Name: "missing-output",
 		Nodes: []Node{
@@ -217,11 +217,8 @@ func TestTranspileRejectsConsumedOutputWithoutFileWrite(t *testing.T) {
 	}
 
 	_, err := Transpile(p, &Options{Name: "missing-output"})
-	if err == nil {
-		t.Fatal("expected consumed output file error")
-	}
-	if !strings.Contains(err.Error(), "/tmp/outputs/output") {
-		t.Fatalf("error = %q, want output path detail", err.Error())
+	if err != nil {
+		t.Fatalf("expected pipeline to transpile without output file check, got error = %q", err.Error())
 	}
 }
 

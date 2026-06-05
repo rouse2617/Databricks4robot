@@ -154,11 +154,7 @@ describe("AssetsResultsPane", () => {
 			<AssetsResultsPane
 				{...defaultProps}
 				items={[asset]}
-				selectedColumns={[
-					"asset_id",
-					"lifecycle_state",
-					"updated_at",
-				]}
+				selectedColumns={["asset_id", "lifecycle_state", "updated_at"]}
 			/>,
 		);
 		expect(screen.getByText("ready")).toBeTruthy();

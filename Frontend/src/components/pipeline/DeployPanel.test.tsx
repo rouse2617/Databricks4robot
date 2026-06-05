@@ -8,6 +8,7 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
+import { App } from "antd";
 import { MemoryRouter } from "react-router-dom";
 import {
 	afterEach,
@@ -18,7 +19,6 @@ import {
 	it,
 	vi,
 } from "vitest";
-import { App } from "antd";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 

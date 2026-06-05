@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { countFailedAlgos, countStatuses, parseAlgoEntries } from "./AlgoSummaryCell";
+import {
+	countFailedAlgos,
+	countStatuses,
+	parseAlgoEntries,
+} from "./AlgoSummaryCell";
 
 // ─── parseAlgoEntries ───
 

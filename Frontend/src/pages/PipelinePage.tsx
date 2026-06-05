@@ -240,7 +240,6 @@ function PipelineCanvas() {
 	const [nodes, setNodes] = useState<PipelineFlowNode[]>([]);
 	const [edges, setEdges] = useState<PipelineFlowEdge[]>([]);
 	const [pipelineName, setPipelineName] = useState("my-pipeline");
-	const pipelineNameReplaceRef = useRef(false);
 	const workflowNameReplaceRef = useRef(false);
 	const [selectedNode, setSelectedNode] = useState<PipelineFlowNode | null>(
 		null,
@@ -1010,7 +1009,14 @@ function PipelineCanvas() {
 	}, [buildPipelineJSON, assertPipelineRunnable]);
 
 	const isCanvasEmpty = nodes.length === 0;
-	const currentTemplateLabel = pipelineName || "未命名流水线";
+	const currentTemplate = templateVersions.find(
+		(item) => item.id === selectedTemplateVersionId,
+	);
+	const currentTemplateLabel = pipelineName
+		? currentTemplate?.version
+			? `${pipelineName} v${currentTemplate.version}`
+			: pipelineName
+		: "未命名流水线";
 	const deployDisabledReason = canDeploy
 		? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
 		: "请先从左侧拖入至少一个组件到画布，再保存或部署";
@@ -1039,15 +1045,7 @@ function PipelineCanvas() {
 						name="pipelineName"
 						value={pipelineName}
 						onChange={(e) => {
-							const next = pipelineNameReplaceRef.current
-								? replaceAppendedValue(pipelineName, e.target.value)
-								: e.target.value;
-							pipelineNameReplaceRef.current = false;
-							setPipelineName(next);
-						}}
-						onFocus={(e) => markReplaceOnNextEdit(e, pipelineNameReplaceRef)}
-						onBlur={() => {
-							pipelineNameReplaceRef.current = false;
+							setPipelineName(e.target.value);
 						}}
 						maxLength={48}
 						placeholder="输入流水线名称"
@@ -1194,6 +1192,31 @@ function PipelineCanvas() {
 								applyCanvasEdges(Object.values(nextEdges) as PipelineFlowEdge[])
 							}
 							contextMenuEnabled={false}
+							beforeConnect={(connection) => {
+								const sourceNode = nodes.find(
+									(n) => n.id === connection.source,
+								);
+								const targetNode = nodes.find(
+									(n) => n.id === connection.target,
+								);
+								if (!sourceNode || !targetNode) return true;
+
+								const sourcePort = sourceNode.data.outputPorts?.find(
+									(p) => p.name === connection.sourceHandle,
+								);
+								const targetPort = targetNode.data.inputPorts?.find(
+									(p) => p.name === connection.targetHandle,
+								);
+								if (!sourcePort || !targetPort) return true;
+
+								if (sourcePort.type !== targetPort.type) {
+									messageApi.warning(
+										`端口类型不匹配：${sourcePort.name}(${sourcePort.type}) → ${targetPort.name}(${targetPort.type})`,
+									);
+									return false;
+								}
+								return true;
+							}}
 							flowProps={{
 								edgeTypes: PIPELINE_EDGE_TYPES,
 								onDrop,
