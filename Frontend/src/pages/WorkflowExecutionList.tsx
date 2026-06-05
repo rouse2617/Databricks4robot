@@ -171,6 +171,52 @@ const formatTriggerSource = (value?: string) => {
 	}
 };
 
+const renderPipelineIdentity = (record: ExecutionListRow) => {
+	if (!record.templateId && !record.templateName && !record.templateVersion) {
+		return <Typography.Text type="secondary">-</Typography.Text>;
+	}
+
+	const versionLabel =
+		typeof record.templateVersion === "number"
+			? `v${record.templateVersion}`
+			: "-";
+	const rawId = record.templateId || record.templateName || "";
+	const displayId = record.templateId
+		? toAssetStyleId(record.templateId)
+		: record.templateName || "-";
+	const copyText = rawId
+		? `${rawId}:${versionLabel}`
+		: versionLabel !== "-"
+			? versionLabel
+			: "";
+
+	return (
+		<div style={{ minWidth: 0 }}>
+			<Typography.Text
+				strong
+				className="pipeline-execution-pipeline-id"
+				copyable={copyText ? { text: copyText } : false}
+				ellipsis={{
+					tooltip: rawId
+						? `流水线 ID: ${rawId}，版本: ${versionLabel}`
+						: "未关联流水线模板",
+				}}
+			>
+				{displayId} : {versionLabel}
+			</Typography.Text>
+			{record.templateName ? (
+				<Typography.Text
+					type="secondary"
+					style={{ display: "block", fontSize: 12 }}
+					ellipsis={{ tooltip: record.templateName }}
+				>
+					{record.templateName}
+				</Typography.Text>
+			) : null}
+		</div>
+	);
+};
+
 const buildExecutionRows = (
 	runs: PipelineRun[],
 	workflows: WorkflowSummary[],
@@ -611,12 +657,6 @@ export function WorkflowExecutionList({
 			render: (name: string, record: ExecutionListRow) => {
 				const displayId = toAssetStyleId(record.runId ?? name);
 				const copyId = record.runId ?? name;
-				const traceLabel = [
-					record.templateName ? `流水线 ${record.templateName}` : "",
-					record.templateVersion ? `v${record.templateVersion}` : "",
-				]
-					.filter(Boolean)
-					.join(" · ");
 				const triggerLabel = formatTriggerSource(record.triggerSource);
 				const failedSummary =
 					isFailedExecutionStatus(record.status) && record.failureSummary
@@ -637,24 +677,9 @@ export function WorkflowExecutionList({
 						>
 							ID: {displayId}
 						</Typography.Text>
-						{traceLabel ? (
-							<Typography.Text
-								type="secondary"
-								style={{ display: "block", fontSize: 12 }}
-								ellipsis={{ tooltip: traceLabel }}
-							>
-								{traceLabel}
-							</Typography.Text>
-						) : null}
 						<Space size={[6, 6]} wrap style={{ marginTop: 4 }}>
-							{record.templateVersion ? (
-								<Tag color="blue">模板 v{record.templateVersion}</Tag>
-							) : null}
-							{record.templateId ? (
-								<Tag>{`快照 ${toAssetStyleId(record.templateId)}`}</Tag>
-							) : null}
 							{triggerLabel ? <Tag color="gold">{triggerLabel}</Tag> : null}
-							{record.historyOnly ? <Tag>历史账本</Tag> : null}
+							{record.historyOnly ? <Tag>已归档</Tag> : null}
 						</Space>
 						{failedSummary ? (
 							<Typography.Text
@@ -675,6 +700,13 @@ export function WorkflowExecutionList({
 					</div>
 				);
 			},
+		},
+		{
+			title: "流水线",
+			key: "pipeline",
+			width: 240,
+			render: (_: unknown, record: ExecutionListRow) =>
+				renderPipelineIdentity(record),
 		},
 		{
 			title: "状态",
@@ -722,20 +754,20 @@ export function WorkflowExecutionList({
 			title: "创建时间",
 			dataIndex: "createdAt",
 			key: "createdAt",
-			width: 190,
+			width: 220,
 			render: renderTimestamp,
 		},
 		{
 			title: "完成时间",
 			dataIndex: "finishedAt",
 			key: "finishedAt",
-			width: 190,
+			width: 220,
 			render: renderTimestamp,
 		},
 		{
 			title: "操作",
 			key: "actions",
-			width: 110,
+			width: 96,
 			render: (_: unknown, record: ExecutionListRow) => {
 				const menuItems = record.liveAvailable
 					? getWorkflowOperationMenuItems(record)
@@ -748,7 +780,7 @@ export function WorkflowExecutionList({
 					: `/pipeline/executions/${encodeURIComponent(record.name)}`;
 
 				return (
-					<div style={{ display: "flex", gap: 4 }}>
+					<div className="pipeline-execution-actions">
 						<Button
 							type="link"
 							size="small"
@@ -778,19 +810,18 @@ export function WorkflowExecutionList({
 								size="small"
 								icon={<MoreOutlined />}
 								loading={hasOperationLoading}
+								aria-label="更多操作"
 								onClick={(event) => {
 									event.stopPropagation();
 									if (menuItems.length === 0) {
 										message.info(
 											record.historyOnly
-												? "该记录只保留 DataBrew 历史账本，暂无可用运行操作"
+												? "该记录已归档，Argo Workflow 已清理或不可用，暂无可用运行操作"
 												: "当前状态暂无可用操作",
 										);
 									}
 								}}
-							>
-								操作
-							</Button>
+							/>
 						</Dropdown>
 					</div>
 				);
@@ -818,7 +849,7 @@ export function WorkflowExecutionList({
 						selectedRowKeys.length === 0
 							? "请先选择执行记录"
 							: selectedLiveRows.length === 0
-								? "当前选中项只保留历史账本，无法直接删除 Argo 工作流"
+								? "当前选中项包含已归档记录，无法直接删除 Argo Workflow"
 								: undefined
 					}
 				>
@@ -954,10 +985,10 @@ export function WorkflowExecutionList({
 								disabled: !record.liveAvailable,
 								title: record.liveAvailable
 									? undefined
-									: "该记录只保留历史账本，当前不支持直接删除 Argo 工作流",
+									: "该记录已归档，当前不支持直接删除 Argo Workflow",
 							}),
 						}}
-						scroll={{ x: 1200 }}
+						scroll={{ x: 1480 }}
 						rowClassName={() => "pipeline-execution-table-row"}
 						onRow={(record) => ({
 							onClick: (event) => {

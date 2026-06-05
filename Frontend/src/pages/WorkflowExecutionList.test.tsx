@@ -202,10 +202,25 @@ describe("WorkflowExecutionList", () => {
 		});
 
 		expect(mockListPipelineRuns).toHaveBeenCalled();
-		expect(screen.getByText("流水线 daily-pipeline · v2")).toBeInTheDocument();
-		expect(screen.getByText("模板 v2")).toBeInTheDocument();
-		expect(screen.getByText("快照 tplv2")).toBeInTheDocument();
+		expect(screen.getAllByText("流水线").length).toBeGreaterThan(0);
+		expect(screen.getByText("tplv2 : v2")).toBeInTheDocument();
+		expect(screen.getByText("daily-pipeline")).toBeInTheDocument();
 		expect(screen.getByText("手动运行")).toBeInTheDocument();
+	});
+
+	it("does not render placeholder id and version when pipeline metadata is missing", async () => {
+		mockListPipelineRuns.mockResolvedValue([]);
+
+		renderList();
+
+		await waitFor(() => {
+			expect(screen.getByText("successful-run")).toBeInTheDocument();
+		});
+
+		expect(screen.queryByText("- : -")).not.toBeInTheDocument();
+		const row = screen.getByText("successful-run").closest("tr");
+		expect(row).not.toBeNull();
+		expect(within(row as HTMLElement).getByText("-")).toBeInTheDocument();
 	});
 
 	it("opens execution detail with durable run id when available", async () => {
@@ -253,10 +268,9 @@ describe("WorkflowExecutionList", () => {
 			expect(screen.getByText("ttl-cleaned-workflow")).toBeInTheDocument();
 		});
 		expect(screen.getByText("ID: runledge")).toBeInTheDocument();
-		expect(
-			screen.getByText("流水线 ttl-cleaned-template · v4"),
-		).toBeInTheDocument();
-		expect(screen.getByText("历史账本")).toBeInTheDocument();
+		expect(screen.getByText("tplledge : v4")).toBeInTheDocument();
+		expect(screen.getByText("ttl-cleaned-template")).toBeInTheDocument();
+		expect(screen.getByText("已归档")).toBeInTheDocument();
 		expect(screen.getByText("批量运行")).toBeInTheDocument();
 	});
 
@@ -283,7 +297,8 @@ describe("WorkflowExecutionList", () => {
 			expect(screen.getByText("ledger-workflow")).toBeInTheDocument();
 		});
 		expect(screen.queryByText("服务不可用")).not.toBeInTheDocument();
-		expect(screen.getByText("流水线 ledger-template · v1")).toBeInTheDocument();
+		expect(screen.getByText("ledger-template : v1")).toBeInTheDocument();
+		expect(screen.getByText("ledger-template")).toBeInTheDocument();
 		expect(screen.getByText("API 运行")).toBeInTheDocument();
 	});
 });

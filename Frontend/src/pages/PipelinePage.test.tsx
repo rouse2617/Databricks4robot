@@ -287,14 +287,14 @@ describe("PipelinePage", () => {
 	});
 
 	// ── Render & structure ──────────────────────────────────────────
-	it("renders the design toolbar and node config panel", () => {
+	it("renders the design toolbar without an empty config panel", () => {
 		renderPage();
 		expect(screen.getAllByText("组件").length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText("保存")).toBeInTheDocument();
-		expect(screen.getByText("节点配置")).toBeInTheDocument();
+		expect(screen.queryByText("节点配置")).not.toBeInTheDocument();
 		expect(
-			screen.getByText("已保存流水线请到「流水线」页签管理。"),
-		).toBeInTheDocument();
+			screen.queryByText("已保存流水线请到「流水线」页签管理。"),
+		).not.toBeInTheDocument();
 	});
 
 	it("shows canvas toolbar buttons by default", () => {

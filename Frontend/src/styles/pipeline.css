@@ -254,7 +254,8 @@
 	background: #fff;
 	border: 1px solid var(--color-border, #e2e8f0);
 	border-radius: 6px;
-	min-width: 140px;
+	width: 260px;
+	min-width: 260px;
 	font-size: var(--pipeline-font-base);
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 	transition:
@@ -1412,6 +1413,26 @@
 
 .pipeline-execution-table .ant-table {
 	width: 100%;
+}
+
+.pipeline-execution-table .ant-table-cell {
+	vertical-align: middle;
+}
+
+.pipeline-execution-table .ant-table-cell:nth-child(8),
+.pipeline-execution-table .ant-table-cell:nth-child(9) {
+	white-space: nowrap;
+}
+
+.pipeline-execution-pipeline-id {
+	white-space: nowrap;
+}
+
+.pipeline-execution-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	white-space: nowrap;
 }
 
 .workflow-run-context {
