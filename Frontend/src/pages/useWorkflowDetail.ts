@@ -19,6 +19,7 @@ import {
 	type WorkflowLogResponse,
 	type WorkflowNodeStatus,
 } from "../api/workflowApi";
+import { applyPipelineNodeDisplayNames } from "../lib/workflowNodeNames";
 
 export type WorkflowLogFollowStatus =
 	| "idle"
@@ -726,10 +727,18 @@ export function useWorkflowDetail(
 		[workflowLookup?.workflowName, selectedNodeId],
 	);
 
+	const displayWorkflow = useMemo(
+		() =>
+			applyPipelineNodeDisplayNames(workflow, runEventState.run?.pipelineJSON),
+		[runEventState.run?.pipelineJSON, workflow],
+	);
+
 	const selectedNode = useMemo(() => {
-		if (!workflow || !selectedNodeId) return null;
-		return workflow.nodes.find((node) => node.id === selectedNodeId) ?? null;
-	}, [workflow, selectedNodeId]);
+		if (!displayWorkflow || !selectedNodeId) return null;
+		return (
+			displayWorkflow.nodes.find((node) => node.id === selectedNodeId) ?? null
+		);
+	}, [displayWorkflow, selectedNodeId]);
 
 	const stopFollowLogs = useCallback(() => {
 		if (followSourceRef.current) {
@@ -912,7 +921,7 @@ export function useWorkflowDetail(
 	}, [runEventState.run?.status, workflow]);
 
 	return {
-		workflow,
+		workflow: displayWorkflow,
 		loading,
 		loadError,
 		statusSyncWarning,

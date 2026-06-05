@@ -24,6 +24,7 @@ export interface WorkflowNodeStatus {
 	id: string;
 	name: string;
 	displayName: string;
+	technicalDisplayName?: string;
 	type?: string;
 	templateName?: string;
 	phase: string;

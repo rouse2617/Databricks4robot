@@ -106,6 +106,15 @@ export function WorkflowDagNode({
 }: NodeProps<Node<WorkflowDagNodeData>>): React.JSX.Element {
 	const { workflowNode, selected, dimmed, progressPercent } = data;
 	const displayText = getWorkflowNodeDisplayText(workflowNode);
+	const technicalText =
+		workflowNode.technicalDisplayName ||
+		workflowNode.templateName ||
+		workflowNode.name ||
+		workflowNode.id;
+	const titleText =
+		technicalText && technicalText !== displayText
+			? `${displayText}\n技术ID: ${technicalText}`
+			: displayText;
 	const phase = workflowNode.phase;
 	const accent = PHASE_COLORS[phase] || "#64748b";
 	const phaseLabel =
@@ -151,7 +160,7 @@ export function WorkflowDagNode({
 
 			<div className="workflow-dag-node__body">
 				<div className="workflow-dag-node__header">
-					<div className="workflow-dag-node__title" title={displayText}>
+					<div className="workflow-dag-node__title" title={titleText}>
 						{displayText}
 					</div>
 					{progressPercent !== null ? (
