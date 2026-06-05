@@ -37,16 +37,28 @@ Agent 在验证完成前 **不得** `git commit` / `git push`（运行时代码�
 
 | 方式 | 适用 |
 |------|------|
-| **Cloud Run dev**（与线上一致） | 合并前必做（deploy-before-commit） |
+| **Cloudflare Worker dev**（与线上 Worker 一致） | 合并前必做（deploy-before-commit） |
 | 本地 `make frontend-dev` + 后端 | 开发中快速迭代；**不能替代** dev 部署验证 |
 
-部署前端 dev（在已 build/push 镜像后）：
+> ℹ️ **架构变更（2026-06-05）：** 前端从 Cloud Run 迁到 Cloudflare Worker，dev 域名是 `https://cyber-databrew-dev.cyberorigin.ai/`（Worker `cyber-databrew-dev`），prod 是 `https://cyber-databrew.cyberorigin.ai/`（Worker `cyber-databrew`）。详见 [`deploy-before-commit.md` → Frontend (Cloudflare Workers)](deploy-before-commit.md#frontend--cloudflare-workers)。
+
+部署前端 dev：
 
 ```bash
-USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false bash deploy/cloudrun/frontend-dev.sh
+# 1. 本地 build
+cd Frontend && npm ci && npm run build && cd ..
+mkdir -p site && cp -r Frontend/dist/* site/
+# (可选) 文档站
+cd docs-site && npm ci && npm run build && cd ..
+mkdir -p site/doc && cp -r docs-site/build/* site/doc/
+
+# 2. wrangler 部署（需先 wrangler login）
+wrangler deploy --env dev
 ```
 
-记录 PR 证据：**image tag（git SHA）**、Cloud Run **revision**、服务 URL、验证时间。格式见 [`deploy-before-commit.md`](deploy-before-commit.md#image-tags-and-revision-record)。
+或者：push 到 `dev` 分支后由 **Cloudflare Workers Builds** 自动部署（如果对应 Worker 已连 Git）。
+
+记录 PR 证据：**Worker 名 + Version ID + URL + source SHA + 验证时间**。格式见 [`deploy-before-commit.md`](deploy-before-commit.md#record-revision-required-before-asking-to-commit)。
 
 ### 1.2 验证维度（你提到的三点 + 补充）
 
@@ -275,7 +287,7 @@ curl -sfS "${API_HDR[@]}" -d '{"...": "..."}' "$BASE/api/v1/..."
 
 | 改动类型 | 部署 | 针对性验证 | 回归 |
 |----------|------|------------|------|
-| Frontend UI（diff 含 `Frontend/`） | `frontend-dev.sh` | **Chrome DevTools MCP** 走 tasks + §6 | 引用方页面 + `npm run test` |
+| Frontend UI（diff 含 `Frontend/`、`_worker.js`、`wrangler.jsonc`、`docs-site/`） | `wrangler deploy --env dev` | **Chrome DevTools MCP** 走 tasks + §6 | 引用方页面 + `npm run test` |
 | Backend API（diff 含 `backend/` 等，无 `Frontend/`） | `backend-dev.sh` | curl 新接口 | smoke-local + api-guide-smoke；**无 MCP** |
 | 全栈 | 两者 | E2E 路径 | 上两者合并 |
 
@@ -299,7 +311,7 @@ curl -sfS "${API_HDR[@]}" -d '{"...": "..."}' "$BASE/api/v1/..."
 环境变量示例：
 
 ```bash
-export FRONTEND_DEV_URL="https://<frontend-cloud-run-dev>"
+export FRONTEND_DEV_URL="https://cyber-databrew-dev.cyberorigin.ai"
 export BASE="https://<backend-cloud-run-dev>"
 export TOKEN="<DATABREW_TOKEN>"
 export IAP_TOKEN="<若 Gateway/IAP 需要>"
@@ -440,7 +452,8 @@ RUN_WRITES=1 BASE="$BASE" TOKEN="$TOKEN" bash scripts/api-guide-smoke.sh
 | 脚本 / 目标 | 用途 |
 |-------------|------|
 | [`deploy/cloudrun/backend-dev.sh`](../../deploy/cloudrun/backend-dev.sh) | 部署后端 dev |
-| [`deploy/cloudrun/frontend-dev.sh`](../../deploy/cloudrun/frontend-dev.sh) | 部署前端 dev |
+| `wrangler deploy --env dev` | 部署前端 dev（Cloudflare Worker `cyber-databrew-dev`，详见 [`deploy-before-commit.md`](deploy-before-commit.md#frontend--cloudflare-workers)） |
+| ~~`deploy/cloudrun/frontend-dev.sh`~~ | ⚠️ **DEPRECATED 2026-06-05**，前端已迁到 Cloudflare Worker |
 | [`backend/scripts/smoke_actions_api.sh`](../../backend/scripts/smoke_actions_api.sh) | 轻量 API smoke |
 | [`scripts/api-guide-smoke.sh`](../../scripts/api-guide-smoke.sh) | api-guide 对齐 curl 回归 |
 | `make api-guide-smoke-incluster` | GKE 内回归（IAP 场景） |
