@@ -52,6 +52,7 @@ import {
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
+import { getWorkflowNodeDisplayText } from "../lib/workflowNodeDisplay";
 import {
 	useWorkflowDetail,
 	type WorkflowLogFollowStatus,
@@ -1003,6 +1004,13 @@ function findLiveWorkflowNode(
 	return null;
 }
 
+function getAssetNodeTechnicalLabel(row: PipelineRunAssetNode) {
+	const candidates = [row.pipelineNodeId, row.argoNodeId, row.displayName]
+		.map((value) => value?.trim())
+		.filter((value): value is string => !!value);
+	return candidates.find((value, index) => candidates.indexOf(value) === index);
+}
+
 function shouldUseLiveWorkflowStatus(rowStatus?: string, liveStatus?: string) {
 	return (
 		isWaitingForRuntimeResources(rowStatus) && isTerminalCostStatus(liveStatus)
@@ -1126,14 +1134,22 @@ function WorkflowAssetNodePanel({
 		() =>
 			assetNodeState.items.map((row) => {
 				const liveNode = findLiveWorkflowNode(liveWorkflowNodeByKey, row);
+				const liveDisplayName =
+					liveNode && row.pipelineNodeId !== "dag"
+						? getWorkflowNodeDisplayText(liveNode)
+						: undefined;
+				const displayRow =
+					liveDisplayName && liveDisplayName !== row.displayName
+						? { ...row, displayName: liveDisplayName }
+						: row;
 				if (
 					!liveNode ||
 					!shouldUseLiveWorkflowStatus(row.status, liveNode.phase)
 				) {
-					return row;
+					return displayRow;
 				}
 				return {
-					...row,
+					...displayRow,
 					status: liveNode.phase,
 					message: liveNode.message ?? row.message,
 					podName: liveNode.podName ?? row.podName,
@@ -1346,10 +1362,17 @@ function WorkflowAssetNodePanel({
 					{
 						title: "节点",
 						dataIndex: "displayName",
-						render: (_, row) =>
-							row.pipelineNodeId === "dag"
-								? "运行汇总"
-								: row.displayName || row.pipelineNodeId,
+						render: (_, row) => {
+							if (row.pipelineNodeId === "dag") return "运行汇总";
+							const label = row.displayName || row.pipelineNodeId || "-";
+							const technicalLabel = getAssetNodeTechnicalLabel(row);
+							if (!technicalLabel || technicalLabel === label) return label;
+							return (
+								<Tooltip title={`技术 ID: ${technicalLabel}`}>
+									<span>{label}</span>
+								</Tooltip>
+							);
+						},
 					},
 					{
 						title: "状态",
@@ -1731,6 +1754,16 @@ export default function WorkflowDetailPage({
 	const displayableNodeCount = countDisplayableWorkflowNodes(workflow.nodes);
 	const graphHeight =
 		displayableNodeCount <= 1 ? 320 : displayableNodeCount <= 5 ? 420 : 500;
+	const hasDatabrewRunContext = Boolean(
+		runEventState.run ||
+			runEventState.items.length > 0 ||
+			assetNodeState.items.length > 0,
+	);
+	const databrewRunContextLoading =
+		!hasDatabrewRunContext &&
+		(runEventState.loading ||
+			assetNodeState.loading ||
+			costSummaryState.loading);
 
 	return (
 		<div
@@ -1782,8 +1815,10 @@ export default function WorkflowDetailPage({
 							: workflow.status;
 					return <Tag color={effectiveColor}>{effectiveLabel}</Tag>;
 				})()}
-				{runEventState.run || runEventState.items.length > 0 ? (
+				{hasDatabrewRunContext ? (
 					<Tag color="green">DataBrew 运行</Tag>
+				) : databrewRunContextLoading ? (
+					<Tag color="blue">同步 DataBrew 运行</Tag>
 				) : (
 					<Tag color="orange">外部 Workflow</Tag>
 				)}
@@ -1969,7 +2004,7 @@ export default function WorkflowDetailPage({
 						/>
 					)}
 				</div>
-				{runEventState.run || runEventState.items.length > 0 ? (
+				{hasDatabrewRunContext || databrewRunContextLoading ? (
 					<WorkflowAssetNodePanel
 						assetNodeState={assetNodeState}
 						costSummaryState={costSummaryState}

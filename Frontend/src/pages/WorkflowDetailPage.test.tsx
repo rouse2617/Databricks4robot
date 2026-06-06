@@ -160,6 +160,34 @@ describe("WorkflowDetailPage", () => {
 		).toBeInTheDocument();
 	});
 
+	it("keeps a syncing state before DataBrew run context finishes loading", () => {
+		mockWorkflowDetailState({
+			runEventState: {
+				run: null,
+				items: [],
+				total: 0,
+				loading: true,
+				error: null,
+			},
+			assetNodeState: {
+				items: [],
+				total: 0,
+				loading: true,
+				error: null,
+				summary: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText("同步 DataBrew 运行")).toBeInTheDocument();
+		expect(screen.queryByText("外部 Workflow")).not.toBeInTheDocument();
+		expect(screen.getByText("节点明细")).toBeInTheDocument();
+		expect(
+			screen.queryByText(/此工作流不是由 DataBrew 部署/),
+		).not.toBeInTheDocument();
+	});
+
 	it("shows waiting resource snapshot copy for pending cost rows", () => {
 		mockWorkflowDetailState({
 			workflow: {
@@ -422,6 +450,67 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getByRole("button", { name: "日志" })).toBeInTheDocument();
+	});
+
+	it("uses business node names in the asset node table", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Succeeded",
+				nodes: [
+					{
+						id: "argo-node-2",
+						name: "wf-asset.step-step-2",
+						displayName: "Count Lines",
+						technicalDisplayName: "step-step-2",
+						templateName: "step-step-2",
+						type: "Pod",
+						phase: "Succeeded",
+					},
+				],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"asset-ids": "asset-a",
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: { id: "run-1" },
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+			assetNodeState: {
+				items: [
+					{
+						id: "row-1",
+						runId: "run-1",
+						assetId: "asset-a",
+						pipelineNodeId: "step-step-2",
+						displayName: "step-step-2",
+						status: "Succeeded",
+						costSource: "not_available",
+						updatedAt: "2026-06-03T00:00:00Z",
+					},
+				],
+				total: 1,
+				loading: false,
+				error: null,
+				summary: {
+					assetCount: 1,
+					nodeCount: 1,
+					statuses: { Succeeded: 1 },
+					costSource: "not_available",
+				},
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText("Count Lines")).toBeInTheDocument();
+		expect(screen.queryByText("step-step-2")).not.toBeInTheDocument();
 	});
 
 	it("shows workflow node count and quiet missing cost copy", () => {
