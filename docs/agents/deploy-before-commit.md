@@ -64,16 +64,11 @@ Frontend is a static SPA served by a **Cloudflare Worker** (`cyber-databrew-dev`
 ```bash
 cd ~/cyber-databrew
 
-# Build the SPA into ./site/ (the Worker's static-asset directory)
-cd Frontend && npm ci && npm run build && cd ..
-mkdir -p site && cp -r Frontend/dist/* site/
+# Build the SPA with the dev marker, refresh ./site/, rebuild /doc/, and deploy
+INSTALL_DEPS=1 bash scripts/deploy-frontend-dev-worker.sh
+# → cyber-databrew-dev Worker → cyber-databrew-dev.cyberorigin.ai
 
-# Optional: also rebuild the docs sub-site under /doc/
-cd docs-site && npm ci && npm run build && cd ..
-mkdir -p site/doc && cp -r docs-site/build/* site/doc/
-
-# Deploy
-wrangler deploy --env dev     # → cyber-databrew-dev Worker → cyber-databrew-dev.cyberorigin.ai
+# Production deploy remains explicit:
 # or
 wrangler deploy               # → cyber-databrew (prod) Worker → cyber-databrew.cyberorigin.ai
 ```
@@ -89,9 +84,9 @@ Each Worker can be connected to this repo in the dashboard (Settings → Build �
 | Worker | Production branch | Build command | Deploy command |
 |--------|-------------------|---------------|----------------|
 | `cyber-databrew` (prod) | `dev` *(current)* or `main` *(recommended)* | `cd Frontend && npm ci && npm run build && mkdir -p ../site && cp -r dist/* ../site/` (+ docs-site optional) | `npx wrangler deploy` |
-| `cyber-databrew-dev` | `dev` | same as above | `npx wrangler deploy --env dev` ⚠️ |
+| `cyber-databrew-dev` | `dev` | `INSTALL_DEPS=1 DEPLOY_WORKER=0 bash scripts/deploy-frontend-dev-worker.sh` | `npx wrangler deploy --env dev` ⚠️ |
 
-⚠️ **The `--env dev` flag is mandatory** in the dev Worker's deploy command, otherwise wrangler deploys to the prod Worker (because `wrangler.jsonc` top-level `name` is `cyber-databrew`).
+⚠️ The dev Worker deploy must use the canonical script or an equivalent command that sets `VITE_APP_ENV=dev`, refreshes `site/`, and deploys with `--env dev`.
 
 Recommended Build watch paths to avoid spurious builds on backend-only changes:
 ```

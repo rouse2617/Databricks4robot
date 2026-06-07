@@ -45,15 +45,8 @@ Agent 在验证完成前 **不得** `git commit` / `git push`（运行时代码�
 部署前端 dev：
 
 ```bash
-# 1. 本地 build
-cd Frontend && npm ci && npm run build && cd ..
-mkdir -p site && cp -r Frontend/dist/* site/
-# (可选) 文档站
-cd docs-site && npm ci && npm run build && cd ..
-mkdir -p site/doc && cp -r docs-site/build/* site/doc/
-
-# 2. wrangler 部署（需先 wrangler login）
-wrangler deploy --env dev
+# 本地 build + site 刷新 + /doc 构建 + wrangler dev 部署
+INSTALL_DEPS=1 bash scripts/deploy-frontend-dev-worker.sh
 ```
 
 或者：push 到 `dev` 分支后由 **Cloudflare Workers Builds** 自动部署（如果对应 Worker 已连 Git）。
@@ -111,6 +104,15 @@ Vitest 覆盖到的组件会有单元级保护；**不能**替代跨页交互回
 | 大列表 / 表格 | 操作是否卡顿；是否多余 re-render（React Profiler） |
 | 网络 | Network 面板：重复请求、过大 payload、未取消的轮询 |
 | 构建体积 | `npm run build` 后看 chunk 大小是否异常增大 |
+
+Dev Worker 部署后还需确认环境标识与资产一致：
+
+```bash
+curl -sS https://cyber-databrew-dev.cyberorigin.ai/ | rg -o '/assets/index-[^" ]+\.js'
+curl -sS https://cyber-databrew-dev.cyberorigin.ai/assets/<index-file>.js | rg 'environment:|__APP_ENV__'
+```
+
+Chrome DevTools MCP 需在页面上确认左侧版本标识显示 `dev`，而不是 `production`。
 
 **通过标准（dev 环境参考，非硬指标）：**
 

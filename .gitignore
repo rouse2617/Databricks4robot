@@ -23,6 +23,7 @@ Frontend/node_modules/
 tools/commitlint/node_modules/
 Frontend/dist/
 Frontend/tsconfig.tsbuildinfo
+site/
 
 # Env files
 .env
