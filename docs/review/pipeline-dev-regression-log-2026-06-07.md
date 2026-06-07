@@ -857,3 +857,49 @@ Environment:
   - Console has no runtime `error` / `warn`; remaining messages are existing browser issues for deprecated feature usage and form fields missing `id` / `name`.
 - Screenshots:
   - No PNG artifacts were written to the repo.
+
+## CYB-1647 Pipeline Designer Reliability — 2026-06-07
+
+### Scope
+
+- Linear: `CYB-1647`
+- Branch: `fix/CYB-1647-designer-reliability`
+- OpenSpec: `openspec/changes/CYB-1647-designer-reliability`
+
+### UI issues addressed
+
+- Generated pipeline name replacement:
+  - Symptom: first editing the generated `pipeline-*` name could append the intended name after the generated value, producing durable names like `pipeline-...qa-name`.
+  - Fix: designer now tracks whether the name is still generated and only applies append-repair in that state. Imported, loaded, or user-edited names are treated as user-owned.
+- Component palette primary action:
+  - Symptom: component cards already supported click-add, but the UI only communicated drag/drop, which made MCP/human fallback flows unclear.
+  - Fix: palette cards are explicitly exposed as `添加组件 <name>` with a visible `添加` affordance while retaining drag/drop support.
+- Empty canvas copy:
+  - Symptom: empty-state copy only told users to drag components.
+  - Fix: copy now says users can click-add from the component palette or drag to the canvas.
+
+### Local verification before dev deploy
+
+- `cd Frontend && npm run test -- --run ComponentPalette.test.tsx PipelinePage.test.tsx` -> pass, `35` tests
+- `cd Frontend && npm run lint` -> pass
+- `cd Frontend && npm run build` -> pass; existing large chunk warnings only
+- `scripts/agent-harness/check-openspec-quality.sh openspec/changes/CYB-1647-designer-reliability` -> pass
+
+### Dev deploy and Chrome MCP verification
+
+- Frontend:
+  - Worker: `cyber-databrew-dev`
+  - Version ID: `95e6e9eb-8f5f-430c-887a-7644ffae3d98`
+  - Dev URL: `https://cyber-databrew-dev.cyberorigin.ai/`
+  - Source SHA: `f04d3d9`
+- Chrome DevTools MCP URL:
+  - `https://cyber-databrew-dev.cyberorigin.ai/pipeline`
+- Chrome DevTools MCP checks:
+  - Version badge: `v0.1.1 · f04d3d9-dirty · dev`
+  - Generated name edit replaced `pipeline-*` with `qa-cyb1647-mcp-name`; no generated prefix remained.
+  - Palette buttons are exposed as `添加组件 Chain Stamp`, `添加组件 Count Lines`, `添加组件 Echo Message`, etc.
+  - Clicking `添加组件 Echo Message` created and selected a canvas node labelled `Echo Message`; node detail also showed `Echo Message`.
+  - Key requests returned `200`: `/pipeline`, `/api/v1/auth/me`, `/api/v1/pipeline-components`, `/api/v1/execution-targets`.
+  - Console has no runtime `error` / `warn`; remaining message is an existing browser issue for a form field missing `id` / `name`.
+- Screenshots:
+  - Captured to `/tmp/cyb-1647-dev-verify-pipeline-designer.png`; no PNG artifacts were written to the repo.

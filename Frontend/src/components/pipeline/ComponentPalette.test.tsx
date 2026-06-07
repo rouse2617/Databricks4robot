@@ -91,7 +91,7 @@ describe("ComponentPalette", () => {
 		});
 
 		fireEvent.dragStart(
-			screen.getByRole("button", { name: "拖入组件 head-track-pycuvslam" }),
+			screen.getByRole("button", { name: /添加组件 head-track-pycuvslam/ }),
 		);
 
 		expect(onDragStart).toHaveBeenCalledTimes(1);
@@ -99,5 +99,31 @@ describe("ComponentPalette", () => {
 			id: "comp-1",
 			name: "head-track-pycuvslam",
 		});
+	});
+
+	it("shows a visible click-add action for each component", () => {
+		const onAddComponent = vi.fn();
+		render(
+			<MemoryRouter>
+				<ComponentPalette
+					components={components}
+					onDragStart={vi.fn()}
+					onAddComponent={onAddComponent}
+				/>
+			</MemoryRouter>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: /添加组件 find-toni-stats/ }),
+		);
+
+		expect(screen.getAllByText("添加")).toHaveLength(components.length);
+		expect(onAddComponent).toHaveBeenCalledTimes(1);
+		expect(onAddComponent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: "comp-2",
+				name: "find-toni-stats",
+			}),
+		);
 	});
 });

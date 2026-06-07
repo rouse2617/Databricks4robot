@@ -313,6 +313,33 @@ describe("PipelinePage", () => {
 		expectGeneratedPipelineName(getPipelineNameInput().value);
 	});
 
+	it("replaces the generated default name when the first edit appends typed text", () => {
+		renderPage();
+		const nameInput = getPipelineNameInput();
+		const generatedName = nameInput.value;
+		expectGeneratedPipelineName(generatedName);
+
+		fireEvent.focus(nameInput);
+		fireEvent.change(nameInput, {
+			target: { value: `${generatedName}qa-designer-flow` },
+		});
+
+		expect(getPipelineNameInput().value).toBe("qa-designer-flow");
+	});
+
+	it("preserves user-owned names during later edits", async () => {
+		renderPage();
+		await importOneNodePipeline("existing-template");
+		const nameInput = getPipelineNameInput();
+
+		fireEvent.focus(nameInput);
+		fireEvent.change(nameInput, {
+			target: { value: "existing-template-v2" },
+		});
+
+		expect(getPipelineNameInput().value).toBe("existing-template-v2");
+	});
+
 	// ── Tab switching ───────────────────────────────────────────────
 	it("shows component palette on canvas view", () => {
 		renderPage();
@@ -437,7 +464,7 @@ describe("PipelinePage", () => {
 	it("disables toolbar deploy when canvas is empty", () => {
 		renderPage();
 		expect(screen.getByRole("button", { name: /play-circle/i })).toBeDisabled();
-		expect(screen.getByText("拖入组件开始设计")).toBeInTheDocument();
+		expect(screen.getByText("添加组件开始设计")).toBeInTheDocument();
 	});
 
 	it("adds a node when a palette component is dropped on the canvas wrapper", async () => {
@@ -458,7 +485,7 @@ describe("PipelinePage", () => {
 		renderPage();
 
 		const component = await screen.findByRole("button", {
-			name: /拖入组件 Drag Component/,
+			name: /添加组件 Drag Component/,
 		});
 		const canvas = screen.getByRole("application", { name: "流水线画布" });
 		const dataTransfer = {
@@ -491,6 +518,47 @@ describe("PipelinePage", () => {
 			).not.toBeDisabled();
 		});
 		expect(dataTransfer.dropEffect).toBe("copy");
+	});
+
+	it("adds the exact selected palette component through the visible add action", async () => {
+		mockListComponents.mockResolvedValue({
+			items: [
+				{
+					id: "comp-count",
+					name: "Count Lines",
+					type: "container",
+					image: "alpine:latest",
+					source: "custom",
+					createdAt: "2026-06-02T00:00:00Z",
+					updatedAt: "2026-06-02T00:00:00Z",
+				},
+				{
+					id: "comp-echo",
+					name: "Echo Message",
+					type: "container",
+					image: "busybox:latest",
+					source: "custom",
+					createdAt: "2026-06-02T00:00:00Z",
+					updatedAt: "2026-06-02T00:00:00Z",
+				},
+			],
+		});
+
+		renderPage();
+
+		fireEvent.click(
+			await screen.findByRole("button", { name: /添加组件 Echo Message/ }),
+		);
+
+		await waitFor(() => {
+			expect(
+				screen.getByRole("button", { name: /play-circle/i }),
+			).not.toBeDisabled();
+		});
+		const configPanel = document.querySelector(".config-panel");
+		expect(configPanel?.textContent).toContain("Echo Message");
+		expect(configPanel?.textContent).toContain("busybox:latest");
+		expect(configPanel?.textContent).not.toContain("Count Lines");
 	});
 
 	it("opens deploy modal with title", async () => {

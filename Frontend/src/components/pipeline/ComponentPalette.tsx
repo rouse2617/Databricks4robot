@@ -1,4 +1,4 @@
-import { SearchOutlined } from "@ant-design/icons";
+import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import { Alert, Button, Input, Spin } from "antd";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -86,7 +86,8 @@ export function ComponentPalette({
 					type="button"
 					className="palette-item"
 					draggable={!loading}
-					aria-label={`拖入组件 ${c.name}`}
+					aria-label={`添加组件 ${c.name}`}
+					title="点击添加，或拖拽到画布"
 					onDragStart={(e) => onDragStart(e, c)}
 					onClick={() => onAddComponent?.(c)}
 				>
@@ -94,6 +95,10 @@ export function ComponentPalette({
 						<div className="pi-label">{c.name}</div>
 						<div className="pi-image">{c.image}</div>
 					</div>
+					<span className="pi-add" aria-hidden="true">
+						<PlusOutlined />
+						添加
+					</span>
 				</button>
 			))}
 			{!loading && components.length === 0 ? (

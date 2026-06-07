@@ -119,7 +119,12 @@ type CanvasMenuState = {
 	node: PipelineFlowNode | null;
 };
 
-function replaceAppendedValue(_previous: string, next: string) {
+type PipelineNameSource = "generated" | "user";
+
+function replaceAppendedValue(previous: string, next: string) {
+	if (previous && next.startsWith(previous) && next.length > previous.length) {
+		return next.slice(previous.length);
+	}
 	return next;
 }
 
@@ -137,6 +142,8 @@ function PipelineCanvas() {
 	const [nodes, setNodes] = useState<PipelineFlowNode[]>([]);
 	const [edges, setEdges] = useState<PipelineFlowEdge[]>([]);
 	const [pipelineName, setPipelineName] = useState(generateDefaultPipelineName);
+	const [pipelineNameSource, setPipelineNameSource] =
+		useState<PipelineNameSource>("generated");
 	const pipelineNameReplaceRef = useRef(false);
 	const workflowNameReplaceRef = useRef(false);
 	const [selectedNode, setSelectedNode] = useState<PipelineFlowNode | null>(
@@ -208,6 +215,11 @@ function PipelineCanvas() {
 	const flattenNodes = useMemo(() => toRecord(nodes), [nodes]);
 	const flattenEdges = useMemo(() => toRecord(edges), [edges]);
 	const nodeTypes = useMemo(() => PIPELINE_NODE_TYPES, []);
+	const setUserPipelineName = useCallback((name: string) => {
+		pipelineNameReplaceRef.current = false;
+		setPipelineName(name);
+		setPipelineNameSource("user");
+	}, []);
 
 	useEffect(() => {
 		editorRef.current = editor;
@@ -243,16 +255,19 @@ function PipelineCanvas() {
 		});
 	}, [nodes]);
 
-	const loadPipelineToCanvas = useCallback((pipeline: Pipeline) => {
-		const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
-		setNodes(n);
-		setEdges(e);
-		setEditingNodeId(null);
-		if (pipeline.name) setPipelineName(pipeline.name);
-		setSelectedNode(null);
-		editorRef.current.deselectAll();
-		setJsonOutput(null);
-	}, []);
+	const loadPipelineToCanvas = useCallback(
+		(pipeline: Pipeline) => {
+			const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
+			setNodes(n);
+			setEdges(e);
+			setEditingNodeId(null);
+			if (pipeline.name) setUserPipelineName(pipeline.name);
+			setSelectedNode(null);
+			editorRef.current.deselectAll();
+			setJsonOutput(null);
+		},
+		[setUserPipelineName],
+	);
 
 	const loadPipelineFromSessionStorage = useCallback(() => {
 		const raw = sessionStorage.getItem("pipeline-edit");
@@ -279,7 +294,7 @@ function PipelineCanvas() {
 			.then(([template, versions]) => {
 				if (cancelled) return;
 				loadPipelineToCanvas(template.pipeline);
-				setPipelineName(template.name);
+				setUserPipelineName(template.name);
 				setTemplateVersions(versions);
 				setSelectedTemplateVersionId(template.id);
 			})
@@ -297,7 +312,12 @@ function PipelineCanvas() {
 		return () => {
 			cancelled = true;
 		};
-	}, [loadPipelineFromSessionStorage, loadPipelineToCanvas, templateId]);
+	}, [
+		loadPipelineFromSessionStorage,
+		loadPipelineToCanvas,
+		setUserPipelineName,
+		templateId,
+	]);
 
 	const handleTemplateVersionChange = useCallback(
 		(versionId: string) => {
@@ -305,12 +325,12 @@ function PipelineCanvas() {
 			if (!version) return;
 			setSelectedTemplateVersionId(versionId);
 			loadPipelineToCanvas(version.pipeline);
-			setPipelineName(version.name);
+			setUserPipelineName(version.name);
 			navigate(`/pipeline?templateId=${encodeURIComponent(versionId)}`, {
 				replace: true,
 			});
 		},
-		[loadPipelineToCanvas, navigate, templateVersions],
+		[loadPipelineToCanvas, navigate, setUserPipelineName, templateVersions],
 	);
 
 	const componentById = useMemo(() => {
@@ -604,7 +624,7 @@ function PipelineCanvas() {
 			setEdges(importedEdges);
 			setEditingNodeId(null);
 			if (pipeline.name) {
-				setPipelineName(pipeline.name);
+				setUserPipelineName(pipeline.name);
 			}
 			setJsonOutput(null);
 			setImportModalOpen(false);
@@ -613,7 +633,7 @@ function PipelineCanvas() {
 		} catch {
 			message.error("无效的 JSON");
 		}
-	}, []);
+	}, [setUserPipelineName]);
 
 	const clearCanvas = useCallback(() => {
 		modal.confirm({
@@ -794,9 +814,12 @@ function PipelineCanvas() {
 	const markReplaceOnNextEdit = (
 		event: FocusEvent<HTMLInputElement>,
 		replaceRef: MutableRefObject<boolean>,
+		shouldReplace = true,
 	) => {
-		replaceRef.current = true;
-		event.target.select();
+		replaceRef.current = shouldReplace;
+		if (shouldReplace) {
+			event.target.select();
+		}
 	};
 
 	return (
@@ -819,10 +842,15 @@ function PipelineCanvas() {
 							const next = pipelineNameReplaceRef.current
 								? replaceAppendedValue(pipelineName, e.target.value)
 								: e.target.value;
-							pipelineNameReplaceRef.current = false;
-							setPipelineName(next);
+							setUserPipelineName(next);
 						}}
-						onFocus={(e) => markReplaceOnNextEdit(e, pipelineNameReplaceRef)}
+						onFocus={(e) =>
+							markReplaceOnNextEdit(
+								e,
+								pipelineNameReplaceRef,
+								pipelineNameSource === "generated",
+							)
+						}
 						onBlur={() => {
 							pipelineNameReplaceRef.current = false;
 						}}
@@ -935,8 +963,8 @@ function PipelineCanvas() {
 					{isCanvasEmpty && !templateLoading ? (
 						<PipelineEmptyState
 							variant="canvas"
-							title="拖入组件开始设计"
-							description="从左侧组件栏拖入步骤，连接节点后保存。"
+							title="添加组件开始设计"
+							description="从左侧组件栏点击添加步骤，也可以拖拽到画布。"
 							hint="保存后可在「流水线」页签打开、运行或继续编辑。"
 						/>
 					) : null}
