@@ -76,6 +76,42 @@ class PipelineManager(BaseManager):
             json_body=payload,
         )
 
+    def create_batch_runs_from_template(
+        self,
+        template_id: str,
+        asset_ids: list[str],
+        *,
+        target_id: str | None = None,
+        version: int | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"asset_ids": asset_ids}
+        if target_id is not None:
+            payload["target_id"] = target_id
+        if version is not None:
+            payload["version"] = version
+        return self._request(
+            "POST",
+            self._endpoint("pipeline_run_create_template_batch", template_id=template_id),
+            json_body=payload,
+        )
+
+    def set_template_active_version(
+        self,
+        template_id: str,
+        active_version: int,
+    ) -> dict[str, Any]:
+        return self._request(
+            "PATCH",
+            self._endpoint("pipeline_template_active_version", template_id=template_id),
+            json_body={"activeVersion": active_version},
+        )
+
+    def promote_template(self, template_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            self._endpoint("pipeline_template_promote", template_id=template_id),
+        )
+
     def list_runs(self) -> dict[str, Any]:
         return self._request("GET", self._endpoint("pipeline_run_list"))
 

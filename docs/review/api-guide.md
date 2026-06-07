@@ -725,10 +725,10 @@ Per-asset `finish` 在 `run_id` 为 16 位且已登记时，同事务追加 `alg
 
 ### 2.0.1 列表 / 取消 / 影响资产（CYB-1123）
 
-列表分页统一为 `page/page_size`，响应为 `{items,total,page,page_size}`。非法或超限分页参数会按服务端默认值归一化，响应中的 `page/page_size` 表示实际生效的分页值。
+列表分页统一为 `page/page_size`，响应为 `{items,total,page,page_size}`。非法或超限分页参数会按服务端默认值归一化，响应中的 `page/page_size` 表示实际生效的分页值。可选过滤参数包括 `algo_name`、`status`、`started_after`、`started_before`；时间字段为 RFC3339。
 
 ```bash
-curl "$BASE/api/v1/algo-runs?page=1&page_size=20&algo_name=hand_track&status=running" \
+curl "$BASE/api/v1/algo-runs?page=1&page_size=20&algo_name=hand_track&status=running&started_after=2026-05-22T00:00:00Z" \
   -H "X-Databrew-Token: $TOKEN"
 ```
 
@@ -973,7 +973,7 @@ curl "$BASE/api/v1/assets/{asset_id}/events?event_type=algo_*&algo_key=env_analy
   -H "X-Databrew-Token: $TOKEN"
 ```
 
-说明：`{asset_id}` 须为 **8 位字母数字**（与创建响应中的 `asset_id` 同格式）；非法格式返回 `400`（`INVALID_ARGUMENT`），资产不存在返回 `404`（`ASSET_NOT_FOUND`）。`GET /tags/history` 同理。
+说明：`{asset_id}` 须为 **8 位字母数字**（与创建响应中的 `asset_id` 同格式）；非法格式返回 `400`（`INVALID_ARGUMENT`），资产不存在返回 `404`（`ASSET_NOT_FOUND`）。`event_type` 可重复传入，支持 `algo_*` 这类后缀通配；`cursor` 与 `before_event_seq` 等价，均表示继续拉取 `event_seq < cursor` 的更早事件；`after_event_seq` 拉取更新事件。`start_time` / `end_time` 为 RFC3339 时间边界。`GET /tags/history` 同理。
 
 响应 `200`（统一 `asset_events` 格式）:
 ```json
@@ -1623,6 +1623,10 @@ curl -X POST "$BASE/api/v1/mcap-files" \
 
 ```bash
 curl "$BASE/api/v1/mcap-files?page=1&page_size=20" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 可选过滤
+curl "$BASE/api/v1/mcap-files?page=1&page_size=20&ingest_state=summarized&owner=team-a" \
   -H "X-Databrew-Token: $TOKEN"
 ```
 
@@ -2437,6 +2441,20 @@ curl -s "$BASE/api/v1/pipelines/<TEMPLATE_ID>/versions" \
 # }
 ```
 
+设置活跃版本或提升指定模板版本：
+
+```bash
+curl -X PATCH "$BASE/api/v1/pipelines/<TEMPLATE_ID>/active-version" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"activeVersion": 2}'
+
+curl -X POST "$BASE/api/v1/pipelines/<TEMPLATE_ID>/promote" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+### 从模板创建 Pipeline Run
+
 ```bash
 curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
   -H "X-Databrew-Token: $TOKEN" \
@@ -2472,6 +2490,23 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
 # 400: asset 不存在或 target_id 不支持
 # 404: template 不存在
 # 503: Argo backend 未配置
+```
+
+批量从模板创建运行：
+
+```bash
+curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>/batch" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target_id": "default",
+    "version": 1,
+    "asset_ids": ["SDKT0202", "SDKT0101"]
+  }'
+
+# 响应: {"batchId":"...","items":[...],"failed":[...]}
+# 400: asset 不存在、重复或 target_id 不支持
+# 404: template 不存在
 ```
 
 查询 first-class run 列表和详情。详情会尽量刷新 Argo phase，并在 workflow

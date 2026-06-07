@@ -139,6 +139,7 @@ ENDPOINTS: dict[str, str] = {
     "pipeline_execution_targets": "/api/v1/execution-targets",
     "pipeline_run_create": "/api/v1/pipeline-runs",
     "pipeline_run_create_template": "/api/v1/pipeline-runs/template/{template_id}",
+    "pipeline_run_create_template_batch": "/api/v1/pipeline-runs/template/{template_id}/batch",
     "pipeline_run_list": "/api/v1/pipeline-runs",
     "pipeline_run_get": "/api/v1/pipeline-runs/{run_id}",
     "pipeline_run_watcher_status": "/api/v1/pipeline-runs/watcher/status",
@@ -148,6 +149,8 @@ ENDPOINTS: dict[str, str] = {
     "pipeline_run_retry": "/api/v1/pipeline-runs/{run_id}/retry",
     "pipeline_run_stop": "/api/v1/pipeline-runs/{run_id}/stop",
     "pipeline_run_delete": "/api/v1/pipeline-runs/{run_id}",
+    "pipeline_template_active_version": "/api/v1/pipelines/{template_id}/active-version",
+    "pipeline_template_promote": "/api/v1/pipelines/{template_id}/promote",
     "pipeline_deploy_template": "/api/v1/deploy/template/{template_id}",
     "pipeline_deployment_list": "/api/v1/deployments",
     # ── Pipeline Components ────────────────────────────────────────────

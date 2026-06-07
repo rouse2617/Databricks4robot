@@ -102,10 +102,16 @@ class TestAssetManager:
 
 class TestStorageManager:
     def test_list_files(self, client):
-        respx.get(f"{BASE_URL}/api/v1/mcap-files").mock(
+        route = respx.get(f"{BASE_URL}/api/v1/mcap-files").mock(
             return_value=httpx.Response(200, json={"items": [], "total": 0})
         )
-        assert client.storage.list_files()["total"] == 0
+        assert client.storage.list_files(ingest_state="summarized", owner="qa")["total"] == 0
+        assert dict(route.calls.last.request.url.params) == {
+            "page": "1",
+            "page_size": "20",
+            "ingest_state": "summarized",
+            "owner": "qa",
+        }
 
     def test_get_file_info(self, client):
         respx.get(f"{BASE_URL}/api/v1/mcap-files/f1").mock(
@@ -236,10 +242,25 @@ class TestAlgoRunManager:
         assert client.algo_runs.cancel("r1")["status"] == "cancelled"
 
     def test_list_with_filters(self, client):
-        respx.get(f"{BASE_URL}/api/v1/algo-runs").mock(
+        route = respx.get(f"{BASE_URL}/api/v1/algo-runs").mock(
             return_value=httpx.Response(200, json={"items": []})
         )
-        assert client.algo_runs.list(asset_id="a1") == {"items": []}
+        assert client.algo_runs.list(
+            algo_name="hand_track",
+            status="failed",
+            started_after="2026-05-22T00:00:00Z",
+            started_before="2026-05-23T00:00:00Z",
+            page=2,
+            page_size=25,
+        ) == {"items": []}
+        assert dict(route.calls.last.request.url.params) == {
+            "algo_name": "hand_track",
+            "status": "failed",
+            "started_after": "2026-05-22T00:00:00Z",
+            "started_before": "2026-05-23T00:00:00Z",
+            "page": "2",
+            "page_size": "25",
+        }
 
     def test_get_affected_assets(self, client):
         respx.get(f"{BASE_URL}/api/v1/algo-runs/r1/affected-assets").mock(
@@ -375,6 +396,31 @@ class TestPipelineManager:
         result = client.pipelines.create_run_from_template("tmpl-1", asset_ids=["asset-1"])
         assert result["id"] == "run-1"
         assert route.calls.last.request.url.path == "/api/v1/pipeline-runs/template/tmpl-1"
+
+    def test_template_version_and_batch_helpers(self, client):
+        batch_route = respx.post(
+            f"{BASE_URL}/api/v1/pipeline-runs/template/tmpl-1/batch"
+        ).mock(return_value=httpx.Response(201, json={"batchId": "batch-1", "items": []}))
+        active_route = respx.patch(
+            f"{BASE_URL}/api/v1/pipelines/tmpl-1/active-version"
+        ).mock(return_value=httpx.Response(200, json={"activeVersion": 2}))
+        promote_route = respx.post(f"{BASE_URL}/api/v1/pipelines/tmpl-1/promote").mock(
+            return_value=httpx.Response(200, json={"id": "tmpl-1"})
+        )
+
+        assert client.pipelines.create_batch_runs_from_template(
+            "tmpl-1",
+            ["asset-1"],
+            target_id="default",
+            version=2,
+        )["batchId"] == "batch-1"
+        assert client.pipelines.set_template_active_version("tmpl-1", 2)["activeVersion"] == 2
+        assert client.pipelines.promote_template("tmpl-1")["id"] == "tmpl-1"
+        assert batch_route.calls.last.request.url.path == "/api/v1/pipeline-runs/template/tmpl-1/batch"
+        assert b'"asset_ids"' in batch_route.calls.last.request.read()
+        assert active_route.calls.last.request.url.path == "/api/v1/pipelines/tmpl-1/active-version"
+        assert b'"activeVersion"' in active_route.calls.last.request.read()
+        assert promote_route.calls.last.request.url.path == "/api/v1/pipelines/tmpl-1/promote"
 
     def test_pipeline_run_crud_actions(self, client):
         respx.get(f"{BASE_URL}/api/v1/pipeline-runs").mock(

@@ -15,12 +15,24 @@ class StorageManager(BaseManager):
     the backend for centralized auth and audit.
     """
 
-    def list_files(self, *, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+    def list_files(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        ingest_state: str | None = None,
+        owner: str | None = None,
+    ) -> dict[str, Any]:
         """List MCAP files."""
+        params: dict[str, Any] = {"page": page, "page_size": page_size}
+        if ingest_state is not None:
+            params["ingest_state"] = ingest_state
+        if owner is not None:
+            params["owner"] = owner
         return self._request(
             "GET",
             self._endpoint("storage_files_list"),
-            params={"page": page, "page_size": page_size},
+            params=params,
         )
 
     def get_file_info(self, mcap_id: str) -> dict[str, Any]:

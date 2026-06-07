@@ -18,20 +18,32 @@ class AlgoRunManager(BaseManager):
         *,
         asset_id: str | None = None,
         algo_key: str | None = None,
+        algo_name: str | None = None,
         status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "status": status,
+            "page": page,
+            "page_size": page_size,
+        }
+        if algo_name is not None:
+            params["algo_name"] = algo_name
+        elif algo_key is not None:
+            params["algo_name"] = algo_key
+        if asset_id is not None:
+            params["asset_id"] = asset_id
+        if started_after is not None:
+            params["started_after"] = started_after
+        if started_before is not None:
+            params["started_before"] = started_before
         return self._request(
             "GET",
             self._endpoint("algo_run_list"),
-            params={
-                "asset_id": asset_id,
-                "algo_key": algo_key,
-                "status": status,
-                "page": page,
-                "page_size": page_size,
-            },
+            params=params,
         )
 
     def create(self, payload: dict[str, Any]) -> dict[str, Any]:

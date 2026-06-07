@@ -1,5 +1,6 @@
 import { ReloadOutlined } from "@ant-design/icons";
 import {
+	Alert,
 	Button,
 	DatePicker,
 	Select,
@@ -13,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { type AlgoRegistryItem, algoRegistryApi } from "../api/algoRegistry";
 import { type AlgoRun, algoRunsApi } from "../api/algoRuns";
+import { extractApiErrorMessage } from "../lib/apiError";
 import { formatDateTime } from "../lib/dateTime";
 
 const { Title } = Typography;
@@ -47,6 +49,7 @@ export default function AlgoRunsPage() {
 		[dayjs.Dayjs | null, dayjs.Dayjs | null]
 	>([null, null]);
 	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 	const [registry, setRegistry] = useState<AlgoRegistryItem[]>([]);
 
 	useEffect(() => {
@@ -58,6 +61,7 @@ export default function AlgoRunsPage() {
 
 	const fetchData = useCallback(async () => {
 		setLoading(true);
+		setError(null);
 		try {
 			const res = await algoRunsApi.list({
 				page,
@@ -69,10 +73,8 @@ export default function AlgoRunsPage() {
 			});
 			setItems(res.items ?? []);
 			setTotal(res.total);
-		} catch {
-			// API may not be available yet; show empty state
-			setItems([]);
-			setTotal(0);
+		} catch (err) {
+			setError(extractApiErrorMessage(err, "加载算法运行记录失败"));
 		} finally {
 			setLoading(false);
 		}
@@ -215,6 +217,18 @@ export default function AlgoRunsPage() {
 					刷新
 				</Button>
 			</Space>
+
+			{error ? (
+				<Alert
+					type="error"
+					showIcon
+					closable
+					message="加载算法运行记录失败"
+					description={error}
+					onClose={() => setError(null)}
+					style={{ marginBottom: 12 }}
+				/>
+			) : null}
 
 			<Table
 				rowKey="run_id"

@@ -2786,14 +2786,40 @@ paths:
           required: true
           schema: { $ref: '#/components/schemas/AssetID' }
         - in: query
-          name: before_seq
-          schema: { type: integer, format: int64 }
+          name: event_type
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+          description: Repeated event type filter; supports wildcard suffix such as algo_*.
         - in: query
-          name: after_seq
+          name: algo_key
+          schema: { type: string }
+          description: Filter events whose payload algo_key matches this value.
+        - in: query
+          name: cursor
           schema: { type: integer, format: int64 }
+          description: Fetch older events with event_seq < cursor.
+        - in: query
+          name: before_event_seq
+          schema: { type: integer, format: int64 }
+          description: Alias of cursor.
+        - in: query
+          name: after_event_seq
+          schema: { type: integer, format: int64 }
+          description: Fetch events with event_seq > after_event_seq.
+        - in: query
+          name: start_time
+          schema: { type: string, format: date-time }
+          description: Lower bound of occurred_at.
+        - in: query
+          name: end_time
+          schema: { type: string, format: date-time }
+          description: Upper bound of occurred_at.
         - in: query
           name: limit
-          schema: { type: integer }
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
       responses:
         '200':
           description: OK
@@ -3047,19 +3073,36 @@ paths:
       summary: List global asset events
       parameters:
         - in: query
-          name: before_seq
-          schema: { type: integer, format: int64 }
-        - in: query
-          name: after_seq
-          schema: { type: integer, format: int64 }
-        - in: query
-          name: limit
-          schema: { type: integer }
-        - in: query
-          name: event_types
+          name: event_type
           schema:
             type: array
             items: { type: string }
+          style: form
+          explode: true
+          description: Repeated event type filter; supports wildcard suffix such as algo_*.
+        - in: query
+          name: cursor
+          schema: { type: integer, format: int64 }
+          description: Fetch older events with event_seq < cursor.
+        - in: query
+          name: before_event_seq
+          schema: { type: integer, format: int64 }
+          description: Alias of cursor.
+        - in: query
+          name: after_event_seq
+          schema: { type: integer, format: int64 }
+          description: Fetch events with event_seq > after_event_seq.
+        - in: query
+          name: start_time
+          schema: { type: string, format: date-time }
+          description: Lower bound of occurred_at. Defaults to the last 24h when no time range is provided.
+        - in: query
+          name: end_time
+          schema: { type: string, format: date-time }
+          description: Upper bound of occurred_at.
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
       responses:
         '200':
           description: OK
@@ -3448,6 +3491,14 @@ paths:
         - in: query
           name: page_size
           schema: { type: integer, default: 20 }
+        - in: query
+          name: ingest_state
+          schema: { type: string, enum: [pending, summarized, failed] }
+          description: Optional ingest state filter.
+        - in: query
+          name: owner
+          schema: { type: string }
+          description: Optional owner substring/exact filter as implemented by the backend.
       responses:
         '200':
           description: OK
@@ -3521,11 +3572,19 @@ paths:
           name: status
           schema: { type: string }
         - in: query
+          name: started_after
+          schema: { type: string, format: date-time }
+          description: RFC3339 lower bound on started_at.
+        - in: query
+          name: started_before
+          schema: { type: string, format: date-time }
+          description: RFC3339 upper bound on started_at.
+        - in: query
           name: page
           schema: { type: integer, default: 1 }
         - in: query
           name: page_size
-          schema: { type: integer, default: 20 }
+          schema: { type: integer, default: 50, maximum: 200 }
       responses:
         '200':
           description: OK
@@ -5290,6 +5349,72 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/PipelineTemplate' }
+  /api/v1/pipelines/{id}/active-version:
+    patch:
+      tags: [Pipeline]
+      summary: Set active pipeline template version
+      description: Marks a saved pipeline template version as the active version for its template family.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [activeVersion]
+              properties:
+                activeVersion: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Active version updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  activeVersion: { type: integer }
+        '400':
+          description: Invalid active version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipelines/{id}/promote:
+    post:
+      tags: [Pipeline]
+      summary: Promote a pipeline template version
+      description: Promotes the selected template version and returns the updated template snapshot.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template ID
+      responses:
+        '200':
+          description: Template promoted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineTemplate' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   # ── Deployment ────────────────────────────────────────────────────
   /api/v1/deploy:
@@ -5563,6 +5688,62 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Invalid request, missing asset, or invalid execution target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-runs/template/{id}/batch:
+    post:
+      tags: [Pipeline]
+      summary: Create first-class pipeline runs from a template for multiple assets
+      description: Creates a batch of pipeline runs from a saved template, binding each requested asset as appropriate for the template execution flow.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset_ids]
+              properties:
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                  uniqueItems: true
+                target_id: { type: string }
+                version: { type: integer }
+      responses:
+        '201':
+          description: Batch pipeline runs created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batchId: { type: string }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineRun' }
+                  failed:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        assetId: { type: string }
+                        error: { type: string }
         '400':
           description: Invalid request, missing asset, or invalid execution target
           content:
