@@ -1129,3 +1129,43 @@ func TestSyncActiveRunEvents_SavesWatcherHealth(t *testing.T) {
 		t.Fatalf("expected healthy non-stale watcher, got %#v", status)
 	}
 }
+
+func TestDurationSeconds(t *testing.T) {
+	started := time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)
+	finished := started.Add(45 * time.Second)
+	zero := time.Time{}
+	beforeStart := started.Add(-1 * time.Second)
+
+	tests := []struct {
+		name      string
+		startedAt *time.Time
+		finished  *time.Time
+		want      *int64
+	}{
+		{name: "valid duration", startedAt: &started, finished: &finished, want: int64Ptr(45)},
+		{name: "nil start", startedAt: nil, finished: &finished, want: nil},
+		{name: "nil finish", startedAt: &started, finished: nil, want: nil},
+		{name: "zero start", startedAt: &zero, finished: &finished, want: nil},
+		{name: "zero finish", startedAt: &started, finished: &zero, want: nil},
+		{name: "finish before start", startedAt: &started, finished: &beforeStart, want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := durationSeconds(tt.startedAt, tt.finished)
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil, got %d", *got)
+				}
+				return
+			}
+			if got == nil || *got != *tt.want {
+				t.Fatalf("expected %d, got %v", *tt.want, got)
+			}
+		})
+	}
+}
+
+func int64Ptr(v int64) *int64 {
+	return &v
+}

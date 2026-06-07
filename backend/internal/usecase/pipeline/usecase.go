@@ -2306,7 +2306,7 @@ func (uc *Usecase) ListRunAssetNodes(ctx context.Context, id string, opts models
 }
 
 func durationSeconds(startedAt, finishedAt *time.Time) *int64 {
-	if startedAt == nil || finishedAt == nil || finishedAt.Before(*startedAt) {
+	if startedAt == nil || finishedAt == nil || startedAt.IsZero() || finishedAt.IsZero() || finishedAt.Before(*startedAt) {
 		return nil
 	}
 	seconds := int64(finishedAt.Sub(*startedAt).Seconds())
