@@ -43,6 +43,29 @@ describe("buildDagElements", () => {
 		});
 	});
 
+	it("marks generated graph elements as read-only for keyboard and accessibility semantics", () => {
+		const workflowEdges: WorkflowDagEdge[] = [
+			{
+				id: "e-step-1-step-2",
+				source: "step-1",
+				target: "step-2",
+				kind: "dag",
+			},
+		];
+
+		const result = buildDagElements(nodes, workflowEdges, null, "");
+
+		expect(result.nodes).toHaveLength(2);
+		expect(result.nodes.every((node) => node.draggable === false)).toBe(true);
+		expect(result.nodes.every((node) => node.connectable === false)).toBe(true);
+		expect(result.nodes.every((node) => node.focusable === false)).toBe(true);
+		expect(result.nodes.every((node) => node.deletable === false)).toBe(true);
+		expect(result.edges).toHaveLength(1);
+		expect(result.edges.every((edge) => edge.focusable === false)).toBe(true);
+		expect(result.edges.every((edge) => edge.selectable === false)).toBe(true);
+		expect(result.edges.every((edge) => edge.deletable === false)).toBe(true);
+	});
+
 	it("ignores backend edges with hidden endpoints", () => {
 		const workflowEdges: WorkflowDagEdge[] = [
 			{

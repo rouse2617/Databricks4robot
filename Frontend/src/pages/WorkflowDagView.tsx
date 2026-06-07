@@ -1,4 +1,5 @@
 import {
+	type AriaLabelConfig,
 	Background,
 	BackgroundVariant,
 	Controls,
@@ -36,6 +37,16 @@ const DAG_NODE_GAP = 40;
 const DAG_JOIN_CENTER_MIN_INPUTS = 2;
 const DAG_FIT_MIN_ZOOM = 0.72;
 const DAG_FIT_MAX_ZOOM = 1;
+const READ_ONLY_DAG_ARIA_LABEL_CONFIG: Partial<AriaLabelConfig> = {
+	"node.a11yDescription.default":
+		"Workflow execution step in a read-only dependency graph.",
+	"node.a11yDescription.keyboardDisabled":
+		"Workflow execution step in a read-only dependency graph.",
+	"node.a11yDescription.ariaLiveMessage": () =>
+		"Workflow execution graph is read-only.",
+	"edge.a11yDescription.default":
+		"Workflow dependency edge in a read-only execution graph.",
+};
 
 const nodeTypes = { workflowStep: WorkflowDagNode };
 const edgeTypes = {};
@@ -144,6 +155,9 @@ export function buildDagElements(
 			source,
 			target,
 			type: "smoothstep",
+			focusable: false,
+			selectable: false,
+			deletable: false,
 			style: { stroke: "#64748b", strokeWidth: 1.5 },
 			markerEnd: {
 				type: MarkerType.ArrowClosed,
@@ -251,6 +265,8 @@ export function buildDagElements(
 			height: DAG_NODE_HEIGHT,
 			draggable: false,
 			connectable: false,
+			focusable: false,
+			deletable: false,
 			selectable: true,
 			position: {
 				x: layoutX - DAG_NODE_WIDTH / 2,
@@ -440,12 +456,20 @@ function WorkflowDagViewInner({
 					onPaneClick={onPaneClick}
 					nodesDraggable={false}
 					nodesConnectable={false}
+					nodesFocusable={false}
+					edgesFocusable={false}
+					edgesReconnectable={false}
+					disableKeyboardA11y
+					deleteKeyCode={null}
+					selectionKeyCode={null}
+					multiSelectionKeyCode={null}
 					elementsSelectable
 					panOnDrag
 					panOnScroll
 					zoomOnScroll
 					minZoom={0.35}
 					maxZoom={1.5}
+					ariaLabelConfig={READ_ONLY_DAG_ARIA_LABEL_CONFIG}
 					proOptions={{ hideAttribution: true }}
 				>
 					<FitViewOnGraphChange graphKey={graphKey} />
