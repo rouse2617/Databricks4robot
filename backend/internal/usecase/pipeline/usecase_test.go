@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
+	"gopkg.in/yaml.v3"
 )
 
 // ── Mocks ─────────────────────────────────────────────────────────────────
@@ -238,6 +240,76 @@ func newUsecase(assetRepo *mockAssetRepo) *Usecase {
 	}
 }
 
+func pipelineEnvTestGraph() map[string]interface{} {
+	return map[string]interface{}{
+		"name": "asset-env-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "a",
+				"component": map[string]interface{}{
+					"name":    "a",
+					"image":   "busybox",
+					"command": []interface{}{"sh", "-c"},
+					"args":    []interface{}{map[string]interface{}{"name": "script", "value": "echo a"}},
+				},
+				"outputs": []interface{}{map[string]interface{}{"name": "out", "type": "string"}},
+			},
+			map[string]interface{}{
+				"id": "b",
+				"component": map[string]interface{}{
+					"name":    "b",
+					"image":   "busybox",
+					"command": []interface{}{"sh", "-c"},
+					"args":    []interface{}{map[string]interface{}{"name": "script", "value": "echo b"}},
+				},
+				"inputs": []interface{}{map[string]interface{}{"name": "in", "type": "string"}},
+			},
+		},
+		"edges": []interface{}{
+			map[string]interface{}{"source": "a.out", "target": "b.in"},
+		},
+	}
+}
+
+func workflowEnvByTemplate(t *testing.T, manifest *string) map[string]map[string]string {
+	t.Helper()
+	if manifest == nil || strings.TrimSpace(*manifest) == "" {
+		t.Fatal("expected manifest")
+	}
+	var wf wfv1.Workflow
+	if err := yaml.Unmarshal([]byte(*manifest), &wf); err != nil {
+		t.Fatalf("unmarshal workflow manifest: %v\n%s", err, *manifest)
+	}
+	out := make(map[string]map[string]string)
+	for _, tmpl := range wf.Spec.Templates {
+		var env []corev1.EnvVar
+		if tmpl.Container != nil {
+			env = tmpl.Container.Env
+		} else if tmpl.Script != nil {
+			env = tmpl.Script.Env
+		} else {
+			continue
+		}
+		values := make(map[string]string, len(env))
+		for _, item := range env {
+			values[item.Name] = item.Value
+		}
+		out[tmpl.Name] = values
+	}
+	return out
+}
+
+func requireEnvValue(t *testing.T, env map[string]string, name, want string) {
+	t.Helper()
+	got, ok := env[name]
+	if !ok {
+		t.Fatalf("missing env %s", name)
+	}
+	if got != want {
+		t.Fatalf("env %s = %q, want %q", name, got, want)
+	}
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 func TestDeploy_ValidatesAssetExistence(t *testing.T) {
@@ -351,6 +423,113 @@ func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 			t.Fatalf("duplicate IDs = %v", validationErr.DuplicateIDs)
 		}
 	})
+}
+
+func TestDeploy_DryRunInjectsSelectedAssetEnv(t *testing.T) {
+	ctx := context.Background()
+	repo := newMockAssetRepo()
+	repo.assets["asset-1"] = &models.Asset{
+		AssetID:          "asset-1",
+		McapFileID:       "mcap-1",
+		AssetType:        "video_segment",
+		StorageURI:       "gs://bucket/asset-1.mcap",
+		StartTimestampNs: 100,
+		EndTimestampNs:   200,
+		SegmentLocator:   "locator-1",
+		LogicalAssetID:   "logical-1",
+		Revision:         3,
+		IsCurrent:        true,
+		Metadata:         map[string]interface{}{"purpose": "qa"},
+	}
+	repo.assets["asset-2"] = &models.Asset{
+		AssetID:          "asset-2",
+		McapFileID:       "mcap-2",
+		AssetType:        "video_segment",
+		StorageURI:       "gs://bucket/asset-2.mcap",
+		StartTimestampNs: 300,
+		EndTimestampNs:   400,
+		SegmentLocator:   "locator-2",
+		LogicalAssetID:   "logical-2",
+		Revision:         1,
+	}
+	uc := newUsecase(repo)
+
+	dep, err := uc.Deploy(ctx, pipelineEnvTestGraph(), "", []string{"asset-1", "asset-2"}, DeployOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("Deploy dry-run: %v", err)
+	}
+	envByTemplate := workflowEnvByTemplate(t, dep.Manifest)
+	for _, templateName := range []string{"step-a", "step-b"} {
+		env := envByTemplate[templateName]
+		if env == nil {
+			t.Fatalf("missing env for template %s; templates=%v", templateName, envByTemplate)
+		}
+		requireEnvValue(t, env, "ASSET_IDS", "asset-1,asset-2")
+		requireEnvValue(t, env, "ASSET_COUNT", "2")
+		requireEnvValue(t, env, "VIDEO_ID", "asset-1")
+		requireEnvValue(t, env, "ASSET_0_ID", "asset-1")
+		requireEnvValue(t, env, "ASSET_0_STORAGE_URI", "gs://bucket/asset-1.mcap")
+		requireEnvValue(t, env, "ASSET_0_MCAP_FILE_ID", "mcap-1")
+		requireEnvValue(t, env, "ASSET_0_START_NS", "100")
+		requireEnvValue(t, env, "ASSET_0_END_NS", "200")
+		requireEnvValue(t, env, "ASSET_0_SEGMENT_LOCATOR", "locator-1")
+		requireEnvValue(t, env, "ASSET_0_TYPE", "video_segment")
+		requireEnvValue(t, env, "ASSET_0_LOGICAL_ASSET_ID", "logical-1")
+		requireEnvValue(t, env, "ASSET_0_REVISION", "3")
+		requireEnvValue(t, env, "ASSET_0_IS_CURRENT", "true")
+		requireEnvValue(t, env, "ASSET_1_ID", "asset-2")
+		requireEnvValue(t, env, "ASSET_1_STORAGE_URI", "gs://bucket/asset-2.mcap")
+		requireEnvValue(t, env, "REQUEST_ID", dep.WorkflowName)
+		if env["PIPELINE_DEPLOYMENT_ID"] != dep.ID {
+			t.Fatalf("%s PIPELINE_DEPLOYMENT_ID = %q, want %q", templateName, env["PIPELINE_DEPLOYMENT_ID"], dep.ID)
+		}
+
+		var metadata map[string]interface{}
+		if err := json.Unmarshal([]byte(env["ASSET_0_METADATA_JSON"]), &metadata); err != nil {
+			t.Fatalf("unmarshal ASSET_0_METADATA_JSON: %v", err)
+		}
+		if metadata["purpose"] != "qa" {
+			t.Fatalf("metadata purpose = %#v", metadata["purpose"])
+		}
+
+		var summaries []pipelineAssetEnvSummary
+		if err := json.Unmarshal([]byte(env["ASSETS_JSON"]), &summaries); err != nil {
+			t.Fatalf("unmarshal ASSETS_JSON: %v", err)
+		}
+		if len(summaries) != 2 {
+			t.Fatalf("ASSETS_JSON length = %d, want 2", len(summaries))
+		}
+		if summaries[0].AssetID != "asset-1" || summaries[0].StorageURI != "gs://bucket/asset-1.mcap" {
+			t.Fatalf("unexpected first asset summary: %#v", summaries[0])
+		}
+		if summaries[1].AssetID != "asset-2" || summaries[1].SegmentLocator != "locator-2" {
+			t.Fatalf("unexpected second asset summary: %#v", summaries[1])
+		}
+	}
+}
+
+func TestDeploy_DryRunNoAssetOmitsIndexedAssetEnv(t *testing.T) {
+	ctx := context.Background()
+	uc := newUsecase(newMockAssetRepo())
+
+	dep, err := uc.Deploy(ctx, pipelineEnvTestGraph(), "", nil, DeployOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("Deploy dry-run: %v", err)
+	}
+	envByTemplate := workflowEnvByTemplate(t, dep.Manifest)
+	env := envByTemplate["step-a"]
+	if env == nil {
+		t.Fatalf("missing env for step-a; templates=%v", envByTemplate)
+	}
+	requireEnvValue(t, env, "REQUEST_ID", dep.WorkflowName)
+	if env["PIPELINE_DEPLOYMENT_ID"] != dep.ID {
+		t.Fatalf("PIPELINE_DEPLOYMENT_ID = %q, want %q", env["PIPELINE_DEPLOYMENT_ID"], dep.ID)
+	}
+	for _, name := range []string{"ASSET_IDS", "ASSET_COUNT", "ASSETS_JSON", "ASSET_0_ID", "ASSET_0_STORAGE_URI", "VIDEO_ID"} {
+		if _, ok := env[name]; ok {
+			t.Fatalf("env %s should not be set for no-asset dry-run", name)
+		}
+	}
 }
 
 func TestAssetIDsFromPipelineJSON(t *testing.T) {

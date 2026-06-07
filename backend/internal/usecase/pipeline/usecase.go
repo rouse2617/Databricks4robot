@@ -84,6 +84,20 @@ type BatchCreateRunsResult struct {
 	Failed  []BatchCreateRunFailure `json:"failed,omitempty"`
 }
 
+type pipelineAssetEnvSummary struct {
+	AssetID          string                 `json:"asset_id"`
+	McapFileID       string                 `json:"mcap_file_id,omitempty"`
+	StorageURI       string                 `json:"storage_uri,omitempty"`
+	AssetType        string                 `json:"asset_type,omitempty"`
+	StartTimestampNs int64                  `json:"start_timestamp_ns"`
+	EndTimestampNs   int64                  `json:"end_timestamp_ns"`
+	SegmentLocator   string                 `json:"segment_locator,omitempty"`
+	LogicalAssetID   string                 `json:"logical_asset_id,omitempty"`
+	Revision         int64                  `json:"revision"`
+	IsCurrent        bool                   `json:"is_current"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+}
+
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
 func (uc *Usecase) SetAssetEventRepo(r repository.AssetEventRepository) {
 	uc.assetEventRepo = r
@@ -1559,6 +1573,114 @@ func (uc *Usecase) DeleteTemplate(ctx context.Context, id, owner string) error {
 
 // ── Deploy ────────────────────────────────────────────────────────
 
+func (uc *Usecase) buildPipelineGlobalEnv(ctx context.Context, assetIDs []string, depID, wfName string) ([]transpiler.EnvVar, error) {
+	globalEnv := []transpiler.EnvVar{
+		{Name: "PIPELINE_DEPLOYMENT_ID", Value: depID},
+	}
+	if len(assetIDs) == 0 {
+		globalEnv = append(globalEnv, transpiler.EnvVar{Name: "REQUEST_ID", Value: wfName})
+		return globalEnv, nil
+	}
+
+	globalEnv = append(globalEnv,
+		transpiler.EnvVar{Name: "ASSET_IDS", Value: strings.Join(assetIDs, ",")},
+		transpiler.EnvVar{Name: "ASSET_COUNT", Value: fmt.Sprintf("%d", len(assetIDs))},
+	)
+
+	summaries := make([]pipelineAssetEnvSummary, 0, len(assetIDs))
+	for i, assetID := range assetIDs {
+		prefix := fmt.Sprintf("ASSET_%d_", i)
+		summary := pipelineAssetEnvSummary{AssetID: assetID}
+		globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "ID", Value: assetID})
+		if i == 0 {
+			// CyberPipe algorithm compatibility: first asset is the primary video.
+			globalEnv = append(globalEnv, transpiler.EnvVar{Name: "VIDEO_ID", Value: assetID})
+		}
+
+		if uc.assetRepo != nil {
+			asset, err := uc.assetRepo.Get(ctx, assetID)
+			if err != nil {
+				return nil, fmt.Errorf("load asset %s for pipeline env: %w", assetID, err)
+			}
+			if asset == nil {
+				return nil, fmt.Errorf("%w: asset %s", ErrAssetNotFound, assetID)
+			}
+			summary = pipelineAssetEnvSummaryFromAsset(asset, assetID)
+			var appendErr error
+			globalEnv, appendErr = appendPipelineAssetDetailEnv(globalEnv, prefix, summary)
+			if appendErr != nil {
+				return nil, appendErr
+			}
+		}
+		summaries = append(summaries, summary)
+	}
+
+	assetsJSON, err := json.Marshal(summaries)
+	if err != nil {
+		return nil, fmt.Errorf("marshal pipeline asset env summary: %w", err)
+	}
+	globalEnv = append(globalEnv,
+		transpiler.EnvVar{Name: "ASSETS_JSON", Value: string(assetsJSON)},
+		transpiler.EnvVar{Name: "REQUEST_ID", Value: wfName},
+	)
+	return globalEnv, nil
+}
+
+func pipelineAssetEnvSummaryFromAsset(asset *models.Asset, fallbackID string) pipelineAssetEnvSummary {
+	assetID := strings.TrimSpace(asset.AssetID)
+	if assetID == "" {
+		assetID = fallbackID
+	}
+	assetType := asset.AssetType
+	if assetType == "" {
+		assetType = asset.SegType
+	}
+	return pipelineAssetEnvSummary{
+		AssetID:          assetID,
+		McapFileID:       asset.McapFileID,
+		StorageURI:       asset.StorageURI,
+		AssetType:        assetType,
+		StartTimestampNs: asset.StartTimestampNs,
+		EndTimestampNs:   asset.EndTimestampNs,
+		SegmentLocator:   asset.SegmentLocator,
+		LogicalAssetID:   asset.LogicalAssetID,
+		Revision:         asset.Revision,
+		IsCurrent:        asset.IsCurrent,
+		Metadata:         asset.Metadata,
+	}
+}
+
+func appendPipelineAssetDetailEnv(env []transpiler.EnvVar, prefix string, summary pipelineAssetEnvSummary) ([]transpiler.EnvVar, error) {
+	env = appendEnvIfNonEmpty(env, prefix+"STORAGE_URI", summary.StorageURI)
+	env = appendEnvIfNonEmpty(env, prefix+"MCAP_FILE_ID", summary.McapFileID)
+	env = append(env,
+		transpiler.EnvVar{Name: prefix + "START_NS", Value: fmt.Sprintf("%d", summary.StartTimestampNs)},
+		transpiler.EnvVar{Name: prefix + "END_NS", Value: fmt.Sprintf("%d", summary.EndTimestampNs)},
+	)
+	env = appendEnvIfNonEmpty(env, prefix+"SEGMENT_LOCATOR", summary.SegmentLocator)
+	env = appendEnvIfNonEmpty(env, prefix+"TYPE", summary.AssetType)
+	env = appendEnvIfNonEmpty(env, prefix+"LOGICAL_ASSET_ID", summary.LogicalAssetID)
+	env = append(env,
+		transpiler.EnvVar{Name: prefix + "REVISION", Value: fmt.Sprintf("%d", summary.Revision)},
+		transpiler.EnvVar{Name: prefix + "IS_CURRENT", Value: fmt.Sprintf("%t", summary.IsCurrent)},
+	)
+	if len(summary.Metadata) > 0 {
+		metadataJSON, err := json.Marshal(summary.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("marshal %sMETADATA_JSON: %w", prefix, err)
+		}
+		env = append(env, transpiler.EnvVar{Name: prefix + "METADATA_JSON", Value: string(metadataJSON)})
+	}
+	return env, nil
+}
+
+func appendEnvIfNonEmpty(env []transpiler.EnvVar, name, value string) []transpiler.EnvVar {
+	if value == "" {
+		return env
+	}
+	return append(env, transpiler.EnvVar{Name: name, Value: value})
+}
+
 // Deploy transpiles a pipeline and submits it as an Argo Workflow.
 // pipelineArg is the raw pipeline JSON map. name overrides the workflow name.
 // assetIDs are passed as workflow-level parameters (F4.1).
@@ -1626,40 +1748,16 @@ func (uc *Usecase) Deploy(
 
 	// Assemble workflow-level params and global env vars from asset IDs.
 	var wfParams []transpiler.Param
-	globalEnv := []transpiler.EnvVar{
-		{Name: "PIPELINE_DEPLOYMENT_ID", Value: depID},
-	}
 	if len(assetIDs) > 0 {
 		wfParams = append(wfParams, transpiler.Param{
 			Name:  "asset_ids",
 			Value: strings.Join(assetIDs, ","),
 		})
-		globalEnv = append(globalEnv,
-			transpiler.EnvVar{Name: "ASSET_IDS", Value: strings.Join(assetIDs, ",")},
-			transpiler.EnvVar{Name: "ASSET_COUNT", Value: fmt.Sprintf("%d", len(assetIDs))},
-		)
-		for i, aid := range assetIDs {
-			prefix := fmt.Sprintf("ASSET_%d_", i)
-			globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "ID", Value: aid})
-			if i == 0 {
-				// CyberPipe algorithm compat: first asset is the primary video
-				globalEnv = append(globalEnv, transpiler.EnvVar{Name: "VIDEO_ID", Value: aid})
-			}
-			if uc.assetRepo != nil {
-				a, err := uc.assetRepo.Get(ctx, aid)
-				if err == nil && a != nil {
-					if a.StorageURI != "" {
-						globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "STORAGE_URI", Value: a.StorageURI})
-					}
-					if a.AssetType != "" {
-						globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "TYPE", Value: a.AssetType})
-					}
-				}
-			}
-		}
 	}
-	// CyberPipe algorithm compat: REQUEST_ID = pipeline workflow name
-	globalEnv = append(globalEnv, transpiler.EnvVar{Name: "REQUEST_ID", Value: wfName})
+	globalEnv, err := uc.buildPipelineGlobalEnv(ctx, assetIDs, depID, wfName)
+	if err != nil {
+		return nil, err
+	}
 
 	// Transpile to Argo Workflow.
 	wfOpts := &transpiler.Options{
