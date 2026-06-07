@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import BuildVersionBadge from "./BuildVersionBadge";
 import CmdKSearch from "./CmdKSearch";
 
 const { Sider, Content } = Layout;
@@ -149,6 +150,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 					items={menuItems}
 					onClick={({ key }) => navigate(key)}
 				/>
+				{!isMobile ? <BuildVersionBadge variant="sidebar" /> : null}
 			</Sider>
 			<Layout style={{ marginLeft: isMobile ? 0 : siderWidth }}>
 				<Content style={{ minHeight: "100vh" }}>
@@ -194,6 +196,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 					</div>
 				</Content>
 			</Layout>
+			{isMobile ? <BuildVersionBadge offsetLeft={8} /> : null}
 		</Layout>
 	);
 }

@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+	readonly VITE_APP_ENV?: string;
 	readonly VITE_API_BASE_URL?: string;
 	readonly VITE_DEV_ACCESS_TOKEN?: string;
 	readonly VITE_ENABLE_EMBED_LICHTBLICK_PLAYER?: string;

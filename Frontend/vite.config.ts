@@ -1,9 +1,31 @@
+import { execSync } from "node:child_process";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+function resolveGitBuildRef(): string {
+	try {
+		const shortSha = execSync("git rev-parse --short HEAD", {
+			stdio: ["ignore", "pipe", "ignore"],
+		})
+			.toString()
+			.trim();
+		if (!shortSha) return "local";
+
+		const dirty = execSync("git status --porcelain", {
+			stdio: ["ignore", "pipe", "ignore"],
+		})
+			.toString()
+			.trim();
+		return dirty ? `${shortSha}-dirty` : shortSha;
+	} catch {
+		return "local";
+	}
+}
+
 const appVersion =
 	process.env.VITE_APP_VERSION || process.env.npm_package_version || "dev";
-const buildRef = process.env.VITE_BUILD_REF || "local";
+const buildRef = process.env.VITE_BUILD_REF || resolveGitBuildRef();
+const appEnv = process.env.VITE_APP_ENV || process.env.NODE_ENV || "local";
 const DEV_PORT = 5176;
 const DEFAULT_LOCAL_API = "http://localhost:8080";
 const apiProxyTarget = process.env.VITE_API_BASE_URL || DEFAULT_LOCAL_API;
@@ -52,6 +74,7 @@ export default defineConfig({
 	define: {
 		__APP_VERSION__: JSON.stringify(appVersion),
 		__APP_BUILD_REF__: JSON.stringify(buildRef),
+		__APP_ENV__: JSON.stringify(appEnv),
 	},
 	server: {
 		port: DEV_PORT,
