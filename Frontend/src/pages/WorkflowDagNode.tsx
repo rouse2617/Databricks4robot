@@ -20,6 +20,10 @@ import "./WorkflowDagNode.css";
 
 const PROGRESS_RING_SIZE = 18;
 const PROGRESS_RING_STROKE = 2.5;
+const READONLY_HANDLE_STYLE: React.CSSProperties = {
+	opacity: 0,
+	pointerEvents: "none",
+};
 
 export type WorkflowDagNodeAction =
 	| "summary"
@@ -149,11 +153,13 @@ export function WorkflowDagNode({
 				type="target"
 				position={Position.Left}
 				className="workflow-dag-node__handle workflow-dag-node__handle--target"
+				style={READONLY_HANDLE_STYLE}
 			/>
 			<Handle
 				type="source"
 				position={Position.Right}
 				className="workflow-dag-node__handle workflow-dag-node__handle--source"
+				style={READONLY_HANDLE_STYLE}
 			/>
 
 			<div className="workflow-dag-node__accent" aria-hidden="true" />

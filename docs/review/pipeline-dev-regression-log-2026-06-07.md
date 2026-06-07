@@ -807,3 +807,53 @@ Environment:
   - Console has no runtime `error` / `warn`; remaining messages are existing browser issues for deprecated feature usage and form fields missing `id` / `name`.
 - Screenshots:
   - Captured during MCP verification, but PNG artifacts were removed intentionally and will not be committed.
+
+## CYB-1793 Workflow DAG Layout — 2026-06-07
+
+### Scope
+
+- Linear: `CYB-1793`
+- Branch: `fix/CYB-1793-workflow-dag-layout`
+- OpenSpec: `openspec/changes/CYB-1793-workflow-dag-layout`
+
+### UI issues addressed
+
+- Complex fan-in DAG layout:
+  - Symptom: join nodes rendered off-center relative to their incoming branches, which made the dependency graph feel visually awkward even though the workflow was system-rendered correctly.
+  - Fix: after dagre computes the layout, multi-input join nodes are centered over the average vertical center of their direct visible predecessors.
+- Fan-in edge readability:
+  - Symptom: several incoming branches to the same join read like incidental crossings.
+  - Fix: join incoming edges get a slightly stronger visual style while preserving the same DAG semantics.
+- Read-only execution handles:
+  - Symptom: React Flow handles were hidden visually but could still expose editing affordances.
+  - Fix: execution DAG handles are transparent and have `pointer-events: none`.
+
+### Local verification before dev deploy
+
+- `cd Frontend && npm run test -- --run src/pages/WorkflowDagView.test.tsx` -> pass, `4` tests
+- `cd Frontend && npm run lint` -> pass
+- `cd Frontend && npm run build` -> pass; existing large chunk warnings only
+
+### Dev deploy and Chrome MCP verification
+
+- Frontend:
+  - Worker: `cyber-databrew-dev`
+  - Version ID: `46345da4-2b70-4747-9099-7f5ba31396a5`
+  - Dev URL: `https://cyber-databrew-dev.cyberorigin.ai/`
+- Chrome DevTools MCP URL:
+  - `https://cyber-databrew-dev.cyberorigin.ai/pipeline/executions/qa-complex-dag-20260607041627-e3d3c7?runId=dcb6cbb1-8e5d-4131-aab0-b99c0f1b4474`
+- Chrome DevTools MCP DOM checks:
+  - `nodeCount = 8`
+  - predecessor centerY values for `qa-left-b`, `qa-right-b`, `qa-mid-a`: `348.2`, `499.1`, `650.0`
+  - average predecessor centerY: `499.1`
+  - `qa-join-abc` centerY: `499.1`
+  - `joinDeltaY = 0`
+  - fan-in styled edge count: `3`
+  - hidden handle count: `16`
+  - visible or clickable handle count: `0`
+- Chrome DevTools MCP page checks:
+  - Status `Succeeded`, `DataBrew 运行`, `8` nodes, `52` events.
+  - Key workflow APIs returned `200`; Cloudflare RUM returned `204`.
+  - Console has no runtime `error` / `warn`; remaining messages are existing browser issues for deprecated feature usage and form fields missing `id` / `name`.
+- Screenshots:
+  - No PNG artifacts were written to the repo.

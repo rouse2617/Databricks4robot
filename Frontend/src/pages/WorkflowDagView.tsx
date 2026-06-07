@@ -33,6 +33,7 @@ const DAG_NODE_WIDTH = 240;
 const DAG_NODE_HEIGHT = 112;
 const DAG_RANK_DIR = "LR" as const;
 const DAG_NODE_GAP = 40;
+const DAG_JOIN_CENTER_MIN_INPUTS = 2;
 const DAG_FIT_MIN_ZOOM = 0.72;
 const DAG_FIT_MAX_ZOOM = 1;
 
@@ -203,6 +204,28 @@ export function buildDagElements(
 		graph.setEdge(edge.source, edge.target);
 	}
 	dagre.layout(graph);
+	centerFanInJoinNodes(graph, edges);
+	const incomingCounts = countIncomingEdges(edges);
+	const styledEdges = edges.map((edge) => {
+		if ((incomingCounts.get(edge.target) ?? 0) < DAG_JOIN_CENTER_MIN_INPUTS) {
+			return edge;
+		}
+		return {
+			...edge,
+			className: "workflow-dag-view__edge--fanin",
+			style: {
+				...(edge.style ?? {}),
+				stroke: "#475569",
+				strokeWidth: 1.8,
+			},
+			markerEnd: {
+				type: MarkerType.ArrowClosed,
+				color: "#475569",
+				width: 14,
+				height: 14,
+			},
+		};
+	});
 	const nodes = visibleNodes.map((node, index) => {
 		const dagreNode = graph.node(node.id);
 		const hasLayout =
@@ -245,7 +268,46 @@ export function buildDagElements(
 		};
 	});
 
-	return { nodes, edges };
+	return { nodes, edges: styledEdges };
+}
+
+function countIncomingEdges(edges: RFEdge[]): Map<string, number> {
+	const incomingCounts = new Map<string, number>();
+	for (const edge of edges) {
+		incomingCounts.set(edge.target, (incomingCounts.get(edge.target) ?? 0) + 1);
+	}
+	return incomingCounts;
+}
+
+function centerFanInJoinNodes(
+	graph: dagre.graphlib.Graph,
+	edges: RFEdge[],
+): void {
+	const incoming = new Map<string, string[]>();
+	for (const edge of edges) {
+		const sources = incoming.get(edge.target) ?? [];
+		sources.push(edge.source);
+		incoming.set(edge.target, sources);
+	}
+
+	for (const [target, sources] of incoming) {
+		if (sources.length < DAG_JOIN_CENTER_MIN_INPUTS) continue;
+		const targetNode = graph.node(target);
+		if (!targetNode || typeof targetNode.y !== "number") continue;
+
+		const sourceLayouts = sources
+			.map((source) => graph.node(source))
+			.filter(
+				(sourceNode): sourceNode is dagre.Node =>
+					!!sourceNode && typeof sourceNode.y === "number",
+			);
+		if (sourceLayouts.length < DAG_JOIN_CENTER_MIN_INPUTS) continue;
+
+		const centeredY =
+			sourceLayouts.reduce((sum, sourceNode) => sum + sourceNode.y, 0) /
+			sourceLayouts.length;
+		targetNode.y = centeredY;
+	}
 }
 
 interface WorkflowDagViewProps {

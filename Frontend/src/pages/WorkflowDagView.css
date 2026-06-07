@@ -61,6 +61,10 @@
 	stroke-linecap: round;
 }
 
+.workflow-dag-view .workflow-dag-view__edge--fanin .react-flow__edge-path {
+	stroke-linecap: round;
+}
+
 .workflow-dag-view .react-flow__controls {
 	border: 1px solid #dbe3ee;
 	border-radius: 8px;

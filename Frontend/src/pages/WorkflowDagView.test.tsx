@@ -72,4 +72,102 @@ describe("buildDagElements", () => {
 			]),
 		).toBe(0);
 	});
+
+	it("centers fan-in join nodes over their direct predecessors", () => {
+		const complexNodes = [
+			"qa-seed-root",
+			"qa-left-a",
+			"qa-left-b",
+			"qa-right-a",
+			"qa-right-b",
+			"qa-mid-a",
+			"qa-join-abc",
+			"qa-final-sink",
+		].map((id): WorkflowNodeStatus => {
+			return {
+				id,
+				name: `wf.${id}`,
+				displayName: id,
+				type: "Pod",
+				templateName: id,
+				phase: "Succeeded",
+			};
+		});
+		const complexEdges: WorkflowDagEdge[] = [
+			{
+				id: "seed-left-a",
+				source: "qa-seed-root",
+				target: "qa-left-a",
+				kind: "dag",
+			},
+			{
+				id: "left-a-left-b",
+				source: "qa-left-a",
+				target: "qa-left-b",
+				kind: "dag",
+			},
+			{
+				id: "seed-right-a",
+				source: "qa-seed-root",
+				target: "qa-right-a",
+				kind: "dag",
+			},
+			{
+				id: "right-a-right-b",
+				source: "qa-right-a",
+				target: "qa-right-b",
+				kind: "dag",
+			},
+			{
+				id: "seed-mid-a",
+				source: "qa-seed-root",
+				target: "qa-mid-a",
+				kind: "dag",
+			},
+			{
+				id: "left-b-join",
+				source: "qa-left-b",
+				target: "qa-join-abc",
+				kind: "dag",
+			},
+			{
+				id: "right-b-join",
+				source: "qa-right-b",
+				target: "qa-join-abc",
+				kind: "dag",
+			},
+			{
+				id: "mid-a-join",
+				source: "qa-mid-a",
+				target: "qa-join-abc",
+				kind: "dag",
+			},
+			{
+				id: "join-final",
+				source: "qa-join-abc",
+				target: "qa-final-sink",
+				kind: "dag",
+			},
+		];
+
+		const result = buildDagElements(complexNodes, complexEdges, null, "");
+		const nodeById = new Map(result.nodes.map((node) => [node.id, node]));
+		const centerY = (id: string) => {
+			const node = nodeById.get(id);
+			if (!node) throw new Error(`missing node ${id}`);
+			return node.position.y + 56;
+		};
+		const expectedJoinCenter =
+			(centerY("qa-left-b") + centerY("qa-right-b") + centerY("qa-mid-a")) / 3;
+
+		expect(centerY("qa-join-abc")).toBeCloseTo(expectedJoinCenter, 5);
+		expect(
+			result.edges
+				.filter((edge) => edge.target === "qa-join-abc")
+				.every((edge) => edge.className === "workflow-dag-view__edge--fanin"),
+		).toBe(true);
+		expect(
+			result.edges.find((edge) => edge.target === "qa-final-sink")?.className,
+		).toBeUndefined();
+	});
 });

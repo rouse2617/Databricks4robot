@@ -189,12 +189,13 @@
 	border: 2px solid #94a3b8;
 	background: #fff;
 	opacity: 0;
+	pointer-events: none;
 	transition: opacity 0.15s ease;
 }
 
 .workflow-dag-node:hover .workflow-dag-node__handle,
 .workflow-dag-node--selected .workflow-dag-node__handle {
-	opacity: 1;
+	opacity: 0;
 }
 
 .workflow-dag-node__handle--target {
