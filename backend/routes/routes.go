@@ -316,6 +316,10 @@ func RegisterAll(
 			assets.GET("/:id/actions", actionHandler.List)
 			assets.PATCH("/:id/actions/:action_id", actionHandler.Patch)
 			assets.DELETE("/:id/actions/:action_id", actionHandler.Delete)
+			assets.POST("/:id/action-annotations", actionHandler.Create)
+			assets.GET("/:id/action-annotations", actionHandler.List)
+			assets.PATCH("/:id/action-annotations/:action_id", actionHandler.Patch)
+			assets.DELETE("/:id/action-annotations/:action_id", actionHandler.Delete)
 		}
 
 		// Algo-runs (CYB-1018)

@@ -414,8 +414,11 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil, nil, nil, nil, nil)
 
 	want := map[string]bool{
-		"PATCH /api/v1/assets/:id/actions/:action_id":  false,
-		"DELETE /api/v1/assets/:id/actions/:action_id": false,
+		"PATCH /api/v1/assets/:id/actions/:action_id":             false,
+		"DELETE /api/v1/assets/:id/actions/:action_id":            false,
+		"GET /api/v1/assets/:id/action-annotations":               false,
+		"PATCH /api/v1/assets/:id/action-annotations/:action_id":  false,
+		"DELETE /api/v1/assets/:id/action-annotations/:action_id": false,
 	}
 	for _, ri := range r.Routes() {
 		key := ri.Method + " " + ri.Path

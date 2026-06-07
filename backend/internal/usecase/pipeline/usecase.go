@@ -1498,9 +1498,35 @@ func (uc *Usecase) ListTemplates(ctx context.Context) ([]models.PipelineTemplate
 	return uc.templateRepo.FindAll(ctx)
 }
 
-// GetTemplate returns a pipeline template by id.
+// GetTemplate returns a pipeline template by id. Short display ids are accepted
+// only when they uniquely match one saved template id prefix.
 func (uc *Usecase) GetTemplate(ctx context.Context, id string) (*models.PipelineTemplate, error) {
-	return uc.templateRepo.FindByID(ctx, id)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
+	t, err := uc.templateRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if t != nil || len(id) >= len(uuid.NewString()) {
+		return t, nil
+	}
+	templates, err := uc.templateRepo.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var match *models.PipelineTemplate
+	for i := range templates {
+		if !strings.HasPrefix(templates[i].ID, id) {
+			continue
+		}
+		if match != nil {
+			return nil, nil
+		}
+		match = &templates[i]
+	}
+	return match, nil
 }
 
 // DeleteTemplate removes a pipeline template.

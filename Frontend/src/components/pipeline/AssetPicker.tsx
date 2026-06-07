@@ -1,5 +1,6 @@
 import { Alert, Button, Input, Table } from "antd";
 import { useEffect, useRef, useState } from "react";
+import { assetsApi } from "../../api/assets";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
 
@@ -80,8 +81,15 @@ export default function AssetPicker({
 				{ q: trimmed, page_size: 50 },
 				controller.signal,
 			);
+			let items = res.items;
+			if (items.length === 0 && isDirectAssetID(trimmed)) {
+				const asset = await lookupDirectAsset(trimmed);
+				if (asset) {
+					items = [asset];
+				}
+			}
 			if (abortRef.current === controller && !controller.signal.aborted) {
-				setResults(res.items);
+				setResults(items);
 			}
 		} catch (err) {
 			if (!isAbortError(err) && abortRef.current === controller) {
@@ -166,4 +174,18 @@ export default function AssetPicker({
 			)}
 		</div>
 	);
+}
+
+function isDirectAssetID(value: string) {
+	return /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/.test(value);
+}
+
+async function lookupDirectAsset(
+	assetId: string,
+): Promise<SearchAssetResult | null> {
+	try {
+		return await assetsApi.get(assetId);
+	} catch {
+		return null;
+	}
 }

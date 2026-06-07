@@ -8,9 +8,16 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { assetsApi } from "../../api/assets";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
 import AssetPicker from "./AssetPicker";
+
+vi.mock("../../api/assets", () => ({
+	assetsApi: {
+		get: vi.fn(),
+	},
+}));
 
 vi.mock("../../api/search", () => ({
 	searchApi: {
@@ -124,6 +131,7 @@ describe("AssetPicker", () => {
 		expect(screen.getByText("ast-002")).toBeTruthy();
 		expect(screen.getByText("dataset")).toBeTruthy();
 		expect(screen.getByText("model")).toBeTruthy();
+		expect(assetsApi.get).not.toHaveBeenCalled();
 	});
 
 	it("replaces the controlled search value instead of appending stale text", () => {
@@ -279,6 +287,7 @@ describe("AssetPicker", () => {
 			page: 1,
 			page_size: 50,
 		});
+		vi.mocked(assetsApi.get).mockRejectedValue(new Error("not found"));
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
 		const input = screen.getByPlaceholderText(
@@ -291,6 +300,44 @@ describe("AssetPicker", () => {
 		await waitFor(() => {
 			expect(screen.getByText("未找到匹配的资产")).toBeTruthy();
 		});
+		expect(assetsApi.get).toHaveBeenCalledWith("zzznonexistent");
+	});
+
+	it("falls back to direct asset lookup when search yields no results", async () => {
+		vi.mocked(searchApi.searchAssets).mockResolvedValue({
+			items: [],
+			total: 0,
+			page: 1,
+			page_size: 50,
+		});
+		vi.mocked(assetsApi.get).mockResolvedValue(
+			makeSearchResult({
+				asset_id: "CYB10A01",
+				asset_type: "segment",
+				lifecycle_state: "ready",
+				storage_uri: "gs://bucket/cyb10a01",
+			}),
+		);
+
+		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
+		const input = screen.getByPlaceholderText(
+			"搜索资产（输入 asset_id 或名称）",
+		);
+		const searchButton = input.parentElement?.querySelector("button");
+		fireEvent.change(input, { target: { value: "CYB10A01" } });
+		if (searchButton) fireEvent.click(searchButton);
+
+		await waitFor(() => {
+			expect(searchApi.searchAssets).toHaveBeenCalledWith(
+				{ q: "CYB10A01", page_size: 50 },
+				expect.any(AbortSignal),
+			);
+			expect(assetsApi.get).toHaveBeenCalledWith("CYB10A01");
+		});
+
+		expect(screen.getByText("CYB10A01")).toBeTruthy();
+		expect(screen.getByText("segment")).toBeTruthy();
+		expect(screen.queryByText("未找到匹配的资产")).toBeNull();
 	});
 
 	it("shows error state when search API fails", async () => {

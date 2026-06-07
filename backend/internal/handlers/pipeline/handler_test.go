@@ -621,6 +621,47 @@ func TestGetTemplate_Success(t *testing.T) {
 	}
 }
 
+func TestGetTemplate_UniqueShortID(t *testing.T) {
+	templateRepo := &mockTemplateRepo{}
+	fullID := "c00f1136-1f86-4a32-a25d-91bf81557fc8"
+	_ = templateRepo.Save(context.Background(), makeTemplate(fullID, "my-pipeline", 1))
+	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	h := New(uc, "")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines/c00f1136", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp models.PipelineTemplate
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.ID != fullID {
+		t.Fatalf("expected id %q, got %q", fullID, resp.ID)
+	}
+}
+
+func TestGetTemplate_AmbiguousShortIDNotFound(t *testing.T) {
+	templateRepo := &mockTemplateRepo{}
+	_ = templateRepo.Save(context.Background(), makeTemplate("c00f1136-1f86-4a32-a25d-91bf81557fc8", "pipeline-a", 1))
+	_ = templateRepo.Save(context.Background(), makeTemplate("c00f1136-2222-4a32-a25d-91bf81557fc8", "pipeline-b", 1))
+	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	h := New(uc, "")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines/c00f1136", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for ambiguous short id, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestGetTemplate_NotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
 	h := New(uc, "")

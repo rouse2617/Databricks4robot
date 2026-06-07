@@ -3125,6 +3125,7 @@ paths:
     post:
       tags: [ActionAnnotations]
       summary: Create action annotation on asset
+      description: Alias of POST /api/v1/assets/{id}/actions for frontend and OpenAPI clients.
       parameters:
         - in: path
           name: id
@@ -3144,6 +3145,7 @@ paths:
     get:
       tags: [ActionAnnotations]
       summary: List action annotations on asset
+      description: Alias of GET /api/v1/assets/{id}/actions; returns the same action list envelope.
       parameters:
         - in: path
           name: id
@@ -3159,6 +3161,7 @@ paths:
     patch:
       tags: [ActionAnnotations]
       summary: Patch action annotation
+      description: Alias of PATCH /api/v1/assets/{id}/actions/{action_id}.
       parameters:
         - in: path
           name: id
@@ -3182,6 +3185,7 @@ paths:
     delete:
       tags: [ActionAnnotations]
       summary: Soft-delete action annotation
+      description: Alias of DELETE /api/v1/assets/{id}/actions/{action_id}.
       parameters:
         - in: path
           name: id

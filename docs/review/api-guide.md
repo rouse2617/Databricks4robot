@@ -1191,7 +1191,7 @@ curl -X POST "$BASE/api/v1/assets/{id}/algo/action_annotation@1.0.0/start" \
 
 ## 2.7 Action 段（seg 内时间分段标注）
 
-> 状态：**Phase 1 已上线**：`POST` / `GET` / `PATCH` / `DELETE /assets/:id/actions[/:action_id]`（含 `at` / `from` / `to` / `label` 过滤；PATCH/DELETE 走同事务发 `action_upserted` / `action_deleted`，可用 `expected_version` 做 CAS）。平台级反查 `GET /actions` 与 `GET /lookup` 仍在 §2.7.4 / §2.7.5 标记为「待上线」。
+> 状态：**Phase 1 已上线**：`POST` / `GET` / `PATCH` / `DELETE /assets/:id/actions[/:action_id]`（含 `at` / `from` / `to` / `label` 过滤；PATCH/DELETE 走同事务发 `action_upserted` / `action_deleted`，可用 `expected_version` 做 CAS）。前端时间轴与 OpenAPI 使用的 `/assets/:id/action-annotations[/:action_id]` 是同一套 handler 的兼容别名。平台级反查 `GET /actions` 与 `GET /lookup` 仍在 §2.7.4 / §2.7.5 标记为「待上线」。
 
 业务模型：`mcap → seg → action`。一条 action 是 seg 内某段时间窗上的一组标注（label + 描述 + 多源溯源）。
 
@@ -1246,6 +1246,10 @@ curl -X DELETE "$BASE/api/v1/assets/{asset_id}/actions/{action_id}?expected_vers
 ```bash
 # 列出 seg 的所有 action（默认按 start_ns 排序）
 curl "$BASE/api/v1/assets/{asset_id}/actions" -H "X-Databrew-Token: $TOKEN"
+
+# 同一响应包络；供资产详情 Action 时间轴和 OpenAPI 客户端使用
+curl "$BASE/api/v1/assets/{asset_id}/action-annotations?limit=200" \
+  -H "X-Databrew-Token: $TOKEN"
 
 # 时间戳点查：哪些 action 覆盖时间点 t
 curl "$BASE/api/v1/assets/{asset_id}/actions?at=1500000000" -H "X-Databrew-Token: $TOKEN"

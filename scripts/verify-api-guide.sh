@@ -163,6 +163,7 @@ echo ""
 echo "--- § Actions (need segment) ---"
 if [[ -n "$SEG_AID" ]]; then
 	getc "GET actions list" "/api/v1/assets/${SEG_AID}/actions"
+	getc "GET action-annotations alias" "/api/v1/assets/${SEG_AID}/action-annotations?limit=200"
 	# start_ns/end_ns must fall inside segment [start_timestamp_ns, end_timestamp_ns]; gin rejects 0 for required int64.
 	SEG_INFO=$(curl -sS --max-time 20 "${HDR[@]}" "${BASE}/api/v1/assets/${SEG_AID}")
 	SSTART=$(echo "$SEG_INFO" | python3 -c "import sys,json;d=json.load(sys.stdin);print(int(d.get('start_timestamp_ns')or 0))")
