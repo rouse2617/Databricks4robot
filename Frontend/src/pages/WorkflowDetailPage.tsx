@@ -228,10 +228,10 @@ function WorkflowLogPanel({
 				{logResponse ? (
 					<>
 						<Tag color="blue">
-							tail {logResponse.truncation.tailLines.toLocaleString()} 行
+							尾部 {logResponse.truncation.tailLines.toLocaleString()} 行
 						</Tag>
 						<Tag color="purple">
-							上限 {logResponse.truncation.limitBytes.toLocaleString()} bytes
+							上限 {logResponse.truncation.limitBytes.toLocaleString()} 字节
 						</Tag>
 						<Tag color="default">
 							来源 {logResponse.source} /{" "}
@@ -255,9 +255,9 @@ function WorkflowLogPanel({
 					<Spin />
 				</div>
 			) : error ? (
-				<div
-					style={{ color: "#dc2626", fontSize: 13 }}
-				>{`获取日志失败：${error}`}</div>
+				<div style={{ color: "#dc2626", fontSize: 13 }}>
+					获取日志失败：{formatWorkflowLogError(selectedNode, error)}
+				</div>
 			) : logContent === null ? (
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>暂无日志</div>
 			) : (
@@ -289,7 +289,7 @@ function WorkflowLogPanel({
 							showIcon
 							style={{ marginBottom: 8 }}
 							message={`日志较大，当前仅显示尾部 ${visibleLog.content.length.toLocaleString()} 字符 / ${Math.min(visibleLog.totalLines, LOG_MAX_RENDER_LINES).toLocaleString()} 行。`}
-							description="完整大日志需要后端 tail、分页或流式接口支持；当前视图会限制渲染量以避免浏览器卡顿。"
+							description="完整大日志需要后端尾部读取、分页或流式日志接口支持；当前视图会限制渲染量以避免浏览器卡顿。"
 						/>
 					)}
 					{clientTruncated && (
@@ -551,10 +551,7 @@ function WorkflowSummaryCards({
 		},
 		{
 			label: "成本",
-			value:
-				costSummaryState.item?.totalEstimatedCostUsd != null
-					? `~$${costSummaryState.item.totalEstimatedCostUsd?.toFixed(4)}`
-					: "—",
+			value: formatWorkflowSummaryCost(workflow.status, costSummaryState),
 		},
 	];
 
@@ -914,15 +911,15 @@ function ExpiredWorkflowLedgerView({
 }
 
 function formatCost(value?: number | null) {
-	if (typeof value !== "number") return "未生成快照";
+	if (typeof value !== "number") return "成本快照未生成";
 	if (value < 0.01) return `$${value.toFixed(4)}`;
 	return `$${value.toFixed(2)}`;
 }
 
 function formatCostSource(value?: string) {
 	if (value === "estimated_resource_duration") return "估算";
-	if (value === "not_available") return "暂无成本数据";
-	return "未生成";
+	if (value === "not_available") return "成本暂不可用";
+	return "成本快照未生成";
 }
 
 const COST_WAITING_STATUSES = new Set([
@@ -937,6 +934,8 @@ const COST_TERMINAL_STATUSES = new Set([
 	"error",
 	"skipped",
 	"omitted",
+	"terminated",
+	"stopped",
 ]);
 
 function normalizeStatus(value?: string) {
@@ -1032,10 +1031,10 @@ function costSnapshotMessage(row: {
 		return "估算成本，非 GCP Billing 最终账单";
 	}
 	if (isWaitingForRuntimeResources(row.status)) {
-		return "等待资源快照，节点运行后生成估算成本";
+		return "等待资源，节点运行后生成估算成本";
 	}
 	if (isTerminalCostStatus(row.status)) {
-		return "暂无成本数据";
+		return "成本快照未生成，当前没有可展示的估算成本";
 	}
 	return "成本快照未生成";
 }
@@ -1048,10 +1047,36 @@ function formatCostCellValue(row: {
 		return formatCost(row.estimatedCostUsd);
 	}
 	if (isWaitingForRuntimeResources(row.status)) {
-		return "等待资源快照";
+		return "等待资源";
 	}
 	if (isTerminalCostStatus(row.status)) {
-		return "暂无成本数据";
+		return "成本快照未生成";
+	}
+	return "成本快照未生成";
+}
+
+function formatWorkflowSummaryCost(
+	workflowStatus: string,
+	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"],
+) {
+	const total = costSummaryState.item?.totalEstimatedCostUsd;
+	if (typeof total === "number") {
+		return `~$${total.toFixed(4)}`;
+	}
+	if (costSummaryState.loading) {
+		return "同步中";
+	}
+	if (costSummaryState.error) {
+		return "成本暂不可用";
+	}
+	if (isWaitingForRuntimeResources(workflowStatus)) {
+		return "等待资源";
+	}
+	if (isTerminalCostStatus(workflowStatus)) {
+		return "成本快照未生成";
+	}
+	if (costSummaryState.item?.costSource === "not_available") {
+		return "成本暂不可用";
 	}
 	return "成本快照未生成";
 }
@@ -1094,9 +1119,31 @@ function getWorkflowLogPaginationDescription(
 		return serverReason;
 	}
 	if (node && isWaitingForRuntimeResources(node.phase)) {
-		return "当前展示的是实时日志窗口，历史翻页暂不可用。节点开始运行后可继续 follow、刷新或下载当前窗口。";
+		return "当前展示的是实时日志窗口，历史翻页暂不可用。节点开始运行后可继续实时查看、刷新或下载当前窗口。";
 	}
-	return "当前展示的是实时日志窗口，历史翻页暂不可用。可继续 follow、刷新或下载当前窗口。";
+	return "当前展示的是实时日志窗口，历史翻页暂不可用。可继续实时查看、刷新或下载当前窗口。";
+}
+
+export function formatWorkflowLogError(
+	node: Pick<WorkflowNodeStatus, "phase" | "message"> | null,
+	error?: string | null,
+) {
+	const raw = error?.trim() || "";
+	if (/live argo logs|stable historical cursor|cursor pagination/i.test(raw)) {
+		return getWorkflowLogPaginationDescription(node, raw);
+	}
+	if (node && isWaitingForRuntimeResources(node.phase)) {
+		return node.message
+			? `节点还未开始运行，日志将在 Pod 启动后生成。当前状态：${node.message}`
+			: "节点还未开始运行，日志将在 Pod 启动后生成；可先查看事件和运行环境。";
+	}
+	if (/pod.*not.*found|container.*not.*found|not found/i.test(raw)) {
+		return "日志暂不可用，Pod 或容器还没有准备好；可先查看事件和运行环境。";
+	}
+	if (raw && !/[\u4e00-\u9fff]/.test(raw) && /[a-z]/i.test(raw)) {
+		return "日志暂不可用，请稍后重试，或查看事件和运行环境。";
+	}
+	return raw || "日志暂不可用，请稍后重试，或查看事件和运行环境。";
 }
 
 function formatDurationSeconds(startedAt?: string, finishedAt?: string) {
@@ -1185,9 +1232,7 @@ function WorkflowAssetNodePanel({
 	const noAssetOnly =
 		displayAssetNodeItems.length > 0 &&
 		displayAssetNodeItems.every((row) => row.assetId === "no-asset");
-	const displayAssetCount = noAssetOnly
-		? "无资产运行"
-		: (summary?.assetCount ?? 0);
+	const displayAssetCount = noAssetOnly ? "无资产" : (summary?.assetCount ?? 0);
 	const totalEstimatedCost =
 		costSummaryState.item?.totalEstimatedCostUsd ??
 		summary?.totalEstimatedCostUsd;
@@ -1241,18 +1286,20 @@ function WorkflowAssetNodePanel({
 	const costStateLabel = costSyncPending
 		? "同步中"
 		: waitingForResourceSnapshot
-			? "等待资源快照"
+			? "等待资源"
 			: completedMissingCost || costUnavailable
-				? "暂无成本数据"
+				? completedMissingCost
+					? "成本快照未生成"
+					: "成本暂不可用"
 				: formatCost(totalEstimatedCost);
 	const costSourceLabel = costSyncPending
 		? "同步中"
 		: costSyncPartial
 			? `部分同步 ${syncedNodeCount}/${expectedNodeCount}`
 			: waitingForResourceSnapshot
-				? "等待资源快照"
+				? "等待资源"
 				: completedMissingCost
-					? "暂无成本数据"
+					? "成本快照未生成"
 					: formatCostSource(costSource);
 	const costTagColor =
 		costSyncPending || costSyncPartial || waitingForResourceSnapshot
@@ -1322,7 +1369,7 @@ function WorkflowAssetNodePanel({
 				<Alert
 					type="info"
 					showIcon
-					message="暂无成本数据"
+					message="成本快照未生成"
 					description="本次运行已有节点结果，但没有生成成本快照；节点状态、日志和 Pod 诊断仍可继续查看。"
 					style={{ margin: "8px 10px 0" }}
 				/>

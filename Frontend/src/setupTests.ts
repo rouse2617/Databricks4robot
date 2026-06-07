@@ -43,14 +43,22 @@ class MockResizeObserver {
 
 beforeAll(() => {
 	for (const key of ["localStorage", "sessionStorage"] as const) {
-		const storage = window[key] ?? new MemoryStorage();
-		if (window[key] == null) {
+		const windowStorage =
+			window[key] && typeof window[key].clear === "function"
+				? window[key]
+				: new MemoryStorage();
+		const globalStorage = globalThis[key] as Storage | undefined;
+		const storage =
+			globalStorage && typeof globalStorage.clear === "function"
+				? globalStorage
+				: windowStorage;
+		if (window[key] !== storage) {
 			Object.defineProperty(window, key, {
 				configurable: true,
 				value: storage,
 			});
 		}
-		if (globalThis[key] == null) {
+		if (globalThis[key] !== storage) {
 			Object.defineProperty(globalThis, key, {
 				configurable: true,
 				value: storage,

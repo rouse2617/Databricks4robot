@@ -340,9 +340,11 @@ describe("WorkflowNodeDetailPanel", () => {
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
 		expect(screen.getByText("暂无监控快照")).toBeTruthy();
-		expect(screen.getByText("暂无成本数据")).toBeTruthy();
+		expect(screen.getByText("成本快照未生成")).toBeTruthy();
 		expect(screen.getByText("终端入口在节点卡片上")).toBeTruthy();
-		expect(screen.getByText(/请回到 DAG 使用节点卡片入口/)).toBeTruthy();
+		expect(
+			screen.getByText(/终端调试请使用 DAG 节点卡片上的入口/),
+		).toBeTruthy();
 	});
 
 	it("shows explicit collection-disabled copy when backend marks metrics or cost unavailable", () => {

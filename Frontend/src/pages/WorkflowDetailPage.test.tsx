@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WorkflowDetailPage, {
+	formatWorkflowLogError,
 	getWorkflowLogEmptyState,
 } from "./WorkflowDetailPage";
 
@@ -262,7 +263,8 @@ describe("WorkflowDetailPage", () => {
 
 		renderWorkflowDetail();
 
-		expect(screen.getAllByText("等待资源快照").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("等待资源").length).toBeGreaterThan(0);
+		expect(screen.getByText("等待资源快照")).toBeInTheDocument();
 		expect(
 			screen.getByText(
 				/节点还在排队或运行中，资源耗时生成后会自动补齐估算成本/,
@@ -348,7 +350,7 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getAllByText("Succeeded").length).toBeGreaterThan(0);
-		expect(screen.getAllByText("暂无成本数据").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("成本快照未生成").length).toBeGreaterThan(0);
 		expect(screen.queryByText("等待资源快照")).not.toBeInTheDocument();
 		expect(
 			screen.queryByText(
@@ -595,7 +597,7 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getByText("节点 2")).toBeInTheDocument();
-		expect(screen.getAllByText("暂无成本数据").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("成本快照未生成").length).toBeGreaterThan(0);
 		expect(
 			screen.getByText(/本次运行已有节点结果，但没有生成成本快照/),
 		).toBeInTheDocument();
@@ -625,5 +627,24 @@ describe("WorkflowDetailPage", () => {
 			description:
 				"这个步骤没有返回可展示的日志内容；可继续查看 Pod 事件、节点消息和运行环境。",
 		});
+	});
+
+	it("maps raw provider log errors to product copy", () => {
+		expect(
+			formatWorkflowLogError(
+				{ phase: "Succeeded" },
+				"live Argo logs do not provide stable historical cursor pagination",
+			),
+		).toBe(
+			"当前展示的是实时日志窗口，历史翻页暂不可用。可继续实时查看、刷新或下载当前窗口。",
+		);
+		expect(
+			formatWorkflowLogError(
+				{ phase: "Pending", message: "0/3 nodes are available" },
+				"pod not found",
+			),
+		).toBe(
+			"节点还未开始运行，日志将在 Pod 启动后生成。当前状态：0/3 nodes are available",
+		);
 	});
 });

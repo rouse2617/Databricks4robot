@@ -19,7 +19,7 @@ import {
 	Tag,
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
 	type Deployment,
 	deletePipeline,
@@ -56,6 +56,18 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
+
+function getRunActionLabel(assetCount: number) {
+	return assetCount > 0 ? "运行资产" : "运行";
+}
+
+function parseAssetIdsParam(value: string | null) {
+	if (!value) return [];
+	return value
+		.split(",")
+		.map((item) => item.trim())
+		.filter((item, index, items) => item && items.indexOf(item) === index);
+}
 
 function PanelSkeleton({ rows = 3 }: { rows?: number }) {
 	const keys = Array.from({ length: rows }, (_, i) => `skel-${i}`);
@@ -248,6 +260,11 @@ export function DeployPanel({
 	const resolvedVariant: DeployPanelVariant =
 		variant ?? (compact ? "compact" : "full");
 	const navigate = useNavigate();
+	const [searchParams] = useSearchParams();
+	const assetIdsFromUrl = useMemo(
+		() => parseAssetIdsParam(searchParams.get("asset_ids")),
+		[searchParams],
+	);
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
@@ -342,7 +359,7 @@ export function DeployPanel({
 		setDeployVersions(currentTemplate ? [currentTemplate] : []);
 		const activeVersion = activeVersionByTemplate[currentTemplate?.name ?? ""];
 		setSelectedDeployVersion(activeVersion ?? currentTemplate?.version);
-		setSelectedAssetIds([]);
+		setSelectedAssetIds(assetIdsFromUrl);
 		setAssetPickerResetKey((key) => key + 1);
 		const defaultTarget =
 			targets.find((target) => target.isDefault) ?? targets[0];
@@ -595,7 +612,9 @@ export function DeployPanel({
 									size="small"
 									icon={<LinkOutlined />}
 									onClick={() =>
-										navigate(`/pipeline/executions/${d.workflowName}`)
+										navigate(
+											`/pipeline/executions/${d.workflowName}${d.id ? `?runId=${encodeURIComponent(d.id)}` : ""}`,
+										)
 									}
 								>
 									查看
@@ -634,6 +653,7 @@ export function DeployPanel({
 		selectableTemplateIds.every((id) => selectedTemplateIdSet.has(id));
 	const someTemplatesSelected =
 		selectedTemplateIds.length > 0 && !allTemplatesSelected;
+	const runActionLabel = getRunActionLabel(selectedAssetIds.length);
 
 	return (
 		<div className="deploy-panel">
@@ -657,6 +677,16 @@ export function DeployPanel({
 					</Button>
 				</Space>
 			</div>
+
+			{assetIdsFromUrl.length > 0 ? (
+				<Alert
+					type="info"
+					showIcon
+					message={`已选择 ${assetIdsFromUrl.length} 个资产`}
+					description="请选择要运行的流水线和版本，确认后即可提交运行。"
+					style={{ marginBottom: 12, fontSize: 12 }}
+				/>
+			) : null}
 
 			{error ? (
 				<Alert
@@ -745,7 +775,7 @@ export function DeployPanel({
 				onCancel={closeAssetModal}
 				onOk={handleDeployConfirm}
 				confirmLoading={deploying}
-				okText={selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
+				okText={runActionLabel}
 				width={640}
 			>
 				<Alert
@@ -753,14 +783,23 @@ export function DeployPanel({
 					message={
 						selectedAssetIds.length > 0
 							? `将处理 ${selectedAssetIds.length} 个资产`
-							: "当前是 no-asset run：不会注入资产环境变量。"
+							: "本次不绑定资产"
+					}
+					description={
+						selectedAssetIds.length > 0
+							? undefined
+							: "本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。"
 					}
 					showIcon
 					style={{ marginBottom: 16, fontSize: 12 }}
 				/>
 				<div className="deploy-run-field">
 					<div className="deploy-run-field__label">模板版本</div>
+					<div className="deploy-run-field__hint">
+						默认使用活跃版本；也可以在这里选择历史版本运行。
+					</div>
 					<Select
+						aria-label="模板版本"
 						value={selectedDeployVersion}
 						onChange={setSelectedDeployVersion}
 						style={{ width: "100%", marginBottom: 12 }}

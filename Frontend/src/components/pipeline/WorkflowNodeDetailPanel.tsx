@@ -342,7 +342,7 @@ function getBillingState(node: WorkflowNodeStatus) {
 	if (isTerminalNodePhase(node.phase)) {
 		return {
 			type: "info" as const,
-			message: "暂无成本数据",
+			message: "成本快照未生成",
 			description:
 				"当前节点已结束，但没有记录到该步骤的成本拆分；Pod、日志和事件仍可继续查看。",
 		};
@@ -690,7 +690,7 @@ function LogsTab({
 				}
 				description={
 					node.message ||
-					"日志会按当前步骤过滤展示；大日志会限制渲染尾部内容，后续可接入 tail、分页和流式 follow。"
+					"日志会按当前步骤过滤展示；大日志会限制渲染尾部内容，后续可接入日志尾部读取、分页和实时跟随能力。"
 				}
 				action={
 					<Button type="primary" size="small" onClick={onShowLogs}>
@@ -754,7 +754,7 @@ function RuntimeTab({
 					description={
 						node.debug?.execEnabled
 							? "返回 DAG 后点击节点上的终端按钮，即可进入调试会话。"
-							: "当前面板只展示运行快照；如需终端调试，请回到 DAG 使用节点卡片入口。"
+							: "当前面板只展示运行快照；终端调试请使用 DAG 节点卡片上的入口。"
 					}
 				/>
 			</RuntimeSection>

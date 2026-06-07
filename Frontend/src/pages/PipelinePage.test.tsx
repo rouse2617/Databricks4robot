@@ -209,7 +209,7 @@ function getModalDeployBtn(): HTMLButtonElement {
 	const modal = screen.getByText("部署流水线").closest(".ant-modal");
 	expect(modal).toBeTruthy();
 	const btn = within(modal as HTMLElement).getByRole("button", {
-		name: /^(运行资产|无资产运行)$/,
+		name: /^(运\s*行\s*资\s*产|运\s*行)$/,
 	});
 	expect(btn).not.toBeNull();
 	expect(btn).not.toBeDisabled();
@@ -589,7 +589,12 @@ describe("PipelinePage", () => {
 
 		await waitFor(() => {
 			expect(screen.getByText("Selected: (none)")).toBeInTheDocument();
-			expect(screen.getAllByText("无资产运行").length).toBeGreaterThan(0);
+			expect(screen.getByText("本次不绑定资产")).toBeInTheDocument();
+			expect(
+				screen.getByText(
+					"本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。",
+				),
+			).toBeInTheDocument();
 			expect(screen.queryByText("将处理 2 个资产")).not.toBeInTheDocument();
 		});
 
@@ -621,7 +626,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(screen.getByTestId("clear-assets-btn"));
 
 		await waitFor(() => {
-			expect(screen.getAllByText("无资产运行").length).toBeGreaterThan(0);
+			expect(screen.getByText("本次不绑定资产")).toBeInTheDocument();
 			expect(screen.getByText("Selected: (none)")).toBeInTheDocument();
 		});
 

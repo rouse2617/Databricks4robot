@@ -28,6 +28,10 @@ import {
 
 const { TextArea } = Input;
 
+function getRunActionLabel(assetCount: number) {
+	return assetCount > 0 ? "运行资产" : "运行";
+}
+
 import {
 	type DragEvent,
 	type FocusEvent,
@@ -786,6 +790,7 @@ function PipelineCanvas() {
 	const deployDisabledReason = canDeploy
 		? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
 		: "请先从左侧拖入至少一个组件到画布，再保存或部署";
+	const runActionLabel = getRunActionLabel(selectedAssetIds.length);
 	const markReplaceOnNextEdit = (
 		event: FocusEvent<HTMLInputElement>,
 		replaceRef: MutableRefObject<boolean>,
@@ -1174,7 +1179,7 @@ function PipelineCanvas() {
 							>
 								当前模板：{currentTemplateLabel}
 								{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} ·
-								模板版本选择在工具栏
+								运行版本由顶部版本选择器决定
 							</Typography.Text>
 							<Typography.Paragraph
 								type="secondary"
@@ -1189,7 +1194,12 @@ function PipelineCanvas() {
 								message={
 									selectedAssetIds.length > 0
 										? `将处理 ${selectedAssetIds.length} 个资产`
-										: "当前是 no-asset run：不会注入资产环境变量。"
+										: "本次不绑定资产"
+								}
+								description={
+									selectedAssetIds.length > 0
+										? undefined
+										: "本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。"
 								}
 								style={{ marginBottom: 16 }}
 							/>
@@ -1335,7 +1345,7 @@ function PipelineCanvas() {
 											onClick={handleDeploy}
 											disabled={!canDeploy}
 										>
-											{selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
+											{runActionLabel}
 										</Button>
 									</span>
 								</Tooltip>
@@ -1352,7 +1362,7 @@ function PipelineCanvas() {
 							>
 								当前模板：{currentTemplateLabel}
 								{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} ·
-								模板版本选择在工具栏
+								运行版本由顶部版本选择器决定
 							</Typography.Text>
 							<Typography.Paragraph
 								type="secondary"
@@ -1422,7 +1432,7 @@ function PipelineCanvas() {
 											onClick={handleDeploy}
 											disabled={!canDeploy}
 										>
-											{selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
+											{runActionLabel}
 										</Button>
 									</span>
 								</Tooltip>
@@ -1459,7 +1469,7 @@ function PipelineCanvas() {
 								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
 									当前模板：{currentTemplateLabel}
 									{activeVersionLabel ? ` (v${activeVersionLabel})` : ""} ·
-									模板版本选择在工具栏
+									运行版本由顶部版本选择器决定
 								</Typography.Text>
 								<br />
 								<Typography.Text type="success" strong>

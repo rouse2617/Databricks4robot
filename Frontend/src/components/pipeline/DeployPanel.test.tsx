@@ -8,7 +8,7 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
-import { App } from "antd";
+import { App, message } from "antd";
 import { MemoryRouter } from "react-router-dom";
 import {
 	afterEach,
@@ -234,18 +234,6 @@ describe("DeployPanel", () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
 		mockDeployTemplate.mockRejectedValue(new Error("K8s error"));
-		const messageError = vi.fn();
-		const useAppSpy = vi.spyOn(App, "useApp").mockReturnValue({
-			message: {
-				success: vi.fn(),
-				error: messageError,
-				warning: vi.fn(),
-				info: vi.fn(),
-				loading: vi.fn(),
-				open: vi.fn(),
-				destroy: vi.fn(),
-			},
-		} as ReturnType<typeof App.useApp>);
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
@@ -258,23 +246,18 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(messageError).toHaveBeenCalledWith(
+			expect(message.error).toHaveBeenCalledWith(
 				expect.stringContaining("部署失败"),
 			);
 		});
-		useAppSpy.mockRestore();
 	});
 
 	it("opens run modal and deploys with asset ids", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
-		mockBatchDeployTemplate.mockResolvedValue({
-			batchId: "batch-001",
-			items: [
-				mockDeployment({ id: "dep-003a" }),
-				mockDeployment({ id: "dep-003b" }),
-			],
-		});
+		mockDeployTemplate.mockResolvedValue(
+			mockDeployment({ id: "dep-003", workflowName: "wf-dep-003" }),
+		);
 		renderDeployPanel();
 
 		// Wait for template to render
@@ -301,14 +284,14 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockBatchDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-001", "ast-002"],
 				"default",
 				1,
 			);
 		});
-		expect(mockDeployTemplate).not.toHaveBeenCalled();
+		expect(mockBatchDeployTemplate).not.toHaveBeenCalled();
 	});
 
 	it("uses asset ids from pipeline url when running a saved template", async () => {
@@ -318,13 +301,9 @@ describe("DeployPanel", () => {
 			mockTemplate({ id: "tmpl-v2", version: 2, nodeCount: 5 }),
 			mockTemplate({ id: "tmpl-001", version: 1, nodeCount: 3 }),
 		]);
-		mockBatchDeployTemplate.mockResolvedValue({
-			batchId: "batch-002",
-			items: [
-				mockDeployment({ id: "dep-005a" }),
-				mockDeployment({ id: "dep-005b" }),
-			],
-		});
+		mockDeployTemplate.mockResolvedValue(
+			mockDeployment({ id: "dep-005", workflowName: "wf-dep-005" }),
+		);
 
 		renderDeployPanel(
 			undefined,
@@ -339,9 +318,7 @@ describe("DeployPanel", () => {
 
 		await waitFor(() => {
 			expect(screen.getByText("运行流水线")).toBeTruthy();
-			expect(
-				screen.getByText("将为 2 个资产各创建 1 个独立 Workflow"),
-			).toBeTruthy();
+			expect(screen.getByText("将处理 2 个资产")).toBeTruthy();
 			expect(screen.getByTestId("mock-asset-picker").textContent).toContain(
 				"Selected: ast-a,ast-b",
 			);
@@ -357,13 +334,14 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockBatchDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-a", "ast-b"],
 				"default",
 				2,
 			);
 		});
+		expect(mockBatchDeployTemplate).not.toHaveBeenCalled();
 	});
 
 	it("deploys without asset IDs when none selected", async () => {
@@ -459,29 +437,16 @@ describe("DeployPanel", () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
 		mockGetPipeline.mockRejectedValue(new Error("not found"));
-		const messageError = vi.fn();
-		const useAppSpy = vi.spyOn(App, "useApp").mockReturnValue({
-			message: {
-				success: vi.fn(),
-				error: messageError,
-				warning: vi.fn(),
-				info: vi.fn(),
-				loading: vi.fn(),
-				open: vi.fn(),
-				destroy: vi.fn(),
-			},
-		} as ReturnType<typeof App.useApp>);
 		renderDeployPanel();
 
 		expect(await screen.findByText("编辑")).toBeTruthy();
 		fireEvent.click(screen.getByText("编辑"));
 
 		await waitFor(() => {
-			expect(messageError).toHaveBeenCalledWith(
+			expect(message.error).toHaveBeenCalledWith(
 				expect.stringContaining("加载模板失败"),
 			);
 		});
-		useAppSpy.mockRestore();
 	});
 
 	it("deletes a template", async () => {
@@ -558,11 +523,14 @@ describe("DeployPanel", () => {
 		fireEvent.click(screen.getByText("运行"));
 
 		await waitFor(() => {
-			expect(screen.getAllByText("无资产运行").length).toBeGreaterThan(0);
+			expect(screen.getByText("本次不绑定资产")).toBeTruthy();
 			expect(
 				screen.getByText(
 					"本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。",
 				),
+			).toBeTruthy();
+			expect(
+				screen.getByText("默认使用活跃版本；也可以在这里选择历史版本运行。"),
 			).toBeTruthy();
 			expect(screen.getByText("运行流水线")).toBeTruthy();
 		});
