@@ -19,6 +19,10 @@ var ErrSchemaMismatch = errors.New("database schema mismatch")
 
 var ErrIdempotencyConflict = errors.New("idempotency key conflict")
 
+// ErrInvalidCursor is returned when an opaque pagination cursor cannot be
+// decoded or does not match the requested listing mode.
+var ErrInvalidCursor = errors.New("invalid pagination cursor")
+
 // TxRunner runs the provided function inside a single transaction. Repos
 // dispatched within fn should be tx-aware (read tx from ctx) so that all
 // writes commit or roll back atomically. Required for event-stream correctness:

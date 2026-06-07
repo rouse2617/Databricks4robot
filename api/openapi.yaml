@@ -4254,6 +4254,7 @@ paths:
         - in: query
           name: cursor
           schema: { type: string }
+          description: Opaque pagination cursor returned as nextCursor. It is bound to the selected orderBy and invalid cursors return 400 INVALID_ARGUMENT.
         - in: query
           name: limit
           schema: { type: integer, default: 20 }

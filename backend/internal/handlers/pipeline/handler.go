@@ -423,6 +423,10 @@ func (h *Handler) ListRunEvents(c *gin.Context) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
 			return
 		}
+		if errors.Is(err, pipelineUC.ErrInvalidArgument) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+			return
+		}
 		httpresp.Internal(c, err.Error())
 		return
 	}
@@ -456,6 +460,10 @@ func (h *Handler) ListRunAssetNodes(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		if errors.Is(err, pipelineUC.ErrInvalidArgument) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 			return
 		}
 		httpresp.Internal(c, err.Error())

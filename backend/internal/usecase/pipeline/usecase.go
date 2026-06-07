@@ -2298,7 +2298,11 @@ func (uc *Usecase) ListRunAssetNodes(ctx context.Context, id string, opts models
 		}
 		return &models.PipelineRunAssetNodeListResult{Items: rows, Total: len(rows), Summary: summary}, nil
 	}
-	return uc.assetNodeRepo.ListByRunID(ctx, id, opts)
+	result, err := uc.assetNodeRepo.ListByRunID(ctx, id, opts)
+	if errors.Is(err, repository.ErrInvalidCursor) {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+	}
+	return result, err
 }
 
 func durationSeconds(startedAt, finishedAt *time.Time) *int64 {

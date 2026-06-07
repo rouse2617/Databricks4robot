@@ -16,6 +16,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
@@ -189,6 +190,27 @@ func (m *mockPipelineRunNodeRepo) FindByRunID(_ context.Context, runID string) (
 func (m *mockPipelineRunNodeRepo) DeleteByRunID(_ context.Context, runID string) error {
 	delete(m.byRunID, runID)
 	return nil
+}
+
+type mockPipelineRunAssetNodeRepo struct {
+	err error
+}
+
+func (m *mockPipelineRunAssetNodeRepo) ReplaceByRunID(_ context.Context, _ string, _ []models.PipelineRunAssetNode) error {
+	return nil
+}
+
+func (m *mockPipelineRunAssetNodeRepo) ListByRunID(_ context.Context, _ string, _ models.PipelineRunAssetNodeListOptions) (*models.PipelineRunAssetNodeListResult, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &models.PipelineRunAssetNodeListResult{
+		Items: []models.PipelineRunAssetNode{},
+		Summary: models.PipelineRunAssetNodeSummary{
+			Statuses:   map[string]int{},
+			CostSource: "not_available",
+		},
+	}, nil
 }
 
 type mockAssetRepo struct {
@@ -461,6 +483,34 @@ func TestGetRun_ReturnsTotalEstimatedCost(t *testing.T) {
 	}
 	if resp.Nodes[0].EstimatedCostUSD == nil && resp.Nodes[1].EstimatedCostUSD == nil {
 		t.Fatalf("expected at least one node estimatedCostUsd in response")
+	}
+}
+
+func TestListRunAssetNodes_InvalidCursorReturnsBadRequest(t *testing.T) {
+	run := makePipelineRun("run-asset-nodes", "wf-assets")
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{run.ID: run},
+	}, &mockPipelineRunNodeRepo{})
+	uc.SetObservabilityRepositories(&mockPipelineRunAssetNodeRepo{err: repository.ErrInvalidCursor}, nil, nil)
+	h := New(uc, "")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs/run-asset-nodes/asset-nodes?cursor=bad", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("expected INVALID_ARGUMENT, got %q", resp.Code)
 	}
 }
 

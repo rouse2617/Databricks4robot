@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1163,6 +1164,139 @@ const pipelineRunAssetNodeSelectCols = `id, run_id, asset_id, pipeline_node_id, 
   display_name, status, message, pod_name, log_ref, estimated_cost_usd, cost_source,
   started_at, finished_at, updated_at`
 
+const assetNodeCursorVersion = 1
+
+type assetNodeCursor struct {
+	Version         int      `json:"v"`
+	Order           string   `json:"order"`
+	ID              string   `json:"id"`
+	AssetID         string   `json:"assetId,omitempty"`
+	PipelineNodeID  string   `json:"pipelineNodeId,omitempty"`
+	Status          string   `json:"status,omitempty"`
+	Cost            *float64 `json:"cost,omitempty"`
+	DurationSeconds *float64 `json:"durationSeconds,omitempty"`
+}
+
+type assetNodeOrderSpec struct {
+	mode       string
+	orderBySQL string
+}
+
+func resolveAssetNodeOrder(raw string) assetNodeOrderSpec {
+	switch strings.TrimSpace(raw) {
+	case "cost":
+		return assetNodeOrderSpec{
+			mode:       "cost",
+			orderBySQL: "estimated_cost_usd DESC NULLS LAST, asset_id ASC, id ASC",
+		}
+	case "duration":
+		return assetNodeOrderSpec{
+			mode:       "duration",
+			orderBySQL: assetNodeDurationSQL() + " DESC NULLS LAST, asset_id ASC, id ASC",
+		}
+	case "status":
+		return assetNodeOrderSpec{
+			mode:       "status",
+			orderBySQL: "COALESCE(status, '') ASC, asset_id ASC, id ASC",
+		}
+	default:
+		return assetNodeOrderSpec{
+			mode:       "default",
+			orderBySQL: "asset_id ASC, pipeline_node_id ASC, id ASC",
+		}
+	}
+}
+
+func assetNodeDurationSQL() string {
+	return "CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL THEN EXTRACT(EPOCH FROM (finished_at - started_at)) END"
+}
+
+func decodeAssetNodeCursor(raw, orderMode string) (*assetNodeCursor, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: decode", repository.ErrInvalidCursor)
+	}
+	var cursor assetNodeCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil {
+		return nil, fmt.Errorf("%w: parse", repository.ErrInvalidCursor)
+	}
+	if cursor.Version != assetNodeCursorVersion || cursor.Order != orderMode || strings.TrimSpace(cursor.ID) == "" {
+		return nil, fmt.Errorf("%w: cursor does not match requested order", repository.ErrInvalidCursor)
+	}
+	return &cursor, nil
+}
+
+func encodeAssetNodeCursor(orderMode string, row models.PipelineRunAssetNode) (string, error) {
+	cursor := assetNodeCursor{
+		Version:        assetNodeCursorVersion,
+		Order:          orderMode,
+		ID:             row.ID,
+		AssetID:        row.AssetID,
+		PipelineNodeID: row.PipelineNodeID,
+		Status:         row.Status,
+		Cost:           row.EstimatedCostUSD,
+	}
+	cursor.DurationSeconds = assetNodeDurationSeconds(row.StartedAt, row.FinishedAt)
+	raw, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func assetNodeDurationSeconds(startedAt, finishedAt *time.Time) *float64 {
+	if startedAt == nil || finishedAt == nil || finishedAt.Before(*startedAt) {
+		return nil
+	}
+	seconds := finishedAt.Sub(*startedAt).Seconds()
+	return &seconds
+}
+
+func appendAssetNodeCursorClause(clauses []string, args []any, order assetNodeOrderSpec, cursor *assetNodeCursor) ([]string, []any) {
+	if cursor == nil {
+		return clauses, args
+	}
+	switch order.mode {
+	case "cost":
+		if cursor.Cost == nil {
+			args = append(args, cursor.AssetID, cursor.ID)
+			return append(clauses, fmt.Sprintf("(estimated_cost_usd IS NULL AND (asset_id, id) > ($%d, $%d))", len(args)-1, len(args))), args
+		}
+		args = append(args, *cursor.Cost, cursor.AssetID, cursor.ID)
+		return append(clauses, fmt.Sprintf(`(
+  (estimated_cost_usd IS NOT NULL AND (
+    estimated_cost_usd < $%d
+    OR (estimated_cost_usd = $%d AND (asset_id, id) > ($%d, $%d))
+  ))
+  OR estimated_cost_usd IS NULL
+)`, len(args)-2, len(args)-2, len(args)-1, len(args))), args
+	case "duration":
+		durationSQL := assetNodeDurationSQL()
+		if cursor.DurationSeconds == nil {
+			args = append(args, cursor.AssetID, cursor.ID)
+			return append(clauses, fmt.Sprintf("(%s IS NULL AND (asset_id, id) > ($%d, $%d))", durationSQL, len(args)-1, len(args))), args
+		}
+		args = append(args, *cursor.DurationSeconds, cursor.AssetID, cursor.ID)
+		return append(clauses, fmt.Sprintf(`(
+  (%s IS NOT NULL AND (
+    %s < $%d
+    OR (%s = $%d AND (asset_id, id) > ($%d, $%d))
+  ))
+  OR %s IS NULL
+)`, durationSQL, durationSQL, len(args)-2, durationSQL, len(args)-2, len(args)-1, len(args), durationSQL)), args
+	case "status":
+		args = append(args, cursor.Status, cursor.AssetID, cursor.ID)
+		return append(clauses, fmt.Sprintf("(COALESCE(status, ''), asset_id, id) > ($%d, $%d, $%d)", len(args)-2, len(args)-1, len(args))), args
+	default:
+		args = append(args, cursor.AssetID, cursor.PipelineNodeID, cursor.ID)
+		return append(clauses, fmt.Sprintf("(asset_id, pipeline_node_id, id) > ($%d, $%d, $%d)", len(args)-2, len(args)-1, len(args))), args
+	}
+}
+
 func scanPipelineRunAssetNode(rs rowScanner) (*models.PipelineRunAssetNode, error) {
 	var row models.PipelineRunAssetNode
 	if err := rs.Scan(
@@ -1232,12 +1366,14 @@ func (r *PipelineRunAssetNodeRepo) ListByRunID(ctx context.Context, runID string
 	if limit > 500 {
 		limit = 500
 	}
+	order := resolveAssetNodeOrder(opts.OrderBy)
+	cursor, err := decodeAssetNodeCursor(opts.Cursor, order.mode)
+	if err != nil {
+		return nil, err
+	}
 	args := []any{runID, limit + 1}
 	clauses := []string{"run_id = $1"}
-	if strings.TrimSpace(opts.Cursor) != "" {
-		args = append(args, strings.TrimSpace(opts.Cursor))
-		clauses = append(clauses, fmt.Sprintf("id > $%d", len(args)))
-	}
+	clauses, args = appendAssetNodeCursorClause(clauses, args, order, cursor)
 	if strings.TrimSpace(opts.AssetID) != "" {
 		args = append(args, strings.TrimSpace(opts.AssetID))
 		clauses = append(clauses, fmt.Sprintf("asset_id = $%d", len(args)))
@@ -1250,20 +1386,11 @@ func (r *PipelineRunAssetNodeRepo) ListByRunID(ctx context.Context, runID string
 		args = append(args, strings.TrimSpace(opts.Status))
 		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
 	}
-	orderBy := "asset_id ASC, pipeline_node_id ASC"
-	switch strings.TrimSpace(opts.OrderBy) {
-	case "cost":
-		orderBy = "estimated_cost_usd DESC NULLS LAST, asset_id ASC"
-	case "duration":
-		orderBy = "finished_at - started_at DESC NULLS LAST, asset_id ASC"
-	case "status":
-		orderBy = "status ASC, asset_id ASC"
-	}
 	q := `SELECT ` + pipelineRunAssetNodeSelectCols + `
-FROM pipeline_run_asset_nodes
-WHERE ` + strings.Join(clauses, " AND ") + `
-ORDER BY ` + orderBy + `
-LIMIT $2`
+	FROM pipeline_run_asset_nodes
+	WHERE ` + strings.Join(clauses, " AND ") + `
+	ORDER BY ` + order.orderBySQL + `
+	LIMIT $2`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q, args...)
 	if err != nil {
@@ -1283,8 +1410,13 @@ LIMIT $2`
 			return nil, fmt.Errorf("postgres PipelineRunAssetNodeRepo.ListByRunID scan: %w", err)
 		}
 		if len(items) >= limit {
-			cursor := row.ID
-			nextCursor = &cursor
+			if len(items) > 0 {
+				cursor, err := encodeAssetNodeCursor(order.mode, items[len(items)-1])
+				if err != nil {
+					return nil, fmt.Errorf("postgres PipelineRunAssetNodeRepo.ListByRunID encode cursor: %w", err)
+				}
+				nextCursor = &cursor
+			}
 			break
 		}
 		items = append(items, *row)

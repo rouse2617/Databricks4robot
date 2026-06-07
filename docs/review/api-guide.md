@@ -2622,6 +2622,8 @@ curl -s "$BASE/api/v1/pipeline-runs/watcher/status" \
 派生明细；no-asset run 会返回 `assetId=no-asset`。成本字段是估算值，
 `costSource=estimated_resource_duration` 表示来自 Argo resource duration
 和 DataBrew pricing 配置，`not_available` 表示没有足够数据。
+分页使用不透明 `nextCursor`；继续请求时保持相同 `orderBy`，否则会返回
+`400 INVALID_ARGUMENT`。
 
 ```bash
 curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/asset-nodes?limit=100&orderBy=cost" \

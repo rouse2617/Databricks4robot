@@ -224,6 +224,212 @@ func TestClientNewAndClose(t *testing.T) {
 	nilClient.Close()
 }
 
+func buildPipelineRunAssetNodeRow(id, assetID, nodeID, status string, cost *float64, startedAt, finishedAt *time.Time) []any {
+	return []any{
+		id,
+		"run-asset-nodes",
+		assetID,
+		nodeID,
+		"argo-" + nodeID,
+		nodeID,
+		status,
+		"",
+		"pod-" + nodeID,
+		"/logs",
+		cost,
+		"estimated_resource_duration",
+		startedAt,
+		finishedAt,
+		time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC),
+	}
+}
+
+func TestPipelineRunAssetNodeRepoListByRunIDUsesCompositeCursor(t *testing.T) {
+	ctx := context.Background()
+	costA := 3.0
+	costB := 2.0
+	costC := 1.0
+	started := time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)
+	finished := started.Add(30 * time.Second)
+	db := &fakeDB{
+		rows: &fakeRows{data: [][]any{
+			buildPipelineRunAssetNodeRow("900", "asset-a", "node-1", "Succeeded", &costA, &started, &finished),
+			buildPipelineRunAssetNodeRow("100", "asset-b", "node-1", "Succeeded", &costB, &started, &finished),
+			buildPipelineRunAssetNodeRow("500", "asset-c", "node-1", "Succeeded", &costC, &started, &finished),
+		}},
+	}
+	repo := NewPipelineRunAssetNodeRepo(&Client{db: db})
+
+	firstPage, err := repo.ListByRunID(ctx, "run-asset-nodes", models.PipelineRunAssetNodeListOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListByRunID first page: %v", err)
+	}
+	if len(firstPage.Items) != 2 {
+		t.Fatalf("expected 2 first-page items, got %d", len(firstPage.Items))
+	}
+	if firstPage.NextCursor == nil {
+		t.Fatal("expected next cursor")
+	}
+	cursor, err := decodeAssetNodeCursor(*firstPage.NextCursor, "default")
+	if err != nil {
+		t.Fatalf("decode next cursor: %v", err)
+	}
+	if cursor.ID != "100" || cursor.AssetID != "asset-b" || cursor.PipelineNodeID != "node-1" {
+		t.Fatalf("cursor should point at last returned row, got %+v", cursor)
+	}
+
+	db.rows = &fakeRows{data: [][]any{
+		buildPipelineRunAssetNodeRow("500", "asset-c", "node-1", "Succeeded", &costC, &started, &finished),
+	}}
+	secondPage, err := repo.ListByRunID(ctx, "run-asset-nodes", models.PipelineRunAssetNodeListOptions{
+		Limit:  2,
+		Cursor: *firstPage.NextCursor,
+	})
+	if err != nil {
+		t.Fatalf("ListByRunID second page: %v", err)
+	}
+	if len(secondPage.Items) != 1 || secondPage.Items[0].ID != "500" {
+		t.Fatalf("expected second page to include overflow row, got %+v", secondPage.Items)
+	}
+	lastSQL := db.querySQLs[len(db.querySQLs)-1]
+	if !strings.Contains(lastSQL, "ORDER BY asset_id ASC, pipeline_node_id ASC, id ASC") {
+		t.Fatalf("default order should include stable id tie-breaker, got SQL: %s", lastSQL)
+	}
+	if !strings.Contains(lastSQL, "(asset_id, pipeline_node_id, id) > ($3, $4, $5)") {
+		t.Fatalf("default cursor predicate should match order, got SQL: %s", lastSQL)
+	}
+	args := db.queryArgs[len(db.queryArgs)-1]
+	if len(args) < 5 || args[2] != "asset-b" || args[3] != "node-1" || args[4] != "100" {
+		t.Fatalf("unexpected cursor args: %#v", args)
+	}
+}
+
+func TestPipelineRunAssetNodeRepoListByRunIDCostCursorMatchesCostOrder(t *testing.T) {
+	ctx := context.Background()
+	cost := 2.5
+	cursor, err := encodeAssetNodeCursor("cost", models.PipelineRunAssetNode{
+		ID:               "row-2",
+		AssetID:          "asset-b",
+		PipelineNodeID:   "node-1",
+		EstimatedCostUSD: &cost,
+	})
+	if err != nil {
+		t.Fatalf("encode cursor: %v", err)
+	}
+	db := &fakeDB{}
+	repo := NewPipelineRunAssetNodeRepo(&Client{db: db})
+
+	if _, err := repo.ListByRunID(ctx, "run-asset-nodes", models.PipelineRunAssetNodeListOptions{
+		Limit:   2,
+		Cursor:  cursor,
+		OrderBy: "cost",
+	}); err != nil {
+		t.Fatalf("ListByRunID cost cursor: %v", err)
+	}
+	sql := db.querySQLs[len(db.querySQLs)-1]
+	if !strings.Contains(sql, "ORDER BY estimated_cost_usd DESC NULLS LAST, asset_id ASC, id ASC") {
+		t.Fatalf("cost order should include id tie-breaker, got SQL: %s", sql)
+	}
+	if !strings.Contains(sql, "estimated_cost_usd < $3") || !strings.Contains(sql, "(asset_id, id) > ($4, $5)") {
+		t.Fatalf("cost cursor predicate should match cost order, got SQL: %s", sql)
+	}
+	args := db.queryArgs[len(db.queryArgs)-1]
+	if len(args) < 5 || args[2] != cost || args[3] != "asset-b" || args[4] != "row-2" {
+		t.Fatalf("unexpected cost cursor args: %#v", args)
+	}
+}
+
+func TestPipelineRunAssetNodeRepoListByRunIDDurationCursorMatchesDurationOrder(t *testing.T) {
+	ctx := context.Background()
+	started := time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)
+	finished := started.Add(45 * time.Second)
+	cursor, err := encodeAssetNodeCursor("duration", models.PipelineRunAssetNode{
+		ID:             "row-2",
+		AssetID:        "asset-b",
+		PipelineNodeID: "node-1",
+		StartedAt:      &started,
+		FinishedAt:     &finished,
+	})
+	if err != nil {
+		t.Fatalf("encode cursor: %v", err)
+	}
+	db := &fakeDB{}
+	repo := NewPipelineRunAssetNodeRepo(&Client{db: db})
+
+	if _, err := repo.ListByRunID(ctx, "run-asset-nodes", models.PipelineRunAssetNodeListOptions{
+		Limit:   2,
+		Cursor:  cursor,
+		OrderBy: "duration",
+	}); err != nil {
+		t.Fatalf("ListByRunID duration cursor: %v", err)
+	}
+	sql := db.querySQLs[len(db.querySQLs)-1]
+	durationSQL := assetNodeDurationSQL()
+	if !strings.Contains(sql, "ORDER BY "+durationSQL+" DESC NULLS LAST, asset_id ASC, id ASC") {
+		t.Fatalf("duration order should include id tie-breaker, got SQL: %s", sql)
+	}
+	if !strings.Contains(sql, durationSQL+" < $3") || !strings.Contains(sql, "(asset_id, id) > ($4, $5)") {
+		t.Fatalf("duration cursor predicate should match duration order, got SQL: %s", sql)
+	}
+	args := db.queryArgs[len(db.queryArgs)-1]
+	if len(args) < 5 || args[2] != float64(45) || args[3] != "asset-b" || args[4] != "row-2" {
+		t.Fatalf("unexpected duration cursor args: %#v", args)
+	}
+}
+
+func TestPipelineRunAssetNodeRepoListByRunIDStatusCursorMatchesStatusOrder(t *testing.T) {
+	ctx := context.Background()
+	cursor, err := encodeAssetNodeCursor("status", models.PipelineRunAssetNode{
+		ID:             "row-2",
+		AssetID:        "asset-b",
+		PipelineNodeID: "node-1",
+		Status:         "Failed",
+	})
+	if err != nil {
+		t.Fatalf("encode cursor: %v", err)
+	}
+	db := &fakeDB{}
+	repo := NewPipelineRunAssetNodeRepo(&Client{db: db})
+
+	if _, err := repo.ListByRunID(ctx, "run-asset-nodes", models.PipelineRunAssetNodeListOptions{
+		Limit:   2,
+		Cursor:  cursor,
+		OrderBy: "status",
+	}); err != nil {
+		t.Fatalf("ListByRunID status cursor: %v", err)
+	}
+	sql := db.querySQLs[len(db.querySQLs)-1]
+	if !strings.Contains(sql, "ORDER BY COALESCE(status, '') ASC, asset_id ASC, id ASC") {
+		t.Fatalf("status order should include id tie-breaker, got SQL: %s", sql)
+	}
+	if !strings.Contains(sql, "(COALESCE(status, ''), asset_id, id) > ($3, $4, $5)") {
+		t.Fatalf("status cursor predicate should match status order, got SQL: %s", sql)
+	}
+	args := db.queryArgs[len(db.queryArgs)-1]
+	if len(args) < 5 || args[2] != "Failed" || args[3] != "asset-b" || args[4] != "row-2" {
+		t.Fatalf("unexpected status cursor args: %#v", args)
+	}
+}
+
+func TestPipelineRunAssetNodeRepoListByRunIDRejectsMismatchedCursorOrder(t *testing.T) {
+	cursor, err := encodeAssetNodeCursor("cost", models.PipelineRunAssetNode{
+		ID:      "row-2",
+		AssetID: "asset-b",
+	})
+	if err != nil {
+		t.Fatalf("encode cursor: %v", err)
+	}
+	repo := NewPipelineRunAssetNodeRepo(&Client{db: &fakeDB{}})
+
+	_, err = repo.ListByRunID(context.Background(), "run-asset-nodes", models.PipelineRunAssetNodeListOptions{
+		Limit:  2,
+		Cursor: cursor,
+	})
+	if !errors.Is(err, repository.ErrInvalidCursor) {
+		t.Fatalf("expected ErrInvalidCursor, got %v", err)
+	}
+}
+
 func TestRealDBPanicPaths(t *testing.T) {
 	assertPanic := func(t *testing.T, fn func()) {
 		t.Helper()
