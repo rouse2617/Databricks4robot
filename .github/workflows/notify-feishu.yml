@@ -1,29 +1,6 @@
-# Git push → Feishu custom bot (branch-routed).
-# Secrets: FEISHU_BOT_WEBHOOK_MAIN (main), FEISHU_BOT_WEBHOOK_BRANCH (other), legacy FEISHU_BOT_WEBHOOK fallback.
-name: Feishu Push Notifications
+# Disabled: push notifications were spamming Feishu group.
+# CI result notifications are handled by notify-feishu-ci.yml (main branch, success only).
+name: Feishu Push Notifications (disabled)
 
 on:
-  push:
-
-jobs:
-  notify-on-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Send push message to Feishu bot
-        env:
-          FEISHU_BOT_WEBHOOK_MAIN: ${{ secrets.FEISHU_BOT_WEBHOOK_MAIN }}
-          FEISHU_BOT_WEBHOOK_BRANCH: ${{ secrets.FEISHU_BOT_WEBHOOK_BRANCH }}
-          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
-          FEISHU_ROUTE_BRANCH: ${{ github.ref_name }}
-          REPO: ${{ github.repository }}
-          PUSHER: ${{ github.actor }}
-          COMMIT_URL: ${{ github.event.head_commit.url }}
-        run: |
-          set -euo pipefail
-          export FEISHU_MESSAGE="$(printf '【Git Push 通知】\n仓库：%s\n分支：%s\n提交人：%s\n链接：%s\n' \
-            "${REPO}" "${FEISHU_ROUTE_BRANCH}" "${PUSHER}" "${COMMIT_URL}")"
-          bash .github/scripts/feishu-notify.sh
+  workflow_dispatch:

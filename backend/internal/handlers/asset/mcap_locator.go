@@ -81,7 +81,7 @@ type FoxgloveSourceResponse struct {
 // @Failure      404  {object}  httpresp.ErrorBody
 // @Failure      409  {object}  httpresp.ErrorBody
 // @Failure      503  {object}  httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/mcap-locator [get]
 func (h *Handler) McapLocator(c *gin.Context) {
 	if h.mcapRepo == nil {

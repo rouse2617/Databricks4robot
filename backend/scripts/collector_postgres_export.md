@@ -63,7 +63,7 @@ Collector often stores **two rows per time window** (e.g. one with real `env` li
 
 ```bash
 export DATABREW_BASE_URL='https://cyber-databrew-backend-dev-234851712830.us-central1.run.app'
-export GRACE_TOKEN='dev-token'
+export DATABREW_TOKEN='dev-token'
 
 python3 backend/scripts/import_collector_postgres_to_databrew.py \
   --videos-jsonl grace_videos_mcap.jsonl \
@@ -80,7 +80,7 @@ Options:
 - `--videos-only` — skip segment assets.
 - `--assets-only` — **不**调用 `POST /mcap-files`；按 collector 行推导 `mcap_file_id`（与已写入 Databrew 的规则一致），只跑 segment 的 `POST /assets`。集群里可设 Secret 键 `IMPORT_ASSETS_ONLY=1`（与 `IMPORT_VIDEOS_ONLY` 互斥）。
 - `--source-db postgres` — stored in `metadata.source_db` (default: `postgres`).
-- `--base-url` / `--token` — override `DATABREW_BASE_URL` / `GRACE_TOKEN`.
+- `--base-url` / `--token` — override `DATABREW_BASE_URL` / `DATABREW_TOKEN`.
 - `--mcap-workers` / `--asset-workers` — parallel `POST` 并发数（默认 **8**）；可用 `IMPORT_MCAP_WORKERS` / `IMPORT_ASSET_WORKERS` 覆盖。若后端开启 Gin 限流（`RATE_LIMIT_RPS`>0）出现 429，请调低并发或关闭/放宽限流。
 - 日志会带 **`[timing]`**：每 500 条进度带 `last500_wall` / 吞吐；每若干批 HTTP 有 `mcap_http_batch` / `asset_http_batch`；阶段结束有 `mcap_phase` / `asset_phase`；`main` 结束有 `run_total`。
 
@@ -95,7 +95,7 @@ Run the importer **inside GKE** so you reach collector **private IP** and Cloud 
 kubectl -n cyber-databrew-dev create secret generic collector-databrew-import-env \
   --from-literal=COLLECTOR_PG_DSN='postgresql://postgres:YOUR_PASSWORD@10.159.176.3:5432/postgres?sslmode=disable' \
   --from-literal=DATABREW_BASE_URL='https://cyber-databrew-backend-dev-234851712830.us-central1.run.app' \
-  --from-literal=GRACE_TOKEN='dev-token' \
+  --from-literal=DATABREW_TOKEN='dev-token' \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
@@ -113,7 +113,7 @@ kubectl -n cyber-databrew-dev logs -f job/collector-databrew-import
 ```bash
 export COLLECTOR_PG_DSN='postgresql://...'
 export DATABREW_BASE_URL='https://...'
-export GRACE_TOKEN='...'
+export DATABREW_TOKEN='...'
 python3 backend/scripts/import_collector_postgres_to_databrew.py \
   --import-batch collector-postgres-direct \
   --reviewer collector-import --owner collector-import

@@ -15,7 +15,7 @@ client ──HTTP──▶ mcap-preview ──HTTP──▶ cyber-databrew backe
 ```
 
 - HTTP framework: Gin (matches the cyber-databrew backend conventions).
-- Auth: pass-through `X-Grace-Token` (phase-0). The token reaches us from the
+- Auth: pass-through `X-Databrew-Token` (phase-0). The token reaches us from the
   caller; we forward it to the upstream backend along with `X-Request-ID`.
 - MCAP parsing: only the summary section (`mcap.Reader.Info()`). Topic and
   chunk enumeration is O(channels + chunk_indexes), no message scan.
@@ -34,7 +34,7 @@ No auth. Returns `{"status":"ok"}`.
 
 Headers:
 
-- `X-Grace-Token` *(required)*
+- `X-Databrew-Token` *(required)*
 - `X-Request-ID` *(optional; generated if absent and propagated upstream)*
 
 Behaviour:
@@ -86,10 +86,10 @@ each, cut on keyframe boundaries.
 
 Headers:
 
-- `X-Grace-Token` *(canonical)*. **Or** `?grace_token=` query param —
+- `X-Databrew-Token` *(canonical)*. **Or** `?databrew_token=` query param —
   accepted only on this endpoint as a fallback because the HTML `<video>`
   element cannot send custom headers. Treat the query param like the header
-  for security purposes; rotating `GRACE_TOKEN` invalidates both.
+  for security purposes; rotating `DATABREW_TOKEN` invalidates both.
 
 Query params:
 
@@ -120,7 +120,7 @@ Error codes specific to this endpoint:
 |---|---|---|
 | `PORT` | `8090` | HTTP listen port. |
 | `UPSTREAM_BASE_URL` | *(required for manifest)* | e.g. `http://cyber-databrew-backend:8080`. Do **not** include `/api/v1`. |
-| `GRACE_TOKEN_PASSTHROUGH` | `true` | When `false`, the upstream call is made anonymously. |
+| `DATABREW_TOKEN_PASSTHROUGH` | `true` | When `false`, the upstream call is made anonymously. |
 | `GCS_PAGE_SIZE_BYTES` | `1048576` | Page size of the GCS Range reader. |
 | `GCS_PAGE_CACHE_BYTES` | `67108864` | Total cache footprint per reader. |
 | `LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error`. |
@@ -145,7 +145,7 @@ UPSTREAM_BASE_URL=http://localhost:8080 \
   go run ./cmd/server
 
 # Then call the local service:
-curl -H "X-Grace-Token: $TOKEN" \
+curl -H "X-Databrew-Token: $TOKEN" \
   http://localhost:8090/api/v1/preview/assets/<asset_id>/manifest | jq
 ```
 

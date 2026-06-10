@@ -112,7 +112,7 @@ func genErrorFormat(suite *TestSuite) {
 		var resp []byte
 		var lat time.Duration
 		if ec.n == "401 无token" {
-			c, resp, lat = doReq(ec.method, ec.path, ec.body, map[string]string{"X-Grace-Token": "wrong"})
+			c, resp, lat = doReq(ec.method, ec.path, ec.body, map[string]string{"X-Databrew-Token": "wrong"})
 		} else {
 			c, resp, lat = doReq(ec.method, ec.path, ec.body, nil)
 		}
@@ -158,7 +158,7 @@ func genHTTPMethods(suite *TestSuite) {
 
 	// healthz 不需要 token (5)
 	for i := 0; i < 5; i++ {
-		c, _, lat := doReq("GET", "/healthz", nil, map[string]string{"X-Grace-Token": ""})
+		c, _, lat := doReq("GET", "/healthz", nil, map[string]string{"X-Databrew-Token": ""})
 		suite.record(TestResult{cat, fmt.Sprintf("healthz无token#%d", i), c == 200, c, 200, lat, ""})
 	}
 }
@@ -177,18 +177,18 @@ func genAuth(suite *TestSuite) {
 		"\x00\x01\x02", "dev-token\n", "dev-token\r\n",
 	}
 	for _, t := range badTokens {
-		c, _, lat := doReq("GET", "/api/v1/assets/x", nil, map[string]string{"X-Grace-Token": t})
+		c, _, lat := doReq("GET", "/api/v1/assets/x", nil, map[string]string{"X-Databrew-Token": t})
 		suite.record(TestResult{cat, fmt.Sprintf("token=%q", truncStr(t, 20)), c == 401, c, 401, lat, ""})
 	}
 
 	// Bearer 格式 (5)
-	c, _, lat := doReq("GET", "/api/v1/assets/x", nil, map[string]string{"X-Grace-Token": "", "Authorization": "Bearer " + *token})
+	c, _, lat := doReq("GET", "/api/v1/assets/x", nil, map[string]string{"X-Databrew-Token": "", "Authorization": "Bearer " + *token})
 	suite.record(TestResult{cat, "Bearer格式", c == 404, c, 404, lat, ""}) // 404 因为资产不存在，但认证通过
 
-	c, _, lat = doReq("GET", "/api/v1/assets/x", nil, map[string]string{"X-Grace-Token": "", "Authorization": "Bearer wrong"})
+	c, _, lat = doReq("GET", "/api/v1/assets/x", nil, map[string]string{"X-Databrew-Token": "", "Authorization": "Bearer wrong"})
 	suite.record(TestResult{cat, "Bearer错误", c == 401, c, 401, lat, ""})
 
-	c, _, lat = doReq("GET", "/api/v1/assets/x", nil, map[string]string{"X-Grace-Token": "", "Authorization": *token})
+	c, _, lat = doReq("GET", "/api/v1/assets/x", nil, map[string]string{"X-Databrew-Token": "", "Authorization": *token})
 	suite.record(TestResult{cat, "Auth直接token", c == 404, c, 404, lat, ""})
 }
 

@@ -12,7 +12,7 @@ Supports:
   - --from-csv payloads.csv (see --csv-format)
 
 Auth:
-- Uses X-Grace-Token header.
+- Uses X-Databrew-Token header.
 
 Examples:
   BASE=https://api-cyber-databrew-dev.cyberorigin.ai TOKEN=dev-token \
@@ -54,7 +54,7 @@ class ApiClient:
             method,
             url,
             "-H",
-            f"X-Grace-Token: {self.token}",
+            f"X-Databrew-Token: {self.token}",
             "-H",
             "Content-Type: application/json",
         ]

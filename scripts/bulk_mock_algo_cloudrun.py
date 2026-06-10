@@ -12,7 +12,7 @@ Per asset: pick one registered algo with no upstream deps, then try
 reset → start → finish (ok for env_analysis with empty registry output reqs,
 otherwise failed with a reason).
 
-  export GRACE_TOKEN=...
+  export DATABREW_TOKEN=...
   python3 scripts/bulk_mock_algo_cloudrun.py [--workers 24] [--dry-run]
 
 See backend/config/algo_registry.yaml for valid algo_key strings.
@@ -58,7 +58,7 @@ def http_json(
 ) -> tuple[int, Any]:
     data = None
     headers = {
-        "X-Grace-Token": token,
+        "X-Databrew-Token": token,
         "Accept": "application/json",
     }
     if body is not None:
@@ -176,12 +176,12 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--workers", type=int, default=20)
     ap.add_argument("--max-assets", type=int, default=DEFAULT_TARGET_IDS, help="cap sampled assets")
-    ap.add_argument("--token", default="", help="X-Grace-Token (else env GRACE_TOKEN)")
+    ap.add_argument("--token", default="", help="X-Databrew-Token (else env DATABREW_TOKEN)")
     args = ap.parse_args()
 
-    token = (args.token or "").strip() or __import__("os").environ.get("GRACE_TOKEN", "").strip()
+    token = (args.token or "").strip() or __import__("os").environ.get("DATABREW_TOKEN", "").strip()
     if not token:
-        print("ERROR: set GRACE_TOKEN or pass --token", file=sys.stderr)
+        print("ERROR: set DATABREW_TOKEN or pass --token", file=sys.stderr)
         return 2
 
     random.seed()

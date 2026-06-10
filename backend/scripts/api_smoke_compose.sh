@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # API smoke for local compose (Postgres + backend on :8080). Requires httpx/seed only for full runs.
 # Usage:
-#   GRACE_TOKEN=dev-token bash backend/scripts/api_smoke_compose.sh
+#   DATABREW_TOKEN=dev-token bash backend/scripts/api_smoke_compose.sh
 #   BASE_URL=http://127.0.0.1:8080 FIRST_ASSET_ID=abcd1234 bash backend/scripts/api_smoke_compose.sh
 set -euo pipefail
 
 BASE="${BASE_URL:-http://127.0.0.1:8080}"
-TOKEN="${GRACE_TOKEN:-dev-token}"
-H=(-H "X-Grace-Token: ${TOKEN}" -H "Content-Type: application/json")
+TOKEN="${DATABREW_TOKEN:-dev-token}"
+H=(-H "X-Databrew-Token: ${TOKEN}" -H "Content-Type: application/json")
 
 json_get() { curl -sS -fS "${H[@]}" "$1"; }
 

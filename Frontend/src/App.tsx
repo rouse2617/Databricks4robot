@@ -1,6 +1,12 @@
 import { Spin } from "antd";
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import {
+	BrowserRouter,
+	Navigate,
+	Route,
+	Routes,
+	useLocation,
+} from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
@@ -12,12 +18,16 @@ const AssetsPage = lazy(() => import("./pages/AssetsPage"));
 const AssetDetailPage = lazy(() => import("./pages/AssetDetailPage"));
 const McapFilesPage = lazy(() => import("./pages/McapFilesPage"));
 const AlgoProcessingPage = lazy(() => import("./pages/AlgoProcessingPage"));
+const AlgoRunsPage = lazy(() => import("./pages/AlgoRunsPage"));
+const AlgoRunDetailPage = lazy(() => import("./pages/AlgoRunDetailPage"));
 const DeliveriesPage = lazy(() => import("./pages/DeliveriesPage"));
 const DeliveryDetailPage = lazy(() => import("./pages/DeliveryDetailPage"));
 const RegistryCenterPage = lazy(() => import("./pages/RegistryCenterPage"));
 const MetricsSearchPage = lazy(() => import("./pages/MetricsSearchPage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const EventsPage = lazy(() => import("./pages/EventsPage"));
+const PipelinePage = lazy(() => import("./pages/PipelinePage"));
+const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
 function PageLoader() {
@@ -33,12 +43,13 @@ function PageLoader() {
 
 function ProtectedRoutes() {
 	const { isAuthenticated, loading } = useAuth();
+	const location = useLocation();
 	if (loading) return <PageLoader />;
 	if (!isAuthenticated) return <Navigate to="/login" replace />;
 	return (
 		<AppLayout>
 			<ErrorBoundary>
-				<Suspense fallback={<PageLoader />}>
+				<Suspense fallback={<PageLoader />} key={location.pathname}>
 					<Routes>
 						<Route path="/" element={<Navigate to="/dashboard" replace />} />
 						<Route path="/dashboard" element={<DashboardPage />} />
@@ -46,6 +57,8 @@ function ProtectedRoutes() {
 						<Route path="/assets/:id" element={<AssetDetailPage />} />
 						<Route path="/mcap-files" element={<McapFilesPage />} />
 						<Route path="/algo" element={<AlgoProcessingPage />} />
+						<Route path="/algo-runs" element={<AlgoRunsPage />} />
+						<Route path="/algo-runs/:run_id" element={<AlgoRunDetailPage />} />
 						<Route path="/deliveries" element={<DeliveriesPage />} />
 						<Route path="/deliveries/:id" element={<DeliveryDetailPage />} />
 						<Route
@@ -56,6 +69,16 @@ function ProtectedRoutes() {
 						<Route path="/tags" element={<Navigate to="/registry" replace />} />
 						<Route path="/metrics" element={<MetricsSearchPage />} />
 						<Route path="/events" element={<EventsPage />} />
+						<Route path="/pipeline" element={<PipelinePage />} />
+						<Route
+							path="/components"
+							element={<Navigate to="/pipeline?tab=components" replace />}
+						/>
+						<Route
+							path="/workflows"
+							element={<Navigate to="/pipeline?tab=executions" replace />}
+						/>
+						<Route path="/workflows/:name" element={<WorkflowDetailPage />} />
 						<Route path="/settings" element={<SettingsPage />} />
 						<Route path="*" element={<Navigate to="/dashboard" replace />} />
 					</Routes>

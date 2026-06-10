@@ -3,7 +3,9 @@ import {
 	DashboardOutlined,
 	DatabaseOutlined,
 	FileOutlined,
+	ForkOutlined,
 	FundProjectionScreenOutlined,
+	HistoryOutlined,
 	LogoutOutlined,
 	RobotOutlined,
 	SendOutlined,
@@ -13,9 +15,9 @@ import {
 } from "@ant-design/icons";
 import { Avatar, Dropdown, Grid, Layout, Menu, Typography } from "antd";
 import type { ReactNode } from "react";
+import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { getAppVersionLabel } from "../lib/appVersion";
 import CmdKSearch from "./CmdKSearch";
 
 const { Sider, Content } = Layout;
@@ -30,7 +32,10 @@ const menuItems = [
 	{ key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
 	{ key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
 	{ type: "divider" as const },
+	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
+	{ type: "divider" as const },
+	{ key: "/pipeline", icon: <ForkOutlined />, label: "流水线" },
 	{ type: "divider" as const },
 	{ key: "/registry", icon: <ApartmentOutlined />, label: "注册中心" },
 	{
@@ -50,8 +55,15 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/events")) return "/events";
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
+	if (pathname.startsWith("/pipeline")) return "/pipeline";
+	if (pathname.startsWith("/workflows")) return "/pipeline";
+	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	if (pathname.startsWith("/algo")) return "/algo";
 	return "/assets";
+}
+
+function isFullBleedPage(pathname: string): boolean {
+	return pathname.startsWith("/pipeline");
 }
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -61,87 +73,78 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const screens = useBreakpoint();
 	const isMobile = !screens.lg;
 	const siderWidth = 220;
-	const versionLabel = getAppVersionLabel();
+	const fullBleed = isFullBleedPage(location.pathname);
+
+	// Browser restores scroll position on back-nav, no dep needed
+	useEffect(() => {
+		window.scrollTo(0, 0);
+	}, []);
 
 	return (
-		<>
-			<Layout style={{ minHeight: "100vh" }}>
-				<Sider
-					width={siderWidth}
-					breakpoint="lg"
-					collapsedWidth={isMobile ? 0 : 80}
-					collapsible
+		<Layout style={{ minHeight: "100vh" }}>
+			<Sider
+				width={siderWidth}
+				breakpoint="lg"
+				collapsedWidth={0}
+				trigger={null}
+				style={{
+					overflow: "auto",
+					height: "100vh",
+					position: "fixed",
+					left: 0,
+					top: 0,
+					bottom: 0,
+					zIndex: 100,
+				}}
+			>
+				{/* logo area */}
+				<button
+					type="button"
 					style={{
-						overflow: "auto",
-						height: "100vh",
-						position: isMobile ? "sticky" : "fixed",
-						left: 0,
-						top: 0,
-						bottom: 0,
-						background: "#0F172A",
+						height: 64,
 						display: "flex",
-						flexDirection: "column",
+						alignItems: "center",
+						paddingLeft: 24,
+						cursor: "pointer",
+						background: "none",
+						border: "none",
+						width: "100%",
 					}}
+					onClick={() => navigate("/dashboard")}
 				>
-					{/* Logo */}
-					<button
-						type="button"
-						onClick={() => navigate("/dashboard")}
-						aria-label="Cyber Databrew · 返回概览"
-						style={{
-							height: 56,
-							display: "flex",
-							alignItems: "center",
-							padding: "0 20px",
-							cursor: "pointer",
-							borderBottom: "1px solid rgba(255,255,255,0.06)",
-							width: "100%",
-							background: "transparent",
-							border: "none",
-							textAlign: "left",
-						}}
-					>
-						<div
-							aria-hidden="true"
-							style={{
-								width: 28,
-								height: 28,
-								borderRadius: 6,
-								background: "var(--color-primary)",
-								display: "flex",
-								alignItems: "center",
-								justifyContent: "center",
-								marginRight: 10,
-								flexShrink: 0,
-							}}
-						>
-							<DatabaseOutlined style={{ color: "#fff", fontSize: 14 }} />
-						</div>
-						<Typography.Text
-							strong
-							style={{ color: "#F1F5F9", fontSize: 15, letterSpacing: 0.5 }}
-						>
-							Cyber Databrew
-						</Typography.Text>
-					</button>
+					<img
+						src="/favicon.svg"
+						alt="DataBrew"
+						style={{ width: 28, height: 28, marginRight: 10 }}
+					/>
+					<Typography.Title level={5} style={{ margin: 0, color: "#fff" }}>
+						DataBrew
+					</Typography.Title>
+				</button>
 
-					{/* Navigation */}
-					<div style={{ flex: 1, paddingTop: 8 }}>
-						<Menu
-							mode="inline"
-							theme="dark"
-							selectedKeys={[resolveSelectedKey(location.pathname)]}
-							items={menuItems}
-							onClick={({ key }) => navigate(key)}
-							style={{ background: "transparent", borderRight: 0 }}
-						/>
-					</div>
+				{/* search */}
+				<div style={{ padding: "0 16px 12px" }}>
+					<CmdKSearch />
+				</div>
 
-					{/* User section */}
+				{/* nav */}
+				<Menu
+					theme="dark"
+					mode="inline"
+					selectedKeys={[resolveSelectedKey(location.pathname)]}
+					items={menuItems}
+					onClick={({ key }) => navigate(key)}
+				/>
+			</Sider>
+			<Layout style={{ marginLeft: isMobile ? 0 : siderWidth }}>
+				<Content style={{ minHeight: "100vh" }}>
 					<div
 						style={{
-							padding: "12px 16px",
-							borderTop: "1px solid rgba(255,255,255,0.06)",
+							display: "flex",
+							justifyContent: "flex-end",
+							padding: "12px 24px",
+							background: "#fff",
+							borderBottom: "1px solid #f0f0f0",
 						}}
 					>
 						<Dropdown
@@ -151,86 +154,32 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 										key: "logout",
 										icon: <LogoutOutlined />,
 										label: "退出登录",
-										danger: true,
+										onClick: () => {
+											logout();
+											navigate("/login");
+										},
 									},
 								],
-								onClick: async () => {
-									await logout();
-								},
 							}}
-							placement="topRight"
-							trigger={["click"]}
+							placement="bottomRight"
 						>
-							<div
-								style={{
-									display: "flex",
-									alignItems: "center",
-									gap: 10,
-									padding: "8px 8px",
-									borderRadius: 6,
-									cursor: "pointer",
-									transition: "background 0.2s",
-								}}
-								className="hover:bg-white/5"
-							>
-								<Avatar
-									size={32}
-									icon={<UserOutlined />}
-									style={{ background: "#334155", flexShrink: 0 }}
-								/>
-								<div style={{ overflow: "hidden" }}>
-									<div
-										style={{
-											color: "#E2E8F0",
-											fontSize: 13,
-											fontWeight: 500,
-											lineHeight: 1.3,
-										}}
-									>
-										管理员
-									</div>
-									<div
-										style={{ color: "#64748B", fontSize: 11, lineHeight: 1.3 }}
-									>
-										Phase 0
-									</div>
-								</div>
-							</div>
+							<Avatar
+								size="small"
+								icon={<UserOutlined />}
+								style={{ cursor: "pointer", backgroundColor: "#1677ff" }}
+							/>
 						</Dropdown>
-						<div
-							style={{
-								color: "#64748B",
-								fontSize: 11,
-								marginTop: 8,
-								paddingLeft: 8,
-								whiteSpace: "nowrap",
-								overflow: "hidden",
-								textOverflow: "ellipsis",
-							}}
-							title={versionLabel}
-						>
-							{versionLabel}
-						</div>
 					</div>
-				</Sider>
-
-				<Layout
-					style={{
-						marginLeft: isMobile ? 0 : siderWidth,
-						background: "#F8FAFC",
-					}}
-				>
-					<Content
+					<div
 						style={{
-							padding: 24,
-							minHeight: "100vh",
+							padding: fullBleed ? 0 : 24,
+							minHeight: fullBleed ? 0 : undefined,
 						}}
 					>
 						{children}
-					</Content>
-				</Layout>
+					</div>
+				</Content>
 			</Layout>
-			<CmdKSearch />
-		</>
+		</Layout>
 	);
 }

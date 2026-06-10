@@ -1,5 +1,5 @@
 substitutions:
-  _BASE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/cyber-databrew-frontend:dev-latest
+  _BASE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:dev-latest
 steps:
   - name: gcr.io/cloud-builders/docker
     args:

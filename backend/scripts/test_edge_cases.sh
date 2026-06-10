@@ -18,7 +18,7 @@ call() {
   local method="$1" path="$2"; shift 2
   local raw
   raw=$(curl -s --max-time 15 -w "\n%{http_code}" \
-    -X "$method" -H "Content-Type: application/json" -H "X-Grace-Token: ${TOKEN}" \
+    -X "$method" -H "Content-Type: application/json" -H "X-Databrew-Token: ${TOKEN}" \
     "${BASE_URL}${path}" "$@" 2>/dev/null || echo -e "\nTIMEOUT")
   RESP_BODY=$(echo "$raw" | sed '$d')
   RESP_CODE=$(echo "$raw" | tail -1)
@@ -275,7 +275,7 @@ CONC_RESULTS=$(mktemp)
 for i in $(seq 1 5); do
   (
     raw=$(curl -s --max-time 10 -w "\n%{http_code}" \
-      -X POST -H "Content-Type: application/json" -H "X-Grace-Token: ${TOKEN}" \
+      -X POST -H "Content-Type: application/json" -H "X-Databrew-Token: ${TOKEN}" \
       "${BASE_URL}/api/v1/assets/${ASSET_ID}/algo/${ALGO}/start" \
       -d '{"method":"conc-test"}' 2>/dev/null)
     code=$(echo "$raw" | tail -1)
@@ -439,7 +439,7 @@ section "9. HTTP 方法错误"
 
 # 9.1 PUT 不存在的路由
 RAW=$(curl -s --max-time 5 -w "\n%{http_code}" -X PUT \
-  -H "Content-Type: application/json" -H "X-Grace-Token: ${TOKEN}" \
+  -H "Content-Type: application/json" -H "X-Databrew-Token: ${TOKEN}" \
   "${BASE_URL}/api/v1/assets/${ASSET_ID}" -d '{}' 2>/dev/null)
 RESP_CODE=$(echo "$RAW" | tail -1)
 RESP_BODY=$(echo "$RAW" | sed '$d')

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +36,107 @@ type mockAssetRepo struct {
 	listWithFiltersFn func(ctx context.Context, whereSQL string, args []interface{}, page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error)
 }
 
+type fakeAssetSQLQuerier struct {
+	querySQL  string
+	queryArgs []any
+	allArgs   [][]any
+	rows      assetSQLRows
+	err       error
+	called    bool
+	calls     int
+	queries   []assetSQLQueryResult
+}
+
+type assetSQLQueryResult struct {
+	rows assetSQLRows
+	err  error
+}
+
+func (q *fakeAssetSQLQuerier) Query(_ context.Context, sql string, args ...any) (assetSQLRows, error) {
+	q.called = true
+	q.calls++
+	q.querySQL = sql
+	q.queryArgs = args
+	q.allArgs = append(q.allArgs, append([]any(nil), args...))
+	if len(q.queries) > 0 {
+		res := q.queries[0]
+		q.queries = q.queries[1:]
+		if res.err != nil {
+			return nil, res.err
+		}
+		if res.rows == nil {
+			return &fakeAssetSQLRows{}, nil
+		}
+		return res.rows, nil
+	}
+	if q.err != nil {
+		return nil, q.err
+	}
+	if q.rows == nil {
+		return &fakeAssetSQLRows{}, nil
+	}
+	return q.rows, nil
+}
+
+type fakeAssetSQLRows struct {
+	data   [][]any
+	idx    int
+	closed bool
+	err    error
+}
+
+func (r *fakeAssetSQLRows) Next() bool {
+	if r.idx >= len(r.data) {
+		return false
+	}
+	r.idx++
+	return true
+}
+
+func (r *fakeAssetSQLRows) Scan(dest ...any) error {
+	if r.idx == 0 || r.idx > len(r.data) {
+		return errors.New("scan called before next")
+	}
+	cur := r.data[r.idx-1]
+	if len(dest) != len(cur) {
+		return fmt.Errorf("scan length mismatch: got %d dest, %d values", len(dest), len(cur))
+	}
+	for i := range dest {
+		if err := assignAssetSQLValue(dest[i], cur[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *fakeAssetSQLRows) Close() { r.closed = true }
+
+func (r *fakeAssetSQLRows) Err() error { return r.err }
+
+func assignAssetSQLValue(dst any, src any) error {
+	dv := reflect.ValueOf(dst)
+	if dv.Kind() != reflect.Ptr || dv.IsNil() {
+		return errors.New("dest must be pointer")
+	}
+	elem := dv.Elem()
+	if src == nil {
+		elem.Set(reflect.Zero(elem.Type()))
+		return nil
+	}
+	sv := reflect.ValueOf(src)
+	if sv.Type().AssignableTo(elem.Type()) {
+		elem.Set(sv)
+		return nil
+	}
+	if elem.Kind() == reflect.Ptr && sv.Type().AssignableTo(elem.Type().Elem()) {
+		ptr := reflect.New(elem.Type().Elem())
+		ptr.Elem().Set(sv)
+		elem.Set(ptr)
+		return nil
+	}
+	return fmt.Errorf("type mismatch: cannot assign %T to %s", src, elem.Type())
+}
+
 // mockDeliveryRepoForAsset implements repository.DeliveryRepository for asset handler tests.
 type mockDeliveryRepoForAsset struct {
 	listByAssetFn func(ctx context.Context, assetID string) ([]string, error)
@@ -43,7 +146,10 @@ func (m *mockDeliveryRepoForAsset) Set(context.Context, *models.Delivery) error 
 func (m *mockDeliveryRepoForAsset) Get(context.Context, string) (*models.Delivery, error) {
 	return nil, nil
 }
-func (m *mockDeliveryRepoForAsset) WriteIndexes(context.Context, string, *models.Delivery) error {
+func (m *mockDeliveryRepoForAsset) AddItems(context.Context, string, []string) error {
+	return nil
+}
+func (m *mockDeliveryRepoForAsset) RefreshAssetDeliveryIndex(context.Context, string) error {
 	return nil
 }
 func (m *mockDeliveryRepoForAsset) ListByCustomer(context.Context, string) ([]string, error) {
@@ -58,8 +164,11 @@ func (m *mockDeliveryRepoForAsset) ListByAsset(_ context.Context, _ string) ([]s
 func (m *mockDeliveryRepoForAsset) ListItems(context.Context, string) ([]*models.DeliveryItem, error) {
 	return []*models.DeliveryItem{}, nil
 }
-func (m *mockDeliveryRepoForAsset) List(_ context.Context, _, _ int, _ string) ([]*models.Delivery, int64, error) {
+func (m *mockDeliveryRepoForAsset) List(_ context.Context, _, _ int, _ string, _ string) ([]*models.Delivery, int64, error) {
 	return []*models.Delivery{}, 0, nil
+}
+func (m *mockDeliveryRepoForAsset) Update(_ context.Context, _ *models.Delivery, _ int64) error {
+	return nil
 }
 
 func (m *mockAssetRepo) InsertNew(ctx context.Context, a *models.Asset) error {
@@ -95,6 +204,9 @@ func (m *mockAssetRepo) ListByMcapFile(ctx context.Context, mcapFileID string) (
 	}
 	return nil, nil
 }
+func (m *mockAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (m *mockAssetRepo) WriteSegmentIndex(ctx context.Context, a *models.Asset) error {
 	if m.writeSegIndexFn != nil {
 		return m.writeSegIndexFn(ctx, a)
@@ -106,6 +218,9 @@ func (m *mockAssetRepo) ListWithFilters(ctx context.Context, whereSQL string, ar
 		return m.listWithFiltersFn(ctx, whereSQL, args, page, pageSize, orderBy)
 	}
 	return []*models.Asset{}, 0, nil
+}
+func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
 }
 func (m *mockAssetRepo) MergeCfAlgo(_ context.Context, _ string, _ int64, _ map[string]interface{}, _ map[string]interface{}) (int64, error) {
 	return 0, nil
@@ -284,6 +399,208 @@ func TestCreate(t *testing.T) {
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422 for missing mcap_file FK violation, got %d", w.Code)
 	}
+}
+
+func TestGetAssetTypeSchema(t *testing.T) {
+	h := New(assetUC.New(&mockAssetRepo{}), &mockDeliveryRepoForAsset{})
+	r := setupAssetRouter(http.MethodGet, "/asset-types/:type/schema", h.GetAssetTypeSchema)
+
+	w := doReq(t, r, http.MethodGet, "/asset-types/dataset/schema", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &schema); err != nil {
+		t.Fatalf("schema response is not JSON: %v", err)
+	}
+	if got, _ := schema["title"].(string); got == "" {
+		t.Fatalf("expected schema title, got %#v", schema)
+	}
+
+	w = doReq(t, r, http.MethodGet, "/asset-types/unknown/schema", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown schema, got %d", w.Code)
+	}
+}
+
+func TestHandleRatingsHistoryValidationAndNotConfigured(t *testing.T) {
+	q := &fakeAssetSQLQuerier{}
+	h := &Handler{pgq: q}
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/not-valid/ratings-history", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+	if q.called {
+		t.Fatal("did not expect query for invalid id")
+	}
+
+	r = setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", (&Handler{}).HandleRatingsHistory)
+	w = doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleRatingsHistoryMissingLogicalAsset(t *testing.T) {
+	q := &fakeAssetSQLQuerier{}
+	h := &Handler{pgq: q}
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(q.querySQL, "asset_metrics") || strings.Contains(q.querySQL, "asset_algo_latest") {
+		t.Fatalf("unexpected ratings-history query:\n%s", q.querySQL)
+	}
+	if got, want := q.queryArgs[0], "aaaaaaaa"; got != want {
+		t.Fatalf("logical id arg: got %#v want %#v", got, want)
+	}
+}
+
+func TestHandleRatingsHistoryNoRatings(t *testing.T) {
+	created := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
+	rows := &fakeAssetSQLRows{data: [][]any{
+		ratingsHistoryRow("asset001", int64(1), true, "ready", created, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
+	}}
+	q := &fakeAssetSQLQuerier{rows: rows}
+	h := &Handler{pgq: q}
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if !rows.closed {
+		t.Fatal("expected rows to be closed")
+	}
+	var body struct {
+		LogicalAssetID string                   `json:"logical_asset_id"`
+		Items          []ratingsHistoryRevision `json:"items"`
+		Count          int                      `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.LogicalAssetID != "aaaaaaaa" || body.Count != 1 || len(body.Items) != 1 {
+		t.Fatalf("unexpected envelope: %+v", body)
+	}
+	if body.Items[0].AssetID != "asset001" || !body.Items[0].IsCurrent || body.Items[0].Revision != 1 {
+		t.Fatalf("unexpected revision: %+v", body.Items[0])
+	}
+	if body.Items[0].Ratings == nil || len(body.Items[0].Ratings) != 0 {
+		t.Fatalf("expected empty ratings array, got %#v", body.Items[0].Ratings)
+	}
+}
+
+func TestHandleRatingsHistoryGroupsAndSortsMetricRows(t *testing.T) {
+	t1 := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Hour)
+	score45 := 4.5
+	score40 := 4.0
+	conf := 0.99
+	runID := "run0000000000001"
+	sourceName := "reviewer_a"
+	unit := "stars"
+	rows := &fakeAssetSQLRows{data: [][]any{
+		ratingsHistoryRow("asset001", int64(1), false, "ready", t1,
+			"rating.quality_score", "float", unit, score45, nil, nil, nil,
+			"asset", "", "manual_rating", "v1", nil, runID, "human", sourceName, conf, t1.Add(10*time.Minute), t1.Add(10*time.Minute)),
+		ratingsHistoryRow("asset002", int64(2), true, "ready", t2,
+			"rating.action_completeness", "float", nil, score40, nil, nil, nil,
+			"asset", "", "manual_rating", "v1", nil, nil, "human", "reviewer_b", nil, t2.Add(10*time.Minute), t2.Add(10*time.Minute)),
+		ratingsHistoryRow("asset002", int64(2), true, "ready", t2,
+			"rating.label_correctness", "float", nil, score45, nil, nil, nil,
+			"asset", "", "manual_rating", "v1", nil, nil, "human", "reviewer_a", nil, t2.Add(20*time.Minute), t2.Add(20*time.Minute)),
+	}}
+	q := &fakeAssetSQLQuerier{rows: rows}
+	h := &Handler{pgq: q}
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	for _, want := range []string{
+		"m.metric_key LIKE 'rating.%'",
+		"ORDER BY a.revision ASC NULLS LAST",
+		"m.metric_key ASC NULLS LAST",
+		"m.source_type ASC NULLS LAST",
+		"m.source_name ASC NULLS LAST",
+		"m.recorded_at ASC NULLS LAST",
+	} {
+		if !strings.Contains(q.querySQL, want) {
+			t.Fatalf("query missing %q:\n%s", want, q.querySQL)
+		}
+	}
+
+	var body struct {
+		Items []ratingsHistoryRevision `json:"items"`
+		Count int                      `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Count != 2 || len(body.Items) != 2 {
+		t.Fatalf("expected 2 revision items, got %+v", body)
+	}
+	if body.Items[0].AssetID != "asset001" || body.Items[0].Revision != 1 || len(body.Items[0].Ratings) != 1 {
+		t.Fatalf("unexpected first revision: %+v", body.Items[0])
+	}
+	if body.Items[1].AssetID != "asset002" || body.Items[1].Revision != 2 || !body.Items[1].IsCurrent || len(body.Items[1].Ratings) != 2 {
+		t.Fatalf("unexpected second revision: %+v", body.Items[1])
+	}
+	firstRating := body.Items[0].Ratings[0]
+	if firstRating.MetricKey != "rating.quality_score" || firstRating.MetricValue == nil || *firstRating.MetricValue != score45 {
+		t.Fatalf("unexpected first rating: %+v", firstRating)
+	}
+	if firstRating.MetricUnit == nil || *firstRating.MetricUnit != unit || firstRating.RunID == nil || *firstRating.RunID != runID {
+		t.Fatalf("unexpected optional fields: %+v", firstRating)
+	}
+	if body.Items[1].Ratings[0].MetricKey != "rating.action_completeness" || body.Items[1].Ratings[1].MetricKey != "rating.label_correctness" {
+		t.Fatalf("unexpected rating order/grouping: %+v", body.Items[1].Ratings)
+	}
+}
+
+func TestHandleRatingsHistoryDatabaseErrors(t *testing.T) {
+	t.Run("query error", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{err: errors.New("boom")}
+		h := &Handler{pgq: q}
+		r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+		w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("scan error", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{rows: &fakeAssetSQLRows{data: [][]any{{"too-few-columns"}}}}
+		h := &Handler{pgq: q}
+		r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+		w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("row iteration error", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{rows: &fakeAssetSQLRows{err: errors.New("rows failed")}}
+		h := &Handler{pgq: q}
+		r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+		w := doReq(t, r, http.MethodGet, "/logical-assets/aaaaaaaa/ratings-history", nil)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+}
+
+func ratingsHistoryRow(values ...any) []any {
+	return values
 }
 
 func TestUpdateDeleteAndCommitSegments(t *testing.T) {
@@ -699,6 +1016,118 @@ func TestAssetListEvents(t *testing.T) {
 	}
 }
 
+func TestAssetEventsStream(t *testing.T) {
+	const testAssetID = "11111111"
+	occurredAt := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
+
+	makeHandler := func(assetExists bool, q *fakeAssetSQLQuerier) *Handler {
+		assetRepo := &mockAssetRepo{}
+		if assetExists {
+			assetRepo.getFn = func(context.Context, string) (*models.Asset, error) {
+				return &models.Asset{AssetID: testAssetID, Version: 1}, nil
+			}
+		} else {
+			assetRepo.getFn = func(context.Context, string) (*models.Asset, error) { return nil, nil }
+		}
+		h := New(assetUC.New(assetRepo), &mockDeliveryRepoForAsset{})
+		h.pgq = q
+		return h
+	}
+
+	t.Run("streams first batch and resumes after Last-Event-ID", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{
+			queries: []assetSQLQueryResult{
+				{
+					rows: &fakeAssetSQLRows{data: [][]any{{
+						"event-11",
+						int64(11),
+						"asset_updated",
+						testAssetID,
+						json.RawMessage(`{"field":"status"}`),
+						occurredAt,
+					}}},
+				},
+				{err: context.Canceled},
+			},
+		}
+		h := makeHandler(true, q)
+		r := setupAssetRouter(http.MethodGet, "/assets/:id/events/stream", h.HandleEventsStream)
+		srv := httptest.NewServer(r)
+		defer srv.Close()
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/assets/"+testAssetID+"/events/stream", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Last-Event-ID", "10")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("stream request: %v", err)
+		}
+		defer resp.Body.Close()
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read stream: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, string(bodyBytes))
+		}
+		if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/event-stream") {
+			t.Fatalf("expected text/event-stream content type, got %q", got)
+		}
+		body := string(bodyBytes)
+		for _, want := range []string{
+			"id: 11\n",
+			"event: asset_updated\n",
+			`"event_seq":11`,
+			`"event_payload":{"field":"status"}`,
+			": keepalive\n\n",
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("expected stream body to contain %q, got %s", want, body)
+			}
+		}
+		if !q.called || len(q.allArgs) == 0 || len(q.allArgs[0]) != 2 || q.allArgs[0][0] != testAssetID || q.allArgs[0][1] != int64(10) {
+			t.Fatalf("expected first SQL query with asset id and after seq, got called=%v args=%#v", q.called, q.allArgs)
+		}
+		if !strings.Contains(q.querySQL, "event_seq > $2") || !strings.Contains(q.querySQL, "ORDER BY event_seq ASC") || !strings.Contains(q.querySQL, "LIMIT 50") {
+			t.Fatalf("unexpected stream query: %s", q.querySQL)
+		}
+	})
+
+	t.Run("rejects malformed Last-Event-ID before opening stream", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{}
+		h := makeHandler(true, q)
+		r := setupAssetRouter(http.MethodGet, "/assets/:id/events/stream", h.HandleEventsStream)
+
+		req := httptest.NewRequest(http.MethodGet, "/assets/"+testAssetID+"/events/stream", nil)
+		req.Header.Set("Last-Event-ID", "not-a-number")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+		}
+		if q.called {
+			t.Fatalf("expected no stream query for malformed Last-Event-ID")
+		}
+	})
+
+	t.Run("rejects missing asset before opening stream", func(t *testing.T) {
+		q := &fakeAssetSQLQuerier{}
+		h := makeHandler(false, q)
+		r := setupAssetRouter(http.MethodGet, "/assets/:id/events/stream", h.HandleEventsStream)
+
+		w := doReq(t, r, http.MethodGet, "/assets/22222222/events/stream", nil)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d body=%s", w.Code, w.Body.String())
+		}
+		if q.called {
+			t.Fatalf("expected no stream query for missing asset")
+		}
+	})
+}
+
 func TestUpsertTagAndDeleteTag(t *testing.T) {
 	assetRepo := &mockAssetRepo{
 		getFn: func(context.Context, string) (*models.Asset, error) {
@@ -722,7 +1151,10 @@ func TestUpsertTagAndDeleteTag(t *testing.T) {
 	r.POST("/assets/:id/tags", h.UpsertTag)
 	r.DELETE("/assets/:id/tags/:key", h.DeleteTag)
 
-	w := doReq(t, r, http.MethodPost, "/assets/aaaaaaaa/tags", map[string]any{"key": "quality", "value": "good"})
+	w := doReq(t, r, http.MethodPost, "/assets/aaaaaaaa/tags", map[string]any{
+		"key": "quality", "value": "good",
+		"source_type": "human", "source_name": "tester",
+	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 from upsert tag, got %d", w.Code)
 	}
@@ -882,16 +1314,20 @@ func newHandlerAssetTagRepo() *handlerAssetTagRepo {
 
 func tagRowKey(assetID, tagKey string) string { return assetID + "|" + tagKey }
 
-func (m *handlerAssetTagRepo) Upsert(_ context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error {
+func (m *handlerAssetTagRepo) Upsert(_ context.Context, in repository.AssetTagUpsertInput) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.rows[tagRowKey(assetID, tagKey)] = &models.AssetTag{
-		AssetID:    assetID,
-		TagKey:     tagKey,
-		TagValue:   tagValue,
-		TagType:    tagType,
-		SourceType: sourceType,
-		UpdatedAt:  time.Now().UTC(),
+	m.rows[tagRowKey(in.AssetID, in.TagKey)] = &models.AssetTag{
+		AssetID:       in.AssetID,
+		TagKey:        in.TagKey,
+		TagValue:      in.TagValue,
+		TagType:       in.TagType,
+		SourceType:    in.SourceType,
+		SourceName:    in.SourceName,
+		SourceVersion: in.SourceVersion,
+		RunID:         in.RunID,
+		AppliedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 	return nil
 }
@@ -909,10 +1345,16 @@ func (m *handlerAssetTagRepo) ListByAsset(_ context.Context, assetID string) ([]
 	return out, nil
 }
 
-func (m *handlerAssetTagRepo) Delete(_ context.Context, assetID, tagKey string) error {
+func (m *handlerAssetTagRepo) Delete(_ context.Context, assetID, tagKey, sourceType string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.rows, tagRowKey(assetID, tagKey))
+	if sourceType == "" {
+		delete(m.rows, tagRowKey(assetID, tagKey))
+		return nil
+	}
+	if row, ok := m.rows[tagRowKey(assetID, tagKey)]; ok && row.SourceType == sourceType {
+		delete(m.rows, tagRowKey(assetID, tagKey))
+	}
 	return nil
 }
 
@@ -1043,6 +1485,10 @@ func (m *handlerAssetEventRepo) PublishStateCounts(context.Context) (map[string]
 	return map[string]int64{}, nil
 }
 
+func (m *handlerAssetEventRepo) ListVersionPromotedByLogical(context.Context, string) ([]*models.AssetEvent, error) {
+	return nil, nil
+}
+
 func (m *handlerAssetEventRepo) ListByAsset(_ context.Context, assetID string, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1149,4 +1595,221 @@ func buildTestTagRegistryForAsset(t *testing.T) *config.TagRegistry {
 		t.Fatalf("failed to load tag registry: %v", err)
 	}
 	return reg
+}
+
+func TestHandleRatingsHistoryNoPG(t *testing.T) {
+	h := New(nil, nil)
+	r := setupAssetRouter(http.MethodGet, "/logical-assets/:id/ratings-history", h.HandleRatingsHistory)
+
+	w := doReq(t, r, http.MethodGet, "/logical-assets/abc12345/ratings-history", nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// ─── buildLineageResponse tests ────────────────────────────────────────────
+
+func TestBuildLineageResponse_nilDB(t *testing.T) {
+	h := New(nil, nil)
+	// pg and pgq both nil → early return with empty skeleton
+	res, err := h.buildLineageResponse(context.Background(), "aa111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.AssetID != "aa111111" {
+		t.Fatalf("expected asset_id aa111111, got %s", res.AssetID)
+	}
+	if len(res.Downstream["algo_results"].([]any)) != 0 {
+		t.Fatal("expected empty algo_results")
+	}
+	if len(res.Downstream["deliveries"].([]any)) != 0 {
+		t.Fatal("expected empty deliveries")
+	}
+	if len(res.Downstream["eval_results"].([]any)) != 0 {
+		t.Fatal("expected empty eval_results")
+	}
+}
+
+func TestBuildLineageResponse_happyPath(t *testing.T) {
+	now := time.Now()
+	algoRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"algo-a", "v1", "ok", "run-111", "s3://output/a"},
+			{"algo-b", "v2", "ok", "run-222", "s3://output/b"},
+		},
+	}
+	delRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"del-111", "c1", &now},
+		},
+	}
+	evalRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"eval-1", "accuracy", float64(0.95)},
+		},
+	}
+
+	q := &fakeAssetSQLQuerier{
+		queries: []assetSQLQueryResult{
+			{rows: algoRows},
+			{rows: delRows},
+			{rows: evalRows},
+		},
+	}
+
+	h := New(nil, nil)
+	h.pgq = q
+
+	res, err := h.buildLineageResponse(context.Background(), "aa111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Round-trip through JSON to read response fields concretely.
+	b, _ := json.Marshal(res)
+	var body map[string]any
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+
+	ds := body["downstream"].(map[string]any)
+
+	algos := ds["algo_results"].([]any)
+	if len(algos) != 2 {
+		t.Fatalf("expected 2 algo results, got %d", len(algos))
+	}
+	a0 := algos[0].(map[string]any)
+	if a0["algo_name"] != "algo-a" || a0["run_id"] != "run-111" {
+		t.Fatalf("unexpected algo[0]: %v", a0)
+	}
+
+	dels := ds["deliveries"].([]any)
+	if len(dels) != 1 {
+		t.Fatalf("expected 1 delivery, got %d", len(dels))
+	}
+	d0 := dels[0].(map[string]any)
+	if d0["delivery_id"] != "del-111" || d0["customer_id"] != "c1" {
+		t.Fatalf("unexpected delivery[0]: %v", d0)
+	}
+	if _, ok := d0["delivered_at"]; !ok {
+		t.Fatal("expected delivered_at for non-nil timestamp")
+	}
+
+	evals := ds["eval_results"].([]any)
+	if len(evals) != 1 {
+		t.Fatalf("expected 1 eval result, got %d", len(evals))
+	}
+	e0 := evals[0].(map[string]any)
+	if e0["eval_name"] != "eval-1" || e0["metric_value"] != float64(0.95) {
+		t.Fatalf("unexpected eval[0]: %v", e0)
+	}
+
+	up := body["upstream"].(map[string]any)
+	if len(up) != 0 {
+		t.Fatal("expected empty upstream when pg is nil")
+	}
+}
+
+func TestBuildLineageResponse_algoRowsErr(t *testing.T) {
+	algoRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"algo-a", "v1", "ok", "run-111", "s3://output/a"},
+		},
+		err: fmt.Errorf("connection lost"),
+	}
+	delRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"del-111", "c1", nil},
+		},
+	}
+	evalRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"eval-1", "accuracy", float64(0.92)},
+		},
+	}
+
+	q := &fakeAssetSQLQuerier{
+		queries: []assetSQLQueryResult{
+			{rows: algoRows},
+			{rows: delRows},
+			{rows: evalRows},
+		},
+	}
+
+	h := New(nil, nil)
+	h.pgq = q
+
+	res, err := h.buildLineageResponse(context.Background(), "aa111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b, _ := json.Marshal(res)
+	var body map[string]any
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	ds := body["downstream"].(map[string]any)
+
+	// Algo row scanned before the error should still appear
+	algos := ds["algo_results"].([]any)
+	if len(algos) != 1 {
+		t.Fatalf("expected 1 scanned algo result despite rows.Err, got %d", len(algos))
+	}
+	a0 := algos[0].(map[string]any)
+	if a0["algo_name"] != "algo-a" {
+		t.Fatalf("expected algo-a, got %v", a0)
+	}
+
+	dels := ds["deliveries"].([]any)
+	if len(dels) != 1 {
+		t.Fatalf("expected 1 delivery, got %d", len(dels))
+	}
+	evals := ds["eval_results"].([]any)
+	if len(evals) != 1 {
+		t.Fatalf("expected 1 eval result, got %d", len(evals))
+	}
+}
+
+func TestBuildLineageResponse_scanErrorLogged(t *testing.T) {
+	algoRows := &fakeAssetSQLRows{
+		data: [][]any{
+			{"algo-a", "v1", "ok", "run-111", "s3://output/a"},
+			{"broken-row"},
+		},
+	}
+	delRows := &fakeAssetSQLRows{data: [][]any{}}
+	evalRows := &fakeAssetSQLRows{data: [][]any{}}
+
+	q := &fakeAssetSQLQuerier{
+		queries: []assetSQLQueryResult{
+			{rows: algoRows},
+			{rows: delRows},
+			{rows: evalRows},
+		},
+	}
+
+	h := New(nil, nil)
+	h.pgq = q
+
+	res, err := h.buildLineageResponse(context.Background(), "aa111111")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b, _ := json.Marshal(res)
+	var body map[string]any
+	if err := json.Unmarshal(b, &body); err != nil {
+		t.Fatalf("json unmarshal: %v", err)
+	}
+	ds := body["downstream"].(map[string]any)
+
+	algos := ds["algo_results"].([]any)
+	if len(algos) != 1 {
+		t.Fatalf("expected 1 valid algo result (broken row skipped), got %d", len(algos))
+	}
+	a0 := algos[0].(map[string]any)
+	if a0["algo_name"] != "algo-a" {
+		t.Fatalf("expected algo-a, got %v", a0)
+	}
 }

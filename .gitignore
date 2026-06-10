@@ -17,6 +17,7 @@ dist/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
+sdk/src/cyber_databrew_sdk/_version.py
 
 # Node / Frontend
 Frontend/node_modules/
@@ -33,6 +34,9 @@ backend/.env
 !backend/.env.example
 deploy/cloudrun/backend.env.runtime
 
+# OpenSpec design artifact screenshots
+openspec/changes/**/*.png
+
 # GCP
 *.json
 !.commitlintrc.json
@@ -44,13 +48,18 @@ deploy/cloudrun/backend.env.runtime
 !deploy/k8s/monitoring/dashboards/*.json
 !backend/schemas/events/*.json
 
-# IDE / editor local (do not commit machine-specific or assistant bundles)
+# IDE / editor / agent configs (local only)
 .idea/
 .vscode/
 .cursor/
+.cursor-plugin/
+.kiro/
 .cursorrules
 .agents/
-.kiro/
+.agent/tasks/
+.agent/context/
+.agent/screenshots/
+.omm/
 *.swp
 
 # OS
@@ -63,39 +72,48 @@ Frontend/e2e/report/
 Frontend/e2e/screenshots/*.png
 /e2e-screenshots/
 
-# Agent QA dumps at repo root (keep under docs/screenshots/ if needed)
+# Agent QA dumps (keep under docs/screenshots/ if needed)
 /screenshot*.png
 /verify_*.png
 /review.js
 docs/screenshots/qa-session-*/
+frontend-dev-screenshot*.png
+backend-dev-screenshot*.png
 
-# Local Feishu wiki sync (scripts/sync_review_to_wiki_incremental.py output + state)
+# Local Feishu wiki sync
 .sync_tmp_docs_review_to_wiki_*/
 .sync_state_docs_review_to_wiki*.json
 .cursor_tmp_*.json
 
 # Local temp worktrees / nested repos
+.worktrees-split/
 .local/
+.claude/
+.codegraph/
 _tmp_cyber_iac/
 _tmp_cyber_iac_fresh/
-.openharness/
-
-# Agent/IDE personal configs — keep local only
-.agents/skills/
-.cursor-plugin/
-.omm/
-.vscode/
 
 # Test coverage
 Frontend/coverage/
 
-
 # Dagster (unused scaffold)
 dagster/
 
-
 # Personal/temporary files
-.cursorrules
 skills-lock.json
 TODO.md
 ralph.yml
+
+# Argo UI full source (not directly used)
+argo-ui/
+
+# Task / planning files
+TASK-*
+.hermes/TASK-*
+
+
+# repo-wiki MkDocs Material build (regenerate via mkdocs build)
+docs/repo-wiki-site/
+
+# repo-wiki MkDocs Material config (regenerate via scripts/repo-wiki/gen_mkdocs.py)
+mkdocs.yml

@@ -49,11 +49,10 @@ func (h *Handler) Bytes(c *gin.Context) {
 
 	size, contentType, err := h.bytesSrc.Stat(c.Request.Context(), f.GCSPath)
 	if err != nil {
-		if errors.Is(err, storage.ErrObjectNotExist) {
-			httpresp.NotFound(c, httpresp.CodeMcapFileNotFound, "mcap file bytes not found")
+		if !writeBytesError(c, err) {
+			httpresp.Internal(c, fmt.Sprintf("gcs stat failed: %v", err))
 			return
 		}
-		httpresp.Internal(c, fmt.Sprintf("gcs stat failed: %v", err))
 		return
 	}
 	if size < 0 {
@@ -78,11 +77,10 @@ func (h *Handler) Bytes(c *gin.Context) {
 
 		rc, err := h.bytesSrc.OpenFull(c.Request.Context(), f.GCSPath)
 		if err != nil {
-			if errors.Is(err, storage.ErrObjectNotExist) {
-				httpresp.NotFound(c, httpresp.CodeMcapFileNotFound, "mcap file bytes not found")
+			if !writeBytesError(c, err) {
+				httpresp.Internal(c, fmt.Sprintf("gcs read failed: %v", err))
 				return
 			}
-			httpresp.Internal(c, fmt.Sprintf("gcs read failed: %v", err))
 			return
 		}
 		defer func() { _ = rc.Close() }()
@@ -117,11 +115,10 @@ func (h *Handler) Bytes(c *gin.Context) {
 
 	rc, err := h.bytesSrc.OpenRange(c.Request.Context(), f.GCSPath, start, length)
 	if err != nil {
-		if errors.Is(err, storage.ErrObjectNotExist) {
-			httpresp.NotFound(c, httpresp.CodeMcapFileNotFound, "mcap file bytes not found")
+		if !writeBytesError(c, err) {
+			httpresp.Internal(c, fmt.Sprintf("gcs range read failed: %v", err))
 			return
 		}
-		httpresp.Internal(c, fmt.Sprintf("gcs range read failed: %v", err))
 		return
 	}
 	defer func() { _ = rc.Close() }()
@@ -210,4 +207,15 @@ func parseNonNegativeInt64(s string) (int64, error) {
 		return 0, errors.New("invalid")
 	}
 	return v, nil
+}
+
+// writeBytesError maps known bytes-source errors to HTTP error responses.
+// It writes the response and returns true when the error is recognized.
+// For unrecognized errors it returns false — the caller should respond 500.
+func writeBytesError(c *gin.Context, err error) bool {
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		httpresp.NotFound(c, httpresp.CodeMcapFileNotFound, "mcap file bytes not found")
+		return true
+	}
+	return false
 }

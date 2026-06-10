@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,9 @@ import (
 // prefix routing directly via prefixedFieldSpecs.
 var FieldAliasMap = map[string]string{}
 
+// ErrUnknownField is returned when a filter field is not in the whitelist.
+var ErrUnknownField = errors.New("filter: unknown field")
+
 // FieldMeta describes a searchable field's type and allowed values.
 type FieldMeta struct {
 	Type   string   // "string", "enum", "numeric", "timestamp", "virtual"
@@ -23,6 +27,9 @@ type FieldMeta struct {
 var SearchableFields = map[string]FieldMeta{
 	"_fulltext":          {Type: "string"},
 	"asset_id":           {Type: "string"},
+	"logical_asset_id":   {Type: "string"},
+	"revision":           {Type: "numeric"},
+	"is_current":         {Type: "enum", Values: []string{"true", "false"}},
 	"mcap_file_id":       {Type: "string"},
 	"owner":              {Type: "string"},
 	"reviewer":           {Type: "string"},
@@ -37,7 +44,7 @@ var SearchableFields = map[string]FieldMeta{
 	"updated_at":         {Type: "timestamp"},
 	"delivery_count":     {Type: "numeric"},
 	"lifecycle_state":    {Type: "enum", Values: []string{"created", "processing", "ready", "rejected", "delivered", "archived", "superseded"}},
-	"asset_type":         {Type: "enum", Values: []string{"segment", "clip", "frame_set", "derived_asset"}},
+	"asset_type":         {Type: "enum", Values: []string{"raw_mcap", "segment", "clip", "frame", "action", "task", "derived_asset"}},
 	"expire_at":          {Type: "timestamp"},
 	"retention_tier":     {Type: "string"},
 	"last_delivered_to":  {Type: "string"},
@@ -79,7 +86,7 @@ func ValidateFieldWhitelist(field string) error {
 	if _, ok := SearchableFields[field]; ok {
 		return nil
 	}
-	return fmt.Errorf("filter: unknown field %q", field)
+	return fmt.Errorf("%w %q", ErrUnknownField, field)
 }
 
 // VirtualFieldHandler defines how a virtual field is resolved for both

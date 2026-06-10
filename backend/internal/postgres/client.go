@@ -29,6 +29,7 @@ type rowScanner interface {
 type rowsScanner interface {
 	Next() bool
 	Scan(dest ...any) error
+	Err() error
 	Close()
 }
 
@@ -150,10 +151,10 @@ func envInt32(key string, fallback int32) int32 {
 }
 
 func New(ctx context.Context, cfg *config.Config) (*Client, error) {
-	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName,
-	)
+	// Use key=value format to avoid URL encoding issues with special chars in
+	// the password (e.g. >, &).  pgx natively supports both formats.
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName)
 	return NewFromDSN(ctx, dsn)
 }
 
@@ -201,6 +202,7 @@ func (c *Client) QueryRow(ctx context.Context, sql string, args ...any) interfac
 func (c *Client) Query(ctx context.Context, sql string, args ...any) (interface {
 	Next() bool
 	Scan(dest ...any) error
+	Err() error
 	Close()
 }, error) {
 	return c.db.Query(ctx, sql, args...)

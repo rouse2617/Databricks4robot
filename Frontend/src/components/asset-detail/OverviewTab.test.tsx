@@ -44,7 +44,7 @@ const mockAsset: Asset = {
 describe("OverviewTab", () => {
 	it("renders asset details", () => {
 		render(<OverviewTab asset={mockAsset} />);
-		expect(screen.getByText("test-asset-001")).toBeTruthy();
+		expect(screen.getAllByText("test-asset-001").length).toBeGreaterThan(0);
 		expect(screen.getByText("mcap-001")).toBeTruthy();
 		expect(screen.getByText("alice")).toBeTruthy();
 		expect(screen.getByText("team-a")).toBeTruthy();

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/handlers"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
@@ -22,17 +24,42 @@ import (
 )
 
 type Handler struct {
-	repo      repository.DeliveryRepository
-	idemRepo  repository.IdempotencyRepository
-	eventRepo repository.AssetEventRepository
+	repo         repository.DeliveryRepository
+	idemRepo     repository.IdempotencyRepository
+	customerRepo repository.CustomerRepository
+	eventRepo    repository.AssetEventRepository
+	ruleEngine   *deliveryrules.Engine
 }
 
-func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepository, eventRepo ...repository.AssetEventRepository) *Handler {
+// withTx runs fn within a transaction if the repo supports it.
+func (h *Handler) withTx(ctx context.Context, fn func(context.Context) error) error {
+	if txRunner, ok := h.repo.(repository.TxRunner); ok {
+		return txRunner.WithTx(ctx, fn)
+	}
+	return fn(ctx)
+}
+
+// withTxRequired is like withTx but returns an error when the repo
+// does not support transactions.
+func (h *Handler) withTxRequired(ctx context.Context, fn func(context.Context) error) error {
+	txRunner, ok := h.repo.(repository.TxRunner)
+	if !ok {
+		return fmt.Errorf("delivery repository does not support transactions")
+	}
+	return txRunner.WithTx(ctx, fn)
+}
+
+func New(repo repository.DeliveryRepository, idemRepo repository.IdempotencyRepository, customerRepo repository.CustomerRepository, eventRepo ...repository.AssetEventRepository) *Handler {
 	var evt repository.AssetEventRepository
 	if len(eventRepo) > 0 {
 		evt = eventRepo[0]
 	}
-	return &Handler{repo: repo, idemRepo: idemRepo, eventRepo: evt}
+	return &Handler{repo: repo, idemRepo: idemRepo, customerRepo: customerRepo, eventRepo: evt}
+}
+
+// SetRuleEngine enables pre-delivery compliance checks (CYB-1020).
+func (h *Handler) SetRuleEngine(e *deliveryrules.Engine) {
+	h.ruleEngine = e
 }
 
 func (h *Handler) appendDeliveryEvents(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string) error {
@@ -65,23 +92,97 @@ func (h *Handler) appendDeliveryEvents(ctx context.Context, d *models.Delivery, 
 	return nil
 }
 
-func (h *Handler) commitDelivery(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string) error {
+func (h *Handler) createDeliveryWithItems(ctx context.Context, d *models.Delivery, assetIDs []string) error {
+	assetIDs = uniqueAssetIDs(assetIDs)
+	d.AssetCount = len(assetIDs)
+	d.ItemCount = int64(len(assetIDs))
 	writeFn := func(txCtx context.Context) error {
 		if err := h.repo.Set(txCtx, d); err != nil {
 			return err
 		}
+		if err := h.repo.AddItems(txCtx, d.DeliveryID, assetIDs); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	return h.withTx(ctx, writeFn)
+}
+
+func (h *Handler) commitDeliveryIndexesAndEvents(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string) error {
+	writeFn := func(txCtx context.Context) error {
 		for _, assetID := range assetIDs {
-			if err := h.repo.WriteIndexes(txCtx, assetID, d); err != nil {
+			if err := h.repo.RefreshAssetDeliveryIndex(txCtx, assetID); err != nil {
 				return err
 			}
 		}
 		return h.appendDeliveryEvents(txCtx, d, assetIDs, requestID)
 	}
 
-	if txRunner, ok := h.repo.(repository.TxRunner); ok {
-		return txRunner.WithTx(ctx, writeFn)
+	return h.withTx(ctx, writeFn)
+}
+
+// commitDeliveryFull runs idempotency lock + recheck + Set + AddItems +
+// RefreshAssetDeliveryIndex + events + idempotency
+// in a single transaction so that either all writes land or none do. The idempotency record
+// is included in the same tx to prevent duplicates on retry after partial failure.
+func (h *Handler) commitDeliveryFull(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string, idemRec *repository.IdempotencyRecord) (*repository.IdempotencyRecord, error) {
+	assetIDs = uniqueAssetIDs(assetIDs)
+	d.AssetCount = len(assetIDs)
+	d.ItemCount = int64(len(assetIDs))
+	var replay *repository.IdempotencyRecord
+	writeFn := func(txCtx context.Context) error {
+		if err := h.idemRepo.Lock(txCtx, idemRec.Scope, idemRec.Key); err != nil {
+			return err
+		}
+		rec, err := h.idemRepo.Get(txCtx, idemRec.Scope, idemRec.Key)
+		if err != nil {
+			return err
+		}
+		if rec != nil {
+			if rec.RequestHash != idemRec.RequestHash {
+				return repository.ErrIdempotencyConflict
+			}
+			replay = rec
+			return nil
+		}
+		if err := h.repo.Set(txCtx, d); err != nil {
+			return err
+		}
+		if err := h.repo.AddItems(txCtx, d.DeliveryID, assetIDs); err != nil {
+			return err
+		}
+		for _, assetID := range assetIDs {
+			if err := h.repo.RefreshAssetDeliveryIndex(txCtx, assetID); err != nil {
+				return err
+			}
+		}
+		if err := h.appendDeliveryEvents(txCtx, d, assetIDs, requestID); err != nil {
+			return err
+		}
+		return h.idemRepo.Save(txCtx, idemRec)
 	}
-	return writeFn(ctx)
+
+	err := h.withTx(ctx, writeFn)
+	return replay, err
+}
+
+// commitC2Full runs Update + RefreshAssetDeliveryIndex + events in a single
+// transaction for consistent C2 commit semantics.
+func (h *Handler) commitC2Full(ctx context.Context, d *models.Delivery, assetIDs []string, requestID string, expectedRevision int64) error {
+	writeFn := func(txCtx context.Context) error {
+		if err := h.repo.Update(txCtx, d, expectedRevision); err != nil {
+			return err
+		}
+		for _, assetID := range assetIDs {
+			if err := h.repo.RefreshAssetDeliveryIndex(txCtx, assetID); err != nil {
+				return err
+			}
+		}
+		return h.appendDeliveryEvents(txCtx, d, assetIDs, requestID)
+	}
+
+	return h.withTx(ctx, writeFn)
 }
 
 // Commit creates a new delivery.
@@ -96,7 +197,7 @@ func (h *Handler) commitDelivery(ctx context.Context, d *models.Delivery, assetI
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /deliveries [post]
 func (h *Handler) Commit(c *gin.Context) {
 	var req struct {
@@ -116,6 +217,37 @@ func (h *Handler) Commit(c *gin.Context) {
 			return
 		}
 	}
+	req.CustomerID = strings.TrimSpace(req.CustomerID)
+	if req.CustomerID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "customer_id is required", nil)
+		return
+	}
+	if h.customerRepo != nil {
+		ok, err := h.customerRepo.Exists(c.Request.Context(), req.CustomerID)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		if !ok {
+			httpresp.Unprocessable(c, httpresp.CodeInvalidArgument, "customer not found", map[string]any{"customer_id": req.CustomerID})
+			return
+		}
+	}
+	if h.ruleEngine != nil {
+		violations, err := h.ruleEngine.Check(c.Request.Context(), req.CustomerID, req.AssetIDs)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		if len(violations) > 0 {
+			httpresp.Unprocessable(c, httpresp.CodeDeliveryRuleFailed,
+				"one or more assets failed delivery rules",
+				map[string]any{"violations": violations},
+			)
+			return
+		}
+	}
+
 	idemKey := c.GetHeader("Idempotency-Key")
 	if idemKey == "" {
 		httpresp.BadRequest(c, httpresp.CodeMissingIdempotencyKey, "Idempotency-Key header is required", nil)
@@ -133,22 +265,19 @@ func (h *Handler) Commit(c *gin.Context) {
 		return
 	}
 
+	req.AssetIDs = uniqueAssetIDs(req.AssetIDs)
 	now := time.Now()
 	d := &models.Delivery{
 		DeliveryID:  uuid.NewString(),
 		CustomerID:  req.CustomerID,
 		Status:      models.DeliveryStatusDelivered,
 		DeliveredAt: &now,
+		CompletedAt: &now,
 		ContractID:  req.ContractID,
 		Note:        req.Note,
 		Owner:       req.Owner,
 		AssetCount:  len(req.AssetIDs),
 		CreatedAt:   now,
-	}
-
-	if err := h.commitDelivery(c.Request.Context(), d, req.AssetIDs, c.GetHeader("X-Request-ID")); err != nil {
-		httpresp.Internal(c, err.Error())
-		return
 	}
 
 	body := gin.H{
@@ -158,18 +287,31 @@ func (h *Handler) Commit(c *gin.Context) {
 		"delivered_at": d.DeliveredAt,
 		"status":       d.Status,
 	}
+	respBytes, _ := json.Marshal(body)
+	idemRec := &repository.IdempotencyRecord{
+		Scope: "deliveries_commit", Key: idemKey, RequestHash: hash, StatusCode: http.StatusCreated, Response: respBytes,
+	}
+	replay, err := h.commitDeliveryFull(c.Request.Context(), d, req.AssetIDs, c.GetHeader("X-Request-ID"), idemRec)
+	if err != nil {
+		if err == repository.ErrIdempotencyConflict {
+			httpresp.Conflict(c, httpresp.CodeIdempotencyConflict, "same idempotency key used with different payload", nil)
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if replay != nil {
+		var body map[string]any
+		_ = json.Unmarshal(replay.Response, &body)
+		c.JSON(replay.StatusCode, body)
+		return
+	}
+
 	audit.Log(c.Request.Context(), "delivery.commit", "delivery", []string{d.DeliveryID}, map[string]any{
 		"customer_id": req.CustomerID,
 		"asset_ids":   req.AssetIDs,
 		"asset_count": len(req.AssetIDs),
 	})
-	respBytes, _ := json.Marshal(body)
-	if err := h.idemRepo.Save(c.Request.Context(), &repository.IdempotencyRecord{
-		Scope: "deliveries_commit", Key: idemKey, RequestHash: hash, StatusCode: http.StatusCreated, Response: respBytes,
-	}); err != nil {
-		httpresp.Internal(c, err.Error())
-		return
-	}
 	c.JSON(http.StatusCreated, body)
 }
 
@@ -177,8 +319,9 @@ func (h *Handler) Commit(c *gin.Context) {
 func (h *Handler) List(c *gin.Context) {
 	page, pageSize := handlers.ParsePageParams(c.Query("page"), c.Query("page_size"))
 	status := c.Query("status")
+	customerID := strings.TrimSpace(c.Query("customer_id"))
 
-	items, total, err := h.repo.List(c.Request.Context(), page, pageSize, status)
+	items, total, err := h.repo.List(c.Request.Context(), page, pageSize, status, customerID)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -264,6 +407,498 @@ func (h *Handler) ListByCustomer(c *gin.Context) {
 	})
 }
 
+// ─── C2 (two-step) delivery workflow ────────────────────────────────────────
+
+// HandleDraft creates a new delivery in "pending" status without running
+// the rule engine. Items are added later via HandleAddItems, then committed
+// via HandleCommitC2.
+func (h *Handler) HandleDraft(c *gin.Context) {
+	var req struct {
+		CustomerID string   `json:"customer_id" binding:"required"`
+		AssetIDs   []string `json:"asset_ids"`
+		ContractID string   `json:"contract_id"`
+		Note       string   `json:"note"`
+		Owner      string   `json:"owner"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	req.CustomerID = strings.TrimSpace(req.CustomerID)
+	if req.CustomerID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "customer_id is required", nil)
+		return
+	}
+	if h.customerRepo != nil {
+		ok, err := h.customerRepo.Exists(c.Request.Context(), req.CustomerID)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		if !ok {
+			httpresp.Unprocessable(c, httpresp.CodeInvalidArgument, "customer not found", map[string]any{"customer_id": req.CustomerID})
+			return
+		}
+	}
+	for _, raw := range req.AssetIDs {
+		if !id.ValidateAssetID(raw) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset_ids must be 8 alphanumeric characters", map[string]any{"asset_id": raw})
+			return
+		}
+	}
+
+	now := time.Now()
+	requestedBy := strings.TrimSpace(req.Owner)
+	if requestedBy == "" {
+		requestedBy = c.GetHeader("X-Request-ID")
+	}
+	d := &models.Delivery{
+		DeliveryID:  uuid.NewString(),
+		CustomerID:  req.CustomerID,
+		Status:      models.DeliveryStatusPending,
+		ContractID:  req.ContractID,
+		Note:        req.Note,
+		Owner:       req.Owner,
+		RequestedBy: requestedBy,
+		AssetCount:  len(req.AssetIDs),
+		CreatedAt:   now,
+	}
+
+	if err := h.createDeliveryWithItems(c.Request.Context(), d, req.AssetIDs); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	audit.Log(c.Request.Context(), "delivery.draft", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id": req.CustomerID,
+		"asset_count": len(req.AssetIDs),
+	})
+	c.JSON(http.StatusCreated, gin.H{
+		"delivery_id": d.DeliveryID,
+		"customer_id": d.CustomerID,
+		"status":      d.Status,
+		"asset_count": d.AssetCount,
+		"created_at":  d.CreatedAt,
+	})
+}
+
+// HandleAddItems batch-adds asset items to a pending delivery.
+func (h *Handler) HandleAddItems(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+	var req struct {
+		AssetIDs []string `json:"asset_ids" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	for _, raw := range req.AssetIDs {
+		if !id.ValidateAssetID(raw) {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "asset_ids must be 8 alphanumeric characters", map[string]any{"asset_id": raw})
+			return
+		}
+	}
+
+	d, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+	if d.Status != models.DeliveryStatusPending {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only add items to pending deliveries",
+			map[string]any{"current_status": d.Status})
+		return
+	}
+
+	req.AssetIDs = uniqueAssetIDs(req.AssetIDs)
+	err = h.withTxRequired(c.Request.Context(), func(txCtx context.Context) error {
+		if err := h.repo.AddItems(txCtx, deliveryID, req.AssetIDs); err != nil {
+			return err
+		}
+		items, err := h.repo.ListItems(txCtx, deliveryID)
+		if err != nil {
+			return err
+		}
+		d.AssetCount = len(items)
+		d.ItemCount = int64(len(items))
+		return h.repo.Update(txCtx, d, d.Version)
+	})
+	if err != nil {
+		if !writeDeliveryError(c, err) {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"delivery_id": d.DeliveryID,
+		"customer_id": d.CustomerID,
+		"status":      d.Status,
+		"asset_count": d.AssetCount,
+		"version":     d.Version,
+	})
+}
+
+// HandleCommitC2 commits a pending delivery after re-running the rule engine.
+// Enforce modes: block → reject violations; warn/tag_only → commit with warnings.
+func (h *Handler) HandleCommitC2(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+	var req struct {
+		ExpectedRevision int64  `json:"expected_revision"`
+		ApprovedBy       string `json:"approved_by"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+
+	d, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+	if d.Status != models.DeliveryStatusPending {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only commit pending deliveries",
+			map[string]any{"current_status": d.Status})
+		return
+	}
+	if d.Version != req.ExpectedRevision {
+		httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
+			"delivery has been modified since you last read it",
+			map[string]any{"expected_revision": req.ExpectedRevision, "current_version": d.Version})
+		return
+	}
+
+	// Collect asset IDs from delivery_items for rule evaluation.
+	items, err := h.repo.ListItems(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	var assetIDs []string
+	for _, item := range items {
+		assetIDs = append(assetIDs, item.AssetID)
+	}
+
+	// Run rule engine at commit time.
+	var warnings []deliveryrules.Violation
+	if h.ruleEngine != nil && len(assetIDs) > 0 {
+		violations, err := h.ruleEngine.CheckAll(c.Request.Context(), d.CustomerID, assetIDs)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		if len(violations) > 0 {
+			// Check if any violation has enforce_mode "block".
+			hasBlock := false
+			for _, v := range violations {
+				if v.EnforceMode == "block" {
+					hasBlock = true
+					break
+				}
+			}
+			if hasBlock {
+				httpresp.Unprocessable(c, httpresp.CodeDeliveryRuleFailed,
+					"one or more assets failed delivery rules",
+					map[string]any{"violations": violations},
+				)
+				return
+			}
+			// warn / tag_only → commit with warnings
+			warnings = violations
+		}
+	}
+
+	now := time.Now()
+	d.Status = models.DeliveryStatusDelivered
+	d.DeliveredAt = &now
+	d.CompletedAt = &now
+	d.ApprovedBy = req.ApprovedBy
+
+	if err := h.commitC2Full(c.Request.Context(), d, assetIDs, c.GetHeader("X-Request-ID"), req.ExpectedRevision); err != nil {
+		if !writeDeliveryError(c, err) {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		return
+	}
+
+	audit.Log(c.Request.Context(), "delivery.commit_c2", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id": d.CustomerID,
+		"asset_count": len(assetIDs),
+	})
+
+	body := gin.H{
+		"delivery_id":  d.DeliveryID,
+		"customer_id":  d.CustomerID,
+		"status":       d.Status,
+		"delivered_at": d.DeliveredAt,
+		"approved_by":  d.ApprovedBy,
+		"asset_count":  d.AssetCount,
+		"version":      d.Version,
+	}
+	if len(warnings) > 0 {
+		body["warnings"] = warnings
+	}
+	c.JSON(http.StatusOK, body)
+}
+
+// ─── Delivery operations: cancel / retry / ack ──────────────────────────────
+
+// HandleCancel cancels a pending or delivered delivery (CYB-1104).
+// POST /api/v1/deliveries/:id/cancel
+func (h *Handler) HandleCancel(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+	var req struct {
+		CancelledBy  string `json:"cancelled_by"`
+		CancelReason string `json:"cancel_reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	req.CancelledBy = strings.TrimSpace(req.CancelledBy)
+	if req.CancelledBy == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "cancelled_by is required", nil)
+		return
+	}
+
+	d, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+
+	// Validate allowed statuses: pending, delivered, or accepted.
+	if d.Status != models.DeliveryStatusPending && d.Status != models.DeliveryStatusDelivered && d.Status != models.DeliveryStatusAccepted {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only cancel pending, delivered, or accepted deliveries",
+			map[string]any{"current_status": d.Status})
+		return
+	}
+	previousStatus := d.Status
+
+	if err := models.ValidateTransition(d.Status, models.DeliveryStatusCancelled); err != nil {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidStateTransition, err.Error(), nil)
+		return
+	}
+
+	now := time.Now()
+	d.Status = models.DeliveryStatusCancelled
+	d.CancelledAt = &now
+	d.CancelledBy = req.CancelledBy
+	d.CancelReason = req.CancelReason
+
+	var items []*models.DeliveryItem
+	if previousStatus != models.DeliveryStatusPending {
+		items, err = h.repo.ListItems(c.Request.Context(), deliveryID)
+		if err != nil {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+	}
+	writeFn := func(txCtx context.Context) error {
+		if err := h.repo.Update(txCtx, d, d.Version); err != nil {
+			return err
+		}
+		for _, item := range items {
+			if err := h.repo.RefreshAssetDeliveryIndex(txCtx, item.AssetID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	err = h.withTxRequired(c.Request.Context(), writeFn)
+	if err != nil {
+		if !writeDeliveryError(c, err) {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		return
+	}
+
+	audit.Log(c.Request.Context(), "delivery.cancel", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id":   d.CustomerID,
+		"cancelled_by":  req.CancelledBy,
+		"cancel_reason": req.CancelReason,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"delivery_id":   d.DeliveryID,
+		"status":        d.Status,
+		"cancelled_at":  d.CancelledAt,
+		"cancelled_by":  d.CancelledBy,
+		"cancel_reason": d.CancelReason,
+	})
+}
+
+// HandleRetry creates a new delivery from a failed or cancelled one (CYB-1105).
+// POST /api/v1/deliveries/:id/retry
+func (h *Handler) HandleRetry(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+
+	old, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if old == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+
+	// Only allow retry from failed or cancelled deliveries.
+	if old.Status != models.DeliveryStatusFailed && old.Status != models.DeliveryStatusCancelled {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only retry failed or cancelled deliveries",
+			map[string]any{"current_status": old.Status})
+		return
+	}
+
+	// Fetch items from old delivery.
+	items, err := h.repo.ListItems(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	now := time.Now()
+	d := &models.Delivery{
+		DeliveryID: uuid.NewString(),
+		CustomerID: old.CustomerID,
+		Status:     models.DeliveryStatusPending,
+		ContractID: old.ContractID,
+		Note:       old.Note,
+		Owner:      old.Owner,
+		AssetCount: len(items),
+		CreatedAt:  now,
+	}
+
+	var assetIDs []string
+	for _, item := range items {
+		assetIDs = append(assetIDs, item.AssetID)
+	}
+
+	if err := h.createDeliveryWithItems(c.Request.Context(), d, assetIDs); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	// Reference the original delivery for traceability.
+	audit.Log(c.Request.Context(), "delivery.retry", "delivery", []string{d.DeliveryID, old.DeliveryID}, map[string]any{
+		"customer_id":       d.CustomerID,
+		"original_delivery": old.DeliveryID,
+		"asset_count":       d.AssetCount,
+	})
+
+	c.JSON(http.StatusCreated, gin.H{
+		"delivery_id":       d.DeliveryID,
+		"customer_id":       d.CustomerID,
+		"status":            d.Status,
+		"asset_count":       d.AssetCount,
+		"original_delivery": old.DeliveryID,
+	})
+}
+
+// HandleAck acknowledges a delivered delivery (CYB-1106).
+// POST /api/v1/deliveries/:id/ack
+func (h *Handler) HandleAck(c *gin.Context) {
+	deliveryID := c.Param("id")
+	if _, err := uuid.Parse(deliveryID); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid delivery_id: must be a valid UUID", nil)
+		return
+	}
+	var req struct {
+		AcknowledgedBy string `json:"acknowledged_by"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	req.AcknowledgedBy = strings.TrimSpace(req.AcknowledgedBy)
+	if req.AcknowledgedBy == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "acknowledged_by is required", nil)
+		return
+	}
+
+	d, err := h.repo.Get(c.Request.Context(), deliveryID)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if d == nil {
+		httpresp.NotFound(c, httpresp.CodeDeliveryNotFound, "delivery not found")
+		return
+	}
+
+	if d.Status != models.DeliveryStatusDelivered {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidState,
+			"can only acknowledge delivered deliveries",
+			map[string]any{"current_status": d.Status})
+		return
+	}
+
+	now := time.Now()
+	if err := models.ValidateTransition(d.Status, models.DeliveryStatusAccepted); err != nil {
+		httpresp.Unprocessable(c, httpresp.CodeInvalidStateTransition, err.Error(), nil)
+		return
+	}
+	d.Status = models.DeliveryStatusAccepted
+	d.AcknowledgedAt = &now
+	d.AcknowledgedBy = req.AcknowledgedBy
+
+	if err := h.repo.Update(c.Request.Context(), d, d.Version); err != nil {
+		if !writeDeliveryError(c, err) {
+			httpresp.Internal(c, err.Error())
+			return
+		}
+		return
+	}
+
+	audit.Log(c.Request.Context(), "delivery.ack", "delivery", []string{d.DeliveryID}, map[string]any{
+		"customer_id":     d.CustomerID,
+		"acknowledged_by": req.AcknowledgedBy,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"delivery_id":     d.DeliveryID,
+		"status":          d.Status,
+		"acknowledged_at": d.AcknowledgedAt,
+		"acknowledged_by": d.AcknowledgedBy,
+	})
+}
+
 func paginateIDs(ids []string, page, pageSize int) ([]string, string) {
 	if len(ids) == 0 {
 		return []string{}, ""
@@ -287,4 +922,20 @@ func hashDeliveryRequest(v any) string {
 	b, _ := json.Marshal(v)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+func uniqueAssetIDs(assetIDs []string) []string {
+	if len(assetIDs) < 2 {
+		return assetIDs
+	}
+	seen := make(map[string]struct{}, len(assetIDs))
+	out := make([]string, 0, len(assetIDs))
+	for _, assetID := range assetIDs {
+		if _, ok := seen[assetID]; ok {
+			continue
+		}
+		seen[assetID] = struct{}{}
+		out = append(out, assetID)
+	}
+	return out
 }

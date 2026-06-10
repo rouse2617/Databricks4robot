@@ -1,0 +1,107 @@
+name: repo-wiki-divergence
+
+# Warns (does NOT block — Phase A) when a PR changes code that a docs/repo-wiki page
+# documents (per docs/repo-wiki/manifest.yaml `sources`) without updating that page.
+# Coverage is lenient: touching any one owning page clears a file.
+# Exempt via PR label: wiki-exempt, docs-only, or infra-ci-only.
+# To enforce later (Phase B): make the job fail on divergence — see the commented
+# "enforce" step at the bottom and mark this check Required in branch protection.
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "Frontend/**"
+      - "sdk/**"
+      - "services/**"
+      - "api/openapi.yaml"
+      - "docs/repo-wiki/**"
+      - "scripts/repo-wiki/**"
+      - ".github/workflows/repo-wiki-divergence.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: wiki-divergence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  wiki-divergence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check exempt label
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const exemptLabels = ['wiki-exempt', 'docs-only', 'infra-ci-only'];
+            const exempt = exemptLabels.some(l => labels.includes(l));
+            core.setOutput('exempt', exempt.toString());
+            if (exempt) core.info(`wiki-divergence skipped via label (${labels.join(', ')}).`);
+
+      - name: Set up Python
+        if: steps.gate.outputs.exempt != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        if: steps.gate.outputs.exempt != 'true'
+        run: pip install pyyaml
+
+      - name: Run wiki-sync check
+        if: steps.gate.outputs.exempt != 'true'
+        id: check
+        run: |
+          set +e
+          python3 scripts/repo-wiki/wiki_sync.py check \
+            --base "origin/${{ github.base_ref }}" --format markdown > /tmp/wiki-sync.md
+          rc=$?
+          set -e
+          echo "rc=${rc}" >> "$GITHUB_OUTPUT"
+          if grep -q "New code with no wiki coverage" /tmp/wiki-sync.md; then
+            echo "advisory=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "advisory=0" >> "$GITHUB_OUTPUT"
+          fi
+          cat /tmp/wiki-sync.md
+
+      - name: Upsert PR comment
+        if: steps.gate.outputs.exempt != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/wiki-sync.md', 'utf8');
+            const marker = '<!-- wiki-sync -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            const diverged = '${{ steps.check.outputs.rc }}' === '1';
+            const advisory = '${{ steps.check.outputs.advisory }}' === '1';
+            const hasFindings = diverged || advisory;
+            // Post/keep a comment while there's something to report; otherwise
+            // resolve the existing comment to the ✅ all-clear body.
+            if (hasFindings) {
+              if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              else await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            } else if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            }
+
+      # Phase A is warn-only: the job always succeeds.
+      # ── To enforce (Phase B), uncomment: ─────────────────────────────────
+      # - name: Enforce (fail on divergence)
+      #   if: steps.gate.outputs.exempt != 'true' && steps.check.outputs.rc == '1'
+      #   run: |
+      #     echo "Wiki out of date — update docs/repo-wiki or add the wiki-exempt label." >&2
+      #     exit 1

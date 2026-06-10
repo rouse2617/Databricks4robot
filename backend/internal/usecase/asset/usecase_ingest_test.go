@@ -134,6 +134,51 @@ func TestCreate_TrimAndMirrorAssetTypeFields(t *testing.T) {
 	}
 }
 
+func TestCreate_DatasetAllowsMissingMcapAndValidatesMetadata(t *testing.T) {
+	repo := newMockAssetRepo()
+	uc := New(repo)
+	ctx := context.Background()
+
+	asset, err := uc.Create(ctx, CreateInput{
+		StartTimestampNs: 1000,
+		EndTimestampNs:   2000,
+		Reviewer:         "tester",
+		AssetType:        "dataset",
+		Metadata: map[string]interface{}{
+			"format":            "csv",
+			"record_count":      float64(12),
+			"annotation_status": "raw",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create dataset failed: %v", err)
+	}
+	if asset.AssetType != "dataset" {
+		t.Fatalf("expected asset_type=dataset, got %q", asset.AssetType)
+	}
+
+	_, err = uc.Create(ctx, CreateInput{
+		StartTimestampNs: 1000,
+		EndTimestampNs:   2000,
+		Reviewer:         "tester",
+		AssetType:        "dataset",
+		Metadata:         map[string]interface{}{"format": "jsonl"},
+	})
+	if err == nil {
+		t.Fatal("expected invalid dataset metadata to fail")
+	}
+}
+
+func TestGetAssetTypeSchema(t *testing.T) {
+	uc := New(newMockAssetRepo())
+	if schema, ok := uc.GetAssetTypeSchema("annotation_result"); !ok || len(schema) == 0 {
+		t.Fatal("expected annotation_result schema")
+	}
+	if schema, ok := uc.GetAssetTypeSchema("unknown"); ok || schema != nil {
+		t.Fatal("expected unknown schema to be absent")
+	}
+}
+
 func TestCommitSegments_LifecycleDefaults(t *testing.T) {
 	repo := newMockAssetRepo()
 	algoReg := buildTestAlgoRegistry(t)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/queryir"
 )
 
 // WhereClause represents a built SQL WHERE clause with parameterized values.
@@ -92,7 +94,7 @@ func buildActionCondition(f Filter, paramIdx int) (string, []interface{}, int, e
 		case "!=":
 			return fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s AND $%d = ANY(ax.labels))", base, paramIdx), []interface{}{f.Value}, paramIdx + 1, nil
 		default:
-			return "", nil, paramIdx, fmt.Errorf("filter: unsupported operator %q for action.label", f.Op)
+			return "", nil, paramIdx, fmt.Errorf("%w %q for action.label", queryir.ErrUnsupportedOperator, f.Op)
 		}
 	case "source_type":
 		return existsCondition(base, "ax.source_type", f, paramIdx)

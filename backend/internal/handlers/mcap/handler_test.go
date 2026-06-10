@@ -63,6 +63,9 @@ func (m *mcapEventRepo) ListPendingSafe(context.Context, time.Duration, int) ([]
 func (m *mcapEventRepo) ListByAsset(context.Context, string, repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
+func (m *mcapEventRepo) ListVersionPromotedByLogical(context.Context, string) ([]*models.AssetEvent, error) {
+	return nil, nil
+}
 
 func (m *mcapEventRepo) ListGlobal(_ context.Context, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil

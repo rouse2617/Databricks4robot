@@ -7,7 +7,7 @@
 
 ## 2026-05-19 — Admin routes production gate
 
-- **Context**: `GRACE_TOKEN` could authorize hard-delete when `ADMIN_TOKEN` empty in production.
+- **Context**: `DATABREW_TOKEN` could authorize hard-delete when `ADMIN_TOKEN` empty in production.
 - **Decision**: `Config.AdminRoutesEnabled()` unmounts routes; `AdminTokenAuth` returns 403 if invoked without token in production.
 - **Alternatives**: Only middleware change without unmounting routes.
 - **Rationale**: Defense in depth; matches reviewer deployment guard request.

@@ -61,16 +61,10 @@ vi.mock("../api/admin", () => ({
 	},
 }));
 
+const mockFetchSyncStatus = vi.fn();
 vi.mock("../api/search", () => ({
 	searchApi: {
-		fetchSyncStatus: vi.fn(() =>
-			Promise.resolve({
-				elasticsearch_ok: true,
-				outbox_relay_enabled: true,
-				outbox_es_subscriber_enabled: true,
-				search_index_mode: "outbox_es_subscriber",
-			}),
-		),
+		fetchSyncStatus: (...args: unknown[]) => mockFetchSyncStatus(...args),
 		fetchSyncProgress: vi.fn(() =>
 			Promise.resolve({
 				postgres_assets_total: 1000,
@@ -92,6 +86,20 @@ vi.mock("../lib/apiError", () => ({
 	extractApiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }));
 
+vi.mock("../api/lakehouse", () => ({
+	lakehouseApi: {
+		syncProgress: vi.fn(() =>
+			Promise.resolve({
+				outbox_published_max_seq: 1000,
+				bronze_max_event_seq: 950,
+				bronze_lag_events: 50,
+				bronze_stale_seconds: 120,
+				checked_at: "2026-05-12T00:00:00Z",
+			}),
+		),
+	},
+}));
+
 afterEach(() => {
 	cleanup();
 	mockCreateReindexJob.mockReset();
@@ -100,10 +108,18 @@ afterEach(() => {
 	mockStopReindexJob.mockReset();
 	mockResumeReindexJob.mockReset();
 	mockAuditSearch.mockReset();
+	mockFetchSyncStatus.mockReset();
 	mockListReindexJobs.mockResolvedValue([]);
 });
 
 beforeEach(() => {
+	mockFetchSyncStatus.mockResolvedValue({
+		elasticsearch_ok: true,
+		outbox_relay_enabled: true,
+		outbox_es_subscriber_enabled: true,
+		search_index_mode: "outbox_es_subscriber",
+		admin_search_enabled: true,
+	});
 	mockListReindexJobs.mockResolvedValue([]);
 });
 
@@ -115,10 +131,58 @@ describe("SettingsPage", () => {
 		expect(screen.getByText("Cookie Session (HttpOnly)")).toBeTruthy();
 	});
 
-	it("renders the reindex card with single rebuild button", () => {
+	it("renders the reindex card with single rebuild button", async () => {
 		render(<SettingsPage />);
+		await waitFor(() => {
+			expect(screen.getByTestId("reindex-open-confirm-btn")).toBeTruthy();
+		});
 		expect(screen.getAllByText("重建 ES 索引").length).toBeGreaterThan(0);
-		expect(screen.getByTestId("reindex-open-confirm-btn")).toBeTruthy();
+	});
+
+	it("hides admin reindex widgets when search admin capabilities are unavailable", async () => {
+		mockFetchSyncStatus.mockResolvedValue({
+			elasticsearch_ok: true,
+			outbox_relay_enabled: true,
+			outbox_es_subscriber_enabled: true,
+			search_index_mode: "outbox_es_subscriber",
+		});
+
+		render(<SettingsPage />);
+
+		await waitFor(() => {
+			expect(screen.getByText("搜索管理工具未启用")).toBeTruthy();
+		});
+		expect(screen.queryByTestId("reindex-card")).toBeNull();
+		expect(screen.queryByTestId("reindex-history-card")).toBeNull();
+		expect(mockListReindexJobs).not.toHaveBeenCalled();
+		expect(mockAuditSearch).not.toHaveBeenCalled();
+	});
+
+	it("closes the reindex confirmation modal without creating a job", async () => {
+		mockAuditSearch.mockResolvedValue({
+			pg_assets: 100,
+			elasticsearch_docs: 80,
+			missing_in_elasticsearch: 20,
+			orphan_in_elasticsearch: 0,
+			consistency: 0.8,
+			target: 0.999,
+			duration_ms: 5,
+		});
+
+		render(<SettingsPage />);
+		await waitFor(() => {
+			expect(screen.getByTestId("reindex-open-confirm-btn")).toBeTruthy();
+		});
+		fireEvent.click(screen.getByTestId("reindex-open-confirm-btn"));
+		await waitFor(() => {
+			expect(screen.getByText("确认重建 ES 索引")).toBeTruthy();
+		});
+		fireEvent.click(screen.getByTestId("reindex-cancel-btn"));
+
+		await waitFor(() => {
+			expect(screen.queryByText("确定继续？")).toBeNull();
+		});
+		expect(mockCreateReindexJob).not.toHaveBeenCalled();
 	});
 
 	it("opens confirmation modal showing audit data when rebuild is clicked", async () => {
@@ -133,6 +197,9 @@ describe("SettingsPage", () => {
 		});
 
 		render(<SettingsPage />);
+		await waitFor(() => {
+			expect(screen.getByTestId("reindex-open-confirm-btn")).toBeTruthy();
+		});
 		fireEvent.click(screen.getByTestId("reindex-open-confirm-btn"));
 
 		await waitFor(() => {
@@ -186,6 +253,9 @@ describe("SettingsPage", () => {
 		});
 
 		render(<SettingsPage />);
+		await waitFor(() => {
+			expect(screen.getByTestId("reindex-open-confirm-btn")).toBeTruthy();
+		});
 		fireEvent.click(screen.getByTestId("reindex-open-confirm-btn"));
 
 		await waitFor(() => {

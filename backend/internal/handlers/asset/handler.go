@@ -1,8 +1,12 @@
 package asset
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/handlers"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
@@ -27,6 +32,29 @@ type Handler struct {
 	deliveryRepo repository.DeliveryRepository
 	mcapRepo     repository.McapFileRepository
 	pg           *postgres.Client
+	pgq          assetSQLQuerier
+}
+
+type assetSQLRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close()
+}
+
+type assetSQLQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (assetSQLRows, error)
+}
+
+type assetPostgresQuerier struct {
+	pg *postgres.Client
+}
+
+func (q assetPostgresQuerier) Query(ctx context.Context, sql string, args ...any) (assetSQLRows, error) {
+	if q.pg == nil {
+		return nil, fmt.Errorf("postgres client is not configured")
+	}
+	return q.pg.Query(ctx, sql, args...)
 }
 
 func New(uc *assetUC.Usecase, deliveryRepo repository.DeliveryRepository) *Handler {
@@ -44,6 +72,11 @@ func (h *Handler) SetMcapRepo(repo repository.McapFileRepository) {
 // queries (e.g. /assets/:id/lineage).
 func (h *Handler) SetPG(pg *postgres.Client) {
 	h.pg = pg
+	if pg == nil {
+		h.pgq = nil
+	} else {
+		h.pgq = assetPostgresQuerier{pg: pg}
+	}
 }
 
 // Get returns a single asset by ID.
@@ -55,7 +88,7 @@ func (h *Handler) SetPG(pg *postgres.Client) {
 // @Success      200 {object} models.Asset
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -66,14 +99,32 @@ func (h *Handler) Get(c *gin.Context) {
 	// matching the API contract: "assets still accessible via GET after soft delete".
 	a, err := h.uc.GetAll(c.Request.Context(), assetID)
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(200, a)
+}
+
+// GetAssetTypeSchema returns a registered asset_type metadata JSON Schema.
+// @Summary      Get asset type schema
+// @Description  Return the JSON Schema definition for an asset_type
+// @Tags         assets
+// @Produce      json
+// @Param        type path string true "Asset type"
+// @Success      200 {object} object
+// @Failure      404 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /asset-types/{type}/schema [get]
+func (h *Handler) GetAssetTypeSchema(c *gin.Context) {
+	assetType := strings.TrimSpace(c.Param("type"))
+	schema, ok := h.uc.GetAssetTypeSchema(assetType)
+	if !ok {
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "asset type schema not found")
+		return
+	}
+	c.Data(http.StatusOK, "application/schema+json", schema)
 }
 
 // List returns assets with optional filters and pagination.
@@ -208,7 +259,7 @@ func writeEventList(c *gin.Context, res *assetUC.ListEventsResult, limit int) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/events [get]
 func (h *Handler) ListEvents(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -245,11 +296,9 @@ func (h *Handler) ListEvents(c *gin.Context) {
 		Limit:             q.limit,
 	})
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	writeEventList(c, res, q.limit)
@@ -262,115 +311,51 @@ func (h *Handler) GetLineage(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "valid asset_id is required", nil)
 		return
 	}
-
 	if h.pg == nil {
 		httpresp.Error(c, http.StatusServiceUnavailable, "PG_DISABLED", "postgres not available", nil)
 		return
 	}
-
-	type algoEntry struct {
-		AlgoName    string `json:"algo_name"`
-		AlgoVersion string `json:"algo_version"`
-		Status      string `json:"status"`
-		RunID       string `json:"run_id,omitempty"`
-		OutputURI   string `json:"output_uri,omitempty"`
+	body, err := h.buildLineageResponse(c.Request.Context(), assetID)
+	if err != nil {
+		slog.Warn("lineage response partial", "asset_id", assetID, "error", err)
 	}
-	type deliveryEntry struct {
-		DeliveryID  string `json:"delivery_id"`
-		CustomerID  string `json:"customer_id"`
-		DeliveredAt string `json:"delivered_at,omitempty"`
-	}
-	type evalEntry struct {
-		EvalName    string  `json:"eval_name"`
-		MetricKey   string  `json:"metric_key"`
-		MetricValue float64 `json:"metric_value,omitempty"`
-	}
+	c.JSON(200, body)
+}
 
-	ctx := c.Request.Context()
-
-	// Upstream: MCAP file
-	var mcapFileID, mcapURI, ingestState string
-	err := h.pg.QueryRow(ctx, `
-		SELECT mcap_file_id, COALESCE(storage_uri,''), COALESCE(ingest_state,'')
-		FROM mcap_files
-		WHERE mcap_file_id = (SELECT mcap_file_id FROM assets WHERE asset_id = $1)
-	`, assetID).Scan(&mcapFileID, &mcapURI, &ingestState)
-	upstream := gin.H{}
-	if err == nil && mcapFileID != "" {
-		upstream["mcap_file_id"] = mcapFileID
-		upstream["mcap_uri"] = mcapURI
-		upstream["ingest_state"] = ingestState
+// GetProvenance returns version history, revisions, and structural lineage for an asset.
+// @Summary      Get asset provenance
+// @Description  Version timeline and revision list for the logical asset family, plus lineage snapshot
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/{id}/provenance [get]
+func (h *Handler) GetProvenance(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
 	}
-
-	// Downstream: algo results
-	algoRows, _ := h.pg.Query(ctx, `
-		SELECT algo_name, algo_version, status, COALESCE(run_id,''), COALESCE(output_uri,'')
-		FROM asset_algo_latest
-		WHERE asset_id = $1
-		ORDER BY algo_name
-	`, assetID)
-	algos := []algoEntry{}
-	if algoRows != nil {
-		defer algoRows.Close()
-		for algoRows.Next() {
-			var a algoEntry
-			if err := algoRows.Scan(&a.AlgoName, &a.AlgoVersion, &a.Status, &a.RunID, &a.OutputURI); err == nil {
-				algos = append(algos, a)
-			}
+	res, err := h.uc.GetProvenance(c.Request.Context(), assetID)
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
+		return
 	}
-
-	// Downstream: deliveries
-	delRows, _ := h.pg.Query(ctx, `
-		SELECT d.delivery_id, d.customer_id, d.delivered_at
-		FROM delivery_items di
-		JOIN deliveries d ON d.delivery_id = di.delivery_id
-		WHERE di.asset_id = $1
-		ORDER BY d.delivered_at DESC
-		LIMIT 20
-	`, assetID)
-	deliveries := []deliveryEntry{}
-	if delRows != nil {
-		defer delRows.Close()
-		for delRows.Next() {
-			var d deliveryEntry
-			var deliveredAt *time.Time
-			if err := delRows.Scan(&d.DeliveryID, &d.CustomerID, &deliveredAt); err == nil {
-				if deliveredAt != nil {
-					d.DeliveredAt = deliveredAt.Format(time.RFC3339)
-				}
-				deliveries = append(deliveries, d)
-			}
-		}
+	lineage, err := h.buildLineageResponse(c.Request.Context(), assetID)
+	if err != nil {
+		slog.Warn("provenance lineage partial", "asset_id", assetID, "error", err)
 	}
-
-	// Downstream: eval results
-	evalRows, _ := h.pg.Query(ctx, `
-		SELECT eval_name, metric_key, COALESCE(metric_value,0)
-		FROM asset_eval_results
-		WHERE asset_id = $1
-		ORDER BY created_at DESC
-		LIMIT 20
-	`, assetID)
-	evals := []evalEntry{}
-	if evalRows != nil {
-		defer evalRows.Close()
-		for evalRows.Next() {
-			var e evalEntry
-			if err := evalRows.Scan(&e.EvalName, &e.MetricKey, &e.MetricValue); err == nil {
-				evals = append(evals, e)
-			}
-		}
-	}
-
 	c.JSON(200, gin.H{
-		"asset_id": assetID,
-		"upstream": upstream,
-		"downstream": gin.H{
-			"algo_results": algos,
-			"deliveries":   deliveries,
-			"eval_results": evals,
-		},
+		"asset_id":         res.AssetID,
+		"logical_asset_id": res.LogicalAssetID,
+		"revisions":        res.Revisions,
+		"version_history":  res.VersionHistory,
+		"lineage":          lineage,
 	})
 }
 
@@ -441,7 +426,7 @@ func (h *Handler) ListGlobalEvents(c *gin.Context) {
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      422 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/tags [post]
 func (h *Handler) UpsertTag(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -449,24 +434,27 @@ func (h *Handler) UpsertTag(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Key   string `json:"key" binding:"required" label:"标签 Key"`
-		Value string `json:"value" binding:"required" label:"标签值"`
+		Key           string `json:"key" binding:"required" label:"标签 Key"`
+		Value         string `json:"value" binding:"required" label:"标签值"`
+		SourceType    string `json:"source_type"`
+		SourceName    string `json:"source_name"`
+		SourceVersion string `json:"source_version"`
+		RunID         string `json:"run_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
 	a, err := h.uc.UpsertTag(c.Request.Context(), assetID, assetUC.UpsertTagInput{
-		Key:   req.Key,
-		Value: req.Value,
+		Key:           req.Key,
+		Value:         req.Value,
+		SourceType:    req.SourceType,
+		SourceName:    req.SourceName,
+		SourceVersion: req.SourceVersion,
+		RunID:         req.RunID,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrNotFound):
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-		case errors.Is(err, assetUC.ErrInvalidTag):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
-		default:
+		if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -484,20 +472,18 @@ func (h *Handler) UpsertTag(c *gin.Context) {
 // @Success      200 {object} models.Asset
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/tags/{key} [delete]
 func (h *Handler) DeleteTag(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
 	if !ok {
 		return
 	}
-	a, err := h.uc.DeleteTag(c.Request.Context(), assetID, c.Param("key"))
+	a, err := h.uc.DeleteTag(c.Request.Context(), assetID, c.Param("key"), c.Query("source_type"))
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	c.JSON(200, a)
@@ -517,7 +503,7 @@ func (h *Handler) DeleteTag(c *gin.Context) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/tags/history [get]
 func (h *Handler) ListTagHistory(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -535,11 +521,9 @@ func (h *Handler) ListTagHistory(c *gin.Context) {
 		Limit:          q.limit,
 	})
 	if err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	writeEventList(c, res, q.limit)
@@ -556,12 +540,13 @@ func (h *Handler) ListTagHistory(c *gin.Context) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      422 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req struct {
 		AssetID             string                 `json:"asset_id" label:"资产ID"`
-		McapFileID          string                 `json:"mcap_file_id" binding:"required" label:"MCAP文件ID"`
+		LogicalAssetID      string                 `json:"logical_asset_id" label:"逻辑资产ID"`
+		McapFileID          string                 `json:"mcap_file_id" label:"MCAP文件ID"`
 		StartTimestampNs    int64                  `json:"start_timestamp_ns" binding:"required,gt=0" label:"起始时间戳"`
 		EndTimestampNs      int64                  `json:"end_timestamp_ns" binding:"required,gt=0" label:"结束时间戳"`
 		Reviewer            string                 `json:"reviewer" binding:"required" label:"审核人"`
@@ -605,6 +590,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	a, err := h.uc.Create(c.Request.Context(), assetUC.CreateInput{
 		AssetID:             req.AssetID,
+		LogicalAssetID:      req.LogicalAssetID,
 		McapFileID:          req.McapFileID,
 		StartTimestampNs:    req.StartTimestampNs,
 		EndTimestampNs:      req.EndTimestampNs,
@@ -640,24 +626,88 @@ func (h *Handler) Create(c *gin.Context) {
 		LastDeliveredTo:     req.LastDeliveredTo,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrMcapFileIDRequired), errors.Is(err, assetUC.ErrInvalidRange):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrInvalidTag):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrInvalidMcapFileID), errors.Is(err, assetUC.ErrMcapFileNotFound):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidArgument, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrInvalidAssetID):
-			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
-		case errors.Is(err, assetUC.ErrAssetIDTaken):
-			httpresp.Conflict(c, httpresp.CodeDuplicateAssetID, err.Error(), nil)
-		default:
+		// CYB-1164: hierarchy violation check before sentinel switch.
+		var hv *deliveryrules.HierarchyViolation
+		if errors.As(err, &hv) {
+			httpresp.Unprocessable(c, httpresp.CodeHierarchyViolation, hv.Error(), map[string]any{
+				"invariant":  hv.Invariant,
+				"asset_type": hv.AssetType,
+				"parent_id":  hv.ParentID,
+				"expected":   hv.Expected,
+			})
+			return
+		}
+		if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
 	}
 	c.JSON(201, a)
 }
+
+// createChildAssetRequest is the shared request body for all layered endpoints.
+type createChildAssetRequest struct {
+	StartTimestampNs int64                  `json:"start_timestamp_ns" binding:"required,gt=0" label:"start_timestamp_ns"`
+	EndTimestampNs   int64                  `json:"end_timestamp_ns" binding:"required,gt=0" label:"end_timestamp_ns"`
+	SplitMethod      string                 `json:"split_method"`
+	SplitRunID       string                 `json:"split_run_id"`
+	Metadata         map[string]interface{} `json:"metadata"`
+}
+
+// createChildAsset is the shared handler logic for all layered endpoints.
+func (h *Handler) createChildAsset(c *gin.Context, assetType string) {
+	parentID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	var req createChildAssetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	if valErr := validate.ValidateStruct(&req); valErr != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, valErr.Error(), nil)
+		return
+	}
+	a, err := h.uc.CreateChildAsset(c.Request.Context(), assetUC.CreateChildAssetInput{
+		AssetType:        assetType,
+		ParentAssetID:    parentID,
+		StartTimestampNs: req.StartTimestampNs,
+		EndTimestampNs:   req.EndTimestampNs,
+		SplitMethod:      req.SplitMethod,
+		SplitRunID:       req.SplitRunID,
+		Metadata:         req.Metadata,
+	})
+	if err != nil {
+		var hv *deliveryrules.HierarchyViolation
+		if errors.As(err, &hv) {
+			httpresp.Unprocessable(c, httpresp.CodeHierarchyViolation, hv.Error(), map[string]any{
+				"invariant":  hv.Invariant,
+				"asset_type": hv.AssetType,
+				"parent_id":  hv.ParentID,
+				"expected":   hv.Expected,
+			})
+			return
+		}
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(201, a)
+}
+
+// POST /api/v1/assets/:id/clips
+func (h *Handler) CreateClip(c *gin.Context) { h.createChildAsset(c, "clip") }
+
+// POST /api/v1/assets/:id/actions
+func (h *Handler) CreateAction(c *gin.Context) { h.createChildAsset(c, "action") }
+
+// POST /api/v1/assets/:id/frames
+func (h *Handler) CreateFrame(c *gin.Context) { h.createChildAsset(c, "frame") }
+
+// POST /api/v1/assets/:id/tasks
+func (h *Handler) CreateTask(c *gin.Context) { h.createChildAsset(c, "task") }
 
 // PATCH /api/v1/assets/:id
 func (h *Handler) Update(c *gin.Context) {
@@ -684,15 +734,7 @@ func (h *Handler) Update(c *gin.Context) {
 		Tags:           req.Tags,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrNotFound):
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-		case errors.Is(err, assetUC.ErrInvalidTag):
-			httpresp.Unprocessable(c, httpresp.CodeInvalidTag, err.Error(), nil)
-		case errors.Is(err, repository.ErrOptimisticLock):
-			httpresp.Conflict(c, httpresp.CodeConcurrentConflict,
-				"asset was modified concurrently; reload and retry", nil)
-		default:
+		if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -711,7 +753,7 @@ func (h *Handler) Update(c *gin.Context) {
 // @Param        id path string true "Asset ID"
 // @Success      200 {object} object
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
 	assetID, ok := handlers.RequirePathAssetID(c)
@@ -719,11 +761,9 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 	if err := h.uc.Delete(c.Request.Context(), assetID); err != nil {
-		if errors.Is(err, assetUC.ErrNotFound) {
-			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
-			return
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
 		}
-		httpresp.Internal(c, err.Error())
 		return
 	}
 	audit.Log(c.Request.Context(), "asset.delete", "asset", []string{assetID}, nil)
@@ -750,10 +790,9 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 		Owner:      req.Owner,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, assetUC.ErrMcapFileIDRequired), errors.Is(err, assetUC.ErrInvalidRange):
+		if errors.Is(err, assetUC.ErrMcapFileIDRequired) || errors.Is(err, assetUC.ErrInvalidRange) {
 			httpresp.Unprocessable(c, httpresp.CodeInvalidState, err.Error(), map[string]any{"partial": created})
-		default:
+		} else if !mapAssetError(c, err) {
 			httpresp.Internal(c, err.Error())
 		}
 		return
@@ -763,7 +802,10 @@ func (h *Handler) CommitSegments(c *gin.Context) {
 
 // GET /api/v1/assets/:id/deliveries
 func (h *Handler) ListDeliveries(c *gin.Context) {
-	assetID := c.Param("id")
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
 	page, pageSize := handlers.ParsePageParams(c.Query("page"), c.Query("page_size"))
 
 	ids, err := h.deliveryRepo.ListByAsset(c.Request.Context(), assetID)
@@ -778,14 +820,21 @@ func (h *Handler) ListDeliveries(c *gin.Context) {
 	// Paginate the delivery ID list.
 	start := (page - 1) * pageSize
 	var items []string
+	end := 0
 	if start >= len(ids) {
 		items = []string{}
 	} else {
-		end := start + pageSize
+		end = start + pageSize
 		if end > len(ids) {
 			end = len(ids)
 		}
 		items = ids[start:end]
+	}
+
+	// Compute next_token based on whether there are more pages.
+	var nextToken string
+	if end < len(ids) {
+		nextToken = strconv.Itoa(page + 1)
 	}
 
 	c.JSON(200, gin.H{
@@ -793,7 +842,7 @@ func (h *Handler) ListDeliveries(c *gin.Context) {
 		"asset_id":   assetID,
 		"page":       page,
 		"page_size":  pageSize,
-		"next_token": "",
+		"next_token": nextToken,
 	})
 }
 
@@ -832,7 +881,7 @@ func parseBoundedInt(raw string, fallback, min, max int) (int, error) {
 // @Success      200 {object} object
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      500 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets:batch_get [post]
 func (h *Handler) BatchGet(c *gin.Context) {
 	var req struct {
@@ -851,6 +900,17 @@ func (h *Handler) BatchGet(c *gin.Context) {
 		return
 	}
 
+	// Deduplicate asset IDs to avoid duplicate items in response.
+	seen := make(map[string]struct{}, len(req.AssetIDs))
+	deduped := make([]string, 0, len(req.AssetIDs))
+	for _, id := range req.AssetIDs {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			deduped = append(deduped, id)
+		}
+	}
+	req.AssetIDs = deduped
+
 	result, err := h.uc.BatchGet(c.Request.Context(), req.AssetIDs)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
@@ -858,6 +918,81 @@ func (h *Handler) BatchGet(c *gin.Context) {
 	}
 	items := result
 	c.JSON(200, gin.H{"items": items})
+}
+
+// PromoteRevision creates a new revision of an asset (B-route promote).
+// @Summary      Promote asset revision
+// @Description  Create a new revision of an asset within a logical asset family
+// @Tags         assets
+// @Accept       json
+// @Produce      json
+// @Param        id   path string true "Source Asset ID"
+// @Param        body body object true "Promote request"
+// @Success      201 {object} models.Asset
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      422 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/{id}/revisions [post]
+func (h *Handler) PromoteRevision(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		LogicalAssetID string `json:"logical_asset_id"`
+		RevisionOf     string `json:"revision_of"`
+		Owner          string `json:"owner"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	a, err := h.uc.Promote(c.Request.Context(), assetID, assetUC.PromoteInput{
+		LogicalAssetID: req.LogicalAssetID,
+		RevisionOf:     req.RevisionOf,
+		Owner:          req.Owner,
+	})
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(201, a)
+}
+
+// GetCurrentForLogical returns the current revision for a logical asset.
+// @Summary      Get current logical asset
+// @Description  Get the current revision for a logical asset
+// @Tags         logical-assets
+// @Produce      json
+// @Param        id path string true "Logical Asset ID"
+// @Success      200 {object} asset.CurrentAssetResponse
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /logical-assets/{id}/current [get]
+func (h *Handler) GetCurrentForLogical(c *gin.Context) {
+	logicalAssetID := strings.TrimSpace(c.Param("id"))
+	if logicalAssetID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "logical_asset_id is required", nil)
+		return
+	}
+	res, err := h.uc.GetCurrentForLogical(c.Request.Context(), logicalAssetID)
+	if err != nil {
+		if errors.Is(err, assetUC.ErrLogicalAssetNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "logical asset not found")
+		} else if errors.Is(err, assetUC.ErrNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "no current revision found")
+		} else if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(200, res)
 }
 
 func paginateAssets(items []*models.Asset, page, pageSize int) []*models.Asset {
@@ -873,4 +1008,592 @@ func paginateAssets(items []*models.Asset, page, pageSize int) []*models.Asset {
 		end = len(items)
 	}
 	return items[start:end]
+}
+
+// RecordView increments view_count and updates last_viewed_at for an asset (CYB-1095).
+// @Summary      Record asset view
+// @Description  Increment view counter and update last_viewed_at in asset_usage_stats
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/{id}/view [post]
+func (h *Handler) RecordView(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	if err := h.uc.RecordAssetView(c.Request.Context(), assetID); err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(200, gin.H{"asset_id": assetID, "viewed": true})
+}
+
+// ToggleFavorite flips the favorite state for an asset (CYB-1096).
+// @Summary      Toggle asset favorite
+// @Description  Toggle favorite and update favorite_count in asset_usage_stats
+// @Tags         assets
+// @Produce      json
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/{id}/favorite [post]
+func (h *Handler) ToggleFavorite(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+	newCount, err := h.uc.ToggleFavorite(c.Request.Context(), assetID)
+	if err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+	c.JSON(200, gin.H{"asset_id": assetID, "favorite_count": newCount, "is_favorited": newCount > 0})
+}
+
+// sseEvent represents one event in the SSE stream.
+type sseEvent struct {
+	EventID    string          `json:"event_id"`
+	EventSeq   int64           `json:"event_seq"`
+	EventType  string          `json:"event_type"`
+	AssetID    string          `json:"asset_id,omitempty"`
+	Payload    json.RawMessage `json:"event_payload"`
+	OccurredAt time.Time       `json:"occurred_at"`
+}
+
+var assetEventStreamPollInterval = 5 * time.Second
+
+// HandleEventsStream streams asset events as Server-Sent Events (CYB-1099).
+// Supports Last-Event-ID header for reconnection — the client sends the last
+// event_seq it received and the server replays from that point onward.
+//
+// @Summary      Stream asset events (SSE)
+// @Description  SSE endpoint that polls asset_events for new rows belonging to this asset.
+//
+//	Supports Last-Event-ID for reconnection (value must be an event_seq integer).
+//
+// @Tags         assets
+// @Produce      text/event-stream
+// @Param        id path string true "Asset ID"
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /assets/{id}/events/stream [get]
+func (h *Handler) HandleEventsStream(c *gin.Context) {
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
+
+	lastEventIDStr := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	var afterSeq *int64
+	if lastEventIDStr != "" {
+		v, err := strconv.ParseInt(lastEventIDStr, 10, 64)
+		if err != nil || v < 0 {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid Last-Event-ID", map[string]any{
+				"error": "Last-Event-ID must be a non-negative event_seq integer",
+			})
+			return
+		}
+		afterSeq = &v
+	}
+
+	if _, err := h.uc.GetAll(c.Request.Context(), assetID); err != nil {
+		if !mapAssetError(c, err) {
+			httpresp.Internal(c, err.Error())
+		}
+		return
+	}
+
+	// SSE headers.
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	c.Stream(func(w io.Writer) bool {
+		// Wait for new events by polling.
+		events := h.pollAssetEvents(c.Request.Context(), assetID, afterSeq)
+		if events == nil {
+			// Context cancelled or query failed — stop streaming.
+			return false
+		}
+
+		for _, ev := range events {
+			payloadJSON, _ := json.Marshal(ev.Payload)
+			if payloadJSON == nil {
+				payloadJSON = []byte("{}")
+			}
+
+			// SSE format: "id: <event_seq>\nevent: <event_type>\ndata: <json>\n\n"
+			line := fmt.Sprintf("id: %d\nevent: %s\ndata: {\"event_id\":%q,\"event_seq\":%d,\"event_type\":%q,\"asset_id\":%q,\"event_payload\":%s,\"occurred_at\":%q}\n\n",
+				ev.EventSeq, ev.EventType,
+				ev.EventID, ev.EventSeq, ev.EventType, ev.AssetID,
+				string(payloadJSON),
+				ev.OccurredAt.Format(time.RFC3339Nano),
+			)
+
+			if _, err := io.WriteString(w, line); err != nil {
+				return false
+			}
+
+			// Update the cursor so subsequent polls skip past this event.
+			afterSeq = &ev.EventSeq
+		}
+
+		// Send keepalive comment every poll cycle.
+		if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+			return false
+		}
+
+		return true
+	})
+}
+
+// HandleGlobalEventsStream streams global asset events as Server-Sent Events (CYB-1099).
+// Supports Last-Event-ID header for reconnection — the client sends the last
+// event_seq it received and the server replays from that point onward.
+//
+// @Summary      Stream global asset events (SSE)
+// @Description  SSE endpoint that polls asset_events for new rows across all assets.
+//
+//	Supports Last-Event-ID for reconnection (value must be an event_seq integer).
+//
+// @Tags         assets
+// @Produce      text/event-stream
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /events/stream [get]
+func (h *Handler) HandleGlobalEventsStream(c *gin.Context) {
+	lastEventIDStr := strings.TrimSpace(c.GetHeader("Last-Event-ID"))
+	var afterSeq *int64
+	if lastEventIDStr != "" {
+		v, err := strconv.ParseInt(lastEventIDStr, 10, 64)
+		if err != nil || v < 0 {
+			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid Last-Event-ID", map[string]any{
+				"error": "Last-Event-ID must be a non-negative event_seq integer",
+			})
+			return
+		}
+		afterSeq = &v
+	}
+
+	// SSE headers.
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	c.Stream(func(w io.Writer) bool {
+		events := h.pollGlobalAssetEvents(c.Request.Context(), afterSeq)
+		if events == nil {
+			// Context cancelled or query failed — stop streaming.
+			return false
+		}
+
+		for _, ev := range events {
+			payloadJSON, _ := json.Marshal(ev.Payload)
+			if payloadJSON == nil {
+				payloadJSON = []byte("{}")
+			}
+
+			// SSE format: "id: <event_seq>\nevent: <event_type>\ndata: <json>\n\n"
+			line := fmt.Sprintf("id: %d\nevent: %s\ndata: {\"event_id\":%q,\"event_seq\":%d,\"event_type\":%q,\"asset_id\":%q,\"event_payload\":%s,\"occurred_at\":%q}\n\n",
+				ev.EventSeq, ev.EventType,
+				ev.EventID, ev.EventSeq, ev.EventType, ev.AssetID,
+				string(payloadJSON),
+				ev.OccurredAt.Format(time.RFC3339Nano),
+			)
+
+			if _, err := io.WriteString(w, line); err != nil {
+				return false
+			}
+
+			afterSeq = &ev.EventSeq
+		}
+
+		// Send keepalive comment every poll cycle.
+		if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+			return false
+		}
+
+		return true
+	})
+}
+
+// pollAssetEvents queries asset_events for rows with event_seq > afterSeq
+// belonging to the given asset. Returns nil when the context is cancelled or
+// the query fails.
+func (h *Handler) pollAssetEvents(ctx context.Context, assetID string, afterSeq *int64) []sseEvent {
+	if h.pgq == nil {
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+		return []sseEvent{}
+	}
+
+	args := []interface{}{assetID}
+	where := "asset_id = $1"
+
+	if afterSeq != nil {
+		args = append(args, *afterSeq)
+		where = fmt.Sprintf("asset_id = $1 AND event_seq > $%d", len(args))
+	}
+
+	q := `SELECT event_id, event_seq, event_type,
+  COALESCE(asset_id::text, ''),
+  event_payload,
+  occurred_at
+FROM asset_events
+WHERE ` + where + `
+ORDER BY event_seq ASC
+LIMIT 50`
+
+	rows, err := h.pgq.Query(ctx, q, args...)
+	if err != nil {
+		// If context cancelled, return nil to signal stop.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
+		// On transient error, sleep and return empty (don't kill the stream).
+		slog.ErrorContext(ctx, "pollAssetEvents: query failed",
+			"err", err,
+		)
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+		return []sseEvent{}
+	}
+	defer rows.Close()
+
+	var events []sseEvent
+	for rows.Next() {
+		var ev sseEvent
+		if err := rows.Scan(
+			&ev.EventID, &ev.EventSeq, &ev.EventType,
+			&ev.AssetID,
+			&ev.Payload,
+			&ev.OccurredAt,
+		); err != nil {
+			slog.ErrorContext(ctx, "pollAssetEvents: scan failed",
+				"err", err,
+			)
+			return []sseEvent{}
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		slog.ErrorContext(ctx, "pollAssetEvents: rows iteration failed",
+			"err", err,
+		)
+		return []sseEvent{}
+	}
+
+	// If no new events, sleep before polling again.
+	if len(events) == 0 {
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+	}
+
+	return events
+}
+
+// pollGlobalAssetEvents queries asset_events for rows with event_seq > afterSeq
+// across all assets. Returns nil when the context is cancelled or the query fails.
+func (h *Handler) pollGlobalAssetEvents(ctx context.Context, afterSeq *int64) []sseEvent {
+	if h.pgq == nil {
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+		return []sseEvent{}
+	}
+
+	where := "TRUE"
+	args := []interface{}{}
+	if afterSeq != nil {
+		args = append(args, *afterSeq)
+		where = fmt.Sprintf("event_seq > $%d", len(args))
+	}
+
+	q := `SELECT event_id, event_seq, event_type,
+  COALESCE(asset_id::text, ''),
+  event_payload,
+  occurred_at
+FROM asset_events
+WHERE ` + where + `
+ORDER BY event_seq ASC
+LIMIT 50`
+
+	rows, err := h.pgq.Query(ctx, q, args...)
+	if err != nil {
+		// If context cancelled, return nil to signal stop.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
+		// On transient error, sleep and return empty (don't kill the stream).
+		slog.ErrorContext(ctx, "pollGlobalAssetEvents: query failed",
+			"err", err,
+		)
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+		return []sseEvent{}
+	}
+	defer rows.Close()
+
+	var events []sseEvent
+	for rows.Next() {
+		var ev sseEvent
+		if err := rows.Scan(
+			&ev.EventID, &ev.EventSeq, &ev.EventType,
+			&ev.AssetID,
+			&ev.Payload,
+			&ev.OccurredAt,
+		); err != nil {
+			slog.ErrorContext(ctx, "pollGlobalAssetEvents: scan failed",
+				"err", err,
+			)
+			return []sseEvent{}
+		}
+		events = append(events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		slog.ErrorContext(ctx, "pollGlobalAssetEvents: rows iteration failed",
+			"err", err,
+		)
+		return []sseEvent{}
+	}
+
+	// If no new events, sleep before polling again.
+	if len(events) == 0 {
+		if !sleepAssetEventStreamPoll(ctx) {
+			return nil
+		}
+	}
+
+	return events
+}
+
+func sleepAssetEventStreamPoll(ctx context.Context) bool {
+	timer := time.NewTimer(assetEventStreamPollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// ratingsHistoryRevision represents one logical asset revision and its rating
+// metrics for the ratings-history endpoint.
+type ratingsHistoryRevision struct {
+	AssetID        string                 `json:"asset_id"`
+	Revision       int64                  `json:"revision"`
+	IsCurrent      bool                   `json:"is_current"`
+	LifecycleState string                 `json:"lifecycle_state"`
+	CreatedAt      time.Time              `json:"created_at"`
+	Ratings        []ratingsHistoryMetric `json:"ratings"`
+}
+
+type ratingsHistoryMetric struct {
+	MetricKey        string    `json:"metric_key"`
+	MetricType       string    `json:"metric_type"`
+	MetricUnit       *string   `json:"metric_unit,omitempty"`
+	MetricValue      *float64  `json:"metric_value,omitempty"`
+	MetricValueInt   *int64    `json:"metric_value_int,omitempty"`
+	MetricValueText  *string   `json:"metric_value_text,omitempty"`
+	MetricValueBool  *bool     `json:"metric_value_bool,omitempty"`
+	TargetType       string    `json:"target_type"`
+	TargetID         string    `json:"target_id"`
+	EvalName         string    `json:"eval_name"`
+	EvalVersion      string    `json:"eval_version"`
+	ParameterVersion *string   `json:"parameter_version,omitempty"`
+	RunID            *string   `json:"run_id,omitempty"`
+	SourceType       string    `json:"source_type"`
+	SourceName       *string   `json:"source_name,omitempty"`
+	Confidence       *float64  `json:"confidence,omitempty"`
+	RecordedAt       time.Time `json:"recorded_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// HandleRatingsHistory returns all revisions of a logical asset with their
+// associated rating.* metric rows over time (CYB-1100).
+//
+// @Summary      Get ratings history for a logical asset
+// @Description  Query all revisions of a logical asset, return rating fields over time
+// @Tags         logical-assets
+// @Produce      json
+// @Param        id path string true "Logical Asset ID"
+// @Success      200 {object} object
+// @Failure      400 {object} httpresp.ErrorBody
+// @Failure      404 {object} httpresp.ErrorBody
+// @Failure      500 {object} httpresp.ErrorBody
+// @Security     DatabrewToken
+// @Router       /logical-assets/{id}/ratings-history [get]
+func (h *Handler) HandleRatingsHistory(c *gin.Context) {
+	logicalAssetID := strings.TrimSpace(c.Param("id"))
+	if logicalAssetID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "logical_asset_id is required", nil)
+		return
+	}
+	if !id.ValidateAssetID(logicalAssetID) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "logical_asset_id must be an 8-character alphanumeric id", nil)
+		return
+	}
+	if h == nil || h.pgq == nil {
+		httpresp.Error(c, http.StatusServiceUnavailable, "PG_DISABLED", "postgres not available", nil)
+		return
+	}
+
+	const q = `
+SELECT a.asset_id,
+       COALESCE(a.revision, 0) AS revision,
+       COALESCE(a.is_current, FALSE) AS is_current,
+       COALESCE(a.lifecycle_state, '') AS lifecycle_state,
+       a.created_at,
+       m.metric_key,
+       m.metric_type,
+       m.metric_unit,
+       m.metric_value,
+       m.metric_value_int,
+       m.metric_value_text,
+       m.metric_value_bool,
+       m.target_type,
+       m.target_id,
+       m.eval_name,
+       m.eval_version,
+       m.parameter_version,
+       m.run_id,
+       m.source_type,
+       m.source_name,
+       m.confidence,
+       m.recorded_at,
+       m.updated_at
+FROM assets a
+LEFT JOIN asset_metrics m ON m.asset_id = a.asset_id
+  AND m.metric_key LIKE 'rating.%'
+WHERE a.logical_asset_id = $1
+  AND a.is_deleted = FALSE
+ORDER BY a.revision ASC NULLS LAST,
+         a.created_at ASC,
+         m.metric_key ASC NULLS LAST,
+         m.source_type ASC NULLS LAST,
+         m.source_name ASC NULLS LAST,
+         m.recorded_at ASC NULLS LAST`
+
+	rows, err := h.pgq.Query(c.Request.Context(), q, logicalAssetID)
+	if err != nil {
+		httpresp.Internal(c, "database query failed: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	items := make([]ratingsHistoryRevision, 0)
+	itemIndexByAssetID := make(map[string]int)
+	for rows.Next() {
+		var (
+			assetID        string
+			revision       int64
+			isCurrent      bool
+			lifecycleState string
+			createdAt      time.Time
+			metric         ratingsHistoryMetric
+			metricKey      *string
+			metricType     *string
+			targetType     *string
+			targetID       *string
+			evalName       *string
+			evalVersion    *string
+			sourceType     *string
+			recordedAt     *time.Time
+			updatedAt      *time.Time
+		)
+
+		if err := rows.Scan(
+			&assetID, &revision, &isCurrent, &lifecycleState, &createdAt,
+			&metricKey, &metricType, &metric.MetricUnit,
+			&metric.MetricValue, &metric.MetricValueInt, &metric.MetricValueText, &metric.MetricValueBool,
+			&targetType, &targetID, &evalName, &evalVersion,
+			&metric.ParameterVersion, &metric.RunID,
+			&sourceType, &metric.SourceName, &metric.Confidence,
+			&recordedAt, &updatedAt,
+		); err != nil {
+			httpresp.Internal(c, "scan failed: "+err.Error())
+			return
+		}
+
+		itemIndex, ok := itemIndexByAssetID[assetID]
+		if !ok {
+			items = append(items, ratingsHistoryRevision{
+				AssetID:        assetID,
+				Revision:       revision,
+				IsCurrent:      isCurrent,
+				LifecycleState: lifecycleState,
+				CreatedAt:      createdAt,
+				Ratings:        []ratingsHistoryMetric{},
+			})
+			itemIndex = len(items) - 1
+			itemIndexByAssetID[assetID] = itemIndex
+		}
+
+		if metricKey == nil {
+			continue
+		}
+		metric.MetricKey = *metricKey
+		if metricType != nil {
+			metric.MetricType = *metricType
+		}
+		if targetType != nil {
+			metric.TargetType = *targetType
+		}
+		if targetID != nil {
+			metric.TargetID = *targetID
+		}
+		if evalName != nil {
+			metric.EvalName = *evalName
+		}
+		if evalVersion != nil {
+			metric.EvalVersion = *evalVersion
+		}
+		if sourceType != nil {
+			metric.SourceType = *sourceType
+		}
+		if recordedAt != nil {
+			metric.RecordedAt = *recordedAt
+		}
+		if updatedAt != nil {
+			metric.UpdatedAt = *updatedAt
+		}
+		items[itemIndex].Ratings = append(items[itemIndex].Ratings, metric)
+	}
+	if err := rows.Err(); err != nil {
+		httpresp.Internal(c, "row iteration error: "+err.Error())
+		return
+	}
+	if len(items) == 0 {
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "logical asset not found")
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"logical_asset_id": logicalAssetID,
+		"items":            items,
+		"count":            len(items),
+	})
 }

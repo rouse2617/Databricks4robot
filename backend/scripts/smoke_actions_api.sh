@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Smoke: health + optional actions list on a segment asset (requires stack + token).
 # Usage:
-#   GRACE_TOKEN=dev-token bash backend/scripts/smoke_actions_api.sh
-#   SEG_ASSET_ID=uuid GRACE_TOKEN=dev-token bash backend/scripts/smoke_actions_api.sh
+#   DATABREW_TOKEN=dev-token bash backend/scripts/smoke_actions_api.sh
+#   SEG_ASSET_ID=uuid DATABREW_TOKEN=dev-token bash backend/scripts/smoke_actions_api.sh
 set -euo pipefail
 
 BASE="${BASE_URL:-http://127.0.0.1:8080}"
-TOKEN="${GRACE_TOKEN:-dev-token}"
+TOKEN="${DATABREW_TOKEN:-dev-token}"
 
 curl -sfS "$BASE/healthz" | grep -q '"status":"ok"' || {
   echo "smoke: healthz failed"
@@ -16,7 +16,7 @@ echo "smoke: healthz ok"
 
 if [ -n "${SEG_ASSET_ID:-}" ]; then
   code="$(curl -sS -o /tmp/smoke_actions.json -w '%{http_code}' \
-    -H "X-Grace-Token: $TOKEN" \
+    -H "X-Databrew-Token: $TOKEN" \
     "$BASE/api/v1/assets/$SEG_ASSET_ID/actions")"
   if [ "$code" != "200" ]; then
     echo "smoke: GET actions HTTP $code"

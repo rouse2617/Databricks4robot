@@ -9,9 +9,11 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 COPY . .
+ARG VERSION=dev
+ARG COMMIT=unknown
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -ldflags="-X github.com/CyberOrigin2077/cyber-databrew/routes.buildVersion=dev -X github.com/CyberOrigin2077/cyber-databrew/routes.buildTime=$(date -u +%FT%TZ)" -o /server ./cmd/server
+    CGO_ENABLED=0 go build -ldflags="-X github.com/CyberOrigin2077/cyber-databrew/routes.buildVersion=${VERSION} -X github.com/CyberOrigin2077/cyber-databrew/routes.buildCommit=${COMMIT} -X github.com/CyberOrigin2077/cyber-databrew/routes.buildTime=$(date -u +%FT%TZ)" -o /server ./cmd/server
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata postgresql16-client

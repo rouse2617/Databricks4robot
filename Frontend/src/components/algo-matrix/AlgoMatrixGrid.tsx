@@ -66,7 +66,7 @@ export default function AlgoMatrixGrid({
 			title: (
 				<div style={{ textAlign: "center", fontSize: 12 }}>
 					<div>{algo.name}</div>
-					<div style={{ color: "#999", fontSize: 10 }}>{algo.version}</div>
+					<div style={{ color: "#64748b", fontSize: 10 }}>{algo.version}</div>
 				</div>
 			),
 			key: algo.key,

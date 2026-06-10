@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
@@ -22,10 +23,13 @@ var (
 	ErrInvalidRange       = errors.New("end_timestamp_ns must be greater than start_timestamp_ns")
 	ErrMcapFileIDRequired = errors.New("mcap_file_id is required")
 	ErrInvalidTag         = errors.New("invalid tag")
+	ErrTagSourceInvalid   = errors.New("invalid tag source")
+	ErrTagImmutable       = errors.New("tag source is immutable")
 	ErrInvalidAssetID     = errors.New("asset id must be 8 alphanumeric characters")
 	ErrAssetIDTaken       = errors.New("asset id already exists")
 	ErrInvalidMcapFileID  = errors.New("mcap_file_id must be exactly 8 alphanumeric characters")
 	ErrMcapFileNotFound   = errors.New("mcap_file_id does not exist")
+	ErrCustomerNotFound   = errors.New("customer not found for customer.* tag namespace") // CYB-1070
 )
 
 func mapCreateDBError(err error) error {
@@ -57,27 +61,32 @@ func defaultLifecycleMeta() map[string]interface{} {
 
 type Usecase struct {
 	repo           repository.AssetRepository
+	logicalRepo    repository.LogicalAssetRepository
 	tagRegistry    *config.TagRegistry
 	algoRegistry   *config.AlgoRegistry
 	tx             repository.TxRunner
 	tagRepo        repository.AssetTagRepository
 	algoLatestRepo repository.AssetAlgoLatestRepository
 	eventRepo      repository.AssetEventRepository
+	customerRepo   repository.CustomerRepository       // CYB-1070: customer.* namespace lint
+	usageStatsRepo repository.AssetUsageStatRepository // CYB-1095/1096: usage stats
+	validator      *deliveryrules.AssetWriteValidator  // CYB-1164: hierarchy invariants
+	schemaRegistry *models.SchemaRegistry
 }
 
 func New(repo repository.AssetRepository) *Usecase {
-	return &Usecase{repo: repo}
+	return &Usecase{repo: repo, schemaRegistry: models.NewSchemaRegistry()}
 }
 
 // NewWithTagRegistry creates a Usecase with tag validation support.
 func NewWithTagRegistry(repo repository.AssetRepository, tagReg *config.TagRegistry) *Usecase {
-	return &Usecase{repo: repo, tagRegistry: tagReg}
+	return &Usecase{repo: repo, tagRegistry: tagReg, schemaRegistry: models.NewSchemaRegistry()}
 }
 
 // NewFull creates a Usecase with tag validation and algo registry support.
 // The algo registry is used to initialize algorithm states on asset creation.
 func NewFull(repo repository.AssetRepository, tagReg *config.TagRegistry, algoReg *config.AlgoRegistry) *Usecase {
-	return &Usecase{repo: repo, tagRegistry: tagReg, algoRegistry: algoReg}
+	return &Usecase{repo: repo, tagRegistry: tagReg, algoRegistry: algoReg, schemaRegistry: models.NewSchemaRegistry()}
 }
 
 // NewWithProjections wires the asset usecase with the projection and event
@@ -100,7 +109,43 @@ func NewWithProjections(
 		tagRepo:        tagRepo,
 		algoLatestRepo: algoLatestRepo,
 		eventRepo:      eventRepo,
+		schemaRegistry: models.NewSchemaRegistry(),
 	}
+}
+
+// SetLogicalAssetRepo wires logical_assets persistence (CYB-1013).
+func (u *Usecase) SetLogicalAssetRepo(r repository.LogicalAssetRepository) {
+	u.logicalRepo = r
+}
+
+// SetCustomerRepo wires customer persistence for customer.* namespace lint (CYB-1070).
+func (u *Usecase) SetCustomerRepo(r repository.CustomerRepository) {
+	u.customerRepo = r
+}
+
+// SetUsageStatsRepo wires usage stats persistence for view/favorite counters (CYB-1095/1096).
+func (u *Usecase) SetUsageStatsRepo(r repository.AssetUsageStatRepository) {
+	u.usageStatsRepo = r
+}
+
+// SetValidator wires the asset hierarchy validator (CYB-1164).
+func (u *Usecase) SetValidator(v *deliveryrules.AssetWriteValidator) {
+	u.validator = v
+}
+
+func (u *Usecase) SetSchemaRegistry(r *models.SchemaRegistry) {
+	u.schemaRegistry = r
+}
+
+func (u *Usecase) GetAssetTypeSchema(assetType string) (json.RawMessage, bool) {
+	if u.schemaRegistry == nil {
+		return nil, false
+	}
+	schema := u.schemaRegistry.GetSchema(assetType)
+	if schema == nil {
+		return nil, false
+	}
+	return schema, true
 }
 
 func (u *Usecase) withMutationTx(ctx context.Context, fn func(context.Context) error) error {
@@ -143,6 +188,73 @@ func (u *Usecase) validateTags(tags map[string]string) error {
 	return nil
 }
 
+// validateCustomerNamespace checks that tags with key prefix "customer." reference
+// an existing customer (CYB-1070). The customer ID is extracted from the tag
+// value (e.g. key="customer.id", value="cust_abc").
+func (u *Usecase) validateCustomerNamespace(ctx context.Context, tags map[string]string) error {
+	if u.customerRepo == nil {
+		return nil
+	}
+	for k, v := range tags {
+		if !strings.HasPrefix(k, "customer.") {
+			continue
+		}
+		// For customer.id tags the value IS the customer ID.
+		// For other customer.* tags, the value may also be a customer ID.
+		exists, err := u.customerRepo.Exists(ctx, v)
+		if err != nil {
+			return fmt.Errorf("customer namespace check: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: customer %q not found for tag %q", ErrCustomerNotFound, v, k)
+		}
+	}
+	return nil
+}
+
+// propagateTagToDescendants applies a tag to all descendant assets when the
+// tag registry declares propagation=descendants (CYB-1068).
+func (u *Usecase) propagateTagToDescendants(ctx context.Context, assetID, tagKey, tagValue, tagType string, src tagSource) error {
+	if u.tagRegistry == nil || !u.tagRegistry.ShouldPropagate(tagKey) {
+		return nil
+	}
+	descendants, err := u.repo.ListDescendants(ctx, assetID)
+	if err != nil {
+		return fmt.Errorf("tag propagation: %w", err)
+	}
+	for _, desc := range descendants {
+		if err := u.tagRepo.Upsert(ctx, repository.AssetTagUpsertInput{
+			AssetID:       desc.AssetID,
+			TagKey:        tagKey,
+			TagValue:      tagValue,
+			TagType:       tagType,
+			SourceType:    src.SourceType,
+			SourceName:    src.SourceName,
+			SourceVersion: src.SourceVersion,
+			RunID:         src.RunID,
+			TenantID:      desc.TenantID,
+			ProjectID:     desc.ProjectID,
+		}); err != nil {
+			return fmt.Errorf("tag propagation to %s: %w", desc.AssetID, err)
+		}
+	}
+	return nil
+}
+
+// validateTagSource enforces tag_registry tag_sources[] identity contracts
+// for a single tag write (requires_source_name / requires_source_version).
+// Unknown sources return ErrTagSourceInvalid only when the registry has any
+// tag_sources configured (back-compat for environments without the block).
+func (u *Usecase) validateTagSource(sourceType, sourceName, sourceVersion string) error {
+	if u.tagRegistry == nil {
+		return nil
+	}
+	if err := u.tagRegistry.ValidateSource(sourceType, sourceName, sourceVersion); err != nil {
+		return fmt.Errorf("%w: %s", ErrTagSourceInvalid, err.Error())
+	}
+	return nil
+}
+
 func (u *Usecase) appendAssetEvent(ctx context.Context, eventType string, a *models.Asset, payload map[string]any) error {
 	if u.eventRepo == nil || a == nil {
 		return nil
@@ -160,58 +272,127 @@ func (u *Usecase) appendAssetEvent(ctx context.Context, eventType string, a *mod
 	})
 }
 
-func (u *Usecase) upsertTagProjection(ctx context.Context, a *models.Asset, tags map[string]string, sourceType string) error {
+// tagSource captures the per-write identity of a tag assertion. Empty fields
+// other than SourceType are allowed when the registry does not require them.
+type tagSource struct {
+	SourceType    string
+	SourceName    string
+	SourceVersion string
+	RunID         string
+}
+
+func defaultTagSource() tagSource { return tagSource{SourceType: "system"} }
+
+func (u *Usecase) upsertTagProjection(ctx context.Context, a *models.Asset, tags map[string]string, src tagSource) error {
 	if u.tagRepo == nil || a == nil {
 		return nil
 	}
 	for k, v := range tags {
 		tagType := u.tagTypeFor(k)
-		if err := u.tagRepo.Upsert(ctx, a.AssetID, k, v, tagType, sourceType); err != nil {
+		if err := u.assertNotImmutable(ctx, a.AssetID, k, src); err != nil {
+			return err
+		}
+		if err := u.tagRepo.Upsert(ctx, repository.AssetTagUpsertInput{
+			AssetID:       a.AssetID,
+			TagKey:        k,
+			TagValue:      v,
+			TagType:       tagType,
+			SourceType:    src.SourceType,
+			SourceName:    src.SourceName,
+			SourceVersion: src.SourceVersion,
+			RunID:         src.RunID,
+			TenantID:      a.TenantID,
+			ProjectID:     a.ProjectID,
+		}); err != nil {
 			return err
 		}
 		if err := u.appendAssetEvent(ctx, "tag_upserted", a, map[string]any{
-			"tag_key":     k,
-			"tag_value":   v,
-			"tag_type":    tagType,
-			"source_type": sourceType,
+			"tag_key":        k,
+			"tag_value":      v,
+			"tag_type":       tagType,
+			"source_type":    src.SourceType,
+			"source_name":    src.SourceName,
+			"source_version": src.SourceVersion,
+			"run_id":         src.RunID,
 		}); err != nil {
+			return err
+		}
+		// CYB-1068: propagate to descendants when tag declares propagation=descendants.
+		if err := u.propagateTagToDescendants(ctx, a.AssetID, k, v, tagType, src); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (u *Usecase) persistNewAsset(ctx context.Context, a *models.Asset, tags map[string]string) error {
+// assertNotImmutable rejects any attempt to rewrite an existing assertion
+// from a source flagged `immutable: true` in tag_registry.yaml.
+func (u *Usecase) assertNotImmutable(ctx context.Context, assetID, tagKey string, src tagSource) error {
+	if u.tagRegistry == nil || u.tagRepo == nil {
+		return nil
+	}
+	def, ok := u.tagRegistry.SourceDef(src.SourceType)
+	if !ok || !def.Immutable {
+		return nil
+	}
+	existing, err := u.tagRepo.ListByAsset(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	for _, row := range existing {
+		if row.TagKey == tagKey && row.SourceType == src.SourceType &&
+			row.SourceVersion == src.SourceVersion {
+			return fmt.Errorf("%w: %s/%s on %s", ErrTagImmutable, src.SourceType, tagKey, assetID)
+		}
+	}
+	return nil
+}
+
+func (u *Usecase) persistNewAsset(ctx context.Context, a *models.Asset, tags map[string]string, promoteLogicalID string) error {
 	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
-		if err := u.repo.InsertNew(txCtx, a); err != nil {
-			return err
+		if promoteLogicalID != "" {
+			promoteIn, err := u.preparePromoteVersion(txCtx, a, promoteLogicalID)
+			if err != nil {
+				return err
+			}
+			if err := u.finalizePromoteVersion(txCtx, a, promoteIn); err != nil {
+				return err
+			}
+		} else {
+			if err := u.seedFirstVersion(txCtx, a); err != nil {
+				return err
+			}
+			if err := u.repo.InsertNew(txCtx, a); err != nil {
+				return err
+			}
+			if err := u.appendAssetEvent(txCtx, "asset_created", a, map[string]any{
+				"asset_id":         a.AssetID,
+				"mcap_file_id":     a.McapFileID,
+				"segment_locator":  a.SegmentLocator,
+				"lifecycle_state":  a.LifecycleState,
+				"asset_type":       a.AssetType,
+				"logical_asset_id": a.LogicalAssetID,
+				"revision":         a.Revision,
+				"owner":            a.Owner,
+				"reviewer":         a.Reviewer,
+			}); err != nil {
+				return err
+			}
 		}
 		if err := u.seedInitialAlgoProjection(txCtx, a); err != nil {
 			return err
 		}
-		if err := u.appendAssetEvent(txCtx, "asset_created", a, map[string]any{
-			"asset_id":        a.AssetID,
-			"mcap_file_id":    a.McapFileID,
-			"segment_locator": a.SegmentLocator,
-			"lifecycle_state": a.LifecycleState,
-			"asset_type":      a.AssetType,
-			"owner":           a.Owner,
-			"reviewer":        a.Reviewer,
-		}); err != nil {
-			return err
-		}
-		return u.upsertTagProjection(txCtx, a, tags, "manual")
+		return u.upsertTagProjection(txCtx, a, tags, defaultTagSource())
 	}); err != nil {
 		return err
 	}
-	// Secondary index write is best-effort for now.
 	return u.repo.WriteSegmentIndex(ctx, a)
 }
 
 const maxAssetIDAllocationAttempts = 32
 
 // allocateNewAssetID assigns a random 8-char asset_id and persists the new asset, retrying on id collision.
-func (u *Usecase) allocateNewAssetID(ctx context.Context, a *models.Asset, tags map[string]string) error {
+func (u *Usecase) allocateNewAssetID(ctx context.Context, a *models.Asset, tags map[string]string, promoteLogicalID string) error {
 	for range maxAssetIDAllocationAttempts {
 		gid, err := id.GenerateAssetID()
 		if err != nil {
@@ -220,7 +401,7 @@ func (u *Usecase) allocateNewAssetID(ctx context.Context, a *models.Asset, tags 
 		a.AssetID = gid
 		a.Version = 0
 		a.CreatedAt = time.Time{}
-		if err := u.persistNewAsset(ctx, a, tags); err != nil {
+		if err := u.persistNewAsset(ctx, a, tags, promoteLogicalID); err != nil {
 			if errors.Is(err, repository.ErrDuplicateAssetID) {
 				continue
 			}
@@ -275,10 +456,22 @@ func (u *Usecase) hydrateTags(ctx context.Context, a *models.Asset) error {
 	if err != nil {
 		return err
 	}
+	// Flat map is last-applied-wins per key for backward compatibility.
+	// tags_detailed is the source of truth for multi-source assertions.
 	a.Tags = map[string]string{}
+	latestApplied := map[string]time.Time{}
+	detailed := make([]models.AssetTag, 0, len(rows))
 	for _, row := range rows {
-		a.Tags[row.TagKey] = row.TagValue
+		if row == nil {
+			continue
+		}
+		detailed = append(detailed, *row)
+		if t, seen := latestApplied[row.TagKey]; !seen || row.AppliedAt.After(t) {
+			a.Tags[row.TagKey] = row.TagValue
+			latestApplied[row.TagKey] = row.AppliedAt
+		}
 	}
+	a.TagsDetailed = detailed
 	return nil
 }
 
@@ -349,6 +542,7 @@ func (u *Usecase) hydrateAssetsReadModels(ctx context.Context, items []*models.A
 
 type CreateInput struct {
 	AssetID             string
+	LogicalAssetID      string
 	McapFileID          string
 	StartTimestampNs    int64
 	EndTimestampNs      int64
@@ -411,6 +605,12 @@ type ListEventsResult struct {
 type UpsertTagInput struct {
 	Key   string
 	Value string
+	// Source identity (CYB-1015). When SourceType is empty the handler must
+	// default it (typically to "human" on UI flows, "system" elsewhere).
+	SourceType    string
+	SourceName    string
+	SourceVersion string
+	RunID         string
 }
 
 type CommitSegmentsInput struct {
@@ -608,9 +808,6 @@ func (u *Usecase) ListGlobalEvents(ctx context.Context, in ListEventsInput) (*Li
 }
 
 func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, error) {
-	if in.McapFileID == "" {
-		return nil, ErrMcapFileIDRequired
-	}
 	if in.EndTimestampNs <= in.StartTimestampNs {
 		return nil, ErrInvalidRange
 	}
@@ -623,11 +820,19 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	if in.AssetID != "" && !id.ValidateAssetID(in.AssetID) {
 		return nil, ErrInvalidAssetID
 	}
+	promoteLogicalID := strings.TrimSpace(in.LogicalAssetID)
+	if promoteLogicalID != "" && !id.ValidateAssetID(promoteLogicalID) {
+		return nil, ErrInvalidAssetID
+	}
 	tags := in.Tags
 	if tags == nil {
 		tags = map[string]string{}
 	}
 	if err := u.validateTags(tags); err != nil {
+		return nil, err
+	}
+	// CYB-1070: customer.* namespace lint.
+	if err := u.validateCustomerNamespace(ctx, tags); err != nil {
 		return nil, err
 	}
 	assetType := strings.TrimSpace(in.AssetType)
@@ -642,6 +847,9 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	if assetType == "" {
 		assetType = "segment"
 		segType = "segment"
+	}
+	if in.McapFileID == "" && assetType != "derived_asset" && (u.schemaRegistry == nil || u.schemaRegistry.GetSchema(assetType) == nil) {
+		return nil, ErrMcapFileIDRequired
 	}
 	a := &models.Asset{
 		AssetID:             "",
@@ -694,6 +902,11 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	if len(in.Metadata) > 0 {
 		a.Metadata = in.Metadata
 	}
+	if u.schemaRegistry != nil {
+		if err := u.schemaRegistry.Validate(a.AssetType, a.Metadata); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidTag, err.Error())
+		}
+	}
 	if len(in.LifecycleMeta) > 0 {
 		a.LifecycleMeta = in.LifecycleMeta
 	}
@@ -720,19 +933,150 @@ func (u *Usecase) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 			a.Files["raw_mcap"] = in.McapFileID
 		}
 	}
+	// CYB-1164: validate hierarchy invariants before persisting.
+	if u.validator != nil {
+		if err := u.validator.ValidateCreate(ctx, a); err != nil {
+			return nil, err
+		}
+	}
 	if in.AssetID == "" {
-		if err := u.allocateNewAssetID(ctx, a, tags); err != nil {
+		if err := u.allocateNewAssetID(ctx, a, tags, promoteLogicalID); err != nil {
 			return nil, mapCreateDBError(err)
 		}
 		return a, nil
 	}
-	if err := u.persistNewAsset(ctx, a, tags); err != nil {
+	if err := u.persistNewAsset(ctx, a, tags, promoteLogicalID); err != nil {
 		if errors.Is(err, repository.ErrDuplicateAssetID) {
 			return nil, ErrAssetIDTaken
 		}
 		return nil, mapCreateDBError(err)
 	}
 	return a, nil
+}
+
+// CreateChildAssetInput carries the fields needed for layered child-asset creation.
+type CreateChildAssetInput struct {
+	AssetType        string
+	ParentAssetID    string
+	StartTimestampNs int64
+	EndTimestampNs   int64
+	Metadata         map[string]interface{}
+	SplitMethod      string
+	SplitRunID       string
+}
+
+// splitMethodToRelation maps split_method to asset_relations.relation_type per
+// the decision table in §3.2.1 of the hierarchy-and-derivatives design doc.
+//
+//	algo:*  → derived_from
+//	manual / rule:* / ""  → split_from
+func splitMethodToRelation(splitMethod string) string {
+	if strings.HasPrefix(splitMethod, "algo:") {
+		return "derived_from"
+	}
+	return "split_from"
+}
+
+// CreateChildAsset creates a child asset under a parent with automatic
+// asset_relations edge insertion. This is the usecase behind the layered API
+// (POST /assets/:id/{clips,actions,frames,tasks}).
+func (u *Usecase) CreateChildAsset(ctx context.Context, in CreateChildAssetInput) (*models.Asset, error) {
+	if in.EndTimestampNs <= in.StartTimestampNs {
+		return nil, ErrInvalidRange
+	}
+	if in.ParentAssetID == "" {
+		return nil, ErrNotFound
+	}
+
+	// Verify parent exists before proceeding.
+	parent, err := u.repo.Get(ctx, in.ParentAssetID)
+	if err != nil {
+		return nil, err
+	}
+	if parent == nil {
+		return nil, ErrNotFound
+	}
+
+	// Build the asset model with a zero ID; InsertNew + prepAssetForWrite will
+	// allocate timestamps and derive duration.
+	// Inherit identity fields (McapFileID, SegmentLocator, RootAssetID) and
+	// tenant/project scope from the parent — the DB CHECK constraints require these.
+	a := &models.Asset{
+		AssetType:        in.AssetType,
+		ParentAssetID:    in.ParentAssetID,
+		McapFileID:       parent.McapFileID,
+		SegmentLocator:   parent.SegmentLocator,
+		RootAssetID:      parent.RootAssetID,
+		StartTimestampNs: in.StartTimestampNs,
+		EndTimestampNs:   in.EndTimestampNs,
+		DurationMs:       (in.EndTimestampNs - in.StartTimestampNs) / 1_000_000,
+		SplitMethod:      in.SplitMethod,
+		SplitRunID:       in.SplitRunID,
+		Metadata:         in.Metadata,
+		LifecycleMeta:    defaultLifecycleMeta(),
+		RetentionTier:    parent.RetentionTier,
+		TenantID:         parent.TenantID,
+		ProjectID:        parent.ProjectID,
+		Files:            map[string]string{},
+		Tags:             map[string]string{},
+		AlgoResults:      map[string]string{},
+	}
+	if u.schemaRegistry != nil {
+		if err := u.schemaRegistry.Validate(a.AssetType, a.Metadata); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidTag, err.Error())
+		}
+	}
+
+	// CYB-1164: validate hierarchy invariants before persisting.
+	if u.validator != nil {
+		if err := u.validator.ValidateCreate(ctx, a); err != nil {
+			return nil, err
+		}
+	}
+
+	relationType := splitMethodToRelation(in.SplitMethod)
+
+	for range maxAssetIDAllocationAttempts {
+		gid, err := id.GenerateAssetID()
+		if err != nil {
+			return nil, err
+		}
+		a.AssetID = gid
+		a.Version = 0
+		a.CreatedAt = time.Time{}
+
+		err = u.withMutationTx(ctx, func(txCtx context.Context) error {
+			if err := u.seedFirstVersion(txCtx, a); err != nil {
+				return err
+			}
+			if err := u.repo.InsertNew(txCtx, a); err != nil {
+				return err
+			}
+			if relRepo, ok := u.repo.(repository.AssetRelationWriter); ok {
+				if err := relRepo.InsertRelation(txCtx, a.AssetID, in.ParentAssetID, relationType, in.SplitRunID); err != nil {
+					return err
+				}
+			}
+			if err := u.appendAssetEvent(txCtx, "asset_created", a, map[string]any{
+				"asset_id":        a.AssetID,
+				"asset_type":      a.AssetType,
+				"parent_asset_id": in.ParentAssetID,
+				"relation_type":   relationType,
+			}); err != nil {
+				return err
+			}
+			return u.seedInitialAlgoProjection(txCtx, a)
+		})
+
+		if err != nil {
+			if errors.Is(err, repository.ErrDuplicateAssetID) {
+				continue
+			}
+			return nil, mapCreateDBError(err)
+		}
+		return u.Get(ctx, a.AssetID)
+	}
+	return nil, fmt.Errorf("exhausted asset id allocation attempts (%d)", maxAssetIDAllocationAttempts)
 }
 
 func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*models.Asset, error) {
@@ -770,6 +1114,10 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 	if err := u.validateTags(in.Tags); err != nil {
 		return nil, err
 	}
+	// CYB-1070: customer.* namespace lint.
+	if err := u.validateCustomerNamespace(ctx, in.Tags); err != nil {
+		return nil, err
+	}
 	for k, v := range in.Tags {
 		if a.Tags == nil {
 			a.Tags = map[string]string{}
@@ -800,7 +1148,7 @@ func (u *Usecase) Update(ctx context.Context, assetID string, in UpdateInput) (*
 				return err
 			}
 		}
-		return u.upsertTagProjection(txCtx, a, in.Tags, "manual")
+		return u.upsertTagProjection(txCtx, a, in.Tags, defaultTagSource())
 	}); err != nil {
 		return nil, err
 	}
@@ -811,6 +1159,22 @@ func (u *Usecase) UpsertTag(ctx context.Context, assetID string, in UpsertTagInp
 	if err := u.validateTags(map[string]string{in.Key: in.Value}); err != nil {
 		return nil, err
 	}
+	// CYB-1070: customer.* namespace lint — verify the customer exists.
+	if err := u.validateCustomerNamespace(ctx, map[string]string{in.Key: in.Value}); err != nil {
+		return nil, err
+	}
+	src := tagSource{
+		SourceType:    in.SourceType,
+		SourceName:    in.SourceName,
+		SourceVersion: in.SourceVersion,
+		RunID:         in.RunID,
+	}
+	if src.SourceType == "" {
+		src.SourceType = "human"
+	}
+	if err := u.validateTagSource(src.SourceType, src.SourceName, src.SourceVersion); err != nil {
+		return nil, err
+	}
 
 	a, err := u.repo.Get(ctx, assetID)
 	if err != nil {
@@ -821,14 +1185,17 @@ func (u *Usecase) UpsertTag(ctx context.Context, assetID string, in UpsertTagInp
 	}
 
 	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
-		return u.upsertTagProjection(txCtx, a, map[string]string{in.Key: in.Value}, "manual")
+		return u.upsertTagProjection(txCtx, a, map[string]string{in.Key: in.Value}, src)
 	}); err != nil {
 		return nil, err
 	}
 	return u.Get(ctx, assetID)
 }
 
-func (u *Usecase) findTag(ctx context.Context, assetID, tagKey string) (*models.AssetTag, error) {
+// findTagsForDelete returns the tag rows that will be removed by DeleteTag.
+// When sourceType is empty all rows for the key are returned, matching the
+// repo Delete behavior.
+func (u *Usecase) findTagsForDelete(ctx context.Context, assetID, tagKey, sourceType string) ([]*models.AssetTag, error) {
 	if u.tagRepo == nil {
 		return nil, nil
 	}
@@ -836,15 +1203,23 @@ func (u *Usecase) findTag(ctx context.Context, assetID, tagKey string) (*models.
 	if err != nil {
 		return nil, err
 	}
+	var out []*models.AssetTag
 	for _, row := range rows {
-		if row.TagKey == tagKey {
-			return row, nil
+		if row.TagKey != tagKey {
+			continue
 		}
+		if sourceType != "" && row.SourceType != sourceType {
+			continue
+		}
+		out = append(out, row)
 	}
-	return nil, nil
+	return out, nil
 }
 
-func (u *Usecase) DeleteTag(ctx context.Context, assetID, tagKey string) (*models.Asset, error) {
+// DeleteTag removes tag rows for (assetID, tagKey). When sourceType is the
+// empty string all sources for the key are removed; otherwise only the
+// matching source is deleted.
+func (u *Usecase) DeleteTag(ctx context.Context, assetID, tagKey, sourceType string) (*models.Asset, error) {
 	a, err := u.repo.Get(ctx, assetID)
 	if err != nil {
 		return nil, err
@@ -854,22 +1229,30 @@ func (u *Usecase) DeleteTag(ctx context.Context, assetID, tagKey string) (*model
 	}
 
 	if err := u.withMutationTx(ctx, func(txCtx context.Context) error {
-		existing, err := u.findTag(txCtx, assetID, tagKey)
+		victims, err := u.findTagsForDelete(txCtx, assetID, tagKey, sourceType)
 		if err != nil {
 			return err
 		}
-		if existing == nil {
+		if len(victims) == 0 {
 			return nil
 		}
-		if err := u.tagRepo.Delete(txCtx, assetID, tagKey); err != nil {
+		if err := u.tagRepo.Delete(txCtx, assetID, tagKey, sourceType); err != nil {
 			return err
 		}
-		return u.appendAssetEvent(txCtx, "tag_deleted", a, map[string]any{
-			"tag_key":     existing.TagKey,
-			"tag_value":   existing.TagValue,
-			"tag_type":    existing.TagType,
-			"source_type": "manual",
-		})
+		for _, v := range victims {
+			if err := u.appendAssetEvent(txCtx, "tag_deleted", a, map[string]any{
+				"tag_key":        v.TagKey,
+				"tag_value":      v.TagValue,
+				"tag_type":       v.TagType,
+				"source_type":    v.SourceType,
+				"source_name":    v.SourceName,
+				"source_version": v.SourceVersion,
+				"run_id":         v.RunID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
 		return nil, err
 	}
@@ -928,7 +1311,7 @@ func (u *Usecase) CommitSegments(ctx context.Context, in CommitSegmentsInput) ([
 			initAlgoStates(a, u.algoRegistry)
 			a.Files["raw_mcap"] = in.McapFileID
 		}
-		if err := u.allocateNewAssetID(ctx, a, a.Tags); err != nil {
+		if err := u.allocateNewAssetID(ctx, a, a.Tags, ""); err != nil {
 			return created, err
 		}
 		created = append(created, a.AssetID)
@@ -951,4 +1334,36 @@ func initAlgoStates(a *models.Asset, reg *config.AlgoRegistry) {
 			}
 		}
 	}
+}
+
+// RecordAssetView increments view_count and updates last_viewed_at in
+// asset_usage_stats (CYB-1095). Verifies the asset exists first.
+func (u *Usecase) RecordAssetView(ctx context.Context, assetID string) error {
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if a == nil {
+		return ErrNotFound
+	}
+	if u.usageStatsRepo == nil {
+		return nil
+	}
+	return u.usageStatsRepo.RecordView(ctx, assetID)
+}
+
+// ToggleFavorite flips the favorite state for an asset and returns the new
+// favorite_count (CYB-1096). Verifies the asset exists first.
+func (u *Usecase) ToggleFavorite(ctx context.Context, assetID string) (int, error) {
+	a, err := u.repo.Get(ctx, assetID)
+	if err != nil {
+		return 0, err
+	}
+	if a == nil {
+		return 0, ErrNotFound
+	}
+	if u.usageStatsRepo == nil {
+		return 0, fmt.Errorf("usage stats repository not configured")
+	}
+	return u.usageStatsRepo.ToggleFavorite(ctx, assetID)
 }

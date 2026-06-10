@@ -2,6 +2,7 @@ package queryir
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,10 @@ const (
 	SchemaVersionV1 = "v1"
 	ResourceAssets  = "assets"
 )
+
+// ErrUnsupportedOperator is returned when a predicate operator is not
+// in the supported set.
+var ErrUnsupportedOperator = errors.New("unsupported operator")
 
 var supportedLeafOperators = map[string]struct{}{
 	"eq":       {},
@@ -70,7 +75,7 @@ func compileLeaf(p *QueryPredicate) (string, error) {
 		return "", fmt.Errorf("missing operator in predicate")
 	}
 	if _, ok := supportedLeafOperators[operator]; !ok {
-		return "", fmt.Errorf("unsupported operator %q", p.Op)
+		return "", fmt.Errorf("%w %q", ErrUnsupportedOperator, p.Op)
 	}
 	valueEncoded, err := encodeFilterValue(p.Value)
 	if err != nil {

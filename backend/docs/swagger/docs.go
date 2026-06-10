@@ -19,7 +19,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Create a new asset segment from an MCAP file",
@@ -76,7 +76,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Get asset by ID",
@@ -120,7 +120,7 @@ const docTemplate = `{
             "delete": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Soft delete an asset (status = archived)",
@@ -160,7 +160,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Mark an algorithm as ok or failed on the given asset",
@@ -237,7 +237,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Reset a failed or ok algorithm back to pending state",
@@ -296,7 +296,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Mark an algorithm as running on the given asset",
@@ -367,7 +367,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "List generic asset events with optional event_type/algo_key filters",
@@ -475,7 +475,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Create or update one tag entry under asset_tags and append tag_upserted",
@@ -545,7 +545,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "List tag-specific events sourced from asset_events",
@@ -625,7 +625,7 @@ const docTemplate = `{
             "delete": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Delete one tag entry under asset_tags and append tag_deleted when present",
@@ -678,7 +678,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Retrieve multiple assets by ID in a single request (max 100)",
@@ -729,7 +729,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "GraceToken": []
+                        "DatabrewToken": []
                     }
                 ],
                 "description": "Create a new delivery for a set of assets",
@@ -980,9 +980,9 @@ const docTemplate = `{
         }
     },
     "securityDefinitions": {
-        "GraceToken": {
+        "DatabrewToken": {
             "type": "apiKey",
-            "name": "X-Grace-Token",
+            "name": "X-Databrew-Token",
             "in": "header"
         }
     }

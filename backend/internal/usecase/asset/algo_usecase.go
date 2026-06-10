@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/id"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 )
@@ -39,16 +40,18 @@ var (
 	ErrConcurrentConflict     = errors.New("concurrent conflict after retries")
 	ErrMissingRequiredField   = errors.New("missing required field")
 	ErrMissingReason          = errors.New("missing reason for failed status")
+	ErrRunNotFound            = errors.New("algo run not found")
 )
 
 // Event types appended to asset_events. Names align with
 // data-platform-design.md §5.2.7 typical event types.
 const (
-	eventAlgoStarted   = "algo_started"
-	eventAlgoFinished  = "algo_finished" // status = ok
-	eventAlgoFailed    = "algo_failed"
-	eventAlgoReset     = "algo_reset"
-	eventAlgoUnblocked = "algo_unblocked"
+	eventAlgoStarted    = "algo_started"
+	eventAlgoFinished   = "algo_finished" // status = ok
+	eventAlgoFailed     = "algo_failed"
+	eventAlgoReset      = "algo_reset"
+	eventAlgoUnblocked  = "algo_unblocked"
+	eventAlgoRunApplied = "algo_run_applied"
 )
 
 // algoEventTypes lists every event_type produced by AlgoUsecase. Used by
@@ -88,6 +91,7 @@ type AlgoUsecase struct {
 	existenceRepo  repository.AssetRepository
 	algoLatestRepo repository.AssetAlgoLatestRepository
 	eventRepo      repository.AssetEventRepository
+	algoRunRepo    repository.AlgoRunRepository
 	registry       *config.AlgoRegistry
 }
 
@@ -107,6 +111,28 @@ func NewAlgoUsecase(
 		eventRepo:      eventRepo,
 		registry:       registry,
 	}
+}
+
+// SetAlgoRunRepo enables run_id FK validation and algo_run_applied events.
+func (u *AlgoUsecase) SetAlgoRunRepo(r repository.AlgoRunRepository) {
+	u.algoRunRepo = r
+}
+
+func (u *AlgoUsecase) requireRegisteredRun(ctx context.Context, runID string) error {
+	if runID == "" || u.algoRunRepo == nil {
+		return nil
+	}
+	if !id.ValidateRunID(runID) {
+		return nil
+	}
+	ok, err := u.algoRunRepo.Exists(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrRunNotFound
+	}
+	return nil
 }
 
 // parseAlgoKey splits "name@version" into its components. Returns ok=false on
@@ -261,6 +287,9 @@ func (u *AlgoUsecase) StartAlgo(ctx context.Context, assetID, algoKey string, in
 
 	now := time.Now().UTC()
 	runID := runIDPtr(input.RunID)
+	if err := u.requireRegisteredRun(ctx, runID); err != nil {
+		return err
+	}
 
 	return u.tx.WithTx(ctx, func(txCtx context.Context) error {
 		curStatus, _, err := u.currentStatus(txCtx, assetID, algoKey)
@@ -342,6 +371,9 @@ func (u *AlgoUsecase) FinishAlgo(ctx context.Context, assetID, algoKey string, i
 	}
 
 	runID := runIDPtr(input.RunID)
+	if err := u.requireRegisteredRun(ctx, runID); err != nil {
+		return err
+	}
 	reason := reasonPtr(input.Reason)
 	now := time.Now().UTC()
 
@@ -403,6 +435,23 @@ func (u *AlgoUsecase) FinishAlgo(ctx context.Context, assetID, algoKey string, i
 			EventPayload: makePayload(algoKey, algoName, algoVersion, string(curStatus), string(finishStatus), runID, reason, payloadExtra),
 		}); err != nil {
 			return err
+		}
+
+		if runID != "" && id.ValidateRunID(runID) {
+			applied, _ := json.Marshal(map[string]interface{}{
+				"run_id":       runID,
+				"algo_name":    algoName,
+				"algo_version": algoVersion,
+				"new_status":   string(finishStatus),
+			})
+			if err := u.eventRepo.Append(txCtx, repository.AssetEventAppendInput{
+				EventType:    eventAlgoRunApplied,
+				AssetID:      assetID,
+				RunID:        runID,
+				EventPayload: applied,
+			}); err != nil {
+				return err
+			}
 		}
 
 		// Cascade unblock for ok finishes — same transaction.

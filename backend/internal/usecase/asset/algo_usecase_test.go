@@ -84,7 +84,13 @@ func (m *mockAssetRepo) SoftDelete(_ context.Context, assetID string) error {
 func (m *mockAssetRepo) ListByMcapFile(_ context.Context, _ string) ([]*models.Asset, error) {
 	return nil, nil
 }
+func (m *mockAssetRepo) ListByLogicalAssetID(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (m *mockAssetRepo) WriteSegmentIndex(_ context.Context, _ *models.Asset) error { return nil }
+func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (m *mockAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	return nil, 0, nil
 }
@@ -306,6 +312,10 @@ func (m *mockAssetEventRepo) ListByAsset(_ context.Context, assetID string, opts
 		}
 	}
 	return out, nil
+}
+
+func (m *mockAssetEventRepo) ListVersionPromotedByLogical(context.Context, string) ([]*models.AssetEvent, error) {
+	return nil, nil
 }
 
 func (m *mockAssetEventRepo) ListGlobal(_ context.Context, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {

@@ -1,4 +1,4 @@
-// ─── LineageTab — Upstream MCAP + downstream algo/delivery/eval chain ───
+// ─── LineageTab — Upstream MCAP + downstream algo/delivery/eval chain + pipeline provenance ───
 
 import {
 	FileOutlined,
@@ -9,7 +9,9 @@ import {
 } from "@ant-design/icons";
 import { Alert, Card, Descriptions, List, Spin, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { assetsApi } from "../../api/assets";
+import type { PipelineLineage } from "../../api/types";
 
 const { Text } = Typography;
 
@@ -55,9 +57,13 @@ export interface LineageTabProps {
 }
 
 export default function LineageTab({ assetId }: LineageTabProps) {
+	const navigate = useNavigate();
 	const [data, setData] = useState<LineageData | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [pipelineLineage, setPipelineLineage] =
+		useState<PipelineLineage | null>(null);
+	const [pipelineLoading, setPipelineLoading] = useState(true);
 
 	useEffect(() => {
 		if (!assetId) return;
@@ -68,6 +74,18 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 			.then((d) => setData(d as unknown as LineageData))
 			.catch((e) => setError(e instanceof Error ? e.message : "加载失败"))
 			.finally(() => setLoading(false));
+	}, [assetId]);
+
+	useEffect(() => {
+		if (!assetId) return;
+		setPipelineLoading(true);
+		assetsApi
+			.getPipelineLineage(assetId)
+			.then((pl) => setPipelineLineage(pl))
+			.catch(() => {
+				// pipeline-lineage endpoint may be unavailable — silently ignore
+			})
+			.finally(() => setPipelineLoading(false));
 	}, [assetId]);
 
 	if (loading)
@@ -83,8 +101,98 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 		);
 	if (!data) return <Alert type="info" showIcon message="暂无血缘数据" />;
 
+	const hasPipelineLineage =
+		pipelineLineage &&
+		(pipelineLineage.workflow_name || pipelineLineage.deployment_id);
+
 	return (
 		<div style={{ padding: "0 4px", maxWidth: 720 }}>
+			{/* Pipeline provenance */}
+			{!pipelineLoading && hasPipelineLineage && (
+				<Card
+					size="small"
+					title={
+						<span>
+							<LinkOutlined /> Pipeline 血缘
+						</span>
+					}
+					style={{ marginBottom: 16 }}
+				>
+					<Descriptions column={1} size="small">
+						{pipelineLineage?.workflow_name && (
+							<Descriptions.Item label="Workflow">
+								<Text
+									code
+									style={{ cursor: "pointer", color: "#1677ff" }}
+									onClick={() => {
+										const wf = pipelineLineage?.workflow_name;
+										if (wf) navigate(`/workflows/${encodeURIComponent(wf)}`);
+									}}
+								>
+									{pipelineLineage?.workflow_name}
+								</Text>
+							</Descriptions.Item>
+						)}
+						{pipelineLineage?.pipeline_name && (
+							<Descriptions.Item label="Pipeline">
+								<Text code>{pipelineLineage?.pipeline_name}</Text>
+							</Descriptions.Item>
+						)}
+						{pipelineLineage?.deployment_id && (
+							<Descriptions.Item label="部署 ID">
+								<Text code style={{ fontSize: 11 }}>
+									{pipelineLineage?.deployment_id}
+								</Text>
+							</Descriptions.Item>
+						)}
+						{pipelineLineage?.node_id && (
+							<Descriptions.Item label="节点">
+								<Text code>{pipelineLineage?.node_id}</Text>
+							</Descriptions.Item>
+						)}
+						{pipelineLineage?.produced_at && (
+							<Descriptions.Item label="产生时间">
+								<Text type="secondary">
+									{new Date(pipelineLineage?.produced_at).toLocaleString()}
+								</Text>
+							</Descriptions.Item>
+						)}
+					</Descriptions>
+					{pipelineLineage?.input_assets &&
+						pipelineLineage?.input_assets.length > 0 && (
+							<div style={{ marginTop: 8 }}>
+								<Text strong style={{ fontSize: 12 }}>
+									输入资产:
+								</Text>
+								<div
+									style={{
+										marginTop: 4,
+										display: "flex",
+										gap: 4,
+										flexWrap: "wrap",
+									}}
+								>
+									{pipelineLineage?.input_assets.map((aid) => (
+										<Tag
+											key={aid}
+											style={{
+												cursor: "pointer",
+												fontFamily: "monospace",
+												fontSize: 11,
+											}}
+											onClick={() =>
+												navigate(`/assets/${encodeURIComponent(aid)}`)
+											}
+										>
+											{aid.slice(0, 16)}...
+										</Tag>
+									))}
+								</div>
+							</div>
+						)}
+				</Card>
+			)}
+
 			{/* Upstream */}
 			<Card
 				size="small"
@@ -129,7 +237,7 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 						<RobotOutlined /> 算法处理
 					</Text>
 					{data.downstream.algo_results.length === 0 ? (
-						<div style={{ color: "#999", marginTop: 4, fontSize: 12 }}>
+						<div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
 							暂无算法结果
 						</div>
 					) : (
@@ -170,7 +278,7 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 						<SendOutlined /> 交付记录
 					</Text>
 					{data.downstream.deliveries.length === 0 ? (
-						<div style={{ color: "#999", marginTop: 4, fontSize: 12 }}>
+						<div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
 							暂无交付记录
 						</div>
 					) : (
@@ -205,7 +313,7 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 						<FundOutlined /> 评测结果
 					</Text>
 					{data.downstream.eval_results.length === 0 ? (
-						<div style={{ color: "#999", marginTop: 4, fontSize: 12 }}>
+						<div style={{ color: "#64748b", marginTop: 4, fontSize: 12 }}>
 							暂无评测结果
 						</div>
 					) : (

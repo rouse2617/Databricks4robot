@@ -27,8 +27,7 @@ describe("QuickFiltersRow", () => {
 				onRemoveFilter={() => {}}
 			/>,
 		);
-		expect(screen.getByText("快捷筛选")).toBeTruthy();
-		expect(screen.getByText("Ready 资产")).toBeTruthy();
+		expect(screen.getByText("Ready")).toBeTruthy();
 		expect(screen.getByText("算法失败")).toBeTruthy();
 		expect(screen.getByText("高优先级")).toBeTruthy();
 		expect(screen.getByText("未交付")).toBeTruthy();

@@ -3,16 +3,26 @@ package main
 import (
 	"context"
 
+	"cloud.google.com/go/storage"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
 	actionH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/action"
 	adminH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/admin"
+	algorunH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/algorun"
 	assetH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/asset"
+	backfillH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/backfill"
+	customerH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/customer"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
+	deliveryruleH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/deliveryrule"
 	evalH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/eval"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
+	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
@@ -28,15 +38,20 @@ type infra struct {
 	es              *espkg.Client
 	lake            lakehouse.Querier
 	mcapBytesSource mcapH.BytesSource // optional
+	gcsClient       *storage.Client   // optional; owns GCS client for mcapBytesSource
 
 	algoRegistry   *config.AlgoRegistry
 	tagRegistry    *config.TagRegistry
 	metricRegistry *config.MetricRegistry
 	queryFieldReg  *config.QueryFieldRegistry
 	actionLabelReg *config.ActionLabelRegistry
+	workflowClient argo.WorkflowClient
 }
 
 func (inf *infra) close() {
+	if inf.gcsClient != nil {
+		_ = inf.gcsClient.Close()
+	}
 	if inf.pg != nil {
 		inf.pg.Close()
 	}
@@ -60,14 +75,21 @@ type coreRepos struct {
 
 // coreHandlers groups all HTTP handlers that form the main API surface.
 type coreHandlers struct {
-	asset    *assetH.Handler
-	algo     *assetH.AlgoHandler
-	mcap     *mcapH.Handler
-	delivery *deliveryH.Handler
-	eval     *evalH.Handler
-	action   *actionH.Handler
-	query    *queryH.Handler
-	assetUC  *assetUC.Usecase
+	asset             *assetH.Handler
+	algo              *assetH.AlgoHandler
+	mcap              *mcapH.Handler
+	delivery          *deliveryH.Handler
+	customer          *customerH.Handler
+	deliveryRule      *deliveryruleH.Handler
+	algoRun           *algorunH.Handler
+	eval              *evalH.Handler
+	action            *actionH.Handler
+	query             *queryH.Handler
+	workflow          *workflowH.Handler
+	pipeline          *pipelineH.Handler
+	pipelineComponent *pipelineComponentH.Handler
+	backfill          *backfillH.Handler
+	assetUC           *assetUC.Usecase
 }
 
 // optional holds components that are not required for the core API to function.

@@ -17,6 +17,8 @@ var ErrOptimisticLock = errors.New("optimistic lock conflict: version mismatch")
 // connected database does not currently satisfy (usually missed migrations).
 var ErrSchemaMismatch = errors.New("database schema mismatch")
 
+var ErrIdempotencyConflict = errors.New("idempotency key conflict")
+
 // TxRunner runs the provided function inside a single transaction. Repos
 // dispatched within fn should be tx-aware (read tx from ctx) so that all
 // writes commit or roll back atomically. Required for event-stream correctness:
@@ -39,14 +41,19 @@ type McapFileRepository interface {
 type DeliveryRepository interface {
 	Set(ctx context.Context, d *models.Delivery) error
 	Get(ctx context.Context, deliveryID string) (*models.Delivery, error)
-	WriteIndexes(ctx context.Context, assetID string, d *models.Delivery) error
+	AddItems(ctx context.Context, deliveryID string, assetIDs []string) error
+	RefreshAssetDeliveryIndex(ctx context.Context, assetID string) error
 	ListByCustomer(ctx context.Context, customerID string) ([]string, error)
 	ListByAsset(ctx context.Context, assetID string) ([]string, error)
 	ListItems(ctx context.Context, deliveryID string) ([]*models.DeliveryItem, error)
 
-	// List returns a paginated list of deliveries, optionally filtered by status.
-	// status may be empty to return all deliveries.
-	List(ctx context.Context, page, pageSize int, status string) ([]*models.Delivery, int64, error)
+	// List returns a paginated list of deliveries, optionally filtered by status and customer_id.
+	// Empty status or customerID means no filter on that dimension.
+	List(ctx context.Context, page, pageSize int, status, customerID string) ([]*models.Delivery, int64, error)
+
+	// Update persists changes to an existing delivery using optimistic locking.
+	// Returns ErrOptimisticLock when expectedRowVersion does not match the current version.
+	Update(ctx context.Context, d *models.Delivery, expectedRowVersion int64) error
 }
 
 // IdempotencyRecord stores one idempotent request result.
@@ -61,16 +68,39 @@ type IdempotencyRecord struct {
 
 // IdempotencyRepository persists idempotency keys/results.
 type IdempotencyRepository interface {
+	Lock(ctx context.Context, scope, key string) error
 	Get(ctx context.Context, scope, key string) (*IdempotencyRecord, error)
 	Save(ctx context.Context, rec *IdempotencyRecord) error
+}
+
+// AssetTagUpsertInput captures the full identity + payload of a single
+// `asset_tags` write. As of CYB-1015 the row identity is
+// (asset_id, tag_key, tag_value, source_type, source_version) — multiple
+// sources may coexist on the same (asset_id, tag_key).
+type AssetTagUpsertInput struct {
+	AssetID       string
+	TagKey        string
+	TagValue      string
+	TagType       string
+	SourceType    string
+	SourceName    string
+	SourceVersion string
+	RunID         string
+	TenantID      string
+	ProjectID     string
 }
 
 // AssetTagRepository defines persistence operations for the asset_tags
 // projection table.
 type AssetTagRepository interface {
-	Upsert(ctx context.Context, assetID, tagKey, tagValue, tagType, sourceType string) error
+	// Upsert inserts or refreshes a single tag assertion. Idempotent on
+	// (asset_id, tag_key, tag_value, source_type, source_version).
+	Upsert(ctx context.Context, in AssetTagUpsertInput) error
 	ListByAsset(ctx context.Context, assetID string) ([]*models.AssetTag, error)
-	Delete(ctx context.Context, assetID, tagKey string) error
+	// Delete removes tag rows for (assetID, tagKey). When sourceType is the
+	// empty string all sources for the key are removed; otherwise only the
+	// matching source is deleted.
+	Delete(ctx context.Context, assetID, tagKey, sourceType string) error
 }
 
 // AssetAlgoLatestRepository is the source-of-truth store for per-algorithm
@@ -139,6 +169,8 @@ type AssetEventRepository interface {
 	// ordered by event_seq (outbox relay publishing horizon).
 	ListPendingSafe(ctx context.Context, safetyLag time.Duration, limit int) ([]*models.AssetEvent, error)
 	ListByAsset(ctx context.Context, assetID string, opts AssetEventListOptions) ([]*models.AssetEvent, error)
+	// ListVersionPromotedByLogical returns version_promoted events for all revisions in a family.
+	ListVersionPromotedByLogical(ctx context.Context, logicalAssetID string) ([]*models.AssetEvent, error)
 	// ListGlobal returns recent events across all assets, ordered by event_seq DESC.
 	// Used by the global events page (/events) for operational visibility.
 	ListGlobal(ctx context.Context, opts AssetEventListOptions) ([]*models.AssetEvent, error)
@@ -173,4 +205,16 @@ type OutboxDLQRepository interface {
 	MoveToDLQ(ctx context.Context, retryThreshold int) (int64, error)
 	// Count returns rows currently stored in outbox_dlq (archived failures).
 	Count(ctx context.Context) (int64, error)
+}
+
+// AssetUsageStatRepository persists per-asset engagement counters (CYB-1094).
+type AssetUsageStatRepository interface {
+	// RecordView increments view_count and sets last_viewed_at (CYB-1095).
+	// Idempotent on asset_id — upserts when no row exists.
+	RecordView(ctx context.Context, assetID string) error
+	// ToggleFavorite increments or decrements favorite_count and returns the
+	// new count (CYB-1096). Returns (newCount, nil).
+	ToggleFavorite(ctx context.Context, assetID string) (int, error)
+	// GetByAsset returns the usage stats for a given asset, or nil when no row exists.
+	GetByAsset(ctx context.Context, assetID string) (*models.AssetUsageStat, error)
 }

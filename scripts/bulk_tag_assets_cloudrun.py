@@ -5,10 +5,10 @@ Bulk-tag assets on Cloud Run dev using only public API:
   PATCH /api/v1/assets/{id} — body `{"tags": {...}}` updates several keys in one request
 
 Usage:
-  export GRACE_TOKEN=...   # or pass --token
+  export DATABREW_TOKEN=...   # or pass --token
   python3 scripts/bulk_tag_assets_cloudrun.py [--dry-run] [--workers 24]
 
-Requires: network to Cloud Run; token with same rights as X-Grace-Token.
+Requires: network to Cloud Run; token with same rights as X-Databrew-Token.
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def http_json(
 ) -> tuple[int, Any]:
     data = None
     headers = {
-        "X-Grace-Token": token,
+        "X-Databrew-Token": token,
         "Accept": "application/json",
     }
     if body is not None:
@@ -159,12 +159,12 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--max-assets", type=int, default=TARGET_IDS, help="number of assets to sample")
-    ap.add_argument("--token", default="", help="X-Grace-Token (else env GRACE_TOKEN)")
+    ap.add_argument("--token", default="", help="X-Databrew-Token (else env DATABREW_TOKEN)")
     args = ap.parse_args()
 
-    token = (args.token or "").strip() or __import__("os").environ.get("GRACE_TOKEN", "").strip()
+    token = (args.token or "").strip() or __import__("os").environ.get("DATABREW_TOKEN", "").strip()
     if not token:
-        print("ERROR: set GRACE_TOKEN or pass --token", file=sys.stderr)
+        print("ERROR: set DATABREW_TOKEN or pass --token", file=sys.stderr)
         return 2
 
     random.seed()

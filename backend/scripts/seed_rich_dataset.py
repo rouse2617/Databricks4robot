@@ -378,7 +378,7 @@ def get_client(base_url: str, token: str) -> httpx.Client:
     if c is None:
         c = httpx.Client(
             base_url=base_url,
-            headers={"X-Grace-Token": token, "Content-Type": "application/json"},
+            headers={"X-Databrew-Token": token, "Content-Type": "application/json"},
             timeout=httpx.Timeout(30.0, connect=5.0),
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
         )
@@ -706,7 +706,7 @@ def seed_bundle(bundle_idx: int, start_idx: int, count: int, base_url: str, toke
 def parse_args():
     p = argparse.ArgumentParser(description="Seed rich mock dataset (mcap + asset + tags + algo + eval metrics)")
     p.add_argument("--base", default=BASE, help="API base URL")
-    p.add_argument("--token", default=TOKEN, help="X-Grace-Token")
+    p.add_argument("--token", default=TOKEN, help="X-Databrew-Token")
     p.add_argument("--total", type=int, default=DEFAULT_TOTAL, help="Number of assets to create")
     p.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="Concurrency")
     p.add_argument("--sample-output", default="/tmp/seed_rich_sample.json", help="Write sample asset IDs JSON")

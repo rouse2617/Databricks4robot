@@ -62,7 +62,7 @@ class ApiClient:
     ) -> HttpResult:
         url = f"{self.base}{path}"
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        headers = {"X-Grace-Token": self.token}
+        headers = {"X-Databrew-Token": self.token}
         if data is not None:
             headers["Content-Type"] = "application/json"
         if extra_headers:
@@ -237,7 +237,7 @@ def main() -> int:
         default=os.environ.get("BASE", _dev_default),
         help="Backend base URL (default: hosted dev Cloud Run; override for local)",
     )
-    p.add_argument("--token", default=os.environ.get("TOKEN", "dev-token"), help="X-Grace-Token value")
+    p.add_argument("--token", default=os.environ.get("TOKEN", "dev-token"), help="X-Databrew-Token value")
     p.add_argument("--count", type=int, default=100, help="Number of full scenarios to run")
     p.add_argument("--concurrency", type=int, default=20, help="Parallel workers (ThreadPoolExecutor)")
     p.add_argument("--timeout", type=float, default=120.0, help="Per-request socket timeout (seconds)")

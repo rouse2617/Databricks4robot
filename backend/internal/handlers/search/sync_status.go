@@ -8,8 +8,9 @@ type SyncInfo struct {
 	OutboxRelayEnabled        bool `json:"outbox_relay_enabled"`
 	OutboxESSubscriberEnabled bool `json:"outbox_es_subscriber_enabled"`
 	// SearchIndexMode is one of: unavailable | outbox_es_subscriber | local_reconcile | manual
-	SearchIndexMode string `json:"search_index_mode"`
-	Env             string `json:"env,omitempty"`
+	SearchIndexMode    string `json:"search_index_mode"`
+	Env                string `json:"env,omitempty"`
+	AdminSearchEnabled bool   `json:"admin_search_enabled"`
 }
 
 // SyncProgress exposes runtime PG→ES sync progress signals.

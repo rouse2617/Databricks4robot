@@ -16,6 +16,7 @@ type Builder struct {
 	Algos   repository.AssetAlgoLatestRepository
 	Mcap    repository.McapFileRepository
 	Actions repository.ActionRepository // optional; nil disables actions[] projection
+	Lineage repository.AssetLineageRepository
 }
 
 // Build returns the document for an asset suitable for ES index API.
@@ -44,27 +45,31 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 	}
 
 	doc = map[string]any{
-		"asset_id":           a.AssetID,
-		"mcap_file_id":       a.McapFileID,
-		"segment_locator":    a.SegmentLocator,
-		"asset_type":         a.AssetType,
-		"lifecycle_state":    lifecycleState,
-		"status":             string(a.Status), // deprecated — retained during dual-write window (§5.8.1)
-		"is_deleted":         false,
-		"version":            a.Version,
-		"retention_tier":     a.RetentionTier,
-		"owner":              a.Owner,
-		"reviewer":           a.Reviewer,
-		"start_timestamp_ns": a.StartTimestampNs,
-		"end_timestamp_ns":   a.EndTimestampNs,
-		"duration_ms":        a.DurationMs,
-		"delivery_count":     a.DeliveryCount,
-		"asset_level":        a.AssetLevel,
-		"metadata":           meta,
-		"tags_flat":          map[string]any{},
-		"tags":               []map[string]any{},
-		"algos":              []map[string]any{},
-		"mcap":               map[string]any{},
+		"asset_id":               a.AssetID,
+		"mcap_file_id":           a.McapFileID,
+		"segment_locator":        a.SegmentLocator,
+		"asset_type":             a.AssetType,
+		"lifecycle_state":        lifecycleState,
+		"status":                 string(a.Status), // deprecated — retained during dual-write window (§5.8.1)
+		"is_deleted":             false,
+		"version":                a.Version,
+		"retention_tier":         a.RetentionTier,
+		"storage_uri":            a.StorageURI,
+		"owner":                  a.Owner,
+		"reviewer":               a.Reviewer,
+		"start_timestamp_ns":     a.StartTimestampNs,
+		"end_timestamp_ns":       a.EndTimestampNs,
+		"duration_ms":            a.DurationMs,
+		"delivery_count":         a.DeliveryCount,
+		"asset_level":            a.AssetLevel,
+		"metadata":               meta,
+		"tags_flat":              map[string]any{},
+		"tags":                   []map[string]any{},
+		"algos":                  []map[string]any{},
+		"mcap":                   map[string]any{},
+		"lineage_upstream_ids":   []string{},
+		"lineage_downstream_ids": []string{},
+		"lineage_relation_types": []string{},
 	}
 
 	if a.ParentAssetID != "" {
@@ -90,6 +95,13 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 	}
 	doc["created_at"] = a.CreatedAt.UTC().Format(time.RFC3339Nano)
 	doc["updated_at"] = a.UpdatedAt.UTC().Format(time.RFC3339Nano)
+
+	if a.LogicalAssetID != "" {
+		doc["logical_asset_id"] = a.LogicalAssetID
+		doc["revision"] = a.Revision
+		doc["is_current"] = a.IsCurrent
+	}
+	addTypedMetadataProjection(doc, a.AssetType, meta)
 
 	notes := ""
 	if v, exists := meta["notes"]; exists {
@@ -171,6 +183,18 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 		doc["recorded_at"] = time.Unix(0, a.StartTimestampNs).UTC().Format(time.RFC3339Nano)
 	}
 
+	if b.Lineage != nil {
+		projection, err := b.Lineage.GetLineageProjection(ctx, assetID)
+		if err != nil {
+			return nil, false, err
+		}
+		if projection != nil {
+			doc["lineage_upstream_ids"] = projection.UpstreamIDs
+			doc["lineage_downstream_ids"] = projection.DownstreamIDs
+			doc["lineage_relation_types"] = projection.RelationTypes
+		}
+	}
+
 	// actions[] nested: re-read the seg's full action set on every projection.
 	// CDC writes are at-least-once and reads are idempotent, so this is safe.
 	if b.Actions != nil {
@@ -214,4 +238,51 @@ func (b *Builder) Build(ctx context.Context, assetID string) (doc map[string]any
 	}
 
 	return doc, true, nil
+}
+
+func addTypedMetadataProjection(doc map[string]any, assetType string, meta map[string]any) {
+	switch assetType {
+	case "dataset":
+		projection := map[string]any{}
+		copyIfPresent(projection, meta, "format")
+		copyIfPresent(projection, meta, "record_count")
+		copyIfPresent(projection, meta, "size_bytes")
+		copyIfPresent(projection, meta, "annotation_status")
+		if len(projection) > 0 {
+			doc["dataset"] = projection
+		}
+	case "annotation_result":
+		projection := map[string]any{}
+		copyIfPresent(projection, meta, "tool")
+		copyIfPresent(projection, meta, "quality_score")
+		copyIfPresent(projection, meta, "coverage")
+		if len(projection) > 0 {
+			doc["annotation_result"] = projection
+		}
+	case "ml_model":
+		projection := map[string]any{}
+		copyIfPresent(projection, meta, "framework")
+		copyIfPresent(projection, meta, "architecture")
+		copyIfPresent(projection, meta, "metrics")
+		copyIfPresent(projection, meta, "quantization")
+		copyIfPresent(projection, meta, "artifact_uri")
+		if len(projection) > 0 {
+			doc["ml_model"] = projection
+		}
+	case "evaluation_report":
+		projection := map[string]any{}
+		copyIfPresent(projection, meta, "model_id")
+		copyIfPresent(projection, meta, "dataset_id")
+		copyIfPresent(projection, meta, "metrics")
+		copyIfPresent(projection, meta, "tool")
+		if len(projection) > 0 {
+			doc["evaluation_report"] = projection
+		}
+	}
+}
+
+func copyIfPresent(dst map[string]any, src map[string]any, key string) {
+	if value, ok := src[key]; ok {
+		dst[key] = value
+	}
 }

@@ -1,6 +1,17 @@
+```
+██████╗  █████╗ ████████╗ █████╗ ██████╗ ██████╗ ███████╗██╗    ██╗
+██╔══██╗██╔══██╗╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██╔════╝██║    ██║
+██║  ██║███████║   ██║   ███████║██████╔╝██████╔╝█████╗  ██║ █╗ ██║
+██║  ██║██╔══██║   ██║   ██╔══██║██╔══██╗██╔══██╗██╔══╝  ██║███╗██║
+██████╔╝██║  ██║   ██║   ██║  ██║██████╔╝██║  ██║███████╗╚███╔███╔╝
+╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝
+```
+
 # cyber-databrew（data-platform）
 
 面向视频 / 多模态**资产元数据、算法状态、检索与交付**的单进程后端 + Web / SDK 工程骨架；GitHub 主仓库为 [`CyberOrigin2077/cyber-databrew`](https://github.com/CyberOrigin2077/cyber-databrew)。
+
+> 贡献流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
 > **架构基线与评审文档**以 [`docs/review/README.md`](docs/review/README.md) 为准（当前 **2.0：PostgreSQL + Elasticsearch + BigQuery + Outbox CDC**）。本页只负责仓库导航与本地启动。
 
@@ -22,7 +33,7 @@
 | `backend/` | Go API（assets / mcap / deliveries / algo / search / lakehouse / admin） |
 | `services/mcap-preview/` | MCAP 预览服务（独立 Go 服务，HEVC/H.264 转码 + fMP4 流式） |
 | `Frontend/` | React + TypeScript 前端（card view / facets / preview pane / dashboard） |
-| `sdk/` | Python SDK（`asset_sdk`，httpx + pydantic，CRUD 已完成，OpenAPI 类型生成待迭代）；见 [`sdk/README.md`](sdk/README.md) |
+| `sdk/` | Python SDK（`cyber_databrew_sdk`，httpx + pydantic，CRUD 已完成，OpenAPI 类型生成待迭代）；见 [`sdk/README.md`](sdk/README.md) |
 | `deploy/local/` | Docker Compose：最小依赖、全栈、Iceberg；说明见 [`deploy/local/README.md`](deploy/local/README.md) |
 | `deploy/k8s/` | Kubernetes 清单（backend / frontend / mcap-preview / monitoring / gateway）；说明见 [`deploy/k8s/README.md`](deploy/k8s/README.md) |
 | `deploy/cloudrun/` | Cloud Run 部署脚本与配置 |
@@ -31,10 +42,12 @@
 | `schemas/` | SQL / 阶段 schema |
 | `api/openapi.yaml` | HTTP 契约（与实现一致的源） |
 | `docs/review/` | **评审与设计主文档包**（整体方案、schema 速查、API 指南、路线图） |
+| `docs/repo-wiki/` | 仓库 Wiki（Markdown，按 cyber-annotation repo-wiki 模板组织） |
 | `docs/agents/` | **AI 协作规范**（Cursor / Codex 共用，规则真相在此目录） |
 | `openspec/` | **Spec 驱动开发**：当前系统规格 + 每次变更的 proposal/design/tasks |
 | `docs/archive/` | 历史调研与旧版设计（仅供参考） |
 | `scripts/` | 运维与冒烟测试脚本 |
+| `CONTRIBUTING.md` | 贡献指南（分支 / 提交规范 / 测试 / 文档同步 / PR 流程） |
 
 各子模块细节见对应目录内的 README。
 
@@ -87,7 +100,7 @@ git checkout main   # 或你们约定的工作分支
 
 ```bash
 make dev-up
-cp backend/.env.example backend/.env   # 编辑 DB_*、GRACE_TOKEN 等
+cp backend/.env.example backend/.env   # 编辑 DB_*、DATABREW_TOKEN 等
 make backend-run                       # 另开终端: make frontend-dev
 ```
 
@@ -320,7 +333,7 @@ make dev-up
 
 ```bash
 cp backend/.env.example backend/.env
-# 按需编辑 DB_*、GRACE_TOKEN、ELASTICSEARCH_URL 等
+# 按需编辑 DB_*、DATABREW_TOKEN、ELASTICSEARCH_URL 等
 make backend-run
 ```
 
@@ -405,4 +418,4 @@ chmod +x .githooks/commit-msg
 - [x] 前端资产发现工作台（card view / facets / preview pane / dashboard）
 - [x] MCAP 预览服务（HEVC/H.264 转码 + fMP4 流式播放）
 - [x] Outbox CDC 同步主线（`asset_events` → relay → Pub/Sub → ES）
-- [ ] 生产级身份认证（当前 Phase 0：`X-Grace-Token`）
+- [ ] 生产级身份认证（当前 Phase 0：`X-Databrew-Token`）

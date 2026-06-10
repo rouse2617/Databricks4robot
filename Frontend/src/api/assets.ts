@@ -5,7 +5,14 @@ import {
 	type QuerySort,
 	queryApi,
 } from "./query";
-import type { AlgoEvent, Asset, AssetEvent, PaginatedResponse } from "./types";
+import type {
+	AlgoEvent,
+	Asset,
+	AssetEvent,
+	AssetProvenance,
+	PaginatedResponse,
+	PipelineLineage,
+} from "./types";
 
 export type { Asset };
 
@@ -131,6 +138,82 @@ function toAssetEvent(row: AssetEventRow): AssetEvent {
 	};
 }
 
+type AssetEventStreamCallback = {
+	onEvent?: (event: AssetEvent) => void;
+	onError?: (error: Event) => void;
+	onKeepAlive?: () => void;
+	onOpen?: () => void;
+};
+
+type StreamableEventSource = {
+	event_id?: string;
+	event_seq?: number | string;
+	event_type?: string;
+	asset_id?: string;
+	event_payload?: Record<string, unknown>;
+	occurred_at?: string;
+};
+
+function parseStreamEvent(payload: unknown): AssetEvent | null {
+	if (!payload || typeof payload !== "object") return null;
+	const obj = payload as StreamableEventSource;
+	const eventSeq =
+		typeof obj.event_seq === "number"
+			? obj.event_seq
+			: Number(obj.event_seq ?? 0) || 0;
+	const occurredAt =
+		typeof obj.occurred_at === "string"
+			? obj.occurred_at
+			: new Date().toISOString();
+	return {
+		event_id: obj.event_id ?? `stream-${eventSeq}`,
+		event_seq: eventSeq,
+		event_type: obj.event_type ?? "unknown",
+		payload_schema_version: undefined,
+		asset_id: obj.asset_id ?? "",
+		mcap_file_id: undefined,
+		event_source: undefined,
+		request_id: undefined,
+		publish_state: undefined,
+		event_payload: obj.event_payload,
+		created_at: occurredAt,
+		occurred_at: occurredAt,
+	};
+}
+
+function makeEventStreamUrl(path: string): string {
+	const base = apiClient.defaults.baseURL ?? "/api/v1";
+	return new URL(path, new URL(base, window.location.origin)).toString();
+}
+
+function streamAssetEvents(
+	url: string,
+	callbacks: AssetEventStreamCallback = {},
+): () => void {
+	const es = new EventSource(url, { withCredentials: true });
+	es.addEventListener("open", () => {
+		callbacks.onOpen?.();
+	});
+	es.addEventListener("message", (evt) => {
+		if (evt.type === "keepalive" || evt.data?.trim() === "") {
+			callbacks.onKeepAlive?.();
+			return;
+		}
+		try {
+			const parsed = parseStreamEvent(JSON.parse(evt.data));
+			if (parsed) {
+				callbacks.onEvent?.(parsed);
+			}
+		} catch {
+			// Ignore malformed SSE payloads.
+		}
+	});
+	es.addEventListener("error", (evt) => {
+		callbacks.onError?.(evt);
+	});
+	return () => es.close();
+}
+
 type EventListResponse = {
 	items: AssetEvent[];
 	next_cursor?: number;
@@ -210,12 +293,24 @@ export const assetsApi = {
 
 	delete: (id: string) => apiClient.delete(`/assets/${id}`).then((r) => r.data),
 
-	upsertTag: (assetId: string, body: { key: string; value: string }) =>
+	upsertTag: (
+		assetId: string,
+		body: {
+			key: string;
+			value: string;
+			source_type?: string;
+			source_name?: string;
+			source_version?: string;
+			run_id?: string;
+		},
+	) =>
 		apiClient.post<Asset>(`/assets/${assetId}/tags`, body).then((r) => r.data),
 
-	deleteTag: (assetId: string, key: string) =>
+	deleteTag: (assetId: string, key: string, sourceType?: string) =>
 		apiClient
-			.delete<Asset>(`/assets/${assetId}/tags/${encodeURIComponent(key)}`)
+			.delete<Asset>(`/assets/${assetId}/tags/${encodeURIComponent(key)}`, {
+				params: sourceType ? { source_type: sourceType } : undefined,
+			})
 			.then((r) => r.data),
 
 	// ─── Delivery association ───
@@ -292,6 +387,28 @@ export const assetsApi = {
 				next_cursor: r.next_cursor,
 				limit: r.limit,
 			})),
+
+	streamForAsset: (assetId: string, callbacks?: AssetEventStreamCallback) =>
+		streamAssetEvents(
+			makeEventStreamUrl(
+				`/assets/${encodeURIComponent(assetId)}/events/stream`,
+			),
+			callbacks,
+		),
+
+	streamGlobalEvents: (
+		callbacks?: AssetEventStreamCallback,
+		fallbackAssetId?: string,
+	) =>
+		fallbackAssetId
+			? streamAssetEvents(
+					makeEventStreamUrl(
+						`/assets/${encodeURIComponent(fallbackAssetId)}/events/stream`,
+					),
+					callbacks,
+				)
+			: streamAssetEvents(makeEventStreamUrl("/events/stream"), callbacks),
+
 	listGlobalEvents: (params?: {
 		event_type?: string;
 		cursor?: number;
@@ -318,5 +435,13 @@ export const assetsApi = {
 					eval_results?: Array<Record<string, unknown>>;
 				};
 			}>(`/assets/${assetId}/lineage`)
+			.then((r) => r.data),
+	getPipelineLineage: (assetId: string) =>
+		apiClient
+			.get<PipelineLineage>(`/assets/${assetId}/pipeline-lineage`)
+			.then((r) => r.data),
+	getProvenance: (assetId: string) =>
+		apiClient
+			.get<AssetProvenance>(`/assets/${assetId}/provenance`)
 			.then((r) => r.data),
 };

@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/config"
 	espkg "github.com/CyberOrigin2077/cyber-databrew/internal/elasticsearch"
@@ -27,6 +28,10 @@ func setupInfra() *infra {
 	}
 
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		slog.Error("config validation failed", "err", err)
+		os.Exit(1)
+	}
 
 	validate.RegisterCustomValidators()
 
@@ -93,17 +98,21 @@ func setupInfra() *infra {
 	}
 
 	// ── Optional: GCS bytes source for MCAP proxy ──
-	var mcapBytesSource mcapH.BytesSource
+	var (
+		mcapBytesSource mcapH.BytesSource
+		gcsClient       *storage.Client
+	)
 	{
-		gcsClient, err := storage.NewClient(ctx)
+		client, err := storage.NewClient(ctx)
 		if err != nil {
 			slog.Warn("gcs client unavailable; mcap bytes proxy disabled", "err", err)
 		} else {
-			defer func() { _ = gcsClient.Close() }()
-			src, srcErr := mcapH.NewGCSBytesSource(gcsClient)
+			src, srcErr := mcapH.NewGCSBytesSource(client)
 			if srcErr != nil {
 				slog.Warn("gcs bytes source init failed; mcap bytes proxy disabled", "err", srcErr)
+				_ = client.Close()
 			} else {
+				gcsClient = client
 				mcapBytesSource = src
 			}
 		}
@@ -119,6 +128,13 @@ func setupInfra() *infra {
 		slog.Warn("lakehouse query layer disabled or unhealthy",
 			"backend", st.Backend, "error", st.Error)
 	}
+
+	// ── Argo Workflows client ──
+	argoCfg := argo.ConfigFromEnv()
+	workflowClient := argo.NewClientFromConfig(argoCfg)
+	slog.Info("argo workflow client configured",
+		"server_url_set", argoCfg.ServerURL != "",
+		"namespace", cfg.ArgoWorkflowsNamespace)
 
 	// ── Optional: Elasticsearch ──
 	var esClient *espkg.Client
@@ -139,10 +155,12 @@ func setupInfra() *infra {
 		es:              esClient,
 		lake:            lakeClient,
 		mcapBytesSource: mcapBytesSource,
+		gcsClient:       gcsClient,
 		algoRegistry:    algoRegistry,
 		tagRegistry:     tagRegistry,
 		metricRegistry:  metricRegistry,
 		queryFieldReg:   queryFieldReg,
 		actionLabelReg:  actionLabelReg,
+		workflowClient:  workflowClient,
 	}
 }

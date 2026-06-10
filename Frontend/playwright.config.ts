@@ -12,22 +12,22 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./e2e",
-  outputDir: "./e2e/test-results",
-  timeout: 30_000,
-  retries: 1,
-  reporter: [["html", { outputFolder: "e2e/report" }], ["list"]],
+	testDir: "./e2e",
+	outputDir: "./e2e/test-results",
+	timeout: 30_000,
+	retries: 1,
+	reporter: [["html", { outputFolder: "e2e/report" }], ["list"]],
 
-  use: {
-    baseURL: process.env.E2E_BASE_URL || "http://localhost:5173",
-    screenshot: "only-on-failure",
-    trace: "on-first-retry",
-  },
+	use: {
+		baseURL: process.env.E2E_BASE_URL || "http://localhost:5173",
+		screenshot: "only-on-failure",
+		trace: "on-first-retry",
+	},
 
-  projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-    },
-  ],
+	projects: [
+		{
+			name: "chromium",
+			use: { ...devices["Desktop Chrome"] },
+		},
+	],
 });

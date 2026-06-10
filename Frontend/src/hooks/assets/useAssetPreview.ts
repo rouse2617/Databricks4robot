@@ -52,10 +52,10 @@ function buildSegmentPreviewUrl(
 	if (opts?.previewTopic) {
 		q.set("topic", opts.previewTopic);
 	}
-	const graceToken = readCookieValue("grace_session");
+	const graceToken = readCookieValue("databrew_session");
 	if (graceToken) {
-		// <video> cannot set X-Grace-Token; backend supports query fallback.
-		q.set("grace_token", graceToken);
+		// <video> cannot set X-Databrew-Token; backend supports query fallback.
+		q.set("databrew_token", graceToken);
 	}
 	const qs = q.toString();
 	return qs ? `${path}?${qs}` : path;

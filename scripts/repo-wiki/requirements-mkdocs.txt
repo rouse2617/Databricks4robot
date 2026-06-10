@@ -1,0 +1,10 @@
+# Dependencies for the fancy MkDocs Material view of the repo-wiki.
+# Generate the config from the manifest, then serve/build:
+#   python3 scripts/repo-wiki/gen_mkdocs.py
+#   mkdocs serve            # http://localhost:8000
+#   mkdocs build            # -> docs/repo-wiki-site/ (gitignored)
+# Source of truth remains the markdown under docs/repo-wiki/.
+mkdocs-material>=9.5
+pymdown-extensions>=10.7
+# Used directly by gen_mkdocs.py and scaffold.py (also a transitive mkdocs dep).
+pyyaml>=6.0

@@ -35,7 +35,7 @@ func TestBuildSearchBody_NestedTagsAndDurationBetween(t *testing.T) {
 		`"scene"`,
 		`"tags.value"`,
 		`"highway"`,
-		`"multi_match"`,
+		`"minimum_should_match"`,
 		`"duration_ms"`,
 		`"gte":"9000"`,
 		`"lte":"11000"`,
@@ -140,6 +140,35 @@ func TestBuildSearchBody_NestedActionsFilter(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %q in body: %s", want, s)
 		}
+	}
+}
+
+func TestBuildSearchBody_AssetIDsTermsFilter(t *testing.T) {
+	req := SearchRequest{
+		AssetIDs: []string{"asset-b", "asset-a", "asset-b"},
+		Page:     1,
+		PageSize: 20,
+	}
+	body := buildSearchBody(req)
+	query := body["query"].(map[string]any)
+	boolQuery := query["bool"].(map[string]any)
+	filters := boolQuery["filter"].([]map[string]any)
+	found := false
+	for _, clause := range filters {
+		terms, ok := clause["terms"].(map[string]any)
+		if !ok {
+			continue
+		}
+		values, ok := terms["asset_id"].([]any)
+		if !ok {
+			continue
+		}
+		if len(values) == 2 && values[0] == "asset-b" && values[1] == "asset-a" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing asset_id terms filter: %#v", body)
 	}
 }
 

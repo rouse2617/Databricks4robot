@@ -947,7 +947,7 @@ def main() -> int:
         help="Read-only Postgres DSN to collector-db. Env COLLECTOR_PG_DSN if flag omitted. Ignored when --videos-jsonl is set.",
     )
     ap.add_argument("--base-url", default=os.environ.get("DATABREW_BASE_URL", "").rstrip("/"))
-    ap.add_argument("--token", default=os.environ.get("GRACE_TOKEN", ""))
+    ap.add_argument("--token", default=os.environ.get("DATABREW_TOKEN", ""))
     ap.add_argument("--reviewer", required=True)
     ap.add_argument("--owner", default="")
     ap.add_argument("--import-batch", required=True)
@@ -1006,14 +1006,14 @@ def main() -> int:
         print("Set --base-url or DATABREW_BASE_URL", file=sys.stderr)
         return 2
     if not args.token:
-        print("Set --token or GRACE_TOKEN", file=sys.stderr)
+        print("Set --token or DATABREW_TOKEN", file=sys.stderr)
         return 2
     if args.videos_only and assets_only:
         print("--videos-only and --assets-only are mutually exclusive.", file=sys.stderr)
         return 2
 
     ctx = ssl.create_default_context()
-    headers = {"X-Grace-Token": args.token, "Content-Type": "application/json"}
+    headers = {"X-Databrew-Token": args.token, "Content-Type": "application/json"}
     owner = args.owner or args.reviewer
 
     t_run0 = time.perf_counter()

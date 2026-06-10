@@ -180,7 +180,7 @@ defs = dg.Definitions(
         "ray_cluster": _ray_resource,
         "grace": GraceResource(                    # 新增
             base_url=os.getenv("GRACE_BASE_URL", "http://localhost:8080"),
-            token=os.getenv("GRACE_TOKEN", "dev-token"),
+            token=os.getenv("DATABREW_TOKEN", "dev-token"),
         ),
     },
 )
@@ -450,7 +450,7 @@ def pending_algo_sensor(context: dg.SensorEvaluationContext):
 
     client = GraceClient(
         base_url=os.getenv("GRACE_BASE_URL", "http://localhost:8080"),
-        token=os.getenv("GRACE_TOKEN", "dev-token"),
+        token=os.getenv("DATABREW_TOKEN", "dev-token"),
     )
 
     for algo_key, job_name in ALGO_JOB_MAP.items():
@@ -529,7 +529,7 @@ defs = dg.Definitions(
         "ray_cluster": _ray_resource,
         "grace": GraceResource(
             base_url=os.getenv("GRACE_BASE_URL", "http://localhost:8080"),
-            token=os.getenv("GRACE_TOKEN", "dev-token"),
+            token=os.getenv("DATABREW_TOKEN", "dev-token"),
         ),
     },
 )
@@ -549,7 +549,7 @@ cd tekton-playground/dagster_playground
 export DAGSTER_HOME=/tmp/dagster_demo
 export DAGSTER_ENV=local
 export GRACE_BASE_URL=http://localhost:8080
-export GRACE_TOKEN=dev-token
+export DATABREW_TOKEN=dev-token
 mkdir -p "$DAGSTER_HOME"
 uv run dagster dev -m src.definitions --port 3333
 ```

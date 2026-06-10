@@ -35,7 +35,13 @@ func (r *reindexAssetRepo) SoftDelete(context.Context, string) error { return ni
 func (r *reindexAssetRepo) ListByMcapFile(context.Context, string) ([]*models.Asset, error) {
 	return nil, nil
 }
+func (r *reindexAssetRepo) ListByLogicalAssetID(context.Context, string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *reindexAssetRepo) WriteSegmentIndex(context.Context, *models.Asset) error { return nil }
+func (r *reindexAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.Asset, error) {
+	return nil, nil
+}
 func (r *reindexAssetRepo) ListWithFilters(_ context.Context, _ string, _ []interface{}, page, pageSize int, _ filter.OrderByClause) ([]*models.Asset, int64, error) {
 	start := (page - 1) * pageSize
 	if start >= len(r.list) {
@@ -50,13 +56,13 @@ func (r *reindexAssetRepo) ListWithFilters(_ context.Context, _ string, _ []inte
 
 type reindexTagRepo struct{}
 
-func (r *reindexTagRepo) Upsert(context.Context, string, string, string, string, string) error {
+func (r *reindexTagRepo) Upsert(context.Context, repository.AssetTagUpsertInput) error {
 	return nil
 }
 func (r *reindexTagRepo) ListByAsset(context.Context, string) ([]*models.AssetTag, error) {
 	return []*models.AssetTag{}, nil
 }
-func (r *reindexTagRepo) Delete(context.Context, string, string) error { return nil }
+func (r *reindexTagRepo) Delete(context.Context, string, string, string) error { return nil }
 
 type reindexAlgoRepo struct{}
 

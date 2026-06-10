@@ -12,11 +12,11 @@ spec:
       image: python:3.11-slim
       imagePullPolicy: IfNotPresent
       env:
-        - name: GRACE_TOKEN
+        - name: DATABREW_TOKEN
           valueFrom:
             secretKeyRef:
               name: cyber-databrew-secrets
-              key: GRACE_TOKEN
+              key: DATABREW_TOKEN
       volumeMounts:
         - name: seed-script
           mountPath: /scripts
@@ -28,7 +28,7 @@ spec:
           python -m pip install --no-cache-dir httpx &&
           python -u /scripts/seed_rich_dataset.py
           --base "http://cyber-databrew-backend.cyber-databrew-dev.svc.cluster.local"
-          --token "$GRACE_TOKEN"
+          --token "$DATABREW_TOKEN"
           --total 500
           --workers 20
           --sample-output /tmp/seed_rich_sample_500_pod.json

@@ -40,7 +40,7 @@ func main() {
 
 	r := server.New(server.Config{
 		UpstreamBaseURL:       cfg.UpstreamBaseURL,
-		GraceTokenPassthrough: cfg.GraceTokenPassthrough,
+		DatabrewTokenPassthrough: cfg.DatabrewTokenPassthrough,
 		HTTPClient:            &http.Client{Timeout: 15 * time.Second},
 		OpenMCAP:              openMCAP,
 		StrictWindowValidation: cfg.StrictWindowValidation,
@@ -62,7 +62,7 @@ func main() {
 type appConfig struct {
 	Port                  string
 	UpstreamBaseURL       string
-	GraceTokenPassthrough bool
+	DatabrewTokenPassthrough bool
 	GCSPageSizeBytes      int64
 	GCSPageCacheBytes     int64
 	LogLevel              string
@@ -74,7 +74,7 @@ func loadEnv() appConfig {
 	return appConfig{
 		Port:                  envOr("PORT", "8090"),
 		UpstreamBaseURL:       strings.TrimRight(envOr("UPSTREAM_BASE_URL", ""), "/"),
-		GraceTokenPassthrough: envOr("GRACE_TOKEN_PASSTHROUGH", "true") != "false",
+		DatabrewTokenPassthrough: envOr("DATABREW_TOKEN_PASSTHROUGH", "true") != "false",
 		GCSPageSizeBytes:      envInt64("GCS_PAGE_SIZE_BYTES", gcsrs.DefaultPageSize),
 		GCSPageCacheBytes:     envInt64("GCS_PAGE_CACHE_BYTES", gcsrs.DefaultCacheBytes),
 		LogLevel:              envOr("LOG_LEVEL", "info"),

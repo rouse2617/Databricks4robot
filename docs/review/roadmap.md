@@ -49,23 +49,25 @@ Failure Mining  → 日常体验完备化  → 规模化支撑       → 数据�
 
 | 场景 | 定义文件 | 触发条件（简写） | 结果 |
 |---|---|---|---|
-| Dev 后端自动部署 | `.tekton/push-backend-cloudrun-dev.yaml` | `push` 且分支非 `main`，路径命中 `backend/**` or `deploy/cloudrun/**` or 该 YAML | build + push backend 镜像，deploy `cyber-databrew-backend-dev` |
-| Dev 前端自动部署 | `.tekton/push-frontend-cloudrun-dev.yaml` | `push` 且分支非 `main`，路径命中 `Frontend/**` or `deploy/cloudrun/**` or 该 YAML | build + push frontend 镜像，deploy `cyber-databrew-frontend-dev` |
-| Prod 后端 | `.tekton/push-backend-cloudrun-prod.yaml` | PR 评论 **`/deploy-cloudrun-prod-backend`**（PR → `main`） | build + push；若 `cyber-databrew-backend-prod` 存在则 deploy，否则仅推镜像 |
-| Prod 前端 | `.tekton/push-frontend-cloudrun-prod.yaml` | PR 评论 **`/deploy-cloudrun-prod-frontend`**（PR → `main`） | build + push；若 `cyber-databrew-frontend-prod` 存在则 deploy，否则仅推镜像 |
-| PR 评论触发（仅后端 dev） | `.tekton/deploy-cloudrun-dev.yaml` | PR 指向 `main`，评论精确 `/deploy-cloudrun-dev`，且路径命中 `backend/**`/`deploy/cloudrun/**` | build + deploy `cyber-databrew-backend-dev` |
+| Dev 后端 **手动** 部署 | `.tekton/deploy-cloudrun-dev.yaml` | PR → `main`/`dev`，评论 `/deploy-cloudrun-dev`，路径命中 `backend/**` 等 | build + deploy `cyber-databrew-backend-dev` |
+| Dev 后端 push 自动 | `.tekton/push-backend-cloudrun-dev.yaml` | **已关闭**（`on-cel-expression: false`） | 仅保留 Pipeline 定义；改用评论或本地 deploy |
+| Dev 前端 push 自动 | `.tekton/push-frontend-cloudrun-dev.yaml` | **已关闭** | 本地 `frontend-dev.sh` 或后续加前端评论流水线 |
+| Dev GKE push（legacy） | `.tekton/push-dev.yaml` | **已关闭** | 曾 push `dev` 分支 rollout GKE；现用手动 `/deploy-dev` 或 Cloud Run 路径 |
+| Prod 后端（main） | `.tekton/push-backend-cloudrun-prod.yaml` | `push` 到 `main`，路径命中 `backend/**` / `deploy/cloudrun/**` / 该 YAML | build + push；若 `cyber-databrew-backend-prod` 存在则 deploy，否则仅推镜像 |
+| Prod 前端（main） | `.tekton/push-frontend-cloudrun-prod.yaml` | `push` 到 `main`，路径命中 `Frontend/**` / `deploy/cloudrun/**` / 该 YAML | build + push；若 `cyber-databrew-frontend-prod` 存在则 deploy，否则仅推镜像 |
+| PR 评论触发（仅后端 dev） | `.tekton/deploy-cloudrun-dev.yaml` | PR 指向 `main` 或 `dev`，评论 `/deploy-cloudrun-dev`，路径命中 `backend/**` 等 | build + deploy `cyber-databrew-backend-dev` |
 
 ### 关键约束（避免误触发）
 
-1. 修改 `deploy/cloudrun/**` 时，通常会**同时触发后端 + 前端 dev** 两条流水线。
-2. 只想部署后端时，尽量只改 `backend/**` 或后端 `.tekton` 文件；避免顺手改 `deploy/cloudrun/**`。
-3. 只想部署前端时，改动应落在 `Frontend/**`（目录大小写必须是大写 `F`）。
-4. Dev：PAC 闭环为 `git push` → PipelineRun；**Prod**：在 PR（→ `main`）评论 `/deploy-cloudrun-prod-*` → PipelineRun（merge 不自动触发）。本地 deploy 仅作临时验证，不作为团队交付基线。
+1. **`git push` 到 `dev` / feature 分支不会自动部署 Cloud Run dev**（2026-05 起）。
+2. 部署 dev 后端：**PR 评论** `/deploy-cloudrun-dev`，或 Agent/开发者按 `docs/agents/deploy-before-commit.md` 本地 build + `backend-dev.sh`。
+3. Prod 仍可在 **`main` push** 时由 `push-*-cloudrun-prod.yaml` 自动 build（及 deploy，若服务存在）。
+4. 修改 `.tekton/*.yaml` 本身不会触发 deploy（push 触发已关）；合并后 PAC 重新加载定义即可。
 
 ### Agent / 开发者标准动作
 
 1. 先读本次改动对应的 `.tekton/*.yaml`，确认会触发哪条流水线。
-2. Dev：提交并 `git push` 到非 `main` 分支（路径命中则自动部署 dev）。Prod：merge 后在本 PR 评论 `/deploy-cloudrun-prod-backend` 和/或 `/deploy-cloudrun-prod-frontend`（见上表）。
+2. 提交并 `git push` 到目标分支（dev: 非 `main`；prod: `main`）。
 3. 观察 `tekton-pipelines` 命名空间中的 PipelineRun：
    - `kubectl get pipelinerun -n tekton-pipelines`
    - 失败时看失败 TaskRun（典型是 `build-and-push` 或 `deploy-cloudrun-*`）。
@@ -300,7 +302,7 @@ P2 解决"不止一个团队在用"时的问题——权限、多租户、SDK �
 
 | 子项 | 描述 |
 |------|------|
-| Middleware 解析 | `X-Grace-Token` → 查 token→tenant 映射表（简单方案，等 OIDC 后再切） |
+| Middleware 解析 | `X-Databrew-Token` → 查 token→tenant 映射表（简单方案，等 OIDC 后再切） |
 | Repository 过滤 | 所有 `SELECT` 追加 `AND tenant_id = $ctxTenant` |
 | 写路径约束 | `INSERT/UPDATE/DELETE` + outbox 事件写入同样强制 tenant 绑定，禁止跨租户写入 |
 | 存量数据迁移 | 所有 `tenant_id IS NULL` 的行 → 单次 migration 写入 `'default'` |
@@ -546,7 +548,7 @@ BigQuery 聚合：对比两个版本的 quality 分布 / failure_rate / avg_metr
 1. 本地 build + lint + test（质量门禁全部通过）
 2. 运行部署脚本（后端/前端 → Cloud Run dev）
 3. 在线 smoke test
-   后端：curl -H "X-Grace-Token: dev-token" "<endpoint>"
+   后端：curl -H "X-Databrew-Token: dev-token" "<endpoint>"
    前端：Chrome MCP 浏览器走查（navigate → snapshot → 交互验证）
 4. 你确认 OK
 5. git commit + push（Tekton CI 自动再部署一次，覆盖即可）
@@ -570,7 +572,7 @@ BigQuery 聚合：对比两个版本的 quality 分布 / failure_rate / avg_metr
 
 ```
 # 后端 dev
-curl -s -H "X-Grace-Token: dev-token" \
+curl -s -H "X-Databrew-Token: dev-token" \
   "https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app/api/v1/<path>"
 
 # 前端 dev
@@ -585,6 +587,7 @@ https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app/<page>
 
 ### 契约纪律
 
+- **新/改 API → 完整契约同步**（OpenAPI、api-guide、smoke、SDK 等）— 清单见 [`docs/agents/AI-RULES.md` § API contract sync](../agents/AI-RULES.md#api-contract-sync-mandatory)
 - **新/改 API → 同步 `api/openapi.yaml`**。SDK types 未自动生成前，手写类型需与 OpenAPI 一致
 - **修改 `asset_events` 的事件类型 → 同步 `backend/schemas/events/` JSON Schema + `registry.json`**
   - 加可选字段：直接改现有 `.vN.json`；加必填字段：新建 `.vN+1.json`
@@ -598,7 +601,7 @@ https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app/<page>
 
 ### 安全红线
 
-- 仍然用 `X-Grace-Token`（Phase 0），**禁止**新增 bypass auth 的公开端点
+- 仍然用 `X-Databrew-Token`（Phase 0），**禁止**新增 bypass auth 的公开端点
 - 内部端点放 `/internal/*`，管理端点放 `/admin/*`
 - Idempotency-Key：`POST /deliveries` 和 `POST /deliveries/batch` 共享 namespace
 - 错误响应统一信封：`{ "code": "...", "message": "...", "request_id": "...", "details": {...} }`
@@ -616,7 +619,7 @@ dev 环境 URL：
 ```
 前端：https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app
 后端：https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app
-鉴权：X-Grace-Token: <dev GRACE_TOKEN>
+鉴权：X-Databrew-Token: <dev DATABREW_TOKEN>
 ```
 
 #### 标准验证流程（单页面）
@@ -638,7 +641,7 @@ dev 环境 URL：
 | **P0-T3** Dashboard 饼图 | 1. navigate → `/dashboard` 2. take_snapshot → 确认"近 7 天失败模式分布"卡片出现 3. 检查：有数据时饼图展示；无数据时 Empty state 不报红 4. list_console_messages → 无 JS error |
 | **P0-T4** 算法矩阵按钮 | 1. navigate → `/algo` 2. take_snapshot → 确认"重试当前页失败"按钮文案正确 3. 通过筛选调到有失败行的页面 → 按钮应显示计数且可点击 4. click 按钮 → 确认弹窗出现 |
 | **P0-T6** 事件流默认加载 | 1. navigate → `/events` 2. take_snapshot → 确认无"请先输入 Asset ID"提示，直接展示事件列表 3. 确认"加载更多"按钮存在 4. click → 追加数据，无重复 5. 输入 Asset ID → 确认可切换为单资产视图书签 |
-| **P0-T1/T2** 后端 | 用 curl 验证（无法用浏览器直测）：`curl -H "X-Grace-Token: $token" "$BACKEND/api/v1/lakehouse/failure-clusters?days=7"` → 返回 JSON 含 `items[]` |
+| **P0-T1/T2** 后端 | 用 curl 验证（无法用浏览器直测）：`curl -H "X-Databrew-Token: $token" "$BACKEND/api/v1/lakehouse/failure-clusters?days=7"` → 返回 JSON 含 `items[]` |
 
 #### P1 验证脚本
 

@@ -1,5 +1,5 @@
 [project]
-name = "asset-sdk"
+name = "cyber-databrew-sdk"
 dynamic = ["version"]
 description = "Python SDK for the cyber-databrew platform"
 readme = "README.md"
@@ -11,6 +11,10 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "types-python-dateutil>=2.9.0",
 ]
+
+[project.optional-dependencies]
+yaml = ["pyyaml>=6.0"]
+otel = ["opentelemetry-api>=1.28"]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -26,10 +30,10 @@ local_scheme = "no-local-version"
 fallback_version = "0.0.0"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "src/asset_sdk/_version.py"
+version-file = "src/cyber_databrew_sdk/_version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/asset_sdk"]
+packages = ["src/cyber_databrew_sdk"]
 
 [dependency-groups]
 dev = [
@@ -39,6 +43,9 @@ dev = [
     "respx>=0.21",         # httpx mock
     "ruff>=0.11",
     "mypy>=1.10",
+    "twine>=6.2.0",
+    "keyring>=25.7.0",
+    "keyrings-google-artifactregistry-auth>=1.1.2",
 ]
 
 [tool.ruff]
@@ -50,8 +57,18 @@ indent-width = 4
 select = ["F", "E", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "BLE", "PERF", "RUF"]
 fixable = ["ALL"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/cyber_databrew_sdk/_version.py" = ["RUF022"]
+"src/cyber_databrew_sdk/_generated/*" = ["ALL"]
+
+[tool.mypy]
+exclude = [
+    "src/cyber_databrew_sdk/_generated/",
+    "src/cyber_databrew_sdk/_version.py",
+]
+
 [tool.ruff.lint.isort]
-known-first-party = ["asset_sdk"]
+known-first-party = ["cyber_databrew_sdk"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -64,6 +64,42 @@ _es_curl -X PUT "${OS_URL}/assets" \
 
       "metadata":           { "type": "flattened" },
 
+      "dataset": {
+        "properties": {
+          "format":             { "type": "keyword" },
+          "record_count":       { "type": "long" },
+          "size_bytes":         { "type": "long" },
+          "annotation_status":  { "type": "keyword" }
+        }
+      },
+
+      "annotation_result": {
+        "properties": {
+          "tool":           { "type": "keyword" },
+          "quality_score":  { "type": "double" },
+          "coverage":       { "type": "double" }
+        }
+      },
+
+      "ml_model": {
+        "properties": {
+          "framework":    { "type": "keyword" },
+          "architecture": { "type": "keyword" },
+          "metrics":      { "type": "flattened" },
+          "quantization": { "type": "keyword" },
+          "artifact_uri": { "type": "keyword" }
+        }
+      },
+
+      "evaluation_report": {
+        "properties": {
+          "model_id":   { "type": "keyword" },
+          "dataset_id": { "type": "keyword" },
+          "metrics":    { "type": "flattened" },
+          "tool":       { "type": "keyword" }
+        }
+      },
+
       "owner":              { "type": "keyword", "fields": { "text": { "type": "text" } } },
       "reviewer":           { "type": "keyword", "fields": { "text": { "type": "text" } } },
       "notes":              { "type": "text" },
@@ -83,6 +119,14 @@ _es_curl -X PUT "${OS_URL}/assets" \
       "parent_asset_id":    { "type": "keyword" },
       "root_asset_id":      { "type": "keyword" },
       "asset_level":        { "type": "integer" },
+
+      "lineage_upstream_ids":   { "type": "keyword" },
+      "lineage_downstream_ids": { "type": "keyword" },
+      "lineage_relation_types": { "type": "keyword" },
+
+      "logical_asset_id":   { "type": "keyword" },
+      "revision":           { "type": "long" },
+      "is_current":         { "type": "boolean" },
 
       "mcap": {
         "properties": {

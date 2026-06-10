@@ -11,6 +11,7 @@ Skills are reusable expert workflows. Read and follow the SKILL.md file when a m
 | Creating or modifying OpenSpec artifacts | spec-writing (in-repo doc) | [`spec-writing-skill.md`](spec-writing-skill.md) |
 | Before commit / deploy OK /「完成」claims | verification-before-completion — run commands, cite SHA tag + revision evidence | [`skills/verification-before-completion/SKILL.md`](skills/verification-before-completion/SKILL.md) → deploy-verification **§6** |
 | Bug, test failure, unexpected behavior (before fixing) | systematic-debugging — root cause phases before patching; pairs with `diagnose` for repro | [`skills/systematic-debugging/SKILL.md`](skills/systematic-debugging/SKILL.md) |
+| Changed code documented by a repo-wiki page (see `wiki_sync.py owners`) | repo-wiki **update mode** — refresh the owning page in the same PR, or label `wiki-exempt` | [`skills/repo-wiki/SKILL.md`](skills/repo-wiki/SKILL.md) |
 | Debugging a bug or failure | diagnose | `.agents/skills/diagnose/SKILL.md` |
 | Behavior change that needs tests | tdd | `.agents/skills/tdd/SKILL.md` |
 | Updating Linear progress | linear-progress-update | `.claude/skills/linear-progress-update/SKILL.md` |
@@ -20,6 +21,7 @@ Skills are reusable expert workflows. Read and follow the SKILL.md file when a m
 
 | Scenario | Skill | Path |
 |----------|-------|------|
+| Creating / refreshing / reviewing the repo wiki under `docs/repo-wiki/` | repo-wiki (in-repo doc) — markdown is source of truth; HTML via MkDocs Material (`scripts/repo-wiki/gen_mkdocs.py` + `mkdocs`), published to GitHub Pages | [`skills/repo-wiki/SKILL.md`](skills/repo-wiki/SKILL.md) |
 | Stress-testing a plan or design | grill-me | `.agents/skills/grill-me/SKILL.md` |
 | Challenging plan against domain docs | grill-with-docs | `.agents/skills/grill-with-docs/SKILL.md` |
 | Improving architecture | improve-codebase-architecture | `.agents/skills/improve-codebase-architecture/SKILL.md` |

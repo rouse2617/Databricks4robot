@@ -5,7 +5,7 @@
 PR #2 review identified merge blockers:
 
 1. Migration `025` drops `assets.status` while repository code still reads/writes the column.
-2. Admin hard-delete routes accept `GRACE_TOKEN` when `ADMIN_TOKEN` is unset in production.
+2. Admin hard-delete routes accept `DATABREW_TOKEN` when `ADMIN_TOKEN` is unset in production.
 
 ## Scope
 

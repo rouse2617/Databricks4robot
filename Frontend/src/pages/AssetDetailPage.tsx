@@ -15,7 +15,7 @@ import {
 	Tag,
 	Typography,
 } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { assetsApi } from "../api/assets";
 import {
@@ -24,16 +24,32 @@ import {
 	evalApi,
 } from "../api/eval";
 import type { AlgoEvent, AlgoStatus, Asset, AssetEvent } from "../api/types";
-import ActionsTimelineTab from "../components/asset-detail/ActionsTimelineTab";
-import AlgoTab from "../components/asset-detail/AlgoTab";
-import AssetEventsTab from "../components/asset-detail/AssetEventsTab";
 import AssetPreviewHero from "../components/asset-detail/AssetPreviewHero";
-import DeliveryHistoryTab from "../components/asset-detail/DeliveryHistoryTab";
-import EvalMetricsTab from "../components/asset-detail/EvalMetricsTab";
-import FilesTab from "../components/asset-detail/FilesTab";
-import LineageTab from "../components/asset-detail/LineageTab";
+
+const ActionsTimelineTab = lazy(
+	() => import("../components/asset-detail/ActionsTimelineTab"),
+);
+const AlgoTab = lazy(() => import("../components/asset-detail/AlgoTab"));
+const AssetEventsTab = lazy(
+	() => import("../components/asset-detail/AssetEventsTab"),
+);
+const DeliveryHistoryTab = lazy(
+	() => import("../components/asset-detail/DeliveryHistoryTab"),
+);
+const EvalMetricsTab = lazy(
+	() => import("../components/asset-detail/EvalMetricsTab"),
+);
+const FilesTab = lazy(() => import("../components/asset-detail/FilesTab"));
+const LineageTab = lazy(() => import("../components/asset-detail/LineageTab"));
+
 import OverviewTab from "../components/asset-detail/OverviewTab";
-import TagsTab from "../components/asset-detail/TagsTab";
+
+const TagsTab = lazy(() => import("../components/asset-detail/TagsTab"));
+
+const TAB_FALLBACK = (
+	<div style={{ padding: 24, textAlign: "center" }}>加载中...</div>
+);
+
 import { buildPreviewManifestFromSources } from "../hooks/assets/useAssetPreview";
 import { extractApiErrorMessage } from "../lib/apiError";
 import {
@@ -277,60 +293,74 @@ export default function AssetDetailPage() {
 		},
 		{
 			key: "algo",
-			label: `算法处理 (${algoList.length})`,
+			label: algoEventsLoading
+				? "算法处理 (...)"
+				: `算法处理 (${algoList.length})`,
 			children: (
-				<AlgoTab
-					assetId={asset.asset_id}
-					algoList={algoList}
-					events={algoEvents}
-					eventsLoading={algoEventsLoading}
-					hasMoreEvents={algoEventsCursor !== null}
-					onLoadMoreEvents={() => {
-						if (algoEventsCursor !== null) loadAlgoEvents(algoEventsCursor);
-					}}
-					onRefresh={refresh}
-					onJumpToPreviewTime={jumpToPreviewTime}
-				/>
+				<Suspense fallback={TAB_FALLBACK}>
+					<AlgoTab
+						assetId={asset.asset_id}
+						algoList={algoList}
+						events={algoEvents}
+						eventsLoading={algoEventsLoading}
+						hasMoreEvents={algoEventsCursor !== null}
+						onLoadMoreEvents={() => {
+							if (algoEventsCursor !== null) loadAlgoEvents(algoEventsCursor);
+						}}
+						onRefresh={refresh}
+						onJumpToPreviewTime={jumpToPreviewTime}
+					/>
+				</Suspense>
 			),
 		},
 		{
 			key: "events",
-			label: `全部事件 (${allEvents.length})`,
+			label: allEventsLoading
+				? "全部事件 (...)"
+				: `全部事件 (${allEvents.length})`,
 			children: (
-				<AssetEventsTab
-					assetId={asset.asset_id}
-					events={allEvents}
-					loading={allEventsLoading}
-					hasMore={allEventsCursor !== null}
-					onLoadMore={() => {
-						if (allEventsCursor !== null) loadAllEvents(allEventsCursor);
-					}}
-					onJumpToPreviewTime={jumpToPreviewTime}
-				/>
+				<Suspense fallback={TAB_FALLBACK}>
+					<AssetEventsTab
+						assetId={asset.asset_id}
+						events={allEvents}
+						loading={allEventsLoading}
+						hasMore={allEventsCursor !== null}
+						onLoadMore={() => {
+							if (allEventsCursor !== null) loadAllEvents(allEventsCursor);
+						}}
+						onJumpToPreviewTime={jumpToPreviewTime}
+					/>
+				</Suspense>
 			),
 		},
 		{
 			key: "eval-metrics",
-			label: `评测与指标 (${assetMetrics.length})`,
+			label: evalLoading
+				? "评测与指标 (...)"
+				: `评测与指标 (${assetMetrics.length})`,
 			children: (
-				<EvalMetricsTab
-					loading={evalLoading}
-					evalResults={evalResults}
-					metrics={assetMetrics}
-					onRefresh={refresh}
-				/>
+				<Suspense fallback={TAB_FALLBACK}>
+					<EvalMetricsTab
+						loading={evalLoading}
+						evalResults={evalResults}
+						metrics={assetMetrics}
+						onRefresh={refresh}
+					/>
+				</Suspense>
 			),
 		},
 		{
 			key: "actions",
 			label: "Action 时间轴",
 			children: (
-				<ActionsTimelineTab
-					assetId={asset.asset_id}
-					assetType={asset.asset_type}
-					segStartNs={asset.start_timestamp_ns}
-					segEndNs={asset.end_timestamp_ns}
-				/>
+				<Suspense fallback={TAB_FALLBACK}>
+					<ActionsTimelineTab
+						assetId={asset.asset_id}
+						assetType={asset.asset_type}
+						segStartNs={asset.start_timestamp_ns}
+						segEndNs={asset.end_timestamp_ns}
+					/>
+				</Suspense>
 			),
 		},
 		{
@@ -341,11 +371,13 @@ export default function AssetDetailPage() {
 				</span>
 			),
 			children: (
-				<TagsTab
-					assetId={asset.asset_id}
-					tags={asset.tags ?? {}}
-					onUpdate={refreshAfterTagUpdate}
-				/>
+				<Suspense fallback={TAB_FALLBACK}>
+					<TagsTab
+						assetId={asset.asset_id}
+						tags={asset.tags ?? {}}
+						onUpdate={refreshAfterTagUpdate}
+					/>
+				</Suspense>
 			),
 		},
 		{
@@ -355,7 +387,11 @@ export default function AssetDetailPage() {
 					<SendOutlined /> 交付历史
 				</span>
 			),
-			children: <DeliveryHistoryTab assetId={asset.asset_id} />,
+			children: (
+				<Suspense fallback={TAB_FALLBACK}>
+					<DeliveryHistoryTab assetId={asset.asset_id} />
+				</Suspense>
+			),
 		},
 		{
 			key: "lineage",
@@ -364,7 +400,11 @@ export default function AssetDetailPage() {
 					<LinkOutlined /> 血缘
 				</span>
 			),
-			children: <LineageTab assetId={asset.asset_id} />,
+			children: (
+				<Suspense fallback={TAB_FALLBACK}>
+					<LineageTab assetId={asset.asset_id} />
+				</Suspense>
+			),
 		},
 		{
 			key: "files",
@@ -373,7 +413,11 @@ export default function AssetDetailPage() {
 					<FileOutlined /> 文件
 				</span>
 			),
-			children: <FilesTab files={asset.files ?? {}} />,
+			children: (
+				<Suspense fallback={TAB_FALLBACK}>
+					<FilesTab files={asset.files ?? {}} />
+				</Suspense>
+			),
 		},
 	];
 
@@ -414,6 +458,18 @@ export default function AssetDetailPage() {
 				<Text type="secondary" className="text-xs font-mono">
 					{asset.asset_id}
 				</Text>
+				<Button
+					size="small"
+					onClick={() => {
+						if (asset?.asset_id) {
+							navigate(
+								`/pipeline?asset_ids=${encodeURIComponent(asset.asset_id)}`,
+							);
+						}
+					}}
+				>
+					以此资产创建流水线
+				</Button>
 			</div>
 
 			{/* Preview Hero */}

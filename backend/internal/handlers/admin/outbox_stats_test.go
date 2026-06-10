@@ -29,6 +29,9 @@ func (s *statsEventRepo) ListPendingSafe(context.Context, time.Duration, int) ([
 func (s *statsEventRepo) ListByAsset(context.Context, string, repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
+func (s *statsEventRepo) ListVersionPromotedByLogical(context.Context, string) ([]*models.AssetEvent, error) {
+	return nil, nil
+}
 
 func (m *statsEventRepo) ListGlobal(_ context.Context, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil

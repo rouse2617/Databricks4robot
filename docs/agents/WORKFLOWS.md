@@ -20,14 +20,15 @@ Three paths depending on change type. Follow the matching path strictly — **wi
 |------|--------|-----------------|
 | 1 | Create Linear Issue (label: `bug`) | Title + reproduction steps |
 | 2 | Create OpenSpec change | `proposal.md` + `tasks.md` + at least 1 spec delta |
-| 3 | Branch: `fix/CYB-{id}-*` | Name must contain Linear ID |
-| 4 | Code + local verify | After every accepted change: verification tier S/M/L per [`AI-RULES.md`](AI-RULES.md) |
-| 5 | Push + create PR (fill template completely) | Linear ID + OpenSpec change-id + test evidence |
-| 6 | CI passes | openspec-gate + commitlint + test-integration + pre-commit |
-| 7 | Deploy verification | build → push → dev; **若 diff 含 `Frontend/`：** Chrome DevTools MCP；**否则：** curl/smoke only |
-| 8 | Review (>=1 person, within 24h) | Approve then merge |
-| 9 | Squash merge | `fix(scope): description` |
-| 10 | Linear → Done | Include commit hash |
+| 3 | **OpenSpec checkpoint** | User confirms OpenSpec OK → then branch + code ([`AI-RULES.md`](AI-RULES.md) step 4) |
+| 4 | Branch: `fix/CYB-{id}-*` | Name must contain Linear ID |
+| 5 | Code + local verify | Tier per AI-RULES; **new/changed HTTP API** → [API contract sync](AI-RULES.md#api-contract-sync-mandatory) same PR |
+| 6 | Push + create PR (fill template completely) | Linear ID + OpenSpec change-id + test evidence |
+| 7 | CI passes | openspec-gate + commitlint + test-integration + pre-commit |
+| 8 | Deploy verification | `apply-migration-dev.sh` (if migration) → build → push → dev; smoke via [`deploy-verification.md`](deploy-verification.md) §2.0 |
+| 9 | Review (>=1 person, within 24h) | Approve then merge |
+| 10 | Squash merge | `fix(scope): description` |
+| 11 | Linear → Done | Include commit hash |
 
 **Exemption**: Bug path may skip `design.md`.
 
@@ -37,16 +38,17 @@ Three paths depending on change type. Follow the matching path strictly — **wi
 |------|--------|-----------------|
 | 1 | Create Linear Issue (label: `feature`) | Goal + implementation approach |
 | 2 | Create OpenSpec change (full) | `proposal.md` + `design.md` + `tasks.md` + spec delta |
-| 3 | **Spec Review** (before coding) | Label `needs-spec-review` → reviewer confirms → `spec-approved` |
-| 4 | Branch: `feat/CYB-{id}-*` | — |
-| 5 | Code (split into sub-PRs if > 200 lines) | Each step: verification tier per AI-RULES |
-| 6 | Push + create PR | Same as above + spec delta scope description |
-| 7 | CI passes | Same + openapi-diff (if API changed) |
-| 8 | Deploy verification | Same as Bug（仅改 Frontend 时做 MCP） |
-| 9 | Review (complex features: >=2 people) | — |
-| 10 | Squash merge | `feat(scope): description` |
-| 11 | Archive in repo | Merge spec delta into `openspec/specs/`, remove `changes/` dir (**mandatory**, no CLI) |
-| 12 | Linear → Done | Summary + commit hash |
+| 3 | **OpenSpec checkpoint** | User confirms OpenSpec OK (required even if `spec-approved` label exists) |
+| 4 | **Spec Review** (optional, before or after checkpoint) | Label `needs-spec-review` → reviewer confirms → `spec-approved` |
+| 5 | Branch: `feat/CYB-{id}-*` | — |
+| 6 | Code (split into sub-PRs if > 200 lines) | Each step: verification tier per AI-RULES; API changes include contract files |
+| 7 | Push + create PR | Same as above + spec delta scope description |
+| 8 | CI passes | Same + openapi-diff (if API changed) |
+| 9 | Deploy verification | Same as Bug §2.0 scripts |
+| 10 | Review (complex features: >=2 people) | — |
+| 11 | Squash merge | `feat(scope): description` |
+| 12 | Archive in repo | Merge spec delta into `openspec/specs/`, remove `changes/` dir (**mandatory**, no CLI) |
+| 13 | Linear → Done | Summary + commit hash |
 
 **Risk gate**: touching off-limits zones → automatically requires second reviewer.
 

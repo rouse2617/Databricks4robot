@@ -33,6 +33,9 @@ func (m *relayEventRepo) ListPendingSafe(_ context.Context, _ time.Duration, _ i
 func (m *relayEventRepo) ListByAsset(context.Context, string, repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil
 }
+func (m *relayEventRepo) ListVersionPromotedByLogical(context.Context, string) ([]*models.AssetEvent, error) {
+	return nil, nil
+}
 
 func (m *relayEventRepo) ListGlobal(_ context.Context, opts repository.AssetEventListOptions) ([]*models.AssetEvent, error) {
 	return nil, nil

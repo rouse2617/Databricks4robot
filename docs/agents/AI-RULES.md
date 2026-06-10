@@ -13,10 +13,10 @@ On **every** user message that involves this repo, do the following **before** e
 1. **Silent environment check** — Follow `docs/agents/SETUP.md` in the background. Fix what you can (deps, skills, **repo-local commit-msg hook** via `git config core.hooksPath .githooks`). Only interrupt the user if a required credential is missing (e.g. `LINEAR_API_KEY`). OpenSpec is **in-repo Markdown only** — never ask to install OpenSpec CLI.
 2. **Classify the task** — Bug fix, feature, hotfix, or docs/infra-only. Pick the path in `docs/agents/WORKFLOWS.md`.
 3. **Linear** — Ensure a Linear Issue exists (`CYB-xxx` in this workspace). Create or link via MCP if the user did not provide one.
-4. **OpenSpec** — For any runtime change, create or use `openspec/changes/CYB-{id}-{slug}/` **before** writing application code. Never skip because the user did not mention OpenSpec. Follow [`spec-writing-skill.md`](spec-writing-skill.md) for artifact quality (proposal, delta, design, tasks, `context-files.md`, decisions). Read `context-files.md` (or `## Context files` in `tasks.md`) before implementation.
-5. **Branch** — Use `fix/CYB-{id}-*`, `feat/CYB-{id}-*`, or `hotfix/CYB-{id}-*` as appropriate (`DAT-*` accepted by CI for legacy).
-6. **After each code change** — Run verification at the **tier** matching diff scope (see [Verification tiers](#verification-tiers)); log non-obvious choices in `decisions.md` when required. **Bugs:** follow [`systematic-debugging`](skills/systematic-debugging/SKILL.md) before speculative fixes.
-7. **Before commit/push** — Follow [`deploy-before-commit.md`](deploy-before-commit.md) and [`deploy-verification.md`](deploy-verification.md) **§6** with [`verification-before-completion`](skills/verification-before-completion/SKILL.md) (evidence before claims). **If the diff touches `Frontend/`:** deploy frontend dev → Agent **must** run **Chrome DevTools MCP** (tasks path + screenshot + console). **Backend/sdk-only:** API smoke only — no browser MCP.
+4. **OpenSpec (write artifacts, then stop)** — For any runtime change, create or use `openspec/changes/CYB-{id}-{slug}/` **before** writing application code. Follow [`spec-writing-skill.md`](spec-writing-skill.md) for artifact quality (proposal, tasks, spec delta; feature path also `design.md`). **Checkpoint:** When `proposal.md` + `tasks.md` (+ `design.md` if feature) are ready, **stop** and ask the user to confirm OpenSpec is OK (e.g. 「OpenSpec OK，继续」). **Do not** edit `backend/`, `Frontend/`, `sdk/`, or `dagster/` until they approve. Record their approval in `decisions.md` or a short Linear comment if useful.
+5. **Branch** — Use `fix/CYB-{id}-*`, `feat/CYB-{id}-*`, or `hotfix/CYB-{id}-*` as appropriate (`DAT-*` accepted by CI for legacy). **Always branch from latest `dev`** (`git fetch origin dev && git checkout -b feat/CYB-{id}-… origin/dev`) so parallel CYB work does not conflict. Create the branch when starting OpenSpec or immediately after the OpenSpec checkpoint passes.
+6. **After each code change** — Run verification at the **tier** matching diff scope (see [Verification tiers](#verification-tiers)); log non-obvious choices in `decisions.md` when required. **Any new or changed HTTP API** (route, handler, request/response, query param, status code) MUST complete [API contract sync](#api-contract-sync-mandatory) in the **same PR** as `backend/` — not a follow-up. **Bugs:** follow [`systematic-debugging`](skills/systematic-debugging/SKILL.md) before speculative fixes. **New interface methods:** when adding methods to a repository/usecase interface, ALWAYS update ALL test mocks (`*_test.go`) that implement that interface in the SAME commit — do not defer test mock updates. **Wiki sync:** if the diff touches a file documented by a `docs/repo-wiki/manifest.yaml` page (check with `python3 scripts/repo-wiki/wiki_sync.py owners <files>`), update that page in the **same PR** following [`repo-wiki`](skills/repo-wiki/SKILL.md); if no doc update is warranted, add the `wiki-exempt` label. Enforced advisory-only by [`repo-wiki-divergence`](../../.github/workflows/repo-wiki-divergence.yml).
+7. **Before commit/push** — Follow [`deploy-before-commit.md`](deploy-before-commit.md) and [`deploy-verification.md`](deploy-verification.md) (canonical dev scripts in **§2.0**). **Dev is manual deploy** — `git push` does not roll Cloud Run; use local `deploy/cloudrun/*-dev.sh` or PR comment `/deploy-cloudrun-dev`. **If the diff touches `Frontend/`:** deploy frontend dev → Agent **must** run **Chrome DevTools MCP**. **Backend/sdk-only:** `source scripts/dev-backend-env.sh` + targeted smoke; `scripts/apply-migration-dev.sh` **before** backend deploy when schema changes.
 8. **PR** — Fill `.github/pull_request_template.md` completely when opening a PR.
 
 Do **not** ask the user to confirm that you will follow this workflow. Do **not** wait for them to say "按规范" or "prepare environment".
@@ -39,6 +39,38 @@ Do **not** ask the user to confirm that you will follow this workflow. Do **not*
 - Runtime paths: `backend/`, `Frontend/`, `sdk/`, `dagster/` — see `docs/agents/spec-driven-workflow.md`
 - Commit format: Conventional Commits — `type(scope): description`. **Subject (first line) must be entirely lower-case** — CI `commitlint` enforces `subject-case` (e.g. write `cel` / `api`, not `CEL` / `API`; acronyms in the body are fine).
 - Full step tables: `docs/agents/WORKFLOWS.md`
+- **New/changed HTTP API** → [API contract sync](#api-contract-sync-mandatory) (same PR, no exceptions except documented hotfix backfill)
+
+## API contract sync (mandatory)
+
+**Trigger:** You add or change anything exposed over HTTP — new `routes.go` registration, handler method, JSON body/query/path param, response shape, status code, or auth/idempotency header requirement.
+
+**Do not** merge backend-only handler work and “document SDK later”. CYB-1014-style gaps (handler shipped, OpenAPI/api-guide/SDK empty) are **process failures**.
+
+Sync these artifacts in the **same change / PR** (check off in `tasks.md`):
+
+| # | File / area | Required when | What to update |
+|---|-------------|---------------|----------------|
+| 1 | [`api/openapi.yaml`](../../api/openapi.yaml) | Always | `paths`, `components/schemas`, parameters, request/response bodies, error envelope |
+| 2 | [`docs/review/api-guide.md`](../../docs/review/api-guide.md) | Always | Section with `curl` examples, headers (`X-Databrew-Token`, `Idempotency-Key` if any), success + ≥1 error path, field validation notes |
+| 3 | [`sdk/src/cyber_databrew_sdk/`](../../sdk/src/cyber_databrew_sdk/) | New/changed **public** REST surface | Resource client module (e.g. `customers.py`), methods mirroring api-guide; wire on [`client.py`](../../sdk/src/cyber_databrew_sdk/client.py) / [`__init__.py`](../../sdk/src/cyber_databrew_sdk/__init__.py) exports |
+| 4 | [`sdk/tests/unit/`](../../sdk/tests/unit/) | SDK client added/changed | Unit tests for new client methods (mock HTTP) |
+| 5 | [`scripts/api-guide-smoke.sh`](../../scripts/api-guide-smoke.sh) **or** `scripts/smoke-<feature>-dev.sh` | Always | At least happy path + one error path for **each new endpoint**; use `source scripts/dev-backend-env.sh` for dev |
+| 6 | `backend/internal/handlers/*/*.go` | Handlers use Swagger generation elsewhere | `@Summary` / `@Router` / `@Param` blocks consistent with asset handlers (keep OpenAPI as source of truth if drift) |
+| 7 | `openspec/changes/CYB-*/specs/*/spec.md` | Always (runtime feature) | Behavior delta (Given/When/Then) — **not** field-level API paste |
+| 8 | `Frontend/src/api/` or feature hooks | UI calls the new API | Typed client / hook + types aligned with OpenAPI |
+
+**Also sync when applicable (not HTTP, but same discipline):**
+
+| Change | Also update |
+|--------|-------------|
+| `asset_events` event type / payload | `backend/schemas/events/*.json` + `registry.json` |
+| Postgres DDL | `backend/migrations/` (approved) + `docs/review/sql.md` |
+| Preview / gateway-only paths | `docs/review/api-guide.md` + OpenAPI if externally consumed |
+
+**Verification before commit:** Tier **L** when OpenAPI or public API changes; run `cd sdk && uv run pytest tests/unit/` if SDK touched; run targeted smoke (`api-guide-smoke.sh` or feature script). PR template must list which rows above were updated.
+
+**Out of scope declaration:** If an issue explicitly defers SDK or Frontend (e.g. “backend-only spike”), record it in `decisions.md` **and** Linear — still require rows **1, 2, 5, 7** minimum.
 
 ## Off-limits zones (require explicit approval to touch)
 
@@ -81,11 +113,30 @@ Avoid running full `build` on every one-line fix. After each **accepted** code e
 |------|------|---------|----------|-----|
 | **S — small** | ≤2 files, no router/handler/middleware/OpenAPI, no shared types | `make fmt && make vet` | `npm run lint` | `ruff check` on touched paths |
 | **M — medium** | Default for most PRs; new/changed logic; >2 files or tests exist for package | Tier S + `go test` packages touched (`go test ./internal/foo/...`) | Tier S + `npm run test -- --run` (related tests if known) | Tier S + `pytest` for touched modules |
-| **L — large** | Cross-module; UI routes; API contract; build/config; before PR / deploy | Tier M + `go test ./...` | Tier M + `npm run build` | Tier M + full `pytest tests/unit/` |
+| **L — large** | Cross-module; UI routes; **any API contract sync**; build/config; before PR / deploy | Tier M + `go test ./...` | Tier M + `npm run build` | Tier M + full `pytest tests/unit/` |
 
 **Always Tier L before:** opening PR, deploy verification, or touching off-limits-adjacent code.
 
 **Upgrade triggers (bump one tier):** changed `go.mod` / `package.json` deps; renamed exported symbols; modified `App.tsx` routes or shared `components/common/*`; any edit under `openspec/specs/` (baseline behavior — treat as **Tier L**).
+
+## API contract first (mandatory for new endpoints)
+
+When implementing a **new HTTP endpoint** (not modifying an existing one), follow this order:
+
+1. **Define the response shape** in `api/openapi.yaml` AND `Frontend/src/api/types.ts` (or the relevant API module) — BEFORE writing handler code.
+2. **Verify shape alignment** — the backend handler's `c.JSON()` response MUST match the TypeScript type the frontend expects (e.g. `{items: [...], total: N}` vs bare array).
+3. **Then implement** the handler, usecase, and frontend consumption.
+
+**Why:** Mismatched response shapes (e.g. backend returns `[{...}]`, frontend expects `{items: [...]}`) cause silent failures that only surface during live testing. Defining the contract first prevents this class of bug entirely.
+
+## Migration check before deploy (mandatory)
+
+When a PR includes a new migration file (`backend/migrations/*.sql`):
+
+1. **Apply migration to dev** using `bash scripts/apply-migration-dev.sh "$(pwd)/backend/migrations/NNN_name.sql"` BEFORE deploying the backend image.
+2. **Verify migration applied** — run a smoke query that touches the new columns/tables.
+
+**Why:** Deploying code that references new columns before the migration is applied causes runtime 500 errors on every request that touches those columns.
 
 ## Decision log (audit trail)
 
@@ -141,10 +192,50 @@ Full commands by tier — see [Verification tiers](#verification-tiers).
 | Frontend | `npm run lint` | + `npm run test -- --run` | + `npm run build` |
 | SDK | `uv run ruff check src/` | + `pytest` touched | + `pytest tests/unit/` |
 
+## Development pitfalls (lessons learned)
+
+Field incidents that should inform future development. Add to this section when a preventable mistake repeats.
+
+### P1. Verify diff, not commit message
+After editing code (especially tab-heavy Go like switch/struct blocks), run `git diff` before committing. The `default` branch in a `switch` can be silently missing if the edit tool fails on tab indentation — and the commit message may claim it's there.
+
+**Check:** `git diff --stat` and spot-check the actual line changes, not just "build passes".
+
+### P2. Use valid test payloads against DB constraints
+When testing API behavior on dev, ensure the payload satisfies DB CHECK constraints (e.g. `chk_lifecycle_state`). An invalid value like `"active"` produces a DB error that masks the real issue (e.g. validator not rejecting unknown types).
+
+**Check:** Before curl/writing a test, look up valid values from the model layer or migration — don't guess.
+
+### P3. Confirm SHA before docker build
+`docker build` uses the working tree, but the SHA tag should match the current HEAD. An incorrect tag (e.g. stale `93d2bc7` instead of current `c8c175c`) means the deployed Cloud Run revision runs stale code.
+
+**Check:** `echo "HEAD: $(git rev-parse --short HEAD)"` before `docker build`.
+
+### P4. Worktree-aware PR merge
+When the base branch is checked out in another worktree, `gh pr merge` fails locally. Use `gh pr merge --auto` to let GitHub's API handle the merge, avoiding the worktree conflict entirely.
+
+**Check:** If you get "already used by worktree", retry with `--auto`.
+
+### P5. Deploy verification must assert the specific change
+Generic L1 smoke (health + list) doesn't prove the behavioral change works. After deploying, immediately curl with a known-bad payload that should hit the new code path.
+
+**Check:** For each runtime change, write one curl command (happy path + one error path) that proves the new behavior is active on the deployed revision. Include the command and expected response in the PR.
+
+### P6. Python edit scripts: verify line count
+When using Python scripts as an edit-tool workaround (Go tab indentation), the off-by-one in line deletion is silent — it can leave a stale line or omit a needed one. After the script runs, read the affected function top-to-bottom.
+
+**Check:** `sed -n 'start,endp' file.go` on the edited region and visually confirm.
+
+### P7. Files must end with exactly one newline (no trailing blank lines)
+The `end-of-file-fixer` pre-commit hook fails when a file has trailing blank lines after the final newline. Python's `__init__.py`, Go files, and any tracked file are subject to this check. This has failed CI repeatedly.
+
+**Check:** `pre-commit run end-of-file-fixer --all-files` before committing, or manually verify the file ends with a single `\n` (no extra blank lines). When using the Edit/Write tools, ensure the last line of content is not followed by an empty line.
+
 ## What NOT to do
 
 - Do NOT ask users to run a ritual prompt like "prepare environment per project standards"
 - Do NOT write runtime code before OpenSpec change exists (except `hotfix-approved` with documented backfill)
+- Do NOT ship new/changed HTTP handlers without [API contract sync](#api-contract-sync-mandatory) (OpenAPI + api-guide + smoke minimum)
 - Do NOT commit without deployment verification (deploy-before-commit rule)
 - Do NOT ask the user to「浏览器点一遍」when the diff touches `Frontend/` and Chrome DevTools MCP is available — run MCP yourself on dev
 - Do NOT introduce new dependencies without declaring them

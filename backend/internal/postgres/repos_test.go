@@ -109,6 +109,8 @@ func (r *fakeRows) Scan(dest ...any) error {
 
 func (r *fakeRows) Close() { r.closed = true }
 
+func (r *fakeRows) Err() error { return nil }
+
 func assign(dst any, src any) error {
 	dv := reflect.ValueOf(dst)
 	if dv.Kind() != reflect.Ptr || dv.IsNil() {
@@ -222,6 +224,7 @@ func TestAssetRepo(t *testing.T) {
 		(*int)(nil), (*int64)(nil), (*int64)(nil),
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+		(*string)(nil), (*int64)(nil), (*bool)(nil),
 		mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1),
 	}}
 	got, err := repo.Get(ctx, "a1")
@@ -268,6 +271,7 @@ func TestAssetRepo(t *testing.T) {
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 	db.rows = rows
@@ -399,12 +403,12 @@ func TestDeliveryRepo(t *testing.T) {
 		t.Fatalf("delivered_by not read: %s", got.DeliveredBy)
 	}
 
-	if err := repo.WriteIndexes(ctx, "a1", &models.Delivery{DeliveryID: "d1"}); err != nil {
-		t.Fatalf("write indexes err: %v", err)
+	if err := repo.AddItems(ctx, "d1", []string{"a1"}); err != nil {
+		t.Fatalf("add items err: %v", err)
 	}
 	db.execErr = errors.New("e")
-	if err := repo.WriteIndexes(ctx, "a1", &models.Delivery{DeliveryID: "d1"}); err == nil {
-		t.Fatalf("expected write indexes error")
+	if err := repo.AddItems(ctx, "d1", []string{"a1"}); err == nil {
+		t.Fatalf("expected add items error")
 	}
 	db.execErr = nil
 
@@ -428,6 +432,13 @@ func TestIdempotencyRepo(t *testing.T) {
 	ctx := context.Background()
 	db := &fakeDB{}
 	repo := &IdempotencyRepo{c: &Client{db: db}}
+
+	if err := repo.Lock(ctx, "s", "k"); err != nil {
+		t.Fatalf("lock err: %v", err)
+	}
+	if len(db.execSQLs) != 1 || !strings.Contains(db.execSQLs[0], "pg_advisory_xact_lock") {
+		t.Fatalf("expected advisory lock SQL, got %#v", db.execSQLs)
+	}
 
 	if got, err := repo.Get(ctx, "s", "k"); err != nil || got != nil {
 		t.Fatalf("expected nil,nil not found")
@@ -533,6 +544,7 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 		{"a2", "m1", int64(20), int64(30), (*string)(nil),
 			"ready", "segment", int64(0),
@@ -540,6 +552,7 @@ func TestListWithFilters_NoFilters(t *testing.T) {
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(2)},
 	}}
 
@@ -571,6 +584,7 @@ func TestListWithFilters_WithWhereSQL(t *testing.T) {
 			"", (*time.Time)(nil), "", "", int(0),
 			(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 			[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+			(*string)(nil), (*int64)(nil), (*bool)(nil),
 			mustTime(t, "2026-04-20T00:00:00Z"), mustTime(t, "2026-04-21T00:00:00Z"), int64(1)},
 	}}
 
@@ -837,6 +851,7 @@ func buildAssetRow(
 		(*int)(nil), (*int64)(nil), (*int64)(nil),
 		(*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+		(*string)(nil), (*int64)(nil), (*bool)(nil), // logical_asset_id, revision, is_current
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -848,7 +863,7 @@ func TestGet_PopulatesBothOldAndNewFields(t *testing.T) {
 
 	row := buildAssetRow(
 		"get-1",
-		"ready", // lifecycle_state
+		"ready",      // lifecycle_state
 		"clip",       // asset_type
 		int64(12500), // duration_ms
 		"alice",      // owner
@@ -1000,6 +1015,7 @@ func TestListWithFilters_PopulatesBothOldAndNewFields(t *testing.T) {
 		"warm", (*time.Time)(nil), "", "", int(0),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+		(*string)(nil), (*int64)(nil), (*bool)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1057,6 +1073,7 @@ func TestListByMcapFile_PopulatesBothOldAndNewFields(t *testing.T) {
 		"cold", (*time.Time)(nil), "gs://s/data", "gs://s/thumb", int(1),
 		(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 		[]byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`),
+		(*string)(nil), (*int64)(nil), (*bool)(nil),
 		time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 4, 21, 0, 0, 0, 0, time.UTC),
 		int64(1),
@@ -1128,7 +1145,7 @@ func TestAssetTagRepo_Upsert_Success(t *testing.T) {
 	db := &fakeDB{}
 	repo := &AssetTagRepo{c: &Client{db: db}}
 
-	err := repo.Upsert(ctx, "a1", "quality", "good", "string", "human")
+	err := repo.Upsert(ctx, repository.AssetTagUpsertInput{AssetID: "a1", TagKey: "quality", TagValue: "good", TagType: "string", SourceType: "human", SourceName: "tester"})
 	if err != nil {
 		t.Fatalf("Upsert err: %v", err)
 	}
@@ -1139,7 +1156,7 @@ func TestAssetTagRepo_Upsert_TagInsertError(t *testing.T) {
 	db := &fakeDB{execErr: errors.New("tag insert fail")}
 	repo := &AssetTagRepo{c: &Client{db: db}}
 
-	err := repo.Upsert(ctx, "a1", "quality", "good", "string", "human")
+	err := repo.Upsert(ctx, repository.AssetTagUpsertInput{AssetID: "a1", TagKey: "quality", TagValue: "good", TagType: "string", SourceType: "human", SourceName: "tester"})
 	if err == nil || !strings.Contains(err.Error(), "asset_tags") {
 		t.Fatalf("expected asset_tags error, got %v", err)
 	}
@@ -1157,7 +1174,7 @@ func TestProperty8_TagUpsertConsistency(t *testing.T) {
 		tracker := &execTracker{fakeDB: &fakeDB{}}
 		repo := &AssetTagRepo{c: &Client{db: tracker}}
 
-		err := repo.Upsert(context.Background(), assetID, tagKey, tagValue, tagType, sourceType)
+		err := repo.Upsert(context.Background(), repository.AssetTagUpsertInput{AssetID: assetID, TagKey: tagKey, TagValue: tagValue, TagType: tagType, SourceType: sourceType, SourceName: "tester"})
 		if err != nil {
 			t.Fatalf("Upsert failed: %v", err)
 		}
@@ -2218,7 +2235,7 @@ func TestDeliveryRepo_List_ReadsNewColumns(t *testing.T) {
 	}
 	repo := &DeliveryRepo{c: &Client{db: db}}
 
-	deliveries, total, err := repo.List(ctx, 1, 20, "")
+	deliveries, total, err := repo.List(ctx, 1, 20, "", "")
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
 	}
@@ -2250,36 +2267,51 @@ func TestDeliveryRepo_List_ReadsNewColumns(t *testing.T) {
 	}
 }
 
-func TestDeliveryRepo_WriteIndexes_UsesDeliveryTimestampAndCustomer(t *testing.T) {
+func TestDeliveryRepo_AddItems_InsertsDeliveryItems(t *testing.T) {
 	ctx := context.Background()
 	db := &fakeDB{}
 	repo := &DeliveryRepo{c: &Client{db: db}}
 
-	deliveredAt := mustTime(t, "2026-05-08T03:31:57Z")
-	d := &models.Delivery{
-		DeliveryID:  "d1",
-		CustomerID:  "seed_customer",
-		CreatedAt:   mustTime(t, "2026-05-08T03:30:00Z"),
-		DeliveredAt: &deliveredAt,
+	if err := repo.AddItems(ctx, "d1", []string{"a1b2c3d4", "b2c3d4e5"}); err != nil {
+		t.Fatalf("AddItems() error: %v", err)
 	}
+	if len(db.execSQLs) != 2 {
+		t.Fatalf("expected two execs, got %d", len(db.execSQLs))
+	}
+	sql := db.execSQLs[0]
+	if !strings.Contains(sql, "INSERT INTO delivery_items") {
+		t.Fatalf("expected AddItems SQL to insert into delivery_items")
+	}
+	if len(db.execArgs) != 2 || len(db.execArgs[0]) != 2 {
+		t.Fatalf("expected 2 args per insert, got %v", db.execArgs)
+	}
+	if got := db.execArgs[0][0]; got != "d1" {
+		t.Fatalf("expected delivery_id arg d1, got %v", got)
+	}
+	if got := db.execArgs[0][1]; got != "a1b2c3d4" {
+		t.Fatalf("expected asset_id arg a1b2c3d4, got %v", got)
+	}
+}
 
-	if err := repo.WriteIndexes(ctx, "a1b2c3d4", d); err != nil {
-		t.Fatalf("WriteIndexes() error: %v", err)
+func TestDeliveryRepo_RefreshAssetDeliveryIndex_RecomputesCounters(t *testing.T) {
+	ctx := context.Background()
+	db := &fakeDB{}
+	repo := &DeliveryRepo{c: &Client{db: db}}
+
+	if err := repo.RefreshAssetDeliveryIndex(ctx, "a1b2c3d4"); err != nil {
+		t.Fatalf("RefreshAssetDeliveryIndex() error: %v", err)
 	}
 	if len(db.execSQLs) != 1 {
 		t.Fatalf("expected exactly one exec, got %d", len(db.execSQLs))
 	}
 	sql := db.execSQLs[0]
-	if !strings.Contains(sql, "UPDATE assets") || !strings.Contains(sql, "delivery_count = delivery_count + 1") {
-		t.Fatalf("expected WriteIndexes SQL to update assets delivery counters")
+	if !strings.Contains(sql, "FROM delivery_items di") || !strings.Contains(sql, "delivery_count = COALESCE") {
+		t.Fatalf("expected refresh SQL to recompute delivery counters, got %s", sql)
 	}
-	if len(db.execArgs) != 1 || len(db.execArgs[0]) != 4 {
-		t.Fatalf("expected 4 args, got %v", db.execArgs)
+	if len(db.execArgs) != 1 || len(db.execArgs[0]) != 1 {
+		t.Fatalf("expected one arg, got %v", db.execArgs)
 	}
-	if got := db.execArgs[0][2]; got != deliveredAt {
-		t.Fatalf("expected delivered_at arg=%v, got %v", deliveredAt, got)
-	}
-	if got := db.execArgs[0][3]; got != "seed_customer" {
-		t.Fatalf("expected customer arg seed_customer, got %v", got)
+	if got := db.execArgs[0][0]; got != "a1b2c3d4" {
+		t.Fatalf("expected asset_id arg a1b2c3d4, got %v", got)
 	}
 }

@@ -10,36 +10,72 @@ import {
 	Select,
 	Space,
 	Tag,
+	Tooltip,
 } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { assetsApi } from "../../api/assets";
 import { type TagRegistryItem, tagRegistryApi } from "../../api/tagRegistry";
+import type { AssetTagDetail } from "../../api/types";
 
 interface Props {
 	assetId: string;
 	tags: Record<string, string>;
+	tagsDetailed?: AssetTagDetail[];
 	onUpdate: () => void;
 }
+
+const SOURCE_OPTIONS = [
+	{ label: "human", value: "human" },
+	{ label: "algo_sdk", value: "algo_sdk" },
+	{ label: "rule_engine", value: "rule_engine" },
+	{ label: "system", value: "system" },
+	{ label: "compliance", value: "compliance" },
+];
+
+const SOURCE_COLORS: Record<string, string> = {
+	human: "blue",
+	algo_sdk: "geekblue",
+	rule_engine: "purple",
+	system: "default",
+	compliance: "red",
+};
+
+// Sources that the registry requires identity fields for. Mirrors
+// backend/config/tag_registry.yaml — kept here to avoid an extra round-trip
+// to GET /api/v1/tag-registry on the add panel.
+const REQUIRES_SOURCE_NAME = new Set([
+	"human",
+	"algo_sdk",
+	"rule_engine",
+	"compliance",
+]);
+const REQUIRES_SOURCE_VERSION = new Set(["algo_sdk", "rule_engine"]);
 
 export default function TagsTab({
 	assetId,
 	tags: initialTags,
+	tagsDetailed,
 	onUpdate,
 }: Props) {
-	const [editingKey, setEditingKey] = useState<string | null>(null);
-	const [editValue, setEditValue] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [addOpen, setAddOpen] = useState(false);
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
+	const [newSource, setNewSource] = useState("human");
+	const [newSourceName, setNewSourceName] = useState("");
+	const [newSourceVersion, setNewSourceVersion] = useState("");
 	const [registry, setRegistry] = useState<TagRegistryItem[]>([]);
-	// Local mutable copy for instant UI feedback — parent syncs in background.
 	const [localTags, setLocalTags] = useState(initialTags);
+	const [localDetailed, setLocalDetailed] = useState<AssetTagDetail[]>(
+		tagsDetailed ?? [],
+	);
 
-	// Keep local copy in sync when parent refreshes.
 	useEffect(() => {
 		setLocalTags(initialTags);
 	}, [initialTags]);
+	useEffect(() => {
+		setLocalDetailed(tagsDetailed ?? []);
+	}, [tagsDetailed]);
 
 	useEffect(() => {
 		tagRegistryApi
@@ -48,43 +84,59 @@ export default function TagsTab({
 			.catch(() => {});
 	}, []);
 
-	const handleSaveEdit = async (key: string, value: string) => {
-		if (value === localTags[key]) {
-			setEditingKey(null);
-			return;
+	// Group detailed rows by tag_key so the UI can render one Tag chip per
+	// key with the source chips inside it.
+	const grouped = useMemo(() => {
+		const out: Record<string, AssetTagDetail[]> = {};
+		for (const row of localDetailed) {
+			if (!row?.tag_key) continue;
+			if (!out[row.tag_key]) out[row.tag_key] = [];
+			out[row.tag_key].push(row);
 		}
-		// Optimistic local update.
-		setLocalTags((prev) => ({ ...prev, [key]: value }));
-		setSaving(true);
-		try {
-			await assetsApi.upsertTag(assetId, { key, value });
-			message.success("标签已更新");
-			onUpdate();
-		} catch {
-			// Revert on failure.
-			setLocalTags(initialTags);
-			message.error("更新标签失败");
-		} finally {
-			setSaving(false);
-			setEditingKey(null);
+		// Fall back to flat map for keys that have no detailed row (older
+		// data path or environments that did not populate tags_detailed).
+		for (const [k, v] of Object.entries(localTags)) {
+			if (!out[k]) {
+				out[k] = [
+					{
+						tag_key: k,
+						tag_value: v,
+						source_type: "system",
+					},
+				];
+			}
 		}
-	};
+		return out;
+	}, [localDetailed, localTags]);
 
-	const handleDelete = async (key: string) => {
-		// Optimistic local update.
-		setLocalTags((prev) => {
-			const next = { ...prev };
-			delete next[key];
-			return next;
-		});
+	const handleDeleteSource = async (
+		key: string,
+		sourceType: string | undefined,
+	) => {
+		const nextDetailed = localDetailed.filter(
+			(r) =>
+				!(r.tag_key === key && (!sourceType || r.source_type === sourceType)),
+		);
+		setLocalDetailed(nextDetailed);
+		// If this was the last source for this tag key, also remove from flat map
+		const hasRemaining = nextDetailed.some((r) => r.tag_key === key);
+		if (!sourceType || !hasRemaining) {
+			setLocalTags((prev) => {
+				const next = { ...prev };
+				delete next[key];
+				return next;
+			});
+		}
 		setSaving(true);
 		try {
-			await assetsApi.deleteTag(assetId, key);
-			message.success("标签已删除");
+			await assetsApi.deleteTag(assetId, key, sourceType);
+			message.success(
+				sourceType ? `已删除 ${sourceType} 的 ${key}` : `已删除标签 ${key}`,
+			);
 			onUpdate();
 		} catch {
-			// Revert on failure.
 			setLocalTags(initialTags);
+			setLocalDetailed(tagsDetailed ?? []);
 			message.error("删除标签失败");
 		} finally {
 			setSaving(false);
@@ -93,34 +145,44 @@ export default function TagsTab({
 
 	const handleAdd = async () => {
 		if (!newKey) return;
-		// Optimistic local update.
-		setLocalTags((prev) => ({ ...prev, [newKey]: newValue }));
+		if (REQUIRES_SOURCE_NAME.has(newSource) && !newSourceName) {
+			message.warning(`${newSource} 需要填写 source_name`);
+			return;
+		}
+		if (REQUIRES_SOURCE_VERSION.has(newSource) && !newSourceVersion) {
+			message.warning(`${newSource} 需要填写 source_version`);
+			return;
+		}
 		setSaving(true);
 		try {
-			await assetsApi.upsertTag(assetId, { key: newKey, value: newValue });
+			await assetsApi.upsertTag(assetId, {
+				key: newKey,
+				value: newValue,
+				source_type: newSource,
+				source_name: newSourceName || undefined,
+				source_version: newSourceVersion || undefined,
+			});
 			message.success("标签已添加");
 			setNewKey("");
 			setNewValue("");
+			setNewSourceName("");
+			setNewSourceVersion("");
 			setAddOpen(false);
 			onUpdate();
-		} catch {
-			// Revert on failure.
-			setLocalTags(initialTags);
-			message.error("添加标签失败");
+		} catch (err) {
+			message.error(err instanceof Error ? err.message : "添加标签失败");
 		} finally {
 			setSaving(false);
 		}
 	};
 
-	// Keys available for adding (not already present)
-	const availableKeys = registry
-		.map((r) => r.key)
-		.filter((k) => !(k in localTags));
+	const groupedEntries = Object.entries(grouped);
 
-	const tagEntries = Object.entries(localTags);
+	const availableKeys = registry.map((r) => r.key);
+	const regItem = registry.find((r) => r.key === newKey);
 
 	const addContent = (
-		<div style={{ width: 240 }}>
+		<div style={{ width: 280 }}>
 			<div className="mb-2">
 				<Select
 					placeholder="选择标签 Key"
@@ -133,35 +195,58 @@ export default function TagsTab({
 				/>
 			</div>
 			<div className="mb-2">
-				{(() => {
-					const regItem = registry.find((r) => r.key === newKey);
-					if (regItem?.type === "enum" && regItem.values?.length) {
-						return (
-							<Select
-								placeholder="选择值"
-								value={newValue || undefined}
-								onChange={setNewValue}
-								style={{ width: "100%" }}
-								size="small"
-								options={regItem.values.map((v) => ({ label: v, value: v }))}
-							/>
-						);
-					}
-					return (
-						<Input
-							placeholder="输入值"
-							value={newValue}
-							onChange={(e) => setNewValue(e.target.value)}
-							size="small"
-						/>
-					);
-				})()}
+				{regItem?.type === "enum" && regItem.values?.length ? (
+					<Select
+						placeholder="选择值"
+						value={newValue || undefined}
+						onChange={setNewValue}
+						style={{ width: "100%" }}
+						size="small"
+						options={regItem.values.map((v) => ({ label: v, value: v }))}
+					/>
+				) : (
+					<Input
+						placeholder="输入值"
+						value={newValue}
+						onChange={(e) => setNewValue(e.target.value)}
+						size="small"
+					/>
+				)}
 			</div>
+			<div className="mb-2">
+				<Select
+					value={newSource}
+					onChange={setNewSource}
+					style={{ width: "100%" }}
+					size="small"
+					options={SOURCE_OPTIONS}
+				/>
+			</div>
+			{REQUIRES_SOURCE_NAME.has(newSource) ? (
+				<div className="mb-2">
+					<Input
+						placeholder="source_name (必填)"
+						value={newSourceName}
+						onChange={(e) => setNewSourceName(e.target.value)}
+						size="small"
+					/>
+				</div>
+			) : null}
+			{REQUIRES_SOURCE_VERSION.has(newSource) ? (
+				<div className="mb-2">
+					<Input
+						placeholder="source_version (必填)"
+						value={newSourceVersion}
+						onChange={(e) => setNewSourceVersion(e.target.value)}
+						size="small"
+					/>
+				</div>
+			) : null}
 			<Button
 				type="primary"
 				size="small"
 				block
-				disabled={!newKey}
+				disabled={!newKey || !newValue}
 				loading={saving}
 				onClick={handleAdd}
 			>
@@ -172,76 +257,77 @@ export default function TagsTab({
 
 	return (
 		<Card size="small">
-			{tagEntries.length > 0 ? (
-				<Space wrap>
-					{tagEntries.map(([k, v]) => (
-						<Tag key={k} closable={false}>
-							<span>{k}: </span>
-							{editingKey === k ? (
-								<Input
-									size="small"
-									style={{ width: 100, display: "inline-block" }}
-									autoFocus
-									defaultValue={v}
-									value={editValue}
-									onChange={(e) => setEditValue(e.target.value)}
-									onBlur={() => {
-										if (editValue !== localTags[k]) {
-											handleSaveEdit(k, editValue);
-										} else {
-											setEditingKey(null);
-										}
-									}}
-									onPressEnter={() => handleSaveEdit(k, editValue)}
-									onKeyDown={(e) => {
-										if (e.key === "Escape") setEditingKey(null);
-									}}
-									disabled={saving}
-								/>
-							) : (
-								<button
-									type="button"
-									className="inline-button-reset"
-									style={{ cursor: "pointer", borderBottom: "1px dashed #999" }}
-									onClick={() => {
-										setEditingKey(k);
-										setEditValue(v);
-									}}
-									title="点击编辑"
-								>
-									{v}
-								</button>
-							)}
-							<Popconfirm
-								title={`确认删除标签 "${k}"？`}
-								onConfirm={() => handleDelete(k)}
-							>
-								<Button
-									type="text"
-									size="small"
-									danger
-									style={{ marginLeft: 4, padding: "0 2px" }}
-								>
-									×
-								</Button>
-							</Popconfirm>
-						</Tag>
+			{groupedEntries.length > 0 ? (
+				<Space direction="vertical" style={{ width: "100%" }} size={6}>
+					{groupedEntries.map(([k, rows]) => (
+						<div key={k}>
+							<Tag closable={false} style={{ marginRight: 8 }}>
+								<strong>{k}</strong>
+							</Tag>
+							<Space wrap size={[6, 4]}>
+								{rows.map((row) => (
+									<Tooltip
+										key={`${k}|${row.source_type}|${row.source_version || ""}|${row.source_name || ""}`}
+										title={[
+											row.source_name && `name: ${row.source_name}`,
+											row.source_version && `version: ${row.source_version}`,
+											row.applied_at && `at: ${row.applied_at}`,
+										]
+											.filter(Boolean)
+											.join("  ·  ")}
+									>
+										<Tag
+											color={SOURCE_COLORS[row.source_type] ?? "default"}
+											closable={false}
+										>
+											<span>{row.tag_value}</span>
+											<span style={{ marginLeft: 6, opacity: 0.7 }}>
+												[{row.source_type}
+												{row.source_version ? `@${row.source_version}` : ""}]
+											</span>
+											<Popconfirm
+												title={`删除 ${row.source_type} 的 ${k}？`}
+												onConfirm={() => handleDeleteSource(k, row.source_type)}
+											>
+												<Button
+													type="text"
+													size="small"
+													danger
+													style={{ marginLeft: 4, padding: "0 2px" }}
+												>
+													×
+												</Button>
+											</Popconfirm>
+										</Tag>
+									</Tooltip>
+								))}
+								{rows.length > 1 ? (
+									<Popconfirm
+										title={`删除 ${k} 的全部来源？`}
+										onConfirm={() => handleDeleteSource(k, undefined)}
+									>
+										<Button size="small" type="text" danger>
+											清空
+										</Button>
+									</Popconfirm>
+								) : null}
+							</Space>
+						</div>
 					))}
 				</Space>
 			) : (
 				<Empty description="暂无标签" image={Empty.PRESENTED_IMAGE_SIMPLE} />
 			)}
 
-			<div className="mt-3">
+			<div style={{ marginTop: 12 }}>
 				<Popover
 					content={addContent}
-					title="新增标签"
 					trigger="click"
 					open={addOpen}
 					onOpenChange={setAddOpen}
 				>
 					<Button size="small" icon={<PlusOutlined />}>
-						新增标签
+						添加标签
 					</Button>
 				</Popover>
 			</div>

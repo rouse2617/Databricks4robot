@@ -131,6 +131,31 @@ Agent 在 dev 上应完成：
 
 ## 二、后端 API 改动
 
+### 2.0 Canonical dev API（固定入口 — Agent 必用）
+
+**不要猜 URL。** 部署后验收 backend 时，默认使用 **Cloud Run dev**（`cyber-databrew-backend-dev`），不要用 `api-cyber-databrew-dev.cyberorigin.ai` 除非文档明确写了 Gateway 已切到同一 revision。
+
+| 脚本 | 用途 |
+|------|------|
+| [`scripts/dev-backend-env.sh`](../../scripts/dev-backend-env.sh) | `source` 后得到 `BASE`、`DATABREW_TOKEN`、`CLOUDRUN_ID_TOKEN`、`API_HDR` |
+| [`scripts/apply-migration-dev.sh`](../../scripts/apply-migration-dev.sh) | 对 dev PG 应用 `backend/migrations/*.sql`（GKE 工具 pod，可重复） |
+| [`scripts/smoke-customers-dev.sh`](../../scripts/smoke-customers-dev.sh) | CYB-1014 类 customers/delivery 契约 smoke（需 `ASSET_ID`） |
+| [`scripts/api-guide-smoke.sh`](../../scripts/api-guide-smoke.sh) | 全站 L2 契约回归（`source dev-backend-env.sh` 后设 `BASE`/`TOKEN`） |
+
+```bash
+# 1) 有 schema 变更时：先迁移，再 deploy backend
+bash scripts/apply-migration-dev.sh backend/migrations/029_customers.sql
+
+# 2) build / push / deploy（见 deploy-before-commit.md）
+
+# 3) smoke
+source scripts/dev-backend-env.sh
+echo "BASE=$BASE"
+bash scripts/smoke-customers-dev.sh   # 或 api-guide-smoke.sh
+```
+
+**顺序：** migration → deploy image → smoke against **new revision**（`gcloud run services describe … --format='value(status.latestReadyRevisionName)'`）。
+
 ### 2.1 推荐环境
 
 部署 backend dev（在已 build/push 镜像后）：
@@ -141,7 +166,7 @@ USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
   bash deploy/cloudrun/backend-dev.sh
 ```
 
-记下 dev **BASE URL**（Cloud Run 或 Gateway + IAP，与团队一致）。
+`BASE` 用 `source scripts/dev-backend-env.sh` 解析，不要手抄 URL。
 
 ### 2.2 验证维度
 
@@ -150,19 +175,13 @@ USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
 - 对照 OpenSpec / api-guide：方法、路径、请求体、状态码、响应字段。
 - 至少：**happy path** + **1 个错误 path**（400/404/409 等）。
 
-示例（本地或 dev，替换 `BASE` 与 `TOKEN`）：
+示例（dev Cloud Run）：
 
 ```bash
-export BASE="https://<backend-dev-url>"
-export TOKEN="<GRACE_TOKEN>"
-export IAP_TOKEN="<若 Gateway 需要>"
-
-# 健康检查
-curl -sfS "$BASE/healthz"
+source scripts/dev-backend-env.sh
 
 # 本次新增/修改的接口（按实际填写）
-curl -sfS -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
-  -d '{"...": "..."}' "$BASE/api/v1/..."
+curl -sfS "${API_HDR[@]}" -d '{"...": "..."}' "$BASE/api/v1/..."
 ```
 
 #### B. 其它接口回归（你提到的「每次跑完其它接口也要复测」）
@@ -172,7 +191,7 @@ curl -sfS -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
 | 层级 | 何时跑 | 命令 / 脚本 |
 |------|--------|-------------|
 | **L0 必跑** | 任意 backend 改动 | `cd backend && go test ./...`（CI 也会跑） |
-| **L1 核心 smoke** | 改动 handler/router/middleware/公共 model | `make smoke-local` 或 `GRACE_TOKEN=... bash backend/scripts/smoke_actions_api.sh` |
+| **L1 核心 smoke** | 改动 handler/router/middleware/公共 model | `make smoke-local` 或 `DATABREW_TOKEN=... bash backend/scripts/smoke_actions_api.sh` |
 | **L2 契约 smoke** | 改动 API 契约、auth、资产 CRUD、检索 | `BASE=... TOKEN=... bash scripts/api-guide-smoke.sh`（对齐 [`docs/review/api-guide.md`](../review/api-guide.md)） |
 | **L3 集群内 smoke** | 改动仅在线上 Gateway/IAP 下才暴露的问题 | `make api-guide-smoke-incluster`（GKE dev） |
 
@@ -191,13 +210,23 @@ curl -sfS -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
 - 写接口：是否产生脏数据；必要时用测试 asset id，避免污染共享数据。
 - Outbox / ES 同步：若涉及 `asset_events`，按 [`docs/review/`](../review/README.md) 相关说明做延迟一致性 spot-check（如适用）。
 
-### 2.3 SDK / OpenAPI 联动
+### 2.3 API 契约同步（与 backend 同 PR — 强制）
 
-若改了 `api/openapi.yaml`：
+**新增或修改 HTTP API 时**（不仅限于先改 OpenAPI），必须按 [`AI-RULES.md` § API contract sync](AI-RULES.md#api-contract-sync-mandatory) 逐项完成，不得「先合 handler 再补文档」。
 
-- [ ] `docs/review/api-guide.md` 已同步
-- [ ] `cd sdk && uv run ruff check src/ && uv run pytest tests/unit/`（CI 目标）
-- [ ] 用 sdk 或 curl 调一次新字段（dev）
+| 必做 | 文件 |
+|------|------|
+| OpenAPI | `api/openapi.yaml` |
+| 人工 curl 文档 | `docs/review/api-guide.md` |
+| Dev smoke | `scripts/api-guide-smoke.sh` 或 `scripts/smoke-*-dev.sh` |
+| SDK（公开 REST） | `sdk/src/cyber_databrew_sdk/*.py` + `client.py` |
+| 行为 spec | `openspec/changes/CYB-*/specs/*/spec.md` |
+
+验证：
+
+- [ ] `cd sdk && uv run ruff check src/ && uv run pytest tests/unit/`（若 SDK 有改动）
+- [ ] `source scripts/dev-backend-env.sh` + smoke 脚本 PASS
+- [ ] PR 描述列出已更新的契约文件
 
 ---
 
@@ -267,7 +296,7 @@ curl -sfS -H "X-Grace-Token: $TOKEN" -H "Content-Type: application/json" \
 ```bash
 export FRONTEND_DEV_URL="https://<frontend-cloud-run-dev>"
 export BASE="https://<backend-cloud-run-dev>"
-export TOKEN="<GRACE_TOKEN>"
+export TOKEN="<DATABREW_TOKEN>"
 export IAP_TOKEN="<若 Gateway/IAP 需要>"
 ```
 
@@ -322,7 +351,7 @@ export IAP_TOKEN="<若 Gateway/IAP 需要>"
 
 ```bash
 export BASE="https://<backend-dev-url>"
-export TOKEN="<GRACE_TOKEN>"
+export TOKEN="<DATABREW_TOKEN>"
 # 可选: IAP_TOKEN=… 见 scripts/api-guide-smoke.sh 头部注释
 bash scripts/api-guide-smoke.sh
 # 期望: 末尾 0 failed（WARN 项在 PR 说明）

@@ -33,9 +33,11 @@ All tools load the **same** rules under `docs/agents/`. There is **no** Cursor-o
 | Step | Document | Purpose |
 |------|----------|---------|
 | 1 | [`AI-RULES.md`](AI-RULES.md) | Automatic behavior, precedence, verification tiers, decision log |
-| 2 | [`SETUP.md`](SETUP.md) | Silent env check (Linear, skills, hooks, build smoke) |
-| 3 | [`WORKFLOWS.md`](WORKFLOWS.md) | Bug / Feature / Hotfix paths |
-| 4+ | As needed (table below) | Deploy, OpenSpec, skills, MCP |
+| 2 | [`HARNESS.md`](HARNESS.md) | Portable runtime guardrails, shared scripts, adapter rules |
+| 3 | [`.agent/context/current-work.md`](../../.agent/context/current-work.md) | Active CYB / branch / constraints (compact recovery) |
+| 4 | [`SETUP.md`](SETUP.md) | Silent env check (Linear, skills, hooks, build smoke) |
+| 5 | [`WORKFLOWS.md`](WORKFLOWS.md) | Bug / Feature / Hotfix paths |
+| 6+ | As needed (table below) | Deploy, OpenSpec, skills, MCP |
 
 ---
 
@@ -44,6 +46,8 @@ All tools load the **same** rules under `docs/agents/`. There is **no** Cursor-o
 | Document | When to read |
 |----------|----------------|
 | [`AI-RULES.md`](AI-RULES.md) | Every task (mandatory) |
+| [`HARNESS.md`](HARNESS.md) | Runtime phases, `scripts/agent-harness/*`, adapter rules |
+| [`.agent/context/current-work.md`](../../.agent/context/current-work.md) | Active iteration scratchpad |
 | [`SETUP.md`](SETUP.md) | First task in session / env failure |
 | [`WORKFLOWS.md`](WORKFLOWS.md) | Classifying bug vs feature vs hotfix |
 | [`spec-driven-workflow.md`](spec-driven-workflow.md) | Creating or archiving OpenSpec changes |
@@ -69,6 +73,21 @@ All tools load the **same** rules under `docs/agents/`. There is **no** Cursor-o
 | PR template + CI gates | `.github/pull_request_template.md`, `.github/workflows/` |
 
 Do not tell users that deploy, OpenSpec, or hooks apply only when using Cursor.
+
+---
+
+## Runtime guardrails (all tools)
+
+| Layer | Location | Role |
+|-------|----------|------|
+| Policy | [`AI-RULES.md`](AI-RULES.md) | What agents must do |
+| Contract | [`HARNESS.md`](HARNESS.md) | How scripts and adapters enforce policy |
+| Context | [`.agent/context/current-work.md`](../../.agent/context/current-work.md) | Current CYB constraints (human-updated) |
+| Scripts | `scripts/agent-harness/after-edit.sh`, `before-commit.sh` | Shared checks (advisory / hard) |
+| Adapters | `AGENTS.md`, `CLAUDE.md`, `.cursor/rules/*.mdc` | Pointers only — optional client hooks call scripts |
+| Hard backstop | `.githooks/commit-msg`, CI | Conventional Commits + optional `before-commit.sh` |
+
+Client-specific hooks are **optional early feedback**. Git hooks and CI remain authoritative when wired.
 
 ---
 

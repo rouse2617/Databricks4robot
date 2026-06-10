@@ -33,11 +33,11 @@ type Config struct {
 	// (e.g. http://cyber-databrew-backend:8080). Must NOT include /api/v1.
 	UpstreamBaseURL string
 
-	// GraceTokenPassthrough controls whether incoming X-Grace-Token is
+	// DatabrewTokenPassthrough controls whether incoming X-Databrew-Token is
 	// forwarded to the upstream call. In phase 0 this is always true; the
 	// flag exists so we can wire OpenFGA / service-to-service auth later
 	// without bypassing token validation.
-	GraceTokenPassthrough bool
+	DatabrewTokenPassthrough bool
 
 	// HTTPClient calls the upstream backend. tests override.
 	HTTPClient *http.Client
@@ -105,9 +105,9 @@ func New(cfg Config) *gin.Engine {
 func prewarmHandler(cfg Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		assetID := c.Param("id")
-		token := extractGraceToken(c)
+		token := extractDatabrewToken(c)
 		if token == "" {
-			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "missing X-Grace-Token")
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "missing X-Databrew-Token")
 			return
 		}
 		loc, status, err := fetchLocator(c, cfg, assetID, token)
@@ -191,19 +191,19 @@ func accessLogger() gin.HandlerFunc {
 	})
 }
 
-// extractGraceToken pulls the phase-0 grace token from the request, accepting
+// extractDatabrewToken pulls the phase-0 Databrew token from the request, accepting
 // any of the three transports we know about:
-//   - `X-Grace-Token` header (server-to-server callers, curl)
-//   - `?grace_token=` query (HTML <video> tags can't add headers)
-//   - `grace_session` cookie (browser session set by backend /auth/login)
-func extractGraceToken(c *gin.Context) string {
-	if t := c.GetHeader("X-Grace-Token"); t != "" {
+//   - `X-Databrew-Token` header (server-to-server callers, curl)
+//   - `?databrew_token=` query (HTML <video> tags can't add headers)
+//   - `databrew_session` cookie (browser session set by backend /auth/login)
+func extractDatabrewToken(c *gin.Context) string {
+	if t := c.GetHeader("X-Databrew-Token"); t != "" {
 		return t
 	}
-	if t := c.Query("grace_token"); t != "" {
+	if t := c.Query("databrew_token"); t != "" {
 		return t
 	}
-	if t, err := c.Cookie("grace_session"); err == nil && t != "" {
+	if t, err := c.Cookie("databrew_session"); err == nil && t != "" {
 		return t
 	}
 	return ""
@@ -250,9 +250,9 @@ func manifestHandler(cfg Config) gin.HandlerFunc {
 			httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid asset id", nil)
 			return
 		}
-		token := extractGraceToken(c)
+		token := extractDatabrewToken(c)
 		if token == "" {
-			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "missing X-Grace-Token")
+			httpresp.Unauthorized(c, httpresp.CodeUnauthorized, "missing X-Databrew-Token")
 			return
 		}
 		if cfg.UpstreamBaseURL == "" {
@@ -310,8 +310,8 @@ func fetchLocator(c *gin.Context, cfg Config, assetID, token string) (*upstreamL
 	if err != nil {
 		return nil, 0, err
 	}
-	if cfg.GraceTokenPassthrough {
-		req.Header.Set("X-Grace-Token", token)
+	if cfg.DatabrewTokenPassthrough {
+		req.Header.Set("X-Databrew-Token", token)
 	}
 	if rid, _ := c.Get("request_id"); rid != nil {
 		if s, ok := rid.(string); ok && s != "" {

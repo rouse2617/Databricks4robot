@@ -42,6 +42,7 @@ export interface SearchAssetHit {
 	status?: string;
 	version?: number;
 	retention_tier?: string;
+	storage_uri?: string;
 	owner?: string;
 	reviewer?: string;
 	start_timestamp_ns?: number;
@@ -81,6 +82,7 @@ export interface SearchSyncStatusResponse {
 		| "local_reconcile"
 		| "manual";
 	env?: string;
+	admin_search_enabled?: boolean;
 }
 
 /** GET /search/sync-progress — runtime PG→ES sync progress snapshot. */
@@ -211,6 +213,7 @@ export function normalizeSearchHitToAsset(
 		updated_at: hit.updated_at ?? "",
 		version: hit.version ?? 0,
 		_highlight: hit._highlight,
+		storage_uri: hit.storage_uri,
 	};
 }
 
@@ -224,7 +227,7 @@ export const searchApi = {
 			.get<SearchSyncProgressResponse>("/search/sync-progress")
 			.then((r) => r.data),
 
-	searchAssets: (params?: SearchAssetsParams) => {
+	searchAssets: (params?: SearchAssetsParams, signal?: AbortSignal) => {
 		const sp = new URLSearchParams();
 		if (params?.q) sp.set("q", params.q);
 		if (params?.mode) sp.set("mode", params.mode);
@@ -238,6 +241,7 @@ export const searchApi = {
 		return apiClient
 			.get<Omit<SearchAssetsResponse, "items"> & { items: SearchAssetHit[] }>(
 				`/search/assets?${sp.toString()}`,
+				{ signal },
 			)
 			.then((r) => ({
 				...r.data,

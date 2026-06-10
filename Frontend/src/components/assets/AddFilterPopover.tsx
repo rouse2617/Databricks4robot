@@ -305,7 +305,7 @@ export default function AddFilterPopover({
 
 				{/* Quick field buttons */}
 				<div>
-					<div style={{ fontSize: 11, color: "#999", marginBottom: 4 }}>
+					<div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
 						快捷字段
 					</div>
 					<Space size={4} wrap>

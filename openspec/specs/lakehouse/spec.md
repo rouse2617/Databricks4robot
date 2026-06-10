@@ -16,4 +16,4 @@ The system SHALL support report export from lakehouse query results.
 
 ### Requirement: Access control
 
-The system SHALL enforce `X-Grace-Token` authentication on all lakehouse endpoints.
+The system SHALL enforce `X-Databrew-Token` authentication on all lakehouse endpoints.

@@ -8,6 +8,18 @@ export interface PaginatedResponse<T> {
 }
 
 // ─── Asset ───
+/** One row of `asset_tags`. Multi-source enabled by CYB-1015. */
+export interface AssetTagDetail {
+	tag_key: string;
+	tag_value: string;
+	tag_type?: string;
+	source_type: string;
+	source_name?: string;
+	source_version?: string;
+	run_id?: string;
+	applied_at?: string;
+}
+
 export interface Asset {
 	asset_id: string;
 	mcap_file_id: string;
@@ -29,6 +41,7 @@ export interface Asset {
 	delivery_count: number;
 	algo_results: Record<string, string>;
 	tags: Record<string, string>;
+	tags_detailed?: AssetTagDetail[];
 	files: Record<string, string>;
 	thumb_uri?: string;
 	storage_uri?: string;
@@ -40,6 +53,36 @@ export interface Asset {
 	created_at: string;
 	updated_at: string;
 	version: number;
+	logical_asset_id?: string;
+	revision?: number;
+	is_current?: boolean;
+}
+
+export interface RevisionSummary {
+	asset_id: string;
+	revision: number;
+	is_current: boolean;
+	created_at: string;
+}
+
+export interface VersionHistoryEntry {
+	version: number;
+	asset_id?: string;
+	promoted_at: string;
+	by_run_id?: string;
+	reason?: string;
+}
+
+export interface AssetProvenance {
+	asset_id: string;
+	logical_asset_id?: string;
+	revisions: RevisionSummary[];
+	version_history: VersionHistoryEntry[];
+	lineage: {
+		asset_id: string;
+		upstream: Record<string, unknown>;
+		downstream: Record<string, unknown>;
+	};
 }
 
 // ─── MCAP File ───
@@ -141,4 +184,14 @@ export interface ActivityItem {
 	id: string;
 	description: string;
 	timestamp: string;
+}
+
+export interface PipelineLineage {
+	asset_id: string;
+	deployment_id?: string;
+	pipeline_name?: string;
+	workflow_name?: string;
+	node_id?: string;
+	input_assets?: string[];
+	produced_at?: string;
 }

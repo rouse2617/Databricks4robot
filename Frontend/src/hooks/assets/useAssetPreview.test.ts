@@ -76,7 +76,7 @@ describe("buildPreviewManifestFromSources", () => {
 	it("includes grace token and topic in segment preview url", () => {
 		Object.defineProperty(document, "cookie", {
 			configurable: true,
-			get: () => "grace_session=dev-token",
+			get: () => "databrew_session=dev-token",
 		});
 		const m = buildPreviewManifestFromSources(
 			makeAsset({ lifecycle_state: "ready" }),
@@ -89,7 +89,7 @@ describe("buildPreviewManifestFromSources", () => {
 			},
 			{ previewTopic: "/camera/front/image_raw/compressed" },
 		);
-		expect(m.previewVideoUrl).toContain("grace_token=dev-token");
+		expect(m.previewVideoUrl).toContain("databrew_token=dev-token");
 		expect(m.previewVideoUrl).toContain(
 			"topic=%2Fcamera%2Ffront%2Fimage_raw%2Fcompressed",
 		);

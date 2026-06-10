@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://data-platform/schemas/events/algo_run_applied.v1.json",
+  "title": "algo_run_applied.v1",
+  "description": "Emitted when a registered algo run updates per-asset algorithm state.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["run_id", "algo_name", "algo_version", "new_status"],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "16-character alphanumeric run identifier."
+    },
+    "algo_name": {
+      "type": "string"
+    },
+    "algo_version": {
+      "type": "string"
+    },
+    "new_status": {
+      "type": "string",
+      "enum": ["ok", "failed"]
+    }
+  }
+}

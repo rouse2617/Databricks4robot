@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	lakehouseH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/lakehouse"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
@@ -35,7 +36,11 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		core.asset,
 		core.mcap,
 		core.delivery,
+		core.customer,
+		core.deliveryRule,
+		core.algoRun,
 		core.algo,
+		auditH.New(inf.pg),
 		lakehouseH.New(cfg.LakehouseReportPath, inf.lake, inf.pg).
 			WithBronzeCheckpoint(postgres.NewLakehouseBronzeCheckpointRepo(inf.pg)),
 		registryH.New(inf.algoRegistry, inf.tagRegistry, inf.metricRegistry, inf.actionLabelReg),
@@ -44,7 +49,11 @@ func runServer(inf *infra, core *coreHandlers, opt *optional) {
 		opt.purge,
 		core.eval,
 		core.action,
+		core.pipeline,
+		core.pipelineComponent,
 		core.query,
+		core.workflow,
+		core.backfill,
 	)
 
 	// Config watcher is created and managed by setupOptional (optional.go).

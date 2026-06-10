@@ -27,7 +27,11 @@ repos:
     hooks:
       - id: check-merge-conflict
       - id: end-of-file-fixer
+        exclude: ^databrew-pipeline/
       - id: trailing-whitespace
+        exclude: ^databrew-pipeline/
       - id: check-yaml
         args: ['--allow-multiple-documents']
+        exclude: ^databrew-pipeline/
       - id: check-json
+        exclude: ^databrew-pipeline/

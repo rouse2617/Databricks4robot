@@ -4,7 +4,8 @@ Applies to **all AI agents** (Cursor, Codex, Claude Code, etc.) when changing ru
 
 When you finish implementing a change targeting Backend / Frontend / SDK / Dagster, you MUST NOT run `git commit` or `git push` until the following sequence has completed and the user has explicitly approved:
 
-1. **Build image LOCALLY** with `docker build` — NOT Cloud Build (`gcloud builds submit`). The repo has no `.gcloudignore`, so Cloud Build uploads a large tarball and is slow; local `docker build` is preferred. Use `--platform=linux/amd64` on ARM Macs (Cloud Run is amd64).
+0. **Apply migrations** — If the diff includes new files under `backend/migrations/*.sql`, apply them to dev BEFORE building/deploying: `bash scripts/apply-migration-dev.sh "$(pwd)/backend/migrations/NNN_name.sql"`. Verify the migration succeeded before proceeding.
+1. **Build image LOCALLY** with `docker build` — NOT Cloud Build (`gcloud builds submit`). The repo has no `.gcloudignore`, so Cloud Build uploads a large tarball and is slow; local `docker build` is preferred. Use `--platform=linux/amd64` on ARM Macs (Cloud Run is amd64). On Docker Desktop + BuildKit, also pass `--output=type=docker` to force a single-platform Docker manifest — otherwise BuildKit produces a multi-platform OCI index that Cloud Run rejects with "Container manifest type must support amd64/linux".
    - **Tag with git SHA** (immutable) **and** push `cloudrun-dev-latest` (mutable convenience). See [Image tags and revision record](#image-tags-and-revision-record) below — do **not** push only `:cloudrun-dev-latest` without a SHA tag.
    - Backend / Frontend build commands: same section below.
    - Do NOT call `bash deploy/cloudrun/backend-dev.sh` / `frontend-dev.sh` without `USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false`, because the script's default path is Cloud Build.
@@ -14,6 +15,7 @@ When you finish implementing a change targeting Backend / Frontend / SDK / Dagst
    - **Diff 含 `Frontend/`**：部署 frontend dev → Agent **必须**用 **Chrome DevTools MCP** 验收（截图 + console），不得默认让用户点浏览器。
    - **仅 backend / sdk 等（无 `Frontend/`）**：部署对应服务 + API smoke/curl；**不需要** Chrome DevTools MCP。
 5. **Wait for user approval** — explicitly ask "确认部署 OK，可以 commit 吗？" (or equivalent). User must answer affirmatively.
+6. **Pre-commit hook check (local)** — After user approves but BEFORE `git add`/`git commit`, run `pre-commit run --all-files` locally to catch trailing whitespace, YAML/JSON validation, secrets leakage, and other pre-commit issues. If any hook fails (excluding infra-only hooks like `tflint` that require tools not installed locally), fix the issue immediately. **Do not push commits that would fail CI pre-commit checks.**
 
 Only after step 5 may you run `git add` / `git commit` / `git push`.
 
@@ -36,8 +38,8 @@ When in doubt, treat the change as runtime-affecting and follow the full gate.
 
 | Service | Registry image | Dev service name |
 |---------|----------------|------------------|
-| Backend | `us-central1-docker.pkg.dev/green-valley-442103/rick-cyber-databrew-images/cyber-databrew-backend` | `cyber-databrew-backend-dev` |
-| Frontend (Cloud Run) | `us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/cyber-databrew-frontend` | `cyber-databrew-frontend-dev` |
+| Backend | `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend` | `cyber-databrew-backend-dev` |
+| Frontend (Cloud Run) | `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend` | `cyber-databrew-frontend-dev` |
 
 Set once per shell:
 
@@ -51,8 +53,8 @@ export REG=us-central1-docker.pkg.dev/${PROJECT_ID}
 ### Backend — build, push, deploy
 
 ```bash
-export BACKEND_IMAGE="${REG}/rick-cyber-databrew-images/cyber-databrew-backend:${SHA}"
-export BACKEND_LATEST="${REG}/rick-cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest"
+export BACKEND_IMAGE="${REG}/cyber-databrew-images/cyber-databrew-backend:${SHA}"
+export BACKEND_LATEST="${REG}/cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest"
 
 docker build --platform=linux/amd64 -f backend/Dockerfile -t "${BACKEND_IMAGE}" backend/
 docker tag "${BACKEND_IMAGE}" "${BACKEND_LATEST}"
@@ -70,9 +72,9 @@ USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
 Frontend is two images (SPA + nginx wrapper). Match `deploy/cloudrun/frontend-dev.sh` defaults:
 
 ```bash
-export FRONTEND_BASE="${REG}/video-proc-images/cyber-databrew-frontend:dev-latest"
-export FRONTEND_IMAGE="${REG}/video-proc-images/cyber-databrew-frontend:${SHA}"
-export FRONTEND_LATEST="${REG}/video-proc-images/cyber-databrew-frontend:cloudrun-dev-latest"
+export FRONTEND_BASE="${REG}/cyber-databrew-images/cyber-databrew-frontend:dev-latest"
+export FRONTEND_IMAGE="${REG}/cyber-databrew-images/cyber-databrew-frontend:${SHA}"
+export FRONTEND_LATEST="${REG}/cyber-databrew-images/cyber-databrew-frontend:cloudrun-dev-latest"
 
 docker build --platform=linux/amd64 \
   --build-arg "VITE_APP_VERSION=${SHA}" \
@@ -123,7 +125,7 @@ gcloud run services describe cyber-databrew-frontend-dev \
 | frontend-dev | cyber-databrew-frontend:`<sha>` | cyber-databrew-frontend-dev-00xxx-xyz | https://… |
 ```
 
-**Tekton note:** CI push pipelines already tag images with `{{revision}}` (git commit). Local deploys should use the same `SHA` convention so dev matches CI.
+**Tekton / dev deploy policy:** Push to `dev` or feature branches **does not** auto-deploy Cloud Run (see `.tekton/push-*-cloudrun-dev.yaml`, `on-cel-expression: false`). Use **local** build + `backend-dev.sh` / `frontend-dev.sh` (this doc), or open a PR to `main`/`dev` and comment **`/deploy-cloudrun-dev`** on the PR. Prod `main` push pipelines are unchanged. Tag images with git `SHA` in both paths.
 
 ### Rollback (dev)
 
@@ -143,7 +145,7 @@ gcloud run services update-traffic cyber-databrew-backend-dev \
 
 ```bash
 USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
-  IMAGE="${REG}/rick-cyber-databrew-images/cyber-databrew-backend:<old-sha>" \
+  IMAGE="${REG}/cyber-databrew-images/cyber-databrew-backend:<old-sha>" \
   DB_PASSWORD_SECRET=cyber-databrew-dev-postgres-password \
   bash deploy/cloudrun/backend-dev.sh
 ```

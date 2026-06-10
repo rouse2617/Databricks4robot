@@ -30,9 +30,12 @@ type DeliveryStatus string
 const (
 	DeliveryStatusPending   DeliveryStatus = "pending"
 	DeliveryStatusDelivered DeliveryStatus = "delivered"
+	DeliveryStatusFailed    DeliveryStatus = "failed"
 	DeliveryStatusAccepted  DeliveryStatus = "accepted"
 	DeliveryStatusRejected  DeliveryStatus = "rejected"
 	DeliveryStatusRecalled  DeliveryStatus = "recalled"
+	DeliveryStatusCancelled DeliveryStatus = "cancelled"
+	DeliveryStatusArchived  DeliveryStatus = "archived"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -69,8 +72,11 @@ type Asset struct {
 	DeliveryCount   int        `json:"delivery_count"`
 
 	AlgoResults map[string]string `json:"algo_results,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-	Files       map[string]string `json:"files,omitempty"`
+	// Tags is the flat last-write-wins map kept for backward compatibility.
+	// Source of truth for multi-source assertions is TagsDetailed (CYB-1015).
+	Tags         map[string]string `json:"tags,omitempty"`
+	TagsDetailed []AssetTag        `json:"tags_detailed,omitempty"`
+	Files        map[string]string `json:"files,omitempty"`
 
 	LifecycleMeta map[string]interface{} `json:"lifecycle_meta,omitempty"`
 
@@ -100,10 +106,30 @@ type Asset struct {
 	TenantID            string                 `json:"tenant_id,omitempty"`
 	ProjectID           string                 `json:"project_id,omitempty"`
 
-	// Timestamps / versioning
+	// Multi-version identity (CYB-1013). Legacy rows may have empty/zero values.
+	LogicalAssetID string `json:"logical_asset_id,omitempty"`
+	Revision       int64  `json:"revision,omitempty"`
+	IsCurrent      bool   `json:"is_current"`
+
+	// Timestamps / row optimistic-lock version (not content revision)
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Version   int64     `json:"version"`
+}
+
+// LogicalAsset is the version coordinator row for a family of asset revisions.
+type LogicalAsset struct {
+	LogicalAssetID  string                 `json:"logical_asset_id"`
+	AssetType       string                 `json:"asset_type"`
+	DisplayName     string                 `json:"display_name,omitempty"`
+	Description     string                 `json:"description,omitempty"`
+	Owner           string                 `json:"owner,omitempty"`
+	Status          string                 `json:"status"`
+	CurrentRevision int64                  `json:"current_revision"`
+	TotalRevisions  int64                  `json:"total_revisions"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 }
 
 // SyncLegacyFields computes backward-compatible legacy fields from the new
@@ -222,6 +248,15 @@ type Delivery struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Version   int64     `json:"version"`
+
+	// Cancel fields (CYB-1104)
+	CancelledAt  *time.Time `json:"cancelled_at,omitempty"`
+	CancelledBy  string     `json:"cancelled_by,omitempty"`
+	CancelReason string     `json:"cancel_reason,omitempty"`
+
+	// Acknowledgment fields (CYB-1106)
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy string     `json:"acknowledged_by,omitempty"`
 }
 
 // DeliveryItem is used only in API request/response bodies.

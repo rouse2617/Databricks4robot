@@ -24,7 +24,7 @@ OWNER="scenario-owner-${TS}"
 CUSTOMER_ID="tag-scenario-cust-${TS}"
 BATCH_TAG="scenario-batch-${TS}"
 
-hdr=( -H "X-Grace-Token: ${TOKEN}" -H "Content-Type: application/json" )
+hdr=( -H "X-Databrew-Token: ${TOKEN}" -H "Content-Type: application/json" )
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -178,7 +178,7 @@ PY
 echo ""
 echo "--- (3a) POST /api/v1/deliveries (Idempotency-Key) ---"
 raw=$(curl -sS --max-time 60 -w "\n%{http_code}" -X POST \
-	-H "X-Grace-Token: ${TOKEN}" -H "Content-Type: application/json" \
+	-H "X-Databrew-Token: ${TOKEN}" -H "Content-Type: application/json" \
 	-H "Idempotency-Key: ${IDEM_KEY}" \
 	"${BASE}/api/v1/deliveries" -d "${DELIVERY_BODY}" 2>/dev/null || echo -e "\n000")
 parse_http_body_code "$raw"

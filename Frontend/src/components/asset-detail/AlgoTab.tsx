@@ -26,6 +26,7 @@ import { type AlgoRegistryItem, algoRegistryApi } from "../../api/algoRegistry";
 import { assetsApi } from "../../api/assets";
 import type { AlgoEvent, AlgoStatus } from "../../api/types";
 import { extractApiErrorMessage } from "../../lib/apiError";
+import RunIdLink from "./RunIdLink";
 
 const { Text } = Typography;
 
@@ -78,6 +79,7 @@ export default function AlgoTab({
 	const [startModalOpen, setStartModalOpen] = useState(false);
 	const [algoKey, setAlgoKey] = useState("");
 	const [method, setMethod] = useState("");
+	const [runId, setRunId] = useState("");
 	const [starting, setStarting] = useState(false);
 	const [registry, setRegistry] = useState<AlgoRegistryItem[]>([]);
 
@@ -105,11 +107,16 @@ export default function AlgoTab({
 		if (!algoKey || !method) return;
 		setStarting(true);
 		try {
-			await assetsApi.startAlgo(assetId, algoKey, { method });
+			const trimmedRunId = runId.trim();
+			await assetsApi.startAlgo(assetId, algoKey, {
+				method,
+				...(trimmedRunId ? { run_id: trimmedRunId } : {}),
+			});
 			message.success(`算法 ${algoKey} 已启动`);
 			setStartModalOpen(false);
 			setAlgoKey("");
 			setMethod("");
+			setRunId("");
 			onRefresh();
 		} catch (err) {
 			message.error(extractApiErrorMessage(err, "启动算法失败"));
@@ -155,6 +162,14 @@ export default function AlgoTab({
 								</Tag>
 							);
 						},
+					},
+					{
+						title: "来自 run",
+						key: "run_id",
+						width: 140,
+						render: (_: unknown, r: AlgoInfo) => (
+							<RunIdLink runId={r.run_id} showLabel={false} />
+						),
 					},
 					{
 						title: "开始时间",
@@ -292,6 +307,7 @@ export default function AlgoTab({
 					setStartModalOpen(false);
 					setAlgoKey("");
 					setMethod("");
+					setRunId("");
 				}}
 				onOk={handleStartAlgo}
 				confirmLoading={starting}
@@ -316,7 +332,7 @@ export default function AlgoTab({
 						showSearch
 					/>
 				</div>
-				<div>
+				<div className="mb-3">
 					<label htmlFor="algo-method-input" className="block text-sm mb-1">
 						Method
 					</label>
@@ -325,6 +341,22 @@ export default function AlgoTab({
 						placeholder="输入 method（如 default, gpu, cpu）"
 						value={method}
 						onChange={(e) => setMethod(e.target.value)}
+					/>
+				</div>
+				<div>
+					<label htmlFor="algo-run-id-input" className="block text-sm mb-1">
+						Run ID{" "}
+						<Text type="secondary" className="text-xs">
+							（可选，关联已有运行记录）
+						</Text>
+					</label>
+					<Input
+						id="algo-run-id-input"
+						placeholder="输入 16 位 run_id"
+						value={runId}
+						onChange={(e) => setRunId(e.target.value)}
+						maxLength={16}
+						allowClear
 					/>
 				</div>
 			</Modal>

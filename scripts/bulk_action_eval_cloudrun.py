@@ -9,7 +9,7 @@ Bulk-mock Action + Eval APIs on Cloud Run dev.
 Per asset: one eval row (queryable metrics from metric_registry) + one action
 (primary_label from action_label_registry, time window inside seg bounds).
 
-  export GRACE_TOKEN=...
+  export DATABREW_TOKEN=...
   python3 scripts/bulk_action_eval_cloudrun.py [--max-assets 25000] [--workers 20]
     [--page-size 100] [--in-flight-mult 4]
 
@@ -78,7 +78,7 @@ def http_json(
 ) -> tuple[int, Any]:
     data = None
     headers = {
-        "X-Grace-Token": token,
+        "X-Databrew-Token": token,
         "Accept": "application/json",
     }
     if extra_headers:
@@ -334,9 +334,9 @@ def main() -> int:
     args = ap.parse_args()
 
     base = args.base.rstrip("/")
-    token = (args.token or "").strip() or __import__("os").environ.get("GRACE_TOKEN", "").strip()
+    token = (args.token or "").strip() or __import__("os").environ.get("DATABREW_TOKEN", "").strip()
     if not token:
-        print("ERROR: set GRACE_TOKEN or --token", file=sys.stderr)
+        print("ERROR: set DATABREW_TOKEN or --token", file=sys.stderr)
         return 2
     if args.eval_only and args.action_only:
         print("ERROR: choose at most one of --eval-only / --action-only", file=sys.stderr)

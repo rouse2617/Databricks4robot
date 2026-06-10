@@ -35,6 +35,8 @@ type AssetRepository interface {
 	Set(ctx context.Context, a *models.Asset) error
 	SoftDelete(ctx context.Context, assetID string) error
 	ListByMcapFile(ctx context.Context, mcapFileID string) ([]*models.Asset, error)
+	// ListByLogicalAssetID returns non-deleted revisions for a logical asset family.
+	ListByLogicalAssetID(ctx context.Context, logicalAssetID string) ([]*models.Asset, error)
 	WriteSegmentIndex(ctx context.Context, a *models.Asset) error
 
 	// ListWithFilters queries assets using a parameterized WHERE clause.
@@ -42,4 +44,9 @@ type AssetRepository interface {
 	// Returns matching assets and total count for pagination.
 	ListWithFilters(ctx context.Context, whereSQL string, args []interface{},
 		page, pageSize int, orderBy filter.OrderByClause) ([]*models.Asset, int64, error)
+
+	// ListDescendants returns all non-deleted descendant assets reachable via
+	// asset_relations parent→child edges (recursive CTE). Used by the tag
+	// propagator (CYB-1068) to apply tags to the full descendant tree.
+	ListDescendants(ctx context.Context, assetID string) ([]*models.Asset, error)
 }

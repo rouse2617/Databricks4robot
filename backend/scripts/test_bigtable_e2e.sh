@@ -39,7 +39,7 @@ api() {
   curl -s --max-time "${CURL_TIMEOUT}" -w "\n%{http_code}" \
     -X "$method" \
     -H "Content-Type: application/json" \
-    -H "X-Grace-Token: ${AUTH_TOKEN}" \
+    -H "X-Databrew-Token: ${AUTH_TOKEN}" \
     "${BASE_URL}${path}" "$@" 2>/dev/null || echo -e "\nTIMEOUT"
 }
 

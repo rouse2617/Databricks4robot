@@ -271,14 +271,14 @@ func TestSegment_HappyPath(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			return bytes.NewReader(mcapBytes), nil, nil, nil
 		},
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -320,7 +320,7 @@ func TestSegment_RejectsNonH264(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnsupportedMediaType {
@@ -338,14 +338,14 @@ func TestSegment_HEVCHappyPath(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			return bytes.NewReader(mcapBytes), nil, nil, nil
 		},
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -365,14 +365,14 @@ func TestSegment_PreferH264TopicWhenAvailable(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			return bytes.NewReader(mcapBytes), nil, nil, nil
 		},
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -393,14 +393,14 @@ func TestSegment_H265HintFallsBackToH264Topic(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			return bytes.NewReader(mcapBytes), nil, nil, nil
 		},
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4?topic=/camera/front", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
@@ -428,7 +428,7 @@ func TestSegment_RejectsNonVideoSchema(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnprocessableEntity {
@@ -452,7 +452,7 @@ func TestSegment_InvalidTopicHint_Returns422(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4?topic=/camera/not-exist", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnprocessableEntity {
@@ -476,7 +476,7 @@ func TestSegment_NonVideoTopicHint_Returns422(t *testing.T) {
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4?topic=/debug/text", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnprocessableEntity {
@@ -494,14 +494,14 @@ func TestSegment_TokenViaQueryParam(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			return bytes.NewReader(mcapBytes), nil, nil, nil
 		},
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/preview/assets/abc123/segment.mp4?grace_token=tok", nil)
+		"/api/v1/preview/assets/abc123/segment.mp4?databrew_token=tok", nil)
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -517,14 +517,14 @@ func TestSegment_NormalizesMillisecondWindow(t *testing.T) {
 
 	r := New(Config{
 		UpstreamBaseURL:       upstream.URL,
-		GraceTokenPassthrough: true,
+		DatabrewTokenPassthrough: true,
 		OpenMCAP: func(_ context.Context, _ string) (io.ReadSeeker, *gcsrs.Stats, func(), error) {
 			return bytes.NewReader(mcapBytes), nil, nil, nil
 		},
 	})
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/preview/assets/abc123/segment.mp4", nil)
-	req.Header.Set("X-Grace-Token", "tok")
+	req.Header.Set("X-Databrew-Token", "tok")
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())

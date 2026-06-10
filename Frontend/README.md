@@ -14,7 +14,8 @@
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # http://127.0.0.1:5176 (local backend :8080)
+npm run dev:remote # same port, API proxy → Cloud Run dev backend
 ```
 
 构建生产版本：
@@ -55,7 +56,7 @@ cp .env.example .env
 ```
 src/
 ├── api/                  # API 客户端
-│   ├── client.ts         #   axios 实例，自动注入 X-Grace-Token
+│   ├── client.ts         #   axios 实例，自动注入 X-Databrew-Token
 │   ├── assets.ts         #   资产 CRUD + 算法生命周期接口
 │   └── types.ts          #   TypeScript 类型定义（对齐后端 model）
 ├── components/

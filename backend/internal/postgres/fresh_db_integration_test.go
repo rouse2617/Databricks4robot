@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 
@@ -48,17 +49,38 @@ SELECT EXISTS (
 	if err != nil {
 		t.Fatalf("GenerateMcapFileID: %v", err)
 	}
-	mcapRepo := NewMcapFileRepo(client)
-	if err := mcapRepo.Set(ctx, &models.McapFile{
-		McapFileID:  mcapFileID,
-		GCSPath:     "gs://smoke/test.mcap",
-		IngestState: models.IngestStatePending,
-		Owner:       "smoke",
+
+	// Migration 038 introduced dual FKs creating a circular dependency:
+	//   fk_mcap_asset:  mcap_files → assets (DEFERRABLE INITIALLY DEFERRED)
+	//   fk_assets_mcap: assets      → mcap_files (NOT deferred)
+	//
+	// McapFileRepo.Set does not use dbFromCtx (runs outside any caller
+	// transaction), so we insert via raw SQL within a tx instead. The
+	// deferred FK is checked only at commit time, after both rows exist.
+	repo := NewAssetRepo(client)
+	if err := client.WithTx(ctx, func(txCtx context.Context) error {
+		db := dbFromCtx(txCtx, client.db)
+		if err := db.Exec(txCtx, `
+INSERT INTO mcap_files(mcap_file_id, mcap_uri, ingest_state, owner, created_at, updated_at)
+VALUES($1, $2, $3, $4, NOW(), NOW())`, mcapFileID, "gs://smoke/test.mcap", string(models.IngestStatePending), "smoke"); err != nil {
+			return fmt.Errorf("insert mcap_file: %w", err)
+		}
+		if err := repo.InsertNew(txCtx, &models.Asset{
+			AssetID:          mcapFileID,
+			McapFileID:       mcapFileID,
+			StartTimestampNs: 1,
+			EndTimestampNs:   2,
+			LifecycleState:   string(LifecycleReady),
+			AssetType:        "raw_mcap",
+			Owner:            "smoke",
+		}); err != nil {
+			return fmt.Errorf("insert placeholder asset: %w", err)
+		}
+		return nil
 	}); err != nil {
-		t.Fatalf("mcap Set: %v", err)
+		t.Fatalf("seed mcap_file + placeholder asset: %v", err)
 	}
 
-	repo := NewAssetRepo(client)
 	a := &models.Asset{
 		AssetID:          assetID,
 		McapFileID:       mcapFileID,

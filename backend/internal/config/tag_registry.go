@@ -11,55 +11,78 @@ import (
 // TagDef defines a single tag's registration info.
 type TagDef struct {
 	Description string   `yaml:"description"`
-	Type        string   `yaml:"type"`       // "enum" or "string"
-	Values      []string `yaml:"values"`     // allowed values for enum type
-	MaxLength   int      `yaml:"max_length"` // max length for string type (0 = unlimited)
+	Type        string   `yaml:"type"`        // "enum" or "string"
+	Values      []string `yaml:"values"`      // allowed values for enum type
+	MaxLength   int      `yaml:"max_length"`  // max length for string type (0 = unlimited)
+	Propagation string   `yaml:"propagation"` // "none" (default) or "descendants" (CYB-1068)
 }
 
-// TagRegistry manages all registered tag definitions.
+// TagSourceDef governs which sources are allowed to write into asset_tags,
+// what identity fields they must provide, and whether their assertions are
+// immutable. Land scope for CYB-1015 — writable_by ACL is P1.5 and
+// deliberately not enforced here. Propagation is enforced since CYB-1068.
+type TagSourceDef struct {
+	Source                string `yaml:"source"`
+	Description           string `yaml:"description"`
+	RequiresSourceName    bool   `yaml:"requires_source_name"`
+	RequiresSourceVersion bool   `yaml:"requires_source_version"`
+	Immutable             bool   `yaml:"immutable"`
+}
+
+// TagRegistry manages all registered tag definitions and source contracts.
 type TagRegistry struct {
-	mu   sync.RWMutex
-	tags map[string]TagDef
-	path string
+	mu      sync.RWMutex
+	tags    map[string]TagDef
+	sources map[string]TagSourceDef
+	path    string
 }
 
 // tagRegistryFile is the top-level YAML structure.
 type tagRegistryFile struct {
-	Tags map[string]TagDef `yaml:"tags"`
+	Tags       map[string]TagDef `yaml:"tags"`
+	TagSources []TagSourceDef    `yaml:"tag_sources"`
 }
 
 // LoadTagRegistry loads the tag registry from a YAML file.
 // Returns an error if the file is missing or contains invalid syntax.
 func LoadTagRegistry(path string) (*TagRegistry, error) {
-	tags, err := loadTagsFromFile(path)
+	tags, sources, err := loadTagsFromFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return &TagRegistry{tags: tags, path: path}, nil
+	return &TagRegistry{tags: tags, sources: sources, path: path}, nil
 }
 
-func loadTagsFromFile(path string) (map[string]TagDef, error) {
+func loadTagsFromFile(path string) (map[string]TagDef, map[string]TagSourceDef, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("tag_registry: read file %s: %w", path, err)
+		return nil, nil, fmt.Errorf("tag_registry: read file %s: %w", path, err)
 	}
 
 	var f tagRegistryFile
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("tag_registry: parse yaml: %w", err)
+		return nil, nil, fmt.Errorf("tag_registry: parse yaml: %w", err)
 	}
 
-	return f.Tags, nil
+	sources := make(map[string]TagSourceDef, len(f.TagSources))
+	for _, s := range f.TagSources {
+		if s.Source == "" {
+			continue
+		}
+		sources[s.Source] = s
+	}
+	return f.Tags, sources, nil
 }
 
-// Reload re-reads the YAML file and swaps the internal map atomically.
+// Reload re-reads the YAML file and swaps the internal maps atomically.
 func (r *TagRegistry) Reload() error {
-	tags, err := loadTagsFromFile(r.path)
+	tags, sources, err := loadTagsFromFile(r.path)
 	if err != nil {
 		return err
 	}
 	r.mu.Lock()
 	r.tags = tags
+	r.sources = sources
 	r.mu.Unlock()
 	return nil
 }
@@ -101,4 +124,69 @@ func (r *TagRegistry) GetAllTags() map[string]TagDef {
 		cp[k] = v
 	}
 	return cp
+}
+
+// ErrUnknownSource is returned when a tag write references a source that is
+// not declared in `tag_sources[]`. Callers translate this to HTTP 422.
+type ErrUnknownSource struct{ Source string }
+
+func (e ErrUnknownSource) Error() string {
+	return fmt.Sprintf("tag_registry: source %q not registered", e.Source)
+}
+
+// ErrSourceContract signals that a write of a registered source violates an
+// identity contract (`requires_source_name` / `requires_source_version`).
+type ErrSourceContract struct {
+	Source string
+	Field  string
+}
+
+func (e ErrSourceContract) Error() string {
+	return fmt.Sprintf("tag_registry: source %q requires %s", e.Source, e.Field)
+}
+
+// ValidateSource enforces the per-source contract for `asset_tags` writes.
+// It does not enforce `writable_by` ACL (P1.5) — caller authentication is
+// handled by middleware; only the identity-field requirements are checked
+// here so that downstream queries can rely on those columns being populated.
+//
+// Returns nil when the source is unknown but the registry has no
+// `tag_sources` block at all (back-compat for environments that have not
+// configured sources yet).
+func (r *TagRegistry) ValidateSource(sourceType, sourceName, sourceVersion string) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.sources) == 0 {
+		return nil
+	}
+	def, ok := r.sources[sourceType]
+	if !ok {
+		return ErrUnknownSource{Source: sourceType}
+	}
+	if def.RequiresSourceName && sourceName == "" {
+		return ErrSourceContract{Source: sourceType, Field: "source_name"}
+	}
+	if def.RequiresSourceVersion && sourceVersion == "" {
+		return ErrSourceContract{Source: sourceType, Field: "source_version"}
+	}
+	return nil
+}
+
+// SourceDef returns the source contract for the given source_type, if any.
+// `ok=false` means the source is not registered (which under the back-compat
+// rule in ValidateSource means writes are unrestricted).
+func (r *TagRegistry) SourceDef(sourceType string) (TagSourceDef, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	def, ok := r.sources[sourceType]
+	return def, ok
+}
+
+// ShouldPropagate returns true when the given tag key is registered with
+// propagation=descendants (CYB-1068). Unregistered keys return false.
+func (r *TagRegistry) ShouldPropagate(key string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	def, ok := r.tags[key]
+	return ok && def.Propagation == "descendants"
 }

@@ -72,6 +72,17 @@ describe("query-changing actions reset page to 1 and set isStale", () => {
 		expect(result.resultsState.isStale).toBe(true);
 	});
 
+	it("CLEAR_ALL_FILTERS clears committed query and search draft", () => {
+		const s = freshState();
+		s.queryState.queryText = "no-such-asset";
+		s.searchUiState.draftText = "no-such-asset";
+		const result = assetsDiscoveryReducer(s, {
+			type: "CLEAR_ALL_FILTERS",
+		});
+		expect(result.queryState.queryText).toBe("");
+		expect(result.searchUiState.draftText).toBe("");
+	});
+
 	it("SET_SORT resets page and marks stale", () => {
 		const result = assetsDiscoveryReducer(stateOnPage3, {
 			type: "SET_SORT",
@@ -455,18 +466,17 @@ describe("FACET_COLLAPSE_TOGGLE", () => {
 describe("FACET_GROUP_TOGGLE", () => {
 	it("toggles group in facetUiState.expandedGroups", () => {
 		const s = freshState();
-		// "basic" is in default expanded groups
-		expect(s.facetUiState.expandedGroups).toContain("basic");
+		expect(s.facetUiState.expandedGroups).toContain("algorithm");
 		const r1 = assetsDiscoveryReducer(s, {
 			type: "FACET_GROUP_TOGGLE",
-			payload: { group: "basic" },
+			payload: { group: "algorithm" },
 		});
-		expect(r1.facetUiState.expandedGroups).not.toContain("basic");
+		expect(r1.facetUiState.expandedGroups).not.toContain("algorithm");
 		const r2 = assetsDiscoveryReducer(r1, {
 			type: "FACET_GROUP_TOGGLE",
-			payload: { group: "basic" },
+			payload: { group: "algorithm" },
 		});
-		expect(r2.facetUiState.expandedGroups).toContain("basic");
+		expect(r2.facetUiState.expandedGroups).toContain("algorithm");
 	});
 });
 

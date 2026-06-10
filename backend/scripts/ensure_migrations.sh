@@ -60,19 +60,24 @@ apply_if_missing() {
   echo "ensure_migrations: applied $name"
 }
 
-# eval/metrics tables (014)
+# eval/metrics tables (archive/014)
 apply_if_missing \
   "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'asset_metrics')" \
-  "$MIGRATIONS/014_add_eval_metrics.sql"
+  "$MIGRATIONS/archive/014_add_eval_metrics.sql"
 
-# actions table (016)
+# actions table (archive/016)
 apply_if_missing \
   "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'actions')" \
-  "$MIGRATIONS/016_add_actions.sql"
+  "$MIGRATIONS/archive/016_add_actions.sql"
 
-# saved_queries table (018)
+# saved_queries table (archive/026)
 apply_if_missing \
   "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'saved_queries')" \
-  "$MIGRATIONS/018_add_saved_queries.sql"
+  "$MIGRATIONS/archive/026_add_saved_queries.sql"
+
+# algo_runs table (archive/031, CYB-1018)
+apply_if_missing \
+  "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'algo_runs')" \
+  "$MIGRATIONS/archive/031_algo_runs.sql"
 
 echo "ensure_migrations: done"

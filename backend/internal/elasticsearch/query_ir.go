@@ -12,6 +12,7 @@ func BuildQueryIRSearchBody(req queryir.QueryRequest, includeHits, includeFacets
 	if err != nil {
 		return nil, err
 	}
+	query = wrapCurrentRevisionOnlyQuery(req, query)
 	body := map[string]any{
 		"query": query,
 	}

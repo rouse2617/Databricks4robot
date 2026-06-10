@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -43,6 +44,12 @@ func New(assetUsecase *assetUC.Usecase, fieldRegistry *config.QueryFieldRegistry
 	}
 }
 
+func applyIncludeHistoryQueryParam(c *gin.Context, req *queryir.QueryRequest) {
+	if c.Query("include_history") == "true" {
+		req.Scope.IncludeHistory = true
+	}
+}
+
 // Validate validates and compiles query IR without executing it.
 func (h *Handler) Validate(c *gin.Context) {
 	var req queryir.QueryRequest
@@ -50,6 +57,7 @@ func (h *Handler) Validate(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	applyIncludeHistoryQueryParam(c, &req)
 	compiled, err := h.compileAndValidate(c.Request.Context(), req)
 	if err != nil {
 		writeQueryError(c, err)
@@ -80,6 +88,7 @@ func (h *Handler) Run(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	applyIncludeHistoryQueryParam(c, &req)
 	compileStarted := time.Now()
 	plan, compiled, err := h.compileForRun(c.Request.Context(), req)
 	if err != nil {
@@ -225,6 +234,14 @@ func (h *Handler) applyESRecall(ctx context.Context, plan *queryplan.Plan, compi
 	} else {
 		compiled.CandidateAssetIDs = esCompiled.CandidateAssetIDs
 	}
+	if len(esCompiled.ESResults) > 0 {
+		normalized := make([]map[string]any, 0, len(esCompiled.ESResults))
+		for _, esDoc := range esCompiled.ESResults {
+			normalized = append(normalized, normalizeESAsset(esDoc))
+		}
+		compiled.ESResults = normalized
+	}
+	compiled.MatchTotal = esCompiled.MatchTotal
 }
 
 func (h *Handler) fetchESFacetsOrTotal(ctx context.Context, plan *queryplan.Plan, trackTotalHits bool) (*queryir.CompiledQuery, error) {
@@ -252,8 +269,16 @@ func (h *Handler) fetchESFacetsOrTotal(ctx context.Context, plan *queryplan.Plan
 	return esCompiled, nil
 }
 
-func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) ([]*models.Asset, int64, error) {
+func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, compiled *queryir.CompiledQuery) (any, int64, error) {
 	h.applyESRecall(ctx, plan, compiled)
+	if len(compiled.ESResults) > 0 {
+		return compiled.ESResults, compiled.MatchTotal, nil
+	}
+	// ES recall returned 0 results — short circuit, no PG fallback needed.
+	// ES is the authoritative search oracle for fulltext; if it says 0, trust it.
+	if plan.UseESRecall && compiled.MatchTotal == 0 {
+		return []*models.Asset{}, 0, nil
+	}
 
 	skipPGCount := canSkipPGCount(plan, compiled)
 	needESFacets := plan.UseESFacets && h.esExecutor != nil
@@ -267,9 +292,15 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 		esErr error
 	)
 
-	g, ctx := errgroup.WithContext(ctx)
+	// Save original request context before errgroup — errgroup.WithContext
+	// derives a new context that is cancelled by g.Wait() after all goroutines
+	// complete (Go stdlib errgroup v0.5+ behaviour). Any fallback PG queries
+	// after g.Wait() that use the errgroup context would immediately fail with
+	// "context canceled". See internal issue CYB-xxx.
+	reqCtx := ctx
+	eg, ctx := errgroup.WithContext(ctx)
 
-	g.Go(func() error {
+	eg.Go(func() error {
 		pgStarted := time.Now()
 		if skipPGCount {
 			items, pgErr = h.pgExecutor.ExecutePage(ctx, h.assetUC, compiled)
@@ -285,15 +316,15 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 	})
 
 	if needESFacets || needESTotalOnly {
-		g.Go(func() error {
+		eg.Go(func() error {
 			var err error
 			esOut, err = h.fetchESFacetsOrTotal(ctx, plan, skipPGCount)
 			esErr = err
-			return err
+			return nil // ES failure is non-fatal; handled in fallback below
 		})
 	}
 
-	if err := g.Wait(); err != nil {
+	if err := eg.Wait(); err != nil {
 		if pgErr != nil {
 			return nil, 0, pgErr
 		}
@@ -309,19 +340,20 @@ func (h *Handler) executeCompiledRun(ctx context.Context, plan *queryplan.Plan, 
 		}
 	}
 
+	// Use reqCtx (not ctx) here — ctx is cancelled by eg.Wait() above.
 	if skipPGCount {
 		switch {
 		case esOut != nil && esOut.MatchTotal > 0:
 			total = esOut.MatchTotal
 		case esErr != nil || esOut == nil:
 			compiled.Warnings = append(compiled.Warnings, "elasticsearch unavailable; used postgres count")
-			items, total, pgErr = h.pgExecutor.Execute(ctx, h.assetUC, compiled)
+			items, total, pgErr = h.pgExecutor.Execute(reqCtx, h.assetUC, compiled)
 			if pgErr != nil {
 				return nil, 0, pgErr
 			}
 		default:
 			compiled.Warnings = append(compiled.Warnings, "elasticsearch total unavailable; used postgres count")
-			items, total, pgErr = h.pgExecutor.Execute(ctx, h.assetUC, compiled)
+			items, total, pgErr = h.pgExecutor.Execute(reqCtx, h.assetUC, compiled)
 			if pgErr != nil {
 				return nil, 0, pgErr
 			}
@@ -376,24 +408,13 @@ func (h *Handler) fieldCapabilitiesFor(resource string, fallback []queryir.Field
 }
 
 func writeQueryError(c *gin.Context, err error) {
-	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "unknown field"):
-		httpresp.Unprocessable(c, httpresp.CodeUnsupportedField, msg, nil)
-	case strings.Contains(msg, "unsupported operator"):
-		httpresp.Unprocessable(c, httpresp.CodeUnsupportedOperator, msg, nil)
-	case strings.Contains(msg, "unplannable"):
-		httpresp.Unprocessable(c, httpresp.CodeUnplannableQuery, msg, nil)
-	case strings.Contains(msg, "unsupported scope.resource"),
-		strings.Contains(msg, "unsupported schema_version"),
-		strings.Contains(msg, "sort[0].field is required"),
-		strings.Contains(msg, "unsupported sort direction"),
-		strings.Contains(msg, "missing field in predicate"),
-		strings.Contains(msg, "missing operator in predicate"),
-		strings.Contains(msg, "invalid where expression"):
-		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
+	case errors.Is(err, filter.ErrUnknownField):
+		httpresp.Unprocessable(c, httpresp.CodeUnsupportedField, err.Error(), nil)
+	case errors.Is(err, queryir.ErrUnsupportedOperator):
+		httpresp.Unprocessable(c, httpresp.CodeUnsupportedOperator, err.Error(), nil)
 	default:
-		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, msg, nil)
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 	}
 }
 
@@ -501,4 +522,98 @@ func (h *Handler) upsertSavedQuery(c *gin.Context, create bool) {
 		return
 	}
 	c.JSON(200, updated)
+}
+
+// normalizeESAsset converts an ES _source document map to match the PG Asset JSON
+// format that the frontend expects. ES stores nested tags as {key, value, ...} and
+// algos as {name, version, status}, while PG returns tags_flat + tags_detailed and
+// algo_results as a flat map with composite keys.
+func normalizeESAsset(esDoc map[string]any) map[string]any {
+	out := make(map[string]any, len(esDoc))
+
+	// Copy over all root-level fields that share the same name in ES and PG.
+	for _, key := range []string{
+		"asset_id", "mcap_file_id", "segment_locator", "asset_type",
+		"lifecycle_state", "status", "owner", "reviewer", "notes",
+		"start_timestamp_ns", "end_timestamp_ns", "duration_ms",
+		"delivery_count", "asset_level", "version", "is_deleted",
+		"retention_tier", "storage_uri", "thumb_uri",
+		"parent_asset_id", "root_asset_id", "tenant_id", "project_id",
+		"last_delivered_to", "last_delivered_at", "expire_at",
+		"logical_asset_id", "revision", "is_current",
+		"segment_index", "parent_start_offset_ms", "parent_end_offset_ms",
+		"split_method", "split_algo_name", "split_algo_version",
+		"split_run_id", "split_reason",
+		"created_at", "updated_at",
+		"metadata", "files_json",
+		"algo_inputs_uris", "annot_inputs_uris",
+		"actions",
+	} {
+		if v, ok := esDoc[key]; ok {
+			out[key] = v
+		}
+	}
+
+	// Map ES tags_flat → PG tags (both are flat key→value maps).
+	if v, ok := esDoc["tags_flat"]; ok {
+		out["tags"] = v
+	}
+
+	// Map ES tags[] → PG tags_detailed[] with field renames.
+	if raw, ok := esDoc["tags"]; ok {
+		if arr, ok := raw.([]any); ok {
+			detailed := make([]map[string]any, 0, len(arr))
+			for _, item := range arr {
+				if m, ok := item.(map[string]any); ok {
+					entry := map[string]any{
+						"tag_key":     m["key"],
+						"tag_value":   m["value"],
+						"source_type": m["source_type"],
+						"source_name": m["source_name"],
+					}
+					if taggedAt, ok := m["tagged_at"]; ok {
+						entry["tagged_at"] = taggedAt
+					}
+					detailed = append(detailed, entry)
+				}
+			}
+			if len(detailed) > 0 {
+				out["tags_detailed"] = detailed
+			}
+		}
+	}
+
+	// Flatten ES algos[] → PG algo_results with composite keys.
+	if raw, ok := esDoc["algos"]; ok {
+		if arr, ok := raw.([]any); ok {
+			algoResults := make(map[string]string, len(arr)*3)
+			for _, item := range arr {
+				if m, ok := item.(map[string]any); ok {
+					name, _ := m["name"].(string)
+					version, _ := m["version"].(string)
+					if name == "" || version == "" {
+						continue
+					}
+					prefix := name + "@" + version + ":"
+					if status, ok := m["status"].(string); ok {
+						algoResults[prefix+"status"] = status
+					}
+					if runID, ok := m["run_id"].(string); ok {
+						algoResults[prefix+"run_id"] = runID
+					}
+					if finishedAt, ok := m["finished_at"].(string); ok {
+						algoResults[prefix+"finished_at"] = finishedAt
+					}
+				}
+			}
+			if len(algoResults) > 0 {
+				out["algo_results"] = algoResults
+			}
+		}
+	}
+
+	// mcap → extract mcap_file_id only if available (ES already has it at root level).
+	// Skip: recorded_at, mcap (nested), lineage_*, dataset, annotation_result, ml_model, evaluation_report.
+
+	return out
 }

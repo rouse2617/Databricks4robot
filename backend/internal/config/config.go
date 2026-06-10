@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -31,8 +32,10 @@ type Config struct {
 	TopicMcapFinalized string
 	TopicAssetEvents   string
 
-	// Auth (Phase 0 static token; Phase 0.5 → OIDC)
-	GraceToken string
+	// Auth (Phase 0 static token; Phase 0.5 → email + JWT)
+	DatabrewToken string
+	JWTSecret     string // HMAC-SHA256 secret for JWT signing
+	AllowedDomain string // email domain allowlisted (e.g. "cyberorigin.ai")
 
 	// Logging
 	LogLevel  string // debug, info, warn, error
@@ -82,6 +85,24 @@ type Config struct {
 	OutboxKafkaTopic          string // topic for kafka mode (fallback: TOPIC_ASSET_EVENTS)
 	OutboxKafkaGroupID        string // consumer group for ES subscriber in kafka mode
 
+	// OutboxESAlgoRunSubscription is a SEPARATE Pub/Sub subscription for the
+	// algo_run ES subscriber. Required when OUTBOX_TRANSPORT=pubsub so the
+	// asset and algo_run ES subscribers do not compete for the same events
+	// (C3 in PR #59). Same topic, distinct subscription; each subscriber
+	// gets the full stream and filters internally.
+	OutboxESAlgoRunSubscription string
+	// OutboxKafkaAlgoRunGroupID is the SEPARATE consumer group for the
+	// algo_run ES subscriber in kafka mode. Same topic, distinct group.
+	OutboxKafkaAlgoRunGroupID string
+
+	// OutboxESDeliverySubscription is a SEPARATE Pub/Sub subscription for
+	// the delivery-eligibility projector. Required when OUTBOX_TRANSPORT=pubsub
+	// so the projector does not compete with the ES subscribers (C3).
+	OutboxESDeliverySubscription string
+	// OutboxKafkaDeliveryGroupID is the SEPARATE consumer group for the
+	// delivery-eligibility projector in kafka mode.
+	OutboxKafkaDeliveryGroupID string
+
 	// OUTBOX_TRANSPORT=internal only: parallel ES handlers (per routing key serial).
 	OutboxInternalSubscriberWorkers string
 	// OUTBOX_TRANSPORT=internal only: in-memory bus channel buffer (matches the
@@ -116,6 +137,20 @@ type Config struct {
 
 	// Admin endpoints (search reindex, etc.). Empty disables routes.
 	AdminToken string
+
+	// OpenLineage emitter
+	OpenLineageEmitterEnabled string
+	OpenLineageEndpoint       string
+	OpenLineageSubscription   string
+	OpenLineageNamespace      string
+	OpenLineageProducer       string
+	OpenLineageTimeoutMs      string
+
+	// Argo Workflows
+	ArgoWorkflowsNamespace string
+
+	// DeliveryEligibilityProjector
+	DeliveryEligibilityProjectorEnabled string
 }
 
 func Load() *Config {
@@ -146,7 +181,9 @@ func Load() *Config {
 		TopicMcapFinalized: getenv("TOPIC_MCAP_FINALIZED", "gcs.mcap.finalized.v1"),
 		TopicAssetEvents:   getenv("TOPIC_ASSET_EVENTS", "cyber-databrew-asset-events"),
 
-		GraceToken: getenv("GRACE_TOKEN", "dev-token"),
+		DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
+		JWTSecret:     getenv("JWT_SECRET", "dev-jwt-secret"),
+		AllowedDomain: getenv("ALLOWED_DOMAIN", "cyberorigin.ai"),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),
@@ -184,6 +221,11 @@ func Load() *Config {
 		OutboxKafkaTopic:          getenv("OUTBOX_KAFKA_TOPIC", ""),
 		OutboxKafkaGroupID:        getenv("OUTBOX_KAFKA_GROUP_ID", "cyber-databrew-outbox-es"),
 
+		OutboxESAlgoRunSubscription: getenv("OUTBOX_ES_ALGORUN_SUBSCRIPTION", ""),
+		OutboxKafkaAlgoRunGroupID:   getenv("OUTBOX_KAFKA_ALGORUN_GROUP_ID", "cyber-databrew-outbox-es-algorun"),
+		OutboxESDeliverySubscription: getenv("OUTBOX_ES_DELIVERY_SUBSCRIPTION", ""),
+		OutboxKafkaDeliveryGroupID:   getenv("OUTBOX_KAFKA_DELIVERY_GROUP_ID", "cyber-databrew-outbox-delivery"),
+
 		OutboxInternalSubscriberWorkers:     getenv("OUTBOX_INTERNAL_SUBSCRIBER_WORKERS", "8"),
 		OutboxInternalBusBuffer:             getenv("OUTBOX_INTERNAL_BUS_BUFFER", "1024"),
 		OutboxInternalSubscriberBatchSize:   getenv("OUTBOX_INTERNAL_SUBSCRIBER_BATCH_SIZE", "1"),
@@ -192,7 +234,14 @@ func Load() *Config {
 		OutboxESCheckpointShards:            getenv("OUTBOX_ES_CHECKPOINT_SHARDS", "16"),
 		OutboxESCheckpointIdleAfterSec:      getenv("OUTBOX_ES_CHECKPOINT_IDLE_AFTER_SEC", "300"),
 
-		AdminToken: getenv("ADMIN_TOKEN", ""),
+		AdminToken:               getenv("ADMIN_TOKEN", ""),
+		OpenLineageEmitterEnabled: getenv("OPENLINEAGE_EMITTER_ENABLED", ""),
+		OpenLineageEndpoint:       getenv("OPENLINEAGE_ENDPOINT", ""),
+		OpenLineageSubscription:   getenv("OPENLINEAGE_SUBSCRIPTION", ""),
+		OpenLineageNamespace:      getenv("OPENLINEAGE_NAMESPACE", ""),
+		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", ""),
+		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", ""),
+		ArgoWorkflowsNamespace:    getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
 	}
 }
 
@@ -203,6 +252,22 @@ func (c *Config) AdminRoutesEnabled() bool {
 		return true
 	}
 	return c.Env != "production"
+}
+
+// Validate checks for security-sensitive misconfiguration after Load().
+// Production deployments MUST set JWT_SECRET and DATABREW_TOKEN explicitly;
+// the compiled-in dev defaults are rejected.
+func (c *Config) Validate() error {
+	if c.Env != "production" {
+		return nil
+	}
+		if c.JWTSecret == "" || c.JWTSecret == "dev-jwt-secret" { // pragma: allowlist secret
+		return errors.New("config: JWT_SECRET must be set to a non-default value in production")
+	}
+	if c.DatabrewToken == "" || c.DatabrewToken == "dev-token" {
+		return errors.New("config: DATABREW_TOKEN must be set to a non-default value in production")
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {

@@ -1,4 +1,4 @@
-import { Card, Descriptions } from "antd";
+import { Card, Descriptions, Tag } from "antd";
 import dayjs from "dayjs";
 import type { Asset } from "../../api/types";
 import {
@@ -57,7 +57,23 @@ export default function OverviewTab({ asset }: Props) {
 				<Descriptions.Item label="过期时间">
 					{asset.expire_at ? dayjs(asset.expire_at).fromNow() : "—"}
 				</Descriptions.Item>
-				<Descriptions.Item label="版本">{asset.version}</Descriptions.Item>
+				<Descriptions.Item label="逻辑资产 ID">
+					<code className="text-xs">
+						{asset.logical_asset_id ?? asset.asset_id}
+					</code>
+				</Descriptions.Item>
+				<Descriptions.Item label="资产版本 (revision)">
+					{asset.revision ?? "—"}
+					{asset.is_current === false ? (
+						<Tag color="default" className="ml-2">
+							历史
+						</Tag>
+					) : asset.is_current === true ? (
+						<Tag color="blue" className="ml-2">
+							当前
+						</Tag>
+					) : null}
+				</Descriptions.Item>
 				<Descriptions.Item label="创建时间">
 					{formatDateTime(asset.created_at)}
 				</Descriptions.Item>

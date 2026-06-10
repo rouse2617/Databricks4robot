@@ -7,10 +7,13 @@ const (
 	CodeInvalidFilter          = "INVALID_FILTER"
 	CodeInvalidState           = "INVALID_STATE"
 	CodeInvalidTag             = "INVALID_TAG"
+	CodeTagSourceInvalid       = "TAG_SOURCE_INVALID"
+	CodeTagImmutable           = "TAG_IMMUTABLE"
 	CodeAssetNotFound          = "ASSET_NOT_FOUND"
 	CodeAssetNotPreviewable    = "ASSET_NOT_PREVIEWABLE"
 	CodeMcapFileNotFound       = "MCAP_FILE_NOT_FOUND"
 	CodeDuplicateAssetID       = "DUPLICATE_ASSET_ID"
+	CodeAlgoRunNotFound        = "ALGO_RUN_NOT_FOUND"
 	CodeInvalidAlgoKey         = "INVALID_ALGO_KEY"
 	CodeAlgoAlreadyRunning     = "ALGO_ALREADY_RUNNING"
 	CodeInvalidStateTransition = "INVALID_STATE_TRANSITION"
@@ -23,9 +26,11 @@ const (
 	CodeMissingIdempotencyKey  = "MISSING_IDEMPOTENCY_KEY"
 	CodeIdempotencyConflict    = "IDEMPOTENCY_CONFLICT"
 	CodeDeliveryNotFound       = "DELIVERY_NOT_FOUND"
+	CodeDeliveryRuleFailed     = "DELIVERY_RULE_FAILED"
 	CodeRateLimited            = "RATE_LIMITED"
 	CodeServiceUnavailable     = "SERVICE_UNAVAILABLE"
 	CodeUnsupportedField       = "UNSUPPORTED_FIELD"
 	CodeUnsupportedOperator    = "UNSUPPORTED_OPERATOR"
-	CodeUnplannableQuery       = "UNPLANNABLE_QUERY"
+	CodeCustomerNotFound       = "CUSTOMER_NOT_FOUND"        // CYB-1070
+	CodeHierarchyViolation     = "ASSET_HIERARCHY_VIOLATION" // CYB-1164
 )

@@ -7,6 +7,13 @@ resources:
       - field: asset_id
         filter_engines: [postgres]
         sort_engines: [postgres]
+      - field: logical_asset_id
+        filter_engines: [postgres, elasticsearch]
+      - field: revision
+        filter_engines: [postgres, elasticsearch]
+        sort_engines: [postgres, elasticsearch]
+      - field: is_current
+        filter_engines: [postgres, elasticsearch]
       - field: owner
         filter_engines: [postgres, elasticsearch]
         sort_engines: [postgres, elasticsearch]

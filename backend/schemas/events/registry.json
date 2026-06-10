@@ -62,6 +62,11 @@
       "schema_file": "algo_unblocked.v1.json",
       "description": "Emitted when a blocked algorithm becomes pending."
     },
+    "algo_run_applied": {
+      "current_version": "v1",
+      "schema_file": "algo_run_applied.v1.json",
+      "description": "Emitted when a registered algo run is applied to an asset via finish."
+    },
     "eval_result_reported": {
       "current_version": "v1",
       "schema_file": "eval_result_reported.v1.json",

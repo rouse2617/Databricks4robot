@@ -694,7 +694,7 @@ if cfg.OutboxWorkerEnabled {
 ```
 POST /admin/search/reindex
 Body: { "rebuild_index": false, "dry_run": false }
-权限：独立 ADMIN_TOKEN，不与 X-Grace-Token 共享
+权限：独立 ADMIN_TOKEN，不与 X-Databrew-Token 共享
 ```
 
 执行步骤：

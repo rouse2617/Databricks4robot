@@ -61,7 +61,7 @@ Complete Phase 1 before editing production code.
 | Symptom area | First checks |
 |--------------|--------------|
 | Assets list wrong | `useAssetsDiscoveryReducer`, backend `queries/run`, ES vs PG |
-| Auth 401/403 | `X-Grace-Token`, middleware — **off-limits** without approval |
+| Auth 401/403 | `X-Databrew-Token`, middleware — **off-limits** without approval |
 | Search stale | outbox / ES sync — **off-limits** without approval |
 | UI state | React reducer + API response shape mismatch (client re-filter?) |
 

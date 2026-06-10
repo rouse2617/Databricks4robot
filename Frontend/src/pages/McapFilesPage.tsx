@@ -56,16 +56,22 @@ export default function McapFilesPage() {
 	const [page, setPage] = useState(Number(searchParams.get("page")) || 1);
 	const [stateFilter, setStateFilter] = useState("");
 	const [ownerFilter, setOwnerFilter] = useState("");
+	const [debouncedOwnerFilter, setDebouncedOwnerFilter] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [selectedFile, setSelectedFile] = useState<McapFile | null>(null);
 
 	useEffect(() => {
-		const nextPage = Number(searchParams.get("page")) || 1;
-		if (nextPage !== page) {
-			setPage(nextPage);
-		}
-	}, [page, searchParams]);
+		const timer = window.setTimeout(() => {
+			setDebouncedOwnerFilter(ownerFilter.trim());
+		}, 300);
+		return () => window.clearTimeout(timer);
+	}, [ownerFilter]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: filter change triggers page reset
+	useEffect(() => {
+		setPage(1);
+	}, [debouncedOwnerFilter, stateFilter]);
 
 	const load = useCallback(
 		async (p = page) => {
@@ -76,7 +82,7 @@ export default function McapFilesPage() {
 					page: p,
 					page_size: 20,
 					ingest_state: stateFilter || undefined,
-					owner: ownerFilter || undefined,
+					owner: debouncedOwnerFilter || undefined,
 				});
 				setFiles(data.items ?? []);
 				setTotal(data.total ?? 0);
@@ -88,8 +94,12 @@ export default function McapFilesPage() {
 				setLoading(false);
 			}
 		},
-		[page, stateFilter, ownerFilter],
+		[page, stateFilter, debouncedOwnerFilter],
 	);
+
+	useEffect(() => {
+		setPage(1);
+	}, []);
 
 	useEffect(() => {
 		load(page);
@@ -190,6 +200,7 @@ export default function McapFilesPage() {
 			title: "Owner",
 			dataIndex: "owner",
 			width: 100,
+			ellipsis: true,
 			render: (v: string) => v || "—",
 		},
 		{
@@ -232,21 +243,23 @@ export default function McapFilesPage() {
 				</Title>
 				<Space>
 					<Input
+						id="mcap-owner-filter"
 						placeholder="搜索 Owner"
 						value={ownerFilter}
 						onChange={(e) => setOwnerFilter(e.target.value)}
 						onPressEnter={() => {
+							setDebouncedOwnerFilter(ownerFilter.trim());
 							setPage(1);
-							load(1);
 						}}
 						onBlur={() => {
+							setDebouncedOwnerFilter(ownerFilter.trim());
 							setPage(1);
-							load(1);
 						}}
 						style={{ width: 140 }}
 						allowClear
 					/>
 					<Select
+						id="mcap-state-filter"
 						value={stateFilter}
 						onChange={(v) => {
 							setStateFilter(v);

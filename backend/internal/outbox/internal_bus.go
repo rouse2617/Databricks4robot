@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/fnv"
+	"sync"
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
@@ -12,16 +13,79 @@ import (
 )
 
 // InMemoryBus is an in-process event bus for default local transport mode.
+//
+// It is a fan-out / broadcast bus: every subscriber receives every published
+// event. This mirrors the semantics of a Pub/Sub topic with one subscription
+// per subscriber, or a Kafka topic with one consumer group per subscriber —
+// the "competing consumer" anti-pattern is avoided at the transport layer so
+// downstream consumers (asset ES, algo_run ES, delivery eligibility projector,
+// openlineage emitter, …) can each filter the full event stream without
+// stealing events from siblings.
 type InMemoryBus struct {
-	ch chan internalMessage
+	mu      sync.RWMutex
+	subs    []chan internalMessage
+	bufSize int
 }
 
-// NewInMemoryBus creates a buffered in-process bus.
+// NewInMemoryBus creates a fan-out in-process bus. The buffer size applies
+// to each subscriber's channel — a slow subscriber will block the publisher
+// once its channel is full (intentional back-pressure so a stuck handler
+// surfaces immediately rather than silently dropping events).
 func NewInMemoryBus(buffer int) *InMemoryBus {
 	if buffer <= 0 {
 		buffer = 1024
 	}
-	return &InMemoryBus{ch: make(chan internalMessage, buffer)}
+	return &InMemoryBus{bufSize: buffer}
+}
+
+// SubscribeOrClosed is a convenience for tests and one-shot consumers that
+// don't need explicit unsubscribe semantics. Returns the private channel
+// only; cleanup happens via garbage collection when the bus is dropped.
+func (b *InMemoryBus) SubscribeOrClosed() <-chan internalMessage {
+	ch, _ := b.Subscribe()
+	return ch
+}
+
+// Subscribe registers a new subscriber and returns its private channel plus
+// an unsubscribe function. Each subscriber must call unsubscribe when done so
+// the bus stops fanning out to it and the channel is GC'd.
+func (b *InMemoryBus) Subscribe() (<-chan internalMessage, func()) {
+	if b == nil {
+		ch := make(chan internalMessage)
+		close(ch)
+		return ch, func() {}
+	}
+	ch := make(chan internalMessage, b.bufSize)
+	b.mu.Lock()
+	b.subs = append(b.subs, ch)
+	b.mu.Unlock()
+
+	var once sync.Once
+	unsubscribe := func() {
+		once.Do(func() {
+			b.mu.Lock()
+			for i, sub := range b.subs {
+				if sub == ch {
+					b.subs = append(b.subs[:i], b.subs[i+1:]...)
+					break
+				}
+			}
+			b.mu.Unlock()
+			close(ch)
+		})
+	}
+	return ch, unsubscribe
+}
+
+// subscriberCount returns the number of currently registered subscribers.
+// Used for back-pressure and metrics.
+func (b *InMemoryBus) subscriberCount() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subs)
 }
 
 type internalMessage struct {
@@ -29,60 +93,91 @@ type internalMessage struct {
 	ack  chan error
 }
 
+// publish fans the message out to every subscribed channel. The returned
+// receipt resolves only when EVERY subscriber has acked; if any one fails,
+// the receipt's first error is returned and the relay retries the entire
+// event_seq (at-least-once delivery per subscriber).
 func (b *InMemoryBus) publish(ctx context.Context, data []byte) (PublishReceipt, error) {
-	if b == nil || b.ch == nil {
+	if b == nil {
 		return nil, errors.New("outbox internal bus is not initialized")
 	}
-	msg := internalMessage{
-		data: append([]byte(nil), data...),
-		ack:  make(chan error, 1),
+	b.mu.RLock()
+	subs := make([]chan internalMessage, len(b.subs))
+	copy(subs, b.subs)
+	b.mu.RUnlock()
+
+	if len(subs) == 0 {
+		// No subscribers yet (startup race) — return an already-resolved
+		// receipt so the relay doesn't deadlock waiting for an ack that
+		// will never arrive. The event will be visible to the next poll.
+		return immediateReceipt{}, nil
 	}
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case b.ch <- msg:
-		metrics.OutboxInternalBusDepth.Set(float64(len(b.ch)))
-		return internalReceipt{ack: msg.ack}, nil
+
+	acks := make([]chan error, len(subs))
+	for i, ch := range subs {
+		payload := append([]byte(nil), data...)
+		ack := make(chan error, 1)
+		acks[i] = ack
+		msg := internalMessage{data: payload, ack: ack}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case ch <- msg:
+			metrics.OutboxInternalBusDepth.Set(float64(len(ch)))
+		}
 	}
+	return fanoutReceipt{acks: acks}, nil
 }
 
-type internalReceipt struct {
-	ack <-chan error
+// fanoutReceipt aggregates per-subscriber acks into a single relay-facing
+// receipt. The first non-nil error short-circuits and is returned to the
+// relay so the publisher retries the underlying event_seq.
+type fanoutReceipt struct {
+	acks []chan error
 }
 
-func (r internalReceipt) Get(ctx context.Context) (string, error) {
-	if r.ack == nil {
-		return "", errors.New("outbox internal receipt: nil ack channel")
+func (r fanoutReceipt) Get(ctx context.Context) (string, error) {
+	for _, ack := range r.acks {
+		if ack == nil {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case err := <-ack:
+			if err != nil {
+				return "", err
+			}
+		}
 	}
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case err := <-r.ack:
-		return "", err
-	}
+	return "", nil
 }
 
-// InternalSubscriber consumes events from an in-process bus.
+// InternalSubscriber consumes events from a single subscriber channel
+// (obtained from InMemoryBus.Subscribe). It is fully isolated from siblings:
+// events published to the bus while this subscriber was offline are NOT
+// queued for it. Producers must tolerate subscriber re-registration.
 type InternalSubscriber struct {
-	bus     *InMemoryBus
+	ch      <-chan internalMessage
 	workers int // <=1 means serial single-handler loop (legacy behaviour).
 }
 
-// NewInternalSubscriber creates a subscriber for internal bus mode.
-// workers controls parallel handlers: routing keys that match orderingKeyFor (asset / mcap / _na)
-// hash to the same worker queue so events for one asset stay ordered.
-func NewInternalSubscriber(bus *InMemoryBus, workers int) (*InternalSubscriber, error) {
-	if bus == nil {
-		return nil, errors.New("outbox internal subscriber: bus is required")
+// NewInternalSubscriber creates a subscriber bound to a single channel.
+// workers controls parallel handlers: routing keys that match orderingKeyFor
+// (asset / mcap / _na) hash to the same worker queue so events for one asset
+// stay ordered.
+func NewInternalSubscriber(ch <-chan internalMessage, workers int) (*InternalSubscriber, error) {
+	if ch == nil {
+		return nil, errors.New("outbox internal subscriber: channel is required")
 	}
 	if workers < 1 {
 		workers = 1
 	}
-	return &InternalSubscriber{bus: bus, workers: workers}, nil
+	return &InternalSubscriber{ch: ch, workers: workers}, nil
 }
 
 func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.Context, []byte) error) error {
-	if s == nil || s.bus == nil || s.bus.ch == nil {
+	if s == nil || s.ch == nil {
 		return errors.New("outbox internal subscriber is not initialized")
 	}
 	if s.workers <= 1 {
@@ -106,7 +201,6 @@ func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.C
 					err := handler(gctx, msg.data)
 					select {
 					case msg.ack <- err:
-						metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
 					case <-gctx.Done():
 						return gctx.Err()
 					}
@@ -120,8 +214,10 @@ func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.C
 			select {
 			case <-gctx.Done():
 				return gctx.Err()
-			case msg := <-s.bus.ch:
-				metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
+			case msg, ok := <-s.ch:
+				if !ok {
+					return nil
+				}
 				idx := routingWorkerIndex(msg.data, w)
 				select {
 				case workerChs[idx] <- msg:
@@ -140,12 +236,13 @@ func (s *InternalSubscriber) receiveSerial(ctx context.Context, handler func(con
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case msg := <-s.bus.ch:
-			metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
+		case msg, ok := <-s.ch:
+			if !ok {
+				return nil
+			}
 			err := handler(ctx, msg.data)
 			select {
 			case msg.ack <- err:
-				metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -153,10 +250,11 @@ func (s *InternalSubscriber) receiveSerial(ctx context.Context, handler func(con
 	}
 }
 
-// ReceiveBatch consumes the in-process bus and delivers messages to handler in
-// short-window batches. Per-asset ordering is preserved because the same
-// routing-key dispatch (FNV(asset_id) % workers) used by Receive is applied
-// here too, so every event for a given asset always lands on the same worker.
+// ReceiveBatch consumes a single subscriber channel and delivers messages to
+// handler in short-window batches. Per-asset ordering is preserved because
+// the same routing-key dispatch (FNV(asset_id) % workers) used by Receive is
+// applied here too, so every event for a given asset always lands on the
+// same worker.
 //
 // Each worker:
 //  1. Blocks on the first message in its queue.
@@ -177,7 +275,7 @@ func (s *InternalSubscriber) ReceiveBatch(
 	waitFor time.Duration,
 	handler func(context.Context, [][]byte) error,
 ) error {
-	if s == nil || s.bus == nil || s.bus.ch == nil {
+	if s == nil || s.ch == nil {
 		return errors.New("outbox internal subscriber is not initialized")
 	}
 	if handler == nil {
@@ -218,8 +316,10 @@ func (s *InternalSubscriber) ReceiveBatch(
 			select {
 			case <-gctx.Done():
 				return gctx.Err()
-			case msg := <-s.bus.ch:
-				metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
+			case msg, ok := <-s.ch:
+				if !ok {
+					return nil
+				}
 				idx := routingWorkerIndex(msg.data, w)
 				select {
 				case workerChs[idx] <- msg:
@@ -239,7 +339,7 @@ func (s *InternalSubscriber) receiveBatchSerial(
 	waitFor time.Duration,
 	handler func(context.Context, [][]byte) error,
 ) error {
-	return runBatchWorker(ctx, s.bus.ch, batchSize, waitFor, handler)
+	return runBatchWorker(ctx, s.ch, batchSize, waitFor, handler)
 }
 
 // runBatchWorker drains source up to batchSize, bounded by waitFor (per batch),
@@ -255,10 +355,14 @@ func runBatchWorker(
 		// Block on the first message: a worker that has nothing to do should
 		// not flush an empty batch.
 		var first internalMessage
+		var ok bool
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case first = <-source:
+		case first, ok = <-source:
+			if !ok {
+				return nil
+			}
 		}
 
 		batch := make([]internalMessage, 0, batchSize)
@@ -298,7 +402,10 @@ func drainBatch(
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case m := <-source:
+			case m, ok := <-source:
+				if !ok {
+					return nil
+				}
 				*batch = append(*batch, m)
 			default:
 				return nil
@@ -313,7 +420,10 @@ func drainBatch(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case m := <-source:
+		case m, ok := <-source:
+			if !ok {
+				return nil
+			}
 			*batch = append(*batch, m)
 		case <-timer.C:
 			return nil

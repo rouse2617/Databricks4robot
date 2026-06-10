@@ -1,4 +1,5 @@
-# Feishu when core CI workflows finish. Failures → A 群; success → A 群 only on main.
+# Feishu when core CI workflows finish. Success only → A 群 (main branch).
+# Failures are silenced — only the commit log matters.
 name: Feishu CI Notifications
 
 on:
@@ -42,10 +43,6 @@ jobs:
               fi
               TITLE="【CI 成功 · main】"
               HINT="main 分支检查已通过。"
-              ;;
-            failure)
-              TITLE="【CI 失败 · 需处理】"
-              HINT="请打开下方链接查看失败 job，修复后重新 push。"
               ;;
             *)
               echo "SKIP: conclusion=${CONCLUSION}"

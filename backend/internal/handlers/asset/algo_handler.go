@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/audit"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/handlers"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
 )
@@ -33,10 +34,13 @@ func NewAlgoHandler(uc *assetUC.AlgoUsecase) *AlgoHandler {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/algo/{algo_key}/start [post]
 func (h *AlgoHandler) Start(c *gin.Context) {
-	assetID := c.Param("id")
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
 	algoKey := c.Param("algo_key")
 
 	var req struct {
@@ -73,10 +77,13 @@ func (h *AlgoHandler) Start(c *gin.Context) {
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
 // @Failure      422 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/algo/{algo_key}/finish [post]
 func (h *AlgoHandler) Finish(c *gin.Context) {
-	assetID := c.Param("id")
+	assetID, ok := handlers.RequirePathAssetID(c)
+	if !ok {
+		return
+	}
 	algoKey := c.Param("algo_key")
 
 	var req struct {
@@ -118,7 +125,7 @@ func (h *AlgoHandler) Finish(c *gin.Context) {
 // @Failure      400 {object} httpresp.ErrorBody
 // @Failure      404 {object} httpresp.ErrorBody
 // @Failure      409 {object} httpresp.ErrorBody
-// @Security     GraceToken
+// @Security     DatabrewToken
 // @Router       /assets/{id}/algo/{algo_key}/reset [post]
 func (h *AlgoHandler) Reset(c *gin.Context) {
 	assetID := c.Param("id")
@@ -161,6 +168,8 @@ func (h *AlgoHandler) mapError(c *gin.Context, err error) {
 		httpresp.Unprocessable(c, httpresp.CodeMissingRequiredField, err.Error(), nil)
 	case errors.Is(err, assetUC.ErrMissingReason):
 		httpresp.Unprocessable(c, httpresp.CodeMissingReason, err.Error(), nil)
+	case errors.Is(err, assetUC.ErrRunNotFound):
+		httpresp.BadRequest(c, httpresp.CodeAlgoRunNotFound, err.Error(), nil)
 	default:
 		httpresp.Internal(c, err.Error())
 	}
