@@ -25,6 +25,7 @@ preview_id: ${sha}
 frontend:   ${web_url}
 backend:    ${api_url}
 
-local frontend:
-  cd Frontend && VITE_API_BASE_URL=${api_url}/v1 npm run dev
+local frontend (recommended):
+  bash scripts/dev-local.sh --preview-id ${sha}
+  # or: cd Frontend && npm run dev:preview
 EOF

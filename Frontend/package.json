@@ -5,6 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite --host",
+		"dev:shared": "bash ../scripts/dev-local.sh --shared",
+		"dev:preview": "bash ../scripts/dev-local.sh --preview",
 		"dev:remote": "VITE_API_BASE_URL=https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app vite --host",
 		"build": "tsc -b && vite build",
 		"test": "vitest run",

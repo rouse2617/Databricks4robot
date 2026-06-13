@@ -25,6 +25,17 @@ backend and prints the local Vite command.
 
 ### Local frontend + preview backend (recommended daily workflow)
 
+**一键（推荐）** — 自动读 token、health check、启动本地 Vite（不 deploy frontend）：
+
+```bash
+bash scripts/dev-local.sh --preview          # HEAD preview Pod；不存在则只 deploy backend
+bash scripts/dev-local.sh --preview-id <id>  # 指定已有 preview Pod
+bash scripts/dev-local.sh --latest           # 用最新的 preview Pod
+cd Frontend && npm run dev:preview           # 同上（--preview）
+```
+
+手动两步（等价）：
+
 Terminal 1 — deploy backend preview:
 
 ```bash

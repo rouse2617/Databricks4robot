@@ -67,7 +67,7 @@ function devServerBanner(): import("vite").Plugin {
 				console.log(`  Ver: v${appVersion} (${buildRef})`);
 				if (!usingRemoteApi) {
 					console.log(
-						"  Tip: npm run dev:remote — proxy to Cloud Run dev backend (workflows, pipeline, …)",
+						"  Tip: npm run dev:shared / dev:preview — local UI + GKE backend Pod",
 					);
 				}
 				console.log("");
