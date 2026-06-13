@@ -1,7 +1,8 @@
-import { Alert, Button, Input, Table } from "antd";
+import { Alert, Button, Input, Space, Tag, Table } from "antd";
 import { useEffect, useRef, useState } from "react";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
+import { mergeAssetIds, parseAssetIdInput } from "../../lib/assetIdInput";
 
 interface AssetPickerProps {
 	/** Currently selected asset IDs (controlled) */
@@ -17,7 +18,7 @@ interface AssetPickerProps {
 }
 
 /** Shared asset search + multi-select table.
- *  Wraps no Modal or Collapse — parent controls the container.
+ *  Supports search hits and manual asset ID entry (no registry required).
  */
 export default function AssetPicker({
 	selectedIds,
@@ -58,6 +59,18 @@ export default function AssetPicker({
 			((err as { name?: string }).name === "AbortError" ||
 				(err as { code?: string }).code === "ERR_CANCELED"));
 
+	const removeSelected = (assetId: string) => {
+		onSelectionChange(selectedIds.filter((id) => id !== assetId));
+	};
+
+	const addManualAssetIds = (raw: string) => {
+		const incoming = parseAssetIdInput(raw);
+		if (incoming.length === 0) return;
+		onSelectionChange(mergeAssetIds(selectedIds, incoming));
+		setQuery("");
+		setResults([]);
+	};
+
 	const handleSearch = async (value: string) => {
 		const trimmed = value.trim();
 		if (!trimmed) {
@@ -96,6 +109,21 @@ export default function AssetPicker({
 
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+			{selectedIds.length > 0 ? (
+				<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+					{selectedIds.map((assetId) => (
+						<Tag
+							key={assetId}
+							closable
+							color="blue"
+							onClose={() => removeSelected(assetId)}
+						>
+							{assetId}
+						</Tag>
+					))}
+				</div>
+			) : null}
+
 			<Input.Search
 				placeholder={placeholder}
 				value={query}
@@ -104,6 +132,27 @@ export default function AssetPicker({
 				loading={loading}
 				size="small"
 			/>
+
+			<Space size={8} wrap>
+				<Button
+					size="small"
+					disabled={!query.trim()}
+					onClick={() => addManualAssetIds(query)}
+				>
+					{query.trim()
+						? `添加「${query.trim()}」为资产 ID`
+						: "添加为资产 ID"}
+				</Button>
+				<Button
+					size="small"
+					type="link"
+					disabled={selectedIds.length === 0}
+					onClick={() => onSelectionChange([])}
+				>
+					清空已选
+				</Button>
+			</Space>
+
 			{error ? (
 				<Alert
 					type="error"
@@ -161,7 +210,9 @@ export default function AssetPicker({
 						fontSize: 12,
 					}}
 				>
-					{query ? "未找到匹配的资产" : "输入关键字搜索资产，不选择则直接部署"}
+					{query
+						? "未找到匹配的资产，仍可点击「添加为资产 ID」直接用于批量任务"
+						: "输入关键字搜索资产，或手动添加 asset ID；不选择则直接部署"}
 				</div>
 			)}
 		</div>

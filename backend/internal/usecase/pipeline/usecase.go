@@ -55,12 +55,14 @@ type Usecase struct {
 }
 
 type DeployOptions struct {
-	DryRun          bool
-	TemplateID      string
-	TemplateVersion int
-	TargetID        string
-	Owner           string
-	BatchJobID      string
+	DryRun             bool
+	TemplateID         string
+	TemplateVersion    int
+	TargetID           string
+	Owner              string
+	BatchJobID         string
+	PreallocatedRunID  string
+	AllowUnknownAssets bool
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -1426,6 +1428,9 @@ func (uc *Usecase) Deploy(
 		templateID = opts[0].TemplateID
 		templateVersion = opts[0].TemplateVersion
 		dryRun = opts[0].DryRun
+		if strings.TrimSpace(opts[0].PreallocatedRunID) != "" {
+			depID = strings.TrimSpace(opts[0].PreallocatedRunID)
+		}
 	}
 	target, err := uc.resolveExecutionTarget(ctx, "")
 	if len(opts) > 0 {
@@ -1439,7 +1444,7 @@ func (uc *Usecase) Deploy(
 		targetNamespace = uc.namespace
 	}
 
-	normalizedAssetIDs, err := assetvalidation.Validate(ctx, uc.assetRepo, "asset_ids", assetIDs)
+	normalizedAssetIDs, err := uc.validateDeployAssetIDs(ctx, assetIDs, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrAssetNotFound, err)
 	}
@@ -1642,8 +1647,17 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 		deployOpts.Owner = opts[0].Owner
 		deployOpts.BatchJobID = opts[0].BatchJobID
 		deployOpts.DryRun = opts[0].DryRun
+		deployOpts.AllowUnknownAssets = opts[0].AllowUnknownAssets
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
+}
+
+func (uc *Usecase) validateDeployAssetIDs(ctx context.Context, assetIDs []string, opts ...DeployOptions) ([]string, error) {
+	allowUnknown := len(opts) > 0 && opts[0].AllowUnknownAssets
+	if allowUnknown {
+		return assetvalidation.NormalizeAssetIDs("asset_ids", assetIDs)
+	}
+	return assetvalidation.Validate(ctx, uc.assetRepo, "asset_ids", assetIDs)
 }
 
 // ── Pipeline Runs ───────────────────────────────────────────────────────

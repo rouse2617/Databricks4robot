@@ -117,3 +117,18 @@ func TestResumeJob_SchedulesPendingItems(t *testing.T) {
 		t.Fatalf("expected running, got %q", repo.jobs["job-1"].Status)
 	}
 }
+
+func TestCreateBackfill_AcceptsUnknownAssetIDs(t *testing.T) {
+	uc := New(&mockBackfillRepo{}, nil)
+	job, err := uc.CreateBackfill(context.Background(), "manual-batch", "tpl-1", []string{
+		" custom-a ",
+		"custom-b",
+		"custom-a",
+	})
+	if err != nil {
+		t.Fatalf("CreateBackfill: %v", err)
+	}
+	if job.TotalCount != 2 {
+		t.Fatalf("expected 2 items after dedupe, got %d", job.TotalCount)
+	}
+}

@@ -42,10 +42,9 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../api/assets";
+import { deployPipelineForAssets } from "../api/deployPipelineRun";
 import {
 	type Deployment,
-	deployTemplate,
-	normalizeDeployResults,
 	type ExecutionTarget,
 	getPipeline,
 	listExecutionTargets,
@@ -95,7 +94,7 @@ import {
 	parseAssetType,
 	toRecord,
 } from "./pipeline/pipelinePageHelpers";
-import { WorkflowExecutionList } from "./WorkflowExecutionList";
+import { ExecutionRecordsPanel } from "./ExecutionRecordsPanel";
 
 import "../styles/pipeline.css";
 
@@ -159,9 +158,13 @@ function AssetRunSummary({
 
 	return (
 		<Alert
-			type="success"
+			type={assetIds.length >= 2 ? "info" : "success"}
 			showIcon
-			message={`将处理 ${assetIds.length} 个资产`}
+			message={
+				assetIds.length >= 2
+					? `将创建批量任务，共 ${assetIds.length} 个子任务`
+					: `将处理 ${assetIds.length} 个资产`
+			}
 			description={
 				<div style={{ display: "grid", gap: 8 }}>
 					<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -927,18 +930,28 @@ function PipelineCanvas() {
 			}
 			const name = deployDialog.name || pipelineName;
 			const saved = await savePipeline(name, pipeline);
-			const result = await deployTemplate(
+			const result = await deployPipelineForAssets(
 				saved.id,
 				selectedAssetIds,
-				selectedTargetId,
+				{
+					targetId: selectedTargetId,
+					batchName: `${name}-${Date.now()}`,
+				},
 			);
-			const results = normalizeDeployResults(result);
+			if (result.mode === "batch") {
+				messageApi.success(
+					`已创建批量任务，共 ${result.batchJob.totalCount} 个子任务`,
+				);
+				closeDeployDialog();
+				navigate(`/pipeline/batch/${result.batchJob.id}`);
+				return;
+			}
 			setDeployDialog((prev) => ({
 				...prev,
 				deploying: false,
 				done: true,
-				result: results[0],
-				results,
+				result: result.runs[0],
+				results: result.runs,
 			}));
 		} catch (err) {
 			setDeployDialog((prev) => ({
@@ -955,6 +968,9 @@ function PipelineCanvas() {
 		pipelineName,
 		selectedAssetIds,
 		selectedTargetId,
+		closeDeployDialog,
+		messageApi,
+		navigate,
 	]);
 
 	const handlePreviewDeploy = useCallback(async () => {
@@ -1923,7 +1939,7 @@ export default function PipelinePage() {
 						label: tabLabel("执行记录", "查看和管理流水线运行"),
 						children: (
 							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--executions">
-								<WorkflowExecutionList active={activeTab === "executions"} />
+								<ExecutionRecordsPanel active={activeTab === "executions"} />
 							</div>
 						),
 					},

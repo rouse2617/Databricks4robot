@@ -119,7 +119,12 @@ func setupCore(inf *infra) *coreHandlers {
 		puc.SetPricing(priceCfg)
 	}
 	puc.StartRunEventWatcher(context.Background(), 10*time.Second, 100)
-	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath)
+
+	backfillRepo := postgres.NewBackfillRepo(pg)
+	backfillUC := backfillUC.New(backfillRepo, puc)
+	backfillHandler := backfillH.New(backfillUC)
+
+	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)
 
 	// Pipeline component registry
 	pipelineComponentRepo := postgres.NewPipelineComponentRepo(pg)
@@ -128,10 +133,6 @@ func setupCore(inf *infra) *coreHandlers {
 		slog.Warn("seed system components", "err", err)
 	}
 	pipelineComponentHandler := pipelineComponentH.New(pipelineComponentUC)
-
-	backfillRepo := postgres.NewBackfillRepo(pg)
-	backfillUC := backfillUC.New(backfillRepo, puc)
-	backfillHandler := backfillH.New(backfillUC)
 
 	// ── Workflow monitoring ──
 	workflowHandler := workflowH.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)

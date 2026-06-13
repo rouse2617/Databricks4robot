@@ -11,6 +11,24 @@
 
 import { defineConfig, devices } from "@playwright/test";
 
+const previewId = (process.env.E2E_PREVIEW_ID || "").trim();
+const previewHost = (
+	process.env.E2E_PREVIEW_HOST || "https://cyber-databrew-dev.cyberorigin.ai"
+).replace(/\/$/, "");
+const devToken = (
+	process.env.E2E_DATABREW_TOKEN ||
+	process.env.VITE_DEV_ACCESS_TOKEN ||
+	""
+).trim();
+
+const devServerEnv = [
+	previewId ? `VITE_PREVIEW_ID=${previewId}` : "",
+	previewId ? `VITE_PREVIEW_HOST=${previewHost}` : "",
+	devToken ? `VITE_DEV_ACCESS_TOKEN=${devToken}` : "",
+]
+	.filter(Boolean)
+	.join(" ");
+
 export default defineConfig({
 	testDir: "./e2e",
 	outputDir: "./e2e/test-results",
@@ -19,7 +37,7 @@ export default defineConfig({
 	reporter: [["html", { outputFolder: "e2e/report" }], ["list"]],
 
 	use: {
-		baseURL: process.env.E2E_BASE_URL || "http://localhost:5173",
+		baseURL: process.env.E2E_BASE_URL || "http://localhost:5176",
 		screenshot: "only-on-failure",
 		trace: "on-first-retry",
 	},
@@ -30,4 +48,11 @@ export default defineConfig({
 			use: { ...devices["Desktop Chrome"] },
 		},
 	],
+
+	webServer: {
+		command: devServerEnv ? `${devServerEnv} npm run dev` : "npm run dev",
+		url: "http://127.0.0.1:5176",
+		reuseExistingServer: !previewId,
+		timeout: 120_000,
+	},
 });

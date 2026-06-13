@@ -55,6 +55,36 @@ func (e *ValidationError) Details() map[string]any {
 	return details
 }
 
+// NormalizeAssetIDs trims, drops empty values, and deduplicates while preserving order.
+// It does not check whether assets exist in the database.
+func NormalizeAssetIDs(field string, assetIDs []string) ([]string, error) {
+	if len(assetIDs) == 0 {
+		return nil, nil
+	}
+
+	result := make([]string, 0, len(assetIDs))
+	seen := make(map[string]struct{}, len(assetIDs))
+	var invalid []string
+
+	for _, raw := range assetIDs {
+		assetID := strings.TrimSpace(raw)
+		if assetID == "" {
+			invalid = append(invalid, raw)
+			continue
+		}
+		if _, ok := seen[assetID]; ok {
+			continue
+		}
+		seen[assetID] = struct{}{}
+		result = append(result, assetID)
+	}
+
+	if len(invalid) > 0 {
+		return nil, &ValidationError{Field: field, InvalidIDs: invalid}
+	}
+	return result, nil
+}
+
 func Validate(ctx context.Context, repo repository.AssetRepository, field string, assetIDs []string) ([]string, error) {
 	if len(assetIDs) == 0 {
 		return nil, nil

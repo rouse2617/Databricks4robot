@@ -18,10 +18,16 @@ import {
 	it,
 	vi,
 } from "vitest";
+import type { ReactNode } from "react";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 
 const mockNavigate = vi.hoisted(() => vi.fn());
+const mockMessage = vi.hoisted(() => ({
+	success: vi.fn(),
+	error: vi.fn(),
+	warning: vi.fn(),
+}));
 
 vi.mock("react-router-dom", async (importOriginal) => {
 	const actual = await importOriginal<Record<string, unknown>>();
@@ -35,7 +41,7 @@ vi.mock("react-router-dom", async (importOriginal) => {
 const mockListPipelines = vi.fn();
 const mockListPipelineVersions = vi.fn();
 const mockListDeployments = vi.fn();
-const mockDeployTemplate = vi.fn();
+const mockDeployPipelineForAssets = vi.fn();
 const mockDeletePipeline = vi.fn();
 const mockGetPipeline = vi.fn();
 const mockListExecutionTargets = vi.fn();
@@ -47,20 +53,25 @@ vi.mock("../../api/pipelineApi", () => ({
 	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
 	listExecutionTargets: (...args: unknown[]) =>
 		mockListExecutionTargets(...args),
-	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
 }));
 
-// Mock antd message to suppress console noise
+vi.mock("../../api/deployPipelineRun", () => ({
+	deployPipelineForAssets: (...args: unknown[]) =>
+		mockDeployPipelineForAssets(...args),
+	BATCH_ASSET_THRESHOLD: 2,
+}));
+
+// Mock antd message / App.useApp to suppress console noise
 vi.mock("antd", async () => {
-	const actual = await vi.importActual("antd");
+	const actual = await vi.importActual<typeof import("antd")>("antd");
+	const AppMock = ({ children }: { children: ReactNode }) => children;
+	(AppMock as typeof actual.App).useApp = () => ({ message: mockMessage });
 	return {
-		...(actual as Record<string, unknown>),
-		message: {
-			success: vi.fn(),
-			error: vi.fn(),
-		},
+		...actual,
+		message: mockMessage,
+		App: AppMock,
 	};
 });
 
@@ -164,6 +175,35 @@ beforeEach(() => {
 			isDefault: true,
 		},
 	]);
+	mockDeployPipelineForAssets.mockImplementation(
+		async (templateId, assetIds, options) => {
+			if (assetIds.length >= 2) {
+				return {
+					mode: "batch",
+					batchJob: {
+						id: "batch-001",
+						name: "demo-batch",
+						templateId,
+						totalCount: assetIds.length,
+						completedCount: 0,
+						failedCount: 0,
+						status: "running",
+						createdAt: "2026-05-27T12:30:00Z",
+						updatedAt: "2026-05-27T12:30:00Z",
+					},
+				};
+			}
+			return {
+				mode: "single",
+				runs: [
+					mockDeployment({
+						id: "dep-auto",
+						workflowName: "wf-auto",
+					}),
+				],
+			};
+		},
+	);
 });
 
 describe("DeployPanel", () => {
@@ -195,12 +235,9 @@ describe("DeployPanel", () => {
 		expect(mockListDeployments).not.toHaveBeenCalled();
 	});
 
-	it("calls deployTemplate on direct run", async () => {
+	it("calls deployPipelineForAssets on direct run", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(
-			mockDeployment({ id: "dep-002", workflowName: "wf-test-002" }),
-		);
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
@@ -213,11 +250,13 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
 				"tmpl-001",
 				[],
-				"default",
-				1,
+				expect.objectContaining({
+					targetId: "default",
+					version: 1,
+				}),
 			);
 		});
 		expect(mockListPipelineVersions).toHaveBeenCalledWith("tmpl-001");
@@ -226,7 +265,7 @@ describe("DeployPanel", () => {
 	it("shows error toast when direct deploy fails", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockRejectedValue(new Error("K8s error"));
+		mockDeployPipelineForAssets.mockRejectedValue(new Error("K8s error"));
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
@@ -246,10 +285,9 @@ describe("DeployPanel", () => {
 		});
 	});
 
-	it("opens run modal and deploys with asset ids", async () => {
+	it("opens run modal and creates batch job with two asset ids", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-003" }));
 		renderDeployPanel();
 
 		// Wait for template to render
@@ -276,12 +314,15 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-001", "ast-002"],
-				"default",
-				1,
+				expect.objectContaining({
+					targetId: "default",
+					version: 1,
+				}),
 			);
+			expect(mockNavigate).toHaveBeenCalledWith("/pipeline/batch/batch-001");
 		});
 	});
 
@@ -292,7 +333,6 @@ describe("DeployPanel", () => {
 			mockTemplate({ id: "tmpl-v2", version: 2, nodeCount: 5 }),
 			mockTemplate({ id: "tmpl-001", version: 1, nodeCount: 3 }),
 		]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-005" }));
 
 		renderDeployPanel(
 			undefined,
@@ -307,7 +347,7 @@ describe("DeployPanel", () => {
 
 		await waitFor(() => {
 			expect(screen.getByText("运行流水线")).toBeTruthy();
-			expect(screen.getByText("将处理 2 个资产")).toBeTruthy();
+			expect(screen.getByText("将创建批量任务，共 2 个子任务")).toBeTruthy();
 			expect(screen.getByTestId("mock-asset-picker").textContent).toContain(
 				"Selected: ast-a,ast-b",
 			);
@@ -323,19 +363,21 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
 				"tmpl-001",
 				["ast-a", "ast-b"],
-				"default",
-				2,
+				expect.objectContaining({
+					targetId: "default",
+					version: 2,
+				}),
 			);
+			expect(mockNavigate).toHaveBeenCalledWith("/pipeline/batch/batch-001");
 		});
 	});
 
 	it("deploys without asset IDs when none selected", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-002" })]);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-004" }));
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
@@ -359,11 +401,13 @@ describe("DeployPanel", () => {
 		if (deployBtn) fireEvent.click(deployBtn);
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
 				"tmpl-002",
 				[],
-				"default",
-				1,
+				expect.objectContaining({
+					targetId: "default",
+					version: 1,
+				}),
 			);
 		});
 	});
@@ -476,7 +520,6 @@ describe("DeployPanel", () => {
 	it("refreshes data after successful deploy", async () => {
 		mockListPipelines.mockResolvedValue([mockTemplate({ id: "tmpl-001" })]);
 		mockListDeployments.mockResolvedValue([]);
-		mockDeployTemplate.mockResolvedValue(mockDeployment({ id: "dep-005" }));
 		renderDeployPanel();
 
 		expect(await screen.findByText("运行")).toBeTruthy();
@@ -488,13 +531,14 @@ describe("DeployPanel", () => {
 		expect(deployBtn).toBeTruthy();
 		if (deployBtn) fireEvent.click(deployBtn);
 
-		// After deploy, refresh() is called — verify deployTemplate was called
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockDeployPipelineForAssets).toHaveBeenCalledWith(
 				"tmpl-001",
 				[],
-				"default",
-				1,
+				expect.objectContaining({
+					targetId: "default",
+					version: 1,
+				}),
 			);
 		});
 

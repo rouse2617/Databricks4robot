@@ -105,3 +105,23 @@ func TestValidate_PropagatesLookupErrors(t *testing.T) {
 		t.Fatal("expected lookup error")
 	}
 }
+
+func TestValidate_AllowsUnknownAssetsWhenRepoNil(t *testing.T) {
+	got, err := Validate(context.Background(), nil, "asset_ids", []string{" custom-asset-1 ", "custom-asset-2"})
+	if err != nil {
+		t.Fatalf("Validate err=%v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"custom-asset-1", "custom-asset-2"}) {
+		t.Fatalf("normalized ids=%v", got)
+	}
+}
+
+func TestNormalizeAssetIDs_DedupesAndTrims(t *testing.T) {
+	got, err := NormalizeAssetIDs("asset_ids", []string{" a ", "b", "a", "  c  "})
+	if err != nil {
+		t.Fatalf("NormalizeAssetIDs err=%v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
+		t.Fatalf("normalized ids=%v", got)
+	}
+}

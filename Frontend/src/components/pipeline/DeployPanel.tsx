@@ -22,11 +22,10 @@ import {
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { deployPipelineForAssets } from "../../api/deployPipelineRun";
 import {
 	type Deployment,
 	deletePipeline,
-	deployTemplate,
-	normalizeDeployResults,
 	type ExecutionTarget,
 	getPipeline,
 	listDeployments,
@@ -104,9 +103,13 @@ function AssetRunSummary({
 
 	return (
 		<Alert
-			type="success"
+			type={assetIds.length >= 2 ? "info" : "success"}
 			showIcon
-			message={`将处理 ${assetIds.length} 个资产`}
+			message={
+				assetIds.length >= 2
+					? `将创建批量任务，共 ${assetIds.length} 个子任务`
+					: `将处理 ${assetIds.length} 个资产`
+			}
 			description={
 				<div style={{ display: "grid", gap: 8 }}>
 					<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -479,21 +482,34 @@ export function DeployPanel({
 		if (!deployTargetId) return;
 		setDeploying(true);
 		try {
-			const result = await deployTemplate(
+			const template = templates.find((item) => item.id === deployTargetId);
+			const result = await deployPipelineForAssets(
 				deployTargetId,
 				selectedAssetIds,
-				selectedTargetId,
-				selectedDeployVersion,
+				{
+					targetId: selectedTargetId,
+					version: selectedDeployVersion,
+					batchName: template
+						? `${template.name}-${Date.now()}`
+						: undefined,
+				},
 			);
-			const results = normalizeDeployResults(result);
-			messageApi.success(
-				results.length > 1
-					? `已下发 ${results.length} 个任务`
-					: "部署成功",
-			);
-			closeAssetModal();
+			if (result.mode === "batch") {
+				messageApi.success(
+					`已创建批量任务，共 ${result.batchJob.totalCount} 个子任务`,
+				);
+				closeAssetModal();
+				navigate(`/pipeline/batch/${result.batchJob.id}`);
+			} else {
+				messageApi.success(
+					result.runs.length > 1
+						? `已下发 ${result.runs.length} 个任务`
+						: "部署成功",
+				);
+				closeAssetModal();
+				void refresh();
+			}
 			setDeploying(false);
-			void refresh();
 		} catch (err) {
 			messageApi.error(`部署失败: ${String(err)}`);
 			setDeploying(false);

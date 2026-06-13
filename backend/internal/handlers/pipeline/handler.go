@@ -17,20 +17,26 @@ import (
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
+// BatchSubtaskReconciler materializes batch subtasks as pipeline runs for list views.
+type BatchSubtaskReconciler interface {
+	ReconcileSubtaskRuns(ctx context.Context, jobID string) error
+}
+
 // Handler bundles the pipeline endpoints.
 type Handler struct {
-	uc      *pipelineUC.Usecase
-	pricing *pipelineUC.PricingConfig
+	uc           *pipelineUC.Usecase
+	pricing      *pipelineUC.PricingConfig
+	batchRuns    BatchSubtaskReconciler
 }
 
 // New constructs a Handler. When pricingPath is non-empty the GCP pricing
 // YAML is loaded at construction time for cost estimation.
-func New(uc *pipelineUC.Usecase, pricingPath string) *Handler {
+func New(uc *pipelineUC.Usecase, pricingPath string, batchRuns BatchSubtaskReconciler) *Handler {
 	var pricing *pipelineUC.PricingConfig
 	if strings.TrimSpace(pricingPath) != "" {
 		pricing, _ = pipelineUC.LoadPricing(pricingPath)
 	}
-	return &Handler{uc: uc, pricing: pricing}
+	return &Handler{uc: uc, pricing: pricing, batchRuns: batchRuns}
 }
 
 // SaveTemplate handles POST /api/v1/pipelines.
@@ -308,6 +314,9 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	summaryView := strings.EqualFold(c.Query("view"), "summary")
 	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
 	excludeBatch := strings.EqualFold(c.Query("excludeBatch"), "true") || c.Query("excludeBatch") == "1"
+	if batchJobID != "" && h.batchRuns != nil {
+		_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
+	}
 	statusFilter := strings.TrimSpace(c.Query("status"))
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
 	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))

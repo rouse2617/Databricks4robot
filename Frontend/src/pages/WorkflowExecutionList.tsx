@@ -56,6 +56,11 @@ dayjs.extend(relativeTime);
 
 interface WorkflowExecutionListProps {
 	active?: boolean;
+	batchJobId?: string;
+	/** Bumps embedded batch subtask lists after parent job metadata loads. */
+	batchListKey?: string | number;
+	embedded?: boolean;
+	title?: string;
 }
 
 type WorkflowErrorKind = "network" | "service-unavailable";
@@ -286,6 +291,10 @@ const getErrorTitle = (kind: WorkflowErrorKind): string =>
 
 export function WorkflowExecutionList({
 	active = true,
+	batchJobId,
+	batchListKey,
+	embedded = false,
+	title,
 }: WorkflowExecutionListProps) {
 	const { message: messageApi } = App.useApp();
 	const [searchParams, setSearchParams] = useSearchParams();
@@ -358,7 +367,9 @@ export function WorkflowExecutionList({
 	} | null>(null);
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
+	const [serverTotal, setServerTotal] = useState(0);
 	const navigate = useNavigate();
+	const isBatchScope = Boolean(batchJobId);
 
 	useEffect(() => {
 		const nextStatus = normalizeStatus(searchParams.get("status"));
@@ -444,6 +455,57 @@ export function WorkflowExecutionList({
 		setLoading(true);
 		setError(null);
 		try {
+			if (isBatchScope && batchJobId) {
+				const runResponse = await listPipelineRuns({
+					view: "summary",
+					batchJobId,
+					page,
+					pageSize,
+					status: statusFilter,
+				});
+				const pipelineRuns = runResponse.items ?? [];
+				setServerTotal(runResponse.total ?? pipelineRuns.length);
+				setRunIdsByWorkflowName(
+					Object.fromEntries(
+						pipelineRuns
+							.filter((run) => run.workflowName && run.id)
+							.map((run) => [run.workflowName, run.id] as const),
+					),
+				);
+				setTemplateVersionsByWorkflowName(
+					Object.fromEntries(
+						pipelineRuns
+							.filter((run) => run.workflowName && run.templateVersion)
+							.map(
+								(run) =>
+									[run.workflowName, run.templateVersion as number] as const,
+							),
+					),
+				);
+				setNodeCountsByWorkflowName(
+					Object.fromEntries(
+						pipelineRuns
+							.filter((run) => run.workflowName)
+							.map((run) => [run.workflowName, run.nodeCount] as const),
+					),
+				);
+				setScopeByWorkflowName(
+					Object.fromEntries(
+						pipelineRuns
+							.filter((run) => run.workflowName && run.scope)
+							.map((run) => [run.workflowName, run.scope as string] as const),
+					),
+				);
+				const summaries = pipelineRuns.map((run) =>
+					workflowSummaryFromRun(run),
+				);
+				setItems(summaries);
+				setSelectedWorkflowNames((prev) =>
+					prev.filter((name) => summaries.some((item) => item.name === name)),
+				);
+				return;
+			}
+
 			const params: ListWorkflowsParams = {
 				status: statusFilter,
 				name: nameSearch.trim().toLowerCase() || undefined,
@@ -456,13 +518,14 @@ export function WorkflowExecutionList({
 					console.warn("live workflow list unavailable", err);
 					return { items: [] };
 				}),
-				listPipelineRuns({ view: "summary" }).catch(() => ({
+				listPipelineRuns({ view: "summary", excludeBatch: true }).catch(() => ({
 					items: [],
 					total: 0,
 				})),
 				listPipelines().catch(() => []),
 			]);
 			const pipelineRuns = pipelineRunResponse.items ?? [];
+			setServerTotal(pipelineRunResponse.total ?? pipelineRuns.length);
 			setRunIdsByWorkflowName(
 				Object.fromEntries(
 					pipelineRuns
@@ -518,13 +581,22 @@ export function WorkflowExecutionList({
 			setLoading(false);
 			setInitializedOnce(true);
 		}
-	}, [statusFilter, nameSearch, labelFilter, dateRange]);
+	}, [
+		batchJobId,
+		dateRange,
+		isBatchScope,
+		labelFilter,
+		nameSearch,
+		page,
+		pageSize,
+		statusFilter,
+	]);
 
 	useEffect(() => {
 		if (active) {
 			refresh();
 		}
-	}, [active, refresh]);
+	}, [active, refresh, batchListKey]);
 
 	useEffect(() => {
 		setPage(1);
@@ -669,13 +741,16 @@ export function WorkflowExecutionList({
 	}, [messageApi, refresh, selectedWorkflowNames]);
 
 	const displayItems = useMemo(() => {
+		if (isBatchScope) return items;
 		if (!versionFilter) return items;
 		const targetVersion = Number(versionFilter);
 		if (Number.isNaN(targetVersion)) return items;
 		return items.filter(
 			(item) => templateVersionsByWorkflowName[item.name] === targetVersion,
 		);
-	}, [items, versionFilter, templateVersionsByWorkflowName]);
+	}, [isBatchScope, items, versionFilter, templateVersionsByWorkflowName]);
+
+	const tableTotal = isBatchScope ? serverTotal : displayItems.length;
 
 	const columns = [
 		{
@@ -856,18 +931,20 @@ export function WorkflowExecutionList({
 				}}
 			>
 				<Typography.Title level={4} style={{ margin: 0 }}>
-					流水线执行记录
+					{title ?? "流水线执行记录"}
 				</Typography.Title>
-				<Button
-					danger
-					disabled={selectedWorkflowNames.length === 0}
-					onClick={() => setBulkDeleteOpen(true)}
-				>
-					批量删除
-					{selectedWorkflowNames.length > 0
-						? `（${selectedWorkflowNames.length}）`
-						: ""}
-				</Button>
+				{!embedded ? (
+					<Button
+						danger
+						disabled={selectedWorkflowNames.length === 0}
+						onClick={() => setBulkDeleteOpen(true)}
+					>
+						批量删除
+						{selectedWorkflowNames.length > 0
+							? `（${selectedWorkflowNames.length}）`
+							: ""}
+					</Button>
+				) : null}
 				<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
@@ -1013,6 +1090,7 @@ export function WorkflowExecutionList({
 						pagination={{
 							current: page,
 							pageSize,
+							total: tableTotal,
 							showSizeChanger: true,
 							showQuickJumper: true,
 							pageSizeOptions: ["10", "20", "50", "100"],

@@ -12,6 +12,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
@@ -32,6 +33,12 @@ func New(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase) *Us
 
 // CreateBackfill creates a new backfill job and its items.
 func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, assetIDs []string) (*models.BackfillJob, error) {
+	normalizedAssetIDs, err := assetvalidation.NormalizeAssetIDs("asset_ids", assetIDs)
+	if err != nil {
+		return nil, fmt.Errorf("validate asset_ids: %w", err)
+	}
+	assetIDs = normalizedAssetIDs
+
 	job := &models.BackfillJob{
 		ID:         uuid.New().String(),
 		Name:       name,
@@ -55,6 +62,25 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 	}
 	if err := uc.repo.SaveItems(ctx, items); err != nil {
 		return nil, fmt.Errorf("save backfill items: %w", err)
+	}
+
+	if uc.pipelineUC != nil {
+		for i := range items {
+			runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+				TemplateID: templateID,
+				BatchJobID: job.ID,
+				AssetID:    items[i].AssetID,
+				Status:     "Pending",
+			})
+			if err != nil {
+				continue
+			}
+			items[i].PipelineRunID = &runID
+			if wf := strings.TrimSpace(workflowName); wf != "" {
+				items[i].WorkflowName = &wf
+			}
+			_ = uc.repo.UpdateItemPipelineRun(ctx, items[i].ID, runID, workflowName, "pending")
+		}
 	}
 
 	if uc.pipelineUC != nil {
@@ -102,15 +128,75 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 		return nil
 	}
 
+	if fresh, err := uc.repo.FindItemByID(ctx, item.ID); err == nil && fresh != nil {
+		item = *fresh
+	}
+
+	runID := ""
+	if item.PipelineRunID != nil {
+		runID = strings.TrimSpace(*item.PipelineRunID)
+	}
+	workflowName := ""
+	if item.WorkflowName != nil {
+		workflowName = strings.TrimSpace(*item.WorkflowName)
+	}
+
+	if runID == "" && uc.pipelineUC != nil {
+		var initErr error
+		runID, workflowName, initErr = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+			TemplateID: templateID,
+			BatchJobID: jobID,
+			AssetID:    item.AssetID,
+			Status:     "Pending",
+		})
+		if initErr == nil {
+			_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "pending")
+		}
+	}
+
+	deployOpts := pipelineUC.DeployOptions{
+		BatchJobID:         jobID,
+		AllowUnknownAssets: true,
+		PreallocatedRunID:  runID,
+	}
 	dep, err := uc.pipelineUC.DeployByTemplateID(
 		ctx,
 		templateID,
 		"",
 		[]string{item.AssetID},
-		pipelineUC.DeployOptions{BatchJobID: jobID},
+		deployOpts,
 	)
 	if err != nil {
-		_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", "", err.Error())
+		if uc.pipelineUC != nil {
+			errMsg := err.Error()
+			if runID == "" {
+				runID, workflowName, _ = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+					TemplateID:   templateID,
+					BatchJobID:   jobID,
+					AssetID:      item.AssetID,
+					Status:       "Failed",
+					Message:      errMsg,
+					WorkflowName: workflowName,
+				})
+			} else {
+				_, workflowName, _ = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+					TemplateID:   templateID,
+					BatchJobID:   jobID,
+					AssetID:      item.AssetID,
+					RunID:        runID,
+					Status:       "Failed",
+					Message:      errMsg,
+					WorkflowName: workflowName,
+				})
+			}
+			if runID != "" {
+				_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "failed")
+			} else {
+				_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", workflowName, errMsg)
+			}
+		} else {
+			_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", "", err.Error())
+		}
 		_ = uc.syncJobProgress(ctx, jobID)
 		return err
 	}
@@ -118,6 +204,80 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, dep.ID, dep.WorkflowName, "running")
 	_ = uc.syncJobProgress(ctx, jobID)
 	return nil
+}
+
+// ReconcileSubtaskRuns ensures every backfill item has a pipeline run ledger row.
+func (uc *Usecase) ReconcileSubtaskRuns(ctx context.Context, jobID string) error {
+	if uc.pipelineUC == nil {
+		return nil
+	}
+	job, err := uc.repo.FindJobByID(ctx, jobID)
+	if err != nil || job == nil {
+		return err
+	}
+	items, err := uc.repo.FindItemsByJobID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if err := uc.reconcileItemRun(ctx, job, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob, item models.BackfillItem) error {
+	runID := ""
+	if item.PipelineRunID != nil {
+		runID = strings.TrimSpace(*item.PipelineRunID)
+	}
+	if runID != "" {
+		run, err := uc.pipelineUC.GetRun(ctx, runID)
+		if err == nil && run != nil {
+			return nil
+		}
+	}
+
+	workflowName := ""
+	if item.WorkflowName != nil {
+		workflowName = strings.TrimSpace(*item.WorkflowName)
+	}
+	status, message := backfillItemLedgerStatus(item)
+	newRunID, newWorkflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+		TemplateID:   job.TemplateID,
+		BatchJobID:   job.ID,
+		AssetID:      item.AssetID,
+		RunID:        runID,
+		Status:       status,
+		Message:      message,
+		WorkflowName: workflowName,
+	})
+	if err != nil {
+		return err
+	}
+	if newWorkflowName != "" {
+		workflowName = newWorkflowName
+	}
+	_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, newRunID, workflowName, item.Status)
+	return nil
+}
+
+func backfillItemLedgerStatus(item models.BackfillItem) (status, message string) {
+	switch item.Status {
+	case "failed", "cancelled":
+		status = "Failed"
+		if item.ErrorMessage != nil {
+			message = strings.TrimSpace(*item.ErrorMessage)
+		}
+	case "completed":
+		status = "Succeeded"
+	case "running":
+		status = "Running"
+	default:
+		status = "Pending"
+	}
+	return status, message
 }
 
 // ListJobs returns all backfill jobs with refreshed progress.
@@ -145,6 +305,7 @@ func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, 
 		return nil, nil
 	}
 	_ = uc.syncJobProgress(ctx, id)
+	_ = uc.ReconcileSubtaskRuns(ctx, id)
 	return uc.repo.FindJobByID(ctx, id)
 }
 
@@ -193,6 +354,24 @@ func (uc *Usecase) RetryFailed(ctx context.Context, jobID string) error {
 	for _, item := range items {
 		if item.Status == "failed" {
 			_ = uc.repo.UpdateItemStatus(ctx, item.ID, "pending", "", "")
+			if uc.pipelineUC != nil {
+				runID := ""
+				if item.PipelineRunID != nil {
+					runID = strings.TrimSpace(*item.PipelineRunID)
+				}
+				workflowName := ""
+				if item.WorkflowName != nil {
+					workflowName = strings.TrimSpace(*item.WorkflowName)
+				}
+				_, _, _ = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+					TemplateID:   job.TemplateID,
+					BatchJobID:   jobID,
+					AssetID:      item.AssetID,
+					RunID:        runID,
+					Status:       "Pending",
+					WorkflowName: workflowName,
+				})
+			}
 		}
 	}
 	if err := uc.repo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
