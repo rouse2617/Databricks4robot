@@ -45,6 +45,7 @@ import { assetsApi } from "../api/assets";
 import {
 	type Deployment,
 	deployTemplate,
+	normalizeDeployResults,
 	type ExecutionTarget,
 	getPipeline,
 	listExecutionTargets,
@@ -95,7 +96,6 @@ import {
 	toRecord,
 } from "./pipeline/pipelinePageHelpers";
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
-import { BatchJobList } from "./BatchJobList";
 
 import "../styles/pipeline.css";
 
@@ -275,6 +275,7 @@ function PipelineCanvas() {
 		name: string;
 		mode: DeployMode;
 		result?: Deployment;
+		results?: Deployment[];
 		error?: string;
 		previewManifest?: string;
 		previewLoading?: boolean;
@@ -931,11 +932,13 @@ function PipelineCanvas() {
 				selectedAssetIds,
 				selectedTargetId,
 			);
+			const results = normalizeDeployResults(result);
 			setDeployDialog((prev) => ({
 				...prev,
 				deploying: false,
 				done: true,
-				result,
+				result: results[0],
+				results,
 			}));
 		} catch (err) {
 			setDeployDialog((prev) => ({
@@ -1417,7 +1420,7 @@ function PipelineCanvas() {
 								style={{ fontSize: 12, marginBottom: 16 }}
 							>
 								选择执行目标和资产后，将流水线转换为 Argo Workflow 并提交到
-								Kubernetes 集群。
+								Kubernetes 集群。选择多个资产时，会为每个资产各下发一条执行记录。
 							</Typography.Paragraph>
 							<div style={{ marginBottom: 16 }}>
 								<AssetRunSummary
@@ -1729,18 +1732,45 @@ function PipelineCanvas() {
 								</Typography.Text>
 								<br />
 								<Typography.Text type="success" strong>
-									部署成功
+									{(deployDialog.results?.length ?? 1) > 1
+										? `已下发 ${deployDialog.results?.length ?? 1} 个任务`
+										: "部署成功"}
 								</Typography.Text>
-								<p
-									style={{
-										fontFamily: '"SF Mono",monospace',
-										fontSize: 12,
-										color: "#64748b",
-										marginTop: 8,
-									}}
-								>
-									{deployDialog.result.workflowName}
-								</p>
+								{(deployDialog.results?.length ?? 0) > 1 ? (
+									<div
+										style={{
+											marginTop: 12,
+											textAlign: "left",
+											maxHeight: 180,
+											overflowY: "auto",
+										}}
+									>
+										{(deployDialog.results ?? []).map((item) => (
+											<p
+												key={item.id}
+												style={{
+													fontFamily: '"SF Mono",monospace',
+													fontSize: 12,
+													color: "#64748b",
+													margin: "4px 0",
+												}}
+											>
+												{item.workflowName}
+											</p>
+										))}
+									</div>
+								) : (
+									<p
+										style={{
+											fontFamily: '"SF Mono",monospace',
+											fontSize: 12,
+											color: "#64748b",
+											marginTop: 8,
+										}}
+									>
+										{deployDialog.result.workflowName}
+									</p>
+								)}
 								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
 									{deployDialog.result.assetCount
 										? `${deployDialog.result.assetCount} 个资产`
@@ -1811,15 +1841,13 @@ function PipelineCanvas() {
 	);
 }
 
-type PipelineTab = "design" | "pipelines" | "batch" | "executions" | "components";
+type PipelineTab = "design" | "pipelines" | "executions" | "components";
 
 function resolvePipelineTab(raw: string | null): PipelineTab {
 	switch (raw) {
 		case "templates":
 		case "pipelines":
 			return "pipelines";
-		case "batch":
-			return "batch";
 		case "executions":
 			return "executions";
 		case "components":
@@ -1887,15 +1915,6 @@ export default function PipelinePage() {
 						children: (
 							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--management">
 								<DeployPanel variant="full" />
-							</div>
-						),
-					},
-					{
-						key: "batch",
-						label: tabLabel("批次任务", "批量跑流水线"),
-						children: (
-							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--batch">
-								<BatchJobList active={activeTab === "batch"} />
 							</div>
 						),
 					},

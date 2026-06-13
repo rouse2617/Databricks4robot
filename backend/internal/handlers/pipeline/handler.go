@@ -272,6 +272,18 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
+	if len(req.AssetIDs) > 1 {
+		runs, err := h.uc.CreateRunsByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c)})
+		if err != nil {
+			mapDeployError(c, err)
+			return
+		}
+		if runs == nil {
+			runs = []models.PipelineRun{}
+		}
+		c.JSON(http.StatusCreated, gin.H{"items": runs, "total": len(runs)})
+		return
+	}
 	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c)})
 	if err != nil {
 		mapDeployError(c, err)

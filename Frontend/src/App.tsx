@@ -28,7 +28,6 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const EventsPage = lazy(() => import("./pages/EventsPage"));
 const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
-const BatchJobDetailPage = lazy(() => import("./pages/BatchJobDetailPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 
 function PageLoader() {
@@ -82,10 +81,6 @@ function ProtectedRoutes() {
 						<Route
 							path="/workflows/:name"
 							element={<WorkflowDetailPage legacyRoute />}
-						/>
-						<Route
-							path="/pipeline/batch/:id"
-							element={<BatchJobDetailPage />}
 						/>
 						<Route
 							path="/pipeline/executions/:name"

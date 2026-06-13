@@ -1695,6 +1695,27 @@ func (uc *Usecase) CreateRunByTemplateID(ctx context.Context, templateID, name s
 	return run, nil
 }
 
+// CreateRunsByTemplateID deploys one pipeline run per asset when multiple asset
+// IDs are provided; zero or one asset uses a single run as before.
+func (uc *Usecase) CreateRunsByTemplateID(ctx context.Context, templateID, name string, assetIDs []string, opts ...DeployOptions) ([]models.PipelineRun, error) {
+	if len(assetIDs) <= 1 {
+		run, err := uc.CreateRunByTemplateID(ctx, templateID, name, assetIDs, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return []models.PipelineRun{*run}, nil
+	}
+	runs := make([]models.PipelineRun, 0, len(assetIDs))
+	for _, assetID := range assetIDs {
+		run, err := uc.CreateRunByTemplateID(ctx, templateID, name, []string{assetID}, opts...)
+		if err != nil {
+			return runs, err
+		}
+		runs = append(runs, *run)
+	}
+	return runs, nil
+}
+
 // ListRuns returns all first-class pipeline runs. When the run table is not
 // wired, it projects legacy deployments for compatibility.
 // refreshActive triggers live Argo status polls (capped); list endpoints should

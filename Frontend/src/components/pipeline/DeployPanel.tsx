@@ -26,6 +26,7 @@ import {
 	type Deployment,
 	deletePipeline,
 	deployTemplate,
+	normalizeDeployResults,
 	type ExecutionTarget,
 	getPipeline,
 	listDeployments,
@@ -478,13 +479,18 @@ export function DeployPanel({
 		if (!deployTargetId) return;
 		setDeploying(true);
 		try {
-			await deployTemplate(
+			const result = await deployTemplate(
 				deployTargetId,
 				selectedAssetIds,
 				selectedTargetId,
 				selectedDeployVersion,
 			);
-			messageApi.success("部署成功");
+			const results = normalizeDeployResults(result);
+			messageApi.success(
+				results.length > 1
+					? `已下发 ${results.length} 个任务`
+					: "部署成功",
+			);
 			closeAssetModal();
 			setDeploying(false);
 			void refresh();
