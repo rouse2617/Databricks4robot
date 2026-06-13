@@ -214,8 +214,12 @@ export function listDeployments(): Promise<Deployment[]> {
 	);
 }
 
-export function listPipelineRuns(): Promise<PipelineRun[]> {
-	return request<{ items: PipelineRun[] }>("GET", "/pipeline-runs").then(
+export function listPipelineRuns(options?: {
+	view?: "summary" | "full";
+}): Promise<PipelineRun[]> {
+	const view = options?.view ?? "full";
+	const suffix = view === "summary" ? "?view=summary" : "";
+	return request<{ items: PipelineRun[] }>("GET", `/pipeline-runs${suffix}`).then(
 		(r) => r.items,
 	);
 }

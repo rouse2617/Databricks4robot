@@ -1726,6 +1726,36 @@ func (uc *Usecase) ListRuns(ctx context.Context, refreshActive bool) ([]models.P
 	return list, nil
 }
 
+// ListRunSummaries returns lightweight pipeline runs for list UIs. It skips
+// manifest/pipeline_json hydration and per-run node/asset enrichment.
+func (uc *Usecase) ListRunSummaries(ctx context.Context) ([]models.PipelineRun, error) {
+	if uc.runRepo == nil {
+		deps, err := uc.deploymentRepo.FindAll(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]models.PipelineRun, 0, len(deps))
+		for i := range deps {
+			run := uc.deploymentToRun(&deps[i])
+			stripRunHeavyFields(run)
+			out = append(out, *run)
+		}
+		return out, nil
+	}
+	return uc.runRepo.FindAllSummaries(ctx)
+}
+
+func stripRunHeavyFields(run *models.PipelineRun) {
+	if run == nil {
+		return
+	}
+	run.PipelineJSON = nil
+	run.Manifest = nil
+	run.TargetSnapshot = nil
+	run.Nodes = nil
+	run.ExecutionTarget = nil
+}
+
 // GetRun returns a single first-class pipeline run.
 func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, error) {
 	if uc.runRepo == nil {
@@ -2080,7 +2110,7 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 
 func (uc *Usecase) listDeployments(ctx context.Context, refreshActive bool) ([]models.PipelineDeployment, error) {
 	if uc.runRepo != nil {
-		runs, err := uc.ListRuns(ctx, false)
+		runs, err := uc.ListRunSummaries(ctx)
 		if err != nil {
 			return nil, err
 		}

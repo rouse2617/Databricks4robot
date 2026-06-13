@@ -601,6 +601,32 @@ const pipelineRunSelectCols = `id, template_id, pipeline_name, template_version,
   manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner,
   created_at, updated_at, started_at, finished_at`
 
+const pipelineRunSummarySelectCols = `id, template_id, pipeline_name, template_version, workflow_name,
+  execution_target_id, status, node_count, asset_ids, asset_count, no_asset_run,
+  argo_namespace, argo_workflow_uid, message, scope, owner,
+  created_at, updated_at, started_at, finished_at`
+
+func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
+	var (
+		r            models.PipelineRun
+		templateID   *string
+		templateVer  *int
+		assetIDs     []string
+	)
+	if err := rs.Scan(
+		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
+		&r.ExecutionTargetID, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
+		&r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
+		&r.Scope, &r.Owner, &r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+	); err != nil {
+		return nil, err
+	}
+	r.TemplateID = templateID
+	r.TemplateVersion = templateVer
+	r.AssetIDs = assetIDs
+	return &r, nil
+}
+
 func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 	var (
 		r              models.PipelineRun
@@ -719,20 +745,34 @@ ON CONFLICT (id) DO UPDATE SET
 
 // FindAll returns pipeline runs ordered by created_at DESC.
 func (r *PipelineRunRepo) FindAll(ctx context.Context) ([]models.PipelineRun, error) {
-	q := `SELECT ` + pipelineRunSelectCols + `
+	return r.findAllPipelineRuns(ctx, pipelineRunSelectCols, scanPipelineRun, "FindAll")
+}
+
+// FindAllSummaries returns lightweight pipeline runs for list endpoints.
+func (r *PipelineRunRepo) FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error) {
+	return r.findAllPipelineRuns(ctx, pipelineRunSummarySelectCols, scanPipelineRunSummary, "FindAllSummaries")
+}
+
+func (r *PipelineRunRepo) findAllPipelineRuns(
+	ctx context.Context,
+	cols string,
+	scan func(rowScanner) (*models.PipelineRun, error),
+	op string,
+) ([]models.PipelineRun, error) {
+	q := `SELECT ` + cols + `
 FROM pipeline_runs
 ORDER BY created_at DESC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q)
 	if err != nil {
-		return nil, fmt.Errorf("postgres PipelineRunRepo.FindAll: %w", err)
+		return nil, fmt.Errorf("postgres PipelineRunRepo.%s: %w", op, err)
 	}
 	defer rows.Close()
 	var out []models.PipelineRun
 	for rows.Next() {
-		run, err := scanPipelineRun(rows)
+		run, err := scan(rows)
 		if err != nil {
-			return nil, fmt.Errorf("postgres PipelineRunRepo.FindAll scan: %w", err)
+			return nil, fmt.Errorf("postgres PipelineRunRepo.%s scan: %w", op, err)
 		}
 		out = append(out, *run)
 	}

@@ -69,6 +69,7 @@ type mockRunRepo struct {
 
 func (m *mockRunRepo) Save(context.Context, *models.PipelineRun) error               { return nil }
 func (m *mockRunRepo) FindAll(context.Context) ([]models.PipelineRun, error)         { return nil, nil }
+func (m *mockRunRepo) FindAllSummaries(context.Context) ([]models.PipelineRun, error) { return nil, nil }
 func (m *mockRunRepo) FindByID(context.Context, string) (*models.PipelineRun, error) { return nil, nil }
 func (m *mockRunRepo) FindByWorkflowName(context.Context, string) (*models.PipelineRun, error) {
 	return m.run, nil

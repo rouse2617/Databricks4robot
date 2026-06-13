@@ -83,6 +83,8 @@ type ExecutionTargetRepository interface {
 type PipelineRunRepository interface {
 	Save(ctx context.Context, r *models.PipelineRun) error
 	FindAll(ctx context.Context) ([]models.PipelineRun, error)
+	// FindAllSummaries returns list rows without manifest/pipeline_json/target_snapshot.
+	FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error)
 	FindByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error)
 	Delete(ctx context.Context, id string) error

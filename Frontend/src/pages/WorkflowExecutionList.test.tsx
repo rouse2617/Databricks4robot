@@ -22,7 +22,6 @@ import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const mockListWorkflows = vi.fn();
 const mockDeleteWorkflow = vi.fn();
-const mockListDeployments = vi.fn();
 const mockListPipelineRuns = vi.fn();
 const mockListPipelines = vi.fn();
 const mockGetPipelineRunWatcherStatus = vi.fn();
@@ -41,7 +40,6 @@ vi.mock("../api/workflowApi", () => ({
 vi.mock("../api/pipelineApi", () => ({
 	getPipelineRunWatcherStatus: (...args: unknown[]) =>
 		mockGetPipelineRunWatcherStatus(...args),
-	listDeployments: (...args: unknown[]) => mockListDeployments(...args),
 	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
 }));
@@ -106,7 +104,6 @@ describe("WorkflowExecutionList", () => {
 			});
 		});
 		mockDeleteWorkflow.mockResolvedValue({ message: "deleted" });
-		mockListDeployments.mockResolvedValue([]);
 		mockListPipelineRuns.mockResolvedValue([
 			{
 				id: "run-1",

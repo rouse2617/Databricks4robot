@@ -131,6 +131,19 @@ func (m *mockPipelineRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, 
 	}
 	return out, nil
 }
+func (m *mockPipelineRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun, error) {
+	out := make([]models.PipelineRun, 0, len(m.byID))
+	for _, r := range m.byID {
+		copy := *r
+		copy.PipelineJSON = nil
+		copy.Manifest = nil
+		copy.TargetSnapshot = nil
+		copy.Nodes = nil
+		copy.ExecutionTarget = nil
+		out = append(out, copy)
+	}
+	return out, nil
+}
 func (m *mockPipelineRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
 	return m.byID[id], nil
 }
@@ -401,6 +414,50 @@ func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
 		t.Fatalf("expected 2 nodes, got %d", len(resp.Items[0].Nodes))
 	}
 }
+
+func TestListRuns_SummaryViewSkipsHeavyFields(t *testing.T) {
+	heavyJSON := map[string]interface{}{"nodes": []interface{}{map[string]interface{}{"id": "n1"}}}
+	run := makePipelineRun("run-1", "wf-summary")
+	run.PipelineJSON = heavyJSON
+	run.Manifest = strPtr("manifest-yaml")
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{run.ID: run},
+	}, &mockPipelineRunNodeRepo{
+		byRunID: map[string][]models.PipelineRunNode{
+			run.ID: {{ID: "node-1", RunID: run.ID, DisplayName: "step-1"}},
+		},
+	})
+	h := New(uc, "")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs?view=summary", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.PipelineRun `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(resp.Items))
+	}
+	item := resp.Items[0]
+	if item.PipelineJSON != nil || item.Manifest != nil || len(item.Nodes) != 0 {
+		t.Fatalf("summary view should omit heavy fields: pipelineJSON=%v manifest=%v nodes=%d",
+			item.PipelineJSON != nil, item.Manifest != nil, len(item.Nodes))
+	}
+	if item.TotalEstimatedCost != nil {
+		t.Fatalf("summary view should not compute totalEstimatedCost, got %v", item.TotalEstimatedCost)
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func TestGetRun_ReturnsTotalEstimatedCost(t *testing.T) {
 	run := makePipelineRun("run-1", "wf-cost")

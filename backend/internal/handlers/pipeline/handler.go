@@ -293,7 +293,17 @@ func (h *Handler) ListExecutionTargets(c *gin.Context) {
 // ListRuns handles GET /api/v1/pipeline-runs.
 func (h *Handler) ListRuns(c *gin.Context) {
 	refreshActive := strings.EqualFold(c.Query("refresh"), "true") || c.Query("refresh") == "1"
-	items, err := h.uc.ListRuns(c.Request.Context(), refreshActive)
+	summaryView := strings.EqualFold(c.Query("view"), "summary")
+
+	var (
+		items []models.PipelineRun
+		err   error
+	)
+	if summaryView {
+		items, err = h.uc.ListRunSummaries(c.Request.Context())
+	} else {
+		items, err = h.uc.ListRuns(c.Request.Context(), refreshActive)
+	}
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -301,8 +311,14 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	if items == nil {
 		items = []models.PipelineRun{}
 	}
-	for i := range items {
-		items[i].TotalEstimatedCost = pipelineUC.ComputeRunCost(&items[i], h.pricing)
+	if summaryView {
+		for i := range items {
+			items[i].TotalEstimatedCost = nil
+		}
+	} else {
+		for i := range items {
+			items[i].TotalEstimatedCost = pipelineUC.ComputeRunCost(&items[i], h.pricing)
+		}
 	}
 	c.JSON(200, gin.H{"items": items})
 }

@@ -20,7 +20,6 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-	listDeployments,
 	listPipelineRuns,
 	listPipelines,
 	type PipelineRun,
@@ -452,41 +451,23 @@ export function WorkflowExecutionList({
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
-			const [res, deployments, pipelineRuns, templates] = await Promise.all([
+			const [res, pipelineRuns, templates] = await Promise.all([
 				listWorkflows(params).catch((err) => {
 					console.warn("live workflow list unavailable", err);
 					return { items: [] };
 				}),
-				listDeployments().catch(() => []),
-				listPipelineRuns().catch(() => []),
+				listPipelineRuns({ view: "summary" }).catch(() => []),
 				listPipelines().catch(() => []),
 			]);
 			setRunIdsByWorkflowName(
-				Object.fromEntries([
-					...deployments
-						.filter((deployment) => deployment.workflowName && deployment.id)
-						.map(
-							(deployment) => [deployment.workflowName, deployment.id] as const,
-						),
-					...pipelineRuns
+				Object.fromEntries(
+					pipelineRuns
 						.filter((run) => run.workflowName && run.id)
 						.map((run) => [run.workflowName, run.id] as const),
-				]),
+				),
 			);
 			setTemplateVersionsByWorkflowName(
 				Object.fromEntries([
-					...deployments
-						.filter(
-							(deployment) =>
-								deployment.workflowName && deployment.templateVersion,
-						)
-						.map(
-							(deployment) =>
-								[
-									deployment.workflowName,
-									deployment.templateVersion as number,
-								] as const,
-						),
 					...pipelineRuns
 						.filter((run) => run.workflowName && run.templateVersion)
 						.map(
@@ -503,30 +484,18 @@ export function WorkflowExecutionList({
 				]),
 			);
 			setNodeCountsByWorkflowName(
-				Object.fromEntries([
-					...deployments
-						.filter((deployment) => deployment.workflowName)
-						.map(
-							(deployment) =>
-								[deployment.workflowName, deployment.nodeCount] as const,
-						),
-					...pipelineRuns
+				Object.fromEntries(
+					pipelineRuns
 						.filter((run) => run.workflowName)
 						.map((run) => [run.workflowName, run.nodeCount] as const),
-				]),
+				),
 			);
 			setScopeByWorkflowName(
-				Object.fromEntries([
-					...deployments
-						.filter((deployment) => deployment.workflowName && deployment.scope)
-						.map(
-							(deployment) =>
-								[deployment.workflowName, deployment.scope as string] as const,
-						),
-					...pipelineRuns
+				Object.fromEntries(
+					pipelineRuns
 						.filter((run) => run.workflowName && run.scope)
 						.map((run) => [run.workflowName, run.scope as string] as const),
-				]),
+				),
 			);
 			const enrichedItems = mergeLedgerRunsWithLiveWorkflows(
 				res.items || [],
