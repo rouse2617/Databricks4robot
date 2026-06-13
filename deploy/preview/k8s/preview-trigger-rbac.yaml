@@ -1,0 +1,42 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: preview-trigger
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/managed-by: codex
+    app.kubernetes.io/part-of: cyber-databrew-preview
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: ["tekton.dev"]
+    resources: ["taskruns"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["cyber-databrew-preview-github-token"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: preview-trigger-cyber-databrew-gha
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/managed-by: codex
+    app.kubernetes.io/part-of: cyber-databrew-preview
+subjects:
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: cyber-databrew-gha@green-valley-442103.iam.gserviceaccount.com
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: preview-trigger

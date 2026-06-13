@@ -1,0 +1,257 @@
+substitutions:
+  _REGION: us-central1
+  _ARTIFACT_REPO: cyber-databrew-images
+  _PREVIEW_ID: manual
+  _FRONTEND_MODE: remote
+  _COMMIT_SHA: HEAD
+  _REPO_URL: https://github.com/CyberOrigin2077/cyber-databrew.git
+  _GIT_CREDENTIAL_NAME: cyber-databrew-preview-github-token
+  _TTL_HOURS: "24"
+  _RUN_APP_DOMAIN: 234851712830.us-central1.run.app
+  _MCAP_PREVIEW_HOST: mcap-preview-dev-wtttm6suaq-uc.a.run.app
+  _K8S_CLUSTER: cyber-clust
+  _K8S_CLUSTER_LOCATION: us-central1
+
+options:
+  machineType: E2_HIGHCPU_32
+  substitutionOption: ALLOW_LOOSE
+
+steps:
+  - id: clone-source
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    secretEnv:
+      - GITHUB_TOKEN
+    args:
+      - -ceu
+      - |
+        clone_start="$(date -u +%s)"
+        mkdir -p /workspace/src
+        repo_url="$_REPO_URL"
+        repo_path="$${repo_url#https://github.com/}"
+        repo_path="$${repo_path%.git}"
+        curl -fsSL \
+          -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/$${repo_path}/tarball/${_COMMIT_SHA}" \
+          | tar -xz --strip-components=1 -C /workspace/src
+        printf '%s\n' "$_COMMIT_SHA" | tee /workspace/source-commit.txt
+        clone_end="$(date -u +%s)"
+        echo "TIMING clone_source_seconds=$((clone_end - clone_start))"
+
+  - id: preview-vars
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        preview_id="$(printf '%s' "$_PREVIEW_ID" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed -E 's/^-+//; s/-+$//; s/-+/-/g' | cut -c1-24)"
+        if [[ -z "$${preview_id}" ]]; then
+          echo "ERROR: _PREVIEW_ID is empty after sanitization." >&2
+          exit 1
+        fi
+        if [[ "${_FRONTEND_MODE}" != "remote" && "${_FRONTEND_MODE}" != "local" ]]; then
+          echo "ERROR: _FRONTEND_MODE must be remote or local, got: ${_FRONTEND_MODE}" >&2
+          exit 1
+        fi
+        if ! [[ "${_TTL_HOURS}" =~ ^[0-9]+$ ]]; then
+          echo "ERROR: _TTL_HOURS must be an integer, got: ${_TTL_HOURS}" >&2
+          exit 1
+        fi
+
+        api_service="cdb-a-$${preview_id}"
+        web_service="cdb-w-$${preview_id}"
+        api_image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPO}/cyber-databrew-backend:preview-$${preview_id}"
+        web_image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPO}/cyber-databrew-frontend:preview-$${preview_id}"
+        api_cache_image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPO}/cyber-databrew-backend:preview-buildcache"
+        web_cache_image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_ARTIFACT_REPO}/cyber-databrew-frontend:preview-buildcache"
+        api_url="https://$${api_service}-${_RUN_APP_DOMAIN}"
+        web_url="https://$${web_service}-${_RUN_APP_DOMAIN}"
+        api_host="$${api_url#https://}"
+        created_epoch="$(date -u +%s)"
+        expires_epoch="$((created_epoch + ${_TTL_HOURS} * 3600))"
+
+        {
+          echo "PREVIEW_ID=$${preview_id}"
+          echo "API_SERVICE=$${api_service}"
+          echo "WEB_SERVICE=$${web_service}"
+          echo "API_IMAGE=$${api_image}"
+          echo "WEB_IMAGE=$${web_image}"
+          echo "API_CACHE_IMAGE=$${api_cache_image}"
+          echo "WEB_CACHE_IMAGE=$${web_cache_image}"
+          echo "API_URL=$${api_url}"
+          echo "WEB_URL=$${web_url}"
+          echo "API_HOST=$${api_host}"
+          echo "FRONTEND_MODE=${_FRONTEND_MODE}"
+          echo "CREATED_EPOCH=$${created_epoch}"
+          echo "EXPIRES_EPOCH=$${expires_epoch}"
+          echo "TTL_HOURS=${_TTL_HOURS}"
+        } | tee /workspace/preview.env
+
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    waitFor: [clone-source, preview-vars]
+    env:
+      - DOCKER_BUILDKIT=1
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        source /workspace/preview.env
+        docker buildx create --name backend-builder --driver docker-container
+        docker buildx inspect backend-builder --bootstrap
+
+        build_start="$(date -u +%s)"
+        docker buildx build \
+          --builder backend-builder \
+          --platform linux/amd64 \
+          --file /workspace/src/backend/Dockerfile \
+          --tag "$${API_IMAGE}" \
+          --cache-from "type=registry,ref=$${API_CACHE_IMAGE}" \
+          --cache-to "type=registry,ref=$${API_CACHE_IMAGE},mode=max" \
+          --push \
+          /workspace/src/backend
+        build_end="$(date -u +%s)"
+        echo "TIMING backend_buildx_push_seconds=$((build_end - build_start))"
+
+  - id: build-frontend-image
+    name: gcr.io/cloud-builders/docker
+    waitFor: [clone-source, preview-vars]
+    env:
+      - DOCKER_BUILDKIT=1
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        source /workspace/preview.env
+        if [[ "$${FRONTEND_MODE}" != "remote" ]]; then
+          echo "Skipping frontend image build because _FRONTEND_MODE=$${FRONTEND_MODE}."
+          exit 0
+        fi
+        docker buildx create --name frontend-builder --driver docker-container
+        docker buildx inspect frontend-builder --bootstrap
+
+        build_start="$(date -u +%s)"
+        docker buildx build \
+          --builder frontend-builder \
+          --platform linux/amd64 \
+          --file /workspace/src/deploy/preview/frontend-runtime.Dockerfile \
+          --tag "$${WEB_IMAGE}" \
+          --cache-from "type=registry,ref=$${WEB_CACHE_IMAGE}" \
+          --cache-to "type=registry,ref=$${WEB_CACHE_IMAGE},mode=max" \
+          --push \
+          /workspace/src
+        build_end="$(date -u +%s)"
+        echo "TIMING frontend_buildx_push_seconds=$((build_end - build_start))"
+
+  - id: deploy-backend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:latest
+    waitFor: [build-backend]
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        source /workspace/preview.env
+        if ! command -v kubectl >/dev/null 2>&1; then
+          gcloud components install kubectl --quiet
+        fi
+        gcloud container clusters get-credentials "$_K8S_CLUSTER" \
+          --region "$_K8S_CLUSTER_LOCATION" \
+          --project "${PROJECT_ID}"
+        cd /workspace/src
+        deploy_start="$(date -u +%s)"
+        env \
+          PROJECT_ID="${PROJECT_ID}" \
+          REGION="$_REGION" \
+          SERVICE_NAME="$${API_SERVICE}" \
+          IMAGE="$${API_IMAGE}" \
+          USE_EXISTING_IMAGE=true \
+          USE_CLOUD_BUILD=false \
+          MIN_INSTANCES=0 \
+          MAX_INSTANCES=2 \
+          CPU=1 \
+          MEMORY=512Mi \
+          LABELS="preview=true,preview-id=$${PREVIEW_ID},managed-by=cloud-build,expires-epoch=$${EXPIRES_EPOCH},ttl-hours=${_TTL_HOURS}" \
+          CLOUDRUN_OUTBOX_RELAY_ENABLED=false \
+          CLOUDRUN_OUTBOX_ES_SUBSCRIBER_ENABLED=false \
+          bash deploy/cloudrun/backend-dev.sh
+        deploy_end="$(date -u +%s)"
+        echo "TIMING backend_cloud_run_deploy_seconds=$((deploy_end - deploy_start))"
+        actual_api_url="$(gcloud run services describe "$${API_SERVICE}" \
+          --project "${PROJECT_ID}" \
+          --region "$_REGION" \
+          --format='value(status.url)')"
+        echo "ACTUAL_API_URL=$${actual_api_url}" >> /workspace/preview.env
+
+  - id: deploy-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    waitFor: [deploy-backend, build-frontend-image]
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        source /workspace/preview.env
+        if [[ "$${FRONTEND_MODE}" != "remote" ]]; then
+          echo "Skipping frontend Cloud Run deploy because _FRONTEND_MODE=$${FRONTEND_MODE}."
+          exit 0
+        fi
+        deploy_start="$(date -u +%s)"
+        gcloud run deploy "$${WEB_SERVICE}" \
+          --quiet \
+          --project "${PROJECT_ID}" \
+          --region "$_REGION" \
+          --platform managed \
+          --image "$${WEB_IMAGE}" \
+          --port 80 \
+          --allow-unauthenticated \
+          --min-instances 0 \
+          --max-instances 2 \
+          --cpu 1 \
+          --memory 512Mi \
+          --timeout 60 \
+          --set-env-vars "BACKEND_UPSTREAM_HOST=$${API_HOST},MCAP_PREVIEW_UPSTREAM_HOST=$_MCAP_PREVIEW_HOST" \
+          --labels "preview=true,preview-id=$${PREVIEW_ID},managed-by=cloud-build,expires-epoch=$${EXPIRES_EPOCH},ttl-hours=${_TTL_HOURS}"
+        deploy_end="$(date -u +%s)"
+        echo "TIMING frontend_cloud_run_deploy_seconds=$((deploy_end - deploy_start))"
+        actual_web_url="$(gcloud run services describe "$${WEB_SERVICE}" \
+          --project "${PROJECT_ID}" \
+          --region "$_REGION" \
+          --format='value(status.url)')"
+        echo "ACTUAL_WEB_URL=$${actual_web_url}" >> /workspace/preview.env
+
+  - id: preview-result
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    waitFor: [deploy-backend, deploy-frontend]
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        source /workspace/preview.env
+        echo ""
+        echo "Preview deployment complete"
+        echo "commit/preview: $${PREVIEW_ID}"
+        echo "backend service: $${API_SERVICE}"
+        echo "backend url: $${API_URL}"
+        if [[ -n "$${ACTUAL_API_URL:-}" && "$${ACTUAL_API_URL}" != "$${API_URL}" ]]; then
+          echo "backend actual url: $${ACTUAL_API_URL}"
+        fi
+        echo "expires epoch: $${EXPIRES_EPOCH}"
+        echo "ttl hours: $${TTL_HOURS}"
+        if [[ "$${FRONTEND_MODE}" == "remote" ]]; then
+          echo "frontend service: $${WEB_SERVICE}"
+          echo "frontend url: $${WEB_URL}"
+          if [[ -n "$${ACTUAL_WEB_URL:-}" && "$${ACTUAL_WEB_URL}" != "$${WEB_URL}" ]]; then
+            echo "frontend actual url: $${ACTUAL_WEB_URL}"
+          fi
+        else
+          echo "frontend mode: local"
+          echo "local command:"
+          echo "  cd Frontend && VITE_API_BASE_URL=$${API_URL} npm run dev"
+        fi
+
+timeout: 1800s
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/${_GIT_CREDENTIAL_NAME}/versions/latest
+      env: GITHUB_TOKEN

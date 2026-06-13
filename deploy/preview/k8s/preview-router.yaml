@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: preview-router-nginx
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: preview-router
+    app.kubernetes.io/part-of: cyber-databrew-preview
+data:
+  default.conf: |
+    server {
+        listen 80;
+
+        # GKE kube-dns service IP in this cluster. Required because proxy_pass
+        # uses dynamic service names based on the preview id path segment.
+        resolver 34.118.224.10 valid=5s ipv6=off;
+
+        location = /healthz {
+            add_header Content-Type text/plain;
+            return 200 "ok\n";
+        }
+
+        location = / {
+            add_header Content-Type text/plain;
+            return 200 "preview-router\n";
+        }
+
+        location ~ "^/preview/([0-9a-f]{7,40})$" {
+            return 308 /preview/$1/;
+        }
+
+        location ~ "^/preview/([0-9a-f]{7,40})/api(?<api_path>/.*)?$" {
+            set $preview_id $1;
+            if ($api_path = "") {
+                set $api_path "/";
+            }
+            proxy_pass http://cdb-pv-$preview_id-api.cyber-databrew-dev.svc.cluster.local$api_path$is_args$args;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Prefix /preview/$preview_id;
+            proxy_set_header X-Preview-Id $preview_id;
+            proxy_http_version 1.1;
+            proxy_request_buffering off;
+            proxy_buffering off;
+            proxy_read_timeout 600s;
+        }
+
+        location ~ "^/preview/([0-9a-f]{7,40})(/.*)?$" {
+            set $preview_id $1;
+            set $web_path $2;
+            if ($web_path = "") {
+                set $web_path "/";
+            }
+            proxy_pass http://cdb-pv-$preview_id-web.cyber-databrew-dev.svc.cluster.local$web_path$is_args$args;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Prefix /preview/$preview_id;
+            proxy_set_header X-Preview-Id $preview_id;
+            proxy_http_version 1.1;
+            proxy_request_buffering off;
+            proxy_buffering off;
+            proxy_read_timeout 600s;
+        }
+
+        location / {
+            add_header Content-Type text/plain;
+            return 404 "preview not found\n";
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preview-router
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: preview-router
+    app.kubernetes.io/part-of: cyber-databrew-preview
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: preview-router
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: preview-router
+        app.kubernetes.io/part-of: cyber-databrew-preview
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: preview-router-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: preview-router
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/name: preview-router
+    app.kubernetes.io/part-of: cyber-databrew-preview
+  annotations:
+    cloud.google.com/neg: '{"exposed_ports":{"80":{}}}'
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: preview-router
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: preview-router-route
+  namespace: developer-gateway
+  labels:
+    app.kubernetes.io/name: preview-router
+    app.kubernetes.io/part-of: cyber-databrew-preview
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: developer-gateway
+      namespace: developer-gateway
+  hostnames:
+    - api-cyber-databrew-dev.cyberorigin.ai
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /preview/
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: preview-router
+          namespace: cyber-databrew-dev
+          port: 80
