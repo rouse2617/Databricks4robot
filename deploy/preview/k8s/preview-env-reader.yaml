@@ -1,0 +1,96 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: preview-workload-deployer
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/managed-by: codex
+    app.kubernetes.io/part-of: cyber-databrew-preview
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tekton-builder
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/managed-by: codex
+    app.kubernetes.io/part-of: cyber-databrew-preview
+  annotations:
+    iam.gke.io/gcp-service-account: tekton-builder@green-valley-442103.iam.gserviceaccount.com
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: preview-workload-deployer-tekton-builder
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/managed-by: codex
+    app.kubernetes.io/part-of: cyber-databrew-preview
+subjects:
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: tekton-builder@green-valley-442103.iam.gserviceaccount.com
+  - kind: ServiceAccount
+    name: tekton-builder
+    namespace: cyber-databrew-dev
+  - kind: ServiceAccount
+    name: tekton-builder
+    namespace: tekton-pipelines
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: preview-workload-deployer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: preview-env-reader
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/managed-by: codex
+    app.kubernetes.io/part-of: cyber-databrew-preview
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cyber-databrew-config"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["cyber-databrew-secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: preview-env-reader-tekton-builder
+  namespace: cyber-databrew-dev
+  labels:
+    app.kubernetes.io/managed-by: codex
+    app.kubernetes.io/part-of: cyber-databrew-preview
+subjects:
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: tekton-builder@green-valley-442103.iam.gserviceaccount.com
+  - kind: ServiceAccount
+    name: tekton-builder
+    namespace: cyber-databrew-dev
+  - kind: ServiceAccount
+    name: tekton-builder
+    namespace: tekton-pipelines
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: preview-env-reader
