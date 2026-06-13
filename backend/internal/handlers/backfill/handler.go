@@ -60,7 +60,7 @@ func (h *Handler) GetJob(c *gin.Context) {
 		return
 	}
 
-	job, items, err := h.uc.GetJob(c.Request.Context(), id)
+	job, err := h.uc.GetJob(c.Request.Context(), id)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -70,10 +70,7 @@ func (h *Handler) GetJob(c *gin.Context) {
 		return
 	}
 
-	if items == nil {
-		items = []models.BackfillItem{}
-	}
-	c.JSON(200, gin.H{"job": job, "items": items})
+	c.JSON(200, gin.H{"job": job})
 }
 
 // PauseJob handles POST /api/v1/backfill/:id/pause.

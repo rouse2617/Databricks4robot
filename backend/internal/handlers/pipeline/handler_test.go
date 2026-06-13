@@ -144,6 +144,13 @@ func (m *mockPipelineRunRepo) FindAllSummaries(_ context.Context) ([]models.Pipe
 	}
 	return out, nil
 }
+func (m *mockPipelineRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	items, err := m.FindAllSummaries(context.Background())
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, len(items), nil
+}
 func (m *mockPipelineRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
 	return m.byID[id], nil
 }

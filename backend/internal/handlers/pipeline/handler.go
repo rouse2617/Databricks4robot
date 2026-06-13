@@ -294,15 +294,29 @@ func (h *Handler) ListExecutionTargets(c *gin.Context) {
 func (h *Handler) ListRuns(c *gin.Context) {
 	refreshActive := strings.EqualFold(c.Query("refresh"), "true") || c.Query("refresh") == "1"
 	summaryView := strings.EqualFold(c.Query("view"), "summary")
+	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
+	excludeBatch := strings.EqualFold(c.Query("excludeBatch"), "true") || c.Query("excludeBatch") == "1"
+	statusFilter := strings.TrimSpace(c.Query("status"))
+	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
+	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
 
 	var (
 		items []models.PipelineRun
+		total int
 		err   error
 	)
 	if summaryView {
-		items, err = h.uc.ListRunSummaries(c.Request.Context())
+		filter := models.PipelineRunListFilter{
+			BatchJobID:   batchJobID,
+			ExcludeBatch: excludeBatch,
+			Status:       statusFilter,
+			Page:         page,
+			PageSize:     pageSize,
+		}
+		items, total, err = h.uc.ListRunSummaries(c.Request.Context(), filter)
 	} else {
 		items, err = h.uc.ListRuns(c.Request.Context(), refreshActive)
+		total = len(items)
 	}
 	if err != nil {
 		httpresp.Internal(c, err.Error())
@@ -315,12 +329,24 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		for i := range items {
 			items[i].TotalEstimatedCost = nil
 		}
-	} else {
-		for i := range items {
-			items[i].TotalEstimatedCost = pipelineUC.ComputeRunCost(&items[i], h.pricing)
+		resp := gin.H{"items": items, "total": total}
+		if page > 0 || pageSize > 0 || batchJobID != "" || excludeBatch {
+			if page < 1 {
+				page = 1
+			}
+			if pageSize < 1 {
+				pageSize = 20
+			}
+			resp["page"] = page
+			resp["pageSize"] = pageSize
 		}
+		c.JSON(200, resp)
+		return
 	}
-	c.JSON(200, gin.H{"items": items})
+	for i := range items {
+		items[i].TotalEstimatedCost = pipelineUC.ComputeRunCost(&items[i], h.pricing)
+	}
+	c.JSON(200, gin.H{"items": items, "total": total})
 }
 
 // GetRun handles GET /api/v1/pipeline-runs/:id.

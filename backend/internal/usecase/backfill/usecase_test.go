@@ -63,6 +63,30 @@ func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, e
 	}
 	return nil
 }
+func (m *mockBackfillRepo) UpdateItemPipelineRun(_ context.Context, id, pipelineRunID, workflowName, status string) error {
+	for i := range m.items {
+		if m.items[i].ID == id {
+			m.items[i].Status = status
+			if pipelineRunID != "" {
+				m.items[i].PipelineRunID = &pipelineRunID
+			}
+			if workflowName != "" {
+				m.items[i].WorkflowName = &workflowName
+			}
+		}
+	}
+	return nil
+}
+func (m *mockBackfillRepo) UpdateJobProgress(_ context.Context, id string, completed, failed int, status string) error {
+	if m.jobs != nil {
+		if j, ok := m.jobs[id]; ok {
+			j.CompletedCount = completed
+			j.FailedCount = failed
+			j.Status = status
+		}
+	}
+	return nil
+}
 func (m *mockBackfillRepo) CountItemsByStatus(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }

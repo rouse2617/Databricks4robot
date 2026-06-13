@@ -95,6 +95,7 @@ import {
 	toRecord,
 } from "./pipeline/pipelinePageHelpers";
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
+import { BatchJobList } from "./BatchJobList";
 
 import "../styles/pipeline.css";
 
@@ -1810,13 +1811,15 @@ function PipelineCanvas() {
 	);
 }
 
-type PipelineTab = "design" | "pipelines" | "executions" | "components";
+type PipelineTab = "design" | "pipelines" | "batch" | "executions" | "components";
 
 function resolvePipelineTab(raw: string | null): PipelineTab {
 	switch (raw) {
 		case "templates":
 		case "pipelines":
 			return "pipelines";
+		case "batch":
+			return "batch";
 		case "executions":
 			return "executions";
 		case "components":
@@ -1884,6 +1887,15 @@ export default function PipelinePage() {
 						children: (
 							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--management">
 								<DeployPanel variant="full" />
+							</div>
+						),
+					},
+					{
+						key: "batch",
+						label: tabLabel("批次任务", "批量跑流水线"),
+						children: (
+							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--batch">
+								<BatchJobList active={activeTab === "batch"} />
 							</div>
 						),
 					},

@@ -599,6 +599,13 @@ func (m *mockRunRepo) FindAll(_ context.Context) ([]models.PipelineRun, error) {
 func (m *mockRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun, error) {
 	return m.FindAll(context.Background())
 }
+func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	items, err := m.FindAll(context.Background())
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, len(items), nil
+}
 func (m *mockRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
 	if m.byID == nil {
 		return nil, nil

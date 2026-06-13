@@ -153,13 +153,13 @@ func (r *BackfillRepo) IncrementFailed(ctx context.Context, id string) error {
 // ── Items ───────────────────────────────────────────────────────────────────
 
 const backfillItemSelectCols = `id, job_id, asset_id, status,
-  workflow_name, error_message, started_at, finished_at, created_at`
+  pipeline_run_id, workflow_name, error_message, started_at, finished_at, created_at`
 
 func scanBackfillItem(rs rowScanner) (*models.BackfillItem, error) {
 	var item models.BackfillItem
 	if err := rs.Scan(
 		&item.ID, &item.JobID, &item.AssetID, &item.Status,
-		&item.WorkflowName, &item.ErrorMessage, &item.StartedAt, &item.FinishedAt,
+		&item.PipelineRunID, &item.WorkflowName, &item.ErrorMessage, &item.StartedAt, &item.FinishedAt,
 		&item.CreatedAt,
 	); err != nil {
 		return nil, err
@@ -180,12 +180,12 @@ func (r *BackfillRepo) SaveItem(ctx context.Context, item *models.BackfillItem) 
 
 	const q = `
 	INSERT INTO backfill_items (id, job_id, asset_id, status,
-	  workflow_name, error_message, started_at, finished_at, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	  pipeline_run_id, workflow_name, error_message, started_at, finished_at, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
 		item.ID, item.JobID, item.AssetID, item.Status,
-		item.WorkflowName, item.ErrorMessage, item.StartedAt, item.FinishedAt, item.CreatedAt,
+		item.PipelineRunID, item.WorkflowName, item.ErrorMessage, item.StartedAt, item.FinishedAt, item.CreatedAt,
 	); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.SaveItem: %w", err)
 	}
@@ -209,13 +209,13 @@ func (r *BackfillRepo) SaveItems(ctx context.Context, items []models.BackfillIte
 
 	const q = `
 	INSERT INTO backfill_items (id, job_id, asset_id, status,
-	  workflow_name, error_message, started_at, finished_at, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	  pipeline_run_id, workflow_name, error_message, started_at, finished_at, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
 	for _, item := range items {
 		if err := db.Exec(ctx, q,
 			item.ID, item.JobID, item.AssetID, item.Status,
-			item.WorkflowName, item.ErrorMessage, item.StartedAt, item.FinishedAt, item.CreatedAt,
+			item.PipelineRunID, item.WorkflowName, item.ErrorMessage, item.StartedAt, item.FinishedAt, item.CreatedAt,
 		); err != nil {
 			return fmt.Errorf("postgres BackfillRepo.SaveItems: %w", err)
 		}
@@ -285,4 +285,29 @@ func (r *BackfillRepo) CountItemsByStatus(ctx context.Context, jobID, status str
 		return 0, fmt.Errorf("postgres BackfillRepo.CountItemsByStatus: %w", err)
 	}
 	return n, nil
+}
+
+// UpdateItemPipelineRun links an item to its pipeline run and workflow name.
+func (r *BackfillRepo) UpdateItemPipelineRun(ctx context.Context, id, pipelineRunID, workflowName, status string) error {
+	const q = `UPDATE backfill_items SET
+	  pipeline_run_id = $2, workflow_name = $3, status = $4,
+	  started_at = CASE WHEN started_at IS NULL THEN NOW() ELSE started_at END
+	WHERE id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, id, nullIfEmpty(pipelineRunID), nullIfEmpty(workflowName), status); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.UpdateItemPipelineRun: %w", err)
+	}
+	return nil
+}
+
+// UpdateJobProgress updates aggregate counters and job status.
+func (r *BackfillRepo) UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error {
+	const q = `UPDATE backfill_jobs SET
+	  completed_count = $2, failed_count = $3, status = $4, updated_at = NOW()
+	WHERE id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, id, completed, failed, status); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.UpdateJobProgress: %w", err)
+	}
+	return nil
 }

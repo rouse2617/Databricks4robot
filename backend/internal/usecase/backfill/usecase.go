@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +14,8 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
+
+const maxConcurrentBatchItems = 5
 
 var ErrNotFound = errors.New("backfill job not found")
 
@@ -65,60 +69,83 @@ func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, items
 	for _, status := range allowed {
 		allowedSet[status] = struct{}{}
 	}
+
+	sem := make(chan struct{}, maxConcurrentBatchItems)
+	var wg sync.WaitGroup
 	for _, item := range items {
-		if _, ok := allowedSet[item.Status]; !ok {
-			continue
+		if len(allowedSet) > 0 {
+			if _, ok := allowedSet[item.Status]; !ok {
+				continue
+			}
 		}
 		job, err := uc.repo.FindJobByID(ctx, jobID)
 		if err != nil || job == nil || job.Status == "paused" {
 			return
 		}
-		_ = uc.executeItem(ctx, item, templateID)
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(item models.BackfillItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			_ = uc.executeItem(ctx, item, templateID, jobID)
+		}(item)
 	}
+	wg.Wait()
+	_ = uc.syncJobProgress(ctx, jobID)
 }
 
 // executeItem deploys the pipeline for a single backfill item and tracks status.
-func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, templateID string) error {
+func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, templateID, jobID string) error {
 	job, err := uc.repo.FindJobByID(ctx, item.JobID)
 	if err != nil || job == nil || job.Status == "paused" {
 		return nil
 	}
 
-	_ = uc.repo.UpdateItemStatus(ctx, item.ID, "running", "", "")
-
-	dep, err := uc.pipelineUC.DeployByTemplateID(ctx, templateID, "", []string{item.AssetID})
+	dep, err := uc.pipelineUC.DeployByTemplateID(
+		ctx,
+		templateID,
+		"",
+		[]string{item.AssetID},
+		pipelineUC.DeployOptions{BatchJobID: jobID},
+	)
 	if err != nil {
 		_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", "", err.Error())
-		_ = uc.repo.IncrementFailed(ctx, item.JobID)
+		_ = uc.syncJobProgress(ctx, jobID)
 		return err
 	}
 
-	wfName := dep.WorkflowName
-	_ = uc.repo.UpdateItemStatus(ctx, item.ID, "completed", wfName, "")
-	_ = uc.repo.IncrementCompleted(ctx, item.JobID)
+	_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, dep.ID, dep.WorkflowName, "running")
+	_ = uc.syncJobProgress(ctx, jobID)
 	return nil
 }
 
-// ListJobs returns all backfill jobs.
+// ListJobs returns all backfill jobs with refreshed progress.
 func (uc *Usecase) ListJobs(ctx context.Context) ([]models.BackfillJob, error) {
-	return uc.repo.FindAllJobs(ctx)
+	jobs, err := uc.repo.FindAllJobs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range jobs {
+		_ = uc.syncJobProgress(ctx, jobs[i].ID)
+		if refreshed, err := uc.repo.FindJobByID(ctx, jobs[i].ID); err == nil && refreshed != nil {
+			jobs[i] = *refreshed
+		}
+	}
+	return jobs, nil
 }
 
-// GetJob returns a backfill job with its items.
-func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, []models.BackfillItem, error) {
+// GetJob returns a backfill job without loading all items.
+func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, error) {
 	job, err := uc.repo.FindJobByID(ctx, id)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if job == nil {
-		return nil, nil, nil
+		return nil, nil
 	}
-
-	items, err := uc.repo.FindItemsByJobID(ctx, id)
-	if err != nil {
-		return nil, nil, err
-	}
-	return job, items, nil
+	_ = uc.syncJobProgress(ctx, id)
+	return uc.repo.FindJobByID(ctx, id)
 }
 
 // PauseJob pauses a running backfill job.
@@ -165,8 +192,79 @@ func (uc *Usecase) RetryFailed(ctx context.Context, jobID string) error {
 
 	for _, item := range items {
 		if item.Status == "failed" {
-			_ = uc.executeItem(ctx, item, job.TemplateID)
+			_ = uc.repo.UpdateItemStatus(ctx, item.ID, "pending", "", "")
 		}
 	}
+	if err := uc.repo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
+		return err
+	}
+	if uc.pipelineUC != nil {
+		go uc.runItems(context.Background(), jobID, job.TemplateID, items, "pending")
+	}
 	return nil
+}
+
+func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
+	job, err := uc.repo.FindJobByID(ctx, jobID)
+	if err != nil || job == nil {
+		return err
+	}
+	if job.Status == "paused" {
+		return nil
+	}
+
+	items, err := uc.repo.FindItemsByJobID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+
+	var completed, failed, pending, running int
+	for _, item := range items {
+		status := item.Status
+		if item.PipelineRunID != nil && *item.PipelineRunID != "" && uc.pipelineUC != nil {
+			run, err := uc.pipelineUC.GetRun(ctx, *item.PipelineRunID)
+			if err == nil && run != nil {
+				mapped := mapRunStatusToItem(run.Status)
+				if mapped != status {
+					status = mapped
+					wf := run.WorkflowName
+					_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, wf, "")
+				}
+			}
+		}
+		switch status {
+		case "completed":
+			completed++
+		case "failed", "cancelled":
+			failed++
+		case "running":
+			running++
+		default:
+			pending++
+		}
+	}
+
+	jobStatus := job.Status
+	switch {
+	case pending > 0 || running > 0:
+		jobStatus = "running"
+	case failed > 0 && completed+failed == job.TotalCount:
+		jobStatus = "failed"
+	case completed == job.TotalCount:
+		jobStatus = "completed"
+	}
+	return uc.repo.UpdateJobProgress(ctx, jobID, completed, failed, jobStatus)
+}
+
+func mapRunStatusToItem(runStatus string) string {
+	switch strings.ToLower(runStatus) {
+	case "succeeded", "success":
+		return "completed"
+	case "failed", "error":
+		return "failed"
+	case "running", "pending":
+		return "running"
+	default:
+		return "running"
+	}
 }

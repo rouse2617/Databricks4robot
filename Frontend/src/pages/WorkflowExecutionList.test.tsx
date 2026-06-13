@@ -104,17 +104,20 @@ describe("WorkflowExecutionList", () => {
 			});
 		});
 		mockDeleteWorkflow.mockResolvedValue({ message: "deleted" });
-		mockListPipelineRuns.mockResolvedValue([
-			{
-				id: "run-1",
-				pipelineName: "successful-run",
-				workflowName: "successful-run",
-				status: "Succeeded",
-				nodeCount: 2,
-				totalEstimatedCost: 1.25,
-				createdAt: "2026-06-02T01:00:00Z",
-			},
-		]);
+		mockListPipelineRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-1",
+					pipelineName: "successful-run",
+					workflowName: "successful-run",
+					status: "Succeeded",
+					nodeCount: 2,
+					totalEstimatedCost: 1.25,
+					createdAt: "2026-06-02T01:00:00Z",
+				},
+			],
+			total: 1,
+		});
 		mockListPipelines.mockResolvedValue([]);
 		mockGetPipelineRunWatcherStatus.mockResolvedValue({
 			id: "default",
@@ -179,18 +182,21 @@ describe("WorkflowExecutionList", () => {
 
 	it("shows ledger-only runs with estimated cost after live Argo workflow TTL cleanup", async () => {
 		mockListWorkflows.mockResolvedValue({ items: [] });
-		mockListPipelineRuns.mockResolvedValue([
-			{
-				id: "run-ledger-1",
-				pipelineName: "ttl-cleaned-pipeline",
-				workflowName: "ttl-cleaned-workflow",
-				status: "Succeeded",
-				nodeCount: 5,
-				totalEstimatedCost: 0.009,
-				createdAt: "2026-06-03T19:16:51Z",
-				finishedAt: "2026-06-03T19:18:09Z",
-			},
-		]);
+		mockListPipelineRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-ledger-1",
+					pipelineName: "ttl-cleaned-pipeline",
+					workflowName: "ttl-cleaned-workflow",
+					status: "Succeeded",
+					nodeCount: 5,
+					totalEstimatedCost: 0.009,
+					createdAt: "2026-06-03T19:16:51Z",
+					finishedAt: "2026-06-03T19:18:09Z",
+				},
+			],
+			total: 1,
+		});
 
 		renderList();
 
@@ -203,18 +209,21 @@ describe("WorkflowExecutionList", () => {
 
 	it("keeps ledger records visible when live workflow listing is unavailable", async () => {
 		mockListWorkflows.mockRejectedValue(new Error("argo unavailable"));
-		mockListPipelineRuns.mockResolvedValue([
-			{
-				id: "run-ledger-2",
-				pipelineName: "ledger-pipeline",
-				workflowName: "ledger-workflow",
-				status: "Succeeded",
-				nodeCount: 2,
-				totalEstimatedCost: 1.5,
-				createdAt: "2026-06-03T10:00:00Z",
-				finishedAt: "2026-06-03T10:01:00Z",
-			},
-		]);
+		mockListPipelineRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-ledger-2",
+					pipelineName: "ledger-pipeline",
+					workflowName: "ledger-workflow",
+					status: "Succeeded",
+					nodeCount: 2,
+					totalEstimatedCost: 1.5,
+					createdAt: "2026-06-03T10:00:00Z",
+					finishedAt: "2026-06-03T10:01:00Z",
+				},
+			],
+			total: 1,
+		});
 
 		renderList();
 

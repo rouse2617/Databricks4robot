@@ -43,6 +43,14 @@ export interface PipelineRun extends Deployment {
 	noAssetRun?: boolean;
 	startedAt?: string;
 	totalEstimatedCost?: number | null;
+	batchJobId?: string;
+}
+
+export interface PipelineRunListResponse {
+	items: PipelineRun[];
+	total: number;
+	page?: number;
+	pageSize?: number;
 }
 
 export interface PipelineRunEvent {
@@ -216,12 +224,22 @@ export function listDeployments(): Promise<Deployment[]> {
 
 export function listPipelineRuns(options?: {
 	view?: "summary" | "full";
-}): Promise<PipelineRun[]> {
+	excludeBatch?: boolean;
+	batchJobId?: string;
+	status?: string;
+	page?: number;
+	pageSize?: number;
+}): Promise<PipelineRunListResponse> {
 	const view = options?.view ?? "full";
-	const suffix = view === "summary" ? "?view=summary" : "";
-	return request<{ items: PipelineRun[] }>("GET", `/pipeline-runs${suffix}`).then(
-		(r) => r.items,
-	);
+	const search = new URLSearchParams();
+	if (view === "summary") search.set("view", "summary");
+	if (options?.excludeBatch) search.set("excludeBatch", "true");
+	if (options?.batchJobId) search.set("batchJobId", options.batchJobId);
+	if (options?.status) search.set("status", options.status);
+	if (options?.page) search.set("page", String(options.page));
+	if (options?.pageSize) search.set("pageSize", String(options.pageSize));
+	const suffix = search.toString() ? `?${search.toString()}` : "";
+	return request<PipelineRunListResponse>("GET", `/pipeline-runs${suffix}`);
 }
 
 export function listPipelineRunEvents(

@@ -90,6 +90,7 @@ type PipelineRun struct {
 	TotalEstimatedCost *float64               `json:"totalEstimatedCost,omitempty"`
 	Scope              string                 `json:"scope,omitempty"`
 	Owner              string                 `json:"owner,omitempty"`
+	BatchJobID         *string                `json:"batchJobId,omitempty"`
 	LedgerState        string                 `json:"ledgerState"`
 	CreatedAt          time.Time              `json:"createdAt"`
 	UpdatedAt          time.Time              `json:"updatedAt"`
@@ -282,4 +283,13 @@ type LedgerHealth struct {
 	RunsWithEvents  int        `json:"runsWithEvents"`
 	RunsWithout     int        `json:"runsWithout"`
 	LastBackfillAt  *time.Time `json:"lastBackfillAt,omitempty"`
+}
+
+// PipelineRunListFilter scopes summary list queries for batch-aware UIs.
+type PipelineRunListFilter struct {
+	BatchJobID   string
+	ExcludeBatch bool
+	Status       string
+	Page         int
+	PageSize     int
 }

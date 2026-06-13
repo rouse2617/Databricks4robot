@@ -60,6 +60,7 @@ type DeployOptions struct {
 	TemplateVersion int
 	TargetID        string
 	Owner           string
+	BatchJobID      string
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -356,7 +357,7 @@ func runToDeployment(run *models.PipelineRun) *models.PipelineDeployment {
 	return dep
 }
 
-func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDeployment, templateVersion int, wfUID string) error {
+func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDeployment, templateVersion int, wfUID string, opts ...DeployOptions) error {
 	if uc.runRepo == nil || dep == nil {
 		return nil
 	}
@@ -365,6 +366,9 @@ func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDepl
 		run.TemplateVersion = &templateVersion
 	}
 	run.ArgoWorkflowUID = wfUID
+	if len(opts) > 0 && opts[0].BatchJobID != "" {
+		run.BatchJobID = &opts[0].BatchJobID
+	}
 	if err := uc.runRepo.Save(ctx, run); err != nil {
 		return err
 	}
@@ -1573,7 +1577,7 @@ func (uc *Usecase) Deploy(
 	if err := uc.deploymentRepo.Save(ctx, dep); err != nil {
 		return nil, fmt.Errorf("save deployment: %w", err)
 	}
-	if err := uc.savePipelineRun(ctx, dep, templateVersion, wfUID); err != nil {
+	if err := uc.savePipelineRun(ctx, dep, templateVersion, wfUID, opts...); err != nil {
 		return nil, fmt.Errorf("save pipeline run: %w", err)
 	}
 
@@ -1635,6 +1639,9 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	deployOpts := DeployOptions{TemplateID: templateID, TemplateVersion: t.Version}
 	if len(opts) > 0 {
 		deployOpts.TargetID = opts[0].TargetID
+		deployOpts.Owner = opts[0].Owner
+		deployOpts.BatchJobID = opts[0].BatchJobID
+		deployOpts.DryRun = opts[0].DryRun
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }
@@ -1728,11 +1735,11 @@ func (uc *Usecase) ListRuns(ctx context.Context, refreshActive bool) ([]models.P
 
 // ListRunSummaries returns lightweight pipeline runs for list UIs. It skips
 // manifest/pipeline_json hydration and per-run node/asset enrichment.
-func (uc *Usecase) ListRunSummaries(ctx context.Context) ([]models.PipelineRun, error) {
+func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	if uc.runRepo == nil {
 		deps, err := uc.deploymentRepo.FindAll(ctx)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out := make([]models.PipelineRun, 0, len(deps))
 		for i := range deps {
@@ -1740,9 +1747,16 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context) ([]models.PipelineRun, 
 			stripRunHeavyFields(run)
 			out = append(out, *run)
 		}
-		return out, nil
+		return out, len(out), nil
 	}
-	return uc.runRepo.FindAllSummaries(ctx)
+	if len(filter) > 0 && (filter[0].BatchJobID != "" || filter[0].ExcludeBatch || filter[0].Status != "" || filter[0].Page > 0 || filter[0].PageSize > 0) {
+		return uc.runRepo.ListSummaries(ctx, filter[0])
+	}
+	items, err := uc.runRepo.FindAllSummaries(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, len(items), nil
 }
 
 func stripRunHeavyFields(run *models.PipelineRun) {
@@ -2110,7 +2124,7 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 
 func (uc *Usecase) listDeployments(ctx context.Context, refreshActive bool) ([]models.PipelineDeployment, error) {
 	if uc.runRepo != nil {
-		runs, err := uc.ListRunSummaries(ctx)
+		runs, _, err := uc.ListRunSummaries(ctx)
 		if err != nil {
 			return nil, err
 		}

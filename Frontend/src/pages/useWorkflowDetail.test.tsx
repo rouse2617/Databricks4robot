@@ -6,7 +6,7 @@ import { ApiError } from "../api/pipelineClient";
 
 const mockGetWorkflow = vi.fn();
 const mockGetWorkflowLogs = vi.fn();
-const mockListPipelineRuns = vi.fn(() => Promise.resolve([]));
+const mockListPipelineRuns = vi.fn(() => Promise.resolve({ items: [], total: 0 }));
 
 class MockEventSource extends EventTarget {
 	static instances: MockEventSource[] = [];

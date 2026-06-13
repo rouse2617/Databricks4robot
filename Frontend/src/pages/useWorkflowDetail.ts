@@ -214,7 +214,8 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				error: null,
 			}));
 			listPipelineRuns()
-				.then((runs) => {
+				.then((response) => {
+					const runs = response.items ?? [];
 					const run = runs.find((item) => item.workflowName === name) ?? null;
 					if (!run) {
 						setRunEventState({

@@ -598,12 +598,12 @@ var _ repository.PipelineRunRepository = (*PipelineRunRepo)(nil)
 
 const pipelineRunSelectCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, target_snapshot, status, node_count, asset_ids, asset_count, no_asset_run,
-  manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner,
+  manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
   created_at, updated_at, started_at, finished_at`
 
 const pipelineRunSummarySelectCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, status, node_count, asset_ids, asset_count, no_asset_run,
-  argo_namespace, argo_workflow_uid, message, scope, owner,
+  argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
   created_at, updated_at, started_at, finished_at`
 
 func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
@@ -612,18 +612,21 @@ func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 		templateID   *string
 		templateVer  *int
 		assetIDs     []string
+		batchJobID   *string
 	)
 	if err := rs.Scan(
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
 		&r.ExecutionTargetID, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
-		&r.Scope, &r.Owner, &r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.Scope, &r.Owner, &batchJobID,
+		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
 	); err != nil {
 		return nil, err
 	}
 	r.TemplateID = templateID
 	r.TemplateVersion = templateVer
 	r.AssetIDs = assetIDs
+	r.BatchJobID = batchJobID
 	return &r, nil
 }
 
@@ -636,18 +639,21 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 		assetIDs       []string
 		manifest       *string
 		pipelineJSON   []byte
+		batchJobID     *string
 	)
 	if err := rs.Scan(
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
 		&r.ExecutionTargetID, &targetSnapshot, &r.Status, &r.NodeCount, &assetIDs, &r.AssetCount, &r.NoAssetRun,
 		&manifest, &pipelineJSON, &r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
-		&r.Scope, &r.Owner, &r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.Scope, &r.Owner, &batchJobID,
+		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
 	); err != nil {
 		return nil, err
 	}
 	r.TemplateID = templateID
 	r.TemplateVersion = templateVer
 	r.AssetIDs = assetIDs
+	r.BatchJobID = batchJobID
 	r.Manifest = manifest
 	r.TargetSnapshot = mapFromJSON(targetSnapshot)
 	r.PipelineJSON = mapFromJSON(pipelineJSON)
@@ -699,13 +705,13 @@ func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) err
 INSERT INTO pipeline_runs (
   id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, target_snapshot, status, node_count, asset_ids, asset_count, no_asset_run,
-  manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner,
+  manifest, pipeline_json, argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
   created_at, updated_at, started_at, finished_at
 ) VALUES (
   $1, $2, $3, $4, $5,
   $6, $7::jsonb, $8, $9, $10::text[], $11, $12,
-  $13, $14::jsonb, $15, $16, $17, $18, $19,
-  $20, $21, $22, $23
+  $13, $14::jsonb, $15, $16, $17, $18, $19, $20,
+  $21, $22, $23, $24
 )
 ON CONFLICT (id) DO UPDATE SET
   template_id = EXCLUDED.template_id,
@@ -726,6 +732,7 @@ ON CONFLICT (id) DO UPDATE SET
   message = EXCLUDED.message,
   scope = EXCLUDED.scope,
   owner = EXCLUDED.owner,
+  batch_job_id = EXCLUDED.batch_job_id,
   updated_at = EXCLUDED.updated_at,
   started_at = EXCLUDED.started_at,
   finished_at = EXCLUDED.finished_at`
@@ -735,7 +742,7 @@ ON CONFLICT (id) DO UPDATE SET
 	if err := db.Exec(ctx, q,
 		run.ID, templateID, run.PipelineName, templateVersion, run.WorkflowName,
 		run.ExecutionTargetID, targetSnapshot, run.Status, run.NodeCount, assetIDs, run.AssetCount, run.NoAssetRun,
-		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message, run.Scope, run.Owner,
+		manifest, pipelineJSON, run.ArgoNamespace, run.ArgoWorkflowUID, run.Message, run.Scope, run.Owner, run.BatchJobID,
 		run.CreatedAt, run.UpdatedAt, run.StartedAt, run.FinishedAt,
 	); err != nil {
 		return fmt.Errorf("postgres PipelineRunRepo.Save: %w", err)
@@ -751,6 +758,91 @@ func (r *PipelineRunRepo) FindAll(ctx context.Context) ([]models.PipelineRun, er
 // FindAllSummaries returns lightweight pipeline runs for list endpoints.
 func (r *PipelineRunRepo) FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error) {
 	return r.findAllPipelineRuns(ctx, pipelineRunSummarySelectCols, scanPipelineRunSummary, "FindAllSummaries")
+}
+
+// ListSummaries returns filtered/paginated summary rows.
+func (r *PipelineRunRepo) ListSummaries(ctx context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	var (
+		conds  []string
+		args   []any
+		argPos = 1
+	)
+	if filter.BatchJobID != "" {
+		conds = append(conds, fmt.Sprintf("batch_job_id = $%d", argPos))
+		args = append(args, filter.BatchJobID)
+		argPos++
+	}
+	if filter.ExcludeBatch {
+		conds = append(conds, "batch_job_id IS NULL")
+	}
+	if filter.Status != "" {
+		conds = append(conds, fmt.Sprintf("status = $%d", argPos))
+		args = append(args, filter.Status)
+		argPos++
+	}
+
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+
+	countQ := `SELECT COUNT(*) FROM pipeline_runs ` + where
+	db := dbFromCtx(ctx, r.c.db)
+	var total int
+	if err := db.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries count: %w", err)
+	}
+
+	listQ := `SELECT ` + pipelineRunSummarySelectCols + `
+FROM pipeline_runs
+` + where + `
+ORDER BY created_at DESC`
+
+	if filter.Page > 0 || filter.PageSize > 0 {
+		page := filter.Page
+		if page < 1 {
+			page = 1
+		}
+		pageSize := filter.PageSize
+		if pageSize < 1 {
+			pageSize = 20
+		}
+		if pageSize > 200 {
+			pageSize = 200
+		}
+		offset := (page - 1) * pageSize
+		limitClause := fmt.Sprintf(" LIMIT $%d OFFSET $%d", argPos, argPos+1)
+		listArgs := append(append([]any{}, args...), pageSize, offset)
+		rows, err := db.Query(ctx, listQ+limitClause, listArgs...)
+		if err != nil {
+			return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries: %w", err)
+		}
+		defer rows.Close()
+		var out []models.PipelineRun
+		for rows.Next() {
+			run, err := scanPipelineRunSummary(rows)
+			if err != nil {
+				return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries scan: %w", err)
+			}
+			out = append(out, *run)
+		}
+		return out, total, nil
+	}
+
+	rows, err := db.Query(ctx, listQ, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries: %w", err)
+	}
+	defer rows.Close()
+	var out []models.PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRunSummary(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries scan: %w", err)
+		}
+		out = append(out, *run)
+	}
+	return out, total, nil
 }
 
 func (r *PipelineRunRepo) findAllPipelineRuns(
