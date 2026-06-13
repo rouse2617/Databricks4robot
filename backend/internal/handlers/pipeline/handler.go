@@ -292,7 +292,8 @@ func (h *Handler) ListExecutionTargets(c *gin.Context) {
 
 // ListRuns handles GET /api/v1/pipeline-runs.
 func (h *Handler) ListRuns(c *gin.Context) {
-	items, err := h.uc.ListRuns(c.Request.Context())
+	refreshActive := strings.EqualFold(c.Query("refresh"), "true") || c.Query("refresh") == "1"
+	items, err := h.uc.ListRuns(c.Request.Context(), refreshActive)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return

@@ -1690,9 +1690,11 @@ func (uc *Usecase) CreateRunByTemplateID(ctx context.Context, templateID, name s
 
 // ListRuns returns all first-class pipeline runs. When the run table is not
 // wired, it projects legacy deployments for compatibility.
-func (uc *Usecase) ListRuns(ctx context.Context) ([]models.PipelineRun, error) {
+// refreshActive triggers live Argo status polls (capped); list endpoints should
+// pass false and rely on the run watcher + GetRun for on-demand refresh.
+func (uc *Usecase) ListRuns(ctx context.Context, refreshActive bool) ([]models.PipelineRun, error) {
 	if uc.runRepo == nil {
-		deps, err := uc.ListDeployments(ctx)
+		deps, err := uc.listDeployments(ctx, refreshActive)
 		if err != nil {
 			return nil, err
 		}
@@ -1706,7 +1708,7 @@ func (uc *Usecase) ListRuns(ctx context.Context) ([]models.PipelineRun, error) {
 	if err != nil {
 		return nil, err
 	}
-	if uc.wfClient != nil {
+	if refreshActive && uc.wfClient != nil {
 		refreshed := 0
 		for i := range list {
 			if refreshed >= maxActiveDeploymentStatusRefresh {
@@ -2071,10 +2073,14 @@ func (uc *Usecase) refreshDeploymentStatus(ctx context.Context, d *models.Pipeli
 	logPipelineSideEffect("update deployment status", uc.deploymentRepo.UpdateStatus(ctx, d.ID, string(phase)))
 }
 
-// ListDeployments returns all deployments, optionally refreshing active statuses.
+// ListDeployments returns all deployments without live Argo refresh (fast list).
 func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeployment, error) {
+	return uc.listDeployments(ctx, false)
+}
+
+func (uc *Usecase) listDeployments(ctx context.Context, refreshActive bool) ([]models.PipelineDeployment, error) {
 	if uc.runRepo != nil {
-		runs, err := uc.ListRuns(ctx)
+		runs, err := uc.ListRuns(ctx, false)
 		if err != nil {
 			return nil, err
 		}
@@ -2106,7 +2112,7 @@ func (uc *Usecase) ListDeployments(ctx context.Context) ([]models.PipelineDeploy
 		return nil, err
 	}
 	// Refresh status for active workflows (capped to avoid N+1 storms).
-	if uc.wfClient != nil {
+	if refreshActive && uc.wfClient != nil {
 		refreshed := 0
 		for i := range list {
 			if refreshed >= maxActiveDeploymentStatusRefresh {

@@ -521,7 +521,7 @@ func TestListDeployments_MarksMissingWorkflowExpired(t *testing.T) {
 	}
 	uc := New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, wfClient, "default")
 
-	list, err := uc.ListDeployments(ctx)
+	list, err := uc.listDeployments(ctx, true)
 	if err != nil {
 		t.Fatalf("ListDeployments: %v", err)
 	}
