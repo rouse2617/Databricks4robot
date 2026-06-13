@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+	getPipelineRunByWorkflowName,
 	getPipelineRunCostSummary,
 	listPipelineRunAssetNodes,
 	listPipelineRunEvents,
-	listPipelineRuns,
 	type PipelineRun,
 	type PipelineRunAssetNode,
 	type PipelineRunCostSummary,
@@ -213,10 +213,14 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				loading: true,
 				error: null,
 			}));
-			listPipelineRuns()
-				.then((response) => {
-					const runs = response.items ?? [];
-					const run = runs.find((item) => item.workflowName === name) ?? null;
+			getPipelineRunByWorkflowName(name)
+				.catch((err) => {
+					if (err instanceof ApiError && err.status === 404) {
+						return null;
+					}
+					throw err;
+				})
+				.then((run) => {
 					if (!run) {
 						setRunEventState({
 							run: null,
@@ -309,15 +313,16 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	}, [name, workflow?.status, workflow]);
 
 	const loadNodeLogs = useCallback(
-		async (nodeId: string) => {
+		async (nodeId: string, nodePhase?: string) => {
 			if (!name) return;
 			setLogState((current) => ({
 				...current,
 				loading: true,
 				error: null,
 			}));
-			try {
-				const res = await getWorkflowLogs(name, nodeId);
+			const shouldTryPrevious =
+				nodePhase != null && /failed|error/i.test(nodePhase);
+			const applyLogResponse = (res: Awaited<ReturnType<typeof getWorkflowLogs>>) => {
 				setLogState((current) => ({
 					content: res.logs || "",
 					loading: false,
@@ -329,7 +334,43 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 					response: res,
 					clientTruncated: false,
 				}));
+			};
+			try {
+				const res = await getWorkflowLogs(name, nodeId);
+				if (!res.logs?.trim() && shouldTryPrevious) {
+					try {
+						const previous = await getWorkflowLogs(name, nodeId, {
+							previous: true,
+						});
+						if (previous.logs?.trim()) {
+							applyLogResponse({
+								...previous,
+								logs: `[前一容器实例]\n${previous.logs}`,
+							});
+							return;
+						}
+					} catch {
+						/* fall through to primary response */
+					}
+				}
+				applyLogResponse(res);
 			} catch (err) {
+				if (shouldTryPrevious) {
+					try {
+						const previous = await getWorkflowLogs(name, nodeId, {
+							previous: true,
+						});
+						if (previous.logs?.trim()) {
+							applyLogResponse({
+								...previous,
+								logs: `[前一容器实例]\n${previous.logs}`,
+							});
+							return;
+						}
+					} catch {
+						/* use primary error below */
+					}
+				}
 				setLogState((current) => ({
 					content: null,
 					loading: false,
@@ -521,8 +562,10 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		if (!selectedNodeId || !name) {
 			return;
 		}
-		void loadNodeLogs(selectedNodeId);
-	}, [loadNodeLogs, name, selectedNodeId]);
+		const phase = workflow?.nodes.find((node) => node.id === selectedNodeId)
+			?.phase;
+		void loadNodeLogs(selectedNodeId, phase);
+	}, [loadNodeLogs, name, selectedNodeId, workflow?.nodes]);
 
 	useEffect(() => {
 		if (!workflow || !selectedNodeId) return;

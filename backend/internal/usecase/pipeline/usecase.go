@@ -1087,6 +1087,29 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 		return
 	}
 	uc.applyWorkflowToRun(ctx, run, wf)
+	uc.maybeMarkStaleRun(ctx, run, wf)
+}
+
+func (uc *Usecase) maybeMarkStaleRun(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow) {
+	if uc.runRepo == nil || run == nil || wf == nil || !isActiveDeploymentStatus(run.Status) {
+		return
+	}
+	ref := run.UpdatedAt
+	if run.StartedAt != nil && !run.StartedAt.IsZero() {
+		ref = *run.StartedAt
+	}
+	if ref.IsZero() || time.Since(ref) < staleActiveRunMaxAge {
+		return
+	}
+	phase := wf.Status.Phase
+	if phase != wfv1.WorkflowRunning && phase != wfv1.WorkflowPending && phase != wfv1.WorkflowPhase("Suspended") {
+		return
+	}
+	now := time.Now().UTC()
+	run.Status = string(wfv1.WorkflowFailed)
+	run.FinishedAt = &now
+	run.Message = fmt.Sprintf("stale run: exceeded maximum active duration (%s)", staleActiveRunMaxAge.Truncate(time.Hour))
+	logPipelineSideEffect("mark stale pipeline run failed", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
 }
 
 func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.PipelineRun) {
@@ -1377,9 +1400,13 @@ func (uc *Usecase) Promote(ctx context.Context, templateID string) (*models.Pipe
 }
 
 // ListTemplates returns all pipeline templates.
-// ListTemplates returns all pipeline templates.
 func (uc *Usecase) ListTemplates(ctx context.Context) ([]models.PipelineTemplate, error) {
 	return uc.templateRepo.FindAll(ctx)
+}
+
+// ListTemplatesPaged returns a paginated pipeline template list.
+func (uc *Usecase) ListTemplatesPaged(ctx context.Context, filter models.PipelineTemplateListFilter) ([]models.PipelineTemplate, int, error) {
+	return uc.templateRepo.FindLatestPaged(ctx, filter)
 }
 
 // GetTemplate returns a pipeline template by id.
@@ -1841,6 +1868,28 @@ func stripRunHeavyFields(run *models.PipelineRun) {
 	run.ExecutionTarget = nil
 }
 
+// GetRunByWorkflowName returns a pipeline run by its Argo workflow name.
+func (uc *Usecase) GetRunByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error) {
+	workflowName = strings.TrimSpace(workflowName)
+	if workflowName == "" {
+		return nil, nil
+	}
+	if uc.runRepo == nil {
+		return nil, nil
+	}
+	run, err := uc.runRepo.FindByWorkflowName(ctx, workflowName)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, nil
+	}
+	uc.refreshPipelineRunStatus(ctx, run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
+	uc.enrichRun(ctx, run)
+	return run, nil
+}
+
 // GetRun returns a single first-class pipeline run.
 func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, error) {
 	if uc.runRepo == nil {
@@ -2164,6 +2213,10 @@ func (uc *Usecase) SaveFromDeployment(ctx context.Context, deploymentID, templat
 const maxActiveDeploymentStatusRefresh = 50
 
 const deploymentStatusExpired = "Expired"
+
+// staleActiveRunMaxAge is the maximum duration a run may stay in an active
+// Argo phase before the watcher marks it failed as a zombie run.
+const staleActiveRunMaxAge = 48 * time.Hour
 
 // workflowCreateVisibilityGracePeriod avoids marking brand-new runs as expired
 // while Argo is still creating the workflow CR.

@@ -1,6 +1,7 @@
 import {
 	DeleteOutlined,
 	EditOutlined,
+	EyeOutlined,
 	HistoryOutlined,
 	LinkOutlined,
 	LockOutlined,
@@ -13,6 +14,7 @@ import {
 	App,
 	Button,
 	Checkbox,
+	Input,
 	Modal,
 	Popconfirm,
 	Select,
@@ -31,6 +33,7 @@ import {
 	listDeployments,
 	listExecutionTargets,
 	listPipelines,
+	type ListPipelinesParams,
 	listPipelineVersions,
 	type PipelineTemplate,
 	promotePipeline,
@@ -40,7 +43,6 @@ import { toAssetStyleId } from "../../lib/idDisplay";
 import AssetPicker from "./AssetPicker";
 import {
 	COMPACT_TEMPLATE_LIMIT,
-	dedupeTemplatesByName,
 	prepareDeployments,
 	SIDEBAR_TEMPLATE_LIMIT,
 	TEMPLATE_PAGE_SIZE,
@@ -137,6 +139,7 @@ function TemplateCard({
 	onDelete,
 	onVersionHistory,
 	onPromote,
+	onView,
 	activeVersion,
 	compactActions,
 	selectable,
@@ -149,6 +152,7 @@ function TemplateCard({
 	onDelete: (id: string) => void;
 	onVersionHistory?: (template: PipelineTemplate) => void;
 	onPromote?: (template: PipelineTemplate) => void;
+	onView?: (id: string) => void;
 	activeVersion?: number;
 	compactActions?: boolean;
 	selectable?: boolean;
@@ -248,27 +252,39 @@ function TemplateCard({
 			</div>
 			{compactActions ? (
 				<Space.Compact>
-					<Button
-						size="small"
-						icon={<EditOutlined />}
-						onClick={() => onEdit(template.id)}
-					>
-						打开
-					</Button>
-					<Popconfirm
-						title="删除此流水线？"
-						description="删除后不可恢复"
-						okText="删除"
-						cancelText="取消"
-						onConfirm={() => onDelete(template.id)}
-					>
+					{template.scope === "prod" ? (
 						<Button
 							size="small"
-							danger
-							icon={<DeleteOutlined />}
-							aria-label="删除流水线"
-						/>
-					</Popconfirm>
+							icon={<EyeOutlined />}
+							onClick={() => onView?.(template.id) ?? onEdit(template.id)}
+						>
+							查看定义
+						</Button>
+					) : (
+						<Button
+							size="small"
+							icon={<EditOutlined />}
+							onClick={() => onEdit(template.id)}
+						>
+							打开
+						</Button>
+					)}
+					{template.scope !== "prod" ? (
+						<Popconfirm
+							title="删除此流水线？"
+							description="删除后不可恢复"
+							okText="删除"
+							cancelText="取消"
+							onConfirm={() => onDelete(template.id)}
+						>
+							<Button
+								size="small"
+								danger
+								icon={<DeleteOutlined />}
+								aria-label="删除流水线"
+							/>
+						</Popconfirm>
+					) : null}
 				</Space.Compact>
 			) : (
 				<div className="deploy-btn-list">
@@ -300,7 +316,15 @@ function TemplateCard({
 						>
 							编辑
 						</Button>
-					) : null}
+					) : (
+						<Button
+							size="small"
+							icon={<EyeOutlined />}
+							onClick={() => onView?.(template.id) ?? onEdit(template.id)}
+						>
+							查看定义
+						</Button>
+					)}
 					{template.scope !== "prod" ? (
 						<Popconfirm
 							title="删除此流水线？"
@@ -336,7 +360,7 @@ export function DeployPanel({
 	variant?: DeployPanelVariant;
 	onViewAll?: () => void;
 }) {
-	const { message: messageApi } = App.useApp();
+	const { message: messageApi, modal } = App.useApp();
 	void _refreshKey;
 	const resolvedVariant: DeployPanelVariant =
 		variant ?? (compact ? "compact" : "full");
@@ -347,12 +371,18 @@ export function DeployPanel({
 		[searchParams],
 	);
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
+	const [templateTotal, setTemplateTotal] = useState(0);
+	const [templatePage, setTemplatePage] = useState(1);
+	const [templateQueryDraft, setTemplateQueryDraft] = useState("");
+	const [templateQuery, setTemplateQuery] = useState("");
+	const [templateScope, setTemplateScope] = useState<string | undefined>();
+	const [templateSort, setTemplateSort] =
+		useState<ListPipelinesParams["sort"]>("updated_at_desc");
+	const [loadingMoreTemplates, setLoadingMoreTemplates] = useState(false);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
-	const [templateVisibleCount, setTemplateVisibleCount] =
-		useState(TEMPLATE_PAGE_SIZE);
 	const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
 	const [bulkDeletingTemplates, setBulkDeletingTemplates] = useState(false);
 
@@ -387,29 +417,16 @@ export function DeployPanel({
 		[searchParams, setSearchParams],
 	);
 
-	const displayTemplates = useMemo(
-		() => dedupeTemplatesByName(templates),
-		[templates],
-	);
+	const displayTemplates = templates;
 	const displayDeployments = useMemo(
 		() => prepareDeployments(deployments),
 		[deployments],
 	);
 
-	const refresh = useCallback(async () => {
-		setLoading(true);
-		setError(null);
-		try {
-			const shouldLoadDeployments = resolvedVariant === "compact";
-			const [d, t, executionTargets] = await Promise.all([
-				shouldLoadDeployments ? listDeployments() : Promise.resolve([]),
-				listPipelines(),
-				listExecutionTargets(),
-			]);
-			setDeployments(d);
-			setTemplates(t);
+	const applyTemplateFiltersFromTemplates = useCallback(
+		(items: PipelineTemplate[]) => {
 			const activeMap: Record<string, number> = {};
-			for (const tmpl of t) {
+			for (const tmpl of items) {
 				const av = tmpl.activeVersion;
 				if (av != null && av > 0 && av < tmpl.version) {
 					activeMap[tmpl.name] = av;
@@ -417,31 +434,125 @@ export function DeployPanel({
 			}
 			setActiveVersionByTemplate(activeMap);
 			setSelectedTemplateIds((prev) =>
-				prev.filter((id) => t.some((template) => template.id === id)),
+				prev.filter((id) => items.some((template) => template.id === id)),
 			);
-			setTargets(executionTargets);
-			const defaultTarget =
-				executionTargets.find((target) => target.isDefault) ??
-				executionTargets[0];
-			if (defaultTarget) setSelectedTargetId(defaultTarget.id);
-		} catch (err) {
-			const detail = err instanceof Error ? err.message : String(err);
-			setError(detail);
+		},
+		[],
+	);
+
+	const fetchTemplates = useCallback(
+		async (page: number, append: boolean) => {
+			if (append) {
+				setLoadingMoreTemplates(true);
+			}
+			try {
+				const resp = await listPipelines({
+					page,
+					pageSize: TEMPLATE_PAGE_SIZE,
+					q: templateQuery || undefined,
+					scope: templateScope,
+					sort: templateSort,
+				});
+				setTemplateTotal(resp.total);
+				setTemplatePage(resp.page);
+				setTemplates((prev) => {
+					const next = append ? [...prev, ...resp.items] : resp.items;
+					applyTemplateFiltersFromTemplates(next);
+					return next;
+				});
+			} catch {
+				if (!append) {
+					setTemplates([]);
+					setTemplateTotal(0);
+				}
+				throw new Error("流水线模板加载失败");
+			} finally {
+				if (append) {
+					setLoadingMoreTemplates(false);
+				}
+			}
+		},
+		[
+			applyTemplateFiltersFromTemplates,
+			templateQuery,
+			templateScope,
+			templateSort,
+		],
+	);
+
+	const refresh = useCallback(async () => {
+		setLoading(true);
+		setError(null);
+		const shouldLoadDeployments = resolvedVariant === "compact";
+		const [deploymentsResult, templatesResult, targetsResult] =
+			await Promise.allSettled([
+				shouldLoadDeployments ? listDeployments() : Promise.resolve([]),
+				listPipelines({
+					page: 1,
+					pageSize: TEMPLATE_PAGE_SIZE,
+					q: templateQuery || undefined,
+					scope: templateScope,
+					sort: templateSort,
+				}),
+				listExecutionTargets(),
+			]);
+		const partialErrors: string[] = [];
+
+		if (deploymentsResult.status === "fulfilled") {
+			setDeployments(deploymentsResult.value);
+		} else if (shouldLoadDeployments) {
+			partialErrors.push("执行记录加载失败");
 			setDeployments([]);
-			setTemplates([]);
-			setTargets([]);
-		} finally {
-			setLoading(false);
 		}
-	}, [resolvedVariant]);
+
+		if (templatesResult.status === "fulfilled") {
+			const resp = templatesResult.value;
+			setTemplates(resp.items);
+			setTemplateTotal(resp.total);
+			setTemplatePage(resp.page);
+			applyTemplateFiltersFromTemplates(resp.items);
+		} else {
+			partialErrors.push("流水线模板加载失败");
+			setTemplates([]);
+			setTemplateTotal(0);
+		}
+
+		if (targetsResult.status === "fulfilled") {
+			setTargets(targetsResult.value);
+			const defaultTarget =
+				targetsResult.value.find((target) => target.isDefault) ??
+				targetsResult.value[0];
+			if (defaultTarget) setSelectedTargetId(defaultTarget.id);
+		} else {
+			partialErrors.push("运行目标加载失败");
+		}
+
+		setError(partialErrors.length > 0 ? partialErrors.join("；") : null);
+		setLoading(false);
+	}, [
+		applyTemplateFiltersFromTemplates,
+		resolvedVariant,
+		templateQuery,
+		templateScope,
+		templateSort,
+	]);
 
 	useEffect(() => {
 		refresh();
 	}, [refresh]);
 
-	useEffect(() => {
-		setTemplateVisibleCount(TEMPLATE_PAGE_SIZE);
-	}, []);
+	const loadMoreTemplates = useCallback(async () => {
+		try {
+			await fetchTemplates(templatePage + 1, true);
+		} catch (err) {
+			messageApi.error(String(err));
+		}
+	}, [fetchTemplates, messageApi, templatePage]);
+
+	const applyTemplateSearch = useCallback((value?: string) => {
+		setTemplateQuery((value ?? templateQueryDraft).trim());
+		setTemplatePage(1);
+	}, [templateQueryDraft]);
 
 	const handleDeployClick = (templateId: string) => {
 		const currentTemplate = templates.find(
@@ -541,7 +652,7 @@ export function DeployPanel({
 				messageApi.success(`已删除 ${deletedCount} 条流水线`);
 			}
 			if (failedCount > 0) {
-				messageApi.error(`${failedCount} 条流水线删除失败`);
+				messageApi.error(`${failedCount} 条流水线删除失败（正式版不可删除）`);
 			}
 			setSelectedTemplateIds([]);
 			await refresh();
@@ -550,17 +661,60 @@ export function DeployPanel({
 		}
 	};
 
+	const confirmBulkDeleteTemplates = () => {
+		if (selectedTemplateIds.length === 0) return;
+		const count = selectedTemplateIds.length;
+		let confirmInput = "";
+		modal.confirm({
+			title: `删除选中的 ${count} 条流水线？`,
+			content: (
+				<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+					<span>正式版（prod）已从选择中排除。此操作不可恢复。</span>
+					<span>
+						请输入 <strong>{count}</strong> 以确认删除：
+					</span>
+					<Input
+						placeholder={String(count)}
+						onChange={(event) => {
+							confirmInput = event.target.value;
+						}}
+					/>
+				</div>
+			),
+			okText: "删除",
+			okButtonProps: { danger: true },
+			cancelText: "取消",
+			onOk: async () => {
+				if (confirmInput.trim() !== String(count)) {
+					messageApi.error("确认数字不匹配，已取消删除");
+					return Promise.reject(new Error("confirm mismatch"));
+				}
+				await handleBulkDeleteTemplates();
+			},
+		});
+	};
+
 	const handleEditTemplate = async (id: string) => {
 		try {
 			const t = await getPipeline(id);
+			if (t.scope === "prod") {
+				handleViewTemplate(id);
+				return;
+			}
 			if (onEditTemplate) {
 				onEditTemplate(t.pipeline);
 			} else {
-				navigate(`/pipeline?templateId=${encodeURIComponent(id)}`);
+				navigate(`/pipeline?templateId=${encodeURIComponent(id)}&tab=design`);
 			}
 		} catch (err) {
 			messageApi.error(`加载模板失败: ${String(err)}`);
 		}
+	};
+
+	const handleViewTemplate = (id: string) => {
+		navigate(
+			`/pipeline?templateId=${encodeURIComponent(id)}&readonly=1&tab=design`,
+		);
 	};
 
 	const handleVersionHistory = (template: PipelineTemplate) => {
@@ -568,16 +722,25 @@ export function DeployPanel({
 		setVersionDrawerOpen(true);
 	};
 
-	const handlePromote = async (template: PipelineTemplate) => {
-		try {
-			const promoted = await promotePipeline(template.id);
-			messageApi.success(
-				`已发布 ${template.name} v${promoted.version} 到正式版（prod）`,
-			);
-			refresh();
-		} catch (err) {
-			messageApi.error(`发布失败: ${String(err)}`);
-		}
+	const handlePromote = (template: PipelineTemplate) => {
+		modal.confirm({
+			title: `发布 ${template.name} v${template.version} 到正式版？`,
+			content:
+				"将生成 prod 正式版模板（只读、不可删除）。dev 草稿仍可继续编辑；「活跃版本」仅影响默认运行版本，不等于 prod。",
+			okText: "发布",
+			cancelText: "取消",
+			onOk: async () => {
+				try {
+					const promoted = await promotePipeline(template.id);
+					messageApi.success(
+						`已发布 ${template.name} v${promoted.version} 到正式版（prod）`,
+					);
+					await refresh();
+				} catch (err) {
+					messageApi.error(`发布失败: ${String(err)}`);
+				}
+			},
+		});
 	};
 
 	const handleSetActiveVersion = async (
@@ -624,9 +787,10 @@ export function DeployPanel({
 				onDelete={handleDeleteTemplate}
 				onVersionHistory={handleVersionHistory}
 				onPromote={handlePromote}
+				onView={handleViewTemplate}
 				activeVersion={activeVersionByTemplate[t.name]}
 				compactActions={options?.compactActions}
-				selectable={resolvedVariant === "full"}
+				selectable={resolvedVariant === "full" && t.scope !== "prod"}
 				selected={selectedTemplateIds.includes(t.id)}
 				onSelect={(id, checked) =>
 					setSelectedTemplateIds((prev) =>
@@ -775,8 +939,13 @@ export function DeployPanel({
 		);
 	}
 
-	const visibleTemplates = displayTemplates.slice(0, templateVisibleCount);
-	const selectableTemplateIds = displayTemplates.map((template) => template.id);
+	const visibleTemplates = displayTemplates;
+	const deletableVisibleTemplates = visibleTemplates.filter(
+		(template) => template.scope !== "prod",
+	);
+	const selectableTemplateIds = deletableVisibleTemplates.map(
+		(template) => template.id,
+	);
 	const selectedTemplateIdSet = new Set(selectedTemplateIds);
 	const allTemplatesSelected =
 		selectableTemplateIds.length > 0 &&
@@ -857,7 +1026,7 @@ export function DeployPanel({
 					<div>
 						已保存的流水线
 						{!loading ? (
-							<span className="count">{displayTemplates.length}</span>
+							<span className="count">{templateTotal}</span>
 						) : null}
 					</div>
 					{!loading && displayTemplates.length > 0 ? (
@@ -875,11 +1044,11 @@ export function DeployPanel({
 							</Checkbox>
 							<Popconfirm
 								title={`删除选中的 ${selectedTemplateIds.length} 条流水线？`}
-								description="删除后不可恢复"
-								okText="删除"
+								description="正式版已排除；将要求输入数量确认"
+								okText="继续"
 								cancelText="取消"
 								disabled={selectedTemplateIds.length === 0}
-								onConfirm={handleBulkDeleteTemplates}
+								onConfirm={confirmBulkDeleteTemplates}
 							>
 								<Button
 									size="small"
@@ -897,20 +1066,63 @@ export function DeployPanel({
 						</Space>
 					) : null}
 				</div>
+				<div
+					className="deploy-panel__template-filters"
+					style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}
+				>
+					<Input.Search
+						allowClear
+						placeholder="搜索流水线名称"
+						value={templateQueryDraft}
+						onChange={(event) => setTemplateQueryDraft(event.target.value)}
+						onSearch={(value) => applyTemplateSearch(value)}
+						style={{ width: 220 }}
+						data-testid="pipeline-template-search"
+					/>
+					<Select
+						allowClear
+						placeholder="范围"
+						value={templateScope}
+						onChange={(value) => {
+							setTemplateScope(value);
+							setTemplatePage(1);
+						}}
+						style={{ width: 120 }}
+						options={[
+							{ value: "dev", label: "dev" },
+							{ value: "prod", label: "prod" },
+						]}
+						data-testid="pipeline-template-scope"
+					/>
+					<Select
+						value={templateSort}
+						onChange={(value) => {
+							setTemplateSort(value);
+							setTemplatePage(1);
+						}}
+						style={{ width: 160 }}
+						options={[
+							{ value: "updated_at_desc", label: "最近更新" },
+							{ value: "created_at_desc", label: "最近创建" },
+							{ value: "name_asc", label: "名称 A-Z" },
+							{ value: "name_desc", label: "名称 Z-A" },
+						]}
+						data-testid="pipeline-template-sort"
+					/>
+				</div>
 				<div className="deploy-section">
 					{renderTemplateSection(visibleTemplates)}
 				</div>
-				{displayTemplates.length > visibleTemplates.length ? (
+				{displayTemplates.length < templateTotal ? (
 					<Button
 						type="link"
 						size="small"
 						className="deploy-panel__load-more"
-						onClick={() =>
-							setTemplateVisibleCount((count) => count + TEMPLATE_PAGE_SIZE)
-						}
+						loading={loadingMoreTemplates}
+						onClick={() => void loadMoreTemplates()}
+						data-testid="pipeline-template-load-more"
 					>
-						加载更多模板（还剩{" "}
-						{displayTemplates.length - visibleTemplates.length} 条）
+						加载更多模板（还剩 {templateTotal - displayTemplates.length} 条）
 					</Button>
 				) : null}
 			</div>

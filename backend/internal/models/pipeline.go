@@ -19,6 +19,15 @@ type PipelineTemplate struct {
 	UpdatedAt     time.Time              `json:"updatedAt"`
 }
 
+// PipelineTemplateListFilter scopes paginated pipeline template list queries.
+type PipelineTemplateListFilter struct {
+	Query    string
+	Scope    string
+	Sort     string
+	Page     int
+	PageSize int
+}
+
 // PipelineDeployment represents a single deployment of a pipeline template
 // to a workflow run. Each deployment records the target workflow, current
 // status, and optionally the rendered manifest and pipeline JSON snapshot.

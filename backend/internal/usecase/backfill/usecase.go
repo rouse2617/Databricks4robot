@@ -17,6 +17,7 @@ import (
 )
 
 const maxConcurrentBatchItems = 5
+const backfillItemChunkSize = 500
 
 var ErrNotFound = errors.New("backfill job not found")
 
@@ -44,50 +45,68 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 		Name:       name,
 		TemplateID: templateID,
 		TotalCount: len(assetIDs),
-		Status:     "running",
+		Status:     "pending",
 		CreatedAt:  time.Now().UTC(),
 	}
 	if err := uc.repo.SaveJob(ctx, job); err != nil {
 		return nil, fmt.Errorf("save backfill job: %w", err)
 	}
 
-	items := make([]models.BackfillItem, len(assetIDs))
-	for i, aid := range assetIDs {
-		items[i] = models.BackfillItem{
-			ID:      uuid.New().String(),
-			JobID:   job.ID,
-			AssetID: aid,
-			Status:  "pending",
-		}
-	}
-	if err := uc.repo.SaveItems(ctx, items); err != nil {
-		return nil, fmt.Errorf("save backfill items: %w", err)
-	}
-
-	if uc.pipelineUC != nil {
-		for i := range items {
-			runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-				TemplateID: templateID,
-				BatchJobID: job.ID,
-				AssetID:    items[i].AssetID,
-				Status:     "Pending",
-			})
-			if err != nil {
-				continue
-			}
-			items[i].PipelineRunID = &runID
-			if wf := strings.TrimSpace(workflowName); wf != "" {
-				items[i].WorkflowName = &wf
-			}
-			_ = uc.repo.UpdateItemPipelineRun(ctx, items[i].ID, runID, workflowName, "pending")
-		}
-	}
-
-	if uc.pipelineUC != nil {
-		go uc.runItems(context.Background(), job.ID, templateID, items, "pending")
-	}
+	assetIDsCopy := append([]string(nil), assetIDs...)
+	go uc.materializeAndRunBatch(job.ID, templateID, assetIDsCopy)
 
 	return job, nil
+}
+
+func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, assetIDs []string) {
+	ctx := context.Background()
+	items := make([]models.BackfillItem, 0, len(assetIDs))
+	for start := 0; start < len(assetIDs); start += backfillItemChunkSize {
+		end := start + backfillItemChunkSize
+		if end > len(assetIDs) {
+			end = len(assetIDs)
+		}
+		chunk := assetIDs[start:end]
+		batch := make([]models.BackfillItem, len(chunk))
+		for i, aid := range chunk {
+			batch[i] = models.BackfillItem{
+				ID:      uuid.New().String(),
+				JobID:   jobID,
+				AssetID: aid,
+				Status:  "pending",
+			}
+		}
+		if err := uc.repo.SaveItems(ctx, batch); err != nil {
+			_ = uc.repo.UpdateJobStatus(ctx, jobID, "failed")
+			return
+		}
+		if uc.pipelineUC != nil {
+			for i := range batch {
+				runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+					TemplateID: templateID,
+					BatchJobID: jobID,
+					AssetID:    batch[i].AssetID,
+					Status:     "Pending",
+				})
+				if err != nil {
+					continue
+				}
+				batch[i].PipelineRunID = &runID
+				if wf := strings.TrimSpace(workflowName); wf != "" {
+					batch[i].WorkflowName = &wf
+				}
+				_ = uc.repo.UpdateItemPipelineRun(ctx, batch[i].ID, runID, workflowName, "pending")
+			}
+		}
+		items = append(items, batch...)
+	}
+
+	if err := uc.repo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
+		return
+	}
+	if uc.pipelineUC != nil && len(items) > 0 {
+		uc.runItems(ctx, jobID, templateID, items, "pending")
+	}
 }
 
 func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, items []models.BackfillItem, allowed ...string) {

@@ -88,7 +88,9 @@ describe("AssetPicker", () => {
 	it("shows empty state with hint text when no query and no results", () => {
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
 		expect(
-			screen.getByText("输入关键字搜索资产，不选择则直接部署"),
+			screen.getByText(
+				"输入关键字搜索资产，或批量粘贴 asset ID；不选择则直接部署",
+			),
 		).toBeTruthy();
 	});
 
@@ -97,7 +99,7 @@ describe("AssetPicker", () => {
 			items: mockResults,
 			total: 2,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
@@ -114,7 +116,7 @@ describe("AssetPicker", () => {
 			expect(searchApi.searchAssets).toHaveBeenCalledWith(
 				{
 					q: "ast",
-					page_size: 50,
+					page_size: 100,
 				},
 				expect.any(AbortSignal),
 			);
@@ -144,7 +146,7 @@ describe("AssetPicker", () => {
 			items: mockResults,
 			total: 2,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		const { rerender } = render(
@@ -176,7 +178,9 @@ describe("AssetPicker", () => {
 		expect(input.value).toBe("");
 		expect(screen.queryByText("ast-001")).toBeNull();
 		expect(
-			screen.getByText("输入关键字搜索资产，不选择则直接部署"),
+			screen.getByText(
+				"输入关键字搜索资产，或批量粘贴 asset ID；不选择则直接部署",
+			),
 		).toBeTruthy();
 	});
 
@@ -185,7 +189,7 @@ describe("AssetPicker", () => {
 			items: mockResults,
 			total: 2,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
@@ -220,7 +224,7 @@ describe("AssetPicker", () => {
 			],
 			total: 1,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
@@ -241,7 +245,7 @@ describe("AssetPicker", () => {
 			items: mockResults,
 			total: 2,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		const onSelectionChange = vi.fn();
@@ -272,12 +276,12 @@ describe("AssetPicker", () => {
 		});
 	});
 
-	it("shows '未找到匹配的资产' when search yields no results", async () => {
+	it("shows '未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴' when search yields no results", async () => {
 		vi.mocked(searchApi.searchAssets).mockResolvedValue({
 			items: [],
 			total: 0,
 			page: 1,
-			page_size: 50,
+			page_size: 100,
 		});
 
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
@@ -289,7 +293,7 @@ describe("AssetPicker", () => {
 		if (searchButton) fireEvent.click(searchButton);
 
 		await waitFor(() => {
-			expect(screen.getByText("未找到匹配的资产")).toBeTruthy();
+			expect(screen.getByText("未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴")).toBeTruthy();
 		});
 	});
 
@@ -310,7 +314,7 @@ describe("AssetPicker", () => {
 			expect(searchApi.searchAssets).toHaveBeenCalled();
 			expect(screen.getByText("搜索资产失败，请重试")).toBeTruthy();
 		});
-		expect(screen.queryByText("未找到匹配的资产")).toBeNull();
+		expect(screen.queryByText("未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴")).toBeNull();
 	});
 
 	it("accepts custom placeholder and maxHeight props", () => {

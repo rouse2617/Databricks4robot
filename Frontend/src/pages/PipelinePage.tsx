@@ -267,10 +267,15 @@ function PipelineCanvas() {
 	const [selectedTemplateVersionId, setSelectedTemplateVersionId] = useState<
 		string | null
 	>(null);
+	const [loadedTemplateScope, setLoadedTemplateScope] = useState<string | null>(
+		null,
+	);
 	const templateId = useMemo(
 		() => searchParams.get("templateId") || null,
 		[searchParams],
 	);
+	const readOnlyMode =
+		searchParams.get("readonly") === "1" || loadedTemplateScope === "prod";
 	const [deployDialog, setDeployDialog] = useState<{
 		open: boolean;
 		deploying: boolean;
@@ -410,6 +415,7 @@ function PipelineCanvas() {
 		if (!templateId) {
 			setTemplateVersions((prev) => (prev.length > 0 ? [] : prev));
 			setSelectedTemplateVersionId((prev) => (prev !== null ? null : prev));
+			setLoadedTemplateScope(null);
 			loadPipelineFromSessionStorage();
 			return;
 		}
@@ -423,6 +429,7 @@ function PipelineCanvas() {
 				setPipelineName(template.name);
 				setTemplateVersions(versions);
 				setSelectedTemplateVersionId(template.id);
+				setLoadedTemplateScope(template.scope ?? null);
 			})
 			.catch((err) => {
 				if (cancelled) return;
@@ -861,7 +868,7 @@ function PipelineCanvas() {
 		messageApi,
 	]);
 
-	const canDeploy = nodes.length > 0;
+	const canDeploy = nodes.length > 0 && !readOnlyMode;
 
 	const openDeployDialog = useCallback(() => {
 		if (nodes.length === 0) {
@@ -899,9 +906,9 @@ function PipelineCanvas() {
 	}, []);
 
 	usePipelineKeyboardShortcuts({
-		onSave: handleSave,
-		onDeploy: openDeployDialog,
-		onClear: clearCanvas,
+		onSave: readOnlyMode ? () => undefined : handleSave,
+		onDeploy: readOnlyMode ? () => undefined : openDeployDialog,
+		onClear: readOnlyMode ? () => undefined : clearCanvas,
 		onCloseModal: () => {
 			if (deployDialog.open) closeDeployDialog();
 			if (importModalOpen) {
@@ -1068,6 +1075,16 @@ function PipelineCanvas() {
 					) : null}
 				</div>
 				<div className="pipeline-toolbar__actions">
+					{readOnlyMode ? (
+						<Alert
+							type="info"
+							showIcon
+							message="只读模式"
+							description="正在查看正式版（prod）流水线定义，不可修改或部署。"
+							style={{ padding: "4px 12px", fontSize: 12 }}
+						/>
+					) : (
+						<>
 					<Select
 						size="small"
 						placeholder="载入示例"
@@ -1130,6 +1147,8 @@ function PipelineCanvas() {
 					>
 						清空
 					</Button>
+						</>
+					)}
 				</div>
 			</div>
 
@@ -1193,8 +1212,11 @@ function PipelineCanvas() {
 							contextMenuEnabled={false}
 							flowProps={{
 								edgeTypes: PIPELINE_EDGE_TYPES,
-								onDrop,
-								onDragOver,
+								nodesDraggable: !readOnlyMode,
+								nodesConnectable: !readOnlyMode,
+								elementsSelectable: true,
+								onDrop: readOnlyMode ? undefined : onDrop,
+								onDragOver: readOnlyMode ? undefined : onDragOver,
 								onNodeClick,
 								onNodeContextMenu,
 								onPaneClick,
@@ -1886,6 +1908,9 @@ export default function PipelinePage() {
 				next.delete("tab");
 			} else {
 				next.set("tab", nextTab);
+				next.delete("templateId");
+				next.delete("readonly");
+				next.delete("asset_ids");
 			}
 			setSearchParams(next, { replace: true });
 		},

@@ -47,7 +47,7 @@ export default function BatchJobDetailPage() {
 		try {
 			const [jobData, templates] = await Promise.all([
 				getBatchJob(id),
-				listPipelines().catch(() => [] as PipelineTemplate[]),
+				listPipelines({ pageSize: 200 }).then((r) => r.items).catch(() => [] as PipelineTemplate[]),
 			]);
 			setJob(jobData);
 			const template = templates.find((item) => item.id === jobData.templateId);

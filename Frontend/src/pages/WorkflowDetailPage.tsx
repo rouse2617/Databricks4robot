@@ -434,6 +434,7 @@ function WorkflowSummaryCards({
 	runEventState: ReturnType<typeof useWorkflowDetail>["runEventState"];
 	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"];
 }) {
+	const navigate = useNavigate();
 	const templateName = workflow.labels
 		? getWorkflowLabel(workflow.labels, "template-name") ||
 			getWorkflowLabel(workflow.labels, "pipeline-name")
@@ -461,8 +462,36 @@ function WorkflowSummaryCards({
 	const cards = [
 		{
 			label: "模板",
-			value: templateName || "—",
-			extra: templateVersion ? `v${templateVersion}` : undefined,
+			value: templateName ? (
+				runEventState.run?.templateId ? (
+					<Button
+						type="link"
+						size="small"
+						style={{ padding: 0, height: "auto" }}
+						onClick={() => {
+							const params = new URLSearchParams({
+								templateId: runEventState.run!.templateId!,
+								tab: "design",
+							});
+							if (runEventState.run?.scope === "prod") {
+								params.set("readonly", "1");
+							}
+							navigate(`/pipeline?${params.toString()}`);
+						}}
+					>
+						{templateName}
+						{templateVersion ? ` v${templateVersion}` : ""}
+					</Button>
+				) : (
+					<>
+						{templateName}
+						{templateVersion ? ` v${templateVersion}` : ""}
+					</>
+				)
+			) : (
+				"—"
+			),
+			extra: undefined,
 		},
 		{
 			label: "资产",
@@ -566,7 +595,12 @@ function WorkflowRunContextPanel({
 	onLoadMoreEvents: () => void;
 	onSelectNodeEvent: (event: PipelineRunEvent) => void;
 }) {
+	const [searchDraft, setSearchDraft] = useState(runEventFilters.q ?? "");
 	const latestEvents = runEventState.items.slice(-5);
+
+	useEffect(() => {
+		setSearchDraft(runEventFilters.q ?? "");
+	}, [runEventFilters.q]);
 
 	return (
 		<div
@@ -625,11 +659,14 @@ function WorkflowRunContextPanel({
 					placeholder="搜索消息/ID"
 					allowClear
 					style={{ width: 180 }}
-					value={runEventFilters.q}
-					onChange={(event) =>
-						onFilterEvents({ ...runEventFilters, q: event.target.value })
+					value={searchDraft}
+					onChange={(event) => setSearchDraft(event.target.value)}
+					onSearch={(value) =>
+						onFilterEvents({ ...runEventFilters, q: value || undefined })
 					}
-					onSearch={() => onRefreshEvents()}
+					onClear={() =>
+						onFilterEvents({ ...runEventFilters, q: undefined })
+					}
 				/>
 				<Button
 					size="small"
@@ -1121,10 +1158,15 @@ export default function WorkflowDetailPage({
 		() => (workflow ? getAvailableWorkflowOperationConfigs(workflow) : []),
 		[workflow],
 	);
-	const canRetryWorkflow = useMemo(
-		() => operations.some((op) => op.key === "retry" && !op.disabled),
-		[operations],
-	);
+	const canRetryFailedNode = useMemo(() => {
+		const retryOp = operations.find(
+			(operation) => operation.key === "retry" && !operation.disabled,
+		);
+		if (!retryOp || !selectedNode) return false;
+		return (
+			selectedNode.phase === "Failed"
+		);
+	}, [operations, selectedNode]);
 
 	const executeOperation = useCallback(
 		async (operation: WorkflowOperationConfig) => {
@@ -1469,11 +1511,12 @@ export default function WorkflowDetailPage({
 			>
 				<div
 					style={{
-						height: graphHeight,
+						height: viewMode === "timeline" ? "auto" : graphHeight,
+						minHeight: viewMode === "timeline" ? 280 : graphHeight,
 						margin: "0 24px 12px",
 						border: "1px solid #dbe3ee",
 						borderRadius: 8,
-						overflow: "hidden",
+						overflow: viewMode === "timeline" ? "visible" : "hidden",
 						background: "#eef2f6",
 					}}
 				>
@@ -1527,7 +1570,7 @@ export default function WorkflowDetailPage({
 				workflow={workflow}
 				open={nodePanelOpen}
 				onClose={closeNodeDetailPanel}
-				canRetryWorkflow={canRetryWorkflow}
+				canRetryWorkflow={canRetryFailedNode}
 				onRetryWorkflow={handleRetryWorkflow}
 				onShowLogs={handleShowNodeLogs}
 				activeTab={nodeDetailTab}

@@ -130,6 +130,110 @@ ORDER BY updated_at DESC`
 	return out, nil
 }
 
+func pipelineTemplateOrderBy(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "name_asc":
+		return "name ASC, updated_at DESC"
+	case "name_desc":
+		return "name DESC, updated_at DESC"
+	case "created_at_desc":
+		return "created_at DESC"
+	default:
+		return "updated_at DESC"
+	}
+}
+
+// FindLatestPaged returns the latest version of each pipeline template with
+// optional filters and server-side pagination.
+func (r *PipelineTemplateRepo) FindLatestPaged(ctx context.Context, filter models.PipelineTemplateListFilter) ([]models.PipelineTemplate, int, error) {
+	query := strings.TrimSpace(filter.Query)
+	scope := strings.TrimSpace(filter.Scope)
+	orderBy := pipelineTemplateOrderBy(filter.Sort)
+	page := filter.Page
+	pageSize := filter.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	offset := (page - 1) * pageSize
+
+	baseCTE := `
+WITH latest AS (
+	SELECT ` + pipelineTemplateSelectCols + `,
+	       ROW_NUMBER() OVER (PARTITION BY name ORDER BY version DESC, updated_at DESC) AS rn,
+	       COUNT(*) OVER (PARTITION BY name) AS version_count
+	FROM pipeline_templates
+)
+SELECT ` + pipelineTemplateSelectCols + `, version_count
+FROM latest
+WHERE rn = 1`
+	countCTE := `
+WITH latest AS (
+	SELECT name, scope,
+	       ROW_NUMBER() OVER (PARTITION BY name ORDER BY version DESC, updated_at DESC) AS rn
+	FROM pipeline_templates
+)
+SELECT COUNT(*)
+FROM latest
+WHERE rn = 1`
+
+	args := []any{}
+	argPos := 1
+	if query != "" {
+		baseCTE += fmt.Sprintf(" AND name ILIKE $%d", argPos)
+		countCTE += fmt.Sprintf(" AND name ILIKE $%d", argPos)
+		args = append(args, "%"+query+"%")
+		argPos++
+	}
+	if scope != "" {
+		baseCTE += fmt.Sprintf(" AND scope = $%d", argPos)
+		countCTE += fmt.Sprintf(" AND scope = $%d", argPos)
+		args = append(args, scope)
+		argPos++
+	}
+	baseCTE += " ORDER BY " + orderBy
+	baseCTE += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argPos, argPos+1)
+	listArgs := append(append([]any{}, args...), pageSize, offset)
+
+	db := dbFromCtx(ctx, r.c.db)
+	var total int
+	if err := db.QueryRow(ctx, countCTE, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("postgres PipelineTemplateRepo.FindLatestPaged count: %w", err)
+	}
+
+	rows, err := db.Query(ctx, baseCTE, listArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("postgres PipelineTemplateRepo.FindLatestPaged: %w", err)
+	}
+	defer rows.Close()
+
+	var out []models.PipelineTemplate
+	for rows.Next() {
+		var (
+			t            models.PipelineTemplate
+			pipelineJSON []byte
+		)
+		if err := rows.Scan(
+			&t.ID, &t.Name, &t.Version, &pipelineJSON, &t.NodeCount, &t.ActiveVersion, &t.Scope, &t.Owner, &t.CreatedAt, &t.UpdatedAt, &t.VersionCount,
+		); err != nil {
+			return nil, 0, fmt.Errorf("postgres PipelineTemplateRepo.FindLatestPaged scan: %w", err)
+		}
+		if len(pipelineJSON) > 0 {
+			_ = json.Unmarshal(pipelineJSON, &t.Pipeline)
+		}
+		if t.Pipeline == nil {
+			t.Pipeline = map[string]interface{}{}
+		}
+		out = append(out, t)
+	}
+	return out, total, nil
+}
+
 // FindByID returns a pipeline template by id, or (nil, nil) when not found.
 func (r *PipelineTemplateRepo) FindByID(ctx context.Context, id string) (*models.PipelineTemplate, error) {
 	q := `SELECT ` + pipelineTemplateSelectCols + `

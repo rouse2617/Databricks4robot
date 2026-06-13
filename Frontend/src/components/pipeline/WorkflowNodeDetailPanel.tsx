@@ -855,9 +855,10 @@ export function WorkflowNodeDetailPanel({
 		</Button>,
 	];
 	if (canRetryWorkflow && onRetryWorkflow) {
+		const nodeFailed = node.phase === "Failed";
 		drawerExtra.unshift(
 			<Button key="retry" icon={<ReloadOutlined />} onClick={onRetryWorkflow}>
-				重试工作流
+				{nodeFailed ? "重试失败节点" : "重试工作流"}
 			</Button>,
 		);
 	}

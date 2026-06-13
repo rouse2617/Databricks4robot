@@ -59,7 +59,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		try {
 			const [jobItems, templateItems] = await Promise.all([
 				listBatchJobs(),
-				listPipelines().catch(() => []),
+				listPipelines({ pageSize: 200 }).then((r) => r.items).catch(() => []),
 			]);
 			setJobs(jobItems);
 			setTemplates(templateItems);

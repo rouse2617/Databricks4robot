@@ -10,6 +10,7 @@ import {
 	Modal,
 	Select,
 	Skeleton,
+	Space,
 	Table,
 	Tag,
 	Tooltip,
@@ -17,7 +18,7 @@ import {
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
 	listPipelineRuns,
@@ -72,8 +73,16 @@ type WorkflowErrorState = {
 
 const activeWorkflowStatuses = new Set(["Running", "Pending", "Suspended"]);
 
+const STALE_ACTIVE_RUN_MS = 48 * 60 * 60 * 1000;
+
 const isActiveWorkflowStatus = (status?: string): boolean =>
 	activeWorkflowStatuses.has(status ?? "");
+
+const isStaleRunningWorkflow = (record: WorkflowSummary): boolean => {
+	if (!isActiveWorkflowStatus(record.status)) return false;
+	if (!record.createdAt) return false;
+	return Date.now() - new Date(record.createdAt).getTime() > STALE_ACTIVE_RUN_MS;
+};
 
 const parseDate = (value: string | null): Dayjs | null => {
 	if (!value) return null;
@@ -369,6 +378,7 @@ export function WorkflowExecutionList({
 	const [pageSize, setPageSize] = useState(20);
 	const [serverTotal, setServerTotal] = useState(0);
 	const navigate = useNavigate();
+	const refreshInFlightRef = useRef(false);
 	const isBatchScope = Boolean(batchJobId);
 
 	useEffect(() => {
@@ -452,6 +462,8 @@ export function WorkflowExecutionList({
 	]);
 
 	const refresh = useCallback(async () => {
+		if (refreshInFlightRef.current) return;
+		refreshInFlightRef.current = true;
 		setLoading(true);
 		setError(null);
 		try {
@@ -522,7 +534,7 @@ export function WorkflowExecutionList({
 					items: [],
 					total: 0,
 				})),
-				listPipelines().catch(() => []),
+				listPipelines({ pageSize: 200 }).then((r) => r.items).catch(() => []),
 			]);
 			const pipelineRuns = pipelineRunResponse.items ?? [];
 			setServerTotal(pipelineRunResponse.total ?? pipelineRuns.length);
@@ -580,6 +592,7 @@ export function WorkflowExecutionList({
 		} finally {
 			setLoading(false);
 			setInitializedOnce(true);
+			refreshInFlightRef.current = false;
 		}
 	}, [
 		batchJobId,
@@ -800,13 +813,20 @@ export function WorkflowExecutionList({
 			dataIndex: "status",
 			key: "status",
 			width: 130,
-			render: (s: string) => (
-				<Tag
-					color={STATUS_COLORS[s] || STATUS_ACCENT_COLORS[s] || "default"}
-					style={{ padding: "2px 8px" }}
-				>
-					{s}
-				</Tag>
+			render: (s: string, record: WorkflowSummary) => (
+				<Space size={4} wrap>
+					<Tag
+						color={STATUS_COLORS[s] || STATUS_ACCENT_COLORS[s] || "default"}
+						style={{ padding: "2px 8px" }}
+					>
+						{s}
+					</Tag>
+					{isStaleRunningWorkflow(record) ? (
+						<Tooltip title="运行时间超过 48 小时，同步任务将自动标记为失败">
+							<Tag color="warning">疑似僵尸</Tag>
+						</Tooltip>
+					) : null}
+				</Space>
 			),
 		},
 		{

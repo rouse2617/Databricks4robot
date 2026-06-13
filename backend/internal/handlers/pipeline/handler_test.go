@@ -40,6 +40,49 @@ func (m *mockTemplateRepo) FindAll(_ context.Context) ([]models.PipelineTemplate
 	}
 	return out, nil
 }
+func (m *mockTemplateRepo) FindLatestPaged(_ context.Context, filter models.PipelineTemplateListFilter) ([]models.PipelineTemplate, int, error) {
+	items, err := m.FindAll(context.Background())
+	if err != nil {
+		return nil, 0, err
+	}
+	if filter.Query != "" {
+		q := strings.ToLower(filter.Query)
+		filtered := make([]models.PipelineTemplate, 0, len(items))
+		for _, item := range items {
+			if strings.Contains(strings.ToLower(item.Name), q) {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+	if filter.Scope != "" {
+		filtered := make([]models.PipelineTemplate, 0, len(items))
+		for _, item := range items {
+			if item.Scope == filter.Scope {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+	total := len(items)
+	page := filter.Page
+	pageSize := filter.PageSize
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []models.PipelineTemplate{}, total, nil
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return items[start:end], total, nil
+}
 func (m *mockTemplateRepo) FindByID(_ context.Context, id string) (*models.PipelineTemplate, error) {
 	return m.byID[id], nil
 }

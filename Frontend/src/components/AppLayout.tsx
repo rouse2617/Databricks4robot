@@ -32,7 +32,7 @@ const menuItems = [
 	{ key: "/deliveries", icon: <SendOutlined />, label: "交付管理" },
 	{ key: "/events", icon: <UnorderedListOutlined />, label: "事件流" },
 	{ type: "divider" as const },
-	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "运行记录" },
+	{ key: "/algo-runs", icon: <HistoryOutlined />, label: "算法运行" },
 	{ key: "/algo", icon: <RobotOutlined />, label: "算法处理" },
 	{ type: "divider" as const },
 	{ key: "/pipeline", icon: <ForkOutlined />, label: "流水线" },

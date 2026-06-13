@@ -18,6 +18,10 @@ type PipelineTemplateRepository interface {
 	// updated_at DESC.
 	FindAll(ctx context.Context) ([]models.PipelineTemplate, error)
 
+	// FindLatestPaged returns a paginated list of the latest version per template
+	// name with optional search, scope, and sort filters.
+	FindLatestPaged(ctx context.Context, filter models.PipelineTemplateListFilter) ([]models.PipelineTemplate, int, error)
+
 	// FindByID returns a single pipeline template by id, or (nil, nil) when
 	// not found.
 	FindByID(ctx context.Context, id string) (*models.PipelineTemplate, error)

@@ -169,10 +169,60 @@ export function previewDeploy(
 	}).then((resp) => ({ manifest: resp.manifest || "" }));
 }
 
-export function listPipelines(): Promise<PipelineTemplate[]> {
-	return request<{ items: PipelineTemplate[] }>("GET", "/pipelines").then(
-		(r) => r.items,
+export function listPipelines(
+	params: ListPipelinesParams = {},
+): Promise<ListPipelinesResponse> {
+	const qs = new URLSearchParams();
+	if (params.page) qs.set("page", String(params.page));
+	if (params.pageSize) qs.set("page_size", String(params.pageSize));
+	if (params.q) qs.set("q", params.q);
+	if (params.scope) qs.set("scope", params.scope);
+	if (params.sort) qs.set("sort", params.sort);
+	const query = qs.toString();
+	return request<ListPipelinesResponse>(
+		"GET",
+		`/pipelines${query ? `?${query}` : ""}`,
 	);
+}
+
+export interface ListPipelinesParams {
+	page?: number;
+	pageSize?: number;
+	q?: string;
+	scope?: string;
+	sort?: "updated_at_desc" | "name_asc" | "name_desc" | "created_at_desc";
+}
+
+export interface ListPipelinesResponse {
+	items: PipelineTemplate[];
+	total: number;
+	page: number;
+	pageSize: number;
+}
+
+export interface PipelineDiffNode {
+	id: string;
+	component?: Record<string, unknown>;
+}
+
+export interface PipelineDiffEdge {
+	source: string;
+	target: string;
+}
+
+export interface PipelineDiff {
+	added_nodes: PipelineDiffNode[];
+	removed_nodes: PipelineDiffNode[];
+	modified_nodes: PipelineDiffNode[];
+	added_edges: PipelineDiffEdge[];
+	removed_edges: PipelineDiffEdge[];
+}
+
+export function getPipelineDiff(
+	id1: string,
+	id2: string,
+): Promise<PipelineDiff> {
+	return request<PipelineDiff>("GET", `/pipelines/${id1}/diff/${id2}`);
 }
 
 export function getPipeline(id: string): Promise<PipelineTemplate> {
@@ -241,6 +291,15 @@ export function normalizeDeployResults(
 export function listDeployments(): Promise<Deployment[]> {
 	return request<{ items: Deployment[] }>("GET", "/deployments").then(
 		(r) => r.items,
+	);
+}
+
+export function getPipelineRunByWorkflowName(
+	workflowName: string,
+): Promise<PipelineRun> {
+	return request<PipelineRun>(
+		"GET",
+		`/pipeline-runs/by-workflow/${encodeURIComponent(workflowName)}`,
 	);
 }
 

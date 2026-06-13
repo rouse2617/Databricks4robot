@@ -176,11 +176,16 @@ test.describe("流水线批量任务", () => {
 	test("手动输入未注册 asset ID 可创建批量任务", async ({ page }) => {
 		let createBody: Record<string, unknown> | null = null;
 
-		await page.route(api("/pipelines"), (route) =>
+		await page.route(api("/pipelines*"), (route) =>
 			route.fulfill({
 				status: 200,
 				contentType: "application/json",
-				body: JSON.stringify({ items: [demoTemplate] }),
+				body: JSON.stringify({
+					items: [demoTemplate],
+					total: 1,
+					page: 1,
+					pageSize: 20,
+				}),
 			}),
 		);
 		await page.route(api("/pipelines/tpl-111/versions*"), (route) =>

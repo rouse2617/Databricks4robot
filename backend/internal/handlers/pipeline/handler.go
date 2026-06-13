@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/handlers"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -84,7 +85,15 @@ func (h *Handler) Promote(c *gin.Context) {
 
 // ListTemplates handles GET /api/v1/pipelines.
 func (h *Handler) ListTemplates(c *gin.Context) {
-	items, err := h.uc.ListTemplates(c.Request.Context())
+	page, pageSize := handlers.ParsePageParams(c.Query("page"), c.Query("page_size"))
+	filter := models.PipelineTemplateListFilter{
+		Query:    strings.TrimSpace(c.Query("q")),
+		Scope:    strings.TrimSpace(c.Query("scope")),
+		Sort:     strings.TrimSpace(c.DefaultQuery("sort", "updated_at_desc")),
+		Page:     page,
+		PageSize: pageSize,
+	}
+	items, total, err := h.uc.ListTemplatesPaged(c.Request.Context(), filter)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -92,7 +101,12 @@ func (h *Handler) ListTemplates(c *gin.Context) {
 	if items == nil {
 		items = []models.PipelineTemplate{}
 	}
-	c.JSON(200, gin.H{"items": items})
+	c.JSON(200, gin.H{
+		"items":    items,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
 // GetTemplate handles GET /api/v1/pipelines/:id.
@@ -369,6 +383,26 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		items[i].TotalEstimatedCost = pipelineUC.ComputeRunCost(&items[i], h.pricing)
 	}
 	c.JSON(200, gin.H{"items": items, "total": total})
+}
+
+// GetRunByWorkflowName handles GET /api/v1/pipeline-runs/by-workflow/:workflowName.
+func (h *Handler) GetRunByWorkflowName(c *gin.Context) {
+	workflowName := strings.TrimSpace(c.Param("workflowName"))
+	if workflowName == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "workflowName is required", nil)
+		return
+	}
+	run, err := h.uc.GetRunByWorkflowName(c.Request.Context(), workflowName)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if run == nil {
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+		return
+	}
+	run.TotalEstimatedCost = pipelineUC.ComputeRunCost(run, h.pricing)
+	c.JSON(200, run)
 }
 
 // GetRun handles GET /api/v1/pipeline-runs/:id.
