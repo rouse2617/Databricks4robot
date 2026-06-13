@@ -1648,6 +1648,7 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 		deployOpts.BatchJobID = opts[0].BatchJobID
 		deployOpts.DryRun = opts[0].DryRun
 		deployOpts.AllowUnknownAssets = opts[0].AllowUnknownAssets
+		deployOpts.PreallocatedRunID = opts[0].PreallocatedRunID
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }

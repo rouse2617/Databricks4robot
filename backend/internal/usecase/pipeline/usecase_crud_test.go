@@ -435,6 +435,34 @@ func TestDeployByTemplateID(t *testing.T) {
 		}
 	})
 
+	t.Run("reuses preallocated run id for batch subtasks", func(t *testing.T) {
+		repo := newMockAssetRepo()
+		uc := newUsecase(repo)
+		pipe := map[string]interface{}{
+			"name": "batch-tmpl",
+			"nodes": []interface{}{
+				map[string]interface{}{"id": "s1", "component": map[string]interface{}{"name": "a", "image": "img"}},
+			},
+			"edges": []interface{}{},
+		}
+		tmpl, err := uc.SaveTemplate(ctx, "batch-tmpl", pipe, "dev", "legacy")
+		if err != nil {
+			t.Fatalf("SaveTemplate: %v", err)
+		}
+
+		preallocatedID := "preallocated-run-001"
+		dep, err := uc.DeployByTemplateID(ctx, tmpl.ID, "", nil, DeployOptions{
+			BatchJobID:        "batch-job-001",
+			PreallocatedRunID: preallocatedID,
+		})
+		if err != nil {
+			t.Fatalf("DeployByTemplateID: %v", err)
+		}
+		if dep.ID != preallocatedID {
+			t.Fatalf("expected preallocated run id %q, got %q", preallocatedID, dep.ID)
+		}
+	})
+
 	t.Run("deploys requested saved version snapshot", func(t *testing.T) {
 		uc := newUsecase(newMockAssetRepo())
 		v1Pipe := map[string]interface{}{
