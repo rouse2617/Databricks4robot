@@ -345,6 +345,12 @@ spec:
                               value: cyber-databrew-dev
                             - name: ARGO_WORKFLOWS_NAMESPACE
                               value: cyber-databrew-dev
+                            # Preview pods run in-cluster; use the Argo API directly instead of
+                            # the Cloud Run pipeline-ui proxy baked into cyber-databrew-config.
+                            - name: ARGO_BASE_URL
+                              value: ""
+                            - name: ARGO_SERVER_URL
+                              value: http://argo-server.cyber-databrew-dev.svc.cluster.local:2746
                             - name: OUTBOX_RELAY_ENABLED
                               value: "false"
                             - name: OUTBOX_ES_SUBSCRIBER_ENABLED

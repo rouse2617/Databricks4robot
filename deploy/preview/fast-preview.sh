@@ -198,6 +198,90 @@ condition_reason() {
     -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].reason}' 2>/dev/null || true
 }
 
+taskrun_name() {
+  kubectl get taskrun -n "${tekton_namespace}" \
+    -l "tekton.dev/pipelineRun=${run_name}" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+}
+
+pipeline_pod_name() {
+  kubectl get pods -n "${tekton_namespace}" \
+    -l "tekton.dev/pipelineRun=${run_name}" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+}
+
+step_state() {
+  local taskrun="$1"
+  local step="$2"
+  [[ -n "${taskrun}" ]] || { echo "pending"; return 0; }
+  kubectl get taskrun "${taskrun}" -n "${tekton_namespace}" -o json 2>/dev/null \
+    | STEP="${step}" python3 -c '
+import json, os, sys
+data = json.load(sys.stdin)
+step = os.environ["STEP"]
+for item in data.get("status", {}).get("steps", []):
+    if item.get("name") != step:
+        continue
+    if item.get("running") is not None:
+        print("running")
+        raise SystemExit(0)
+    reason = item.get("terminated", {}).get("reason", "")
+    if reason == "Completed":
+        print("done")
+    elif reason:
+        print(f"failed:{reason}")
+    else:
+        print("pending")
+    raise SystemExit(0)
+print("pending")
+' || echo "pending"
+}
+
+step_label() {
+  case "$1" in
+    fetch-source) echo "1/3 拉取 GitHub 源码" ;;
+    build-images) echo "2/3 BuildKit 构建镜像" ;;
+    deploy-previews) echo "3/3 部署 GKE Preview Pod" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+latest_progress_hint() {
+  local pod="$1"
+  local container="$2"
+  [[ -n "${pod}" && -n "${container}" ]] || return 0
+  kubectl logs -n "${tekton_namespace}" "${pod}" -c "${container}" --tail=80 2>/dev/null \
+    | awk '
+      /^TIMING / { line=$0; next }
+      /^#[0-9]+ [0-9.]+ TIMING / { sub(/^#[0-9]+ [0-9.]+ /, ""); line=$0; next }
+      /^Skipping frontend image build/ { line=$0; next }
+      /^Registry credentials written/ { line=$0; next }
+      END { if (line != "") print line }
+    ' || true
+}
+
+print_progress_snapshot() {
+  local taskrun pod current_step="" current_container="" hint="" state=""
+  taskrun="$(taskrun_name)"
+  pod="$(pipeline_pod_name)"
+  echo "progress:"
+  for step in fetch-source build-images deploy-previews; do
+    state="$(step_state "${taskrun}" "${step}")"
+    printf '  - %-16s %s [%s]\n' "${step}" "$(step_label "${step}")" "${state}"
+    if [[ "${state}" == "running" ]]; then
+      current_step="${step}"
+      current_container="step-${step}"
+    fi
+  done
+  if [[ -n "${current_step}" ]]; then
+    hint="$(latest_progress_hint "${pod}" "${current_container}")"
+    echo "  current: ${current_step}"
+    if [[ -n "${hint}" ]]; then
+      echo "  latest:  ${hint}"
+    fi
+  fi
+}
+
 pipeline_result() {
   local name="$1"
   local value
@@ -225,7 +309,7 @@ show_logs() {
     [[ -n "${pod}" ]] || continue
     echo ""
     echo "===== logs: ${pod} ====="
-    kubectl logs -n "${tekton_namespace}" "${pod}" --all-containers --tail=-1 || true
+    kubectl logs -n "${tekton_namespace}" "${pod}" --all-containers --tail=500 || true
   done <<< "${pods}"
 }
 
@@ -238,7 +322,7 @@ show_success_logs() {
     [[ -n "${pod}" ]] || continue
     echo ""
     echo "===== summary: ${pod} ====="
-    kubectl logs -n "${tekton_namespace}" "${pod}" --all-containers --tail=-1 \
+    kubectl logs -n "${tekton_namespace}" "${pod}" -c step-deploy-previews --tail=300 \
       | awk '
         /^TIMING / { print; next }
         /^#[0-9]+ [0-9.]+ TIMING / {
@@ -286,11 +370,13 @@ if [[ "${frontend_mode}" == "remote" ]]; then
   echo "frontend: ${web_url}"
 else
   echo "frontend: local"
-  echo "local command: cd Frontend && VITE_API_BASE_URL=${api_url}/v1 npm run dev"
+  echo "local command: cd Frontend && VITE_PREVIEW_ID=${preview_id} npm run dev"
+  echo "check:     概览页左下角应显示 v<package.json> (preview/${preview_id})"
 fi
 echo ""
 echo "Tekton:"
 echo "kubectl get pipelinerun ${run_name} -n ${tekton_namespace}"
+echo "watch:    bash deploy/preview/preview-status.sh --watch ${run_name}"
 
 if [[ "${wait_for_completion}" != "true" ]]; then
   exit 0
@@ -300,12 +386,18 @@ echo ""
 echo "Waiting for PipelineRun completion..."
 deadline=$((SECONDS + 3600))
 last_status=""
+last_progress=""
 while (( SECONDS < deadline )); do
   status="$(condition_status)"
   reason="$(condition_reason)"
   if [[ "${status}:${reason}" != "${last_status}" ]]; then
     echo "status=${status:-Pending} reason=${reason:-Pending}"
     last_status="${status}:${reason}"
+  fi
+  progress="$(print_progress_snapshot)"
+  if [[ "${progress}" != "${last_progress}" ]]; then
+    echo "${progress}"
+    last_progress="${progress}"
   fi
   case "${status}" in
     True)
@@ -318,7 +410,8 @@ while (( SECONDS < deadline )); do
       if [[ "${frontend_mode}" == "remote" ]]; then
         echo "frontend: ${frontend_result:-${web_url}}"
       else
-        echo "local command: cd Frontend && VITE_API_BASE_URL=${backend_result:-${api_url}}/v1 npm run dev"
+        echo "local command: cd Frontend && VITE_PREVIEW_ID=${preview_id} npm run dev"
+        echo "check:     概览页左下角应显示 v<package.json> (preview/${preview_id})"
       fi
       exit 0
       ;;

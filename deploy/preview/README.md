@@ -15,6 +15,57 @@ bash deploy/preview/fast-preview.sh HEAD --frontend local
 `remote` deploys backend and frontend preview Pods. `local` deploys only the
 backend and prints the local Vite command.
 
+## Deployment modes
+
+| Mode | Backend | Frontend | Typical use |
+|------|---------|----------|-------------|
+| **Local Vite + preview backend** (`--frontend local`) | GKE preview Pod (~1–2 min) | Local Vite with HMR | Daily dev: hot-reload UI against an isolated backend at a specific commit |
+| **Full preview** (`--frontend remote`) | GKE preview Pod | GKE preview Pod | Share a hosted preview URL or test the production frontend build |
+| **Cloud Run dev** (`npm run dev:remote`) | Shared Cloud Run dev | Local Vite | Legacy path; backend updates are slower (~4–5 min via Cloud Build) |
+
+### Local frontend + preview backend (recommended daily workflow)
+
+Terminal 1 — deploy backend preview:
+
+```bash
+bash deploy/preview/fast-preview.sh HEAD --frontend local --wait
+```
+
+Terminal 2 — local frontend with hot reload:
+
+```bash
+cd Frontend
+VITE_PREVIEW_ID=<preview-id> npm run dev
+```
+
+Open `http://127.0.0.1:5176/`. Vite proxies `/api/*` to the preview backend through
+the dev gateway. Use **`VITE_PREVIEW_ID`**, not `VITE_API_BASE_URL=.../api/v1`:
+the preview router strips `/preview/<id>/api` before forwarding to the backend,
+so the proxy must rewrite paths correctly (handled automatically when
+`VITE_PREVIEW_ID` is set).
+
+**Verify the pairing:** Dashboard → 概览 → bottom-left **前端版本** should read
+`v<package.json-version> (preview/<preview-id>)`, e.g. `v0.1.1 (preview/b723ff083383)`.
+If it still shows `(local)`, restart Vite with `VITE_PREVIEW_ID` set.
+
+**Verify pipeline deploy works:** preview Pods override Argo env to talk to the
+in-cluster API (`argo-server.cyber-databrew-dev.svc.cluster.local:2746`), not the
+Cloud Run `pipeline-ui` proxy from `cyber-databrew-config`. Without this override,
+deploy returns `argo resource not found: 404 page not found`.
+
+### Monitor build/deploy progress
+
+```bash
+# list recent runs
+bash deploy/preview/preview-status.sh
+
+# watch a specific PipelineRun
+bash deploy/preview/preview-status.sh --watch preview-fast-<preview-id>-<HHMMSS>
+```
+
+`fast-preview.sh --wait` also prints step progress inline. Use `--no-wait` plus
+`preview-status.sh --watch` in another terminal if you prefer.
+
 Before the deploy finishes, the script prints deterministic preview URLs:
 
 ```text
