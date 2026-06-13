@@ -1020,23 +1020,8 @@ func (uc *Usecase) runCostSnapshotMissing(run *models.PipelineRun) bool {
 	return false
 }
 
-func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
-	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
-		return
-	}
-	namespace := run.ArgoNamespace
-	if namespace == "" {
-		namespace = uc.namespace
-	}
-	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
-	if err != nil {
-		if errors.Is(err, argo.ErrNotFound) {
-			run.Status = deploymentStatusExpired
-			logPipelineSideEffect("mark expired pipeline run", uc.runRepo.UpdateStatus(ctx, run.ID, deploymentStatusExpired, nil))
-		}
-		return
-	}
-	if wf == nil {
+func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineRun, wf *wfv1.Workflow) {
+	if uc.runRepo == nil || run == nil || wf == nil {
 		return
 	}
 	uc.appendWorkflowEvents(ctx, run, wf)
@@ -1046,12 +1031,62 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if string(wf.UID) != "" {
 		run.ArgoWorkflowUID = string(wf.UID)
 	}
-	if wf.Status.Phase == "Succeeded" || wf.Status.Phase == "Failed" || wf.Status.Phase == "Error" {
+	if isActiveDeploymentStatus(run.Status) {
+		run.FinishedAt = nil
+		run.Message = ""
+	}
+	if wf.Status.Phase == wfv1.WorkflowSucceeded || wf.Status.Phase == wfv1.WorkflowFailed || wf.Status.Phase == wfv1.WorkflowError {
 		now := time.Now().UTC()
 		run.FinishedAt = &now
 	}
 	logPipelineSideEffect("update pipeline run status", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
+}
+
+func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *models.PipelineRun) {
+	if uc.wfClient == nil || run == nil || !isMisclassifiedTerminalRunStatus(run.Status) {
+		return
+	}
+	if strings.TrimSpace(run.WorkflowName) == "" {
+		return
+	}
+	namespace := run.ArgoNamespace
+	if namespace == "" {
+		namespace = uc.namespace
+	}
+	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	if err != nil || wf == nil {
+		return
+	}
+	uc.applyWorkflowToRun(ctx, run, wf)
+}
+
+func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
+	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
+		return
+	}
+	if strings.TrimSpace(run.WorkflowName) == "" {
+		return
+	}
+	namespace := run.ArgoNamespace
+	if namespace == "" {
+		namespace = uc.namespace
+	}
+	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
+	if err != nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			if shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
+				return
+			}
+			run.Status = deploymentStatusExpired
+			logPipelineSideEffect("mark expired pipeline run", uc.runRepo.UpdateStatus(ctx, run.ID, deploymentStatusExpired, nil))
+		}
+		return
+	}
+	if wf == nil {
+		return
+	}
+	uc.applyWorkflowToRun(ctx, run, wf)
 }
 
 func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.PipelineRun) {
@@ -1823,6 +1858,7 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 		return nil, nil
 	}
 	uc.refreshPipelineRunStatus(ctx, run)
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
 	uc.enrichRun(ctx, run)
 	return run, nil
 }
@@ -2129,8 +2165,56 @@ const maxActiveDeploymentStatusRefresh = 50
 
 const deploymentStatusExpired = "Expired"
 
+// workflowCreateVisibilityGracePeriod avoids marking brand-new runs as expired
+// while Argo is still creating the workflow CR.
+const workflowCreateVisibilityGracePeriod = 5 * time.Minute
+
 func isActiveDeploymentStatus(status string) bool {
 	return status == "" || status == "Running" || status == "Pending" || status == "Unknown"
+}
+
+func shouldWaitForWorkflowCreation(run *models.PipelineRun, now time.Time) bool {
+	if run == nil {
+		return false
+	}
+	if strings.TrimSpace(run.WorkflowName) == "" {
+		return true
+	}
+	if isPendingBatchWorkflowCreation(run) {
+		return true
+	}
+	if !isActiveDeploymentStatus(run.Status) {
+		return false
+	}
+	if strings.TrimSpace(run.ArgoWorkflowUID) != "" {
+		return false
+	}
+	if run.CreatedAt.IsZero() {
+		return false
+	}
+	return now.Sub(run.CreatedAt) < workflowCreateVisibilityGracePeriod
+}
+
+func isPendingBatchWorkflowCreation(run *models.PipelineRun) bool {
+	if run == nil || run.BatchJobID == nil || strings.TrimSpace(*run.BatchJobID) == "" {
+		return false
+	}
+	if strings.TrimSpace(run.ArgoWorkflowUID) != "" {
+		return false
+	}
+	if isBatchSubtaskPlaceholderWorkflowName(run.WorkflowName) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(run.Status), "Pending")
+}
+
+func isMisclassifiedTerminalRunStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "error", "expired":
+		return true
+	default:
+		return false
+	}
 }
 
 func (uc *Usecase) refreshDeploymentStatus(ctx context.Context, d *models.PipelineDeployment) {

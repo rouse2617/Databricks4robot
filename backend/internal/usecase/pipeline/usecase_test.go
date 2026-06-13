@@ -957,3 +957,65 @@ func TestSyncActiveRunEvents_SavesWatcherHealth(t *testing.T) {
 		t.Fatalf("expected healthy non-stale watcher, got %#v", status)
 	}
 }
+
+func TestRefreshRunStatus_SkipsBatchPlaceholderNotFound(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-batch": {
+				ID:           "run-batch",
+				WorkflowName: "pipe-batch-asset123",
+				Status:       "Pending",
+				BatchJobID:   &batchJobID,
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	uc.refreshRunStatus(ctx, runRepo.byID["run-batch"])
+	if runRepo.byID["run-batch"].Status != "Pending" {
+		t.Fatalf("expected Pending placeholder run to stay Pending, got %q", runRepo.byID["run-batch"].Status)
+	}
+}
+
+func TestGetRun_ReconcilesMisclassifiedError(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Error",
+				Message:      "Argo 工作流已被 TTL 清理",
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowSucceeded},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	run, err := uc.GetRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if run.Status != "Succeeded" {
+		t.Fatalf("expected reconciled Succeeded status, got %q", run.Status)
+	}
+}

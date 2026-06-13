@@ -115,6 +115,10 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 	return runID, workflowName, nil
 }
 
+func isBatchSubtaskPlaceholderWorkflowName(name string) bool {
+	return strings.Contains(strings.TrimSpace(name), "-batch-")
+}
+
 func batchSubtaskWorkflowName(pipelineName, assetID, runID string) string {
 	suffix := strings.TrimSpace(assetID)
 	if len(suffix) > 12 {
