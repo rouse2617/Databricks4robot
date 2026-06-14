@@ -19,6 +19,7 @@ import {
 	vi,
 } from "vitest";
 import type { ReactNode } from "react";
+import { StrictMode } from "react";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 
@@ -556,6 +557,21 @@ describe("DeployPanel", () => {
 		expect(mockListPipelines.mock.calls.length).toBeGreaterThanOrEqual(2);
 	});
 
+	it("dedupes listPipelines refresh under StrictMode", async () => {
+		mockListPipelines.mockResolvedValue(pipelinesResponse([]));
+		mockListDeployments.mockResolvedValue([]);
+		render(
+			<StrictMode>
+				<MemoryRouter initialEntries={["/pipeline"]}>
+					<DeployPanel />
+				</MemoryRouter>
+			</StrictMode>,
+		);
+		await waitFor(() => {
+			expect(mockListPipelines).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	it("shows modal with no-asset run warning", async () => {
 		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
 		mockListDeployments.mockResolvedValue([]);
@@ -584,5 +600,31 @@ describe("DeployPanel", () => {
 		// Should show empty state without crashing
 		expect(await screen.findByText("暂无已保存的流水线模板")).toBeTruthy();
 		expect(screen.queryByText("暂无部署记录")).toBeNull();
+	});
+
+	it("refetches only pipelines when template filters change", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ name: "alpha-pipeline" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		await waitFor(() => {
+			expect(mockListPipelines).toHaveBeenCalledTimes(1);
+			expect(mockListExecutionTargets).toHaveBeenCalledTimes(1);
+		});
+
+		const searchInput = screen.getByTestId("pipeline-template-search");
+		fireEvent.change(searchInput, { target: { value: "alpha" } });
+		fireEvent.keyDown(searchInput, { key: "Enter", code: "Enter" });
+
+		await waitFor(() => {
+			expect(mockListPipelines).toHaveBeenCalledTimes(2);
+		});
+		expect(mockListExecutionTargets).toHaveBeenCalledTimes(1);
+		expect(mockListPipelines.mock.calls[1]?.[0]).toMatchObject({
+			q: "alpha",
+			page: 1,
+		});
 	});
 });

@@ -50,4 +50,15 @@ describe("deployPipelineForAssets", () => {
 		expect(result.mode).toBe("single");
 		expect(mockDeployTemplate).toHaveBeenCalledWith("tpl-1", ["a1"], undefined, undefined);
 	});
+
+	it("rejects batches above the asset limit", async () => {
+		const assetIds = Array.from(
+			{ length: 10_001 },
+			(_, index) => `asset-${index}`,
+		);
+		await expect(deployPipelineForAssets("tpl-1", assetIds)).rejects.toThrow(
+			/最多支持 10,000 个资产/,
+		);
+		expect(mockCreateBatchJob).not.toHaveBeenCalled();
+	});
 });

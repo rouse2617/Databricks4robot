@@ -22,7 +22,7 @@ import {
 	Space,
 	Tag,
 } from "antd";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { deployPipelineForAssets } from "../../api/deployPipelineRun";
 import {
@@ -399,6 +399,13 @@ export function DeployPanel({
 	const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
 	const [versionDrawerTemplate, setVersionDrawerTemplate] =
 		useState<PipelineTemplate | null>(null);
+	const refreshInFlightRef = useRef(false);
+	const templatesInFlightRef = useRef(false);
+	const prevTemplateFiltersRef = useRef({
+		query: templateQuery,
+		scope: templateScope,
+		sort: templateSort,
+	});
 	const [activeVersionByTemplate, setActiveVersionByTemplate] = useState<
 		Record<string, number>
 	>({});
@@ -480,66 +487,122 @@ export function DeployPanel({
 		],
 	);
 
-	const refresh = useCallback(async () => {
+	const refreshTemplates = useCallback(async () => {
+		if (templatesInFlightRef.current) return;
+		templatesInFlightRef.current = true;
 		setLoading(true);
-		setError(null);
-		const shouldLoadDeployments = resolvedVariant === "compact";
-		const [deploymentsResult, templatesResult, targetsResult] =
-			await Promise.allSettled([
-				shouldLoadDeployments ? listDeployments() : Promise.resolve([]),
-				listPipelines({
-					page: 1,
-					pageSize: TEMPLATE_PAGE_SIZE,
-					q: templateQuery || undefined,
-					scope: templateScope,
-					sort: templateSort,
-				}),
-				listExecutionTargets(),
-			]);
-		const partialErrors: string[] = [];
-
-		if (deploymentsResult.status === "fulfilled") {
-			setDeployments(deploymentsResult.value);
-		} else if (shouldLoadDeployments) {
-			partialErrors.push("执行记录加载失败");
-			setDeployments([]);
-		}
-
-		if (templatesResult.status === "fulfilled") {
-			const resp = templatesResult.value;
+		try {
+			const resp = await listPipelines({
+				page: 1,
+				pageSize: TEMPLATE_PAGE_SIZE,
+				q: templateQuery || undefined,
+				scope: templateScope,
+				sort: templateSort,
+			});
 			setTemplates(resp.items);
 			setTemplateTotal(resp.total);
 			setTemplatePage(resp.page);
 			applyTemplateFiltersFromTemplates(resp.items);
-		} else {
-			partialErrors.push("流水线模板加载失败");
+			setError((prev) =>
+				prev?.includes("流水线模板加载失败") ? null : prev,
+			);
+		} catch {
 			setTemplates([]);
 			setTemplateTotal(0);
+			setError((prev) => {
+				const parts = (prev ?? "")
+					.split("；")
+					.filter((part) => part && part !== "流水线模板加载失败");
+				parts.push("流水线模板加载失败");
+				return parts.join("；");
+			});
+		} finally {
+			setLoading(false);
+			templatesInFlightRef.current = false;
 		}
-
-		if (targetsResult.status === "fulfilled") {
-			setTargets(targetsResult.value);
-			const defaultTarget =
-				targetsResult.value.find((target) => target.isDefault) ??
-				targetsResult.value[0];
-			if (defaultTarget) setSelectedTargetId(defaultTarget.id);
-		} else {
-			partialErrors.push("运行目标加载失败");
-		}
-
-		setError(partialErrors.length > 0 ? partialErrors.join("；") : null);
-		setLoading(false);
 	}, [
 		applyTemplateFiltersFromTemplates,
-		resolvedVariant,
 		templateQuery,
 		templateScope,
 		templateSort,
 	]);
 
+	const refreshAll = useCallback(async () => {
+		if (refreshInFlightRef.current) return;
+		refreshInFlightRef.current = true;
+		setLoading(true);
+		setError(null);
+		const shouldLoadDeployments = resolvedVariant === "compact";
+		const { query, scope, sort } = prevTemplateFiltersRef.current;
+		try {
+			const [deploymentsResult, templatesResult, targetsResult] =
+				await Promise.allSettled([
+					shouldLoadDeployments ? listDeployments() : Promise.resolve([]),
+					listPipelines({
+						page: 1,
+						pageSize: TEMPLATE_PAGE_SIZE,
+						q: query || undefined,
+						scope,
+						sort,
+					}),
+					listExecutionTargets(),
+				]);
+			const partialErrors: string[] = [];
+
+			if (deploymentsResult.status === "fulfilled") {
+				setDeployments(deploymentsResult.value);
+			} else if (shouldLoadDeployments) {
+				partialErrors.push("执行记录加载失败");
+				setDeployments([]);
+			}
+
+			if (templatesResult.status === "fulfilled") {
+				const resp = templatesResult.value;
+				setTemplates(resp.items);
+				setTemplateTotal(resp.total);
+				setTemplatePage(resp.page);
+				applyTemplateFiltersFromTemplates(resp.items);
+			} else {
+				partialErrors.push("流水线模板加载失败");
+				setTemplates([]);
+				setTemplateTotal(0);
+			}
+
+			if (targetsResult.status === "fulfilled") {
+				setTargets(targetsResult.value);
+				const defaultTarget =
+					targetsResult.value.find((target) => target.isDefault) ??
+					targetsResult.value[0];
+				if (defaultTarget) setSelectedTargetId(defaultTarget.id);
+			} else {
+				partialErrors.push("运行目标加载失败");
+			}
+
+			setError(partialErrors.length > 0 ? partialErrors.join("；") : null);
+		} finally {
+			setLoading(false);
+			refreshInFlightRef.current = false;
+		}
+	}, [applyTemplateFiltersFromTemplates, resolvedVariant]);
+
 	useEffect(() => {
-		refresh();
-	}, [refresh]);
+		void refreshAll();
+	}, [refreshAll]);
+
+	useEffect(() => {
+		const prev = prevTemplateFiltersRef.current;
+		const filtersChanged =
+			prev.query !== templateQuery ||
+			prev.scope !== templateScope ||
+			prev.sort !== templateSort;
+		prevTemplateFiltersRef.current = {
+			query: templateQuery,
+			scope: templateScope,
+			sort: templateSort,
+		};
+		if (!filtersChanged) return;
+		void refreshTemplates();
+	}, [templateQuery, templateScope, templateSort, refreshTemplates]);
 
 	const loadMoreTemplates = useCallback(async () => {
 		try {
@@ -618,7 +681,7 @@ export function DeployPanel({
 						: "部署成功",
 				);
 				closeAssetModal();
-				void refresh();
+				void refreshAll();
 			}
 			setDeploying(false);
 		} catch (err) {
@@ -631,7 +694,7 @@ export function DeployPanel({
 		try {
 			await deletePipeline(id);
 			messageApi.success("已删除流水线模板");
-			refresh();
+			refreshAll();
 		} catch (err) {
 			messageApi.error(`删除失败: ${String(err)}`);
 		}
@@ -655,7 +718,7 @@ export function DeployPanel({
 				messageApi.error(`${failedCount} 条流水线删除失败（正式版不可删除）`);
 			}
 			setSelectedTemplateIds([]);
-			await refresh();
+			await refreshAll();
 		} finally {
 			setBulkDeletingTemplates(false);
 		}
@@ -735,7 +798,7 @@ export function DeployPanel({
 					messageApi.success(
 						`已发布 ${template.name} v${promoted.version} 到正式版（prod）`,
 					);
-					await refresh();
+					await refreshAll();
 				} catch (err) {
 					messageApi.error(`发布失败: ${String(err)}`);
 				}
@@ -973,7 +1036,7 @@ export function DeployPanel({
 					<Button
 						size="small"
 						icon={<ReloadOutlined />}
-						onClick={refresh}
+						onClick={refreshAll}
 						loading={loading}
 					>
 						刷新

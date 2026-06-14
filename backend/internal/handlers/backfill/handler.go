@@ -8,6 +8,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	uc "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
 )
 
@@ -33,7 +34,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 
 	job, err := h.uc.CreateBackfill(c.Request.Context(), req.Name, req.TemplateID, req.AssetIDs)
 	if err != nil {
-		httpresp.Internal(c, err.Error())
+		mapCreateJobError(c, err)
 		return
 	}
 	c.JSON(201, job)
@@ -118,6 +119,18 @@ func (h *Handler) RetryFailed(c *gin.Context) {
 func mapBackfillError(c *gin.Context, err error) {
 	if errors.Is(err, uc.ErrNotFound) {
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+		return
+	}
+	httpresp.Internal(c, err.Error())
+}
+
+func mapCreateJobError(c *gin.Context, err error) {
+	if errors.Is(err, uc.ErrTooManyAssets) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+	if errors.Is(err, assetvalidation.ErrInvalidAssetIDs) {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 		return
 	}
 	httpresp.Internal(c, err.Error())

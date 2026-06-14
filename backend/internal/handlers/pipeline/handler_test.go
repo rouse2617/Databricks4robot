@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -337,6 +338,12 @@ func makeTemplate(id, name string, version int) *models.PipelineTemplate {
 	}
 }
 
+func makeTemplateWithScope(id, name string, version int, scope string) *models.PipelineTemplate {
+	t := makeTemplate(id, name, version)
+	t.Scope = scope
+	return t
+}
+
 func makeDeployment(id, name, status string) *models.PipelineDeployment {
 	return &models.PipelineDeployment{
 		ID:           id,
@@ -399,7 +406,7 @@ func setupRouter(h *Handler) *gin.Engine {
 
 func TestListExecutionTargets_Default(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "cyber-databrew-dev")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/execution-targets", nil)
@@ -438,7 +445,7 @@ func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
 			},
 		},
 	})
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs", nil)
@@ -478,7 +485,7 @@ func TestListRuns_SummaryViewSkipsHeavyFields(t *testing.T) {
 			run.ID: {{ID: "node-1", RunID: run.ID, DisplayName: "step-1"}},
 		},
 	})
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs?view=summary", nil)
@@ -523,7 +530,7 @@ func TestGetRun_ReturnsTotalEstimatedCost(t *testing.T) {
 			},
 		},
 	})
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs/run-1", nil)
@@ -553,7 +560,7 @@ func TestDeployByTemplate_RejectsUnknownTarget(t *testing.T) {
 		"tmpl-1": makeTemplate("tmpl-1", "target-test", 1),
 	}}
 	uc := pipelineUC.New(templates, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"target_id":"missing-target"}`
@@ -574,7 +581,7 @@ func TestDeployByTemplate_RejectsUnknownTarget(t *testing.T) {
 
 func TestSaveTemplate_Success(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"name":"test-pipeline","pipeline":{"nodes":[{"id":"a"}]}}`
@@ -600,7 +607,7 @@ func TestSaveTemplate_Success(t *testing.T) {
 
 func TestSaveTemplate_MissingName(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"pipeline":{"nodes":[]}}`
@@ -616,7 +623,7 @@ func TestSaveTemplate_MissingName(t *testing.T) {
 
 func TestSaveTemplate_MissingPipeline(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"name":"test"}`
@@ -632,7 +639,7 @@ func TestSaveTemplate_MissingPipeline(t *testing.T) {
 
 func TestListTemplates_Empty(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines", nil)
@@ -659,7 +666,7 @@ func TestListTemplates_WithItem(t *testing.T) {
 	templateRepo := &mockTemplateRepo{}
 	_ = templateRepo.Save(context.Background(), makeTemplate("tpl-1", "pipeline-a", 1))
 	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines", nil)
@@ -679,11 +686,83 @@ func TestListTemplates_WithItem(t *testing.T) {
 	}
 }
 
+func TestListTemplates_PaginationAndFilters(t *testing.T) {
+	templateRepo := &mockTemplateRepo{}
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("tpl-%02d", i)
+		name := fmt.Sprintf("pipeline-%02d", i)
+		scope := "dev"
+		if i%3 == 0 {
+			scope = "prod"
+			name = fmt.Sprintf("prod-pipeline-%02d", i)
+		}
+		_ = templateRepo.Save(context.Background(), makeTemplateWithScope(id, name, 1, scope))
+	}
+	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines?page=1&page_size=10", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	items, ok := resp["items"].([]interface{})
+	if !ok {
+		t.Fatal("expected items array")
+	}
+	if len(items) != 10 {
+		t.Fatalf("expected 10 items, got %d", len(items))
+	}
+	total, ok := resp["total"].(float64)
+	if !ok || int(total) < 12 {
+		t.Fatalf("expected total >= 12, got %#v", resp["total"])
+	}
+	if resp["pageSize"] != float64(10) && resp["page_size"] != float64(10) {
+		t.Fatalf("expected pageSize/page_size 10, got %#v / %#v", resp["pageSize"], resp["page_size"])
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipelines?scope=prod&page_size=50", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("scope filter: expected 200, got %d", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal scope: %v", err)
+	}
+	for _, item := range resp["items"].([]interface{}) {
+		row := item.(map[string]interface{})
+		if row["scope"] != "prod" {
+			t.Fatalf("expected prod scope only, got %#v", row["scope"])
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipelines?q=prod-pipeline-03&page_size=50", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("q filter: expected 200, got %d", w.Code)
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal q: %v", err)
+	}
+	qItems := resp["items"].([]interface{})
+	if len(qItems) != 1 {
+		t.Fatalf("expected 1 q match, got %d", len(qItems))
+	}
+}
+
 func TestGetTemplate_Success(t *testing.T) {
 	templateRepo := &mockTemplateRepo{}
 	_ = templateRepo.Save(context.Background(), makeTemplate("tpl-1", "my-pipeline", 1))
 	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines/tpl-1", nil)
@@ -707,7 +786,7 @@ func TestGetTemplate_Success(t *testing.T) {
 
 func TestGetTemplate_NotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines/non-existent", nil)
@@ -723,7 +802,7 @@ func TestDeleteTemplate_Success(t *testing.T) {
 	templateRepo := &mockTemplateRepo{}
 	_ = templateRepo.Save(context.Background(), makeTemplate("tpl-1", "my-pipeline", 1))
 	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/pipelines/tpl-1", nil)
@@ -742,7 +821,7 @@ func TestDeleteTemplate_EmptyID(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r.DELETE("/api/v1/pipelines/:id", h.DeleteTemplate)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/pipelines/%20%20", nil)
@@ -759,7 +838,7 @@ func TestListVersions_Success(t *testing.T) {
 	_ = templateRepo.Save(context.Background(), makeTemplate("v1", "my-pipeline", 1))
 	_ = templateRepo.Save(context.Background(), makeTemplate("v2", "my-pipeline", 2))
 	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines/my-pipeline/versions", nil)
@@ -783,7 +862,7 @@ func TestListVersions_Success(t *testing.T) {
 
 func TestDeploy_Success(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"pipeline":{"name":"test","nodes":[]},"name":"my-deploy","asset_ids":[]}`
@@ -806,7 +885,7 @@ func TestDeploy_Success(t *testing.T) {
 
 func TestDeploy_MissingPipeline(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"name":"test"}`
@@ -824,7 +903,7 @@ func TestDeployByTemplate_Success(t *testing.T) {
 	templateRepo := &mockTemplateRepo{}
 	_ = templateRepo.Save(context.Background(), makeTemplate("tpl-1", "my-pipeline", 1))
 	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"name":"from-template","asset_ids":[]}`
@@ -862,7 +941,7 @@ func TestDeployByTemplate_UsesRequestedVersion(t *testing.T) {
 	_ = templateRepo.Save(context.Background(), v1)
 	_ = templateRepo.Save(context.Background(), v2)
 	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/deploy/template/tpl-v2", strings.NewReader(`{"version":1}`))
@@ -890,7 +969,7 @@ func TestDeployByTemplate_UsesRequestedVersion(t *testing.T) {
 
 func TestDeployByTemplate_NotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{}`
@@ -908,7 +987,7 @@ func TestDeployByTemplate_EmptyID(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r.POST("/api/v1/deploy/template/:id", h.DeployByTemplate)
 
 	body := `{}`
@@ -926,7 +1005,7 @@ func TestDeployByTemplate_EmptyID(t *testing.T) {
 
 func TestListDeployments_Empty(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments", nil)
@@ -955,7 +1034,7 @@ func TestListDeployments_WithItem(t *testing.T) {
 	dep.PipelineJSON = map[string]interface{}{"_input_asset_ids": []interface{}{"asset-a", "asset-b"}}
 	_ = depRepo.Save(context.Background(), dep)
 	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments", nil)
@@ -990,7 +1069,7 @@ func TestGetDeployment_Success(t *testing.T) {
 	depRepo := &mockDeploymentRepo{}
 	_ = depRepo.Save(context.Background(), makeDeployment("dep-1", "my-pipeline", "Succeeded"))
 	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments/dep-1", nil)
@@ -1014,7 +1093,7 @@ func TestGetDeployment_Success(t *testing.T) {
 
 func TestGetDeployment_NotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments/non-existent", nil)
@@ -1030,7 +1109,7 @@ func TestGetDeployment_EmptyID(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r.GET("/api/v1/deployments/:id", h.GetDeployment)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments/", nil)
@@ -1046,7 +1125,7 @@ func TestDeleteDeployment_Success(t *testing.T) {
 	depRepo := &mockDeploymentRepo{}
 	_ = depRepo.Save(context.Background(), makeDeployment("dep-1", "my-pipeline", "Succeeded"))
 	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/deployments/dep-1", nil)
@@ -1065,7 +1144,7 @@ func TestDeleteDeployment_EmptyID(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r.DELETE("/api/v1/deployments/:id", h.DeleteDeployment)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/deployments/%20%20", nil)
@@ -1085,7 +1164,7 @@ func TestRetryDeployment_Success(t *testing.T) {
 		PipelineJSON: map[string]interface{}{"name": "test", "nodes": []interface{}{}},
 	})
 	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/dep-1/retry", nil)
@@ -1106,7 +1185,7 @@ func TestRetryDeployment_Success(t *testing.T) {
 
 func TestRetryDeployment_NotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/non-existent/retry", nil)
@@ -1122,7 +1201,7 @@ func TestStopDeployment_Success(t *testing.T) {
 	depRepo := &mockDeploymentRepo{}
 	_ = depRepo.Save(context.Background(), makeDeployment("dep-1", "my-pipeline", "Running"))
 	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	// With nil wfClient, StopDeployment returns an error
@@ -1137,7 +1216,7 @@ func TestStopDeployment_Success(t *testing.T) {
 
 func TestStopDeployment_NotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/non-existent/stop", nil)
@@ -1158,7 +1237,7 @@ func TestSaveFromDeployment_Success(t *testing.T) {
 		PipelineJSON: map[string]interface{}{"name": "test", "nodes": []interface{}{}},
 	})
 	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"name":"saved-template"}`
@@ -1181,7 +1260,7 @@ func TestSaveFromDeployment_Success(t *testing.T) {
 
 func TestSaveFromDeployment_NotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"name":"saved-template"}`
@@ -1197,7 +1276,7 @@ func TestSaveFromDeployment_NotFound(t *testing.T) {
 
 func TestGetResourceUsage_NotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments/non-existent/resources", nil)
@@ -1211,7 +1290,7 @@ func TestGetResourceUsage_NotFound(t *testing.T) {
 
 func TestGetWorkflowResourceUsage_Success(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/wf-1/resources", nil)
@@ -1244,7 +1323,7 @@ func TestDiffTemplates_Success(t *testing.T) {
 	_ = templateRepo.Save(context.Background(), makeTemplate("tpl-1", "pipeline-a", 1))
 	_ = templateRepo.Save(context.Background(), makeTemplate("tpl-2", "pipeline-b", 1))
 	uc := pipelineUC.New(templateRepo, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines/tpl-1/diff/tpl-2", nil)
@@ -1273,7 +1352,7 @@ func TestRegisterOutput_Success(t *testing.T) {
 	})
 	assetRepo := &mockAssetRepo{assets: make(map[string]*models.Asset)}
 	uc := pipelineUC.New(&mockTemplateRepo{}, depRepo, assetRepo, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"deployment_id":"dep-1","node_id":"step-1","storage_uri":"s3://bucket/output","asset_type":"dataset"}`
@@ -1296,7 +1375,7 @@ func TestRegisterOutput_Success(t *testing.T) {
 
 func TestRegisterOutput_MissingDeploymentID(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"node_id":"step-1","storage_uri":"s3://bucket/output","asset_type":"dataset"}`
@@ -1312,7 +1391,7 @@ func TestRegisterOutput_MissingDeploymentID(t *testing.T) {
 
 func TestRegisterOutput_InvalidBody(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{invalid json`
@@ -1328,7 +1407,7 @@ func TestRegisterOutput_InvalidBody(t *testing.T) {
 
 func TestRegisterOutput_DeploymentNotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"deployment_id":"non-existent","storage_uri":"s3://bucket/output","asset_type":"dataset"}`
@@ -1345,7 +1424,7 @@ func TestRegisterOutput_DeploymentNotFound(t *testing.T) {
 func TestGetLineage_Success(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
 	// GetLineage requires assetEventRepo; without it, returns 500
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/assets/asset-1/pipeline-lineage", nil)
@@ -1362,7 +1441,7 @@ func TestGetLineage_EmptyID(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r.GET("/api/v1/assets/:id/pipeline-lineage", h.GetLineage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/assets/%20%20/pipeline-lineage", nil)
@@ -1379,7 +1458,7 @@ func TestGetLineage_EmptyID(t *testing.T) {
 func TestDeploy_WithAssetValidation(t *testing.T) {
 	assetRepo := &mockAssetRepo{assets: map[string]*models.Asset{"a1": {AssetID: "a1"}}}
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, assetRepo, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{"pipeline":{"name":"test","nodes":[]},"name":"my-deploy","asset_ids":["a1","non-existent"]}`
@@ -1412,7 +1491,7 @@ func TestDeploy_WithAssetValidation(t *testing.T) {
 
 func TestDeployByTemplate_TemplateNotFound(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	body := `{}`
@@ -1430,7 +1509,7 @@ func TestDeployByTemplate_TemplateNotFound(t *testing.T) {
 
 func TestCreateRunByTemplate_MalformedBody(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-runs/template/tmpl-1", strings.NewReader("not-json"))
@@ -1451,7 +1530,7 @@ func TestCreateRunByTemplate_EmptyBody_OK(t *testing.T) {
 	// We use a non-existent template id so the usecase returns 4xx/5xx,
 	// but the binding path must not produce 400.
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "default")
-	h := New(uc, "")
+	h := New(uc, "", nil)
 	r := setupRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-runs/template/missing-tmpl", nil)

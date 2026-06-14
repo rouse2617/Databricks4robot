@@ -102,10 +102,11 @@ func (h *Handler) ListTemplates(c *gin.Context) {
 		items = []models.PipelineTemplate{}
 	}
 	c.JSON(200, gin.H{
-		"items":    items,
-		"total":    total,
-		"page":     page,
-		"pageSize": pageSize,
+		"items":     items,
+		"total":     total,
+		"page":      page,
+		"pageSize":  pageSize,
+		"page_size": pageSize,
 	})
 }
 

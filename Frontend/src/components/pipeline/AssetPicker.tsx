@@ -12,6 +12,11 @@ import { useEffect, useRef, useState, type Key } from "react";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
 import { mergeAssetIds, parseAssetIdInput } from "../../lib/assetIdInput";
+import {
+	batchAssetLimitError,
+	exceedsBatchAssetLimit,
+	MAX_BATCH_ASSET_COUNT,
+} from "../../lib/batchAssetLimits";
 
 const SEARCH_PAGE_SIZE = 100;
 
@@ -76,25 +81,40 @@ export default function AssetPicker({
 		onSelectionChange(selectedIds.filter((id) => id !== assetId));
 	};
 
+	const applyAssetIds = (incoming: string[]) => {
+		if (incoming.length === 0) return;
+		const merged = mergeAssetIds(selectedIds, incoming);
+		if (exceedsBatchAssetLimit(merged.length)) {
+			setError(batchAssetLimitError(merged.length));
+			return;
+		}
+		setError(null);
+		onSelectionChange(merged);
+	};
+
 	const addManualAssetIds = (raw: string) => {
 		const incoming = parseAssetIdInput(raw);
-		if (incoming.length === 0) return;
-		onSelectionChange(mergeAssetIds(selectedIds, incoming));
+		applyAssetIds(incoming);
 		setQuery("");
 		setResults([]);
 	};
 
 	const handleBulkPasteApply = () => {
 		const incoming = parseAssetIdInput(bulkPaste);
-		if (incoming.length === 0) return;
-		onSelectionChange(mergeAssetIds(selectedIds, incoming));
+		applyAssetIds(incoming);
 		setBulkPaste("");
 	};
 
 	const handleTableSelectionChange = (keys: Key[]) => {
 		const pageIds = new Set(results.map((row) => row.asset_id));
 		const offPageSelected = selectedIds.filter((id) => !pageIds.has(id));
-		onSelectionChange(mergeAssetIds(offPageSelected, keys as string[]));
+		const merged = mergeAssetIds(offPageSelected, keys as string[]);
+		if (exceedsBatchAssetLimit(merged.length)) {
+			setError(batchAssetLimitError(merged.length));
+			return;
+		}
+		setError(null);
+		onSelectionChange(merged);
 	};
 
 	const handleSearch = async (value: string) => {
@@ -196,7 +216,7 @@ export default function AssetPicker({
 								<Input.TextArea
 									value={bulkPaste}
 									onChange={(event) => setBulkPaste(event.target.value)}
-									placeholder="每行一个 asset_id，或逗号分隔；适合大批量（如 10 万条）粘贴后创建批量任务"
+									placeholder={`每行一个 asset_id，或逗号分隔；单次批量最多 ${MAX_BATCH_ASSET_COUNT.toLocaleString()} 条`}
 									autoSize={{ minRows: 4, maxRows: 10 }}
 								/>
 								<Button

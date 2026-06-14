@@ -172,6 +172,8 @@ export function previewDeploy(
 export function listPipelines(
 	params: ListPipelinesParams = {},
 ): Promise<ListPipelinesResponse> {
+	const page = params.page ?? 1;
+	const pageSize = params.pageSize ?? 20;
 	const qs = new URLSearchParams();
 	if (params.page) qs.set("page", String(params.page));
 	if (params.pageSize) qs.set("page_size", String(params.pageSize));
@@ -179,10 +181,28 @@ export function listPipelines(
 	if (params.scope) qs.set("scope", params.scope);
 	if (params.sort) qs.set("sort", params.sort);
 	const query = qs.toString();
-	return request<ListPipelinesResponse>(
-		"GET",
-		`/pipelines${query ? `?${query}` : ""}`,
-	);
+	return request<
+		Partial<ListPipelinesResponse> & {
+			items?: PipelineTemplate[];
+			page_size?: number;
+		}
+	>("GET", `/pipelines${query ? `?${query}` : ""}`).then((raw) => {
+		const items = raw.items ?? [];
+		const resolvedPageSize = raw.pageSize ?? raw.page_size ?? pageSize;
+		const hasServerTotal = typeof raw.total === "number";
+		const total = hasServerTotal ? raw.total : items.length;
+		let normalizedItems = items;
+		if (!hasServerTotal && items.length > resolvedPageSize) {
+			const start = (page - 1) * resolvedPageSize;
+			normalizedItems = items.slice(start, start + resolvedPageSize);
+		}
+		return {
+			items: normalizedItems,
+			total,
+			page: raw.page ?? page,
+			pageSize: resolvedPageSize,
+		};
+	});
 }
 
 export interface ListPipelinesParams {

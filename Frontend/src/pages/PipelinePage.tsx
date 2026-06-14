@@ -487,6 +487,7 @@ function PipelineCanvas() {
 
 	const addComponentToCanvas = useCallback(
 		(comp: RegisteredComponent, clientPosition?: { x: number; y: number }) => {
+			if (readOnlyMode) return;
 			const bounds = wrapperRef.current?.getBoundingClientRect();
 			const screenPosition =
 				clientPosition ??
@@ -503,7 +504,7 @@ function PipelineCanvas() {
 			setSelectedNode(newNode);
 			setEditingNodeId(null);
 		},
-		[editor, nodes.length],
+		[editor, nodes.length, readOnlyMode],
 	);
 
 	const onDrop = useCallback(
@@ -1161,6 +1162,7 @@ function PipelineCanvas() {
 					loading={componentsLoading}
 					error={componentsError}
 					onRetry={reloadComponents}
+					disabled={readOnlyMode}
 				/>
 				<div
 					className={[
@@ -1171,8 +1173,8 @@ function PipelineCanvas() {
 						.join(" ")}
 					ref={wrapperRef}
 					style={{ flex: 1, height: "100%", position: "relative" }}
-					onDrop={onDrop}
-					onDragOver={onDragOver}
+					onDrop={readOnlyMode ? undefined : onDrop}
+					onDragOver={readOnlyMode ? undefined : onDragOver}
 					role="application"
 					aria-label="流水线画布"
 				>

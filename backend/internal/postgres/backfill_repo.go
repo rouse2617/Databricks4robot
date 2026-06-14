@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -192,7 +193,7 @@ func (r *BackfillRepo) SaveItem(ctx context.Context, item *models.BackfillItem) 
 	return nil
 }
 
-// SaveItems bulk-inserts backfill items in a batch.
+// SaveItems bulk-inserts backfill items using multi-row INSERT statements.
 func (r *BackfillRepo) SaveItems(ctx context.Context, items []models.BackfillItem) error {
 	if len(items) == 0 {
 		return nil
@@ -207,16 +208,42 @@ func (r *BackfillRepo) SaveItems(ctx context.Context, items []models.BackfillIte
 		items[i].CreatedAt = now
 	}
 
-	const q = `
-	INSERT INTO backfill_items (id, job_id, asset_id, status,
-	  pipeline_run_id, workflow_name, error_message, started_at, finished_at, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	const colsPerRow = 10
+	const rowsPerStmt = 50
+	for start := 0; start < len(items); start += rowsPerStmt {
+		end := start + rowsPerStmt
+		if end > len(items) {
+			end = len(items)
+		}
+		chunk := items[start:end]
 
-	for _, item := range items {
-		if err := db.Exec(ctx, q,
-			item.ID, item.JobID, item.AssetID, item.Status,
-			item.PipelineRunID, item.WorkflowName, item.ErrorMessage, item.StartedAt, item.FinishedAt, item.CreatedAt,
-		); err != nil {
+		var sb strings.Builder
+		sb.WriteString(`
+INSERT INTO backfill_items (id, job_id, asset_id, status,
+  pipeline_run_id, workflow_name, error_message, started_at, finished_at, created_at)
+VALUES `)
+
+		args := make([]any, 0, len(chunk)*colsPerRow)
+		for i, item := range chunk {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			base := i*colsPerRow + 1
+			fmt.Fprintf(
+				&sb,
+				"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				base, base+1, base+2, base+3, base+4,
+				base+5, base+6, base+7, base+8, base+9,
+			)
+			args = append(
+				args,
+				item.ID, item.JobID, item.AssetID, item.Status,
+				item.PipelineRunID, item.WorkflowName, item.ErrorMessage,
+				item.StartedAt, item.FinishedAt, item.CreatedAt,
+			)
+		}
+
+		if err := db.Exec(ctx, sb.String(), args...); err != nil {
 			return fmt.Errorf("postgres BackfillRepo.SaveItems: %w", err)
 		}
 	}
@@ -285,6 +312,85 @@ func (r *BackfillRepo) CountItemsByStatus(ctx context.Context, jobID, status str
 		return 0, fmt.Errorf("postgres BackfillRepo.CountItemsByStatus: %w", err)
 	}
 	return n, nil
+}
+
+// SummarizeItemStatuses returns aggregate counts per status bucket in one query.
+func (r *BackfillRepo) SummarizeItemStatuses(ctx context.Context, jobID string) (repository.BackfillItemStatusSummary, error) {
+	const q = `
+SELECT
+  COUNT(*) FILTER (WHERE status = 'completed'),
+  COUNT(*) FILTER (WHERE status IN ('failed', 'cancelled')),
+  COUNT(*) FILTER (WHERE status = 'pending'),
+  COUNT(*) FILTER (WHERE status = 'running')
+FROM backfill_items
+WHERE job_id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	var summary repository.BackfillItemStatusSummary
+	if err := db.QueryRow(ctx, q, jobID).Scan(
+		&summary.Completed,
+		&summary.Failed,
+		&summary.Pending,
+		&summary.Running,
+	); err != nil {
+		return summary, fmt.Errorf("postgres BackfillRepo.SummarizeItemStatuses: %w", err)
+	}
+	return summary, nil
+}
+
+// FindItemsByJobIDWithStatuses returns items matching any of the given statuses.
+func (r *BackfillRepo) FindItemsByJobIDWithStatuses(ctx context.Context, jobID string, statuses []string) ([]models.BackfillItem, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]any, 0, len(statuses)+1)
+	args = append(args, jobID)
+	for i, status := range statuses {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, status)
+	}
+	q := `SELECT ` + backfillItemSelectCols + `
+FROM backfill_items
+WHERE job_id = $1 AND status IN (` + strings.Join(placeholders, ",") + `)
+ORDER BY created_at ASC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.FindItemsByJobIDWithStatuses: %w", err)
+	}
+	defer rows.Close()
+	var out []models.BackfillItem
+	for rows.Next() {
+		item, err := scanBackfillItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.FindItemsByJobIDWithStatuses scan: %w", err)
+		}
+		out = append(out, *item)
+	}
+	return out, nil
+}
+
+// FindItemsMissingPipelineRun returns items without a linked pipeline run row.
+func (r *BackfillRepo) FindItemsMissingPipelineRun(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
+	q := `SELECT ` + backfillItemSelectCols + `
+FROM backfill_items
+WHERE job_id = $1 AND (pipeline_run_id IS NULL OR pipeline_run_id = '')
+ORDER BY created_at ASC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.FindItemsMissingPipelineRun: %w", err)
+	}
+	defer rows.Close()
+	var out []models.BackfillItem
+	for rows.Next() {
+		item, err := scanBackfillItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.FindItemsMissingPipelineRun scan: %w", err)
+		}
+		out = append(out, *item)
+	}
+	return out, nil
 }
 
 // UpdateItemPipelineRun links an item to its pipeline run and workflow name.

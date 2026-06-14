@@ -25,4 +25,15 @@ type BackfillRepository interface {
 	UpdateItemPipelineRun(ctx context.Context, id, pipelineRunID, workflowName, status string) error
 	UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error
 	CountItemsByStatus(ctx context.Context, jobID, status string) (int, error)
+	SummarizeItemStatuses(ctx context.Context, jobID string) (BackfillItemStatusSummary, error)
+	FindItemsByJobIDWithStatuses(ctx context.Context, jobID string, statuses []string) ([]models.BackfillItem, error)
+	FindItemsMissingPipelineRun(ctx context.Context, jobID string) ([]models.BackfillItem, error)
+}
+
+// BackfillItemStatusSummary aggregates item counts by coarse status bucket.
+type BackfillItemStatusSummary struct {
+	Completed int
+	Failed    int
+	Pending   int
+	Running   int
 }

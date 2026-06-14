@@ -15,6 +15,9 @@ const previewId = (process.env.E2E_PREVIEW_ID || "").trim();
 const previewHost = (
 	process.env.E2E_PREVIEW_HOST || "https://cyber-databrew-dev.cyberorigin.ai"
 ).replace(/\/$/, "");
+const apiBaseUrl = (
+	process.env.E2E_API_BASE_URL || process.env.VITE_API_BASE_URL || ""
+).trim();
 const devToken = (
 	process.env.E2E_DATABREW_TOKEN ||
 	process.env.VITE_DEV_ACCESS_TOKEN ||
@@ -24,6 +27,7 @@ const devToken = (
 const devServerEnv = [
 	previewId ? `VITE_PREVIEW_ID=${previewId}` : "",
 	previewId ? `VITE_PREVIEW_HOST=${previewHost}` : "",
+	apiBaseUrl ? `VITE_API_BASE_URL=${apiBaseUrl}` : "",
 	devToken ? `VITE_DEV_ACCESS_TOKEN=${devToken}` : "",
 ]
 	.filter(Boolean)

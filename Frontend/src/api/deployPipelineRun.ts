@@ -1,5 +1,9 @@
 import { type BatchJob, createBatchJob } from "./batchJobApi";
 import {
+	batchAssetLimitError,
+	exceedsBatchAssetLimit,
+} from "../lib/batchAssetLimits";
+import {
 	type Deployment,
 	deployTemplate,
 	normalizeDeployResults,
@@ -20,6 +24,9 @@ export async function deployPipelineForAssets(
 		batchName?: string;
 	},
 ): Promise<DeployPipelineResult> {
+	if (exceedsBatchAssetLimit(assetIds.length)) {
+		throw new Error(batchAssetLimitError(assetIds.length));
+	}
 	if (assetIds.length >= BATCH_ASSET_THRESHOLD) {
 		const stamp = new Date()
 			.toISOString()
