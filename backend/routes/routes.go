@@ -414,6 +414,7 @@ func RegisterAll(
 			api.POST("/backfill/:id/rerun", backfillHandler.Rerun)
 			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
 			api.POST("/backfill/:id/continue-full", backfillHandler.ContinueFull)
+			api.POST("/backfill/results", backfillHandler.UploadResult)
 		}
 
 		if queryHandler != nil {

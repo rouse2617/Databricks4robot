@@ -199,7 +199,48 @@ func (h *Handler) Rerun(c *gin.Context) {
 	c.JSON(200, result)
 }
 
-// ContinueFull handles POST /api/v1/backfill/:id/continue-full.
+// UploadResult handles POST /api/v1/backfill/results.
+func (h *Handler) UploadResult(c *gin.Context) {
+	var req struct {
+		AssetID  string         `json:"assetId" binding:"required"`
+		ReportID string         `json:"reportId" binding:"required"`
+		Version  string         `json:"version" binding:"required"`
+		Manifest map[string]any `json:"manifest"`
+		Result   map[string]any `json:"result"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	out, err := h.uc.UploadResult(c.Request.Context(), uc.UploadResultInput{
+		AssetID:  req.AssetID,
+		ReportID: req.ReportID,
+		Version:  req.Version,
+		Manifest: req.Manifest,
+		Result:   req.Result,
+	})
+	if err != nil {
+		mapUploadResultError(c, err)
+		return
+	}
+	c.JSON(201, out)
+}
+
+func mapUploadResultError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, uc.ErrAssetNotFound):
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+	case errors.Is(err, uc.ErrReportManifestMissing):
+		httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+	case errors.Is(err, uc.ErrManifestMismatch),
+		errors.Is(err, uc.ErrPayloadTooLarge),
+		errors.Is(err, uc.ErrInvalidUploadRequest):
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+	default:
+		httpresp.Internal(c, err.Error())
+	}
+}
+
 func (h *Handler) ContinueFull(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {

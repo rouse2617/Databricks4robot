@@ -72,6 +72,9 @@ func (missingJobRepo) CountPipelineRunsByBatchJobID(_ context.Context, _ string)
 func (missingJobRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
+func (missingJobRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
+	return nil, nil
+}
 
 func TestRetryFailed_NotFoundHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)

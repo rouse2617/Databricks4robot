@@ -2998,3 +2998,33 @@ curl -i -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
   -H "Content-Type: application/json" \
   -d '{"scope":"node_failed"}'
 ```
+
+## Backfill result upload (CYB-2097)
+
+Register algorithm JSON against an asset + report manifest. Requires `report_manifests`
+and `algo_run_results` tables on dev (legacy/dev schema).
+
+```bash
+curl -X POST "$BASE/api/v1/backfill/results" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assetId": "<ASSET_ID>",
+    "reportId": "report.project@1.0.0-backfill-left-eye-only",
+    "version": "1.0.0",
+    "manifest": { "assetId": "<ASSET_ID>" },
+    "result": { "crop": "left_eye_only", "status": "ok" }
+  }'
+
+# 错误路径：manifest assetId 与 body 不一致 → 400
+curl -i -X POST "$BASE/api/v1/backfill/results" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assetId": "<ASSET_ID>",
+    "reportId": "report.project@1.0.0-backfill-left-eye-only",
+    "version": "1.0.0",
+    "manifest": { "assetId": "other-asset" },
+    "result": {}
+  }'
+```
