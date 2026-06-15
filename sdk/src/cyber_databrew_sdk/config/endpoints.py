@@ -156,6 +156,9 @@ ENDPOINTS: dict[str, str] = {
     "pipeline_component_get": "/api/v1/pipeline-components/{component_id}",
     "pipeline_component_update": "/api/v1/pipeline-components/{component_id}",
     "pipeline_component_delete": "/api/v1/pipeline-components/{component_id}",
+    "pipeline_component_release_list": "/api/v1/pipeline-component-releases",
+    "pipeline_component_release_get": "/api/v1/pipeline-component-releases/{release_id}",
+    "pipeline_component_release_sync": "/api/v1/pipeline-component-releases/sync",
     # ── SDK Config (bootstrap discovery) ──────────────────────────────
     "sdk_config": "/api/v1/sdk-config",
 }

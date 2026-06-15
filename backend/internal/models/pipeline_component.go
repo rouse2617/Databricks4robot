@@ -37,3 +37,45 @@ type EnvVarDef struct {
 	Name  string `json:"name"`
 	Value string `json:"value,omitempty"`
 }
+
+// ComponentReleaseRuntimeSnapshot captures the immutable runtime contract used
+// when a pipeline node selects a generated component release.
+type ComponentReleaseRuntimeSnapshot struct {
+	Image       string                 `json:"image"`
+	Command     []string               `json:"command,omitempty"`
+	Args        []string               `json:"args,omitempty"`
+	Env         map[string]string      `json:"env,omitempty"`
+	InputPorts  []PortDef              `json:"inputPorts"`
+	OutputPorts []PortDef              `json:"outputPorts"`
+	Resources   map[string]interface{} `json:"resources,omitempty"`
+}
+
+// PipelineComponentRelease is a generated, validated version of an algorithm
+// task. Normal users select releases rather than authoring image/digest fields.
+type PipelineComponentRelease struct {
+	ID                string                          `json:"id"`
+	ComponentID       string                          `json:"componentId"`
+	TaskName          string                          `json:"taskName"`
+	TaskPath          string                          `json:"taskPath,omitempty"`
+	DisplayName       string                          `json:"displayName,omitempty"`
+	Owner             string                          `json:"owner,omitempty"`
+	ReleaseLabel      string                          `json:"releaseLabel"`
+	Channel           string                          `json:"channel"`
+	SourceRepo        string                          `json:"sourceRepo,omitempty"`
+	SourceRef         string                          `json:"sourceRef,omitempty"`
+	SourceCommit      string                          `json:"sourceCommit,omitempty"`
+	BuildID           string                          `json:"buildId,omitempty"`
+	ImageRepo         string                          `json:"imageRepo,omitempty"`
+	ImageTag          string                          `json:"imageTag,omitempty"`
+	ImageDigest       string                          `json:"imageDigest,omitempty"`
+	RuntimeImage      string                          `json:"runtimeImage"`
+	Status            string                          `json:"status"`
+	Selectable        bool                            `json:"selectable"`
+	ValidationStatus  string                          `json:"validationStatus"`
+	ValidationErrors  []string                        `json:"validationErrors,omitempty"`
+	RuntimeSnapshot   ComponentReleaseRuntimeSnapshot `json:"runtimeSnapshot"`
+	TechnicalMetadata map[string]interface{}          `json:"technicalMetadata,omitempty"`
+	CreatedAt         time.Time                       `json:"createdAt"`
+	UpdatedAt         time.Time                       `json:"updatedAt"`
+	LastSyncedAt      *time.Time                      `json:"lastSyncedAt,omitempty"`
+}

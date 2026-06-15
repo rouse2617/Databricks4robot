@@ -379,6 +379,9 @@ func RegisterAll(
 			api.GET("/pipeline-components/:id", pipelineComponentHandler.GetComponent)
 			api.PUT("/pipeline-components/:id", pipelineComponentHandler.UpdateComponent)
 			api.DELETE("/pipeline-components/:id", pipelineComponentHandler.DeleteComponent)
+			api.GET("/pipeline-component-releases", pipelineComponentHandler.ListReleases)
+			api.POST("/pipeline-component-releases/sync", pipelineComponentHandler.SyncReleases)
+			api.GET("/pipeline-component-releases/:id", pipelineComponentHandler.GetRelease)
 		}
 
 		// Workflow monitoring

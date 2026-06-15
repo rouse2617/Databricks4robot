@@ -518,6 +518,30 @@ class TestPipelineComponentManager:
         )
         assert client.pipeline_components.delete("c1") == {}
 
+    def test_component_releases(self, client):
+        respx.get(f"{BASE_URL}/api/v1/pipeline-component-releases").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "r1"}]})
+        )
+        assert client.pipeline_components.list_releases(
+            q="hand",
+            component_id="hand-detect-yolov26m",
+            status="ready",
+            selectable=True,
+        ) == {"items": [{"id": "r1"}]}
+
+        respx.get(f"{BASE_URL}/api/v1/pipeline-component-releases/r1").mock(
+            return_value=httpx.Response(200, json={"id": "r1", "releaseLabel": "main-abc123"})
+        )
+        assert client.pipeline_components.get_release("r1")["id"] == "r1"
+
+        route = respx.post(f"{BASE_URL}/api/v1/pipeline-component-releases/sync").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "r1"}]})
+        )
+        payload = [{"componentId": "hand-detect-yolov26m", "releaseLabel": "main-abc123"}]
+        assert client.pipeline_components.sync_releases(payload) == {"items": [{"id": "r1"}]}
+        body = route.calls.last.request.read()
+        assert b'"items":[{"componentId":"hand-detect-yolov26m"' in body
+
 
 # =========================================================================
 # SearchManager

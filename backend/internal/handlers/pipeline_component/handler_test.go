@@ -19,7 +19,8 @@ import (
 // ── Mock Repository ──────────────────────────────────────────────────────────
 
 type mockComponentRepo struct {
-	byID map[string]*models.PipelineComponent
+	byID     map[string]*models.PipelineComponent
+	releases map[string]*models.PipelineComponentRelease
 }
 
 func (m *mockComponentRepo) Save(_ context.Context, c *models.PipelineComponent) error {
@@ -80,6 +81,63 @@ func (m *mockComponentRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *mockComponentRepo) UpsertRelease(_ context.Context, release *models.PipelineComponentRelease) error {
+	if m.releases == nil {
+		m.releases = make(map[string]*models.PipelineComponentRelease)
+	}
+	for id, existing := range m.releases {
+		if existing.ComponentID == release.ComponentID && existing.ReleaseLabel == release.ReleaseLabel {
+			release.ID = existing.ID
+			release.CreatedAt = existing.CreatedAt
+			copied := *release
+			m.releases[id] = &copied
+			return nil
+		}
+	}
+	copied := *release
+	m.releases[release.ID] = &copied
+	return nil
+}
+
+func (m *mockComponentRepo) FindReleases(_ context.Context, filter *repository.ComponentReleaseFilter) ([]models.PipelineComponentRelease, error) {
+	out := make([]models.PipelineComponentRelease, 0)
+	for _, release := range m.releases {
+		if filter != nil {
+			if filter.Query != "" {
+				q := strings.ToLower(filter.Query)
+				haystack := strings.ToLower(release.ComponentID + " " + release.TaskName + " " + release.DisplayName + " " + release.ReleaseLabel)
+				if !strings.Contains(haystack, q) {
+					continue
+				}
+			}
+			if filter.ComponentID != "" && release.ComponentID != filter.ComponentID {
+				continue
+			}
+			if filter.TaskName != "" && release.TaskName != filter.TaskName {
+				continue
+			}
+			if filter.Status != "" && release.Status != filter.Status {
+				continue
+			}
+			if filter.Channel != "" && release.Channel != filter.Channel {
+				continue
+			}
+			if filter.Selectable != nil && release.Selectable != *filter.Selectable {
+				continue
+			}
+		}
+		out = append(out, *release)
+	}
+	return out, nil
+}
+
+func (m *mockComponentRepo) FindReleaseByID(_ context.Context, id string) (*models.PipelineComponentRelease, error) {
+	if m.releases == nil {
+		return nil, nil
+	}
+	return m.releases[id], nil
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 func makeComponent(id, name, source string) *models.PipelineComponent {
@@ -111,6 +169,9 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.GET("/api/v1/pipeline-components/:id", h.GetComponent)
 	r.PUT("/api/v1/pipeline-components/:id", h.UpdateComponent)
 	r.DELETE("/api/v1/pipeline-components/:id", h.DeleteComponent)
+	r.GET("/api/v1/pipeline-component-releases", h.ListReleases)
+	r.POST("/api/v1/pipeline-component-releases/sync", h.SyncReleases)
+	r.GET("/api/v1/pipeline-component-releases/:id", h.GetRelease)
 	return r
 }
 
@@ -426,5 +487,153 @@ func TestDeleteComponent_EmptyID(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for empty id, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSyncReleases_ValidDigestPinnedRelease(t *testing.T) {
+	repo := &mockComponentRepo{}
+	usecase := uc.New(repo)
+	h := New(usecase)
+	r := setupRouter(h)
+
+	body := `{"items":[{
+		"componentId":"hand-detect-yolov26m",
+		"taskName":"hand-detect-yolov26m",
+		"taskPath":"tasks/hand_detect_yolov26m",
+		"releaseLabel":"main-abcdef1",
+		"runtimeImage":"us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"runtimeSnapshot":{
+			"command":["python","src/main.py"],
+			"inputPorts":[{"name":"input","type":"asset"}],
+			"outputPorts":[{"name":"output","type":"asset"}],
+			"resources":{"cpu":"14000m","memory":"55Gi","gpu":"1"}
+		}
+	}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-component-releases/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.PipelineComponentRelease `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected one release, got %d", len(resp.Items))
+	}
+	got := resp.Items[0]
+	if got.ID == "" {
+		t.Fatal("expected generated stable release id")
+	}
+	if got.Channel != "candidate" {
+		t.Fatalf("expected candidate channel, got %q", got.Channel)
+	}
+	if !got.Selectable || got.ValidationStatus != "passed" {
+		t.Fatalf("expected selectable passed release, got selectable=%v validation=%q errors=%v", got.Selectable, got.ValidationStatus, got.ValidationErrors)
+	}
+	if got.Owner != "platform" {
+		t.Fatalf("expected platform owner default, got %q", got.Owner)
+	}
+}
+
+func TestSyncReleases_MissingDigestIsNotSelectable(t *testing.T) {
+	repo := &mockComponentRepo{}
+	usecase := uc.New(repo)
+	h := New(usecase)
+	r := setupRouter(h)
+
+	body := `{"items":[{
+		"componentId":"hand-detect-yolov26m",
+		"taskName":"hand-detect-yolov26m",
+		"releaseLabel":"pr-128-abcdef1",
+		"runtimeImage":"us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m:abcdef1",
+		"runtimeSnapshot":{
+			"command":["python","src/main.py"],
+			"resources":{"cpu":"14000m","memory":"55Gi"}
+		}
+	}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-component-releases/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.PipelineComponentRelease `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("expected one release, got %d", len(resp.Items))
+	}
+	got := resp.Items[0]
+	if got.Selectable {
+		t.Fatal("expected release without digest to be unselectable")
+	}
+	if got.ValidationStatus != "failed" {
+		t.Fatalf("expected failed validation, got %q", got.ValidationStatus)
+	}
+	if len(got.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors")
+	}
+}
+
+func TestListAndGetReleases(t *testing.T) {
+	repo := &mockComponentRepo{}
+	usecase := uc.New(repo)
+	_, err := usecase.SyncReleases(context.Background(), []models.PipelineComponentRelease{{
+		ComponentID:  "head-track-stereo",
+		TaskName:     "head-track-stereo",
+		ReleaseLabel: "v0.4.0",
+		RuntimeImage: "repo/head-track-stereo@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		RuntimeSnapshot: models.ComponentReleaseRuntimeSnapshot{
+			Command:     []string{"python", "src/main.py"},
+			InputPorts:  []models.PortDef{{Name: "input", Type: "asset"}},
+			OutputPorts: []models.PortDef{{Name: "output", Type: "asset"}},
+			Resources:   map[string]interface{}{"cpu": "4000m", "memory": "16Gi"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("sync release: %v", err)
+	}
+	h := New(usecase)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-component-releases?selectable=true&q=head", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var listResp struct {
+		Items []models.PipelineComponentRelease `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(listResp.Items) != 1 {
+		t.Fatalf("expected one release, got %d", len(listResp.Items))
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-component-releases/"+listResp.Items[0].ID, nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var getResp models.PipelineComponentRelease
+	if err := json.Unmarshal(w.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("unmarshal get: %v", err)
+	}
+	if getResp.ReleaseLabel != "v0.4.0" {
+		t.Fatalf("expected release label v0.4.0, got %q", getResp.ReleaseLabel)
 	}
 }

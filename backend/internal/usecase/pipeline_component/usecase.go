@@ -15,12 +15,22 @@ import (
 
 // Usecase orchestrates pipeline component registry operations.
 type Usecase struct {
-	repo repository.PipelineComponentRepository
+	repo        repository.PipelineComponentRepository
+	releaseRepo repository.PipelineComponentReleaseRepository
 }
 
 // New creates a Usecase.
 func New(repo repository.PipelineComponentRepository) *Usecase {
-	return &Usecase{repo: repo}
+	uc := &Usecase{repo: repo}
+	if releaseRepo, ok := repo.(repository.PipelineComponentReleaseRepository); ok {
+		uc.releaseRepo = releaseRepo
+	}
+	return uc
+}
+
+// NewWithReleaseRepo creates a Usecase with independently wired release storage.
+func NewWithReleaseRepo(repo repository.PipelineComponentRepository, releaseRepo repository.PipelineComponentReleaseRepository) *Usecase {
+	return &Usecase{repo: repo, releaseRepo: releaseRepo}
 }
 
 // Create persists a new component.
@@ -88,6 +98,45 @@ func (uc *Usecase) Delete(ctx context.Context, id string) error {
 		return errors.New("system components cannot be deleted")
 	}
 	return uc.repo.Delete(ctx, id)
+}
+
+// SyncReleases validates and persists generated component release records.
+func (uc *Usecase) SyncReleases(ctx context.Context, releases []models.PipelineComponentRelease) ([]models.PipelineComponentRelease, error) {
+	if uc.releaseRepo == nil {
+		return nil, errors.New("component release repository is not configured")
+	}
+	out := make([]models.PipelineComponentRelease, 0, len(releases))
+	for i := range releases {
+		release := releases[i]
+		if err := normalizeComponentRelease(&release); err != nil {
+			return nil, err
+		}
+		if err := uc.releaseRepo.UpsertRelease(ctx, &release); err != nil {
+			return nil, fmt.Errorf("sync component release %q/%q: %w", release.ComponentID, release.ReleaseLabel, err)
+		}
+		out = append(out, release)
+	}
+	return out, nil
+}
+
+// ListReleases returns generated component releases for component selection UI.
+func (uc *Usecase) ListReleases(ctx context.Context, filter repository.ComponentReleaseFilter) ([]models.PipelineComponentRelease, error) {
+	if uc.releaseRepo == nil {
+		return nil, errors.New("component release repository is not configured")
+	}
+	return uc.releaseRepo.FindReleases(ctx, &filter)
+}
+
+// GetRelease returns one generated component release by ID.
+func (uc *Usecase) GetRelease(ctx context.Context, id string) (*models.PipelineComponentRelease, error) {
+	if uc.releaseRepo == nil {
+		return nil, errors.New("component release repository is not configured")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("id is required")
+	}
+	return uc.releaseRepo.FindReleaseByID(ctx, id)
 }
 
 var validComponentTypes = map[string]struct{}{
@@ -168,6 +217,178 @@ func normalizeComponent(pc *models.PipelineComponent, preserveID bool) error {
 		pc.EnvVars = envMapToDefs(pc.Env)
 	}
 	return nil
+}
+
+func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
+	if release == nil {
+		return errors.New("component release is required")
+	}
+	release.ID = strings.TrimSpace(release.ID)
+	release.ComponentID = strings.TrimSpace(release.ComponentID)
+	release.TaskName = strings.TrimSpace(release.TaskName)
+	release.TaskPath = strings.TrimSpace(release.TaskPath)
+	release.DisplayName = strings.TrimSpace(release.DisplayName)
+	release.Owner = strings.TrimSpace(release.Owner)
+	release.ReleaseLabel = strings.TrimSpace(release.ReleaseLabel)
+	release.Channel = strings.ToLower(strings.TrimSpace(release.Channel))
+	release.SourceRepo = strings.TrimSpace(release.SourceRepo)
+	release.SourceRef = strings.TrimSpace(release.SourceRef)
+	release.SourceCommit = strings.TrimSpace(release.SourceCommit)
+	release.BuildID = strings.TrimSpace(release.BuildID)
+	release.ImageRepo = strings.TrimSpace(release.ImageRepo)
+	release.ImageTag = strings.TrimSpace(release.ImageTag)
+	release.ImageDigest = normalizeDigest(strings.TrimSpace(release.ImageDigest))
+	release.RuntimeImage = strings.TrimSpace(release.RuntimeImage)
+	release.Status = strings.ToLower(strings.TrimSpace(release.Status))
+	release.ValidationStatus = strings.ToLower(strings.TrimSpace(release.ValidationStatus))
+
+	if release.ComponentID == "" {
+		release.ComponentID = release.TaskName
+	}
+	if release.TaskName == "" {
+		release.TaskName = release.ComponentID
+	}
+	if release.DisplayName == "" {
+		release.DisplayName = release.TaskName
+	}
+	if release.Owner == "" {
+		release.Owner = "platform"
+	}
+	if release.ReleaseLabel == "" {
+		release.ReleaseLabel = firstNonEmpty(release.ImageTag, shortCommit(release.SourceCommit))
+	}
+	if release.Channel == "" {
+		release.Channel = deriveReleaseChannel(release.ReleaseLabel)
+	}
+	if release.ID == "" && release.ComponentID != "" && release.ReleaseLabel != "" {
+		release.ID = uuid.NewSHA1(uuid.NameSpaceURL, []byte(release.ComponentID+":"+release.ReleaseLabel)).String()
+	}
+	if release.RuntimeSnapshot.Image == "" {
+		release.RuntimeSnapshot.Image = release.RuntimeImage
+	}
+	if release.RuntimeImage == "" {
+		release.RuntimeImage = release.RuntimeSnapshot.Image
+	}
+	if release.ImageDigest == "" {
+		release.ImageDigest = digestFromImage(release.RuntimeImage)
+	}
+	if release.RuntimeImage == "" && release.ImageRepo != "" && release.ImageDigest != "" {
+		release.RuntimeImage = release.ImageRepo + "@" + release.ImageDigest
+		release.RuntimeSnapshot.Image = release.RuntimeImage
+	}
+	if release.RuntimeSnapshot.Image == "" {
+		release.RuntimeSnapshot.Image = release.RuntimeImage
+	}
+	if release.RuntimeSnapshot.InputPorts == nil || len(release.RuntimeSnapshot.InputPorts) == 0 {
+		release.RuntimeSnapshot.InputPorts = []models.PortDef{{Name: "input", Type: "asset"}}
+	}
+	if release.RuntimeSnapshot.OutputPorts == nil || len(release.RuntimeSnapshot.OutputPorts) == 0 {
+		release.RuntimeSnapshot.OutputPorts = []models.PortDef{{Name: "output", Type: "asset"}}
+	}
+	if release.RuntimeSnapshot.Resources == nil {
+		release.RuntimeSnapshot.Resources = map[string]interface{}{}
+	}
+	if release.TechnicalMetadata == nil {
+		release.TechnicalMetadata = map[string]interface{}{}
+	}
+
+	var validationErrors []string
+	if release.ComponentID == "" {
+		validationErrors = append(validationErrors, "componentId is required")
+	}
+	if release.TaskName == "" {
+		validationErrors = append(validationErrors, "taskName is required")
+	}
+	if release.TaskPath != "" && !strings.HasPrefix(release.TaskPath, "tasks/") {
+		validationErrors = append(validationErrors, "taskPath must be under tasks/")
+	}
+	if release.ReleaseLabel == "" {
+		validationErrors = append(validationErrors, "releaseLabel is required")
+	}
+	if release.RuntimeImage == "" {
+		validationErrors = append(validationErrors, "runtimeImage is required")
+	}
+	if release.ImageDigest == "" || !strings.HasPrefix(release.ImageDigest, "sha256:") {
+		validationErrors = append(validationErrors, "imageDigest is required and must be sha256 pinned")
+	}
+	if len(release.RuntimeSnapshot.Command) == 0 {
+		validationErrors = append(validationErrors, "runtimeSnapshot.command is required")
+	}
+	if len(release.RuntimeSnapshot.Resources) == 0 {
+		validationErrors = append(validationErrors, "runtimeSnapshot.resources is required")
+	}
+
+	if len(validationErrors) == 0 {
+		release.ValidationStatus = "passed"
+	} else {
+		release.ValidationStatus = "failed"
+	}
+	release.ValidationErrors = validationErrors
+
+	if release.Status == "" {
+		if release.ValidationStatus == "passed" {
+			release.Status = "ready"
+		} else {
+			release.Status = "failed"
+		}
+	}
+	release.Selectable = release.ValidationStatus == "passed" && release.Status == "ready"
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func shortCommit(commit string) string {
+	commit = strings.TrimSpace(commit)
+	if len(commit) <= 7 {
+		return commit
+	}
+	return commit[:7]
+}
+
+func deriveReleaseChannel(label string) string {
+	label = strings.ToLower(strings.TrimSpace(label))
+	switch {
+	case strings.HasPrefix(label, "pr-"):
+		return "preview"
+	case strings.Contains(label, "-rc."):
+		return "rc"
+	case strings.HasPrefix(label, "main-"):
+		return "candidate"
+	case strings.HasPrefix(label, "v"):
+		return "prod"
+	default:
+		return "dev"
+	}
+}
+
+func normalizeDigest(digest string) string {
+	digest = strings.TrimSpace(digest)
+	if digest == "" {
+		return ""
+	}
+	if strings.HasPrefix(digest, "sha256:") {
+		return digest
+	}
+	if strings.HasPrefix(digest, "@sha256:") {
+		return strings.TrimPrefix(digest, "@")
+	}
+	return digest
+}
+
+func digestFromImage(image string) string {
+	parts := strings.Split(image, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return normalizeDigest(parts[1])
 }
 
 func readResourceString(resources map[string]interface{}, key string) string {
