@@ -157,8 +157,10 @@ check_preview_backend() {
 ensure_preview_backend() {
   local ref="$1"
   [[ -f "${preview_script}" ]] || die "missing ${preview_script}"
-  echo "Deploying backend preview Pod only (--frontend local) for ${ref}..."
-  bash "${preview_script}" "${ref}" --frontend local "${deploy_wait[@]}"
+  {
+    echo "Deploying backend preview Pod only (--frontend local) for ${ref}..."
+    bash "${preview_script}" "${ref}" --frontend local "${deploy_wait[@]}"
+  } >&2
 }
 
 resolve_preview_id_for_mode() {
