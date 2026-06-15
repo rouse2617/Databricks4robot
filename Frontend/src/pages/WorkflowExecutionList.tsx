@@ -561,11 +561,15 @@ export function WorkflowExecutionList({
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
-			const [res, pipelineRunResponse, templates] = await Promise.all([
-				listWorkflows(params).catch((err) => {
-					console.warn("live workflow list unavailable", err);
-					return { items: [] };
-				}),
+			const shouldLoadLiveWorkflows = labelFilter.length > 0;
+			const [liveWorkflowResponse, pipelineRunResponse, templates] =
+				await Promise.all([
+					shouldLoadLiveWorkflows
+						? listWorkflows(params).catch((err) => {
+								console.warn("live workflow list unavailable", err);
+								return { items: [] };
+							})
+						: Promise.resolve({ items: [] }),
 				listPipelineRuns({ view: "summary", excludeBatch: true }).catch(() => ({
 					items: [],
 					total: 0,
@@ -574,6 +578,7 @@ export function WorkflowExecutionList({
 					.then((r) => r.items)
 					.catch(() => []),
 			]);
+			const liveWorkflows = liveWorkflowResponse.items || [];
 			const pipelineRuns = pipelineRunResponse.items ?? [];
 			setServerTotal(pipelineRunResponse.total ?? pipelineRuns.length);
 			setRunIdsByWorkflowName(
@@ -594,7 +599,7 @@ export function WorkflowExecutionList({
 					...templates
 						.filter((t) => t.name)
 						.flatMap((t) =>
-							(res.items || [])
+							liveWorkflows
 								.filter((item) => item.name.startsWith(`${t.name}-`))
 								.map((item) => [item.name, t.version] as const),
 						),
@@ -624,7 +629,7 @@ export function WorkflowExecutionList({
 				),
 			);
 			const enrichedItems = mergeLedgerRunsWithLiveWorkflows(
-				res.items || [],
+				liveWorkflows,
 				pipelineRuns,
 				params,
 			);
