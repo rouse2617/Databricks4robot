@@ -41,7 +41,6 @@ import {
 } from "../api/batchJobApi";
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
 import type { WorkflowSummary } from "../api/workflowApi";
-import { BackfillResultsUpload } from "../components/backfill/BackfillResultsUpload";
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const { Title, Text } = Typography;
@@ -364,24 +363,6 @@ export default function BatchJobDetailPage() {
 					style={{ marginBottom: 16 }}
 				/>
 			) : null}
-
-			<Card title="回填结果上传" style={{ marginBottom: 16 }}>
-				<BackfillResultsUpload
-					defaultReportId={
-						typeof job.filterJson?.expectedReportId === "string"
-							? job.filterJson.expectedReportId
-							: undefined
-					}
-					defaultVersion={
-						typeof job.filterJson?.expectedReportVersion === "string"
-							? job.filterJson.expectedReportVersion
-							: undefined
-					}
-					onUploaded={() => {
-						void refresh();
-					}}
-				/>
-			</Card>
 
 			<Card title="节点概览" style={{ marginBottom: 16 }}>
 				{nodeSummary && !nodeSummary.dataCoverage.complete ? (

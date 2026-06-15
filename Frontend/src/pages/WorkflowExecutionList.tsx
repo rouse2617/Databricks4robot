@@ -856,9 +856,6 @@ export function WorkflowExecutionList({
 							{templateVersion ? (
 								<Tag color="blue">模板 v{templateVersion}</Tag>
 							) : null}
-							{templateId ? (
-								<Tag style={{ fontSize: 11 }}>可回到模板</Tag>
-							) : null}
 							{scope === "prod" ? (
 								<Tag color="green" style={{ fontSize: 11 }}>
 									<LockOutlined /> 正式版
