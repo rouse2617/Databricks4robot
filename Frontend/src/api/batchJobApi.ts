@@ -176,6 +176,32 @@ export function continueFullBatchJob(id: string): Promise<void> {
 	).then(() => undefined);
 }
 
+export interface UploadBackfillResultRequest {
+	assetId: string;
+	reportId: string;
+	version: string;
+	manifest?: Record<string, unknown>;
+	result?: Record<string, unknown>;
+}
+
+export interface UploadBackfillResultResponse {
+	assetId: string;
+	reportId: string;
+	version: string;
+	algoKey: string;
+	status: string;
+}
+
+export function uploadBackfillResult(
+	body: UploadBackfillResultRequest,
+): Promise<UploadBackfillResultResponse> {
+	return request<UploadBackfillResultResponse>(
+		"POST",
+		"/backfill/results",
+		body,
+	);
+}
+
 export function batchJobProgress(job: BatchJob): number {
 	if (!job.totalCount) return 0;
 	return Math.round(

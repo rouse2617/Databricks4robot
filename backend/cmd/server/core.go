@@ -121,7 +121,9 @@ func setupCore(inf *infra) *coreHandlers {
 	puc.StartRunEventWatcher(context.Background(), 10*time.Second, 100)
 
 	backfillRepo := postgres.NewBackfillRepo(pg)
+	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
 	backfillUC := backfillUC.New(backfillRepo, puc)
+	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
 	backfillHandler := backfillH.New(backfillUC)
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)

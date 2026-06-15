@@ -6576,6 +6576,54 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/results:
+    post:
+      tags: [Backfill]
+      summary: Register algorithm result JSON for a backfill asset
+      description: Validates report manifest and upserts a staging row in algo_run_results.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetId, reportId, version]
+              properties:
+                assetId: { type: string }
+                reportId: { type: string, example: report.project@1.0.0-backfill-left-eye-only }
+                version: { type: string, example: "1.0.0" }
+                manifest:
+                  type: object
+                  additionalProperties: true
+                  description: Optional manifest metadata; assetId must match when present
+                result:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '201':
+          description: Result registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assetId: { type: string }
+                  reportId: { type: string }
+                  version: { type: string }
+                  algoKey: { type: string }
+                  status: { type: string, example: registered }
+        '400':
+          description: Validation failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Asset or report manifest not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/backfill/{id}/retry-failed:
     post:
       tags: [Backfill]
