@@ -710,13 +710,47 @@ const pipelineRunSummarySelectCols = `id, template_id, pipeline_name, template_v
   argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
   created_at, updated_at, started_at, finished_at`
 
+func qualifyPipelineRunCols(cols, alias string) string {
+	parts := strings.Split(cols, ",")
+	for i, part := range parts {
+		parts[i] = alias + "." + strings.TrimSpace(part)
+	}
+	return strings.Join(parts, ", ")
+}
+
+const batchItemRunStatusExpr = `CASE bi.status
+      WHEN 'completed' THEN 'Succeeded'
+      WHEN 'failed' THEN 'Failed'
+      WHEN 'cancelled' THEN 'Error'
+      WHEN 'running' THEN 'Running'
+      WHEN 'pending' THEN 'Pending'
+      ELSE pr.status
+    END`
+
+func pipelineRunSummarySelectSQL(batchScoped bool) string {
+	if !batchScoped {
+		return qualifyPipelineRunCols(pipelineRunSummarySelectCols, "pr")
+	}
+	return `pr.id, pr.template_id, pr.pipeline_name, pr.template_version,
+  COALESCE(NULLIF(pr.workflow_name, ''), NULLIF(bi.workflow_name, '')) AS workflow_name,
+  pr.execution_target_id,
+  ` + batchItemRunStatusExpr + ` AS status,
+  pr.node_count, pr.asset_ids, pr.asset_count, pr.no_asset_run,
+  pr.argo_namespace, pr.argo_workflow_uid,
+  CASE WHEN bi.status = 'completed' THEN '' ELSE COALESCE(NULLIF(bi.error_message, ''), pr.message, '') END AS message,
+  pr.scope, pr.owner, pr.batch_job_id,
+  pr.created_at, pr.updated_at,
+  COALESCE(pr.started_at, bi.started_at) AS started_at,
+  COALESCE(pr.finished_at, bi.finished_at) AS finished_at`
+}
+
 func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 	var (
-		r            models.PipelineRun
-		templateID   *string
-		templateVer  *int
-		assetIDs     []string
-		batchJobID   *string
+		r           models.PipelineRun
+		templateID  *string
+		templateVer *int
+		assetIDs    []string
+		batchJobID  *string
 	)
 	if err := rs.Scan(
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
@@ -871,16 +905,40 @@ func (r *PipelineRunRepo) ListSummaries(ctx context.Context, filter models.Pipel
 		args   []any
 		argPos = 1
 	)
+	fromSQL := "FROM pipeline_runs pr"
 	if filter.BatchJobID != "" {
-		conds = append(conds, fmt.Sprintf("batch_job_id = $%d", argPos))
+		fromSQL = `
+FROM (
+  SELECT DISTINCT ON (job_id, asset_id) *
+  FROM backfill_items
+  WHERE job_id = $1
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+) bi
+INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id`
 		args = append(args, filter.BatchJobID)
 		argPos++
 	}
 	if filter.ExcludeBatch {
-		conds = append(conds, "batch_job_id IS NULL")
+		conds = append(conds, "pr.batch_job_id IS NULL")
 	}
 	if filter.Status != "" {
-		conds = append(conds, fmt.Sprintf("status = $%d", argPos))
+		statusExpr := "pr.status"
+		if filter.BatchJobID != "" {
+			statusExpr = batchItemRunStatusExpr
+		}
+		conds = append(conds, fmt.Sprintf("%s = $%d", statusExpr, argPos))
 		args = append(args, filter.Status)
 		argPos++
 	}
@@ -890,17 +948,17 @@ func (r *PipelineRunRepo) ListSummaries(ctx context.Context, filter models.Pipel
 		where = "WHERE " + strings.Join(conds, " AND ")
 	}
 
-	countQ := `SELECT COUNT(*) FROM pipeline_runs ` + where
+	countQ := `SELECT COUNT(*) ` + fromSQL + ` ` + where
 	db := dbFromCtx(ctx, r.c.db)
 	var total int
 	if err := db.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries count: %w", err)
 	}
 
-	listQ := `SELECT ` + pipelineRunSummarySelectCols + `
-FROM pipeline_runs
+	listQ := `SELECT ` + pipelineRunSummarySelectSQL(filter.BatchJobID != "") + `
+` + fromSQL + `
 ` + where + `
-ORDER BY created_at DESC`
+ORDER BY pr.created_at DESC`
 
 	if filter.Page > 0 || filter.PageSize > 0 {
 		page := filter.Page

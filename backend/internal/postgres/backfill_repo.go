@@ -338,13 +338,31 @@ func (r *BackfillRepo) CountItemsByStatus(ctx context.Context, jobID, status str
 // SummarizeItemStatuses returns aggregate counts per status bucket in one query.
 func (r *BackfillRepo) SummarizeItemStatuses(ctx context.Context, jobID string) (repository.BackfillItemStatusSummary, error) {
 	const q = `
+WITH current_items AS (
+  SELECT DISTINCT ON (job_id, asset_id) status
+  FROM backfill_items
+  WHERE job_id = $1
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'awaiting_result' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+)
 SELECT
   COUNT(*) FILTER (WHERE status = 'completed'),
   COUNT(*) FILTER (WHERE status IN ('failed', 'cancelled')),
   COUNT(*) FILTER (WHERE status = 'pending'),
   COUNT(*) FILTER (WHERE status IN ('running', 'awaiting_result'))
-FROM backfill_items
-WHERE job_id = $1`
+FROM current_items`
 	db := dbFromCtx(ctx, r.c.db)
 	var summary repository.BackfillItemStatusSummary
 	if err := db.QueryRow(ctx, q, jobID).Scan(
@@ -394,8 +412,17 @@ ORDER BY created_at ASC`
 // FindItemsMissingPipelineRun returns items without a linked pipeline run row.
 func (r *BackfillRepo) FindItemsMissingPipelineRun(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
 	q := `SELECT ` + backfillItemSelectCols + `
-FROM backfill_items
-WHERE job_id = $1 AND (pipeline_run_id IS NULL OR pipeline_run_id = '')
+FROM backfill_items bi
+WHERE bi.job_id = $1
+  AND (bi.pipeline_run_id IS NULL OR bi.pipeline_run_id = '')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM backfill_items linked
+    WHERE linked.job_id = bi.job_id
+      AND linked.asset_id = bi.asset_id
+      AND linked.pipeline_run_id IS NOT NULL
+      AND linked.pipeline_run_id <> ''
+  )
 ORDER BY created_at ASC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q, jobID)
@@ -520,7 +547,25 @@ SELECT
   COUNT(*) AS cnt
 FROM pipeline_run_asset_nodes n
 INNER JOIN pipeline_runs pr ON pr.id = n.run_id
-WHERE pr.batch_job_id = $1
+INNER JOIN (
+  SELECT DISTINCT ON (job_id, asset_id) *
+  FROM backfill_items
+  WHERE job_id = $1
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+) bi ON bi.pipeline_run_id = pr.id AND bi.asset_id = n.asset_id
+WHERE bi.job_id = $1
 GROUP BY 1, 2, 3
 ORDER BY 2, 1, 3`
 	db := dbFromCtx(ctx, r.c.db)
@@ -565,8 +610,26 @@ func (r *BackfillRepo) ListNodeFailures(ctx context.Context, filter repository.B
 	whereSQL := strings.Join(where, " AND ")
 	db := dbFromCtx(ctx, r.c.db)
 	countQ := `
+WITH current_items AS (
+  SELECT DISTINCT ON (job_id, asset_id) *
+  FROM backfill_items
+  WHERE job_id = $1
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+)
 SELECT COUNT(*)
-FROM backfill_items bi
+FROM current_items bi
 INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
 INNER JOIN pipeline_run_asset_nodes n ON n.run_id = pr.id AND n.asset_id = bi.asset_id
 WHERE ` + whereSQL
@@ -576,11 +639,29 @@ WHERE ` + whereSQL
 	}
 	args = append(args, pageSize, (page-1)*pageSize)
 	q := `
+WITH current_items AS (
+  SELECT DISTINCT ON (job_id, asset_id) *
+  FROM backfill_items
+  WHERE job_id = $1
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+)
 SELECT
   bi.id, bi.asset_id, pr.id, COALESCE(pr.workflow_name, bi.workflow_name, ''),
   n.pipeline_node_id, COALESCE(NULLIF(n.display_name, ''), n.pipeline_node_id),
   COALESCE(n.status, ''), COALESCE(n.message, ''), n.started_at, n.finished_at
-FROM backfill_items bi
+FROM current_items bi
 INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
 INNER JOIN pipeline_run_asset_nodes n ON n.run_id = pr.id AND n.asset_id = bi.asset_id
 WHERE ` + whereSQL + `
@@ -607,7 +688,28 @@ LIMIT $` + fmt.Sprint(len(args)-1) + ` OFFSET $` + fmt.Sprint(len(args))
 }
 
 func (r *BackfillRepo) CountPipelineRunsByBatchJobID(ctx context.Context, jobID string) (int, error) {
-	const q = `SELECT COUNT(*) FROM pipeline_runs WHERE batch_job_id = $1`
+	const q = `
+SELECT COUNT(*)
+FROM (
+  SELECT DISTINCT ON (job_id, asset_id) *
+  FROM backfill_items
+  WHERE job_id = $1
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+) bi
+INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
+WHERE bi.job_id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	var total int
 	if err := db.QueryRow(ctx, q, jobID).Scan(&total); err != nil {
@@ -618,10 +720,28 @@ func (r *BackfillRepo) CountPipelineRunsByBatchJobID(ctx context.Context, jobID 
 
 func (r *BackfillRepo) CountRunsWithNodeRowsByBatchJobID(ctx context.Context, jobID string) (int, error) {
 	const q = `
-SELECT COUNT(DISTINCT n.run_id)
-FROM pipeline_run_asset_nodes n
-INNER JOIN pipeline_runs pr ON pr.id = n.run_id
-WHERE pr.batch_job_id = $1`
+SELECT COUNT(DISTINCT bi.id)
+FROM (
+  SELECT DISTINCT ON (job_id, asset_id) *
+  FROM backfill_items
+  WHERE job_id = $1
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+) bi
+INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
+INNER JOIN pipeline_run_asset_nodes n ON n.run_id = pr.id AND n.asset_id = bi.asset_id
+WHERE bi.job_id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	var total int
 	if err := db.QueryRow(ctx, q, jobID).Scan(&total); err != nil {

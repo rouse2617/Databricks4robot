@@ -217,6 +217,33 @@ func TestCreateBackfill_RejectsTooManyAssets(t *testing.T) {
 	}
 }
 
+func TestCreateBackfill_DoesNotDuplicateItemsDuringMaterialization(t *testing.T) {
+	repo := &trackingBackfillRepo{}
+	uc := New(repo, nil)
+
+	job, err := uc.CreateBackfill(context.Background(), "batch", "tpl-1", []string{
+		"asset-1",
+		"asset-2",
+		"asset-3",
+	})
+	if err != nil {
+		t.Fatalf("CreateBackfill: %v", err)
+	}
+
+	waitForTrackingRepo(t, repo, func(job *models.BackfillJob, items []models.BackfillItem) bool {
+		return job != nil && job.Status == "running" && len(items) == 3
+	})
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if len(repo.items) != job.TotalCount {
+		t.Fatalf("expected %d persisted items, got %d", job.TotalCount, len(repo.items))
+	}
+	if len(repo.saveItemChunkSizes) != 1 || repo.saveItemChunkSizes[0] != 3 {
+		t.Fatalf("expected one initial SaveItems chunk [3], got %v", repo.saveItemChunkSizes)
+	}
+}
+
 func TestDeriveJobStatus(t *testing.T) {
 	status := deriveJobStatus(repository.BackfillItemStatusSummary{
 		Completed: 8,
@@ -230,6 +257,50 @@ func TestDeriveJobStatus(t *testing.T) {
 	}, 10)
 	if status != "completed" {
 		t.Fatalf("expected completed, got %q", status)
+	}
+}
+
+func TestGetBatchNodeSummary_UsesLogicalBatchTotalForCoverage(t *testing.T) {
+	repo := &trackingBackfillRepo{
+		job: &models.BackfillJob{
+			ID:              "job-1",
+			TemplateID:      "tpl-1",
+			TemplateVersion: 3,
+			TotalCount:      100,
+			Status:          "running",
+		},
+		items: make([]models.BackfillItem, 100),
+		aggregates: []repository.BatchNodeStatusAggregate{
+			{PipelineNodeID: "step-1", DisplayName: "step-1", Status: "Succeeded", Count: 100},
+		},
+		runsWithNodeRows: 100,
+	}
+	for i := range repo.items {
+		repo.items[i] = models.BackfillItem{
+			ID:      fmt.Sprintf("item-%03d", i),
+			JobID:   "job-1",
+			AssetID: fmt.Sprintf("asset-%03d", i),
+			Status:  "completed",
+		}
+	}
+	uc := New(repo, nil)
+
+	summary, err := uc.GetBatchNodeSummary(context.Background(), "job-1")
+	if err != nil {
+		t.Fatalf("GetBatchNodeSummary: %v", err)
+	}
+	if summary.Subtasks.Total != 100 || summary.Subtasks.Completed != 100 || summary.Subtasks.Pending != 0 {
+		t.Fatalf("unexpected subtask counts: %+v", summary.Subtasks)
+	}
+	if summary.DataCoverage.RunsTotal != 100 || summary.DataCoverage.RunsWithNodeRows != 100 || !summary.DataCoverage.Complete {
+		t.Fatalf("unexpected data coverage: %+v", summary.DataCoverage)
+	}
+	if len(summary.Nodes) != 1 {
+		t.Fatalf("expected one node, got %d", len(summary.Nodes))
+	}
+	node := summary.Nodes[0]
+	if node.Counts["Succeeded"] != 100 || node.Counts["Pending"] != 0 || node.Attempted != 100 {
+		t.Fatalf("unexpected node summary: %+v", node)
 	}
 }
 
@@ -253,36 +324,48 @@ func TestCreateBackfill_1000Assets_ReturnsPendingImmediately(t *testing.T) {
 		t.Fatalf("expected totalCount 1000, got %d", job.TotalCount)
 	}
 
+	waitForTrackingRepo(t, repo, func(job *models.BackfillJob, items []models.BackfillItem) bool {
+		return job != nil && job.Status == "running" && len(items) == 1000
+	})
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if len(repo.saveItemChunkSizes) != 2 || repo.saveItemChunkSizes[0] != 500 || repo.saveItemChunkSizes[1] != 500 {
+		t.Fatalf("expected chunk sizes [500,500], got %v", repo.saveItemChunkSizes)
+	}
+	if len(repo.items) != 1000 {
+		t.Fatalf("expected 1000 persisted items, got %d", len(repo.items))
+	}
+}
+
+func waitForTrackingRepo(
+	t *testing.T,
+	repo *trackingBackfillRepo,
+	ready func(*models.BackfillJob, []models.BackfillItem) bool,
+) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		repo.mu.Lock()
-		chunkSizes := append([]int(nil), repo.saveItemChunkSizes...)
-		status := ""
+		var job *models.BackfillJob
 		if repo.job != nil {
-			status = repo.job.Status
+			copyJob := *repo.job
+			job = &copyJob
 		}
+		items := append([]models.BackfillItem(nil), repo.items...)
 		repo.mu.Unlock()
-		if len(chunkSizes) >= 2 && status == "running" {
-			if chunkSizes[0] != 500 || chunkSizes[1] != 500 {
-				t.Fatalf("expected chunk sizes [500,500], got %v", chunkSizes)
-			}
+		if ready(job, items) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
-	t.Fatalf(
-		"materialize did not finish in time: chunks=%v jobStatus=%q",
-		repo.saveItemChunkSizes,
-		func() string {
-			if repo.job == nil {
-				return ""
-			}
-			return repo.job.Status
-		}(),
-	)
+	status := ""
+	if repo.job != nil {
+		status = repo.job.Status
+	}
+	t.Fatalf("condition not met in time: chunks=%v itemCount=%d jobStatus=%q", repo.saveItemChunkSizes, len(repo.items), status)
 }
 
 type trackingBackfillRepo struct {
@@ -290,6 +373,9 @@ type trackingBackfillRepo struct {
 	job                *models.BackfillJob
 	saveItemChunkSizes []int
 	items              []models.BackfillItem
+	aggregates         []repository.BatchNodeStatusAggregate
+	runsTotal          int
+	runsWithNodeRows   int
 }
 
 func (r *trackingBackfillRepo) SaveJob(_ context.Context, job *models.BackfillJob) error {
@@ -468,16 +554,22 @@ func (r *trackingBackfillRepo) PrepareItemsForRerun(_ context.Context, itemIDs [
 	return nil
 }
 func (r *trackingBackfillRepo) AggregateNodeStatusByBatchJobID(_ context.Context, _ string) ([]repository.BatchNodeStatusAggregate, error) {
-	return nil, nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]repository.BatchNodeStatusAggregate(nil), r.aggregates...), nil
 }
 func (r *trackingBackfillRepo) ListNodeFailures(_ context.Context, _ repository.BatchNodeFailureFilter) (*models.BatchNodeFailureListResult, error) {
 	return &models.BatchNodeFailureListResult{}, nil
 }
 func (r *trackingBackfillRepo) CountPipelineRunsByBatchJobID(_ context.Context, _ string) (int, error) {
-	return 0, nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.runsTotal, nil
 }
 func (r *trackingBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ string) (int, error) {
-	return 0, nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.runsWithNodeRows, nil
 }
 func (r *trackingBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
