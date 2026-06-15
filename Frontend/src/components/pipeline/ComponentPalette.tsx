@@ -64,14 +64,12 @@ export function ComponentPalette({
 					disabled={interactionDisabled}
 					aria-label={`添加组件 ${c.name}`}
 					title={
-						disabled
-							? "只读模式不可添加组件"
-							: "点击添加到画布，也可以拖拽放置"
+						disabled ? "只读模式不可添加组件" : "点击添加到画布，也可以拖拽放置"
 					}
-					onDragStart={interactionDisabled ? undefined : (e) => onDragStart(e, c)}
-					onClick={
-						interactionDisabled ? undefined : () => onAddComponent?.(c)
+					onDragStart={
+						interactionDisabled ? undefined : (e) => onDragStart(e, c)
 					}
+					onClick={interactionDisabled ? undefined : () => onAddComponent?.(c)}
 				>
 					<div className="pi-content">
 						<div className="pi-label">{c.name}</div>

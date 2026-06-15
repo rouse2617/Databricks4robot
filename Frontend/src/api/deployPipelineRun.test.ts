@@ -48,7 +48,12 @@ describe("deployPipelineForAssets", () => {
 		const result = await deployPipelineForAssets("tpl-1", ["a1"]);
 
 		expect(result.mode).toBe("single");
-		expect(mockDeployTemplate).toHaveBeenCalledWith("tpl-1", ["a1"], undefined, undefined);
+		expect(mockDeployTemplate).toHaveBeenCalledWith(
+			"tpl-1",
+			["a1"],
+			undefined,
+			undefined,
+		);
 	});
 
 	it("rejects batches above the asset limit", async () => {

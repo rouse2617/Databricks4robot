@@ -21,8 +21,16 @@ import {
 	Skeleton,
 	Space,
 	Tag,
+	Tooltip,
 } from "antd";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	type ChangeEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { deployPipelineForAssets } from "../../api/deployPipelineRun";
 import {
@@ -30,10 +38,10 @@ import {
 	deletePipeline,
 	type ExecutionTarget,
 	getPipeline,
+	type ListPipelinesParams,
 	listDeployments,
 	listExecutionTargets,
 	listPipelines,
-	type ListPipelinesParams,
 	listPipelineVersions,
 	type PipelineTemplate,
 	promotePipeline,
@@ -141,6 +149,7 @@ function TemplateCard({
 	onPromote,
 	onView,
 	activeVersion,
+	recommended,
 	compactActions,
 	selectable,
 	selected,
@@ -154,6 +163,7 @@ function TemplateCard({
 	onPromote?: (template: PipelineTemplate) => void;
 	onView?: (id: string) => void;
 	activeVersion?: number;
+	recommended?: boolean;
 	compactActions?: boolean;
 	selectable?: boolean;
 	selected?: boolean;
@@ -207,6 +217,11 @@ function TemplateCard({
 								活跃: v{activeVersion}
 							</Tag>
 						) : null}
+						{recommended ? (
+							<Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>
+								推荐
+							</Tag>
+						) : null}
 						{template.versionCount && template.versionCount > 1 ? (
 							<span>{template.versionCount} 个版本</span>
 						) : null}
@@ -239,6 +254,11 @@ function TemplateCard({
 						{activeVersion != null && activeVersion < template.version ? (
 							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
 								活跃: v{activeVersion}
+							</Tag>
+						) : null}
+						{recommended ? (
+							<Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>
+								推荐
 							</Tag>
 						) : null}
 						{template.versionCount && template.versionCount > 1 ? (
@@ -401,6 +421,9 @@ export function DeployPanel({
 		useState<PipelineTemplate | null>(null);
 	const refreshInFlightRef = useRef(false);
 	const templatesInFlightRef = useRef(false);
+	const templateSearchDebounceRef = useRef<ReturnType<
+		typeof setTimeout
+	> | null>(null);
 	const prevTemplateFiltersRef = useRef({
 		query: templateQuery,
 		scope: templateScope,
@@ -409,6 +432,17 @@ export function DeployPanel({
 	const [activeVersionByTemplate, setActiveVersionByTemplate] = useState<
 		Record<string, number>
 	>({});
+	const recommendedTemplateId = useMemo(() => {
+		if (queryAssetIds.length === 0 || templates.length === 0) return null;
+		const prodTemplates = templates.filter(
+			(template) => template.scope === "prod",
+		);
+		if (prodTemplates.length === 1) return prodTemplates[0].id;
+		const activeProd = prodTemplates.find(
+			(template) => activeVersionByTemplate[template.name] === template.version,
+		);
+		return activeProd?.id ?? prodTemplates[0]?.id ?? templates[0]?.id ?? null;
+	}, [activeVersionByTemplate, queryAssetIds.length, templates]);
 
 	const updateSelectedAssetIds = useCallback(
 		(nextIds: string[]) => {
@@ -425,6 +459,10 @@ export function DeployPanel({
 	);
 
 	const displayTemplates = templates;
+	const deployTargetTemplate = useMemo(
+		() => templates.find((item) => item.id === deployTargetId),
+		[deployTargetId, templates],
+	);
 	const displayDeployments = useMemo(
 		() => prepareDeployments(deployments),
 		[deployments],
@@ -503,9 +541,7 @@ export function DeployPanel({
 			setTemplateTotal(resp.total);
 			setTemplatePage(resp.page);
 			applyTemplateFiltersFromTemplates(resp.items);
-			setError((prev) =>
-				prev?.includes("流水线模板加载失败") ? null : prev,
-			);
+			setError((prev) => (prev?.includes("流水线模板加载失败") ? null : prev));
 		} catch {
 			setTemplates([]);
 			setTemplateTotal(0);
@@ -612,10 +648,28 @@ export function DeployPanel({
 		}
 	}, [fetchTemplates, messageApi, templatePage]);
 
-	const applyTemplateSearch = useCallback((value?: string) => {
-		setTemplateQuery((value ?? templateQueryDraft).trim());
-		setTemplatePage(1);
-	}, [templateQueryDraft]);
+	const handleTemplateSearchChange = useCallback(
+		(event: ChangeEvent<HTMLInputElement>) => {
+			const value = event.target.value;
+			setTemplateQueryDraft(value);
+			if (templateSearchDebounceRef.current) {
+				clearTimeout(templateSearchDebounceRef.current);
+			}
+			templateSearchDebounceRef.current = setTimeout(() => {
+				setTemplateQuery(value.trim());
+				setTemplatePage(1);
+			}, 300);
+		},
+		[],
+	);
+
+	const applyTemplateSearch = useCallback(
+		(value?: string) => {
+			setTemplateQuery((value ?? templateQueryDraft).trim());
+			setTemplatePage(1);
+		},
+		[templateQueryDraft],
+	);
 
 	const handleDeployClick = (templateId: string) => {
 		const currentTemplate = templates.find(
@@ -663,9 +717,7 @@ export function DeployPanel({
 				{
 					targetId: selectedTargetId,
 					version: selectedDeployVersion,
-					batchName: template
-						? `${template.name}-${Date.now()}`
-						: undefined,
+					batchName: template ? `${template.name}-${Date.now()}` : undefined,
 				},
 			);
 			if (result.mode === "batch") {
@@ -707,15 +759,35 @@ export function DeployPanel({
 			const results = await Promise.allSettled(
 				selectedTemplateIds.map((id) => deletePipeline(id)),
 			);
-			const failedCount = results.filter(
-				(result) => result.status === "rejected",
-			).length;
-			const deletedCount = results.length - failedCount;
+			const succeeded: string[] = [];
+			const failed: { id: string; reason: string }[] = [];
+			results.forEach((result, i) => {
+				const id = selectedTemplateIds[i];
+				if (result.status === "fulfilled") {
+					succeeded.push(id);
+				} else {
+					const reason =
+						result.reason instanceof Error
+							? result.reason.message
+							: String(result.reason);
+					failed.push({ id, reason });
+				}
+			});
+			const deletedCount = succeeded.length;
 			if (deletedCount > 0) {
 				messageApi.success(`已删除 ${deletedCount} 条流水线`);
 			}
-			if (failedCount > 0) {
-				messageApi.error(`${failedCount} 条流水线删除失败（正式版不可删除）`);
+			if (failed.length > 0) {
+				const name = (fid: string) =>
+					displayTemplates.find((t) => t.id === fid)?.name ?? fid;
+				const detail = failed
+					.slice(0, 3)
+					.map((f) => `"${name(f.id)}"`)
+					.join("、");
+				const overflow = failed.length > 3 ? ` 等 ${failed.length} 条` : "";
+				messageApi.error(
+					`删除失败：${detail}${overflow}（${failed[0].reason}）`,
+				);
 			}
 			setSelectedTemplateIds([]);
 			await refreshAll();
@@ -852,6 +924,7 @@ export function DeployPanel({
 				onPromote={handlePromote}
 				onView={handleViewTemplate}
 				activeVersion={activeVersionByTemplate[t.name]}
+				recommended={t.id === recommendedTemplateId}
 				compactActions={options?.compactActions}
 				selectable={resolvedVariant === "full" && t.scope !== "prod"}
 				selected={selectedTemplateIds.includes(t.id)}
@@ -1060,7 +1133,10 @@ export function DeployPanel({
 					message={`已选择 ${queryAssetIds.length} 个资产`}
 					description={
 						<div className="deploy-panel__asset-context-body">
-							<span>请选择要运行的流水线和版本，确认后即可提交运行。</span>
+							<span>
+								请选择要运行的流水线和版本，确认后即可提交运行。
+								{recommendedTemplateId ? " 已为你标出一个推荐模板。" : ""}
+							</span>
 							<div className="deploy-panel__asset-context-assets">
 								{visibleQueryAssetIds.map((assetId) => (
 									<Tag
@@ -1088,23 +1164,23 @@ export function DeployPanel({
 				<div className="deploy-section-title">
 					<div>
 						已保存的流水线
-						{!loading ? (
-							<span className="count">{templateTotal}</span>
-						) : null}
+						{!loading ? <span className="count">{templateTotal}</span> : null}
 					</div>
 					{!loading && displayTemplates.length > 0 ? (
 						<Space>
-							<Checkbox
-								checked={allTemplatesSelected}
-								indeterminate={someTemplatesSelected}
-								onChange={(event) =>
-									setSelectedTemplateIds(
-										event.target.checked ? selectableTemplateIds : [],
-									)
-								}
-							>
-								全选
-							</Checkbox>
+							<Tooltip title="仅选择当前页可删除的 dev 流水线，正式版不会被选中">
+								<Checkbox
+									checked={allTemplatesSelected}
+									indeterminate={someTemplatesSelected}
+									onChange={(event) =>
+										setSelectedTemplateIds(
+											event.target.checked ? selectableTemplateIds : [],
+										)
+									}
+								>
+									全选当前页
+								</Checkbox>
+							</Tooltip>
 							<Popconfirm
 								title={`删除选中的 ${selectedTemplateIds.length} 条流水线？`}
 								description="正式版已排除；将要求输入数量确认"
@@ -1131,13 +1207,18 @@ export function DeployPanel({
 				</div>
 				<div
 					className="deploy-panel__template-filters"
-					style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}
+					style={{
+						display: "flex",
+						gap: 8,
+						flexWrap: "wrap",
+						marginBottom: 12,
+					}}
 				>
 					<Input.Search
 						allowClear
 						placeholder="搜索流水线名称"
 						value={templateQueryDraft}
-						onChange={(event) => setTemplateQueryDraft(event.target.value)}
+						onChange={handleTemplateSearchChange}
 						onSearch={(value) => applyTemplateSearch(value)}
 						style={{ width: 220 }}
 						data-testid="pipeline-template-search"
@@ -1199,6 +1280,15 @@ export function DeployPanel({
 				okText={selectedAssetIds.length > 0 ? "运行资产" : "无资产运行"}
 				width={640}
 			>
+				{deployTargetTemplate?.scope === "prod" ? (
+					<Alert
+						type="success"
+						showIcon
+						message="正在运行正式版流水线"
+						description="本次运行使用 prod 模板定义，适合生产数据处理；如需修改流程，请先回到 dev 草稿保存并发布。"
+						style={{ marginBottom: 16 }}
+					/>
+				) : null}
 				<div style={{ marginBottom: 16 }}>
 					<AssetRunSummary
 						assetIds={selectedAssetIds}

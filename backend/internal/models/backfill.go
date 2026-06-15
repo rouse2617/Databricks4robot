@@ -5,28 +5,91 @@ import "time"
 // BackfillJob represents a batch backfill job that processes multiple assets
 // through a selected pipeline template.
 type BackfillJob struct {
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	TemplateID     string                 `json:"templateId"`
-	FilterJSON     map[string]interface{} `json:"filterJson,omitempty"`
-	TotalCount     int                    `json:"totalCount"`
-	CompletedCount int                    `json:"completedCount"`
-	FailedCount    int                    `json:"failedCount"`
-	Status         string                 `json:"status"` // running | paused | completed | failed
-	CreatedAt      time.Time              `json:"createdAt"`
-	UpdatedAt      time.Time              `json:"updatedAt"`
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	TemplateID      string                 `json:"templateId"`
+	TemplateVersion int                    `json:"templateVersion,omitempty"`
+	FilterJSON      map[string]interface{} `json:"filterJson,omitempty"`
+	TotalCount      int                    `json:"totalCount"`
+	CompletedCount  int                    `json:"completedCount"`
+	FailedCount     int                    `json:"failedCount"`
+	PilotCount      int                    `json:"pilotCount,omitempty"`
+	PilotPhase      string                 `json:"pilotPhase,omitempty"` // none | running | review | done
+	Status          string                 `json:"status"`               // running | paused | completed | failed
+	CreatedAt       time.Time              `json:"createdAt"`
+	UpdatedAt       time.Time              `json:"updatedAt"`
 }
 
 // BackfillItem represents a single asset being processed in a backfill job.
 type BackfillItem struct {
-	ID             string     `json:"id"`
-	JobID          string     `json:"jobId"`
+	ID            string     `json:"id"`
+	JobID         string     `json:"jobId"`
+	AssetID       string     `json:"assetId"`
+	Status        string     `json:"status"` // pending | running | completed | failed | cancelled
+	PipelineRunID *string    `json:"pipelineRunId,omitempty"`
+	WorkflowName  *string    `json:"workflowName,omitempty"`
+	ErrorMessage  *string    `json:"errorMessage,omitempty"`
+	StartedAt     *time.Time `json:"startedAt,omitempty"`
+	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+}
+
+type BatchNodeSummary struct {
+	BatchJobID      string                 `json:"batchJobId"`
+	TemplateID      string                 `json:"templateId"`
+	TemplateVersion int                    `json:"templateVersion,omitempty"`
+	Subtasks        BatchNodeSubtaskCounts `json:"subtasks"`
+	Nodes           []BatchNodeSummaryNode `json:"nodes"`
+	DataCoverage    BatchNodeDataCoverage  `json:"dataCoverage"`
+	GeneratedAt     time.Time              `json:"generatedAt"`
+}
+
+type BatchNodeSubtaskCounts struct {
+	Total     int  `json:"total"`
+	Completed int  `json:"completed"`
+	Failed    int  `json:"failed"`
+	Running   int  `json:"running"`
+	Pending   int  `json:"pending"`
+	Paused    bool `json:"paused"`
+}
+
+type BatchNodeSummaryNode struct {
+	PipelineNodeID    string                   `json:"pipelineNodeId"`
+	DisplayName       string                   `json:"displayName"`
+	DagOrder          int                      `json:"dagOrder"`
+	Counts            map[string]int           `json:"counts"`
+	Attempted         int                      `json:"attempted"`
+	FailureRate       float64                  `json:"failureRate"`
+	TopFailureReasons []BatchNodeFailureReason `json:"topFailureReasons,omitempty"`
+}
+
+type BatchNodeFailureReason struct {
+	Message string `json:"message"`
+	Count   int    `json:"count"`
+}
+
+type BatchNodeDataCoverage struct {
+	RunsWithNodeRows int  `json:"runsWithNodeRows"`
+	RunsTotal        int  `json:"runsTotal"`
+	Complete         bool `json:"complete"`
+}
+
+type BatchNodeFailureItem struct {
+	BackfillItemID string     `json:"backfillItemId"`
 	AssetID        string     `json:"assetId"`
-	Status         string     `json:"status"` // pending | running | completed | failed | cancelled
-	PipelineRunID  *string    `json:"pipelineRunId,omitempty"`
-	WorkflowName   *string    `json:"workflowName,omitempty"`
-	ErrorMessage   *string    `json:"errorMessage,omitempty"`
+	RunID          string     `json:"runId"`
+	WorkflowName   string     `json:"workflowName"`
+	PipelineNodeID string     `json:"pipelineNodeId"`
+	DisplayName    string     `json:"displayName"`
+	Status         string     `json:"status"`
+	Message        string     `json:"message,omitempty"`
 	StartedAt      *time.Time `json:"startedAt,omitempty"`
 	FinishedAt     *time.Time `json:"finishedAt,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
+}
+
+type BatchNodeFailureListResult struct {
+	Items    []BatchNodeFailureItem `json:"items"`
+	Total    int                    `json:"total"`
+	Page     int                    `json:"page"`
+	PageSize int                    `json:"pageSize"`
 }

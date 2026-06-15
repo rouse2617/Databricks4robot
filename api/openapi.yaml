@@ -2410,10 +2410,13 @@ components:
         id: { type: string }
         name: { type: string }
         templateId: { type: string }
+        templateVersion: { type: integer, nullable: true }
         filterJson: { type: object, nullable: true }
         totalCount: { type: integer }
         completedCount: { type: integer }
         failedCount: { type: integer }
+        pilotCount: { type: integer }
+        pilotPhase: { type: string, description: "none | running | review | done" }
         status: { type: string, description: "running | paused | completed | failed" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -2429,6 +2432,93 @@ components:
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
+    BatchNodeSummary:
+      type: object
+      properties:
+        batchJobId: { type: string }
+        templateId: { type: string }
+        templateVersion: { type: integer, nullable: true }
+        subtasks:
+          type: object
+          properties:
+            total: { type: integer }
+            completed: { type: integer }
+            failed: { type: integer }
+            running: { type: integer }
+            pending: { type: integer }
+            paused: { type: boolean }
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              pipelineNodeId: { type: string }
+              displayName: { type: string }
+              dagOrder: { type: integer }
+              counts:
+                type: object
+                additionalProperties: { type: integer }
+              attempted: { type: integer }
+              failureRate: { type: number, format: double }
+        dataCoverage:
+          type: object
+          properties:
+            runsWithNodeRows: { type: integer }
+            runsTotal: { type: integer }
+            complete: { type: boolean }
+        generatedAt: { type: string, format: date-time }
+    BatchNodeFailureList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              backfillItemId: { type: string }
+              assetId: { type: string }
+              runId: { type: string }
+              workflowName: { type: string }
+              pipelineNodeId: { type: string }
+              displayName: { type: string }
+              status: { type: string }
+              message: { type: string }
+              startedAt: { type: string, format: date-time, nullable: true }
+              finishedAt: { type: string, format: date-time, nullable: true }
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+    BackfillRerunRequest:
+      type: object
+      properties:
+        scope:
+          type: string
+          enum: [failed, pending, incomplete, completed, custom, node_failed]
+        templateId: { type: string }
+        templateVersion: { type: integer }
+        itemIds:
+          type: array
+          items: { type: string }
+        assetIds:
+          type: array
+          items: { type: string }
+        pipelineNodeId: { type: string }
+        dryRun: { type: boolean }
+    BackfillRerunResult:
+      type: object
+      properties:
+        status: { type: string, example: accepted }
+        dryRun: { type: boolean }
+        matchedCount: { type: integer }
+        templateId: { type: string }
+        templateVersion: { type: integer, nullable: true }
+        skipped:
+          type: array
+          items:
+            type: object
+            properties:
+              itemId: { type: string }
+              reason: { type: string }
 
 paths:
   # ── Infrastructure ────────────────────────────────────────────────────
@@ -6250,10 +6340,15 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, templateId]
+              required: [name, templateId, assetIds]
               properties:
                 name: { type: string, description: Job name }
                 templateId: { type: string, description: Pipeline template ID }
+                templateVersion: { type: integer, description: Optional template version lock }
+                pilotCount: { type: integer, description: Optional pilot gate size }
+                assetIds:
+                  type: array
+                  items: { type: string }
                 filterJson: { type: object, description: Asset filter criteria (JSON) }
       responses:
         '201':
@@ -6304,6 +6399,71 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/node-summary:
+    get:
+      tags: [Backfill]
+      summary: Get batch node status summary
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Node summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BatchNodeSummary' }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/node-failures:
+    get:
+      tags: [Backfill]
+      summary: List batch items for a node status
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: pipelineNodeId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string, example: "Failed,Error" }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200':
+          description: Node item page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BatchNodeFailureList' }
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /api/v1/backfill/{id}/pause:
     post:
       tags: [Backfill]
@@ -6349,6 +6509,68 @@ paths:
                 type: object
                 properties:
                   message: { type: string, example: job resumed }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/rerun:
+    post:
+      tags: [Backfill]
+      summary: Rerun selected backfill items
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackfillRerunRequest' }
+      responses:
+        '200':
+          description: Rerun accepted or dry-run result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackfillRerunResult' }
+        '400':
+          description: Invalid scope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/backfill/{id}/continue-full:
+    post:
+      tags: [Backfill]
+      summary: Continue full batch after pilot review
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Full batch resumed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: running }
+        '400':
+          description: Pilot is not awaiting review
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Job not found
           content:

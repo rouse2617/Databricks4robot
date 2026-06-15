@@ -79,6 +79,7 @@ import {
 } from "../lib/pipelineExamples";
 import { validatePipelineForRun } from "../lib/pipelineValidation";
 import { ComponentManager } from "./ComponentManager";
+import { ExecutionRecordsPanel } from "./ExecutionRecordsPanel";
 import {
 	apiToRegistered,
 	createPipelineNode,
@@ -94,7 +95,6 @@ import {
 	parseAssetType,
 	toRecord,
 } from "./pipeline/pipelinePageHelpers";
-import { ExecutionRecordsPanel } from "./ExecutionRecordsPanel";
 
 import "../styles/pipeline.css";
 
@@ -228,7 +228,35 @@ function AssetRunContextBanner({
 	);
 }
 
-function PipelineCanvas() {
+interface PipelineCanvasProps {
+	onDirtyChange?: (dirty: boolean) => void;
+}
+
+function createCanvasSnapshot(
+	name: string,
+	nodes: PipelineFlowNode[],
+	edges: PipelineFlowEdge[],
+): string {
+	return JSON.stringify({ name, nodes, edges });
+}
+
+function confirmLeaveWithUnsavedChanges(
+	modal: ReturnType<typeof App.useApp>["modal"],
+): Promise<boolean> {
+	return new Promise((resolve) => {
+		modal.confirm({
+			title: "离开当前编辑？",
+			content: "存在未保存的变更，离开后这些修改会丢失。",
+			okText: "离开",
+			okType: "danger",
+			cancelText: "继续编辑",
+			onOk: () => resolve(true),
+			onCancel: () => resolve(false),
+		});
+	});
+}
+
+function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const wrapperRef = useRef<HTMLDivElement>(null);
@@ -267,6 +295,7 @@ function PipelineCanvas() {
 	const [selectedTemplateVersionId, setSelectedTemplateVersionId] = useState<
 		string | null
 	>(null);
+	const cleanCanvasSnapshotRef = useRef<string | null>(null);
 	const [loadedTemplateScope, setLoadedTemplateScope] = useState<string | null>(
 		null,
 	);
@@ -319,6 +348,21 @@ function PipelineCanvas() {
 		if (code === "002") return;
 		console.warn(`[React Flow]: ${flowMessage}`);
 	}, []);
+	const markCanvasClean = useCallback(
+		(
+			nextName: string,
+			nextNodes: PipelineFlowNode[],
+			nextEdges: PipelineFlowEdge[],
+		) => {
+			cleanCanvasSnapshotRef.current = createCanvasSnapshot(
+				nextName,
+				nextNodes,
+				nextEdges,
+			);
+			onDirtyChange?.(false);
+		},
+		[onDirtyChange],
+	);
 	const selectedExecutionTarget = useMemo(
 		() =>
 			executionTargets.find((target) => target.id === selectedTargetId) ?? null,
@@ -327,6 +371,35 @@ function PipelineCanvas() {
 
 	const flattenNodes = useMemo(() => toRecord(nodes), [nodes]);
 	const flattenEdges = useMemo(() => toRecord(edges), [edges]);
+	const canvasSnapshot = useMemo(
+		() => createCanvasSnapshot(pipelineName, nodes, edges),
+		[pipelineName, nodes, edges],
+	);
+	const hasUnsavedChanges =
+		!readOnlyMode &&
+		cleanCanvasSnapshotRef.current !== null &&
+		cleanCanvasSnapshotRef.current !== canvasSnapshot;
+
+	useEffect(() => {
+		if (cleanCanvasSnapshotRef.current === null) {
+			cleanCanvasSnapshotRef.current = canvasSnapshot;
+		}
+	}, [canvasSnapshot]);
+
+	useEffect(() => {
+		onDirtyChange?.(hasUnsavedChanges);
+	}, [hasUnsavedChanges, onDirtyChange]);
+
+	useEffect(() => {
+		if (!hasUnsavedChanges) return;
+		const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+			event.preventDefault();
+			event.returnValue = "";
+		};
+		window.addEventListener("beforeunload", handleBeforeUnload);
+		return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+	}, [hasUnsavedChanges]);
+
 	const applyCanvasEdges = useCallback(
 		(nextEdges: PipelineFlowEdge[]) => {
 			const duplicate = findDuplicateTargetInput(nextEdges);
@@ -389,16 +462,21 @@ function PipelineCanvas() {
 		});
 	}, [nodes]);
 
-	const loadPipelineToCanvas = useCallback((pipeline: Pipeline) => {
-		const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
-		setNodes(n);
-		setEdges(e);
-		setEditingNodeId(null);
-		if (pipeline.name) setPipelineName(pipeline.name);
-		setSelectedNode(null);
-		editorRef.current.deselectAll();
-		setJsonOutput(null);
-	}, []);
+	const loadPipelineToCanvas = useCallback(
+		(pipeline: Pipeline) => {
+			const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
+			setNodes(n);
+			setEdges(e);
+			setEditingNodeId(null);
+			const nextName = pipeline.name || pipelineName;
+			if (pipeline.name) setPipelineName(pipeline.name);
+			setSelectedNode(null);
+			editorRef.current.deselectAll();
+			setJsonOutput(null);
+			markCanvasClean(nextName, n, e);
+		},
+		[markCanvasClean, pipelineName],
+	);
 
 	const loadPipelineFromSessionStorage = useCallback(() => {
 		const raw = sessionStorage.getItem("pipeline-edit");
@@ -453,17 +531,30 @@ function PipelineCanvas() {
 	]);
 
 	const handleTemplateVersionChange = useCallback(
-		(versionId: string) => {
+		async (versionId: string) => {
 			const version = templateVersions.find((item) => item.id === versionId);
 			if (!version) return;
+			if (hasUnsavedChanges) {
+				const confirmed = await confirmLeaveWithUnsavedChanges(modal);
+				if (!confirmed) return;
+			}
 			setSelectedTemplateVersionId(versionId);
 			loadPipelineToCanvas(version.pipeline);
 			setPipelineName(version.name);
-			navigate(`/pipeline?templateId=${encodeURIComponent(versionId)}`, {
-				replace: true,
-			});
+			navigate(
+				`/pipeline?templateId=${encodeURIComponent(versionId)}&tab=design`,
+				{
+					replace: true,
+				},
+			);
 		},
-		[loadPipelineToCanvas, navigate, templateVersions],
+		[
+			hasUnsavedChanges,
+			loadPipelineToCanvas,
+			modal,
+			navigate,
+			templateVersions,
+		],
 	);
 
 	const componentById = useMemo(() => {
@@ -768,6 +859,7 @@ function PipelineCanvas() {
 			const pipeline: Pipeline = JSON.parse(text);
 			const { nodes: importedNodes, edges: importedEdges } =
 				fromTranspilerPipeline(pipeline);
+			const nextName = pipeline.name || pipelineName;
 			setNodes(importedNodes);
 			setEdges(importedEdges);
 			setEditingNodeId(null);
@@ -777,22 +869,22 @@ function PipelineCanvas() {
 			setJsonOutput(null);
 			setImportModalOpen(false);
 			setImportText("");
+			markCanvasClean(nextName, importedNodes, importedEdges);
 			messageApi.success("导入成功");
 		} catch {
 			messageApi.error("无效的 JSON");
 		}
-	}, [messageApi]);
+	}, [markCanvasClean, messageApi, pipelineName]);
 
 	const applyExampleToCanvas = useCallback(
 		(example: PipelineExample) => {
 			const { nodes: exampleNodes, edges: exampleEdges } =
 				fromTranspilerPipeline(example.pipeline);
-			setNodes(
-				exampleNodes.map((node) => ({
-					...node,
-					position: example.layout[node.id] ?? node.position,
-				})),
-			);
+			const positionedNodes = exampleNodes.map((node) => ({
+				...node,
+				position: example.layout[node.id] ?? node.position,
+			}));
+			setNodes(positionedNodes);
 			setEdges(exampleEdges);
 			setPipelineName(example.pipeline.name);
 			setSelectedTemplateVersionId(null);
@@ -801,9 +893,10 @@ function PipelineCanvas() {
 			setEditingNodeId(null);
 			editor.deselectAll();
 			setJsonOutput(null);
+			markCanvasClean(example.pipeline.name, positionedNodes, exampleEdges);
 			messageApi.success(`已载入示例: ${example.label}`);
 		},
-		[editor, messageApi],
+		[editor, markCanvasClean, messageApi],
 	);
 
 	const loadExample = useCallback(
@@ -840,9 +933,10 @@ function PipelineCanvas() {
 				setEditingNodeId(null);
 				editor.deselectAll();
 				setJsonOutput(null);
+				markCanvasClean(pipelineName, [], []);
 			},
 		});
-	}, [editor, modal.confirm]);
+	}, [editor, markCanvasClean, modal.confirm, pipelineName]);
 
 	const handleSave = useCallback(async () => {
 		try {
@@ -854,9 +948,13 @@ function PipelineCanvas() {
 				const withoutSaved = prev.filter((item) => item.id !== saved.id);
 				return [saved, ...withoutSaved].sort((a, b) => b.version - a.version);
 			});
-			navigate(`/pipeline?templateId=${encodeURIComponent(saved.id)}`, {
-				replace: true,
-			});
+			markCanvasClean(pipelineName, nodes, edges);
+			navigate(
+				`/pipeline?templateId=${encodeURIComponent(saved.id)}&tab=design`,
+				{
+					replace: true,
+				},
+			);
 			messageApi.success(`已保存为 v${saved.version}，可在「流水线」页签管理`);
 		} catch (err) {
 			messageApi.error(`保存失败: ${String(err)}`);
@@ -867,6 +965,9 @@ function PipelineCanvas() {
 		navigate,
 		assertPipelineRunnable,
 		messageApi,
+		markCanvasClean,
+		nodes,
+		edges,
 	]);
 
 	const canDeploy = nodes.length > 0 && !readOnlyMode;
@@ -938,14 +1039,10 @@ function PipelineCanvas() {
 			}
 			const name = deployDialog.name || pipelineName;
 			const saved = await savePipeline(name, pipeline);
-			const result = await deployPipelineForAssets(
-				saved.id,
-				selectedAssetIds,
-				{
-					targetId: selectedTargetId,
-					batchName: `${name}-${Date.now()}`,
-				},
-			);
+			const result = await deployPipelineForAssets(saved.id, selectedAssetIds, {
+				targetId: selectedTargetId,
+				batchName: `${name}-${Date.now()}`,
+			});
 			if (result.mode === "batch") {
 				messageApi.success(
 					`已创建批量任务，共 ${result.batchJob.totalCount} 个子任务`,
@@ -1086,68 +1183,68 @@ function PipelineCanvas() {
 						/>
 					) : (
 						<>
-					<Select
-						size="small"
-						placeholder="载入示例"
-						style={{ width: 180 }}
-						value={undefined}
-						onChange={loadExample}
-						options={PIPELINE_EXAMPLES.map((example) => ({
-							value: example.key,
-							label: example.label,
-							title: example.description,
-						}))}
-						aria-label="载入标准流水线示例"
-					/>
-					<Tooltip title={deployDisabledReason}>
-						<span>
+							<Select
+								size="small"
+								placeholder="载入示例"
+								style={{ width: 180 }}
+								value={undefined}
+								onChange={loadExample}
+								options={PIPELINE_EXAMPLES.map((example) => ({
+									value: example.key,
+									label: example.label,
+									title: example.description,
+								}))}
+								aria-label="载入标准流水线示例"
+							/>
+							<Tooltip title={deployDisabledReason}>
+								<span>
+									<Button
+										size="small"
+										type="primary"
+										className="pipeline-toolbar__deploy"
+										icon={<PlayCircleOutlined />}
+										onClick={openDeployDialog}
+										disabled={!canDeploy}
+									>
+										部署
+									</Button>
+								</span>
+							</Tooltip>
+							<Tooltip title="保存 (⌘/Ctrl+S)">
+								<Button
+									size="small"
+									type="primary"
+									ghost
+									icon={<SaveOutlined />}
+									onClick={handleSave}
+								>
+									保存
+								</Button>
+							</Tooltip>
+							<div className="pipeline-toolbar__secondary-actions">
+								<Button
+									size="small"
+									icon={<ExportOutlined />}
+									onClick={exportPipeline}
+								>
+									导出
+								</Button>
+								<Button
+									size="small"
+									icon={<ImportOutlined />}
+									onClick={importPipeline}
+								>
+									导入
+								</Button>
+							</div>
 							<Button
 								size="small"
-								type="primary"
-								className="pipeline-toolbar__deploy"
-								icon={<PlayCircleOutlined />}
-								onClick={openDeployDialog}
-								disabled={!canDeploy}
+								danger
+								icon={<DeleteOutlined />}
+								onClick={clearCanvas}
 							>
-								部署
+								清空
 							</Button>
-						</span>
-					</Tooltip>
-					<Tooltip title="保存 (⌘/Ctrl+S)">
-						<Button
-							size="small"
-							type="primary"
-							ghost
-							icon={<SaveOutlined />}
-							onClick={handleSave}
-						>
-							保存
-						</Button>
-					</Tooltip>
-					<div className="pipeline-toolbar__secondary-actions">
-						<Button
-							size="small"
-							icon={<ExportOutlined />}
-							onClick={exportPipeline}
-						>
-							导出
-						</Button>
-						<Button
-							size="small"
-							icon={<ImportOutlined />}
-							onClick={importPipeline}
-						>
-							导入
-						</Button>
-					</div>
-					<Button
-						size="small"
-						danger
-						icon={<DeleteOutlined />}
-						onClick={clearCanvas}
-					>
-						清空
-					</Button>
 						</>
 					)}
 				</div>
@@ -1245,14 +1342,20 @@ function PipelineCanvas() {
 								items={
 									contextMenu.node
 										? [
-												{ key: "configure", label: "配置节点" },
+												...(readOnlyMode
+													? []
+													: [{ key: "configure", label: "配置节点" }]),
 												{ key: "copy", label: "复制节点" },
 												{ type: "divider" },
-												{
-													key: "delete",
-													label: "删除节点",
-													danger: true,
-												},
+												...(readOnlyMode
+													? []
+													: [
+															{
+																key: "delete",
+																label: "删除节点",
+																danger: true,
+															},
+														]),
 											]
 										: [
 												{ key: "paste", label: "粘贴" },
@@ -1287,13 +1390,15 @@ function PipelineCanvas() {
 											{selectedNode.data?.image || "未设置镜像"}
 										</span>
 									</div>
-									<Button
-										size="small"
-										type="primary"
-										onClick={() => setEditingNodeId(selectedNode.id)}
-									>
-										配置节点
-									</Button>
+									{readOnlyMode ? null : (
+										<Button
+											size="small"
+											type="primary"
+											onClick={() => setEditingNodeId(selectedNode.id)}
+										>
+											配置节点
+										</Button>
+									)}
 								</div>
 								<div className="config-content">
 									<div className="config-section-title">关联资产</div>
@@ -1392,7 +1497,7 @@ function PipelineCanvas() {
 						/>
 					)}
 				</aside>
-				{editingNode && (
+				{editingNode && !readOnlyMode && (
 					<NodeConfigPanel
 						open={Boolean(editingNode)}
 						node={editingNode}
@@ -1460,7 +1565,8 @@ function PipelineCanvas() {
 								style={{ fontSize: 12, marginBottom: 16 }}
 							>
 								选择执行目标和资产后，将流水线转换为 Argo Workflow 并提交到
-								Kubernetes 集群。选择多个资产时，会为每个资产各下发一条执行记录。
+								Kubernetes
+								集群。选择多个资产时，会为每个资产各下发一条执行记录。
 							</Typography.Paragraph>
 							<div style={{ marginBottom: 16 }}>
 								<AssetRunSummary
@@ -1899,12 +2005,19 @@ function resolvePipelineTab(raw: string | null): PipelineTab {
 
 export default function PipelinePage() {
 	const [searchParams, setSearchParams] = useSearchParams();
+	const { modal } = App.useApp();
+	const [designDirty, setDesignDirty] = useState(false);
 	const activeTab = useMemo(
 		() => resolvePipelineTab(searchParams.get("tab")),
 		[searchParams],
 	);
 	const onTabChange = useCallback(
-		(nextTab: string) => {
+		async (nextTab: string) => {
+			if (nextTab !== activeTab && designDirty) {
+				const confirmed = await confirmLeaveWithUnsavedChanges(modal);
+				if (!confirmed) return;
+				setDesignDirty(false);
+			}
 			const next = new URLSearchParams(searchParams);
 			if (nextTab === "design") {
 				next.delete("tab");
@@ -1916,7 +2029,7 @@ export default function PipelinePage() {
 			}
 			setSearchParams(next, { replace: true });
 		},
-		[searchParams, setSearchParams],
+		[activeTab, designDirty, modal, searchParams, setSearchParams],
 	);
 
 	const tabLabel = useCallback((title: string, subtitle: string) => {
@@ -1946,7 +2059,7 @@ export default function PipelinePage() {
 									subTitle="设计画布加载失败，可重试或刷新页面"
 								>
 									<FlowEditorProvider>
-										<PipelineCanvas />
+										<PipelineCanvas onDirtyChange={setDesignDirty} />
 									</FlowEditorProvider>
 								</ErrorBoundary>
 							</div>

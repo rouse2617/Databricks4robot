@@ -69,7 +69,7 @@ func RegisterAll(
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
-	_, _, _, _, _ = algoRunHandler, pipelineHandler, pipelineComponentHandler, workflowHandler, backfillHandler
+	_, _, _, _ = algoRunHandler, pipelineHandler, pipelineComponentHandler, workflowHandler
 
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
@@ -407,9 +407,13 @@ func RegisterAll(
 			api.POST("/backfill", backfillHandler.CreateJob)
 			api.GET("/backfill", backfillHandler.ListJobs)
 			api.GET("/backfill/:id", backfillHandler.GetJob)
+			api.GET("/backfill/:id/node-summary", backfillHandler.GetNodeSummary)
+			api.GET("/backfill/:id/node-failures", backfillHandler.ListNodeFailures)
 			api.POST("/backfill/:id/pause", backfillHandler.PauseJob)
 			api.POST("/backfill/:id/resume", backfillHandler.ResumeJob)
+			api.POST("/backfill/:id/rerun", backfillHandler.Rerun)
 			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
+			api.POST("/backfill/:id/continue-full", backfillHandler.ContinueFull)
 		}
 
 		if queryHandler != nil {

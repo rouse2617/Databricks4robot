@@ -59,8 +59,9 @@ interface WorkflowExecutionListProps {
 	active?: boolean;
 	batchJobId?: string;
 	/** Bumps embedded batch subtask lists after parent job metadata loads. */
-	batchListKey?: string | number;
+	_batchListKey?: string | number;
 	embedded?: boolean;
+	onSelectionChange?: (items: WorkflowSummary[]) => void;
 	title?: string;
 }
 
@@ -81,7 +82,9 @@ const isActiveWorkflowStatus = (status?: string): boolean =>
 const isStaleRunningWorkflow = (record: WorkflowSummary): boolean => {
 	if (!isActiveWorkflowStatus(record.status)) return false;
 	if (!record.createdAt) return false;
-	return Date.now() - new Date(record.createdAt).getTime() > STALE_ACTIVE_RUN_MS;
+	return (
+		Date.now() - new Date(record.createdAt).getTime() > STALE_ACTIVE_RUN_MS
+	);
 };
 
 const parseDate = (value: string | null): Dayjs | null => {
@@ -105,6 +108,20 @@ const renderTimestamp = (value?: string) => {
 			</div>
 		</Tooltip>
 	);
+};
+
+const getWorkflowLabel = (
+	labels: Record<string, string> | undefined,
+	key: string,
+): string | undefined => {
+	if (!labels) return undefined;
+	const normalizedKey = formatWorkflowLabelKey(key);
+	for (const [labelKey, value] of Object.entries(labels)) {
+		if (formatWorkflowLabelKey(labelKey) === normalizedKey && value) {
+			return value;
+		}
+	}
+	return undefined;
 };
 
 const getWorkflowEstimatedCost = (record: WorkflowSummary): number | null => {
@@ -225,19 +242,26 @@ const runMatchesFilters = (
 const workflowSummaryFromRun = (
 	run: PipelineRun,
 	liveWorkflow?: WorkflowSummary,
-): WorkflowSummary => ({
-	name: workflowNameForRun(run),
-	status: liveWorkflow?.status ?? run.status,
-	nodeCount: run.nodeCount ?? liveWorkflow?.nodeCount ?? 0,
-	createdAt: liveWorkflow?.createdAt ?? run.createdAt,
-	finishedAt: liveWorkflow?.finishedAt ?? run.finishedAt,
-	labels: liveWorkflow?.labels,
-	estimatedCostUsd: liveWorkflow?.estimatedCostUsd,
-	totalEstimatedCost:
-		typeof run.totalEstimatedCost === "number"
-			? run.totalEstimatedCost
-			: liveWorkflow?.totalEstimatedCost,
-});
+): WorkflowSummary => {
+	const assetId = run.assetIds?.[0];
+	const mergedLabels = {
+		...(liveWorkflow?.labels ?? {}),
+		...(assetId ? { asset_id: assetId } : {}),
+	};
+	return {
+		name: workflowNameForRun(run),
+		status: liveWorkflow?.status ?? run.status,
+		nodeCount: run.nodeCount ?? liveWorkflow?.nodeCount ?? 0,
+		createdAt: liveWorkflow?.createdAt ?? run.createdAt,
+		finishedAt: liveWorkflow?.finishedAt ?? run.finishedAt,
+		labels: Object.keys(mergedLabels).length > 0 ? mergedLabels : undefined,
+		estimatedCostUsd: liveWorkflow?.estimatedCostUsd,
+		totalEstimatedCost:
+			typeof run.totalEstimatedCost === "number"
+				? run.totalEstimatedCost
+				: liveWorkflow?.totalEstimatedCost,
+	};
+};
 
 const mergeLedgerRunsWithLiveWorkflows = (
 	liveWorkflows: WorkflowSummary[],
@@ -301,8 +325,8 @@ const getErrorTitle = (kind: WorkflowErrorKind): string =>
 export function WorkflowExecutionList({
 	active = true,
 	batchJobId,
-	batchListKey,
 	embedded = false,
+	onSelectionChange,
 	title,
 }: WorkflowExecutionListProps) {
 	const { message: messageApi } = App.useApp();
@@ -313,6 +337,9 @@ export function WorkflowExecutionList({
 	>({});
 	const [templateVersionsByWorkflowName, setTemplateVersionsByWorkflowName] =
 		useState<Record<string, number>>({});
+	const [templateIdsByWorkflowName, setTemplateIdsByWorkflowName] = useState<
+		Record<string, string>
+	>({});
 	const [nodeCountsByWorkflowName, setNodeCountsByWorkflowName] = useState<
 		Record<string, number>
 	>({});
@@ -494,6 +521,15 @@ export function WorkflowExecutionList({
 							),
 					),
 				);
+				setTemplateIdsByWorkflowName(
+					Object.fromEntries(
+						pipelineRuns
+							.filter((run) => run.workflowName && run.templateId)
+							.map(
+								(run) => [run.workflowName, run.templateId as string] as const,
+							),
+					),
+				);
 				setNodeCountsByWorkflowName(
 					Object.fromEntries(
 						pipelineRuns
@@ -534,7 +570,9 @@ export function WorkflowExecutionList({
 					items: [],
 					total: 0,
 				})),
-				listPipelines({ pageSize: 200 }).then((r) => r.items).catch(() => []),
+				listPipelines({ pageSize: 200 })
+					.then((r) => r.items)
+					.catch(() => []),
 			]);
 			const pipelineRuns = pipelineRunResponse.items ?? [];
 			setServerTotal(pipelineRunResponse.total ?? pipelineRuns.length);
@@ -561,6 +599,15 @@ export function WorkflowExecutionList({
 								.map((item) => [item.name, t.version] as const),
 						),
 				]),
+			);
+			setTemplateIdsByWorkflowName(
+				Object.fromEntries(
+					pipelineRuns
+						.filter((run) => run.workflowName && run.templateId)
+						.map(
+							(run) => [run.workflowName, run.templateId as string] as const,
+						),
+				),
 			);
 			setNodeCountsByWorkflowName(
 				Object.fromEntries(
@@ -609,7 +656,7 @@ export function WorkflowExecutionList({
 		if (active) {
 			refresh();
 		}
-	}, [active, refresh, batchListKey]);
+	}, [active, refresh]);
 
 	useEffect(() => {
 		setPage(1);
@@ -773,6 +820,9 @@ export function WorkflowExecutionList({
 			width: 260,
 			render: (name: string, record: WorkflowSummary) => {
 				const runId = runIdsByWorkflowName[record.name];
+				const templateId =
+					templateIdsByWorkflowName[record.name] ??
+					getWorkflowLabel(record.labels, "template-id");
 				const templateVersion = templateVersionsByWorkflowName[record.name];
 				const scope = scopeByWorkflowName[record.name];
 				const displayId = toAssetStyleId(runId ?? name);
@@ -790,9 +840,19 @@ export function WorkflowExecutionList({
 						>
 							ID: {displayId}
 						</Typography.Text>
-						<div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 4 }}>
+						<div
+							style={{
+								marginTop: 4,
+								display: "flex",
+								flexWrap: "wrap",
+								gap: 4,
+							}}
+						>
 							{templateVersion ? (
 								<Tag color="blue">模板 v{templateVersion}</Tag>
+							) : null}
+							{templateId ? (
+								<Tag style={{ fontSize: 11 }}>可回到模板</Tag>
 							) : null}
 							{scope === "prod" ? (
 								<Tag color="green" style={{ fontSize: 11 }}>
@@ -891,6 +951,11 @@ export function WorkflowExecutionList({
 			key: "actions",
 			width: 110,
 			render: (_: unknown, record: WorkflowSummary) => {
+				const templateId =
+					templateIdsByWorkflowName[record.name] ??
+					getWorkflowLabel(record.labels, "template-id");
+				const templateVersion = templateVersionsByWorkflowName[record.name];
+				const scope = scopeByWorkflowName[record.name];
 				const menuItems = getWorkflowOperationMenuItems(record);
 				const hasOperationLoading = operationLoading?.startsWith(
 					`${record.name}:`,
@@ -898,6 +963,28 @@ export function WorkflowExecutionList({
 
 				return (
 					<div style={{ display: "flex", gap: 4 }}>
+						{templateId ? (
+							<Button
+								type="link"
+								size="small"
+								onClick={(event) => {
+									event.stopPropagation();
+									const params = new URLSearchParams({
+										templateId,
+										tab: "design",
+									});
+									if (templateVersion) {
+										params.set("templateVersion", String(templateVersion));
+									}
+									if (scope === "prod") {
+										params.set("readonly", "1");
+									}
+									navigate(`/pipeline?${params.toString()}`);
+								}}
+							>
+								模板
+							</Button>
+						) : null}
 						<Button
 							type="link"
 							size="small"
@@ -997,6 +1084,7 @@ export function WorkflowExecutionList({
 			</div>
 			<div className="pipeline-execution-filters" style={{ gap: 8 }}>
 				<Select
+					id="workflow-execution-status-filter"
 					allowClear
 					placeholder="状态"
 					style={{ minWidth: 130, flex: "0 0 130px" }}
@@ -1008,6 +1096,7 @@ export function WorkflowExecutionList({
 					}))}
 				/>
 				<Select
+					id="workflow-execution-version-filter"
 					allowClear
 					placeholder="模板版本"
 					style={{ minWidth: 120, flex: "0 0 120px" }}
@@ -1033,6 +1122,7 @@ export function WorkflowExecutionList({
 					onSearch={applyFilters}
 				/>
 				<RangePicker
+					id="workflow-execution-date-range"
 					value={draftDateRange}
 					placeholder={["创建开始时间", "完成截止时间"]}
 					onChange={(values) =>
@@ -1041,6 +1131,7 @@ export function WorkflowExecutionList({
 					style={{ minWidth: 300, flex: "1 1 280px" }}
 				/>
 				<Select
+					id="workflow-execution-label-filter"
 					mode="multiple"
 					allowClear
 					maxTagCount="responsive"
@@ -1089,7 +1180,13 @@ export function WorkflowExecutionList({
 						loading={loading}
 						rowSelection={{
 							selectedRowKeys: selectedWorkflowNames,
-							onChange: (keys) => setSelectedWorkflowNames(keys as string[]),
+							onChange: (keys) => {
+								const names = keys as string[];
+								setSelectedWorkflowNames(names);
+								onSelectionChange?.(
+									displayItems.filter((item) => names.includes(item.name)),
+								);
+							},
 						}}
 						scroll={{ x: 1200 }}
 						rowClassName={() => "pipeline-execution-table-row"}

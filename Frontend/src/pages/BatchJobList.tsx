@@ -1,8 +1,8 @@
 import {
 	PauseCircleOutlined,
 	PlayCircleOutlined,
-	ReloadOutlined,
 	RedoOutlined,
+	ReloadOutlined,
 } from "@ant-design/icons";
 import {
 	App,
@@ -19,8 +19,8 @@ import dayjs from "dayjs";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-	batchJobProgress,
 	type BatchJob,
+	batchJobProgress,
 	listBatchJobs,
 	pauseBatchJob,
 	resumeBatchJob,
@@ -59,7 +59,9 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		try {
 			const [jobItems, templateItems] = await Promise.all([
 				listBatchJobs(),
-				listPipelines({ pageSize: 200 }).then((r) => r.items).catch(() => []),
+				listPipelines({ pageSize: 200 })
+					.then((r) => r.items)
+					.catch(() => []),
 			]);
 			setJobs(jobItems);
 			setTemplates(templateItems);
@@ -112,7 +114,8 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			title: "模板",
 			dataIndex: "templateId",
 			key: "templateId",
-			render: (templateId: string) => templateNameById[templateId] ?? templateId,
+			render: (templateId: string) =>
+				templateNameById[templateId] ?? templateId,
 		},
 		{
 			title: "进度",

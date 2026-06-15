@@ -25,9 +25,10 @@ func (missingJobRepo) FindAllJobs(_ context.Context) ([]models.BackfillJob, erro
 func (missingJobRepo) FindJobByID(_ context.Context, _ string) (*models.BackfillJob, error) {
 	return nil, nil
 }
-func (missingJobRepo) UpdateJobStatus(_ context.Context, _, _ string) error { return nil }
-func (missingJobRepo) IncrementCompleted(_ context.Context, _ string) error { return nil }
-func (missingJobRepo) IncrementFailed(_ context.Context, _ string) error    { return nil }
+func (missingJobRepo) UpdateJobStatus(_ context.Context, _, _ string) error        { return nil }
+func (missingJobRepo) UpdateJobPilotPhase(_ context.Context, _, _, _ string) error { return nil }
+func (missingJobRepo) IncrementCompleted(_ context.Context, _ string) error        { return nil }
+func (missingJobRepo) IncrementFailed(_ context.Context, _ string) error           { return nil }
 func (missingJobRepo) SaveItem(_ context.Context, _ *models.BackfillItem) error {
 	return nil
 }
@@ -38,7 +39,7 @@ func (missingJobRepo) FindItemsByJobID(_ context.Context, _ string) ([]models.Ba
 func (missingJobRepo) FindItemByID(_ context.Context, _ string) (*models.BackfillItem, error) {
 	return nil, nil
 }
-func (missingJobRepo) UpdateItemStatus(_ context.Context, _, _, _, _ string) error { return nil }
+func (missingJobRepo) UpdateItemStatus(_ context.Context, _, _, _, _ string) error      { return nil }
 func (missingJobRepo) UpdateItemPipelineRun(_ context.Context, _, _, _, _ string) error { return nil }
 func (missingJobRepo) UpdateJobProgress(_ context.Context, _ string, _, _ int, _ string) error {
 	return nil
@@ -54,6 +55,22 @@ func (missingJobRepo) FindItemsByJobIDWithStatuses(_ context.Context, _ string, 
 }
 func (missingJobRepo) FindItemsMissingPipelineRun(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
+}
+func (missingJobRepo) FindItemsByScope(_ context.Context, _ repository.BackfillRerunItemFilter) ([]models.BackfillItem, error) {
+	return nil, nil
+}
+func (missingJobRepo) PrepareItemsForRerun(_ context.Context, _ []string) error { return nil }
+func (missingJobRepo) AggregateNodeStatusByBatchJobID(_ context.Context, _ string) ([]repository.BatchNodeStatusAggregate, error) {
+	return nil, nil
+}
+func (missingJobRepo) ListNodeFailures(_ context.Context, _ repository.BatchNodeFailureFilter) (*models.BatchNodeFailureListResult, error) {
+	return &models.BatchNodeFailureListResult{}, nil
+}
+func (missingJobRepo) CountPipelineRunsByBatchJobID(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+func (missingJobRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 func TestRetryFailed_NotFoundHTTP(t *testing.T) {

@@ -8,6 +8,8 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { StrictMode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import {
 	afterEach,
@@ -18,8 +20,6 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { ReactNode } from "react";
-import { StrictMode } from "react";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
 import { DeployPanel } from "./DeployPanel";
 
@@ -110,10 +110,7 @@ const mockTemplate = (
 	...overrides,
 });
 
-const pipelinesResponse = (
-	items: PipelineTemplate[],
-	total?: number,
-) => ({
+const pipelinesResponse = (items: PipelineTemplate[], total?: number) => ({
 	items,
 	total: total ?? items.length,
 	page: 1,
@@ -187,7 +184,7 @@ beforeEach(() => {
 		},
 	]);
 	mockDeployPipelineForAssets.mockImplementation(
-		async (templateId, assetIds, options) => {
+		async (templateId, assetIds, _options) => {
 			if (assetIds.length >= 2) {
 				return {
 					mode: "batch",
@@ -228,9 +225,11 @@ describe("DeployPanel", () => {
 	});
 
 	it("loads and displays templates on mount", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([
-			mockTemplate({ id: "tmpl-001", name: "my-pipeline", nodeCount: 5 }),
-		]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([
+				mockTemplate({ id: "tmpl-001", name: "my-pipeline", nodeCount: 5 }),
+			]),
+		);
 		mockListDeployments.mockResolvedValue([
 			mockDeployment({
 				id: "dep-001",
@@ -247,7 +246,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("calls deployPipelineForAssets on direct run", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 
@@ -274,7 +275,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("shows error toast when direct deploy fails", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockDeployPipelineForAssets.mockRejectedValue(new Error("K8s error"));
 		renderDeployPanel();
@@ -297,7 +300,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("opens run modal and creates batch job with two asset ids", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 
@@ -338,7 +343,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("uses asset ids from pipeline url when running a saved template", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockListPipelineVersions.mockResolvedValue([
 			mockTemplate({ id: "tmpl-v2", version: 2, nodeCount: 5 }),
@@ -352,7 +359,7 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("已选择 2 个资产")).toBeTruthy();
 		expect(
-			screen.getByText("请选择要运行的流水线和版本，确认后即可提交运行。"),
+			screen.getByText(/请选择要运行的流水线和版本，确认后即可提交运行。/),
 		).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
 
@@ -387,7 +394,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("deploys without asset IDs when none selected", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-002" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-002" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 
@@ -431,9 +440,9 @@ describe("DeployPanel", () => {
 			nodes: [],
 			edges: [],
 		};
-		mockListPipelines.mockResolvedValue(pipelinesResponse([
-			mockTemplate({ id: "tmpl-001", pipeline }),
-		]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001", pipeline })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockGetPipeline.mockResolvedValue(
 			mockTemplate({ id: "tmpl-001", pipeline }),
@@ -456,9 +465,9 @@ describe("DeployPanel", () => {
 			nodes: [],
 			edges: [],
 		};
-		mockListPipelines.mockResolvedValue(pipelinesResponse([
-			mockTemplate({ id: "tmpl-001", pipeline }),
-		]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001", pipeline })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockGetPipeline.mockResolvedValue(
 			mockTemplate({ id: "tmpl-001", pipeline }),
@@ -477,7 +486,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("shows error when load template fails on edit", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockGetPipeline.mockRejectedValue(new Error("not found"));
 		renderDeployPanel();
@@ -494,7 +505,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("deletes a template", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		mockDeletePipeline.mockResolvedValue(undefined);
 		renderDeployPanel();
@@ -529,7 +542,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("refreshes data after successful deploy", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 
@@ -573,7 +588,9 @@ describe("DeployPanel", () => {
 	});
 
 	it("shows modal with no-asset run warning", async () => {
-		mockListPipelines.mockResolvedValue(pipelinesResponse([mockTemplate({ id: "tmpl-001" })]));
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
 		mockListDeployments.mockResolvedValue([]);
 		renderDeployPanel();
 

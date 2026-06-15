@@ -322,7 +322,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			}));
 			const shouldTryPrevious =
 				nodePhase != null && /failed|error/i.test(nodePhase);
-			const applyLogResponse = (res: Awaited<ReturnType<typeof getWorkflowLogs>>) => {
+			const applyLogResponse = (
+				res: Awaited<ReturnType<typeof getWorkflowLogs>>,
+			) => {
 				setLogState((current) => ({
 					content: res.logs || "",
 					loading: false,
@@ -397,17 +399,16 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				}));
 				return;
 			}
+			const nodeChanged = node.id !== selectedNodeId;
 			setSelectedNodeId(node.id);
-			if (node.id !== selectedNodeId) {
-				setLogState((current) => ({
-					...current,
-					content: "",
-					loading: false,
-					error: null,
-					response: null,
-					clientTruncated: false,
-				}));
-			}
+			setLogState((current) => ({
+				...current,
+				content: nodeChanged ? "" : current.content,
+				loading: nodeChanged ? false : current.loading,
+				error: null,
+				response: nodeChanged ? null : current.response,
+				clientTruncated: nodeChanged ? false : current.clientTruncated,
+			}));
 		},
 		[name, selectedNodeId],
 	);
@@ -562,8 +563,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		if (!selectedNodeId || !name) {
 			return;
 		}
-		const phase = workflow?.nodes.find((node) => node.id === selectedNodeId)
-			?.phase;
+		const phase = workflow?.nodes.find(
+			(node) => node.id === selectedNodeId,
+		)?.phase;
 		void loadNodeLogs(selectedNodeId, phase);
 	}, [loadNodeLogs, name, selectedNodeId, workflow?.nodes]);
 

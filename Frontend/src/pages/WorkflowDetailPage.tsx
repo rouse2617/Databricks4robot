@@ -470,7 +470,7 @@ function WorkflowSummaryCards({
 						style={{ padding: 0, height: "auto" }}
 						onClick={() => {
 							const params = new URLSearchParams({
-								templateId: runEventState.run!.templateId!,
+								templateId: runEventState.run?.templateId ?? "",
 								tab: "design",
 							});
 							if (runEventState.run?.scope === "prod") {
@@ -664,9 +664,7 @@ function WorkflowRunContextPanel({
 					onSearch={(value) =>
 						onFilterEvents({ ...runEventFilters, q: value || undefined })
 					}
-					onClear={() =>
-						onFilterEvents({ ...runEventFilters, q: undefined })
-					}
+					onClear={() => onFilterEvents({ ...runEventFilters, q: undefined })}
 				/>
 				<Button
 					size="small"
@@ -1163,9 +1161,7 @@ export default function WorkflowDetailPage({
 			(operation) => operation.key === "retry" && !operation.disabled,
 		);
 		if (!retryOp || !selectedNode) return false;
-		return (
-			selectedNode.phase === "Failed"
-		);
+		return selectedNode.phase === "Failed";
 	}, [operations, selectedNode]);
 
 	const executeOperation = useCallback(

@@ -4,11 +4,11 @@ import {
 	Collapse,
 	Input,
 	Space,
-	Tag,
 	Table,
+	Tag,
 	Typography,
 } from "antd";
-import { useEffect, useRef, useState, type Key } from "react";
+import { type Key, useEffect, useRef, useState } from "react";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
 import { mergeAssetIds, parseAssetIdInput } from "../../lib/assetIdInput";
@@ -191,9 +191,7 @@ export default function AssetPicker({
 					disabled={!query.trim()}
 					onClick={() => addManualAssetIds(query)}
 				>
-					{query.trim()
-						? `添加「${query.trim()}」为资产 ID`
-						: "添加为资产 ID"}
+					{query.trim() ? `添加「${query.trim()}」为资产 ID` : "添加为资产 ID"}
 				</Button>
 				<Button
 					size="small"

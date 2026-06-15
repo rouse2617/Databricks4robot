@@ -190,7 +190,7 @@ export function listPipelines(
 		const items = raw.items ?? [];
 		const resolvedPageSize = raw.pageSize ?? raw.page_size ?? pageSize;
 		const hasServerTotal = typeof raw.total === "number";
-		const total = hasServerTotal ? raw.total : items.length;
+		const total = typeof raw.total === "number" ? raw.total : items.length;
 		let normalizedItems = items;
 		if (!hasServerTotal && items.length > resolvedPageSize) {
 			const start = (page - 1) * resolvedPageSize;

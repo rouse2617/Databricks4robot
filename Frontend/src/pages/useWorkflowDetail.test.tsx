@@ -6,7 +6,9 @@ import { ApiError } from "../api/pipelineClient";
 
 const mockGetWorkflow = vi.fn();
 const mockGetWorkflowLogs = vi.fn();
-const mockListPipelineRuns = vi.fn(() => Promise.resolve({ items: [], total: 0 }));
+const mockListPipelineRuns = vi.fn(() =>
+	Promise.resolve({ items: [], total: 0 }),
+);
 
 class MockEventSource extends EventTarget {
 	static instances: MockEventSource[] = [];
@@ -37,6 +39,7 @@ vi.mock("../api/pipelineApi", () => ({
 	listPipelineRunAssetNodes: vi.fn(),
 	listPipelineRunEvents: vi.fn(),
 	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
+	getPipelineRunByWorkflowName: vi.fn().mockResolvedValue(null),
 }));
 
 import { useWorkflowDetail } from "./useWorkflowDetail";

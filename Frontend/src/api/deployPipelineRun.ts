@@ -1,8 +1,8 @@
-import { type BatchJob, createBatchJob } from "./batchJobApi";
 import {
 	batchAssetLimitError,
 	exceedsBatchAssetLimit,
 } from "../lib/batchAssetLimits";
+import { type BatchJob, createBatchJob } from "./batchJobApi";
 import {
 	type Deployment,
 	deployTemplate,
@@ -28,10 +28,7 @@ export async function deployPipelineForAssets(
 		throw new Error(batchAssetLimitError(assetIds.length));
 	}
 	if (assetIds.length >= BATCH_ASSET_THRESHOLD) {
-		const stamp = new Date()
-			.toISOString()
-			.slice(0, 19)
-			.replace(/[-:T]/g, "");
+		const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
 		const batchJob = await createBatchJob({
 			name: options?.batchName ?? `batch-${stamp}`,
 			templateId,

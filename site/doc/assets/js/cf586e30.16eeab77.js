@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkdocs_site=self.webpackChunkdocs_site||[]).push([["26"],{1942(s){s.exports=JSON.parse('{"name":"@scalar/docusaurus","id":"default"}')}}]);

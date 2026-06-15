@@ -26,10 +26,19 @@ func NewBackfillRepo(c *Client) *BackfillRepo {
 
 var _ repository.BackfillRepository = (*BackfillRepo)(nil)
 
+func nullIntIfZero(v int) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
 // ── Jobs ────────────────────────────────────────────────────────────────────
 
 const backfillJobSelectCols = `id, name, template_id, filter_json,
-  total_count, completed_count, failed_count, status, created_at, updated_at`
+  total_count, completed_count, failed_count, status,
+  COALESCE(template_version, 0), COALESCE(pilot_count, 0), COALESCE(pilot_phase, ''),
+  created_at, updated_at`
 
 func scanBackfillJob(rs rowScanner) (*models.BackfillJob, error) {
 	var (
@@ -39,6 +48,7 @@ func scanBackfillJob(rs rowScanner) (*models.BackfillJob, error) {
 	if err := rs.Scan(
 		&j.ID, &j.Name, &j.TemplateID, &filterJSON,
 		&j.TotalCount, &j.CompletedCount, &j.FailedCount, &j.Status,
+		&j.TemplateVersion, &j.PilotCount, &j.PilotPhase,
 		&j.CreatedAt, &j.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -70,12 +80,14 @@ func (r *BackfillRepo) SaveJob(ctx context.Context, j *models.BackfillJob) error
 
 	const q = `
 	INSERT INTO backfill_jobs (id, name, template_id, filter_json,
-	  total_count, completed_count, failed_count, status, created_at, updated_at)
-	VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10)`
+	  total_count, completed_count, failed_count, status,
+	  template_version, pilot_count, pilot_phase, created_at, updated_at)
+	VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
 		j.ID, j.Name, j.TemplateID, filterJSON,
 		j.TotalCount, j.CompletedCount, j.FailedCount, j.Status,
+		nullIntIfZero(j.TemplateVersion), j.PilotCount, nullIfEmpty(j.PilotPhase),
 		j.CreatedAt, j.UpdatedAt,
 	); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.SaveJob: %w", err)
@@ -127,6 +139,15 @@ func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) e
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, status); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateJobStatus: %w", err)
+	}
+	return nil
+}
+
+func (r *BackfillRepo) UpdateJobPilotPhase(ctx context.Context, id, status, pilotPhase string) error {
+	const q = `UPDATE backfill_jobs SET status = $2, pilot_phase = $3, updated_at = NOW() WHERE id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, id, status, pilotPhase); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.UpdateJobPilotPhase: %w", err)
 	}
 	return nil
 }
@@ -416,4 +437,195 @@ func (r *BackfillRepo) UpdateJobProgress(ctx context.Context, id string, complet
 		return fmt.Errorf("postgres BackfillRepo.UpdateJobProgress: %w", err)
 	}
 	return nil
+}
+
+func (r *BackfillRepo) FindItemsByScope(ctx context.Context, filter repository.BackfillRerunItemFilter) ([]models.BackfillItem, error) {
+	db := dbFromCtx(ctx, r.c.db)
+	args := []any{filter.JobID}
+	where := []string{"bi.job_id = $1"}
+	joinNode := strings.TrimSpace(filter.PipelineNodeID) != ""
+	if len(filter.Statuses) > 0 {
+		args = append(args, filter.Statuses)
+		where = append(where, fmt.Sprintf("bi.status = ANY($%d)", len(args)))
+	}
+	if len(filter.ItemIDs) > 0 {
+		args = append(args, filter.ItemIDs)
+		where = append(where, fmt.Sprintf("bi.id = ANY($%d)", len(args)))
+	}
+	if len(filter.AssetIDs) > 0 {
+		args = append(args, filter.AssetIDs)
+		where = append(where, fmt.Sprintf("bi.asset_id = ANY($%d)", len(args)))
+	}
+	if joinNode {
+		args = append(args, filter.PipelineNodeID)
+		where = append(where, fmt.Sprintf("n.pipeline_node_id = $%d", len(args)))
+		statuses := filter.NodeStatuses
+		if len(statuses) == 0 {
+			statuses = []string{"Failed", "Error"}
+		}
+		args = append(args, statuses)
+		where = append(where, fmt.Sprintf("n.status = ANY($%d)", len(args)))
+	}
+	from := "FROM backfill_items bi"
+	if joinNode {
+		from += " INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id INNER JOIN pipeline_run_asset_nodes n ON n.run_id = pr.id AND n.asset_id = bi.asset_id"
+	}
+	q := `SELECT
+  bi.id, bi.job_id, bi.asset_id, bi.status,
+  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.started_at, bi.finished_at, bi.created_at
+` + from + `
+WHERE ` + strings.Join(where, " AND ") + `
+ORDER BY bi.created_at ASC`
+	rows, err := db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.FindItemsByScope: %w", err)
+	}
+	defer rows.Close()
+	var out []models.BackfillItem
+	for rows.Next() {
+		item, err := scanBackfillItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.FindItemsByScope scan: %w", err)
+		}
+		out = append(out, *item)
+	}
+	return out, nil
+}
+
+func (r *BackfillRepo) PrepareItemsForRerun(ctx context.Context, itemIDs []string) error {
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	const q = `UPDATE backfill_items SET
+	  status = 'pending',
+	  pipeline_run_id = NULL,
+	  workflow_name = NULL,
+	  error_message = NULL,
+	  started_at = NULL,
+	  finished_at = NULL
+	WHERE id = ANY($1)`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q, itemIDs); err != nil {
+		return fmt.Errorf("postgres BackfillRepo.PrepareItemsForRerun: %w", err)
+	}
+	return nil
+}
+
+func (r *BackfillRepo) AggregateNodeStatusByBatchJobID(ctx context.Context, jobID string) ([]repository.BatchNodeStatusAggregate, error) {
+	const q = `
+SELECT
+  n.pipeline_node_id,
+  COALESCE(NULLIF(n.display_name, ''), n.pipeline_node_id) AS display_name,
+  COALESCE(NULLIF(n.status, ''), 'Pending') AS status,
+  COUNT(*) AS cnt
+FROM pipeline_run_asset_nodes n
+INNER JOIN pipeline_runs pr ON pr.id = n.run_id
+WHERE pr.batch_job_id = $1
+GROUP BY 1, 2, 3
+ORDER BY 2, 1, 3`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.AggregateNodeStatusByBatchJobID: %w", err)
+	}
+	defer rows.Close()
+	out := []repository.BatchNodeStatusAggregate{}
+	for rows.Next() {
+		var row repository.BatchNodeStatusAggregate
+		if err := rows.Scan(&row.PipelineNodeID, &row.DisplayName, &row.Status, &row.Count); err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.AggregateNodeStatusByBatchJobID scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (r *BackfillRepo) ListNodeFailures(ctx context.Context, filter repository.BatchNodeFailureFilter) (*models.BatchNodeFailureListResult, error) {
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := filter.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	statuses := filter.Statuses
+	if len(statuses) == 0 {
+		statuses = []string{"Failed", "Error"}
+	}
+	args := []any{filter.JobID, filter.PipelineNodeID, statuses}
+	where := []string{"bi.job_id = $1", "n.pipeline_node_id = $2", "n.status = ANY($3)"}
+	if q := strings.TrimSpace(filter.Query); q != "" {
+		args = append(args, "%"+q+"%")
+		where = append(where, fmt.Sprintf("bi.asset_id ILIKE $%d", len(args)))
+	}
+	whereSQL := strings.Join(where, " AND ")
+	db := dbFromCtx(ctx, r.c.db)
+	countQ := `
+SELECT COUNT(*)
+FROM backfill_items bi
+INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
+INNER JOIN pipeline_run_asset_nodes n ON n.run_id = pr.id AND n.asset_id = bi.asset_id
+WHERE ` + whereSQL
+	var total int
+	if err := db.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.ListNodeFailures count: %w", err)
+	}
+	args = append(args, pageSize, (page-1)*pageSize)
+	q := `
+SELECT
+  bi.id, bi.asset_id, pr.id, COALESCE(pr.workflow_name, bi.workflow_name, ''),
+  n.pipeline_node_id, COALESCE(NULLIF(n.display_name, ''), n.pipeline_node_id),
+  COALESCE(n.status, ''), COALESCE(n.message, ''), n.started_at, n.finished_at
+FROM backfill_items bi
+INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
+INNER JOIN pipeline_run_asset_nodes n ON n.run_id = pr.id AND n.asset_id = bi.asset_id
+WHERE ` + whereSQL + `
+ORDER BY n.updated_at DESC, bi.created_at ASC
+LIMIT $` + fmt.Sprint(len(args)-1) + ` OFFSET $` + fmt.Sprint(len(args))
+	rows, err := db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.ListNodeFailures: %w", err)
+	}
+	defer rows.Close()
+	items := []models.BatchNodeFailureItem{}
+	for rows.Next() {
+		var item models.BatchNodeFailureItem
+		if err := rows.Scan(
+			&item.BackfillItemID, &item.AssetID, &item.RunID, &item.WorkflowName,
+			&item.PipelineNodeID, &item.DisplayName, &item.Status, &item.Message,
+			&item.StartedAt, &item.FinishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.ListNodeFailures scan: %w", err)
+		}
+		items = append(items, item)
+	}
+	return &models.BatchNodeFailureListResult{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (r *BackfillRepo) CountPipelineRunsByBatchJobID(ctx context.Context, jobID string) (int, error) {
+	const q = `SELECT COUNT(*) FROM pipeline_runs WHERE batch_job_id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	var total int
+	if err := db.QueryRow(ctx, q, jobID).Scan(&total); err != nil {
+		return 0, fmt.Errorf("postgres BackfillRepo.CountPipelineRunsByBatchJobID: %w", err)
+	}
+	return total, nil
+}
+
+func (r *BackfillRepo) CountRunsWithNodeRowsByBatchJobID(ctx context.Context, jobID string) (int, error) {
+	const q = `
+SELECT COUNT(DISTINCT n.run_id)
+FROM pipeline_run_asset_nodes n
+INNER JOIN pipeline_runs pr ON pr.id = n.run_id
+WHERE pr.batch_job_id = $1`
+	db := dbFromCtx(ctx, r.c.db)
+	var total int
+	if err := db.QueryRow(ctx, q, jobID).Scan(&total); err != nil {
+		return 0, fmt.Errorf("postgres BackfillRepo.CountRunsWithNodeRowsByBatchJobID: %w", err)
+	}
+	return total, nil
 }

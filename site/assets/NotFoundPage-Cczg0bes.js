@@ -1,0 +1,2 @@
+import{u as s,j as t}from"./vendor-react-DD1ansQ6.js";import{q as a,B as i}from"./vendor-antd-core-De_amM0D.js";function o(){const e=s();return t.jsx("div",{style:{display:"flex",justifyContent:"center",alignItems:"center",minHeight:"60vh"},children:t.jsx(a,{status:"404",title:"404",subTitle:"页面未找到",extra:t.jsx(i,{type:"primary",onClick:()=>e("/dashboard"),children:"返回首页"})})})}export{o as default};
+//# sourceMappingURL=NotFoundPage-Cczg0bes.js.map

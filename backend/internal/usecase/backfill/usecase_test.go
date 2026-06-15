@@ -42,6 +42,15 @@ func (m *mockBackfillRepo) UpdateJobStatus(_ context.Context, id, status string)
 	}
 	return nil
 }
+func (m *mockBackfillRepo) UpdateJobPilotPhase(_ context.Context, id, status, pilotPhase string) error {
+	if m.jobs != nil {
+		if j, ok := m.jobs[id]; ok {
+			j.Status = status
+			j.PilotPhase = pilotPhase
+		}
+	}
+	return nil
+}
 func (m *mockBackfillRepo) IncrementCompleted(_ context.Context, _ string) error { return nil }
 func (m *mockBackfillRepo) IncrementFailed(_ context.Context, _ string) error    { return nil }
 func (m *mockBackfillRepo) SaveItem(_ context.Context, _ *models.BackfillItem) error {
@@ -103,6 +112,52 @@ func (m *mockBackfillRepo) FindItemsByJobIDWithStatuses(_ context.Context, _ str
 }
 func (m *mockBackfillRepo) FindItemsMissingPipelineRun(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
+}
+func (m *mockBackfillRepo) FindItemsByScope(_ context.Context, filter repository.BackfillRerunItemFilter) ([]models.BackfillItem, error) {
+	out := []models.BackfillItem{}
+	for _, item := range m.items {
+		if item.JobID != filter.JobID {
+			continue
+		}
+		if len(filter.Statuses) > 0 && !containsString(filter.Statuses, item.Status) {
+			continue
+		}
+		if len(filter.ItemIDs) > 0 && !containsString(filter.ItemIDs, item.ID) {
+			continue
+		}
+		if len(filter.AssetIDs) > 0 && !containsString(filter.AssetIDs, item.AssetID) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+func (m *mockBackfillRepo) PrepareItemsForRerun(_ context.Context, itemIDs []string) error {
+	for _, id := range itemIDs {
+		_ = m.UpdateItemStatus(context.Background(), id, "pending", "", "")
+	}
+	return nil
+}
+func (m *mockBackfillRepo) AggregateNodeStatusByBatchJobID(_ context.Context, _ string) ([]repository.BatchNodeStatusAggregate, error) {
+	return nil, nil
+}
+func (m *mockBackfillRepo) ListNodeFailures(_ context.Context, _ repository.BatchNodeFailureFilter) (*models.BatchNodeFailureListResult, error) {
+	return &models.BatchNodeFailureListResult{}, nil
+}
+func (m *mockBackfillRepo) CountPipelineRunsByBatchJobID(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+func (m *mockBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRetryFailed_JobNotFound(t *testing.T) {
@@ -261,6 +316,15 @@ func (r *trackingBackfillRepo) UpdateJobStatus(_ context.Context, _ string, stat
 	}
 	return nil
 }
+func (r *trackingBackfillRepo) UpdateJobPilotPhase(_ context.Context, _ string, status, pilotPhase string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.job != nil {
+		r.job.Status = status
+		r.job.PilotPhase = pilotPhase
+	}
+	return nil
+}
 func (r *trackingBackfillRepo) IncrementCompleted(_ context.Context, _ string) error { return nil }
 func (r *trackingBackfillRepo) IncrementFailed(_ context.Context, _ string) error    { return nil }
 func (r *trackingBackfillRepo) SaveItem(_ context.Context, _ *models.BackfillItem) error {
@@ -369,4 +433,46 @@ func (r *trackingBackfillRepo) FindItemsMissingPipelineRun(_ context.Context, _ 
 		}
 	}
 	return out, nil
+}
+func (r *trackingBackfillRepo) FindItemsByScope(_ context.Context, filter repository.BackfillRerunItemFilter) ([]models.BackfillItem, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := []models.BackfillItem{}
+	for _, item := range r.items {
+		if filter.JobID != "" && item.JobID != filter.JobID {
+			continue
+		}
+		if len(filter.Statuses) > 0 && !containsString(filter.Statuses, item.Status) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+func (r *trackingBackfillRepo) PrepareItemsForRerun(_ context.Context, itemIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.items {
+		if containsString(itemIDs, r.items[i].ID) {
+			r.items[i].Status = "pending"
+			r.items[i].PipelineRunID = nil
+			r.items[i].WorkflowName = nil
+			r.items[i].ErrorMessage = nil
+			r.items[i].StartedAt = nil
+			r.items[i].FinishedAt = nil
+		}
+	}
+	return nil
+}
+func (r *trackingBackfillRepo) AggregateNodeStatusByBatchJobID(_ context.Context, _ string) ([]repository.BatchNodeStatusAggregate, error) {
+	return nil, nil
+}
+func (r *trackingBackfillRepo) ListNodeFailures(_ context.Context, _ repository.BatchNodeFailureFilter) (*models.BatchNodeFailureListResult, error) {
+	return &models.BatchNodeFailureListResult{}, nil
+}
+func (r *trackingBackfillRepo) CountPipelineRunsByBatchJobID(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+func (r *trackingBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }

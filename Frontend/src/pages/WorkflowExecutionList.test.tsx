@@ -118,7 +118,7 @@ describe("WorkflowExecutionList", () => {
 			],
 			total: 1,
 		});
-		mockListPipelines.mockResolvedValue([]);
+		mockListPipelines.mockResolvedValue({ items: [] });
 		mockGetPipelineRunWatcherStatus.mockResolvedValue({
 			id: "default",
 			activeScanLimit: 100,

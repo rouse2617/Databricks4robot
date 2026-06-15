@@ -13,7 +13,12 @@ import type { RegisteredComponent } from "../components/pipeline/types";
 
 const STORAGE_KEY = "databrew-components";
 
+function hasLocalStorage(): boolean {
+	return typeof localStorage !== "undefined";
+}
+
 function loadComponentsFromStorage(): RegisteredComponent[] {
+	if (!hasLocalStorage()) return [];
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (raw) return JSON.parse(raw) as RegisteredComponent[];
@@ -24,7 +29,12 @@ function loadComponentsFromStorage(): RegisteredComponent[] {
 }
 
 function saveComponentsToStorage(comps: RegisteredComponent[]) {
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(comps));
+	if (!hasLocalStorage()) return;
+	try {
+		localStorage.setItem(STORAGE_KEY, JSON.stringify(comps));
+	} catch {
+		/* ignore */
+	}
 }
 
 export type UsePipelineComponentsResult = {

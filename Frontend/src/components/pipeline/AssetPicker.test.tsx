@@ -293,7 +293,11 @@ describe("AssetPicker", () => {
 		if (searchButton) fireEvent.click(searchButton);
 
 		await waitFor(() => {
-			expect(screen.getByText("未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴")).toBeTruthy();
+			expect(
+				screen.getByText(
+					"未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴",
+				),
+			).toBeTruthy();
 		});
 	});
 
@@ -314,7 +318,11 @@ describe("AssetPicker", () => {
 			expect(searchApi.searchAssets).toHaveBeenCalled();
 			expect(screen.getByText("搜索资产失败，请重试")).toBeTruthy();
 		});
-		expect(screen.queryByText("未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴")).toBeNull();
+		expect(
+			screen.queryByText(
+				"未找到匹配的资产，仍可点击「添加为资产 ID」或批量粘贴",
+			),
+		).toBeNull();
 	});
 
 	it("accepts custom placeholder and maxHeight props", () => {

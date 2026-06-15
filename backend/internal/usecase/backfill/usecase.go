@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,20 +22,57 @@ const maxConcurrentBatchItems = 5
 const backfillItemChunkSize = 500
 
 var ErrNotFound = errors.New("backfill job not found")
+var ErrInvalidRerunScope = errors.New("invalid backfill rerun scope")
 
 // Usecase orchestrates backfill job operations.
 type Usecase struct {
 	repo       repository.BackfillRepository
 	pipelineUC *pipelineUC.Usecase
+	// pgClient enables WithTx for transactional SaveJob+SaveItems in CreateBackfill.
+	pgClient any // *postgres.Client — set via NewWithPostgres
 }
 
-// New creates a Usecase.
+// New creates a Usecase without transaction support.
 func New(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase) *Usecase {
 	return &Usecase{repo: repo, pipelineUC: pipelineUC}
 }
 
+// NewWithPostgres creates a Usecase with transaction support via the postgres client.
+func NewWithPostgres(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase, pgClient any) *Usecase {
+	return &Usecase{repo: repo, pipelineUC: pipelineUC, pgClient: pgClient}
+}
+
+type CreateBackfillOptions struct {
+	TemplateVersion int
+	PilotCount      int
+}
+
+type RerunRequest struct {
+	Scope           string
+	TemplateID      string
+	TemplateVersion int
+	ItemIDs         []string
+	AssetIDs        []string
+	PipelineNodeID  string
+	DryRun          bool
+}
+
+type RerunResult struct {
+	Status          string             `json:"status"`
+	DryRun          bool               `json:"dryRun"`
+	MatchedCount    int                `json:"matchedCount"`
+	TemplateID      string             `json:"templateId"`
+	TemplateVersion int                `json:"templateVersion,omitempty"`
+	Skipped         []RerunSkippedItem `json:"skipped"`
+}
+
+type RerunSkippedItem struct {
+	ItemID string `json:"itemId"`
+	Reason string `json:"reason"`
+}
+
 // CreateBackfill creates a new backfill job and its items.
-func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, assetIDs []string) (*models.BackfillJob, error) {
+func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, assetIDs []string, opts ...CreateBackfillOptions) (*models.BackfillJob, error) {
 	normalizedAssetIDs, err := assetvalidation.NormalizeAssetIDs("asset_ids", assetIDs)
 	if err != nil {
 		return nil, fmt.Errorf("validate asset_ids: %w", err)
@@ -42,26 +81,137 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 	if len(assetIDs) > MaxBackfillAssetCount {
 		return nil, fmt.Errorf("%w: max %d assets per batch", ErrTooManyAssets, MaxBackfillAssetCount)
 	}
+	var options CreateBackfillOptions
+	if len(opts) > 0 {
+		options = opts[0]
+	}
+	templateVersion := options.TemplateVersion
+	if templateVersion <= 0 {
+		templateVersion = uc.resolveTemplateVersion(ctx, templateID)
+	}
+	pilotCount := options.PilotCount
+	if pilotCount < 0 {
+		pilotCount = 0
+	}
+	if pilotCount > len(assetIDs) {
+		pilotCount = len(assetIDs)
+	}
+	pilotPhase := "none"
+	status := "pending"
+	if pilotCount > 0 && pilotCount < len(assetIDs) {
+		pilotPhase = "running"
+		status = "pilot_running"
+	}
 
 	job := &models.BackfillJob{
-		ID:         uuid.New().String(),
-		Name:       name,
-		TemplateID: templateID,
-		TotalCount: len(assetIDs),
-		Status:     "pending",
-		CreatedAt:  time.Now().UTC(),
-	}
-	if err := uc.repo.SaveJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("save backfill job: %w", err)
+		ID:              uuid.New().String(),
+		Name:            name,
+		TemplateID:      templateID,
+		TemplateVersion: templateVersion,
+		TotalCount:      len(assetIDs),
+		PilotCount:      pilotCount,
+		PilotPhase:      pilotPhase,
+		Status:          status,
+		CreatedAt:       time.Now().UTC(),
 	}
 
 	assetIDsCopy := append([]string(nil), assetIDs...)
-	go uc.materializeAndRunBatch(job.ID, templateID, assetIDsCopy)
+
+	// Try to atomically save job + items in one transaction.
+	// Falls back to separate calls when pgClient is not available.
+	if uc.pgClient != nil {
+		if withTx, ok := uc.pgClient.(interface {
+			WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+		}); ok {
+			txCtx := ctx
+			if err := withTx.WithTx(txCtx, func(txCtx context.Context) error {
+				if err := uc.repo.SaveJob(txCtx, job); err != nil {
+					return fmt.Errorf("save backfill job: %w", err)
+				}
+				for start := 0; start < len(assetIDsCopy); start += backfillItemChunkSize {
+					end := start + backfillItemChunkSize
+					if end > len(assetIDsCopy) {
+						end = len(assetIDsCopy)
+					}
+					chunk := assetIDsCopy[start:end]
+					items := make([]models.BackfillItem, len(chunk))
+					for i, aid := range chunk {
+						items[i] = models.BackfillItem{
+							ID:      uuid.New().String(),
+							JobID:   job.ID,
+							AssetID: aid,
+							Status:  "pending",
+						}
+					}
+					if err := uc.repo.SaveItems(txCtx, items); err != nil {
+						return fmt.Errorf("save backfill items: %w", err)
+					}
+				}
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+			go func() {
+				if err := <-uc.materializeAndRunBatch(job.ID, templateID, templateVersion, pilotCount, assetIDsCopy); err != nil {
+					slog.Error("CreateBackfill: materializeAndRunBatch failed", "jobID", job.ID, "err", err)
+				}
+			}()
+			return job, nil
+		}
+	}
+
+	// Fallback: save job, then items (not atomic; used when pgClient unavailable).
+	if err := uc.repo.SaveJob(ctx, job); err != nil {
+		return nil, fmt.Errorf("save backfill job: %w", err)
+	}
+	for start := 0; start < len(assetIDsCopy); start += backfillItemChunkSize {
+		end := start + backfillItemChunkSize
+		if end > len(assetIDsCopy) {
+			end = len(assetIDsCopy)
+		}
+		chunk := assetIDsCopy[start:end]
+		items := make([]models.BackfillItem, len(chunk))
+		for i, aid := range chunk {
+			items[i] = models.BackfillItem{
+				ID:      uuid.New().String(),
+				JobID:   job.ID,
+				AssetID: aid,
+				Status:  "pending",
+			}
+		}
+		if err := uc.repo.SaveItems(ctx, items); err != nil {
+			_ = uc.repo.UpdateJobStatus(ctx, job.ID, "failed")
+			return nil, fmt.Errorf("save backfill items: %w", err)
+		}
+	}
+	go func() {
+		if err := <-uc.materializeAndRunBatch(job.ID, templateID, templateVersion, pilotCount, assetIDsCopy); err != nil {
+			slog.Error("CreateBackfill (fallback): materializeAndRunBatch failed", "jobID", job.ID, "err", err)
+		}
+	}()
 
 	return job, nil
 }
 
-func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, assetIDs []string) {
+func (uc *Usecase) resolveTemplateVersion(ctx context.Context, templateID string) int {
+	if uc.pipelineUC == nil {
+		return 0
+	}
+	t, err := uc.pipelineUC.GetTemplate(ctx, templateID)
+	if err != nil || t == nil {
+		return 0
+	}
+	if t.ActiveVersion > 0 {
+		return t.ActiveVersion
+	}
+	return t.Version
+}
+
+// materializeAndRunBatch materializes items and schedules execution.
+// Returns a channel that delivers any fatal errors encountered during background execution.
+// Callers must drain the returned channel to avoid goroutine leaks.
+func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVersion, pilotCount int, assetIDs []string) <-chan error {
+	errCh := make(chan error, 1)
 	ctx := context.Background()
 	items := make([]models.BackfillItem, 0, len(assetIDs))
 	for start := 0; start < len(assetIDs); start += backfillItemChunkSize {
@@ -80,39 +230,68 @@ func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, assetIDs []s
 			}
 		}
 		if err := uc.repo.SaveItems(ctx, batch); err != nil {
+			slog.Error("materializeAndRunBatch: SaveItems failed", "jobID", jobID, "err", err)
+			select {
+			case errCh <- fmt.Errorf("save items: %w", err):
+			default:
+			}
 			_ = uc.repo.UpdateJobStatus(ctx, jobID, "failed")
-			return
+			close(errCh)
+			return errCh
 		}
 		if uc.pipelineUC != nil {
 			for i := range batch {
 				runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-					TemplateID: templateID,
-					BatchJobID: jobID,
-					AssetID:    batch[i].AssetID,
-					Status:     "Pending",
+					TemplateID:      templateID,
+					TemplateVersion: templateVersion,
+					BatchJobID:      jobID,
+					AssetID:         batch[i].AssetID,
+					Status:          "Pending",
 				})
 				if err != nil {
+					slog.Warn("materializeAndRunBatch: UpsertBatchSubtaskRun failed, skipping item",
+						"jobID", jobID, "assetID", batch[i].AssetID, "err", err)
 					continue
 				}
 				batch[i].PipelineRunID = &runID
 				if wf := strings.TrimSpace(workflowName); wf != "" {
 					batch[i].WorkflowName = &wf
 				}
-				_ = uc.repo.UpdateItemPipelineRun(ctx, batch[i].ID, runID, workflowName, "pending")
+				if err := uc.repo.UpdateItemPipelineRun(ctx, batch[i].ID, runID, workflowName, "pending"); err != nil {
+					slog.Warn("materializeAndRunBatch: UpdateItemPipelineRun failed",
+						"jobID", jobID, "itemID", batch[i].ID, "err", err)
+				}
 			}
 		}
 		items = append(items, batch...)
 	}
 
-	if err := uc.repo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
-		return
+	status := "running"
+	itemsToRun := items
+	if pilotCount > 0 && pilotCount < len(items) {
+		status = "pilot_running"
+		itemsToRun = items[:pilotCount]
 	}
-	if uc.pipelineUC != nil && len(items) > 0 {
-		uc.runItems(ctx, jobID, templateID, items, "pending")
+	if err := uc.repo.UpdateJobStatus(ctx, jobID, status); err != nil {
+		slog.Error("materializeAndRunBatch: UpdateJobStatus failed", "jobID", jobID, "status", status, "err", err)
+		select {
+		case errCh <- fmt.Errorf("update job status: %w", err):
+		default:
+		}
+		close(errCh)
+		return errCh
 	}
+	if uc.pipelineUC != nil && len(itemsToRun) > 0 {
+		go func() {
+			slog.Info("materializeAndRunBatch: starting runItems", "jobID", jobID, "templateID", templateID)
+			uc.runItems(context.Background(), jobID, templateID, templateVersion, itemsToRun, "pending")
+		}()
+	}
+	close(errCh)
+	return errCh
 }
 
-func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, items []models.BackfillItem, allowed ...string) {
+func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, templateVersion int, items []models.BackfillItem, allowed ...string) {
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, status := range allowed {
 		allowedSet[status] = struct{}{}
@@ -128,7 +307,10 @@ func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, items
 				if uc.isJobPaused(ctx, jobID) {
 					continue
 				}
-				_ = uc.executeItem(ctx, item, templateID, jobID)
+				if err := uc.executeItem(ctx, item, templateID, templateVersion, jobID); err != nil {
+					slog.Warn("runItems: executeItem failed",
+						"jobID", jobID, "itemID", item.ID, "assetID", item.AssetID, "err", err)
+				}
 			}
 		}()
 	}
@@ -156,7 +338,7 @@ func (uc *Usecase) isJobPaused(ctx context.Context, jobID string) bool {
 }
 
 // executeItem deploys the pipeline for a single backfill item and tracks status.
-func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, templateID, jobID string) error {
+func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, templateID string, templateVersion int, jobID string) error {
 	job, err := uc.repo.FindJobByID(ctx, item.JobID)
 	if err != nil || job == nil || job.Status == "paused" {
 		return nil
@@ -178,10 +360,11 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	if runID == "" && uc.pipelineUC != nil {
 		var initErr error
 		runID, workflowName, initErr = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-			TemplateID: templateID,
-			BatchJobID: jobID,
-			AssetID:    item.AssetID,
-			Status:     "Pending",
+			TemplateID:      templateID,
+			TemplateVersion: templateVersion,
+			BatchJobID:      jobID,
+			AssetID:         item.AssetID,
+			Status:          "Pending",
 		})
 		if initErr == nil {
 			_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, "pending")
@@ -190,6 +373,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 
 	deployOpts := pipelineUC.DeployOptions{
 		BatchJobID:         jobID,
+		TemplateVersion:    templateVersion,
 		AllowUnknownAssets: true,
 		PreallocatedRunID:  runID,
 	}
@@ -205,22 +389,24 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 			errMsg := err.Error()
 			if runID == "" {
 				runID, workflowName, _ = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-					TemplateID:   templateID,
-					BatchJobID:   jobID,
-					AssetID:      item.AssetID,
-					Status:       "Failed",
-					Message:      errMsg,
-					WorkflowName: workflowName,
+					TemplateID:      templateID,
+					TemplateVersion: templateVersion,
+					BatchJobID:      jobID,
+					AssetID:         item.AssetID,
+					Status:          "Failed",
+					Message:         errMsg,
+					WorkflowName:    workflowName,
 				})
 			} else {
 				_, workflowName, _ = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-					TemplateID:   templateID,
-					BatchJobID:   jobID,
-					AssetID:      item.AssetID,
-					RunID:        runID,
-					Status:       "Failed",
-					Message:      errMsg,
-					WorkflowName: workflowName,
+					TemplateID:      templateID,
+					TemplateVersion: templateVersion,
+					BatchJobID:      jobID,
+					AssetID:         item.AssetID,
+					RunID:           runID,
+					Status:          "Failed",
+					Message:         errMsg,
+					WorkflowName:    workflowName,
 				})
 			}
 			if runID != "" {
@@ -283,13 +469,14 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 	}
 	status, message := backfillItemLedgerStatus(item)
 	newRunID, newWorkflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-		TemplateID:   job.TemplateID,
-		BatchJobID:   job.ID,
-		AssetID:      item.AssetID,
-		RunID:        runID,
-		Status:       status,
-		Message:      message,
-		WorkflowName: workflowName,
+		TemplateID:      job.TemplateID,
+		TemplateVersion: job.TemplateVersion,
+		BatchJobID:      job.ID,
+		AssetID:         item.AssetID,
+		RunID:           runID,
+		Status:          status,
+		Message:         message,
+		WorkflowName:    workflowName,
 	})
 	if err != nil {
 		return err
@@ -369,18 +556,253 @@ func (uc *Usecase) ResumeJob(ctx context.Context, id string) error {
 		return err
 	}
 	if uc.pipelineUC != nil {
-		go uc.runItems(context.Background(), id, job.TemplateID, items, "pending")
+		go func() {
+			slog.Info("ResumeJob: starting runItems", "jobID", id)
+			uc.runItems(context.Background(), id, job.TemplateID, job.TemplateVersion, items, "pending")
+		}()
 	}
 	return nil
 }
 
 // RetryFailed retries all failed items for a backfill job.
 func (uc *Usecase) RetryFailed(ctx context.Context, jobID string) error {
-	items, err := uc.repo.FindItemsByJobID(ctx, jobID)
+	_, err := uc.Rerun(ctx, jobID, RerunRequest{Scope: "failed"})
+	return err
+}
+
+func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*RerunResult, error) {
+	job, err := uc.repo.FindJobByID(ctx, jobID)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if job == nil {
+		return nil, ErrNotFound
 	}
 
+	filter, err := rerunFilter(jobID, req)
+	if err != nil {
+		return nil, err
+	}
+	items, err := uc.repo.FindItemsByScope(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	templateID := strings.TrimSpace(req.TemplateID)
+	if templateID == "" {
+		templateID = job.TemplateID
+	}
+	templateVersion := req.TemplateVersion
+	if templateVersion <= 0 {
+		templateVersion = job.TemplateVersion
+	}
+	if templateVersion <= 0 {
+		templateVersion = uc.resolveTemplateVersion(ctx, templateID)
+	}
+	result := &RerunResult{
+		Status:          "accepted",
+		DryRun:          req.DryRun,
+		MatchedCount:    len(items),
+		TemplateID:      templateID,
+		TemplateVersion: templateVersion,
+		Skipped:         []RerunSkippedItem{},
+	}
+	runnable := make([]models.BackfillItem, 0, len(items))
+	itemIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.Status == "running" {
+			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: item.ID, Reason: "already_running"})
+			continue
+		}
+		runnable = append(runnable, item)
+		itemIDs = append(itemIDs, item.ID)
+	}
+	if req.DryRun {
+		return result, nil
+	}
+	if err := uc.repo.PrepareItemsForRerun(ctx, itemIDs); err != nil {
+		return nil, err
+	}
+	for i := range runnable {
+		if uc.pipelineUC == nil {
+			continue
+		}
+		runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+			TemplateID:      templateID,
+			TemplateVersion: templateVersion,
+			BatchJobID:      jobID,
+			AssetID:         runnable[i].AssetID,
+			Status:          "Pending",
+		})
+		if err != nil {
+			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: runnable[i].ID, Reason: err.Error()})
+			continue
+		}
+		runnable[i].PipelineRunID = &runID
+		if wf := strings.TrimSpace(workflowName); wf != "" {
+			runnable[i].WorkflowName = &wf
+		}
+		_ = uc.repo.UpdateItemPipelineRun(ctx, runnable[i].ID, runID, workflowName, "pending")
+	}
+	if len(runnable) > 0 {
+		if err := uc.repo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
+			return nil, err
+		}
+		if uc.pipelineUC != nil {
+			go func() {
+				slog.Info("Rerun: starting runItems", "jobID", jobID, "templateID", templateID)
+				uc.runItems(context.Background(), jobID, templateID, templateVersion, runnable, "pending")
+			}()
+		}
+	}
+	return result, nil
+}
+
+func rerunFilter(jobID string, req RerunRequest) (repository.BackfillRerunItemFilter, error) {
+	scope := strings.ToLower(strings.TrimSpace(req.Scope))
+	if scope == "" {
+		scope = "failed"
+	}
+	filter := repository.BackfillRerunItemFilter{JobID: jobID}
+	switch scope {
+	case "failed":
+		filter.Statuses = []string{"failed", "cancelled"}
+	case "pending":
+		filter.Statuses = []string{"pending"}
+	case "incomplete":
+		filter.Statuses = []string{"pending", "failed", "cancelled"}
+	case "completed":
+		filter.Statuses = []string{"completed"}
+	case "custom":
+		filter.ItemIDs = req.ItemIDs
+		filter.AssetIDs = req.AssetIDs
+		if len(filter.ItemIDs) == 0 && len(filter.AssetIDs) == 0 {
+			return filter, fmt.Errorf("%w: custom requires itemIds or assetIds", ErrInvalidRerunScope)
+		}
+	case "node_failed":
+		filter.PipelineNodeID = strings.TrimSpace(req.PipelineNodeID)
+		filter.NodeStatuses = []string{"Failed", "Error"}
+		if filter.PipelineNodeID == "" {
+			return filter, fmt.Errorf("%w: node_failed requires pipelineNodeId", ErrInvalidRerunScope)
+		}
+	default:
+		return filter, fmt.Errorf("%w: %s", ErrInvalidRerunScope, scope)
+	}
+	return filter, nil
+}
+
+func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*models.BatchNodeSummary, error) {
+	job, err := uc.repo.FindJobByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, ErrNotFound
+	}
+	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	aggregates, err := uc.repo.AggregateNodeStatusByBatchJobID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	runsTotal, _ := uc.repo.CountPipelineRunsByBatchJobID(ctx, jobID)
+	runsWithNodeRows, _ := uc.repo.CountRunsWithNodeRowsByBatchJobID(ctx, jobID)
+	nodesByID := map[string]*models.BatchNodeSummaryNode{}
+	order := 1
+	for _, aggregate := range aggregates {
+		node := nodesByID[aggregate.PipelineNodeID]
+		if node == nil {
+			node = &models.BatchNodeSummaryNode{
+				PipelineNodeID: aggregate.PipelineNodeID,
+				DisplayName:    aggregate.DisplayName,
+				DagOrder:       order,
+				Counts: map[string]int{
+					"Pending":   0,
+					"Running":   0,
+					"Succeeded": 0,
+					"Failed":    0,
+					"Error":     0,
+					"Skipped":   0,
+					"Omitted":   0,
+				},
+			}
+			nodesByID[aggregate.PipelineNodeID] = node
+			order++
+		}
+		status := normalizeNodeStatus(aggregate.Status)
+		node.Counts[status] += aggregate.Count
+		node.Attempted += aggregate.Count
+	}
+	nodes := make([]models.BatchNodeSummaryNode, 0, len(nodesByID))
+	for _, node := range nodesByID {
+		if missing := job.TotalCount - node.Attempted; missing > 0 {
+			node.Counts["Pending"] += missing
+		}
+		failures := node.Counts["Failed"] + node.Counts["Error"]
+		if node.Attempted > 0 {
+			node.FailureRate = float64(failures) / float64(node.Attempted)
+		}
+		nodes = append(nodes, *node)
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].DagOrder == nodes[j].DagOrder {
+			return nodes[i].PipelineNodeID < nodes[j].PipelineNodeID
+		}
+		return nodes[i].DagOrder < nodes[j].DagOrder
+	})
+	return &models.BatchNodeSummary{
+		BatchJobID:      job.ID,
+		TemplateID:      job.TemplateID,
+		TemplateVersion: job.TemplateVersion,
+		Subtasks: models.BatchNodeSubtaskCounts{
+			Total:     job.TotalCount,
+			Completed: summary.Completed,
+			Failed:    summary.Failed,
+			Running:   summary.Running,
+			Pending:   summary.Pending,
+			Paused:    job.Status == "paused",
+		},
+		Nodes: nodes,
+		DataCoverage: models.BatchNodeDataCoverage{
+			RunsWithNodeRows: runsWithNodeRows,
+			RunsTotal:        runsTotal,
+			Complete:         runsTotal == 0 || runsWithNodeRows >= runsTotal,
+		},
+		GeneratedAt: time.Now().UTC(),
+	}, nil
+}
+
+func normalizeNodeStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "succeeded", "success", "completed":
+		return "Succeeded"
+	case "failed":
+		return "Failed"
+	case "error":
+		return "Error"
+	case "running":
+		return "Running"
+	case "skipped":
+		return "Skipped"
+	case "omitted":
+		return "Omitted"
+	default:
+		return "Pending"
+	}
+}
+
+func (uc *Usecase) ListNodeFailures(ctx context.Context, jobID string, filter repository.BatchNodeFailureFilter) (*models.BatchNodeFailureListResult, error) {
+	if job, err := uc.repo.FindJobByID(ctx, jobID); err != nil {
+		return nil, err
+	} else if job == nil {
+		return nil, ErrNotFound
+	}
+	filter.JobID = jobID
+	return uc.repo.ListNodeFailures(ctx, filter)
+}
+
+func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {
 	job, err := uc.repo.FindJobByID(ctx, jobID)
 	if err != nil {
 		return err
@@ -388,35 +810,21 @@ func (uc *Usecase) RetryFailed(ctx context.Context, jobID string) error {
 	if job == nil {
 		return ErrNotFound
 	}
-
-	for _, item := range items {
-		if item.Status == "failed" {
-			_ = uc.repo.UpdateItemStatus(ctx, item.ID, "pending", "", "")
-			if uc.pipelineUC != nil {
-				runID := ""
-				if item.PipelineRunID != nil {
-					runID = strings.TrimSpace(*item.PipelineRunID)
-				}
-				workflowName := ""
-				if item.WorkflowName != nil {
-					workflowName = strings.TrimSpace(*item.WorkflowName)
-				}
-				_, _, _ = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-					TemplateID:   job.TemplateID,
-					BatchJobID:   jobID,
-					AssetID:      item.AssetID,
-					RunID:        runID,
-					Status:       "Pending",
-					WorkflowName: workflowName,
-				})
-			}
-		}
+	if job.PilotPhase != "review" {
+		return fmt.Errorf("%w: pilot is not awaiting review", ErrInvalidRerunScope)
 	}
-	if err := uc.repo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
+	if err := uc.repo.UpdateJobPilotPhase(ctx, jobID, "running", "done"); err != nil {
+		return err
+	}
+	items, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"pending"})
+	if err != nil {
 		return err
 	}
 	if uc.pipelineUC != nil {
-		go uc.runItems(context.Background(), jobID, job.TemplateID, items, "pending")
+		go func() {
+			slog.Info("ContinueFull: starting runItems", "jobID", jobID)
+			uc.runItems(context.Background(), jobID, job.TemplateID, job.TemplateVersion, items, "pending")
+		}()
 	}
 	return nil
 }
@@ -455,7 +863,20 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
+	if job.PilotPhase == "running" && job.PilotCount > 0 {
+		attemptedPilot := summary.Completed + summary.Failed
+		if attemptedPilot >= job.PilotCount && summary.Pending > 0 {
+			return uc.repo.UpdateJobPilotPhase(ctx, jobID, "pilot_review", "review")
+		}
+	}
 	jobStatus := deriveJobStatus(summary, job.TotalCount)
+	if job.PilotPhase == "review" && jobStatus == "running" {
+		jobStatus = "pilot_review"
+	}
+	if job.PilotPhase == "running" && jobStatus == "completed" {
+		_ = uc.repo.UpdateJobPilotPhase(ctx, jobID, jobStatus, "done")
+		return nil
+	}
 	return uc.repo.UpdateJobProgress(ctx, jobID, summary.Completed, summary.Failed, jobStatus)
 }
 

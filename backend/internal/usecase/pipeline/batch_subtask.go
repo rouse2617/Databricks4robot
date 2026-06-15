@@ -14,13 +14,14 @@ import (
 // BatchSubtaskRunInput describes a batch subtask ledger row that should look
 // like any other pipeline run in list/detail views.
 type BatchSubtaskRunInput struct {
-	TemplateID   string
-	BatchJobID   string
-	AssetID      string
-	RunID        string
-	Status       string
-	Message      string
-	WorkflowName string
+	TemplateID      string
+	TemplateVersion int
+	BatchJobID      string
+	AssetID         string
+	RunID           string
+	Status          string
+	Message         string
+	WorkflowName    string
 }
 
 // UpsertBatchSubtaskRun creates or updates a first-class pipeline run for a
@@ -42,6 +43,17 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 	}
 	if t == nil {
 		return "", "", ErrTemplateNotFound
+	}
+	if in.TemplateVersion > 0 && in.TemplateVersion != t.Version {
+		versioned, err := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, in.TemplateVersion)
+		if err != nil {
+			return "", "", err
+		}
+		if versioned == nil {
+			return "", "", ErrTemplateNotFound
+		}
+		t = versioned
+		templateID = t.ID
 	}
 
 	runID := strings.TrimSpace(in.RunID)

@@ -200,7 +200,12 @@ export function VersionHistoryDrawer({
 				{diffLoading ? (
 					<Skeleton active paragraph={{ rows: 4 }} />
 				) : diffError ? (
-					<Alert type="error" message="对比失败" description={diffError} showIcon />
+					<Alert
+						type="error"
+						message="对比失败"
+						description={diffError}
+						showIcon
+					/>
 				) : diffResult ? (
 					<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 						<DiffSection

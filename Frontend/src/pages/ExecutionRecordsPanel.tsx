@@ -14,7 +14,9 @@ function parseExecutionView(value: string | null): ExecutionView {
 	return value === "batch" ? "batch" : "single";
 }
 
-export function ExecutionRecordsPanel({ active = true }: ExecutionRecordsPanelProps) {
+export function ExecutionRecordsPanel({
+	active = true,
+}: ExecutionRecordsPanelProps) {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const executionView = useMemo(
 		() => parseExecutionView(searchParams.get("executionView")),

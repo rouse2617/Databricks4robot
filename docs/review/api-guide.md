@@ -2958,3 +2958,43 @@ curl -X DELETE "$BASE/api/v1/workflows/<WORKFLOW_NAME>" \
 curl -i "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs" \
   -H "X-Databrew-Token: $TOKEN"
 ```
+
+## Pipeline Batch M1
+
+创建 batch 可锁定模板版本，并可指定 pilot 试跑数量。`assetIds` 单批上限为
+10,000；超过上限返回 `400 INVALID_ARGUMENT`。
+
+```bash
+curl -X POST "$BASE/api/v1/backfill" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "daily-batch",
+    "templateId": "tpl-123",
+    "templateVersion": 4,
+    "pilotCount": 50,
+    "assetIds": ["asset-1", "asset-2"]
+  }'
+
+curl -s "$BASE/api/v1/backfill/<BATCH_ID>/node-summary" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应包含 subtasks、nodes[].counts、dataCoverage；Pending 表示该节点尚无账本行。
+
+curl -s "$BASE/api/v1/backfill/<BATCH_ID>/node-failures?pipelineNodeId=step-extract&page=1&pageSize=20" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"node_failed","pipelineNodeId":"step-extract","templateVersion":4,"dryRun":true}'
+
+curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/continue-full" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 错误路径：node_failed 缺少 pipelineNodeId 返回 400。
+curl -i -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"node_failed"}'
+```

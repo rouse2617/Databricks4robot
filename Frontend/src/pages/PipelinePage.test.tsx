@@ -13,6 +13,17 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Deployment } from "../api/pipelineApi";
 import PipelinePage from "./PipelinePage";
 
+// ── Mock navigate ────────────────────────────────────────────────
+const mockNavigate = vi.hoisted(() => vi.fn());
+
+vi.mock("react-router-dom", async (importOriginal) => {
+	const actual = await importOriginal<Record<string, unknown>>();
+	return {
+		...actual,
+		useNavigate: () => mockNavigate,
+	};
+});
+
 // ── Mock pipelineApi ──────────────────────────────────────────────
 const mockSavePipeline = vi.fn();
 const mockDeployTemplate = vi.fn();
@@ -264,6 +275,7 @@ describe("PipelinePage", () => {
 
 	afterEach(() => {
 		cleanup();
+		mockNavigate.mockClear();
 	});
 
 	// ── Render & structure ──────────────────────────────────────────
@@ -394,6 +406,24 @@ describe("PipelinePage", () => {
 		);
 		const msg = await getMockMessage();
 		expect(msg.success).toHaveBeenCalledWith(expect.stringContaining("已保存"));
+	});
+
+	it("navigates with tab=design after save", async () => {
+		mockNavigate.mockClear();
+		mockSavePipeline.mockResolvedValueOnce({
+			id: "tmpl-001",
+			name: "my-pipeline",
+			version: 2,
+		});
+		renderPage();
+		fireEvent.click(screen.getByText("保存"));
+		await waitFor(() => expect(mockSavePipeline).toHaveBeenCalledTimes(1));
+		await waitFor(() => {
+			expect(mockNavigate).toHaveBeenCalledWith(
+				expect.stringContaining("/pipeline?templateId=tmpl-001&tab=design"),
+				{ replace: true },
+			);
+		});
 	});
 
 	it("shows error on save failure", async () => {
