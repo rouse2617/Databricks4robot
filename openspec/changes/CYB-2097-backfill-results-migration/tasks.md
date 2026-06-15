@@ -8,7 +8,7 @@
 - [x] specs/backfill/spec.md
 - [x] context-files.md
 - [x] decisions.md
-- [ ] User checkpoint: 「OpenSpec OK，继续」before any `backend/` / `Frontend/` edit
+- [x] User checkpoint: 「OpenSpec OK，继续」before any `backend/` / `Frontend/` edit
 
 ## 2. Backend — upload API (after approval)
 

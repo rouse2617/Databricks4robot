@@ -20,3 +20,10 @@
 
 - OpenSpec artifacts only this session; no runtime deploy.
 - Next implementer: read `context-files.md`, run `scripts/smoke-backfill-results-api-dev.sh` after handler work.
+
+## 2026-06-15 — User checkpoint approved
+
+- **User:** 「OpenSpec OK，继续」（侧栏确认 CYB-2097 实现）
+- **Unblocks:** `backend/`, `Frontend/`, `api/openapi.yaml`, smoke scripts
+- **Still gated:** `backend/migrations/` for `algo_run_results` — off-limits per `AI-RULES.md`; needs explicit user approval before DDL
+- **Repo note:** `algo_run_results` / `report_manifests` not in current `backend/migrations/`; design ADR-1 assumes legacy/dev tables — confirm schema owner before migration PR
