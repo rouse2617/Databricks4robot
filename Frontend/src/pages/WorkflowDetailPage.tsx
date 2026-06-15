@@ -1384,8 +1384,7 @@ export default function WorkflowDetailPage({
 				height: "calc(100vh - 49px)",
 				display: "flex",
 				flexDirection: "column",
-				maxWidth: 1400,
-				margin: "0 auto",
+				width: "100%",
 			}}
 		>
 			<div
