@@ -99,6 +99,44 @@ func TestPipelineRunRepoSaveUsesExplicitEmptyAssetArray(t *testing.T) {
 	}
 }
 
+func TestPipelineRunRepoListSummariesBatchUsesBackfillItemStatus(t *testing.T) {
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{0}},
+		rows:     &fakeRows{},
+	}
+	repo := NewPipelineRunRepo(&Client{db: db})
+
+	_, _, err := repo.ListSummaries(context.Background(), models.PipelineRunListFilter{
+		BatchJobID: "job-1",
+		Status:     "Succeeded",
+		Page:       1,
+		PageSize:   20,
+	})
+	if err != nil {
+		t.Fatalf("ListSummaries() error = %v", err)
+	}
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 list query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"WHEN 'completed' THEN 'Succeeded'",
+		"CASE WHEN bi.status = 'completed' THEN ''",
+		"COALESCE(pr.started_at, bi.started_at)",
+		"INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("list query missing %q:\n%s", want, q)
+		}
+	}
+	if strings.Contains(q, "pr.status = $2") {
+		t.Fatalf("batch-scoped status filter should not use raw pipeline run status:\n%s", q)
+	}
+	if got := db.queryArgs[0]; !reflect.DeepEqual(got, []any{"job-1", "Succeeded", 20, 0}) {
+		t.Fatalf("query args = %#v, want job/status/page args", got)
+	}
+}
+
 type fakeRow struct {
 	values []any
 	err    error

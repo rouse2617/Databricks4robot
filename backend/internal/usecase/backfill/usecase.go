@@ -213,57 +213,54 @@ func (uc *Usecase) resolveTemplateVersion(ctx context.Context, templateID string
 func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVersion, pilotCount int, assetIDs []string) <-chan error {
 	errCh := make(chan error, 1)
 	ctx := context.Background()
-	items := make([]models.BackfillItem, 0, len(assetIDs))
-	for start := 0; start < len(assetIDs); start += backfillItemChunkSize {
-		end := start + backfillItemChunkSize
-		if end > len(assetIDs) {
-			end = len(assetIDs)
+	items, err := uc.repo.FindItemsByJobID(ctx, jobID)
+	if err != nil {
+		slog.Error("materializeAndRunBatch: FindItemsByJobID failed", "jobID", jobID, "err", err)
+		select {
+		case errCh <- fmt.Errorf("find items: %w", err):
+		default:
 		}
-		chunk := assetIDs[start:end]
-		batch := make([]models.BackfillItem, len(chunk))
-		for i, aid := range chunk {
-			batch[i] = models.BackfillItem{
-				ID:      uuid.New().String(),
-				JobID:   jobID,
-				AssetID: aid,
-				Status:  "pending",
+		_ = uc.repo.UpdateJobStatus(ctx, jobID, "failed")
+		close(errCh)
+		return errCh
+	}
+	if len(items) == 0 && len(assetIDs) > 0 {
+		slog.Warn("materializeAndRunBatch: no persisted items found", "jobID", jobID, "assetCount", len(assetIDs))
+	}
+	if len(items) != len(assetIDs) {
+		slog.Warn("materializeAndRunBatch: persisted item count differs from submitted asset count",
+			"jobID", jobID, "itemCount", len(items), "assetCount", len(assetIDs))
+	}
+
+	if uc.pipelineUC != nil {
+		for i := range items {
+			if items[i].PipelineRunID != nil && strings.TrimSpace(*items[i].PipelineRunID) != "" {
+				continue
+			}
+			if strings.TrimSpace(items[i].Status) != "pending" {
+				continue
+			}
+			runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+				TemplateID:      templateID,
+				TemplateVersion: templateVersion,
+				BatchJobID:      jobID,
+				AssetID:         items[i].AssetID,
+				Status:          "Pending",
+			})
+			if err != nil {
+				slog.Warn("materializeAndRunBatch: UpsertBatchSubtaskRun failed, skipping item",
+					"jobID", jobID, "assetID", items[i].AssetID, "err", err)
+				continue
+			}
+			items[i].PipelineRunID = &runID
+			if wf := strings.TrimSpace(workflowName); wf != "" {
+				items[i].WorkflowName = &wf
+			}
+			if err := uc.repo.UpdateItemPipelineRun(ctx, items[i].ID, runID, workflowName, "pending"); err != nil {
+				slog.Warn("materializeAndRunBatch: UpdateItemPipelineRun failed",
+					"jobID", jobID, "itemID", items[i].ID, "err", err)
 			}
 		}
-		if err := uc.repo.SaveItems(ctx, batch); err != nil {
-			slog.Error("materializeAndRunBatch: SaveItems failed", "jobID", jobID, "err", err)
-			select {
-			case errCh <- fmt.Errorf("save items: %w", err):
-			default:
-			}
-			_ = uc.repo.UpdateJobStatus(ctx, jobID, "failed")
-			close(errCh)
-			return errCh
-		}
-		if uc.pipelineUC != nil {
-			for i := range batch {
-				runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
-					TemplateID:      templateID,
-					TemplateVersion: templateVersion,
-					BatchJobID:      jobID,
-					AssetID:         batch[i].AssetID,
-					Status:          "Pending",
-				})
-				if err != nil {
-					slog.Warn("materializeAndRunBatch: UpsertBatchSubtaskRun failed, skipping item",
-						"jobID", jobID, "assetID", batch[i].AssetID, "err", err)
-					continue
-				}
-				batch[i].PipelineRunID = &runID
-				if wf := strings.TrimSpace(workflowName); wf != "" {
-					batch[i].WorkflowName = &wf
-				}
-				if err := uc.repo.UpdateItemPipelineRun(ctx, batch[i].ID, runID, workflowName, "pending"); err != nil {
-					slog.Warn("materializeAndRunBatch: UpdateItemPipelineRun failed",
-						"jobID", jobID, "itemID", batch[i].ID, "err", err)
-				}
-			}
-		}
-		items = append(items, batch...)
 	}
 
 	status := "running"
@@ -706,7 +703,10 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	if err != nil {
 		return nil, err
 	}
-	runsTotal, _ := uc.repo.CountPipelineRunsByBatchJobID(ctx, jobID)
+	runsTotal := job.TotalCount
+	if runsTotal <= 0 {
+		runsTotal, _ = uc.repo.CountPipelineRunsByBatchJobID(ctx, jobID)
+	}
 	runsWithNodeRows, _ := uc.repo.CountRunsWithNodeRowsByBatchJobID(ctx, jobID)
 	nodesByID := map[string]*models.BatchNodeSummaryNode{}
 	order := 1
