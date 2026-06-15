@@ -40,6 +40,7 @@ import {
 	type WorkflowNodeDetailTabKey,
 } from "../components/pipeline/WorkflowNodeDetailPanel";
 import { STATUS_COLORS } from "../lib/constants";
+import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationConfigs,
@@ -452,40 +453,52 @@ function WorkflowSummaryCards({
 				.map((item) => item.trim())
 				.filter(Boolean)
 		: [];
-	const assetCount = assetIdList.length;
-	const visibleAssetIds = assetIdList.slice(0, 4);
-	const hiddenAssetCount = Math.max(
-		assetIdList.length - visibleAssetIds.length,
+	const run = runEventState.run;
+	const resolvedTemplateName = templateName || run?.pipelineName || undefined;
+	const resolvedTemplateVersion =
+		templateVersion && Number.isFinite(templateVersion)
+			? templateVersion
+			: run?.templateVersion;
+	const resolvedAssetIdList =
+		assetIdList.length > 0
+			? assetIdList
+			: (run?.assetIds?.filter(Boolean) ?? []);
+	const resolvedAssetCount = run?.noAssetRun
+		? 0
+		: resolvedAssetIdList.length || run?.assetCount || 0;
+	const visibleResolvedAssetIds = resolvedAssetIdList.slice(0, 4);
+	const hiddenResolvedAssetCount = Math.max(
+		resolvedAssetIdList.length - visibleResolvedAssetIds.length,
 		0,
 	);
 
 	const cards = [
 		{
 			label: "模板",
-			value: templateName ? (
-				runEventState.run?.templateId ? (
+			value: resolvedTemplateName ? (
+				run?.templateId ? (
 					<Button
 						type="link"
 						size="small"
 						style={{ padding: 0, height: "auto" }}
 						onClick={() => {
 							const params = new URLSearchParams({
-								templateId: runEventState.run?.templateId ?? "",
+								templateId: run?.templateId ?? "",
 								tab: "design",
 							});
-							if (runEventState.run?.scope === "prod") {
+							if (run?.scope === "prod") {
 								params.set("readonly", "1");
 							}
 							navigate(`/pipeline?${params.toString()}`);
 						}}
 					>
-						{templateName}
-						{templateVersion ? ` v${templateVersion}` : ""}
+						{resolvedTemplateName}
+						{resolvedTemplateVersion ? ` v${resolvedTemplateVersion}` : ""}
 					</Button>
 				) : (
 					<>
-						{templateName}
-						{templateVersion ? ` v${templateVersion}` : ""}
+						{resolvedTemplateName}
+						{resolvedTemplateVersion ? ` v${resolvedTemplateVersion}` : ""}
 					</>
 				)
 			) : (
@@ -496,16 +509,20 @@ function WorkflowSummaryCards({
 		{
 			label: "资产",
 			value:
-				assetCount > 0 ? (
+				run?.noAssetRun && resolvedAssetCount === 0 ? (
+					"无资产运行"
+				) : resolvedAssetCount > 0 ? (
 					<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-						{visibleAssetIds.map((assetId) => (
+						{visibleResolvedAssetIds.map((assetId) => (
 							<Link key={assetId} to={`/assets/${encodeURIComponent(assetId)}`}>
 								<Tag color="blue" style={{ marginInlineEnd: 0 }}>
 									{assetId}
 								</Tag>
 							</Link>
 						))}
-						{hiddenAssetCount > 0 ? <Tag>+{hiddenAssetCount}</Tag> : null}
+						{hiddenResolvedAssetCount > 0 ? (
+							<Tag>+{hiddenResolvedAssetCount}</Tag>
+						) : null}
 					</div>
 				) : (
 					"无资产"
@@ -1406,7 +1423,7 @@ export default function WorkflowDetailPage({
 				</Button>
 				<h3 style={{ margin: 0, fontSize: 15 }}>{workflow.name}</h3>
 				<Tag color={STATUS_COLORS[workflow.status] || "default"}>
-					{workflow.status}
+					{formatWorkflowPhaseLabel(workflow.status)}
 				</Tag>
 				{runEventState.run || runEventState.items.length > 0 ? (
 					<Tag color="green">DataBrew 运行</Tag>

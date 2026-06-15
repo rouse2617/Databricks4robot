@@ -27,16 +27,12 @@ import {
 	retryFailedBatchItems,
 } from "../api/batchJobApi";
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
-import { STATUS_COLORS } from "../lib/constants";
+import {
+	formatBatchJobStatus,
+	resolveStatusTagColor,
+} from "../lib/statusLabels";
 
 const { Title, Text } = Typography;
-
-const BATCH_STATUS_COLORS: Record<string, string> = {
-	running: "processing",
-	paused: "warning",
-	completed: "success",
-	failed: "error",
-};
 
 interface BatchJobListProps {
 	active?: boolean;
@@ -101,9 +97,13 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			title: "批次名称",
 			dataIndex: "name",
 			key: "name",
+			width: 260,
+			ellipsis: true,
 			render: (name: string, record: BatchJob) => (
-				<div>
-					<Text strong>{name}</Text>
+				<div style={{ minWidth: 0, maxWidth: 260 }}>
+					<Text strong ellipsis={{ tooltip: name }}>
+						{name}
+					</Text>
 					<Text type="secondary" style={{ display: "block", fontSize: 12 }}>
 						ID: {record.id.slice(0, 8)}…
 					</Text>
@@ -114,8 +114,16 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			title: "模板",
 			dataIndex: "templateId",
 			key: "templateId",
-			render: (templateId: string) =>
-				templateNameById[templateId] ?? templateId,
+			width: 200,
+			ellipsis: true,
+			render: (templateId: string) => {
+				const label = templateNameById[templateId] ?? templateId;
+				return (
+					<Text ellipsis={{ tooltip: label }} style={{ maxWidth: 200 }}>
+						{label}
+					</Text>
+				);
+			},
 		},
 		{
 			title: "进度",
@@ -141,12 +149,8 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			key: "status",
 			width: 110,
 			render: (status: string) => (
-				<Tag
-					color={
-						BATCH_STATUS_COLORS[status] ?? STATUS_COLORS[status] ?? "default"
-					}
-				>
-					{status}
+				<Tag color={resolveStatusTagColor(status)}>
+					{formatBatchJobStatus(status)}
 				</Tag>
 			),
 		},

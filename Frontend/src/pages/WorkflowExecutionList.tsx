@@ -39,6 +39,7 @@ import {
 	WORKFLOW_PHASES,
 } from "../lib/constants";
 import { toAssetStyleId } from "../lib/idDisplay";
+import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationMenuItems,
@@ -880,7 +881,7 @@ export function WorkflowExecutionList({
 						color={STATUS_COLORS[s] || STATUS_ACCENT_COLORS[s] || "default"}
 						style={{ padding: "2px 8px" }}
 					>
-						{s}
+						{formatWorkflowPhaseLabel(s)}
 					</Tag>
 					{isStaleRunningWorkflow(record) ? (
 						<Tooltip title="运行时间超过 48 小时，同步任务将自动标记为失败">

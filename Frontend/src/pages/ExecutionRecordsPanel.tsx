@@ -1,4 +1,4 @@
-import { Segmented } from "antd";
+import { Alert, Segmented } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { BatchJobList } from "./BatchJobList";
@@ -38,6 +38,14 @@ export function ExecutionRecordsPanel({
 
 	return (
 		<div className="pipeline-execution-records">
+			<Alert
+				type="info"
+				showIcon
+				closable
+				message="执行记录说明"
+				description="流水线模板是设计稿；单次执行为一个资产的一次 Workflow 运行；批量任务将多资产打包，可在批次详情查看节点汇总与子任务。"
+				style={{ marginBottom: 16 }}
+			/>
 			<Segmented
 				value={view}
 				onChange={(value) => setExecutionView(value as ExecutionView)}

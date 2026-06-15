@@ -1,5 +1,6 @@
 import {
 	ArrowLeftOutlined,
+	DownloadOutlined,
 	PauseCircleOutlined,
 	PlayCircleOutlined,
 	RedoOutlined,
@@ -41,9 +42,34 @@ import {
 } from "../api/batchJobApi";
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
 import type { WorkflowSummary } from "../api/workflowApi";
+import {
+	formatBatchJobStatus,
+	formatWorkflowPhaseLabel,
+	resolveStatusTagColor,
+} from "../lib/statusLabels";
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const { Title, Text } = Typography;
+
+function exportFailuresCsv(
+	items: BatchNodeFailureItem[],
+	filename: string,
+): void {
+	const header = "assetId,status,message,workflowName\n";
+	const rows = items
+		.map((item) => {
+			const message = (item.message ?? "").replace(/"/g, '""');
+			return `"${item.assetId}","${item.status}","${message}","${item.workflowName ?? ""}"`;
+		})
+		.join("\n");
+	const blob = new Blob([header + rows], { type: "text/csv;charset=utf-8" });
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = filename;
+	anchor.click();
+	URL.revokeObjectURL(url);
+}
 
 export default function BatchJobDetailPage() {
 	const { id = "" } = useParams();
@@ -314,7 +340,11 @@ export default function BatchJobDetailPage() {
 						{ label: "模板", children: templateName },
 						{
 							label: "状态",
-							children: <Tag>{job.status}</Tag>,
+							children: (
+								<Tag color={resolveStatusTagColor(job.status)}>
+									{formatBatchJobStatus(job.status)}
+								</Tag>
+							),
 						},
 						{
 							label: "子任务数",
@@ -360,6 +390,36 @@ export default function BatchJobDetailPage() {
 					type="warning"
 					showIcon
 					message="Pilot 试跑已完成，等待确认后继续全量"
+					style={{ marginBottom: 16 }}
+				/>
+			) : null}
+
+			{job.failedCount > 0 && nodeSummary ? (
+				<Alert
+					type="error"
+					showIcon
+					message={`本批次有 ${job.failedCount} 条子任务失败`}
+					description={
+						<Space direction="vertical" size={4}>
+							<span>
+								可在下方「节点概览」点击失败数查看资产明细，或使用「重试失败项」。
+							</span>
+							{nodeSummary.nodes
+								.map((node) => ({
+									node,
+									failed: (node.counts.Failed ?? 0) + (node.counts.Error ?? 0),
+								}))
+								.filter((entry) => entry.failed > 0)
+								.sort((a, b) => b.failed - a.failed)
+								.slice(0, 3)
+								.map((entry) => (
+									<span key={entry.node.pipelineNodeId}>
+										· {entry.node.displayName}：{entry.failed} 失败（
+										{(entry.node.failureRate * 100).toFixed(1)}%）
+									</span>
+								))}
+						</Space>
+					}
 					style={{ marginBottom: 16 }}
 				/>
 			) : null}
@@ -434,17 +494,31 @@ export default function BatchJobDetailPage() {
 				onClose={() => setDrawerNode(null)}
 				extra={
 					drawerNode ? (
-						<Button
-							icon={<RedoOutlined />}
-							loading={actionLoading === "rerun-node_failed"}
-							onClick={() =>
-								void runRerun("node_failed", {
-									pipelineNodeId: drawerNode.pipelineNodeId,
-								})
-							}
-						>
-							重试这 {nodeFailureTotal} 条
-						</Button>
+						<Space>
+							<Button
+								icon={<DownloadOutlined />}
+								disabled={nodeFailures.length === 0}
+								onClick={() =>
+									exportFailuresCsv(
+										nodeFailures,
+										`batch-${job.id.slice(0, 8)}-${drawerNode.pipelineNodeId}-failures.csv`,
+									)
+								}
+							>
+								导出 CSV
+							</Button>
+							<Button
+								icon={<RedoOutlined />}
+								loading={actionLoading === "rerun-node_failed"}
+								onClick={() =>
+									void runRerun("node_failed", {
+										pipelineNodeId: drawerNode.pipelineNodeId,
+									})
+								}
+							>
+								重试这 {nodeFailureTotal} 条
+							</Button>
+						</Space>
 					) : null
 				}
 			>
@@ -456,7 +530,11 @@ export default function BatchJobDetailPage() {
 					pagination={false}
 					columns={[
 						{ title: "资产", dataIndex: "assetId" },
-						{ title: "状态", dataIndex: "status" },
+						{
+							title: "状态",
+							dataIndex: "status",
+							render: (status: string) => formatWorkflowPhaseLabel(status),
+						},
 						{ title: "消息", dataIndex: "message", ellipsis: true },
 						{
 							title: "Workflow",

@@ -266,6 +266,10 @@ test.describe("流水线全流程（mock）", () => {
 
 		await modal.getByRole("button", { name: "运行资产" }).click();
 
+		const confirmDialog = page.getByRole("dialog", { name: "确认创建批量任务" });
+		await expect(confirmDialog).toBeVisible();
+		await confirmDialog.getByRole("button", { name: "确认运行" }).click();
+
 		// 4) 批量下发：POST /backfill 带正确 templateId + assetIds。
 		await expect.poll(() => createBatchBody).not.toBeNull();
 		expect(createBatchBody).toMatchObject({
@@ -320,6 +324,9 @@ test.describe("流水线全流程 @integration", () => {
 		await addAssets(modal, assetIds);
 		await expect(modal.getByText(`已选 ${assetIds.length} 个`)).toBeVisible();
 		await modal.getByRole("button", { name: "运行资产" }).click();
+		const confirmDialog = page.getByRole("dialog", { name: "确认创建批量任务" });
+		await expect(confirmDialog).toBeVisible();
+		await confirmDialog.getByRole("button", { name: "确认运行" }).click();
 
 		// 跳转批次详情。
 		await expect(page).toHaveURL(/\/pipeline\/batch\//, { timeout: 30_000 });

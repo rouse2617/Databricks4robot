@@ -42,7 +42,10 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../api/assets";
-import { deployPipelineForAssets } from "../api/deployPipelineRun";
+import {
+	BATCH_ASSET_THRESHOLD,
+	deployPipelineForAssets,
+} from "../api/deployPipelineRun";
 import {
 	type Deployment,
 	type ExecutionTarget,
@@ -68,6 +71,7 @@ import type {
 } from "../components/pipeline/types";
 import { usePipelineComponents } from "../hooks/usePipelineComponents";
 import { usePipelineKeyboardShortcuts } from "../hooks/usePipelineKeyboardShortcuts";
+import { MAX_BATCH_ASSET_COUNT } from "../lib/batchAssetLimits";
 import {
 	fromTranspilerPipeline,
 	toTranspilerPipeline,
@@ -161,12 +165,18 @@ function AssetRunSummary({
 			type={assetIds.length >= 2 ? "info" : "success"}
 			showIcon
 			message={
-				assetIds.length >= 2
+				assetIds.length >= BATCH_ASSET_THRESHOLD
 					? `将创建批量任务，共 ${assetIds.length} 个子任务`
 					: `将处理 ${assetIds.length} 个资产`
 			}
 			description={
 				<div style={{ display: "grid", gap: 8 }}>
+					{assetIds.length >= BATCH_ASSET_THRESHOLD ? (
+						<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+							提交后跳转批次详情，可在「执行记录 → 批量任务」查看进度；单次最多{" "}
+							{MAX_BATCH_ASSET_COUNT.toLocaleString()} 个资产。
+						</Typography.Text>
+					) : null}
 					<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
 						{visibleIds.map((assetId) => (
 							<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
@@ -1030,6 +1040,32 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 	}, [deployDialog.result]);
 
 	const handleDeploy = useCallback(async () => {
+		const assetCount = selectedAssetIds.length;
+		if (assetCount >= BATCH_ASSET_THRESHOLD) {
+			const confirmed = await new Promise<boolean>((resolve) => {
+				Modal.confirm({
+					title: "确认创建批量任务",
+					content: (
+						<div>
+							<p>
+								将为 {assetCount} 个资产各创建 1 条子任务，共 {assetCount}{" "}
+								条执行记录。
+							</p>
+							<p style={{ marginBottom: 0, color: "#64748b", fontSize: 12 }}>
+								提交后可在「执行记录 →
+								批量任务」查看进度，并支持暂停或重试失败项。
+							</p>
+						</div>
+					),
+					okText: "确认运行",
+					cancelText: "取消",
+					onOk: () => resolve(true),
+					onCancel: () => resolve(false),
+				});
+			});
+			if (!confirmed) return;
+		}
+
 		setDeployDialog((prev) => ({ ...prev, deploying: true, done: false }));
 		try {
 			const pipeline = buildPipelineJSON();
@@ -1113,9 +1149,11 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 
 	const isCanvasEmpty = nodes.length === 0;
 	const currentTemplateLabel = pipelineName || "未命名流水线";
-	const deployDisabledReason = canDeploy
-		? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
-		: "请先从左侧拖入至少一个组件到画布，再保存或部署";
+	const deployDisabledReason = readOnlyMode
+		? "只读模式：正式版模板不可部署"
+		: canDeploy
+			? "保存并部署为 Argo Workflow (⌘/Ctrl+D)"
+			: "请先从左侧拖入至少一个组件到画布，再保存或部署";
 	const markReplaceOnNextEdit = (
 		event: FocusEvent<HTMLInputElement>,
 		replaceRef: MutableRefObject<boolean>,

@@ -8,6 +8,7 @@ import {
 	waitFor,
 	within,
 } from "@testing-library/react";
+import { Modal } from "antd";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Deployment } from "../api/pipelineApi";
@@ -306,6 +307,10 @@ describe("PipelinePage", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		resetPipelineMocks();
+		vi.spyOn(Modal, "confirm").mockImplementation((config) => {
+			config.onOk?.();
+			return { destroy: vi.fn(), update: vi.fn() };
+		});
 	});
 
 	afterEach(() => {
