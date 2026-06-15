@@ -192,6 +192,22 @@ Full commands by tier — see [Verification tiers](#verification-tiers).
 | Frontend | `npm run lint` | + `npm run test -- --run` | + `npm run build` |
 | SDK | `uv run ruff check src/` | + `pytest` touched | + `pytest tests/unit/` |
 
+## Local dev backend modes
+
+Use one unified local frontend entry point and choose the backend mode explicitly:
+
+| Mode | Command | Backend target | Use for |
+|------|---------|----------------|---------|
+| Cloud Run dev | `bash scripts/dev-local.sh --cloudrun` | `cyber-databrew-backend-dev` resolved by `scripts/dev-backend-env.sh` | Canonical dev backend parity and deploy-verification-style checks |
+| Shared Pod | `bash scripts/dev-local.sh --shared` | shared GKE service `cyber-databrew-backend` | Local frontend work against the stable shared dev pod |
+| Fast preview Pod | `bash scripts/dev-local.sh --deploy` or `--preview-id <id>` | isolated GKE preview backend under `/preview/<id>/api` | Backend changes that need quick frontend integration without changing Cloud Run dev |
+
+Do not mix these up:
+
+- **Cloud Run dev** is the canonical shared dev deploy target. Use `source scripts/dev-backend-env.sh` or `scripts/dev-local.sh --cloudrun`; do not hand-copy backend URLs.
+- **Fast preview Pod** is commit/HEAD-based and isolated. It is appropriate for quick backend/frontend pairing, but it does not replace Cloud Run dev deploy verification before commit/PR.
+- **Local frontend** should normally stay local in all three modes; only deploy frontend dev when doing required deployed-revision UI verification.
+
 ## Development pitfalls (lessons learned)
 
 Field incidents that should inform future development. Add to this section when a preventable mistake repeats.

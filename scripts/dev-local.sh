@@ -3,6 +3,7 @@
 #
 # Usage:
 #   bash scripts/dev-local.sh                    # shared dev backend Pod (default)
+#   bash scripts/dev-local.sh --cloudrun         # Cloud Run dev backend
 #   bash scripts/dev-local.sh --shared           # same as default
 #   bash scripts/dev-local.sh --preview          # HEAD preview Pod; deploy if missing
 #   bash scripts/dev-local.sh --preview-id <id>    # existing preview Pod
@@ -15,6 +16,7 @@
 #   DEV_K8S_NAMESPACE          default: cyber-databrew-dev
 #   DEV_BACKEND_SERVICE        default: cyber-databrew-backend
 #   SKIP_API_CHECK=true        skip preflight curl
+#   Cloud Run mode uses scripts/dev-backend-env.sh for BASE and token.
 set -euo pipefail
 
 usage() {
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --shared)
       mode="shared"
+      shift
+      ;;
+    --cloudrun)
+      mode="cloudrun"
       shift
       ;;
     --preview)
@@ -90,9 +96,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-require_cmd kubectl
 require_cmd curl
 require_cmd git
+if [[ "${mode}" != "cloudrun" ]]; then
+  require_cmd kubectl
+fi
 [[ -d "${frontend_dir}" ]] || die "missing Frontend directory: ${frontend_dir}"
 
 resolve_token() {
@@ -147,6 +155,11 @@ resolve_shared_backend_url() {
 check_shared_backend() {
   local base="$1"
   curl -sfS --max-time 15 "${base}/healthz" >/dev/null
+}
+
+check_cloudrun_backend() {
+  local base="$1"
+  curl -sfS --max-time 15 "${API_HDR[@]}" "${base}/readyz" >/dev/null
 }
 
 check_preview_backend() {
@@ -205,17 +218,28 @@ if [[ "${mode}" == "preview" && -n "${preview_id}" ]]; then
   mode="preview-id"
 fi
 
-token="$(resolve_token)"
+token=""
 shared_url=""
 resolved_preview_id=""
 
-if [[ "${mode}" == "shared" ]]; then
+if [[ "${mode}" == "cloudrun" ]]; then
+  # shellcheck source=scripts/dev-backend-env.sh
+  source "${repo_root}/scripts/dev-backend-env.sh"
+  shared_url="${BASE}"
+  token="${DATABREW_TOKEN}"
+  if [[ "${SKIP_API_CHECK:-false}" != "true" ]]; then
+    echo "Checking Cloud Run dev backend ${shared_url}/readyz ..."
+    check_cloudrun_backend "${shared_url}" || die "Cloud Run dev backend health check failed"
+  fi
+elif [[ "${mode}" == "shared" ]]; then
+  token="$(resolve_token)"
   shared_url="$(resolve_shared_backend_url)"
   if [[ "${SKIP_API_CHECK:-false}" != "true" ]]; then
     echo "Checking shared backend ${shared_url}/healthz ..."
     check_shared_backend "${shared_url}" || die "shared backend health check failed"
   fi
 else
+  token="$(resolve_token)"
   resolved_preview_id="$(resolve_preview_id_for_mode)"
   if [[ "${SKIP_API_CHECK:-false}" != "true" ]]; then
     echo "Checking preview backend ${preview_host}/preview/${resolved_preview_id}/api/healthz ..."
@@ -230,7 +254,16 @@ fi
 
 echo ""
 echo "Starting local frontend (Vite HMR, no frontend Pod deploy)"
-if [[ "${mode}" == "shared" ]]; then
+if [[ "${mode}" == "cloudrun" ]]; then
+  echo "  mode:    Cloud Run dev backend"
+  echo "  API:     ${shared_url}"
+  echo "  UI:      http://127.0.0.1:5176/"
+  echo ""
+  exec env \
+    VITE_API_BASE_URL="${shared_url}" \
+    VITE_DEV_ACCESS_TOKEN="${token}" \
+    npm --prefix "${frontend_dir}" run dev
+elif [[ "${mode}" == "shared" ]]; then
   echo "  mode:    shared dev backend Pod"
   echo "  API:     ${shared_url}"
   echo "  UI:      http://127.0.0.1:5176/"
