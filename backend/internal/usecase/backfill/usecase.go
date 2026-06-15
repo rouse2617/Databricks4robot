@@ -27,6 +27,8 @@ var ErrInvalidRerunScope = errors.New("invalid backfill rerun scope")
 // Usecase orchestrates backfill job operations.
 type Usecase struct {
 	repo       repository.BackfillRepository
+	resultRepo repository.BackfillResultRepository
+	assetRepo  repository.AssetRepository
 	pipelineUC *pipelineUC.Usecase
 	// pgClient enables WithTx for transactional SaveJob+SaveItems in CreateBackfill.
 	pgClient any // *postgres.Client — set via NewWithPostgres
@@ -40,6 +42,12 @@ func New(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase) *Us
 // NewWithPostgres creates a Usecase with transaction support via the postgres client.
 func NewWithPostgres(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase, pgClient any) *Usecase {
 	return &Usecase{repo: repo, pipelineUC: pipelineUC, pgClient: pgClient}
+}
+
+// SetResultRepositories wires staging upload dependencies.
+func (uc *Usecase) SetResultRepositories(resultRepo repository.BackfillResultRepository, assetRepo repository.AssetRepository) {
+	uc.resultRepo = resultRepo
+	uc.assetRepo = assetRepo
 }
 
 type CreateBackfillOptions struct {
@@ -852,6 +860,9 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 				continue
 			}
 			mapped := mapRunStatusToItem(run.Status)
+			if mapped == "completed" {
+				mapped = uc.resolveCompletionStatus(ctx, job, item)
+			}
 			if mapped != item.Status {
 				wf := run.WorkflowName
 				_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, wf, "")

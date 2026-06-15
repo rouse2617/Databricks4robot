@@ -35,6 +35,7 @@ type BackfillRepository interface {
 	ListNodeFailures(ctx context.Context, filter BatchNodeFailureFilter) (*models.BatchNodeFailureListResult, error)
 	CountPipelineRunsByBatchJobID(ctx context.Context, jobID string) (int, error)
 	CountRunsWithNodeRowsByBatchJobID(ctx context.Context, jobID string) (int, error)
+	FindItemsByAssetID(ctx context.Context, assetID string) ([]models.BackfillItem, error)
 }
 
 // BackfillItemStatusSummary aggregates item counts by coarse status bucket.

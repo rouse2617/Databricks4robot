@@ -348,6 +348,7 @@ WITH current_items AS (
       WHEN 'failed' THEN 1
       WHEN 'cancelled' THEN 1
       WHEN 'running' THEN 2
+      WHEN 'awaiting_result' THEN 2
       WHEN 'pending' THEN 3
       ELSE 4
     END,
@@ -360,7 +361,7 @@ SELECT
   COUNT(*) FILTER (WHERE status = 'completed'),
   COUNT(*) FILTER (WHERE status IN ('failed', 'cancelled')),
   COUNT(*) FILTER (WHERE status = 'pending'),
-  COUNT(*) FILTER (WHERE status = 'running')
+  COUNT(*) FILTER (WHERE status IN ('running', 'awaiting_result'))
 FROM current_items`
 	db := dbFromCtx(ctx, r.c.db)
 	var summary repository.BackfillItemStatusSummary
@@ -747,4 +748,26 @@ WHERE bi.job_id = $1`
 		return 0, fmt.Errorf("postgres BackfillRepo.CountRunsWithNodeRowsByBatchJobID: %w", err)
 	}
 	return total, nil
+}
+
+func (r *BackfillRepo) FindItemsByAssetID(ctx context.Context, assetID string) ([]models.BackfillItem, error) {
+	q := `SELECT ` + backfillItemSelectCols + `
+	FROM backfill_items
+	WHERE asset_id = $1
+	ORDER BY created_at DESC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.FindItemsByAssetID: %w", err)
+	}
+	defer rows.Close()
+	var out []models.BackfillItem
+	for rows.Next() {
+		item, err := scanBackfillItem(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.FindItemsByAssetID scan: %w", err)
+		}
+		out = append(out, *item)
+	}
+	return out, nil
 }

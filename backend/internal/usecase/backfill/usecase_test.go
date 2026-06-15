@@ -150,6 +150,9 @@ func (m *mockBackfillRepo) CountPipelineRunsByBatchJobID(_ context.Context, _ st
 func (m *mockBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
+func (m *mockBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
+	return nil, nil
+}
 
 func containsString(values []string, target string) bool {
 	for _, value := range values {
@@ -567,4 +570,7 @@ func (r *trackingBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Conte
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.runsWithNodeRows, nil
+}
+func (r *trackingBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
+	return nil, nil
 }
