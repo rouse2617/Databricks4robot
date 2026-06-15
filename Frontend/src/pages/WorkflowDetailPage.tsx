@@ -667,7 +667,7 @@ function WorkflowRunContextPanel({
 						onFilterEvents({ ...runEventFilters, status: val })
 					}
 					options={["Succeeded", "Failed", "Error", "Running"].map((s) => ({
-						label: s,
+						label: formatWorkflowPhaseLabel(s),
 						value: s,
 					}))}
 				/>

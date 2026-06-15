@@ -17,6 +17,7 @@ import {
 	exceedsBatchAssetLimit,
 	MAX_BATCH_ASSET_COUNT,
 } from "../../lib/batchAssetLimits";
+import { withSelectAllColumn } from "../../lib/tableSelection";
 
 const SEARCH_PAGE_SIZE = 100;
 
@@ -249,11 +250,11 @@ export default function AssetPicker({
 					size="small"
 					pagination={false}
 					scroll={{ y: maxHeight }}
-					rowSelection={{
+					rowSelection={withSelectAllColumn<SearchAssetResult>({
 						type: "checkbox",
 						selectedRowKeys: selectedIds,
 						onChange: handleTableSelectionChange,
-					}}
+					})}
 					columns={[
 						{ title: "Asset ID", dataIndex: "asset_id", width: 120 },
 						{ title: "类型", dataIndex: "asset_type", width: 70 },

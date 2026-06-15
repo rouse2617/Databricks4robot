@@ -40,6 +40,7 @@ import {
 } from "../lib/constants";
 import { toAssetStyleId } from "../lib/idDisplay";
 import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
+import { withSelectAllColumn } from "../lib/tableSelection";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationMenuItems,
@@ -1180,7 +1181,7 @@ export function WorkflowExecutionList({
 						columns={columns}
 						rowKey="name"
 						loading={loading}
-						rowSelection={{
+						rowSelection={withSelectAllColumn<WorkflowSummary>({
 							selectedRowKeys: selectedWorkflowNames,
 							onChange: (keys) => {
 								const names = keys as string[];
@@ -1189,7 +1190,7 @@ export function WorkflowExecutionList({
 									displayItems.filter((item) => names.includes(item.name)),
 								);
 							},
-						}}
+						})}
 						scroll={{ x: 1200 }}
 						rowClassName={() => "pipeline-execution-table-row"}
 						onRow={(record) => ({

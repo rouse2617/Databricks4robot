@@ -104,7 +104,7 @@ describe("WorkflowNodeDetailPanel", () => {
 				onShowLogs={vi.fn()}
 			/>,
 		);
-		expect(screen.getByText("Succeeded")).toBeTruthy();
+		expect(screen.getByText("成功")).toBeTruthy();
 	});
 
 	it("shows resolved pod name when provided by the API", () => {

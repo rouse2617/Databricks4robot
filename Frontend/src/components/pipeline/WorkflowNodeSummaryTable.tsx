@@ -8,7 +8,10 @@ import {
 import { Button, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { WorkflowNodeStatus } from "../../api/workflowApi";
-import { STATUS_COLORS } from "../../lib/constants";
+import {
+	formatWorkflowPhaseLabel,
+	resolveStatusTagColor,
+} from "../../lib/statusLabels";
 import {
 	getWorkflowNodeDisplayText,
 	getWorkflowNodePodName,
@@ -160,7 +163,9 @@ export function WorkflowNodeSummaryTable({
 			key: "status",
 			width: 110,
 			render: (status: string) => (
-				<Tag color={STATUS_COLORS[status] || "default"}>{status}</Tag>
+				<Tag color={resolveStatusTagColor(status)}>
+					{formatWorkflowPhaseLabel(status)}
+				</Tag>
 			),
 		},
 		{

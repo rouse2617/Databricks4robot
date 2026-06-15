@@ -44,6 +44,7 @@ import {
 	normalizeComponentArgs,
 	normalizeShellCommandArgs,
 } from "../lib/pipelineContract";
+import { withSelectAllColumn } from "../lib/tableSelection";
 
 type EnvRow = { name?: string; value?: string };
 type PortRow = {
@@ -862,14 +863,14 @@ export function ComponentManager() {
 					loading={loading}
 					columns={columns}
 					dataSource={filteredItems}
-					rowSelection={{
+					rowSelection={withSelectAllColumn<PipelineComponentAPI>({
 						selectedRowKeys: selectedComponentIds,
 						onChange: (keys) => setSelectedComponentIds(keys as string[]),
 						getCheckboxProps: (record) => ({
 							disabled: record.source === "system",
 							name: record.name,
 						}),
-					}}
+					})}
 					pagination={{ pageSize: 12, showSizeChanger: true }}
 				/>
 			)}

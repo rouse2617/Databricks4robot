@@ -38,7 +38,10 @@ import {
 	getNodePodDiagnostics,
 	type NodePodDiagnostics,
 } from "../../api/workflowApi";
-import { STATUS_COLORS } from "../../lib/constants";
+import {
+	formatWorkflowPhaseLabel,
+	resolveStatusTagColor,
+} from "../../lib/statusLabels";
 import {
 	getWorkflowNodePodName,
 	truncateMiddle,
@@ -578,7 +581,9 @@ function LogsTab({
 					{getWorkflowNodePodName(node) || "—"}
 				</Descriptions.Item>
 				<Descriptions.Item label="状态">
-					<Tag color={STATUS_COLORS[node.phase] || "default"}>{node.phase}</Tag>
+					<Tag color={resolveStatusTagColor(node.phase)}>
+						{formatWorkflowPhaseLabel(node.phase)}
+					</Tag>
 				</Descriptions.Item>
 			</Descriptions>
 		</Space>
@@ -777,7 +782,9 @@ function SummaryTab({
 					{node.type || node.templateName || "—"}
 				</Descriptions.Item>
 				<Descriptions.Item label="状态">
-					<Tag color={STATUS_COLORS[node.phase] || "default"}>{node.phase}</Tag>
+					<Tag color={resolveStatusTagColor(node.phase)}>
+						{formatWorkflowPhaseLabel(node.phase)}
+					</Tag>
 				</Descriptions.Item>
 				<Descriptions.Item label="开始时间">
 					{formatRelativeTime(node.startedAt)}

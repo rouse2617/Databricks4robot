@@ -112,6 +112,8 @@ describe("WorkflowNodeSummaryTable", () => {
 		expect(screen.getByText("节点耗时 / 花费")).toBeTruthy();
 		expect(screen.getByText("Pod 累计耗时 5m 30s")).toBeTruthy();
 		expect(screen.getByText("训练节点")).toBeTruthy();
+		expect(screen.getByText("成功")).toBeTruthy();
+		expect(screen.getByText("失败")).toBeTruthy();
 		expect(screen.getByText("5m 0s")).toBeTruthy();
 		expect(screen.getAllByText("$1.25").length).toBeGreaterThan(0);
 		expect(screen.getAllByText("—").length).toBeGreaterThan(0);

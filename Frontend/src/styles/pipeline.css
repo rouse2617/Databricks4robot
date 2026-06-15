@@ -1366,6 +1366,11 @@
 	align-items: center;
 }
 
+.pipeline-execution-filters .ant-btn {
+	letter-spacing: normal;
+	text-transform: none;
+}
+
 .pipeline-execution-statusbar {
 	display: flex;
 	align-items: center;

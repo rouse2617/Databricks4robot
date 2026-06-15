@@ -18,6 +18,7 @@ import type {
 	ViewMode,
 } from "../../lib/assets/assetsDiscoveryTypes";
 import { formatDateTime } from "../../lib/dateTime";
+import { withSelectAllColumn } from "../../lib/tableSelection";
 import AlgoSummaryCell from "./AlgoSummaryCell";
 import AssetsCardView from "./AssetsCardView";
 import ResultsEmptyState from "./ResultsEmptyState";
@@ -472,7 +473,7 @@ export default function AssetsResultsPane({
 					"aria-selected": selectedIds.has(record.asset_id),
 					tabIndex: 0,
 				})}
-				rowSelection={{
+				rowSelection={withSelectAllColumn<Asset>({
 					selectedRowKeys,
 					onChange: (keys) => {
 						const newKeys = new Set(keys as string[]);
@@ -485,7 +486,7 @@ export default function AssetsResultsPane({
 							if (!newKeys.has(k)) onSelectRow(k);
 						}
 					},
-				}}
+				})}
 				pagination={{
 					current: page,
 					total,
