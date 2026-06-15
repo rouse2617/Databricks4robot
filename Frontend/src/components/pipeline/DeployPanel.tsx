@@ -48,7 +48,8 @@ import {
 } from "../../api/pipelineApi";
 import { request } from "../../api/pipelineClient";
 import { toAssetStyleId } from "../../lib/idDisplay";
-import AssetPicker from "./AssetPicker";
+import { batchJobDetailLocationState } from "../../lib/pipelineNavigation";
+import AssetPicker, { type AssetPickerHandle } from "./AssetPicker";
 import {
 	COMPACT_TEMPLATE_LIMIT,
 	prepareDeployments,
@@ -412,6 +413,7 @@ export function DeployPanel({
 	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
 	const [deploying, setDeploying] = useState(false);
 	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
+	const assetPickerRef = useRef<AssetPickerHandle>(null);
 	const [deployVersions, setDeployVersions] = useState<PipelineTemplate[]>([]);
 	const [selectedDeployVersion, setSelectedDeployVersion] = useState<
 		number | undefined
@@ -709,24 +711,30 @@ export function DeployPanel({
 
 	const handleDeployConfirm = async () => {
 		if (!deployTargetId) return;
+		const resolved = assetPickerRef.current?.resolveSelectionForRun() ?? {
+			assetIds: selectedAssetIds,
+		};
+		if (resolved.error) {
+			messageApi.error(resolved.error);
+			return;
+		}
+		const assetIds = resolved.assetIds;
 		setDeploying(true);
 		try {
 			const template = templates.find((item) => item.id === deployTargetId);
-			const result = await deployPipelineForAssets(
-				deployTargetId,
-				selectedAssetIds,
-				{
-					targetId: selectedTargetId,
-					version: selectedDeployVersion,
-					batchName: template ? `${template.name}-${Date.now()}` : undefined,
-				},
-			);
+			const result = await deployPipelineForAssets(deployTargetId, assetIds, {
+				targetId: selectedTargetId,
+				version: selectedDeployVersion,
+				batchName: template ? `${template.name}-${Date.now()}` : undefined,
+			});
 			if (result.mode === "batch") {
 				messageApi.success(
 					`已创建批量任务，共 ${result.batchJob.totalCount} 个子任务`,
 				);
 				closeAssetModal();
-				navigate(`/pipeline/batch/${result.batchJob.id}`);
+				navigate(`/pipeline/batch/${result.batchJob.id}`, {
+					state: batchJobDetailLocationState(),
+				});
 			} else {
 				messageApi.success(
 					result.runs.length > 1
@@ -1339,6 +1347,7 @@ export function DeployPanel({
 					/>
 				</div>
 				<AssetPicker
+					ref={assetPickerRef}
 					selectedIds={selectedAssetIds}
 					onSelectionChange={updateSelectedAssetIds}
 					maxHeight={300}

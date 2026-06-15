@@ -58,7 +58,9 @@ import {
 } from "../api/pipelineApi";
 import type { Asset } from "../api/types";
 import ErrorBoundary from "../components/ErrorBoundary";
-import AssetPicker from "../components/pipeline/AssetPicker";
+import AssetPicker, {
+	type AssetPickerHandle,
+} from "../components/pipeline/AssetPicker";
 import { ComponentPalette } from "../components/pipeline/ComponentPalette";
 import { DeployPanel } from "../components/pipeline/DeployPanel";
 import { NodeConfigPanel } from "../components/pipeline/NodeConfigPanel";
@@ -82,6 +84,7 @@ import {
 	type PipelineExample,
 } from "../lib/pipelineExamples";
 import { validatePipelineForRun } from "../lib/pipelineValidation";
+import { batchJobDetailLocationState } from "../lib/pipelineNavigation";
 import { ComponentManager } from "./ComponentManager";
 import { ExecutionRecordsPanel } from "./ExecutionRecordsPanel";
 import {
@@ -342,6 +345,7 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 	const [selectedAssetIds, setSelectedAssetIds] =
 		useState<string[]>(queryAssetIds);
 	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
+	const assetPickerRef = useRef<AssetPickerHandle>(null);
 	const [executionTargets, setExecutionTargets] = useState<ExecutionTarget[]>(
 		[],
 	);
@@ -1040,7 +1044,15 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 	}, [deployDialog.result]);
 
 	const handleDeploy = useCallback(async () => {
-		const assetCount = selectedAssetIds.length;
+		const resolved = assetPickerRef.current?.resolveSelectionForRun() ?? {
+			assetIds: selectedAssetIds,
+		};
+		if (resolved.error) {
+			messageApi.error(resolved.error);
+			return;
+		}
+		const assetIds = resolved.assetIds;
+		const assetCount = assetIds.length;
 		if (assetCount >= BATCH_ASSET_THRESHOLD) {
 			const confirmed = await new Promise<boolean>((resolve) => {
 				Modal.confirm({
@@ -1075,7 +1087,7 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 			}
 			const name = deployDialog.name || pipelineName;
 			const saved = await savePipeline(name, pipeline);
-			const result = await deployPipelineForAssets(saved.id, selectedAssetIds, {
+			const result = await deployPipelineForAssets(saved.id, assetIds, {
 				targetId: selectedTargetId,
 				batchName: `${name}-${Date.now()}`,
 			});
@@ -1084,7 +1096,9 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 					`已创建批量任务，共 ${result.batchJob.totalCount} 个子任务`,
 				);
 				closeDeployDialog();
-				navigate(`/pipeline/batch/${result.batchJob.id}`);
+				navigate(`/pipeline/batch/${result.batchJob.id}`, {
+					state: batchJobDetailLocationState(),
+				});
 				return;
 			}
 			setDeployDialog((prev) => ({
@@ -1645,14 +1659,16 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 									<Input
 										id="pp-workflow-name"
 										value={deployDialog.name}
-										onChange={(e) =>
-											setDeployDialog((prev) => ({
-												...prev,
-												name: workflowNameReplaceRef.current
-													? replaceAppendedValue(prev.name, e.target.value)
-													: e.target.value,
-											}))
-										}
+										onChange={(e) => {
+											const next = workflowNameReplaceRef.current
+												? replaceAppendedValue(
+														deployDialog.name,
+														e.target.value,
+													)
+												: e.target.value;
+											workflowNameReplaceRef.current = false;
+											setDeployDialog((prev) => ({ ...prev, name: next }));
+										}}
 										onFocus={(e) =>
 											markReplaceOnNextEdit(e, workflowNameReplaceRef)
 										}
@@ -1715,6 +1731,7 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 									<span>{edges.length} 条连线</span>
 								</div>
 								<AssetPicker
+									ref={assetPickerRef}
 									selectedIds={selectedAssetIds}
 									onSelectionChange={updateSelectedAssetIds}
 									maxHeight={180}

@@ -1,3 +1,8 @@
+import {
+	batchAssetLimitError,
+	exceedsBatchAssetLimit,
+} from "./batchAssetLimits";
+
 /** Split comma / whitespace / newline separated asset IDs. */
 export function parseAssetIdInput(raw: string): string[] {
 	return raw
@@ -19,4 +24,23 @@ export function mergeAssetIds(
 		merged.push(trimmed);
 	}
 	return merged;
+}
+
+/** Merge selected IDs with uncommitted bulk-paste text (e.g. on deploy). */
+export function mergePendingBulkPaste(
+	selectedIds: string[],
+	bulkPasteRaw: string,
+): { assetIds: string[]; error?: string } {
+	const incoming = parseAssetIdInput(bulkPasteRaw);
+	if (incoming.length === 0) {
+		return { assetIds: selectedIds };
+	}
+	const assetIds = mergeAssetIds(selectedIds, incoming);
+	if (exceedsBatchAssetLimit(assetIds.length)) {
+		return {
+			assetIds: selectedIds,
+			error: batchAssetLimitError(assetIds.length),
+		};
+	}
+	return { assetIds };
 }

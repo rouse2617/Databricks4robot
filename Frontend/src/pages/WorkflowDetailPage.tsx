@@ -24,7 +24,7 @@ import {
 	Typography,
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type {
 	PipelineRunAssetNode,
 	PipelineRunEvent,
@@ -41,6 +41,7 @@ import {
 } from "../components/pipeline/WorkflowNodeDetailPanel";
 import { STATUS_COLORS } from "../lib/constants";
 import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
+import { resolveWorkflowDetailBackTarget } from "../lib/pipelineNavigation";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationConfigs,
@@ -1136,6 +1137,15 @@ export default function WorkflowDetailPage({
 	const { message: messageApi } = App.useApp();
 	const { name } = useParams<{ name: string }>();
 	const navigate = useNavigate();
+	const location = useLocation();
+	const backTarget = useMemo(
+		() => resolveWorkflowDetailBackTarget(location.state),
+		[location.state],
+	);
+	const backLabel = (location.state as { fromBatchJobId?: string } | null)
+		?.fromBatchJobId
+		? "返回批次详情"
+		: "返回";
 	const [viewMode, setViewMode] = useState<"dag" | "timeline">("dag");
 	const [operationLoading, setOperationLoading] =
 		useState<WorkflowOperationKey | null>(null);
@@ -1361,7 +1371,7 @@ export default function WorkflowDetailPage({
 				<ExpiredWorkflowLedgerView
 					name={name}
 					runEventState={runEventState}
-					onBack={() => navigate("/pipeline?tab=executions")}
+					onBack={() => navigate(backTarget)}
 					onRefreshEvents={loadRunEvents}
 				/>
 			);
@@ -1417,9 +1427,9 @@ export default function WorkflowDetailPage({
 				<Button
 					icon={<ArrowLeftOutlined />}
 					size="small"
-					onClick={() => navigate("/pipeline?tab=executions")}
+					onClick={() => navigate(backTarget)}
 				>
-					返回
+					{backLabel}
 				</Button>
 				<h3 style={{ margin: 0, fontSize: 15 }}>{workflow.name}</h3>
 				<Tag color={STATUS_COLORS[workflow.status] || "default"}>

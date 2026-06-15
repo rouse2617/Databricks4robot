@@ -147,7 +147,7 @@ test.describe("批量任务 integration @integration", () => {
 		await modal
 			.getByPlaceholder(/单次批量最多/)
 			.fill(assetIds.join("\n"));
-		await modal.getByRole("button", { name: "导入到已选列表" }).click();
+		await modal.getByPlaceholder(/单次批量最多/).blur();
 		await expect(modal.getByText("将创建批量任务，共 1000 个子任务")).toBeVisible();
 		await modal.getByRole("button", { name: "运行资产" }).click();
 

@@ -75,10 +75,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const siderWidth = 220;
 	const fullBleed = isFullBleedPage(location.pathname);
 
-	// Browser restores scroll position on back-nav, no dep needed
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll to top on route changes
 	useEffect(() => {
 		window.scrollTo(0, 0);
-	}, []);
+	}, [location.pathname, location.search]);
 
 	return (
 		<Layout style={{ minHeight: "100vh" }}>

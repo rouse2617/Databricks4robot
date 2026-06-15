@@ -39,6 +39,7 @@ import {
 	WORKFLOW_PHASES,
 } from "../lib/constants";
 import { toAssetStyleId } from "../lib/idDisplay";
+import { workflowDetailLocationState } from "../lib/pipelineNavigation";
 import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
 import { withSelectAllColumn } from "../lib/tableSelection";
 import {
@@ -351,46 +352,65 @@ export function WorkflowExecutionList({
 	const [loading, setLoading] = useState(false);
 	const [initializedOnce, setInitializedOnce] = useState(false);
 	const [error, setError] = useState<WorkflowErrorState | null>(null);
-	const [statusFilter, setStatusFilter] = useState<string | undefined>(
-		normalizeStatus(searchParams.get("status")),
+	const [statusFilter, setStatusFilter] = useState<string | undefined>(() =>
+		batchJobId ? undefined : normalizeStatus(searchParams.get("status")),
 	);
 	const [draftStatusFilter, setDraftStatusFilter] = useState<
 		string | undefined
-	>(normalizeStatus(searchParams.get("status")));
+	>(() =>
+		batchJobId ? undefined : normalizeStatus(searchParams.get("status")),
+	);
 	const [nameSearch, setNameSearch] = useState(
-		searchParams.get("name")?.trim() ?? "",
+		batchJobId ? "" : (searchParams.get("name")?.trim() ?? ""),
 	);
 	const [draftNameSearch, setDraftNameSearch] = useState(
-		searchParams.get("name")?.trim() ?? "",
+		batchJobId ? "" : (searchParams.get("name")?.trim() ?? ""),
 	);
 	const [labelFilter, setLabelFilter] = useState<string[]>(() => {
+		if (batchJobId) return [];
 		const labels = searchParams.getAll("label");
 		return Array.from(
 			new Set(labels.map((label) => label.trim()).filter(Boolean)),
 		);
 	});
 	const [versionFilter, setVersionFilter] = useState<string | undefined>(
-		searchParams.get("templateVersion")?.trim() || undefined,
+		batchJobId
+			? undefined
+			: searchParams.get("templateVersion")?.trim() || undefined,
 	);
 	const [draftVersionFilter, setDraftVersionFilter] = useState<
 		string | undefined
-	>(searchParams.get("templateVersion")?.trim() || undefined);
+	>(
+		batchJobId
+			? undefined
+			: searchParams.get("templateVersion")?.trim() || undefined,
+	);
 	const [draftLabelFilter, setDraftLabelFilter] = useState<string[]>(() => {
+		if (batchJobId) return [];
 		const labels = searchParams.getAll("label");
 		return Array.from(
 			new Set(labels.map((label) => label.trim()).filter(Boolean)),
 		);
 	});
-	const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([
-		parseDate(searchParams.get("createdAfter")),
-		parseDate(searchParams.get("finishedBefore")),
-	]);
+	const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>(
+		() =>
+			batchJobId
+				? [null, null]
+				: [
+						parseDate(searchParams.get("createdAfter")),
+						parseDate(searchParams.get("finishedBefore")),
+					],
+	);
 	const [draftDateRange, setDraftDateRange] = useState<
 		[Dayjs | null, Dayjs | null]
-	>([
-		parseDate(searchParams.get("createdAfter")),
-		parseDate(searchParams.get("finishedBefore")),
-	]);
+	>(() =>
+		batchJobId
+			? [null, null]
+			: [
+					parseDate(searchParams.get("createdAfter")),
+					parseDate(searchParams.get("finishedBefore")),
+				],
+	);
 	const [operationLoading, setOperationLoading] = useState<string | null>(null);
 	const [selectedWorkflowNames, setSelectedWorkflowNames] = useState<string[]>(
 		[],
@@ -409,8 +429,17 @@ export function WorkflowExecutionList({
 	const navigate = useNavigate();
 	const refreshInFlightRef = useRef(false);
 	const isBatchScope = Boolean(batchJobId);
+	const openWorkflowDetail = useCallback(
+		(workflowName: string) => {
+			navigate(`/pipeline/executions/${workflowName}`, {
+				state: workflowDetailLocationState(batchJobId),
+			});
+		},
+		[batchJobId, navigate],
+	);
 
 	useEffect(() => {
+		if (batchJobId) return;
 		const nextStatus = normalizeStatus(searchParams.get("status"));
 		const nextName = searchParams.get("name")?.trim() ?? "";
 		const nextLabelFilter = Array.from(
@@ -458,9 +487,10 @@ export function WorkflowExecutionList({
 			}
 			return [nextCreatedAfter, nextFinishedBefore];
 		});
-	}, [searchParams]);
+	}, [batchJobId, searchParams]);
 
 	const syncAppliedFiltersToUrl = useCallback(() => {
+		if (batchJobId) return;
 		const next = new URLSearchParams(searchParams);
 		if (statusFilter) next.set("status", statusFilter);
 		else next.delete("status");
@@ -481,6 +511,7 @@ export function WorkflowExecutionList({
 			setSearchParams(next, { replace: true });
 		}
 	}, [
+		batchJobId,
 		dateRange,
 		labelFilter,
 		nameSearch,
@@ -572,12 +603,14 @@ export function WorkflowExecutionList({
 								return { items: [] };
 							})
 						: Promise.resolve({ items: [] }),
-					listPipelineRuns({ view: "summary", excludeBatch: true }).catch(
-						() => ({
-							items: [],
-							total: 0,
-						}),
-					),
+					listPipelineRuns({
+						view: "summary",
+						excludeBatch: true,
+						status: statusFilter,
+					}).catch(() => ({
+						items: [],
+						total: 0,
+					})),
 					listPipelines({ pageSize: 200 })
 						.then((r) => r.items)
 						.catch(() => []),
@@ -656,9 +689,8 @@ export function WorkflowExecutionList({
 		isBatchScope,
 		labelFilter,
 		nameSearch,
-		page,
-		pageSize,
 		statusFilter,
+		...(isBatchScope ? [page, pageSize] : []),
 	]);
 
 	useEffect(() => {
@@ -669,8 +701,10 @@ export function WorkflowExecutionList({
 
 	useEffect(() => {
 		setPage(1);
-		syncAppliedFiltersToUrl();
-	}, [syncAppliedFiltersToUrl]);
+		if (!batchJobId) {
+			syncAppliedFiltersToUrl();
+		}
+	}, [batchJobId, syncAppliedFiltersToUrl]);
 
 	const filtersDirty =
 		draftVersionFilter !== versionFilter ||
@@ -993,7 +1027,7 @@ export function WorkflowExecutionList({
 							size="small"
 							onClick={(event) => {
 								event.stopPropagation();
-								navigate(`/pipeline/executions/${record.name}`);
+								openWorkflowDetail(record.name);
 							}}
 						>
 							查看
@@ -1203,7 +1237,8 @@ export function WorkflowExecutionList({
 								) {
 									return;
 								}
-								navigate(`/pipeline/executions/${record.name}`);
+								openWorkflowDetail(record.name);
+								openWorkflowDetail(record.name);
 							},
 							style: { cursor: "pointer" },
 						})}

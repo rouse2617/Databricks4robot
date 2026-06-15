@@ -24,7 +24,7 @@ import {
 } from "antd";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
 	type BatchJob,
 	type BatchNodeFailureItem,
@@ -42,6 +42,10 @@ import {
 } from "../api/batchJobApi";
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
 import type { WorkflowSummary } from "../api/workflowApi";
+import {
+	goBackFromBatchJobDetail,
+	workflowDetailLocationState,
+} from "../lib/pipelineNavigation";
 import {
 	formatBatchJobStatus,
 	formatWorkflowPhaseLabel,
@@ -74,6 +78,7 @@ function exportFailuresCsv(
 export default function BatchJobDetailPage() {
 	const { id = "" } = useParams();
 	const navigate = useNavigate();
+	const location = useLocation();
 	const { message } = App.useApp();
 	const [job, setJob] = useState<BatchJob | null>(null);
 	const [templateName, setTemplateName] = useState("");
@@ -114,6 +119,10 @@ export default function BatchJobDetailPage() {
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
+
+	const backToBatchList = useCallback(() => {
+		goBackFromBatchJobDetail(navigate, location.state);
+	}, [location.state, navigate]);
 
 	const runAction = async (action: "pause" | "resume" | "retry") => {
 		if (!job) return;
@@ -206,12 +215,7 @@ export default function BatchJobDetailPage() {
 	if (!job) {
 		return (
 			<div style={{ padding: 24 }}>
-				<Button
-					icon={<ArrowLeftOutlined />}
-					onClick={() =>
-						navigate("/pipeline?tab=executions&executionView=batch")
-					}
-				>
+				<Button icon={<ArrowLeftOutlined />} onClick={backToBatchList}>
 					返回批量任务
 				</Button>
 				<Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
@@ -224,12 +228,7 @@ export default function BatchJobDetailPage() {
 	return (
 		<div className="pipeline-batch-detail" style={{ padding: "0 0 24px" }}>
 			<Space style={{ marginBottom: 16 }}>
-				<Button
-					icon={<ArrowLeftOutlined />}
-					onClick={() =>
-						navigate("/pipeline?tab=executions&executionView=batch")
-					}
-				>
+				<Button icon={<ArrowLeftOutlined />} onClick={backToBatchList}>
 					返回批量任务
 				</Button>
 				<Button icon={<ReloadOutlined />} onClick={() => void refresh()}>
@@ -543,7 +542,9 @@ export default function BatchJobDetailPage() {
 									type="link"
 									size="small"
 									onClick={() =>
-										navigate(`/pipeline/executions/${record.workflowName}`)
+										navigate(`/pipeline/executions/${record.workflowName}`, {
+											state: workflowDetailLocationState(job.id),
+										})
 									}
 								>
 									查看

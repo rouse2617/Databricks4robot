@@ -27,6 +27,7 @@ import {
 	retryFailedBatchItems,
 } from "../api/batchJobApi";
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
+import { batchJobDetailLocationState } from "../lib/pipelineNavigation";
 import {
 	formatBatchJobStatus,
 	resolveStatusTagColor,
@@ -170,7 +171,11 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					<Button
 						type="link"
 						size="small"
-						onClick={() => navigate(`/pipeline/batch/${record.id}`)}
+						onClick={() =>
+							navigate(`/pipeline/batch/${record.id}`, {
+								state: batchJobDetailLocationState(),
+							})
+						}
 					>
 						查看子任务
 					</Button>
@@ -246,7 +251,10 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					dataSource={jobs}
 					pagination={{ pageSize: 20, showSizeChanger: true }}
 					onRow={(record) => ({
-						onClick: () => navigate(`/pipeline/batch/${record.id}`),
+						onClick: () =>
+							navigate(`/pipeline/batch/${record.id}`, {
+								state: batchJobDetailLocationState(),
+							}),
 						style: { cursor: "pointer" },
 					})}
 				/>

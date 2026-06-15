@@ -89,7 +89,7 @@ describe("AssetPicker", () => {
 		render(<AssetPicker selectedIds={[]} onSelectionChange={() => {}} />);
 		expect(
 			screen.getByText(
-				"输入关键字搜索资产，或批量粘贴 asset ID；不选择则直接部署",
+				"输入关键字搜索资产，或批量粘贴 asset ID；粘贴后可直接运行",
 			),
 		).toBeTruthy();
 	});
@@ -179,7 +179,7 @@ describe("AssetPicker", () => {
 		expect(screen.queryByText("ast-001")).toBeNull();
 		expect(
 			screen.getByText(
-				"输入关键字搜索资产，或批量粘贴 asset ID；不选择则直接部署",
+				"输入关键字搜索资产，或批量粘贴 asset ID；粘贴后可直接运行",
 			),
 		).toBeTruthy();
 	});
@@ -335,5 +335,25 @@ describe("AssetPicker", () => {
 			/>,
 		);
 		expect(screen.getByPlaceholderText("自定义搜索")).toBeTruthy();
+	});
+
+	it("imports bulk paste on blur", () => {
+		const onSelectionChange = vi.fn();
+		render(
+			<AssetPicker selectedIds={[]} onSelectionChange={onSelectionChange} />,
+		);
+
+		fireEvent.click(
+			screen.getByText("批量粘贴 asset ID（换行 / 逗号 / 分号分隔）"),
+		);
+		const textarea = document.querySelector(
+			"textarea",
+		) as HTMLTextAreaElement;
+		fireEvent.change(textarea, {
+			target: { value: "a1\na2" },
+		});
+		fireEvent.blur(textarea);
+
+		expect(onSelectionChange).toHaveBeenCalledWith(["a1", "a2"]);
 	});
 });

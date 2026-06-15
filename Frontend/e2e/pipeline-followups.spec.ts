@@ -371,9 +371,9 @@ test("deploy modal bulk-pastes 1000 assets and creates batch job", async ({
 		.getByText("批量粘贴 asset ID（换行 / 逗号 / 分号分隔）")
 		.click();
 	await modal
-		.getByPlaceholder("每行一个 asset_id，或逗号分隔")
+		.getByPlaceholder(/单次批量最多/)
 		.fill(assetIds.join("\n"));
-	await modal.getByRole("button", { name: "导入到已选列表" }).click();
+	await modal.getByPlaceholder(/单次批量最多/).blur();
 
 	await expect(modal.getByText("将创建批量任务，共 1000 个子任务")).toBeVisible();
 	await expect(modal.getByText("+988")).toBeVisible();

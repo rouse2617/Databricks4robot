@@ -510,19 +510,11 @@ func backfillItemLedgerStatus(item models.BackfillItem) (status, message string)
 	return status, message
 }
 
-// ListJobs returns all backfill jobs with refreshed progress.
+// ListJobs returns all backfill jobs from the database.
+// Listing must stay read-only: syncJobProgress (per-job DB + optional GetRun/Argo)
+// belongs on GetJob, ReconcileSubtaskRuns, and background runners — not on list.
 func (uc *Usecase) ListJobs(ctx context.Context) ([]models.BackfillJob, error) {
-	jobs, err := uc.repo.FindAllJobs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range jobs {
-		_ = uc.syncJobProgress(ctx, jobs[i].ID)
-		if refreshed, err := uc.repo.FindJobByID(ctx, jobs[i].ID); err == nil && refreshed != nil {
-			jobs[i] = *refreshed
-		}
-	}
-	return jobs, nil
+	return uc.repo.FindAllJobs(ctx)
 }
 
 // GetJob returns a backfill job without loading all items.
