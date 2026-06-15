@@ -27,7 +27,9 @@ vi.mock("react-router-dom", async (importOriginal) => {
 // ── Mock pipelineApi ──────────────────────────────────────────────
 const mockSavePipeline = vi.fn();
 const mockDeployTemplate = vi.fn();
-const mockListPipelines = vi.fn().mockResolvedValue([]);
+const mockListPipelines = vi
+	.fn()
+	.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
 const mockListPipelineVersions = vi.fn().mockResolvedValue([]);
 const mockListDeployments = vi.fn().mockResolvedValue([]);
 const mockListPipelineRuns = vi.fn().mockResolvedValue([]);
@@ -57,6 +59,14 @@ const mockListExecutionTargets = vi.fn().mockResolvedValue([
 vi.mock("../api/pipelineApi", () => ({
 	savePipeline: (...args: unknown[]) => mockSavePipeline(...args),
 	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
+	// Real helper used by deployPipelineForAssets (unmocked) to shape runs.
+	normalizeDeployResults: (result: unknown) =>
+		result &&
+		typeof result === "object" &&
+		"items" in result &&
+		Array.isArray((result as { items: unknown[] }).items)
+			? (result as { items: unknown[] }).items
+			: [result],
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
 	listPipelineVersions: (...args: unknown[]) =>
 		mockListPipelineVersions(...args),
@@ -71,6 +81,13 @@ vi.mock("../api/pipelineApi", () => ({
 	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
 	previewDeploy: (...args: unknown[]) => mockPreviewDeploy(...args),
 	retryDeployment: (...args: unknown[]) => mockRetryDeployment(...args),
+}));
+
+// ── Mock batchJobApi (used by deployPipelineForAssets for ≥2 assets) ──
+const mockCreateBatchJob = vi.fn();
+
+vi.mock("../api/batchJobApi", () => ({
+	createBatchJob: (...args: unknown[]) => mockCreateBatchJob(...args),
 }));
 
 // ── Mock workflowApi ──────────────────────────────────────────────
@@ -236,7 +253,25 @@ beforeAll(() => {
 function resetPipelineMocks() {
 	mockSavePipeline.mockReset();
 	mockDeployTemplate.mockReset();
-	mockListPipelines.mockResolvedValue([]);
+	mockCreateBatchJob.mockReset();
+	mockCreateBatchJob.mockResolvedValue({
+		id: "batch-001",
+		name: "batch-test",
+		templateId: "tmpl-001",
+		templateVersion: 1,
+		totalCount: 2,
+		completedCount: 0,
+		failedCount: 0,
+		status: "pending",
+		createdAt: "2026-05-28T12:00:00Z",
+		updatedAt: "2026-05-28T12:00:00Z",
+	});
+	mockListPipelines.mockResolvedValue({
+		items: [],
+		total: 0,
+		page: 1,
+		pageSize: 20,
+	});
 	mockListPipelineVersions.mockResolvedValue([]);
 	mockListDeployments.mockResolvedValue([]);
 	mockListPipelineRuns.mockResolvedValue({ items: [] });
@@ -309,14 +344,19 @@ describe("PipelinePage", () => {
 	});
 
 	it("shows saved pipelines in the pipeline management tab", async () => {
-		mockListPipelines.mockResolvedValueOnce([
-			{
-				id: "tmpl-001",
-				name: "saved-flow",
-				nodeCount: 2,
-				createdAt: "2026-06-01T09:00:00Z",
-			},
-		]);
+		mockListPipelines.mockResolvedValueOnce({
+			items: [
+				{
+					id: "tmpl-001",
+					name: "saved-flow",
+					nodeCount: 2,
+					createdAt: "2026-06-01T09:00:00Z",
+				},
+			],
+			total: 1,
+			page: 1,
+			pageSize: 20,
+		});
 		renderPage();
 		fireEvent.click(screen.getByText("管理已保存的流水线"));
 		await waitFor(() => {
@@ -326,14 +366,19 @@ describe("PipelinePage", () => {
 	});
 
 	it("treats legacy templates tab query as pipeline management tab", async () => {
-		mockListPipelines.mockResolvedValueOnce([
-			{
-				id: "tmpl-001",
-				name: "legacy-tab-flow",
-				nodeCount: 1,
-				createdAt: "2026-06-01T09:00:00Z",
-			},
-		]);
+		mockListPipelines.mockResolvedValueOnce({
+			items: [
+				{
+					id: "tmpl-001",
+					name: "legacy-tab-flow",
+					nodeCount: 1,
+					createdAt: "2026-06-01T09:00:00Z",
+				},
+			],
+			total: 1,
+			page: 1,
+			pageSize: 20,
+		});
 
 		renderPage("/pipeline?tab=templates");
 
@@ -544,6 +589,7 @@ describe("PipelinePage", () => {
 				"tmpl-001",
 				[],
 				"default",
+				undefined,
 			);
 		});
 
@@ -572,13 +618,19 @@ describe("PipelinePage", () => {
 
 		fireEvent.click(getModalDeployBtn());
 
+		// ≥2 assets dispatch a batch job instead of a single deploy.
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
-				"tmpl-001",
-				["ast-001", "ast-002"],
-				"default",
+			expect(mockCreateBatchJob).toHaveBeenCalledWith(
+				expect.objectContaining({
+					templateId: "tmpl-001",
+					assetIds: ["ast-001", "ast-002"],
+				}),
 			);
 		});
+		expect(mockDeployTemplate).not.toHaveBeenCalled();
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith("/pipeline/batch/batch-001"),
+		);
 	});
 
 	it("preserves asset_ids from url when opening deploy modal", async () => {
@@ -593,7 +645,10 @@ describe("PipelinePage", () => {
 		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
 
 		await waitFor(() => {
-			expect(screen.getByText("将处理 2 个资产")).toBeInTheDocument();
+			// ≥2 assets render the batch-job banner instead of single-run text.
+			expect(
+				screen.getByText("将创建批量任务，共 2 个子任务"),
+			).toBeInTheDocument();
 			expect(screen.getAllByText("asset-a").length).toBeGreaterThan(0);
 			expect(screen.getAllByText("asset-b").length).toBeGreaterThan(0);
 			expect(screen.getByText("Selected: asset-a,asset-b")).toBeInTheDocument();
@@ -601,13 +656,18 @@ describe("PipelinePage", () => {
 
 		fireEvent.click(getModalDeployBtn());
 
+		// asset_ids from the URL (2) dispatch a batch job.
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
-				"tmpl-001",
-				["asset-a", "asset-b"],
-				"default",
+			expect(mockCreateBatchJob).toHaveBeenCalledWith(
+				expect.objectContaining({
+					templateId: "tmpl-001",
+					assetIds: ["asset-a", "asset-b"],
+				}),
 			);
 		});
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith("/pipeline/batch/batch-001"),
+		);
 	});
 
 	it("allows clearing url assets into an explicit no-asset run", async () => {
@@ -637,6 +697,7 @@ describe("PipelinePage", () => {
 				"tmpl-001",
 				[],
 				"default",
+				undefined,
 			);
 		});
 	});
@@ -694,12 +755,10 @@ describe("PipelinePage", () => {
 		);
 		fireEvent.click(screen.getByText(/查看记录/));
 
-		await waitFor(() => {
-			expect(screen.getByRole("tab", { name: /执行记录/ })).toHaveAttribute(
-				"aria-selected",
-				"true",
-			);
-		});
+		// "查看记录" navigates to the executions tab (useNavigate is mocked).
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith("/pipeline?tab=executions"),
+		);
 	});
 
 	// ── Component registry ──────────────────────────────────────────

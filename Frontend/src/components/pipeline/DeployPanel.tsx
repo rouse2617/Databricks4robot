@@ -594,10 +594,11 @@ export function DeployPanel({
 
 			if (templatesResult.status === "fulfilled") {
 				const resp = templatesResult.value;
-				setTemplates(resp.items);
-				setTemplateTotal(resp.total);
-				setTemplatePage(resp.page);
-				applyTemplateFiltersFromTemplates(resp.items);
+				const templateItems = resp.items ?? [];
+				setTemplates(templateItems);
+				setTemplateTotal(resp.total ?? templateItems.length);
+				setTemplatePage(resp.page ?? 1);
+				applyTemplateFiltersFromTemplates(templateItems);
 			} else {
 				partialErrors.push("流水线模板加载失败");
 				setTemplates([]);

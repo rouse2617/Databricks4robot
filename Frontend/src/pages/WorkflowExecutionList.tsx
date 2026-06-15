@@ -570,14 +570,16 @@ export function WorkflowExecutionList({
 								return { items: [] };
 							})
 						: Promise.resolve({ items: [] }),
-				listPipelineRuns({ view: "summary", excludeBatch: true }).catch(() => ({
-					items: [],
-					total: 0,
-				})),
-				listPipelines({ pageSize: 200 })
-					.then((r) => r.items)
-					.catch(() => []),
-			]);
+					listPipelineRuns({ view: "summary", excludeBatch: true }).catch(
+						() => ({
+							items: [],
+							total: 0,
+						}),
+					),
+					listPipelines({ pageSize: 200 })
+						.then((r) => r.items)
+						.catch(() => []),
+				]);
 			const liveWorkflows = liveWorkflowResponse.items || [];
 			const pipelineRuns = pipelineRunResponse.items ?? [];
 			setServerTotal(pipelineRunResponse.total ?? pipelineRuns.length);
@@ -825,9 +827,6 @@ export function WorkflowExecutionList({
 			width: 260,
 			render: (name: string, record: WorkflowSummary) => {
 				const runId = runIdsByWorkflowName[record.name];
-				const templateId =
-					templateIdsByWorkflowName[record.name] ??
-					getWorkflowLabel(record.labels, "template-id");
 				const templateVersion = templateVersionsByWorkflowName[record.name];
 				const scope = scopeByWorkflowName[record.name];
 				const displayId = toAssetStyleId(runId ?? name);

@@ -69,6 +69,32 @@ const allWorkflows: WorkflowSummary[] = [
 	},
 ];
 
+// Ledger runs are the source of truth for the executions list. Live Argo
+// workflows are only fetched when a label filter is active (perf optimization),
+// so status filtering is asserted against ledger pipeline-runs.
+const ledgerRuns = [
+	{
+		id: "run-success",
+		pipelineName: "successful-run",
+		workflowName: "successful-run",
+		status: "Succeeded",
+		nodeCount: 2,
+		totalEstimatedCost: 1.25,
+		createdAt: "2026-06-02T01:00:00Z",
+		finishedAt: "2026-06-02T01:00:20Z",
+	},
+	{
+		id: "run-failed",
+		pipelineName: "failed-run",
+		workflowName: "failed-run",
+		status: "Failed",
+		nodeCount: 1,
+		totalEstimatedCost: 0.5,
+		createdAt: "2026-06-02T02:00:00Z",
+		finishedAt: "2026-06-02T02:00:10Z",
+	},
+];
+
 function renderList(initialEntry = "/pipeline?tab=executions") {
 	return render(
 		<MemoryRouter initialEntries={[initialEntry]}>
@@ -138,30 +164,27 @@ describe("WorkflowExecutionList", () => {
 	});
 
 	it("applies status filters from the URL", async () => {
+		mockListPipelineRuns.mockResolvedValue({ items: ledgerRuns, total: 2 });
 		renderList("/pipeline?tab=executions&status=Failed");
 
 		await waitFor(() => {
-			expect(mockListWorkflows).toHaveBeenLastCalledWith(
-				expect.objectContaining({ status: "Failed" }),
-			);
-			expect(screen.queryByText("successful-run")).not.toBeInTheDocument();
 			expect(screen.getByText("failed-run")).toBeInTheDocument();
 		});
+		expect(screen.queryByText("successful-run")).not.toBeInTheDocument();
 	});
 
 	it("clears status filters when reset is clicked", async () => {
+		mockListPipelineRuns.mockResolvedValue({ items: ledgerRuns, total: 2 });
 		renderList("/pipeline?tab=executions&status=Failed");
 
 		await waitFor(() => {
 			expect(screen.getByText("failed-run")).toBeInTheDocument();
 		});
+		expect(screen.queryByText("successful-run")).not.toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "重 置" }));
 
 		await waitFor(() => {
-			expect(mockListWorkflows).toHaveBeenLastCalledWith(
-				expect.objectContaining({ status: undefined }),
-			);
 			expect(screen.getByText("successful-run")).toBeInTheDocument();
 			expect(screen.getByText("failed-run")).toBeInTheDocument();
 		});
