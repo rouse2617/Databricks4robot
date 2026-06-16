@@ -80,7 +80,7 @@ interface ComponentLibraryRow {
 	searchText: string;
 }
 
-type ReleaseKindFilter = "all" | "tag" | "commit" | "branch" | "pr";
+type ReleaseKindFilter = "all" | "prod" | "dev";
 type SearchMode = "smart" | "task" | "commit" | "version";
 type LibraryTypeFilter = "all" | "release" | "legacy";
 
@@ -122,10 +122,8 @@ const DEFAULT_OUTPUT_PORTS: PortDef[] = [{ name: "output", type: "asset" }];
 const RELEASE_KIND_OPTIONS: Array<{ label: string; value: ReleaseKindFilter }> =
 	[
 		{ label: "全部标记", value: "all" },
-		{ label: "线上版本", value: "tag" },
-		{ label: "测试版本", value: "commit" },
-		{ label: "分支版本", value: "branch" },
-		{ label: "PR 预览", value: "pr" },
+		{ label: "prod", value: "prod" },
+		{ label: "dev", value: "dev" },
 	];
 
 const SEARCH_MODE_OPTIONS: Array<{ label: string; value: SearchMode }> = [
@@ -189,33 +187,45 @@ const releaseTagText = (release?: PipelineComponentReleaseAPI): string => {
 	return normalizedReleaseRef(release) || release.releaseLabel || "";
 };
 
-const releaseKindLabel = (release: PipelineComponentReleaseAPI): string => {
-	if (isOnlineRelease(release)) return "线上版本";
+const releaseTagEmptyHint = (release: PipelineComponentReleaseAPI): string => {
 	switch (release.sourceRefType) {
-		case "commit":
-			return "测试版本";
-		case "pr":
-			return "PR 预览";
 		case "branch":
-			return "分支版本";
+			return "该版本由分支构建，未打 Git tag";
+		case "commit":
+			return "该版本由 commit 构建，未打 Git tag";
 		default:
-			return "开发版本";
+			return "该版本未关联 Git tag";
 	}
 };
 
-const releaseKindColor = (release: PipelineComponentReleaseAPI): string => {
-	if (isOnlineRelease(release)) return "green";
-	switch (release.sourceRefType) {
-		case "commit":
-			return "blue";
-		case "pr":
-			return "purple";
-		case "branch":
-			return "cyan";
-		default:
-			return "default";
+function ReleaseTagCell({
+	release,
+}: {
+	release?: PipelineComponentReleaseAPI;
+}) {
+	const tag = releaseTagText(release);
+	if (tag) {
+		return (
+			<Typography.Text code ellipsis={{ tooltip: tag }}>
+				{tag}
+			</Typography.Text>
+		);
 	}
-};
+	if (!release) {
+		return <Typography.Text type="secondary">-</Typography.Text>;
+	}
+	return (
+		<Tooltip title={releaseTagEmptyHint(release)}>
+			<Typography.Text type="secondary">无 tag</Typography.Text>
+		</Tooltip>
+	);
+}
+
+const releaseKindLabel = (release: PipelineComponentReleaseAPI): string =>
+	isOnlineRelease(release) ? "prod" : "dev";
+
+const releaseKindColor = (release: PipelineComponentReleaseAPI): string =>
+	isOnlineRelease(release) ? "green" : "default";
 
 const componentKey = (value?: string): string =>
 	(value || "").trim().toLowerCase();
@@ -263,24 +273,42 @@ const sourceRefTypeText = (release: PipelineComponentReleaseAPI): string => {
 
 const releaseRefBadge = (
 	release: PipelineComponentReleaseAPI,
-): { label: string; color: string } => {
-	if (isOnlineRelease(release)) {
-		return { label: "线上", color: "green" };
-	}
-	if (release.sourceRefType === "pr") {
-		return { label: "PR", color: "purple" };
-	}
-	const ref = normalizedReleaseRef(release);
-	if (ref) {
-		return { label: shortTechnicalValue(ref), color: "cyan" };
-	}
-	if (release.sourceRefType === "commit") {
-		return { label: "commit", color: "blue" };
-	}
-	return { label: "dev", color: "default" };
-};
+): { label: string; color: string } =>
+	isOnlineRelease(release)
+		? { label: "prod", color: "green" }
+		: { label: "dev", color: "default" };
 
 function ReleaseVersionChip({
+	release,
+	onClick,
+	label,
+}: {
+	release: PipelineComponentReleaseAPI;
+	onClick: () => void;
+	label?: string;
+}) {
+	const badge = releaseRefBadge(release);
+	const displayText = shortTechnicalValue(
+		label || release.sourceCommit || release.releaseLabel,
+	);
+	const tooltip = label || release.sourceCommit || release.releaseLabel;
+	return (
+		<Tooltip title={tooltip}>
+			<Space size={4}>
+				<Tag
+					color={badge.color}
+					style={{ cursor: "pointer", fontFamily: "monospace" }}
+					onClick={onClick}
+				>
+					{displayText}
+				</Tag>
+				<Tag color={badge.color}>{badge.label}</Tag>
+			</Space>
+		</Tooltip>
+	);
+}
+
+function ReleaseExpandedBuildCell({
 	release,
 	onClick,
 }: {
@@ -288,22 +316,26 @@ function ReleaseVersionChip({
 	onClick: () => void;
 }) {
 	const badge = releaseRefBadge(release);
-	const commitText = shortTechnicalValue(
-		release.sourceCommit || release.releaseLabel,
-	);
 	return (
-		<Tooltip title={release.sourceCommit || release.releaseLabel}>
-			<Space size={4}>
+		<div className="component-library-release-grid__build">
+			<Tooltip title={release.releaseLabel}>
 				<Tag
 					color={badge.color}
-					style={{ cursor: "pointer", fontFamily: "monospace" }}
+					className="component-library-release-grid__build-tag"
+					style={{ cursor: "pointer" }}
 					onClick={onClick}
 				>
-					{commitText}
+					{shortTechnicalValue(release.releaseLabel)}
 				</Tag>
-				<Tag color={badge.color}>{badge.label}</Tag>
-			</Space>
-		</Tooltip>
+			</Tooltip>
+			<Typography.Text
+				type="secondary"
+				ellipsis={{ tooltip: badge.label }}
+				style={{ fontSize: 11, maxWidth: "100%" }}
+			>
+				{badge.label}
+			</Typography.Text>
+		</div>
 	);
 }
 
@@ -312,7 +344,8 @@ const copyableCode = (value?: string, display?: string) => (
 		<Typography.Text
 			code
 			copyable={value ? { text: value } : false}
-			style={{ maxWidth: "100%", display: "inline-block" }}
+			className="component-library-release-grid__mono"
+			ellipsis={{ tooltip: value || display }}
 		>
 			{display || shortTechnicalValue(value) || "-"}
 		</Typography.Text>
@@ -354,12 +387,8 @@ const releaseMatchesKind = (
 	kind: ReleaseKindFilter,
 ): boolean => {
 	if (kind === "all") return true;
-	if (kind === "tag") return isOnlineRelease(release);
-	if (kind === "commit") return release.sourceRefType === "commit";
-	if (kind === "branch") {
-		return release.sourceRefType === "branch" && !isMainRelease(release);
-	}
-	return release.sourceRefType === "pr";
+	if (kind === "prod") return isOnlineRelease(release);
+	return !isOnlineRelease(release);
 };
 
 const releaseMatchesSearch = (
@@ -1248,43 +1277,44 @@ export function ComponentManager() {
 		{
 			title: "构建版本",
 			key: "versions",
-			width: 240,
-			render: (_, record) => (
-				<Space wrap size={4}>
-					{record.primaryRelease ? (
-						<ReleaseVersionChip
-							release={record.primaryRelease}
-							onClick={() =>
-								openReleaseView(
-									record.primaryRelease as PipelineComponentReleaseAPI,
-								)
-							}
-						/>
-					) : null}
-					{record.releases.length > 1 ? (
-						<Tag>{record.releases.length} 个版本</Tag>
-					) : null}
-					{record.releases.length === 0 && record.legacyComponent ? (
-						<Typography.Text code>
-							{record.legacyComponent.tag || "latest"}
-						</Typography.Text>
-					) : null}
-					{record.releases.length === 0 && !record.legacyComponent ? "-" : null}
-				</Space>
-			),
-		},
-		{
-			title: "Tag",
-			key: "tag",
-			width: 160,
+			width: 280,
 			render: (_, record) => {
 				const tag = releaseTagText(record.primaryRelease);
-				return tag ? (
-					<Typography.Text code ellipsis={{ tooltip: tag }}>
-						{tag}
-					</Typography.Text>
-				) : (
-					<Typography.Text type="secondary">-</Typography.Text>
+				return (
+					<Space direction="vertical" size={2} style={{ maxWidth: 280 }}>
+						<Space wrap size={4}>
+							{record.primaryRelease ? (
+								<ReleaseVersionChip
+									release={record.primaryRelease}
+									onClick={() =>
+										openReleaseView(
+											record.primaryRelease as PipelineComponentReleaseAPI,
+										)
+									}
+								/>
+							) : null}
+							{record.releases.length > 1 ? (
+								<Tag>{record.releases.length} 个版本</Tag>
+							) : null}
+							{record.releases.length === 0 && record.legacyComponent ? (
+								<Typography.Text code>
+									{record.legacyComponent.tag || "latest"}
+								</Typography.Text>
+							) : null}
+							{record.releases.length === 0 && !record.legacyComponent
+								? "-"
+								: null}
+						</Space>
+						{tag ? (
+							<Typography.Text
+								code
+								ellipsis={{ tooltip: tag }}
+								style={{ fontSize: 12, color: "rgba(15, 23, 42, 0.65)" }}
+							>
+								Tag {tag}
+							</Typography.Text>
+						) : null}
+					</Space>
 				);
 			},
 		},
@@ -1300,8 +1330,13 @@ export function ComponentManager() {
 			width: 260,
 			render: (_, record) => {
 				const component = record.legacyComponent;
+				const linkedToReleaseLibrary = Boolean(
+					record.primaryRelease && component,
+				);
 				const showComponentActions =
-					Boolean(component) && libraryTypeFilter !== "release";
+					Boolean(component) &&
+					!record.primaryRelease &&
+					libraryTypeFilter !== "release";
 				const isSystemComponent = component?.source === "system";
 				const deleteButton = component ? (
 					<Button
@@ -1334,6 +1369,13 @@ export function ComponentManager() {
 							>
 								版本详情
 							</Button>
+						) : null}
+						{linkedToReleaseLibrary ? (
+							<Tooltip title="该任务已接入版本库，镜像版本请通过「版本详情」管理">
+								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+									已关联版本库
+								</Typography.Text>
+							</Tooltip>
 						) : null}
 						{record.primaryRelease && showComponentActions ? (
 							<Typography.Text type="secondary">|</Typography.Text>
@@ -1516,84 +1558,74 @@ export function ComponentManager() {
 							setExpandedRowKeys(keys.map(String)),
 						rowExpandable: (record) => record.releases.length > 0,
 						expandedRowRender: (record) => (
-							<div
-								style={{
-									background: "#f8fafc",
-									borderTop: "1px solid #eef2f7",
-									borderBottom: "1px solid #eef2f7",
-									margin: "-16px",
-									padding: "8px 0",
-								}}
-							>
-								<div
-									style={{
-										display: "grid",
-										gridTemplateColumns:
-											"44px 240px minmax(260px, 320px) minmax(140px, 180px) minmax(120px, 160px) 160px",
-										alignItems: "center",
-										columnGap: 16,
-										padding: "8px 0",
-										color: "rgba(15, 23, 42, 0.65)",
-										fontSize: 12,
-										fontWeight: 600,
-									}}
-								>
-									<div />
-									<div>全部构建版本</div>
-									<div>Commit</div>
-									<div>Tag</div>
-									<div>镜像ID</div>
-									<div>操作</div>
+							<div className="component-library-expanded-panel">
+								<div className="component-library-release-grid component-library-release-grid--header">
+									<div className="component-library-release-grid__cell">
+										全部构建版本
+									</div>
+									<div className="component-library-release-grid__cell">
+										Commit
+									</div>
+									<div className="component-library-release-grid__cell">
+										Tag
+									</div>
+									<div className="component-library-release-grid__cell">
+										镜像ID
+									</div>
+									<div className="component-library-release-grid__cell">
+										操作
+									</div>
 								</div>
 								{record.releases.map((release) => (
 									<div
 										key={release.id}
-										style={{
-											display: "grid",
-											gridTemplateColumns:
-												"44px 240px minmax(260px, 320px) minmax(140px, 180px) minmax(120px, 160px) 160px",
-											alignItems: "center",
-											columnGap: 16,
-											padding: "8px 0",
-											borderTop: "1px solid #eef2f7",
-										}}
+										className="component-library-release-grid component-library-release-grid--row"
 									>
-										<div />
-										<div>
-											<ReleaseVersionChip
+										<div className="component-library-release-grid__cell">
+											<ReleaseExpandedBuildCell
 												release={release}
 												onClick={() => openReleaseView(release)}
 											/>
 										</div>
-										<div>
-											{releaseTagText(release) ? (
-												<Typography.Text
-													code
-													ellipsis={{ tooltip: releaseTagText(release) }}
-												>
-													{releaseTagText(release)}
-												</Typography.Text>
+										<div className="component-library-release-grid__cell">
+											{release.sourceCommit ? (
+												copyableCode(
+													release.sourceCommit,
+													shortTechnicalValue(release.sourceCommit),
+												)
 											) : (
 												<Typography.Text type="secondary">-</Typography.Text>
 											)}
 										</div>
-										<div>
-											<Typography.Text
-												code
-												copyable={{ text: releaseImageUid(release) }}
-											>
-												{releaseImageUid(release)}
-											</Typography.Text>
+										<div className="component-library-release-grid__cell">
+											<ReleaseTagCell release={release} />
 										</div>
-										<div>
-											<Button
-												type="link"
-												size="small"
-												icon={<EyeOutlined />}
-												onClick={() => openReleaseView(release)}
-											>
-												版本详情
-											</Button>
+										<div className="component-library-release-grid__cell">
+											{copyableCode(
+												releaseImageUid(release),
+												releaseImageUid(release),
+											)}
+										</div>
+										<div className="component-library-release-grid__cell">
+											{release.id === record.primaryRelease?.id ? (
+												<Tooltip title="与主表「操作」列相同，请在那里查看">
+													<Typography.Text
+														type="secondary"
+														style={{ fontSize: 12 }}
+													>
+														主版本
+													</Typography.Text>
+												</Tooltip>
+											) : (
+												<Button
+													type="link"
+													size="small"
+													icon={<EyeOutlined />}
+													onClick={() => openReleaseView(release)}
+												>
+													版本详情
+												</Button>
+											)}
 										</div>
 									</div>
 								))}

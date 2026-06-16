@@ -145,6 +145,11 @@ vi.mock("../components/pipeline/AssetPicker", () => ({
 vi.mock("antd", async (importOriginal) => {
 	const actual = await importOriginal<Record<string, unknown>>();
 	const messageApi = { success: vi.fn(), error: vi.fn(), warning: vi.fn() };
+	const message = {
+		...(actual.message as Record<string, unknown>),
+		...messageApi,
+		useMessage: () => [messageApi, null] as const,
+	};
 	return {
 		...actual,
 		App: {
@@ -156,7 +161,7 @@ vi.mock("antd", async (importOriginal) => {
 				},
 			}),
 		},
-		message: messageApi,
+		message,
 	};
 });
 
@@ -347,6 +352,14 @@ describe("PipelinePage", () => {
 	});
 
 	// ── Tab switching ───────────────────────────────────────────────
+	it("drops executionView when opening components tab", async () => {
+		renderPage("/pipeline?tab=executions&executionView=batch");
+		fireEvent.click(screen.getByRole("tab", { name: /组件/ }));
+		await waitFor(() => {
+			expect(screen.getByText("组件库")).toBeInTheDocument();
+		});
+	});
+
 	it("shows component palette on canvas view", () => {
 		renderPage();
 		expect(screen.getByRole("heading", { name: "组件" })).toBeInTheDocument();

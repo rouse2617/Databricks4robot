@@ -2060,6 +2060,9 @@ export default function PipelinePage() {
 				next.delete("readonly");
 				next.delete("asset_ids");
 			}
+			if (nextTab !== "executions") {
+				next.delete("executionView");
+			}
 			setSearchParams(next, { replace: true });
 		},
 		[activeTab, designDirty, modal, searchParams, setSearchParams],

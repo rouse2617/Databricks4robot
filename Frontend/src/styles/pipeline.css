@@ -1057,6 +1057,72 @@
 	margin-top: 2px;
 }
 
+.component-library-release-grid {
+	display: grid;
+	grid-template-columns:
+		minmax(0, 1.4fr)
+		minmax(0, 1.6fr)
+		minmax(0, 0.9fr)
+		minmax(0, 0.8fr)
+		minmax(88px, 0.7fr);
+	column-gap: 12px;
+	align-items: center;
+	padding: 8px 16px;
+	min-width: 0;
+}
+
+.component-library-expanded-panel {
+	margin: -16px;
+	padding: 0;
+	overflow: hidden;
+	background: #f8fafc;
+	border-top: 1px solid #eef2f7;
+	border-bottom: 1px solid #eef2f7;
+}
+
+.component-library-release-grid--header {
+	color: rgba(15, 23, 42, 0.65);
+	font-size: 12px;
+	font-weight: 600;
+	border-bottom: none;
+}
+
+.component-library-release-grid--row {
+	border-top: 1px solid #eef2f7;
+}
+
+.component-library-release-grid__cell {
+	min-width: 0;
+	overflow: hidden;
+}
+
+.component-library-release-grid__build {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.component-library-release-grid__build-tag {
+	max-width: 100%;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: "SF Mono", "Menlo", monospace;
+}
+
+.component-library-release-grid__mono {
+	display: block;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: "SF Mono", "Menlo", monospace;
+}
+
 .cm-form {
 	background: #fff;
 	border: 1px solid var(--color-border, #e2e8f0);
