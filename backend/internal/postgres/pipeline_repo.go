@@ -1099,6 +1099,34 @@ LIMIT 1`
 	return run, nil
 }
 
+// FindAllByBatchJobAndAssetID returns all pipeline runs for a batch asset ordered by creation time.
+func (r *PipelineRunRepo) FindAllByBatchJobAndAssetID(ctx context.Context, batchJobID, assetID string) ([]models.PipelineRun, error) {
+	batchJobID = strings.TrimSpace(batchJobID)
+	assetID = strings.TrimSpace(assetID)
+	if batchJobID == "" || assetID == "" {
+		return nil, nil
+	}
+	q := `SELECT ` + pipelineRunSelectCols + `
+FROM pipeline_runs
+WHERE batch_job_id = $1 AND $2 = ANY(asset_ids)
+ORDER BY created_at ASC, id ASC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, batchJobID, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunRepo.FindAllByBatchJobAndAssetID: %w", err)
+	}
+	defer rows.Close()
+	var out []models.PipelineRun
+	for rows.Next() {
+		run, err := scanPipelineRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunRepo.FindAllByBatchJobAndAssetID scan: %w", err)
+		}
+		out = append(out, *run)
+	}
+	return out, nil
+}
+
 // Delete removes a pipeline run by id.
 func (r *PipelineRunRepo) Delete(ctx context.Context, id string) error {
 	const q = `DELETE FROM pipeline_runs WHERE id = $1`
@@ -1628,6 +1656,31 @@ LIMIT $2`
 			CostSource:            costSource,
 		},
 	}, nil
+}
+
+func (r *PipelineRunAssetNodeRepo) ListByRunIDs(ctx context.Context, runIDs []string) ([]models.PipelineRunAssetNode, error) {
+	if len(runIDs) == 0 {
+		return nil, nil
+	}
+	q := `SELECT ` + pipelineRunAssetNodeSelectCols + `
+FROM pipeline_run_asset_nodes
+WHERE run_id = ANY($1)
+ORDER BY run_id ASC, pipeline_node_id ASC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, runIDs)
+	if err != nil {
+		return nil, fmt.Errorf("postgres PipelineRunAssetNodeRepo.ListByRunIDs: %w", err)
+	}
+	defer rows.Close()
+	items := make([]models.PipelineRunAssetNode, 0, len(runIDs)*4)
+	for rows.Next() {
+		row, err := scanPipelineRunAssetNode(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres PipelineRunAssetNodeRepo.ListByRunIDs scan: %w", err)
+		}
+		items = append(items, *row)
+	}
+	return items, nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

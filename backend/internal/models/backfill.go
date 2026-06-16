@@ -93,3 +93,29 @@ type BatchNodeFailureListResult struct {
 	Page     int                    `json:"page"`
 	PageSize int                    `json:"pageSize"`
 }
+
+type BackfillItemAttempt struct {
+	RunID           string                  `json:"runId"`
+	AttemptNo       int                     `json:"attemptNo"`
+	Status          string                  `json:"status"`
+	TemplateVersion int                     `json:"templateVersion,omitempty"`
+	WorkflowName    string                  `json:"workflowName,omitempty"`
+	Message         string                  `json:"message,omitempty"`
+	NodeProgress    *PipelineRunNodeProgress `json:"nodeProgress,omitempty"`
+	IsCurrent       bool                    `json:"isCurrent"`
+	StartedAt       *time.Time              `json:"startedAt,omitempty"`
+	FinishedAt      *time.Time              `json:"finishedAt,omitempty"`
+	CreatedAt       time.Time               `json:"createdAt"`
+}
+
+type BackfillItemAttemptsResult struct {
+	ItemID       string                `json:"itemId"`
+	AssetID      string                `json:"assetId"`
+	CurrentRunID string                `json:"currentRunId,omitempty"`
+	Attempts     []BackfillItemAttempt `json:"attempts"`
+}
+
+type ValidateBackfillAssetsResult struct {
+	Registered []string `json:"registered"`
+	Unknown    []string `json:"unknown"`
+}

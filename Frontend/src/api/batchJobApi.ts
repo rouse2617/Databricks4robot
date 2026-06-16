@@ -1,3 +1,4 @@
+import type { PipelineRunNodeProgress } from "./pipelineApi";
 import { request } from "./pipelineClient";
 
 export interface BatchJob {
@@ -206,5 +207,54 @@ export function batchJobProgress(job: BatchJob): number {
 	if (!job.totalCount) return 0;
 	return Math.round(
 		((job.completedCount + job.failedCount) / job.totalCount) * 100,
+	);
+}
+
+export interface BackfillItemAttempt {
+	runId: string;
+	attemptNo: number;
+	status: string;
+	templateVersion?: number;
+	workflowName?: string;
+	message?: string;
+	nodeProgress?: PipelineRunNodeProgress;
+	isCurrent: boolean;
+	startedAt?: string;
+	finishedAt?: string;
+	createdAt: string;
+}
+
+export interface BackfillItemAttemptsResult {
+	itemId: string;
+	assetId: string;
+	currentRunId?: string;
+	attempts: BackfillItemAttempt[];
+}
+
+export interface ValidateBackfillAssetsResult {
+	registered: string[];
+	unknown: string[];
+}
+
+export function getBatchItemAttempts(
+	jobId: string,
+	params: { itemId?: string; assetId?: string },
+): Promise<BackfillItemAttemptsResult> {
+	const search = new URLSearchParams();
+	if (params.itemId) search.set("itemId", params.itemId);
+	if (params.assetId) search.set("assetId", params.assetId);
+	return request<BackfillItemAttemptsResult>(
+		"GET",
+		`/backfill/${jobId}/attempts?${search.toString()}`,
+	);
+}
+
+export function validateBackfillAssets(
+	assetIds: string[],
+): Promise<ValidateBackfillAssetsResult> {
+	return request<ValidateBackfillAssetsResult>(
+		"POST",
+		"/backfill/validate-assets",
+		{ assetIds },
 	);
 }

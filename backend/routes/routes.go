@@ -415,10 +415,12 @@ func RegisterAll(
 		// Backfill jobs
 		if backfillHandler != nil {
 			api.POST("/backfill", backfillHandler.CreateJob)
+			api.POST("/backfill/validate-assets", backfillHandler.ValidateAssets)
 			api.GET("/backfill", backfillHandler.ListJobs)
 			api.GET("/backfill/:id", backfillHandler.GetJob)
 			api.GET("/backfill/:id/node-summary", backfillHandler.GetNodeSummary)
 			api.GET("/backfill/:id/node-failures", backfillHandler.ListNodeFailures)
+			api.GET("/backfill/:id/attempts", backfillHandler.GetItemAttempts)
 			api.POST("/backfill/:id/pause", backfillHandler.PauseJob)
 			api.POST("/backfill/:id/resume", backfillHandler.ResumeJob)
 			api.POST("/backfill/:id/rerun", backfillHandler.Rerun)

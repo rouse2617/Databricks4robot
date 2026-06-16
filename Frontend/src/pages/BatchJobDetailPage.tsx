@@ -21,6 +21,7 @@ import {
 	Space,
 	Table,
 	Tag,
+	Tooltip,
 	Typography,
 } from "antd";
 import dayjs from "dayjs";
@@ -60,6 +61,8 @@ import { WorkflowExecutionList } from "./WorkflowExecutionList";
 const { Title, Text } = Typography;
 
 type RerunScope = "failed" | "incomplete" | "completed" | "custom" | "node_failed";
+
+type NodeDrawerFilter = "failed" | "running" | "pending";
 
 interface RerunModalState {
 	scope: RerunScope;
@@ -112,6 +115,7 @@ export default function BatchJobDetailPage() {
 	const [drawerNode, setDrawerNode] = useState<BatchNodeSummaryNode | null>(
 		null,
 	);
+	const [drawerFilter, setDrawerFilter] = useState<NodeDrawerFilter>("failed");
 	const [nodeFailures, setNodeFailures] = useState<BatchNodeFailureItem[]>([]);
 	const [nodeFailureTotal, setNodeFailureTotal] = useState(0);
 	const [nodeFailureLoading, setNodeFailureLoading] = useState(false);
@@ -241,12 +245,18 @@ export default function BatchJobDetailPage() {
 	};
 
 	const loadNodeFailures = useCallback(
-		async (node: BatchNodeSummaryNode) => {
+		async (node: BatchNodeSummaryNode, filter: NodeDrawerFilter) => {
 			if (!id) return;
 			setNodeFailureLoading(true);
 			try {
+				const statusByFilter: Record<NodeDrawerFilter, string | undefined> = {
+					failed: undefined,
+					running: "Running",
+					pending: "Pending",
+				};
 				const result = await listBatchNodeFailures(id, {
 					pipelineNodeId: node.pipelineNodeId,
+					status: statusByFilter[filter],
 					page: 1,
 					pageSize: 20,
 				});
@@ -260,6 +270,15 @@ export default function BatchJobDetailPage() {
 		},
 		[id, message],
 	);
+
+	const openNodeDrawer = (
+		node: BatchNodeSummaryNode,
+		filter: NodeDrawerFilter,
+	) => {
+		setDrawerNode(node);
+		setDrawerFilter(filter);
+		void loadNodeFailures(node, filter);
+	};
 
 	const selectedAssetIds = selectedRuns
 		.map((item) => item.labels?.asset_id ?? item.labels?.assetId ?? "")
@@ -515,10 +534,7 @@ export default function BatchJobDetailPage() {
 									<Button
 										type="link"
 										size="small"
-										onClick={() => {
-											setDrawerNode(record);
-											void loadNodeFailures(record);
-										}}
+										onClick={() => openNodeDrawer(record, "failed")}
 									>
 										{failed} 失败
 									</Button>
@@ -527,8 +543,44 @@ export default function BatchJobDetailPage() {
 								);
 							},
 						},
-						{ title: "运行中", dataIndex: ["counts", "Running"] },
-						{ title: "未开始", dataIndex: ["counts", "Pending"] },
+						{
+							title: "运行中",
+							render: (_, record) => {
+								const running = record.counts.Running ?? 0;
+								return running > 0 ? (
+									<Button
+										type="link"
+										size="small"
+										onClick={() => openNodeDrawer(record, "running")}
+									>
+										{running}
+									</Button>
+								) : (
+									0
+								);
+							},
+						},
+						{
+							title: (
+								<Tooltip title="含尚无节点账本行的资产；下钻列表仅显示已有账本且状态为 Pending 的记录">
+									<span>未开始</span>
+								</Tooltip>
+							),
+							render: (_, record) => {
+								const pending = record.counts.Pending ?? 0;
+								return pending > 0 ? (
+									<Button
+										type="link"
+										size="small"
+										onClick={() => openNodeDrawer(record, "pending")}
+									>
+										{pending}
+									</Button>
+								) : (
+									0
+								);
+							},
+						},
 						{
 							title: "失败率",
 							render: (_, record) =>
@@ -548,12 +600,22 @@ export default function BatchJobDetailPage() {
 			/>
 
 			<Drawer
-				title={drawerNode ? `${drawerNode.displayName} 失败资产` : "节点明细"}
+				title={
+					drawerNode
+						? `${drawerNode.displayName} · ${
+								drawerFilter === "failed"
+									? "失败资产"
+									: drawerFilter === "running"
+										? "运行中资产"
+										: "未开始（已有账本）"
+							}`
+						: "节点明细"
+				}
 				open={Boolean(drawerNode)}
 				width={720}
 				onClose={() => setDrawerNode(null)}
 				extra={
-					drawerNode ? (
+					drawerNode && drawerFilter === "failed" ? (
 						<Space>
 							<Button
 								icon={<DownloadOutlined />}
@@ -579,6 +641,10 @@ export default function BatchJobDetailPage() {
 								重试这 {nodeFailureTotal} 条
 							</Button>
 						</Space>
+					) : drawerFilter === "pending" ? (
+						<Text type="secondary" style={{ fontSize: 12 }}>
+							不含尚无节点账本行的资产
+						</Text>
 					) : null
 				}
 			>

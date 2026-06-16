@@ -94,6 +94,7 @@ type PipelineRunRepository interface {
 	FindByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error)
 	FindByBatchJobAndAssetID(ctx context.Context, batchJobID, assetID string) (*models.PipelineRun, error)
+	FindAllByBatchJobAndAssetID(ctx context.Context, batchJobID, assetID string) ([]models.PipelineRun, error)
 	Delete(ctx context.Context, id string) error
 	DeleteByTemplateID(ctx context.Context, templateID string) error
 	UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time) error
@@ -119,6 +120,7 @@ type PipelineRunEventRepository interface {
 type PipelineRunAssetNodeRepository interface {
 	ReplaceByRunID(ctx context.Context, runID string, rows []models.PipelineRunAssetNode) error
 	ListByRunID(ctx context.Context, runID string, opts models.PipelineRunAssetNodeListOptions) (*models.PipelineRunAssetNodeListResult, error)
+	ListByRunIDs(ctx context.Context, runIDs []string) ([]models.PipelineRunAssetNode, error)
 }
 
 // PipelineRunNotificationRepository stores idempotent notification candidates.

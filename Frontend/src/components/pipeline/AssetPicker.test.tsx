@@ -8,6 +8,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { validateBackfillAssets } from "../../api/batchJobApi";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
 import AssetPicker from "./AssetPicker";
@@ -16,6 +18,10 @@ vi.mock("../../api/search", () => ({
 	searchApi: {
 		searchAssets: vi.fn(),
 	},
+}));
+
+vi.mock("../../api/batchJobApi", () => ({
+	validateBackfillAssets: vi.fn(),
 }));
 
 function makeSearchResult(
@@ -355,5 +361,32 @@ describe("AssetPicker", () => {
 		fireEvent.blur(textarea);
 
 		expect(onSelectionChange).toHaveBeenCalledWith(["a1", "a2"]);
+	});
+
+	it("shows asset catalog validation for selected IDs", async () => {
+		vi.mocked(validateBackfillAssets).mockResolvedValue({
+			registered: ["abc12345"],
+			unknown: ["custom01"],
+		});
+
+		render(
+			<MemoryRouter>
+				<AssetPicker
+					selectedIds={["abc12345", "custom01"]}
+					onSelectionChange={() => {}}
+				/>
+			</MemoryRouter>,
+		);
+
+		await waitFor(() => {
+			expect(validateBackfillAssets).toHaveBeenCalledWith([
+				"abc12345",
+				"custom01",
+			]);
+		});
+		expect(screen.getByText(/目录中已注册 1 个，1 个尚未注册/)).toBeTruthy();
+		expect(
+			screen.getByText(/未注册 ID 仍可创建批次/),
+		).toBeTruthy();
 	});
 });

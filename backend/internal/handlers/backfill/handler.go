@@ -163,6 +163,44 @@ func (h *Handler) ListNodeFailures(c *gin.Context) {
 	c.JSON(200, result)
 }
 
+// GetItemAttempts handles GET /api/v1/backfill/:id/attempts.
+func (h *Handler) GetItemAttempts(c *gin.Context) {
+	jobID := strings.TrimSpace(c.Param("id"))
+	itemID := strings.TrimSpace(c.Query("itemId"))
+	assetID := strings.TrimSpace(c.Query("assetId"))
+	if jobID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	if itemID == "" && assetID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "itemId or assetId is required", nil)
+		return
+	}
+	result, err := h.uc.GetItemAttempts(c.Request.Context(), jobID, itemID, assetID)
+	if err != nil {
+		mapBackfillError(c, err)
+		return
+	}
+	c.JSON(200, result)
+}
+
+// ValidateAssets handles POST /api/v1/backfill/validate-assets.
+func (h *Handler) ValidateAssets(c *gin.Context) {
+	var req struct {
+		AssetIDs []string `json:"assetIds" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	result, err := h.uc.ValidateAssets(c.Request.Context(), req.AssetIDs)
+	if err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+	c.JSON(200, result)
+}
+
 // Rerun handles POST /api/v1/backfill/:id/rerun.
 func (h *Handler) Rerun(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))

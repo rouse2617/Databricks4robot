@@ -42,6 +42,9 @@ func (missingJobRepo) FindItemByID(_ context.Context, _ string) (*models.Backfil
 func (missingJobRepo) FindItemByPipelineRunID(_ context.Context, _ string) (*models.BackfillItem, error) {
 	return nil, nil
 }
+func (missingJobRepo) FindItemByJobAndAssetID(_ context.Context, _, _ string) (*models.BackfillItem, error) {
+	return nil, nil
+}
 func (missingJobRepo) UpdateItemStatus(_ context.Context, _, _, _, _ string) error      { return nil }
 func (missingJobRepo) UpdateItemPipelineRun(_ context.Context, _, _, _, _ string) error { return nil }
 func (missingJobRepo) UpdateJobProgress(_ context.Context, _ string, _, _ int, _ string) error {

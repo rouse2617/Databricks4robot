@@ -105,6 +105,17 @@ type PipelineRun struct {
 	UpdatedAt          time.Time              `json:"updatedAt"`
 	StartedAt          *time.Time             `json:"startedAt,omitempty"`
 	FinishedAt         *time.Time             `json:"finishedAt,omitempty"`
+	NodeProgress       *PipelineRunNodeProgress `json:"nodeProgress,omitempty"`
+}
+
+// PipelineRunNodeProgress is a compact summary for batch subtask list views.
+type PipelineRunNodeProgress struct {
+	FocusNodeID       string `json:"focusNodeId,omitempty"`
+	FocusNodeName     string `json:"focusNodeName,omitempty"`
+	FocusStatus       string `json:"focusStatus,omitempty"`
+	Message           string `json:"message,omitempty"`
+	Label             string `json:"label,omitempty"`
+	ParallelRunning   int    `json:"parallelRunning,omitempty"`
 }
 
 // PipelineRunNode captures per-node Argo state for a pipeline run.

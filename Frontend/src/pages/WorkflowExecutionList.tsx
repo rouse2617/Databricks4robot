@@ -4,6 +4,7 @@ import {
 	App,
 	Button,
 	DatePicker,
+	Drawer,
 	Dropdown,
 	Empty,
 	Input,
@@ -21,9 +22,14 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+	getBatchItemAttempts,
+	type BackfillItemAttemptsResult,
+} from "../api/batchJobApi";
+import {
 	listPipelineRuns,
 	listPipelines,
 	type PipelineRun,
+	type PipelineRunNodeProgress,
 } from "../api/pipelineApi";
 import {
 	deleteWorkflow,
@@ -31,8 +37,11 @@ import {
 	listWorkflows,
 	type WorkflowSummary,
 } from "../api/workflowApi";
+import AssetIdLink from "../components/common/AssetIdLink";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { WorkflowLabels } from "../components/common/WorkflowLabels";
+import { isCanonicalAssetId } from "../lib/assetId";
+import { formatPipelineRunNodeProgress } from "../lib/batchNodeProgress";
 import {
 	STATUS_ACCENT_COLORS,
 	STATUS_COLORS,
@@ -350,6 +359,15 @@ export function WorkflowExecutionList({
 	const [scopeByWorkflowName, setScopeByWorkflowName] = useState<
 		Record<string, string>
 	>({});
+	const [nodeProgressByWorkflowName, setNodeProgressByWorkflowName] = useState<
+		Record<string, PipelineRunNodeProgress | undefined>
+	>({});
+	const [attemptsDrawerAssetId, setAttemptsDrawerAssetId] = useState<
+		string | null
+	>(null);
+	const [attemptsLoading, setAttemptsLoading] = useState(false);
+	const [attemptsResult, setAttemptsResult] =
+		useState<BackfillItemAttemptsResult | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [initializedOnce, setInitializedOnce] = useState(false);
 	const [error, setError] = useState<WorkflowErrorState | null>(null);
@@ -576,6 +594,16 @@ export function WorkflowExecutionList({
 						pipelineRuns
 							.filter((run) => run.workflowName && run.scope)
 							.map((run) => [run.workflowName, run.scope as string] as const),
+					),
+				);
+				setNodeProgressByWorkflowName(
+					Object.fromEntries(
+						pipelineRuns
+							.filter((run) => run.workflowName)
+							.map(
+								(run) =>
+									[run.workflowName, run.nodeProgress] as const,
+							),
 					),
 				);
 				const summaries = pipelineRuns.map((run) =>
@@ -857,7 +885,26 @@ export function WorkflowExecutionList({
 	const tableTotal =
 		isBatchScope || labelFilter.length === 0 ? serverTotal : displayItems.length;
 
-	const columns = [
+	const openAttemptsDrawer = useCallback(
+		async (assetId: string) => {
+			if (!batchJobId) return;
+			setAttemptsDrawerAssetId(assetId);
+			setAttemptsLoading(true);
+			setAttemptsResult(null);
+			try {
+				const result = await getBatchItemAttempts(batchJobId, { assetId });
+				setAttemptsResult(result);
+			} catch (err) {
+				messageApi.error(`加载执行历史失败: ${String(err)}`);
+			} finally {
+				setAttemptsLoading(false);
+			}
+		},
+		[batchJobId, messageApi],
+	);
+
+	const columns = useMemo(() => {
+		const baseColumns = [
 		{
 			title: "名称",
 			dataIndex: "name",
@@ -928,6 +975,41 @@ export function WorkflowExecutionList({
 				</Space>
 			),
 		},
+		...(isBatchScope
+			? [
+					{
+						title: "资产",
+						key: "assetId",
+						width: 120,
+						render: (_: unknown, record: WorkflowSummary) => {
+							const assetId = getWorkflowLabel(record.labels, "asset_id");
+							if (!assetId) return "—";
+							if (isCanonicalAssetId(assetId)) {
+								return <AssetIdLink id={assetId} />;
+							}
+							return (
+								<Typography.Text code style={{ fontSize: 12 }}>
+									{assetId}
+								</Typography.Text>
+							);
+						},
+					},
+					{
+						title: "节点进度",
+						key: "nodeProgress",
+						width: 180,
+						render: (_: unknown, record: WorkflowSummary) => {
+							const progress = nodeProgressByWorkflowName[record.name];
+							const { text, tooltip } =
+								formatPipelineRunNodeProgress(progress);
+							if (tooltip) {
+								return <Tooltip title={tooltip}>{text}</Tooltip>;
+							}
+							return text;
+						},
+					},
+				]
+			: []),
 		{
 			title: "节点数",
 			dataIndex: "nodeCount",
@@ -995,13 +1077,26 @@ export function WorkflowExecutionList({
 					getWorkflowLabel(record.labels, "template-id");
 				const templateVersion = templateVersionsByWorkflowName[record.name];
 				const scope = scopeByWorkflowName[record.name];
+				const assetId = getWorkflowLabel(record.labels, "asset_id");
 				const menuItems = getWorkflowOperationMenuItems(record);
 				const hasOperationLoading = operationLoading?.startsWith(
 					`${record.name}:`,
 				);
 
 				return (
-					<div style={{ display: "flex", gap: 4 }}>
+					<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+						{isBatchScope && assetId ? (
+							<Button
+								type="link"
+								size="small"
+								onClick={(event) => {
+									event.stopPropagation();
+									void openAttemptsDrawer(assetId);
+								}}
+							>
+								历史
+							</Button>
+						) : null}
 						{templateId ? (
 							<Button
 								type="link"
@@ -1063,6 +1158,22 @@ export function WorkflowExecutionList({
 			},
 		},
 	];
+		return baseColumns;
+	}, [
+		isBatchScope,
+		nodeCountsByWorkflowName,
+		nodeProgressByWorkflowName,
+		openAttemptsDrawer,
+		openWorkflowDetail,
+		operationLoading,
+		runIdsByWorkflowName,
+		runOperation,
+		scopeByWorkflowName,
+		templateIdsByWorkflowName,
+		templateVersionsByWorkflowName,
+		messageApi,
+		navigate,
+	]);
 
 	const showSkeleton = loading && !initializedOnce;
 
@@ -1295,6 +1406,85 @@ export function WorkflowExecutionList({
 				items={compareItems}
 				onClose={() => setCompareOpen(false)}
 			/>
+			<Drawer
+				title={
+					attemptsDrawerAssetId
+						? `执行历史 · ${attemptsDrawerAssetId}`
+						: "执行历史"
+				}
+				open={Boolean(attemptsDrawerAssetId)}
+				width={720}
+				onClose={() => {
+					setAttemptsDrawerAssetId(null);
+					setAttemptsResult(null);
+				}}
+			>
+				<Table
+					size="small"
+					rowKey="runId"
+					loading={attemptsLoading}
+					dataSource={attemptsResult?.attempts ?? []}
+					pagination={false}
+					columns={[
+						{
+							title: "次序",
+							dataIndex: "attemptNo",
+							width: 60,
+						},
+						{
+							title: "状态",
+							dataIndex: "status",
+							render: (status: string, record) => (
+								<Space size={4}>
+									<Tag>{formatWorkflowPhaseLabel(status)}</Tag>
+									{record.isCurrent ? <Tag color="blue">当前</Tag> : null}
+								</Space>
+							),
+						},
+						{
+							title: "节点进度",
+							render: (_, record) => {
+								const { text, tooltip } = formatPipelineRunNodeProgress(
+									record.nodeProgress,
+								);
+								return tooltip ? (
+									<Tooltip title={tooltip}>{text}</Tooltip>
+								) : (
+									text
+								);
+							},
+						},
+						{
+							title: "版本",
+							dataIndex: "templateVersion",
+							render: (version?: number) =>
+								version ? `v${version}` : "—",
+						},
+						{
+							title: "Workflow",
+							render: (_, record) =>
+								record.workflowName ? (
+									<Button
+										type="link"
+										size="small"
+										onClick={() =>
+											openWorkflowDetail(record.workflowName as string)
+										}
+									>
+										查看
+									</Button>
+								) : (
+									"—"
+								),
+						},
+						{
+							title: "创建时间",
+							dataIndex: "createdAt",
+							render: renderTimestamp,
+						},
+					]}
+				/>
+			</Drawer>
 		</div>
 	);
 }

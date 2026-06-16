@@ -13,11 +13,17 @@ import {
 	type Key,
 	useEffect,
 	useImperativeHandle,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
+import {
+	type ValidateBackfillAssetsResult,
+	validateBackfillAssets,
+} from "../../api/batchJobApi";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
+import { isCanonicalAssetId } from "../../lib/assetId";
 import {
 	mergeAssetIds,
 	mergePendingBulkPaste,
@@ -29,6 +35,7 @@ import {
 	MAX_BATCH_ASSET_COUNT,
 } from "../../lib/batchAssetLimits";
 import { withSelectAllColumn } from "../../lib/tableSelection";
+import AssetIdLink from "../common/AssetIdLink";
 
 const SEARCH_PAGE_SIZE = 100;
 
@@ -69,6 +76,9 @@ const AssetPicker = forwardRef<AssetPickerHandle, AssetPickerProps>(
 		const [query, setQuery] = useState("");
 		const [error, setError] = useState<string | null>(null);
 		const [bulkPaste, setBulkPaste] = useState("");
+		const [assetValidation, setAssetValidation] =
+			useState<ValidateBackfillAssetsResult | null>(null);
+		const [validationLoading, setValidationLoading] = useState(false);
 		const abortRef = useRef<AbortController | null>(null);
 		const previousResetKeyRef = useRef(resetKey);
 		const selectedIdsRef = useRef(selectedIds);
@@ -107,6 +117,37 @@ const AssetPicker = forwardRef<AssetPickerHandle, AssetPickerProps>(
 		}, []);
 
 		useEffect(() => {
+			if (selectedIds.length === 0) {
+				setAssetValidation(null);
+				setValidationLoading(false);
+				return;
+			}
+			let cancelled = false;
+			const timer = window.setTimeout(() => {
+				setValidationLoading(true);
+				void validateBackfillAssets(selectedIds)
+					.then((result) => {
+						if (!cancelled) setAssetValidation(result);
+					})
+					.catch(() => {
+						if (!cancelled) setAssetValidation(null);
+					})
+					.finally(() => {
+						if (!cancelled) setValidationLoading(false);
+					});
+			}, 300);
+			return () => {
+				cancelled = true;
+				window.clearTimeout(timer);
+			};
+		}, [selectedIds]);
+
+		const registeredSet = useMemo(
+			() => new Set(assetValidation?.registered ?? []),
+			[assetValidation],
+		);
+
+		useEffect(() => {
 			if (previousResetKeyRef.current === resetKey) return;
 			previousResetKeyRef.current = resetKey;
 			abortRef.current?.abort();
@@ -116,6 +157,8 @@ const AssetPicker = forwardRef<AssetPickerHandle, AssetPickerProps>(
 			setResults([]);
 			setError(null);
 			setLoading(false);
+			setAssetValidation(null);
+			setValidationLoading(false);
 		}, [resetKey]);
 
 		const isAbortError = (err: unknown) =>
@@ -218,7 +261,13 @@ const AssetPicker = forwardRef<AssetPickerHandle, AssetPickerProps>(
 							<Tag
 								key={assetId}
 								closable
-								color="blue"
+								color={
+									assetValidation
+										? registeredSet.has(assetId)
+											? "green"
+											: "orange"
+										: "blue"
+								}
 								onClose={() => removeSelected(assetId)}
 							>
 								{assetId}
@@ -228,6 +277,57 @@ const AssetPicker = forwardRef<AssetPickerHandle, AssetPickerProps>(
 							<Tag>+{selectedIds.length - 12}</Tag>
 						) : null}
 					</div>
+				) : null}
+
+				{selectedIds.length > 0 ? (
+					<Alert
+						type={
+							assetValidation && assetValidation.unknown.length > 0
+								? "warning"
+								: "info"
+						}
+						showIcon
+						message={
+							assetValidation
+								? `目录中已注册 ${assetValidation.registered.length} 个${
+										assetValidation.unknown.length > 0
+											? `，${assetValidation.unknown.length} 个尚未注册`
+											: ""
+									}`
+								: validationLoading
+									? "正在校验资产目录…"
+									: "资产目录校验暂不可用"
+						}
+						description={
+							assetValidation ? (
+								<Space direction="vertical" size={4}>
+									{assetValidation.unknown.length > 0 ? (
+										<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+											未注册 ID 仍可创建批次；已注册 ID 可跳转资产详情页。
+										</Typography.Text>
+									) : null}
+									{assetValidation.registered.length > 0 ? (
+										<Space size={4} wrap>
+											{assetValidation.registered
+												.filter((id) => isCanonicalAssetId(id))
+												.slice(0, 6)
+												.map((assetId) => (
+													<AssetIdLink key={assetId} id={assetId} />
+												))}
+											{assetValidation.registered.length > 6 ? (
+												<Typography.Text
+													type="secondary"
+													style={{ fontSize: 12 }}
+												>
+													+{assetValidation.registered.length - 6}
+												</Typography.Text>
+											) : null}
+										</Space>
+									) : null}
+								</Space>
+							) : undefined
+						}
+					/>
 				) : null}
 
 				<Input.Search

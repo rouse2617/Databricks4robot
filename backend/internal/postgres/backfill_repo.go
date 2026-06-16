@@ -805,3 +805,35 @@ func (r *BackfillRepo) FindItemsByAssetID(ctx context.Context, assetID string) (
 	}
 	return out, nil
 }
+
+func (r *BackfillRepo) FindItemByJobAndAssetID(ctx context.Context, jobID, assetID string) (*models.BackfillItem, error) {
+	const q = `
+SELECT ` + backfillItemSelectCols + `
+FROM (
+  SELECT DISTINCT ON (job_id, asset_id) *
+  FROM backfill_items
+  WHERE job_id = $1 AND asset_id = $2
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+) bi`
+	db := dbFromCtx(ctx, r.c.db)
+	item, err := scanBackfillItem(db.QueryRow(ctx, q, jobID, assetID))
+	if err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres BackfillRepo.FindItemByJobAndAssetID: %w", err)
+	}
+	return item, nil
+}

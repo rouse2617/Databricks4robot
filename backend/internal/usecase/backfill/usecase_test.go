@@ -66,6 +66,15 @@ func (m *mockBackfillRepo) FindItemByID(_ context.Context, _ string) (*models.Ba
 func (m *mockBackfillRepo) FindItemByPipelineRunID(_ context.Context, _ string) (*models.BackfillItem, error) {
 	return nil, nil
 }
+func (m *mockBackfillRepo) FindItemByJobAndAssetID(_ context.Context, jobID, assetID string) (*models.BackfillItem, error) {
+	for i := range m.items {
+		if m.items[i].JobID == jobID && m.items[i].AssetID == assetID {
+			item := m.items[i]
+			return &item, nil
+		}
+	}
+	return nil, nil
+}
 func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range m.items {
 		if m.items[i].ID == id {
@@ -438,6 +447,17 @@ func (r *trackingBackfillRepo) FindItemByID(_ context.Context, _ string) (*model
 	return nil, nil
 }
 func (r *trackingBackfillRepo) FindItemByPipelineRunID(_ context.Context, _ string) (*models.BackfillItem, error) {
+	return nil, nil
+}
+func (r *trackingBackfillRepo) FindItemByJobAndAssetID(_ context.Context, jobID, assetID string) (*models.BackfillItem, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.items {
+		if r.items[i].JobID == jobID && r.items[i].AssetID == assetID {
+			item := r.items[i]
+			return &item, nil
+		}
+	}
 	return nil, nil
 }
 func (r *trackingBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {

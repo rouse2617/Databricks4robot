@@ -94,6 +94,15 @@ func (s *stubBackfillRepo) FindItemByID(context.Context, string) (*models.Backfi
 func (s *stubBackfillRepo) FindItemByPipelineRunID(context.Context, string) (*models.BackfillItem, error) {
 	return nil, nil
 }
+func (s *stubBackfillRepo) FindItemByJobAndAssetID(_ context.Context, jobID, assetID string) (*models.BackfillItem, error) {
+	for i := range s.items {
+		if s.items[i].JobID == jobID && s.items[i].AssetID == assetID {
+			item := s.items[i]
+			return &item, nil
+		}
+	}
+	return nil, nil
+}
 func (s *stubBackfillRepo) UpdateItemStatus(_ context.Context, id, status, _, _ string) error {
 	for i := range s.items {
 		if s.items[i].ID == id {

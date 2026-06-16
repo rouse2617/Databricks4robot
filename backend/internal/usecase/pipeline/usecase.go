@@ -17,6 +17,7 @@ import (
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
@@ -1848,13 +1849,56 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		return out, len(out), nil
 	}
 	if len(filter) > 0 && (filter[0].BatchJobID != "" || filter[0].ExcludeBatch || filter[0].Status != "" || filter[0].Page > 0 || filter[0].PageSize > 0) {
-		return uc.runRepo.ListSummaries(ctx, filter[0])
+		items, total, err := uc.runRepo.ListSummaries(ctx, filter[0])
+		if err != nil {
+			return nil, 0, err
+		}
+		if filter[0].BatchJobID != "" {
+			uc.attachBatchNodeProgress(ctx, items)
+		}
+		return items, total, nil
 	}
 	items, err := uc.runRepo.FindAllSummaries(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
 	return items, len(items), nil
+}
+
+func (uc *Usecase) attachBatchNodeProgress(ctx context.Context, items []models.PipelineRun) {
+	if uc.assetNodeRepo == nil || len(items) == 0 {
+		return
+	}
+	runIDs := make([]string, 0, len(items))
+	for i := range items {
+		if items[i].ID != "" {
+			runIDs = append(runIDs, items[i].ID)
+		}
+	}
+	rows, err := uc.assetNodeRepo.ListByRunIDs(ctx, runIDs)
+	if err != nil {
+		return
+	}
+	progressByRun := batchprogress.ByRunID(rows, items)
+	for i := range items {
+		items[i].NodeProgress = progressByRun[items[i].ID]
+	}
+}
+
+// ListBatchAssetRuns returns all pipeline runs for one asset within a batch job.
+func (uc *Usecase) ListBatchAssetRuns(ctx context.Context, batchJobID, assetID string) ([]models.PipelineRun, error) {
+	if uc.runRepo == nil {
+		return nil, nil
+	}
+	return uc.runRepo.FindAllByBatchJobAndAssetID(ctx, batchJobID, assetID)
+}
+
+// ListAssetNodesByRunIDs returns asset-node rows for multiple runs.
+func (uc *Usecase) ListAssetNodesByRunIDs(ctx context.Context, runIDs []string) ([]models.PipelineRunAssetNode, error) {
+	if uc.assetNodeRepo == nil || len(runIDs) == 0 {
+		return nil, nil
+	}
+	return uc.assetNodeRepo.ListByRunIDs(ctx, runIDs)
 }
 
 func stripRunHeavyFields(run *models.PipelineRun) {

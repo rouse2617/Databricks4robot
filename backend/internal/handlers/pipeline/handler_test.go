@@ -218,6 +218,19 @@ func (m *mockPipelineRunRepo) FindByBatchJobAndAssetID(_ context.Context, batchJ
 	}
 	return nil, nil
 }
+func (m *mockPipelineRunRepo) FindAllByBatchJobAndAssetID(_ context.Context, batchJobID, assetID string) ([]models.PipelineRun, error) {
+	var out []models.PipelineRun
+	for _, r := range m.byID {
+		if r.BatchJobID != nil && *r.BatchJobID == batchJobID {
+			for _, id := range r.AssetIDs {
+				if id == assetID {
+					out = append(out, *r)
+				}
+			}
+		}
+	}
+	return out, nil
+}
 func (m *mockPipelineRunRepo) Delete(_ context.Context, id string) error {
 	delete(m.byID, id)
 	return nil

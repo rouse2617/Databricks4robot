@@ -80,6 +80,9 @@ func (m *mockRunRepo) FindByWorkflowName(context.Context, string) (*models.Pipel
 func (m *mockRunRepo) FindByBatchJobAndAssetID(context.Context, string, string) (*models.PipelineRun, error) {
 	return nil, nil
 }
+func (m *mockRunRepo) FindAllByBatchJobAndAssetID(context.Context, string, string) ([]models.PipelineRun, error) {
+	return nil, nil
+}
 func (m *mockRunRepo) Delete(context.Context, string) error                           { return nil }
 func (m *mockRunRepo) DeleteByTemplateID(context.Context, string) error               { return nil }
 func (m *mockRunRepo) UpdateStatus(context.Context, string, string, *time.Time) error { return nil }

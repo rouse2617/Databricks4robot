@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
@@ -665,22 +666,13 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 		if uc.pipelineUC == nil {
 			continue
 		}
-		runID := ""
-		if runnable[i].PipelineRunID != nil {
-			runID = strings.TrimSpace(*runnable[i].PipelineRunID)
-		}
-		workflowName := ""
-		if runnable[i].WorkflowName != nil {
-			workflowName = strings.TrimSpace(*runnable[i].WorkflowName)
-		}
 		runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      templateID,
 			TemplateVersion: templateVersion,
 			BatchJobID:      jobID,
 			AssetID:         runnable[i].AssetID,
-			RunID:           runID,
-			WorkflowName:    workflowName,
 			Status:          "Pending",
+			ForceNewAttempt: true,
 		})
 		if err != nil {
 			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: runnable[i].ID, Reason: err.Error()})
@@ -963,4 +955,135 @@ func mapRunStatusToItem(runStatus string) string {
 	default:
 		return "running"
 	}
+}
+
+// GetItemAttempts returns all pipeline runs (attempts) for one logical backfill item.
+func (uc *Usecase) GetItemAttempts(ctx context.Context, jobID, itemID, assetID string) (*models.BackfillItemAttemptsResult, error) {
+	job, err := uc.repo.FindJobByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, ErrNotFound
+	}
+	item, err := uc.resolveBackfillItem(ctx, jobID, itemID, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, ErrNotFound
+	}
+	if uc.pipelineUC == nil {
+		return &models.BackfillItemAttemptsResult{
+			ItemID:   item.ID,
+			AssetID:  item.AssetID,
+			Attempts: []models.BackfillItemAttempt{},
+		}, nil
+	}
+	runs, err := uc.pipelineUC.ListBatchAssetRuns(ctx, jobID, item.AssetID)
+	if err != nil {
+		return nil, err
+	}
+	currentRunID := ""
+	if item.PipelineRunID != nil {
+		currentRunID = strings.TrimSpace(*item.PipelineRunID)
+	}
+	runIDs := make([]string, 0, len(runs))
+	for _, run := range runs {
+		runIDs = append(runIDs, run.ID)
+	}
+	var nodeRows []models.PipelineRunAssetNode
+	if len(runIDs) > 0 {
+		nodeRows, err = uc.pipelineUC.ListAssetNodesByRunIDs(ctx, runIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	progressByRun := batchprogress.ByRunID(nodeRows, runs)
+	attempts := make([]models.BackfillItemAttempt, 0, len(runs))
+	for i, run := range runs {
+		version := 0
+		if run.TemplateVersion != nil {
+			version = *run.TemplateVersion
+		}
+		attempts = append(attempts, models.BackfillItemAttempt{
+			RunID:           run.ID,
+			AttemptNo:       i + 1,
+			Status:          run.Status,
+			TemplateVersion: version,
+			WorkflowName:    run.WorkflowName,
+			Message:         strings.TrimSpace(run.Message),
+			NodeProgress:    progressByRun[run.ID],
+			IsCurrent:       run.ID == currentRunID,
+			StartedAt:       run.StartedAt,
+			FinishedAt:      run.FinishedAt,
+			CreatedAt:       run.CreatedAt,
+		})
+	}
+	sort.Slice(attempts, func(i, j int) bool {
+		return attempts[i].CreatedAt.After(attempts[j].CreatedAt)
+	})
+	for i := range attempts {
+		attempts[i].AttemptNo = len(attempts) - i
+	}
+	return &models.BackfillItemAttemptsResult{
+		ItemID:       item.ID,
+		AssetID:      item.AssetID,
+		CurrentRunID: currentRunID,
+		Attempts:     attempts,
+	}, nil
+}
+
+// ValidateAssets checks which submitted asset IDs exist in the catalog.
+func (uc *Usecase) ValidateAssets(ctx context.Context, assetIDs []string) (*models.ValidateBackfillAssetsResult, error) {
+	normalized, err := assetvalidation.NormalizeAssetIDs("assetIds", assetIDs)
+	if err != nil {
+		return nil, err
+	}
+	result := &models.ValidateBackfillAssetsResult{
+		Registered: []string{},
+		Unknown:    []string{},
+	}
+	if len(normalized) == 0 {
+		return result, nil
+	}
+	if uc.assetRepo == nil {
+		result.Unknown = append(result.Unknown, normalized...)
+		return result, nil
+	}
+	existing, err := uc.assetRepo.FindExistingIDs(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range normalized {
+		if _, ok := existing[id]; ok {
+			result.Registered = append(result.Registered, id)
+		} else {
+			result.Unknown = append(result.Unknown, id)
+		}
+	}
+	return result, nil
+}
+
+func (uc *Usecase) resolveBackfillItem(ctx context.Context, jobID, itemID, assetID string) (*models.BackfillItem, error) {
+	itemID = strings.TrimSpace(itemID)
+	assetID = strings.TrimSpace(assetID)
+	if itemID != "" {
+		item, err := uc.repo.FindItemByID(ctx, itemID)
+		if err != nil {
+			return nil, err
+		}
+		if item == nil || item.JobID != jobID {
+			return nil, ErrNotFound
+		}
+		return item, nil
+	}
+	item, err := uc.repo.FindItemByJobAndAssetID(ctx, jobID, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, ErrNotFound
+	}
+	return item, nil
 }

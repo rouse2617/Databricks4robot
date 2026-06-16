@@ -22,6 +22,9 @@ type BatchSubtaskRunInput struct {
 	Status          string
 	Message         string
 	WorkflowName    string
+	// ForceNewAttempt creates a fresh pipeline run instead of reusing the latest
+	// batch+asset run (used when rerunning a backfill subtask).
+	ForceNewAttempt bool
 }
 
 // UpsertBatchSubtaskRun creates or updates a first-class pipeline run for a
@@ -57,7 +60,7 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 	}
 
 	runID := strings.TrimSpace(in.RunID)
-	if runID == "" {
+	if runID == "" && !in.ForceNewAttempt {
 		if existing, err := uc.runRepo.FindByBatchJobAndAssetID(ctx, batchJobID, assetID); err != nil {
 			return "", "", err
 		} else if existing != nil {

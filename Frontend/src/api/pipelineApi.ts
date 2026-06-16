@@ -34,6 +34,15 @@ export interface Deployment {
 	pipelineJSON?: Pipeline;
 }
 
+export interface PipelineRunNodeProgress {
+	focusNodeId?: string;
+	focusNodeName?: string;
+	focusStatus?: string;
+	message?: string;
+	label?: string;
+	parallelRunning?: number;
+}
+
 export interface PipelineRun extends Deployment {
 	executionTargetId?: string;
 	targetSnapshot?: Record<string, unknown>;
@@ -44,6 +53,7 @@ export interface PipelineRun extends Deployment {
 	startedAt?: string;
 	totalEstimatedCost?: number | null;
 	batchJobId?: string;
+	nodeProgress?: PipelineRunNodeProgress;
 }
 
 export interface PipelineRunListResponse {
