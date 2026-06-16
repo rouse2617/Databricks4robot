@@ -21,7 +21,6 @@ import {
 	Space,
 	Table,
 	Tag,
-	Tooltip,
 	Typography,
 } from "antd";
 import dayjs from "dayjs";
@@ -532,7 +531,7 @@ export default function BatchJobDetailPage() {
 					size="small"
 					rowKey="pipelineNodeId"
 					dataSource={nodeSummary?.nodes ?? []}
-					locale={{ emptyText: "暂无节点账本数据，请稍后刷新" }}
+					locale={{ emptyText: "暂无节点进度数据，请稍后刷新" }}
 					pagination={false}
 					columns={[
 						{
@@ -577,11 +576,7 @@ export default function BatchJobDetailPage() {
 							},
 						},
 						{
-							title: (
-								<Tooltip title="含尚无节点账本行的资产；下钻列表仅显示已有账本且状态为 Pending 的记录">
-									<span>未开始</span>
-								</Tooltip>
-							),
+							title: "未开始",
 							render: (_, record) => {
 								const pending = record.counts.Pending ?? 0;
 								return pending > 0 ? (
@@ -623,7 +618,7 @@ export default function BatchJobDetailPage() {
 									? "失败资产"
 									: drawerFilter === "running"
 										? "运行中资产"
-										: "未开始（已有账本）"
+										: "等待中资产"
 							}`
 						: "节点明细"
 				}
@@ -657,10 +652,6 @@ export default function BatchJobDetailPage() {
 								重试这 {nodeFailureTotal} 条
 							</Button>
 						</Space>
-					) : drawerFilter === "pending" ? (
-						<Text type="secondary" style={{ fontSize: 12 }}>
-							不含尚无节点账本行的资产
-						</Text>
 					) : null
 				}
 			>

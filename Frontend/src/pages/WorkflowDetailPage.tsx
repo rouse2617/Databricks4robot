@@ -796,12 +796,12 @@ function ExpiredWorkflowLedgerView({
 					message={
 						isPendingLedger
 							? "子任务尚未提交到 Argo"
-							: "Argo 工作流已不可用，正在展示 DataBrew 历史"
+							: "Argo 工作流已不可用，正在展示历史记录"
 					}
 					description={
 						isPendingLedger
-							? "该批量子任务仍在排队或等待重试，DAG、Pod 实时状态和日志暂不可用；DataBrew 运行账本会随提交进度更新。"
-							: "Workflow 可能已被 Argo TTL 清理，DAG、Pod 实时状态和实时日志暂不可用；提交记录、状态变化和节点事件会继续保留在 DataBrew 运行账本中。"
+							? "该批量子任务仍在排队或等待重试，DAG、Pod 实时状态和日志暂不可用；页面会随提交进度自动更新。"
+							: "Workflow 可能已被 Argo TTL 清理，DAG、Pod 实时状态和实时日志暂不可用；提交记录、状态变化和节点事件仍会在此保留。"
 					}
 					action={
 						<Button size="small" onClick={onRefreshEvents}>
@@ -810,7 +810,7 @@ function ExpiredWorkflowLedgerView({
 					}
 				/>
 				<Card
-					title="运行账本"
+					title="执行记录"
 					extra={
 						runEventState.run ? (
 							<Space size={8}>
@@ -828,7 +828,7 @@ function ExpiredWorkflowLedgerView({
 						<Alert
 							type="info"
 							showIcon
-							message="运行账本暂不可用"
+							message="执行记录暂不可用"
 							description={runEventState.error}
 						/>
 					) : runEventState.loading &&
@@ -1391,7 +1391,7 @@ export default function WorkflowDetailPage({
 						padding: 80,
 					}}
 				>
-					<Spin size="large" tip="正在加载运行账本…" />
+					<Spin size="large" tip="正在加载执行记录…" />
 				</div>
 			);
 		}

@@ -101,6 +101,13 @@ gcloud run deploy "${SERVICE_NAME}" \
   --memory 512Mi \
   --timeout 60
 
+echo "Routing 100% traffic to latest revision..."
+gcloud run services update-traffic "${SERVICE_NAME}" \
+  --quiet \
+  --project "${PROJECT_ID}" \
+  --region "${REGION}" \
+  --to-latest
+
 echo "Deployment complete."
 gcloud run services describe "${SERVICE_NAME}" \
   --project "${PROJECT_ID}" \
