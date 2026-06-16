@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
+)
 
 func TestLoadOpenLineageConfig(t *testing.T) {
 	t.Setenv("OPENLINEAGE_EMITTER_ENABLED", "true")
@@ -25,5 +29,19 @@ func TestLoadOpenLineageConfig(t *testing.T) {
 	}
 	if cfg.OpenLineageTimeoutMs != "1234" {
 		t.Fatalf("unexpected OpenLineageTimeoutMs: %q", cfg.OpenLineageTimeoutMs)
+	}
+}
+
+func TestLoadArgoWorkflowTTLConfig(t *testing.T) {
+	t.Setenv("ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION", "7200")
+	cfg := Load()
+	if cfg.ArgoWorkflowTTLSecondsAfterCompletion != 7200 {
+		t.Fatalf("unexpected ttl: %d", cfg.ArgoWorkflowTTLSecondsAfterCompletion)
+	}
+
+	t.Setenv("ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION", "not-a-number")
+	cfg = Load()
+	if cfg.ArgoWorkflowTTLSecondsAfterCompletion != transpiler.DefaultTTLSecondsAfterCompletion {
+		t.Fatalf("expected default ttl fallback, got %d", cfg.ArgoWorkflowTTLSecondsAfterCompletion)
 	}
 }

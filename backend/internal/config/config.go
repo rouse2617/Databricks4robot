@@ -2,8 +2,11 @@ package config
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
+
+	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 )
 
 type Config struct {
@@ -129,7 +132,8 @@ type Config struct {
 	OpenLineageTimeoutMs      string
 
 	// Argo Workflows
-	ArgoWorkflowsNamespace string
+	ArgoWorkflowsNamespace              string
+	ArgoWorkflowTTLSecondsAfterCompletion int32
 
 	// DeliveryEligibilityProjector
 	DeliveryEligibilityProjectorEnabled string
@@ -223,7 +227,11 @@ func Load() *Config {
 		OpenLineageNamespace:      getenv("OPENLINEAGE_NAMESPACE", ""),
 		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", ""),
 		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", ""),
-		ArgoWorkflowsNamespace:    getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
+		ArgoWorkflowsNamespace: getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
+		ArgoWorkflowTTLSecondsAfterCompletion: getenvInt32(
+			"ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION",
+			transpiler.DefaultTTLSecondsAfterCompletion,
+		),
 
 		PricingConfigPath: getenv("PRICING_CONFIG_PATH", ""),
 	}
@@ -243,4 +251,16 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getenvInt32(key string, fallback int32) int32 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return int32(n)
 }

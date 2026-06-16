@@ -50,9 +50,10 @@ type Usecase struct {
 	assetEventRepo repository.AssetEventRepository
 	relationWriter repository.AssetRelationWriter
 	logicalRepo    repository.LogicalAssetRepository
-	wfClient       argo.WorkflowClient
-	namespace      string
-	pricing        *PricingConfig
+	wfClient                  argo.WorkflowClient
+	namespace                 string
+	pricing                   *PricingConfig
+	workflowTTLSecondsAfter   int32
 }
 
 type DeployOptions struct {
@@ -113,6 +114,19 @@ func (uc *Usecase) SetObservabilityRepositories(
 // SetPricing wires the GCP pricing config for cost estimation.
 func (uc *Usecase) SetPricing(p *PricingConfig) {
 	uc.pricing = p
+}
+
+// SetArgoWorkflowTTLSecondsAfterCompletion configures Argo workflow CR TTL
+// after completion. Zero keeps transpiler.DefaultTTLSecondsAfterCompletion.
+func (uc *Usecase) SetArgoWorkflowTTLSecondsAfterCompletion(seconds int32) {
+	uc.workflowTTLSecondsAfter = seconds
+}
+
+func (uc *Usecase) argoWorkflowTTLSecondsAfter() int32 {
+	if uc.workflowTTLSecondsAfter > 0 {
+		return uc.workflowTTLSecondsAfter
+	}
+	return transpiler.DefaultTTLSecondsAfterCompletion
 }
 
 func logPipelineSideEffect(op string, err error) {
@@ -1708,7 +1722,7 @@ func (uc *Usecase) Deploy(
 	wfOpts := &transpiler.Options{
 		Name:            wfName,
 		Namespace:       targetNamespace,
-		TTLSecondsAfter: transpiler.DefaultTTLSecondsAfterCompletion,
+		TTLSecondsAfter: uc.argoWorkflowTTLSecondsAfter(),
 		WorkflowParams:  wfParams,
 		GlobalEnv:       globalEnv,
 	}

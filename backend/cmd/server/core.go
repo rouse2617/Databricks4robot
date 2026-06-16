@@ -105,6 +105,7 @@ func setupCore(inf *infra) *coreHandlers {
 	pipelineRunNotificationRepo := postgres.NewPipelineRunNotificationRepo(pg)
 	pipelineRunWatcherStateRepo := postgres.NewPipelineRunWatcherStateRepo(pg)
 	puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
+	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
 	puc.SetRunRepositories(executionTargetRepo, pipelineRunRepo, pipelineRunNodeRepo)
 	puc.SetRunEventRepo(pipelineRunEventRepo)
 	puc.SetObservabilityRepositories(pipelineRunAssetNodeRepo, pipelineRunNotificationRepo, pipelineRunWatcherStateRepo)
