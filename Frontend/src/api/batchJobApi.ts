@@ -95,6 +95,7 @@ export interface RerunBatchJobResult {
 	status: string;
 	dryRun: boolean;
 	matchedCount: number;
+	retriedCount?: number;
 	templateId: string;
 	templateVersion?: number;
 	skipped: Array<{ itemId: string; reason: string }>;

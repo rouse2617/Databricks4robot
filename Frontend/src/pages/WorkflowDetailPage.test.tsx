@@ -118,7 +118,10 @@ describe("WorkflowDetailPage", () => {
 	it("renders linked input asset chips from workflow labels", () => {
 		renderWorkflowDetail();
 
-		expect(screen.getByText("asset-pipeline")).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "asset-a" })).toHaveAttribute(
+			"href",
+			"/assets/asset-a",
+		);
 		expect(screen.getByText("asset-a")).toBeInTheDocument();
 		expect(screen.getByText("asset-b")).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "asset-a" })).toHaveAttribute(

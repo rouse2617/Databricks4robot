@@ -203,6 +203,70 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		EMPTY_COST_SUMMARY_STATE,
 	);
 
+	const loadRunDetailData = useCallback(
+		async (runName: string, opts?: { append?: boolean; cursor?: number }) => {
+			const run = await resolvePipelineRun(runName);
+			if (!run) {
+				setRunEventState({
+					run: null,
+					items: [],
+					loading: false,
+					error: "未找到关联的 DataBrew pipeline run",
+				});
+				setAssetNodeState({
+					items: [],
+					loading: false,
+					error: "未找到关联的 DataBrew pipeline run",
+					summary: null,
+				});
+				setCostSummaryState({
+					item: null,
+					loading: false,
+					error: "未找到关联的 DataBrew pipeline run",
+				});
+				return;
+			}
+			const cursor = opts?.append ? opts.cursor : undefined;
+			const [events, assetNodes, costSummary] = await Promise.all([
+				listPipelineRunEvents(run.id, {
+					limit: 100,
+					cursor,
+					...runEventFilters,
+				}),
+				listPipelineRunAssetNodes(run.id, { limit: 500 }),
+				getPipelineRunCostSummary(run.id),
+			]);
+			setRunEventState((current) => ({
+				run,
+				items: opts?.append
+					? [...current.items, ...(events.items ?? [])]
+					: (events.items ?? []),
+				nextCursor: events.nextCursor,
+				loading: false,
+				error: null,
+			}));
+			setAssetNodeState({
+				items: assetNodes.items ?? [],
+				loading: false,
+				error: null,
+				summary: assetNodes.summary ?? null,
+			});
+			setCostSummaryState({
+				item: costSummary,
+				loading: false,
+				error: null,
+			});
+		},
+		[runEventFilters],
+	);
+
+	const refreshDetailData = useCallback(() => {
+		if (!name) return;
+		void loadRunDetailData(name).catch((err) => {
+			console.error(err);
+		});
+	}, [loadRunDetailData, name]);
+
 	const loadWorkflow = useCallback(() => {
 		if (!name) return;
 		setLoading(true);
@@ -211,6 +275,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			.then((detail) => {
 				setWorkflow(detail);
 				setLoadError(null);
+				refreshDetailData();
 			})
 			.catch((err) => {
 				console.error(err);
@@ -218,7 +283,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				setLoadError(toLoadError(err));
 			})
 			.finally(() => setLoading(false));
-	}, [name]);
+	}, [name, refreshDetailData]);
 
 	useEffect(() => {
 		loadWorkflow();
@@ -232,69 +297,26 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				loading: true,
 				error: null,
 			}));
-			resolvePipelineRun(name)
-				.then((run) => {
-					if (!run) {
-						setRunEventState({
-							run: null,
-							items: [],
-							loading: false,
-							error: "未找到关联的 DataBrew pipeline run",
-						});
-						return;
-					}
-					const cursor = opts?.append ? opts.cursor : undefined;
-					return Promise.all([
-						listPipelineRunEvents(run.id, {
-							limit: 100,
-							cursor,
-							...runEventFilters,
-						}),
-						listPipelineRunAssetNodes(run.id, { limit: 500 }),
-						getPipelineRunCostSummary(run.id),
-					]).then(([events, assetNodes, costSummary]) => {
-						setRunEventState((current) => ({
-							run,
-							items: opts?.append
-								? [...current.items, ...(events.items ?? [])]
-								: (events.items ?? []),
-							nextCursor: events.nextCursor,
-							loading: false,
-							error: null,
-						}));
-						setAssetNodeState({
-							items: assetNodes.items ?? [],
-							loading: false,
-							error: null,
-							summary: assetNodes.summary ?? null,
-						});
-						setCostSummaryState({
-							item: costSummary,
-							loading: false,
-							error: null,
-						});
-					});
-				})
-				.catch((err) => {
-					console.error(err);
-					setRunEventState((current) => ({
-						...current,
-						loading: false,
-						error: toErrorMessage(err),
-					}));
-					setAssetNodeState((current) => ({
-						...current,
-						loading: false,
-						error: toErrorMessage(err),
-					}));
-					setCostSummaryState((current) => ({
-						...current,
-						loading: false,
-						error: toErrorMessage(err),
-					}));
-				});
+			loadRunDetailData(name, opts).catch((err) => {
+				console.error(err);
+				setRunEventState((current) => ({
+					...current,
+					loading: false,
+					error: toErrorMessage(err),
+				}));
+				setAssetNodeState((current) => ({
+					...current,
+					loading: false,
+					error: toErrorMessage(err),
+				}));
+				setCostSummaryState((current) => ({
+					...current,
+					loading: false,
+					error: toErrorMessage(err),
+				}));
+			});
 		},
-		[name, runEventFilters],
+		[loadRunDetailData, name],
 	);
 
 	useEffect(() => {
@@ -316,6 +338,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				.then((detail) => {
 					setWorkflow(detail);
 					setLoadError(null);
+					refreshDetailData();
 				})
 				.catch((err) => {
 					console.error(err);
@@ -323,7 +346,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		}, WORKFLOW_POLL_INTERVAL_MS);
 
 		return () => window.clearInterval(timer);
-	}, [name, workflow?.status, workflow]);
+	}, [name, refreshDetailData, workflow?.status, workflow]);
 
 	const loadNodeLogs = useCallback(
 		async (nodeId: string, nodePhase?: string) => {

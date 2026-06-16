@@ -3044,6 +3044,12 @@ curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
   -H "Content-Type: application/json" \
   -d '{"scope":"node_failed","pipelineNodeId":"step-extract","templateVersion":4,"dryRun":true}'
 
+# 响应会返回 status / matchedCount / retriedCount / skipped；partial_success 表示部分项因唯一冲突或运行态跳过。
+curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"scope":"failed","templateVersion":4}'
+
 curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/continue-full" \
   -H "X-Databrew-Token: $TOKEN"
 

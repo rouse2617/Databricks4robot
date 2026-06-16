@@ -78,7 +78,7 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 
 	workflowName := strings.TrimSpace(in.WorkflowName)
 	if workflowName == "" {
-		workflowName = batchSubtaskWorkflowName(t.Name, assetID, runID)
+		workflowName = batchSubtaskWorkflowName(t.Name, assetID, runID, in.ForceNewAttempt)
 	}
 
 	target, err := uc.resolveExecutionTarget(ctx, "")
@@ -222,13 +222,22 @@ func (uc *Usecase) CommitBatchSubtaskDeploy(ctx context.Context, runID string, d
 	return nil
 }
 
-func batchSubtaskWorkflowName(pipelineName, assetID, runID string) string {
+func batchSubtaskWorkflowName(pipelineName, assetID, runID string, unique bool) string {
 	suffix := strings.TrimSpace(assetID)
 	if len(suffix) > 12 {
 		suffix = suffix[len(suffix)-12:]
 	}
 	if suffix == "" {
 		suffix = runID[:6]
+	}
+	if unique {
+		runSuffix := strings.TrimSpace(runID)
+		if len(runSuffix) > 8 {
+			runSuffix = runSuffix[:8]
+		}
+		if runSuffix != "" {
+			return fmt.Sprintf("%s-batch-%s-%s", pipelineName, suffix, runSuffix)
+		}
 	}
 	return fmt.Sprintf("%s-batch-%s", pipelineName, suffix)
 }

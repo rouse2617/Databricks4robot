@@ -2675,9 +2675,12 @@ components:
     BackfillRerunResult:
       type: object
       properties:
-        status: { type: string, example: accepted }
+        status:
+          type: string
+          enum: [accepted, partial_success, succeeded, failed, noop]
         dryRun: { type: boolean }
         matchedCount: { type: integer }
+        retriedCount: { type: integer }
         templateId: { type: string }
         templateVersion: { type: integer, nullable: true }
         skipped:

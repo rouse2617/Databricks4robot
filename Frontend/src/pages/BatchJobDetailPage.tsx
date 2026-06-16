@@ -42,8 +42,8 @@ import {
 	resumeBatchJob,
 } from "../api/batchJobApi";
 import {
-	listPipelineVersions,
 	listPipelines,
+	listPipelineVersions,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
 import type { WorkflowSummary } from "../api/workflowApi";
@@ -60,7 +60,12 @@ import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const { Title, Text } = Typography;
 
-type RerunScope = "failed" | "incomplete" | "completed" | "custom" | "node_failed";
+type RerunScope =
+	| "failed"
+	| "incomplete"
+	| "completed"
+	| "custom"
+	| "node_failed";
 
 type NodeDrawerFilter = "failed" | "running" | "pending";
 
@@ -106,11 +111,7 @@ function subtaskNodeFilterLabel(
 	filter: NodeDrawerFilter,
 ): string {
 	const statusLabel =
-		filter === "failed"
-			? "失败"
-			: filter === "running"
-				? "运行中"
-				: "等待中";
+		filter === "failed" ? "失败" : filter === "running" ? "运行中" : "等待中";
 	return `${node.displayName} · ${statusLabel}`;
 }
 
@@ -132,6 +133,27 @@ function exportFailuresCsv(
 	anchor.download = filename;
 	anchor.click();
 	URL.revokeObjectURL(url);
+}
+
+export function formatRerunFeedback(result: {
+	status: string;
+	matchedCount: number;
+	retriedCount?: number;
+	skipped?: Array<unknown>;
+}): { level: "success" | "warning" | "error"; text: string } {
+	if (result.status === "failed") {
+		return { level: "error", text: "重跑失败，没有可重新提交的子任务" };
+	}
+	if (
+		result.status === "partial_success" ||
+		(result.skipped?.length ?? 0) > 0
+	) {
+		return {
+			level: "warning",
+			text: `重跑部分提交成功：${result.retriedCount ?? result.matchedCount} / ${result.matchedCount}`,
+		};
+	}
+	return { level: "success", text: "重跑已提交" };
 }
 
 export default function BatchJobDetailPage() {
@@ -168,38 +190,43 @@ export default function BatchJobDetailPage() {
 	const [subtaskNodeFilter, setSubtaskNodeFilter] =
 		useState<SubtaskNodeFilter | null>(null);
 
-	const refresh = useCallback(async (opts?: { silent?: boolean }) => {
-		if (!id) return;
-		if (!opts?.silent) {
-			setLoading(true);
-		}
-		try {
-			const jobData = await getBatchJob(id);
-			const [templates, versions] = await Promise.all([
-				listPipelines({ pageSize: 200 })
-					.then((r) => r.items)
-					.catch(() => [] as PipelineTemplate[]),
-				listPipelineVersions(jobData.templateId).catch(
-					() => [] as PipelineTemplate[],
-				),
-			]);
-			setJob(jobData);
-			setTemplateVersions(versions);
-			getBatchNodeSummary(id)
-				.then(setNodeSummary)
-				.catch(() => setNodeSummary(null));
-			const template = templates.find((item) => item.id === jobData.templateId);
-			setTemplateName(template?.name ?? jobData.templateId);
-		} catch (err) {
+	const refresh = useCallback(
+		async (opts?: { silent?: boolean }) => {
+			if (!id) return;
 			if (!opts?.silent) {
-				message.error(`加载批次详情失败：${String(err)}`);
+				setLoading(true);
 			}
-		} finally {
-			if (!opts?.silent) {
-				setLoading(false);
+			try {
+				const jobData = await getBatchJob(id);
+				const [templates, versions] = await Promise.all([
+					listPipelines({ pageSize: 200 })
+						.then((r) => r.items)
+						.catch(() => [] as PipelineTemplate[]),
+					listPipelineVersions(jobData.templateId).catch(
+						() => [] as PipelineTemplate[],
+					),
+				]);
+				setJob(jobData);
+				setTemplateVersions(versions);
+				getBatchNodeSummary(id)
+					.then(setNodeSummary)
+					.catch(() => setNodeSummary(null));
+				const template = templates.find(
+					(item) => item.id === jobData.templateId,
+				);
+				setTemplateName(template?.name ?? jobData.templateId);
+			} catch (err) {
+				if (!opts?.silent) {
+					message.error(`加载批次详情失败：${String(err)}`);
+				}
+			} finally {
+				if (!opts?.silent) {
+					setLoading(false);
+				}
 			}
-		}
-	}, [id, message]);
+		},
+		[id, message],
+	);
 
 	useEffect(() => {
 		void refresh();
@@ -213,7 +240,7 @@ export default function BatchJobDetailPage() {
 			void refresh({ silent: true });
 		}, 5000);
 		return () => window.clearInterval(timer);
-	}, [job?.id, job?.status, refresh]);
+	}, [job, refresh]);
 
 	const backToBatchList = useCallback(() => {
 		goBackFromBatchJobDetail(navigate, location.state);
@@ -320,12 +347,19 @@ export default function BatchJobDetailPage() {
 		if (!job || !rerunModal) return;
 		setActionLoading(`rerun-${rerunModal.scope}`);
 		try {
-			await rerunBatchJob(job.id, {
+			const result = await rerunBatchJob(job.id, {
 				scope: rerunModal.scope,
 				templateVersion: rerunTemplateVersion,
 				...rerunModal.extra,
 			});
-			message.success("重跑已提交");
+			const feedback = formatRerunFeedback(result);
+			if (feedback.level === "error") {
+				message.error(feedback.text);
+			} else if (feedback.level === "warning") {
+				message.warning(feedback.text);
+			} else {
+				message.success(feedback.text);
+			}
 			closeRerunModal();
 			await refresh();
 		} catch (err) {
@@ -466,9 +500,7 @@ export default function BatchJobDetailPage() {
 										});
 										return;
 									}
-									openRerunModal(
-										key as "failed" | "incomplete" | "completed",
-									);
+									openRerunModal(key as "failed" | "incomplete" | "completed");
 								},
 							}}
 						>
@@ -708,9 +740,7 @@ export default function BatchJobDetailPage() {
 						<Space>
 							<Button
 								type="link"
-								onClick={() =>
-									applySubtaskNodeFilter(drawerNode, drawerFilter)
-								}
+								onClick={() => applySubtaskNodeFilter(drawerNode, drawerFilter)}
 							>
 								在子任务列表筛选
 							</Button>

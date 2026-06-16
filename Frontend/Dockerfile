@@ -1,6 +1,12 @@
 # BuildKit cache mount speeds up repeat `npm ci` (persists tarballs across builds).
-FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
+FROM mirror.gcr.io/library/node:20-alpine AS builder
 WORKDIR /app
+ENV HTTP_PROXY=
+ENV HTTPS_PROXY=
+ENV ALL_PROXY=
+ENV http_proxy=
+ENV https_proxy=
+ENV all_proxy=
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
 COPY package.json package-lock.json ./
@@ -16,7 +22,7 @@ ARG VITE_BUILD_REF=local
 ENV VITE_BUILD_REF=$VITE_BUILD_REF
 RUN npm run build
 
-FROM nginx:alpine
+FROM mirror.gcr.io/library/nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 # nginx official entrypoint will envsubst templates under /etc/nginx/templates/*.template
 ENV BACKEND_UPSTREAM_HOST=cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app

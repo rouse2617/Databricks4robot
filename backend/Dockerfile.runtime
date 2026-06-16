@@ -1,0 +1,6 @@
+FROM scratch
+WORKDIR /app
+COPY .tmp/cyber-databrew-server /app/server
+COPY config/ ./config/
+EXPOSE 8080
+CMD ["/app/server"]

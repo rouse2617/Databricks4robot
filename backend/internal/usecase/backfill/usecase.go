@@ -70,6 +70,7 @@ type RerunResult struct {
 	Status          string             `json:"status"`
 	DryRun          bool               `json:"dryRun"`
 	MatchedCount    int                `json:"matchedCount"`
+	RetriedCount    int                `json:"retriedCount"`
 	TemplateID      string             `json:"templateId"`
 	TemplateVersion int                `json:"templateVersion,omitempty"`
 	Skipped         []RerunSkippedItem `json:"skipped"`
@@ -719,6 +720,7 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 	if req.DryRun {
 		return result, nil
 	}
+	retriedCount := 0
 	if err := uc.repo.PrepareItemsForRerun(ctx, itemIDs); err != nil {
 		return nil, err
 	}
@@ -738,6 +740,7 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 			result.Skipped = append(result.Skipped, RerunSkippedItem{ItemID: runnable[i].ID, Reason: err.Error()})
 			continue
 		}
+		retriedCount++
 		runnable[i].PipelineRunID = &runID
 		if wf := strings.TrimSpace(workflowName); wf != "" {
 			runnable[i].WorkflowName = &wf
@@ -754,6 +757,21 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 				uc.runItems(context.Background(), jobID, templateID, templateVersion, runnable, "pending")
 			}()
 		}
+	}
+	result.RetriedCount = retriedCount
+	switch {
+	case result.RetriedCount == 0:
+		if len(result.Skipped) > 0 {
+			result.Status = "failed"
+		} else {
+			result.Status = "noop"
+		}
+	case len(result.Skipped) == 0:
+		result.Status = "succeeded"
+	case result.RetriedCount < result.MatchedCount:
+		result.Status = "partial_success"
+	default:
+		result.Status = "accepted"
 	}
 	return result, nil
 }
