@@ -952,6 +952,18 @@ LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id`
 		args = append(args, filter.Status)
 		argPos++
 	}
+	if filter.BatchJobID != "" && strings.TrimSpace(filter.PipelineNodeID) != "" {
+		nodeStatus := strings.TrimSpace(filter.NodeStatus)
+		conds = append(conds, fmt.Sprintf(`EXISTS (
+  SELECT 1 FROM pipeline_run_asset_nodes n
+  WHERE n.run_id = pr.id
+    AND n.asset_id = bi.asset_id
+    AND n.pipeline_node_id = $%d
+    AND ($%d = '' OR n.status = $%d)
+)`, argPos, argPos+1, argPos+1))
+		args = append(args, strings.TrimSpace(filter.PipelineNodeID), nodeStatus)
+		argPos += 2
+	}
 
 	where := ""
 	if len(conds) > 0 {

@@ -3,6 +3,7 @@ import { request } from "./pipelineClient";
 export interface WorkflowSummary {
 	name: string;
 	status: string;
+	message?: string;
 	nodeCount: number;
 	createdAt: string;
 	finishedAt?: string;

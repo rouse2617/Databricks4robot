@@ -342,6 +342,8 @@ export function listPipelineRuns(options?: {
 	excludeBatch?: boolean;
 	batchJobId?: string;
 	status?: string;
+	pipelineNodeId?: string;
+	nodeStatus?: string;
 	page?: number;
 	pageSize?: number;
 }): Promise<PipelineRunListResponse> {
@@ -351,6 +353,10 @@ export function listPipelineRuns(options?: {
 	if (options?.excludeBatch) search.set("excludeBatch", "true");
 	if (options?.batchJobId) search.set("batchJobId", options.batchJobId);
 	if (options?.status) search.set("status", options.status);
+	if (options?.pipelineNodeId) {
+		search.set("pipelineNodeId", options.pipelineNodeId);
+	}
+	if (options?.nodeStatus) search.set("nodeStatus", options.nodeStatus);
 	if (options?.page) search.set("page", String(options.page));
 	if (options?.pageSize) search.set("pageSize", String(options.pageSize));
 	const suffix = search.toString() ? `?${search.toString()}` : "";

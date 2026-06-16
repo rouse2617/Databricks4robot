@@ -53,6 +53,7 @@ import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
 import { withSelectAllColumn } from "../lib/tableSelection";
 import {
 	getAvailableWorkflowOperationConfigs,
+	getWorkflowOperationConfirmText,
 	getWorkflowOperationMenuItems,
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
@@ -73,6 +74,12 @@ interface WorkflowExecutionListProps {
 	/** Bumps embedded batch subtask lists after parent job metadata loads. */
 	_batchListKey?: string | number;
 	embedded?: boolean;
+	nodeFilter?: {
+		pipelineNodeId: string;
+		nodeStatus?: string;
+		label: string;
+	};
+	onClearNodeFilter?: () => void;
 	onSelectionChange?: (items: WorkflowSummary[]) => void;
 	title?: string;
 }
@@ -339,6 +346,8 @@ export function WorkflowExecutionList({
 	batchJobId,
 	_batchListKey,
 	embedded = false,
+	nodeFilter,
+	onClearNodeFilter,
 	onSelectionChange,
 	title,
 }: WorkflowExecutionListProps) {
@@ -553,6 +562,8 @@ export function WorkflowExecutionList({
 					page,
 					pageSize,
 					status: statusFilter,
+					pipelineNodeId: nodeFilter?.pipelineNodeId,
+					nodeStatus: nodeFilter?.nodeStatus,
 				});
 				const pipelineRuns = runResponse.items ?? [];
 				setServerTotal(runResponse.total ?? pipelineRuns.length);
@@ -717,6 +728,7 @@ export function WorkflowExecutionList({
 		isBatchScope,
 		labelFilter,
 		nameSearch,
+		nodeFilter,
 		statusFilter,
 		page,
 		pageSize,
@@ -733,7 +745,7 @@ export function WorkflowExecutionList({
 		if (!batchJobId) {
 			syncAppliedFiltersToUrl();
 		}
-	}, [batchJobId, syncAppliedFiltersToUrl]);
+	}, [batchJobId, syncAppliedFiltersToUrl, nodeFilter?.pipelineNodeId, nodeFilter?.nodeStatus]);
 
 	const filtersDirty =
 		draftVersionFilter !== versionFilter ||
@@ -1205,6 +1217,14 @@ export function WorkflowExecutionList({
 				<Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>
 					刷新
 				</Button>
+				{isBatchScope && nodeFilter ? (
+					<Tag
+						closable={Boolean(onClearNodeFilter)}
+						onClose={onClearNodeFilter}
+					>
+						节点筛选：{nodeFilter.label}
+					</Tag>
+				) : null}
 				<Button
 					type="default"
 					disabled={
@@ -1385,10 +1405,9 @@ export function WorkflowExecutionList({
 				onOk={confirmPendingOperation}
 				onCancel={() => setPendingOperation(null)}
 			>
-				{pendingOperation?.operation.key === "resubmit" ||
-				pendingOperation?.operation.key === "retry" ? (
-					<p>将基于当前工作流再次提交执行。</p>
-				) : null}
+				{pendingOperation
+					? getWorkflowOperationConfirmText(pendingOperation.operation.key)
+					: null}
 			</Modal>
 			<Modal
 				open={bulkDeleteOpen}

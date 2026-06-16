@@ -307,9 +307,11 @@ type LedgerHealth struct {
 
 // PipelineRunListFilter scopes summary list queries for batch-aware UIs.
 type PipelineRunListFilter struct {
-	BatchJobID   string
-	ExcludeBatch bool
-	Status       string
-	Page         int
-	PageSize     int
+	BatchJobID      string
+	ExcludeBatch    bool
+	Status          string
+	PipelineNodeID  string
+	NodeStatus      string
+	Page            int
+	PageSize        int
 }

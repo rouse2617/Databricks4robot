@@ -333,6 +333,8 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
 	excludeBatch := strings.EqualFold(c.Query("excludeBatch"), "true") || c.Query("excludeBatch") == "1"
 	statusFilter := strings.TrimSpace(c.Query("status"))
+	pipelineNodeID := strings.TrimSpace(c.Query("pipelineNodeId"))
+	nodeStatus := strings.TrimSpace(c.Query("nodeStatus"))
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
 	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
 
@@ -343,11 +345,13 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	)
 	if summaryView {
 		filter := models.PipelineRunListFilter{
-			BatchJobID:   batchJobID,
-			ExcludeBatch: excludeBatch,
-			Status:       statusFilter,
-			Page:         page,
-			PageSize:     pageSize,
+			BatchJobID:     batchJobID,
+			ExcludeBatch:   excludeBatch,
+			Status:         statusFilter,
+			PipelineNodeID: pipelineNodeID,
+			NodeStatus:     nodeStatus,
+			Page:           page,
+			PageSize:       pageSize,
 		}
 		items, total, err = h.uc.ListRunSummaries(c.Request.Context(), filter)
 		if err == nil && batchJobID != "" && h.batchRuns != nil {

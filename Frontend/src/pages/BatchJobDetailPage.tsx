@@ -16,6 +16,7 @@ import {
 	Dropdown,
 	Modal,
 	Progress,
+	Radio,
 	Select,
 	Skeleton,
 	Space,
@@ -63,6 +64,12 @@ type RerunScope = "failed" | "incomplete" | "completed" | "custom" | "node_faile
 
 type NodeDrawerFilter = "failed" | "running" | "pending";
 
+type SubtaskNodeFilter = {
+	pipelineNodeId: string;
+	nodeStatus?: string;
+	label: string;
+};
+
 interface RerunModalState {
 	scope: RerunScope;
 	extra: Record<string, unknown>;
@@ -79,6 +86,32 @@ function defaultRerunTemplateVersion(
 		return undefined;
 	}
 	return Math.max(...versions.map((item) => item.version));
+}
+
+function nodeStatusForDrawerFilter(
+	filter: NodeDrawerFilter,
+): string | undefined {
+	switch (filter) {
+		case "failed":
+			return "Failed";
+		case "running":
+			return "Running";
+		case "pending":
+			return "Pending";
+	}
+}
+
+function subtaskNodeFilterLabel(
+	node: BatchNodeSummaryNode,
+	filter: NodeDrawerFilter,
+): string {
+	const statusLabel =
+		filter === "failed"
+			? "失败"
+			: filter === "running"
+				? "运行中"
+				: "等待中";
+	return `${node.displayName} · ${statusLabel}`;
 }
 
 function exportFailuresCsv(
@@ -130,6 +163,10 @@ export default function BatchJobDetailPage() {
 		null,
 	);
 	const [rerunPreviewLoading, setRerunPreviewLoading] = useState(false);
+	const [pauseModalOpen, setPauseModalOpen] = useState(false);
+	const [pauseStopRunning, setPauseStopRunning] = useState(false);
+	const [subtaskNodeFilter, setSubtaskNodeFilter] =
+		useState<SubtaskNodeFilter | null>(null);
 
 	const refresh = useCallback(async (opts?: { silent?: boolean }) => {
 		if (!id) return;
@@ -182,12 +219,11 @@ export default function BatchJobDetailPage() {
 		goBackFromBatchJobDetail(navigate, location.state);
 	}, [location.state, navigate]);
 
-	const runAction = async (action: "pause" | "resume") => {
+	const runAction = async (action: "resume") => {
 		if (!job) return;
 		setActionLoading(action);
 		try {
-			if (action === "pause") await pauseBatchJob(job.id);
-			if (action === "resume") await resumeBatchJob(job.id);
+			await resumeBatchJob(job.id);
 			message.success("操作已提交");
 			await refresh();
 		} catch (err) {
@@ -195,6 +231,46 @@ export default function BatchJobDetailPage() {
 		} finally {
 			setActionLoading(null);
 		}
+	};
+
+	const submitPause = async () => {
+		if (!job) return;
+		setActionLoading("pause");
+		try {
+			const result = await pauseBatchJob(job.id, {
+				stopRunning: pauseStopRunning,
+			});
+			if (pauseStopRunning && (result.stoppedCount ?? 0) > 0) {
+				message.success(
+					`批次已暂停，已停止 ${result.stoppedCount} 条运行中的子任务`,
+				);
+			} else if (pauseStopRunning && (result.stopFailedCount ?? 0) > 0) {
+				message.warning(
+					`批次已暂停，但有 ${result.stopFailedCount} 条子任务停止失败`,
+				);
+			} else {
+				message.success("批次已暂停");
+			}
+			setPauseModalOpen(false);
+			setPauseStopRunning(false);
+			await refresh();
+		} catch (err) {
+			message.error(`暂停失败：${String(err)}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
+	const applySubtaskNodeFilter = (
+		node: BatchNodeSummaryNode,
+		filter: NodeDrawerFilter,
+	) => {
+		setSubtaskNodeFilter({
+			pipelineNodeId: node.pipelineNodeId,
+			nodeStatus: nodeStatusForDrawerFilter(filter),
+			label: subtaskNodeFilterLabel(node, filter),
+		});
+		setDrawerNode(null);
 	};
 
 	const previewRerun = useCallback(
@@ -347,7 +423,7 @@ export default function BatchJobDetailPage() {
 							<Button
 								icon={<PauseCircleOutlined />}
 								loading={actionLoading === "pause"}
-								onClick={() => void runAction("pause")}
+								onClick={() => setPauseModalOpen(true)}
 							>
 								暂停
 							</Button>
@@ -606,6 +682,8 @@ export default function BatchJobDetailPage() {
 				batchJobId={job.id}
 				_batchListKey={job.updatedAt}
 				embedded
+				nodeFilter={subtaskNodeFilter ?? undefined}
+				onClearNodeFilter={() => setSubtaskNodeFilter(null)}
 				onSelectionChange={setSelectedRuns}
 				title="子任务执行记录"
 			/>
@@ -626,31 +704,43 @@ export default function BatchJobDetailPage() {
 				width={720}
 				onClose={() => setDrawerNode(null)}
 				extra={
-					drawerNode && drawerFilter === "failed" ? (
+					drawerNode ? (
 						<Space>
 							<Button
-								icon={<DownloadOutlined />}
-								disabled={nodeFailures.length === 0}
+								type="link"
 								onClick={() =>
-									exportFailuresCsv(
-										nodeFailures,
-										`batch-${job.id.slice(0, 8)}-${drawerNode.pipelineNodeId}-failures.csv`,
-									)
+									applySubtaskNodeFilter(drawerNode, drawerFilter)
 								}
 							>
-								导出 CSV
+								在子任务列表筛选
 							</Button>
-							<Button
-								icon={<RedoOutlined />}
-								loading={actionLoading === "rerun-node_failed"}
-								onClick={() =>
-									openRerunModal("node_failed", {
-										pipelineNodeId: drawerNode.pipelineNodeId,
-									})
-								}
-							>
-								重试这 {nodeFailureTotal} 条
-							</Button>
+							{drawerFilter === "failed" ? (
+								<>
+									<Button
+										icon={<DownloadOutlined />}
+										disabled={nodeFailures.length === 0}
+										onClick={() =>
+											exportFailuresCsv(
+												nodeFailures,
+												`batch-${job.id.slice(0, 8)}-${drawerNode.pipelineNodeId}-failures.csv`,
+											)
+										}
+									>
+										导出 CSV
+									</Button>
+									<Button
+										icon={<RedoOutlined />}
+										loading={actionLoading === "rerun-node_failed"}
+										onClick={() =>
+											openRerunModal("node_failed", {
+												pipelineNodeId: drawerNode.pipelineNodeId,
+											})
+										}
+									>
+										重试这 {nodeFailureTotal} 条
+									</Button>
+								</>
+							) : null}
 						</Space>
 					) : null
 				}
@@ -739,6 +829,33 @@ export default function BatchJobDetailPage() {
 						<Text type="secondary">请选择模板版本后预览重跑范围。</Text>
 					)}
 				</Space>
+			</Modal>
+
+			<Modal
+				title="暂停批次"
+				open={pauseModalOpen}
+				onCancel={() => {
+					setPauseModalOpen(false);
+					setPauseStopRunning(false);
+				}}
+				onOk={() => void submitPause()}
+				okText="确认暂停"
+				cancelText="取消"
+				confirmLoading={actionLoading === "pause"}
+				destroyOnHidden
+			>
+				<Radio.Group
+					value={pauseStopRunning}
+					onChange={(event) => setPauseStopRunning(event.target.value)}
+					style={{ display: "flex", flexDirection: "column", gap: 12 }}
+				>
+					<Radio value={false}>
+						仅暂停调度（不再启动新的子任务，运行中的继续执行）
+					</Radio>
+					<Radio value={true}>
+						暂停并停止运行中的子任务（向 Argo 发送停止信号）
+					</Radio>
+				</Radio.Group>
 			</Modal>
 		</div>
 	);

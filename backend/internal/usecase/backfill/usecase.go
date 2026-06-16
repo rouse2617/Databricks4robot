@@ -596,13 +596,47 @@ func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, 
 	return uc.repo.FindJobByID(ctx, id)
 }
 
+// PauseJobOptions controls optional pause side effects.
+type PauseJobOptions struct {
+	StopRunning bool
+}
+
+// PauseJobResult is returned after pausing a batch job.
+type PauseJobResult struct {
+	Status          string `json:"status"`
+	StoppedCount    int    `json:"stoppedCount,omitempty"`
+	StopFailedCount int    `json:"stopFailedCount,omitempty"`
+}
+
 // PauseJob pauses a running backfill job.
-func (uc *Usecase) PauseJob(ctx context.Context, id string) error {
+func (uc *Usecase) PauseJob(ctx context.Context, id string, opts PauseJobOptions) (*PauseJobResult, error) {
 	if err := uc.repo.UpdateJobStatus(ctx, id, "paused"); err != nil {
-		return err
+		return nil, err
+	}
+	result := &PauseJobResult{Status: "paused"}
+	if opts.StopRunning && uc.pipelineUC != nil {
+		items, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, id, []string{"running"})
+		if err != nil {
+			return result, err
+		}
+		for _, item := range items {
+			runID := ""
+			if item.PipelineRunID != nil {
+				runID = strings.TrimSpace(*item.PipelineRunID)
+			}
+			if runID == "" {
+				continue
+			}
+			if err := uc.pipelineUC.StopRun(ctx, runID); err != nil {
+				result.StopFailedCount++
+				slog.Warn("PauseJob: stop run failed", "jobID", id, "runID", runID, "err", err)
+				continue
+			}
+			result.StoppedCount++
+		}
 	}
 	_ = uc.syncJobProgress(ctx, id)
-	return nil
+	return result, nil
 }
 
 // ResumeJob resumes a paused backfill job and re-schedules pending items.

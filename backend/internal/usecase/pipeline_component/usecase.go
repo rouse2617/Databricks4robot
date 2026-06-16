@@ -243,7 +243,7 @@ func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
 	release.SourceRepo = strings.TrimSpace(release.SourceRepo)
 	release.SourceRef = strings.TrimSpace(release.SourceRef)
 	release.SourceRefType = normalizeSourceRefType(release.SourceRefType)
-	release.SourceCommit = strings.TrimSpace(release.SourceCommit)
+	release.SourceCommit = normalizeStoredCommit(strings.TrimSpace(release.SourceCommit))
 	release.BuildID = strings.TrimSpace(release.BuildID)
 	release.ImageRepo = strings.TrimSpace(release.ImageRepo)
 	release.ImageTag = strings.TrimSpace(release.ImageTag)
@@ -403,11 +403,25 @@ func firstNonEmpty(values ...string) string {
 }
 
 func shortCommit(commit string) string {
-	commit = strings.TrimSpace(commit)
+	commit = normalizeStoredCommit(commit)
 	if len(commit) <= 7 {
 		return commit
 	}
 	return commit[:7]
+}
+
+func normalizeStoredCommit(commit string) string {
+	commit = strings.ToLower(strings.TrimSpace(commit))
+	if commit == "" {
+		return ""
+	}
+	if len(commit) >= 40 && isCommitLike(commit) {
+		trimmed := strings.TrimRight(commit, "0")
+		if len(trimmed) >= 4 && len(trimmed) <= 12 {
+			return trimmed
+		}
+	}
+	return commit
 }
 
 func deriveReleaseChannel(label string, refType string) string {

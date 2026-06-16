@@ -45,6 +45,8 @@ import { resolveWorkflowDetailBackTarget } from "../lib/pipelineNavigation";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationConfigs,
+	getWorkflowOperationConfirmText,
+	runWorkflowRetryWithFeedback,
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
@@ -1212,8 +1214,21 @@ export default function WorkflowDetailPage({
 			if (!workflow || operation.disabled) return;
 			setOperationLoading(operation.key);
 			try {
-				await operation.run();
-				messageApi.success(`${operation.title}已提交`);
+				if (operation.key === "retry") {
+					const outcome = await runWorkflowRetryWithFeedback(workflow, () =>
+						operation.run(),
+					);
+					if (outcome === "no_progress") {
+						messageApi.warning(
+							"重试已提交，但执行状态未变化。若曾手动停止，请使用「重提交」。",
+						);
+					} else {
+						messageApi.success("重试已提交");
+					}
+				} else {
+					await operation.run();
+					messageApi.success(`${operation.title}已提交`);
+				}
 				if (operation.key === "delete") {
 					navigate("/workflows");
 					return;
@@ -1646,10 +1661,9 @@ export default function WorkflowDetailPage({
 				}}
 				onCancel={() => setConfirmOperation(null)}
 			>
-				{confirmOperation?.key === "resubmit" ||
-				confirmOperation?.key === "retry" ? (
-					<p>将基于当前工作流再次提交执行。</p>
-				) : null}
+				{confirmOperation
+					? getWorkflowOperationConfirmText(confirmOperation.key)
+					: null}
 			</Modal>
 
 			<Modal

@@ -36,3 +36,22 @@ export function dedupePipelineComponentsByName(
 
 	return Array.from(byName.values());
 }
+
+/** Strip artificial zero-padding some ingest paths append to short git SHAs. */
+export function normalizeGitCommit(value?: string): string {
+	const trimmed = (value || "").trim();
+	if (!trimmed) return "";
+	const lower = trimmed.toLowerCase();
+	if (!/^[0-9a-f]+$/.test(lower)) return trimmed;
+	if (lower.length >= 40 && /^[0-9a-f]{4,12}0+$/.test(lower)) {
+		return lower.replace(/0+$/, "");
+	}
+	return lower;
+}
+
+export function formatCommitDisplay(value?: string): string {
+	const normalized = normalizeGitCommit(value);
+	if (!normalized) return "-";
+	if (normalized.length <= 12) return normalized;
+	return `${normalized.slice(0, 10)}…${normalized.slice(-8)}`;
+}

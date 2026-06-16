@@ -116,10 +116,23 @@ export function createBatchJob(body: CreateBatchJobRequest): Promise<BatchJob> {
 	return request<BatchJob>("POST", "/backfill", body);
 }
 
-export function pauseBatchJob(id: string): Promise<void> {
-	return request<{ status: string }>("POST", `/backfill/${id}/pause`, {}).then(
-		() => undefined,
-	);
+export interface PauseBatchJobOptions {
+	stopRunning?: boolean;
+}
+
+export interface PauseBatchJobResult {
+	status: string;
+	stoppedCount?: number;
+	stopFailedCount?: number;
+}
+
+export function pauseBatchJob(
+	id: string,
+	options?: PauseBatchJobOptions,
+): Promise<PauseBatchJobResult> {
+	return request<PauseBatchJobResult>("POST", `/backfill/${id}/pause`, {
+		stopRunning: options?.stopRunning ?? false,
+	});
 }
 
 export function resumeBatchJob(id: string): Promise<void> {

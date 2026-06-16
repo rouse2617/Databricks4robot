@@ -1105,7 +1105,23 @@ func TestWorkflowOperations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.wantOp, func(t *testing.T) {
-			client := &mockWorkflowClient{}
+			client := &mockWorkflowClient{
+				getFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+					if tt.wantOp != "retry" {
+						return nil, nil
+					}
+					wf := makeWorkflow(name, "Failed", 1)
+					wf.Status.Nodes["a"] = wfv1.NodeStatus{
+						ID:           "a",
+						Name:         "step-a",
+						DisplayName:  "step-a",
+						Type:         wfv1.NodeTypePod,
+						TemplateName: "template-a",
+						Phase:        wfv1.NodeFailed,
+					}
+					return wf, nil
+				},
+			}
 			h := New(client, "fallback")
 			r := setupRouter(h)
 
@@ -1127,6 +1143,35 @@ func TestWorkflowOperations(t *testing.T) {
 				t.Fatalf("expected ok message, got %q", resp["message"])
 			}
 		})
+	}
+}
+
+func TestRetryWorkflow_NotRetryable(t *testing.T) {
+	client := &mockWorkflowClient{
+		getFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+			wf := makeWorkflow(name, "Failed", 1)
+			wf.Status.Message = "Stopped"
+			wf.Status.Nodes["a"] = wfv1.NodeStatus{
+				ID:   "a",
+				Name: "step-a",
+				Type: wfv1.NodeTypePod,
+				Phase: wfv1.NodePending,
+			}
+			return wf, nil
+		},
+	}
+	h := New(client, "default")
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/retry", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if client.operation != "" {
+		t.Fatalf("expected no retry call, got %q", client.operation)
 	}
 }
 

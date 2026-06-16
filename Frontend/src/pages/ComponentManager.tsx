@@ -44,7 +44,9 @@ import {
 } from "../api/pipelineComponentApi";
 import {
 	dedupePipelineComponentsByName,
+	formatCommitDisplay,
 	formatComponentImage,
+	normalizeGitCommit,
 } from "../lib/pipelineComponentDisplay";
 import {
 	normalizeComponentArgs,
@@ -233,6 +235,12 @@ const componentKey = (value?: string): string =>
 const releaseDisplayName = (release: PipelineComponentReleaseAPI): string =>
 	release.displayName || release.taskName || release.componentId;
 
+const compareTextAsc = (a?: string, b?: string): number =>
+	(a || "").localeCompare(b || "", undefined, { sensitivity: "base" });
+
+const compareDateAsc = (a?: string, b?: string): number =>
+	new Date(a || 0).getTime() - new Date(b || 0).getTime();
+
 const compareDateDesc = (a?: string, b?: string): number =>
 	new Date(b || 0).getTime() - new Date(a || 0).getTime();
 
@@ -289,9 +297,16 @@ function ReleaseVersionChip({
 }) {
 	const badge = releaseRefBadge(release);
 	const displayText = shortTechnicalValue(
-		label || release.sourceCommit || release.releaseLabel,
+		normalizeGitCommit(label || release.sourceCommit || release.releaseLabel) ||
+			label ||
+			release.sourceCommit ||
+			release.releaseLabel,
 	);
-	const tooltip = label || release.sourceCommit || release.releaseLabel;
+	const tooltip =
+		normalizeGitCommit(release.sourceCommit) ||
+		label ||
+		release.sourceCommit ||
+		release.releaseLabel;
 	return (
 		<Tooltip title={tooltip}>
 			<Space size={4}>
@@ -325,7 +340,9 @@ function ReleaseExpandedBuildCell({
 					style={{ cursor: "pointer" }}
 					onClick={onClick}
 				>
-					{shortTechnicalValue(release.releaseLabel)}
+					{shortTechnicalValue(
+						normalizeGitCommit(release.releaseLabel) || release.releaseLabel,
+					)}
 				</Tag>
 			</Tooltip>
 			<Typography.Text
@@ -351,6 +368,103 @@ const copyableCode = (value?: string, display?: string) => (
 		</Typography.Text>
 	</Tooltip>
 );
+
+function ReleaseExpandedTable({
+	releases,
+	primaryReleaseId,
+	onViewRelease,
+}: {
+	releases: PipelineComponentReleaseAPI[];
+	primaryReleaseId?: string;
+	onViewRelease: (release: PipelineComponentReleaseAPI) => void;
+}) {
+	const columns: ColumnsType<PipelineComponentReleaseAPI> = [
+		{
+			title: "全部构建版本",
+			key: "releaseLabel",
+			sorter: (a, b) => compareTextAsc(a.releaseLabel, b.releaseLabel),
+			render: (_, release) => (
+				<ReleaseExpandedBuildCell
+					release={release}
+					onClick={() => onViewRelease(release)}
+				/>
+			),
+		},
+		{
+			title: "Commit",
+			key: "commit",
+			sorter: (a, b) =>
+				compareTextAsc(
+					normalizeGitCommit(a.sourceCommit),
+					normalizeGitCommit(b.sourceCommit),
+				),
+			render: (_, release) => {
+				const commit = normalizeGitCommit(release.sourceCommit);
+				return commit ? (
+					copyableCode(commit, formatCommitDisplay(release.sourceCommit))
+				) : (
+					<Typography.Text type="secondary">-</Typography.Text>
+				);
+			},
+		},
+		{
+			title: "Tag",
+			key: "tag",
+			sorter: (a, b) =>
+				compareTextAsc(releaseTagText(a), releaseTagText(b)),
+			render: (_, release) => <ReleaseTagCell release={release} />,
+		},
+		{
+			title: "更新时间",
+			key: "updatedAt",
+			width: 160,
+			sorter: (a, b) => compareDateAsc(a.updatedAt, b.updatedAt),
+			defaultSortOrder: "descend",
+			render: (_, release) => formatDateTime(release.updatedAt),
+		},
+		{
+			title: "镜像ID",
+			key: "imageUid",
+			sorter: (a, b) =>
+				compareTextAsc(releaseImageUid(a), releaseImageUid(b)),
+			render: (_, release) =>
+				copyableCode(releaseImageUid(release), releaseImageUid(release)),
+		},
+		{
+			title: "操作",
+			key: "actions",
+			width: 110,
+			render: (_, release) =>
+				release.id === primaryReleaseId ? (
+					<Tooltip title="与主表「操作」列相同，请在那里查看">
+						<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+							主版本
+						</Typography.Text>
+					</Tooltip>
+				) : (
+					<Button
+						type="link"
+						size="small"
+						icon={<EyeOutlined />}
+						onClick={() => onViewRelease(release)}
+					>
+						版本详情
+					</Button>
+				),
+		},
+	];
+
+	return (
+		<Table
+			size="small"
+			rowKey="id"
+			columns={columns}
+			dataSource={releases}
+			pagination={false}
+			className="component-library-release-table"
+		/>
+	);
+}
 
 const releaseSearchText = (release: PipelineComponentReleaseAPI): string =>
 	[
@@ -398,7 +512,11 @@ const releaseMatchesSearch = (
 ): boolean => {
 	if (!query) return true;
 	if (mode === "commit") {
-		return (release.sourceCommit || "").toLowerCase().includes(query);
+		const normalized = normalizeGitCommit(release.sourceCommit);
+		return (
+			normalized.toLowerCase().includes(query) ||
+			(release.sourceCommit || "").toLowerCase().includes(query)
+		);
 	}
 	if (mode === "version") {
 		return (release.releaseLabel || "").toLowerCase().includes(query);
@@ -719,8 +837,12 @@ function ReleaseDetail({ release }: { release: PipelineComponentReleaseAPI }) {
 					{release.sourceRefType || "-"}
 				</Descriptions.Item>
 				<Descriptions.Item label="Source Commit">
-					<Typography.Text copyable={{ text: release.sourceCommit || "" }}>
-						{release.sourceCommit || "-"}
+					<Typography.Text
+						copyable={{
+							text: normalizeGitCommit(release.sourceCommit) || "",
+						}}
+					>
+						{formatCommitDisplay(release.sourceCommit)}
 					</Typography.Text>
 				</Descriptions.Item>
 				<Descriptions.Item label="Image Digest">
@@ -1254,6 +1376,7 @@ export function ComponentManager() {
 			title: "任务 / 镜像",
 			key: "name",
 			width: 240,
+			sorter: (a, b) => compareTextAsc(a.name, b.name),
 			render: (_, record) => (
 				<Space direction="vertical" size={0}>
 					<Typography.Text strong ellipsis={{ tooltip: record.name }}>
@@ -1322,6 +1445,8 @@ export function ComponentManager() {
 			title: "更新时间",
 			key: "updatedAt",
 			width: 160,
+			sorter: (a, b) => compareDateAsc(a.updatedAt, b.updatedAt),
+			defaultSortOrder: "descend",
 			render: (_, record) => formatDateTime(record.updatedAt),
 		},
 		{
@@ -1559,76 +1684,11 @@ export function ComponentManager() {
 						rowExpandable: (record) => record.releases.length > 0,
 						expandedRowRender: (record) => (
 							<div className="component-library-expanded-panel">
-								<div className="component-library-release-grid component-library-release-grid--header">
-									<div className="component-library-release-grid__cell">
-										全部构建版本
-									</div>
-									<div className="component-library-release-grid__cell">
-										Commit
-									</div>
-									<div className="component-library-release-grid__cell">
-										Tag
-									</div>
-									<div className="component-library-release-grid__cell">
-										镜像ID
-									</div>
-									<div className="component-library-release-grid__cell">
-										操作
-									</div>
-								</div>
-								{record.releases.map((release) => (
-									<div
-										key={release.id}
-										className="component-library-release-grid component-library-release-grid--row"
-									>
-										<div className="component-library-release-grid__cell">
-											<ReleaseExpandedBuildCell
-												release={release}
-												onClick={() => openReleaseView(release)}
-											/>
-										</div>
-										<div className="component-library-release-grid__cell">
-											{release.sourceCommit ? (
-												copyableCode(
-													release.sourceCommit,
-													shortTechnicalValue(release.sourceCommit),
-												)
-											) : (
-												<Typography.Text type="secondary">-</Typography.Text>
-											)}
-										</div>
-										<div className="component-library-release-grid__cell">
-											<ReleaseTagCell release={release} />
-										</div>
-										<div className="component-library-release-grid__cell">
-											{copyableCode(
-												releaseImageUid(release),
-												releaseImageUid(release),
-											)}
-										</div>
-										<div className="component-library-release-grid__cell">
-											{release.id === record.primaryRelease?.id ? (
-												<Tooltip title="与主表「操作」列相同，请在那里查看">
-													<Typography.Text
-														type="secondary"
-														style={{ fontSize: 12 }}
-													>
-														主版本
-													</Typography.Text>
-												</Tooltip>
-											) : (
-												<Button
-													type="link"
-													size="small"
-													icon={<EyeOutlined />}
-													onClick={() => openReleaseView(release)}
-												>
-													版本详情
-												</Button>
-											)}
-										</div>
-									</div>
-								))}
+								<ReleaseExpandedTable
+									releases={record.releases}
+									primaryReleaseId={record.primaryRelease?.id}
+									onViewRelease={openReleaseView}
+								/>
 							</div>
 						),
 					}}

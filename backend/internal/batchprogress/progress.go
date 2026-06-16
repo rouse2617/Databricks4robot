@@ -64,6 +64,28 @@ func Derive(rows []models.PipelineRunAssetNode, overallStatus string) *models.Pi
 		return progress
 	}
 
+	succeeded := make([]models.PipelineRunAssetNode, 0)
+	for _, row := range sorted {
+		if strings.TrimSpace(row.Status) == "Succeeded" {
+			succeeded = append(succeeded, row)
+		}
+	}
+	if len(succeeded) > 0 {
+		row := succeeded[len(succeeded)-1]
+		name := strings.TrimSpace(row.DisplayName)
+		if name == "" {
+			name = row.PipelineNodeID
+		}
+		overall := strings.TrimSpace(overallStatus)
+		if overall == "Succeeded" || overall == "Success" {
+			return &models.PipelineRunNodeProgress{
+				FocusNodeID:   row.PipelineNodeID,
+				FocusNodeName: name,
+				FocusStatus:   "Succeeded",
+			}
+		}
+	}
+
 	switch strings.TrimSpace(overallStatus) {
 	case "Succeeded", "Success":
 		return &models.PipelineRunNodeProgress{Label: "已完成"}

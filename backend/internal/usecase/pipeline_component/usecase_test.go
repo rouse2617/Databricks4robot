@@ -458,3 +458,14 @@ func TestUpdate_PreservesCreatedAt(t *testing.T) {
 		t.Error("Update should preserve CreatedAt")
 	}
 }
+
+func TestNormalizeStoredCommit_StripsZeroPadding(t *testing.T) {
+	got := normalizeStoredCommit("b68162f0000000000000000000000000000000000")
+	if got != "b68162f" {
+		t.Fatalf("expected stripped commit, got %q", got)
+	}
+	full := "a86a258f91fad9c64a0123456789abcdef0123456"
+	if normalizeStoredCommit(full) != full {
+		t.Fatalf("expected full commit preserved, got %q", normalizeStoredCommit(full))
+	}
+}

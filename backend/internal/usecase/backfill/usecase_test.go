@@ -598,3 +598,22 @@ func (r *trackingBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Conte
 func (r *trackingBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
 	return nil, nil
 }
+
+func TestPauseJob_SetsPausedStatus(t *testing.T) {
+	repo := &mockBackfillRepo{
+		jobs: map[string]*models.BackfillJob{
+			"job-1": {ID: "job-1", Status: "running"},
+		},
+	}
+	uc := New(repo, nil)
+	result, err := uc.PauseJob(context.Background(), "job-1", PauseJobOptions{})
+	if err != nil {
+		t.Fatalf("PauseJob: %v", err)
+	}
+	if result.Status != "paused" {
+		t.Fatalf("unexpected status: %q", result.Status)
+	}
+	if repo.jobs["job-1"].Status != "paused" {
+		t.Fatalf("job status not updated: %q", repo.jobs["job-1"].Status)
+	}
+}

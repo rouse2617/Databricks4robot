@@ -1051,8 +1051,12 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		run.Message = ""
 	}
 	if wf.Status.Phase == wfv1.WorkflowSucceeded || wf.Status.Phase == wfv1.WorkflowFailed || wf.Status.Phase == wfv1.WorkflowError {
-		now := time.Now().UTC()
-		run.FinishedAt = &now
+		if finishedAt := argoTimeOrZero(wf.Status.FinishedAt.Time); finishedAt != nil {
+			run.FinishedAt = finishedAt
+		} else if run.FinishedAt == nil || run.FinishedAt.IsZero() {
+			now := time.Now().UTC()
+			run.FinishedAt = &now
+		}
 	}
 	uc.persistRunObservation(ctx, run)
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
@@ -1068,7 +1072,11 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 		return
 	}
 	existing.Status = run.Status
-	existing.FinishedAt = run.FinishedAt
+	if run.FinishedAt != nil && !run.FinishedAt.IsZero() {
+		if existing.FinishedAt == nil || existing.FinishedAt.IsZero() || run.FinishedAt.Before(*existing.FinishedAt) {
+			existing.FinishedAt = run.FinishedAt
+		}
+	}
 	existing.Message = run.Message
 	if uid := strings.TrimSpace(run.ArgoWorkflowUID); uid != "" {
 		existing.ArgoWorkflowUID = uid

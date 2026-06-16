@@ -1206,3 +1206,116 @@ func TestInferRunStatusFromAssetNodes(t *testing.T) {
 		t.Fatal("expected non-terminal when nodes still running")
 	}
 }
+
+func TestGetRun_UsesArgoFinishedAtOnTerminalWorkflow(t *testing.T) {
+	ctx := context.Background()
+	actualFinish := time.Date(2026, 6, 16, 9, 39, 43, 0, time.UTC)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {ID: "run-1", WorkflowName: "wf-1", Status: "Running"},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-1" || namespace != "default" {
+			t.Fatalf("unexpected workflow lookup name=%q namespace=%q", name, namespace)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase:      wfv1.WorkflowSucceeded,
+				FinishedAt: metav1.Time{Time: actualFinish},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	run, err := uc.GetRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if run.FinishedAt == nil || !run.FinishedAt.Equal(actualFinish) {
+		t.Fatalf("expected Argo finished_at %v, got %v", actualFinish, run.FinishedAt)
+	}
+}
+
+func TestRefreshRunForList_DoesNotAdvanceFinishedAtOnStaleMessageReconcile(t *testing.T) {
+	ctx := context.Background()
+	correctFinish := time.Date(2026, 6, 16, 9, 39, 43, 0, time.UTC)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Succeeded",
+				FinishedAt:   &correctFinish,
+				Message:      messageWorkflowUnavailable,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowSucceeded},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	run := runRepo.byID["run-1"]
+	before := *run.FinishedAt
+	uc.RefreshRunForList(ctx, run)
+	if run.FinishedAt == nil {
+		t.Fatal("expected finished_at to remain set")
+	}
+	if run.FinishedAt.After(before) {
+		t.Fatalf("finished_at advanced from %v to %v", before, *run.FinishedAt)
+	}
+	if !run.FinishedAt.Equal(correctFinish) {
+		t.Fatalf("expected finished_at %v, got %v", correctFinish, *run.FinishedAt)
+	}
+}
+
+func TestGetRun_RepairsPollutedFinishedAtFromArgo(t *testing.T) {
+	ctx := context.Background()
+	correctFinish := time.Date(2026, 6, 16, 9, 39, 43, 0, time.UTC)
+	pollutedFinish := correctFinish.Add(16 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Succeeded",
+				FinishedAt:   &pollutedFinish,
+				Message:      messageWorkflowUnavailable,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase:      wfv1.WorkflowSucceeded,
+				FinishedAt: metav1.Time{Time: correctFinish},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	run, err := uc.GetRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if run.FinishedAt == nil || !run.FinishedAt.Equal(correctFinish) {
+		t.Fatalf("expected repaired finished_at %v, got %v", correctFinish, run.FinishedAt)
+	}
+}

@@ -150,6 +150,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 	type item struct {
 		Name       string            `json:"name"`
 		Status     string            `json:"status"`
+		Message    string            `json:"message,omitempty"`
 		NodeCount  int               `json:"nodeCount"`
 		CreatedAt  *string           `json:"createdAt,omitempty"`
 		FinishedAt *string           `json:"finishedAt,omitempty"`
@@ -161,6 +162,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		it := item{
 			Name:      wf.Name,
 			Status:    string(wf.Status.Phase),
+			Message:   strings.TrimSpace(wf.Status.Message),
 			NodeCount: len(wf.Status.Nodes),
 			CreatedAt: &created,
 			Labels:    wf.Labels,
@@ -371,6 +373,26 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 
 // RetryWorkflow handles POST /api/v1/workflows/:name/retry
 func (h *Handler) RetryWorkflow(c *gin.Context) {
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
+		return
+	}
+	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, h.namespaceFor(c))
+	if err != nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if !workflowCanRetry(wf) {
+		httpresp.Conflict(c, "WORKFLOW_NOT_RETRYABLE", workflowRetryBlockedMessage(wf), gin.H{
+			"hint": "use POST /workflows/:name/resubmit to start a new run from the beginning",
+		})
+		return
+	}
 	h.workflowOperation(c, h.wfClient.RetryWorkflow)
 }
 

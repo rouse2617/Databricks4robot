@@ -88,11 +88,18 @@ func (h *Handler) PauseJob(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
 		return
 	}
-	if err := h.uc.PauseJob(c.Request.Context(), id); err != nil {
+	var body struct {
+		StopRunning bool `json:"stopRunning"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	result, err := h.uc.PauseJob(c.Request.Context(), id, uc.PauseJobOptions{
+		StopRunning: body.StopRunning,
+	})
+	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	c.JSON(200, gin.H{"status": "paused"})
+	c.JSON(200, result)
 }
 
 // ResumeJob handles POST /api/v1/backfill/:id/resume.
