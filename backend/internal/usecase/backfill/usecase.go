@@ -839,11 +839,11 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 	}
 
 	if uc.pipelineUC != nil {
-		runningItems, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"running"})
+		ledgerItems, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"running", "pending"})
 		if err != nil {
 			return err
 		}
-		for _, item := range runningItems {
+		for _, item := range ledgerItems {
 			if item.PipelineRunID == nil || strings.TrimSpace(*item.PipelineRunID) == "" {
 				continue
 			}
@@ -857,7 +857,11 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 			}
 			if mapped != item.Status {
 				wf := run.WorkflowName
-				_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, wf, "")
+				errMsg := ""
+				if mapped == "failed" {
+					errMsg = strings.TrimSpace(run.Message)
+				}
+				_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, wf, errMsg)
 			}
 		}
 	}

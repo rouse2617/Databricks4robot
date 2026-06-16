@@ -827,7 +827,14 @@ function ExpiredWorkflowLedgerView({
 						!runEventState.error ? (
 						<Spin size="small" />
 					) : latestEvents.length === 0 && !runEventState.error ? (
-						<Typography.Text type="secondary">暂无运行事件</Typography.Text>
+						<Space direction="vertical" size={8}>
+							<Typography.Text type="secondary">暂无运行事件</Typography.Text>
+							{runEventState.run?.message ? (
+								<Typography.Text type="secondary">
+									{runEventState.run.message}
+								</Typography.Text>
+							) : null}
+						</Space>
 					) : (
 						<Space direction="vertical" size={8} style={{ width: "100%" }}>
 							{latestEvents.map((event) => (
@@ -1366,6 +1373,19 @@ export default function WorkflowDetailPage({
 	}
 
 	if (!loading && loadError?.kind === "not_found") {
+		if (runEventState.loading) {
+			return (
+				<div
+					style={{
+						display: "flex",
+						justifyContent: "center",
+						padding: 80,
+					}}
+				>
+					<Spin size="large" tip="正在加载运行账本…" />
+				</div>
+			);
+		}
 		if (runEventState.run || runEventState.items.length > 0) {
 			return (
 				<ExpiredWorkflowLedgerView
