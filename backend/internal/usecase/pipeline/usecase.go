@@ -1061,6 +1061,90 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 	uc.applyWorkflowToRun(ctx, run, wf)
 }
 
+// RefreshRunForList performs a bounded status refresh for batch list views.
+// It avoids full run enrichment and is safe to call per page item.
+func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRun) {
+	if uc.runRepo == nil || run == nil || strings.TrimSpace(run.ID) == "" {
+		return
+	}
+	if !needsRunListRefresh(run) {
+		return
+	}
+	if isActiveDeploymentStatus(run.Status) {
+		uc.refreshRunStatus(ctx, run)
+	}
+	uc.reconcileTerminalRunFromLedger(ctx, run)
+	if fresh, err := uc.runRepo.FindByID(ctx, run.ID); err == nil && fresh != nil {
+		*run = *fresh
+	}
+}
+
+func needsRunListRefresh(run *models.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	if isActiveDeploymentStatus(run.Status) {
+		return true
+	}
+	return needsLedgerReconcile(run)
+}
+
+func needsLedgerReconcile(run *models.PipelineRun) bool {
+	if run == nil || run.FinishedAt == nil || run.FinishedAt.IsZero() {
+		return false
+	}
+	return isActiveDeploymentStatus(run.Status)
+}
+
+// reconcileTerminalRunFromLedger infers a terminal run status from durable
+// asset-node rows when Argo has already TTL'd the workflow CR.
+func (uc *Usecase) reconcileTerminalRunFromLedger(ctx context.Context, run *models.PipelineRun) bool {
+	if uc.runRepo == nil || run == nil || !needsLedgerReconcile(run) {
+		return false
+	}
+	if uc.assetNodeRepo == nil {
+		return false
+	}
+	result, err := uc.assetNodeRepo.ListByRunID(ctx, run.ID, models.PipelineRunAssetNodeListOptions{Limit: 500})
+	if err != nil || result == nil || len(result.Items) == 0 {
+		return false
+	}
+	status, ok := inferRunStatusFromAssetNodes(result.Items)
+	if !ok {
+		return false
+	}
+	run.Status = status
+	logPipelineSideEffect("reconcile pipeline run from ledger", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
+	return true
+}
+
+func inferRunStatusFromAssetNodes(nodes []models.PipelineRunAssetNode) (string, bool) {
+	if len(nodes) == 0 {
+		return "", false
+	}
+	hasFailed := false
+	hasActive := false
+	for _, node := range nodes {
+		switch strings.ToLower(strings.TrimSpace(node.Status)) {
+		case "failed", "error":
+			hasFailed = true
+		case "running", "pending":
+			hasActive = true
+		case "succeeded", "success", "skipped", "omitted", "completed":
+			// terminal success path
+		default:
+			hasActive = true
+		}
+	}
+	if hasActive {
+		return "", false
+	}
+	if hasFailed {
+		return string(wfv1.WorkflowFailed), true
+	}
+	return string(wfv1.WorkflowSucceeded), true
+}
+
 func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
 	if uc.wfClient == nil || run == nil || !isActiveDeploymentStatus(run.Status) {
 		return
@@ -1076,6 +1160,9 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			if shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
+				return
+			}
+			if uc.reconcileTerminalRunFromLedger(ctx, run) {
 				return
 			}
 			run.Status = deploymentStatusExpired
@@ -1278,7 +1365,7 @@ func (uc *Usecase) GetRunWatcherStatus(ctx context.Context) (*models.PipelineRun
 // StartRunEventWatcher starts a polling watcher for active pipeline runs.
 func (uc *Usecase) StartRunEventWatcher(ctx context.Context, interval time.Duration, limit int) {
 	if interval <= 0 {
-		interval = 10 * time.Second
+		interval = 3 * time.Second
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -1885,6 +1972,7 @@ func (uc *Usecase) GetRunByWorkflowName(ctx context.Context, workflowName string
 		return nil, nil
 	}
 	uc.refreshPipelineRunStatus(ctx, run)
+	uc.reconcileTerminalRunFromLedger(ctx, run)
 	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
 	uc.enrichRun(ctx, run)
 	return run, nil
@@ -1907,6 +1995,7 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 		return nil, nil
 	}
 	uc.refreshPipelineRunStatus(ctx, run)
+	uc.reconcileTerminalRunFromLedger(ctx, run)
 	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
 	uc.enrichRun(ctx, run)
 	return run, nil

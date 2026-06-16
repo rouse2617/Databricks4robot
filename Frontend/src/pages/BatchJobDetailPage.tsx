@@ -128,9 +128,11 @@ export default function BatchJobDetailPage() {
 	);
 	const [rerunPreviewLoading, setRerunPreviewLoading] = useState(false);
 
-	const refresh = useCallback(async () => {
+	const refresh = useCallback(async (opts?: { silent?: boolean }) => {
 		if (!id) return;
-		setLoading(true);
+		if (!opts?.silent) {
+			setLoading(true);
+		}
 		try {
 			const jobData = await getBatchJob(id);
 			const [templates, versions] = await Promise.all([
@@ -149,15 +151,29 @@ export default function BatchJobDetailPage() {
 			const template = templates.find((item) => item.id === jobData.templateId);
 			setTemplateName(template?.name ?? jobData.templateId);
 		} catch (err) {
-			message.error(`加载批次详情失败：${String(err)}`);
+			if (!opts?.silent) {
+				message.error(`加载批次详情失败：${String(err)}`);
+			}
 		} finally {
-			setLoading(false);
+			if (!opts?.silent) {
+				setLoading(false);
+			}
 		}
 	}, [id, message]);
 
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
+
+	useEffect(() => {
+		if (!job || !["running", "paused"].includes(job.status)) {
+			return;
+		}
+		const timer = window.setInterval(() => {
+			void refresh({ silent: true });
+		}, 5000);
+		return () => window.clearInterval(timer);
+	}, [job?.id, job?.status, refresh]);
 
 	const backToBatchList = useCallback(() => {
 		goBackFromBatchJobDetail(navigate, location.state);

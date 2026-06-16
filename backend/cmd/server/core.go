@@ -118,7 +118,7 @@ func setupCore(inf *infra) *coreHandlers {
 		}
 		puc.SetPricing(priceCfg)
 	}
-	puc.StartRunEventWatcher(context.Background(), 10*time.Second, 100)
+	puc.StartRunEventWatcher(context.Background(), 3*time.Second, 100)
 
 	backfillRepo := postgres.NewBackfillRepo(pg)
 	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
