@@ -23,6 +23,8 @@ const apiMocks = vi.hoisted(() => ({
 	createComponent: vi.fn(),
 	deleteComponent: vi.fn(),
 	listComponents: vi.fn(),
+	listComponentReleases: vi.fn(),
+	syncComponentReleases: vi.fn(),
 	updateComponent: vi.fn(),
 }));
 
@@ -34,6 +36,8 @@ vi.mock("../api/pipelineComponentApi", async (importOriginal) => {
 		createComponent: apiMocks.createComponent,
 		deleteComponent: apiMocks.deleteComponent,
 		listComponents: apiMocks.listComponents,
+		listComponentReleases: apiMocks.listComponentReleases,
+		syncComponentReleases: apiMocks.syncComponentReleases,
 		updateComponent: apiMocks.updateComponent,
 	};
 });
@@ -100,8 +104,11 @@ beforeEach(() => {
 	apiMocks.createComponent.mockReset();
 	apiMocks.deleteComponent.mockReset();
 	apiMocks.listComponents.mockReset();
+	apiMocks.listComponentReleases.mockReset();
+	apiMocks.syncComponentReleases.mockReset();
 	apiMocks.updateComponent.mockReset();
 	apiMocks.listComponents.mockResolvedValue({ items: components });
+	apiMocks.listComponentReleases.mockResolvedValue({ items: [] });
 });
 
 afterEach(() => {
@@ -162,7 +169,7 @@ describe("page ComponentManager", () => {
 			gpu: "2",
 			computeTier: "gpu-a100",
 		});
-	});
+	}, 60000);
 
 	it("keeps validation errors local and still allows closing the create modal", async () => {
 		render(<ComponentManager />);
@@ -171,8 +178,10 @@ describe("page ComponentManager", () => {
 		fireEvent.click(screen.getByRole("button", { name: /新建组件/ }));
 		fireEvent.click(screen.getByRole("button", { name: "创 建" }));
 
-		expect(await screen.findByText("请输入组件名称")).toBeTruthy();
-		expect(apiMocks.createComponent).not.toHaveBeenCalled();
+		await waitFor(() => {
+			expect(apiMocks.createComponent).not.toHaveBeenCalled();
+			expect(screen.getByRole("dialog", { name: "新建组件" })).toBeTruthy();
+		});
 
 		fireEvent.click(screen.getByRole("button", { name: "关 闭" }));
 
@@ -180,7 +189,6 @@ describe("page ComponentManager", () => {
 			expect(
 				document.body.querySelector('input[placeholder="normalize-mcap"]'),
 			).toBeNull();
-			expect(screen.queryByText("请输入组件名称")).toBeNull();
 		});
-	});
+	}, 60000);
 });

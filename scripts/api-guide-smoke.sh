@@ -258,6 +258,8 @@ expect_code_get "asset type schema unknown -> 404" "/api/v1/asset-types/unknown/
 echo ""
 echo "--- § pipeline component registry ---"
 get "pipeline-components list" "/api/v1/pipeline-components"
+get "pipeline-component-releases list selectable" "/api/v1/pipeline-component-releases?selectable=true"
+expect_code_get "pipeline-component-releases invalid selectable -> 400" "/api/v1/pipeline-component-releases?selectable=maybe" "400" >/dev/null
 expect_code_post "pipeline-components missing image -> 400" "/api/v1/pipeline-components" '{"name":"smoke-missing-image","type":"container"}' "400" >/dev/null
 if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	component_name="smoke-component-$(date +%s)"
@@ -273,8 +275,30 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 		RESP_BODY="$component_created"
 		bad "pipeline-components create id extraction"
 	fi
+	release_label="main-smoke$(date +%s)"
+	release_commit="abcdef$(date +%s)"
+	release_body='{"source":{"provider":"api-guide-smoke","repo":"CyberOrigin2077/automated-processing-gcloud","ref":"refs/heads/main","refType":"branch","commit":"'"${release_commit}"'","buildId":"smoke-build","trigger":"smoke-trigger"},"items":[{"componentId":"smoke-task","taskName":"smoke-task","taskPath":"tasks/smoke_task","releaseLabel":"'"${release_label}"'","runtimeImage":"registry.example.com/smoke-task@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtimeSnapshot":{"command":["python","src/main.py"],"inputPorts":[{"name":"input","type":"asset"}],"outputPorts":[{"name":"output","type":"asset"}],"resources":{"cpu":"1","memory":"1Gi"}}}]}'
+	release_created=$(post_json "pipeline-component-releases sync" "/api/v1/pipeline-component-releases/sync" "$release_body")
+	release_id=$(echo "$release_created" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("items",[{}])[0].get("id",""))' 2>/dev/null || true)
+	if [[ -n "$release_id" ]]; then
+		get "pipeline-component-releases get" "/api/v1/pipeline-component-releases/${release_id}"
+		get "pipeline-component-releases search source commit" "/api/v1/pipeline-component-releases?q=${release_commit}"
+	else
+		RESP_CODE="json"
+		RESP_BODY="$release_created"
+		bad "pipeline-component-releases sync id extraction"
+	fi
+	release_unpinned='{"items":[{"componentId":"smoke-unpinned","releaseLabel":"pr-1-abc123","runtimeImage":"registry.example.com/smoke-unpinned:abc123","runtimeSnapshot":{"command":["python","main.py"],"resources":{"cpu":"1"}}}]}'
+	unpinned_resp=$(post_json "pipeline-component-releases missing digest -> unselectable" "/api/v1/pipeline-component-releases/sync" "$release_unpinned")
+	if echo "$unpinned_resp" | python3 -c 'import sys,json; d=json.load(sys.stdin); item=d.get("items",[{}])[0]; assert item.get("selectable") is False and item.get("validationStatus") == "failed"' 2>/dev/null; then
+		ok "pipeline-component-releases missing digest validation"
+	else
+		RESP_CODE="json"
+		RESP_BODY="$unpinned_resp"
+		bad "pipeline-component-releases missing digest validation"
+	fi
 else
-	echo "  skip pipeline-components write smoke — set RUN_WRITES=1 to create/update/delete a disposable component"
+	echo "  skip pipeline component write smoke — set RUN_WRITES=1 to create/update/delete disposable component records"
 fi
 
 echo ""

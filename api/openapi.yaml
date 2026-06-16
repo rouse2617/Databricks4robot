@@ -58,6 +58,10 @@ components:
       type: apiKey
       in: header
       name: X-Databrew-Token
+    DatabrewCIIngestToken:
+      type: apiKey
+      in: header
+      name: X-Databrew-CI-Token
     AdminToken:
       type: apiKey
       in: header
@@ -2219,6 +2223,170 @@ components:
           type: object
           additionalProperties: { type: string }
       additionalProperties: true
+    ComponentReleaseRuntimeSnapshot:
+      type: object
+      required: [image, inputPorts, outputPorts]
+      properties:
+        image:
+          type: string
+          description: Immutable runtime image, preferably pinned by digest.
+          example: us-central1-docker.pkg.dev/my-project/video-proc-images/hand-detect-yolov26m@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        command:
+          type: array
+          items: { type: string }
+        args:
+          type: array
+          items: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        inputPorts:
+          type: array
+          items: { $ref: '#/components/schemas/PortDef' }
+        outputPorts:
+          type: array
+          items: { $ref: '#/components/schemas/PortDef' }
+        resources:
+          type: object
+          additionalProperties: true
+    PipelineComponentRelease:
+      type: object
+      required:
+        - id
+        - componentId
+        - taskName
+        - releaseLabel
+        - channel
+        - runtimeImage
+        - status
+        - selectable
+        - validationStatus
+        - runtimeSnapshot
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string }
+        imageUid:
+          type: string
+          description: Stable 8-character DataBrew image ID generated from image digest, falling back to runtime image.
+          example: 2f4a9c01
+        componentId: { type: string }
+        taskName: { type: string }
+        taskPath: { type: string }
+        displayName: { type: string }
+        owner: { type: string }
+        releaseLabel:
+          type: string
+          description: User-facing version label such as pr-128-abc123, main-abc123, v0.4.1-rc.1, or v0.4.0.
+        channel:
+          type: string
+          enum: [dev, preview, candidate, rc, prod]
+        sourceRepo: { type: string }
+        sourceRef: { type: string }
+        sourceRefType:
+          type: string
+          enum: [tag, commit, branch, pr]
+        sourceCommit: { type: string }
+        buildId: { type: string }
+        imageRepo: { type: string }
+        imageTag: { type: string }
+        imageDigest: { type: string }
+        runtimeImage: { type: string }
+        status:
+          type: string
+          enum: [ready, failed, pending, deprecated]
+        selectable: { type: boolean }
+        validationStatus:
+          type: string
+          enum: [passed, failed]
+        validationErrors:
+          type: array
+          items: { type: string }
+        runtimeSnapshot:
+          $ref: '#/components/schemas/ComponentReleaseRuntimeSnapshot'
+        technicalMetadata:
+          type: object
+          additionalProperties: true
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastSyncedAt: { type: string, format: date-time, nullable: true }
+    PipelineComponentReleaseInput:
+      type: object
+      description: CI/platform generated component release payload. DataBrew derives missing identity/status fields where possible and validates selectability.
+      properties:
+        id: { type: string }
+        imageUid:
+          type: string
+          description: Optional CI-provided DataBrew image ID. DataBrew derives it from image digest when omitted.
+        componentId: { type: string }
+        taskName: { type: string }
+        taskPath: { type: string }
+        displayName: { type: string }
+        owner: { type: string }
+        releaseLabel: { type: string }
+        channel:
+          type: string
+          enum: [dev, preview, candidate, rc, prod]
+        sourceRepo: { type: string }
+        sourceRef: { type: string }
+        sourceRefType:
+          type: string
+          enum: [tag, commit, branch, pr]
+        sourceCommit: { type: string }
+        buildId: { type: string }
+        imageRepo: { type: string }
+        imageTag: { type: string }
+        imageDigest: { type: string }
+        runtimeImage: { type: string }
+        status:
+          type: string
+          enum: [ready, failed, pending, deprecated]
+        runtimeSnapshot:
+          $ref: '#/components/schemas/ComponentReleaseRuntimeSnapshot'
+        technicalMetadata:
+          type: object
+          additionalProperties: true
+    ComponentReleaseIngestSource:
+      type: object
+      description: Shared CI/build source context applied as defaults to every release item in the batch.
+      properties:
+        provider:
+          type: string
+          example: cloud-build
+        repo:
+          type: string
+          example: CyberOrigin2077/automated-processing-gcloud
+        ref:
+          type: string
+          example: refs/heads/main
+        refType:
+          type: string
+          enum: [tag, commit, branch, pr]
+          example: branch
+        commit:
+          type: string
+          example: abc123
+        buildId:
+          type: string
+          example: 1e86eab9-9250-41c5-b905-8ff3c6de23af
+        trigger:
+          type: string
+          example: hand-track-stereo-build-trigger
+    ComponentReleaseSyncRequest:
+      type: object
+      required: [items]
+      properties:
+        source:
+          $ref: '#/components/schemas/ComponentReleaseIngestSource'
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineComponentReleaseInput' }
+    ComponentReleaseListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineComponentRelease' }
     PortDef:
       type: object
       properties:
@@ -6041,6 +6209,86 @@ paths:
               schema: { $ref: '#/components/schemas/PipelineComponent' }
         '404':
           description: Component not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/pipeline-component-releases:
+    get:
+      tags: [Pipeline]
+      summary: List generated component releases
+      description: Lists platform-generated component releases. Normal UI should use selectable=true to hide unsafe or incomplete builds.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive search over component, task, display name, release label, source commit/ref/repo, build id, image tag/digest, and runtime image.
+        - in: query
+          name: componentId
+          schema: { type: string }
+        - in: query
+          name: taskName
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: channel
+          schema: { type: string }
+        - in: query
+          name: selectable
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Component release list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComponentReleaseListResponse' }
+  /api/v1/pipeline-component-releases/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get a generated component release
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Component release details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineComponentRelease' }
+        '404':
+          description: Component release not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-component-releases/sync:
+    post:
+      tags: [Pipeline]
+      summary: Sync generated component releases
+      description: Accepts release records generated by CI/platform tooling and stores the validated selectable state. CI should prefer X-Databrew-CI-Token; administrators may still use normal DataBrew auth.
+      security:
+        - DatabrewCIIngestToken: []
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ComponentReleaseSyncRequest' }
+      responses:
+        '200':
+          description: Synced component releases
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComponentReleaseListResponse' }
+        '400':
+          description: Invalid request body or release identity
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

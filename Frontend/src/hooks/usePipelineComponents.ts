@@ -6,8 +6,10 @@ import {
 	useState,
 } from "react";
 import {
+	listComponentReleases,
 	listComponents,
 	type PipelineComponentAPI,
+	type PipelineComponentReleaseAPI,
 } from "../api/pipelineComponentApi";
 import type { RegisteredComponent } from "../components/pipeline/types";
 
@@ -48,6 +50,7 @@ export type UsePipelineComponentsResult = {
 export function usePipelineComponents(
 	mapApi: (api: PipelineComponentAPI) => RegisteredComponent,
 	dedupe: (comps: RegisteredComponent[]) => RegisteredComponent[],
+	mapRelease?: (api: PipelineComponentReleaseAPI) => RegisteredComponent,
 ): UsePipelineComponentsResult {
 	const [components, setComponents] = useState<RegisteredComponent[]>(
 		loadComponentsFromStorage,
@@ -58,9 +61,30 @@ export function usePipelineComponents(
 	const fetchComponents = useCallback(() => {
 		setLoading(true);
 		setError(null);
-		listComponents()
-			.then((res) => {
-				const mapped = dedupe((res.items ?? []).map(mapApi));
+		Promise.all([
+			listComponents(),
+			mapRelease
+				? listComponentReleases({ selectable: true }).catch(() => ({
+						items: [] as PipelineComponentReleaseAPI[],
+					}))
+				: Promise.resolve({ items: [] as PipelineComponentReleaseAPI[] }),
+		])
+			.then(([componentRes, releaseRes]) => {
+				const releaseComponents = mapRelease
+					? (releaseRes.items ?? []).map(mapRelease)
+					: [];
+				const releaseNames = new Set(
+					releaseComponents.map((component) =>
+						component.name.trim().toLowerCase(),
+					),
+				);
+				const legacyComponents = (componentRes.items ?? [])
+					.map(mapApi)
+					.filter(
+						(component) =>
+							!releaseNames.has(component.name.trim().toLowerCase()),
+					);
+				const mapped = dedupe([...releaseComponents, ...legacyComponents]);
 				if (mapped.length > 0) {
 					setComponents(mapped);
 					saveComponentsToStorage(mapped);
@@ -72,7 +96,7 @@ export function usePipelineComponents(
 			.finally(() => {
 				setLoading(false);
 			});
-	}, [dedupe, mapApi]);
+	}, [dedupe, mapApi, mapRelease]);
 
 	useEffect(() => {
 		fetchComponents();

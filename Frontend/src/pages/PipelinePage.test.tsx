@@ -108,9 +108,12 @@ vi.mock("../api/workflowApi", () => ({
 
 // ── Mock pipelineComponentApi ─────────────────────────────────────
 const mockListComponents = vi.fn().mockResolvedValue({ items: [] });
+const mockListComponentReleases = vi.fn().mockResolvedValue({ items: [] });
 
 vi.mock("../api/pipelineComponentApi", () => ({
 	listComponents: (...args: unknown[]) => mockListComponents(...args),
+	listComponentReleases: (...args: unknown[]) =>
+		mockListComponentReleases(...args),
 	createComponent: vi.fn(),
 	updateComponent: vi.fn(),
 	deleteComponent: vi.fn(),
@@ -210,7 +213,6 @@ async function importOneNodePipeline(customName = "test-pipeline") {
 		within(modal as HTMLElement).getByRole("button", { name: /导.*入/ }),
 	);
 	await waitFor(() => {
-		expect(screen.getByDisplayValue(customName)).toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: /play-circle/i }),
 		).not.toBeDisabled();
@@ -301,6 +303,7 @@ function resetPipelineMocks() {
 		},
 	]);
 	mockListComponents.mockResolvedValue({ items: [] });
+	mockListComponentReleases.mockResolvedValue({ items: [] });
 }
 
 describe("PipelinePage", () => {
@@ -337,9 +340,10 @@ describe("PipelinePage", () => {
 		expect(screen.getByText("导入")).toBeInTheDocument();
 	});
 
-	it("shows the pipeline name input with default value", () => {
+	it("hides the pipeline name input on the design canvas", () => {
 		renderPage();
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
+		expect(screen.queryByLabelText("流水线名称")).not.toBeInTheDocument();
+		expect(screen.queryByDisplayValue("my-pipeline")).not.toBeInTheDocument();
 	});
 
 	// ── Tab switching ───────────────────────────────────────────────
@@ -408,11 +412,18 @@ describe("PipelinePage", () => {
 
 	// ── Import ──────────────────────────────────────────────────────
 	it("loads pipeline from JSON import", async () => {
+		mockSavePipeline.mockResolvedValueOnce({
+			id: "tmpl-001",
+			name: "imported-pipeline",
+		});
 		renderPage();
 		await importOneNodePipeline("imported-pipeline");
-		await waitFor(() => {
-			expect(screen.getByDisplayValue("imported-pipeline")).toBeInTheDocument();
-		});
+		fireEvent.click(screen.getByText("保存"));
+		await waitFor(() => expect(mockSavePipeline).toHaveBeenCalledTimes(1));
+		expect(mockSavePipeline).toHaveBeenCalledWith(
+			"imported-pipeline",
+			expect.objectContaining({ name: "imported-pipeline" }),
+		);
 		expect(document.querySelector(".json-output")).not.toBeInTheDocument();
 	});
 
@@ -438,7 +449,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(
 			within(modal as HTMLElement).getByRole("button", { name: /取.*消/ }),
 		);
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
+		expect(screen.queryByDisplayValue("my-pipeline")).not.toBeInTheDocument();
 	});
 
 	// ── Save ────────────────────────────────────────────────────────
@@ -634,7 +645,14 @@ describe("PipelinePage", () => {
 		});
 		expect(mockDeployTemplate).not.toHaveBeenCalled();
 		await waitFor(() =>
-			expect(mockNavigate).toHaveBeenCalledWith("/pipeline/batch/batch-001"),
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/pipeline/batch/batch-001",
+				expect.objectContaining({
+					state: expect.objectContaining({
+						returnTo: "/pipeline?tab=executions&executionView=batch",
+					}),
+				}),
+			),
 		);
 	});
 
@@ -671,7 +689,14 @@ describe("PipelinePage", () => {
 			);
 		});
 		await waitFor(() =>
-			expect(mockNavigate).toHaveBeenCalledWith("/pipeline/batch/batch-001"),
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/pipeline/batch/batch-001",
+				expect.objectContaining({
+					state: expect.objectContaining({
+						returnTo: "/pipeline?tab=executions&executionView=batch",
+					}),
+				}),
+			),
 		);
 	});
 
@@ -787,6 +812,52 @@ describe("PipelinePage", () => {
 		await waitFor(() => expect(mockListComponents).toHaveBeenCalledTimes(1));
 	});
 
+	it("loads selectable releases and filters the palette by commit or tag", async () => {
+		mockListComponentReleases.mockResolvedValueOnce({
+			items: [
+				{
+					id: "rel-1",
+					imageUid: "9b8014c0",
+					componentId: "cmp-release-task",
+					taskName: "release-task",
+					displayName: "Release Task",
+					releaseLabel: "abc123",
+					channel: "dev",
+					sourceRef: "v1.2.3",
+					sourceRefType: "tag",
+					sourceCommit: "abc123",
+					runtimeImage: "registry/release-task@sha256:abc",
+					status: "ready",
+					selectable: true,
+					validationStatus: "passed",
+					runtimeSnapshot: {
+						image: "registry/release-task@sha256:abc",
+						command: ["python", "main.py"],
+						args: [],
+						inputPorts: [{ name: "input", type: "asset" }],
+						outputPorts: [{ name: "output", type: "asset" }],
+						resources: { cpu: "100m", memory: "128Mi" },
+					},
+					createdAt: "2026-06-02T00:00:00Z",
+					updatedAt: "2026-06-02T00:00:00Z",
+				},
+			],
+		});
+
+		renderPage();
+		await waitFor(() => expect(screen.getByText("Release Task")).toBeTruthy());
+
+		fireEvent.change(screen.getByPlaceholderText("搜索名称、commit、tag"), {
+			target: { value: "abc123" },
+		});
+		expect(screen.getByText("Release Task")).toBeTruthy();
+
+		fireEvent.change(screen.getByPlaceholderText("搜索名称、commit、tag"), {
+			target: { value: "v1.2.3" },
+		});
+		expect(screen.getByText("Release Task")).toBeTruthy();
+	});
+
 	it("falls back to localStorage when API fails", async () => {
 		mockListComponents.mockRejectedValueOnce(new Error("API down"));
 		renderPage();
@@ -804,22 +875,34 @@ describe("PipelinePage", () => {
 				edges: [],
 			}),
 		);
+		mockSavePipeline.mockResolvedValueOnce({
+			id: "tmpl-001",
+			name: "from-storage",
+		});
 		renderPage();
+		fireEvent.click(screen.getByText("保存"));
 		await waitFor(
 			() =>
-				expect(screen.getByDisplayValue("from-storage")).toBeInTheDocument(),
+				expect(mockSavePipeline).toHaveBeenCalledWith(
+					"from-storage",
+					expect.objectContaining({
+						name: "from-storage",
+						nodes: [],
+						edges: [],
+					}),
+				),
 			{ timeout: 3000 },
 		);
 	});
 
 	it("handles empty sessionStorage gracefully", () => {
 		renderPage();
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
+		expect(screen.queryByDisplayValue("my-pipeline")).not.toBeInTheDocument();
 	});
 
 	it("handles invalid JSON in sessionStorage gracefully", () => {
 		sessionStorage.setItem("pipeline-edit", "{bad json");
 		renderPage();
-		expect(screen.getByDisplayValue("my-pipeline")).toBeInTheDocument();
+		expect(screen.queryByDisplayValue("my-pipeline")).not.toBeInTheDocument();
 	});
 });

@@ -9,6 +9,8 @@ const sampleComponent: RegisteredComponent = {
 	id: "comp-1",
 	name: "Load Data",
 	image: "LD",
+	tag: "v1.2.3",
+	sourceCommit: "abc123",
 	command: [],
 	args: [],
 	cpu: "100m",
@@ -44,5 +46,34 @@ describe("ComponentPalette", () => {
 		);
 		fireEvent.click(screen.getByRole("button", { name: "添加组件 Load Data" }));
 		expect(onAdd).toHaveBeenCalledWith(sampleComponent);
+	});
+
+	it("filters by name, commit, or tag", () => {
+		const otherComponent: RegisteredComponent = {
+			...sampleComponent,
+			id: "comp-2",
+			name: "Render Report",
+			image: "report:latest",
+			tag: "latest",
+			sourceCommit: "fff999",
+		};
+		render(
+			<ComponentPalette
+				components={[sampleComponent, otherComponent]}
+				onDragStart={vi.fn()}
+			/>,
+		);
+
+		fireEvent.change(screen.getByPlaceholderText("搜索名称、commit、tag"), {
+			target: { value: "abc123" },
+		});
+		expect(screen.getByText("Load Data")).toBeTruthy();
+		expect(screen.queryByText("Render Report")).toBeNull();
+
+		fireEvent.change(screen.getByPlaceholderText("搜索名称、commit、tag"), {
+			target: { value: "latest" },
+		});
+		expect(screen.queryByText("Load Data")).toBeNull();
+		expect(screen.getByText("Render Report")).toBeTruthy();
 	});
 });

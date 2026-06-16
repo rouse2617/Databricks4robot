@@ -1,4 +1,5 @@
-import { Alert, Button, Spin } from "antd";
+import { Alert, Button, Input, Spin } from "antd";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { PipelineEmptyState } from "./PipelineEmptyState";
 import type { RegisteredComponent } from "./types";
@@ -22,7 +23,29 @@ export function ComponentPalette({
 	onRetry,
 	disabled = false,
 }: Props) {
+	const [query, setQuery] = useState("");
 	const interactionDisabled = loading || disabled;
+	const filteredComponents = useMemo(() => {
+		const keyword = query.trim().toLowerCase();
+		if (!keyword) return components;
+		return components.filter((component) =>
+			[
+				component.name,
+				component.image,
+				component.tag,
+				component.releaseLabel,
+				component.sourceCommit,
+				component.imageUid,
+				component.id,
+			]
+				.filter(Boolean)
+				.join(" ")
+				.toLowerCase()
+				.includes(keyword),
+		);
+	}, [components, query]);
+	const hasQuery = query.trim().length > 0;
+
 	return (
 		<aside
 			className="palette"
@@ -31,8 +54,22 @@ export function ComponentPalette({
 		>
 			<div className="palette-header">
 				<h3>组件</h3>
-				<span className="palette-count">{components.length}</span>
+				<span className="palette-count">
+					{hasQuery
+						? `${filteredComponents.length}/${components.length}`
+						: components.length}
+				</span>
 			</div>
+			<Input.Search
+				id="pipeline-component-palette-search"
+				name="componentSearch"
+				allowClear
+				size="small"
+				value={query}
+				onChange={(event) => setQuery(event.target.value)}
+				placeholder="搜索名称、commit、tag"
+				className="palette-search"
+			/>
 			{loading ? (
 				<div className="pipeline-palette-loading" aria-busy="true">
 					<Spin size="small" />
@@ -55,7 +92,7 @@ export function ComponentPalette({
 					style={{ marginBottom: 8 }}
 				/>
 			) : null}
-			{components.map((c) => (
+			{filteredComponents.map((c) => (
 				<button
 					key={c.id}
 					type="button"
@@ -86,6 +123,13 @@ export function ComponentPalette({
 							请先在 <Link to="/components">步骤组件</Link> 中创建。
 						</>
 					}
+				/>
+			) : null}
+			{!loading && components.length > 0 && filteredComponents.length === 0 ? (
+				<PipelineEmptyState
+					variant="palette"
+					title="没有匹配的组件"
+					description="可以按名称、commit 或 tag 搜索。"
 				/>
 			) : null}
 		</aside>

@@ -32,9 +32,10 @@ type Config struct {
 	TopicAssetEvents   string
 
 	// Auth (Phase 0 static token; Phase 0.5 → email + JWT)
-	DatabrewToken string
-	JWTSecret     string // HMAC-SHA256 secret for JWT signing
-	AllowedDomain string // email domain allowlisted (e.g. "cyberorigin.ai")
+	DatabrewToken               string
+	ComponentReleaseIngestToken string // CI-only token for component release ingest
+	JWTSecret                   string // HMAC-SHA256 secret for JWT signing
+	AllowedDomain               string // email domain allowlisted (e.g. "cyberorigin.ai")
 
 	// Logging
 	LogLevel  string // debug, info, warn, error
@@ -166,9 +167,10 @@ func Load() *Config {
 		TopicMcapFinalized: getenv("TOPIC_MCAP_FINALIZED", "gcs.mcap.finalized.v1"),
 		TopicAssetEvents:   getenv("TOPIC_ASSET_EVENTS", "cyber-databrew-asset-events"),
 
-		DatabrewToken: getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
-		JWTSecret:     getenv("JWT_SECRET", "dev-jwt-secret"),
-		AllowedDomain: getenv("ALLOWED_DOMAIN", "cyberorigin.ai"),
+		DatabrewToken:               getenv("DATABREW_TOKEN", getenv("GRACE_TOKEN", "dev-token")),
+		ComponentReleaseIngestToken: getenv("COMPONENT_RELEASE_INGEST_TOKEN", getenv("DATABREW_CI_INGEST_TOKEN", "")),
+		JWTSecret:                   getenv("JWT_SECRET", "dev-jwt-secret"),
+		AllowedDomain:               getenv("ALLOWED_DOMAIN", "cyberorigin.ai"),
 
 		LogLevel:  getenv("LOG_LEVEL", "info"),
 		LogFormat: getenv("LOG_FORMAT", "text"),

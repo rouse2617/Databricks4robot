@@ -853,6 +853,28 @@ PG 里的 Platform Catalog 只保留 `catalog_objects + catalog_object_versions`
 
 ## 6. Pipeline Run Ledger
 
+### `pipeline_component_releases`
+
+用途：记录由 CI/平台生成的算法 task 构建版本，供 DataBrew UI 选择稳定的组件版本，而不是让用户手填镜像 tag、digest、commit 等底层字段。
+
+关键字段：
+
+- `id`：release 记录 ID。
+- `component_id` / `task_name` / `task_path`：组件和算法 task 身份。
+- `release_label` / `channel`：用户可见版本，例如 `pr-128-abc123`、`main-abc123`、`v0.4.0`。
+- `source_repo` / `source_ref` / `source_commit` / `build_id`：技术来源信息。
+- `image_repo` / `image_tag` / `image_digest` / `runtime_image`：镜像定位信息，`runtime_image` 应优先使用 digest 固化。
+- `status` / `selectable` / `validation_status` / `validation_errors`：DataBrew 可选状态和基础校验结果。
+- `runtime_snapshot`：运行时快照，包括 image、command、args、ports、resources。
+- `technical_metadata`：保留 CI/provider 生成的扩展字段。
+- `last_synced_at`：最近一次同步时间。
+
+约束与索引：
+
+- `(component_id, release_label)` 唯一，避免同一 task 版本重复入库。
+- `task_name`、`status/selectable`、`source_commit` 建索引，支持选择器和排查。
+- Phase 1 允许缺少高级 schema，但缺少 digest、entrypoint 或 resources 的 release 会标记为不可选。
+
 ### `pipeline_run_watcher_state`
 
 用途：记录 DataBrew pipeline run watcher 的持久健康状态，判断 run
