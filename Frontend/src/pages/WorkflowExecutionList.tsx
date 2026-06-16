@@ -22,8 +22,8 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-	getBatchItemAttempts,
 	type BackfillItemAttemptsResult,
+	getBatchItemAttempts,
 } from "../api/batchJobApi";
 import {
 	listPipelineRuns,
@@ -71,8 +71,6 @@ dayjs.extend(relativeTime);
 interface WorkflowExecutionListProps {
 	active?: boolean;
 	batchJobId?: string;
-	/** Bumps embedded batch subtask lists after parent job metadata loads. */
-	_batchListKey?: string | number;
 	embedded?: boolean;
 	nodeFilter?: {
 		pipelineNodeId: string;
@@ -344,7 +342,6 @@ const getErrorTitle = (kind: WorkflowErrorKind): string =>
 export function WorkflowExecutionList({
 	active = true,
 	batchJobId,
-	_batchListKey,
 	embedded = false,
 	nodeFilter,
 	onClearNodeFilter,
@@ -352,6 +349,8 @@ export function WorkflowExecutionList({
 	title,
 }: WorkflowExecutionListProps) {
 	const { message: messageApi } = App.useApp();
+	const messageApiRef = useRef(messageApi);
+	messageApiRef.current = messageApi;
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [items, setItems] = useState<WorkflowSummary[]>([]);
 	const [runIdsByWorkflowName, setRunIdsByWorkflowName] = useState<
@@ -611,10 +610,7 @@ export function WorkflowExecutionList({
 					Object.fromEntries(
 						pipelineRuns
 							.filter((run) => run.workflowName)
-							.map(
-								(run) =>
-									[run.workflowName, run.nodeProgress] as const,
-							),
+							.map((run) => [run.workflowName, run.nodeProgress] as const),
 					),
 				);
 				const summaries = pipelineRuns.map((run) =>
@@ -738,14 +734,14 @@ export function WorkflowExecutionList({
 		if (active) {
 			refresh();
 		}
-	}, [active, refresh, _batchListKey]);
+	}, [active, refresh]);
 
 	useEffect(() => {
 		setPage(1);
 		if (!batchJobId) {
 			syncAppliedFiltersToUrl();
 		}
-	}, [batchJobId, syncAppliedFiltersToUrl, nodeFilter?.pipelineNodeId, nodeFilter?.nodeStatus]);
+	}, [batchJobId, syncAppliedFiltersToUrl]);
 
 	const filtersDirty =
 		draftVersionFilter !== versionFilter ||
@@ -821,15 +817,15 @@ export function WorkflowExecutionList({
 			setOperationLoading(loadingKey);
 			try {
 				await operation.run();
-				messageApi.success(`${operation.title}已提交`);
+				messageApiRef.current.success(`${operation.title}已提交`);
 				await refresh();
 			} catch (err) {
-				messageApi.error(`${operation.title}失败: ${String(err)}`);
+				messageApiRef.current.error(`${operation.title}失败: ${String(err)}`);
 			} finally {
 				setOperationLoading(null);
 			}
 		},
-		[messageApi, refresh],
+		[refresh],
 	);
 
 	const runOperation = useCallback(
@@ -873,16 +869,16 @@ export function WorkflowExecutionList({
 			).length;
 			const deletedCount = results.length - failedCount;
 			if (deletedCount > 0)
-				messageApi.success(`已删除 ${deletedCount} 条执行记录`);
+				messageApiRef.current.success(`已删除 ${deletedCount} 条执行记录`);
 			if (failedCount > 0)
-				messageApi.error(`${failedCount} 条执行记录删除失败`);
+				messageApiRef.current.error(`${failedCount} 条执行记录删除失败`);
 			setSelectedWorkflowNames([]);
 			setBulkDeleteOpen(false);
 			await refresh();
 		} finally {
 			setBulkDeleting(false);
 		}
-	}, [messageApi, refresh, selectedWorkflowNames]);
+	}, [refresh, selectedWorkflowNames]);
 
 	const displayItems = useMemo(() => {
 		if (isBatchScope) return items;
@@ -895,7 +891,9 @@ export function WorkflowExecutionList({
 	}, [isBatchScope, items, versionFilter, templateVersionsByWorkflowName]);
 
 	const tableTotal =
-		isBatchScope || labelFilter.length === 0 ? serverTotal : displayItems.length;
+		isBatchScope || labelFilter.length === 0
+			? serverTotal
+			: displayItems.length;
 
 	const openAttemptsDrawer = useCallback(
 		async (assetId: string) => {
@@ -907,269 +905,269 @@ export function WorkflowExecutionList({
 				const result = await getBatchItemAttempts(batchJobId, { assetId });
 				setAttemptsResult(result);
 			} catch (err) {
-				messageApi.error(`加载执行历史失败: ${String(err)}`);
+				messageApiRef.current.error(`加载执行历史失败: ${String(err)}`);
 			} finally {
 				setAttemptsLoading(false);
 			}
 		},
-		[batchJobId, messageApi],
+		[batchJobId],
 	);
 
 	const columns = useMemo(() => {
 		const baseColumns = [
-		{
-			title: "名称",
-			dataIndex: "name",
-			key: "name",
-			width: 260,
-			render: (name: string, record: WorkflowSummary) => {
-				const runId = runIdsByWorkflowName[record.name];
-				const templateVersion = templateVersionsByWorkflowName[record.name];
-				const scope = scopeByWorkflowName[record.name];
-				const displayId = toAssetStyleId(runId ?? name);
-				const copyId = runId ?? name;
-				return (
-					<div style={{ minWidth: 0 }}>
-						<Typography.Text strong ellipsis={{ tooltip: name }}>
-							{name}
-						</Typography.Text>
-						<Typography.Text
-							type="secondary"
-							copyable={{ text: copyId }}
-							style={{ display: "block", fontSize: 12 }}
-							ellipsis={{ tooltip: runId ? `完整任务 ID: ${runId}` : name }}
-						>
-							ID: {displayId}
-						</Typography.Text>
-						<div
-							style={{
-								marginTop: 4,
-								display: "flex",
-								flexWrap: "wrap",
-								gap: 4,
-							}}
-						>
-							{templateVersion ? (
-								<Tag color="blue">模板 v{templateVersion}</Tag>
-							) : null}
-							{scope === "prod" ? (
-								<Tag color="green" style={{ fontSize: 11 }}>
-									<LockOutlined /> 正式版
-								</Tag>
-							) : scope ? (
-								<Tag color="blue" style={{ fontSize: 11 }}>
-									Dev 草稿
-								</Tag>
-							) : null}
+			{
+				title: "名称",
+				dataIndex: "name",
+				key: "name",
+				width: 260,
+				render: (name: string, record: WorkflowSummary) => {
+					const runId = runIdsByWorkflowName[record.name];
+					const templateVersion = templateVersionsByWorkflowName[record.name];
+					const scope = scopeByWorkflowName[record.name];
+					const displayId = toAssetStyleId(runId ?? name);
+					const copyId = runId ?? name;
+					return (
+						<div style={{ minWidth: 0 }}>
+							<Typography.Text strong ellipsis={{ tooltip: name }}>
+								{name}
+							</Typography.Text>
+							<Typography.Text
+								type="secondary"
+								copyable={{ text: copyId }}
+								style={{ display: "block", fontSize: 12 }}
+								ellipsis={{ tooltip: runId ? `完整任务 ID: ${runId}` : name }}
+							>
+								ID: {displayId}
+							</Typography.Text>
+							<div
+								style={{
+									marginTop: 4,
+									display: "flex",
+									flexWrap: "wrap",
+									gap: 4,
+								}}
+							>
+								{templateVersion ? (
+									<Tag color="blue">模板 v{templateVersion}</Tag>
+								) : null}
+								{scope === "prod" ? (
+									<Tag color="green" style={{ fontSize: 11 }}>
+										<LockOutlined /> 正式版
+									</Tag>
+								) : scope ? (
+									<Tag color="blue" style={{ fontSize: 11 }}>
+										Dev 草稿
+									</Tag>
+								) : null}
+							</div>
 						</div>
-					</div>
-				);
+					);
+				},
 			},
-		},
-		{
-			title: "状态",
-			dataIndex: "status",
-			key: "status",
-			width: 130,
-			render: (s: string, record: WorkflowSummary) => (
-				<Space size={4} wrap>
-					<Tag
-						color={STATUS_COLORS[s] || STATUS_ACCENT_COLORS[s] || "default"}
-						style={{ padding: "2px 8px" }}
-					>
-						{formatWorkflowPhaseLabel(s)}
-					</Tag>
-					{isStaleRunningWorkflow(record) ? (
-						<Tooltip title="运行时间超过 48 小时，同步任务将自动标记为失败">
-							<Tag color="warning">疑似僵尸</Tag>
-						</Tooltip>
-					) : null}
-				</Space>
-			),
-		},
-		...(isBatchScope
-			? [
-					{
-						title: "资产",
-						key: "assetId",
-						width: 120,
-						render: (_: unknown, record: WorkflowSummary) => {
-							const assetId = getWorkflowLabel(record.labels, "asset_id");
-							if (!assetId) return "—";
-							if (isCanonicalAssetId(assetId)) {
-								return <AssetIdLink id={assetId} />;
-							}
-							return (
-								<Typography.Text code style={{ fontSize: 12 }}>
-									{assetId}
-								</Typography.Text>
-							);
+			{
+				title: "状态",
+				dataIndex: "status",
+				key: "status",
+				width: 130,
+				render: (s: string, record: WorkflowSummary) => (
+					<Space size={4} wrap>
+						<Tag
+							color={STATUS_COLORS[s] || STATUS_ACCENT_COLORS[s] || "default"}
+							style={{ padding: "2px 8px" }}
+						>
+							{formatWorkflowPhaseLabel(s)}
+						</Tag>
+						{isStaleRunningWorkflow(record) ? (
+							<Tooltip title="运行时间超过 48 小时，同步任务将自动标记为失败">
+								<Tag color="warning">疑似僵尸</Tag>
+							</Tooltip>
+						) : null}
+					</Space>
+				),
+			},
+			...(isBatchScope
+				? [
+						{
+							title: "资产",
+							key: "assetId",
+							width: 120,
+							render: (_: unknown, record: WorkflowSummary) => {
+								const assetId = getWorkflowLabel(record.labels, "asset_id");
+								if (!assetId) return "—";
+								if (isCanonicalAssetId(assetId)) {
+									return <AssetIdLink id={assetId} />;
+								}
+								return (
+									<Typography.Text code style={{ fontSize: 12 }}>
+										{assetId}
+									</Typography.Text>
+								);
+							},
 						},
-					},
-					{
-						title: "节点进度",
-						key: "nodeProgress",
-						width: 180,
-						render: (_: unknown, record: WorkflowSummary) => {
-							const progress = nodeProgressByWorkflowName[record.name];
-							const { text, tooltip } =
-								formatPipelineRunNodeProgress(progress);
-							if (tooltip) {
-								return <Tooltip title={tooltip}>{text}</Tooltip>;
-							}
-							return text;
+						{
+							title: "节点进度",
+							key: "nodeProgress",
+							width: 180,
+							render: (_: unknown, record: WorkflowSummary) => {
+								const progress = nodeProgressByWorkflowName[record.name];
+								const { text, tooltip } =
+									formatPipelineRunNodeProgress(progress);
+								if (tooltip) {
+									return <Tooltip title={tooltip}>{text}</Tooltip>;
+								}
+								return text;
+							},
 						},
-					},
-				]
-			: []),
-		{
-			title: "节点数",
-			dataIndex: "nodeCount",
-			key: "nodeCount",
-			width: 100,
-			render: (nodeCount: number, record: WorkflowSummary) =>
-				nodeCountsByWorkflowName[record.name] ?? nodeCount,
-		},
-		{
-			title: "标签",
-			dataIndex: "labels",
-			key: "labels",
-			width: 240,
-			render: (labels?: Record<string, string>) => (
-				<WorkflowLabels labels={labels} />
-			),
-		},
-		{
-			title: "耗时",
-			key: "duration",
-			width: 140,
-			render: (_: unknown, record: WorkflowSummary) => (
-				<DurationPanel
-					phase={record.status}
-					startedAt={record.createdAt}
-					finishedAt={record.finishedAt}
-				/>
-			),
-		},
-		{
-			title: (
-				<Tooltip title="按节点成本汇总的估算总成本">
-					<span>总成本</span>
-				</Tooltip>
-			),
-			key: "estimatedCostUsd",
-			width: 120,
-			align: "right" as const,
-			render: renderEstimatedCost,
-			sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
-				(getWorkflowEstimatedCost(a) ?? -1) -
-				(getWorkflowEstimatedCost(b) ?? -1),
-		},
-		{
-			title: "创建时间",
-			dataIndex: "createdAt",
-			key: "createdAt",
-			width: 190,
-			render: renderTimestamp,
-		},
-		{
-			title: "完成时间",
-			dataIndex: "finishedAt",
-			key: "finishedAt",
-			width: 190,
-			render: renderTimestamp,
-		},
-		{
-			title: "操作",
-			key: "actions",
-			width: 110,
-			render: (_: unknown, record: WorkflowSummary) => {
-				const templateId =
-					templateIdsByWorkflowName[record.name] ??
-					getWorkflowLabel(record.labels, "template-id");
-				const templateVersion = templateVersionsByWorkflowName[record.name];
-				const scope = scopeByWorkflowName[record.name];
-				const assetId = getWorkflowLabel(record.labels, "asset_id");
-				const menuItems = getWorkflowOperationMenuItems(record);
-				const hasOperationLoading = operationLoading?.startsWith(
-					`${record.name}:`,
-				);
+					]
+				: []),
+			{
+				title: "节点数",
+				dataIndex: "nodeCount",
+				key: "nodeCount",
+				width: 100,
+				render: (nodeCount: number, record: WorkflowSummary) =>
+					nodeCountsByWorkflowName[record.name] ?? nodeCount,
+			},
+			{
+				title: "标签",
+				dataIndex: "labels",
+				key: "labels",
+				width: 240,
+				render: (labels?: Record<string, string>) => (
+					<WorkflowLabels labels={labels} />
+				),
+			},
+			{
+				title: "耗时",
+				key: "duration",
+				width: 140,
+				render: (_: unknown, record: WorkflowSummary) => (
+					<DurationPanel
+						phase={record.status}
+						startedAt={record.createdAt}
+						finishedAt={record.finishedAt}
+					/>
+				),
+			},
+			{
+				title: (
+					<Tooltip title="按节点成本汇总的估算总成本">
+						<span>总成本</span>
+					</Tooltip>
+				),
+				key: "estimatedCostUsd",
+				width: 120,
+				align: "right" as const,
+				render: renderEstimatedCost,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					(getWorkflowEstimatedCost(a) ?? -1) -
+					(getWorkflowEstimatedCost(b) ?? -1),
+			},
+			{
+				title: "创建时间",
+				dataIndex: "createdAt",
+				key: "createdAt",
+				width: 190,
+				render: renderTimestamp,
+			},
+			{
+				title: "完成时间",
+				dataIndex: "finishedAt",
+				key: "finishedAt",
+				width: 190,
+				render: renderTimestamp,
+			},
+			{
+				title: "操作",
+				key: "actions",
+				width: 110,
+				render: (_: unknown, record: WorkflowSummary) => {
+					const templateId =
+						templateIdsByWorkflowName[record.name] ??
+						getWorkflowLabel(record.labels, "template-id");
+					const templateVersion = templateVersionsByWorkflowName[record.name];
+					const scope = scopeByWorkflowName[record.name];
+					const assetId = getWorkflowLabel(record.labels, "asset_id");
+					const menuItems = getWorkflowOperationMenuItems(record);
+					const hasOperationLoading = operationLoading?.startsWith(
+						`${record.name}:`,
+					);
 
-				return (
-					<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-						{isBatchScope && assetId ? (
+					return (
+						<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+							{isBatchScope && assetId ? (
+								<Button
+									type="link"
+									size="small"
+									onClick={(event) => {
+										event.stopPropagation();
+										void openAttemptsDrawer(assetId);
+									}}
+								>
+									历史
+								</Button>
+							) : null}
+							{templateId ? (
+								<Button
+									type="link"
+									size="small"
+									onClick={(event) => {
+										event.stopPropagation();
+										const params = new URLSearchParams({
+											templateId,
+											tab: "design",
+										});
+										if (templateVersion) {
+											params.set("templateVersion", String(templateVersion));
+										}
+										if (scope === "prod") {
+											params.set("readonly", "1");
+										}
+										navigate(`/pipeline?${params.toString()}`);
+									}}
+								>
+									模板
+								</Button>
+							) : null}
 							<Button
 								type="link"
 								size="small"
 								onClick={(event) => {
 									event.stopPropagation();
-									void openAttemptsDrawer(assetId);
+									openWorkflowDetail(record.name);
 								}}
 							>
-								历史
+								查看
 							</Button>
-						) : null}
-						{templateId ? (
-							<Button
-								type="link"
-								size="small"
-								onClick={(event) => {
-									event.stopPropagation();
-									const params = new URLSearchParams({
-										templateId,
-										tab: "design",
-									});
-									if (templateVersion) {
-										params.set("templateVersion", String(templateVersion));
-									}
-									if (scope === "prod") {
-										params.set("readonly", "1");
-									}
-									navigate(`/pipeline?${params.toString()}`);
+							<Dropdown
+								menu={{
+									items: menuItems,
+									onClick: ({ key, domEvent }) => {
+										domEvent.stopPropagation();
+										runOperation(record, key as WorkflowOperationKey);
+									},
 								}}
+								trigger={["click"]}
 							>
-								模板
-							</Button>
-						) : null}
-						<Button
-							type="link"
-							size="small"
-							onClick={(event) => {
-								event.stopPropagation();
-								openWorkflowDetail(record.name);
-							}}
-						>
-							查看
-						</Button>
-						<Dropdown
-							menu={{
-								items: menuItems,
-								onClick: ({ key, domEvent }) => {
-									domEvent.stopPropagation();
-									runOperation(record, key as WorkflowOperationKey);
-								},
-							}}
-							trigger={["click"]}
-						>
-							<Button
-								size="small"
-								icon={<MoreOutlined />}
-								loading={hasOperationLoading}
-								onClick={(event) => {
-									event.stopPropagation();
-									if (menuItems.length === 0) {
-										messageApi.info("当前状态暂无可用操作");
-									}
-								}}
-							>
-								操作
-							</Button>
-						</Dropdown>
-					</div>
-				);
+								<Button
+									size="small"
+									icon={<MoreOutlined />}
+									loading={hasOperationLoading}
+									onClick={(event) => {
+										event.stopPropagation();
+										if (menuItems.length === 0) {
+											messageApi.info("当前状态暂无可用操作");
+										}
+									}}
+								>
+									操作
+								</Button>
+							</Dropdown>
+						</div>
+					);
+				},
 			},
-		},
-	];
+		];
 		return baseColumns;
 	}, [
 		isBatchScope,
@@ -1476,8 +1474,7 @@ export function WorkflowExecutionList({
 						{
 							title: "版本",
 							dataIndex: "templateVersion",
-							render: (version?: number) =>
-								version ? `v${version}` : "—",
+							render: (version?: number) => (version ? `v${version}` : "—"),
 						},
 						{
 							title: "Workflow",

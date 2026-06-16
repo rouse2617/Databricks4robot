@@ -328,8 +328,13 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		setRunEventState((current) => ({ ...current, nextCursor: undefined }));
 	}, []);
 
+	const shouldPollWorkflow =
+		name != null &&
+		workflow != null &&
+		ACTIVE_WORKFLOW_STATUSES.has(workflow.status);
+
 	useEffect(() => {
-		if (!name || !workflow || !ACTIVE_WORKFLOW_STATUSES.has(workflow.status)) {
+		if (!name || !shouldPollWorkflow) {
 			return;
 		}
 
@@ -346,7 +351,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		}, WORKFLOW_POLL_INTERVAL_MS);
 
 		return () => window.clearInterval(timer);
-	}, [name, refreshDetailData, workflow?.status, workflow]);
+	}, [name, refreshDetailData, shouldPollWorkflow]);
 
 	const loadNodeLogs = useCallback(
 		async (nodeId: string, nodePhase?: string) => {

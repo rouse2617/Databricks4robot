@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/pipelineClient";
 
 const mockGetWorkflow = vi.fn();
@@ -35,7 +35,9 @@ vi.mock("../api/workflowApi", () => ({
 }));
 
 vi.mock("../api/pipelineApi", () => ({
-	getPipelineRun: vi.fn().mockRejectedValue(new ApiError(404, "NOT_FOUND", "not found")),
+	getPipelineRun: vi
+		.fn()
+		.mockRejectedValue(new ApiError(404, "NOT_FOUND", "not found")),
 	getPipelineRunCostSummary: vi.fn(),
 	listPipelineRunAssetNodes: vi.fn(),
 	listPipelineRunEvents: vi.fn(),
@@ -50,6 +52,11 @@ describe("useWorkflowDetail", () => {
 		vi.clearAllMocks();
 		MockEventSource.instances = [];
 		vi.stubGlobal("EventSource", MockEventSource);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
 	});
 
 	it("maps 404 to not_found load error", async () => {
@@ -208,5 +215,38 @@ describe("useWorkflowDetail", () => {
 			expect(result.current.logState.content).toContain("hello\n"),
 		);
 		expect(result.current.logState.followStatus).toBe("connected");
+	});
+
+	it("keeps a single polling interval while an active workflow refreshes", async () => {
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-1",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [],
+		});
+		const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-1"));
+
+		await waitFor(() =>
+			expect(result.current.workflow?.status).toBe("Running"),
+		);
+		expect(
+			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 8_000),
+		).toHaveLength(1);
+
+		await act(async () => {
+			const pollOnce = setIntervalSpy.mock.calls.find(
+				([, delay]) => delay === 8_000,
+			)?.[0];
+			expect(typeof pollOnce).toBe("function");
+			(pollOnce as TimerHandler as () => void)();
+			await Promise.resolve();
+		});
+
+		await waitFor(() => expect(mockGetWorkflow).toHaveBeenCalledTimes(2));
+		expect(
+			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 8_000),
+		).toHaveLength(1);
 	});
 });

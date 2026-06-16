@@ -25,7 +25,7 @@ import {
 	Typography,
 } from "antd";
 import dayjs from "dayjs";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
 	type BatchJob,
@@ -161,6 +161,8 @@ export default function BatchJobDetailPage() {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const { message } = App.useApp();
+	const messageRef = useRef(message);
+	messageRef.current = message;
 	const [job, setJob] = useState<BatchJob | null>(null);
 	const [templateName, setTemplateName] = useState("");
 	const [loading, setLoading] = useState(true);
@@ -217,7 +219,7 @@ export default function BatchJobDetailPage() {
 				setTemplateName(template?.name ?? jobData.templateId);
 			} catch (err) {
 				if (!opts?.silent) {
-					message.error(`加载批次详情失败：${String(err)}`);
+					messageRef.current.error(`加载批次详情失败：${String(err)}`);
 				}
 			} finally {
 				if (!opts?.silent) {
@@ -225,22 +227,25 @@ export default function BatchJobDetailPage() {
 				}
 			}
 		},
-		[id, message],
+		[id],
 	);
 
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
 
+	const shouldPollJob =
+		job != null && ["running", "paused"].includes(job.status);
+
 	useEffect(() => {
-		if (!job || !["running", "paused"].includes(job.status)) {
+		if (!shouldPollJob) {
 			return;
 		}
 		const timer = window.setInterval(() => {
 			void refresh({ silent: true });
 		}, 5000);
 		return () => window.clearInterval(timer);
-	}, [job, refresh]);
+	}, [refresh, shouldPollJob]);
 
 	const backToBatchList = useCallback(() => {
 		goBackFromBatchJobDetail(navigate, location.state);
@@ -318,12 +323,12 @@ export default function BatchJobDetailPage() {
 				setRerunPreviewCount(dryRun.matchedCount);
 			} catch (err) {
 				setRerunPreviewCount(null);
-				message.error(`预览重跑失败：${String(err)}`);
+				messageRef.current.error(`预览重跑失败：${String(err)}`);
 			} finally {
 				setRerunPreviewLoading(false);
 			}
 		},
-		[job, message],
+		[job],
 	);
 
 	const openRerunModal = (
@@ -388,12 +393,12 @@ export default function BatchJobDetailPage() {
 				setNodeFailures(result.items);
 				setNodeFailureTotal(result.total);
 			} catch (err) {
-				message.error(`加载节点明细失败：${String(err)}`);
+				messageRef.current.error(`加载节点明细失败：${String(err)}`);
 			} finally {
 				setNodeFailureLoading(false);
 			}
 		},
-		[id, message],
+		[id],
 	);
 
 	const openNodeDrawer = (
@@ -712,7 +717,6 @@ export default function BatchJobDetailPage() {
 			<WorkflowExecutionList
 				active
 				batchJobId={job.id}
-				_batchListKey={job.updatedAt}
 				embedded
 				nodeFilter={subtaskNodeFilter ?? undefined}
 				onClearNodeFilter={() => setSubtaskNodeFilter(null)}
