@@ -310,6 +310,28 @@ func (r *BackfillRepo) FindItemByID(ctx context.Context, id string) (*models.Bac
 	return item, nil
 }
 
+// FindItemByPipelineRunID returns a backfill item linked to a pipeline run id, or (nil, nil).
+func (r *BackfillRepo) FindItemByPipelineRunID(ctx context.Context, pipelineRunID string) (*models.BackfillItem, error) {
+	pipelineRunID = strings.TrimSpace(pipelineRunID)
+	if pipelineRunID == "" {
+		return nil, nil
+	}
+	q := `SELECT ` + backfillItemSelectCols + `
+	FROM backfill_items
+	WHERE pipeline_run_id = $1
+	ORDER BY created_at DESC
+	LIMIT 1`
+	db := dbFromCtx(ctx, r.c.db)
+	item, err := scanBackfillItem(db.QueryRow(ctx, q, pipelineRunID))
+	if err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres BackfillRepo.FindItemByPipelineRunID: %w", err)
+	}
+	return item, nil
+}
+
 // UpdateItemStatus sets status, workflow_name, error_message for a backfill item.
 func (r *BackfillRepo) UpdateItemStatus(ctx context.Context, id, status, workflowName, errorMsg string) error {
 	const q = `UPDATE backfill_items SET
@@ -409,21 +431,35 @@ ORDER BY created_at ASC`
 	return out, nil
 }
 
-// FindItemsMissingPipelineRun returns items without a linked pipeline run row.
+// FindItemsMissingPipelineRun returns the current backfill item per asset that still
+// lacks a pipeline run ledger row.
 func (r *BackfillRepo) FindItemsMissingPipelineRun(ctx context.Context, jobID string) ([]models.BackfillItem, error) {
-	q := `SELECT ` + backfillItemSelectCols + `
-FROM backfill_items bi
-WHERE bi.job_id = $1
-  AND (bi.pipeline_run_id IS NULL OR bi.pipeline_run_id = '')
-  AND NOT EXISTS (
-    SELECT 1
-    FROM backfill_items linked
-    WHERE linked.job_id = bi.job_id
-      AND linked.asset_id = bi.asset_id
-      AND linked.pipeline_run_id IS NOT NULL
-      AND linked.pipeline_run_id <> ''
-  )
-ORDER BY created_at ASC`
+	q := `SELECT
+  bi.id, bi.job_id, bi.asset_id, bi.status,
+  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.started_at, bi.finished_at, bi.created_at
+FROM (
+  SELECT DISTINCT ON (job_id, asset_id) *
+  FROM backfill_items
+  WHERE job_id = $1
+  ORDER BY job_id, asset_id,
+    CASE status
+      WHEN 'completed' THEN 0
+      WHEN 'failed' THEN 1
+      WHEN 'cancelled' THEN 1
+      WHEN 'running' THEN 2
+      WHEN 'pending' THEN 3
+      ELSE 4
+    END,
+    CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+    finished_at DESC NULLS LAST,
+    started_at DESC NULLS LAST,
+    created_at DESC
+) bi
+WHERE bi.pipeline_run_id IS NULL OR bi.pipeline_run_id = ''
+   OR NOT EXISTS (
+     SELECT 1 FROM pipeline_runs pr WHERE pr.id = bi.pipeline_run_id
+   )
+ORDER BY bi.created_at ASC`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.Query(ctx, q, jobID)
 	if err != nil {
@@ -525,8 +561,6 @@ func (r *BackfillRepo) PrepareItemsForRerun(ctx context.Context, itemIDs []strin
 	}
 	const q = `UPDATE backfill_items SET
 	  status = 'pending',
-	  pipeline_run_id = NULL,
-	  workflow_name = NULL,
 	  error_message = NULL,
 	  started_at = NULL,
 	  finished_at = NULL

@@ -323,6 +323,10 @@ export function getPipelineRunByWorkflowName(
 	);
 }
 
+export function getPipelineRun(id: string): Promise<PipelineRun> {
+	return request<PipelineRun>("GET", `/pipeline-runs/${encodeURIComponent(id)}`);
+}
+
 export function listPipelineRuns(options?: {
 	view?: "summary" | "full";
 	excludeBatch?: boolean;

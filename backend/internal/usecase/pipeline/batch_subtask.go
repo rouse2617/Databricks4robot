@@ -58,6 +58,13 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 
 	runID := strings.TrimSpace(in.RunID)
 	if runID == "" {
+		if existing, err := uc.runRepo.FindByBatchJobAndAssetID(ctx, batchJobID, assetID); err != nil {
+			return "", "", err
+		} else if existing != nil {
+			runID = existing.ID
+		}
+	}
+	if runID == "" {
 		runID = uuid.New().String()
 	}
 
@@ -116,8 +123,19 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 
 	if existing, err := uc.runRepo.FindByID(ctx, runID); err == nil && existing != nil {
 		run.CreatedAt = existing.CreatedAt
-		if existing.StartedAt != nil {
-			run.StartedAt = existing.StartedAt
+		switch strings.ToLower(strings.TrimSpace(status)) {
+		case "pending":
+			run.StartedAt = nil
+			run.FinishedAt = nil
+		case "running":
+			run.FinishedAt = nil
+			if existing.StartedAt != nil {
+				run.StartedAt = existing.StartedAt
+			}
+		default:
+			if existing.StartedAt != nil {
+				run.StartedAt = existing.StartedAt
+			}
 		}
 	}
 

@@ -91,6 +91,9 @@ func (s *stubBackfillRepo) FindItemsByJobID(context.Context, string) ([]models.B
 func (s *stubBackfillRepo) FindItemByID(context.Context, string) (*models.BackfillItem, error) {
 	return nil, nil
 }
+func (s *stubBackfillRepo) FindItemByPipelineRunID(context.Context, string) (*models.BackfillItem, error) {
+	return nil, nil
+}
 func (s *stubBackfillRepo) UpdateItemStatus(_ context.Context, id, status, _, _ string) error {
 	for i := range s.items {
 		if s.items[i].ID == id {

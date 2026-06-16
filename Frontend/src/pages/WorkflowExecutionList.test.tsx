@@ -197,7 +197,14 @@ describe("WorkflowExecutionList", () => {
 			expect(screen.getByText("successful-run")).toBeInTheDocument();
 		});
 
-		expect(mockListPipelineRuns).toHaveBeenCalled();
+		expect(mockListPipelineRuns).toHaveBeenCalledWith(
+			expect.objectContaining({
+				view: "summary",
+				excludeBatch: true,
+				page: 1,
+				pageSize: 20,
+			}),
+		);
 		expect(screen.getAllByText("总成本").length).toBeGreaterThan(0);
 		expect(screen.getByText("$1.25")).toBeInTheDocument();
 		expect(screen.getAllByText("—").length).toBeGreaterThan(0);

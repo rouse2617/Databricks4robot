@@ -22,6 +22,7 @@ import (
 // BatchSubtaskReconciler materializes batch subtasks as pipeline runs for list views.
 type BatchSubtaskReconciler interface {
 	ReconcileSubtaskRuns(ctx context.Context, jobID string) error
+	ReconcileItemByID(ctx context.Context, itemID string) (string, error)
 }
 
 // Handler bundles the pipeline endpoints.
@@ -399,6 +400,17 @@ func (h *Handler) GetRunByWorkflowName(c *gin.Context) {
 		return
 	}
 	if run == nil {
+		run, _ = h.uc.GetRun(c.Request.Context(), workflowName)
+	}
+	if run == nil && h.batchRuns != nil {
+		if runID, err := h.batchRuns.ReconcileItemByID(c.Request.Context(), workflowName); err == nil && runID != "" {
+			run, _ = h.uc.GetRun(c.Request.Context(), runID)
+		}
+		if run == nil {
+			run, _ = h.uc.GetRunByWorkflowName(c.Request.Context(), workflowName)
+		}
+	}
+	if run == nil {
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
 		return
 	}
@@ -417,6 +429,15 @@ func (h *Handler) GetRun(c *gin.Context) {
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
+	}
+	if run == nil && h.batchRuns != nil {
+		if runID, err := h.batchRuns.ReconcileItemByID(c.Request.Context(), id); err == nil && runID != "" {
+			run, err = h.uc.GetRun(c.Request.Context(), runID)
+			if err != nil {
+				httpresp.Internal(c, err.Error())
+				return
+			}
+		}
 	}
 	if run == nil {
 		httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")

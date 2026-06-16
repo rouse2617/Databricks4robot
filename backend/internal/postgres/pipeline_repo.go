@@ -731,15 +731,25 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
 	if !batchScoped {
 		return qualifyPipelineRunCols(pipelineRunSummarySelectCols, "pr")
 	}
-	return `pr.id, pr.template_id, pr.pipeline_name, pr.template_version,
-  COALESCE(NULLIF(pr.workflow_name, ''), NULLIF(bi.workflow_name, '')) AS workflow_name,
-  pr.execution_target_id,
+	return `COALESCE(pr.id, bi.id) AS id,
+  pr.template_id,
+  COALESCE(pr.pipeline_name, '') AS pipeline_name,
+  pr.template_version,
+  COALESCE(NULLIF(pr.workflow_name, ''), NULLIF(bi.workflow_name, ''), '') AS workflow_name,
+  COALESCE(pr.execution_target_id, '') AS execution_target_id,
   ` + batchItemRunStatusExpr + ` AS status,
-  pr.node_count, pr.asset_ids, pr.asset_count, pr.no_asset_run,
-  pr.argo_namespace, pr.argo_workflow_uid,
+  COALESCE(pr.node_count, 0) AS node_count,
+  COALESCE(NULLIF(pr.asset_ids, '{}'), ARRAY[bi.asset_id]) AS asset_ids,
+  COALESCE(NULLIF(pr.asset_count, 0), 1) AS asset_count,
+  COALESCE(pr.no_asset_run, false) AS no_asset_run,
+  COALESCE(pr.argo_namespace, '') AS argo_namespace,
+  COALESCE(pr.argo_workflow_uid, '') AS argo_workflow_uid,
   CASE WHEN bi.status = 'completed' THEN '' ELSE COALESCE(NULLIF(bi.error_message, ''), pr.message, '') END AS message,
-  pr.scope, pr.owner, pr.batch_job_id,
-  pr.created_at, pr.updated_at,
+  COALESCE(pr.scope, '') AS scope,
+  COALESCE(pr.owner, '') AS owner,
+  COALESCE(pr.batch_job_id, bi.job_id) AS batch_job_id,
+  COALESCE(pr.created_at, bi.created_at) AS created_at,
+  COALESCE(pr.updated_at, bi.created_at) AS updated_at,
   COALESCE(pr.started_at, bi.started_at) AS started_at,
   COALESCE(pr.finished_at, bi.finished_at) AS finished_at`
 }
@@ -926,7 +936,7 @@ FROM (
     started_at DESC NULLS LAST,
     created_at DESC
 ) bi
-INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id`
+LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id`
 		args = append(args, filter.BatchJobID)
 		argPos++
 	}
@@ -955,10 +965,15 @@ INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id`
 		return nil, 0, fmt.Errorf("postgres PipelineRunRepo.ListSummaries count: %w", err)
 	}
 
+	orderBy := "ORDER BY pr.created_at DESC"
+	if filter.BatchJobID != "" {
+		orderBy = "ORDER BY COALESCE(pr.created_at, bi.created_at) DESC"
+	}
+
 	listQ := `SELECT ` + pipelineRunSummarySelectSQL(filter.BatchJobID != "") + `
 ` + fromSQL + `
 ` + where + `
-ORDER BY pr.created_at DESC`
+` + orderBy
 
 	if filter.Page > 0 || filter.PageSize > 0 {
 		page := filter.Page
@@ -1059,6 +1074,29 @@ func (r *PipelineRunRepo) FindByWorkflowName(ctx context.Context, workflowName s
 FROM pipeline_runs
 WHERE workflow_name = $1`
 	return r.findOne(ctx, q, workflowName, "FindByWorkflowName")
+}
+
+// FindByBatchJobAndAssetID returns the latest pipeline run for a batch subtask asset.
+func (r *PipelineRunRepo) FindByBatchJobAndAssetID(ctx context.Context, batchJobID, assetID string) (*models.PipelineRun, error) {
+	batchJobID = strings.TrimSpace(batchJobID)
+	assetID = strings.TrimSpace(assetID)
+	if batchJobID == "" || assetID == "" {
+		return nil, nil
+	}
+	q := `SELECT ` + pipelineRunSelectCols + `
+FROM pipeline_runs
+WHERE batch_job_id = $1 AND $2 = ANY(asset_ids)
+ORDER BY created_at DESC
+LIMIT 1`
+	db := dbFromCtx(ctx, r.c.db)
+	run, err := scanPipelineRun(db.QueryRow(ctx, q, batchJobID, assetID))
+	if err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres PipelineRunRepo.FindByBatchJobAndAssetID: %w", err)
+	}
+	return run, nil
 }
 
 // Delete removes a pipeline run by id.

@@ -541,8 +541,8 @@ export function WorkflowExecutionList({
 				setRunIdsByWorkflowName(
 					Object.fromEntries(
 						pipelineRuns
-							.filter((run) => run.workflowName && run.id)
-							.map((run) => [run.workflowName, run.id] as const),
+							.filter((run) => run.id)
+							.map((run) => [workflowNameForRun(run), run.id] as const),
 					),
 				);
 				setTemplateVersionsByWorkflowName(
@@ -608,10 +608,9 @@ export function WorkflowExecutionList({
 						view: "summary",
 						excludeBatch: true,
 						status: statusFilter,
-					}).catch(() => ({
-						items: [],
-						total: 0,
-					})),
+						page,
+						pageSize,
+					}),
 					listPipelines({ pageSize: 200 })
 						.then((r) => r.items)
 						.catch(() => []),
@@ -622,8 +621,8 @@ export function WorkflowExecutionList({
 			setRunIdsByWorkflowName(
 				Object.fromEntries(
 					pipelineRuns
-						.filter((run) => run.workflowName && run.id)
-						.map((run) => [run.workflowName, run.id] as const),
+						.filter((run) => run.id)
+						.map((run) => [workflowNameForRun(run), run.id] as const),
 				),
 			);
 			setTemplateVersionsByWorkflowName(
@@ -691,7 +690,8 @@ export function WorkflowExecutionList({
 		labelFilter,
 		nameSearch,
 		statusFilter,
-		...(isBatchScope ? [page, pageSize] : []),
+		page,
+		pageSize,
 	]);
 
 	useEffect(() => {
@@ -854,7 +854,8 @@ export function WorkflowExecutionList({
 		);
 	}, [isBatchScope, items, versionFilter, templateVersionsByWorkflowName]);
 
-	const tableTotal = isBatchScope ? serverTotal : displayItems.length;
+	const tableTotal =
+		isBatchScope || labelFilter.length === 0 ? serverTotal : displayItems.length;
 
 	const columns = [
 		{

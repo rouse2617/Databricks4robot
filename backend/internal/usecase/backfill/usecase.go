@@ -436,6 +436,42 @@ func (uc *Usecase) ReconcileSubtaskRuns(ctx context.Context, jobID string) error
 	return uc.reconcileMissingRuns(ctx, jobID)
 }
 
+// ReconcileItemByID materializes or repairs the ledger row for a single backfill item.
+func (uc *Usecase) ReconcileItemByID(ctx context.Context, itemID string) (string, error) {
+	item, err := uc.repo.FindItemByID(ctx, itemID)
+	if err != nil {
+		return "", err
+	}
+	if item == nil {
+		item, err = uc.repo.FindItemByPipelineRunID(ctx, itemID)
+		if err != nil {
+			return "", err
+		}
+	}
+	if item == nil {
+		return "", ErrNotFound
+	}
+	itemID = item.ID
+	job, err := uc.repo.FindJobByID(ctx, item.JobID)
+	if err != nil {
+		return "", err
+	}
+	if job == nil {
+		return "", ErrNotFound
+	}
+	if err := uc.reconcileItemRun(ctx, job, *item); err != nil {
+		return "", err
+	}
+	fresh, err := uc.repo.FindItemByID(ctx, itemID)
+	if err != nil {
+		return "", err
+	}
+	if fresh == nil || fresh.PipelineRunID == nil {
+		return "", nil
+	}
+	return strings.TrimSpace(*fresh.PipelineRunID), nil
+}
+
 func (uc *Usecase) reconcileMissingRuns(ctx context.Context, jobID string) error {
 	if uc.pipelineUC == nil {
 		return nil
@@ -464,6 +500,12 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 	if runID != "" {
 		run, err := uc.pipelineUC.GetRun(ctx, runID)
 		if err == nil && run != nil {
+			workflowName := strings.TrimSpace(run.WorkflowName)
+			if item.WorkflowName == nil || strings.TrimSpace(*item.WorkflowName) == "" {
+				if workflowName != "" {
+					_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, item.Status)
+				}
+			}
 			return nil
 		}
 	}
@@ -623,11 +665,21 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 		if uc.pipelineUC == nil {
 			continue
 		}
+		runID := ""
+		if runnable[i].PipelineRunID != nil {
+			runID = strings.TrimSpace(*runnable[i].PipelineRunID)
+		}
+		workflowName := ""
+		if runnable[i].WorkflowName != nil {
+			workflowName = strings.TrimSpace(*runnable[i].WorkflowName)
+		}
 		runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      templateID,
 			TemplateVersion: templateVersion,
 			BatchJobID:      jobID,
 			AssetID:         runnable[i].AssetID,
+			RunID:           runID,
+			WorkflowName:    workflowName,
 			Status:          "Pending",
 		})
 		if err != nil {

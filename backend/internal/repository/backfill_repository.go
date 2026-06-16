@@ -22,6 +22,7 @@ type BackfillRepository interface {
 	SaveItems(ctx context.Context, items []models.BackfillItem) error
 	FindItemsByJobID(ctx context.Context, jobID string) ([]models.BackfillItem, error)
 	FindItemByID(ctx context.Context, id string) (*models.BackfillItem, error)
+	FindItemByPipelineRunID(ctx context.Context, pipelineRunID string) (*models.BackfillItem, error)
 	UpdateItemStatus(ctx context.Context, id, status, workflowName, errorMsg string) error
 	UpdateItemPipelineRun(ctx context.Context, id, pipelineRunID, workflowName, status string) error
 	UpdateJobProgress(ctx context.Context, id string, completed, failed int, status string) error

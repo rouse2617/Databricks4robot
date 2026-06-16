@@ -93,6 +93,7 @@ type PipelineRunRepository interface {
 	ListSummaries(ctx context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error)
 	FindByID(ctx context.Context, id string) (*models.PipelineRun, error)
 	FindByWorkflowName(ctx context.Context, workflowName string) (*models.PipelineRun, error)
+	FindByBatchJobAndAssetID(ctx context.Context, batchJobID, assetID string) (*models.PipelineRun, error)
 	Delete(ctx context.Context, id string) error
 	DeleteByTemplateID(ctx context.Context, templateID string) error
 	UpdateStatus(ctx context.Context, id, status string, finishedAt *time.Time) error

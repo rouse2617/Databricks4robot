@@ -35,6 +35,7 @@ vi.mock("../api/workflowApi", () => ({
 }));
 
 vi.mock("../api/pipelineApi", () => ({
+	getPipelineRun: vi.fn().mockRejectedValue(new ApiError(404, "NOT_FOUND", "not found")),
 	getPipelineRunCostSummary: vi.fn(),
 	listPipelineRunAssetNodes: vi.fn(),
 	listPipelineRunEvents: vi.fn(),

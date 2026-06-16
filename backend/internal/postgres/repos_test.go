@@ -123,7 +123,7 @@ func TestPipelineRunRepoListSummariesBatchUsesBackfillItemStatus(t *testing.T) {
 		"WHEN 'completed' THEN 'Succeeded'",
 		"CASE WHEN bi.status = 'completed' THEN ''",
 		"COALESCE(pr.started_at, bi.started_at)",
-		"INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id",
+		"LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id",
 	} {
 		if !strings.Contains(q, want) {
 			t.Fatalf("list query missing %q:\n%s", want, q)
@@ -134,6 +134,41 @@ func TestPipelineRunRepoListSummariesBatchUsesBackfillItemStatus(t *testing.T) {
 	}
 	if got := db.queryArgs[0]; !reflect.DeepEqual(got, []any{"job-1", "Succeeded", 20, 0}) {
 		t.Fatalf("query args = %#v, want job/status/page args", got)
+	}
+}
+
+func TestPipelineRunRepoListSummariesExcludeBatchUsesPipelineRunsOnly(t *testing.T) {
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{0}},
+		rows:     &fakeRows{},
+	}
+	repo := NewPipelineRunRepo(&Client{db: db})
+
+	_, _, err := repo.ListSummaries(context.Background(), models.PipelineRunListFilter{
+		ExcludeBatch: true,
+		Page:         1,
+		PageSize:     20,
+	})
+	if err != nil {
+		t.Fatalf("ListSummaries() error = %v", err)
+	}
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 list query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"FROM pipeline_runs pr",
+		"pr.batch_job_id IS NULL",
+		"ORDER BY pr.created_at DESC",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("list query missing %q:\n%s", want, q)
+		}
+	}
+	for _, bad := range []string{" bi.", "FROM backfill_items", "COALESCE(pr.created_at, bi.created_at)"} {
+		if strings.Contains(q, bad) {
+			t.Fatalf("list query should not reference batch items %q:\n%s", bad, q)
+		}
 	}
 }
 

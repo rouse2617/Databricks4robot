@@ -772,6 +772,7 @@ function ExpiredWorkflowLedgerView({
 	onRefreshEvents: () => void;
 }) {
 	const latestEvents = runEventState.items.slice(-10);
+	const isPendingLedger = runEventState.run?.status === "Pending";
 
 	return (
 		<div style={{ padding: 24 }}>
@@ -781,7 +782,7 @@ function ExpiredWorkflowLedgerView({
 						返回
 					</Button>
 					<Typography.Title level={4} style={{ margin: 0 }}>
-						{name || "运行详情"}
+						{name || runEventState.run?.workflowName || "运行详情"}
 					</Typography.Title>
 					{runEventState.run?.status ? (
 						<Tag color={STATUS_COLORS[runEventState.run.status] || "default"}>
@@ -790,10 +791,18 @@ function ExpiredWorkflowLedgerView({
 					) : null}
 				</Space>
 				<Alert
-					type="warning"
+					type={isPendingLedger ? "info" : "warning"}
 					showIcon
-					message="Argo 工作流已不可用，正在展示 DataBrew 历史"
-					description="Workflow 可能已被 Argo TTL 清理，DAG、Pod 实时状态和实时日志暂不可用；提交记录、状态变化和节点事件会继续保留在 DataBrew 运行账本中。"
+					message={
+						isPendingLedger
+							? "子任务尚未提交到 Argo"
+							: "Argo 工作流已不可用，正在展示 DataBrew 历史"
+					}
+					description={
+						isPendingLedger
+							? "该批量子任务仍在排队或等待重试，DAG、Pod 实时状态和日志暂不可用；DataBrew 运行账本会随提交进度更新。"
+							: "Workflow 可能已被 Argo TTL 清理，DAG、Pod 实时状态和实时日志暂不可用；提交记录、状态变化和节点事件会继续保留在 DataBrew 运行账本中。"
+					}
 					action={
 						<Button size="small" onClick={onRefreshEvents}>
 							刷新事件

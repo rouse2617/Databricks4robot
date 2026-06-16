@@ -63,6 +63,9 @@ func (m *mockBackfillRepo) FindItemsByJobID(_ context.Context, _ string) ([]mode
 func (m *mockBackfillRepo) FindItemByID(_ context.Context, _ string) (*models.BackfillItem, error) {
 	return nil, nil
 }
+func (m *mockBackfillRepo) FindItemByPipelineRunID(_ context.Context, _ string) (*models.BackfillItem, error) {
+	return nil, nil
+}
 func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range m.items {
 		if m.items[i].ID == id {
@@ -434,6 +437,9 @@ func (r *trackingBackfillRepo) FindItemsByJobID(_ context.Context, _ string) ([]
 func (r *trackingBackfillRepo) FindItemByID(_ context.Context, _ string) (*models.BackfillItem, error) {
 	return nil, nil
 }
+func (r *trackingBackfillRepo) FindItemByPipelineRunID(_ context.Context, _ string) (*models.BackfillItem, error) {
+	return nil, nil
+}
 func (r *trackingBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -544,8 +550,6 @@ func (r *trackingBackfillRepo) PrepareItemsForRerun(_ context.Context, itemIDs [
 	for i := range r.items {
 		if containsString(itemIDs, r.items[i].ID) {
 			r.items[i].Status = "pending"
-			r.items[i].PipelineRunID = nil
-			r.items[i].WorkflowName = nil
 			r.items[i].ErrorMessage = nil
 			r.items[i].StartedAt = nil
 			r.items[i].FinishedAt = nil

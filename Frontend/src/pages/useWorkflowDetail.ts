@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+	getPipelineRun,
 	getPipelineRunByWorkflowName,
 	getPipelineRunCostSummary,
 	listPipelineRunAssetNodes,
@@ -149,6 +150,24 @@ function toLoadError(err: unknown): WorkflowLoadError {
 	return { kind: "error", message: toErrorMessage(err) };
 }
 
+async function resolvePipelineRun(lookup: string): Promise<PipelineRun | null> {
+	try {
+		return await getPipelineRunByWorkflowName(lookup);
+	} catch (err) {
+		if (!(err instanceof ApiError && err.status === 404)) {
+			throw err;
+		}
+	}
+	try {
+		return await getPipelineRun(lookup);
+	} catch (err) {
+		if (!(err instanceof ApiError && err.status === 404)) {
+			throw err;
+		}
+	}
+	return null;
+}
+
 function appendBoundedLogContent(
 	current: string | null,
 	line: string,
@@ -213,13 +232,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				loading: true,
 				error: null,
 			}));
-			getPipelineRunByWorkflowName(name)
-				.catch((err) => {
-					if (err instanceof ApiError && err.status === 404) {
-						return null;
-					}
-					throw err;
-				})
+			resolvePipelineRun(name)
 				.then((run) => {
 					if (!run) {
 						setRunEventState({

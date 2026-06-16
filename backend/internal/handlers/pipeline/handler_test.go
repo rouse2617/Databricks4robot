@@ -206,6 +206,18 @@ func (m *mockPipelineRunRepo) FindByWorkflowName(_ context.Context, workflowName
 	}
 	return nil, nil
 }
+func (m *mockPipelineRunRepo) FindByBatchJobAndAssetID(_ context.Context, batchJobID, assetID string) (*models.PipelineRun, error) {
+	for _, r := range m.byID {
+		if r.BatchJobID != nil && *r.BatchJobID == batchJobID {
+			for _, id := range r.AssetIDs {
+				if id == assetID {
+					return r, nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
 func (m *mockPipelineRunRepo) Delete(_ context.Context, id string) error {
 	delete(m.byID, id)
 	return nil
