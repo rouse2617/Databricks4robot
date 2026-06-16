@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { getAppVersionLabel } from "../lib/appVersion";
 import CmdKSearch from "./CmdKSearch";
 
 const { Sider, Content } = Layout;
@@ -74,6 +75,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const isMobile = !screens.lg;
 	const siderWidth = 220;
 	const fullBleed = isFullBleedPage(location.pathname);
+	const versionLabel = getAppVersionLabel();
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll to top on route changes
 	useEffect(() => {
@@ -87,13 +89,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 				breakpoint="lg"
 				collapsedWidth={0}
 				trigger={null}
+				className="app-sider"
 				style={{
-					overflow: "auto",
-					height: "100vh",
 					position: "fixed",
-					left: 0,
-					top: 0,
-					bottom: 0,
 					zIndex: 100,
 				}}
 			>
@@ -128,13 +126,22 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 				</div>
 
 				{/* nav */}
-				<Menu
-					theme="dark"
-					mode="inline"
-					selectedKeys={[resolveSelectedKey(location.pathname)]}
-					items={menuItems}
-					onClick={({ key }) => navigate(key)}
-				/>
+				<div className="app-nav-wrapper">
+					<Menu
+						theme="dark"
+						mode="inline"
+						selectedKeys={[resolveSelectedKey(location.pathname)]}
+						items={menuItems}
+						onClick={({ key }) => navigate(key)}
+						style={{ background: "transparent", borderRight: 0 }}
+					/>
+				</div>
+
+				<div className="app-user-section">
+					<div className="app-version" title={versionLabel}>
+						{versionLabel}
+					</div>
+				</div>
 			</Sider>
 			<Layout style={{ marginLeft: isMobile ? 0 : siderWidth }}>
 				<Content style={{ minHeight: "100vh" }}>
