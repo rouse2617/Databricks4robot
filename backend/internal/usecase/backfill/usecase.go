@@ -428,6 +428,10 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	}
 
 	_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, dep.ID, dep.WorkflowName, "running")
+	if bindErr := uc.pipelineUC.CommitBatchSubtaskDeploy(ctx, runID, dep); bindErr != nil {
+		slog.Warn("executeItem: commit batch subtask deploy failed",
+			"jobID", jobID, "assetID", item.AssetID, "runID", runID, "err", bindErr)
+	}
 	_ = uc.syncJobProgress(ctx, jobID)
 	return nil
 }
@@ -517,10 +521,13 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 		run, err := uc.pipelineUC.GetRun(ctx, runID)
 		if err == nil && run != nil {
 			workflowName := strings.TrimSpace(run.WorkflowName)
-			if item.WorkflowName == nil || strings.TrimSpace(*item.WorkflowName) == "" {
-				if workflowName != "" {
-					_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, item.Status)
-				}
+			itemWorkflowName := ""
+			if item.WorkflowName != nil {
+				itemWorkflowName = strings.TrimSpace(*item.WorkflowName)
+			}
+			if workflowName != "" && (itemWorkflowName == "" ||
+				(strings.Contains(itemWorkflowName, "-batch-") && !strings.Contains(workflowName, "-batch-"))) {
+				_ = uc.repo.UpdateItemPipelineRun(ctx, item.ID, runID, workflowName, item.Status)
 			}
 			return nil
 		}

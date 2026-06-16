@@ -1040,15 +1040,87 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		now := time.Now().UTC()
 		run.FinishedAt = &now
 	}
-	logPipelineSideEffect("update pipeline run status", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
+	uc.persistRunObservation(ctx, run)
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
 }
 
+func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.PipelineRun) {
+	if uc.runRepo == nil || run == nil || strings.TrimSpace(run.ID) == "" {
+		return
+	}
+	existing, err := uc.runRepo.FindByID(ctx, run.ID)
+	if err != nil || existing == nil {
+		logPipelineSideEffect("save pipeline run observation", uc.runRepo.Save(ctx, run))
+		return
+	}
+	existing.Status = run.Status
+	existing.FinishedAt = run.FinishedAt
+	existing.Message = run.Message
+	if uid := strings.TrimSpace(run.ArgoWorkflowUID); uid != "" {
+		existing.ArgoWorkflowUID = uid
+	}
+	if name := strings.TrimSpace(run.WorkflowName); name != "" {
+		existing.WorkflowName = name
+	}
+	if run.StartedAt != nil {
+		existing.StartedAt = run.StartedAt
+	}
+	logPipelineSideEffect("save pipeline run observation", uc.runRepo.Save(ctx, existing))
+	*run = *existing
+}
+
+func isStaleWorkflowUnavailableMessage(message string) bool {
+	switch strings.TrimSpace(message) {
+	case staleWorkflowTTLCleanupMessage, messageWorkflowAwaitingDeploy, messageWorkflowUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func workflowUnavailableMessage(run *models.PipelineRun) string {
+	if run == nil {
+		return messageWorkflowUnavailable
+	}
+	if strings.TrimSpace(run.ArgoWorkflowUID) == "" && isBatchSubtaskPlaceholderWorkflowName(run.WorkflowName) {
+		return messageWorkflowAwaitingDeploy
+	}
+	return messageWorkflowUnavailable
+}
+
+func (uc *Usecase) markRunWorkflowNotFound(ctx context.Context, run *models.PipelineRun) {
+	if uc.reconcileTerminalRunFromLedger(ctx, run) {
+		return
+	}
+	if isPendingBatchWorkflowCreation(run) {
+		if isStaleWorkflowUnavailableMessage(run.Message) {
+			run.Message = ""
+			uc.persistRunObservation(ctx, run)
+		}
+		return
+	}
+	if run.FinishedAt == nil || run.FinishedAt.IsZero() {
+		now := time.Now().UTC()
+		run.FinishedAt = &now
+	}
+	run.Status = deploymentStatusExpired
+	run.Message = workflowUnavailableMessage(run)
+	uc.persistRunObservation(ctx, run)
+}
+
 func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *models.PipelineRun) {
-	if uc.wfClient == nil || run == nil || !isMisclassifiedTerminalRunStatus(run.Status) {
+	if uc.wfClient == nil || run == nil {
 		return
 	}
 	if strings.TrimSpace(run.WorkflowName) == "" {
+		return
+	}
+	if !isMisclassifiedTerminalRunStatus(run.Status) && !isStaleWorkflowUnavailableMessage(run.Message) {
+		return
+	}
+	if isPendingBatchWorkflowCreation(run) && isStaleWorkflowUnavailableMessage(run.Message) {
+		run.Message = ""
+		uc.persistRunObservation(ctx, run)
 		return
 	}
 	namespace := run.ArgoNamespace
@@ -1074,6 +1146,7 @@ func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRu
 	if isActiveDeploymentStatus(run.Status) {
 		uc.refreshRunStatus(ctx, run)
 	}
+	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
 	if fresh, err := uc.runRepo.FindByID(ctx, run.ID); err == nil && fresh != nil {
 		*run = *fresh
@@ -1115,7 +1188,7 @@ func (uc *Usecase) reconcileTerminalRunFromLedger(ctx context.Context, run *mode
 		return false
 	}
 	run.Status = status
-	logPipelineSideEffect("reconcile pipeline run from ledger", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
+	uc.persistRunObservation(ctx, run)
 	return true
 }
 
@@ -1161,13 +1234,13 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			if shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
+				if isPendingBatchWorkflowCreation(run) && isStaleWorkflowUnavailableMessage(run.Message) {
+					run.Message = ""
+					uc.persistRunObservation(ctx, run)
+				}
 				return
 			}
-			if uc.reconcileTerminalRunFromLedger(ctx, run) {
-				return
-			}
-			run.Status = deploymentStatusExpired
-			logPipelineSideEffect("mark expired pipeline run", uc.runRepo.UpdateStatus(ctx, run.ID, deploymentStatusExpired, nil))
+			uc.markRunWorkflowNotFound(ctx, run)
 		}
 		return
 	}
@@ -2346,6 +2419,12 @@ func (uc *Usecase) SaveFromDeployment(ctx context.Context, deploymentID, templat
 const maxActiveDeploymentStatusRefresh = 50
 
 const deploymentStatusExpired = "Expired"
+
+const (
+	staleWorkflowTTLCleanupMessage = "Argo 工作流已被 TTL 清理"
+	messageWorkflowAwaitingDeploy  = "等待绑定 Argo workflow"
+	messageWorkflowUnavailable     = "Argo workflow 在集群中不可访问（可能已 TTL 清理）"
+)
 
 // staleActiveRunMaxAge is the maximum duration a run may stay in an active
 // Argo phase before the watcher marks it failed as a zombie run.

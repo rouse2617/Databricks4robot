@@ -126,6 +126,16 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 
 	if existing, err := uc.runRepo.FindByID(ctx, runID); err == nil && existing != nil {
 		run.CreatedAt = existing.CreatedAt
+		if shouldPreserveBatchSubtaskWorkflowName(existing, workflowName) {
+			run.WorkflowName = existing.WorkflowName
+			workflowName = existing.WorkflowName
+		}
+		if uid := strings.TrimSpace(existing.ArgoWorkflowUID); uid != "" {
+			run.ArgoWorkflowUID = uid
+		}
+		if strings.TrimSpace(in.Message) == "" && isStaleWorkflowUnavailableMessage(existing.Message) {
+			run.Message = ""
+		}
 		switch strings.ToLower(strings.TrimSpace(status)) {
 		case "pending":
 			run.StartedAt = nil
@@ -150,6 +160,66 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 
 func isBatchSubtaskPlaceholderWorkflowName(name string) bool {
 	return strings.Contains(strings.TrimSpace(name), "-batch-")
+}
+
+func shouldPreserveBatchSubtaskWorkflowName(existing *models.PipelineRun, incoming string) bool {
+	if existing == nil {
+		return false
+	}
+	if strings.TrimSpace(existing.ArgoWorkflowUID) != "" {
+		return true
+	}
+	existingName := strings.TrimSpace(existing.WorkflowName)
+	incomingName := strings.TrimSpace(incoming)
+	if existingName == "" {
+		return false
+	}
+	if !isBatchSubtaskPlaceholderWorkflowName(existingName) {
+		return isBatchSubtaskPlaceholderWorkflowName(incomingName) || incomingName == "" || incomingName != existingName
+	}
+	return false
+}
+
+// CommitBatchSubtaskDeploy binds a preallocated batch ledger row to the live
+// Argo workflow created by DeployByTemplateID.
+func (uc *Usecase) CommitBatchSubtaskDeploy(ctx context.Context, runID string, dep *models.PipelineDeployment) error {
+	if uc.runRepo == nil || dep == nil {
+		return nil
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		runID = strings.TrimSpace(dep.ID)
+	}
+	if runID == "" {
+		return fmt.Errorf("batch subtask run id is required")
+	}
+	existing, err := uc.runRepo.FindByID(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrDeploymentNotFound
+	}
+	wfName := strings.TrimSpace(dep.WorkflowName)
+	if wfName == "" {
+		return fmt.Errorf("deployment workflow name is required")
+	}
+	existing.WorkflowName = wfName
+	existing.Status = strings.TrimSpace(dep.Status)
+	if existing.Status == "" {
+		existing.Status = "Pending"
+	}
+	existing.Message = ""
+	existing.FinishedAt = nil
+	if existing.StartedAt == nil {
+		now := time.Now().UTC()
+		existing.StartedAt = &now
+	}
+	if err := uc.runRepo.Save(ctx, existing); err != nil {
+		return err
+	}
+	uc.refreshRunStatus(ctx, existing)
+	return nil
 }
 
 func batchSubtaskWorkflowName(pipelineName, assetID, runID string) string {

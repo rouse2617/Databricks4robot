@@ -3,6 +3,10 @@ package pipeline
 import (
 	"context"
 	"testing"
+	"time"
+
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 )
@@ -106,6 +110,112 @@ func TestUpsertBatchSubtaskRunForceNewAttemptCreatesFreshRun(t *testing.T) {
 	}
 	if saved := runRepo.byID[runID]; saved == nil || saved.Status != "Pending" {
 		t.Fatalf("new run status = %v, want Pending", saved)
+	}
+}
+
+func TestUpsertBatchSubtaskRunPreservesBoundWorkflowName(t *testing.T) {
+	t.Parallel()
+
+	const (
+		batchJobID = "job-1"
+		assetID    = "23324"
+		runID      = "run-1"
+		templateID = "tmpl-1"
+	)
+
+	existing := &models.PipelineRun{
+		ID:              runID,
+		WorkflowName:    "3-a93367",
+		ArgoWorkflowUID: "uid-1",
+		Status:          "Running",
+		AssetIDs:        []string{assetID},
+		BatchJobID:      strPtr(batchJobID),
+	}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{runID: existing},
+	}
+	templateRepo := &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			templateID: {ID: templateID, Name: "3", Version: 1, NodeCount: 3, Scope: "dev"},
+		},
+	}
+
+	uc := New(templateRepo, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+
+	_, workflowName, err := uc.UpsertBatchSubtaskRun(context.Background(), BatchSubtaskRunInput{
+		TemplateID:      templateID,
+		TemplateVersion: 1,
+		BatchJobID:      batchJobID,
+		AssetID:         assetID,
+		RunID:           runID,
+		Status:          "Running",
+		WorkflowName:    "3-batch-23324",
+	})
+	if err != nil {
+		t.Fatalf("UpsertBatchSubtaskRun() error = %v", err)
+	}
+	if workflowName != "3-a93367" {
+		t.Fatalf("workflowName = %q, want bound name preserved", workflowName)
+	}
+	if saved := runRepo.byID[runID]; saved == nil || saved.WorkflowName != "3-a93367" {
+		t.Fatalf("saved workflowName = %q", saved.WorkflowName)
+	}
+}
+
+func TestCommitBatchSubtaskDeployBindsLiveWorkflow(t *testing.T) {
+	t.Parallel()
+
+	runID := "run-1"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			runID: {
+				ID:           runID,
+				WorkflowName: "3-batch-23324",
+				Status:       "Pending",
+				BatchJobID:   strPtr("job-1"),
+				AssetIDs:     []string{"23324"},
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "3-a93367" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: name, UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase: wfv1.WorkflowRunning,
+				Nodes: map[string]wfv1.NodeStatus{
+					"n1": {TemplateName: "step-a", Phase: wfv1.NodeRunning, DisplayName: "step-a"},
+				},
+			},
+		}, nil
+	}
+
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "cyber-databrew-dev")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetObservabilityRepositories(&mockAssetNodeRepo{}, nil, nil)
+
+	err := uc.CommitBatchSubtaskDeploy(context.Background(), runID, &models.PipelineDeployment{
+		ID:           runID,
+		WorkflowName: "3-a93367",
+		Status:       "Running",
+	})
+	if err != nil {
+		t.Fatalf("CommitBatchSubtaskDeploy() error = %v", err)
+	}
+	saved := runRepo.byID[runID]
+	if saved.WorkflowName != "3-a93367" {
+		t.Fatalf("workflowName = %q", saved.WorkflowName)
+	}
+	if saved.Message != "" {
+		t.Fatalf("message = %q, want cleared", saved.Message)
+	}
+	if saved.Status != "Running" {
+		t.Fatalf("status = %q", saved.Status)
 	}
 }
 

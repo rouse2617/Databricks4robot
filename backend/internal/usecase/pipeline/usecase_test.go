@@ -1053,6 +1053,38 @@ func TestRefreshRunStatus_SkipsBatchPlaceholderNotFound(t *testing.T) {
 	}
 }
 
+func TestRefreshRunStatus_PlaceholderWithStaleTTLMessageStaysPending(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-batch": {
+				ID:           "run-batch",
+				WorkflowName: "pipe-batch-asset123",
+				Status:       "Running",
+				Message:      staleWorkflowTTLCleanupMessage,
+				BatchJobID:   &batchJobID,
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	uc.refreshRunStatus(ctx, runRepo.byID["run-batch"])
+	run := runRepo.byID["run-batch"]
+	if run.Status != "Running" {
+		t.Fatalf("expected Running placeholder run, got %q", run.Status)
+	}
+	if run.Message != "" {
+		t.Fatalf("expected stale TTL message cleared, got %q", run.Message)
+	}
+}
+
 func TestGetRun_ReconcilesMisclassifiedError(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
@@ -1106,6 +1138,16 @@ func (m *mockAssetNodeRepo) ListByRunID(_ context.Context, runID string, _ model
 		items = append(items, m.byRun[runID]...)
 	}
 	return &models.PipelineRunAssetNodeListResult{Items: items, Total: len(items)}, nil
+}
+
+func (m *mockAssetNodeRepo) ListByRunIDs(_ context.Context, runIDs []string) ([]models.PipelineRunAssetNode, error) {
+	out := make([]models.PipelineRunAssetNode, 0)
+	for _, runID := range runIDs {
+		if m.byRun != nil {
+			out = append(out, m.byRun[runID]...)
+		}
+	}
+	return out, nil
 }
 
 func TestReconcileTerminalRunFromLedger_StuckRunningWithSucceededNodes(t *testing.T) {

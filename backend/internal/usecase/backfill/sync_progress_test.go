@@ -65,6 +65,9 @@ func (r *pausedSyncRepo) FindItemByID(context.Context, string) (*models.Backfill
 func (r *pausedSyncRepo) FindItemByPipelineRunID(context.Context, string) (*models.BackfillItem, error) {
 	return nil, nil
 }
+func (r *pausedSyncRepo) FindItemByJobAndAssetID(context.Context, string, string) (*models.BackfillItem, error) {
+	return nil, nil
+}
 func (r *pausedSyncRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range r.items {
 		if r.items[i].ID == id {
@@ -185,6 +188,9 @@ func (m *syncTestRunRepo) FindByWorkflowName(context.Context, string) (*models.P
 	return nil, nil
 }
 func (m *syncTestRunRepo) FindByBatchJobAndAssetID(context.Context, string, string) (*models.PipelineRun, error) {
+	return nil, nil
+}
+func (m *syncTestRunRepo) FindAllByBatchJobAndAssetID(context.Context, string, string) ([]models.PipelineRun, error) {
 	return nil, nil
 }
 func (m *syncTestRunRepo) Delete(context.Context, string) error { return nil }
