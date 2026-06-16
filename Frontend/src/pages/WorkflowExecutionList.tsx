@@ -328,6 +328,7 @@ const getErrorTitle = (kind: WorkflowErrorKind): string =>
 export function WorkflowExecutionList({
 	active = true,
 	batchJobId,
+	_batchListKey,
 	embedded = false,
 	onSelectionChange,
 	title,
@@ -697,7 +698,7 @@ export function WorkflowExecutionList({
 		if (active) {
 			refresh();
 		}
-	}, [active, refresh]);
+	}, [active, refresh, _batchListKey]);
 
 	useEffect(() => {
 		setPage(1);

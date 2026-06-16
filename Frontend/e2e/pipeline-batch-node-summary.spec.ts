@@ -130,6 +130,29 @@ const templates = {
 	pageSize: 20,
 };
 
+const templateVersions = {
+	items: [
+		{
+			id: "tpl-111",
+			name: "demo-pipeline",
+			version: 3,
+			pipeline: { name: "demo-pipeline", nodes: [], edges: [] },
+			nodeCount: 1,
+			scope: "dev",
+			createdAt: "2026-06-09T00:00:00Z",
+		},
+		{
+			id: "tpl-111",
+			name: "demo-pipeline",
+			version: 4,
+			pipeline: { name: "demo-pipeline", nodes: [], edges: [] },
+			nodeCount: 1,
+			scope: "dev",
+			createdAt: "2026-06-10T00:00:00Z",
+		},
+	],
+};
+
 async function mockShell(page: import("@playwright/test").Page) {
 	await page.route(api("/auth/me"), (route) =>
 		route.fulfill({
@@ -143,6 +166,13 @@ async function mockShell(page: import("@playwright/test").Page) {
 			status: 200,
 			contentType: "application/json",
 			body: JSON.stringify(authMe),
+		}),
+	);
+	await page.route(api("/pipelines/tpl-111/versions"), (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify(templateVersions),
 		}),
 	);
 	await page.route(api("/pipelines*"), (route) =>
@@ -190,8 +220,8 @@ test.describe("batch node summary", () => {
 	test("shows node summary and drills into failures", async ({ page }) => {
 		await page.goto("/pipeline/batch/batch-job-001");
 
-		await expect(page.getByText("节点概览")).toBeVisible();
-		await expect(page.getByText("抽特征")).toBeVisible();
+		await expect(page.getByText("节点概览", { exact: true })).toBeVisible();
+		await expect(page.getByRole("cell", { name: "1. 抽特征" })).toBeVisible();
 		await page.getByRole("button", { name: "1 失败" }).click();
 		await expect(page.getByRole("cell", { name: "asset-b", exact: true })).toBeVisible();
 		await expect(page.getByText("exit code 1")).toBeVisible();
@@ -201,6 +231,7 @@ test.describe("batch node summary", () => {
 		const rerunBodies: Array<Record<string, unknown>> = [];
 		await page.route(api("/backfill/batch-job-001/rerun"), async (route) => {
 			rerunBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+			const body = route.request().postDataJSON() as Record<string, unknown>;
 			await route.fulfill({
 				status: 200,
 				contentType: "application/json",
@@ -209,7 +240,7 @@ test.describe("batch node summary", () => {
 					dryRun: true,
 					matchedCount: 1,
 					templateId: "tpl-111",
-					templateVersion: 4,
+					templateVersion: body.templateVersion ?? 4,
 					skipped: [],
 				}),
 			});
@@ -222,12 +253,65 @@ test.describe("batch node summary", () => {
 			.setChecked(true, { force: true });
 		await page.getByRole("button", { name: "重跑" }).click();
 		await page.getByText("重试选中项 (1)").click();
-		await expect(page.getByText("将重新提交 1 条子任务，模板版本 v4。旧 run 记录会保留。")).toBeVisible();
-		await page.keyboard.press("Escape");
+		await expect(page.getByRole("dialog", { name: "确认重跑" })).toBeVisible();
+		await expect(
+			page.getByText("将重新提交 1 条子任务，模板版本 v4。旧 run 记录会保留。"),
+		).toBeVisible();
+		await page.getByRole("button", { name: "取 消" }).click();
 
 		await expect.poll(() => rerunBodies.length).toBe(1);
 		expect(rerunBodies[0].dryRun).toBe(true);
 		expect(rerunBodies[0].scope).toBe("custom");
 		expect(rerunBodies[0].assetIds).toEqual(["asset-a"]);
+		expect(rerunBodies[0].templateVersion).toBe(4);
+	});
+
+	test("lets user pick template version before rerun", async ({ page }) => {
+		const rerunBodies: Array<Record<string, unknown>> = [];
+		await page.route(api("/backfill/batch-job-001/rerun"), async (route) => {
+			rerunBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+			const body = route.request().postDataJSON() as Record<string, unknown>;
+			const isDryRun = Boolean(body.dryRun);
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					status: "accepted",
+					dryRun: isDryRun,
+					matchedCount: body.templateVersion === 3 ? 2 : 1,
+					templateId: "tpl-111",
+					templateVersion: body.templateVersion ?? 4,
+					skipped: [],
+				}),
+			});
+		});
+
+		await page.goto("/pipeline/batch/batch-job-001");
+
+		await page.getByRole("button", { name: "重跑" }).click();
+		await page.getByText("重试全部失败").click();
+		const rerunDialog = page.getByRole("dialog", { name: "确认重跑" });
+		await expect(rerunDialog).toBeVisible();
+		await expect(
+			rerunDialog.getByText("将重新提交 1 条子任务，模板版本 v4。旧 run 记录会保留。"),
+		).toBeVisible();
+
+		await rerunDialog.locator(".ant-select").click();
+		await page.getByTitle("v3").click();
+		await expect(
+			rerunDialog.getByText(
+				"将重新提交 2 条子任务，模板版本 v3。旧 run 记录会保留。",
+			),
+		).toBeVisible();
+
+		await expect.poll(() => rerunBodies.length).toBe(2);
+		expect(rerunBodies[1].dryRun).toBe(true);
+		expect(rerunBodies[1].templateVersion).toBe(3);
+
+		await page.getByRole("button", { name: "确认重跑" }).click();
+		await expect.poll(() => rerunBodies.length).toBe(3);
+		expect(rerunBodies[2].dryRun).toBeUndefined();
+		expect(rerunBodies[2].templateVersion).toBe(3);
+		expect(rerunBodies[2].scope).toBe("failed");
 	});
 });

@@ -16,6 +16,7 @@ import {
 	Dropdown,
 	Modal,
 	Progress,
+	Select,
 	Skeleton,
 	Space,
 	Table,
@@ -38,9 +39,12 @@ import {
 	pauseBatchJob,
 	rerunBatchJob,
 	resumeBatchJob,
-	retryFailedBatchItems,
 } from "../api/batchJobApi";
-import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
+import {
+	listPipelineVersions,
+	listPipelines,
+	type PipelineTemplate,
+} from "../api/pipelineApi";
 import type { WorkflowSummary } from "../api/workflowApi";
 import {
 	goBackFromBatchJobDetail,
@@ -54,6 +58,26 @@ import {
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const { Title, Text } = Typography;
+
+type RerunScope = "failed" | "incomplete" | "completed" | "custom" | "node_failed";
+
+interface RerunModalState {
+	scope: RerunScope;
+	extra: Record<string, unknown>;
+}
+
+function defaultRerunTemplateVersion(
+	job: BatchJob,
+	versions: PipelineTemplate[],
+): number | undefined {
+	if (job.templateVersion && job.templateVersion > 0) {
+		return job.templateVersion;
+	}
+	if (versions.length === 0) {
+		return undefined;
+	}
+	return Math.max(...versions.map((item) => item.version));
+}
 
 function exportFailuresCsv(
 	items: BatchNodeFailureItem[],
@@ -92,18 +116,33 @@ export default function BatchJobDetailPage() {
 	const [nodeFailureTotal, setNodeFailureTotal] = useState(0);
 	const [nodeFailureLoading, setNodeFailureLoading] = useState(false);
 	const [selectedRuns, setSelectedRuns] = useState<WorkflowSummary[]>([]);
+	const [templateVersions, setTemplateVersions] = useState<PipelineTemplate[]>(
+		[],
+	);
+	const [rerunModal, setRerunModal] = useState<RerunModalState | null>(null);
+	const [rerunTemplateVersion, setRerunTemplateVersion] = useState<
+		number | undefined
+	>();
+	const [rerunPreviewCount, setRerunPreviewCount] = useState<number | null>(
+		null,
+	);
+	const [rerunPreviewLoading, setRerunPreviewLoading] = useState(false);
 
 	const refresh = useCallback(async () => {
 		if (!id) return;
 		setLoading(true);
 		try {
-			const [jobData, templates] = await Promise.all([
-				getBatchJob(id),
+			const jobData = await getBatchJob(id);
+			const [templates, versions] = await Promise.all([
 				listPipelines({ pageSize: 200 })
 					.then((r) => r.items)
 					.catch(() => [] as PipelineTemplate[]),
+				listPipelineVersions(jobData.templateId).catch(
+					() => [] as PipelineTemplate[],
+				),
 			]);
 			setJob(jobData);
+			setTemplateVersions(versions);
 			getBatchNodeSummary(id)
 				.then(setNodeSummary)
 				.catch(() => setNodeSummary(null));
@@ -124,13 +163,12 @@ export default function BatchJobDetailPage() {
 		goBackFromBatchJobDetail(navigate, location.state);
 	}, [location.state, navigate]);
 
-	const runAction = async (action: "pause" | "resume" | "retry") => {
+	const runAction = async (action: "pause" | "resume") => {
 		if (!job) return;
 		setActionLoading(action);
 		try {
 			if (action === "pause") await pauseBatchJob(job.id);
 			if (action === "resume") await resumeBatchJob(job.id);
-			if (action === "retry") await retryFailedBatchItems(job.id);
 			message.success("操作已提交");
 			await refresh();
 		} catch (err) {
@@ -140,41 +178,60 @@ export default function BatchJobDetailPage() {
 		}
 	};
 
-	const runRerun = async (
-		scope: "failed" | "incomplete" | "completed" | "custom" | "node_failed",
+	const previewRerun = useCallback(
+		async (
+			scope: RerunScope,
+			templateVersion: number | undefined,
+			extra: Record<string, unknown> = {},
+		) => {
+			if (!job) return;
+			setRerunPreviewLoading(true);
+			try {
+				const dryRun = await rerunBatchJob(job.id, {
+					scope,
+					templateVersion,
+					dryRun: true,
+					...extra,
+				});
+				setRerunPreviewCount(dryRun.matchedCount);
+			} catch (err) {
+				setRerunPreviewCount(null);
+				message.error(`预览重跑失败：${String(err)}`);
+			} finally {
+				setRerunPreviewLoading(false);
+			}
+		},
+		[job, message],
+	);
+
+	const openRerunModal = (
+		scope: RerunScope,
 		extra: Record<string, unknown> = {},
 	) => {
 		if (!job) return;
-		setActionLoading(`rerun-${scope}`);
+		const version = defaultRerunTemplateVersion(job, templateVersions);
+		setRerunModal({ scope, extra });
+		setRerunTemplateVersion(version);
+		setRerunPreviewCount(null);
+		void previewRerun(scope, version, extra);
+	};
+
+	const closeRerunModal = () => {
+		setRerunModal(null);
+		setRerunPreviewCount(null);
+	};
+
+	const submitRerun = async () => {
+		if (!job || !rerunModal) return;
+		setActionLoading(`rerun-${rerunModal.scope}`);
 		try {
-			const dryRun = await rerunBatchJob(job.id, {
-				scope,
-				templateVersion: job.templateVersion,
-				dryRun: true,
-				...extra,
-			});
-			await new Promise<void>((resolve, reject) => {
-				Modal.confirm({
-					title: "确认重跑",
-					content: `将重新提交 ${dryRun.matchedCount} 条子任务，模板版本 v${dryRun.templateVersion ?? "当前"}。旧 run 记录会保留。`,
-					okText: "确认重跑",
-					cancelText: "取消",
-					onOk: async () => {
-						try {
-							await rerunBatchJob(job.id, {
-								scope,
-								templateVersion: job.templateVersion,
-								...extra,
-							});
-							resolve();
-						} catch (err) {
-							reject(err);
-						}
-					},
-					onCancel: () => resolve(),
-				});
+			await rerunBatchJob(job.id, {
+				scope: rerunModal.scope,
+				templateVersion: rerunTemplateVersion,
+				...rerunModal.extra,
 			});
 			message.success("重跑已提交");
+			closeRerunModal();
 			await refresh();
 		} catch (err) {
 			message.error(`重跑失败：${String(err)}`);
@@ -274,8 +331,8 @@ export default function BatchJobDetailPage() {
 						{job.failedCount > 0 ? (
 							<Button
 								icon={<RedoOutlined />}
-								loading={actionLoading === "retry"}
-								onClick={() => void runAction("retry")}
+								loading={actionLoading === "rerun-failed"}
+								onClick={() => openRerunModal("failed")}
 							>
 								重试失败项
 							</Button>
@@ -294,10 +351,14 @@ export default function BatchJobDetailPage() {
 								],
 								onClick: ({ key }) => {
 									if (key === "custom") {
-										void runRerun("custom", { assetIds: selectedAssetIds });
+										openRerunModal("custom", {
+											assetIds: selectedAssetIds,
+										});
 										return;
 									}
-									void runRerun(key as "failed" | "incomplete" | "completed");
+									openRerunModal(
+										key as "failed" | "incomplete" | "completed",
+									);
 								},
 							}}
 						>
@@ -510,7 +571,7 @@ export default function BatchJobDetailPage() {
 								icon={<RedoOutlined />}
 								loading={actionLoading === "rerun-node_failed"}
 								onClick={() =>
-									void runRerun("node_failed", {
+									openRerunModal("node_failed", {
 										pipelineNodeId: drawerNode.pipelineNodeId,
 									})
 								}
@@ -554,6 +615,58 @@ export default function BatchJobDetailPage() {
 					]}
 				/>
 			</Drawer>
+
+			<Modal
+				title="确认重跑"
+				open={Boolean(rerunModal)}
+				onCancel={closeRerunModal}
+				onOk={() => void submitRerun()}
+				okText="确认重跑"
+				cancelText="取消"
+				confirmLoading={actionLoading?.startsWith("rerun-") ?? false}
+				okButtonProps={{
+					disabled:
+						rerunPreviewLoading ||
+						rerunPreviewCount === null ||
+						rerunPreviewCount === 0,
+				}}
+				destroyOnHidden
+			>
+				<Space direction="vertical" size={12} style={{ width: "100%" }}>
+					<div>
+						<Text type="secondary">模板版本</Text>
+						<Select
+							aria-label="重跑模板版本"
+							style={{ width: "100%", marginTop: 8 }}
+							value={rerunTemplateVersion}
+							placeholder="请选择版本"
+							loading={templateVersions.length === 0 && rerunPreviewLoading}
+							options={templateVersions.map((version) => ({
+								value: version.version,
+								label: `v${version.version}${
+									version.version === job.templateVersion ? "（批次版本）" : ""
+								}`,
+							}))}
+							onChange={(value) => {
+								setRerunTemplateVersion(value);
+								if (rerunModal) {
+									void previewRerun(rerunModal.scope, value, rerunModal.extra);
+								}
+							}}
+						/>
+					</div>
+					{rerunPreviewLoading ? (
+						<Text type="secondary">正在计算将重跑的子任务数…</Text>
+					) : rerunPreviewCount !== null ? (
+						<Text>
+							将重新提交 {rerunPreviewCount} 条子任务，模板版本 v
+							{rerunTemplateVersion ?? "当前"}。旧 run 记录会保留。
+						</Text>
+					) : (
+						<Text type="secondary">请选择模板版本后预览重跑范围。</Text>
+					)}
+				</Space>
+			</Modal>
 		</div>
 	);
 }
