@@ -437,6 +437,21 @@ func (uc *Usecase) ReconcileSubtaskRuns(ctx context.Context, jobID string) error
 	return uc.reconcileMissingRuns(ctx, jobID)
 }
 
+// SyncBatchView reconciles batch subtasks, refreshes the current list page from
+// Argo when needed, and updates backfill job counters. Call after reading runs
+// for a batch list/detail view — not for global pipeline lists.
+func (uc *Usecase) SyncBatchView(ctx context.Context, jobID string, runs []models.PipelineRun) error {
+	if err := uc.ReconcileSubtaskRuns(ctx, jobID); err != nil {
+		return err
+	}
+	if uc.pipelineUC != nil {
+		for i := range runs {
+			uc.pipelineUC.RefreshRunForList(ctx, &runs[i])
+		}
+	}
+	return uc.syncJobProgress(ctx, jobID)
+}
+
 // ReconcileItemByID materializes or repairs the ledger row for a single backfill item.
 func (uc *Usecase) ReconcileItemByID(ctx context.Context, itemID string) (string, error) {
 	item, err := uc.repo.FindItemByID(ctx, itemID)
@@ -576,7 +591,11 @@ func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, 
 
 // PauseJob pauses a running backfill job.
 func (uc *Usecase) PauseJob(ctx context.Context, id string) error {
-	return uc.repo.UpdateJobStatus(ctx, id, "paused")
+	if err := uc.repo.UpdateJobStatus(ctx, id, "paused"); err != nil {
+		return err
+	}
+	_ = uc.syncJobProgress(ctx, id)
+	return nil
 }
 
 // ResumeJob resumes a paused backfill job and re-schedules pending items.
@@ -878,9 +897,7 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 	if err != nil || job == nil {
 		return err
 	}
-	if job.Status == "paused" {
-		return nil
-	}
+	paused := job.Status == "paused"
 
 	if uc.pipelineUC != nil {
 		ledgerItems, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"running", "pending"})
@@ -913,6 +930,9 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {
 		return err
+	}
+	if paused {
+		return uc.repo.UpdateJobProgress(ctx, jobID, summary.Completed, summary.Failed, "paused")
 	}
 	if job.PilotPhase == "running" && job.PilotCount > 0 {
 		attemptedPilot := summary.Completed + summary.Failed

@@ -1087,3 +1087,80 @@ func TestGetRun_ReconcilesMisclassifiedError(t *testing.T) {
 		t.Fatalf("expected reconciled Succeeded status, got %q", run.Status)
 	}
 }
+
+type mockAssetNodeRepo struct {
+	byRun map[string][]models.PipelineRunAssetNode
+}
+
+func (m *mockAssetNodeRepo) ReplaceByRunID(_ context.Context, runID string, rows []models.PipelineRunAssetNode) error {
+	if m.byRun == nil {
+		m.byRun = map[string][]models.PipelineRunAssetNode{}
+	}
+	m.byRun[runID] = append([]models.PipelineRunAssetNode(nil), rows...)
+	return nil
+}
+
+func (m *mockAssetNodeRepo) ListByRunID(_ context.Context, runID string, _ models.PipelineRunAssetNodeListOptions) (*models.PipelineRunAssetNodeListResult, error) {
+	items := []models.PipelineRunAssetNode{}
+	if m.byRun != nil {
+		items = append(items, m.byRun[runID]...)
+	}
+	return &models.PipelineRunAssetNodeListResult{Items: items, Total: len(items)}, nil
+}
+
+func TestReconcileTerminalRunFromLedger_StuckRunningWithSucceededNodes(t *testing.T) {
+	ctx := context.Background()
+	finishedAt := time.Now().UTC().Add(-time.Hour)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				FinishedAt:   &finishedAt,
+			},
+		},
+	}
+	assetNodeRepo := &mockAssetNodeRepo{
+		byRun: map[string][]models.PipelineRunAssetNode{
+			"run-1": {
+				{RunID: "run-1", AssetID: "a1", PipelineNodeID: "n1", Status: "Succeeded"},
+				{RunID: "run-1", AssetID: "a1", PipelineNodeID: "n2", Status: "Succeeded"},
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetObservabilityRepositories(assetNodeRepo, nil, nil)
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != "Succeeded" {
+		t.Fatalf("expected Succeeded from ledger, got %q", run.Status)
+	}
+}
+
+func TestInferRunStatusFromAssetNodes(t *testing.T) {
+	status, ok := inferRunStatusFromAssetNodes([]models.PipelineRunAssetNode{
+		{Status: "Succeeded"},
+		{Status: "Skipped"},
+	})
+	if !ok || status != "Succeeded" {
+		t.Fatalf("expected Succeeded, got %q ok=%v", status, ok)
+	}
+	status, ok = inferRunStatusFromAssetNodes([]models.PipelineRunAssetNode{
+		{Status: "Succeeded"},
+		{Status: "Failed"},
+	})
+	if !ok || status != "Failed" {
+		t.Fatalf("expected Failed, got %q ok=%v", status, ok)
+	}
+	_, ok = inferRunStatusFromAssetNodes([]models.PipelineRunAssetNode{{Status: "Running"}})
+	if ok {
+		t.Fatal("expected non-terminal when nodes still running")
+	}
+}

@@ -23,6 +23,7 @@ import (
 type BatchSubtaskReconciler interface {
 	ReconcileSubtaskRuns(ctx context.Context, jobID string) error
 	ReconcileItemByID(ctx context.Context, itemID string) (string, error)
+	SyncBatchView(ctx context.Context, jobID string, runs []models.PipelineRun) error
 }
 
 // Handler bundles the pipeline endpoints.
@@ -331,9 +332,6 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	summaryView := strings.EqualFold(c.Query("view"), "summary")
 	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
 	excludeBatch := strings.EqualFold(c.Query("excludeBatch"), "true") || c.Query("excludeBatch") == "1"
-	if batchJobID != "" && h.batchRuns != nil {
-		_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
-	}
 	statusFilter := strings.TrimSpace(c.Query("status"))
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
 	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
@@ -352,7 +350,14 @@ func (h *Handler) ListRuns(c *gin.Context) {
 			PageSize:     pageSize,
 		}
 		items, total, err = h.uc.ListRunSummaries(c.Request.Context(), filter)
+		if err == nil && batchJobID != "" && h.batchRuns != nil {
+			_ = h.batchRuns.SyncBatchView(c.Request.Context(), batchJobID, items)
+			items, total, err = h.uc.ListRunSummaries(c.Request.Context(), filter)
+		}
 	} else {
+		if batchJobID != "" && h.batchRuns != nil {
+			_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
+		}
 		items, err = h.uc.ListRuns(c.Request.Context(), refreshActive)
 		total = len(items)
 	}
