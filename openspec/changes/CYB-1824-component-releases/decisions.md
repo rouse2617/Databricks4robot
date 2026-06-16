@@ -35,3 +35,15 @@
 - **Decision**: 前端先做 presentation-layer 融合：组件页改为单一“组件库”表格，一行代表一个任务/组件，同行展示 legacy component、generated releases、状态、镜像和来源；legacy CRUD 入口保留，release detail 入口保留。
 - **Alternatives**: 后端立即合并两套 storage/model，或继续用两个独立区块展示。
 - **Rationale**: 当前 Phase 1 仍需要保留旧组件 CRUD 和新 release 台账的不同生命周期；先在 UI 聚合，能降低用户理解成本，同时避免过早破坏既有 pipeline component 行为。
+
+## 2026-06-15 — CI manifest 为主路径，不做全项目扫描
+- **Context**: 用户希望一步到位打通“task 出包后 DataBrew 感知”，但不希望 DataBrew 全项目扫描 Cloud Build/Artifact Registry，也不希望普通用户填写 image/repo/digest。
+- **Decision**: ComponentRelease 主路径定为 CI push manifest：CI 构建成功后向 `/api/v1/pipeline-component-releases/sync` 提交 batch `source + items`；DataBrew 只接收、校验、入库、展示和搜索，不负责猜测 task/image 关系。
+- **Alternatives**: DataBrew 主动扫描全项目 build/image，或 UI 让用户按 commit/tag 懒加载后导入。
+- **Rationale**: CI 在出包时拥有最准确的 task、commit、image digest 和 build metadata；DataBrew 只做 ingest contract 能避免误扫其它团队镜像，也降低平台耦合。
+
+## 2026-06-16 — User-approved PR before deploy verification
+- **Context**: Runtime diff touches Frontend/backend/sdk. The default deploy-before-commit workflow requires dev deploy verification before commit/push, but the user explicitly interrupted the build and said they would verify themselves, asking to submit the PR immediately.
+- **Decision**: Commit and open the PR without completing Cloud Run dev deploy verification. Include completed local checks and the skipped build/deploy status in the PR.
+- **Alternatives**: Continue running build, deploy frontend/backend dev, verify via Chrome DevTools, then ask for commit approval.
+- **Rationale**: The current user instruction explicitly prioritizes getting the PR opened now; remaining verification is handed off to the user.

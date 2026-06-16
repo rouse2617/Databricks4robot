@@ -47,6 +47,42 @@ The system SHALL validate generated component release metadata before marking a 
 - **When** DataBrew ingest 该 release
 - **Then** 该 release 可以被标记为 ready 且 selectable
 
+#### Scenario: CI 推送 batch source manifest
+- **Given** CI 在 build 成功后提交包含 batch `source` 和多个 release `items` 的 manifest
+- **When** DataBrew ingest 该 manifest
+- **Then** DataBrew 将 batch source 作为每个 item 的默认 repo/ref/commit/build metadata
+- **And** item 级字段可以覆盖 batch source 默认值
+- **And** CI token 只能用于 release ingest，不扩大普通 API 访问面
+
+#### Scenario: 用户按版本线索搜索 release
+- **Given** DataBrew 已 ingest 多个 component releases
+- **When** 用户或 SDK 使用 `q` 搜索 release label、source commit、build id、image tag 或 digest
+- **Then** DataBrew 只返回匹配的 release records
+- **And** 普通选择器仍可叠加 `selectable=true`
+
+#### Scenario: 用户在组件库按 task 或 commit 查找版本
+- **Given** DataBrew 已 ingest 某个 task 的多个 component releases
+- **When** 用户在组件库按 task 名称搜索
+- **Then** 组件库展示该 task，并直接展开可选版本列表
+- **When** 用户切换到按 commit 搜索并输入 commit 前缀
+- **Then** 组件库只展示匹配该 commit 的 component release
+- **And** 用户可以用版本类型下拉框筛选线上版本、测试版本、分支版本或 PR 预览
+
+#### Scenario: 每个镜像版本有短 ID
+- **Given** DataBrew 已 ingest 一个带 image digest 的 component release
+- **When** 用户在组件库或版本详情查看该 release
+- **Then** DataBrew 展示一个 8 位镜像 ID
+- **And** 该镜像 ID 优先由 image digest 稳定生成
+- **And** 不把 task name 当作镜像 ID
+
+#### Scenario: Git tag 和 commit 版本可区分
+- **Given** CI 提交的 release manifest 包含 source ref 或 source ref type
+- **When** source 指向 Git tag
+- **Then** DataBrew 将 release 标识为线上版本并归入 prod channel
+- **When** source 指向 commit hash
+- **Then** DataBrew 将 release 标识为测试版本并允许用户按 commit 搜索
+- **And** repo、ref type、commit、image digest 仍位于 technical details 中
+
 #### Scenario: 生成 release 缺少 digest
 - **Given** generated release metadata 没有不可变 image digest
 - **When** DataBrew ingest 该 release

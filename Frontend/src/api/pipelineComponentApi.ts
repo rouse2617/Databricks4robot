@@ -63,6 +63,7 @@ export interface ComponentReleaseRuntimeSnapshot {
 
 export interface PipelineComponentReleaseAPI {
 	id: string;
+	imageUid?: string;
 	componentId: string;
 	taskName: string;
 	taskPath?: string;
@@ -72,6 +73,7 @@ export interface PipelineComponentReleaseAPI {
 	channel: string;
 	sourceRepo?: string;
 	sourceRef?: string;
+	sourceRefType?: string;
 	sourceCommit?: string;
 	buildId?: string;
 	imageRepo?: string;
@@ -107,6 +109,16 @@ export type PipelineComponentReleasePayload = Partial<
 	releaseLabel?: string;
 	runtimeImage?: string;
 };
+
+export interface ComponentReleaseIngestSource {
+	provider?: string;
+	repo?: string;
+	ref?: string;
+	refType?: string;
+	commit?: string;
+	buildId?: string;
+	trigger?: string;
+}
 
 export type PipelineComponentPayload = Pick<
 	PipelineComponentAPI,
@@ -208,12 +220,14 @@ export function getComponentRelease(
 /** Sync generated release records from CI/platform tooling. */
 export function syncComponentReleases(
 	items: PipelineComponentReleasePayload[],
+	source?: ComponentReleaseIngestSource,
 ): Promise<{
 	items: PipelineComponentReleaseAPI[];
 }> {
+	const body = source ? { source, items } : { items };
 	return request<{ items: PipelineComponentReleaseAPI[] }>(
 		"POST",
 		"/pipeline-component-releases/sync",
-		{ items },
+		body,
 	);
 }

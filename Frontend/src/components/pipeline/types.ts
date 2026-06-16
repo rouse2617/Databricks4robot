@@ -64,6 +64,10 @@ export interface RegisteredComponent {
 	type?: string;
 	source?: string;
 	image: string;
+	tag?: string;
+	releaseLabel?: string;
+	sourceCommit?: string;
+	imageUid?: string;
 	command: string[];
 	args: Argument[];
 	env?: Argument[];

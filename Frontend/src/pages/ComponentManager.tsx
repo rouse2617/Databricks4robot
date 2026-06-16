@@ -16,6 +16,7 @@ import {
 	Modal,
 	message,
 	Popconfirm,
+	Segmented,
 	Select,
 	Space,
 	Table,
@@ -27,6 +28,7 @@ import type { InputRef } from "antd/es/input";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+	type ComponentReleaseIngestSource,
 	createComponent,
 	deleteComponent,
 	listComponentReleases,
@@ -40,7 +42,6 @@ import {
 	syncComponentReleases,
 	updateComponent,
 } from "../api/pipelineComponentApi";
-import { toAssetStyleId } from "../lib/idDisplay";
 import {
 	dedupePipelineComponentsByName,
 	formatComponentImage,
@@ -49,7 +50,6 @@ import {
 	normalizeComponentArgs,
 	normalizeShellCommandArgs,
 } from "../lib/pipelineContract";
-import { withSelectAllColumn } from "../lib/tableSelection";
 
 type EnvRow = { name?: string; value?: string };
 type PortRow = {
@@ -62,12 +62,16 @@ type PortRow = {
 type ModalMode = "create" | "edit" | "view";
 
 type SyncReleaseBody =
-	| { items?: PipelineComponentReleasePayload[] }
+	| {
+			source?: ComponentReleaseIngestSource;
+			items?: PipelineComponentReleasePayload[];
+	  }
 	| PipelineComponentReleasePayload[];
 
 interface ComponentLibraryRow {
 	key: string;
 	name: string;
+	imageUid: string;
 	componentId: string;
 	legacyComponent?: PipelineComponentAPI;
 	releases: PipelineComponentReleaseAPI[];
@@ -75,6 +79,10 @@ interface ComponentLibraryRow {
 	updatedAt?: string;
 	searchText: string;
 }
+
+type ReleaseKindFilter = "all" | "tag" | "commit" | "branch" | "pr";
+type SearchMode = "smart" | "task" | "commit" | "version";
+type LibraryTypeFilter = "all" | "release" | "legacy";
 
 interface ComponentFormValues {
 	name: string;
@@ -111,13 +119,38 @@ const TYPE_COLORS: Record<PipelineComponentType, string> = {
 const DEFAULT_INPUT_PORTS: PortDef[] = [{ name: "input", type: "asset" }];
 const DEFAULT_OUTPUT_PORTS: PortDef[] = [{ name: "output", type: "asset" }];
 
+const RELEASE_KIND_OPTIONS: Array<{ label: string; value: ReleaseKindFilter }> =
+	[
+		{ label: "全部标记", value: "all" },
+		{ label: "线上版本", value: "tag" },
+		{ label: "测试版本", value: "commit" },
+		{ label: "分支版本", value: "branch" },
+		{ label: "PR 预览", value: "pr" },
+	];
+
+const SEARCH_MODE_OPTIONS: Array<{ label: string; value: SearchMode }> = [
+	{ label: "全部字段", value: "smart" },
+	{ label: "按名称", value: "task" },
+	{ label: "按 commit", value: "commit" },
+	{ label: "按版本号", value: "version" },
+];
+
+const LIBRARY_TYPE_OPTIONS: Array<{
+	label: string;
+	value: LibraryTypeFilter;
+}> = [
+	{ label: "全部", value: "all" },
+	{ label: "版本库", value: "release" },
+	{ label: "手工组件", value: "legacy" },
+];
+
 const formatDateTime = (value?: string): string =>
 	value ? new Date(value).toLocaleString() : "-";
 
 const shortTechnicalValue = (value?: string): string => {
 	if (!value) return "-";
 	if (value.length <= 18) return value;
-	return `${value.slice(0, 10)}...${value.slice(-8)}`;
+	return `${value.slice(0, 10)}…${value.slice(-8)}`;
 };
 
 const releaseStatusColor = (status?: string): string => {
@@ -138,6 +171,52 @@ const releaseStatusColor = (status?: string): string => {
 const validationStatusColor = (status?: string): string =>
 	status === "passed" ? "green" : "red";
 
+const normalizedReleaseRef = (release: PipelineComponentReleaseAPI): string =>
+	(release.sourceRef || "")
+		.replace(/^refs\/heads\//, "")
+		.replace(/^refs\/tags\//, "");
+
+const isMainRelease = (release: PipelineComponentReleaseAPI): boolean => {
+	const ref = normalizedReleaseRef(release);
+	return ref === "main" || release.releaseLabel?.startsWith("main-");
+};
+
+const isOnlineRelease = (release: PipelineComponentReleaseAPI): boolean =>
+	release.sourceRefType === "tag" || isMainRelease(release);
+
+const releaseTagText = (release?: PipelineComponentReleaseAPI): string => {
+	if (!release || release.sourceRefType !== "tag") return "";
+	return normalizedReleaseRef(release) || release.releaseLabel || "";
+};
+
+const releaseKindLabel = (release: PipelineComponentReleaseAPI): string => {
+	if (isOnlineRelease(release)) return "线上版本";
+	switch (release.sourceRefType) {
+		case "commit":
+			return "测试版本";
+		case "pr":
+			return "PR 预览";
+		case "branch":
+			return "分支版本";
+		default:
+			return "开发版本";
+	}
+};
+
+const releaseKindColor = (release: PipelineComponentReleaseAPI): string => {
+	if (isOnlineRelease(release)) return "green";
+	switch (release.sourceRefType) {
+		case "commit":
+			return "blue";
+		case "pr":
+			return "purple";
+		case "branch":
+			return "cyan";
+		default:
+			return "default";
+	}
+};
+
 const componentKey = (value?: string): string =>
 	(value || "").trim().toLowerCase();
 
@@ -146,6 +225,157 @@ const releaseDisplayName = (release: PipelineComponentReleaseAPI): string =>
 
 const compareDateDesc = (a?: string, b?: string): number =>
 	new Date(b || 0).getTime() - new Date(a || 0).getTime();
+
+const shortImageUid = (identity?: string): string => {
+	const value = (identity || "").trim().toLowerCase();
+	if (!value) return "";
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < value.length; i += 1) {
+		hash ^= value.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0).toString(16).padStart(8, "0");
+};
+
+const releaseImageUid = (release?: PipelineComponentReleaseAPI): string =>
+	release?.imageUid ||
+	shortImageUid(release?.imageDigest || release?.runtimeImage || release?.id);
+
+const legacyImageUid = (component?: PipelineComponentAPI): string =>
+	component
+		? shortImageUid(formatComponentImage(component.image, component.tag))
+		: "";
+
+const sourceRefTypeText = (release: PipelineComponentReleaseAPI): string => {
+	switch (release.sourceRefType) {
+		case "tag":
+			return "Git tag";
+		case "commit":
+			return "Git commit";
+		case "branch":
+			return "Git branch";
+		case "pr":
+			return "Git PR";
+		default:
+			return "Git";
+	}
+};
+
+const releaseRefBadge = (
+	release: PipelineComponentReleaseAPI,
+): { label: string; color: string } => {
+	if (isOnlineRelease(release)) {
+		return { label: "线上", color: "green" };
+	}
+	if (release.sourceRefType === "pr") {
+		return { label: "PR", color: "purple" };
+	}
+	const ref = normalizedReleaseRef(release);
+	if (ref) {
+		return { label: shortTechnicalValue(ref), color: "cyan" };
+	}
+	if (release.sourceRefType === "commit") {
+		return { label: "commit", color: "blue" };
+	}
+	return { label: "dev", color: "default" };
+};
+
+function ReleaseVersionChip({
+	release,
+	onClick,
+}: {
+	release: PipelineComponentReleaseAPI;
+	onClick: () => void;
+}) {
+	const badge = releaseRefBadge(release);
+	const commitText = shortTechnicalValue(
+		release.sourceCommit || release.releaseLabel,
+	);
+	return (
+		<Tooltip title={release.sourceCommit || release.releaseLabel}>
+			<Space size={4}>
+				<Tag
+					color={badge.color}
+					style={{ cursor: "pointer", fontFamily: "monospace" }}
+					onClick={onClick}
+				>
+					{commitText}
+				</Tag>
+				<Tag color={badge.color}>{badge.label}</Tag>
+			</Space>
+		</Tooltip>
+	);
+}
+
+const copyableCode = (value?: string, display?: string) => (
+	<Tooltip title={value || "-"}>
+		<Typography.Text
+			code
+			copyable={value ? { text: value } : false}
+			style={{ maxWidth: "100%", display: "inline-block" }}
+		>
+			{display || shortTechnicalValue(value) || "-"}
+		</Typography.Text>
+	</Tooltip>
+);
+
+const releaseSearchText = (release: PipelineComponentReleaseAPI): string =>
+	[
+		release.componentId,
+		release.taskName,
+		release.displayName,
+		release.releaseLabel,
+		release.channel,
+		release.sourceRefType,
+		release.sourceRepo,
+		release.sourceRef,
+		release.sourceCommit,
+		release.buildId,
+		release.imageTag,
+		releaseImageUid(release),
+		release.imageDigest,
+		release.runtimeImage,
+	]
+		.filter(Boolean)
+		.join(" ")
+		.toLowerCase();
+
+const releaseIdentityText = (release: PipelineComponentReleaseAPI): string =>
+	[release.componentId, release.taskName, release.displayName, release.taskPath]
+		.filter(Boolean)
+		.join(" ")
+		.toLowerCase();
+
+const isCommitSearch = (query: string): boolean =>
+	query.length >= 7 && query.length <= 64 && /^[0-9a-f]+$/i.test(query);
+
+const releaseMatchesKind = (
+	release: PipelineComponentReleaseAPI,
+	kind: ReleaseKindFilter,
+): boolean => {
+	if (kind === "all") return true;
+	if (kind === "tag") return isOnlineRelease(release);
+	if (kind === "commit") return release.sourceRefType === "commit";
+	if (kind === "branch") {
+		return release.sourceRefType === "branch" && !isMainRelease(release);
+	}
+	return release.sourceRefType === "pr";
+};
+
+const releaseMatchesSearch = (
+	release: PipelineComponentReleaseAPI,
+	query: string,
+	mode: SearchMode,
+): boolean => {
+	if (!query) return true;
+	if (mode === "commit") {
+		return (release.sourceCommit || "").toLowerCase().includes(query);
+	}
+	if (mode === "version") {
+		return (release.releaseLabel || "").toLowerCase().includes(query);
+	}
+	return releaseSearchText(release).includes(query);
+};
 
 const splitInputItems = (value?: string): string[] =>
 	(value || "")
@@ -291,9 +521,9 @@ function ComponentDetail({ component }: { component: PipelineComponentAPI }) {
 				<Descriptions.Item label="名称" span={2}>
 					<Typography.Text strong>{component.name}</Typography.Text>
 				</Descriptions.Item>
-				<Descriptions.Item label="ID" span={2}>
+				<Descriptions.Item label="组件 ID" span={2}>
 					<Typography.Text copyable={{ text: component.id }}>
-						{toAssetStyleId(component.id)}
+						{component.id}
 					</Typography.Text>
 				</Descriptions.Item>
 				<Descriptions.Item label="类型">
@@ -394,30 +624,35 @@ function ReleaseDetail({ release }: { release: PipelineComponentReleaseAPI }) {
 					</Typography.Text>
 				</Descriptions.Item>
 				<Descriptions.Item label="版本">
-					<Tag color={release.channel === "prod" ? "green" : "blue"}>
+					<Tag color={releaseRefBadge(release).color}>
 						{release.releaseLabel}
 					</Tag>
-				</Descriptions.Item>
-				<Descriptions.Item label="可选择">
-					<Tag color={release.selectable ? "green" : "red"}>
-						{release.selectable ? "是" : "否"}
+					<Tag color={releaseKindColor(release)}>
+						{releaseKindLabel(release)}
 					</Tag>
 				</Descriptions.Item>
-				<Descriptions.Item label="状态">
+				<Descriptions.Item label="状态" span={1}>
 					<Tag color={releaseStatusColor(release.status)}>{release.status}</Tag>
-				</Descriptions.Item>
-				<Descriptions.Item label="校验">
 					<Tag color={validationStatusColor(release.validationStatus)}>
 						{release.validationStatus}
 					</Tag>
+					<Tag color={release.selectable ? "green" : "red"}>
+						{release.selectable ? "可选择" : "不可选"}
+					</Tag>
 				</Descriptions.Item>
-				<Descriptions.Item label="组件 ID" span={2}>
-					<Typography.Text copyable>{release.componentId}</Typography.Text>
+				<Descriptions.Item label="镜像ID">
+					{copyableCode(releaseImageUid(release), releaseImageUid(release))}
+				</Descriptions.Item>
+				<Descriptions.Item label="来源类型">
+					{sourceRefTypeText(release)}
 				</Descriptions.Item>
 				<Descriptions.Item label="镜像" span={2}>
-					<Typography.Text copyable={{ text: release.runtimeImage }}>
-						{release.runtimeImage || "-"}
-					</Typography.Text>
+					<div style={{ maxWidth: "100%" }}>
+						{copyableCode(
+							release.runtimeImage,
+							shortTechnicalValue(release.runtimeImage),
+						)}
+					</div>
 				</Descriptions.Item>
 				<Descriptions.Item label="命令" span={2}>
 					{release.runtimeSnapshot?.command?.join(" ") || "-"}
@@ -439,6 +674,9 @@ function ReleaseDetail({ release }: { release: PipelineComponentReleaseAPI }) {
 				<Descriptions.Item label="Release ID">
 					<Typography.Text copyable>{release.id}</Typography.Text>
 				</Descriptions.Item>
+				<Descriptions.Item label="Component ID">
+					<Typography.Text copyable>{release.componentId}</Typography.Text>
+				</Descriptions.Item>
 				<Descriptions.Item label="任务路径">
 					{release.taskPath || "-"}
 				</Descriptions.Item>
@@ -448,15 +686,19 @@ function ReleaseDetail({ release }: { release: PipelineComponentReleaseAPI }) {
 				<Descriptions.Item label="Source Ref">
 					{release.sourceRef || "-"}
 				</Descriptions.Item>
+				<Descriptions.Item label="Source Ref Type">
+					{release.sourceRefType || "-"}
+				</Descriptions.Item>
 				<Descriptions.Item label="Source Commit">
 					<Typography.Text copyable={{ text: release.sourceCommit || "" }}>
 						{release.sourceCommit || "-"}
 					</Typography.Text>
 				</Descriptions.Item>
 				<Descriptions.Item label="Image Digest">
-					<Typography.Text copyable={{ text: release.imageDigest || "" }}>
-						{release.imageDigest || "-"}
-					</Typography.Text>
+					{copyableCode(
+						release.imageDigest,
+						shortTechnicalValue(release.imageDigest),
+					)}
 				</Descriptions.Item>
 				<Descriptions.Item label="校验错误">
 					{release.validationErrors?.length ? (
@@ -601,6 +843,12 @@ export function ComponentManager() {
 	const [error, setError] = useState<string | null>(null);
 	const [releaseError, setReleaseError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
+	const [searchMode, setSearchMode] = useState<SearchMode>("smart");
+	const [releaseKindFilter, setReleaseKindFilter] =
+		useState<ReleaseKindFilter>("all");
+	const [libraryTypeFilter, setLibraryTypeFilter] =
+		useState<LibraryTypeFilter>("all");
+	const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
 	const [modalOpen, setModalOpen] = useState(false);
 	const [modalMode, setModalMode] = useState<ModalMode | null>(null);
 	const [releaseModalOpen, setReleaseModalOpen] = useState(false);
@@ -610,12 +858,7 @@ export function ComponentManager() {
 	const [activeRelease, setActiveRelease] =
 		useState<PipelineComponentReleaseAPI | null>(null);
 	const [syncText, setSyncText] = useState("");
-	const [selectedComponentIds, setSelectedComponentIds] = useState<string[]>(
-		[],
-	);
 	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-	const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
-	const [bulkDeleting, setBulkDeleting] = useState(false);
 	const [form] = Form.useForm<ComponentFormValues>();
 	const [messageApi, contextHolder] = message.useMessage();
 	const nameInputRef = useRef<InputRef>(null);
@@ -627,11 +870,6 @@ export function ComponentManager() {
 			const res = await listComponents();
 			const nextItems = dedupePipelineComponentsByName(res.items || []);
 			setItems(nextItems);
-			setSelectedComponentIds((prev) =>
-				prev.filter((id) =>
-					nextItems.some((item) => item.id === id && item.source !== "system"),
-				),
-			);
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			setError(detail);
@@ -660,6 +898,27 @@ export function ComponentManager() {
 	}, [refresh, refreshReleases]);
 
 	const libraryRows = useMemo(() => {
+		const q = search.trim().toLowerCase();
+		const commitQuery = isCommitSearch(q);
+		const filterReleases = (
+			groupedReleases: PipelineComponentReleaseAPI[],
+			identityText: string,
+		): PipelineComponentReleaseAPI[] => {
+			const base = groupedReleases.filter((release) =>
+				releaseMatchesKind(release, releaseKindFilter),
+			);
+			if (!q) return base;
+			if (searchMode === "task") {
+				return identityText.includes(q) ? base : [];
+			}
+			if (searchMode === "smart" && !commitQuery && identityText.includes(q)) {
+				return base;
+			}
+			return base.filter((release) =>
+				releaseMatchesSearch(release, q, searchMode),
+			);
+		};
+
 		const groups = new Map<string, PipelineComponentReleaseAPI[]>();
 		for (const release of releases) {
 			const key = componentKey(release.componentId || release.taskName);
@@ -676,7 +935,19 @@ export function ComponentManager() {
 			const key = componentKey(component.name || component.id);
 			const groupedReleases = groups.get(key) || [];
 			groups.delete(key);
+			const identityText = [
+				component.name,
+				component.id,
+				component.description,
+				component.source,
+			]
+				.filter(Boolean)
+				.join(" ")
+				.toLowerCase();
+			const visibleReleases = filterReleases(groupedReleases, identityText);
 			const primaryRelease =
+				visibleReleases.find((release) => release.selectable) ||
+				visibleReleases[0] ||
 				groupedReleases.find((release) => release.selectable) ||
 				groupedReleases[0];
 			const updatedAt = primaryRelease?.updatedAt || component.updatedAt;
@@ -687,15 +958,8 @@ export function ComponentManager() {
 				component.tag,
 				component.description,
 				component.source,
-				...groupedReleases.flatMap((release) => [
-					release.componentId,
-					release.taskName,
-					release.displayName,
-					release.releaseLabel,
-					release.channel,
-					release.runtimeImage,
-					release.sourceCommit,
-				]),
+				releaseImageUid(primaryRelease) || legacyImageUid(component),
+				...visibleReleases.map(releaseSearchText),
 			]
 				.filter(Boolean)
 				.join(" ")
@@ -703,9 +967,10 @@ export function ComponentManager() {
 			return {
 				key: `component:${component.id}`,
 				name: component.name,
+				imageUid: releaseImageUid(primaryRelease) || legacyImageUid(component),
 				componentId: component.name,
 				legacyComponent: component,
-				releases: groupedReleases,
+				releases: visibleReleases,
 				primaryRelease,
 				updatedAt,
 				searchText,
@@ -717,40 +982,68 @@ export function ComponentManager() {
 				groupedReleases.find((release) => release.selectable) ||
 				groupedReleases[0];
 			const name = primaryRelease ? releaseDisplayName(primaryRelease) : key;
-			const searchText = groupedReleases
-				.flatMap((release) => [
-					release.componentId,
-					release.taskName,
-					release.displayName,
-					release.releaseLabel,
-					release.channel,
-					release.runtimeImage,
-					release.sourceCommit,
-				])
+			const identityText = groupedReleases.map(releaseIdentityText).join(" ");
+			const visibleReleases = filterReleases(groupedReleases, identityText);
+			if (visibleReleases.length === 0) {
+				continue;
+			}
+			const searchText = visibleReleases
+				.map(releaseSearchText)
 				.filter(Boolean)
 				.join(" ")
 				.toLowerCase();
+			const visiblePrimaryRelease =
+				visibleReleases.find((release) => release.selectable) ||
+				visibleReleases[0];
 			rows.push({
 				key: `release:${key}`,
 				name,
-				componentId: primaryRelease?.componentId || key,
-				releases: groupedReleases,
-				primaryRelease,
-				updatedAt: primaryRelease?.updatedAt,
+				imageUid: releaseImageUid(visiblePrimaryRelease),
+				componentId: visiblePrimaryRelease?.componentId || key,
+				releases: visibleReleases,
+				primaryRelease: visiblePrimaryRelease,
+				updatedAt: visiblePrimaryRelease?.updatedAt,
 				searchText,
 			});
 		}
 
-		const q = search.trim().toLowerCase();
-		const filtered = q
-			? rows.filter((row) => row.searchText.includes(q))
-			: rows;
+		const filtered = rows.filter((row) => {
+			if (row.releases.length === 0 && !row.legacyComponent) return false;
+			if (libraryTypeFilter === "release" && row.releases.length === 0) {
+				return false;
+			}
+			if (
+				libraryTypeFilter === "legacy" &&
+				(!row.legacyComponent || row.releases.length > 0)
+			) {
+				return false;
+			}
+			if (releaseKindFilter !== "all" && row.releases.length === 0) {
+				return false;
+			}
+			if (!q) return true;
+			return row.searchText.includes(q) || row.releases.length > 0;
+		});
 		return filtered.sort((a, b) => {
 			if (a.primaryRelease && !b.primaryRelease) return -1;
 			if (!a.primaryRelease && b.primaryRelease) return 1;
 			return compareDateDesc(a.updatedAt, b.updatedAt);
 		});
-	}, [items, releases, search]);
+	}, [
+		items,
+		libraryTypeFilter,
+		releaseKindFilter,
+		releases,
+		search,
+		searchMode,
+	]);
+
+	const activeExpandedRowKeys = useMemo(() => {
+		if (!search.trim()) return expandedRowKeys;
+		return libraryRows
+			.filter((row) => row.releases.length > 0)
+			.map((row) => row.legacyComponent?.id || row.key);
+	}, [expandedRowKeys, libraryRows, search]);
 
 	const isCreateMode = modalMode === "create";
 	const isEditMode = modalMode === "edit";
@@ -817,6 +1110,14 @@ export function ComponentManager() {
 		setSyncText(
 			JSON.stringify(
 				{
+					source: {
+						provider: "cloud-build",
+						repo: "CyberOrigin2077/automated-processing-gcloud",
+						ref: "refs/heads/main",
+						commit: "abc123",
+						buildId: "cloud-build-id",
+						trigger: "hand-detect-yolov26m-build-trigger",
+					},
 					items: [
 						{
 							componentId: "hand-detect-yolov26m",
@@ -849,6 +1150,7 @@ export function ComponentManager() {
 			messageApi.error("请输入合法 JSON");
 			return;
 		}
+		const source = Array.isArray(parsed) ? undefined : parsed.source;
 		const items = Array.isArray(parsed) ? parsed : parsed.items;
 		if (!Array.isArray(items)) {
 			messageApi.error("JSON 需要是数组，或包含 items 数组");
@@ -856,7 +1158,7 @@ export function ComponentManager() {
 		}
 		setSyncing(true);
 		try {
-			const res = await syncComponentReleases(items);
+			const res = await syncComponentReleases(items, source);
 			const failed = (res.items || []).filter(
 				(item) => item.validationStatus !== "passed",
 			).length;
@@ -918,165 +1220,73 @@ export function ComponentManager() {
 		}
 	};
 
-	const handleBulkDelete = async () => {
-		if (selectedComponentIds.length === 0) return;
-		setBulkDeleting(true);
-		try {
-			const results = await Promise.allSettled(
-				selectedComponentIds.map((id) => deleteComponent(id)),
-			);
-			const failedCount = results.filter(
-				(result) => result.status === "rejected",
-			).length;
-			const deletedCount = results.length - failedCount;
-			if (deletedCount > 0) messageApi.success(`已删除 ${deletedCount} 个组件`);
-			if (failedCount > 0) messageApi.error(`${failedCount} 个组件删除失败`);
-			setSelectedComponentIds([]);
-			setBulkDeleteConfirmOpen(false);
-			await refresh();
-		} finally {
-			setBulkDeleting(false);
-		}
-	};
-
 	const libraryColumns: ColumnsType<ComponentLibraryRow> = [
 		{
-			title: "组件 / 任务",
+			title: "任务 / 镜像",
 			key: "name",
-			width: 260,
+			width: 240,
 			render: (_, record) => (
 				<Space direction="vertical" size={0}>
 					<Typography.Text strong ellipsis={{ tooltip: record.name }}>
 						{record.name}
 					</Typography.Text>
 					<Space size={4} wrap>
-						{record.primaryRelease ? <Tag color="green">版本库</Tag> : null}
-						{record.legacyComponent ? (
-							<Tag
-								color={
-									record.legacyComponent.source === "system"
-										? "gold"
-										: "default"
-								}
-							>
-								旧组件
-							</Tag>
-						) : null}
-						{record.componentId !== record.name ? (
-							<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-								{record.componentId}
-							</Typography.Text>
-						) : null}
+						<Tag color={record.primaryRelease ? "green" : "default"}>
+							{record.primaryRelease ? "版本库" : "手工组件"}
+						</Tag>
 					</Space>
-					{record.legacyComponent ? (
-						<Typography.Text
-							type="secondary"
-							copyable={{ text: record.legacyComponent.id }}
-							style={{ fontSize: 12 }}
-						>
-							ID: {toAssetStyleId(record.legacyComponent.id)}
-						</Typography.Text>
-					) : null}
+					<Typography.Text
+						type="secondary"
+						copyable={{ text: record.imageUid }}
+						style={{ fontSize: 12, fontFamily: "monospace" }}
+					>
+						镜像ID {record.imageUid || "-"}
+					</Typography.Text>
 				</Space>
 			),
 		},
 		{
-			title: "版本",
+			title: "构建版本",
 			key: "versions",
-			width: 260,
+			width: 240,
 			render: (_, record) => (
 				<Space wrap size={4}>
-					{record.releases.slice(0, 4).map((release) => (
-						<Tag
-							key={release.id}
-							color={release.selectable ? "green" : "red"}
-							style={{ cursor: "pointer" }}
-							onClick={() => openReleaseView(release)}
-						>
-							{release.releaseLabel}
-						</Tag>
-					))}
-					{record.releases.length > 4 ? (
-						<Tag>+{record.releases.length - 4}</Tag>
+					{record.primaryRelease ? (
+						<ReleaseVersionChip
+							release={record.primaryRelease}
+							onClick={() =>
+								openReleaseView(
+									record.primaryRelease as PipelineComponentReleaseAPI,
+								)
+							}
+						/>
 					) : null}
-					{record.legacyComponent ? (
-						<Tag color="default">
-							旧版:{record.legacyComponent.tag || "latest"}
-						</Tag>
+					{record.releases.length > 1 ? (
+						<Tag>{record.releases.length} 个版本</Tag>
+					) : null}
+					{record.releases.length === 0 && record.legacyComponent ? (
+						<Typography.Text code>
+							{record.legacyComponent.tag || "latest"}
+						</Typography.Text>
 					) : null}
 					{record.releases.length === 0 && !record.legacyComponent ? "-" : null}
 				</Space>
 			),
 		},
 		{
-			title: "状态",
-			key: "status",
+			title: "Tag",
+			key: "tag",
 			width: 160,
 			render: (_, record) => {
-				const release = record.primaryRelease;
-				return (
-					<Space direction="vertical" size={0}>
-						{release ? (
-							<>
-								<Tag color={releaseStatusColor(release.status)}>
-									{release.status}
-								</Tag>
-								<Tag color={validationStatusColor(release.validationStatus)}>
-									{release.validationStatus}
-								</Tag>
-							</>
-						) : (
-							<Tag color="default">仅旧组件</Tag>
-						)}
-					</Space>
+				const tag = releaseTagText(record.primaryRelease);
+				return tag ? (
+					<Typography.Text code ellipsis={{ tooltip: tag }}>
+						{tag}
+					</Typography.Text>
+				) : (
+					<Typography.Text type="secondary">-</Typography.Text>
 				);
 			},
-		},
-		{
-			title: "运行镜像",
-			key: "runtime",
-			width: 260,
-			render: (_, record) => {
-				const release = record.primaryRelease;
-				const imageText = release
-					? release.runtimeImage
-					: record.legacyComponent
-						? formatComponentImage(
-								record.legacyComponent.image,
-								record.legacyComponent.tag,
-							)
-						: "";
-				return (
-					<Tooltip title={imageText || "-"}>
-						<Typography.Text code ellipsis style={{ maxWidth: 240 }}>
-							{release
-								? shortTechnicalValue(release.imageDigest || imageText)
-								: imageText || "-"}
-						</Typography.Text>
-					</Tooltip>
-				);
-			},
-		},
-		{
-			title: "来源",
-			key: "source",
-			width: 210,
-			render: (_, record) => (
-				<Space direction="vertical" size={0}>
-					<Typography.Text>
-						{record.primaryRelease?.sourceCommit
-							? shortTechnicalValue(record.primaryRelease.sourceCommit)
-							: record.primaryRelease
-								? "平台生成"
-								: record.legacyComponent?.source || "-"}
-					</Typography.Text>
-					<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-						{record.primaryRelease?.taskPath ||
-							record.legacyComponent?.description ||
-							"-"}
-					</Typography.Text>
-				</Space>
-			),
 		},
 		{
 			title: "更新时间",
@@ -1090,6 +1300,8 @@ export function ComponentManager() {
 			width: 260,
 			render: (_, record) => {
 				const component = record.legacyComponent;
+				const showComponentActions =
+					Boolean(component) && libraryTypeFilter !== "release";
 				const isSystemComponent = component?.source === "system";
 				const deleteButton = component ? (
 					<Button
@@ -1102,7 +1314,6 @@ export function ComponentManager() {
 						onClick={() => {
 							if (isSystemComponent) return;
 							setConfirmDeleteId(component.id);
-							setBulkDeleteConfirmOpen(false);
 						}}
 					>
 						删除
@@ -1124,18 +1335,21 @@ export function ComponentManager() {
 								版本详情
 							</Button>
 						) : null}
-						{component ? (
+						{record.primaryRelease && showComponentActions ? (
+							<Typography.Text type="secondary">|</Typography.Text>
+						) : null}
+						{showComponentActions && component ? (
 							<Button
 								type="link"
 								size="small"
 								icon={<EyeOutlined />}
-								aria-label="查看组件"
+								aria-label="查看组件定义"
 								onClick={() => openView(component)}
 							>
-								组件
+								组件定义
 							</Button>
 						) : null}
-						{component ? (
+						{showComponentActions && component ? (
 							<Button
 								type="link"
 								size="small"
@@ -1146,7 +1360,7 @@ export function ComponentManager() {
 								编辑
 							</Button>
 						) : null}
-						{component && deleteButton ? (
+						{showComponentActions && component && deleteButton ? (
 							isSystemComponent ? (
 								<Tooltip title="系统来源组件禁止删除">{deleteButton}</Tooltip>
 							) : confirmDeleteId === component.id ? (
@@ -1175,15 +1389,7 @@ export function ComponentManager() {
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 			{contextHolder}
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					justifyContent: "space-between",
-					gap: 12,
-					flexWrap: "wrap",
-				}}
-			>
+			<div>
 				<div>
 					<Typography.Title level={2} style={{ margin: 0 }}>
 						组件库
@@ -1192,60 +1398,76 @@ export function ComponentManager() {
 						统一管理手工组件和平台生成的任务版本
 					</Typography.Text>
 				</div>
-				<Space wrap>
-					{selectedComponentIds.length > 0 ? (
-						bulkDeleteConfirmOpen ? (
-							<Popconfirm
-								title={`删除选中的 ${selectedComponentIds.length} 个组件？`}
-								description="删除后不可恢复。系统组件不可选择。"
-								okText="确认删除"
-								cancelText="取消"
-								open
-								onCancel={() => setBulkDeleteConfirmOpen(false)}
-								onConfirm={handleBulkDelete}
-								destroyOnHidden
-							>
-								<Button danger icon={<DeleteOutlined />} loading={bulkDeleting}>
-									批量删除（{selectedComponentIds.length}）
-								</Button>
-							</Popconfirm>
-						) : (
-							<Button
-								danger
-								icon={<DeleteOutlined />}
-								loading={bulkDeleting}
-								onClick={() => {
-									setBulkDeleteConfirmOpen(true);
-									setConfirmDeleteId(null);
-								}}
-							>
-								批量删除（{selectedComponentIds.length}）
-							</Button>
-						)
-					) : null}
-					<Input.Search
-						id="component-manager-search"
-						allowClear
-						placeholder="搜索组件、任务、版本或镜像"
-						value={search}
-						onChange={(event) => setSearch(event.target.value)}
-						style={{ width: 280 }}
-					/>
-					<Button
-						icon={<ReloadOutlined />}
-						onClick={() => {
-							refresh();
-							refreshReleases();
+				<div
+					style={{
+						display: "flex",
+						alignItems: "flex-start",
+						justifyContent: "space-between",
+						gap: 12,
+						flexWrap: "wrap",
+						marginTop: 16,
+					}}
+				>
+					<div
+						style={{
+							display: "flex",
+							alignItems: "flex-start",
+							gap: 8,
+							flexWrap: "wrap",
+							flex: "1 1 620px",
+							minWidth: 0,
 						}}
-						loading={loading || releaseLoading}
-					/>
-					<Button icon={<SyncOutlined />} onClick={openSyncModal}>
-						同步版本
-					</Button>
-					<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-						新建组件
-					</Button>
-				</Space>
+					>
+						<div style={{ minWidth: 280, flex: "0 1 340px" }}>
+							<Input.Search
+								id="component-manager-search"
+								allowClear
+								placeholder="搜索名称、commit、版本号"
+								value={search}
+								onChange={(event) => setSearch(event.target.value)}
+								style={{ width: "100%" }}
+							/>
+							<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+								先按名称定位 task，再切到按 commit 精确到镜像版本
+							</Typography.Text>
+						</div>
+						<Select<SearchMode>
+							value={searchMode}
+							options={SEARCH_MODE_OPTIONS}
+							onChange={setSearchMode}
+							style={{ width: 128 }}
+						/>
+						<Select<ReleaseKindFilter>
+							value={releaseKindFilter}
+							options={RELEASE_KIND_OPTIONS}
+							onChange={setReleaseKindFilter}
+							style={{ width: 128 }}
+						/>
+						<Segmented<LibraryTypeFilter>
+							value={libraryTypeFilter}
+							options={LIBRARY_TYPE_OPTIONS}
+							onChange={setLibraryTypeFilter}
+						/>
+					</div>
+					<Space wrap style={{ justifyContent: "flex-end" }}>
+						<Tooltip title="刷新">
+							<Button
+								icon={<ReloadOutlined />}
+								onClick={() => {
+									refresh();
+									refreshReleases();
+								}}
+								loading={loading || releaseLoading}
+							/>
+						</Tooltip>
+						<Button icon={<SyncOutlined />} onClick={openSyncModal}>
+							同步版本
+						</Button>
+						<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+							新建组件
+						</Button>
+					</Space>
+				</div>
 			</div>
 
 			{error ? (
@@ -1288,95 +1510,94 @@ export function ComponentManager() {
 					loading={loading || releaseLoading}
 					columns={libraryColumns}
 					dataSource={libraryRows}
-					rowSelection={withSelectAllColumn<ComponentLibraryRow>({
-						selectedRowKeys: selectedComponentIds,
-						onChange: (_keys, rows) =>
-							setSelectedComponentIds(
-								rows
-									.map((row) => row.legacyComponent?.id)
-									.filter(Boolean) as string[],
-							),
-						getCheckboxProps: (record) => ({
-							disabled:
-								!record.legacyComponent ||
-								record.legacyComponent.source === "system",
-							name: record.name,
-						}),
-					})}
 					expandable={{
+						expandedRowKeys: activeExpandedRowKeys,
+						onExpandedRowsChange: (keys) =>
+							setExpandedRowKeys(keys.map(String)),
 						rowExpandable: (record) => record.releases.length > 0,
 						expandedRowRender: (record) => (
-							<Table
-								size="small"
-								rowKey="id"
-								pagination={false}
-								columns={[
-									{
-										title: "版本",
-										dataIndex: "releaseLabel",
-										render: (value: string, release) => (
-											<Tag
-												color={release.selectable ? "green" : "red"}
-												style={{ cursor: "pointer" }}
+							<div
+								style={{
+									background: "#f8fafc",
+									borderTop: "1px solid #eef2f7",
+									borderBottom: "1px solid #eef2f7",
+									margin: "-16px",
+									padding: "8px 0",
+								}}
+							>
+								<div
+									style={{
+										display: "grid",
+										gridTemplateColumns:
+											"44px 240px minmax(260px, 320px) minmax(140px, 180px) minmax(120px, 160px) 160px",
+										alignItems: "center",
+										columnGap: 16,
+										padding: "8px 0",
+										color: "rgba(15, 23, 42, 0.65)",
+										fontSize: 12,
+										fontWeight: 600,
+									}}
+								>
+									<div />
+									<div>全部构建版本</div>
+									<div>Commit</div>
+									<div>Tag</div>
+									<div>镜像ID</div>
+									<div>操作</div>
+								</div>
+								{record.releases.map((release) => (
+									<div
+										key={release.id}
+										style={{
+											display: "grid",
+											gridTemplateColumns:
+												"44px 240px minmax(260px, 320px) minmax(140px, 180px) minmax(120px, 160px) 160px",
+											alignItems: "center",
+											columnGap: 16,
+											padding: "8px 0",
+											borderTop: "1px solid #eef2f7",
+										}}
+									>
+										<div />
+										<div>
+											<ReleaseVersionChip
+												release={release}
 												onClick={() => openReleaseView(release)}
-											>
-												{value}
-											</Tag>
-										),
-									},
-									{
-										title: "状态",
-										render: (_, release) => (
-											<Space size={4}>
-												<Tag color={releaseStatusColor(release.status)}>
-													{release.status}
-												</Tag>
-												<Tag
-													color={validationStatusColor(
-														release.validationStatus,
-													)}
+											/>
+										</div>
+										<div>
+											{releaseTagText(release) ? (
+												<Typography.Text
+													code
+													ellipsis={{ tooltip: releaseTagText(release) }}
 												>
-													{release.validationStatus}
-												</Tag>
-											</Space>
-										),
-									},
-									{
-										title: "镜像",
-										render: (_, release) => (
-											<Tooltip title={release.runtimeImage}>
-												<Typography.Text code>
-													{shortTechnicalValue(
-														release.imageDigest || release.runtimeImage,
-													)}
+													{releaseTagText(release)}
 												</Typography.Text>
-											</Tooltip>
-										),
-									},
-									{
-										title: "来源",
-										render: (_, release) =>
-											release.sourceCommit
-												? shortTechnicalValue(release.sourceCommit)
-												: release.taskPath || "-",
-									},
-									{
-										title: "操作",
-										width: 90,
-										render: (_, release) => (
+											) : (
+												<Typography.Text type="secondary">-</Typography.Text>
+											)}
+										</div>
+										<div>
+											<Typography.Text
+												code
+												copyable={{ text: releaseImageUid(release) }}
+											>
+												{releaseImageUid(release)}
+											</Typography.Text>
+										</div>
+										<div>
 											<Button
 												type="link"
 												size="small"
 												icon={<EyeOutlined />}
 												onClick={() => openReleaseView(release)}
 											>
-												详情
+												版本详情
 											</Button>
-										),
-									},
-								]}
-								dataSource={record.releases}
-							/>
+										</div>
+									</div>
+								))}
+							</div>
 						),
 					}}
 					pagination={{ pageSize: 12, showSizeChanger: true }}
@@ -1395,6 +1616,9 @@ export function ComponentManager() {
 					]}
 					onCancel={closeReleaseModal}
 					destroyOnHidden
+					styles={{
+						body: { maxHeight: "68vh", overflowY: "auto", paddingRight: 8 },
+					}}
 				>
 					<ReleaseDetail release={activeRelease} />
 				</Modal>
@@ -1438,6 +1662,9 @@ export function ComponentManager() {
 					onCancel={closeModal}
 					width={760}
 					destroyOnHidden
+					styles={{
+						body: { maxHeight: "68vh", overflowY: "auto", paddingRight: 8 },
+					}}
 					footer={
 						isViewMode
 							? [
@@ -1501,7 +1728,8 @@ export function ComponentManager() {
 							<div
 								style={{
 									display: "grid",
-									gridTemplateColumns: "minmax(260px, 1fr) 160px",
+									gridTemplateColumns:
+										"minmax(280px, 1fr) minmax(180px, 220px)",
 									gap: 12,
 								}}
 							>

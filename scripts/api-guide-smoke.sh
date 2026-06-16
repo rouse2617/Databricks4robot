@@ -276,11 +276,13 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 		bad "pipeline-components create id extraction"
 	fi
 	release_label="main-smoke$(date +%s)"
-	release_body='{"items":[{"componentId":"smoke-task","taskName":"smoke-task","taskPath":"tasks/smoke_task","releaseLabel":"'"${release_label}"'","runtimeImage":"registry.example.com/smoke-task@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtimeSnapshot":{"command":["python","src/main.py"],"inputPorts":[{"name":"input","type":"asset"}],"outputPorts":[{"name":"output","type":"asset"}],"resources":{"cpu":"1","memory":"1Gi"}}}]}'
+	release_commit="abcdef$(date +%s)"
+	release_body='{"source":{"provider":"api-guide-smoke","repo":"CyberOrigin2077/automated-processing-gcloud","ref":"refs/heads/main","refType":"branch","commit":"'"${release_commit}"'","buildId":"smoke-build","trigger":"smoke-trigger"},"items":[{"componentId":"smoke-task","taskName":"smoke-task","taskPath":"tasks/smoke_task","releaseLabel":"'"${release_label}"'","runtimeImage":"registry.example.com/smoke-task@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtimeSnapshot":{"command":["python","src/main.py"],"inputPorts":[{"name":"input","type":"asset"}],"outputPorts":[{"name":"output","type":"asset"}],"resources":{"cpu":"1","memory":"1Gi"}}}]}'
 	release_created=$(post_json "pipeline-component-releases sync" "/api/v1/pipeline-component-releases/sync" "$release_body")
 	release_id=$(echo "$release_created" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("items",[{}])[0].get("id",""))' 2>/dev/null || true)
 	if [[ -n "$release_id" ]]; then
 		get "pipeline-component-releases get" "/api/v1/pipeline-component-releases/${release_id}"
+		get "pipeline-component-releases search source commit" "/api/v1/pipeline-component-releases?q=${release_commit}"
 	else
 		RESP_CODE="json"
 		RESP_BODY="$release_created"

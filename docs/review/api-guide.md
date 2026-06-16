@@ -2323,17 +2323,27 @@ curl -i -X POST "$BASE/api/v1/pipeline-components" \
 
 组件版本库记录由 CI/平台生成的 task 构建版本。普通 UI 应查询 `selectable=true`，只展示已经通过基础校验且 digest 固化的版本；repo、commit、image digest 等技术字段放在详情里。
 
+CI 推荐使用专用 `X-Databrew-CI-Token: $DATABREW_CI_INGEST_TOKEN` 调用 sync；管理员/调试工具仍可使用普通 `X-Databrew-Token`。`source` 是 batch 级构建上下文，DataBrew 会把它作为每个 item 的默认 source metadata，并写入 technical metadata。
+
 ```bash
 # 平台/CI 同步一个生成版本
 curl -X POST "$BASE/api/v1/pipeline-component-releases/sync" \
-  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -H "X-Databrew-CI-Token: $DATABREW_CI_INGEST_TOKEN" -H "Content-Type: application/json" \
   -d '{
+    "source": {
+      "provider": "cloud-build",
+      "repo": "CyberOrigin2077/automated-processing-gcloud",
+      "ref": "refs/heads/main",
+      "refType": "branch",
+      "commit": "abc1234abc1234abc1234abc1234abc1234abc1234",
+      "buildId": "1e86eab9-9250-41c5-b905-8ff3c6de23af",
+      "trigger": "hand-detect-yolov26m-build-trigger"
+    },
     "items": [{
       "componentId": "hand-detect-yolov26m",
       "taskName": "hand-detect-yolov26m",
       "taskPath": "tasks/hand_detect_yolov26m",
       "releaseLabel": "main-abc1234",
-      "sourceCommit": "abc1234abc1234abc1234abc1234abc1234abc1234",
       "runtimeImage": "us-central1-docker.pkg.dev/my-project/video-proc-images/hand-detect-yolov26m@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "runtimeSnapshot": {
         "command": ["python", "src/main.py"],
@@ -2345,9 +2355,13 @@ curl -X POST "$BASE/api/v1/pipeline-component-releases/sync" \
   }'
 # 响应: {"items":[{...,"channel":"candidate","validationStatus":"passed","selectable":true}]}
 
+# tag 构建可传 `refType=tag`，DataBrew 会归为 `prod`，UI 标识为“线上版本”。
+# commit 构建可传 `refType=commit` 或只传 commit hash，普通用户用 q 搜 commit 即可找到测试版本。
+
 # 普通 UI 列出可选版本
-curl -s "$BASE/api/v1/pipeline-component-releases?selectable=true&q=hand" \
+curl -s "$BASE/api/v1/pipeline-component-releases?selectable=true&q=abc1234" \
   -H "X-Databrew-Token: $TOKEN"
+# q 支持 component/task/display/release label/source commit/ref/repo/build id/image tag/digest/runtime image。
 
 # 查看技术详情
 curl -s "$BASE/api/v1/pipeline-component-releases/<RELEASE_ID>" \

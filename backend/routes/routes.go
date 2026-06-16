@@ -186,6 +186,14 @@ func RegisterAll(
 		c.JSON(http.StatusOK, gin.H{"authenticated": true})
 	})
 
+	if pipelineComponentHandler != nil {
+		releaseIngest := r.Group("/api/v1", pipelineComponentH.ReleaseIngestAuth(cfg.ComponentReleaseIngestToken, cfg.DatabrewToken, cfg.JWTSecret))
+		if cbMiddleware != nil {
+			releaseIngest.Use(cbMiddleware)
+		}
+		releaseIngest.POST("/pipeline-component-releases/sync", pipelineComponentHandler.SyncReleases)
+	}
+
 	api := r.Group("/api/v1", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
 	if cbMiddleware != nil {
 		api.Use(cbMiddleware)
@@ -380,7 +388,6 @@ func RegisterAll(
 			api.PUT("/pipeline-components/:id", pipelineComponentHandler.UpdateComponent)
 			api.DELETE("/pipeline-components/:id", pipelineComponentHandler.DeleteComponent)
 			api.GET("/pipeline-component-releases", pipelineComponentHandler.ListReleases)
-			api.POST("/pipeline-component-releases/sync", pipelineComponentHandler.SyncReleases)
 			api.GET("/pipeline-component-releases/:id", pipelineComponentHandler.GetRelease)
 		}
 

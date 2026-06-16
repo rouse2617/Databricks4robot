@@ -83,8 +83,8 @@ import {
 	PIPELINE_EXAMPLES,
 	type PipelineExample,
 } from "../lib/pipelineExamples";
-import { validatePipelineForRun } from "../lib/pipelineValidation";
 import { batchJobDetailLocationState } from "../lib/pipelineNavigation";
+import { validatePipelineForRun } from "../lib/pipelineValidation";
 import { ComponentManager } from "./ComponentManager";
 import { ExecutionRecordsPanel } from "./ExecutionRecordsPanel";
 import {
@@ -100,6 +100,7 @@ import {
 	parseAssetIds,
 	parseAssetName,
 	parseAssetType,
+	releaseToRegistered,
 	toRecord,
 } from "./pipeline/pipelinePageHelpers";
 
@@ -283,7 +284,6 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 	const [nodes, setNodes] = useState<PipelineFlowNode[]>([]);
 	const [edges, setEdges] = useState<PipelineFlowEdge[]>([]);
 	const [pipelineName, setPipelineName] = useState("my-pipeline");
-	const pipelineNameReplaceRef = useRef(false);
 	const workflowNameReplaceRef = useRef(false);
 	const [selectedNode, setSelectedNode] = useState<PipelineFlowNode | null>(
 		null,
@@ -300,7 +300,11 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 		loading: componentsLoading,
 		error: componentsError,
 		reload: reloadComponents,
-	} = usePipelineComponents(apiToRegistered, dedupeComponentsByName);
+	} = usePipelineComponents(
+		apiToRegistered,
+		dedupeComponentsByName,
+		releaseToRegistered,
+	);
 	const [templateLoading, setTemplateLoading] = useState(false);
 	const [templateVersions, setTemplateVersions] = useState<PipelineTemplate[]>(
 		[],
@@ -1184,32 +1188,6 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 					<Typography.Title level={5} className="pipeline-toolbar__title">
 						流水线设计
 					</Typography.Title>
-				</div>
-
-				<div className="pipeline-toolbar__name">
-					<span className="pipeline-toolbar__name-label">名称</span>
-					<Input
-						id="pipeline-name-input"
-						name="pipelineName"
-						value={pipelineName}
-						onChange={(e) => {
-							const next = pipelineNameReplaceRef.current
-								? replaceAppendedValue(pipelineName, e.target.value)
-								: e.target.value;
-							pipelineNameReplaceRef.current = false;
-							setPipelineName(next);
-						}}
-						onFocus={(e) => markReplaceOnNextEdit(e, pipelineNameReplaceRef)}
-						onBlur={() => {
-							pipelineNameReplaceRef.current = false;
-						}}
-						maxLength={48}
-						placeholder="输入流水线名称"
-						aria-label="流水线名称"
-						autoComplete="off"
-						className="pipeline-toolbar__name-input"
-						size="small"
-					/>
 					{templateVersions.length > 0 ? (
 						<Select
 							size="small"

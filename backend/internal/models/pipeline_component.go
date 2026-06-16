@@ -1,6 +1,11 @@
 package models
 
-import "time"
+import (
+	"fmt"
+	"hash/fnv"
+	"strings"
+	"time"
+)
 
 // PipelineComponent represents a registered pipeline component (Docker image).
 type PipelineComponent struct {
@@ -50,10 +55,30 @@ type ComponentReleaseRuntimeSnapshot struct {
 	Resources   map[string]interface{} `json:"resources,omitempty"`
 }
 
+// ComponentReleaseIngestSource captures CI/build context shared by a release
+// manifest. Individual release items can still override these fields.
+type ComponentReleaseIngestSource struct {
+	Provider string `json:"provider,omitempty"`
+	Repo     string `json:"repo,omitempty"`
+	Ref      string `json:"ref,omitempty"`
+	RefType  string `json:"refType,omitempty"`
+	Commit   string `json:"commit,omitempty"`
+	BuildID  string `json:"buildId,omitempty"`
+	Trigger  string `json:"trigger,omitempty"`
+}
+
+// ComponentReleaseIngestManifest is the CI-facing contract for publishing one
+// or more generated component releases into DataBrew.
+type ComponentReleaseIngestManifest struct {
+	Source ComponentReleaseIngestSource `json:"source,omitempty"`
+	Items  []PipelineComponentRelease   `json:"items"`
+}
+
 // PipelineComponentRelease is a generated, validated version of an algorithm
 // task. Normal users select releases rather than authoring image/digest fields.
 type PipelineComponentRelease struct {
 	ID                string                          `json:"id"`
+	ImageUID          string                          `json:"imageUid,omitempty"`
 	ComponentID       string                          `json:"componentId"`
 	TaskName          string                          `json:"taskName"`
 	TaskPath          string                          `json:"taskPath,omitempty"`
@@ -63,6 +88,7 @@ type PipelineComponentRelease struct {
 	Channel           string                          `json:"channel"`
 	SourceRepo        string                          `json:"sourceRepo,omitempty"`
 	SourceRef         string                          `json:"sourceRef,omitempty"`
+	SourceRefType     string                          `json:"sourceRefType,omitempty"`
 	SourceCommit      string                          `json:"sourceCommit,omitempty"`
 	BuildID           string                          `json:"buildId,omitempty"`
 	ImageRepo         string                          `json:"imageRepo,omitempty"`
@@ -78,4 +104,15 @@ type PipelineComponentRelease struct {
 	CreatedAt         time.Time                       `json:"createdAt"`
 	UpdatedAt         time.Time                       `json:"updatedAt"`
 	LastSyncedAt      *time.Time                      `json:"lastSyncedAt,omitempty"`
+}
+
+// ShortImageUID returns a stable 8-character display ID for a released image.
+func ShortImageUID(identity string) string {
+	identity = strings.ToLower(strings.TrimSpace(identity))
+	if identity == "" {
+		return ""
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(identity))
+	return fmt.Sprintf("%08x", h.Sum32())
 }

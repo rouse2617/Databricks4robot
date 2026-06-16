@@ -1,6 +1,7 @@
 package pipeline_component
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -22,7 +23,8 @@ type Handler struct {
 func New(uc *uc.Usecase) *Handler { return &Handler{uc: uc} }
 
 type syncReleasesRequest struct {
-	Items []models.PipelineComponentRelease `json:"items"`
+	Source models.ComponentReleaseIngestSource `json:"source,omitempty"`
+	Items  []models.PipelineComponentRelease   `json:"items"`
 }
 
 // CreateComponent handles POST /api/v1/components.
@@ -159,12 +161,15 @@ func (h *Handler) GetRelease(c *gin.Context) {
 
 // SyncReleases handles POST /api/v1/pipeline-component-releases/sync.
 func (h *Handler) SyncReleases(c *gin.Context) {
-	var req syncReleasesRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	req, err := parseSyncReleasesRequest(c)
+	if err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
-	items, err := h.uc.SyncReleases(c.Request.Context(), req.Items)
+	items, err := h.uc.SyncReleaseManifest(c.Request.Context(), models.ComponentReleaseIngestManifest{
+		Source: req.Source,
+		Items:  req.Items,
+	})
 	if err != nil {
 		writeReleaseError(c, err)
 		return
@@ -173,6 +178,23 @@ func (h *Handler) SyncReleases(c *gin.Context) {
 		items = []models.PipelineComponentRelease{}
 	}
 	c.JSON(200, gin.H{"items": items})
+}
+
+func parseSyncReleasesRequest(c *gin.Context) (syncReleasesRequest, error) {
+	var req syncReleasesRequest
+	raw, err := c.GetRawData()
+	if err != nil {
+		return req, err
+	}
+	if err := json.Unmarshal(raw, &req); err == nil && req.Items != nil {
+		return req, nil
+	}
+	var items []models.PipelineComponentRelease
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return req, err
+	}
+	req.Items = items
+	return req, nil
 }
 
 func writeComponentError(c *gin.Context, err error) {

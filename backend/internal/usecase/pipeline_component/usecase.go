@@ -102,12 +102,20 @@ func (uc *Usecase) Delete(ctx context.Context, id string) error {
 
 // SyncReleases validates and persists generated component release records.
 func (uc *Usecase) SyncReleases(ctx context.Context, releases []models.PipelineComponentRelease) ([]models.PipelineComponentRelease, error) {
+	return uc.SyncReleaseManifest(ctx, models.ComponentReleaseIngestManifest{Items: releases})
+}
+
+// SyncReleaseManifest validates and persists a CI-generated component release
+// manifest. Source fields are applied as defaults to each item before
+// validation so CI can publish shared build context once per batch.
+func (uc *Usecase) SyncReleaseManifest(ctx context.Context, manifest models.ComponentReleaseIngestManifest) ([]models.PipelineComponentRelease, error) {
 	if uc.releaseRepo == nil {
 		return nil, errors.New("component release repository is not configured")
 	}
-	out := make([]models.PipelineComponentRelease, 0, len(releases))
-	for i := range releases {
-		release := releases[i]
+	out := make([]models.PipelineComponentRelease, 0, len(manifest.Items))
+	for i := range manifest.Items {
+		release := manifest.Items[i]
+		applyIngestSource(&release, manifest.Source)
 		if err := normalizeComponentRelease(&release); err != nil {
 			return nil, err
 		}
@@ -224,6 +232,7 @@ func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
 		return errors.New("component release is required")
 	}
 	release.ID = strings.TrimSpace(release.ID)
+	release.ImageUID = strings.TrimSpace(release.ImageUID)
 	release.ComponentID = strings.TrimSpace(release.ComponentID)
 	release.TaskName = strings.TrimSpace(release.TaskName)
 	release.TaskPath = strings.TrimSpace(release.TaskPath)
@@ -233,6 +242,7 @@ func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
 	release.Channel = strings.ToLower(strings.TrimSpace(release.Channel))
 	release.SourceRepo = strings.TrimSpace(release.SourceRepo)
 	release.SourceRef = strings.TrimSpace(release.SourceRef)
+	release.SourceRefType = normalizeSourceRefType(release.SourceRefType)
 	release.SourceCommit = strings.TrimSpace(release.SourceCommit)
 	release.BuildID = strings.TrimSpace(release.BuildID)
 	release.ImageRepo = strings.TrimSpace(release.ImageRepo)
@@ -254,11 +264,14 @@ func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
 	if release.Owner == "" {
 		release.Owner = "platform"
 	}
+	if release.SourceRefType == "" {
+		release.SourceRefType = deriveSourceRefType(release.SourceRef, release.ReleaseLabel, release.SourceCommit)
+	}
 	if release.ReleaseLabel == "" {
-		release.ReleaseLabel = firstNonEmpty(release.ImageTag, shortCommit(release.SourceCommit))
+		release.ReleaseLabel = deriveDefaultReleaseLabel(release.SourceRefType, release.SourceRef, release.SourceCommit, release.ImageTag)
 	}
 	if release.Channel == "" {
-		release.Channel = deriveReleaseChannel(release.ReleaseLabel)
+		release.Channel = deriveReleaseChannel(release.ReleaseLabel, release.SourceRefType)
 	}
 	if release.ID == "" && release.ComponentID != "" && release.ReleaseLabel != "" {
 		release.ID = uuid.NewSHA1(uuid.NameSpaceURL, []byte(release.ComponentID+":"+release.ReleaseLabel)).String()
@@ -279,6 +292,9 @@ func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
 	if release.RuntimeSnapshot.Image == "" {
 		release.RuntimeSnapshot.Image = release.RuntimeImage
 	}
+	if release.ImageUID == "" {
+		release.ImageUID = models.ShortImageUID(firstNonEmpty(release.ImageDigest, release.RuntimeImage))
+	}
 	if release.RuntimeSnapshot.InputPorts == nil || len(release.RuntimeSnapshot.InputPorts) == 0 {
 		release.RuntimeSnapshot.InputPorts = []models.PortDef{{Name: "input", Type: "asset"}}
 	}
@@ -290,6 +306,9 @@ func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
 	}
 	if release.TechnicalMetadata == nil {
 		release.TechnicalMetadata = map[string]interface{}{}
+	}
+	if release.SourceRefType != "" {
+		release.TechnicalMetadata["sourceRefType"] = release.SourceRefType
 	}
 
 	var validationErrors []string
@@ -336,6 +355,44 @@ func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
 	return nil
 }
 
+func applyIngestSource(release *models.PipelineComponentRelease, source models.ComponentReleaseIngestSource) {
+	source.Provider = strings.TrimSpace(source.Provider)
+	source.Repo = strings.TrimSpace(source.Repo)
+	source.Ref = strings.TrimSpace(source.Ref)
+	source.RefType = normalizeSourceRefType(source.RefType)
+	source.Commit = strings.TrimSpace(source.Commit)
+	source.BuildID = strings.TrimSpace(source.BuildID)
+	source.Trigger = strings.TrimSpace(source.Trigger)
+
+	if release.SourceRepo == "" {
+		release.SourceRepo = source.Repo
+	}
+	if release.SourceRef == "" {
+		release.SourceRef = source.Ref
+	}
+	if release.SourceRefType == "" {
+		release.SourceRefType = source.RefType
+	}
+	if release.SourceCommit == "" {
+		release.SourceCommit = source.Commit
+	}
+	if release.BuildID == "" {
+		release.BuildID = source.BuildID
+	}
+	if release.TechnicalMetadata == nil {
+		release.TechnicalMetadata = map[string]interface{}{}
+	}
+	if source.Provider != "" {
+		release.TechnicalMetadata["sourceProvider"] = source.Provider
+	}
+	if source.RefType != "" {
+		release.TechnicalMetadata["sourceRefType"] = source.RefType
+	}
+	if source.Trigger != "" {
+		release.TechnicalMetadata["sourceTrigger"] = source.Trigger
+	}
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -353,8 +410,12 @@ func shortCommit(commit string) string {
 	return commit[:7]
 }
 
-func deriveReleaseChannel(label string) string {
+func deriveReleaseChannel(label string, refType string) string {
 	label = strings.ToLower(strings.TrimSpace(label))
+	refType = normalizeSourceRefType(refType)
+	if refType == "tag" {
+		return "prod"
+	}
 	switch {
 	case strings.HasPrefix(label, "pr-"):
 		return "preview"
@@ -367,6 +428,101 @@ func deriveReleaseChannel(label string) string {
 	default:
 		return "dev"
 	}
+}
+
+func normalizeSourceRefType(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "tag", "commit", "branch", "pr":
+		return value
+	default:
+		return ""
+	}
+}
+
+func deriveSourceRefType(ref string, label string, commit string) string {
+	ref = strings.TrimSpace(ref)
+	label = strings.TrimSpace(label)
+	commit = strings.TrimSpace(commit)
+	lowerRef := strings.ToLower(ref)
+	lowerLabel := strings.ToLower(label)
+
+	switch {
+	case strings.HasPrefix(lowerRef, "refs/tags/"):
+		return "tag"
+	case strings.HasPrefix(lowerRef, "refs/pull/"), strings.HasPrefix(lowerLabel, "pr-"):
+		return "pr"
+	case strings.HasPrefix(lowerRef, "refs/heads/"):
+		return "branch"
+	case isCommitLike(ref):
+		return "commit"
+	case commit != "" && (label == shortCommit(commit) || lowerLabel == "commit-"+strings.ToLower(shortCommit(commit))):
+		return "commit"
+	case lowerRef != "":
+		return "branch"
+	default:
+		return ""
+	}
+}
+
+func deriveDefaultReleaseLabel(refType string, ref string, commit string, imageTag string) string {
+	refType = normalizeSourceRefType(refType)
+	refName := sourceRefName(ref)
+	short := shortCommit(commit)
+	switch refType {
+	case "tag":
+		return firstNonEmpty(refName, imageTag, short)
+	case "commit":
+		return firstNonEmpty(short, imageTag)
+	case "pr":
+		if refName != "" && short != "" {
+			return refName + "-" + short
+		}
+		return firstNonEmpty(refName, short, imageTag)
+	case "branch":
+		if refName != "" && short != "" {
+			return refName + "-" + short
+		}
+		return firstNonEmpty(imageTag, refName, short)
+	default:
+		return firstNonEmpty(imageTag, short, refName)
+	}
+}
+
+func sourceRefName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	switch {
+	case strings.HasPrefix(ref, "refs/heads/"):
+		return sanitizeReleasePart(strings.TrimPrefix(ref, "refs/heads/"))
+	case strings.HasPrefix(ref, "refs/tags/"):
+		return strings.TrimPrefix(ref, "refs/tags/")
+	case strings.HasPrefix(ref, "refs/pull/"):
+		parts := strings.Split(ref, "/")
+		if len(parts) >= 3 {
+			return "pr-" + parts[2]
+		}
+	}
+	return sanitizeReleasePart(ref)
+}
+
+func sanitizeReleasePart(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "/", "-")
+	value = strings.ReplaceAll(value, "_", "-")
+	return strings.Trim(value, "-")
+}
+
+func isCommitLike(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 7 || len(value) > 64 {
+		return false
+	}
+	for _, char := range value {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeDigest(digest string) string {

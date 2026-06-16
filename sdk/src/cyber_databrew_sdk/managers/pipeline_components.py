@@ -84,9 +84,17 @@ class PipelineComponentManager(BaseManager):
             self._endpoint("pipeline_component_release_get", release_id=release_id),
         )
 
-    def sync_releases(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+    def sync_releases(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        source: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"items": items}
+        if source:
+            body["source"] = source
         return self._request(
             "POST",
             self._endpoint("pipeline_component_release_sync"),
-            json_body={"items": items},
+            json_body=body,
         )

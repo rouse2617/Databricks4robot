@@ -1,6 +1,7 @@
 import { type Edge, type Node, SelectType } from "@ant-design/pro-flow";
 import type {
 	PipelineComponentAPI,
+	PipelineComponentReleaseAPI,
 	PipelineComponentType,
 } from "../../api/pipelineComponentApi";
 import type {
@@ -30,8 +31,18 @@ export function dedupeComponentsByName(
 	const seen = new Set<string>();
 	return comps.filter((c) => {
 		const key = c.name.trim().toLowerCase();
-		if (!key || seen.has(key)) return false;
-		seen.add(key);
+		const versionKey = [
+			c.releaseLabel,
+			c.sourceCommit,
+			c.tag,
+			c.imageUid,
+			c.source,
+		]
+			.filter(Boolean)
+			.join(":");
+		const dedupeKey = [key, versionKey || "legacy"].join(":");
+		if (!key || seen.has(dedupeKey)) return false;
+		seen.add(dedupeKey);
 		return true;
 	});
 }
@@ -248,6 +259,7 @@ export function apiToRegistered(
 		type: normalizedType,
 		source: normalizedSource,
 		image: formatImage(api.image, api.tag),
+		tag: api.tag,
 		command: api.command ?? ((resources.command as string[]) || ["sh", "-c"]),
 		args: normalizeComponentArgs(
 			(api.args && api.args.length > 0
@@ -261,6 +273,55 @@ export function apiToRegistered(
 			{ name: "input", type: "asset" },
 		]),
 		outputPorts: normalizePorts(api.outputPorts, [
+			{ name: "output", type: "asset" },
+		]),
+		cpu: (resources.cpu as string) ?? "",
+		memory: (resources.memory as string) ?? "",
+		disk: (resources.disk as string) ?? "",
+		gpu: (resources.gpu as string) ?? "",
+		computeTier: (resources.computeTier as string) ?? "",
+	};
+}
+
+export function releaseToRegistered(
+	release: PipelineComponentReleaseAPI,
+): RegisteredComponent {
+	const snapshot = release.runtimeSnapshot ?? {
+		image: release.runtimeImage,
+		inputPorts: [],
+		outputPorts: [],
+	};
+	const resources = snapshot.resources ?? {};
+	const sourceRefType = (release.sourceRefType || "").trim().toLowerCase();
+	return {
+		id: release.id,
+		name: release.displayName || release.taskName,
+		type: "container",
+		source: "component-release",
+		image: snapshot.image || release.runtimeImage,
+		tag: sourceRefType === "tag" ? release.sourceRef : release.imageTag,
+		releaseLabel: release.releaseLabel,
+		sourceCommit: release.sourceCommit,
+		imageUid: release.imageUid,
+		command:
+			snapshot.command ?? ((resources.command as string[]) || ["sh", "-c"]),
+		args: normalizeComponentArgs(
+			(snapshot.args && snapshot.args.length > 0
+				? snapshot.args
+				: Array.isArray(resources.args)
+					? resources.args
+					: undefined) as unknown[],
+		),
+		env: snapshot.env
+			? Object.entries(snapshot.env).map(([name, value]) => ({
+					name,
+					value: value || "",
+				}))
+			: undefined,
+		inputPorts: normalizePorts(snapshot.inputPorts, [
+			{ name: "input", type: "asset" },
+		]),
+		outputPorts: normalizePorts(snapshot.outputPorts, [
 			{ name: "output", type: "asset" },
 		]),
 		cpu: (resources.cpu as string) ?? "",

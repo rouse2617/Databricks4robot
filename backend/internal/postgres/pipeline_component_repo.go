@@ -96,6 +96,14 @@ func scanPipelineComponentRelease(rs rowScanner) (*models.PipelineComponentRelea
 	if len(technicalMetadata) > 0 {
 		_ = json.Unmarshal(technicalMetadata, &release.TechnicalMetadata)
 	}
+	if release.SourceRefType == "" && release.TechnicalMetadata != nil {
+		if value, ok := release.TechnicalMetadata["sourceRefType"].(string); ok {
+			release.SourceRefType = strings.TrimSpace(value)
+		}
+	}
+	if release.ImageUID == "" {
+		release.ImageUID = models.ShortImageUID(firstNonEmpty(release.ImageDigest, release.RuntimeImage))
+	}
 	if release.ValidationErrors == nil {
 		release.ValidationErrors = []string{}
 	}
@@ -165,6 +173,15 @@ func stringSliceFromJSONValue(value interface{}) []string {
 	default:
 		return nil
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // Save inserts a pipeline component.
@@ -376,8 +393,10 @@ func (r *PipelineComponentRepo) FindReleases(ctx context.Context, filter *reposi
 		if filter.Query != "" {
 			argIdx++
 			conditions = append(conditions, fmt.Sprintf(`(
-				component_id ILIKE $%d OR task_name ILIKE $%d OR display_name ILIKE $%d OR release_label ILIKE $%d
-			)`, argIdx, argIdx, argIdx, argIdx))
+				component_id ILIKE $%d OR task_name ILIKE $%d OR display_name ILIKE $%d OR release_label ILIKE $%d OR
+				source_repo ILIKE $%d OR source_ref ILIKE $%d OR source_commit ILIKE $%d OR build_id ILIKE $%d OR
+				image_repo ILIKE $%d OR image_tag ILIKE $%d OR image_digest ILIKE $%d OR runtime_image ILIKE $%d
+			)`, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx))
 			args = append(args, "%"+filter.Query+"%")
 		}
 		if filter.ComponentID != "" {

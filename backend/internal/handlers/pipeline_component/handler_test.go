@@ -105,7 +105,20 @@ func (m *mockComponentRepo) FindReleases(_ context.Context, filter *repository.C
 		if filter != nil {
 			if filter.Query != "" {
 				q := strings.ToLower(filter.Query)
-				haystack := strings.ToLower(release.ComponentID + " " + release.TaskName + " " + release.DisplayName + " " + release.ReleaseLabel)
+				haystack := strings.ToLower(strings.Join([]string{
+					release.ComponentID,
+					release.TaskName,
+					release.DisplayName,
+					release.ReleaseLabel,
+					release.SourceRepo,
+					release.SourceRef,
+					release.SourceCommit,
+					release.BuildID,
+					release.ImageRepo,
+					release.ImageTag,
+					release.ImageDigest,
+					release.RuntimeImage,
+				}, " "))
 				if !strings.Contains(haystack, q) {
 					continue
 				}
@@ -530,6 +543,9 @@ func TestSyncReleases_ValidDigestPinnedRelease(t *testing.T) {
 	if got.ID == "" {
 		t.Fatal("expected generated stable release id")
 	}
+	if len(got.ImageUID) != 8 {
+		t.Fatalf("expected 8-character image uid, got %q", got.ImageUID)
+	}
 	if got.Channel != "candidate" {
 		t.Fatalf("expected candidate channel, got %q", got.Channel)
 	}
@@ -538,6 +554,137 @@ func TestSyncReleases_ValidDigestPinnedRelease(t *testing.T) {
 	}
 	if got.Owner != "platform" {
 		t.Fatalf("expected platform owner default, got %q", got.Owner)
+	}
+}
+
+func TestSyncReleases_ManifestSourceDefaultsAndSearch(t *testing.T) {
+	repo := &mockComponentRepo{}
+	usecase := uc.New(repo)
+	h := New(usecase)
+	r := setupRouter(h)
+
+	body := `{
+		"source":{
+			"provider":"cloud-build",
+				"repo":"CyberOrigin2077/automated-processing-gcloud",
+				"ref":"refs/heads/main",
+				"refType":"branch",
+				"commit":"abc123",
+				"buildId":"build-123",
+			"trigger":"hand-track-stereo-build-trigger"
+		},
+		"items":[{
+			"componentId":"hand-detect-yolov26m",
+			"taskName":"hand-detect-yolov26m",
+			"taskPath":"tasks/hand_detect_yolov26m",
+			"imageRepo":"us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m",
+			"imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"runtimeSnapshot":{
+				"command":["python","src/main.py"],
+				"resources":{"cpu":"14000m","memory":"55Gi","gpu":"1"}
+			}
+		}]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-component-releases/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.PipelineComponentRelease `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := resp.Items[0]
+	if got.ReleaseLabel != "main-abcdef1" {
+		t.Fatalf("expected branch release label from source ref and commit, got %q", got.ReleaseLabel)
+	}
+	if got.SourceRefType != "branch" {
+		t.Fatalf("expected branch source ref type, got %q", got.SourceRefType)
+	}
+	if got.SourceRepo != "CyberOrigin2077/automated-processing-gcloud" || got.SourceCommit != "abcdef1234567890" || got.BuildID != "build-123" {
+		t.Fatalf("expected source defaults, got repo=%q commit=%q build=%q", got.SourceRepo, got.SourceCommit, got.BuildID)
+	}
+	if got.RuntimeImage != "us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("expected runtime image composed from repo+digest, got %q", got.RuntimeImage)
+	}
+	if got.TechnicalMetadata["sourceProvider"] != "cloud-build" || got.TechnicalMetadata["sourceTrigger"] != "hand-track-stereo-build-trigger" {
+		t.Fatalf("expected source technical metadata, got %#v", got.TechnicalMetadata)
+	}
+	if got.TechnicalMetadata["sourceRefType"] != "branch" {
+		t.Fatalf("expected source ref type technical metadata, got %#v", got.TechnicalMetadata)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-component-releases?q=abcdef123", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 search, got %d: %s", w.Code, w.Body.String())
+	}
+	var searchResp struct {
+		Items []models.PipelineComponentRelease `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &searchResp); err != nil {
+		t.Fatalf("unmarshal search: %v", err)
+	}
+	if len(searchResp.Items) != 1 {
+		t.Fatalf("expected search by source commit to find one release, got %d", len(searchResp.Items))
+	}
+}
+
+func TestSyncReleases_TagSourceIsProd(t *testing.T) {
+	repo := &mockComponentRepo{}
+	usecase := uc.New(repo)
+	h := New(usecase)
+	r := setupRouter(h)
+
+	body := `{
+		"source":{
+			"provider":"cloud-build",
+			"repo":"CyberOrigin2077/automated-processing-gcloud",
+			"ref":"refs/tags/hand-detect-2026.06.16",
+			"commit":"abcdef1234567890",
+			"buildId":"build-456"
+		},
+		"items":[{
+			"componentId":"hand-detect-yolov26m",
+			"taskName":"hand-detect-yolov26m",
+			"taskPath":"tasks/hand_detect_yolov26m",
+			"imageRepo":"us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m",
+			"imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"runtimeSnapshot":{
+				"command":["python","src/main.py"],
+				"resources":{"cpu":"14000m","memory":"55Gi","gpu":"1"}
+			}
+		}]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-component-releases/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.PipelineComponentRelease `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := resp.Items[0]
+	if got.SourceRefType != "tag" {
+		t.Fatalf("expected tag source ref type, got %q", got.SourceRefType)
+	}
+	if got.ReleaseLabel != "hand-detect-2026.06.16" {
+		t.Fatalf("expected release label from tag, got %q", got.ReleaseLabel)
+	}
+	if got.Channel != "prod" {
+		t.Fatalf("expected prod channel, got %q", got.Channel)
 	}
 }
 
@@ -583,6 +730,33 @@ func TestSyncReleases_MissingDigestIsNotSelectable(t *testing.T) {
 	}
 	if len(got.ValidationErrors) == 0 {
 		t.Fatal("expected validation errors")
+	}
+}
+
+func TestReleaseIngestAuth_AcceptsCITokenOnlyForSyncRoute(t *testing.T) {
+	repo := &mockComponentRepo{}
+	usecase := uc.New(repo)
+	h := New(usecase)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/api/v1/pipeline-component-releases/sync", ReleaseIngestAuth("ci-token", "dev-token", "dev-jwt-secret"), h.SyncReleases)
+
+	body := `{"items":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-component-releases/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without token, got %d: %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-component-releases/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Databrew-CI-Token", "ci-token")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with ci token, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

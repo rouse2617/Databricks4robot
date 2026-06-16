@@ -538,8 +538,19 @@ class TestPipelineComponentManager:
             return_value=httpx.Response(200, json={"items": [{"id": "r1"}]})
         )
         payload = [{"componentId": "hand-detect-yolov26m", "releaseLabel": "main-abc123"}]
-        assert client.pipeline_components.sync_releases(payload) == {"items": [{"id": "r1"}]}
+        assert client.pipeline_components.sync_releases(
+            payload,
+            source={
+                "provider": "cloud-build",
+                "refType": "branch",
+                "commit": "abc123",
+            },
+        ) == {"items": [{"id": "r1"}]}
         body = route.calls.last.request.read()
+        assert (
+            b'"source":{"provider":"cloud-build","refType":"branch",'
+            b'"commit":"abc123"}'
+        ) in body
         assert b'"items":[{"componentId":"hand-detect-yolov26m"' in body
 
 
