@@ -152,6 +152,55 @@ describe("WorkflowDetailPage", () => {
 		).toBeInTheDocument();
 	});
 
+	it("prefers DataBrew run status over active Argo workflow status", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Running",
+				message: "",
+				nodes: [],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: {
+					id: "run-1",
+					workflowName: "wf-asset",
+					pipelineName: "asset-pipeline",
+					status: "Failed",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+					finishedAt: "2026-06-03T00:10:00Z",
+					message: "workflow shutdown with strategy: Stop",
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText("失败")).toBeInTheDocument();
+		expect(
+			screen.getByText("workflow shutdown with strategy: Stop"),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /停止/ }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /暂停/ }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /终止/ }),
+		).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /重提交/ })).toBeInTheDocument();
+	});
+
 	it("shows a not-found alert instead of an indefinite spinner", () => {
 		mockWorkflowDetailState({
 			workflow: null,

@@ -32,6 +32,7 @@ type mockWorkflowClient struct {
 	streamFn       func(ctx context.Context, workflowName, podName, namespace string, opts argo.WorkflowLogOptions) (io.ReadCloser, error)
 	operation      string
 	namespace      string
+	resubmitResult *wfv1.Workflow
 	lastLogNodeID  string
 	lastStreamPod  string
 	lastLogOpts    argo.WorkflowLogOptions
@@ -64,17 +65,31 @@ func (m *mockExecClient) ExecPod(_ context.Context, req k8s.PodExecRequest, stdo
 }
 
 type mockRunRepo struct {
-	run *models.PipelineRun
+	run        *models.PipelineRun
+	byWorkflow map[string]*models.PipelineRun
+	saved      []*models.PipelineRun
 }
 
-func (m *mockRunRepo) Save(context.Context, *models.PipelineRun) error               { return nil }
-func (m *mockRunRepo) FindAll(context.Context) ([]models.PipelineRun, error)         { return nil, nil }
-func (m *mockRunRepo) FindAllSummaries(context.Context) ([]models.PipelineRun, error) { return nil, nil }
+func (m *mockRunRepo) Save(_ context.Context, run *models.PipelineRun) error {
+	m.saved = append(m.saved, run)
+	if m.byWorkflow == nil {
+		m.byWorkflow = map[string]*models.PipelineRun{}
+	}
+	m.byWorkflow[run.WorkflowName] = run
+	return nil
+}
+func (m *mockRunRepo) FindAll(context.Context) ([]models.PipelineRun, error) { return nil, nil }
+func (m *mockRunRepo) FindAllSummaries(context.Context) ([]models.PipelineRun, error) {
+	return nil, nil
+}
 func (m *mockRunRepo) ListSummaries(context.Context, models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
 	return nil, 0, nil
 }
 func (m *mockRunRepo) FindByID(context.Context, string) (*models.PipelineRun, error) { return nil, nil }
-func (m *mockRunRepo) FindByWorkflowName(context.Context, string) (*models.PipelineRun, error) {
+func (m *mockRunRepo) FindByWorkflowName(_ context.Context, workflowName string) (*models.PipelineRun, error) {
+	if m.byWorkflow != nil {
+		return m.byWorkflow[workflowName], nil
+	}
 	return m.run, nil
 }
 func (m *mockRunRepo) FindByBatchJobAndAssetID(context.Context, string, string) (*models.PipelineRun, error) {
@@ -124,6 +139,14 @@ func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, namespace st
 	m.operation = "resubmit"
 	m.namespace = namespace
 	return nil
+}
+func (m *mockWorkflowClient) ResubmitWorkflowWithResult(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+	m.operation = "resubmit"
+	m.namespace = namespace
+	if m.resubmitResult != nil {
+		return m.resubmitResult, nil
+	}
+	return makeWorkflow(name+"-abcde", "Running", 1), nil
 }
 func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, namespace string) error {
 	m.operation = "suspend"
@@ -232,6 +255,14 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.POST("/workflows/:name/terminate", h.TerminateWorkflow)
 	r.DELETE("/workflows/:name", h.DeleteWorkflow)
 	return r
+}
+
+func stringPtr(v string) *string {
+	return &v
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1146,15 +1177,159 @@ func TestWorkflowOperations(t *testing.T) {
 	}
 }
 
+func TestResubmitWorkflow_CreatesPipelineRunLedger(t *testing.T) {
+	createdAt := time.Date(2026, 6, 17, 9, 3, 2, 0, time.UTC)
+	finishedAt := createdAt.Add(10 * time.Second)
+	resubmittedWorkflow := makeWorkflowWithMeta("source-wf-gthtk", "Succeeded", 2, createdAt, &finishedAt, map[string]string{
+		"workflows.argoproj.io/resubmitted-from-workflow": "source-wf",
+	})
+	resubmittedWorkflow.Status.StartedAt = metav1.NewTime(createdAt.Add(1 * time.Second))
+	resubmittedWorkflow.Status.Message = "done"
+	sourceRun := &models.PipelineRun{
+		ID:                "run-source",
+		TemplateID:        stringPtr("template-1"),
+		PipelineName:      "pipeline-1",
+		TemplateVersion:   intPtr(3),
+		WorkflowName:      "source-wf",
+		ExecutionTargetID: "target-1",
+		TargetSnapshot:    map[string]interface{}{"namespace": "argo"},
+		Status:            "Succeeded",
+		NodeCount:         1,
+		AssetIDs:          []string{"asset-1"},
+		AssetCount:        1,
+		Manifest:          stringPtr("manifest"),
+		PipelineJSON:      map[string]interface{}{"nodes": []interface{}{}},
+		ArgoNamespace:     "argo",
+		Scope:             "dev",
+		Owner:             "tester",
+		BatchJobID:        stringPtr("batch-1"),
+		LedgerState:       "active",
+	}
+	runRepo := &mockRunRepo{byWorkflow: map[string]*models.PipelineRun{
+		"source-wf": sourceRun,
+	}}
+	eventRepo := &mockRunEventRepo{}
+	h := New(&mockWorkflowClient{resubmitResult: resubmittedWorkflow}, "argo")
+	h.SetRunRepositories(runRepo, eventRepo)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/source-wf/resubmit", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp["workflowName"] != "source-wf-gthtk" {
+		t.Fatalf("expected new workflow name, got %#v", resp)
+	}
+	if len(runRepo.saved) != 1 {
+		t.Fatalf("expected one saved run, got %d", len(runRepo.saved))
+	}
+	saved := runRepo.saved[0]
+	if saved.ID == "" || saved.ID == sourceRun.ID {
+		t.Fatalf("expected new run id, got %q", saved.ID)
+	}
+	if saved.WorkflowName != "source-wf-gthtk" || saved.Status != "Succeeded" {
+		t.Fatalf("unexpected saved run workflow/status: %#v", saved)
+	}
+	if saved.TemplateID == nil || *saved.TemplateID != "template-1" {
+		t.Fatalf("expected template copied, got %#v", saved.TemplateID)
+	}
+	if saved.BatchJobID == nil || *saved.BatchJobID != "batch-1" {
+		t.Fatalf("expected batch copied, got %#v", saved.BatchJobID)
+	}
+	if saved.StartedAt == nil || saved.FinishedAt == nil {
+		t.Fatalf("expected workflow times copied, got started=%v finished=%v", saved.StartedAt, saved.FinishedAt)
+	}
+	if len(eventRepo.events) != 1 {
+		t.Fatalf("expected one run event, got %d", len(eventRepo.events))
+	}
+	event := eventRepo.events[0]
+	if event.EventType != "run_resubmitted" || event.RunID != saved.ID || event.WorkflowName != saved.WorkflowName {
+		t.Fatalf("unexpected event: %#v", event)
+	}
+	if event.Payload["sourceWorkflowName"] != "source-wf" {
+		t.Fatalf("expected source workflow payload, got %#v", event.Payload)
+	}
+}
+
+func TestResubmitWorkflow_DoesNotDuplicateExistingLedger(t *testing.T) {
+	resubmittedWorkflow := makeWorkflow("source-wf-gthtk", "Running", 1)
+	existingRun := &models.PipelineRun{ID: "run-existing", WorkflowName: "source-wf-gthtk"}
+	runRepo := &mockRunRepo{byWorkflow: map[string]*models.PipelineRun{
+		"source-wf":       {ID: "run-source", WorkflowName: "source-wf"},
+		"source-wf-gthtk": existingRun,
+	}}
+	h := New(&mockWorkflowClient{resubmitResult: resubmittedWorkflow}, "argo")
+	h.SetRunRepositories(runRepo, &mockRunEventRepo{})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/source-wf/resubmit", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(runRepo.saved) != 0 {
+		t.Fatalf("expected no duplicate save, got %d", len(runRepo.saved))
+	}
+}
+
+func TestStopWorkflow_SyncsPipelineRunLedger(t *testing.T) {
+	run := &models.PipelineRun{
+		ID:           "run-1",
+		WorkflowName: "wf-1",
+		Status:       "Running",
+	}
+	runRepo := &mockRunRepo{byWorkflow: map[string]*models.PipelineRun{"wf-1": run}}
+	eventRepo := &mockRunEventRepo{}
+	client := &mockWorkflowClient{}
+	h := New(client, "argo")
+	h.SetRunRepositories(runRepo, eventRepo)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/wf-1/stop", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if client.operation != "stop" || client.namespace != "argo" {
+		t.Fatalf("expected stop operation in argo namespace, got op=%q namespace=%q", client.operation, client.namespace)
+	}
+	if run.Status != string(wfv1.WorkflowFailed) {
+		t.Fatalf("expected run failed, got %q", run.Status)
+	}
+	if run.Message != "workflow shutdown with strategy: Stop" {
+		t.Fatalf("unexpected run message %q", run.Message)
+	}
+	if run.FinishedAt == nil {
+		t.Fatal("expected finished_at to be set")
+	}
+	if len(runRepo.saved) != 1 {
+		t.Fatalf("expected saved run once, got %d", len(runRepo.saved))
+	}
+	if len(eventRepo.events) != 1 || eventRepo.events[0].EventType != "run_failed" {
+		t.Fatalf("expected run_failed event, got %#v", eventRepo.events)
+	}
+}
+
 func TestRetryWorkflow_NotRetryable(t *testing.T) {
 	client := &mockWorkflowClient{
 		getFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
 			wf := makeWorkflow(name, "Failed", 1)
 			wf.Status.Message = "Stopped"
 			wf.Status.Nodes["a"] = wfv1.NodeStatus{
-				ID:   "a",
-				Name: "step-a",
-				Type: wfv1.NodeTypePod,
+				ID:    "a",
+				Name:  "step-a",
+				Type:  wfv1.NodeTypePod,
 				Phase: wfv1.NodePending,
 			}
 			return wf, nil

@@ -2572,6 +2572,12 @@ components:
         message:
           type: string
           example: ok
+        workflowName:
+          type: string
+          description: Newly created workflow name when the operation creates one, such as resubmit.
+        pipelineRunId:
+          type: string
+          description: DataBrew pipeline run id created for the new workflow when available.
     BackfillJob:
       type: object
       properties:

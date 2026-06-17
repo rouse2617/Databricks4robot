@@ -569,7 +569,7 @@ func TestSyncReleases_ManifestSourceDefaultsAndSearch(t *testing.T) {
 				"repo":"CyberOrigin2077/automated-processing-gcloud",
 				"ref":"refs/heads/main",
 				"refType":"branch",
-				"commit":"abc123",
+				"commit":"abcdef1",
 				"buildId":"build-123",
 			"trigger":"hand-track-stereo-build-trigger"
 		},
@@ -606,7 +606,7 @@ func TestSyncReleases_ManifestSourceDefaultsAndSearch(t *testing.T) {
 	if got.SourceRefType != "branch" {
 		t.Fatalf("expected branch source ref type, got %q", got.SourceRefType)
 	}
-	if got.SourceRepo != "CyberOrigin2077/automated-processing-gcloud" || got.SourceCommit != "abcdef1234567890" || got.BuildID != "build-123" {
+	if got.SourceRepo != "CyberOrigin2077/automated-processing-gcloud" || got.SourceCommit != "abcdef1" || got.BuildID != "build-123" {
 		t.Fatalf("expected source defaults, got repo=%q commit=%q build=%q", got.SourceRepo, got.SourceCommit, got.BuildID)
 	}
 	if got.RuntimeImage != "us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
@@ -619,7 +619,7 @@ func TestSyncReleases_ManifestSourceDefaultsAndSearch(t *testing.T) {
 		t.Fatalf("expected source ref type technical metadata, got %#v", got.TechnicalMetadata)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-component-releases?q=abcdef123", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-component-releases?q=abcdef", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -647,7 +647,7 @@ func TestSyncReleases_TagSourceIsProd(t *testing.T) {
 			"provider":"cloud-build",
 			"repo":"CyberOrigin2077/automated-processing-gcloud",
 			"ref":"refs/tags/hand-detect-2026.06.16",
-			"commit":"abcdef1234567890",
+			"commit":"abcdef1",
 			"buildId":"build-456"
 		},
 		"items":[{

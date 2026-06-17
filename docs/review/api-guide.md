@@ -2998,6 +2998,14 @@ curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/retry" \
   -H "X-Databrew-Token: $TOKEN"
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resubmit" \
   -H "X-Databrew-Token: $TOKEN"
+# 返回示例:
+# {
+#   "message": "ok",
+#   "workflowName": "asset-pipeline-a1b2c3-x7k9p",
+#   "pipelineRunId": "61bd4770-1b5a-4f8c-97c2-d8ff88f4b733"
+# }
+# 重新提交会在 Argo 创建新的 workflow；若原 workflow 有 DataBrew pipeline run，
+# 后端会同步创建新的 pipeline_runs 记录，避免新 workflow 详情出现 pipeline run not found。
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/suspend" \
   -H "X-Databrew-Token: $TOKEN"
 curl -X POST "$BASE/api/v1/workflows/<WORKFLOW_NAME>/resume" \

@@ -37,23 +37,23 @@ var (
 
 // Usecase orchestrates pipeline template management and deployment.
 type Usecase struct {
-	templateRepo   repository.PipelineTemplateRepository
-	deploymentRepo repository.PipelineDeploymentRepository
-	targetRepo     repository.ExecutionTargetRepository
-	runRepo        repository.PipelineRunRepository
-	runNodeRepo    repository.PipelineRunNodeRepository
-	runEventRepo   repository.PipelineRunEventRepository
-	assetNodeRepo  repository.PipelineRunAssetNodeRepository
-	notifyRepo     repository.PipelineRunNotificationRepository
-	watcherRepo    repository.PipelineRunWatcherStateRepository
-	assetRepo      repository.AssetRepository
-	assetEventRepo repository.AssetEventRepository
-	relationWriter repository.AssetRelationWriter
-	logicalRepo    repository.LogicalAssetRepository
-	wfClient                  argo.WorkflowClient
-	namespace                 string
-	pricing                   *PricingConfig
-	workflowTTLSecondsAfter   int32
+	templateRepo            repository.PipelineTemplateRepository
+	deploymentRepo          repository.PipelineDeploymentRepository
+	targetRepo              repository.ExecutionTargetRepository
+	runRepo                 repository.PipelineRunRepository
+	runNodeRepo             repository.PipelineRunNodeRepository
+	runEventRepo            repository.PipelineRunEventRepository
+	assetNodeRepo           repository.PipelineRunAssetNodeRepository
+	notifyRepo              repository.PipelineRunNotificationRepository
+	watcherRepo             repository.PipelineRunWatcherStateRepository
+	assetRepo               repository.AssetRepository
+	assetEventRepo          repository.AssetEventRepository
+	relationWriter          repository.AssetRelationWriter
+	logicalRepo             repository.LogicalAssetRepository
+	wfClient                argo.WorkflowClient
+	namespace               string
+	pricing                 *PricingConfig
+	workflowTTLSecondsAfter int32
 }
 
 type DeployOptions struct {
@@ -1040,9 +1040,20 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		return
 	}
 	uc.appendWorkflowEvents(ctx, run, wf)
+	status := run.Status
 	if wf.Status.Phase != "" {
-		run.Status = string(wf.Status.Phase)
+		status = string(wf.Status.Phase)
 	}
+	message := wf.Status.Message
+	finishedAt := argoTimeOrZero(wf.Status.FinishedAt.Time)
+	if derivedStatus, derivedMessage, derivedFinishedAt, ok := deriveTerminalRunFromWorkflowNodes(wf); ok {
+		status = derivedStatus
+		message = derivedMessage
+		if derivedFinishedAt != nil {
+			finishedAt = derivedFinishedAt
+		}
+	}
+	run.Status = status
 	if string(wf.UID) != "" {
 		run.ArgoWorkflowUID = string(wf.UID)
 	}
@@ -1051,7 +1062,16 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		run.Message = ""
 	}
 	if wf.Status.Phase == wfv1.WorkflowSucceeded || wf.Status.Phase == wfv1.WorkflowFailed || wf.Status.Phase == wfv1.WorkflowError {
-		if finishedAt := argoTimeOrZero(wf.Status.FinishedAt.Time); finishedAt != nil {
+		if finishedAt != nil {
+			run.FinishedAt = finishedAt
+		} else if run.FinishedAt == nil || run.FinishedAt.IsZero() {
+			now := time.Now().UTC()
+			run.FinishedAt = &now
+		}
+	}
+	if !isActiveDeploymentStatus(run.Status) {
+		run.Message = strings.TrimSpace(message)
+		if finishedAt != nil {
 			run.FinishedAt = finishedAt
 		} else if run.FinishedAt == nil || run.FinishedAt.IsZero() {
 			now := time.Now().UTC()
@@ -1060,6 +1080,42 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 	}
 	uc.persistRunObservation(ctx, run)
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
+}
+
+func deriveTerminalRunFromWorkflowNodes(wf *wfv1.Workflow) (string, string, *time.Time, bool) {
+	if wf == nil || !isActiveDeploymentStatus(string(wf.Status.Phase)) {
+		return "", "", nil, false
+	}
+	var latestFinishedAt *time.Time
+	derivedMessage := ""
+	for _, node := range wf.Status.Nodes {
+		phase := node.Phase
+		if phase != wfv1.NodeFailed && phase != wfv1.NodeError {
+			continue
+		}
+		message := strings.TrimSpace(node.Message)
+		if !isWorkflowShutdownMessage(message) {
+			continue
+		}
+		if finishedAt := argoTimeOrZero(node.FinishedAt.Time); finishedAt != nil {
+			if latestFinishedAt == nil || finishedAt.After(*latestFinishedAt) {
+				latestFinishedAt = finishedAt
+				derivedMessage = message
+			}
+		} else if derivedMessage == "" {
+			derivedMessage = message
+		}
+	}
+	if derivedMessage == "" {
+		return "", "", nil, false
+	}
+	return string(wfv1.WorkflowFailed), derivedMessage, latestFinishedAt, true
+}
+
+func isWorkflowShutdownMessage(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(normalized, "workflow shutdown with strategy:") ||
+		strings.Contains(normalized, "stopped with strategy")
 }
 
 func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.PipelineRun) {

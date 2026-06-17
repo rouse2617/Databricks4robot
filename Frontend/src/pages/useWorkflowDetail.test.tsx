@@ -270,10 +270,47 @@ describe("useWorkflowDetail", () => {
 		).toHaveLength(1);
 	});
 
-	it("skips pipeline run lookups for external workflows", async () => {
+	it("stops polling when the DataBrew run is terminal even if Argo is still active", async () => {
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-1",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [],
+		});
+		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+			id: "run-1",
+			workflowName: "wf-1",
+			pipelineName: "pipeline",
+			status: "Failed",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:00:00Z",
+			message: "workflow shutdown with strategy: Stop",
+		});
+		const setIntervalSpy = vi.spyOn(window, "setInterval");
+		const clearIntervalSpy = vi.spyOn(window, "clearInterval");
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-1"));
+
+		await waitFor(() =>
+			expect(result.current.runEventState.run?.status).toBe("Failed"),
+		);
+
+		expect(result.current.workflow?.status).toBe("Running");
+		const workflowPolls = setIntervalSpy.mock.calls.filter(
+			([, delay]) => delay === 8_000,
+		);
+		if (workflowPolls.length > 0) {
+			expect(clearIntervalSpy).toHaveBeenCalledWith(workflowPolls[0][0]);
+		}
+	});
+
+	it("treats workflows as external only after pipeline run lookup misses", async () => {
 		const consoleErrorSpy = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => undefined);
+		mockGetPipelineRunByWorkflowName.mockRejectedValue(
+			new ApiError(404, "NOT_FOUND", "not found"),
+		);
 		mockGetWorkflow.mockResolvedValue({
 			name: "wf-external",
 			status: "Running",
@@ -295,8 +332,53 @@ describe("useWorkflowDetail", () => {
 				"未找到关联的 DataBrew pipeline run",
 			),
 		);
-		expect(mockGetPipelineRunByWorkflowName).not.toHaveBeenCalled();
-		expect(mockGetPipelineRun).not.toHaveBeenCalled();
+		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledWith(
+			"wf-external",
+		);
+		expect(mockGetPipelineRun).toHaveBeenCalledWith("wf-external");
 		expect(consoleErrorSpy).not.toHaveBeenCalled();
+	});
+
+	it("loads pipeline run data for Argo-labeled resubmitted workflows", async () => {
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-resubmitted",
+			status: "Succeeded",
+			createdAt: "2026-06-03T00:00:00Z",
+			labels: {
+				"workflows.argoproj.io/completed": "true",
+				"workflows.argoproj.io/phase": "Succeeded",
+				"workflows.argoproj.io/resubmitted-from-workflow": "wf-source",
+			},
+			nodes: [],
+		});
+		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+			id: "run-resubmitted",
+			workflowName: "wf-resubmitted",
+			pipelineJSON: { nodes: [] },
+		});
+		mockListPipelineRunEvents.mockResolvedValue({
+			items: [
+				{
+					id: "event-1",
+					runId: "run-resubmitted",
+					eventType: "run_resubmitted",
+					subjectType: "run",
+					subjectId: "run-resubmitted",
+					occurredAt: "2026-06-03T00:00:00Z",
+				},
+			],
+		});
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-resubmitted"));
+
+		await waitFor(() =>
+			expect(result.current.runEventState.run?.id).toBe("run-resubmitted"),
+		);
+
+		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledWith(
+			"wf-resubmitted",
+		);
+		expect(result.current.runEventState.error).toBeNull();
+		expect(result.current.runEventState.items).toHaveLength(1);
 	});
 });

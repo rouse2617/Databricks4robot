@@ -1309,6 +1309,58 @@ func TestRefreshRunForList_ClearsFinishedAtForActiveRun(t *testing.T) {
 	}
 }
 
+func TestRefreshRunForList_DerivesFailedStatusFromShutdownNode(t *testing.T) {
+	ctx := context.Background()
+	finishedAt := time.Date(2026, 6, 17, 10, 12, 13, 0, time.UTC)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase: wfv1.WorkflowRunning,
+				Nodes: map[string]wfv1.NodeStatus{
+					"node-1": {
+						ID:           "node-1",
+						Name:         "wf-1-step",
+						DisplayName:  "step",
+						Type:         wfv1.NodeTypePod,
+						Phase:        wfv1.NodeFailed,
+						Message:      "workflow shutdown with strategy: Stop",
+						FinishedAt:   metav1.Time{Time: finishedAt},
+						TemplateName: "step",
+					},
+				},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != string(wfv1.WorkflowFailed) {
+		t.Fatalf("expected derived Failed status, got %q", run.Status)
+	}
+	if run.Message != "workflow shutdown with strategy: Stop" {
+		t.Fatalf("expected shutdown message, got %q", run.Message)
+	}
+	if run.FinishedAt == nil || !run.FinishedAt.Equal(finishedAt) {
+		t.Fatalf("expected finished_at %v, got %v", finishedAt, run.FinishedAt)
+	}
+}
+
 func TestRefreshRunForList_DoesNotAdvanceFinishedAtOnStaleMessageReconcile(t *testing.T) {
 	ctx := context.Background()
 	correctFinish := time.Date(2026, 6, 16, 9, 39, 43, 0, time.UTC)

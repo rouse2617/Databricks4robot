@@ -1,5 +1,6 @@
 # Keep the builder version pinned to avoid golang:latest digest churn causing
 # surprise cache misses during dev Cloud Run deploys.
+ARG BUILDPLATFORM=linux/amd64
 FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.0 AS builder
 ENV GOTOOLCHAIN=auto
 ENV HTTP_PROXY=

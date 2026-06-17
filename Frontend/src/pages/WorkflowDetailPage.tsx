@@ -1197,14 +1197,28 @@ export default function WorkflowDetailPage({
 		() => buildPipelineNodeLabelLookup(runEventState.run?.pipelineJSON),
 		[runEventState.run?.pipelineJSON],
 	);
+	const displayWorkflow = useMemo(() => {
+		if (!workflow || !runEventState.run) {
+			return workflow;
+		}
+		return {
+			...workflow,
+			status: runEventState.run.status || workflow.status,
+			message: runEventState.run.message || workflow.message,
+			finishedAt: runEventState.run.finishedAt || workflow.finishedAt,
+		};
+	}, [workflow, runEventState.run]);
 	const [showNodeLogs, setShowNodeLogs] = useState(false);
 	const operations = useMemo(
-		() => (workflow ? getWorkflowOperationConfigs(workflow) : []),
-		[workflow],
+		() => (displayWorkflow ? getWorkflowOperationConfigs(displayWorkflow) : []),
+		[displayWorkflow],
 	);
 	const availableOperations = useMemo(
-		() => (workflow ? getAvailableWorkflowOperationConfigs(workflow) : []),
-		[workflow],
+		() =>
+			displayWorkflow
+				? getAvailableWorkflowOperationConfigs(displayWorkflow)
+				: [],
+		[displayWorkflow],
 	);
 	const canRetryFailedNode = useMemo(() => {
 		const retryOp = operations.find(
@@ -1456,7 +1470,7 @@ export default function WorkflowDetailPage({
 		);
 	}
 
-	if (!workflow) {
+	if (!workflow || !displayWorkflow) {
 		return null;
 	}
 
@@ -1491,16 +1505,16 @@ export default function WorkflowDetailPage({
 					{backLabel}
 				</Button>
 				<h3 style={{ margin: 0, fontSize: 15 }}>{workflow.name}</h3>
-				<Tag color={STATUS_COLORS[workflow.status] || "default"}>
-					{formatWorkflowPhaseLabel(workflow.status)}
+				<Tag color={STATUS_COLORS[displayWorkflow.status] || "default"}>
+					{formatWorkflowPhaseLabel(displayWorkflow.status)}
 				</Tag>
 				{runEventState.run || runEventState.items.length > 0 ? (
 					<Tag color="green">DataBrew 运行</Tag>
 				) : (
 					<Tag color="orange">外部 Workflow</Tag>
 				)}
-				{workflow.message ? (
-					<Tooltip title={workflow.message}>
+				{displayWorkflow.message ? (
+					<Tooltip title={displayWorkflow.message}>
 						<span
 							style={{
 								color: "#dc2626",
@@ -1511,14 +1525,14 @@ export default function WorkflowDetailPage({
 								whiteSpace: "nowrap",
 							}}
 						>
-							{workflow.message}
+							{displayWorkflow.message}
 						</span>
 					</Tooltip>
 				) : null}
 				<DurationPanel
-					phase={workflow.status}
+					phase={displayWorkflow.status}
 					startedAt={workflow.createdAt}
-					finishedAt={workflow.finishedAt}
+					finishedAt={displayWorkflow.finishedAt}
 					progress={workflow.progress}
 				/>
 				{costSummaryState.item &&
@@ -1576,7 +1590,7 @@ export default function WorkflowDetailPage({
 				</div>
 			</div>
 			<WorkflowSummaryCards
-				workflow={workflow}
+				workflow={displayWorkflow}
 				runEventState={runEventState}
 				costSummaryState={costSummaryState}
 			/>
@@ -1608,8 +1622,8 @@ export default function WorkflowDetailPage({
 							selectedNodeId={selectedNode?.id ?? null}
 							onNodeSelect={handleSelectNode}
 							onNodeAction={handleNodeAction}
-							emptyMessage={workflow.message}
-							workflowStatus={workflow.status}
+							emptyMessage={displayWorkflow.message}
+							workflowStatus={displayWorkflow.status}
 							pipelineLabels={pipelineNodeLabels}
 						/>
 					) : (

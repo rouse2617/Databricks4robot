@@ -135,12 +135,6 @@ const EMPTY_COST_SUMMARY_STATE: CostSummaryState = {
 const ACTIVE_WORKFLOW_STATUSES = new Set(["Running", "Pending"]);
 const WORKFLOW_POLL_INTERVAL_MS = 8_000;
 const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
-const EXTERNAL_WORKFLOW_LABEL_KEYS = [
-	"workflows.argoproj.io/completed",
-	"workflows.argoproj.io/phase",
-	"workflows.argoproj.io/creator",
-] as const;
-
 function toErrorMessage(err: unknown): string {
 	if (err instanceof Error) {
 		return err.message;
@@ -153,12 +147,6 @@ function toLoadError(err: unknown): WorkflowLoadError {
 		return { kind: "not_found", message: err.message };
 	}
 	return { kind: "error", message: toErrorMessage(err) };
-}
-
-function looksLikeExternalWorkflow(workflow: WorkflowDetail | null): boolean {
-	if (!workflow) return false;
-	const labels = workflow.labels ?? {};
-	return EXTERNAL_WORKFLOW_LABEL_KEYS.some((key) => key in labels);
 }
 
 async function resolvePipelineRun(lookup: string): Promise<PipelineRun | null> {
@@ -218,29 +206,6 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 
 	const loadRunDetailData = useCallback(
 		async (runName: string, opts?: { append?: boolean; cursor?: number }) => {
-			const shouldTreatAsExternal = looksLikeExternalWorkflow(
-				workflowRef.current,
-			);
-			if (shouldTreatAsExternal) {
-				setRunEventState({
-					run: null,
-					items: [],
-					loading: false,
-					error: "未找到关联的 DataBrew pipeline run",
-				});
-				setAssetNodeState({
-					items: [],
-					loading: false,
-					error: "未找到关联的 DataBrew pipeline run",
-					summary: null,
-				});
-				setCostSummaryState({
-					item: null,
-					loading: false,
-					error: "未找到关联的 DataBrew pipeline run",
-				});
-				return;
-			}
 			const run = await resolvePipelineRun(runName);
 			if (!run) {
 				setRunEventState({
@@ -368,7 +333,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const shouldPollWorkflow =
 		name != null &&
 		workflow != null &&
-		ACTIVE_WORKFLOW_STATUSES.has(workflow.status);
+		ACTIVE_WORKFLOW_STATUSES.has(runEventState.run?.status ?? workflow.status);
 
 	useEffect(() => {
 		if (!name || !shouldPollWorkflow) {

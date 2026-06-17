@@ -11,6 +11,7 @@ import (
 	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
@@ -398,7 +399,39 @@ func (h *Handler) RetryWorkflow(c *gin.Context) {
 
 // ResubmitWorkflow handles POST /api/v1/workflows/:name/resubmit
 func (h *Handler) ResubmitWorkflow(c *gin.Context) {
-	h.workflowOperation(c, h.wfClient.ResubmitWorkflow)
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
+		return
+	}
+
+	namespace := h.namespaceFor(c)
+	var newWorkflow *wfv1.Workflow
+	var err error
+	if client, ok := h.wfClient.(argo.WorkflowResubmitResultClient); ok {
+		newWorkflow, err = client.ResubmitWorkflowWithResult(c.Request.Context(), name, namespace)
+	} else {
+		err = h.wfClient.ResubmitWorkflow(c.Request.Context(), name, namespace)
+	}
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	run, err := h.syncResubmittedPipelineRun(c.Request.Context(), name, namespace, newWorkflow)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+
+	resp := gin.H{"message": "ok"}
+	if newWorkflow != nil && strings.TrimSpace(newWorkflow.Name) != "" {
+		resp["workflowName"] = newWorkflow.Name
+	}
+	if run != nil {
+		resp["pipelineRunId"] = run.ID
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // SuspendWorkflow handles POST /api/v1/workflows/:name/suspend
@@ -408,7 +441,9 @@ func (h *Handler) SuspendWorkflow(c *gin.Context) {
 
 // StopWorkflow handles POST /api/v1/workflows/:name/stop
 func (h *Handler) StopWorkflow(c *gin.Context) {
-	h.workflowOperation(c, h.wfClient.StopWorkflow)
+	if h.workflowOperation(c, h.wfClient.StopWorkflow) {
+		h.syncWorkflowOperationPipelineRun(c.Request.Context(), strings.TrimSpace(c.Param("name")), string(wfv1.WorkflowFailed), "workflow shutdown with strategy: Stop")
+	}
 }
 
 // ResumeWorkflow handles POST /api/v1/workflows/:name/resume
@@ -418,7 +453,9 @@ func (h *Handler) ResumeWorkflow(c *gin.Context) {
 
 // TerminateWorkflow handles POST /api/v1/workflows/:name/terminate
 func (h *Handler) TerminateWorkflow(c *gin.Context) {
-	h.workflowOperation(c, h.wfClient.TerminateWorkflow)
+	if h.workflowOperation(c, h.wfClient.TerminateWorkflow) {
+		h.syncWorkflowOperationPipelineRun(c.Request.Context(), strings.TrimSpace(c.Param("name")), string(wfv1.WorkflowFailed), "Stopped with strategy 'Terminate'")
+	}
 }
 
 // DeleteWorkflow handles DELETE /api/v1/workflows/:name
@@ -426,17 +463,166 @@ func (h *Handler) DeleteWorkflow(c *gin.Context) {
 	h.workflowOperation(c, h.wfClient.DeleteWorkflow)
 }
 
-func (h *Handler) workflowOperation(c *gin.Context, fn func(context.Context, string, string) error) {
+func (h *Handler) workflowOperation(c *gin.Context, fn func(context.Context, string, string) error) bool {
 	name := strings.TrimSpace(c.Param("name"))
 	if name == "" {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
-		return
+		return false
 	}
 	if err := fn(c.Request.Context(), name, h.namespaceFor(c)); err != nil {
 		httpresp.Internal(c, err.Error())
-		return
+		return false
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+	return true
+}
+
+func (h *Handler) syncWorkflowOperationPipelineRun(ctx context.Context, workflowName, status, message string) {
+	if h.runRepo == nil || strings.TrimSpace(workflowName) == "" || strings.TrimSpace(status) == "" {
+		return
+	}
+	run, err := h.runRepo.FindByWorkflowName(ctx, workflowName)
+	if err != nil || run == nil {
+		return
+	}
+	run.Status = status
+	run.Message = strings.TrimSpace(message)
+	if !isWorkflowOperationActiveStatus(status) && (run.FinishedAt == nil || run.FinishedAt.IsZero()) {
+		finishedAt := h.now()
+		run.FinishedAt = &finishedAt
+	}
+	if err := h.runRepo.Save(ctx, run); err != nil {
+		return
+	}
+	if h.runEventRepo == nil {
+		return
+	}
+	now := h.now()
+	eventType := "workflow_operation_synced"
+	switch status {
+	case string(wfv1.WorkflowFailed), string(wfv1.WorkflowError):
+		eventType = "run_failed"
+	case string(wfv1.WorkflowSucceeded):
+		eventType = "run_completed"
+	}
+	_ = h.runEventRepo.Append(ctx, &models.PipelineRunEvent{
+		RunID:          run.ID,
+		WorkflowName:   run.WorkflowName,
+		EventType:      eventType,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        run.Message,
+		IdempotencyKey: strings.Join([]string{"workflow_operation_sync", run.ID, status, message}, ":"),
+		OccurredAt:     now,
+		ObservedAt:     now,
+	})
+}
+
+func isWorkflowOperationActiveStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "running", "pending", "unknown", "suspended":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) syncResubmittedPipelineRun(ctx context.Context, sourceWorkflowName, namespace string, wf *wfv1.Workflow) (*models.PipelineRun, error) {
+	if h.runRepo == nil || wf == nil {
+		return nil, nil
+	}
+	newWorkflowName := strings.TrimSpace(wf.Name)
+	if newWorkflowName == "" || newWorkflowName == sourceWorkflowName {
+		return nil, nil
+	}
+	sourceRun, err := h.runRepo.FindByWorkflowName(ctx, sourceWorkflowName)
+	if err != nil || sourceRun == nil {
+		return nil, err
+	}
+	existingRun, err := h.runRepo.FindByWorkflowName(ctx, newWorkflowName)
+	if err != nil || existingRun != nil {
+		return existingRun, err
+	}
+
+	createdAt := h.now()
+	if !wf.CreationTimestamp.IsZero() {
+		createdAt = wf.CreationTimestamp.Time.UTC()
+	}
+	run := &models.PipelineRun{
+		ID:                 uuid.NewString(),
+		TemplateID:         sourceRun.TemplateID,
+		PipelineName:       sourceRun.PipelineName,
+		TemplateVersion:    sourceRun.TemplateVersion,
+		WorkflowName:       newWorkflowName,
+		ExecutionTargetID:  sourceRun.ExecutionTargetID,
+		TargetSnapshot:     sourceRun.TargetSnapshot,
+		Status:             workflowStatusOrDefault(wf),
+		NodeCount:          sourceRun.NodeCount,
+		AssetIDs:           append([]string(nil), sourceRun.AssetIDs...),
+		AssetCount:         sourceRun.AssetCount,
+		NoAssetRun:         sourceRun.NoAssetRun,
+		Manifest:           sourceRun.Manifest,
+		PipelineJSON:       sourceRun.PipelineJSON,
+		ArgoNamespace:      namespace,
+		ArgoWorkflowUID:    string(wf.UID),
+		Message:            strings.TrimSpace(wf.Status.Message),
+		ExecutionTarget:    sourceRun.ExecutionTarget,
+		TotalEstimatedCost: sourceRun.TotalEstimatedCost,
+		Scope:              sourceRun.Scope,
+		Owner:              sourceRun.Owner,
+		BatchJobID:         sourceRun.BatchJobID,
+		LedgerState:        sourceRun.LedgerState,
+		CreatedAt:          createdAt,
+		UpdatedAt:          createdAt,
+		StartedAt:          workflowTimeOrNil(wf.Status.StartedAt.Time),
+		FinishedAt:         workflowTimeOrNil(wf.Status.FinishedAt.Time),
+	}
+	if err := h.runRepo.Save(ctx, run); err != nil {
+		return nil, err
+	}
+	h.appendResubmittedRunEvent(ctx, run, sourceRun)
+	return run, nil
+}
+
+func workflowStatusOrDefault(wf *wfv1.Workflow) string {
+	if wf == nil || wf.Status.Phase == "" {
+		return "Pending"
+	}
+	return string(wf.Status.Phase)
+}
+
+func workflowTimeOrNil(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	out := t.UTC()
+	return &out
+}
+
+func (h *Handler) appendResubmittedRunEvent(ctx context.Context, run, sourceRun *models.PipelineRun) {
+	if h.runEventRepo == nil || run == nil {
+		return
+	}
+	now := h.now()
+	event := &models.PipelineRunEvent{
+		RunID:        run.ID,
+		WorkflowName: run.WorkflowName,
+		EventType:    "run_resubmitted",
+		SubjectType:  "run",
+		SubjectID:    run.ID,
+		Status:       run.Status,
+		Message:      "pipeline run created from workflow resubmit",
+		Payload: map[string]interface{}{
+			"sourceRunId":        sourceRun.ID,
+			"sourceWorkflowName": sourceRun.WorkflowName,
+			"workflowName":       run.WorkflowName,
+		},
+		IdempotencyKey: strings.Join([]string{"workflow_resubmitted", run.ID, sourceRun.ID}, ":"),
+		OccurredAt:     now,
+		ObservedAt:     now,
+	}
+	_ = h.runEventRepo.Append(ctx, event)
 }
 
 func (h *Handler) namespaceFor(c *gin.Context) string {

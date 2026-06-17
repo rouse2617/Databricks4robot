@@ -34,6 +34,12 @@ type WorkflowClient interface {
 	GetWorkflowLogStream(ctx context.Context, workflowName, podName, namespace string, opts WorkflowLogOptions) (io.ReadCloser, error)
 }
 
+// WorkflowResubmitResultClient exposes Argo's resubmit response, which contains
+// the newly created workflow object.
+type WorkflowResubmitResultClient interface {
+	ResubmitWorkflowWithResult(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
+}
+
 // WorkflowLogOptions contains bounded pod log query options.
 type WorkflowLogOptions struct {
 	Container    string
@@ -120,7 +126,18 @@ func (c *Client) RetryWorkflow(ctx context.Context, name, namespace string) erro
 
 // ResubmitWorkflow resubmits a workflow through Argo Server's resubmit endpoint.
 func (c *Client) ResubmitWorkflow(ctx context.Context, name, namespace string) error {
-	return c.workflowOperation(ctx, name, namespace, "resubmit")
+	_, err := c.ResubmitWorkflowWithResult(ctx, name, namespace)
+	return err
+}
+
+// ResubmitWorkflowWithResult resubmits a workflow and returns the new workflow
+// object created by Argo.
+func (c *Client) ResubmitWorkflowWithResult(ctx context.Context, name, namespace string) (*wfv1.Workflow, error) {
+	var wf wfv1.Workflow
+	if err := c.do(ctx, http.MethodPut, workflowNamePath(namespace, name)+"/resubmit", nil, map[string]any{}, &wf); err != nil {
+		return nil, err
+	}
+	return &wf, nil
 }
 
 // SuspendWorkflow suspends a workflow through Argo Server's suspend endpoint.
