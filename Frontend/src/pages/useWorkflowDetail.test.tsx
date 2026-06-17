@@ -9,6 +9,11 @@ const mockGetWorkflowLogs = vi.fn();
 const mockListPipelineRuns = vi.fn(() =>
 	Promise.resolve({ items: [], total: 0 }),
 );
+const mockGetPipelineRun = vi.fn();
+const mockGetPipelineRunByWorkflowName = vi.fn();
+const mockGetPipelineRunCostSummary = vi.fn();
+const mockListPipelineRunAssetNodes = vi.fn();
+const mockListPipelineRunEvents = vi.fn();
 
 class MockEventSource extends EventTarget {
 	static instances: MockEventSource[] = [];
@@ -35,14 +40,16 @@ vi.mock("../api/workflowApi", () => ({
 }));
 
 vi.mock("../api/pipelineApi", () => ({
-	getPipelineRun: vi
-		.fn()
-		.mockRejectedValue(new ApiError(404, "NOT_FOUND", "not found")),
-	getPipelineRunCostSummary: vi.fn(),
-	listPipelineRunAssetNodes: vi.fn(),
-	listPipelineRunEvents: vi.fn(),
+	getPipelineRun: (...args: unknown[]) => mockGetPipelineRun(...args),
+	getPipelineRunCostSummary: (...args: unknown[]) =>
+		mockGetPipelineRunCostSummary(...args),
+	listPipelineRunAssetNodes: (...args: unknown[]) =>
+		mockListPipelineRunAssetNodes(...args),
+	listPipelineRunEvents: (...args: unknown[]) =>
+		mockListPipelineRunEvents(...args),
 	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
-	getPipelineRunByWorkflowName: vi.fn().mockResolvedValue(null),
+	getPipelineRunByWorkflowName: (...args: unknown[]) =>
+		mockGetPipelineRunByWorkflowName(...args),
 }));
 
 import { useWorkflowDetail } from "./useWorkflowDetail";
@@ -52,6 +59,19 @@ describe("useWorkflowDetail", () => {
 		vi.clearAllMocks();
 		MockEventSource.instances = [];
 		vi.stubGlobal("EventSource", MockEventSource);
+		mockGetPipelineRun.mockRejectedValue(
+			new ApiError(404, "NOT_FOUND", "not found"),
+		);
+		mockGetPipelineRunByWorkflowName.mockResolvedValue(null);
+		mockGetPipelineRunCostSummary.mockResolvedValue(null);
+		mockListPipelineRunAssetNodes.mockResolvedValue({
+			items: [],
+			summary: null,
+		});
+		mockListPipelineRunEvents.mockResolvedValue({
+			items: [],
+			nextCursor: undefined,
+		});
 	});
 
 	afterEach(() => {
@@ -248,5 +268,35 @@ describe("useWorkflowDetail", () => {
 		expect(
 			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 8_000),
 		).toHaveLength(1);
+	});
+
+	it("skips pipeline run lookups for external workflows", async () => {
+		const consoleErrorSpy = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => undefined);
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-external",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			labels: {
+				"workflows.argoproj.io/completed": "false",
+				"workflows.argoproj.io/phase": "Running",
+			},
+			nodes: [],
+		});
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-external"));
+
+		await waitFor(() =>
+			expect(result.current.workflow?.name).toBe("wf-external"),
+		);
+		await waitFor(() =>
+			expect(result.current.runEventState.error).toBe(
+				"未找到关联的 DataBrew pipeline run",
+			),
+		);
+		expect(mockGetPipelineRunByWorkflowName).not.toHaveBeenCalled();
+		expect(mockGetPipelineRun).not.toHaveBeenCalled();
+		expect(consoleErrorSpy).not.toHaveBeenCalled();
 	});
 });

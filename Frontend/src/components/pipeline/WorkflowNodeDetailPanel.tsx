@@ -25,6 +25,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
 import { useEffect, useMemo, useReducer, useState } from "react";
+import { ApiError } from "../../api/pipelineClient";
 import type {
 	WorkflowDetail,
 	WorkflowNodeContainer,
@@ -308,6 +309,14 @@ function PodTab({
 			.catch((err) => {
 				if (!cancelled && requestSeq === refreshTrigger) {
 					setPodDiag(null);
+					if (err instanceof ApiError && err.status === 403) {
+						setPodDiagError("forbidden");
+						return;
+					}
+					if (err instanceof ApiError && err.status === 404) {
+						setPodDiagError("not_found");
+						return;
+					}
 					setPodDiagError(err instanceof Error ? err.message : String(err));
 				}
 			})
@@ -347,7 +356,13 @@ function PodTab({
 					type="warning"
 					showIcon
 					message="Pod 诊断数据不可用"
-					description="已保留 Argo 节点元数据；请检查 K8s API 连通性、RBAC 权限，或等待 Pod 创建完成。"
+					description={
+						podDiagError === "forbidden"
+							? "当前环境缺少读取 Pod 诊断所需的 Kubernetes 权限；已保留 Argo 节点元数据。"
+							: podDiagError === "not_found"
+								? "当前节点尚未解析到 Pod，或 Pod 还未创建完成；已保留 Argo 节点元数据。"
+								: "已保留 Argo 节点元数据；请检查 K8s API 连通性、RBAC 权限，或等待 Pod 创建完成。"
+					}
 					action={
 						<Button
 							size="small"

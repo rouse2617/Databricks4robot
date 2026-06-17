@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 type pausedSyncRepo struct {
 	job   *models.BackfillJob
 	items []models.BackfillItem
+	findJobByIDHook func()
 }
 
 func (r *pausedSyncRepo) SaveJob(context.Context, *models.BackfillJob) error { return nil }
@@ -26,6 +28,9 @@ func (r *pausedSyncRepo) FindAllJobs(context.Context) ([]models.BackfillJob, err
 }
 func (r *pausedSyncRepo) FindJobByID(_ context.Context, id string) (*models.BackfillJob, error) {
 	if r.job != nil && r.job.ID == id {
+		if r.findJobByIDHook != nil {
+			r.findJobByIDHook()
+		}
 		copy := *r.job
 		return &copy, nil
 	}
@@ -281,5 +286,55 @@ func TestSyncJobProgress_PausedStillUpdatesCounts(t *testing.T) {
 	}
 	if repo.job.Status != "paused" {
 		t.Fatalf("expected job status paused, got %q", repo.job.Status)
+	}
+}
+
+func TestSyncJobProgress_DoesNotOverwriteConcurrentPause(t *testing.T) {
+	ctx := context.Background()
+	jobID := "job-1"
+	runID := "run-1"
+	var findCalls atomic.Int32
+	repo := &pausedSyncRepo{
+		job: &models.BackfillJob{
+			ID:         jobID,
+			Status:     "running",
+			TotalCount: 1,
+		},
+		items: []models.BackfillItem{
+			{
+				ID:            "item-1",
+				JobID:         jobID,
+				Status:        "running",
+				PipelineRunID: &runID,
+			},
+		},
+	}
+	repo.findJobByIDHook = func() {
+		if findCalls.Add(1) == 2 {
+			repo.job.Status = "paused"
+		}
+	}
+	runRepo := &syncTestRunRepo{
+		byID: map[string]*models.PipelineRun{
+			runID: {
+				ID:              runID,
+				WorkflowName:    "wf-1",
+				Status:          "Running",
+				ArgoWorkflowUID: "uid-1",
+			},
+		},
+	}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+
+	if err := uc.syncJobProgress(ctx, jobID); err != nil {
+		t.Fatalf("syncJobProgress: %v", err)
+	}
+	if repo.job.Status != "paused" {
+		t.Fatalf("expected job status paused after concurrent pause, got %q", repo.job.Status)
+	}
+	if repo.job.CompletedCount != 1 {
+		t.Fatalf("expected completedCount=1, got %d", repo.job.CompletedCount)
 	}
 }

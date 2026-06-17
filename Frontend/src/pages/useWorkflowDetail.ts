@@ -135,6 +135,11 @@ const EMPTY_COST_SUMMARY_STATE: CostSummaryState = {
 const ACTIVE_WORKFLOW_STATUSES = new Set(["Running", "Pending"]);
 const WORKFLOW_POLL_INTERVAL_MS = 8_000;
 const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
+const EXTERNAL_WORKFLOW_LABEL_KEYS = [
+	"workflows.argoproj.io/completed",
+	"workflows.argoproj.io/phase",
+	"workflows.argoproj.io/creator",
+] as const;
 
 function toErrorMessage(err: unknown): string {
 	if (err instanceof Error) {
@@ -148,6 +153,12 @@ function toLoadError(err: unknown): WorkflowLoadError {
 		return { kind: "not_found", message: err.message };
 	}
 	return { kind: "error", message: toErrorMessage(err) };
+}
+
+function looksLikeExternalWorkflow(workflow: WorkflowDetail | null): boolean {
+	if (!workflow) return false;
+	const labels = workflow.labels ?? {};
+	return EXTERNAL_WORKFLOW_LABEL_KEYS.some((key) => key in labels);
 }
 
 async function resolvePipelineRun(lookup: string): Promise<PipelineRun | null> {
@@ -185,6 +196,7 @@ function appendBoundedLogContent(
 
 export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
+	const workflowRef = useRef<WorkflowDetail | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [loadError, setLoadError] = useState<WorkflowLoadError | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -202,9 +214,33 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const [costSummaryState, setCostSummaryState] = useState<CostSummaryState>(
 		EMPTY_COST_SUMMARY_STATE,
 	);
+	workflowRef.current = workflow;
 
 	const loadRunDetailData = useCallback(
 		async (runName: string, opts?: { append?: boolean; cursor?: number }) => {
+			const shouldTreatAsExternal = looksLikeExternalWorkflow(
+				workflowRef.current,
+			);
+			if (shouldTreatAsExternal) {
+				setRunEventState({
+					run: null,
+					items: [],
+					loading: false,
+					error: "未找到关联的 DataBrew pipeline run",
+				});
+				setAssetNodeState({
+					items: [],
+					loading: false,
+					error: "未找到关联的 DataBrew pipeline run",
+					summary: null,
+				});
+				setCostSummaryState({
+					item: null,
+					loading: false,
+					error: "未找到关联的 DataBrew pipeline run",
+				});
+				return;
+			}
 			const run = await resolvePipelineRun(runName);
 			if (!run) {
 				setRunEventState({
@@ -273,6 +309,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		setLoadError(null);
 		getWorkflow(name)
 			.then((detail) => {
+				workflowRef.current = detail;
 				setWorkflow(detail);
 				setLoadError(null);
 				refreshDetailData();
@@ -291,7 +328,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 
 	const loadRunEvents = useCallback(
 		(opts?: { append?: boolean; cursor?: number }) => {
-			if (!name) return;
+			if (!name || workflowRef.current == null) return;
 			setRunEventState((current) => ({
 				...current,
 				loading: true,
@@ -341,6 +378,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		const timer = window.setInterval(() => {
 			getWorkflow(name)
 				.then((detail) => {
+					workflowRef.current = detail;
 					setWorkflow(detail);
 					setLoadError(null);
 					refreshDetailData();

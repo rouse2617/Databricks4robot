@@ -1,9 +1,23 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "../../api/pipelineClient";
 import type { WorkflowDetail, WorkflowNodeStatus } from "../../api/workflowApi";
 import { WorkflowNodeDetailPanel } from "./WorkflowNodeDetailPanel";
+
+const mockGetNodePodDiagnostics = vi.fn();
+
+vi.mock("../../api/workflowApi", async () => {
+	const actual = await vi.importActual<typeof import("../../api/workflowApi")>(
+		"../../api/workflowApi",
+	);
+	return {
+		...actual,
+		getNodePodDiagnostics: (...args: unknown[]) =>
+			mockGetNodePodDiagnostics(...args),
+	};
+});
 
 Object.defineProperty(window, "matchMedia", {
 	writable: true,
@@ -51,6 +65,40 @@ const baseWorkflow: WorkflowDetail = {
 };
 
 describe("WorkflowNodeDetailPanel", () => {
+	beforeEach(() => {
+		mockGetNodePodDiagnostics.mockReset();
+		mockGetNodePodDiagnostics.mockResolvedValue({
+			namespace: "default",
+			podName: "pod-1",
+			restartCount: 0,
+			containers: [],
+			podConditions: [],
+			podEvents: [],
+		});
+	});
+
+	it("renders permission-specific fallback when pod diagnostics returns 403", async () => {
+		mockGetNodePodDiagnostics.mockRejectedValueOnce(
+			new ApiError(403, "K8S_FORBIDDEN", "forbidden"),
+		);
+		render(
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
+		await waitFor(() =>
+			expect(screen.getByText("Pod 诊断数据不可用")).toBeTruthy(),
+		);
+		expect(
+			screen.getByText(/当前环境缺少读取 Pod 诊断所需的 Kubernetes 权限/),
+		).toBeTruthy();
+	});
+
 	it("returns null when node is null", () => {
 		const { container } = render(
 			<WorkflowNodeDetailPanel
@@ -302,7 +350,7 @@ describe("WorkflowNodeDetailPanel", () => {
 		expect(screen.getByText("$0.1200")).toBeTruthy();
 	});
 
-	it("renders disabled debug terminal shell before backend exec is available", () => {
+	it("shows runtime terminal guidance before backend exec is available", () => {
 		render(
 			<WorkflowNodeDetailPanel
 				node={baseNode}
@@ -313,12 +361,15 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
-		expect(screen.getAllByText("Pod 终端未启用").length).toBeGreaterThan(0);
-		expect(screen.getByRole("button", { name: "pwd" })).toBeDisabled();
-		expect(screen.getByRole("button", { name: "打开终端" })).toBeDisabled();
+		expect(screen.getByText("终端调试")).toBeTruthy();
+		expect(
+			screen.getByText(
+				/终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。/,
+			),
+		).toBeTruthy();
 	});
 
-	it("enables terminal command presets when backend marks exec enabled", () => {
+	it("keeps runtime terminal guidance even when backend marks exec enabled", () => {
 		render(
 			<WorkflowNodeDetailPanel
 				node={{
@@ -336,9 +387,12 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
-		expect(screen.getByText("Pod 终端可用")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "sh" })).not.toBeDisabled();
-		expect(screen.getByRole("button", { name: "打开终端" })).not.toBeDisabled();
+		expect(screen.getByText("终端调试")).toBeTruthy();
+		expect(
+			screen.getByText(
+				/终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。/,
+			),
+		).toBeTruthy();
 	});
 
 	it("opens the requested compact tab", () => {

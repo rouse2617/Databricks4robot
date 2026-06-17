@@ -956,7 +956,6 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 	if err != nil || job == nil {
 		return err
 	}
-	paused := job.Status == "paused"
 
 	if uc.pipelineUC != nil {
 		ledgerItems, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"running", "pending"})
@@ -990,20 +989,27 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	if paused {
+	latestJob, err := uc.repo.FindJobByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if latestJob == nil {
+		return nil
+	}
+	if latestJob.Status == "paused" {
 		return uc.repo.UpdateJobProgress(ctx, jobID, summary.Completed, summary.Failed, "paused")
 	}
-	if job.PilotPhase == "running" && job.PilotCount > 0 {
+	if latestJob.PilotPhase == "running" && latestJob.PilotCount > 0 {
 		attemptedPilot := summary.Completed + summary.Failed
-		if attemptedPilot >= job.PilotCount && summary.Pending > 0 {
+		if attemptedPilot >= latestJob.PilotCount && summary.Pending > 0 {
 			return uc.repo.UpdateJobPilotPhase(ctx, jobID, "pilot_review", "review")
 		}
 	}
-	jobStatus := deriveJobStatus(summary, job.TotalCount)
-	if job.PilotPhase == "review" && jobStatus == "running" {
+	jobStatus := deriveJobStatus(summary, latestJob.TotalCount)
+	if latestJob.PilotPhase == "review" && jobStatus == "running" {
 		jobStatus = "pilot_review"
 	}
-	if job.PilotPhase == "running" && jobStatus == "completed" {
+	if latestJob.PilotPhase == "running" && jobStatus == "completed" {
 		_ = uc.repo.UpdateJobPilotPhase(ctx, jobID, jobStatus, "done")
 		return nil
 	}

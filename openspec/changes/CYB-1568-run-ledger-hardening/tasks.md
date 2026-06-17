@@ -54,3 +54,14 @@
 |---------|-----------|-------------------|-----|
 | backend-dev | `cyber-databrew-backend:7825a5f-cyb1568-091130` | `cyber-databrew-backend-dev-00498-5vc` | https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app |
 | frontend-dev | `cyber-databrew-frontend:7825a5f-cyb1568-091130` | `cyber-databrew-frontend-dev-00307-j9w` | https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app |
+
+### Deploy record — 2026-06-17 regression
+| Service | Image tag | Cloud Run revision | URL |
+|---------|-----------|-------------------|-----|
+| backend-dev | `cyber-databrew-backend:a9e1234-pausefix-092412` | `cyber-databrew-backend-dev-00875-xrl` | https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app |
+| frontend-dev | `cyber-databrew-frontend:a9e1234-wfquiet2-0946` | `cyber-databrew-frontend-dev-00366-hb8` | https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app |
+
+### Verification evidence — 2026-06-17
+- Backend real pause regression: batch `447b4ab8-b7dc-4c27-8014-d9bbd46e068c` stayed `paused` across repeated detail reads after deploy.
+- Frontend real workflow regression: `my-pipeline-a9e90e` now loads without `pipeline-runs/*` 404 probes; runtime tab still degrades the pod `403` to a permission-specific message.
+- Screenshot: `openspec/changes/CYB-1568-run-ledger-hardening/deploy-verify-workflow-external-20260617.png`
