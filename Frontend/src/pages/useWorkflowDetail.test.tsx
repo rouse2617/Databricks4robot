@@ -80,6 +80,9 @@ describe("useWorkflowDetail", () => {
 	});
 
 	it("maps 404 to not_found load error", async () => {
+		mockGetPipelineRunByWorkflowName.mockRejectedValue(
+			new ApiError(404, "NOT_FOUND", "not found"),
+		);
 		mockGetWorkflow.mockRejectedValue(
 			new ApiError(404, "WORKFLOW_NOT_FOUND", "workflow not found"),
 		);
@@ -92,6 +95,49 @@ describe("useWorkflowDetail", () => {
 		expect(result.current.loadError).toEqual({
 			kind: "not_found",
 			message: "workflow not found",
+		});
+	});
+
+	it("loads DataBrew run ledger when the Argo workflow is gone", async () => {
+		mockGetWorkflow.mockRejectedValue(
+			new ApiError(404, "WORKFLOW_NOT_FOUND", "workflow not found"),
+		);
+		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+			id: "run-1",
+			workflowName: "wf-expired",
+			pipelineName: "pipeline",
+			status: "Succeeded",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:00:00Z",
+			finishedAt: "2026-06-03T00:10:00Z",
+		});
+		mockListPipelineRunEvents.mockResolvedValue({
+			items: [
+				{
+					id: "event-1",
+					runId: "run-1",
+					eventType: "run_completed",
+					subjectType: "run",
+					subjectId: "run-1",
+					occurredAt: "2026-06-03T00:10:00Z",
+				},
+			],
+			nextCursor: undefined,
+		});
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-expired"));
+
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		await waitFor(() =>
+			expect(result.current.runEventState.run?.status).toBe("Succeeded"),
+		);
+
+		expect(result.current.workflow).toBeNull();
+		expect(result.current.loadError?.kind).toBe("not_found");
+		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledWith("wf-expired");
+		expect(mockListPipelineRunEvents).toHaveBeenCalledWith("run-1", {
+			limit: 100,
+			cursor: undefined,
 		});
 	});
 

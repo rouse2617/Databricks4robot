@@ -281,8 +281,12 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			})
 			.catch((err) => {
 				console.error(err);
+				const nextLoadError = toLoadError(err);
 				setWorkflow(null);
-				setLoadError(toLoadError(err));
+				setLoadError(nextLoadError);
+				if (nextLoadError.kind === "not_found") {
+					refreshDetailData();
+				}
 			})
 			.finally(() => setLoading(false));
 	}, [name, refreshDetailData]);
@@ -293,7 +297,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 
 	const loadRunEvents = useCallback(
 		(opts?: { append?: boolean; cursor?: number }) => {
-			if (!name || workflowRef.current == null) return;
+			if (!name) return;
 			setRunEventState((current) => ({
 				...current,
 				loading: true,
