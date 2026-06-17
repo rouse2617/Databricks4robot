@@ -1,0 +1,14 @@
+Frontend/src/pages/RegistryCenterPage.tsx
+Frontend/src/components/AppLayout.tsx
+Frontend/src/App.tsx
+Frontend/src/api/registry.ts
+Frontend/src/pages/PipelinePage.tsx
+Frontend/src/components/pipeline/
+backend/internal/handlers/registry/handler.go
+backend/routes/routes.go
+backend/internal/models/
+backend/internal/postgres/
+api/openapi.yaml
+docs/review/api-guide.md
+docs/agents/deploy-verification.md
+openspec/changes/CYB-1824-component-releases/design.md

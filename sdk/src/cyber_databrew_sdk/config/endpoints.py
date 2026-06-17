@@ -150,6 +150,14 @@ ENDPOINTS: dict[str, str] = {
     "pipeline_run_delete": "/api/v1/pipeline-runs/{run_id}",
     "pipeline_deploy_template": "/api/v1/deploy/template/{template_id}",
     "pipeline_deployment_list": "/api/v1/deployments",
+    # ── Pipeline Configs ──────────────────────────────────────────────
+    "pipeline_config_list": "/api/v1/pipeline-configs",
+    "pipeline_config_create": "/api/v1/pipeline-configs",
+    "pipeline_config_get": "/api/v1/pipeline-configs/{config_id}",
+    "pipeline_config_update": "/api/v1/pipeline-configs/{config_id}",
+    "pipeline_config_version_create": "/api/v1/pipeline-configs/{config_id}/versions",
+    "pipeline_config_version_get": "/api/v1/pipeline-configs/{config_id}/versions/{version}",
+    "pipeline_config_deprecate": "/api/v1/pipeline-configs/{config_id}/deprecate",
     # ── Pipeline Components ────────────────────────────────────────────
     "pipeline_component_list": "/api/v1/pipeline-components",
     "pipeline_component_create": "/api/v1/pipeline-components",

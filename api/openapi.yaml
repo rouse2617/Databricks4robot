@@ -2223,6 +2223,109 @@ components:
           type: object
           additionalProperties: { type: string }
       additionalProperties: true
+    PipelineConfig:
+      type: object
+      description: Standalone user-owned config file record. Configs are independent resources and are not children of pipeline components.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        owner: { type: string }
+        scope: { type: string, default: dev }
+        tags:
+          type: array
+          items: { type: string }
+        fileType:
+          type: string
+          enum: [yaml, json]
+        lifecycle:
+          type: string
+          enum: [draft, ready, deprecated]
+        currentVersion: { type: integer, minimum: 1 }
+        versionCount: { type: integer, minimum: 0 }
+        versions:
+          type: array
+          description: Version summaries. File content is omitted here; fetch a specific version for content.
+          items: { $ref: '#/components/schemas/PipelineConfigVersion' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PipelineConfigVersion:
+      type: object
+      description: Immutable file snapshot for a standalone config.
+      properties:
+        id: { type: string }
+        configId: { type: string }
+        version: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [draft, ready, deprecated]
+        content:
+          type: string
+          description: Present only on single-version detail responses.
+          maxLength: 1048576
+        contentSha256: { type: string }
+        contentSizeBytes: { type: integer, minimum: 0, maximum: 1048576 }
+        summary: { type: string }
+        author: { type: string }
+        createdAt: { type: string, format: date-time }
+    PipelineConfigCreateRequest:
+      type: object
+      required: [name, content]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        fileType:
+          type: string
+          enum: [yaml, json]
+          description: Optional; inferred from the file name when omitted.
+        lifecycle:
+          type: string
+          enum: [draft, ready, deprecated]
+          default: draft
+        scope:
+          type: string
+          default: dev
+        content:
+          type: string
+          maxLength: 1048576
+        summary: { type: string }
+    PipelineConfigUpdateRequest:
+      type: object
+      required: [name]
+      description: Updates metadata only. Editing file content creates a new immutable version.
+      properties:
+        name: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        fileType:
+          type: string
+          enum: [yaml, json]
+        lifecycle:
+          type: string
+          enum: [draft, ready, deprecated]
+    PipelineConfigVersionCreateRequest:
+      type: object
+      required: [content]
+      properties:
+        status:
+          type: string
+          enum: [draft, ready, deprecated]
+          default: draft
+        content:
+          type: string
+          maxLength: 1048576
+        summary: { type: string }
+    PipelineConfigListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineConfig' }
     ComponentReleaseRuntimeSnapshot:
       type: object
       required: [image, inputPorts, outputPorts]
@@ -6120,6 +6223,204 @@ paths:
                     example: workflow stopped
         '404':
           description: Deployment not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── Pipeline config registry ───────────────────────────────────────
+  /api/v1/pipeline-configs:
+    get:
+      tags: [Pipeline]
+      summary: List standalone pipeline configs
+      description: Lists config metadata for the current user by default. Admin/legacy SDK callers may pass owner to inspect a specific owner. Version content is omitted.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive search over name, description, owner, file type, and tags.
+        - in: query
+          name: owner
+          schema: { type: string }
+          description: Optional owner filter for admin/legacy SDK callers.
+        - in: query
+          name: scope
+          schema: { type: string }
+          description: Optional scope filter; defaults to dev.
+        - in: query
+          name: lifecycle
+          schema:
+            type: string
+            enum: [draft, ready, deprecated]
+      responses:
+        '200':
+          description: Config list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfigListResponse' }
+    post:
+      tags: [Pipeline]
+      summary: Create a standalone pipeline config
+      description: Creates metadata plus the first immutable file version. File payload is stored in PostgreSQL and limited to 1 MiB.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineConfigCreateRequest' }
+      responses:
+        '201':
+          description: Config created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfig' }
+        '400':
+          description: Invalid request body or content
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-configs/{id}:
+    get:
+      tags: [Pipeline]
+      summary: Get standalone pipeline config metadata
+      description: Returns metadata and version summaries. File content is omitted; fetch a specific version for content.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Config details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfig' }
+        '404':
+          description: Config not found or not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    put:
+      tags: [Pipeline]
+      summary: Update standalone pipeline config metadata
+      description: Updates metadata only. To edit file content, create a new version.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineConfigUpdateRequest' }
+      responses:
+        '200':
+          description: Config updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfig' }
+        '400':
+          description: Invalid metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Config not found or not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-configs/{id}/versions:
+    post:
+      tags: [Pipeline]
+      summary: Create a new immutable config file version
+      description: Appends a new file snapshot and advances currentVersion. Existing versions are not mutated.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PipelineConfigVersionCreateRequest' }
+      responses:
+        '201':
+          description: Version created. Content is omitted from the response.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfigVersion' }
+        '400':
+          description: Invalid content or status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Config not found or not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-configs/{id}/versions/{version}:
+    get:
+      tags: [Pipeline]
+      summary: Get one immutable config file version
+      description: Returns the file content for a single version.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: version
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Version details including content
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfigVersion' }
+        '400':
+          description: Invalid version number
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Config or version not found, or config not owned by caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /api/v1/pipeline-configs/{id}/deprecate:
+    post:
+      tags: [Pipeline]
+      summary: Deprecate a standalone pipeline config
+      description: Marks the config and current version as deprecated. Hard delete is intentionally not exposed because configs can be referenced by saved pipelines and runs.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deprecated config
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineConfig' }
+        '404':
+          description: Config not found or not owned by caller
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

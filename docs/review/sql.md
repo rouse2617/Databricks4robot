@@ -853,6 +853,29 @@ PG 里的 Platform Catalog 只保留 `catalog_objects + catalog_object_versions`
 
 ## 6. Pipeline Run Ledger
 
+### `pipeline_configs` / `pipeline_config_versions`
+
+用途：配置中心的独立资源库。配置不属于组件子对象，组件只描述运行镜像和运行参数；流水线需要配置时引用 `config_id`。当前实现面向“算法同学上传一个配置文件、多版本管理”的场景。
+
+关键字段：
+
+- `pipeline_configs.id`：配置 ID。
+- `name` / `description` / `tags` / `owner` / `scope`：检索和权限字段；用于找得到配置，不表达组件绑定关系。
+- `file_type`：`yaml` / `json`，可由文件名推断。
+- `lifecycle`：`draft` / `ready` / `deprecated`。
+- `current_version`：当前生效版本号。
+- `pipeline_config_versions.version`：配置内递增版本号。
+- `content`：配置文件内容，当前直接存 PostgreSQL；单版本上限 1 MiB。
+- `content_sha256` / `content_size_bytes`：文件指纹和大小，支持审计、去重排查和 UI 展示。
+- `summary` / `author` / `created_at`：版本说明和作者。
+
+约束与索引：
+
+- `pipeline_config_versions(config_id, version)` 唯一，版本不可复写。
+- `pipeline_config_versions.config_id` 使用 `ON DELETE RESTRICT`，避免硬删除配置破坏历史引用。
+- `owner/scope`、`lifecycle` 建索引，支持用户自己的配置列表和部署时选择。
+- 文件内容先存 DB 是刻意取舍：配置文件小、需要事务一致性、需要版本审计；如果后续出现大文件或二进制配置，再迁到对象存储并保留 DB 中的 hash/uri。
+
 ### `pipeline_component_releases`
 
 用途：记录由 CI/平台生成的算法 task 构建版本，供 DataBrew UI 选择稳定的组件版本，而不是让用户手填镜像 tag、digest、commit 等底层字段。

@@ -125,7 +125,7 @@ func TestRegisterAll(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// healthz: no auth
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -230,7 +230,7 @@ func TestAuditSearchRouteRegisteredWhenHandlerProvided(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, auditH.New(nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, auditH.New(nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	assertRoutesRegistered(t, r, []string{"GET /api/v1/audit/search"})
 }
@@ -244,7 +244,7 @@ func TestAuthRoutes_ReturnStandardErrorEnvelope(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token", AllowedDomain: "example.com"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	cases := []struct {
 		name string
@@ -341,7 +341,7 @@ func TestRemovedHealthzOutboxRoute(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz/outbox", nil)
 	w := httptest.NewRecorder()
@@ -361,7 +361,7 @@ func TestAdminRoutes_DisabledInProductionWithoutAdminToken(t *testing.T) {
 	adminHandler := adminH.New(&routeAssetRepo{}, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Databrew-Token", "dev-token")
@@ -391,7 +391,7 @@ func TestAdminReindex_UsesGraceTokenAuth(t *testing.T) {
 	adminHandler := adminH.New(assetRepo, nil, nil, &routeMcapRepo{}, nil, nil, nil, nil, nil)
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, adminHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/search/reindex", nil)
 	req.Header.Set("X-Databrew-Token", "dev-token")
@@ -411,7 +411,7 @@ func TestActionRoutes_PatchAndDeleteRegistered(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token"}
 	actionHandler := actionH.New(nil)
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, actionHandler, nil, nil, nil, nil, nil, nil)
 
 	want := map[string]bool{
 		"PATCH /api/v1/assets/:id/actions/:action_id":  false,
@@ -439,7 +439,7 @@ func TestAuthLogin_SetsSecureCookieInProduction(t *testing.T) {
 	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
 	cfg := &config.Config{DatabrewToken: "dev-token", Env: "production"}
 
-	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"dev-token"}`))
 	req.Header.Set("Content-Type", "application/json")

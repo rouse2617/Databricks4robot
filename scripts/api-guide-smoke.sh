@@ -257,6 +257,36 @@ expect_code_get "asset type schema unknown -> 404" "/api/v1/asset-types/unknown/
 
 echo ""
 echo "--- § pipeline component registry ---"
+get "pipeline-configs list" "/api/v1/pipeline-configs"
+expect_code_post "pipeline-configs missing content -> 400" "/api/v1/pipeline-configs" '{"name":"smoke-missing-content.yaml","lifecycle":"ready"}' "400" >/dev/null
+if [[ "${RUN_WRITES:-0}" == "1" ]]; then
+	config_name="smoke-config-$(date +%s).yaml"
+	config_body='{"name":"'"${config_name}"'","description":"api guide smoke config","tags":["smoke","pipeline"],"lifecycle":"ready","content":"threshold: 0.82\nwindow: 5\n","summary":"initial smoke version"}'
+	config_created=$(post_json "pipeline-configs create" "/api/v1/pipeline-configs" "$config_body")
+	config_id=$(echo "$config_created" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+	if [[ -n "$config_id" ]]; then
+		get "pipeline-configs get" "/api/v1/pipeline-configs/${config_id}"
+		get "pipeline-configs get v1 content" "/api/v1/pipeline-configs/${config_id}/versions/1"
+		config_v2_body='{"status":"ready","content":"threshold: 0.90\nwindow: 5\n","summary":"raise threshold"}'
+		config_v2=$(post_json "pipeline-configs create v2" "/api/v1/pipeline-configs/${config_id}/versions" "$config_v2_body")
+		if echo "$config_v2" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("version") == 2 and "content" not in d' 2>/dev/null; then
+			ok "pipeline-configs create v2 response shape"
+		else
+			RESP_CODE="json"
+			RESP_BODY="$config_v2"
+			bad "pipeline-configs create v2 response shape"
+		fi
+		put_json "pipeline-configs update metadata" "/api/v1/pipeline-configs/${config_id}" '{"name":"'"${config_name}"'","description":"updated api guide smoke config","tags":["smoke","updated"],"fileType":"yaml","lifecycle":"ready"}' >/dev/null
+		post_json "pipeline-configs deprecate" "/api/v1/pipeline-configs/${config_id}/deprecate" '{}' >/dev/null
+	else
+		RESP_CODE="json"
+		RESP_BODY="$config_created"
+		bad "pipeline-configs create id extraction"
+	fi
+else
+	echo "  skip pipeline config write smoke — set RUN_WRITES=1 to create/update/deprecate disposable config records"
+fi
+
 get "pipeline-components list" "/api/v1/pipeline-components"
 get "pipeline-component-releases list selectable" "/api/v1/pipeline-component-releases?selectable=true"
 expect_code_get "pipeline-component-releases invalid selectable -> 400" "/api/v1/pipeline-component-releases?selectable=maybe" "400" >/dev/null

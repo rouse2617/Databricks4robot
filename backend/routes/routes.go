@@ -28,6 +28,7 @@ import (
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
+	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
@@ -62,6 +63,7 @@ func RegisterAll(
 	evalHandler *evalH.Handler,
 	actionHandler *actionH.Handler,
 	pipelineHandler *pipelineH.Handler,
+	pipelineConfigHandler *pipelineConfigH.Handler,
 	pipelineComponentHandler *pipelineComponentH.Handler,
 	queryHandler *queryH.Handler,
 	workflowHandler *workflowH.Handler,
@@ -69,7 +71,8 @@ func RegisterAll(
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
-	_, _, _, _ = algoRunHandler, pipelineHandler, pipelineComponentHandler, workflowHandler
+	_, _, _, _ = algoRunHandler, pipelineHandler, pipelineConfigHandler, pipelineComponentHandler
+	_ = workflowHandler
 
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
@@ -381,6 +384,16 @@ func RegisterAll(
 		api.GET("/assets/:id/pipeline-lineage", pipelineHandler.GetLineage)
 
 		// Pipeline component registry
+		if pipelineConfigHandler != nil {
+			api.POST("/pipeline-configs", pipelineConfigHandler.Create)
+			api.GET("/pipeline-configs", pipelineConfigHandler.List)
+			api.GET("/pipeline-configs/:id", pipelineConfigHandler.Get)
+			api.PUT("/pipeline-configs/:id", pipelineConfigHandler.Update)
+			api.POST("/pipeline-configs/:id/versions", pipelineConfigHandler.CreateVersion)
+			api.GET("/pipeline-configs/:id/versions/:version", pipelineConfigHandler.GetVersion)
+			api.POST("/pipeline-configs/:id/deprecate", pipelineConfigHandler.Deprecate)
+		}
+
 		if pipelineComponentHandler != nil {
 			api.POST("/pipeline-components", pipelineComponentHandler.CreateComponent)
 			api.GET("/pipeline-components", pipelineComponentHandler.ListComponents)

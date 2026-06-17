@@ -2319,6 +2319,72 @@ curl -i -X POST "$BASE/api/v1/pipeline-components" \
 # 响应: 400 + 标准错误体
 ```
 
+### 配置中心（ConfigManagement）
+
+配置中心管理用户自己的单文件配置，不属于组件子对象。组件继续只描述运行镜像和运行参数；流水线需要配置时引用 `configId`。配置文件内容保存在 PostgreSQL，单版本内容上限为 1 MiB。
+
+文件内容不可原地改写：查看旧版本时可看到当时的文件内容；编辑任意旧版本应提交为新版本。
+
+```bash
+# 列出当前用户的配置（普通用户默认只看自己的配置；legacy SDK/admin 可传 owner）
+curl -s "$BASE/api/v1/pipeline-configs?q=detector&lifecycle=ready" \
+  -H "X-Databrew-Token: $TOKEN"
+# 响应: {"items": [{...}, ...]}
+
+# 创建配置和第一个文件版本
+curl -X POST "$BASE/api/v1/pipeline-configs" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name": "detector.yaml",
+    "description": "Detector thresholds for validation",
+    "tags": ["vision", "smoke"],
+    "lifecycle": "ready",
+    "content": "threshold: 0.82\nwindow: 5\n",
+    "summary": "initial thresholds"
+  }'
+# 响应: 201 + Config 对象；versions 只返回摘要，不返回 content
+
+# 查看配置详情和版本摘要
+curl -s "$BASE/api/v1/pipeline-configs/<CONFIG_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 查看 v1 文件内容
+curl -s "$BASE/api/v1/pipeline-configs/<CONFIG_ID>/versions/1" \
+  -H "X-Databrew-Token: $TOKEN"
+# 响应: Version 对象，包含 content
+
+# 编辑文件：创建 v2，不改写 v1
+curl -X POST "$BASE/api/v1/pipeline-configs/<CONFIG_ID>/versions" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "status": "ready",
+    "content": "threshold: 0.90\nwindow: 5\n",
+    "summary": "raise detector threshold"
+  }'
+# 响应: 201 + Version 摘要，content 省略；currentVersion 会推进到 2
+
+# 仅更新元数据，不改文件内容
+curl -X PUT "$BASE/api/v1/pipeline-configs/<CONFIG_ID>" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name": "detector.yaml",
+    "description": "Detector thresholds for validation",
+    "tags": ["vision", "prod"],
+    "fileType": "yaml",
+    "lifecycle": "ready"
+  }'
+
+# 废弃配置（不硬删除，避免破坏历史流水线复现）
+curl -X POST "$BASE/api/v1/pipeline-configs/<CONFIG_ID>/deprecate" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 校验失败示例：缺少文件内容
+curl -i -X POST "$BASE/api/v1/pipeline-configs" \
+  -H "X-Databrew-Token: $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"bad.yaml","lifecycle":"ready"}'
+# 响应: 400 + 标准错误体
+```
+
 ### 组件版本库（ComponentRelease）
 
 组件版本库记录由 CI/平台生成的 task 构建版本。普通 UI 应查询 `selectable=true`，只展示已经通过基础校验且 digest 固化的版本；repo、commit、image digest 等技术字段放在详情里。

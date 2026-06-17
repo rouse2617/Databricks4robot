@@ -16,6 +16,7 @@ import (
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
+	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -26,6 +27,7 @@ import (
 	backfillUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
+	pipelineConfigUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
 	"log/slog"
 )
 
@@ -129,6 +131,10 @@ func setupCore(inf *infra) *coreHandlers {
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)
 
+	// Standalone pipeline config library
+	pipelineConfigRepo := postgres.NewPipelineConfigRepo(pg)
+	pipelineConfigHandler := pipelineConfigH.New(pipelineConfigUC.New(pipelineConfigRepo))
+
 	// Pipeline component registry
 	pipelineComponentRepo := postgres.NewPipelineComponentRepo(pg)
 	pipelineComponentUC := pipelineComponentUC.New(pipelineComponentRepo)
@@ -154,6 +160,7 @@ func setupCore(inf *infra) *coreHandlers {
 		eval:              evalHandler,
 		action:            actionHandler,
 		pipeline:          pipelineHandler,
+		pipelineConfig:    pipelineConfigHandler,
 		pipelineComponent: pipelineComponentHandler,
 		backfill:          backfillHandler,
 		query:             queryHandler,

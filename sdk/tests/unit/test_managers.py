@@ -477,6 +477,74 @@ class TestPipelineManager:
 
 
 # =========================================================================
+# PipelineConfigManager
+# =========================================================================
+
+class TestPipelineConfigManager:
+    def test_list_and_get(self, client):
+        list_route = respx.get(f"{BASE_URL}/api/v1/pipeline-configs").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert client.pipeline_configs.list(
+            q="detector",
+            owner="alice@example.com",
+            scope="dev",
+            lifecycle="ready",
+        ) == {"items": []}
+        assert list_route.calls.last.request.url.params["q"] == "detector"
+        assert list_route.calls.last.request.url.params["owner"] == "alice@example.com"
+
+        respx.get(f"{BASE_URL}/api/v1/pipeline-configs/cfg1").mock(
+            return_value=httpx.Response(200, json={"id": "cfg1", "name": "detector.yaml"})
+        )
+        assert client.pipeline_configs.get("cfg1")["id"] == "cfg1"
+
+    def test_create_update_version_and_deprecate(self, client):
+        payload = {
+            "name": "detector.yaml",
+            "lifecycle": "ready",
+            "content": "threshold: 0.82\n",
+        }
+        respx.post(f"{BASE_URL}/api/v1/pipeline-configs").mock(
+            return_value=httpx.Response(201, json={"id": "cfg1", **payload})
+        )
+        assert client.pipeline_configs.create(payload)["id"] == "cfg1"
+
+        update_route = respx.put(f"{BASE_URL}/api/v1/pipeline-configs/cfg1").mock(
+            return_value=httpx.Response(200, json={"id": "cfg1", "description": "updated"})
+        )
+        updated = client.pipeline_configs.update(
+            "cfg1",
+            {
+                "name": "detector.yaml",
+                "description": "updated",
+                "fileType": "yaml",
+                "lifecycle": "ready",
+            },
+        )
+        assert updated["description"] == "updated"
+        assert b'"fileType":"yaml"' in update_route.calls.last.request.read()
+
+        respx.post(f"{BASE_URL}/api/v1/pipeline-configs/cfg1/versions").mock(
+            return_value=httpx.Response(201, json={"configId": "cfg1", "version": 2})
+        )
+        assert client.pipeline_configs.create_version(
+            "cfg1",
+            {"status": "ready", "content": "threshold: 0.90\n"},
+        )["version"] == 2
+
+        respx.get(f"{BASE_URL}/api/v1/pipeline-configs/cfg1/versions/2").mock(
+            return_value=httpx.Response(200, json={"configId": "cfg1", "version": 2, "content": "threshold: 0.90\n"})
+        )
+        assert client.pipeline_configs.get_version("cfg1", 2)["content"].startswith("threshold")
+
+        respx.post(f"{BASE_URL}/api/v1/pipeline-configs/cfg1/deprecate").mock(
+            return_value=httpx.Response(200, json={"id": "cfg1", "lifecycle": "deprecated"})
+        )
+        assert client.pipeline_configs.deprecate("cfg1")["lifecycle"] == "deprecated"
+
+
+# =========================================================================
 # PipelineComponentManager
 # =========================================================================
 

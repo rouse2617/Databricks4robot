@@ -20,6 +20,7 @@ import (
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
 	pipelineH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline"
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
+	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
@@ -90,6 +91,7 @@ type coreHandlers struct {
 	query             *queryH.Handler
 	workflow          *workflowH.Handler
 	pipeline          *pipelineH.Handler
+	pipelineConfig    *pipelineConfigH.Handler
 	pipelineComponent *pipelineComponentH.Handler
 	backfill          *backfillH.Handler
 	assetUC           *assetUC.Usecase
