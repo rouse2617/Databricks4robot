@@ -40,18 +40,8 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../../api/assets";
-import {
-	BATCH_ASSET_THRESHOLD,
-	deployPipelineForAssets,
-} from "../../api/deployPipelineRun";
-import {
-	getPipeline,
-	listExecutionTargets,
-	listPipelineVersions,
-	previewDeploy,
-	savePipeline,
-	type ExecutionTarget,
-} from "../../api/pipelineApi";
+import { BATCH_ASSET_THRESHOLD } from "../../api/deployPipelineRun";
+import { savePipeline, type ExecutionTarget } from "../../api/pipelineApi";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import AssetPicker, {
 	type AssetPickerHandle,
@@ -76,12 +66,14 @@ import {
 	PIPELINE_EXAMPLES,
 	type PipelineExample,
 } from "../../lib/pipelineExamples";
-import { batchJobDetailLocationState } from "../../lib/pipelineNavigation";
-import { validatePipelineForRun } from "../../lib/pipelineValidation";
-import { defaultDeployWorkflowName } from "../../pages/pipeline/pipelinePageHelpers";
+import {
+	validatePipelineForRun,
+	validatePipelineForSave,
+} from "../../lib/pipelineValidation";
 import {
 	apiToRegistered,
 	createPipelineNode,
+	defaultDeployWorkflowName,
 	dedupeComponentsByName,
 	extractAssetSizeBytes,
 	extractNodeAssetIds,
@@ -100,6 +92,8 @@ import {
 	initialDesignerState,
 	useDesignerReducer,
 } from "./hooks/useDesignerReducer";
+import { usePipelineDeploy } from "./hooks/usePipelineDeploy";
+import { usePipelineTemplateLoader } from "./hooks/usePipelineTemplateLoader";
 
 import "../../styles/pipeline.css";
 
@@ -338,7 +332,6 @@ function PipelineDesignerCanvasInner({
 	);
 	const readOnlyMode =
 		searchParams.get("readonly") === "1" || loadedTemplateScope === "prod";
-	const importTextRef = useRef<string>("");
 	const assetPickerRef = useRef<AssetPickerHandle>(null);
 	const handleFlowError = useCallback((code: string, flowMessage: string) => {
 		if (code === "002") return;
@@ -428,30 +421,6 @@ function PipelineDesignerCanvasInner({
 		[searchParams, setSearchParams],
 	);
 
-	useEffect(() => {
-		let alive = true;
-		listExecutionTargets()
-			.then((targets) => {
-				if (!alive) return;
-				dispatch({ type: "deploy/setExecutionTargets", targets });
-				const defaultTarget =
-					targets.find((target) => target.isDefault) ?? targets[0];
-				if (defaultTarget) {
-					dispatch({
-						type: "deploy/setSelectedTargetId",
-						targetId: defaultTarget.id,
-					});
-				}
-			})
-			.catch(() => {
-				if (!alive) return;
-				dispatch({ type: "deploy/setExecutionTargets", targets: [] });
-			});
-		return () => {
-			alive = false;
-		};
-	}, []);
-
 	const loadPipelineToCanvas = useCallback(
 		(pipeline: Pipeline) => {
 			const { nodes: n, edges: e } = fromTranspilerPipeline(pipeline);
@@ -481,48 +450,13 @@ function PipelineDesignerCanvasInner({
 		}
 	}, [loadPipelineToCanvas]);
 
-	const loadPipelineToCanvasRef = useRef(loadPipelineToCanvas);
-	loadPipelineToCanvasRef.current = loadPipelineToCanvas;
-	const loadPipelineFromSessionStorageRef = useRef(loadPipelineFromSessionStorage);
-	loadPipelineFromSessionStorageRef.current = loadPipelineFromSessionStorage;
-
-	useEffect(() => {
-		if (!templateId) {
-			dispatch({ type: "template/clearVersions" });
-			loadPipelineFromSessionStorageRef.current();
-			return;
-		}
-
-		let cancelled = false;
-		dispatch({ type: "template/setLoading", loading: true });
-		Promise.all([getPipeline(templateId), listPipelineVersions(templateId)])
-			.then(([template, versions]) => {
-				if (cancelled) return;
-				loadPipelineToCanvasRef.current(template.pipeline);
-				dispatch({ type: "canvas/setPipelineName", name: template.name });
-				dispatch({
-					type: "template/setVersions",
-					versions,
-					selectedVersionId: template.id,
-					loadedScope: template.scope ?? null,
-				});
-			})
-			.catch((err) => {
-				if (cancelled) return;
-				messageApi.error(`模板加载失败: ${String(err)}`);
-				dispatch({ type: "template/clearVersions" });
-				loadPipelineFromSessionStorageRef.current();
-			})
-			.finally(() => {
-				if (!cancelled) {
-					dispatch({ type: "template/setLoading", loading: false });
-				}
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [messageApi, templateId]);
+	usePipelineTemplateLoader({
+		templateId,
+		dispatch,
+		messageApi,
+		loadPipelineToCanvas,
+		loadPipelineFromSessionStorage,
+	});
 
 	const handleTemplateVersionChange = useCallback(
 		async (versionId: string) => {
@@ -755,12 +689,28 @@ function PipelineDesignerCanvasInner({
 				engine.fitView();
 			}
 		},
-		[contextMenuNode, editingNodeId, engine, messageApi, selectNodeWithEdges, selectedNodeId],
+		[
+			contextMenuNode,
+			editingNodeId,
+			engine,
+			messageApi,
+			selectNodeWithEdges,
+			selectedNodeId,
+		],
 	);
 
 	const buildPipelineJSON = useCallback(
 		(): Pipeline => toTranspilerPipeline(nodes, edges, { name: pipelineName }),
 		[nodes, edges, pipelineName],
+	);
+	const assertPipelineSavable = useCallback(
+		(pipeline: Pipeline, actionLabel: string) => {
+			const validation = validatePipelineForSave(pipeline);
+			if (validation.valid) return true;
+			messageApi.error(`${actionLabel}失败: ${validation.errors[0]}`);
+			return false;
+		},
+		[messageApi],
 	);
 	const assertPipelineRunnable = useCallback(
 		(pipeline: Pipeline, actionLabel: string) => {
@@ -843,18 +793,12 @@ function PipelineDesignerCanvasInner({
 	}, [buildPipelineJSON]);
 
 	const importPipeline = useCallback(() => {
-		importTextRef.current = "";
 		dispatch({ type: "canvas/setImportText", text: "" });
 		dispatch({ type: "canvas/setImportModalOpen", open: true });
 	}, []);
 
 	const applyImportedPipeline = useCallback(() => {
-		const text =
-			(
-				document.querySelector(
-					".ant-modal textarea",
-				) as HTMLTextAreaElement | null
-			)?.value?.trim() || importTextRef.current.trim();
+		const text = importText.trim();
 		if (!text) {
 			messageApi.warning("请粘贴 Pipeline JSON");
 			return;
@@ -876,7 +820,7 @@ function PipelineDesignerCanvasInner({
 		} catch {
 			messageApi.error("无效的 JSON");
 		}
-	}, [markCanvasClean, messageApi, pipelineName]);
+	}, [importText, markCanvasClean, messageApi, pipelineName]);
 
 	const applyExampleToCanvas = useCallback(
 		(example: PipelineExample) => {
@@ -945,7 +889,7 @@ function PipelineDesignerCanvasInner({
 	const handleSave = useCallback(async () => {
 		try {
 			const pipeline = buildPipelineJSON();
-			if (!assertPipelineRunnable(pipeline, "保存")) return;
+			if (!assertPipelineSavable(pipeline, "保存")) return;
 			const saved = await savePipeline(pipelineName, pipeline);
 			dispatch({
 				type: "template/setSelectedVersionId",
@@ -973,7 +917,7 @@ function PipelineDesignerCanvasInner({
 		pipelineName,
 		buildPipelineJSON,
 		navigate,
-		assertPipelineRunnable,
+		assertPipelineSavable,
 		messageApi,
 		markCanvasClean,
 		nodes,
@@ -994,16 +938,25 @@ function PipelineDesignerCanvasInner({
 			type: "deploy/openDialog",
 			name: defaultDeployWorkflowName(),
 		});
-	}, [
-		nodes.length,
-		buildPipelineJSON,
-		assertPipelineRunnable,
-		messageApi,
-	]);
+	}, [nodes.length, buildPipelineJSON, assertPipelineRunnable, messageApi]);
 
 	const closeDeployDialog = useCallback(() => {
 		dispatch({ type: "deploy/resetDialog" });
 	}, []);
+
+	const { handleDeploy, handlePreviewDeploy } = usePipelineDeploy({
+		assetPickerRef,
+		buildPipelineJSON,
+		assertPipelineRunnable,
+		deployDialog,
+		pipelineName,
+		selectedAssetIds,
+		selectedTargetId,
+		dispatch,
+		closeDeployDialog,
+		messageApi,
+		navigate,
+	});
 
 	usePipelineKeyboardShortcuts({
 		onSave: readOnlyMode ? () => undefined : handleSave,
@@ -1025,136 +978,6 @@ function PipelineDesignerCanvasInner({
 			extractPipelineAssetIds(deployDialog.result.pipelineJSON ?? {})[0] ?? ""
 		);
 	}, [deployDialog.result]);
-
-	const handleDeploy = useCallback(async () => {
-		const resolved = assetPickerRef.current?.resolveSelectionForRun() ?? {
-			assetIds: selectedAssetIds,
-		};
-		if (resolved.error) {
-			messageApi.error(resolved.error);
-			return;
-		}
-		const assetIds = resolved.assetIds;
-		const assetCount = assetIds.length;
-		if (assetCount >= BATCH_ASSET_THRESHOLD) {
-			const confirmed = await new Promise<boolean>((resolve) => {
-				Modal.confirm({
-					title: "确认创建批量任务",
-					content: (
-						<div>
-							<p>
-								将为 {assetCount} 个资产各创建 1 条子任务，共 {assetCount}{" "}
-								条执行记录。
-							</p>
-							<p style={{ marginBottom: 0, color: "#64748b", fontSize: 12 }}>
-								提交后可在「执行记录 →
-								批量任务」查看进度，并支持暂停或重试失败项。
-							</p>
-						</div>
-					),
-					okText: "确认运行",
-					cancelText: "取消",
-					onOk: () => resolve(true),
-					onCancel: () => resolve(false),
-				});
-			});
-			if (!confirmed) return;
-		}
-
-		dispatch({
-			type: "deploy/setDialog",
-			dialog: { deploying: true, done: false },
-		});
-		try {
-			const pipeline = buildPipelineJSON();
-			if (!assertPipelineRunnable(pipeline, "运行")) {
-				dispatch({
-					type: "deploy/setDialog",
-					dialog: { deploying: false },
-				});
-				return;
-			}
-			const name = deployDialog.name || pipelineName;
-			const saved = await savePipeline(name, pipeline);
-			const result = await deployPipelineForAssets(saved.id, assetIds, {
-				targetId: selectedTargetId,
-				batchName: `${name}-${Date.now()}`,
-			});
-			if (result.mode === "batch") {
-				messageApi.success(
-					`已创建批量任务，共 ${result.batchJob.totalCount} 个子任务`,
-				);
-				closeDeployDialog();
-				navigate(`/pipeline/batch/${result.batchJob.id}`, {
-					state: batchJobDetailLocationState(),
-				});
-				return;
-			}
-			dispatch({
-				type: "deploy/setDialog",
-				dialog: {
-					deploying: false,
-					done: true,
-					result: result.runs[0],
-					results: result.runs,
-				},
-			});
-		} catch (err) {
-			dispatch({
-				type: "deploy/setDialog",
-				dialog: {
-					deploying: false,
-					done: true,
-					error: String(err),
-				},
-			});
-		}
-	}, [
-		buildPipelineJSON,
-		assertPipelineRunnable,
-		deployDialog.name,
-		pipelineName,
-		selectedAssetIds,
-		selectedTargetId,
-		closeDeployDialog,
-		messageApi,
-		navigate,
-	]);
-
-	const handlePreviewDeploy = useCallback(async () => {
-		dispatch({
-			type: "deploy/setDialog",
-			dialog: {
-				previewLoading: true,
-				previewError: undefined,
-				previewManifest: undefined,
-				mode: "preview",
-			},
-		});
-		try {
-			const pipeline = buildPipelineJSON();
-			if (!assertPipelineRunnable(pipeline, "预览")) {
-				dispatch({
-					type: "deploy/setDialog",
-					dialog: { previewLoading: false, mode: "edit" },
-				});
-				return;
-			}
-			const { manifest } = await previewDeploy(pipeline);
-			dispatch({
-				type: "deploy/setDialog",
-				dialog: { previewLoading: false, previewManifest: manifest },
-			});
-		} catch (err) {
-			dispatch({
-				type: "deploy/setDialog",
-				dialog: {
-					previewLoading: false,
-					previewError: String(err),
-				},
-			});
-		}
-	}, [buildPipelineJSON, assertPipelineRunnable]);
 
 	const isCanvasEmpty = nodes.length === 0;
 	const currentTemplateLabel = pipelineName || "未命名流水线";
@@ -1542,7 +1365,6 @@ function PipelineDesignerCanvasInner({
 							type: "canvas/setImportText",
 							text: event.target.value,
 						});
-						importTextRef.current = event.target.value;
 					}}
 					placeholder='{"name":"my-pipeline","nodes":[],"edges":[]}'
 					autoSize={{ minRows: 10, maxRows: 18 }}

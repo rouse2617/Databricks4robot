@@ -4,7 +4,10 @@ import {
 	normalizeComponentArgs,
 	normalizeShellCommandArgs,
 } from "./pipelineContract";
-import { validatePipelineForRun } from "./pipelineValidation";
+import {
+	validatePipelineForRun,
+	validatePipelineForSave,
+} from "./pipelineValidation";
 
 function basePipeline(overrides: Partial<Pipeline> = {}): Pipeline {
 	return {
@@ -16,6 +19,62 @@ function basePipeline(overrides: Partial<Pipeline> = {}): Pipeline {
 }
 
 describe("pipeline validation", () => {
+	it("allows saving a draft container without runnable command", () => {
+		const pipeline = basePipeline({
+			nodes: [
+				{
+					id: "step-1",
+					component: {
+						name: "Pass Through",
+						image: "busybox:latest",
+						command: ["sh", "-c"],
+						args: [],
+					},
+				},
+			],
+		});
+
+		expect(validatePipelineForSave(pipeline).valid).toBe(true);
+		expect(validatePipelineForRun(pipeline).valid).toBe(false);
+	});
+
+	it("rejects duplicate node IDs for save", () => {
+		const result = validatePipelineForSave(
+			basePipeline({
+				nodes: [
+					{
+						id: "step-1",
+						component: { name: "left", image: "busybox" },
+					},
+					{
+						id: "step-1",
+						component: { name: "right", image: "busybox" },
+					},
+				],
+			}),
+		);
+
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("重复");
+	});
+
+	it("rejects edges referencing missing nodes for save", () => {
+		const result = validatePipelineForSave(
+			basePipeline({
+				nodes: [
+					{
+						id: "step-1",
+						component: { name: "left", image: "busybox" },
+					},
+				],
+				edges: [{ source: "step-1.output", target: "missing.input" }],
+			}),
+		);
+
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("missing");
+	});
+
 	it("rejects multiple upstream edges targeting the same input parameter", () => {
 		const result = validatePipelineForRun(
 			basePipeline({

@@ -85,10 +85,8 @@ export function usePipelineComponents(
 							!releaseComponentIds.has(component.componentId?.trim() ?? ""),
 					);
 				const mapped = dedupe([...releaseComponents, ...legacyComponents]);
-				if (mapped.length > 0) {
-					setComponents(mapped);
-					saveComponentsToStorage(mapped);
-				}
+				setComponents(mapped);
+				saveComponentsToStorage(mapped);
 			})
 			.catch((err) => {
 				setError(String(err));
