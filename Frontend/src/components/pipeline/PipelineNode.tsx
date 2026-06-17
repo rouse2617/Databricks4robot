@@ -1,9 +1,4 @@
-import {
-	Handle,
-	type NodeProps,
-	Position,
-	SelectType,
-} from "@ant-design/pro-flow";
+import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
 import { memo } from "react";
 import type { PipelineNodeData, Port } from "./types";
 
@@ -22,16 +17,16 @@ function handleTop(index: number, total: number) {
 function PipelineStepNodeInner({
 	data,
 	selected,
-}: NodeProps<PipelineNodeData>) {
-	const selectType = selected
-		? (data.selectType as SelectType | undefined) || SelectType.SELECT
-		: SelectType.DEFAULT;
+}: NodeProps<Node<PipelineNodeData>>) {
 	const label = data.label || "未命名步骤";
+	const versionHint = data.componentVersionLabel
+		? ` · ${data.componentVersionLabel}`
+		: "";
 	const inputPorts = normalizePorts(data.inputPorts, DEFAULT_INPUTS);
 	const outputPorts = normalizePorts(data.outputPorts, DEFAULT_OUTPUTS);
 	return (
 		<div
-			className={`pipeline-node select-${selectType} ${selected ? "selected" : ""}`}
+			className={`pipeline-node select-${selected ? "select" : "default"} ${selected ? "selected" : ""}`}
 			role="option"
 			tabIndex={0}
 			aria-label={`流水线节点 ${label}`}
@@ -49,7 +44,10 @@ function PipelineStepNodeInner({
 			))}
 			<div className="node-header">
 				<span className="node-status-dot" />
-				<span>{label}</span>
+				<span>
+					{label}
+					{versionHint}
+				</span>
 			</div>
 			<div className="node-body">
 				<div className="node-info">{data.image}</div>

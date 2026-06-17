@@ -27,6 +27,9 @@ export interface Component {
 	args?: Argument[];
 	env?: Record<string, string>;
 	resources?: ResourceRequirements;
+	componentId?: string;
+	releaseId?: string;
+	componentVersionLabel?: string;
 }
 
 export interface Argument {
@@ -97,5 +100,8 @@ export interface PipelineNodeData {
 	disk: string;
 	gpu?: string;
 	computeTier?: string;
+	componentId?: string;
+	releaseId?: string;
+	componentVersionLabel?: string;
 	[key: string]: unknown;
 }

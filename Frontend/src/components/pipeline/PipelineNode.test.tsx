@@ -5,12 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import { PipelineStepNode } from "./PipelineNode";
 import type { PipelineNodeData } from "./types";
 
-vi.mock("@ant-design/pro-flow", () => ({
+vi.mock("@xyflow/react", () => ({
 	Handle: ({ type }: { type: string }) => (
 		<div data-testid={`handle-${type}`} />
 	),
 	Position: { Left: "left", Right: "right" },
-	SelectType: { DEFAULT: "default", SELECT: "select", SUB_SELECT: "subSelect" },
 }));
 
 describe("PipelineStepNode", () => {

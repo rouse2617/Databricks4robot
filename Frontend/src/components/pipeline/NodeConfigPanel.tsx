@@ -1,5 +1,5 @@
 import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
-import type { Node } from "@ant-design/pro-flow";
+import type { Node } from "@xyflow/react";
 import { Button, Form, Input, Modal, Select } from "antd";
 import { useEffect } from "react";
 import type { Argument, PipelineNodeData, Port } from "./types";

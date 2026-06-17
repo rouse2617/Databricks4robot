@@ -24,6 +24,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
+import { ArgoNodeRuntimeInspector } from "../../features/pipeline-designer";
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { ApiError } from "../../api/pipelineClient";
 import type {
@@ -629,6 +630,9 @@ function RuntimeTab({
 }) {
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<RuntimeSection title="Argo 运行时">
+				<ArgoNodeRuntimeInspector node={node} />
+			</RuntimeSection>
 			<RuntimeSection title="Pod 与事件">
 				<PodTab node={node} workflowName={workflowName} />
 			</RuntimeSection>
