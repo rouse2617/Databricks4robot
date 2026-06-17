@@ -11,17 +11,13 @@ import {
 import { useCallback, useState } from "react";
 import { type AlgoRun, algoRunsApi } from "../../api/algoRuns";
 import { formatDateTime } from "../../lib/dateTime";
+import {
+	formatBusinessStatusLabel,
+	resolveBusinessStatusTagColor,
+} from "../../lib/productVocabulary";
 import { formatRunIdShort, isRegisteredRunId } from "../../lib/runId";
 
 const { Text } = Typography;
-
-const statusColor: Record<string, string> = {
-	pending: "default",
-	running: "processing",
-	ok: "success",
-	failed: "error",
-	cancelled: "warning",
-};
 
 interface RunIdLinkProps {
 	runId?: string | null;
@@ -91,7 +87,9 @@ export default function RunIdLink({
 				{run.algo_name}@{run.algo_version}
 			</Descriptions.Item>
 			<Descriptions.Item label="状态">
-				<Tag color={statusColor[run.status] ?? "default"}>{run.status}</Tag>
+				<Tag color={resolveBusinessStatusTagColor(run.status)}>
+					{formatBusinessStatusLabel(run.status)}
+				</Tag>
 			</Descriptions.Item>
 			<Descriptions.Item label="触发方">{run.triggered_by}</Descriptions.Item>
 			{run.started_at ? (

@@ -14,6 +14,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { type AlgoRegistryItem, algoRegistryApi } from "../api/algoRegistry";
 import { type AlgoRun, algoRunsApi } from "../api/algoRuns";
 import { formatDateTime } from "../lib/dateTime";
+import {
+	COLUMN_LABELS,
+	formatBusinessStatusLabel,
+	resolveBusinessStatusTagColor,
+} from "../lib/productVocabulary";
 
 const { Title } = Typography;
 const { RangePicker } = DatePicker;
@@ -26,14 +31,6 @@ const STATUS_OPTIONS = [
 	{ label: "失败", value: "failed" },
 	{ label: "已取消", value: "cancelled" },
 ];
-
-const STATUS_COLOR: Record<string, string> = {
-	pending: "default",
-	running: "processing",
-	ok: "success",
-	failed: "error",
-	cancelled: "warning",
-};
 
 export default function AlgoRunsPage() {
 	const navigate = useNavigate();
@@ -90,7 +87,7 @@ export default function AlgoRunsPage() {
 
 	const columns = [
 		{
-			title: "Run ID",
+			title: COLUMN_LABELS.runId,
 			dataIndex: "run_id",
 			key: "run_id",
 			width: 200,
@@ -106,7 +103,7 @@ export default function AlgoRunsPage() {
 			),
 		},
 		{
-			title: "算法",
+			title: COLUMN_LABELS.algorithmVersion,
 			dataIndex: "algo_name",
 			key: "algo_name",
 			width: 180,
@@ -117,12 +114,14 @@ export default function AlgoRunsPage() {
 			),
 		},
 		{
-			title: "状态",
+			title: COLUMN_LABELS.runStatus,
 			dataIndex: "status",
 			key: "status",
 			width: 100,
 			render: (val: string) => (
-				<Tag color={STATUS_COLOR[val] ?? "default"}>{val}</Tag>
+				<Tag color={resolveBusinessStatusTagColor(val)}>
+					{formatBusinessStatusLabel(val)}
+				</Tag>
 			),
 		},
 		{

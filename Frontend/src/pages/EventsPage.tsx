@@ -24,6 +24,11 @@ import { assetsApi } from "../api/assets";
 import type { AssetEvent } from "../api/types";
 import { isCanonicalAssetId } from "../lib/assetId";
 import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
+import {
+	COLUMN_LABELS,
+	formatBusinessStatusLabel,
+	resolveBusinessStatusTagColor,
+} from "../lib/productVocabulary";
 
 dayjs.extend(relativeTime);
 
@@ -39,6 +44,12 @@ function eventTypeColor(eventType: string): string {
 	if (eventType === "asset_lifecycle_changed") return "orange";
 	if (eventType === "asset_delivered") return "gold";
 	return "default";
+}
+
+function formatEventSource(source: string): string {
+	if (source === "backend") return "后端服务";
+	if (source === "pipeline") return "流水线";
+	return source || "—";
 }
 
 function formatJSON(v: unknown): string {
@@ -58,7 +69,7 @@ function buildEventColumns(
 ) {
 	return [
 		{
-			title: "Event Seq",
+			title: COLUMN_LABELS.eventSeq,
 			dataIndex: "event_seq",
 			key: "event_seq",
 			width: 100,
@@ -72,7 +83,7 @@ function buildEventColumns(
 			render: (val: string) => <Tag color={eventTypeColor(val)}>{val}</Tag>,
 		},
 		{
-			title: "Asset ID",
+			title: COLUMN_LABELS.assetId,
 			dataIndex: "asset_id",
 			key: "asset_id",
 			width: 100,
@@ -106,21 +117,23 @@ function buildEventColumns(
 			dataIndex: "event_source",
 			key: "event_source",
 			width: 100,
-			render: (val: string) => <Text type="secondary">{val || "—"}</Text>,
+			render: (val: string) => (
+				<Text type="secondary">{formatEventSource(val)}</Text>
+			),
 		},
 		{
 			title: "发布状态",
 			dataIndex: "publish_state",
 			key: "publish_state",
 			width: 100,
-			render: (val: string) => {
-				const color =
-					val === "published" ? "green" : val === "pending" ? "orange" : "red";
-				return <Tag color={color}>{val || "—"}</Tag>;
-			},
+			render: (val: string) => (
+				<Tag color={resolveBusinessStatusTagColor(val)}>
+					{formatBusinessStatusLabel(val)}
+				</Tag>
+			),
 		},
 		{
-			title: "Payload",
+			title: COLUMN_LABELS.payload,
 			dataIndex: "event_payload",
 			key: "event_payload",
 			ellipsis: true,
@@ -153,7 +166,7 @@ function buildEventColumns(
 			},
 		},
 		{
-			title: "时间",
+			title: COLUMN_LABELS.publishedAt,
 			dataIndex: "occurred_at",
 			key: "occurred_at",
 			width: 160,
@@ -363,12 +376,12 @@ export default function EventsPage() {
 	};
 
 	return (
-		<div style={{ padding: 24 }}>
+		<div>
 			{msgCtx}
 			<Title level={3}>事件流总览</Title>
 			<Text type="secondary" style={{ marginBottom: 16, display: "block" }}>
-				默认展示最近 24 小时全局事件。输入 8 位 Asset ID
-				后可切换为单资产视图（支持 cursor 翻页）。
+				默认展示最近 24 小时全局事件。输入 8 位资产 ID
+				后，可查看该资产的事件记录。
 			</Text>
 
 			{error && (
@@ -402,7 +415,7 @@ export default function EventsPage() {
 						<SearchOutlined style={{ color: "#aaa" }} />
 						<input
 							type="text"
-							placeholder="输入 Asset ID 筛选"
+							placeholder="输入资产 ID 筛选"
 							value={assetId}
 							onChange={(e) => onAssetIdInput(e.target.value)}
 							style={{

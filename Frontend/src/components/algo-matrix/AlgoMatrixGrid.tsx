@@ -8,6 +8,7 @@ import {
 	getAlgoStatusFromResults,
 } from "../../lib/algoStatus";
 import { navigateToAssetDetail } from "../../lib/assets/assetWorkbenchNavigation";
+import { COLUMN_LABELS } from "../../lib/productVocabulary";
 import AlgoStatusCell from "./AlgoStatusCell";
 import AlgoStatusPopover from "./AlgoStatusPopover";
 
@@ -37,7 +38,7 @@ export default function AlgoMatrixGrid({
 	const navigate = useNavigate();
 	const columns: ColumnsType<Asset> = [
 		{
-			title: "Asset ID",
+			title: COLUMN_LABELS.assetId,
 			dataIndex: "asset_id",
 			key: "asset_id",
 			width: 220,
@@ -102,7 +103,8 @@ export default function AlgoMatrixGrid({
 				dataSource={assets}
 				rowKey="asset_id"
 				loading={loading}
-				scroll={{ x: 220 + algorithms.length * 80 }}
+				scroll={{ x: 220 + algorithms.length * 80, y: "calc(100vh - 280px)" }}
+				sticky
 				size="small"
 				locale={{
 					emptyText: (

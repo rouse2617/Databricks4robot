@@ -67,6 +67,23 @@ function isFullBleedPage(pathname: string): boolean {
 	return pathname.startsWith("/pipeline");
 }
 
+function resolvePageContainerClass(pathname: string): string {
+	if (isFullBleedPage(pathname)) return "";
+	if (pathname.startsWith("/dashboard") || pathname.startsWith("/metrics")) {
+		return "page-container page-container--dashboard";
+	}
+	if (pathname.startsWith("/settings")) {
+		return "page-container page-container--form";
+	}
+	if (
+		pathname.startsWith("/algo") &&
+		!pathname.startsWith("/algo-runs")
+	) {
+		return "page-container page-container--matrix";
+	}
+	return "page-container page-container--table";
+}
+
 export default function AppLayout({ children }: { children: ReactNode }) {
 	const navigate = useNavigate();
 	const location = useLocation();
@@ -75,6 +92,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const isMobile = !screens.lg;
 	const siderWidth = 220;
 	const fullBleed = isFullBleedPage(location.pathname);
+	const pageContainerClass = resolvePageContainerClass(location.pathname);
 	const versionLabel = getAppVersionLabel();
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll to top on route changes
@@ -178,6 +196,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 						</Dropdown>
 					</div>
 					<div
+						className={fullBleed ? undefined : pageContainerClass}
 						style={{
 							padding: fullBleed ? 0 : 24,
 							minHeight: fullBleed ? 0 : undefined,
