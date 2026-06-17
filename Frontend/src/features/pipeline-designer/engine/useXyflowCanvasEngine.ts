@@ -3,7 +3,7 @@ import {
 	type Node,
 	useReactFlow,
 } from "@xyflow/react";
-import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { createPipelineNodeId } from "../model/node-id";
 import type { CanvasEngineAdapter } from "./canvasEngineAdapter";
 
@@ -172,18 +172,36 @@ export function useXyflowCanvasEngine<T extends Node>(
 		clipboardRef.current = { nodes: pastedNodes, edges: pastedEdges };
 	}, [deselectAll, setEdges, setNodes]);
 
-	return {
-		addNode,
-		updateNodeData,
-		selectElements,
-		deselectAll,
-		selectAll,
-		deleteSelection,
-		copySelection,
-		paste,
-		screenToFlowPosition,
-		zoomIn,
-		zoomOut,
-		fitView: () => fitView({ padding: 0.2 }),
-	};
+	const fitViewPadded = useCallback(() => fitView({ padding: 0.2 }), [fitView]);
+
+	return useMemo(
+		() => ({
+			addNode,
+			updateNodeData,
+			selectElements,
+			deselectAll,
+			selectAll,
+			deleteSelection,
+			copySelection,
+			paste,
+			screenToFlowPosition,
+			zoomIn,
+			zoomOut,
+			fitView: fitViewPadded,
+		}),
+		[
+			addNode,
+			copySelection,
+			deleteSelection,
+			deselectAll,
+			fitViewPadded,
+			paste,
+			screenToFlowPosition,
+			selectAll,
+			selectElements,
+			updateNodeData,
+			zoomIn,
+			zoomOut,
+		],
+	);
 }

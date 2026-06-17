@@ -202,6 +202,13 @@ export function designerReducer(
 				},
 			};
 		case "template/clearVersions":
+			if (
+				state.template.templateVersions.length === 0 &&
+				state.template.selectedTemplateVersionId === null &&
+				state.template.loadedTemplateScope === null
+			) {
+				return state;
+			}
 			return {
 				...state,
 				template: {

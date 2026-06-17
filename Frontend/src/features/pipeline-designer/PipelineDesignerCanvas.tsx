@@ -481,10 +481,15 @@ function PipelineDesignerCanvasInner({
 		}
 	}, [loadPipelineToCanvas]);
 
+	const loadPipelineToCanvasRef = useRef(loadPipelineToCanvas);
+	loadPipelineToCanvasRef.current = loadPipelineToCanvas;
+	const loadPipelineFromSessionStorageRef = useRef(loadPipelineFromSessionStorage);
+	loadPipelineFromSessionStorageRef.current = loadPipelineFromSessionStorage;
+
 	useEffect(() => {
 		if (!templateId) {
 			dispatch({ type: "template/clearVersions" });
-			loadPipelineFromSessionStorage();
+			loadPipelineFromSessionStorageRef.current();
 			return;
 		}
 
@@ -493,7 +498,7 @@ function PipelineDesignerCanvasInner({
 		Promise.all([getPipeline(templateId), listPipelineVersions(templateId)])
 			.then(([template, versions]) => {
 				if (cancelled) return;
-				loadPipelineToCanvas(template.pipeline);
+				loadPipelineToCanvasRef.current(template.pipeline);
 				dispatch({ type: "canvas/setPipelineName", name: template.name });
 				dispatch({
 					type: "template/setVersions",
@@ -506,7 +511,7 @@ function PipelineDesignerCanvasInner({
 				if (cancelled) return;
 				messageApi.error(`模板加载失败: ${String(err)}`);
 				dispatch({ type: "template/clearVersions" });
-				loadPipelineFromSessionStorage();
+				loadPipelineFromSessionStorageRef.current();
 			})
 			.finally(() => {
 				if (!cancelled) {
@@ -517,12 +522,7 @@ function PipelineDesignerCanvasInner({
 		return () => {
 			cancelled = true;
 		};
-	}, [
-		loadPipelineFromSessionStorage,
-		loadPipelineToCanvas,
-		messageApi,
-		templateId,
-	]);
+	}, [messageApi, templateId]);
 
 	const handleTemplateVersionChange = useCallback(
 		async (versionId: string) => {
