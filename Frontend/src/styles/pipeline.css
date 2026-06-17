@@ -1072,16 +1072,138 @@
 }
 
 .component-library-expanded-panel {
-	margin: -16px;
-	padding: 0 8px 8px;
+	margin: 4px 0 8px 40px;
+	padding: 12px 16px 16px 20px;
 	overflow: hidden;
-	background: #f8fafc;
-	border-top: 1px solid #eef2f7;
-	border-bottom: 1px solid #eef2f7;
+	background: #eef2f7;
+	border-left: 3px solid #94a3b8;
+	border-radius: 0 10px 10px 0;
+}
+
+.component-library-expanded-panel__title {
+	display: block;
+	font-size: 13px;
+	color: #334155;
+	margin-bottom: 2px;
+}
+
+.component-library-expanded-panel__subtitle {
+	display: block;
+	font-size: 12px;
+	margin-bottom: 10px;
+}
+
+.component-library-table .ant-table-column-sort {
+	background: transparent !important;
+}
+
+.component-library-table
+	th.ant-table-column-has-sorters.ant-table-column-sort:hover,
+.component-library-table th.ant-table-column-has-sorters.ant-table-column-sort {
+	background: rgba(248, 250, 252, 0.9) !important;
+}
+
+.component-library-table th.ant-table-column-has-sorters .ant-table-column-sorter {
+	color: #64748b;
+}
+
+.component-library-table th.ant-table-column-sort .ant-table-column-title {
+	color: #0f172a;
+	font-weight: 600;
+}
+
+.component-library-row-head {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.component-library-row-head__title {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.component-library-row-head__meta {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px;
+	font-size: 12px;
+}
+
+.component-library-row-expand {
+	flex: 0 0 auto;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	color: #475569;
+}
+
+.component-library-row-expand--placeholder {
+	display: inline-block;
+	width: 24px;
+	flex: 0 0 24px;
+}
+
+.component-library-row-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-size: 15px;
+}
+
+.component-library-row-inline-action {
+	padding-inline: 4px;
+	height: auto;
+}
+
+.component-library-row-inline-action--muted {
+	font-size: 12px;
+}
+
+.component-library-row-image-id {
+	font-size: 12px;
+	font-family: "SF Mono", "Menlo", monospace;
+	opacity: 0.72;
+}
+
+.component-library-row-image-id .ant-typography-copy {
+	opacity: 0;
+	transition: opacity 0.15s ease;
+}
+
+.component-library-row-head:hover .component-library-row-image-id .ant-typography-copy,
+.component-library-row-image-id:focus-within .ant-typography-copy {
+	opacity: 1;
+}
+
+.component-library-row-actions-cell {
+	text-align: right;
+}
+
+.component-library-row-actions {
+	opacity: 0.72;
+	transition: opacity 0.15s ease;
+}
+
+.component-library-table tbody tr:hover .component-library-row-actions {
+	opacity: 1;
 }
 
 .component-library-release-table .ant-table {
 	background: transparent;
+}
+
+.component-library-release-table .ant-table-column-sort {
+	background: transparent !important;
+}
+
+.component-library-release-table
+	th.ant-table-column-has-sorters.ant-table-column-sort:hover,
+.component-library-release-table th.ant-table-column-has-sorters.ant-table-column-sort {
+	background: rgba(248, 250, 252, 0.9) !important;
 }
 
 .component-library-release-table .ant-table-thead > tr > th {
