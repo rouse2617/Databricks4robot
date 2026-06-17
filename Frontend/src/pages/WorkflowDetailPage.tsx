@@ -40,9 +40,8 @@ import {
 	type WorkflowNodeDetailTabKey,
 } from "../components/pipeline/WorkflowNodeDetailPanel";
 import { STATUS_COLORS } from "../lib/constants";
-import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
 import { resolveWorkflowDetailBackTarget } from "../lib/pipelineNavigation";
-import { buildPipelineNodeLabelLookup } from "../lib/workflowNodeDisplay";
+import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationConfigs,
@@ -51,6 +50,7 @@ import {
 	type WorkflowOperationConfig,
 	type WorkflowOperationKey,
 } from "../lib/workflow-operations";
+import { buildPipelineNodeLabelLookup } from "../lib/workflowNodeDisplay";
 import {
 	useWorkflowDetail,
 	type WorkflowLogFollowStatus,
@@ -1235,7 +1235,11 @@ export default function WorkflowDetailPage({
 					messageApi.success(`${operation.title}已提交`);
 				}
 				if (operation.key === "delete") {
-					navigate("/workflows");
+					navigate("/pipeline?tab=executions");
+					return;
+				}
+				if (operation.key === "resubmit") {
+					navigate("/pipeline?tab=executions");
 					return;
 				}
 				loadWorkflow();
@@ -1402,19 +1406,6 @@ export default function WorkflowDetailPage({
 	}
 
 	if (!loading && loadError?.kind === "not_found") {
-		if (runEventState.loading) {
-			return (
-				<div
-					style={{
-						display: "flex",
-						justifyContent: "center",
-						padding: 80,
-					}}
-				>
-					<Spin size="large" tip="正在加载执行记录…" />
-				</div>
-			);
-		}
 		if (runEventState.run || runEventState.items.length > 0) {
 			return (
 				<ExpiredWorkflowLedgerView
@@ -1425,7 +1416,26 @@ export default function WorkflowDetailPage({
 				/>
 			);
 		}
-		return <div style={{ padding: 24 }}>未找到工作流</div>;
+		return (
+			<div style={{ padding: 24 }}>
+				<Alert
+					type="warning"
+					showIcon
+					message="未找到工作流"
+					description={loadError.message}
+					action={
+						<Space>
+							<Button size="small" onClick={() => navigate(backTarget)}>
+								返回
+							</Button>
+							<Button size="small" onClick={loadWorkflow}>
+								重试
+							</Button>
+						</Space>
+					}
+				/>
+			</div>
+		);
 	}
 
 	if (!loading && loadError?.kind === "error") {

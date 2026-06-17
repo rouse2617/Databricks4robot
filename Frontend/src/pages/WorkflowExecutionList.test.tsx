@@ -103,6 +103,14 @@ function renderList(initialEntry = "/pipeline?tab=executions") {
 	);
 }
 
+function renderBatchList() {
+	return render(
+		<MemoryRouter initialEntries={["/pipeline/batch/batch-1"]}>
+			<WorkflowExecutionList batchJobId="batch-1" embedded />
+		</MemoryRouter>,
+	);
+}
+
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {
 		writable: true,
@@ -262,5 +270,47 @@ describe("WorkflowExecutionList", () => {
 		});
 		expect(screen.queryByText("服务不可用")).not.toBeInTheDocument();
 		expect(screen.getByText("$1.50")).toBeInTheDocument();
+	});
+
+	it("filters batch-scoped runs by workflow name", async () => {
+		mockListPipelineRuns.mockResolvedValue({
+			items: [
+				{
+					id: "run-a",
+					pipelineName: "batch-a",
+					workflowName: "pipeline-aaa",
+					status: "Succeeded",
+					nodeCount: 1,
+					createdAt: "2026-06-02T01:00:00Z",
+				},
+				{
+					id: "run-b",
+					pipelineName: "batch-b",
+					workflowName: "pipeline-bbb",
+					status: "Succeeded",
+					nodeCount: 1,
+					createdAt: "2026-06-02T01:00:00Z",
+				},
+			],
+			total: 2,
+		});
+
+		renderBatchList();
+
+		await waitFor(() => {
+			expect(screen.getByText("pipeline-aaa")).toBeInTheDocument();
+			expect(screen.getByText("pipeline-bbb")).toBeInTheDocument();
+		});
+
+		fireEvent.change(screen.getByPlaceholderText("按名称搜索"), {
+			target: { value: "bbb" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "search" }));
+
+		await waitFor(() => {
+			expect(screen.getByText("pipeline-bbb")).toBeInTheDocument();
+		});
+		expect(screen.queryByText("pipeline-aaa")).not.toBeInTheDocument();
+		expect(screen.getByText(/共 1 条/)).toBeInTheDocument();
 	});
 });

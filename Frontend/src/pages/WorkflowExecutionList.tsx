@@ -575,17 +575,29 @@ export function WorkflowExecutionList({
 					nodeStatus: nodeFilter?.nodeStatus,
 				});
 				const pipelineRuns = runResponse.items ?? [];
-				setServerTotal(runResponse.total ?? pipelineRuns.length);
+				const normalizedNameSearch = nameSearch.trim().toLowerCase();
+				const visiblePipelineRuns = normalizedNameSearch
+					? pipelineRuns.filter((run) =>
+							workflowNameForRun(run)
+								.toLowerCase()
+								.includes(normalizedNameSearch),
+						)
+					: pipelineRuns;
+				setServerTotal(
+					normalizedNameSearch
+						? visiblePipelineRuns.length
+						: (runResponse.total ?? pipelineRuns.length),
+				);
 				setRunIdsByWorkflowName(
 					Object.fromEntries(
-						pipelineRuns
+						visiblePipelineRuns
 							.filter((run) => run.id)
 							.map((run) => [workflowNameForRun(run), run.id] as const),
 					),
 				);
 				setTemplateVersionsByWorkflowName(
 					Object.fromEntries(
-						pipelineRuns
+						visiblePipelineRuns
 							.filter((run) => run.workflowName && run.templateVersion)
 							.map(
 								(run) =>
@@ -595,7 +607,7 @@ export function WorkflowExecutionList({
 				);
 				setTemplateIdsByWorkflowName(
 					Object.fromEntries(
-						pipelineRuns
+						visiblePipelineRuns
 							.filter((run) => run.workflowName && run.templateId)
 							.map(
 								(run) => [run.workflowName, run.templateId as string] as const,
@@ -604,26 +616,26 @@ export function WorkflowExecutionList({
 				);
 				setNodeCountsByWorkflowName(
 					Object.fromEntries(
-						pipelineRuns
+						visiblePipelineRuns
 							.filter((run) => run.workflowName)
 							.map((run) => [run.workflowName, run.nodeCount] as const),
 					),
 				);
 				setScopeByWorkflowName(
 					Object.fromEntries(
-						pipelineRuns
+						visiblePipelineRuns
 							.filter((run) => run.workflowName && run.scope)
 							.map((run) => [run.workflowName, run.scope as string] as const),
 					),
 				);
 				setNodeProgressByWorkflowName(
 					Object.fromEntries(
-						pipelineRuns
+						visiblePipelineRuns
 							.filter((run) => run.workflowName)
 							.map((run) => [run.workflowName, run.nodeProgress] as const),
 					),
 				);
-				const summaries = pipelineRuns.map((run) =>
+				const summaries = visiblePipelineRuns.map((run) =>
 					workflowSummaryFromRun(run),
 				);
 				setItems(summaries);

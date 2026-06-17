@@ -152,6 +152,29 @@ describe("WorkflowDetailPage", () => {
 		).toBeInTheDocument();
 	});
 
+	it("shows a not-found alert instead of an indefinite spinner", () => {
+		mockWorkflowDetailState({
+			workflow: null,
+			loading: false,
+			loadError: {
+				kind: "not_found",
+				message: "workflow not found",
+			},
+			runEventState: {
+				items: [],
+				total: 0,
+				loading: true,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText("未找到工作流")).toBeInTheDocument();
+		expect(screen.getByText("workflow not found")).toBeInTheDocument();
+		expect(screen.queryByText("正在加载执行记录…")).not.toBeInTheDocument();
+	});
+
 	it("shows workflow node count and explicit unavailable cost copy", () => {
 		mockWorkflowDetailState({
 			workflow: {
