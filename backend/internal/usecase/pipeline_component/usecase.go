@@ -617,9 +617,23 @@ var systemComponents = []models.PipelineComponent{
 		Image:       "busybox:latest",
 		Tag:         "latest",
 		Source:      "system",
+		Command:     []string{"sh", "-c", "echo pass"},
 		InputPorts:  []models.PortDef{{Name: "input", Type: "asset", Desc: "输入资产"}},
 		OutputPorts: []models.PortDef{{Name: "output", Type: "asset", Desc: "输出资产"}},
 	},
+}
+
+// patchSystemComponent backfills missing fields on seeded system components.
+func patchSystemComponent(existing, seed *models.PipelineComponent) bool {
+	if existing == nil || seed == nil {
+		return false
+	}
+	changed := false
+	if len(existing.Command) == 0 && len(seed.Command) > 0 {
+		existing.Command = append([]string(nil), seed.Command...)
+		changed = true
+	}
+	return changed
 }
 
 // SeedSystemComponents ensures built-in system components exist in the database.
@@ -631,11 +645,23 @@ func (uc *Usecase) SeedSystemComponents(ctx context.Context) error {
 			return fmt.Errorf("seed system component %q: %w", sc.ID, err)
 		}
 		if existing != nil {
+			if patchSystemComponent(existing, &sc) {
+				if err := normalizeComponent(existing, true); err != nil {
+					return fmt.Errorf("patch system component %q: %w", sc.ID, err)
+				}
+				existing.UpdatedAt = time.Now().UTC()
+				if err := uc.repo.Update(ctx, existing); err != nil {
+					return fmt.Errorf("patch system component %q: %w", sc.ID, err)
+				}
+			}
 			continue
 		}
 		now := time.Now().UTC()
 		sc.CreatedAt = now
 		sc.UpdatedAt = now
+		if err := normalizeComponent(&sc, false); err != nil {
+			return fmt.Errorf("seed system component %q: %w", sc.ID, err)
+		}
 		if err := uc.repo.Save(ctx, &sc); err != nil {
 			return fmt.Errorf("seed system component %q: %w", sc.ID, err)
 		}

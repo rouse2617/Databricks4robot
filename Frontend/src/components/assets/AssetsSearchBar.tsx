@@ -9,6 +9,7 @@ import type {
 	QueryToken,
 	SearchMode,
 } from "../../lib/assets/assetsDiscoveryTypes";
+import { SEARCH_MODE_LABELS } from "../../lib/productVocabulary";
 
 const { Text } = Typography;
 
@@ -324,16 +325,16 @@ const SEARCH_MODE_OPTIONS: {
 	disabled: boolean;
 	tooltip?: string;
 }[] = [
-	{ value: "structured", label: "Structured", disabled: false },
-	{ value: "keyword", label: "Keyword", disabled: false },
+	{ value: "structured", label: SEARCH_MODE_LABELS.structured, disabled: false },
+	{ value: "keyword", label: SEARCH_MODE_LABELS.keyword, disabled: false },
 	{
 		value: "semantic",
-		label: "Semantic",
+		label: SEARCH_MODE_LABELS.semantic,
 		disabled: false,
 	},
 	{
 		value: "similar",
-		label: "Similar",
+		label: SEARCH_MODE_LABELS.similar,
 		disabled: false,
 	},
 ];

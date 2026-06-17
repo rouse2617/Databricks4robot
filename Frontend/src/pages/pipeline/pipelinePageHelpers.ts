@@ -28,23 +28,57 @@ export function toRecord<T extends { id: string }>(
 export function dedupeComponentsByName(
 	comps: RegisteredComponent[],
 ): RegisteredComponent[] {
-	const seen = new Set<string>();
-	return comps.filter((c) => {
-		const key = c.name.trim().toLowerCase();
-		const versionKey = [
-			c.releaseLabel,
-			c.sourceCommit,
-			c.tag,
-			c.imageUid,
-			c.source,
-		]
-			.filter(Boolean)
-			.join(":");
-		const dedupeKey = [key, versionKey || "legacy"].join(":");
-		if (!key || seen.has(dedupeKey)) return false;
-		seen.add(dedupeKey);
+	return dedupeComponents(comps);
+}
+
+function componentDedupeKey(comp: RegisteredComponent): string {
+	const componentId = comp.componentId?.trim();
+	if (componentId) return `component:${componentId}`;
+	const id = comp.id?.trim();
+	if (id) return `id:${id}`;
+	return `name:${comp.name.trim().toLowerCase()}`;
+}
+
+function preferRegisteredComponent(
+	candidate: RegisteredComponent,
+	current: RegisteredComponent,
+): boolean {
+	if (
+		candidate.source === "component-release" &&
+		current.source !== "component-release"
+	) {
 		return true;
-	});
+	}
+	if (
+		current.source === "component-release" &&
+		candidate.source !== "component-release"
+	) {
+		return false;
+	}
+	const candidateLabel = candidate.releaseLabel?.trim() ?? "";
+	const currentLabel = current.releaseLabel?.trim() ?? "";
+	if (candidateLabel !== currentLabel) {
+		return candidateLabel.localeCompare(currentLabel) > 0;
+	}
+	return candidate.name.localeCompare(current.name) <= 0;
+}
+
+export function dedupeComponents(
+	comps: RegisteredComponent[],
+): RegisteredComponent[] {
+	const seen = new Map<string, RegisteredComponent>();
+	for (const comp of comps) {
+		const key = componentDedupeKey(comp);
+		const existing = seen.get(key);
+		if (!existing || preferRegisteredComponent(comp, existing)) {
+			seen.set(key, comp);
+		}
+	}
+	return Array.from(seen.values());
+}
+
+export function defaultDeployWorkflowName(now = Date.now()): string {
+	return `pipeline-${now}`;
 }
 
 function normalizeComponentType(
@@ -255,12 +289,15 @@ export function apiToRegistered(
 				: [];
 	return {
 		id: api.id,
+		componentId: api.id,
 		name: api.name,
 		type: normalizedType,
 		source: normalizedSource,
 		image: formatImage(api.image, api.tag),
 		tag: api.tag,
-		command: api.command ?? ((resources.command as string[]) || ["sh", "-c"]),
+		command:
+			api.command ??
+			((resources.command as string[] | undefined) ?? []),
 		args: normalizeComponentArgs(
 			(api.args && api.args.length > 0
 				? api.args
@@ -295,6 +332,8 @@ export function releaseToRegistered(
 	const sourceRefType = (release.sourceRefType || "").trim().toLowerCase();
 	return {
 		id: release.id,
+		componentId: release.componentId,
+		releaseId: release.id,
 		name: release.displayName || release.taskName,
 		type: "container",
 		source: "component-release",
@@ -304,7 +343,7 @@ export function releaseToRegistered(
 		sourceCommit: release.sourceCommit,
 		imageUid: release.imageUid,
 		command:
-			snapshot.command ?? ((resources.command as string[]) || ["sh", "-c"]),
+			snapshot.command ?? ((resources.command as string[] | undefined) ?? []),
 		args: normalizeComponentArgs(
 			(snapshot.args && snapshot.args.length > 0
 				? snapshot.args

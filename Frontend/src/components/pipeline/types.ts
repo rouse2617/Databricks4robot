@@ -60,6 +60,8 @@ export interface ResourceRequirements {
 
 export interface RegisteredComponent {
 	id: string;
+	componentId?: string;
+	releaseId?: string;
 	name: string;
 	type?: string;
 	source?: string;

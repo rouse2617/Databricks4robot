@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	formatBatchJobStatus,
+	formatBusinessStatusLabel,
 	formatWorkflowPhaseLabel,
 	resolveStatusTagColor,
 } from "./statusLabels";
@@ -21,5 +22,9 @@ describe("statusLabels", () => {
 		expect(resolveStatusTagColor("completed")).toBe("success");
 		expect(resolveStatusTagColor("Succeeded")).toBe("success");
 		expect(resolveStatusTagColor("Running")).toBe("blue");
+	});
+
+	it("re-exports business status helpers", () => {
+		expect(formatBusinessStatusLabel("cancelled")).toBe("已取消");
 	});
 });

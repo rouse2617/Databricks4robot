@@ -91,6 +91,7 @@ import {
 	apiToRegistered,
 	createPipelineNode,
 	dedupeComponentsByName,
+	defaultDeployWorkflowName,
 	extractAssetSizeBytes,
 	extractNodeAssetIds,
 	extractPipelineAssetIds,
@@ -1003,11 +1004,10 @@ function PipelineCanvas({ onDirtyChange }: PipelineCanvasProps) {
 			deploying: false,
 			done: false,
 			mode: "edit",
-			name: pipelineName,
+			name: defaultDeployWorkflowName(),
 		});
 		setAssetPickerResetKey((key) => key + 1);
 	}, [
-		pipelineName,
 		nodes.length,
 		buildPipelineJSON,
 		assertPipelineRunnable,

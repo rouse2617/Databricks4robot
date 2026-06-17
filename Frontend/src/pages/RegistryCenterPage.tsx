@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import type { AlgoRegistryItem } from "../api/algoRegistry";
 import { type MetricRegistryItem, registryApi } from "../api/registry";
 import type { TagRegistryItem } from "../api/tagRegistry";
+import { ContentErrorState, ContentLoadingState } from "../components/common/PageContentState";
+import { COLUMN_LABELS } from "../lib/productVocabulary";
 
 const { Title, Text } = Typography;
 
@@ -44,19 +46,19 @@ export default function RegistryCenterPage() {
 
 	const algoCols: ColumnsType<AlgoRegistryItem> = [
 		{ title: "Key", dataIndex: "key", render: (v) => <Text code>{v}</Text> },
-		{ title: "Name", dataIndex: "name" },
-		{ title: "Version", dataIndex: "version" },
+		{ title: "名称", dataIndex: "name" },
+		{ title: "版本", dataIndex: "version" },
 		{
-			title: "Depends On",
+			title: COLUMN_LABELS.dependsOn,
 			dataIndex: "depends_on",
 			render: (v: string[]) => v?.join(", ") || "—",
 		},
 	];
 	const tagCols: ColumnsType<TagRegistryItem> = [
 		{ title: "Key", dataIndex: "key", render: (v) => <Text code>{v}</Text> },
-		{ title: "Type", dataIndex: "type" },
+		{ title: "类型", dataIndex: "type" },
 		{
-			title: "Description",
+			title: "说明",
 			dataIndex: "description",
 			render: (v?: string) => v || "—",
 		},
@@ -64,16 +66,16 @@ export default function RegistryCenterPage() {
 	const metricCols: ColumnsType<MetricRegistryItem> = [
 		{ title: "Key", dataIndex: "key", render: (v) => <Text code>{v}</Text> },
 		{
-			title: "Display",
+			title: "展示名",
 			dataIndex: "display_name",
 			render: (v?: string) => v || "—",
 		},
-		{ title: "Type", dataIndex: "metric_type" },
+		{ title: "类型", dataIndex: "metric_type" },
 		{
-			title: "Queryable",
+			title: COLUMN_LABELS.queryable,
 			dataIndex: "queryable",
 			render: (v?: boolean) =>
-				v ? <Tag color="green">yes</Tag> : <Tag>no</Tag>,
+				v ? <Tag color="green">是</Tag> : <Tag>否</Tag>,
 		},
 	];
 
@@ -90,15 +92,15 @@ export default function RegistryCenterPage() {
 				description="统一展示 Algo/Tag/Metric/Lifecycle 四类注册表，作为 API、CDC、搜索与 UI 的口径来源。"
 			/>
 			{error ? (
-				<Alert
-					type="error"
-					showIcon
-					message={error}
-					style={{ marginBottom: 12 }}
+				<ContentErrorState
+					title="注册表加载失败"
+					description={error}
+					onRetry={() => window.location.reload()}
 				/>
-			) : null}
-
-			<Card size="small" loading={loading}>
+			) : loading ? (
+				<ContentLoadingState title="正在加载注册表…" />
+			) : (
+				<Card size="small">
 				<Tabs
 					items={[
 						{
@@ -190,6 +192,7 @@ export default function RegistryCenterPage() {
 					]}
 				/>
 			</Card>
+			)}
 		</div>
 	);
 }

@@ -18,6 +18,7 @@ import type {
 	ViewMode,
 } from "../../lib/assets/assetsDiscoveryTypes";
 import { formatDateTime } from "../../lib/dateTime";
+import { COLUMN_LABELS } from "../../lib/productVocabulary";
 import { withSelectAllColumn } from "../../lib/tableSelection";
 import AlgoSummaryCell from "./AlgoSummaryCell";
 import AssetsCardView from "./AssetsCardView";
@@ -94,7 +95,7 @@ function describeSort(sort: string): string {
 
 const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 	asset_id: (onRowClick) => ({
-		title: "Asset ID",
+		title: COLUMN_LABELS.assetId,
 		dataIndex: "asset_id",
 		width: 120,
 		fixed: "left" as const,
@@ -131,7 +132,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 		),
 	}),
 	mcap_file_id: (_onRowClick, onMcapClick) => ({
-		title: "MCAP",
+		title: COLUMN_LABELS.mcapShort,
 		dataIndex: "mcap_file_id",
 		width: 100,
 		render: (v: string) => (
@@ -240,7 +241,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 		},
 	}),
 	owner: () => ({
-		title: "Owner",
+		title: COLUMN_LABELS.owner,
 		dataIndex: "owner",
 		width: 120,
 		ellipsis: { showTitle: false },
@@ -455,6 +456,7 @@ export default function AssetsResultsPane({
 				dataSource={items}
 				loading={loading}
 				size="small"
+				className={viewMode === "compact" ? "assets-table--compact" : undefined}
 				scroll={{ x: 900 }}
 				rowClassName={(record, index) => {
 					if (record.asset_id === activePreviewId)

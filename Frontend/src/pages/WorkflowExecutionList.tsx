@@ -127,6 +127,16 @@ const renderTimestamp = (value?: string) => {
 	);
 };
 
+const renderFinishedTimestamp = (
+	value: string | undefined,
+	record: WorkflowSummary,
+) => {
+	if (isActiveWorkflowStatus(record.status)) {
+		return "—";
+	}
+	return renderTimestamp(value);
+};
+
 const getWorkflowLabel = (
 	labels: Record<string, string> | undefined,
 	key: string,
@@ -1075,7 +1085,8 @@ export function WorkflowExecutionList({
 				dataIndex: "finishedAt",
 				key: "finishedAt",
 				width: 190,
-				render: renderTimestamp,
+				render: (value: string | undefined, record: WorkflowSummary) =>
+					renderFinishedTimestamp(value, record),
 			},
 			{
 				title: "操作",

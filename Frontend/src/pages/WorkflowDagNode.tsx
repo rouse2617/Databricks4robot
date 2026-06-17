@@ -33,6 +33,7 @@ export interface WorkflowDagNodeData extends Record<string, unknown> {
 	selected: boolean;
 	dimmed: boolean;
 	progressPercent: number | null;
+	pipelineLabels?: Map<string, string>;
 	onAction?: (node: WorkflowNodeStatus, action: WorkflowDagNodeAction) => void;
 }
 
@@ -104,8 +105,8 @@ function ProgressRing({ percent, color }: { percent: number; color: string }) {
 export function WorkflowDagNode({
 	data,
 }: NodeProps<Node<WorkflowDagNodeData>>): React.JSX.Element {
-	const { workflowNode, selected, dimmed, progressPercent } = data;
-	const displayText = getWorkflowNodeDisplayText(workflowNode);
+	const { workflowNode, selected, dimmed, progressPercent, pipelineLabels } = data;
+	const displayText = getWorkflowNodeDisplayText(workflowNode, pipelineLabels);
 	const phase = workflowNode.phase;
 	const accent = PHASE_COLORS[phase] || "#64748b";
 	const phaseLabel =

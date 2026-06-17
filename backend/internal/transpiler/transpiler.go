@@ -736,7 +736,11 @@ func shellScriptArgIndex(cmd []string, args []string) int {
 }
 
 func templateName(nodeID string) string {
-	return "step-" + strings.ReplaceAll(nodeID, "_", "-")
+	normalized := strings.ReplaceAll(nodeID, "_", "-")
+	if strings.HasPrefix(normalized, "step-") {
+		return normalized
+	}
+	return "step-" + normalized
 }
 
 func safeParamName(name string) string {

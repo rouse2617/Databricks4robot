@@ -1,4 +1,10 @@
 import { STATUS_COLORS, WORKFLOW_PHASE_LABELS } from "./constants";
+import {
+	formatBusinessStatusLabel,
+	resolveBusinessStatusTagColor,
+} from "./productVocabulary";
+
+export { formatBusinessStatusLabel, resolveBusinessStatusTagColor };
 
 const BATCH_JOB_STATUS_LABELS: Record<string, string> = {
 	running: "运行中",
@@ -17,6 +23,8 @@ const LOWERCASE_PHASE_LABELS: Record<string, string> = {
 	expired: "已过期",
 	skipped: "已跳过",
 	omitted: "已省略",
+	cancelled: "已取消",
+	canceled: "已取消",
 };
 
 /** Human-readable workflow / run phase label (Chinese). */

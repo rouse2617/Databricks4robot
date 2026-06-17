@@ -1072,7 +1072,9 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 		return
 	}
 	existing.Status = run.Status
-	if run.FinishedAt != nil && !run.FinishedAt.IsZero() {
+	if isActiveDeploymentStatus(run.Status) {
+		existing.FinishedAt = nil
+	} else if run.FinishedAt != nil && !run.FinishedAt.IsZero() {
 		if existing.FinishedAt == nil || existing.FinishedAt.IsZero() || run.FinishedAt.Before(*existing.FinishedAt) {
 			existing.FinishedAt = run.FinishedAt
 		}
@@ -1162,7 +1164,7 @@ func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRu
 	if uc.runRepo == nil || run == nil || strings.TrimSpace(run.ID) == "" {
 		return
 	}
-	if !needsRunListRefresh(run) {
+	if !needsRunListRefresh(run) && !needsMisclassifiedReconcile(run) {
 		return
 	}
 	if isActiveDeploymentStatus(run.Status) {
@@ -1175,6 +1177,13 @@ func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRu
 	}
 }
 
+func needsMisclassifiedReconcile(run *models.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	return isMisclassifiedTerminalRunStatus(run.Status) || isStaleWorkflowUnavailableMessage(run.Message)
+}
+
 func needsRunListRefresh(run *models.PipelineRun) bool {
 	if run == nil {
 		return false
@@ -1182,7 +1191,27 @@ func needsRunListRefresh(run *models.PipelineRun) bool {
 	if isActiveDeploymentStatus(run.Status) {
 		return true
 	}
-	return needsLedgerReconcile(run)
+	if needsLedgerReconcile(run) {
+		return true
+	}
+	return needsMisclassifiedReconcile(run)
+}
+
+func (uc *Usecase) refreshRunSummariesForList(ctx context.Context, items []models.PipelineRun) {
+	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
+		return
+	}
+	refreshed := 0
+	for i := range items {
+		if refreshed >= maxActiveDeploymentStatusRefresh {
+			break
+		}
+		if !needsRunListRefresh(&items[i]) {
+			continue
+		}
+		refreshed++
+		uc.RefreshRunForList(ctx, &items[i])
+	}
 }
 
 func needsLedgerReconcile(run *models.PipelineRun) bool {
@@ -2035,6 +2064,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		if err != nil {
 			return nil, 0, err
 		}
+		uc.refreshRunSummariesForList(ctx, items)
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
 		}
@@ -2044,6 +2074,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 	if err != nil {
 		return nil, 0, err
 	}
+	uc.refreshRunSummariesForList(ctx, items)
 	return items, len(items), nil
 }
 

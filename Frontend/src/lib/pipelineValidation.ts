@@ -1,10 +1,42 @@
 import type { Pipeline } from "../components/pipeline/types";
+import { normalizeComponentArgs } from "./pipelineContract";
 
 export type PipelineValidationResult = {
 	valid: boolean;
 	errors: string[];
 	warnings: string[];
 };
+
+function argText(value: { name?: string; value?: string } | undefined): string {
+	return (value?.value ?? value?.name ?? "").trim();
+}
+
+function hasRunnableContainerCommand(
+	component: Pipeline["nodes"][number]["component"],
+): boolean {
+	const command = (component.command ?? []).map((part) => part.trim());
+	const args = normalizeComponentArgs(component.args ?? []);
+	if (command.length === 0) {
+		return args.some((arg) => argText(arg).length > 0);
+	}
+	if (command.length >= 3 && command[0] === "sh" && command[1] === "-c") {
+		return command.slice(2).some((part) => part.length > 0);
+	}
+	if (command.length === 2 && command[0] === "sh" && command[1] === "-c") {
+		return args.some((arg) => argText(arg).length > 0);
+	}
+	return command.some((part) => part.length > 0);
+}
+
+function hasRunnableScript(component: Pipeline["nodes"][number]["component"]): boolean {
+	const source = component.source?.trim() ?? "";
+	if (source.length > 0) {
+		return true;
+	}
+	return normalizeComponentArgs(component.args ?? []).some(
+		(arg) => argText(arg).length > 0,
+	);
+}
 
 function splitRef(ref: string): { nodeId: string; port: string } {
 	const dot = ref.lastIndexOf(".");
@@ -75,6 +107,20 @@ export function validatePipelineForRun(
 	}
 
 	for (const node of pipeline.nodes || []) {
+		const component = node.component;
+		const label = component.name?.trim() || node.id;
+		const nodeType = (component.type || "container").trim().toLowerCase();
+		if (nodeType === "resource" || nodeType === "suspend") {
+			continue;
+		}
+		if (nodeType === "script") {
+			if (!hasRunnableScript(component)) {
+				errors.push(`${label} 缺少可执行的脚本内容。`);
+			}
+		} else if (nodeType === "container" && !hasRunnableContainerCommand(component)) {
+			errors.push(`${label} 缺少可执行的 command/args。`);
+		}
+
 		for (const output of node.outputs || []) {
 			if (!componentWritesOutputPath(node.component, output.name)) {
 				warnings.push(

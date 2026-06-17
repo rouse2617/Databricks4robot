@@ -112,6 +112,7 @@ export function buildDagElements(
 		node: WorkflowNodeStatus,
 		action: WorkflowDagNodeAction,
 	) => void,
+	pipelineLabels?: Map<string, string>,
 ): {
 	nodes: WorkflowDagNodeType[];
 	edges: RFEdge[];
@@ -120,7 +121,7 @@ export function buildDagElements(
 	const normalizedSearch = nodeSearch.trim().toLowerCase();
 	const visibleNodes = displayableNodes.filter((node) => {
 		if (normalizedSearch.length === 0) return true;
-		const displayText = getWorkflowNodeDisplayText(node).toLowerCase();
+		const displayText = getWorkflowNodeDisplayText(node, pipelineLabels).toLowerCase();
 		return (
 			displayText.includes(normalizedSearch) ||
 			node.name.toLowerCase().includes(normalizedSearch)
@@ -214,7 +215,7 @@ export function buildDagElements(
 			: index * (DAG_NODE_WIDTH + DAG_NODE_GAP);
 		const layoutY = hasLayout ? dagreNode.y : 0;
 		const isSelected = node.id === selectedNodeId;
-		const displayText = getWorkflowNodeDisplayText(node).toLowerCase();
+		const displayText = getWorkflowNodeDisplayText(node, pipelineLabels).toLowerCase();
 		const matchesSearch =
 			normalizedSearch.length === 0 ||
 			displayText.includes(normalizedSearch) ||
@@ -238,6 +239,7 @@ export function buildDagElements(
 				selected: isSelected,
 				dimmed,
 				progressPercent,
+				pipelineLabels,
 				onAction: onNodeAction,
 			},
 			sourcePosition: Position.Right,
@@ -259,6 +261,7 @@ interface WorkflowDagViewProps {
 	) => void;
 	emptyMessage?: string;
 	workflowStatus?: string;
+	pipelineLabels?: Map<string, string>;
 }
 
 function FitViewOnGraphChange({ graphKey }: { graphKey: string }): null {
@@ -288,6 +291,7 @@ function WorkflowDagViewInner({
 	onNodeAction,
 	emptyMessage,
 	workflowStatus,
+	pipelineLabels,
 }: WorkflowDagViewProps): React.JSX.Element {
 	const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowDagNodeType>(
 		[],
@@ -302,6 +306,7 @@ function WorkflowDagViewInner({
 			selectedNodeId,
 			nodeSearch,
 			onNodeAction,
+			pipelineLabels,
 		);
 		setNodes(nextNodes);
 		setEdges(nextEdges);
@@ -311,6 +316,7 @@ function WorkflowDagViewInner({
 		selectedNodeId,
 		nodeSearch,
 		onNodeAction,
+		pipelineLabels,
 		setNodes,
 		setEdges,
 	]);

@@ -91,7 +91,11 @@ describe("pipeline validation", () => {
 					},
 					{
 						id: "join",
-						component: { name: "join", image: "busybox" },
+						component: {
+							name: "join",
+							image: "busybox",
+							command: ["sh", "-c", "echo join"],
+						},
 						inputs: [
 							{ name: "left", type: "string" },
 							{ name: "right", type: "string" },
@@ -106,6 +110,27 @@ describe("pipeline validation", () => {
 		);
 
 		expect(result.valid).toBe(true);
+	});
+
+	it("rejects container nodes without runnable command", () => {
+		const result = validatePipelineForRun(
+			basePipeline({
+				nodes: [
+					{
+						id: "step-1",
+						component: {
+							name: "Pass Through",
+							image: "busybox:latest",
+							command: ["sh", "-c"],
+							args: [],
+						},
+					},
+				],
+			}),
+		);
+
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("Pass Through");
 	});
 
 	it("rejects consumed output ports without matching /tmp/outputs file writes", () => {

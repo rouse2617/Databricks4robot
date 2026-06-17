@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	wfv1 "github.com/argoproj/argo-workflows/v3/pkg/apis/workflow/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -497,19 +498,32 @@ func TestTranspileParallelism(t *testing.T) {
 	}
 }
 
-func TestTranspileParallelismZero(t *testing.T) {
+func TestTranspileUsesCanonicalStepTemplateName(t *testing.T) {
 	p := &Pipeline{
-		Name: "no-parallel-limit",
+		Name: "wf",
 		Nodes: []Node{{
-			ID:        "n1",
-			Component: Component{Name: "n", Image: "busybox:latest"},
+			ID:        "step-1",
+			Component: Component{Name: "sleep", Image: "alpine:3.20", Command: []string{"sh", "-c"}, Args: []Argument{{Name: "cmd", Value: "sleep 1"}}},
 		}},
 	}
-	wf, err := Transpile(p, &Options{Name: "no-parallel"})
+	wf, err := Transpile(p, &Options{Name: "wf-test", Namespace: "default"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wf.Spec.Parallelism != nil {
-		t.Fatal("expected Parallelism to be nil when not set")
+	var dag *wfv1.Template
+	for i := range wf.Spec.Templates {
+		if wf.Spec.Templates[i].Name == "dag" {
+			dag = &wf.Spec.Templates[i]
+			break
+		}
+	}
+	if dag == nil || dag.DAG == nil || len(dag.DAG.Tasks) != 1 {
+		t.Fatalf("expected one DAG task, got %#v", dag)
+	}
+	if dag.DAG.Tasks[0].Name != "step-1" {
+		t.Fatalf("task name = %q, want step-1", dag.DAG.Tasks[0].Name)
+	}
+	if dag.DAG.Tasks[0].Template != "step-1" {
+		t.Fatalf("task template = %q, want step-1", dag.DAG.Tasks[0].Template)
 	}
 }

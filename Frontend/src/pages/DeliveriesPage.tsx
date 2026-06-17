@@ -6,6 +6,11 @@ import { deliveriesApi } from "../api/deliveries";
 import type { Delivery } from "../api/types";
 import CreateDeliveryModal from "../components/deliveries/CreateDeliveryModal";
 import { formatDateTime } from "../lib/dateTime";
+import {
+	COLUMN_LABELS,
+	formatBusinessStatusLabel,
+	resolveBusinessStatusTagColor,
+} from "../lib/productVocabulary";
 
 const { Title } = Typography;
 
@@ -17,14 +22,6 @@ const STATUS_OPTIONS = [
 	{ label: "已接受", value: "accepted" },
 	{ label: "已拒绝", value: "rejected" },
 ];
-
-const STATUS_COLOR: Record<string, string> = {
-	draft: "default",
-	pending: "processing",
-	delivered: "success",
-	accepted: "green",
-	rejected: "error",
-};
 
 export default function DeliveriesPage() {
 	const navigate = useNavigate();
@@ -94,7 +91,9 @@ export default function DeliveriesPage() {
 			key: "status",
 			width: 100,
 			render: (val: string) => (
-				<Tag color={STATUS_COLOR[val] ?? "default"}>{val}</Tag>
+				<Tag color={resolveBusinessStatusTagColor(val)}>
+					{formatBusinessStatusLabel(val)}
+				</Tag>
 			),
 		},
 		{
@@ -111,7 +110,7 @@ export default function DeliveriesPage() {
 			width: 80,
 		},
 		{
-			title: "Owner",
+			title: COLUMN_LABELS.owner,
 			dataIndex: "owner",
 			key: "owner",
 			width: 120,
@@ -161,6 +160,7 @@ export default function DeliveriesPage() {
 				columns={columns}
 				dataSource={items}
 				loading={loading}
+				scroll={{ x: 1100 }}
 				pagination={{
 					current: page,
 					pageSize,
@@ -188,7 +188,6 @@ export default function DeliveriesPage() {
 					style: { cursor: "pointer" },
 				})}
 				size="middle"
-				scroll={{ x: 1000 }}
 			/>
 
 			<CreateDeliveryModal

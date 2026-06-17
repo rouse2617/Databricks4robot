@@ -1085,6 +1085,38 @@ func TestRefreshRunStatus_PlaceholderWithStaleTTLMessageStaysPending(t *testing.
 	}
 }
 
+func TestRefreshRunForList_ReconcilesMisclassifiedError(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Error",
+				Message:      staleWorkflowTTLCleanupMessage,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != "Running" {
+		t.Fatalf("expected reconciled Running status, got %q", run.Status)
+	}
+}
+
 func TestGetRun_ReconcilesMisclassifiedError(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
@@ -1238,6 +1270,42 @@ func TestGetRun_UsesArgoFinishedAtOnTerminalWorkflow(t *testing.T) {
 	}
 	if run.FinishedAt == nil || !run.FinishedAt.Equal(actualFinish) {
 		t.Fatalf("expected Argo finished_at %v, got %v", actualFinish, run.FinishedAt)
+	}
+}
+
+func TestRefreshRunForList_ClearsFinishedAtForActiveRun(t *testing.T) {
+	ctx := context.Background()
+	pollutedFinish := time.Date(2026, 6, 17, 3, 28, 23, 0, time.UTC)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				FinishedAt:   &pollutedFinish,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.FinishedAt != nil {
+		t.Fatalf("expected finished_at cleared for active run, got %v", *run.FinishedAt)
+	}
+	if run.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("expected Running status, got %q", run.Status)
 	}
 }
 

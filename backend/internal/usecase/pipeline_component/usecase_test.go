@@ -362,6 +362,35 @@ func TestSeedSystemComponents_Empty(t *testing.T) {
 	if pc.Name != "Pass Through" {
 		t.Errorf("Expected name 'Pass Through', got %q", pc.Name)
 	}
+	if len(pc.Command) != 3 || pc.Command[2] != "echo pass" {
+		t.Fatalf("Expected seeded command, got %#v", pc.Command)
+	}
+}
+
+func TestSeedSystemComponents_PatchesMissingCommand(t *testing.T) {
+	repo := newMockComponentRepo()
+	uc := New(repo)
+	existing := &models.PipelineComponent{
+		ID:     "sys-pass-through",
+		Name:   "Pass Through",
+		Type:   "container",
+		Image:  "busybox:latest",
+		Source: "system",
+	}
+	if err := repo.Save(context.Background(), existing); err != nil {
+		t.Fatalf("save existing: %v", err)
+	}
+
+	if err := uc.SeedSystemComponents(context.Background()); err != nil {
+		t.Fatalf("SeedSystemComponents failed: %v", err)
+	}
+	pc, err := uc.Get(context.Background(), "sys-pass-through")
+	if err != nil {
+		t.Fatalf("Get after patch failed: %v", err)
+	}
+	if pc == nil || len(pc.Command) != 3 {
+		t.Fatalf("expected patched command, got %#v", pc)
+	}
 }
 
 func TestSeedSystemComponents_Idempotent(t *testing.T) {

@@ -42,6 +42,7 @@ import {
 import { STATUS_COLORS } from "../lib/constants";
 import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
 import { resolveWorkflowDetailBackTarget } from "../lib/pipelineNavigation";
+import { buildPipelineNodeLabelLookup } from "../lib/workflowNodeDisplay";
 import {
 	getAvailableWorkflowOperationConfigs,
 	getWorkflowOperationConfigs,
@@ -1192,6 +1193,10 @@ export default function WorkflowDetailPage({
 		stopFollowLogs,
 		downloadLogs,
 	} = useWorkflowDetail(name);
+	const pipelineNodeLabels = useMemo(
+		() => buildPipelineNodeLabelLookup(runEventState.run?.pipelineJSON),
+		[runEventState.run?.pipelineJSON],
+	);
 	const [showNodeLogs, setShowNodeLogs] = useState(false);
 	const operations = useMemo(
 		() => (workflow ? getWorkflowOperationConfigs(workflow) : []),
@@ -1595,12 +1600,14 @@ export default function WorkflowDetailPage({
 							onNodeAction={handleNodeAction}
 							emptyMessage={workflow.message}
 							workflowStatus={workflow.status}
+							pipelineLabels={pipelineNodeLabels}
 						/>
 					) : (
 						<WorkflowTimelineView
 							nodes={workflow.nodes}
 							selectedNodeId={selectedNode?.id ?? null}
 							onNodeSelect={handleSelectNode}
+							pipelineLabels={pipelineNodeLabels}
 						/>
 					)}
 				</div>

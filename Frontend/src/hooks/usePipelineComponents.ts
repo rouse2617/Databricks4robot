@@ -73,16 +73,16 @@ export function usePipelineComponents(
 				const releaseComponents = mapRelease
 					? (releaseRes.items ?? []).map(mapRelease)
 					: [];
-				const releaseNames = new Set(
-					releaseComponents.map((component) =>
-						component.name.trim().toLowerCase(),
-					),
+				const releaseComponentIds = new Set(
+					releaseComponents
+						.map((component) => component.componentId?.trim())
+						.filter((value): value is string => Boolean(value)),
 				);
 				const legacyComponents = (componentRes.items ?? [])
 					.map(mapApi)
 					.filter(
 						(component) =>
-							!releaseNames.has(component.name.trim().toLowerCase()),
+							!releaseComponentIds.has(component.componentId?.trim() ?? ""),
 					);
 				const mapped = dedupe([...releaseComponents, ...legacyComponents]);
 				if (mapped.length > 0) {

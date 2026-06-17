@@ -197,7 +197,7 @@ async function importOneNodePipeline(customName = "test-pipeline") {
 				component: {
 					name: "test",
 					image: "busybox:latest",
-					command: [],
+					command: ["sh", "-c", "echo test"],
 					args: [],
 				},
 				inputs: [{ name: "input", type: "string" }],
@@ -227,6 +227,14 @@ async function importOneNodePipeline(customName = "test-pipeline") {
 async function getMockMessage() {
 	const antd: typeof import("antd") = await import("antd");
 	return antd.message;
+}
+
+/** Open deploy modal and wait until step summary is rendered. */
+async function openDeployModal() {
+	fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
+	await waitFor(() => {
+		expect(screen.getByText("1 个步骤")).toBeInTheDocument();
+	});
 }
 
 /** Find the modal's primary deploy button (not the canvas toolbar one). */
@@ -597,10 +605,7 @@ describe("PipelinePage", () => {
 		await importOneNodePipeline("with-nodes");
 
 		// Open deploy modal
-		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
-		await waitFor(() => {
-			expect(screen.getByText("1 个步骤")).toBeInTheDocument();
-		});
+		await openDeployModal();
 
 		// Change workflow name
 		const nameInput = document.getElementById(
@@ -638,12 +643,15 @@ describe("PipelinePage", () => {
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
-		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
+		await openDeployModal();
 
 		await waitFor(() =>
 			expect(screen.getByTestId("mock-asset-picker")).toBeInTheDocument(),
 		);
 		fireEvent.click(screen.getByTestId("select-assets-btn"));
+		await waitFor(() => {
+			expect(screen.getByText("Selected: ast-001,ast-002")).toBeInTheDocument();
+		});
 
 		fireEvent.click(getModalDeployBtn());
 
@@ -754,7 +762,7 @@ describe("PipelinePage", () => {
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
-		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
+		await openDeployModal();
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() => {
@@ -772,7 +780,7 @@ describe("PipelinePage", () => {
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
-		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
+		await openDeployModal();
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() =>
@@ -790,7 +798,7 @@ describe("PipelinePage", () => {
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
-		fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
+		await openDeployModal();
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() =>

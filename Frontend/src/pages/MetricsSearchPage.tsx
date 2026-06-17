@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { evalApi, type MetricsSearchFilter } from "../api/eval";
 import { type MetricRegistryItem, registryApi } from "../api/registry";
+import { COLUMN_LABELS } from "../lib/productVocabulary";
 
 const { Title, Text } = Typography;
 
@@ -173,7 +174,12 @@ export default function MetricsSearchPage() {
 				size="small"
 				title={
 					<span>
-						命中资产 <Tag color="blue">{total}</Tag>
+						命中资产{" "}
+						{loading ? (
+							<Tag>正在加载…</Tag>
+						) : (
+							<Tag color="blue">{total}</Tag>
+						)}
 					</span>
 				}
 			>
@@ -184,7 +190,7 @@ export default function MetricsSearchPage() {
 					pagination={false}
 					columns={[
 						{
-							title: "Asset ID",
+							title: COLUMN_LABELS.assetId,
 							dataIndex: "id",
 							render: (id: string) => (
 								<Space>
@@ -195,12 +201,14 @@ export default function MetricsSearchPage() {
 						},
 					]}
 					locale={{
-						emptyText: hasSearched ? (
+						emptyText: loading ? (
+							"正在加载匹配结果…"
+						) : hasSearched ? (
 							<Empty
 								image={Empty.PRESENTED_IMAGE_SIMPLE}
 								description={
 									<Space direction="vertical" size={4}>
-										<span>未匹配到任何资产。</span>
+										<span>未找到符合条件的资产</span>
 										<span style={{ color: "#94a3b8", fontSize: 12 }}>
 											建议：放宽阈值、清除生命周期过滤、或换用 = / &lt; / &lt;=
 											比较符。
@@ -222,7 +230,7 @@ export default function MetricsSearchPage() {
 								</Button>
 							</Empty>
 						) : (
-							"加载中…"
+							"请选择指标并点击检索"
 						),
 					}}
 				/>

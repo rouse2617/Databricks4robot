@@ -509,6 +509,7 @@ function ReleaseExpandedTable({
 			columns={columns}
 			dataSource={releases}
 			pagination={false}
+			scroll={{ x: 960 }}
 			className="component-library-release-table"
 		/>
 	);
@@ -1524,8 +1525,11 @@ export function ComponentManager() {
 							/>
 						) : null}
 						{record.releases.length === 0 && record.legacyComponent ? (
-							<Typography.Text code>
-								{record.legacyComponent.tag || "latest"}
+							<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+								默认镜像：
+								<Typography.Text code>
+									{record.legacyComponent.tag || "latest"}
+								</Typography.Text>
 							</Typography.Text>
 						) : null}
 						{record.releases.length === 0 && !record.legacyComponent ? "-" : null}
@@ -1658,7 +1662,7 @@ export function ComponentManager() {
 	];
 
 	return (
-		<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+		<div className="component-library-page" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 			{contextHolder}
 			<div>
 				<div>
@@ -1782,7 +1786,7 @@ export function ComponentManager() {
 					loading={loading || releaseLoading}
 					columns={libraryColumns}
 					dataSource={libraryRows}
-					scroll={{ x: 960 }}
+					scroll={{ x: 1100 }}
 					expandable={{
 						showExpandColumn: false,
 						expandedRowKeys: activeExpandedRowKeys,

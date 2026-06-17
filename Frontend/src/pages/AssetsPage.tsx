@@ -2,8 +2,8 @@
 // Wires all extracted components to the centralized reducer.
 // Validates: Requirements R1, R7, R13
 
-import { FilterOutlined } from "@ant-design/icons";
-import { Alert, Badge, Button, Drawer, Modal, message, Typography } from "antd";
+import { FilterOutlined, AppstoreOutlined, TableOutlined, UnorderedListOutlined } from "@ant-design/icons";
+import { Alert, Badge, Button, Drawer, Modal, message, Segmented, Typography } from "antd";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ActiveFilterChipsRow from "../components/assets/ActiveFilterChipsRow";
@@ -29,6 +29,7 @@ import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryRed
 import { useAssetsHotkeys } from "../hooks/assets/useAssetsHotkeys";
 import { useAssetsQuerySync } from "../hooks/assets/useAssetsQuerySync";
 import { serializeQueryStateToUrl } from "../lib/assets/assetsDiscoveryUrl";
+import type { ViewMode } from "../lib/assets/assetsDiscoveryTypes";
 import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
 
 const { Title } = Typography;
@@ -448,6 +449,49 @@ export default function AssetsPage() {
 						onClearSelection={() => dispatch({ type: "CLEAR_SELECTION" })}
 						disabledRunPipeline={!canRunPipelineForSelection}
 					/>
+					<div
+						style={{
+							display: "flex",
+							justifyContent: "flex-end",
+							marginBottom: 8,
+						}}
+					>
+						<Segmented
+							value={state.queryState.viewMode}
+							options={[
+								{
+									label: (
+										<span>
+											<AppstoreOutlined /> 卡片
+										</span>
+									),
+									value: "card",
+								},
+								{
+									label: (
+										<span>
+											<TableOutlined /> 表格
+										</span>
+									),
+									value: "table",
+								},
+								{
+									label: (
+										<span>
+											<UnorderedListOutlined /> 紧凑
+										</span>
+									),
+									value: "compact",
+								},
+							]}
+							onChange={(value) =>
+								dispatch({
+									type: "SET_VIEW_MODE",
+									payload: { mode: value as ViewMode },
+								})
+							}
+						/>
+					</div>
 					<AssetsResultsPane
 						items={state.resultsState.items}
 						total={state.resultsState.total}
@@ -459,7 +503,7 @@ export default function AssetsPage() {
 						sort={state.queryState.sort}
 						page={state.queryState.page}
 						pageSize={state.queryState.pageSize}
-						viewMode={"card"}
+						viewMode={state.queryState.viewMode}
 						selectedColumns={state.queryState.selectedColumns}
 						selectedIds={state.selectionState.selectedIds}
 						activePreviewId={state.previewState.activeAssetId}
