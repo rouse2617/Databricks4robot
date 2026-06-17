@@ -80,6 +80,21 @@ interface RerunModalState {
 	extra: Record<string, unknown>;
 }
 
+const stableSerialize = (value: unknown): string =>
+	JSON.stringify(value, (_key, current) => {
+		if (current && typeof current === "object" && !Array.isArray(current)) {
+			return Object.fromEntries(
+				Object.entries(current as Record<string, unknown>).sort(([a], [b]) =>
+					a.localeCompare(b),
+				),
+			);
+		}
+		return current;
+	});
+
+const sameValue = (left: unknown, right: unknown): boolean =>
+	stableSerialize(left) === stableSerialize(right);
+
 function defaultRerunTemplateVersion(
 	job: BatchJob,
 	versions: PipelineTemplate[],
@@ -163,6 +178,9 @@ export default function BatchJobDetailPage() {
 	const { message } = App.useApp();
 	const messageRef = useRef(message);
 	messageRef.current = message;
+	const jobRef = useRef<BatchJob | null>(null);
+	const templateNameRef = useRef("");
+	const templateVersionsRef = useRef<PipelineTemplate[]>([]);
 	const [job, setJob] = useState<BatchJob | null>(null);
 	const [templateName, setTemplateName] = useState("");
 	const [loading, setLoading] = useState(true);
@@ -191,6 +209,9 @@ export default function BatchJobDetailPage() {
 	const [pauseStopRunning, setPauseStopRunning] = useState(false);
 	const [subtaskNodeFilter, setSubtaskNodeFilter] =
 		useState<SubtaskNodeFilter | null>(null);
+	jobRef.current = job;
+	templateNameRef.current = templateName;
+	templateVersionsRef.current = templateVersions;
 
 	const refresh = useCallback(
 		async (opts?: { silent?: boolean }) => {
@@ -200,23 +221,41 @@ export default function BatchJobDetailPage() {
 			}
 			try {
 				const jobData = await getBatchJob(id);
-				const [templates, versions] = await Promise.all([
-					listPipelines({ pageSize: 200 })
-						.then((r) => r.items)
-						.catch(() => [] as PipelineTemplate[]),
-					listPipelineVersions(jobData.templateId).catch(
-						() => [] as PipelineTemplate[],
-					),
-				]);
-				setJob(jobData);
-				setTemplateVersions(versions);
+				setJob((current) => (sameValue(current, jobData) ? current : jobData));
 				getBatchNodeSummary(id)
-					.then(setNodeSummary)
-					.catch(() => setNodeSummary(null));
-				const template = templates.find(
-					(item) => item.id === jobData.templateId,
-				);
-				setTemplateName(template?.name ?? jobData.templateId);
+					.then((summary) =>
+						setNodeSummary((current) =>
+							sameValue(current, summary) ? current : summary,
+						),
+					)
+					.catch(() =>
+						setNodeSummary((current) => (current === null ? current : null)),
+					);
+				const shouldRefreshTemplateMeta =
+					!opts?.silent ||
+					jobRef.current?.templateId !== jobData.templateId ||
+					templateVersionsRef.current.length === 0 ||
+					!templateNameRef.current;
+				if (shouldRefreshTemplateMeta) {
+					const [templates, versions] = await Promise.all([
+						listPipelines({ pageSize: 200 })
+							.then((r) => r.items)
+							.catch(() => [] as PipelineTemplate[]),
+						listPipelineVersions(jobData.templateId).catch(
+							() => [] as PipelineTemplate[],
+						),
+					]);
+					setTemplateVersions((current) =>
+						sameValue(current, versions) ? current : versions,
+					);
+					const template = templates.find(
+						(item) => item.id === jobData.templateId,
+					);
+					const nextTemplateName = template?.name ?? jobData.templateId;
+					setTemplateName((current) =>
+						current === nextTemplateName ? current : nextTemplateName,
+					);
+				}
 			} catch (err) {
 				if (!opts?.silent) {
 					messageRef.current.error(`加载批次详情失败：${String(err)}`);

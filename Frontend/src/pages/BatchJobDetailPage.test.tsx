@@ -254,4 +254,29 @@ describe("BatchJobDetailPage", () => {
 			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 5_000),
 		).toHaveLength(1);
 	});
+
+	it("does not refetch template metadata on silent polling when template is unchanged", async () => {
+		const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+		renderBatchJobDetail();
+
+		expect(await screen.findByText("Batch 1")).toBeInTheDocument();
+		await waitFor(() => expect(mockGetBatchJob).toHaveBeenCalledTimes(1));
+		expect(mockListPipelines).toHaveBeenCalledTimes(1);
+		expect(mockListPipelineVersions).toHaveBeenCalledTimes(1);
+
+		const pollOnce = setIntervalSpy.mock.calls.find(
+			([, delay]) => delay === 5_000,
+		)?.[0];
+		expect(typeof pollOnce).toBe("function");
+		await act(async () => {
+			(pollOnce as TimerHandler as () => void)();
+			await Promise.resolve();
+		});
+
+		await waitFor(() => expect(mockGetBatchJob).toHaveBeenCalledTimes(2));
+		expect(mockGetBatchNodeSummary).toHaveBeenCalledTimes(2);
+		expect(mockListPipelines).toHaveBeenCalledTimes(1);
+		expect(mockListPipelineVersions).toHaveBeenCalledTimes(1);
+	});
 });
