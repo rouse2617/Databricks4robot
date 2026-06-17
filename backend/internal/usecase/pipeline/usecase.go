@@ -1198,8 +1198,10 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 	if !isMisclassifiedTerminalRunStatus(run.Status) && !isStaleWorkflowUnavailableMessage(run.Message) {
 		return
 	}
-	if isPendingBatchWorkflowCreation(run) && isStaleWorkflowUnavailableMessage(run.Message) {
+	if isPendingBatchWorkflowCreation(run) && shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
+		run.Status = "Pending"
 		run.Message = ""
+		run.FinishedAt = nil
 		uc.persistRunObservation(ctx, run)
 		return
 	}

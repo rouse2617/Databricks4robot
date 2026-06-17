@@ -17,8 +17,8 @@ import (
 )
 
 type pausedSyncRepo struct {
-	job   *models.BackfillJob
-	items []models.BackfillItem
+	job             *models.BackfillJob
+	items           []models.BackfillItem
 	findJobByIDHook func()
 }
 
@@ -242,6 +242,12 @@ func (syncTestWorkflowClient) SuspendWorkflow(context.Context, string, string) e
 func (syncTestWorkflowClient) ResumeWorkflow(context.Context, string, string) error    { return nil }
 func (syncTestWorkflowClient) TerminateWorkflow(context.Context, string, string) error { return nil }
 
+func TestMapRunStatusToItem_PreservesPending(t *testing.T) {
+	if got := mapRunStatusToItem("Pending"); got != "pending" {
+		t.Fatalf("Pending mapped to %q, want pending", got)
+	}
+}
+
 func TestSyncJobProgress_PausedStillUpdatesCounts(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-1"
@@ -264,9 +270,9 @@ func TestSyncJobProgress_PausedStillUpdatesCounts(t *testing.T) {
 	runRepo := &syncTestRunRepo{
 		byID: map[string]*models.PipelineRun{
 			runID: {
-				ID:           runID,
-				WorkflowName: "wf-1",
-				Status:       "Running",
+				ID:              runID,
+				WorkflowName:    "wf-1",
+				Status:          "Running",
 				ArgoWorkflowUID: "uid-1",
 			},
 		},

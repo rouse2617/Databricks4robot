@@ -222,6 +222,53 @@ func (uc *Usecase) CommitBatchSubtaskDeploy(ctx context.Context, runID string, d
 	return nil
 }
 
+// RecordBatchSubtaskFailure persists a preallocated batch subtask failure with
+// a durable message and event. This covers failures before an Argo workflow is
+// created, where normal watcher events will never arrive.
+func (uc *Usecase) RecordBatchSubtaskFailure(ctx context.Context, in BatchSubtaskRunInput) (string, string, error) {
+	if strings.TrimSpace(in.Status) == "" {
+		in.Status = "Failed"
+	}
+	runID, workflowName, err := uc.UpsertBatchSubtaskRun(ctx, in)
+	if err != nil {
+		return "", "", err
+	}
+	if uc.runRepo == nil {
+		return runID, workflowName, nil
+	}
+	run, err := uc.runRepo.FindByID(ctx, runID)
+	if err != nil || run == nil {
+		return runID, workflowName, err
+	}
+	if strings.TrimSpace(in.Message) != "" && strings.TrimSpace(run.Message) == "" {
+		run.Message = strings.TrimSpace(in.Message)
+		_ = uc.runRepo.Save(ctx, run)
+	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventFailed,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        firstNonEmpty(run.Message, "batch subtask failed before workflow creation"),
+		Reason:         strings.TrimSpace(in.Message),
+		IdempotencyKey: fmt.Sprintf("batch_subtask_failed:%s", run.ID),
+		Payload: map[string]interface{}{
+			"batchJobId": in.BatchJobID,
+			"assetId":    in.AssetID,
+		},
+	})
+	return runID, workflowName, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func batchSubtaskWorkflowName(pipelineName, assetID, runID string, unique bool) string {
 	suffix := strings.TrimSpace(assetID)
 	if len(suffix) > 12 {

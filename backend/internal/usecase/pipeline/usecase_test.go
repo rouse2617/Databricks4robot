@@ -1117,6 +1117,42 @@ func TestRefreshRunForList_ReconcilesMisclassifiedError(t *testing.T) {
 	}
 }
 
+func TestGetRun_ReconcilesNewBatchPlaceholderErrorToPending(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	finishedAt := time.Now().UTC()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-batch": {
+				ID:           "run-batch",
+				WorkflowName: "pipe-batch-asset123-runbatch",
+				Status:       "Error",
+				Message:      staleWorkflowTTLCleanupMessage,
+				BatchJobID:   &batchJobID,
+				CreatedAt:    time.Now().UTC(),
+				FinishedAt:   &finishedAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	run, err := uc.GetRun(ctx, "run-batch")
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run.Status != "Pending" {
+		t.Fatalf("status = %q, want Pending", run.Status)
+	}
+	if run.FinishedAt != nil {
+		t.Fatalf("finishedAt = %v, want nil", run.FinishedAt)
+	}
+}
+
 func TestGetRun_ReconcilesMisclassifiedError(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{

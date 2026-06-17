@@ -1,0 +1,26 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - -ceu
+      - |
+        docker buildx create --driver docker-container --use --name databrew-builder || docker buildx use databrew-builder
+        docker buildx inspect --bootstrap
+        docker buildx build \
+          --progress=plain \
+          --platform=linux/amd64 \
+          --cache-from=type=registry,ref=${_CACHE_IMAGE} \
+          --cache-to=type=registry,ref=${_CACHE_IMAGE},mode=max \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          -f Dockerfile \
+          -t ${_IMAGE} \
+          --push \
+          .
+
+substitutions:
+  _CACHE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:buildcache
+
+options:
+  machineType: E2_HIGHCPU_8

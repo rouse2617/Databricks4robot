@@ -395,7 +395,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 		if uc.pipelineUC != nil {
 			errMsg := err.Error()
 			if runID == "" {
-				runID, workflowName, _ = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+				runID, workflowName, _ = uc.pipelineUC.RecordBatchSubtaskFailure(ctx, pipelineUC.BatchSubtaskRunInput{
 					TemplateID:      templateID,
 					TemplateVersion: templateVersion,
 					BatchJobID:      jobID,
@@ -405,7 +405,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 					WorkflowName:    workflowName,
 				})
 			} else {
-				_, workflowName, _ = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
+				_, workflowName, _ = uc.pipelineUC.RecordBatchSubtaskFailure(ctx, pipelineUC.BatchSubtaskRunInput{
 					TemplateID:      templateID,
 					TemplateVersion: templateVersion,
 					BatchJobID:      jobID,
@@ -724,6 +724,7 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 	if err := uc.repo.PrepareItemsForRerun(ctx, itemIDs); err != nil {
 		return nil, err
 	}
+	scheduled := make([]models.BackfillItem, 0, len(runnable))
 	for i := range runnable {
 		if uc.pipelineUC == nil {
 			continue
@@ -742,19 +743,24 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 		}
 		retriedCount++
 		runnable[i].PipelineRunID = &runID
+		runnable[i].Status = "pending"
+		runnable[i].ErrorMessage = nil
+		runnable[i].StartedAt = nil
+		runnable[i].FinishedAt = nil
 		if wf := strings.TrimSpace(workflowName); wf != "" {
 			runnable[i].WorkflowName = &wf
 		}
 		_ = uc.repo.UpdateItemPipelineRun(ctx, runnable[i].ID, runID, workflowName, "pending")
+		scheduled = append(scheduled, runnable[i])
 	}
-	if len(runnable) > 0 {
+	if len(scheduled) > 0 {
 		if err := uc.repo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
 			return nil, err
 		}
 		if uc.pipelineUC != nil {
 			go func() {
 				slog.Info("Rerun: starting runItems", "jobID", jobID, "templateID", templateID)
-				uc.runItems(context.Background(), jobID, templateID, templateVersion, runnable, "pending")
+				uc.runItems(context.Background(), jobID, templateID, templateVersion, scheduled, "pending")
 			}()
 		}
 	}
@@ -1035,7 +1041,9 @@ func mapRunStatusToItem(runStatus string) string {
 		return "completed"
 	case "failed", "error":
 		return "failed"
-	case "running", "pending":
+	case "pending":
+		return "pending"
+	case "running":
 		return "running"
 	default:
 		return "running"

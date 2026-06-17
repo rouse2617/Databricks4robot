@@ -113,6 +113,61 @@ func TestUpsertBatchSubtaskRunForceNewAttemptCreatesFreshRun(t *testing.T) {
 	}
 }
 
+func TestRecordBatchSubtaskFailurePersistsMessageAndEvent(t *testing.T) {
+	t.Parallel()
+
+	const (
+		batchJobID = "job-1"
+		assetID    = "23324"
+		runID      = "run-1"
+		templateID = "tmpl-1"
+	)
+
+	runRepo := &mockRunRepo{byID: map[string]*models.PipelineRun{}}
+	eventRepo := &mockRunEventRepo{}
+	templateRepo := &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			templateID: {ID: templateID, Name: "pipe", Version: 1, NodeCount: 3, Scope: "dev"},
+		},
+	}
+
+	uc := New(templateRepo, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+	uc.SetRunEventRepo(eventRepo)
+
+	gotRunID, _, err := uc.RecordBatchSubtaskFailure(context.Background(), BatchSubtaskRunInput{
+		TemplateID:      templateID,
+		TemplateVersion: 1,
+		BatchJobID:      batchJobID,
+		AssetID:         assetID,
+		RunID:           runID,
+		Status:          "Failed",
+		Message:         "create workflow: permission denied",
+	})
+	if err != nil {
+		t.Fatalf("RecordBatchSubtaskFailure() error = %v", err)
+	}
+	if gotRunID != runID {
+		t.Fatalf("runID = %q, want %q", gotRunID, runID)
+	}
+	saved := runRepo.byID[runID]
+	if saved == nil {
+		t.Fatal("expected run to be saved")
+	}
+	if saved.Status != "Failed" {
+		t.Fatalf("status = %q, want Failed", saved.Status)
+	}
+	if saved.Message != "create workflow: permission denied" {
+		t.Fatalf("message = %q", saved.Message)
+	}
+	if len(eventRepo.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(eventRepo.events))
+	}
+	if eventRepo.events[0].EventType != runEventFailed {
+		t.Fatalf("event type = %q, want %q", eventRepo.events[0].EventType, runEventFailed)
+	}
+}
+
 func TestUpsertBatchSubtaskRunPreservesBoundWorkflowName(t *testing.T) {
 	t.Parallel()
 
