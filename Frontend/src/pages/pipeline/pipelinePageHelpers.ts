@@ -1,4 +1,4 @@
-import { type Edge, type Node, SelectType } from "@ant-design/pro-flow";
+import type { Edge, Node } from "@xyflow/react";
 import type {
 	PipelineComponentAPI,
 	PipelineComponentReleaseAPI,
@@ -10,6 +10,7 @@ import type {
 	Port,
 	RegisteredComponent,
 } from "../../components/pipeline/types";
+import { createPipelineNodeId } from "../../features/pipeline-designer/model/node-id";
 import { formatComponentImage as formatImage } from "../../lib/pipelineComponentDisplay";
 import { normalizeComponentArgs } from "../../lib/pipelineContract";
 
@@ -332,16 +333,13 @@ export function releaseToRegistered(
 	};
 }
 
-let nodeCounter = 0;
-
 export function createPipelineNode(
 	comp: RegisteredComponent,
 	x: number,
 	y: number,
 ): PipelineFlowNode {
-	nodeCounter += 1;
 	return {
-		id: `step-${nodeCounter}`,
+		id: createPipelineNodeId(),
 		type: "pipelineStep",
 		position: { x, y },
 		data: {
@@ -359,7 +357,14 @@ export function createPipelineNode(
 			disk: comp.disk || "",
 			gpu: comp.gpu || "",
 			computeTier: comp.computeTier || "",
-			selectType: SelectType.DEFAULT,
+			componentId: comp.componentId ?? comp.id,
+			releaseId: comp.releaseId,
+			componentVersionLabel: comp.releaseLabel ?? comp.tag,
 		},
 	};
+}
+
+/** @deprecated legacy counter kept for tests only */
+export function resetLegacyNodeCounterForTests(next = 0) {
+	void next;
 }
