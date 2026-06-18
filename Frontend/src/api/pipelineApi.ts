@@ -366,7 +366,10 @@ export function getPipelineRunByWorkflowName(
 }
 
 export function getPipelineRun(id: string): Promise<PipelineRun> {
-	return request<PipelineRun>("GET", `/pipeline-runs/${encodeURIComponent(id)}`);
+	return request<PipelineRun>(
+		"GET",
+		`/pipeline-runs/${encodeURIComponent(id)}`,
+	);
 }
 
 export function listPipelineRuns(options?: {

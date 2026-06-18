@@ -727,7 +727,9 @@ describe("DeployPanel", () => {
 		await waitFor(() => {
 			expect(mockListPipelineConfigs).toHaveBeenCalledTimes(1);
 		});
-		expect(screen.getByRole("combobox", { name: /选择已保存配置/i })).toBeTruthy();
+		expect(
+			screen.getByRole("combobox", { name: /选择已保存配置/i }),
+		).toBeTruthy();
 		expect(screen.getByText("还未选择平台配置")).toBeTruthy();
 	});
 
@@ -749,9 +751,7 @@ describe("DeployPanel", () => {
 		fireEvent.change(input, { target: { files: [file] } });
 
 		expect(await screen.findByText("runtime.yaml")).toBeTruthy();
-		expect(
-			screen.getByText(/本地文件仅作为本次 deploy 草稿/),
-		).toBeTruthy();
+		expect(screen.getByText(/本地文件仅作为本次 deploy 草稿/)).toBeTruthy();
 	});
 
 	it("shows inline editor summary and mount target", async () => {
@@ -778,7 +778,9 @@ describe("DeployPanel", () => {
 			target: { value: "effective.yaml" },
 		});
 
-		expect(await screen.findByText(/来源：在线编辑 · inline-config.yaml/)).toBeTruthy();
+		expect(
+			await screen.findByText(/来源：在线编辑 · inline-config.yaml/),
+		).toBeTruthy();
 		expect(
 			screen.getByText(/挂载到 \/workspace\/configs\/effective.yaml/),
 		).toBeTruthy();

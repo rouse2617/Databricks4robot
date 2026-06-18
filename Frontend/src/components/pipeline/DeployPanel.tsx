@@ -48,11 +48,11 @@ import {
 	type PipelineTemplate,
 	promotePipeline,
 } from "../../api/pipelineApi";
+import { request } from "../../api/pipelineClient";
 import {
 	type PipelineConfig,
 	pipelineConfigApi,
 } from "../../api/pipelineConfigs";
-import { request } from "../../api/pipelineClient";
 import { toAssetStyleId } from "../../lib/idDisplay";
 import { batchJobDetailLocationState } from "../../lib/pipelineNavigation";
 import AssetPicker, { type AssetPickerHandle } from "./AssetPicker";
@@ -503,13 +503,14 @@ export function DeployPanel({
 		useState<DeployConfigSourceMode>("saved");
 	const [savedConfigs, setSavedConfigs] = useState<PipelineConfig[]>([]);
 	const [savedConfigsLoading, setSavedConfigsLoading] = useState(false);
-	const [savedConfigsError, setSavedConfigsError] = useState<string | null>(null);
+	const [savedConfigsError, setSavedConfigsError] = useState<string | null>(
+		null,
+	);
 	const [selectedSavedConfigId, setSelectedSavedConfigId] = useState<
 		string | undefined
 	>();
-	const [uploadDraftFile, setUploadDraftFile] = useState<UploadDraftFile | null>(
-		null,
-	);
+	const [uploadDraftFile, setUploadDraftFile] =
+		useState<UploadDraftFile | null>(null);
 	const [inlineDraftName, setInlineDraftName] = useState("runtime-config.yaml");
 	const [inlineDraftContent, setInlineDraftContent] = useState("");
 	const [configMountPath, setConfigMountPath] = useState("/app/configs");
@@ -543,7 +544,8 @@ export function DeployPanel({
 	const displayTemplates = templates;
 	const selectedSavedConfig = useMemo(
 		() =>
-			savedConfigs.find((config) => config.id === selectedSavedConfigId) ?? null,
+			savedConfigs.find((config) => config.id === selectedSavedConfigId) ??
+			null,
 		[savedConfigs, selectedSavedConfigId],
 	);
 	const selectedConfigSummary = useMemo(() => {
@@ -836,7 +838,11 @@ export function DeployPanel({
 	};
 
 	useEffect(() => {
-		if (!assetModalOpen || configSourceMode !== "saved" || savedConfigsLoading) {
+		if (
+			!assetModalOpen ||
+			configSourceMode !== "saved" ||
+			savedConfigsLoading
+		) {
 			return;
 		}
 		if (savedConfigs.length > 0) {
@@ -862,7 +868,12 @@ export function DeployPanel({
 		return () => {
 			cancelled = true;
 		};
-	}, [assetModalOpen, configSourceMode, savedConfigs.length, savedConfigsLoading]);
+	}, [
+		assetModalOpen,
+		configSourceMode,
+		savedConfigs.length,
+		savedConfigsLoading,
+	]);
 
 	const handleUploadDraftChange = useCallback(
 		async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1541,7 +1552,9 @@ export function DeployPanel({
 						<Radio.Group
 							value={configSourceMode}
 							onChange={(event) =>
-								setConfigSourceMode(event.target.value as DeployConfigSourceMode)
+								setConfigSourceMode(
+									event.target.value as DeployConfigSourceMode,
+								)
 							}
 							optionType="button"
 							buttonStyle="solid"
@@ -1559,7 +1572,9 @@ export function DeployPanel({
 									value={selectedSavedConfigId}
 									onChange={(value) => {
 										setSelectedSavedConfigId(value);
-										const selected = savedConfigs.find((config) => config.id === value);
+										const selected = savedConfigs.find(
+											(config) => config.id === value,
+										);
 										if (selected && !configTargetFilename.trim()) {
 											setConfigTargetFilename(selected.name);
 										}
@@ -1635,7 +1650,9 @@ export function DeployPanel({
 									rows={8}
 									placeholder={"threshold: 0.82\nwindow: 5\n"}
 									value={inlineDraftContent}
-									onChange={(event) => setInlineDraftContent(event.target.value)}
+									onChange={(event) =>
+										setInlineDraftContent(event.target.value)
+									}
 								/>
 								<Alert
 									type="info"
@@ -1662,7 +1679,9 @@ export function DeployPanel({
 								aria-label="目标文件名"
 								placeholder="runtime-config.yaml"
 								value={configTargetFilename}
-								onChange={(event) => setConfigTargetFilename(event.target.value)}
+								onChange={(event) =>
+									setConfigTargetFilename(event.target.value)
+								}
 							/>
 						</div>
 						{selectedConfigSummary ? (

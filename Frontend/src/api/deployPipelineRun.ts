@@ -4,8 +4,8 @@ import {
 } from "../lib/batchAssetLimits";
 import { type BatchJob, createBatchJob } from "./batchJobApi";
 import {
-	type Deployment,
 	type DeployConfigSelection,
+	type Deployment,
 	deployTemplate,
 	normalizeDeployResults,
 } from "./pipelineApi";
