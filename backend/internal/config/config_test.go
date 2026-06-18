@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 )
@@ -43,5 +44,30 @@ func TestLoadArgoWorkflowTTLConfig(t *testing.T) {
 	cfg = Load()
 	if cfg.ArgoWorkflowTTLSecondsAfterCompletion != transpiler.DefaultTTLSecondsAfterCompletion {
 		t.Fatalf("expected default ttl fallback, got %d", cfg.ArgoWorkflowTTLSecondsAfterCompletion)
+	}
+}
+
+func TestLoadPipelineResourceGuardConfig(t *testing.T) {
+	t.Setenv("PIPELINE_RESOURCE_MAX_CPU", "8")
+	t.Setenv("PIPELINE_RESOURCE_MAX_MEMORY", "28Gi")
+	t.Setenv("PIPELINE_RESOURCE_MAX_DISK", "250Gi")
+	t.Setenv("PIPELINE_RESOURCE_MAX_GPU", "1")
+	t.Setenv("PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD", "7m")
+
+	cfg := Load()
+	if cfg.PipelineResourceMaxCPU != "8" ||
+		cfg.PipelineResourceMaxMemory != "28Gi" ||
+		cfg.PipelineResourceMaxDisk != "250Gi" ||
+		cfg.PipelineResourceMaxGPU != "1" {
+		t.Fatalf("unexpected resource guard config: %#v", cfg)
+	}
+	if got := cfg.PipelineUnschedulablePendingThresholdDuration(); got != 7*time.Minute {
+		t.Fatalf("unexpected pending threshold: %s", got)
+	}
+
+	t.Setenv("PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD", "invalid")
+	cfg = Load()
+	if got := cfg.PipelineUnschedulablePendingThresholdDuration(); got != 15*time.Minute {
+		t.Fatalf("expected default pending threshold, got %s", got)
 	}
 }

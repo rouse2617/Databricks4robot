@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/deliveryrules"
@@ -19,6 +20,7 @@ import (
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
@@ -28,8 +30,6 @@ import (
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
 	pipelineConfigUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
-	"log/slog"
-	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 )
 
 // ── Layer 2: Core business layer (repos + usecases + handlers) ──
@@ -110,6 +110,13 @@ func setupCore(inf *infra) *coreHandlers {
 	pipelineConfigRepo := postgres.NewPipelineConfigRepo(pg)
 	puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
+	puc.SetResourceGuardConfig(pipelineUC.ResourceGuardConfig{
+		MaxCPU:                        inf.cfg.PipelineResourceMaxCPU,
+		MaxMemory:                     inf.cfg.PipelineResourceMaxMemory,
+		MaxDisk:                       inf.cfg.PipelineResourceMaxDisk,
+		MaxGPU:                        inf.cfg.PipelineResourceMaxGPU,
+		UnschedulablePendingThreshold: inf.cfg.PipelineUnschedulablePendingThresholdDuration(),
+	})
 	puc.SetRunRepositories(executionTargetRepo, pipelineRunRepo, pipelineRunNodeRepo)
 	puc.SetRunEventRepo(pipelineRunEventRepo)
 	puc.SetObservabilityRepositories(pipelineRunAssetNodeRepo, pipelineRunNotificationRepo, pipelineRunWatcherStateRepo)

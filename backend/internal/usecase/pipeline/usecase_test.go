@@ -460,6 +460,57 @@ func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 	})
 }
 
+func TestDeploy_RejectsResourceAboveConfiguredCeiling(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "resource-guard-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "oversized",
+					"image": "busybox",
+					"resources": map[string]interface{}{
+						"cpu":    "14",
+						"memory": "55Gi",
+						"disk":   "50Gi",
+					},
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	repo := newMockAssetRepo()
+	uc := newUsecase(repo)
+	created := false
+	uc.wfClient = &mockWorkflowClient{
+		createWorkflowFn: func(context.Context, *wfv1.Workflow, string) error {
+			created = true
+			return nil
+		},
+	}
+	uc.SetResourceGuardConfig(ResourceGuardConfig{
+		MaxCPU:    "8",
+		MaxMemory: "28Gi",
+		MaxDisk:   "250Gi",
+		MaxGPU:    "1",
+	})
+
+	_, err := uc.Deploy(ctx, pipe, "", nil)
+	if err == nil {
+		t.Fatal("expected resource guard error, got nil")
+	}
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "cpu=14") || !strings.Contains(err.Error(), "cpu=8") {
+		t.Fatalf("expected cpu ceiling in error, got %v", err)
+	}
+	if created {
+		t.Fatal("expected workflow not to be created after resource guard failure")
+	}
+}
+
 func TestDeploy_IncludesRuntimeConfigMountAndEnv(t *testing.T) {
 	ctx := context.Background()
 	pipe := map[string]interface{}{
@@ -1769,6 +1820,132 @@ func TestRefreshRunForList_DerivesFailedStatusFromShutdownNode(t *testing.T) {
 	}
 }
 
+func TestRefreshRunForList_KeepsShortUnschedulablePendingActive(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-5 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				CreatedAt:    startedAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1", CreationTimestamp: metav1.Time{Time: startedAt}},
+			Status: wfv1.WorkflowStatus{
+				Phase:     wfv1.WorkflowRunning,
+				StartedAt: metav1.Time{Time: startedAt},
+				Nodes: map[string]wfv1.NodeStatus{
+					"node-1": {
+						ID:           "node-1",
+						Name:         "wf-1-step",
+						DisplayName:  "step",
+						Type:         wfv1.NodeTypePod,
+						Phase:        wfv1.NodePending,
+						Message:      "0/11 nodes are available: 1 Insufficient cpu.",
+						StartedAt:    metav1.Time{Time: startedAt},
+						TemplateName: "step",
+					},
+				},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetResourceGuardConfig(ResourceGuardConfig{UnschedulablePendingThreshold: 15 * time.Minute})
+	uc.now = func() time.Time { return now }
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("expected Running below threshold, got %q", run.Status)
+	}
+	if run.Message != "" {
+		t.Fatalf("expected no terminal message below threshold, got %q", run.Message)
+	}
+	if run.FinishedAt != nil {
+		t.Fatalf("expected no finished_at below threshold, got %v", run.FinishedAt)
+	}
+}
+
+func TestRefreshRunForList_MarksLongUnschedulablePendingError(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-20 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				CreatedAt:    startedAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1", CreationTimestamp: metav1.Time{Time: startedAt}},
+			Status: wfv1.WorkflowStatus{
+				Phase:     wfv1.WorkflowRunning,
+				StartedAt: metav1.Time{Time: startedAt},
+				Nodes: map[string]wfv1.NodeStatus{
+					"node-1": {
+						ID:           "node-1",
+						Name:         "wf-1-step",
+						DisplayName:  "step",
+						Type:         wfv1.NodeTypePod,
+						Phase:        wfv1.NodePending,
+						Message:      "0/11 nodes are available: 1 Insufficient cpu, 2 Insufficient memory.",
+						StartedAt:    metav1.Time{Time: startedAt},
+						TemplateName: "step",
+					},
+				},
+			},
+		}, nil
+	}
+	eventRepo := &mockRunEventRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+	uc.SetResourceGuardConfig(ResourceGuardConfig{UnschedulablePendingThreshold: 15 * time.Minute})
+	uc.now = func() time.Time { return now }
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != string(wfv1.WorkflowError) {
+		t.Fatalf("expected Error for over-threshold unschedulable run, got %q", run.Status)
+	}
+	if !strings.Contains(run.Message, "Insufficient cpu") || !strings.Contains(run.Message, "Pending 20m0s") {
+		t.Fatalf("expected scheduler diagnostics in message, got %q", run.Message)
+	}
+	if run.FinishedAt == nil || !run.FinishedAt.Equal(now) {
+		t.Fatalf("expected finished_at %v, got %v", now, run.FinishedAt)
+	}
+	foundEvent := false
+	for _, event := range eventRepo.events {
+		if event.EventType == runEventFailed && event.Reason == "unschedulable" {
+			foundEvent = true
+			break
+		}
+	}
+	if !foundEvent {
+		t.Fatalf("expected unschedulable run_failed event, got %#v", eventRepo.events)
+	}
+}
+
 func TestRefreshRunForList_DoesNotAdvanceFinishedAtOnStaleMessageReconcile(t *testing.T) {
 	ctx := context.Background()
 	correctFinish := time.Date(2026, 6, 16, 9, 39, 43, 0, time.UTC)
@@ -1807,6 +1984,36 @@ func TestRefreshRunForList_DoesNotAdvanceFinishedAtOnStaleMessageReconcile(t *te
 	}
 	if !run.FinishedAt.Equal(correctFinish) {
 		t.Fatalf("expected finished_at %v, got %v", correctFinish, *run.FinishedAt)
+	}
+}
+
+func TestPersistRunObservation_ActiveToTerminalOverwritesStaleFinishedAt(t *testing.T) {
+	ctx := context.Background()
+	staleFinish := time.Date(2026, 6, 17, 12, 18, 55, 0, time.UTC)
+	terminalFinish := time.Date(2026, 6, 18, 4, 43, 39, 0, time.UTC)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:         "run-1",
+				Status:     "Running",
+				FinishedAt: &staleFinish,
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	observed := &models.PipelineRun{
+		ID:         "run-1",
+		Status:     string(wfv1.WorkflowError),
+		Message:    "Kubernetes 调度失败",
+		FinishedAt: &terminalFinish,
+	}
+	uc.persistRunObservation(ctx, observed)
+
+	got := runRepo.byID["run-1"]
+	if got.FinishedAt == nil || !got.FinishedAt.Equal(terminalFinish) {
+		t.Fatalf("expected active-to-terminal finished_at %v, got %v", terminalFinish, got.FinishedAt)
 	}
 }
 

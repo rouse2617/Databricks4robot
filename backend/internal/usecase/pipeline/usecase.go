@@ -58,6 +58,8 @@ type Usecase struct {
 	wfClient                argo.WorkflowClient
 	namespace               string
 	pricing                 *PricingConfig
+	resourceGuard           ResourceGuardConfig
+	now                     func() time.Time
 	workflowTTLSecondsAfter int32
 }
 
@@ -1514,12 +1516,18 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 	}
 	message := wf.Status.Message
 	finishedAt := argoTimeOrZero(wf.Status.FinishedAt.Time)
+	derivedUnschedulable := false
 	if derivedStatus, derivedMessage, derivedFinishedAt, ok := deriveTerminalRunFromWorkflowNodes(wf); ok {
 		status = derivedStatus
 		message = derivedMessage
 		if derivedFinishedAt != nil {
 			finishedAt = derivedFinishedAt
 		}
+	} else if derivedStatus, derivedMessage, derivedFinishedAt, ok := uc.deriveUnschedulableRunFromWorkflow(run, wf); ok {
+		status = derivedStatus
+		message = derivedMessage
+		finishedAt = derivedFinishedAt
+		derivedUnschedulable = true
 	}
 	run.Status = status
 	if string(wf.UID) != "" {
@@ -1545,6 +1553,22 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 			now := time.Now().UTC()
 			run.FinishedAt = &now
 		}
+	}
+	if derivedUnschedulable {
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      runEventFailed,
+			SubjectType:    "run",
+			SubjectID:      run.ID,
+			Status:         run.Status,
+			Message:        run.Message,
+			Reason:         "unschedulable",
+			OccurredAt:     ptrTimeOrNow(finishedAt),
+			IdempotencyKey: fmt.Sprintf("run_unschedulable:%s", run.ID),
+			Payload: map[string]interface{}{
+				"workflowName": run.WorkflowName,
+				"namespace":    run.ArgoNamespace,
+			},
+		})
 	}
 	uc.persistRunObservation(ctx, run)
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
@@ -1595,11 +1619,12 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 		logPipelineSideEffect("save pipeline run observation", uc.runRepo.Save(ctx, run))
 		return
 	}
+	existingWasActive := isActiveDeploymentStatus(existing.Status)
 	existing.Status = run.Status
 	if isActiveDeploymentStatus(run.Status) {
 		existing.FinishedAt = nil
 	} else if run.FinishedAt != nil && !run.FinishedAt.IsZero() {
-		if existing.FinishedAt == nil || existing.FinishedAt.IsZero() || run.FinishedAt.Before(*existing.FinishedAt) {
+		if existingWasActive || existing.FinishedAt == nil || existing.FinishedAt.IsZero() || run.FinishedAt.Before(*existing.FinishedAt) {
 			existing.FinishedAt = run.FinishedAt
 		}
 	}
@@ -2242,6 +2267,9 @@ func (uc *Usecase) Deploy(
 	targetNamespace := target.Namespace
 	if targetNamespace == "" {
 		targetNamespace = uc.namespace
+	}
+	if err := uc.validateResourceCeilings(pipe, target); err != nil {
+		return nil, err
 	}
 
 	normalizedAssetIDs, err := uc.validateDeployAssetIDs(ctx, assetIDs, opts...)

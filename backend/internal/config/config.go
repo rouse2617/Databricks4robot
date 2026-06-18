@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -132,8 +133,13 @@ type Config struct {
 	OpenLineageTimeoutMs      string
 
 	// Argo Workflows
-	ArgoWorkflowsNamespace              string
+	ArgoWorkflowsNamespace                string
 	ArgoWorkflowTTLSecondsAfterCompletion int32
+	PipelineResourceMaxCPU                string
+	PipelineResourceMaxMemory             string
+	PipelineResourceMaxDisk               string
+	PipelineResourceMaxGPU                string
+	PipelineUnschedulablePendingThreshold string
 
 	// DeliveryEligibilityProjector
 	DeliveryEligibilityProjectorEnabled string
@@ -227,14 +233,30 @@ func Load() *Config {
 		OpenLineageNamespace:      getenv("OPENLINEAGE_NAMESPACE", ""),
 		OpenLineageProducer:       getenv("OPENLINEAGE_PRODUCER", ""),
 		OpenLineageTimeoutMs:      getenv("OPENLINEAGE_TIMEOUT_MS", ""),
-		ArgoWorkflowsNamespace: getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
+		ArgoWorkflowsNamespace:    getenv("ARGO_WORKFLOWS_NAMESPACE", "argo"),
 		ArgoWorkflowTTLSecondsAfterCompletion: getenvInt32(
 			"ARGO_WORKFLOW_TTL_SECONDS_AFTER_COMPLETION",
 			transpiler.DefaultTTLSecondsAfterCompletion,
 		),
+		PipelineResourceMaxCPU:                getenv("PIPELINE_RESOURCE_MAX_CPU", ""),
+		PipelineResourceMaxMemory:             getenv("PIPELINE_RESOURCE_MAX_MEMORY", ""),
+		PipelineResourceMaxDisk:               getenv("PIPELINE_RESOURCE_MAX_DISK", ""),
+		PipelineResourceMaxGPU:                getenv("PIPELINE_RESOURCE_MAX_GPU", ""),
+		PipelineUnschedulablePendingThreshold: getenv("PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD", "15m"),
 
 		PricingConfigPath: getenv("PRICING_CONFIG_PATH", ""),
 	}
+}
+
+func (c *Config) PipelineUnschedulablePendingThresholdDuration() time.Duration {
+	if c == nil {
+		return 15 * time.Minute
+	}
+	d, err := time.ParseDuration(c.PipelineUnschedulablePendingThreshold)
+	if err != nil || d < 0 {
+		return 15 * time.Minute
+	}
+	return d
 }
 
 // AdminRoutesEnabled reports whether privileged admin/internal HTTP routes are mounted.

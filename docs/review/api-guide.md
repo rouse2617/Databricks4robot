@@ -2296,7 +2296,9 @@ curl -X POST "$BASE/api/v1/pipeline-components" \
 # 响应: 201 + Component 对象
 # 必填字段: name, type(container|script|resource|suspend), image
 # resources.gpu 会在部署时映射为 Argo/Kubernetes `limits.nvidia.com/gpu`；
-# resources.computeTier 是 DataBrew 调度、配额、成本策略使用的元数据，当前不强制选择节点池。
+# resources.computeTier 是 DataBrew 调度、配额、成本策略使用的元数据。
+# 部署/运行/批量任务下发时，后端会按当前执行目标的资源上限校验 cpu/memory/disk/gpu；
+# 超出 dev 能力会返回 400/invalid argument，提示最大可用规格并拒绝创建 Argo Workflow。
 
 # 获取组件详情
 curl -s "$BASE/api/v1/pipeline-components/<ID>" \
