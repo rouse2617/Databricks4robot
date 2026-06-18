@@ -7127,6 +7127,7 @@ paths:
                 name: { type: string, description: Job name }
                 templateId: { type: string, description: Pipeline template ID }
                 templateVersion: { type: integer, description: Optional template version lock }
+                targetId: { type: string, description: Optional execution target ID/name used for each materialized pipeline run }
                 pilotCount: { type: integer, description: Optional pilot gate size }
                 assetIds:
                   type: array

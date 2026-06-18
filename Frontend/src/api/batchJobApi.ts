@@ -24,6 +24,7 @@ export interface CreateBatchJobRequest {
 	name: string;
 	templateId: string;
 	assetIds: string[];
+	targetId?: string;
 	templateVersion?: number;
 	pilotCount?: number;
 	configSelection?: DeployConfigSelection;

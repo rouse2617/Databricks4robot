@@ -31,6 +31,7 @@ describe("deployPipelineForAssets", () => {
 
 		const result = await deployPipelineForAssets("tpl-1", ["a1", "a2"], {
 			batchName: "demo-batch",
+			targetId: "video-proc-dev",
 		});
 
 		expect(result.mode).toBe("batch");
@@ -38,6 +39,7 @@ describe("deployPipelineForAssets", () => {
 			name: "demo-batch",
 			templateId: "tpl-1",
 			assetIds: ["a1", "a2"],
+			targetId: "video-proc-dev",
 		});
 		expect(mockDeployTemplate).not.toHaveBeenCalled();
 	});
@@ -51,6 +53,7 @@ describe("deployPipelineForAssets", () => {
 		expect(mockDeployTemplate).toHaveBeenCalledWith(
 			"tpl-1",
 			["a1"],
+			undefined,
 			undefined,
 			undefined,
 		);

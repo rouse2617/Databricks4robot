@@ -35,6 +35,7 @@ export async function deployPipelineForAssets(
 			name: options?.batchName ?? `batch-${stamp}`,
 			templateId,
 			assetIds,
+			targetId: options?.targetId,
 			templateVersion: options?.version,
 			configSelection: options?.configSelection,
 		});

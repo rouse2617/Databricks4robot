@@ -53,6 +53,7 @@ func (uc *Usecase) SetResultRepositories(resultRepo repository.BackfillResultRep
 }
 
 type CreateBackfillOptions struct {
+	TargetID        string
 	TemplateVersion int
 	PilotCount      int
 	ConfigSelection *pipelineUC.RuntimeConfigSelection
@@ -126,18 +127,23 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 		Status:          status,
 		CreatedAt:       time.Now().UTC(),
 	}
+	filterJSON := map[string]interface{}{}
+	if targetID := strings.TrimSpace(options.TargetID); targetID != "" {
+		filterJSON["targetId"] = targetID
+	}
 	if options.ConfigSelection != nil {
-		job.FilterJSON = map[string]interface{}{
-			"configSelection": map[string]interface{}{
-				"mode":           options.ConfigSelection.Mode,
-				"configId":       options.ConfigSelection.ConfigID,
-				"version":        options.ConfigSelection.Version,
-				"fileName":       options.ConfigSelection.FileName,
-				"content":        options.ConfigSelection.Content,
-				"mountPath":      options.ConfigSelection.MountPath,
-				"targetFilename": options.ConfigSelection.TargetFilename,
-			},
+		filterJSON["configSelection"] = map[string]interface{}{
+			"mode":           options.ConfigSelection.Mode,
+			"configId":       options.ConfigSelection.ConfigID,
+			"version":        options.ConfigSelection.Version,
+			"fileName":       options.ConfigSelection.FileName,
+			"content":        options.ConfigSelection.Content,
+			"mountPath":      options.ConfigSelection.MountPath,
+			"targetFilename": options.ConfigSelection.TargetFilename,
 		}
+	}
+	if len(filterJSON) > 0 {
+		job.FilterJSON = filterJSON
 	}
 
 	assetIDsCopy := append([]string(nil), assetIDs...)
@@ -400,6 +406,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 		PreallocatedRunID:  runID,
 	}
 	if job != nil && job.FilterJSON != nil {
+		deployOpts.TargetID = stringFromBackfillFilter(job.FilterJSON, "targetId", "target_id", "executionTargetId", "execution_target_id")
 		if configRaw, ok := job.FilterJSON["configSelection"]; ok {
 			if selection := decodeRuntimeConfigSelection(configRaw); selection != nil {
 				deployOpts.ConfigSelection = selection
@@ -457,6 +464,19 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	}
 	_ = uc.syncJobProgress(ctx, jobID)
 	return nil
+}
+
+func stringFromBackfillFilter(values map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := values[key]
+		if !ok {
+			continue
+		}
+		if value := strings.TrimSpace(fmt.Sprint(raw)); value != "" && value != "<nil>" {
+			return value
+		}
+	}
+	return ""
 }
 
 func decodeRuntimeConfigSelection(raw interface{}) *pipelineUC.RuntimeConfigSelection {

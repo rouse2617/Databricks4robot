@@ -74,3 +74,18 @@ The system SHALL expose only platform-approved runtime mount resources that are 
 - **When** the user deploys a pipeline referencing that resource
 - **Then** DataBrew rejects the deployment before workflow creation
 - **And** the error message identifies the target compatibility issue
+
+### Requirement: Batch pipeline runs preserve execution target selection
+The system SHALL preserve the execution target selected when creating a batch pipeline job and apply it to every materialized child pipeline run.
+
+**Priority**: P0 (Critical)
+**Rationale**: Batch jobs can be created long before individual items materialize. If the target is not persisted with the batch job, child runs silently fall back to the default namespace and can miss target-specific GPU scheduling, secret mounts, and quota policy.
+
+#### Scenario: User creates a batch job for a non-default execution target
+- **Given** the user selects a saved pipeline template
+- **And** the user selects the `video-proc-dev` execution target
+- **And** the user provides multiple asset or video IDs
+- **When** the user creates the batch job
+- **Then** DataBrew stores the selected execution target with the batch job
+- **And** every child pipeline run created from that batch job uses the selected execution target instead of the default target
+- **And** target-specific runtime mounts and scheduling defaults remain available during workflow creation

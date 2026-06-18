@@ -3162,8 +3162,10 @@ curl -i "$BASE/api/v1/workflows/<WORKFLOW_NAME>/logs" \
 
 ## Pipeline Batch M1
 
-创建 batch 可锁定模板版本，并可指定 pilot 试跑数量。`assetIds` 单批上限为
-10,000；超过上限返回 `400 INVALID_ARGUMENT`。
+创建 batch 可锁定模板版本、执行目标，并可指定 pilot 试跑数量。`targetId`
+会保存到 batch job 的 filter JSON，并在每个子任务 materialize / deploy 时透传给
+pipeline run；省略时使用默认执行目标。`assetIds` 单批上限为 10,000；超过上限返回
+`400 INVALID_ARGUMENT`。
 
 ```bash
 curl -X POST "$BASE/api/v1/backfill" \
@@ -3173,6 +3175,7 @@ curl -X POST "$BASE/api/v1/backfill" \
     "name": "daily-batch",
     "templateId": "tpl-123",
     "templateVersion": 4,
+    "targetId": "video-proc-dev",
     "pilotCount": 50,
     "assetIds": ["asset-1", "asset-2"],
     "configSelection": {

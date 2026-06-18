@@ -29,6 +29,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		Name            string   `json:"name" binding:"required"`
 		TemplateID      string   `json:"templateId" binding:"required"`
 		AssetIDs        []string `json:"assetIds" binding:"required,min=1"`
+		TargetID        string   `json:"targetId,omitempty"`
 		TemplateVersion int      `json:"templateVersion,omitempty"`
 		PilotCount      int      `json:"pilotCount,omitempty"`
 		Config          *struct {
@@ -47,6 +48,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 	}
 
 	job, err := h.uc.CreateBackfill(c.Request.Context(), req.Name, req.TemplateID, req.AssetIDs, uc.CreateBackfillOptions{
+		TargetID:        req.TargetID,
 		TemplateVersion: req.TemplateVersion,
 		PilotCount:      req.PilotCount,
 		ConfigSelection: func() *pipelineUC.RuntimeConfigSelection {

@@ -236,6 +236,7 @@ func TestCreateBackfill_PersistsConfigSelectionInFilterJSON(t *testing.T) {
 	job, err := uc.CreateBackfill(context.Background(), "batch", "tpl-1", []string{
 		"asset-1",
 	}, CreateBackfillOptions{
+		TargetID: "video-proc-dev",
 		ConfigSelection: &pipelineUC.RuntimeConfigSelection{
 			Mode:           "inline",
 			FileName:       "runtime-config.yaml",
@@ -256,6 +257,18 @@ func TestCreateBackfill_PersistsConfigSelectionInFilterJSON(t *testing.T) {
 	}
 	if raw["mode"] != "inline" || raw["targetFilename"] != "effective.yaml" {
 		t.Fatalf("unexpected configSelection payload %#v", raw)
+	}
+	if got := job.FilterJSON["targetId"]; got != "video-proc-dev" {
+		t.Fatalf("expected targetId to be persisted, got %#v", got)
+	}
+}
+
+func TestStringFromBackfillFilterAcceptsTargetAliases(t *testing.T) {
+	values := map[string]interface{}{
+		"target_id": " video-proc-dev ",
+	}
+	if got := stringFromBackfillFilter(values, "targetId", "target_id"); got != "video-proc-dev" {
+		t.Fatalf("expected target alias to resolve, got %q", got)
 	}
 }
 
