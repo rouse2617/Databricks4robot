@@ -65,3 +65,8 @@
 - **Decision**: Do not start another browser regression pass in this handoff. Keep the existing Chrome MCP evidence for the execution detail rendering and run scoped local checks on the staged files before commit.
 - **Alternatives**: Repeat full CF browser regression and run full all-files pre-commit.
 - **Rationale**: Backend revision `00916-kxz` was already deployed and API-smoked, and the current worktree contains unrelated `site/` generated artifact churn that should not be swept into this commit.
+## 2026-06-19 — Avoid active workflow NotFound ttl misclassification
+- **Context**: A UI-created `video-proc-dev` batch run was actively running in Argo, but the pipeline list marked it as `Error` with `Argo 工作流已被 TTL 清理` after a transient `NotFound` lookup.
+- **Decision**: Preserve active pipeline runs as running when Argo lookup returns `NotFound` but no terminal ledger proves completion/failure, until the normal stale-active-run limit is reached. Also keep the short workflow creation visibility grace period independent of workflow UID.
+- **Alternatives**: Increase the global unschedulable threshold or disable list refresh. Both would hide unrelated diagnostics and would not address transient workflow visibility.
+- **Rationale**: The authoritative workflow and pods were still running in `video-proc-dev`; list refresh should not persist a terminal TTL state for an active run just because one Argo lookup temporarily failed.

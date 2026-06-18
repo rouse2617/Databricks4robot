@@ -1703,6 +1703,14 @@ func (uc *Usecase) markRunWorkflowNotFound(ctx context.Context, run *models.Pipe
 	if uc.reconcileTerminalRunFromLedger(ctx, run) {
 		return
 	}
+	if shouldPreserveActiveWorkflowNotFound(run, uc.nowUTC()) {
+		if isStaleWorkflowUnavailableMessage(run.Message) {
+			run.Message = ""
+		}
+		run.FinishedAt = nil
+		uc.persistRunObservation(ctx, run)
+		return
+	}
 	if isPendingBatchWorkflowCreation(run) {
 		if isStaleWorkflowUnavailableMessage(run.Message) {
 			run.Message = ""
@@ -1717,6 +1725,34 @@ func (uc *Usecase) markRunWorkflowNotFound(ctx context.Context, run *models.Pipe
 	run.Status = deploymentStatusExpired
 	run.Message = workflowUnavailableMessage(run)
 	uc.persistRunObservation(ctx, run)
+}
+
+func shouldPreserveActiveWorkflowNotFound(run *models.PipelineRun, now time.Time) bool {
+	if run == nil || !isActiveDeploymentStatus(run.Status) {
+		return false
+	}
+	return runAgeWithinStaleLimit(run, now)
+}
+
+func shouldReviveMisclassifiedWorkflowNotFound(run *models.PipelineRun, now time.Time) bool {
+	if run == nil || !isMisclassifiedTerminalRunStatus(run.Status) || !isStaleWorkflowUnavailableMessage(run.Message) {
+		return false
+	}
+	return runAgeWithinStaleLimit(run, now)
+}
+
+func runAgeWithinStaleLimit(run *models.PipelineRun, now time.Time) bool {
+	if run == nil {
+		return false
+	}
+	ref := run.CreatedAt
+	if run.StartedAt != nil && !run.StartedAt.IsZero() {
+		ref = *run.StartedAt
+	}
+	if ref.IsZero() {
+		return false
+	}
+	return now.Sub(ref) < staleActiveRunMaxAge
 }
 
 func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *models.PipelineRun) {
@@ -1742,6 +1778,17 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 	}
 	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil || wf == nil {
+		if errors.Is(err, argo.ErrNotFound) {
+			if uc.reconcileTerminalRunFromLedger(ctx, run) {
+				return
+			}
+			if shouldReviveMisclassifiedWorkflowNotFound(run, uc.nowUTC()) {
+				run.Status = string(wfv1.WorkflowRunning)
+				run.Message = ""
+				run.FinishedAt = nil
+				uc.persistRunObservation(ctx, run)
+			}
+		}
 		return
 	}
 	uc.applyWorkflowToRun(ctx, run, wf)
@@ -3195,9 +3242,6 @@ func shouldWaitForWorkflowCreation(run *models.PipelineRun, now time.Time) bool 
 		return true
 	}
 	if !isActiveDeploymentStatus(run.Status) {
-		return false
-	}
-	if strings.TrimSpace(run.ArgoWorkflowUID) != "" {
 		return false
 	}
 	if run.CreatedAt.IsZero() {

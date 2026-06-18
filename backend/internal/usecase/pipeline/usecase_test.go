@@ -1844,6 +1844,48 @@ func TestRefreshRunStatus_PlaceholderWithStaleTTLMessageStaysPending(t *testing.
 	}
 }
 
+func TestRefreshRunStatus_KeepsActiveRunWithWorkflowUIDActiveOnNotFound(t *testing.T) {
+	ctx := context.Background()
+	createdAt := time.Now().UTC().Add(-10 * time.Minute)
+	batchJobID := "batch-1"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:              "run-1",
+				WorkflowName:    "wf-video-proc",
+				Status:          "Running",
+				ArgoNamespace:   "video-proc-dev",
+				ArgoWorkflowUID: "uid-1",
+				Message:         staleWorkflowTTLCleanupMessage,
+				BatchJobID:      &batchJobID,
+				CreatedAt:       createdAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-video-proc" || namespace != "video-proc-dev" {
+			t.Fatalf("unexpected workflow lookup name=%q namespace=%q", name, namespace)
+		}
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	uc.refreshRunStatus(ctx, runRepo.byID["run-1"])
+
+	run := runRepo.byID["run-1"]
+	if run.Status != "Running" {
+		t.Fatalf("expected active run to stay Running, got %q", run.Status)
+	}
+	if run.Message != "" {
+		t.Fatalf("expected stale TTL message cleared for active run, got %q", run.Message)
+	}
+	if run.FinishedAt != nil {
+		t.Fatalf("expected active run to remain unfinished, got %v", run.FinishedAt)
+	}
+}
+
 func TestRefreshRunForList_ReconcilesMisclassifiedError(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
@@ -1873,6 +1915,45 @@ func TestRefreshRunForList_ReconcilesMisclassifiedError(t *testing.T) {
 	uc.RefreshRunForList(ctx, run)
 	if run.Status != "Running" {
 		t.Fatalf("expected reconciled Running status, got %q", run.Status)
+	}
+}
+
+func TestRefreshRunForList_RevivesRecentTTLNotFoundMisclassification(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:              "run-1",
+				WorkflowName:    "wf-1",
+				Status:          "Error",
+				Message:         staleWorkflowTTLCleanupMessage,
+				ArgoNamespace:   "video-proc-dev",
+				ArgoWorkflowUID: "uid-1",
+				CreatedAt:       time.Now().UTC().Add(-20 * time.Minute),
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-1" || namespace != "video-proc-dev" {
+			t.Fatalf("unexpected workflow lookup name=%q namespace=%q", name, namespace)
+		}
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetObservabilityRepositories(&mockAssetNodeRepo{}, nil, nil)
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != "Running" {
+		t.Fatalf("expected revived Running status, got %q", run.Status)
+	}
+	if run.Message != "" {
+		t.Fatalf("expected stale TTL message cleared, got %q", run.Message)
+	}
+	if run.FinishedAt != nil {
+		t.Fatalf("expected revived run to be unfinished, got %v", run.FinishedAt)
 	}
 }
 
