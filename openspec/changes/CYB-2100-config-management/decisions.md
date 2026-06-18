@@ -57,3 +57,15 @@
 - **Decision**: Deployed backend-dev revision `cyber-databrew-backend-dev-00896-cp5`, verified browser request/response on local frontend against Cloud Run dev, fixed a dropped `ConfigSelection` bug, then added dev RBAC for request-scoped runtime ConfigMaps and re-verified via Workflow and Pod specs.
 - **Alternatives**: Treat returned workflow manifest as sufficient proof without checking live cluster resources.
 - **Rationale**: Browser evidence plus actual Workflow/Pod YAML confirms the runtime path end-to-end: request body, manifest projection, Kubernetes `ConfigMap` volume, `subPath` mount, and injected env vars.
+
+## 2026-06-18 — Pipeline designer local UI verification fallback
+- **Context**: The pipeline designer text-density polish touches `Frontend/`, and the local frontend is running on port `2617` against the dev backend.
+- **Decision**: Chrome DevTools MCP was retried and still failed with `Transport closed`; use local Playwright browser checks and screenshots as the UI verification fallback for this local preview iteration.
+- **Alternatives**: Stop until a working Chrome MCP context is available, or ask the user to manually inspect only.
+- **Rationale**: Playwright still exercises the real browser UI against the local dev server and gives concrete screenshots/DOM checks while preserving the MCP blocker in the decision log.
+
+## 2026-06-18 — Commit after local UI verification
+- **Context**: The user explicitly approved committing this frontend-only pipeline designer polish after rebasing onto the updated `dev` branch.
+- **Decision**: Commit the change after local frontend verification on port `2617` against the dev backend, without a Cloud Run frontend deploy in this iteration.
+- **Alternatives**: Build and deploy a frontend Cloud Run dev revision before committing.
+- **Rationale**: This is a narrow visual/text-density adjustment with no API contract change; local browser smoke, scoped Biome, related Vitest tests, and production build already passed. The deploy gap is recorded here rather than hidden.

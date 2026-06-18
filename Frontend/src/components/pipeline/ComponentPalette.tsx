@@ -1,6 +1,8 @@
-import { Alert, Button, Input, Spin } from "antd";
+import { CopyOutlined } from "@ant-design/icons";
+import { Alert, Button, Input, message, Spin, Tooltip } from "antd";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { componentPaletteMeta } from "./componentDisplay";
 import { PipelineEmptyState } from "./PipelineEmptyState";
 import type { RegisteredComponent } from "./types";
 
@@ -12,6 +14,15 @@ interface Props {
 	error?: string | null;
 	onRetry?: () => void;
 	disabled?: boolean;
+}
+
+async function copyImageReference(image: string) {
+	try {
+		await navigator.clipboard.writeText(image);
+		message.success("已复制镜像地址");
+	} catch {
+		message.error("复制失败");
+	}
 }
 
 export function ComponentPalette({
@@ -92,28 +103,56 @@ export function ComponentPalette({
 					style={{ marginBottom: 8 }}
 				/>
 			) : null}
-			{filteredComponents.map((c) => (
-				<button
-					key={c.id}
-					type="button"
-					className="palette-item"
-					draggable={!interactionDisabled}
-					disabled={interactionDisabled}
-					aria-label={`添加组件 ${c.name}`}
-					title={
-						disabled ? "只读模式不可添加组件" : "点击添加到画布，也可以拖拽放置"
-					}
-					onDragStart={
-						interactionDisabled ? undefined : (e) => onDragStart(e, c)
-					}
-					onClick={interactionDisabled ? undefined : () => onAddComponent?.(c)}
-				>
-					<div className="pi-content">
-						<div className="pi-label">{c.name}</div>
-						<div className="pi-image">{c.image}</div>
+			{filteredComponents.map((c) => {
+				const meta = componentPaletteMeta(c);
+				return (
+					<div
+						key={c.id}
+						className={`palette-item ${interactionDisabled ? "is-disabled" : ""}`}
+						title={
+							disabled
+								? "只读模式不可添加组件"
+								: `${meta.title}\n\n点击添加到画布，也可以拖拽放置`
+						}
+					>
+						<button
+							type="button"
+							className="palette-card-main"
+							draggable={!interactionDisabled}
+							disabled={interactionDisabled}
+							aria-label={`添加组件 ${c.name}`}
+							onDragStart={
+								interactionDisabled ? undefined : (e) => onDragStart(e, c)
+							}
+							onClick={
+								interactionDisabled ? undefined : () => onAddComponent?.(c)
+							}
+						>
+							<div className="pi-content">
+								<div className="pi-label">{c.name}</div>
+								{meta.subtitle ? (
+									<div className="pi-subtitle">{meta.subtitle}</div>
+								) : null}
+							</div>
+						</button>
+						{c.image ? (
+							<Tooltip title="复制完整镜像地址">
+								<button
+									type="button"
+									className="palette-copy"
+									aria-label={`复制组件 ${c.name} 镜像地址`}
+									onClick={(event) => {
+										event.stopPropagation();
+										void copyImageReference(c.image);
+									}}
+								>
+									<CopyOutlined />
+								</button>
+							</Tooltip>
+						) : null}
 					</div>
-				</button>
-			))}
+				);
+			})}
 			{!loading && components.length === 0 ? (
 				<PipelineEmptyState
 					variant="palette"

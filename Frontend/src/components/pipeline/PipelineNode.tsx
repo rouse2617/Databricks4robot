@@ -1,5 +1,8 @@
+import { CopyOutlined } from "@ant-design/icons";
 import { Handle, type Node, type NodeProps, Position } from "@xyflow/react";
+import { message, Tooltip } from "antd";
 import { memo } from "react";
+import { imageIdentity } from "./componentDisplay";
 import type { PipelineNodeData, Port } from "./types";
 
 const DEFAULT_INPUTS: Port[] = [{ name: "input", type: "asset" }];
@@ -14,14 +17,24 @@ function handleTop(index: number, total: number) {
 	return `${Math.round(((index + 1) / (total + 1)) * 100)}%`;
 }
 
+async function copyImageReference(image: string) {
+	try {
+		await navigator.clipboard.writeText(image);
+		message.success("已复制镜像地址");
+	} catch {
+		message.error("复制失败");
+	}
+}
+
 function PipelineStepNodeInner({
 	data,
 	selected,
 }: NodeProps<Node<PipelineNodeData>>) {
 	const label = data.label || "未命名步骤";
-	const versionHint = data.componentVersionLabel
-		? ` · ${data.componentVersionLabel}`
-		: "";
+	const image = imageIdentity(data.image || "");
+	const versionHint = data.componentVersionLabel || image.version;
+	const imageLabel =
+		image.repository && image.repository !== label ? image.repository : "";
 	const runtimeConfigLabel =
 		data.runtimeConfig?.displayName ||
 		data.runtimeConfig?.fileName ||
@@ -48,13 +61,34 @@ function PipelineStepNodeInner({
 			))}
 			<div className="node-header">
 				<span className="node-status-dot" />
-				<span>
-					{label}
-					{versionHint}
-				</span>
+				<span className="node-title">{label}</span>
 			</div>
 			<div className="node-body">
-				<div className="node-info">{data.image}</div>
+				<div className="node-meta-row">
+					{versionHint ? (
+						<span className="node-version-pill">{versionHint}</span>
+					) : null}
+					{data.image ? (
+						<Tooltip title="复制完整镜像地址">
+							<button
+								type="button"
+								className="node-copy"
+								aria-label={`复制节点 ${label} 镜像地址`}
+								onClick={(event) => {
+									event.stopPropagation();
+									void copyImageReference(data.image || "");
+								}}
+							>
+								<CopyOutlined />
+							</button>
+						</Tooltip>
+					) : null}
+				</div>
+				{imageLabel ? (
+					<div className="node-info-row" title={data.image || ""}>
+						<div className="node-info">{imageLabel}</div>
+					</div>
+				) : null}
 				{runtimeConfigLabel ? (
 					<div className="node-config-chip" title={runtimeConfigLabel}>
 						配置 {runtimeConfigLabel}
