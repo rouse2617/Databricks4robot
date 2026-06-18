@@ -42,6 +42,13 @@ No new HTTP routes are expected. Existing create-run/deploy/backfill endpoints m
 - [x] Smoke a normal lightweight batch to confirm it still runs.
 - [x] Record image tag, Cloud Run revision, and API smoke evidence before commit.
 
+## UI regression follow-up
+- [x] Ensure execution detail DAG/timeline/node drawer use DataBrew run node snapshots when Argo workflow state is stale after retry/stop/terminate.
+- [x] Keep workflow polling active while a retry attempt has active nodes newer than the previous terminal run snapshot.
+- [x] Suppress expected historical workflow 404 console errors after falling back to DataBrew run ledger data.
+- [x] Route the execution-detail delete action to `DELETE /api/v1/pipeline-runs/:id` when a DataBrew run exists; keep Argo workflow delete only for external workflows.
+- [x] Add targeted frontend tests for stale DAG overlay, polling, 404 fallback, and delete semantics.
+
 ### Deploy record — CYB-2177
 | Service | Image tag | Cloud Run revision | URL |
 |---------|-----------|-------------------|-----|

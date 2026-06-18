@@ -80,6 +80,9 @@ describe("useWorkflowDetail", () => {
 	});
 
 	it("maps 404 to not_found load error", async () => {
+		const consoleErrorSpy = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => undefined);
 		mockGetPipelineRunByWorkflowName.mockRejectedValue(
 			new ApiError(404, "NOT_FOUND", "not found"),
 		);
@@ -96,6 +99,7 @@ describe("useWorkflowDetail", () => {
 			kind: "not_found",
 			message: "workflow not found",
 		});
+		expect(consoleErrorSpy).not.toHaveBeenCalled();
 	});
 
 	it("loads DataBrew run ledger when the Argo workflow is gone", async () => {
@@ -359,7 +363,7 @@ describe("useWorkflowDetail", () => {
 		).toHaveLength(1);
 	});
 
-	it("stops polling when the DataBrew run is terminal even if Argo is still active", async () => {
+	it("does not keep polling stale Argo status after a terminal run with no newer active nodes", async () => {
 		mockGetWorkflow.mockResolvedValue({
 			name: "wf-1",
 			status: "Running",
@@ -391,6 +395,45 @@ describe("useWorkflowDetail", () => {
 		if (workflowPolls.length > 0) {
 			expect(clearIntervalSpy).toHaveBeenCalledWith(workflowPolls[0][0]);
 		}
+	});
+
+	it("keeps polling while an active workflow retry node is newer than the terminal run snapshot", async () => {
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-1",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [
+				{
+					id: "node-1",
+					name: "wf-1.node-1",
+					displayName: "node-1",
+					phase: "Pending",
+					startedAt: "2026-06-03T00:11:00Z",
+				},
+			],
+		});
+		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+			id: "run-1",
+			workflowName: "wf-1",
+			pipelineName: "pipeline",
+			status: "Failed",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:00:00Z",
+			finishedAt: "2026-06-03T00:10:00Z",
+			message: "previous attempt failed",
+		});
+		const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-1"));
+
+		await waitFor(() =>
+			expect(result.current.runEventState.run?.status).toBe("Failed"),
+		);
+		await waitFor(() =>
+			expect(
+				setIntervalSpy.mock.calls.filter(([, delay]) => delay === 8_000),
+			).toHaveLength(1),
+		);
 	});
 
 	it("treats workflows as external only after pipeline run lookup misses", async () => {

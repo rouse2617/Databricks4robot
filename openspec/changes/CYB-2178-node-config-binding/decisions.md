@@ -27,3 +27,15 @@
 - **Decision**: Build dirty-check snapshots from stable persisted fields only: pipeline name, node id/type/position/data, and edge id/source/target/handles/data.
 - **Alternatives**: Clear dirty only imperatively after save, or ignore dirty checks while navigating away from the design tab.
 - **Rationale**: The dirty check should model persisted pipeline content, not hover/selection/drag runtime state. This keeps real edits protected while preventing false-positive leave prompts.
+
+## 2026-06-18 — Node config binding locks an explicit version
+- **Context**: Browser regression showed the node config selector displayed entries with their current version but did not expose a way to bind an older ready version.
+- **Decision**: Add an explicit version selector after choosing a config. New bindings default to the config current version, but users can choose any ready historical version. Saved nodes persist `{configId, version}`.
+- **Alternatives**: Always bind `currentVersion`, or add a separate "latest" floating mode.
+- **Rationale**: Runtime reproducibility requires a node to resolve the exact selected config content. A floating latest mode would make saved templates and historical runs drift when config authors publish a new version.
+
+## 2026-06-18 — Config versions need human-readable comparison
+- **Context**: The config library exposed `v1`, `v2`, etc. and per-version content viewing, but users could not easily identify or compare many historical versions before binding one to a node.
+- **Decision**: Reuse the existing per-version content API to compare any two config versions in the frontend, and display summary, timestamp, and content hash in both config-library comparison controls and node version selectors.
+- **Alternatives**: Add a backend diff endpoint immediately, or keep only single-version content viewing.
+- **Rationale**: Frontend diff avoids a new HTTP contract while making historical versions auditable enough for node-level runtime selection. A backend diff endpoint can still be added later if large files or binary config formats require server-side handling.

@@ -25,11 +25,15 @@ import {
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import type {
-	PipelineRunAssetNode,
-	PipelineRunEvent,
+import {
+	deletePipelineRun,
+	type PipelineRun,
+	type PipelineRunAssetNode,
+	type PipelineRunEvent,
+	type PipelineRunNode,
 } from "../api/pipelineApi";
 import type {
+	WorkflowDetail,
 	WorkflowLogResponse,
 	WorkflowNodeStatus,
 } from "../api/workflowApi";
@@ -95,6 +99,176 @@ function buildHighlightedLogNodes(logContent: string, keyword: string) {
 			);
 		}
 		return <Ansi key={key}>{part}</Ansi>;
+	});
+}
+
+const ACTIVE_NODE_PHASES = new Set(["Running", "Pending"]);
+const TERMINAL_NODE_PHASES = new Set([
+	"Succeeded",
+	"Failed",
+	"Error",
+	"Skipped",
+	"Omitted",
+]);
+
+function toTime(value?: string): number | null {
+	if (!value) return null;
+	const time = new Date(value).getTime();
+	return Number.isNaN(time) ? null : time;
+}
+
+function addNodeLookupKey(
+	map: Map<string, PipelineRunNode>,
+	key: unknown,
+	node: PipelineRunNode,
+) {
+	if (typeof key !== "string") return;
+	const normalized = key.trim();
+	if (!normalized || map.has(normalized)) return;
+	map.set(normalized, node);
+}
+
+function buildRunNodeLookup(runNodes: PipelineRunNode[] = []) {
+	const lookup = new Map<string, PipelineRunNode>();
+	for (const node of runNodes) {
+		addNodeLookupKey(lookup, node.argoNodeId, node);
+		addNodeLookupKey(lookup, node.pipelineNodeId, node);
+		addNodeLookupKey(lookup, node.argoNodeName, node);
+		addNodeLookupKey(lookup, node.displayName, node);
+		addNodeLookupKey(lookup, node.templateName, node);
+	}
+	return lookup;
+}
+
+function findRunNodeSnapshot(
+	lookup: Map<string, PipelineRunNode>,
+	node: WorkflowNodeStatus,
+): PipelineRunNode | null {
+	return (
+		lookup.get(node.id) ??
+		lookup.get(node.name) ??
+		lookup.get(node.displayName) ??
+		(node.templateName ? lookup.get(node.templateName) : undefined) ??
+		null
+	);
+}
+
+function getWorkflowNodeSnapshotTime(
+	workflow: WorkflowDetail,
+	node: WorkflowNodeStatus,
+): number | null {
+	return (
+		toTime(node.finishedAt) ??
+		toTime(node.startedAt) ??
+		toTime(workflow.finishedAt) ??
+		toTime(workflow.createdAt)
+	);
+}
+
+function getRunNodeSnapshotTime(
+	run: PipelineRun,
+	node: PipelineRunNode,
+): number | null {
+	return (
+		toTime(node.finishedAt) ??
+		toTime(node.updatedAt) ??
+		toTime(node.startedAt) ??
+		toTime(run.finishedAt) ??
+		toTime(run.updatedAt) ??
+		toTime(run.createdAt)
+	);
+}
+
+function shouldUseRunNodeSnapshot(
+	workflow: WorkflowDetail,
+	workflowNode: WorkflowNodeStatus,
+	run: PipelineRun,
+	runNode: PipelineRunNode,
+): boolean {
+	if (!runNode.phase) return false;
+	const workflowActive = ACTIVE_NODE_PHASES.has(workflowNode.phase);
+	const runNodeTerminal = TERMINAL_NODE_PHASES.has(runNode.phase);
+	const runTerminal = TERMINAL_NODE_PHASES.has(run.status);
+	const workflowNodeAt = getWorkflowNodeSnapshotTime(workflow, workflowNode);
+	const runNodeAt = getRunNodeSnapshotTime(run, runNode);
+
+	if (workflowActive && runNodeTerminal && workflowNodeAt && runNodeAt) {
+		return runNodeAt >= workflowNodeAt;
+	}
+	if (runNodeTerminal || runTerminal) return true;
+	if (workflowNodeAt && runNodeAt) return runNodeAt >= workflowNodeAt;
+	return runNode.phase !== workflowNode.phase || Boolean(runNode.message);
+}
+
+function isWorkflowControlNode(
+	workflow: WorkflowDetail,
+	node: WorkflowNodeStatus,
+) {
+	const type = (node.type || "").toLowerCase();
+	return (
+		type === "dag" ||
+		type === "steps" ||
+		type === "stepgroup" ||
+		node.id === workflow.name ||
+		node.name === workflow.name ||
+		node.displayName === workflow.name
+	);
+}
+
+function shouldUseRunTerminalForControlNode(
+	workflow: WorkflowDetail,
+	node: WorkflowNodeStatus,
+	run: PipelineRun,
+) {
+	if (!TERMINAL_NODE_PHASES.has(run.status)) return false;
+	if (!ACTIVE_NODE_PHASES.has(node.phase)) return false;
+	if (!isWorkflowControlNode(workflow, node)) return false;
+	const runAt = toTime(run.finishedAt) ?? toTime(run.updatedAt);
+	const nodeAt = getWorkflowNodeSnapshotTime(workflow, node);
+	if (runAt && nodeAt && nodeAt > runAt) return false;
+	return true;
+}
+
+function mergeRunNodeSnapshot(
+	node: WorkflowNodeStatus,
+	runNode: PipelineRunNode,
+): WorkflowNodeStatus {
+	return {
+		...node,
+		phase: runNode.phase || node.phase,
+		message: runNode.message || node.message,
+		podName: runNode.podName || node.podName,
+		hostNodeName: runNode.hostNodeName || node.hostNodeName,
+		children: runNode.children?.length ? runNode.children : node.children,
+		startedAt: runNode.startedAt || node.startedAt,
+		finishedAt: runNode.finishedAt || node.finishedAt,
+		estimatedCostUsd: runNode.estimatedCostUsd ?? node.estimatedCostUsd,
+		inputs: (runNode.inputs as WorkflowNodeStatus["inputs"]) ?? node.inputs,
+		outputs: (runNode.outputs as WorkflowNodeStatus["outputs"]) ?? node.outputs,
+		resourcesDuration: runNode.resourcesDuration ?? node.resourcesDuration,
+	};
+}
+
+function buildDisplayWorkflowNodes(
+	workflow: WorkflowDetail,
+	run?: PipelineRun | null,
+): WorkflowNodeStatus[] {
+	if (!run) return workflow.nodes;
+	const runNodeLookup = buildRunNodeLookup(run.nodes);
+	return workflow.nodes.map((node) => {
+		const runNode = findRunNodeSnapshot(runNodeLookup, node);
+		if (runNode && shouldUseRunNodeSnapshot(workflow, node, run, runNode)) {
+			return mergeRunNodeSnapshot(node, runNode);
+		}
+		if (shouldUseRunTerminalForControlNode(workflow, node, run)) {
+			return {
+				...node,
+				phase: run.status,
+				message: run.message || node.message,
+				finishedAt: run.finishedAt || node.finishedAt,
+			};
+		}
+		return node;
 	});
 }
 
@@ -311,7 +485,7 @@ function WorkflowLogPanel({
 							onClick={async () => {
 								if (!visibleLog) return;
 								await navigator.clipboard.writeText(visibleLog.content);
-								messageApi.success("已复制当前可见日志");
+								messageApi.success?.("已复制当前可见日志");
 							}}
 						>
 							复制可见日志
@@ -1197,17 +1371,29 @@ export default function WorkflowDetailPage({
 		() => buildPipelineNodeLabelLookup(runEventState.run?.pipelineJSON),
 		[runEventState.run?.pipelineJSON],
 	);
+	const displayNodes = useMemo(
+		() =>
+			workflow ? buildDisplayWorkflowNodes(workflow, runEventState.run) : [],
+		[workflow, runEventState.run],
+	);
 	const displayWorkflow = useMemo(() => {
-		if (!workflow || !runEventState.run) {
+		if (!workflow) {
 			return workflow;
+		}
+		if (!runEventState.run) {
+			return {
+				...workflow,
+				nodes: displayNodes,
+			};
 		}
 		return {
 			...workflow,
+			nodes: displayNodes,
 			status: runEventState.run.status || workflow.status,
 			message: runEventState.run.message || workflow.message,
 			finishedAt: runEventState.run.finishedAt || workflow.finishedAt,
 		};
-	}, [workflow, runEventState.run]);
+	}, [displayNodes, workflow, runEventState.run]);
 	const [showNodeLogs, setShowNodeLogs] = useState(false);
 	const operations = useMemo(
 		() => (displayWorkflow ? getWorkflowOperationConfigs(displayWorkflow) : []),
@@ -1220,33 +1406,50 @@ export default function WorkflowDetailPage({
 				: [],
 		[displayWorkflow],
 	);
+	const displaySelectedNode = useMemo(() => {
+		if (!selectedNode || !displayWorkflow) return selectedNode;
+		return (
+			displayWorkflow.nodes.find((node) => node.id === selectedNode.id) ??
+			selectedNode
+		);
+	}, [displayWorkflow, selectedNode]);
 	const canRetryFailedNode = useMemo(() => {
 		const retryOp = operations.find(
 			(operation) => operation.key === "retry" && !operation.disabled,
 		);
-		if (!retryOp || !selectedNode) return false;
-		return selectedNode.phase === "Failed";
-	}, [operations, selectedNode]);
+		if (!retryOp || !displaySelectedNode) return false;
+		return displaySelectedNode.phase === "Failed";
+	}, [displaySelectedNode, operations]);
 
 	const executeOperation = useCallback(
 		async (operation: WorkflowOperationConfig) => {
-			if (!workflow || operation.disabled) return;
+			if (!displayWorkflow || operation.disabled) return;
 			setOperationLoading(operation.key);
 			try {
-				if (operation.key === "retry") {
-					const outcome = await runWorkflowRetryWithFeedback(workflow, () =>
-						operation.run(),
+				if (operation.key === "delete" && runEventState.run?.id) {
+					await deletePipelineRun(runEventState.run.id);
+					messageApi.success?.("执行记录删除已提交");
+					navigate("/pipeline?tab=executions");
+					return;
+				} else if (operation.key === "retry") {
+					const outcome = await runWorkflowRetryWithFeedback(
+						displayWorkflow,
+						() => operation.run(),
 					);
 					if (outcome === "no_progress") {
-						messageApi.warning(
+						messageApi.warning?.(
 							"重试已提交，但执行状态未变化。若曾手动停止，请使用「重提交」。",
 						);
 					} else {
-						messageApi.success("重试已提交");
+						messageApi.success?.("重试已提交");
 					}
 				} else {
 					await operation.run();
-					messageApi.success(`${operation.title}已提交`);
+					messageApi.success?.(
+						operation.key === "delete"
+							? "工作流删除已提交"
+							: `${operation.title}已提交`,
+					);
 				}
 				if (operation.key === "delete") {
 					navigate("/pipeline?tab=executions");
@@ -1258,12 +1461,18 @@ export default function WorkflowDetailPage({
 				}
 				loadWorkflow();
 			} catch (err) {
-				messageApi.error(`${operation.title}失败: ${String(err)}`);
+				messageApi.error?.(`${operation.title}失败: ${String(err)}`);
 			} finally {
 				setOperationLoading(null);
 			}
 		},
-		[loadWorkflow, messageApi, navigate, workflow],
+		[
+			displayWorkflow,
+			loadWorkflow,
+			messageApi,
+			navigate,
+			runEventState.run?.id,
+		],
 	);
 
 	const runOperation = useCallback(
@@ -1323,17 +1532,19 @@ export default function WorkflowDetailPage({
 
 	const handleSelectEventNode = useCallback(
 		(event: PipelineRunEvent) => {
-			if (!workflow || event.subjectType !== "node") {
+			if (!displayWorkflow || event.subjectType !== "node") {
 				return;
 			}
-			const node = workflow.nodes.find((item) => item.id === event.subjectId);
+			const node = displayWorkflow.nodes.find(
+				(item) => item.id === event.subjectId,
+			);
 			if (!node) {
-				messageApi.warning("事件关联的节点不在当前 DAG 中");
+				messageApi.warning?.("事件关联的节点不在当前 DAG 中");
 				return;
 			}
 			handleSelectNode(node);
 		},
-		[handleSelectNode, messageApi, workflow],
+		[displayWorkflow, handleSelectNode, messageApi],
 	);
 
 	const handleFilterEvents = useCallback(
@@ -1348,10 +1559,15 @@ export default function WorkflowDetailPage({
 		loadRunEvents({ append: true, cursor: runEventState.nextCursor });
 	}, [loadRunEvents, runEventState.nextCursor]);
 
+	const handleRefreshEvents = useCallback(() => {
+		loadWorkflow();
+		loadRunEvents();
+	}, [loadRunEvents, loadWorkflow]);
+
 	const handleSelectAssetNode = useCallback(
 		(row: PipelineRunAssetNode, action: WorkflowDagNodeAction) => {
-			if (!workflow) return;
-			const node = workflow.nodes.find(
+			if (!displayWorkflow) return;
+			const node = displayWorkflow.nodes.find(
 				(item) =>
 					item.id === row.argoNodeId ||
 					item.id === row.pipelineNodeId ||
@@ -1359,36 +1575,36 @@ export default function WorkflowDetailPage({
 					item.name === row.displayName,
 			);
 			if (!node) {
-				messageApi.warning("资产节点关联的 DAG 节点暂不可见");
+				messageApi.warning?.("资产节点关联的 DAG 节点暂不可见");
 				return;
 			}
 			handleNodeAction(node, action);
 		},
-		[handleNodeAction, messageApi, workflow],
+		[displayWorkflow, handleNodeAction, messageApi],
 	);
 
 	const handleShowNodeLogs = useCallback(() => {
-		if (!selectedNode) {
+		if (!displaySelectedNode) {
 			return;
 		}
 		setShowNodeLogs(true);
-	}, [selectedNode]);
+	}, [displaySelectedNode]);
 
 	const handleCloseNodeLogs = useCallback(() => {
 		setShowNodeLogs(false);
 	}, []);
 
 	const handleRetryWorkflow = useCallback(() => {
-		if (!workflow) return;
+		if (!displayWorkflow) return;
 		const retryConfig = operations.find(
 			(operation) => operation.key === "retry",
 		);
 		if (!retryConfig || retryConfig.disabled) {
-			messageApi.warning("当前工作流状态不可重试");
+			messageApi.warning?.("当前工作流状态不可重试");
 			return;
 		}
 		runOperation(retryConfig);
-	}, [messageApi, operations, runOperation, workflow]);
+	}, [displayWorkflow, messageApi, operations, runOperation]);
 
 	useEffect(() => {
 		if (legacyRoute && name) {
@@ -1474,7 +1690,9 @@ export default function WorkflowDetailPage({
 		return null;
 	}
 
-	const displayableNodeCount = countDisplayableWorkflowNodes(workflow.nodes);
+	const displayableNodeCount = countDisplayableWorkflowNodes(
+		displayWorkflow.nodes,
+	);
 	const graphHeight =
 		displayableNodeCount <= 1 ? 320 : displayableNodeCount <= 5 ? 420 : 500;
 
@@ -1617,9 +1835,9 @@ export default function WorkflowDetailPage({
 				>
 					{viewMode === "dag" ? (
 						<WorkflowDagView
-							nodes={workflow.nodes}
-							workflowEdges={workflow.edges}
-							selectedNodeId={selectedNode?.id ?? null}
+							nodes={displayWorkflow.nodes}
+							workflowEdges={displayWorkflow.edges}
+							selectedNodeId={displaySelectedNode?.id ?? null}
 							onNodeSelect={handleSelectNode}
 							onNodeAction={handleNodeAction}
 							emptyMessage={displayWorkflow.message}
@@ -1628,8 +1846,8 @@ export default function WorkflowDetailPage({
 						/>
 					) : (
 						<WorkflowTimelineView
-							nodes={workflow.nodes}
-							selectedNodeId={selectedNode?.id ?? null}
+							nodes={displayWorkflow.nodes}
+							selectedNodeId={displaySelectedNode?.id ?? null}
 							onNodeSelect={handleSelectNode}
 							pipelineLabels={pipelineNodeLabels}
 						/>
@@ -1656,15 +1874,15 @@ export default function WorkflowDetailPage({
 					runEventState={runEventState}
 					runEventFilters={runEventFilters}
 					onFilterEvents={handleFilterEvents}
-					onRefreshEvents={loadRunEvents}
+					onRefreshEvents={handleRefreshEvents}
 					onLoadMoreEvents={handleLoadMoreEvents}
 					onSelectNodeEvent={handleSelectEventNode}
 				/>
 			</div>
 
 			<WorkflowNodeDetailPanel
-				node={selectedNode}
-				workflow={workflow}
+				node={displaySelectedNode}
+				workflow={displayWorkflow}
 				open={nodePanelOpen}
 				onClose={closeNodeDetailPanel}
 				canRetryWorkflow={canRetryFailedNode}
@@ -1700,8 +1918,8 @@ export default function WorkflowDetailPage({
 			<Modal
 				open={showNodeLogs}
 				title={
-					selectedNode
-						? `${selectedNode.displayName || selectedNode.name} 日志`
+					displaySelectedNode
+						? `${displaySelectedNode.displayName || displaySelectedNode.name} 日志`
 						: "日志"
 				}
 				width="80%"
@@ -1711,7 +1929,7 @@ export default function WorkflowDetailPage({
 				styles={{ body: { height: "calc(100vh - 180px)", padding: 0 } }}
 			>
 				<WorkflowLogPanel
-					selectedNode={selectedNode}
+					selectedNode={displaySelectedNode}
 					loading={logState.loading}
 					logContent={logState.content}
 					error={logState.error}

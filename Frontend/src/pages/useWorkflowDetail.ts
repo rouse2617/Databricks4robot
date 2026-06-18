@@ -133,6 +133,13 @@ const EMPTY_COST_SUMMARY_STATE: CostSummaryState = {
 };
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(["Running", "Pending"]);
+const TERMINAL_WORKFLOW_STATUSES = new Set([
+	"Succeeded",
+	"Failed",
+	"Error",
+	"Skipped",
+	"Omitted",
+]);
 const WORKFLOW_POLL_INTERVAL_MS = 8_000;
 const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
 function toErrorMessage(err: unknown): string {
@@ -147,6 +154,35 @@ function toLoadError(err: unknown): WorkflowLoadError {
 		return { kind: "not_found", message: err.message };
 	}
 	return { kind: "error", message: toErrorMessage(err) };
+}
+
+function isExpectedWorkflowNotFound(err: unknown): boolean {
+	return err instanceof ApiError && err.status === 404;
+}
+
+function toTimestamp(value?: string): number | null {
+	if (!value) return null;
+	const time = new Date(value).getTime();
+	return Number.isNaN(time) ? null : time;
+}
+
+function workflowHasActiveNodesNewerThanRun(
+	workflow: WorkflowDetail | null,
+	run: PipelineRun | null,
+): boolean {
+	if (!workflow) return false;
+	const activeNodes = workflow.nodes.filter((node) =>
+		ACTIVE_WORKFLOW_STATUSES.has(node.phase),
+	);
+	if (activeNodes.length === 0) return false;
+	if (!run || ACTIVE_WORKFLOW_STATUSES.has(run.status)) return true;
+	if (!TERMINAL_WORKFLOW_STATUSES.has(run.status)) return true;
+	const runTerminalAt = toTimestamp(run.finishedAt ?? run.updatedAt);
+	if (!runTerminalAt) return false;
+	return activeNodes.some((node) => {
+		const nodeStartedAt = toTimestamp(node.startedAt ?? node.finishedAt);
+		return nodeStartedAt != null && nodeStartedAt > runTerminalAt;
+	});
 }
 
 async function resolvePipelineRun(lookup: string): Promise<PipelineRun | null> {
@@ -264,7 +300,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const refreshDetailData = useCallback(() => {
 		if (!name) return;
 		void loadRunDetailData(name).catch((err) => {
-			console.error(err);
+			if (!isExpectedWorkflowNotFound(err)) {
+				console.error(err);
+			}
 		});
 	}, [loadRunDetailData, name]);
 
@@ -280,7 +318,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				refreshDetailData();
 			})
 			.catch((err) => {
-				console.error(err);
+				if (!isExpectedWorkflowNotFound(err)) {
+					console.error(err);
+				}
 				const nextLoadError = toLoadError(err);
 				setWorkflow(null);
 				setLoadError(nextLoadError);
@@ -337,7 +377,10 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const shouldPollWorkflow =
 		name != null &&
 		workflow != null &&
-		ACTIVE_WORKFLOW_STATUSES.has(runEventState.run?.status ?? workflow.status);
+		(ACTIVE_WORKFLOW_STATUSES.has(
+			runEventState.run?.status ?? workflow.status,
+		) ||
+			workflowHasActiveNodesNewerThanRun(workflow, runEventState.run));
 	const shouldPollLedgerOnly =
 		name != null &&
 		workflow == null &&
@@ -358,7 +401,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 					refreshDetailData();
 				})
 				.catch((err) => {
-					console.error(err);
+					if (!isExpectedWorkflowNotFound(err)) {
+						console.error(err);
+					}
 				});
 		}, WORKFLOW_POLL_INTERVAL_MS);
 

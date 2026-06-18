@@ -43,6 +43,31 @@ export interface PipelineRunNodeProgress {
 	parallelRunning?: number;
 }
 
+export interface PipelineRunNode {
+	id: string;
+	runId: string;
+	pipelineNodeId: string;
+	argoNodeId?: string;
+	argoNodeName?: string;
+	displayName?: string;
+	templateName?: string;
+	type?: string;
+	phase?: string;
+	message?: string;
+	podName?: string;
+	hostNodeName?: string;
+	children?: string[];
+	inputs?: Record<string, unknown>;
+	outputs?: Record<string, unknown>;
+	resourcesDuration?: Record<string, number>;
+	logRef?: string;
+	estimatedCostUsd?: number;
+	startedAt?: string;
+	finishedAt?: string;
+	updatedAt?: string;
+	createdAt?: string;
+}
+
 export interface PipelineRun extends Deployment {
 	executionTargetId?: string;
 	targetSnapshot?: Record<string, unknown>;
@@ -50,7 +75,10 @@ export interface PipelineRun extends Deployment {
 	argoWorkflowUid?: string;
 	message?: string;
 	noAssetRun?: boolean;
+	nodes?: PipelineRunNode[];
+	ledgerState?: string;
 	startedAt?: string;
+	updatedAt?: string;
 	totalEstimatedCost?: number | null;
 	batchJobId?: string;
 	nodeProgress?: PipelineRunNodeProgress;
@@ -370,6 +398,10 @@ export function getPipelineRun(id: string): Promise<PipelineRun> {
 		"GET",
 		`/pipeline-runs/${encodeURIComponent(id)}`,
 	);
+}
+
+export function deletePipelineRun(id: string): Promise<void> {
+	return request<void>("DELETE", `/pipeline-runs/${encodeURIComponent(id)}`);
 }
 
 export function listPipelineRuns(options?: {

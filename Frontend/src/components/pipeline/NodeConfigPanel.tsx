@@ -4,6 +4,7 @@ import { Alert, Button, Form, Input, Modal, Select } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import {
 	type PipelineConfig,
+	type PipelineConfigVersion,
 	pipelineConfigApi,
 } from "../../api/pipelineConfigs";
 import type {
@@ -37,6 +38,7 @@ type FormValues = {
 	inputPorts?: PortFormItem[];
 	outputPorts?: PortFormItem[];
 	runtimeConfigId?: string;
+	runtimeConfigVersion?: number;
 	runtimeConfigMountPath?: string;
 	runtimeConfigTargetFilename?: string;
 	cpu: string;
@@ -47,6 +49,33 @@ type FormValues = {
 const DEFAULT_INPUT_PORTS: Port[] = [{ name: "input", type: "asset" }];
 const DEFAULT_OUTPUT_PORTS: Port[] = [{ name: "output", type: "asset" }];
 const DEFAULT_CONFIG_MOUNT_PATH = "/workspace/configs";
+
+function shortHash(value?: string) {
+	return value ? value.slice(0, 8) : "—";
+}
+
+function formatConfigVersionTime(value?: string) {
+	if (!value) return "";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	const pad = (item: number) => item.toString().padStart(2, "0");
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function configVersionOptionLabel(
+	version: PipelineConfigVersion,
+	currentVersion?: number,
+) {
+	return [
+		`v${version.version}`,
+		version.version === currentVersion ? "当前" : null,
+		version.summary || "无说明",
+		formatConfigVersionTime(version.createdAt),
+		`sha:${shortHash(version.contentSha256)}`,
+	]
+		.filter(Boolean)
+		.join(" · ");
+}
 
 function normalizeArgs(args: Argument[] | undefined): string[] {
 	if (!args || args.length === 0) return [];
@@ -193,19 +222,41 @@ export function NodeConfigPanel({
 }: NodeConfigPanelProps) {
 	const [form] = Form.useForm<FormValues>();
 	const [configs, setConfigs] = useState<PipelineConfig[]>([]);
+	const [configVersions, setConfigVersions] = useState<PipelineConfigVersion[]>(
+		[],
+	);
 	const [configsLoading, setConfigsLoading] = useState(false);
 	const [configsError, setConfigsError] = useState<string | null>(null);
+	const [configVersionsLoading, setConfigVersionsLoading] = useState(false);
+	const [configVersionsError, setConfigVersionsError] = useState<string | null>(
+		null,
+	);
 
 	const componentType = String(node.data.type || "").toLowerCase();
 	const isScriptType = componentType === "script";
 	const selectedConfigId = Form.useWatch("runtimeConfigId", form);
+	const selectedConfig = useMemo(
+		() => configs.find((config) => config.id === selectedConfigId),
+		[configs, selectedConfigId],
+	);
 	const configOptions = useMemo(
 		() =>
 			configs.map((config) => ({
 				value: config.id,
-				label: `${config.name} · v${config.currentVersion}`,
+				label: `${config.name} · 当前 v${config.currentVersion} · ${config.lifecycle}`,
 			})),
 		[configs],
+	);
+	const configVersionOptions = useMemo(
+		() =>
+			configVersions.map((version) => ({
+				value: version.version,
+				label: configVersionOptionLabel(
+					version,
+					selectedConfig?.currentVersion,
+				),
+			})),
+		[configVersions, selectedConfig?.currentVersion],
 	);
 
 	useEffect(() => {
@@ -220,6 +271,7 @@ export function NodeConfigPanel({
 			inputPorts: normalizePorts(node.data.inputPorts, DEFAULT_INPUT_PORTS),
 			outputPorts: normalizePorts(node.data.outputPorts, DEFAULT_OUTPUT_PORTS),
 			runtimeConfigId: runtimeConfig?.configId,
+			runtimeConfigVersion: runtimeConfig?.version,
 			runtimeConfigMountPath:
 				runtimeConfig?.mountPath || DEFAULT_CONFIG_MOUNT_PATH,
 			runtimeConfigTargetFilename:
@@ -240,7 +292,9 @@ export function NodeConfigPanel({
 			.then((result) => {
 				if (!active) return;
 				setConfigs(
-					(result.items || []).filter((config) => config.lifecycle === "ready"),
+					(result.items || []).filter(
+						(config) => config.lifecycle !== "deprecated",
+					),
 				);
 			})
 			.catch((err: unknown) => {
@@ -257,18 +311,67 @@ export function NodeConfigPanel({
 		};
 	}, [open]);
 
+	useEffect(() => {
+		if (!open || !selectedConfigId) {
+			setConfigVersions([]);
+			setConfigVersionsError(null);
+			setConfigVersionsLoading(false);
+			return;
+		}
+		let active = true;
+		setConfigVersionsLoading(true);
+		setConfigVersionsError(null);
+		pipelineConfigApi
+			.get(selectedConfigId)
+			.then((config) => {
+				if (!active) return;
+				const readyVersions = (config.versions || []).filter(
+					(version) => !version.status || version.status === "ready",
+				);
+				setConfigVersions(readyVersions);
+				const currentVersion = form.getFieldValue("runtimeConfigVersion");
+				const currentVersionStillAvailable = readyVersions.some(
+					(version) => version.version === currentVersion,
+				);
+				if (!currentVersionStillAvailable) {
+					const defaultVersion =
+						readyVersions.find(
+							(version) => version.version === config.currentVersion,
+						)?.version ?? readyVersions[0]?.version;
+					form.setFieldsValue({ runtimeConfigVersion: defaultVersion });
+				}
+			})
+			.catch((err: unknown) => {
+				if (!active) return;
+				setConfigVersions([]);
+				setConfigVersionsError(
+					err instanceof Error ? err.message : "配置版本加载失败",
+				);
+			})
+			.finally(() => {
+				if (active) setConfigVersionsLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [form, open, selectedConfigId]);
+
 	const handleSubmit = async () => {
 		const values = await form.validateFields();
 		let runtimeConfig: PipelineNodeRuntimeConfig | undefined;
 		if (values.runtimeConfigId) {
-			const selectedConfig = configs.find(
-				(config) => config.id === values.runtimeConfigId,
-			);
 			const existing =
 				node.data.runtimeConfig?.configId === values.runtimeConfigId
 					? node.data.runtimeConfig
 					: undefined;
-			const version = selectedConfig?.currentVersion || existing?.version || 0;
+			const selectedVersion = configVersions.find(
+				(version) => version.version === values.runtimeConfigVersion,
+			);
+			const version =
+				selectedVersion?.version ||
+				values.runtimeConfigVersion ||
+				existing?.version ||
+				0;
 			const fileName =
 				selectedConfig?.name ||
 				existing?.fileName ||
@@ -277,12 +380,14 @@ export function NodeConfigPanel({
 			if (!version) {
 				form.setFields([
 					{
-						name: "runtimeConfigId",
-						errors: ["请选择可用的 ready 配置"],
+						name: "runtimeConfigVersion",
+						errors: ["请选择可用的 ready 配置版本"],
 					},
 				]);
 				return;
 			}
+			const displayName =
+				selectedConfig?.name || existing?.displayName || fileName;
 			runtimeConfig = {
 				mode: "saved",
 				configId: values.runtimeConfigId,
@@ -291,7 +396,7 @@ export function NodeConfigPanel({
 				mountPath:
 					values.runtimeConfigMountPath?.trim() || DEFAULT_CONFIG_MOUNT_PATH,
 				targetFilename: values.runtimeConfigTargetFilename?.trim() || fileName,
-				displayName: selectedConfig?.name || existing?.displayName || fileName,
+				displayName: `${displayName} · v${version}`,
 			};
 		}
 		const nextData: Partial<PipelineNodeData> = {
@@ -324,6 +429,7 @@ export function NodeConfigPanel({
 	const handleConfigChange = (configId?: string) => {
 		if (!configId) {
 			form.setFieldsValue({
+				runtimeConfigVersion: undefined,
 				runtimeConfigTargetFilename: "",
 			});
 			return;
@@ -332,6 +438,7 @@ export function NodeConfigPanel({
 		if (!selectedConfig) return;
 		const currentTarget = form.getFieldValue("runtimeConfigTargetFilename");
 		form.setFieldsValue({
+			runtimeConfigVersion: undefined,
 			runtimeConfigMountPath:
 				form.getFieldValue("runtimeConfigMountPath") ||
 				DEFAULT_CONFIG_MOUNT_PATH,
@@ -411,8 +518,24 @@ export function NodeConfigPanel({
 							allowClear
 							loading={configsLoading}
 							options={configOptions}
-							placeholder="选择 ready 配置"
+							placeholder="选择有 ready 版本的配置"
 							onChange={handleConfigChange}
+						/>
+					</Form.Item>
+					<Form.Item
+						label="版本"
+						name="runtimeConfigVersion"
+						rules={
+							selectedConfigId
+								? [{ required: true, message: "请选择配置版本" }]
+								: undefined
+						}
+					>
+						<Select
+							loading={configVersionsLoading}
+							options={configVersionOptions}
+							placeholder="选择配置版本"
+							disabled={!selectedConfigId}
 						/>
 					</Form.Item>
 					{configsError ? (
@@ -424,11 +547,31 @@ export function NodeConfigPanel({
 							style={{ marginBottom: 12 }}
 						/>
 					) : null}
+					{configVersionsError ? (
+						<Alert
+							type="warning"
+							showIcon
+							message="配置版本加载失败"
+							description={configVersionsError}
+							style={{ marginBottom: 12 }}
+						/>
+					) : null}
 					{!configsLoading && !configsError && configs.length === 0 ? (
 						<Alert
 							type="info"
 							showIcon
-							message="暂无 ready 配置"
+							message="暂无可用配置"
+							style={{ marginBottom: 12 }}
+						/>
+					) : null}
+					{selectedConfigId &&
+					!configVersionsLoading &&
+					!configVersionsError &&
+					configVersions.length === 0 ? (
+						<Alert
+							type="info"
+							showIcon
+							message="暂无 ready 配置版本"
 							style={{ marginBottom: 12 }}
 						/>
 					) : null}

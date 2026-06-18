@@ -33,7 +33,10 @@ export type WorkflowOperationKey =
 	| "resubmit"
 	| "delete";
 
-type WorkflowLike = Pick<WorkflowSummary | WorkflowDetail, "name" | "status"> & {
+type WorkflowLike = Pick<
+	WorkflowSummary | WorkflowDetail,
+	"name" | "status"
+> & {
 	message?: string;
 	nodes?: Array<Pick<WorkflowNodeStatus, "phase" | "type">>;
 };
@@ -141,7 +144,9 @@ export function workflowHasRetryableFailedNodes(
 	return workflow.nodes.some(isRetryableTaskNode);
 }
 
-export function isWorkflowRetryEnabled(workflow?: WorkflowLike | null): boolean {
+export function isWorkflowRetryEnabled(
+	workflow?: WorkflowLike | null,
+): boolean {
 	if (!workflow?.status) return false;
 	if (!WORKFLOW_OPERATIONS.retry.phases.includes(workflow.status)) return false;
 	if (isWorkflowStopped(workflow)) return false;
@@ -183,6 +188,9 @@ export function getWorkflowOperationConfirmText(
 	if (key === "resubmit") {
 		return "将基于当前工作流模板重新提交一次全新执行。";
 	}
+	if (key === "delete") {
+		return "若这是 DataBrew 执行记录，将从执行记录列表删除，并尝试删除关联 Argo Workflow；外部 Workflow 只会删除 Argo Workflow。";
+	}
 	return null;
 }
 
@@ -194,7 +202,9 @@ export async function runWorkflowRetryWithFeedback(
 	await run();
 	try {
 		const after = await getWorkflow(workflow.name);
-		return workflowShowsRetryProgress(before, after) ? "success" : "no_progress";
+		return workflowShowsRetryProgress(before, after)
+			? "success"
+			: "no_progress";
 	} catch {
 		return "success";
 	}

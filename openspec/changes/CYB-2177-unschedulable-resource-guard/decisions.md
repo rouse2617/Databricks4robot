@@ -15,3 +15,9 @@
 - **Decision**: Use `pre-commit run --files` on the CYB-2177 change set, plus `go test ./...`, `go vet ./...`, `git diff --check`, and dev Cloud Run smoke as the commit gate. Push will skip the local pre-push hook because it delegates to the currently failing all-files baseline.
 - **Alternatives**: Fix or allowlist the unrelated repository-wide `site/` and test fixture findings in this change.
 - **Rationale**: Broadly changing generated frontend/doc artifacts and unrelated test fixtures would expand the blast radius of a backend scheduling guard fix.
+
+## 2026-06-18 — Execution detail UI consistency follow-up
+- **Context**: UI regression testing of retry, stop, terminate, and delete showed backend operations working, but execution detail could keep rendering stale Argo workflow node phases after DataBrew run/node snapshots had already converged. The same testing showed the delete button only removed the Argo workflow while DataBrew run history remained visible.
+- **Decision**: In the execution detail page, treat DataBrew run node snapshots as the authoritative display source when they are newer than the Argo node snapshot, keep polling while retry nodes are newer than the previous terminal run snapshot, and route DataBrew-run deletion through `DELETE /api/v1/pipeline-runs/:id`.
+- **Alternatives**: Force a full page reload after every operation, or keep using Argo workflow state only for the DAG and document the inconsistency.
+- **Rationale**: A display-level merge keeps retry progress visible without hiding newer attempts, while allowing terminal DataBrew states from watcher/resource guard reconciliation to correct stale Argo DAG cards. The existing backend `DeleteRun` already deletes run history and attempts workflow cleanup, so the frontend should call it when a run id exists.

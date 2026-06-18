@@ -1,6 +1,7 @@
 import {
 	ApartmentOutlined,
 	BranchesOutlined,
+	DiffOutlined,
 	EditOutlined,
 	EyeOutlined,
 	FileAddOutlined,
@@ -69,12 +70,30 @@ interface ConfigVersionRecord {
 	updatedAt: string;
 	author: string;
 	summary: string;
+	contentSha256: string;
+	contentSizeBytes: number;
 	content?: string;
 }
 
 interface SelectedVersionContent {
 	configName: string;
 	version: ConfigVersionRecord;
+}
+
+interface SelectedVersionCompare {
+	configName: string;
+	left: ConfigVersionRecord;
+	right: ConfigVersionRecord;
+	rows: VersionDiffRow[];
+}
+
+interface VersionDiffRow {
+	key: string;
+	kind: "equal" | "added" | "removed" | "changed";
+	leftLine?: number;
+	rightLine?: number;
+	leftText?: string;
+	rightText?: string;
 }
 
 interface ConfigFormValues {
@@ -92,6 +111,11 @@ interface VersionFormValues {
 	content: string;
 }
 
+interface CompareFormValues {
+	leftVersion?: number;
+	rightVersion?: number;
+}
+
 function versionLabel(version: number) {
 	return `v${version}`;
 }
@@ -105,6 +129,14 @@ function inferConfigFileType(name: string): UserConfigRecord["fileType"] {
 	return name.toLowerCase().endsWith(".json") ? "json" : "yaml";
 }
 
+function shortHash(value?: string) {
+	return value ? value.slice(0, 8) : "—";
+}
+
+function versionDescriptor(version: ConfigVersionRecord) {
+	return `${version.version} · ${version.summary || "无说明"} · ${version.updatedAt} · ${shortHash(version.contentSha256)}`;
+}
+
 function mapConfigVersion(version: PipelineConfigVersion): ConfigVersionRecord {
 	return {
 		version: versionLabel(version.version),
@@ -113,6 +145,8 @@ function mapConfigVersion(version: PipelineConfigVersion): ConfigVersionRecord {
 		updatedAt: formatConfigTime(version.createdAt),
 		author: version.author || "—",
 		summary: version.summary || "—",
+		contentSha256: version.contentSha256,
+		contentSizeBytes: version.contentSizeBytes,
 		content: version.content,
 	};
 }
@@ -148,6 +182,140 @@ async function fetchConfigRecords(): Promise<UserConfigRecord[]> {
 	return details.map(mapConfig);
 }
 
+function splitConfigContent(content?: string) {
+	if (!content) return [""];
+	return content.split(/\r?\n/);
+}
+
+function buildIndexDiffRows(left: string[], right: string[]): VersionDiffRow[] {
+	const length = Math.max(left.length, right.length);
+	return Array.from({ length }, (_, index) => {
+		const hasLeft = index < left.length;
+		const hasRight = index < right.length;
+		const leftText = hasLeft ? left[index] : undefined;
+		const rightText = hasRight ? right[index] : undefined;
+		const kind =
+			hasLeft && hasRight
+				? leftText === rightText
+					? "equal"
+					: "changed"
+				: hasLeft
+					? "removed"
+					: "added";
+		return {
+			key: `fallback-${index}`,
+			kind,
+			leftLine: hasLeft ? index + 1 : undefined,
+			rightLine: hasRight ? index + 1 : undefined,
+			leftText,
+			rightText,
+		};
+	});
+}
+
+function buildVersionDiffRows(leftContent?: string, rightContent?: string) {
+	const left = splitConfigContent(leftContent);
+	const right = splitConfigContent(rightContent);
+	if (left.length * right.length > 250_000) {
+		return buildIndexDiffRows(left, right);
+	}
+
+	const dp = Array.from({ length: left.length + 1 }, () =>
+		Array(right.length + 1).fill(0),
+	);
+	for (let i = left.length - 1; i >= 0; i -= 1) {
+		for (let j = right.length - 1; j >= 0; j -= 1) {
+			dp[i][j] =
+				left[i] === right[j]
+					? dp[i + 1][j + 1] + 1
+					: Math.max(dp[i + 1][j], dp[i][j + 1]);
+		}
+	}
+
+	const ops: VersionDiffRow[] = [];
+	let i = 0;
+	let j = 0;
+	while (i < left.length && j < right.length) {
+		if (left[i] === right[j]) {
+			ops.push({
+				key: `equal-${i}-${j}`,
+				kind: "equal",
+				leftLine: i + 1,
+				rightLine: j + 1,
+				leftText: left[i],
+				rightText: right[j],
+			});
+			i += 1;
+			j += 1;
+		} else if (dp[i + 1][j] >= dp[i][j + 1]) {
+			ops.push({
+				key: `removed-${i}`,
+				kind: "removed",
+				leftLine: i + 1,
+				leftText: left[i],
+			});
+			i += 1;
+		} else {
+			ops.push({
+				key: `added-${j}`,
+				kind: "added",
+				rightLine: j + 1,
+				rightText: right[j],
+			});
+			j += 1;
+		}
+	}
+	while (i < left.length) {
+		ops.push({
+			key: `removed-${i}`,
+			kind: "removed",
+			leftLine: i + 1,
+			leftText: left[i],
+		});
+		i += 1;
+	}
+	while (j < right.length) {
+		ops.push({
+			key: `added-${j}`,
+			kind: "added",
+			rightLine: j + 1,
+			rightText: right[j],
+		});
+		j += 1;
+	}
+
+	const rows: VersionDiffRow[] = [];
+	for (let index = 0; index < ops.length; index += 1) {
+		const current = ops[index];
+		const next = ops[index + 1];
+		if (current.kind === "removed" && next?.kind === "added") {
+			rows.push({
+				key: `changed-${current.leftLine}-${next.rightLine}`,
+				kind: "changed",
+				leftLine: current.leftLine,
+				rightLine: next.rightLine,
+				leftText: current.leftText,
+				rightText: next.rightText,
+			});
+			index += 1;
+		} else {
+			rows.push(current);
+		}
+	}
+	return rows;
+}
+
+function diffCellBackground(
+	kind: VersionDiffRow["kind"],
+	side: "left" | "right",
+) {
+	if (kind === "equal") return "#ffffff";
+	if (kind === "changed") return "#fff7e6";
+	if (kind === "removed" && side === "left") return "#fff1f0";
+	if (kind === "added" && side === "right") return "#f6ffed";
+	return "#f8fafc";
+}
+
 export default function RegistryCenterPage() {
 	const [msg, msgCtx] = message.useMessage();
 	const [configRecords, setConfigRecords] = useState<UserConfigRecord[]>([]);
@@ -164,8 +332,14 @@ export default function RegistryCenterPage() {
 		useState<ConfigVersionRecord | null>(null);
 	const [selectedVersionContent, setSelectedVersionContent] =
 		useState<SelectedVersionContent | null>(null);
+	const [compareTarget, setCompareTarget] = useState<UserConfigRecord | null>(
+		null,
+	);
+	const [selectedVersionCompare, setSelectedVersionCompare] =
+		useState<SelectedVersionCompare | null>(null);
 	const [configForm] = Form.useForm<ConfigFormValues>();
 	const [versionForm] = Form.useForm<VersionFormValues>();
+	const [compareForm] = Form.useForm<CompareFormValues>();
 	const [algos, setAlgos] = useState<AlgoRegistryItem[]>([]);
 	const [tags, setTags] = useState<TagRegistryItem[]>([]);
 	const [metrics, setMetrics] = useState<MetricRegistryItem[]>([]);
@@ -181,6 +355,7 @@ export default function RegistryCenterPage() {
 	const [loadingVersionKey, setLoadingVersionKey] = useState<string | null>(
 		null,
 	);
+	const [compareLoading, setCompareLoading] = useState(false);
 
 	const refreshConfigs = async () => {
 		setConfigsLoading(true);
@@ -430,6 +605,71 @@ export default function RegistryCenterPage() {
 		})();
 	};
 
+	const handleOpenVersionCompare = (
+		config: UserConfigRecord,
+		version?: ConfigVersionRecord,
+	) => {
+		setCompareTarget(config);
+		setSelectedVersionCompare(null);
+		const versions = [...config.versions].sort(
+			(a, b) => b.versionNumber - a.versionNumber,
+		);
+		const rightVersion =
+			config.currentVersion ||
+			versions[0]?.versionNumber ||
+			version?.versionNumber;
+		const leftVersion =
+			version?.versionNumber && version.versionNumber !== rightVersion
+				? version.versionNumber
+				: versions.find((item) => item.versionNumber !== rightVersion)
+						?.versionNumber;
+		compareForm.setFieldsValue({ leftVersion, rightVersion });
+		if (leftVersion && rightVersion) {
+			void loadVersionCompare(config, leftVersion, rightVersion);
+		}
+	};
+
+	const loadVersionCompare = async (
+		config: UserConfigRecord,
+		leftVersion: number,
+		rightVersion: number,
+	) => {
+		setCompareLoading(true);
+		try {
+			const [leftDetail, rightDetail] = await Promise.all([
+				pipelineConfigApi.getVersion(config.id, leftVersion),
+				pipelineConfigApi.getVersion(config.id, rightVersion),
+			]);
+			const left = mapConfigVersion(leftDetail);
+			const right = mapConfigVersion(rightDetail);
+			setSelectedVersionCompare({
+				configName: config.name,
+				left,
+				right,
+				rows: buildVersionDiffRows(left.content, right.content),
+			});
+		} catch {
+			msg.error("读取对比版本失败");
+		} finally {
+			setCompareLoading(false);
+		}
+	};
+
+	const handleCompareSubmit = async () => {
+		if (!compareTarget) return;
+		const values = await compareForm.validateFields();
+		if (!values.leftVersion || !values.rightVersion) return;
+		if (values.leftVersion === values.rightVersion) {
+			msg.warning("请选择两个不同版本");
+			return;
+		}
+		await loadVersionCompare(
+			compareTarget,
+			values.leftVersion,
+			values.rightVersion,
+		);
+	};
+
 	const algoCols: ColumnsType<AlgoRegistryItem> = [
 		{ title: "Key", dataIndex: "key", render: (v) => <Text code>{v}</Text> },
 		{ title: "名称", dataIndex: "name" },
@@ -528,7 +768,7 @@ export default function RegistryCenterPage() {
 		{
 			title: "操作",
 			key: "actions",
-			width: 260,
+			width: 420,
 			render: (_, record) => (
 				<Space size={4} wrap>
 					<Button
@@ -543,14 +783,22 @@ export default function RegistryCenterPage() {
 						icon={<EditOutlined />}
 						onClick={() => openEditConfig(record)}
 					>
-						编辑
+						属性
 					</Button>
 					<Button
 						size="small"
 						icon={<FileAddOutlined />}
 						onClick={() => openCreateVersion(record)}
 					>
-						新版本
+						基于当前版本新建
+					</Button>
+					<Button
+						size="small"
+						icon={<DiffOutlined />}
+						disabled={record.versions.length < 2}
+						onClick={() => handleOpenVersionCompare(record)}
+					>
+						对比版本
 					</Button>
 					<Popconfirm
 						title="废弃配置"
@@ -599,7 +847,7 @@ export default function RegistryCenterPage() {
 		{
 			title: "文件",
 			key: "content",
-			width: 210,
+			width: 280,
 			render: (_, version) => (
 				<Space size={4}>
 					<Button
@@ -614,10 +862,18 @@ export default function RegistryCenterPage() {
 					</Button>
 					<Button
 						size="small"
+						icon={<DiffOutlined />}
+						disabled={config.versions.length < 2}
+						onClick={() => handleOpenVersionCompare(config, version)}
+					>
+						对比
+					</Button>
+					<Button
+						size="small"
 						icon={<EditOutlined />}
 						onClick={() => openCreateVersion(config, version)}
 					>
-						编辑为新版本
+						基于此版本新建
 					</Button>
 				</Space>
 			),
@@ -884,14 +1140,21 @@ export default function RegistryCenterPage() {
 								icon={<EditOutlined />}
 								onClick={() => openEditConfig(selectedConfig)}
 							>
-								编辑
+								属性
+							</Button>
+							<Button
+								icon={<DiffOutlined />}
+								disabled={selectedConfig.versions.length < 2}
+								onClick={() => handleOpenVersionCompare(selectedConfig)}
+							>
+								对比版本
 							</Button>
 							<Button
 								type="primary"
 								icon={<FileAddOutlined />}
 								onClick={() => openCreateVersion(selectedConfig)}
 							>
-								新增版本
+								基于当前版本新建
 							</Button>
 						</Space>
 					) : null
@@ -956,7 +1219,7 @@ export default function RegistryCenterPage() {
 			</Drawer>
 
 			<Modal
-				title={editingConfig ? "编辑配置" : "新建配置"}
+				title={editingConfig ? "编辑配置属性" : "新建配置"}
 				open={configModalOpen}
 				onCancel={() => {
 					setConfigModalOpen(false);
@@ -964,7 +1227,7 @@ export default function RegistryCenterPage() {
 					configForm.resetFields();
 				}}
 				onOk={() => configForm.submit()}
-				okText={editingConfig ? "保存" : "创建"}
+				okText={editingConfig ? "保存属性" : "创建"}
 				confirmLoading={savingConfig}
 				cancelText="取消"
 				destroyOnHidden
@@ -1090,6 +1353,203 @@ export default function RegistryCenterPage() {
 						/>
 					</Form.Item>
 				</Form>
+			</Modal>
+
+			<Modal
+				title={
+					compareTarget ? `配置版本对比：${compareTarget.name}` : "配置版本对比"
+				}
+				open={Boolean(compareTarget)}
+				onCancel={() => {
+					setCompareTarget(null);
+					setSelectedVersionCompare(null);
+					compareForm.resetFields();
+				}}
+				footer={[
+					<Button
+						key="close"
+						onClick={() => {
+							setCompareTarget(null);
+							setSelectedVersionCompare(null);
+							compareForm.resetFields();
+						}}
+					>
+						关闭
+					</Button>,
+				]}
+				width={1120}
+				destroyOnHidden
+			>
+				{compareTarget ? (
+					<Space direction="vertical" size={12} style={{ width: "100%" }}>
+						<Form
+							form={compareForm}
+							layout="inline"
+							requiredMark={false}
+							onFinish={handleCompareSubmit}
+						>
+							<Form.Item
+								name="leftVersion"
+								label="基准版本"
+								rules={[{ required: true, message: "请选择基准版本" }]}
+							>
+								<Select
+									style={{ width: 360 }}
+									options={compareTarget.versions.map((version) => ({
+										value: version.versionNumber,
+										label: versionDescriptor(version),
+									}))}
+								/>
+							</Form.Item>
+							<Form.Item
+								name="rightVersion"
+								label="目标版本"
+								rules={[{ required: true, message: "请选择目标版本" }]}
+							>
+								<Select
+									style={{ width: 360 }}
+									options={compareTarget.versions.map((version) => ({
+										value: version.versionNumber,
+										label: versionDescriptor(version),
+									}))}
+								/>
+							</Form.Item>
+							<Form.Item>
+								<Button
+									type="primary"
+									icon={<DiffOutlined />}
+									loading={compareLoading}
+									onClick={() => compareForm.submit()}
+								>
+									对比
+								</Button>
+							</Form.Item>
+						</Form>
+
+						{selectedVersionCompare ? (
+							<Space direction="vertical" size={8} style={{ width: "100%" }}>
+								<Space wrap>
+									<Tag color="red">
+										基准 {selectedVersionCompare.left.version}
+									</Tag>
+									<Text type="secondary">
+										{selectedVersionCompare.left.summary} ·{" "}
+										{selectedVersionCompare.left.updatedAt} ·{" "}
+										{shortHash(selectedVersionCompare.left.contentSha256)}
+									</Text>
+								</Space>
+								<Space wrap>
+									<Tag color="green">
+										目标 {selectedVersionCompare.right.version}
+									</Tag>
+									<Text type="secondary">
+										{selectedVersionCompare.right.summary} ·{" "}
+										{selectedVersionCompare.right.updatedAt} ·{" "}
+										{shortHash(selectedVersionCompare.right.contentSha256)}
+									</Text>
+								</Space>
+								<Text type="secondary">
+									变更行{" "}
+									{
+										selectedVersionCompare.rows.filter(
+											(row) => row.kind !== "equal",
+										).length
+									}{" "}
+									/ 共 {selectedVersionCompare.rows.length} 行
+								</Text>
+								<div
+									style={{
+										border: "1px solid #e2e8f0",
+										borderRadius: 6,
+										overflow: "hidden",
+									}}
+								>
+									<div
+										style={{
+											display: "grid",
+											gridTemplateColumns:
+												"64px minmax(0, 1fr) 64px minmax(0, 1fr)",
+											background: "#f8fafc",
+											borderBottom: "1px solid #e2e8f0",
+											fontWeight: 600,
+										}}
+									>
+										<div style={{ padding: "8px 10px" }}>行</div>
+										<div style={{ padding: "8px 10px" }}>
+											{selectedVersionCompare.left.version}
+										</div>
+										<div style={{ padding: "8px 10px" }}>行</div>
+										<div style={{ padding: "8px 10px" }}>
+											{selectedVersionCompare.right.version}
+										</div>
+									</div>
+									<div style={{ maxHeight: 460, overflow: "auto" }}>
+										{selectedVersionCompare.rows.map((row) => (
+											<div
+												key={row.key}
+												style={{
+													display: "grid",
+													gridTemplateColumns:
+														"64px minmax(0, 1fr) 64px minmax(0, 1fr)",
+													borderBottom: "1px solid #eef2f7",
+												}}
+											>
+												<div
+													style={{
+														padding: "4px 8px",
+														color: "#64748b",
+														background: "#f8fafc",
+														textAlign: "right",
+														fontFamily: "monospace",
+													}}
+												>
+													{row.leftLine ?? ""}
+												</div>
+												<pre
+													style={{
+														margin: 0,
+														padding: "4px 8px",
+														whiteSpace: "pre-wrap",
+														wordBreak: "break-word",
+														fontFamily: "monospace",
+														background: diffCellBackground(row.kind, "left"),
+													}}
+												>
+													{row.leftText ?? ""}
+												</pre>
+												<div
+													style={{
+														padding: "4px 8px",
+														color: "#64748b",
+														background: "#f8fafc",
+														textAlign: "right",
+														fontFamily: "monospace",
+													}}
+												>
+													{row.rightLine ?? ""}
+												</div>
+												<pre
+													style={{
+														margin: 0,
+														padding: "4px 8px",
+														whiteSpace: "pre-wrap",
+														wordBreak: "break-word",
+														fontFamily: "monospace",
+														background: diffCellBackground(row.kind, "right"),
+													}}
+												>
+													{row.rightText ?? ""}
+												</pre>
+											</div>
+										))}
+									</div>
+								</div>
+							</Space>
+						) : (
+							<Alert type="info" showIcon message="请选择两个版本后查看差异" />
+						)}
+					</Space>
+				) : null}
 			</Modal>
 
 			<Modal

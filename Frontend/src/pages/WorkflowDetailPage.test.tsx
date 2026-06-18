@@ -1,21 +1,47 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WorkflowDetailPage from "./WorkflowDetailPage";
 
 const mockUseWorkflowDetail = vi.fn();
+const mockDeletePipelineRun = vi.fn();
+const mockWorkflowDagView = vi.fn(
+	({
+		nodes,
+	}: {
+		nodes: Array<{ displayName?: string; name?: string; phase: string }>;
+	}) => (
+		<div data-testid="mock-dag-view">
+			{nodes
+				.map((node) => `${node.displayName || node.name}:${node.phase}`)
+				.join("|")}
+		</div>
+	),
+);
 
 vi.mock("./useWorkflowDetail", () => ({
 	useWorkflowDetail: (...args: unknown[]) => mockUseWorkflowDetail(...args),
+}));
+
+vi.mock("../api/pipelineApi", () => ({
+	deletePipelineRun: (...args: unknown[]) => mockDeletePipelineRun(...args),
 }));
 
 vi.mock("./WorkflowDagView", async (importOriginal) => {
 	const actual = await importOriginal<Record<string, unknown>>();
 	return {
 		...actual,
-		WorkflowDagView: () => <div data-testid="mock-dag-view" />,
+		WorkflowDagView: (props: Parameters<typeof mockWorkflowDagView>[0]) =>
+			mockWorkflowDagView(props),
 	};
 });
 
@@ -110,6 +136,7 @@ describe("WorkflowDetailPage", () => {
 			})),
 		});
 		vi.clearAllMocks();
+		mockDeletePipelineRun.mockResolvedValue(undefined);
 		mockWorkflowDetailState();
 	});
 
@@ -199,6 +226,107 @@ describe("WorkflowDetailPage", () => {
 			screen.queryByRole("button", { name: /终止/ }),
 		).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /重提交/ })).toBeInTheDocument();
+	});
+
+	it("overlays DAG node status from the DataBrew run node snapshot", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Running",
+				message: "",
+				nodes: [
+					{
+						id: "argo-node-1",
+						name: "wf-asset.node-1",
+						displayName: "node-1",
+						type: "Pod",
+						phase: "Pending",
+						startedAt: "2026-06-03T00:09:00Z",
+					},
+				],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: {
+					id: "run-1",
+					workflowName: "wf-asset",
+					pipelineName: "asset-pipeline",
+					status: "Failed",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+					finishedAt: "2026-06-03T00:10:00Z",
+					message: "main: Error (exit code 1)",
+					nodes: [
+						{
+							id: "run-node-1",
+							runId: "run-1",
+							pipelineNodeId: "node-1",
+							argoNodeId: "argo-node-1",
+							displayName: "node-1",
+							phase: "Failed",
+							message: "main: Error (exit code 1)",
+							finishedAt: "2026-06-03T00:10:00Z",
+							updatedAt: "2026-06-03T00:10:00Z",
+						},
+					],
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByTestId("mock-dag-view")).toHaveTextContent(
+			"node-1:Failed",
+		);
+		expect(screen.getByText("main: Error (exit code 1)")).toBeInTheDocument();
+	});
+
+	it("deletes the DataBrew execution record when a run id is available", async () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Failed",
+				nodes: [],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: {
+					id: "run-1",
+					workflowName: "wf-asset",
+					pipelineName: "asset-pipeline",
+					status: "Failed",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		fireEvent.click(screen.getByRole("button", { name: /删除/ }));
+		expect(await screen.findByText(/将从执行记录列表删除/)).toBeInTheDocument();
+		const dialog = await screen.findByRole("dialog");
+		fireEvent.click(within(dialog).getByRole("button", { name: /删\s*除/ }));
+
+		await waitFor(() =>
+			expect(mockDeletePipelineRun).toHaveBeenCalledWith("run-1"),
+		);
 	});
 
 	it("shows a not-found alert instead of an indefinite spinner", () => {

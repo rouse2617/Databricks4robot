@@ -9,9 +9,30 @@ The system SHALL allow a pipeline node/component instance to reference one saved
 #### Scenario: User binds a ready config to one node
 - **Given** a ready config exists in the config library
 - **And** the user is editing a pipeline node
-- **When** the user selects that config in the node configuration panel and saves the node
-- **Then** the node stores the selected config identity and mount destination
+- **When** the user selects that config and one ready config version in the node configuration panel and saves the node
+- **Then** the node stores the selected config identity, explicit version, and mount destination
 - **And** the canvas shows that the node has a config binding
+
+#### Scenario: User binds an earlier ready config version
+- **Given** a config library entry has multiple ready versions
+- **And** the user is editing a pipeline node
+- **When** the user selects an earlier version for that config and saves the node
+- **Then** the saved node binding references that earlier version instead of the current version
+- **And** deploy resolves the exact selected version content for that node
+
+#### Scenario: User binds a ready historical version while the current config draft is not runnable
+- **Given** a config library entry has current version `v5` in draft status
+- **And** the same config has earlier ready versions `v4` and `v3`
+- **When** the user opens the node configuration panel
+- **Then** the config remains selectable because at least one ready version is available
+- **And** the version selector only offers ready versions such as `v4` and `v3`
+- **And** each version option shows its summary, update time, and content hash
+
+#### Scenario: User compares config versions before choosing one
+- **Given** a config library entry has multiple saved versions
+- **When** the user opens the configuration library and selects two versions to compare
+- **Then** the UI shows a line-level diff of the two version contents
+- **And** the comparison identifies both versions by version number, summary, update time, and content hash
 
 #### Scenario: User clears a node config binding
 - **Given** a pipeline node already has a config binding
