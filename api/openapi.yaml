@@ -1976,6 +1976,35 @@ components:
         updatedAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }
         finishedAt: { type: string, format: date-time, nullable: true }
+    DeployConfigSelection:
+      type: object
+      description: Runtime config source resolved during deploy and projected into the workflow as a mounted file plus companion environment variables.
+      required: [mode, mountPath, targetFilename]
+      properties:
+        mode:
+          type: string
+          enum: [saved, upload, inline]
+          description: saved = select a platform-stored config; upload = ad hoc local file; inline = deploy-time editor content.
+        configId:
+          type: string
+          description: Required when mode=saved.
+        version:
+          type: integer
+          description: Optional saved config version. Defaults to the latest active version when omitted.
+        fileName:
+          type: string
+          description: Source file name used in the deploy UI and ConfigMap projection.
+        content:
+          type: string
+          description: Required when mode=upload or mode=inline. Raw file content projected into a request-scoped ConfigMap.
+        mountPath:
+          type: string
+          description: Directory mounted into each pipeline step container.
+          example: /workspace/configs
+        targetFilename:
+          type: string
+          description: Final file name inside mountPath.
+          example: app-config.yaml
     PipelineRunEvent:
       type: object
       properties:
@@ -5886,11 +5915,16 @@ paths:
               type: object
               properties:
                 name: { type: string, description: Optional override pipeline name }
+                version:
+                  type: integer
+                  description: Optional template version lock. Defaults to the active template version when omitted.
                 asset_ids:
                   type: array
                   items: { type: string }
                 target_id:
                   type: string
+                configSelection:
+                  $ref: '#/components/schemas/DeployConfigSelection'
       responses:
         '201':
           description: Pipeline run created
@@ -6908,6 +6942,8 @@ paths:
                   type: array
                   items: { type: string }
                 filterJson: { type: object, description: Asset filter criteria (JSON) }
+                configSelection:
+                  $ref: '#/components/schemas/DeployConfigSelection'
       responses:
         '201':
           description: Backfill job created

@@ -24,9 +24,11 @@ type inputSpec struct {
 
 // Volume represents a named volume that can be mounted.
 type Volume struct {
-	Name       string
-	IsEmptyDir bool
-	PVCName    string
+	Name          string
+	IsEmptyDir    bool
+	PVCName       string
+	ConfigMapName string
+	ConfigMapKey  string
 }
 
 // Options controls how the pipeline is transpiled.
@@ -146,6 +148,12 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 		if v.IsEmptyDir {
 			vol.VolumeSource = corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			}
+		} else if v.ConfigMapName != "" {
+			vol.VolumeSource = corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: v.ConfigMapName},
+				},
 			}
 		} else if v.PVCName != "" {
 			vol.VolumeSource = corev1.VolumeSource{

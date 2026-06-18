@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -54,6 +55,7 @@ func (uc *Usecase) SetResultRepositories(resultRepo repository.BackfillResultRep
 type CreateBackfillOptions struct {
 	TemplateVersion int
 	PilotCount      int
+	ConfigSelection *pipelineUC.RuntimeConfigSelection
 }
 
 type RerunRequest struct {
@@ -123,6 +125,19 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 		PilotPhase:      pilotPhase,
 		Status:          status,
 		CreatedAt:       time.Now().UTC(),
+	}
+	if options.ConfigSelection != nil {
+		job.FilterJSON = map[string]interface{}{
+			"configSelection": map[string]interface{}{
+				"mode":           options.ConfigSelection.Mode,
+				"configId":       options.ConfigSelection.ConfigID,
+				"version":        options.ConfigSelection.Version,
+				"fileName":       options.ConfigSelection.FileName,
+				"content":        options.ConfigSelection.Content,
+				"mountPath":      options.ConfigSelection.MountPath,
+				"targetFilename": options.ConfigSelection.TargetFilename,
+			},
+		}
 	}
 
 	assetIDsCopy := append([]string(nil), assetIDs...)
@@ -384,6 +399,13 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 		AllowUnknownAssets: true,
 		PreallocatedRunID:  runID,
 	}
+	if job != nil && job.FilterJSON != nil {
+		if configRaw, ok := job.FilterJSON["configSelection"]; ok {
+			if selection := decodeRuntimeConfigSelection(configRaw); selection != nil {
+				deployOpts.ConfigSelection = selection
+			}
+		}
+	}
 	dep, err := uc.pipelineUC.DeployByTemplateID(
 		ctx,
 		templateID,
@@ -435,6 +457,21 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	}
 	_ = uc.syncJobProgress(ctx, jobID)
 	return nil
+}
+
+func decodeRuntimeConfigSelection(raw interface{}) *pipelineUC.RuntimeConfigSelection {
+	payload, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var selection pipelineUC.RuntimeConfigSelection
+	if err := json.Unmarshal(payload, &selection); err != nil {
+		return nil
+	}
+	if strings.TrimSpace(selection.Mode) == "" {
+		return nil
+	}
+	return &selection
 }
 
 // ReconcileSubtaskRuns ensures backfill items missing ledger rows get one.

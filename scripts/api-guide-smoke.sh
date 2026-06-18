@@ -34,6 +34,7 @@ RESP_BODY=""
 RESP_CODE=""
 PASS=0
 FAIL=0
+PIPELINE_CONFIG_SMOKE_ID=""
 
 ok() { PASS=$((PASS + 1)); echo "  OK  $1"; }
 bad() {
@@ -221,6 +222,32 @@ if [[ "$RESP_CODE" == "200" ]]; then
 		bad "pipeline-runs response shape"
 	fi
 fi
+if [[ -n "${PIPELINE_TEMPLATE_ID:-}" ]]; then
+	inline_run_payload='{"target_id":"default","configSelection":{"mode":"inline","fileName":"runtime-config.yaml","content":"foo: bar\nnested:\n  enabled: true","mountPath":"/workspace/configs","targetFilename":"app-config.yaml"}}'
+	inline_run_body=$(post_json "pipeline run template with inline configSelection" "/api/v1/pipeline-runs/template/${PIPELINE_TEMPLATE_ID}" "$inline_run_payload")
+	if echo "$inline_run_body" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("id"); assert d.get("executionTargetId") == "default"' 2>/dev/null; then
+		ok "pipeline run template inline configSelection response shape"
+	else
+		RESP_CODE="json"
+		RESP_BODY="$inline_run_body"
+		bad "pipeline run template inline configSelection response shape"
+	fi
+	if [[ -n "$PIPELINE_CONFIG_SMOKE_ID" ]]; then
+		saved_run_payload='{"target_id":"default","configSelection":{"mode":"saved","configId":"'"${PIPELINE_CONFIG_SMOKE_ID}"'","version":1,"fileName":"smoke-config.yaml","mountPath":"/workspace/configs","targetFilename":"saved-config.yaml"}}'
+		saved_run_body=$(post_json "pipeline run template with saved configSelection" "/api/v1/pipeline-runs/template/${PIPELINE_TEMPLATE_ID}" "$saved_run_payload")
+		if echo "$saved_run_body" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("id"); assert d.get("executionTargetId") == "default"' 2>/dev/null; then
+			ok "pipeline run template saved configSelection response shape"
+		else
+			RESP_CODE="json"
+			RESP_BODY="$saved_run_body"
+			bad "pipeline run template saved configSelection response shape"
+		fi
+	else
+		echo "  skip pipeline run template saved configSelection — set RUN_WRITES=1 so smoke can create a disposable pipeline config first"
+	fi
+else
+	echo "  skip pipeline run template configSelection smoke — set PIPELINE_TEMPLATE_ID to a disposable template id"
+fi
 expect_code_post "pipeline save duplicate fan-in -> 400" "/api/v1/pipelines" '{"name":"smoke-invalid-fanin","pipeline":{"name":"smoke-invalid-fanin","nodes":[{"id":"a","component":{"name":"a","image":"busybox","command":["sh","-c"],"args":[{"name":"script","value":"echo a > /tmp/outputs/output"}]},"outputs":[{"name":"output","type":"string"}]},{"id":"b","component":{"name":"b","image":"busybox","command":["sh","-c"],"args":[{"name":"script","value":"echo b > /tmp/outputs/output"}]},"outputs":[{"name":"output","type":"string"}]},{"id":"join","component":{"name":"join","image":"busybox"},"inputs":[{"name":"input","type":"string"}]}],"edges":[{"source":"a.output","target":"join.input"},{"source":"b.output","target":"join.input"}]}}}' "400" >/dev/null
 
 echo ""
@@ -265,6 +292,7 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 	config_created=$(post_json "pipeline-configs create" "/api/v1/pipeline-configs" "$config_body")
 	config_id=$(echo "$config_created" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
 	if [[ -n "$config_id" ]]; then
+		PIPELINE_CONFIG_SMOKE_ID="$config_id"
 		get "pipeline-configs get" "/api/v1/pipeline-configs/${config_id}"
 		get "pipeline-configs get v1 content" "/api/v1/pipeline-configs/${config_id}/versions/1"
 		config_v2_body='{"status":"ready","content":"threshold: 0.90\nwindow: 5\n","summary":"raise threshold"}'

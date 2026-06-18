@@ -17,6 +17,7 @@ import {
 	Input,
 	Modal,
 	Popconfirm,
+	Radio,
 	Select,
 	Skeleton,
 	Space,
@@ -34,6 +35,7 @@ import {
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { deployPipelineForAssets } from "../../api/deployPipelineRun";
 import {
+	type DeployConfigSelection,
 	type Deployment,
 	deletePipeline,
 	type ExecutionTarget,
@@ -46,6 +48,10 @@ import {
 	type PipelineTemplate,
 	promotePipeline,
 } from "../../api/pipelineApi";
+import {
+	type PipelineConfig,
+	pipelineConfigApi,
+} from "../../api/pipelineConfigs";
 import { request } from "../../api/pipelineClient";
 import { toAssetStyleId } from "../../lib/idDisplay";
 import { batchJobDetailLocationState } from "../../lib/pipelineNavigation";
@@ -70,6 +76,64 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export type DeployPanelVariant = "full" | "compact" | "sidebar";
+type DeployConfigSourceMode = "saved" | "upload" | "inline";
+
+interface UploadDraftFile {
+	name: string;
+	size: number;
+	content: string;
+}
+
+export function buildDeployConfigSelection(input: {
+	configSourceMode: DeployConfigSourceMode;
+	selectedSavedConfig: PipelineConfig | null;
+	uploadDraftFile: UploadDraftFile | null;
+	inlineDraftName: string;
+	inlineDraftContent: string;
+	configMountPath: string;
+	configTargetFilename: string;
+}): DeployConfigSelection | undefined {
+	const mountPath = input.configMountPath.trim();
+	const targetFilename = input.configTargetFilename.trim();
+	if (!mountPath || !targetFilename) {
+		return undefined;
+	}
+	if (input.configSourceMode === "saved" && input.selectedSavedConfig) {
+		return {
+			mode: "saved",
+			configId: input.selectedSavedConfig.id,
+			version: input.selectedSavedConfig.currentVersion,
+			fileName: input.selectedSavedConfig.name,
+			mountPath,
+			targetFilename,
+		};
+	}
+	if (input.configSourceMode === "upload" && input.uploadDraftFile) {
+		return {
+			mode: "upload",
+			fileName: input.uploadDraftFile.name,
+			content: input.uploadDraftFile.content,
+			mountPath,
+			targetFilename,
+		};
+	}
+	if (input.configSourceMode === "inline" && input.inlineDraftContent.trim()) {
+		return {
+			mode: "inline",
+			fileName: input.inlineDraftName.trim() || "runtime-config.yaml",
+			content: input.inlineDraftContent,
+			mountPath,
+			targetFilename,
+		};
+	}
+	return undefined;
+}
+
+function formatFileSize(bytes: number) {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function parseAssetIdsParam(raw: string | null): string[] {
 	if (!raw) return [];
@@ -414,6 +478,7 @@ export function DeployPanel({
 	const [deploying, setDeploying] = useState(false);
 	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
 	const assetPickerRef = useRef<AssetPickerHandle>(null);
+	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const [deployVersions, setDeployVersions] = useState<PipelineTemplate[]>([]);
 	const [selectedDeployVersion, setSelectedDeployVersion] = useState<
 		number | undefined
@@ -434,6 +499,21 @@ export function DeployPanel({
 	const [activeVersionByTemplate, setActiveVersionByTemplate] = useState<
 		Record<string, number>
 	>({});
+	const [configSourceMode, setConfigSourceMode] =
+		useState<DeployConfigSourceMode>("saved");
+	const [savedConfigs, setSavedConfigs] = useState<PipelineConfig[]>([]);
+	const [savedConfigsLoading, setSavedConfigsLoading] = useState(false);
+	const [savedConfigsError, setSavedConfigsError] = useState<string | null>(null);
+	const [selectedSavedConfigId, setSelectedSavedConfigId] = useState<
+		string | undefined
+	>();
+	const [uploadDraftFile, setUploadDraftFile] = useState<UploadDraftFile | null>(
+		null,
+	);
+	const [inlineDraftName, setInlineDraftName] = useState("runtime-config.yaml");
+	const [inlineDraftContent, setInlineDraftContent] = useState("");
+	const [configMountPath, setConfigMountPath] = useState("/app/configs");
+	const [configTargetFilename, setConfigTargetFilename] = useState("");
 	const recommendedTemplateId = useMemo(() => {
 		if (queryAssetIds.length === 0 || templates.length === 0) return null;
 		const prodTemplates = templates.filter(
@@ -461,6 +541,41 @@ export function DeployPanel({
 	);
 
 	const displayTemplates = templates;
+	const selectedSavedConfig = useMemo(
+		() =>
+			savedConfigs.find((config) => config.id === selectedSavedConfigId) ?? null,
+		[savedConfigs, selectedSavedConfigId],
+	);
+	const selectedConfigSummary = useMemo(() => {
+		if (configSourceMode === "saved" && selectedSavedConfig) {
+			return {
+				sourceLabel: "平台配置",
+				name: selectedSavedConfig.name,
+				meta: `${selectedSavedConfig.owner} · ${selectedSavedConfig.lifecycle} · v${selectedSavedConfig.currentVersion}`,
+			};
+		}
+		if (configSourceMode === "upload" && uploadDraftFile) {
+			return {
+				sourceLabel: "本地上传",
+				name: uploadDraftFile.name,
+				meta: `${formatFileSize(uploadDraftFile.size)} · deploy 草稿`,
+			};
+		}
+		if (configSourceMode === "inline" && inlineDraftContent.trim()) {
+			return {
+				sourceLabel: "在线编辑",
+				name: inlineDraftName.trim() || "runtime-config.yaml",
+				meta: `${inlineDraftContent.split("\n").length} 行 · deploy 草稿`,
+			};
+		}
+		return null;
+	}, [
+		configSourceMode,
+		inlineDraftContent,
+		inlineDraftName,
+		selectedSavedConfig,
+		uploadDraftFile,
+	]);
 	const deployTargetTemplate = useMemo(
 		() => templates.find((item) => item.id === deployTargetId),
 		[deployTargetId, templates],
@@ -684,6 +799,14 @@ export function DeployPanel({
 		setSelectedDeployVersion(activeVersion ?? currentTemplate?.version);
 		setSelectedAssetIds(queryAssetIds);
 		setAssetPickerResetKey((key) => key + 1);
+		setConfigSourceMode("saved");
+		setSelectedSavedConfigId(undefined);
+		setSavedConfigsError(null);
+		setUploadDraftFile(null);
+		setInlineDraftName("runtime-config.yaml");
+		setInlineDraftContent("");
+		setConfigMountPath("/app/configs");
+		setConfigTargetFilename("");
 		const defaultTarget =
 			targets.find((target) => target.isDefault) ?? targets[0];
 		setSelectedTargetId(defaultTarget?.id ?? "default");
@@ -707,7 +830,63 @@ export function DeployPanel({
 		setDeployVersions([]);
 		setSelectedDeployVersion(undefined);
 		setAssetPickerResetKey((key) => key + 1);
+		if (fileInputRef.current) {
+			fileInputRef.current.value = "";
+		}
 	};
+
+	useEffect(() => {
+		if (!assetModalOpen || configSourceMode !== "saved" || savedConfigsLoading) {
+			return;
+		}
+		if (savedConfigs.length > 0) {
+			return;
+		}
+		let cancelled = false;
+		setSavedConfigsLoading(true);
+		setSavedConfigsError(null);
+		void pipelineConfigApi
+			.list()
+			.then((response) => {
+				if (cancelled) return;
+				setSavedConfigs(response.items);
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setSavedConfigsError("平台配置列表加载失败");
+			})
+			.finally(() => {
+				if (cancelled) return;
+				setSavedConfigsLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [assetModalOpen, configSourceMode, savedConfigs.length, savedConfigsLoading]);
+
+	const handleUploadDraftChange = useCallback(
+		async (event: ChangeEvent<HTMLInputElement>) => {
+			const file = event.target.files?.[0];
+			if (!file) {
+				setUploadDraftFile(null);
+				return;
+			}
+			try {
+				const content = await file.text();
+				setUploadDraftFile({
+					name: file.name,
+					size: file.size,
+					content,
+				});
+				if (!configTargetFilename.trim()) {
+					setConfigTargetFilename(file.name);
+				}
+			} catch {
+				messageApi.error("读取本地文件失败");
+			}
+		},
+		[configTargetFilename, messageApi],
+	);
 
 	const handleDeployConfirm = async () => {
 		if (!deployTargetId) return;
@@ -719,6 +898,15 @@ export function DeployPanel({
 			return;
 		}
 		const assetIds = resolved.assetIds;
+		const configSelection = buildDeployConfigSelection({
+			configSourceMode,
+			selectedSavedConfig,
+			uploadDraftFile,
+			inlineDraftName,
+			inlineDraftContent,
+			configMountPath,
+			configTargetFilename,
+		});
 		setDeploying(true);
 		try {
 			const template = templates.find((item) => item.id === deployTargetId);
@@ -726,6 +914,7 @@ export function DeployPanel({
 				targetId: selectedTargetId,
 				version: selectedDeployVersion,
 				batchName: template ? `${template.name}-${Date.now()}` : undefined,
+				configSelection,
 			});
 			if (result.mode === "batch") {
 				messageApi.success(
@@ -1345,6 +1534,157 @@ export function DeployPanel({
 							disabled: target.status !== "available",
 						}))}
 					/>
+				</div>
+				<div className="deploy-run-field" data-testid="deploy-config-panel">
+					<div className="deploy-run-field__label">配置文件</div>
+					<Space direction="vertical" size={12} style={{ width: "100%" }}>
+						<Radio.Group
+							value={configSourceMode}
+							onChange={(event) =>
+								setConfigSourceMode(event.target.value as DeployConfigSourceMode)
+							}
+							optionType="button"
+							buttonStyle="solid"
+						>
+							<Radio.Button value="saved">选择已保存配置</Radio.Button>
+							<Radio.Button value="upload">上传本地文件</Radio.Button>
+							<Radio.Button value="inline">在线编辑</Radio.Button>
+						</Radio.Group>
+						{configSourceMode === "saved" ? (
+							<Space direction="vertical" size={8} style={{ width: "100%" }}>
+								<Select
+									aria-label="选择已保存配置"
+									placeholder="选择平台已保存的配置"
+									loading={savedConfigsLoading}
+									value={selectedSavedConfigId}
+									onChange={(value) => {
+										setSelectedSavedConfigId(value);
+										const selected = savedConfigs.find((config) => config.id === value);
+										if (selected && !configTargetFilename.trim()) {
+											setConfigTargetFilename(selected.name);
+										}
+									}}
+									options={savedConfigs.map((config) => ({
+										value: config.id,
+										label: `${config.name} · ${config.owner} · ${config.lifecycle} · v${config.currentVersion}`,
+									}))}
+								/>
+								{savedConfigsError ? (
+									<Alert type="error" showIcon message={savedConfigsError} />
+								) : null}
+								{selectedSavedConfig ? (
+									<Alert
+										type="info"
+										showIcon
+										message={selectedSavedConfig.name}
+										description={`owner: ${selectedSavedConfig.owner} · ${selectedSavedConfig.description || "无描述"} · 当前版本 v${selectedSavedConfig.currentVersion}`}
+									/>
+								) : (
+									<Alert
+										type="warning"
+										showIcon
+										message="还未选择平台配置"
+										description="这里会显示当前用户可用的已保存配置。"
+									/>
+								)}
+							</Space>
+						) : null}
+						{configSourceMode === "upload" ? (
+							<Space direction="vertical" size={8} style={{ width: "100%" }}>
+								<input
+									ref={fileInputRef}
+									aria-label="上传配置文件"
+									type="file"
+									accept=".yaml,.yml,.json,.txt,.conf,.cfg"
+									onChange={(event) => {
+										void handleUploadDraftChange(event);
+									}}
+								/>
+								{uploadDraftFile ? (
+									<Alert
+										type="success"
+										showIcon
+										message={uploadDraftFile.name}
+										description={`${formatFileSize(uploadDraftFile.size)} · 本地文件仅作为本次 deploy 草稿，不会自动保存到平台配置库`}
+									/>
+								) : (
+									<Alert
+										type="warning"
+										showIcon
+										message="还未上传本地文件"
+										description="选择一个 yaml / json 文件作为本次 deploy 的临时配置。"
+									/>
+								)}
+							</Space>
+						) : null}
+						{configSourceMode === "inline" ? (
+							<Space direction="vertical" size={8} style={{ width: "100%" }}>
+								<Input
+									aria-label="在线编辑文件名"
+									placeholder="runtime-config.yaml"
+									value={inlineDraftName}
+									onChange={(event) => {
+										setInlineDraftName(event.target.value);
+										if (!configTargetFilename.trim()) {
+											setConfigTargetFilename(event.target.value);
+										}
+									}}
+								/>
+								<Input.TextArea
+									aria-label="在线编辑配置内容"
+									rows={8}
+									placeholder={"threshold: 0.82\nwindow: 5\n"}
+									value={inlineDraftContent}
+									onChange={(event) => setInlineDraftContent(event.target.value)}
+								/>
+								<Alert
+									type="info"
+									showIcon
+									message="在线编辑内容只作为本次 deploy 草稿"
+									description="这部分内容不会自动写回平台配置库，后续如需沉淀为长期配置，再单独保存到配置中心。"
+								/>
+							</Space>
+						) : null}
+						<div
+							style={{
+								display: "grid",
+								gridTemplateColumns: "1fr 1fr",
+								gap: 8,
+							}}
+						>
+							<Input
+								aria-label="挂载目录"
+								placeholder="/app/configs"
+								value={configMountPath}
+								onChange={(event) => setConfigMountPath(event.target.value)}
+							/>
+							<Input
+								aria-label="目标文件名"
+								placeholder="runtime-config.yaml"
+								value={configTargetFilename}
+								onChange={(event) => setConfigTargetFilename(event.target.value)}
+							/>
+						</div>
+						{selectedConfigSummary ? (
+							<Alert
+								type={
+									configMountPath.trim() && configTargetFilename.trim()
+										? "success"
+										: "warning"
+								}
+								showIcon
+								message={`来源：${selectedConfigSummary.sourceLabel} · ${selectedConfigSummary.name}`}
+								description={`摘要：${selectedConfigSummary.meta} · 挂载到 ${configMountPath.trim() || "（未填写目录）"}/${configTargetFilename.trim() || "（未填写文件名）"}`}
+							/>
+						) : (
+							<Alert
+								type="warning"
+								showIcon
+								message="还未完成配置文件选择"
+								description="请选择一种文件来源，并补充挂载目录与目标文件名。"
+							/>
+						)}
+					</Space>
 				</div>
 				<AssetPicker
 					ref={assetPickerRef}

@@ -12,6 +12,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	uc "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/backfill"
+	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
 // Handler bundles the backfill endpoints.
@@ -30,6 +31,15 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		AssetIDs        []string `json:"assetIds" binding:"required,min=1"`
 		TemplateVersion int      `json:"templateVersion,omitempty"`
 		PilotCount      int      `json:"pilotCount,omitempty"`
+		Config          *struct {
+			Mode           string `json:"mode"`
+			ConfigID       string `json:"configId"`
+			Version        int    `json:"version"`
+			FileName       string `json:"fileName"`
+			Content        string `json:"content"`
+			MountPath      string `json:"mountPath"`
+			TargetFilename string `json:"targetFilename"`
+		} `json:"configSelection,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
@@ -39,6 +49,20 @@ func (h *Handler) CreateJob(c *gin.Context) {
 	job, err := h.uc.CreateBackfill(c.Request.Context(), req.Name, req.TemplateID, req.AssetIDs, uc.CreateBackfillOptions{
 		TemplateVersion: req.TemplateVersion,
 		PilotCount:      req.PilotCount,
+		ConfigSelection: func() *pipelineUC.RuntimeConfigSelection {
+			if req.Config == nil {
+				return nil
+			}
+			return &pipelineUC.RuntimeConfigSelection{
+				Mode:           req.Config.Mode,
+				ConfigID:       req.Config.ConfigID,
+				Version:        req.Config.Version,
+				FileName:       req.Config.FileName,
+				Content:        req.Config.Content,
+				MountPath:      req.Config.MountPath,
+				TargetFilename: req.Config.TargetFilename,
+			}
+		}(),
 	})
 	if err != nil {
 		mapCreateJobError(c, err)

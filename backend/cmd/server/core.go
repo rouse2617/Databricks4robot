@@ -29,6 +29,7 @@ import (
 	pipelineComponentUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_component"
 	pipelineConfigUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
 	"log/slog"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 )
 
 // ── Layer 2: Core business layer (repos + usecases + handlers) ──
@@ -106,6 +107,7 @@ func setupCore(inf *infra) *coreHandlers {
 	pipelineRunAssetNodeRepo := postgres.NewPipelineRunAssetNodeRepo(pg)
 	pipelineRunNotificationRepo := postgres.NewPipelineRunNotificationRepo(pg)
 	pipelineRunWatcherStateRepo := postgres.NewPipelineRunWatcherStateRepo(pg)
+	pipelineConfigRepo := postgres.NewPipelineConfigRepo(pg)
 	puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
 	puc.SetRunRepositories(executionTargetRepo, pipelineRunRepo, pipelineRunNodeRepo)
@@ -114,6 +116,12 @@ func setupCore(inf *infra) *coreHandlers {
 	puc.SetAssetEventRepo(assetEventRepo)
 	puc.SetRelationWriter(assetRepo)
 	puc.SetLogicalAssetRepo(postgres.NewLogicalAssetRepo(pg))
+	puc.SetPipelineConfigRepo(pipelineConfigRepo)
+	if clientset, err := k8s.NewClientset(""); err != nil {
+		slog.Warn("runtime config projection store disabled", "err", err)
+	} else {
+		puc.SetRuntimeConfigStore(k8s.NewRuntimeConfigStore(clientset))
+	}
 	if inf.cfg.PricingConfigPath != "" {
 		priceCfg, err := pipelineUC.LoadPricing(inf.cfg.PricingConfigPath)
 		if err != nil {
@@ -132,7 +140,6 @@ func setupCore(inf *infra) *coreHandlers {
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)
 
 	// Standalone pipeline config library
-	pipelineConfigRepo := postgres.NewPipelineConfigRepo(pg)
 	pipelineConfigHandler := pipelineConfigH.New(pipelineConfigUC.New(pipelineConfigRepo))
 
 	// Pipeline component registry

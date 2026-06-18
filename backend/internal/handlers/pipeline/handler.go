@@ -33,6 +33,31 @@ type Handler struct {
 	batchRuns    BatchSubtaskReconciler
 }
 
+type runtimeConfigSelectionRequest struct {
+	Mode           string `json:"mode"`
+	ConfigID       string `json:"configId"`
+	Version        int    `json:"version"`
+	FileName       string `json:"fileName"`
+	Content        string `json:"content"`
+	MountPath      string `json:"mountPath"`
+	TargetFilename string `json:"targetFilename"`
+}
+
+func (r *runtimeConfigSelectionRequest) toUsecase() *pipelineUC.RuntimeConfigSelection {
+	if r == nil {
+		return nil
+	}
+	return &pipelineUC.RuntimeConfigSelection{
+		Mode:           r.Mode,
+		ConfigID:       r.ConfigID,
+		Version:        r.Version,
+		FileName:       r.FileName,
+		Content:        r.Content,
+		MountPath:      r.MountPath,
+		TargetFilename: r.TargetFilename,
+	}
+}
+
 // New constructs a Handler. When pricingPath is non-empty the GCP pricing
 // YAML is loaded at construction time for cost estimation.
 func New(uc *pipelineUC.Usecase, pricingPath string, batchRuns BatchSubtaskReconciler) *Handler {
@@ -202,6 +227,7 @@ func (h *Handler) Deploy(c *gin.Context) {
 		Name     string                 `json:"name"`
 		AssetIDs []string               `json:"asset_ids"`
 		TargetID string                 `json:"target_id"`
+		Config   *runtimeConfigSelectionRequest `json:"configSelection"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
@@ -217,7 +243,7 @@ func (h *Handler) Deploy(c *gin.Context) {
 		dryRun = v
 	}
 
-	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{DryRun: dryRun, TargetID: req.TargetID, Owner: middleware.GetUserEmail(c)})
+	dep, err := h.uc.Deploy(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{DryRun: dryRun, TargetID: req.TargetID, Owner: middleware.GetUserEmail(c), ConfigSelection: req.Config.toUsecase()})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -242,13 +268,14 @@ func (h *Handler) DeployByTemplate(c *gin.Context) {
 		AssetIDs []string `json:"asset_ids"`
 		TargetID string   `json:"target_id"`
 		Version  int      `json:"version"`
+		Config   *runtimeConfigSelectionRequest `json:"configSelection"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
 
-	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c)})
+	dep, err := h.uc.DeployByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c), ConfigSelection: req.Config.toUsecase()})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -263,12 +290,13 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		Name     string                 `json:"name"`
 		AssetIDs []string               `json:"asset_ids"`
 		TargetID string                 `json:"target_id"`
+		Config   *runtimeConfigSelectionRequest `json:"configSelection"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
-	run, err := h.uc.CreateRun(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID})
+	run, err := h.uc.CreateRun(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, ConfigSelection: req.Config.toUsecase()})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -288,6 +316,7 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		AssetIDs []string `json:"asset_ids"`
 		TargetID string   `json:"target_id"`
 		Version  int      `json:"version"`
+		Config   *runtimeConfigSelectionRequest `json:"configSelection"`
 	}
 	// Body is optional: empty body is fine, but a non-empty body that fails to
 	// bind (malformed JSON, wrong content type) is a client error and must not
@@ -297,7 +326,7 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		return
 	}
 	if len(req.AssetIDs) > 1 {
-		runs, err := h.uc.CreateRunsByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c)})
+		runs, err := h.uc.CreateRunsByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c), ConfigSelection: req.Config.toUsecase()})
 		if err != nil {
 			mapDeployError(c, err)
 			return
@@ -308,7 +337,7 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		c.JSON(http.StatusCreated, gin.H{"items": runs, "total": len(runs)})
 		return
 	}
-	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c)})
+	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c), ConfigSelection: req.Config.toUsecase()})
 	if err != nil {
 		mapDeployError(c, err)
 		return

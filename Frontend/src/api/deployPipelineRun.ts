@@ -5,6 +5,7 @@ import {
 import { type BatchJob, createBatchJob } from "./batchJobApi";
 import {
 	type Deployment,
+	type DeployConfigSelection,
 	deployTemplate,
 	normalizeDeployResults,
 } from "./pipelineApi";
@@ -22,6 +23,7 @@ export async function deployPipelineForAssets(
 		targetId?: string;
 		version?: number;
 		batchName?: string;
+		configSelection?: DeployConfigSelection;
 	},
 ): Promise<DeployPipelineResult> {
 	if (exceedsBatchAssetLimit(assetIds.length)) {
@@ -33,6 +35,8 @@ export async function deployPipelineForAssets(
 			name: options?.batchName ?? `batch-${stamp}`,
 			templateId,
 			assetIds,
+			templateVersion: options?.version,
+			configSelection: options?.configSelection,
 		});
 		return { mode: "batch", batchJob };
 	}
@@ -42,6 +46,7 @@ export async function deployPipelineForAssets(
 		assetIds,
 		options?.targetId,
 		options?.version,
+		options?.configSelection,
 	);
 	return { mode: "single", runs: normalizeDeployResults(result) };
 }

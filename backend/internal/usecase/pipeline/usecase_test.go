@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/argo"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 )
 
@@ -230,9 +232,13 @@ func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.
 type mockWorkflowClient struct {
 	getWorkflowFn       func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
 	getWorkflowStatusFn func(ctx context.Context, name, namespace string) (wfv1.WorkflowPhase, error)
+	createWorkflowFn    func(ctx context.Context, wf *wfv1.Workflow, namespace string) error
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
+	if m.createWorkflowFn != nil {
+		return m.createWorkflowFn(context.Background(), nil, "")
+	}
 	return nil
 }
 func (m *mockWorkflowClient) GetWorkflowStatus(ctx context.Context, name, namespace string) (wfv1.WorkflowPhase, error) {
@@ -279,6 +285,53 @@ func newUsecase(assetRepo *mockAssetRepo) *Usecase {
 		assetRepo:      assetRepo,
 		wfClient:       &mockWorkflowClient{},
 	}
+}
+
+type mockPipelineConfigRepo struct {
+	versions map[string]*models.PipelineConfigVersion
+	configs  map[string]*models.PipelineConfig
+}
+
+func (m *mockPipelineConfigRepo) Create(context.Context, *models.PipelineConfig, *models.PipelineConfigVersion) error {
+	return nil
+}
+func (m *mockPipelineConfigRepo) FindAll(context.Context, *repository.PipelineConfigFilter) ([]models.PipelineConfig, error) {
+	return nil, nil
+}
+func (m *mockPipelineConfigRepo) FindByID(_ context.Context, id string) (*models.PipelineConfig, error) {
+	return m.configs[id], nil
+}
+func (m *mockPipelineConfigRepo) UpdateMetadata(context.Context, *models.PipelineConfig) error {
+	return nil
+}
+func (m *mockPipelineConfigRepo) CreateVersion(context.Context, string, *models.PipelineConfigVersion) error {
+	return nil
+}
+func (m *mockPipelineConfigRepo) FindVersion(_ context.Context, configID string, version int) (*models.PipelineConfigVersion, error) {
+	return m.versions[fmt.Sprintf("%s:%d", configID, version)], nil
+}
+func (m *mockPipelineConfigRepo) FindVersions(context.Context, string) ([]models.PipelineConfigVersion, error) {
+	return nil, nil
+}
+func (m *mockPipelineConfigRepo) Deprecate(context.Context, string) error {
+	return nil
+}
+
+type mockRuntimeConfigStore struct {
+	lastNamespace    string
+	lastDeploymentID string
+	lastProjection   RuntimeConfigProjection
+	volumeName       string
+}
+
+func (m *mockRuntimeConfigStore) Create(_ context.Context, namespace, deploymentID string, config RuntimeConfigProjection) (string, error) {
+	m.lastNamespace = namespace
+	m.lastDeploymentID = deploymentID
+	m.lastProjection = config
+	if m.volumeName == "" {
+		m.volumeName = "runtime-config-test"
+	}
+	return m.volumeName, nil
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -394,6 +447,151 @@ func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 			t.Fatalf("duplicate IDs = %v", validationErr.DuplicateIDs)
 		}
 	})
+}
+
+func TestDeploy_IncludesRuntimeConfigMountAndEnv(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "test-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	repo := newMockAssetRepo()
+	uc := newUsecase(repo)
+	configRepo := &mockPipelineConfigRepo{
+		configs: map[string]*models.PipelineConfig{
+			"cfg-1": {ID: "cfg-1", Name: "detector.yaml"},
+		},
+		versions: map[string]*models.PipelineConfigVersion{
+			"cfg-1:2": {
+				ConfigID: "cfg-1",
+				Version:  2,
+				Content:  "threshold: 0.8\n",
+			},
+		},
+	}
+	store := &mockRuntimeConfigStore{volumeName: "runtime-config-test"}
+	uc.pipelineConfigRepo = configRepo
+	uc.runtimeConfigStore = store
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{
+		ConfigSelection: &RuntimeConfigSelection{
+			Mode:           "saved",
+			ConfigID:       "cfg-1",
+			Version:        2,
+			FileName:       "detector.yaml",
+			MountPath:      "/workspace/configs",
+			TargetFilename: "effective.yaml",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on deployment")
+	}
+	if store.lastProjection.FileName != "effective.yaml" {
+		t.Fatalf("expected projected filename effective.yaml, got %q", store.lastProjection.FileName)
+	}
+	if store.lastProjection.Content != "threshold: 0.8\n" {
+		t.Fatalf("unexpected projected content %q", store.lastProjection.Content)
+	}
+	manifest := *dep.Manifest
+	if !strings.Contains(manifest, "runtime-config-test") {
+		t.Fatalf("expected runtime config volume in manifest, got %s", manifest)
+	}
+	if !strings.Contains(manifest, "PIPELINE_CONFIG_PATH") || !strings.Contains(manifest, "/workspace/configs/effective.yaml") {
+		t.Fatalf("expected config env path in manifest, got %s", manifest)
+	}
+	if !strings.Contains(manifest, "subpath: effective.yaml") {
+		t.Fatalf("expected config subPath mount in manifest, got %s", manifest)
+	}
+}
+
+func TestDeployByTemplateID_ForwardsRuntimeConfigSelection(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "test-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	repo := newMockAssetRepo()
+	uc := newUsecase(repo)
+	uc.templateRepo = &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			"tmpl-1": {
+				ID:       "tmpl-1",
+				Name:     "tmpl",
+				Version:  1,
+				Pipeline: pipe,
+			},
+		},
+		byName: map[string][]models.PipelineTemplate{
+			"tmpl": {{
+				ID:       "tmpl-1",
+				Name:     "tmpl",
+				Version:  1,
+				Pipeline: pipe,
+			}},
+		},
+	}
+	uc.pipelineConfigRepo = &mockPipelineConfigRepo{
+		configs: map[string]*models.PipelineConfig{
+			"cfg-1": {ID: "cfg-1", Name: "detector.yaml"},
+		},
+		versions: map[string]*models.PipelineConfigVersion{
+			"cfg-1:1": {
+				ConfigID: "cfg-1",
+				Version:  1,
+				Content:  "threshold: 0.8\n",
+			},
+		},
+	}
+	store := &mockRuntimeConfigStore{volumeName: "runtime-config-template"}
+	uc.runtimeConfigStore = store
+
+	dep, err := uc.DeployByTemplateID(ctx, "tmpl-1", "", nil, DeployOptions{
+		ConfigSelection: &RuntimeConfigSelection{
+			Mode:           "saved",
+			ConfigID:       "cfg-1",
+			Version:        1,
+			FileName:       "detector.yaml",
+			MountPath:      "/workspace/configs",
+			TargetFilename: "effective.yaml",
+		},
+	})
+	if err != nil {
+		t.Fatalf("DeployByTemplateID: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on deployment")
+	}
+	if store.lastProjection.FileName != "effective.yaml" {
+		t.Fatalf("expected forwarded projected filename effective.yaml, got %q", store.lastProjection.FileName)
+	}
+	manifest := *dep.Manifest
+	if !strings.Contains(manifest, "runtime-config-template") {
+		t.Fatalf("expected forwarded runtime config volume in manifest, got %s", manifest)
+	}
+	if !strings.Contains(manifest, "PIPELINE_CONFIG_PATH") {
+		t.Fatalf("expected forwarded runtime config env in manifest, got %s", manifest)
+	}
 }
 
 func TestAssetIDsFromPipelineJSON(t *testing.T) {

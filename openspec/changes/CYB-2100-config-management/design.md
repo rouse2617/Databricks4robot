@@ -1,111 +1,75 @@
 # Design — CYB-2100
 
 ## Architecture Context
-- **Constraints**: React 19 + Ant Design front end; Go/Gin backend; existing `/registry` page is already a read-only dictionary hub; component-release work is already separated in `CYB-1824` and must not be re-coupled here.
-- **Goals**: make configuration management first-class, keep reference registries readable, keep the `/registry` navigation stable, support config version history, preserve immutable runtime snapshots for pipeline execution, and support deploy-time config file mounting into container directories.
-- **Non-Goals**: component-owned config subresources, editable low-level image/build metadata in the config center, replacing the current registry dictionaries, or making the component editor own config content.
-
-## Current Problems With `/registry`
-- The page presents four unrelated dictionaries side by side, so users cannot tell what is reference data and what is operational configuration.
-- Lifecycle states are shown under the same umbrella even though they are validation vocabulary, not a user-managed registry.
-- There is no first-class place for configs, so any future config UX would have to be hidden inside component or pipeline pages.
-- The current mental model makes it easy to search in the wrong place, especially once component releases and configs are both in play.
-- The current page has no version-management surface for config files, so users cannot inspect current versus historical config versions.
+- **Constraints**: React 19 + TypeScript + Ant Design 5 frontend; the current config CRUD backend only supports saved config records, not deploy-time ad hoc file uploads or inline draft persistence.
+- **Goals**: let users express deploy-time file intent, serialize that intent into a concrete deploy payload, and project the selected file into workflow Pods without requiring new database schema work.
+- **Non-Goals**: persistent library storage for ad hoc upload/inline drafts, multi-file runtime mounts per run, or generic parsing of arbitrary config contents into many environment variables.
 
 ## Affected Modules
-- `Frontend/src/pages/RegistryCenterPage.tsx` — split the current hub into reference data and config management sections, including config version history
-- `Frontend/src/api/registry.ts` — keep existing read-only registry clients and add config client entrypoints
-- `Frontend/src/App.tsx` / `Frontend/src/components/AppLayout.tsx` — preserve the `/registry` route and menu entry, but clarify naming and selected-state behavior
-- `Frontend/src/pages/PipelinePage.tsx` / `Frontend/src/components/pipeline/*` — let node configuration pick a config reference and snapshot
-- `Frontend/src/pages/PipelinePage.tsx` / `Frontend/src/components/pipeline/*` — let deploy-time node configuration pick a user-owned config reference, snapshot it, and expose the mount path contract
-- `backend/internal/handlers/registry` — keep existing registry endpoints read-only and add config endpoints
-- `backend/internal/models` / `backend/internal/postgres` — store independent config records and snapshots
-- `backend/routes/routes.go` — route wiring for registry and config resources
-- `api/openapi.yaml` / `docs/review/api-guide.md` — public contract sync for any new config endpoints
+- `Frontend/src/components/pipeline/DeployPanel.tsx` — add config source selector, config summary, mount-path editor, and upload/inline draft controls
+- `Frontend/src/components/pipeline/DeployPanel.test.tsx` — cover mode switching, validation, and summary rendering
+- `Frontend/src/api/pipelineConfigs.ts` — reuse saved-config list/detail types for the picker
+- `Frontend/src/api/pipelineApi.ts` / `Frontend/src/api/deployPipelineRun.ts` / `Frontend/src/api/batchJobApi.ts` — send config selection in single-run and batch-run payloads
+- `backend/internal/handlers/pipeline/handler.go` / `backend/internal/handlers/backfill/handler.go` — accept config selection contract
+- `backend/internal/usecase/pipeline/usecase.go` / `backend/internal/usecase/backfill/usecase.go` — resolve config content snapshots and carry them into workflow creation
+- `backend/internal/transpiler/*` — emit runtime mount and env projection
+- `api/openapi.yaml` / `docs/review/api-guide.md` — document the new deploy contract
 
 ## Architecture Decisions
 
-### Decision 1: Keep `/registry` as the entry point, but split the content model
-- **Approach**: retain the existing route and nav entry, then render two distinct areas: read-only reference registries and configuration management.
-- **Alternative**: introduce a brand-new `/configs` entry and leave `/registry` as-is.
-- **Rationale**: the current route already owns the governance mental model; keeping it stable avoids duplicate navigation while still allowing a clear product split.
-- **Trade-off**: the page becomes broader, so the layout must be explicit about the two different resource classes.
+### Decision 1: Model deploy-time config selection as a three-mode source switch
+- **Approach**: the deploy panel exposes one segmented control / radio group with `saved`, `upload`, and `inline` modes, and renders exactly one source editor at a time.
+- **Alternative**: show all three input styles on the page simultaneously.
+- **Rationale**: these inputs are mutually exclusive runtime intents; a mode switch reduces confusion and keeps the review surface compact.
+- **Trade-off**: switching modes needs explicit draft reset or draft preservation rules.
 
-### Decision 2: Configuration is a standalone resource library
-- **Approach**: model configs as first-class records with their own identity, ownership, tags, description, file payload, and content history.
-- **Alternative**: make configs children of components or releases.
-- **Rationale**: the user requirement is explicit that configs must not be bound to components; keeping them independent avoids shared lifecycle and permission coupling.
-- **Trade-off**: the UI and backend need an extra resource type, plus a separate search surface.
+### Decision 2: Normalize all three source modes into one deploy-time config snapshot contract
+- **Approach**: the frontend resolves the selected mode into one payload shape containing source metadata, filename, content or saved-config reference, mount path, and target filename. The backend resolves saved-config references to immutable version content and trusts upload/inline draft content as request-scoped runtime input.
+- **Alternative**: only support saved configs end-to-end and keep upload/inline as preview-only.
+- **Rationale**: the active user goal explicitly requires upload, inline edit, mounted-file verification, and environment-variable verification.
+- **Trade-off**: deploy payloads become larger for ad hoc content, but this avoids new persistence schema and keeps runtime behavior explicit.
 
-### Decision 2a: Config records expose version history in the config center
-- **Approach**: show each config with a current version and expandable immutable version history.
-- **Alternative**: only show one mutable config row and hide history in an audit page.
-- **Rationale**: users need to reason about which config version is selectable or rollbackable without entering deploy or component pages.
-- **Trade-off**: the config list has more density, so version details should stay collapsed by default.
+### Decision 3: Mount target is edited beside the source selector
+- **Approach**: place mount-path and target filename inputs in the same config section so users define source and runtime destination together.
+- **Alternative**: hide mount-path editing in component manager or a separate advanced drawer.
+- **Rationale**: the runtime question is "what file goes where" and the UI should present both halves in one place.
+- **Trade-off**: deploy panel becomes denser, so labels and helper text need to be explicit.
 
-### Decision 3: Deploy-time config selection is ownership-scoped
-- **Approach**: the deploy picker filters to configs owned by the current user or otherwise shared to them, and a click selects exactly one config to attach to the deploy.
-- **Alternative**: expose the full config library to every deploy context and rely on manual discipline.
-- **Rationale**: the user wants to attach only their own configs, which keeps the deploy UI simple and prevents cross-user leakage.
-- **Trade-off**: ownership and sharing rules must be explicit in the backend query contract.
-
-### Decision 4: Pipeline nodes store a config reference plus a snapshot
-- **Approach**: persist `configId` on the node and copy an immutable config snapshot into the saved pipeline state.
-- **Alternative**: only store the config ID and resolve live config at execution time.
-- **Rationale**: execution history must not drift when a config changes later.
-- **Trade-off**: snapshot storage adds duplication, but it guarantees reproducibility and auditability.
-
-### Decision 5: Existing registry data stays read-only
-- **Approach**: algo/tag/metric/lifecycle registries remain lookup dictionaries with no editing affordances in this slice.
-- **Alternative**: reuse those tabs as the editing surface for configs.
-- **Rationale**: the current registries already serve validation and discovery; mixing them with config CRUD would recreate the same ambiguity we are trying to remove.
-- **Trade-off**: the new config center has to earn its own space instead of piggybacking on an existing table.
-
-### Decision 6: Component editing defines a mount contract, not config ownership
-- **Approach**: component editing can expose a mount path / directory mapping for a config file, so deploy-time selection knows where to project the chosen file in the container.
-- **Alternative**: allow components to directly point at a specific config record.
-- **Rationale**: the user wants to map a config file into a container directory without making the component own that config.
-- **Trade-off**: component runtime metadata needs a clear distinction between “consumes config here” and “owns config”.
+### Decision 4: Project runtime config as a workflow-mounted config volume plus companion env vars
+- **Approach**: the backend creates a single runtime config projection per deploy request. The workflow receives a dedicated mounted file at `<mountPath>/<targetFilename>` and a small set of env vars such as `PIPELINE_CONFIG_PATH`, `PIPELINE_CONFIG_FILENAME`, and `PIPELINE_CONFIG_SOURCE`.
+- **Alternative**: inject raw file content only through env vars, or defer to a later init-container secret store design.
+- **Rationale**: the user explicitly asked for a mounted-file form and environment-variable verification. A mounted file matches common app expectations, while companion env vars make the projection discoverable and testable.
+- **Trade-off**: projected content is request-scoped and duplicated per run instead of being shared as a long-lived cluster object.
 
 ## Data Flow
 
 ```text
-User opens /registry
+User opens DeployPanel
         ↓
-Reference registries load read-only dictionaries
+User chooses config source mode
         ↓
-Config management loads standalone user-owned config records
+saved mode  -> fetch/select existing config metadata
+upload mode -> read local file metadata/content into local draft state
+inline mode -> capture editor content into local draft state
         ↓
-User creates/edits config file version
+User sets mount path / target filename
         ↓
-Backend stores config identity + immutable versions
+Deploy panel summary shows source type + selected file metadata + mount target
         ↓
-Deploy-time picker shows only own/shared configs
+Deploy request sends normalized config selection payload
         ↓
-User clicks one config to attach
+Backend resolves saved-config references to immutable version content
         ↓
-Component mount contract provides container directory path
+Backend injects runtime config projection into workflow generation
         ↓
-Pipeline authoring selects configId
-        ↓
-Saved pipeline node stores configId + immutable config snapshot
+Workflow Pod gets mounted config file and companion env vars
 ```
-
-## Data Model Changes
-- **Table**: `pipeline_configs`
-- **Change**: standalone config identity, name, description, tags, owner, file payload metadata, current status, timestamps
-- **Table**: `pipeline_config_versions`
-- **Change**: immutable content snapshots, version number, version status, change author, creation time, digest/summary metadata
-- **Migration**: a new approved migration under `backend/migrations/` when implementation starts
-- **Runtime field**: component config mount path / container directory mapping stored as part of component runtime metadata or template snapshot, not as config ownership
 
 ## Risks / Trade-offs
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Users confuse read-only registries with editable configs | Mis-edit or missearch | Separate copy, layout, and empty states in the UI |
-| Config snapshots drift from live config if omitted | Historical runs become non-reproducible | Persist snapshots at save time and verify in tests |
-| Config lifecycle becomes too coupled to components | Reintroduces the old problem | Keep config APIs and component APIs independent |
-| `/registry` grows too large | Navigation friction | Use tabs/sections with clear labels and count badges |
-| Ownership filtering misses shared configs | Users cannot deploy expected configs | Make deploy list query contract explicit and test owner/shared visibility |
-| Mount path mapping is ambiguous | Config file lands in wrong container location | Normalize path semantics and validate against the component runtime contract |
+| Users assume upload/inline persists to the platform library | Confusion and false confidence | Keep helper copy explicit that these two modes are request-scoped runtime inputs |
+| Mode switching destroys draft unexpectedly | Frustrating deploy authoring UX | Decide and test whether each mode preserves its own last draft during the session |
+| Mount-path semantics are unclear | Wrong runtime expectation | Use concrete labels and examples such as `/app/configs/model.yaml` |
+| Large ad hoc config content inflates request size | Deploy failure or slow request handling | Reuse the existing config-content size discipline, validate content early, and keep the first slice single-file only |

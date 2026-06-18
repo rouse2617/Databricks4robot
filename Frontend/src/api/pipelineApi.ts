@@ -171,6 +171,36 @@ export interface ExecutionTarget {
 	description?: string;
 }
 
+export type DeployConfigSourceMode = "saved" | "upload" | "inline";
+
+export interface DeployConfigSelectionBase {
+	mode: DeployConfigSourceMode;
+	fileName: string;
+	mountPath: string;
+	targetFilename: string;
+}
+
+export interface SavedDeployConfigSelection extends DeployConfigSelectionBase {
+	mode: "saved";
+	configId: string;
+	version: number;
+}
+
+export interface UploadDeployConfigSelection extends DeployConfigSelectionBase {
+	mode: "upload";
+	content: string;
+}
+
+export interface InlineDeployConfigSelection extends DeployConfigSelectionBase {
+	mode: "inline";
+	content: string;
+}
+
+export type DeployConfigSelection =
+	| SavedDeployConfigSelection
+	| UploadDeployConfigSelection
+	| InlineDeployConfigSelection;
+
 export function previewDeploy(
 	pipeline: Pipeline,
 ): Promise<{ manifest: string }> {
@@ -288,6 +318,7 @@ export function deployTemplate(
 	assetIds?: string[],
 	targetId?: string,
 	version?: number,
+	configSelection?: DeployConfigSelection,
 ): Promise<DeployTemplateResponse> {
 	return request<DeployTemplateResponse>(
 		"POST",
@@ -296,6 +327,7 @@ export function deployTemplate(
 			asset_ids: assetIds ?? [],
 			target_id: targetId,
 			version,
+			configSelection,
 		},
 	);
 }

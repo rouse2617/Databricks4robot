@@ -141,6 +141,49 @@ describe("useWorkflowDetail", () => {
 		});
 	});
 
+	it("keeps polling ledger data when workflow is missing but run is still active", async () => {
+		vi.useFakeTimers();
+		mockGetWorkflow.mockRejectedValue(
+			new ApiError(404, "WORKFLOW_NOT_FOUND", "workflow not found"),
+		);
+		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+			id: "run-pending",
+			workflowName: "wf-pending",
+			pipelineName: "pipeline",
+			status: "Pending",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:00:00Z",
+		});
+		mockListPipelineRunEvents.mockResolvedValue({
+			items: [],
+			nextCursor: undefined,
+		});
+		const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+		renderHook(() => useWorkflowDetail("wf-pending"));
+
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledWith("wf-pending");
+		expect(
+			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 8_000),
+		).toHaveLength(1);
+
+		const pollOnce = setIntervalSpy.mock.calls.find(
+			([, delay]) => delay === 8_000,
+		)?.[0];
+		expect(typeof pollOnce).toBe("function");
+
+		await act(async () => {
+			(pollOnce as TimerHandler as () => void)();
+			await Promise.resolve();
+		});
+
+		expect(mockGetWorkflow).toHaveBeenCalledTimes(2);
+		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledTimes(4);
+	});
+
 	it("maps non-404 API errors to error load error", async () => {
 		mockGetWorkflow.mockRejectedValue(
 			new ApiError(500, "INTERNAL", "argo unavailable"),

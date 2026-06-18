@@ -21,7 +21,7 @@ import {
 	vi,
 } from "vitest";
 import type { Deployment, PipelineTemplate } from "../../api/pipelineApi";
-import { DeployPanel } from "./DeployPanel";
+import { buildDeployConfigSelection, DeployPanel } from "./DeployPanel";
 
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockMessage = vi.hoisted(() => ({
@@ -46,6 +46,7 @@ const mockDeployPipelineForAssets = vi.fn();
 const mockDeletePipeline = vi.fn();
 const mockGetPipeline = vi.fn();
 const mockListExecutionTargets = vi.fn();
+const mockListPipelineConfigs = vi.fn();
 
 vi.mock("../../api/pipelineApi", () => ({
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
@@ -56,6 +57,12 @@ vi.mock("../../api/pipelineApi", () => ({
 		mockListExecutionTargets(...args),
 	deletePipeline: (...args: unknown[]) => mockDeletePipeline(...args),
 	getPipeline: (...args: unknown[]) => mockGetPipeline(...args),
+}));
+
+vi.mock("../../api/pipelineConfigs", () => ({
+	pipelineConfigApi: {
+		list: (...args: unknown[]) => mockListPipelineConfigs(...args),
+	},
 }));
 
 vi.mock("../../api/deployPipelineRun", () => ({
@@ -172,6 +179,24 @@ afterEach(() => {
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockListPipelineVersions.mockResolvedValue([]);
+	mockListPipelineConfigs.mockResolvedValue({
+		items: [
+			{
+				id: "cfg-001",
+				name: "detector.yaml",
+				description: "Detector thresholds",
+				owner: "sdk",
+				scope: "dev",
+				tags: ["vision"],
+				fileType: "yaml",
+				lifecycle: "ready",
+				currentVersion: 2,
+				versionCount: 2,
+				createdAt: "2026-06-18T00:00:00Z",
+				updatedAt: "2026-06-18T00:00:00Z",
+			},
+		],
+	});
 	mockListExecutionTargets.mockResolvedValue([
 		{
 			id: "default",
@@ -266,6 +291,7 @@ describe("DeployPanel", () => {
 				"tmpl-001",
 				[],
 				expect.objectContaining({
+					configSelection: undefined,
 					targetId: "default",
 					version: 1,
 				}),
@@ -334,11 +360,49 @@ describe("DeployPanel", () => {
 				"tmpl-001",
 				["ast-001", "ast-002"],
 				expect.objectContaining({
+					configSelection: undefined,
 					targetId: "default",
 					version: 1,
 				}),
 			);
-			expect(mockNavigate).toHaveBeenCalledWith("/pipeline/batch/batch-001");
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/pipeline/batch/batch-001",
+				expect.anything(),
+			);
+		});
+	});
+
+	it("builds saved config selection payload for deploy requests", () => {
+		expect(
+			buildDeployConfigSelection({
+				configSourceMode: "saved",
+				selectedSavedConfig: {
+					id: "cfg-001",
+					name: "detector.yaml",
+					description: "Detector thresholds",
+					owner: "sdk",
+					scope: "dev",
+					tags: ["vision"],
+					fileType: "yaml",
+					lifecycle: "ready",
+					currentVersion: 2,
+					versionCount: 2,
+					createdAt: "2026-06-18T00:00:00Z",
+					updatedAt: "2026-06-18T00:00:00Z",
+				},
+				uploadDraftFile: null,
+				inlineDraftName: "runtime-config.yaml",
+				inlineDraftContent: "",
+				configMountPath: "/workspace/configs",
+				configTargetFilename: "detector.yaml",
+			}),
+		).toEqual({
+			mode: "saved",
+			configId: "cfg-001",
+			version: 2,
+			fileName: "detector.yaml",
+			mountPath: "/workspace/configs",
+			targetFilename: "detector.yaml",
 		});
 	});
 
@@ -389,7 +453,10 @@ describe("DeployPanel", () => {
 					version: 2,
 				}),
 			);
-			expect(mockNavigate).toHaveBeenCalledWith("/pipeline/batch/batch-001");
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/pipeline/batch/batch-001",
+				expect.anything(),
+			);
 		});
 	});
 
@@ -643,5 +710,77 @@ describe("DeployPanel", () => {
 			q: "alpha",
 			page: 1,
 		});
+	});
+
+	it("shows saved config mode in deploy modal and loads platform configs", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		fireEvent.click(await screen.findByText("运行"));
+		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		expect(screen.getByTestId("deploy-config-panel")).toBeTruthy();
+		expect(screen.getByText("选择已保存配置")).toBeTruthy();
+
+		await waitFor(() => {
+			expect(mockListPipelineConfigs).toHaveBeenCalledTimes(1);
+		});
+		expect(screen.getByRole("combobox", { name: /选择已保存配置/i })).toBeTruthy();
+		expect(screen.getByText("还未选择平台配置")).toBeTruthy();
+	});
+
+	it("shows upload draft metadata in deploy modal", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		fireEvent.click(await screen.findByText("运行"));
+		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		fireEvent.click(screen.getByText("上传本地文件"));
+
+		const input = screen.getByLabelText("上传配置文件") as HTMLInputElement;
+		const file = new File(["threshold: 0.82\n"], "runtime.yaml", {
+			type: "text/yaml",
+		});
+		fireEvent.change(input, { target: { files: [file] } });
+
+		expect(await screen.findByText("runtime.yaml")).toBeTruthy();
+		expect(
+			screen.getByText(/本地文件仅作为本次 deploy 草稿/),
+		).toBeTruthy();
+	});
+
+	it("shows inline editor summary and mount target", async () => {
+		mockListPipelines.mockResolvedValue(
+			pipelinesResponse([mockTemplate({ id: "tmpl-001" })]),
+		);
+		mockListDeployments.mockResolvedValue([]);
+		renderDeployPanel();
+
+		fireEvent.click(await screen.findByText("运行"));
+		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		fireEvent.click(screen.getByText("在线编辑"));
+
+		fireEvent.change(screen.getByLabelText("在线编辑文件名"), {
+			target: { value: "inline-config.yaml" },
+		});
+		fireEvent.change(screen.getByLabelText("在线编辑配置内容"), {
+			target: { value: "threshold: 0.90\nwindow: 3\n" },
+		});
+		fireEvent.change(screen.getByLabelText("挂载目录"), {
+			target: { value: "/workspace/configs" },
+		});
+		fireEvent.change(screen.getByLabelText("目标文件名"), {
+			target: { value: "effective.yaml" },
+		});
+
+		expect(await screen.findByText(/来源：在线编辑 · inline-config.yaml/)).toBeTruthy();
+		expect(
+			screen.getByText(/挂载到 \/workspace\/configs\/effective.yaml/),
+		).toBeTruthy();
 	});
 });

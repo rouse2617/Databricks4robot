@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
+	configUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	"gopkg.in/yaml.v3"
 )
@@ -50,6 +52,8 @@ type Usecase struct {
 	assetEventRepo          repository.AssetEventRepository
 	relationWriter          repository.AssetRelationWriter
 	logicalRepo             repository.LogicalAssetRepository
+	pipelineConfigRepo      repository.PipelineConfigRepository
+	runtimeConfigStore      RuntimeConfigStore
 	wfClient                argo.WorkflowClient
 	namespace               string
 	pricing                 *PricingConfig
@@ -65,6 +69,37 @@ type DeployOptions struct {
 	BatchJobID         string
 	PreallocatedRunID  string
 	AllowUnknownAssets bool
+	ConfigSelection    *RuntimeConfigSelection
+}
+
+type RuntimeConfigSelection struct {
+	Mode           string
+	ConfigID       string
+	Version        int
+	FileName       string
+	Content        string
+	MountPath      string
+	TargetFilename string
+}
+
+type resolvedRuntimeConfig struct {
+	Mode           string
+	ConfigID       string
+	Version        int
+	FileName       string
+	Content        string
+	MountPath      string
+	TargetFilename string
+	VolumeName     string
+}
+
+type RuntimeConfigProjection struct {
+	FileName string
+	Content  string
+}
+
+type RuntimeConfigStore interface {
+	Create(ctx context.Context, namespace, deploymentID string, config RuntimeConfigProjection) (string, error)
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -80,6 +115,16 @@ func (uc *Usecase) SetRelationWriter(r repository.AssetRelationWriter) {
 // SetLogicalAssetRepo wires logical_assets persistence (CYB-1013 pipeline outputs).
 func (uc *Usecase) SetLogicalAssetRepo(r repository.LogicalAssetRepository) {
 	uc.logicalRepo = r
+}
+
+// SetPipelineConfigRepo wires standalone config persistence for deploy-time
+// resolution of saved config references.
+func (uc *Usecase) SetPipelineConfigRepo(r repository.PipelineConfigRepository) {
+	uc.pipelineConfigRepo = r
+}
+
+func (uc *Usecase) SetRuntimeConfigStore(store RuntimeConfigStore) {
+	uc.runtimeConfigStore = store
 }
 
 // SetRunRepositories wires first-class pipeline run persistence. The legacy
@@ -133,6 +178,126 @@ func logPipelineSideEffect(op string, err error) {
 	if err != nil {
 		slog.Warn("pipeline side effect failed", "op", op, "err", err)
 	}
+}
+
+func (uc *Usecase) resolveRuntimeConfig(
+	ctx context.Context,
+	selection *RuntimeConfigSelection,
+) (*resolvedRuntimeConfig, error) {
+	if selection == nil {
+		return nil, nil
+	}
+	mode := strings.TrimSpace(selection.Mode)
+	mountPath := strings.TrimSpace(selection.MountPath)
+	targetFilename := strings.TrimSpace(selection.TargetFilename)
+	if mode == "" {
+		return nil, fmt.Errorf("%w: config mode is required", ErrInvalidArgument)
+	}
+	if mountPath == "" || targetFilename == "" {
+		return nil, fmt.Errorf("%w: config mountPath and targetFilename are required", ErrInvalidArgument)
+	}
+	switch mode {
+	case "saved":
+		if uc.pipelineConfigRepo == nil {
+			return nil, fmt.Errorf("%w: pipeline config repository is not configured", ErrInvalidArgument)
+		}
+		configID := strings.TrimSpace(selection.ConfigID)
+		if configID == "" || selection.Version <= 0 {
+			return nil, fmt.Errorf("%w: saved config requires configId and version", ErrInvalidArgument)
+		}
+		version, err := uc.pipelineConfigRepo.FindVersion(ctx, configID, selection.Version)
+		if err != nil {
+			if errors.Is(err, repository.ErrPipelineConfigNotFound) {
+				return nil, fmt.Errorf("%w: saved config version not found", ErrInvalidArgument)
+			}
+			return nil, err
+		}
+		if version == nil {
+			return nil, fmt.Errorf("%w: saved config version not found", ErrInvalidArgument)
+		}
+		fileName := strings.TrimSpace(selection.FileName)
+		if fileName == "" {
+			cfg, err := uc.pipelineConfigRepo.FindByID(ctx, configID)
+			if err == nil && cfg != nil {
+				fileName = cfg.Name
+			}
+		}
+		if fileName == "" {
+			fileName = targetFilename
+		}
+		return &resolvedRuntimeConfig{
+			Mode:           mode,
+			ConfigID:       configID,
+			Version:        selection.Version,
+			FileName:       fileName,
+			Content:        version.Content,
+			MountPath:      mountPath,
+			TargetFilename: targetFilename,
+		}, nil
+	case "upload", "inline":
+		content := selection.Content
+		if strings.TrimSpace(content) == "" {
+			return nil, fmt.Errorf("%w: config content is required", ErrInvalidArgument)
+		}
+		if len(content) > configUC.MaxConfigFileBytes {
+			return nil, fmt.Errorf("%w: config content exceeds %d bytes", ErrInvalidArgument, configUC.MaxConfigFileBytes)
+		}
+		fileName := strings.TrimSpace(selection.FileName)
+		if fileName == "" {
+			fileName = targetFilename
+		}
+		return &resolvedRuntimeConfig{
+			Mode:           mode,
+			FileName:       fileName,
+			Content:        content,
+			MountPath:      mountPath,
+			TargetFilename: targetFilename,
+		}, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported config mode %q", ErrInvalidArgument, mode)
+	}
+}
+
+func applyRuntimeConfigToPipeline(
+	pipe *transpiler.Pipeline,
+	config *resolvedRuntimeConfig,
+	globalEnv *[]transpiler.EnvVar,
+	extraVolumes *[]transpiler.Volume,
+) {
+	if pipe == nil || config == nil {
+		return
+	}
+	mountFilePath := path.Join(config.MountPath, config.TargetFilename)
+	*globalEnv = append(*globalEnv,
+		transpiler.EnvVar{Name: "PIPELINE_CONFIG_PATH", Value: mountFilePath},
+		transpiler.EnvVar{Name: "PIPELINE_CONFIG_FILENAME", Value: config.TargetFilename},
+		transpiler.EnvVar{Name: "PIPELINE_CONFIG_SOURCE", Value: config.Mode},
+	)
+	if config.ConfigID != "" {
+		*globalEnv = append(*globalEnv, transpiler.EnvVar{Name: "PIPELINE_CONFIG_ID", Value: config.ConfigID})
+	}
+	if config.Version > 0 {
+		*globalEnv = append(*globalEnv, transpiler.EnvVar{Name: "PIPELINE_CONFIG_VERSION", Value: fmt.Sprintf("%d", config.Version)})
+	}
+	*extraVolumes = append(*extraVolumes, transpiler.Volume{
+		Name:          config.VolumeName,
+		ConfigMapName: config.VolumeName,
+	})
+	var applyNodeMounts func(nodes []transpiler.Node)
+	applyNodeMounts = func(nodes []transpiler.Node) {
+		for i := range nodes {
+			nodes[i].VolumeMounts = append(nodes[i].VolumeMounts, transpiler.VolumeMount{
+				Name:      config.VolumeName,
+				MountPath: mountFilePath,
+				SubPath:   config.TargetFilename,
+				ReadOnly:  true,
+			})
+			if len(nodes[i].SubNodes) > 0 {
+				applyNodeMounts(nodes[i].SubNodes)
+			}
+		}
+	}
+	applyNodeMounts(pipe.Nodes)
 }
 
 const (
@@ -1782,6 +1947,14 @@ func (uc *Usecase) Deploy(
 	}
 	assetIDs = normalizedAssetIDs
 
+	var runtimeConfig *resolvedRuntimeConfig
+	if len(opts) > 0 {
+		runtimeConfig, err = uc.resolveRuntimeConfig(ctx, opts[0].ConfigSelection)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Assemble workflow-level params and global env vars from asset IDs.
 	var wfParams []transpiler.Param
 	globalEnv := []transpiler.EnvVar{
@@ -1813,6 +1986,22 @@ func (uc *Usecase) Deploy(
 		}
 	}
 
+	var extraVolumes []transpiler.Volume
+	if runtimeConfig != nil {
+		if uc.runtimeConfigStore == nil {
+			return nil, fmt.Errorf("%w: runtime config store is not configured", ErrInvalidArgument)
+		}
+		volumeName, err := uc.runtimeConfigStore.Create(ctx, targetNamespace, depID, RuntimeConfigProjection{
+			FileName: runtimeConfig.TargetFilename,
+			Content:  runtimeConfig.Content,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create runtime config projection: %w", err)
+		}
+		runtimeConfig.VolumeName = volumeName
+		applyRuntimeConfigToPipeline(pipe, runtimeConfig, &globalEnv, &extraVolumes)
+	}
+
 	// Transpile to Argo Workflow.
 	wfOpts := &transpiler.Options{
 		Name:            wfName,
@@ -1820,6 +2009,7 @@ func (uc *Usecase) Deploy(
 		TTLSecondsAfter: uc.argoWorkflowTTLSecondsAfter(),
 		WorkflowParams:  wfParams,
 		GlobalEnv:       globalEnv,
+		ExtraVolumes:    extraVolumes,
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
@@ -1981,6 +2171,7 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 		deployOpts.DryRun = opts[0].DryRun
 		deployOpts.AllowUnknownAssets = opts[0].AllowUnknownAssets
 		deployOpts.PreallocatedRunID = opts[0].PreallocatedRunID
+		deployOpts.ConfigSelection = opts[0].ConfigSelection
 	}
 	return uc.Deploy(ctx, t.Pipeline, name, assetIDs, deployOpts)
 }

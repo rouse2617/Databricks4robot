@@ -11,6 +11,7 @@ import (
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
 type mockBackfillRepo struct {
@@ -226,6 +227,35 @@ func TestCreateBackfill_RejectsTooManyAssets(t *testing.T) {
 	_, err := uc.CreateBackfill(context.Background(), "too-big", "tpl-1", assetIDs)
 	if !errors.Is(err, ErrTooManyAssets) {
 		t.Fatalf("expected ErrTooManyAssets, got %v", err)
+	}
+}
+
+func TestCreateBackfill_PersistsConfigSelectionInFilterJSON(t *testing.T) {
+	repo := &trackingBackfillRepo{}
+	uc := New(repo, nil)
+	job, err := uc.CreateBackfill(context.Background(), "batch", "tpl-1", []string{
+		"asset-1",
+	}, CreateBackfillOptions{
+		ConfigSelection: &pipelineUC.RuntimeConfigSelection{
+			Mode:           "inline",
+			FileName:       "runtime-config.yaml",
+			Content:        "threshold: 0.8\n",
+			MountPath:      "/workspace/configs",
+			TargetFilename: "effective.yaml",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateBackfill: %v", err)
+	}
+	if job.FilterJSON == nil {
+		t.Fatal("expected filter json to be stored")
+	}
+	raw, ok := job.FilterJSON["configSelection"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected configSelection object, got %#v", job.FilterJSON["configSelection"])
+	}
+	if raw["mode"] != "inline" || raw["targetFilename"] != "effective.yaml" {
+		t.Fatalf("unexpected configSelection payload %#v", raw)
 	}
 }
 

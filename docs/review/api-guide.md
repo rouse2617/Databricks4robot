@@ -2541,7 +2541,14 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
   -d '{
     "target_id": "default",
     "version": 1,
-    "asset_ids": ["SDKT0202", "SDKT0101"]
+    "asset_ids": ["SDKT0202", "SDKT0101"],
+    "configSelection": {
+      "mode": "inline",
+      "fileName": "runtime-config.yaml",
+      "content": "foo: bar\nnested:\n  enabled: true",
+      "mountPath": "/workspace/configs",
+      "targetFilename": "app-config.yaml"
+    }
   }'
 
 # 响应示例:
@@ -2568,6 +2575,20 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
 # 404: template 不存在
 # 503: Argo backend 未配置
 ```
+
+`configSelection` 为可选。存在时，deploy/runtime 会把配置内容投影成一次性
+ConfigMap，并在所有 pipeline step 容器里同时注入：
+
+- 挂载文件：`<mountPath>/<targetFilename>`
+- 环境变量：`PIPELINE_CONFIG_PATH`、`PIPELINE_CONFIG_FILENAME`、`PIPELINE_CONFIG_SOURCE`
+- 若来源是平台已保存配置（`mode=saved`），额外包含 `PIPELINE_CONFIG_ID` 与
+  `PIPELINE_CONFIG_VERSION`
+
+三种来源模式：
+
+- `saved`：选择平台已保存配置，需传 `configId`，可选 `version`
+- `upload`：上传本地文件，需传 `fileName + content`
+- `inline`：在线编辑草稿，需传 `fileName + content`
 
 查询 first-class run 列表和详情。详情会尽量刷新 Argo phase，并在 workflow
 包含节点状态时返回 `nodes`；每个 pod 节点会带 `logRef`，供前端跳转日志。
@@ -3102,7 +3123,15 @@ curl -X POST "$BASE/api/v1/backfill" \
     "templateId": "tpl-123",
     "templateVersion": 4,
     "pilotCount": 50,
-    "assetIds": ["asset-1", "asset-2"]
+    "assetIds": ["asset-1", "asset-2"],
+    "configSelection": {
+      "mode": "saved",
+      "configId": "cfg-123",
+      "version": 2,
+      "fileName": "feature-flags.yaml",
+      "mountPath": "/workspace/configs",
+      "targetFilename": "feature-flags.yaml"
+    }
   }'
 
 curl -s "$BASE/api/v1/backfill/<BATCH_ID>/node-summary" \
@@ -3123,6 +3152,10 @@ curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/rerun" \
   -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"scope":"failed","templateVersion":4}'
+
+batch job 创建时附带的 `configSelection` 会原样保存在 job filter JSON 中，并在
+每个子任务真正 materialize / deploy 时透传给 runtime；这样 pilot、rerun、
+continue-full 与后续子任务能保持同一份挂载文件和环境变量语义。
 
 curl -X POST "$BASE/api/v1/backfill/<BATCH_ID>/continue-full" \
   -H "X-Databrew-Token: $TOKEN"

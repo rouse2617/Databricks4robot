@@ -1,43 +1,43 @@
 # Proposal — CYB-2100
 
 ## Why
-The current `/registry` page is a flat reference dashboard for algo/tag/metric/lifecycle dictionaries. It does not give user-owned configuration files a first-class home, and it blurs the line between immutable reference data, editable operational state, and deploy-time runtime wiring.
+The current config-management work stops at library CRUD plus a deploy-panel draft UI. Users still cannot carry a chosen config into the runtime Pod, which leaves the main deploy workflow blocked even though configs already exist.
 
 ## What Changes
 
 ### New Capabilities
-- `/registry` becomes a governance hub with a clearly separated configuration management area.
-- Configuration records become standalone user-owned resources with independent identity, search, lifecycle handling, and version history.
-- Users can register their own config files and select only their own configs during deploy.
-- Pipeline nodes can reference a configuration by ID without coupling that configuration to a component or release.
-- Components can declare where a chosen config file should be mounted inside the container, without owning that config.
+- The deploy panel adds a config-file section with three source modes: pick a saved platform config, upload a local file, or edit inline content.
+- Users can review the selected config source, file name, version summary, and mount target before deploy.
+- Deploy requests carry a concrete config snapshot so the backend can materialize a runtime file even for upload/inline draft sources.
+- The selected config is projected into the workflow Pod through a mounted file and companion environment variables that describe the selected source and target path.
+- Components and deploy-time runtime settings expose a mount-path contract so the chosen file has a clear in-container destination.
 
 ### Modified Capabilities
-- Existing registry views remain authoritative read-only dictionaries, but they stop being treated as the place to edit operational configuration.
-- Component pages stay focused on components and releases, not on low-level config authoring.
-- Pipeline authoring can consume config references without inventing a component-to-config binding.
-- Deploy-time UX becomes a config picker plus a component mount contract, not a free-form metadata editor.
+- Deploy-time config selection is no longer limited to previously saved config records.
+- The deploy UX becomes a guided file-source workflow instead of a future-placeholder action.
+- Batch deploys reuse the same config selection so every subtask run receives the same runtime file contract.
 
 ## Impact
-- **Affected code**: `Frontend/src/pages/RegistryCenterPage.tsx`, `Frontend/src/api/registry.ts`, `Frontend/src/App.tsx`, `Frontend/src/components/AppLayout.tsx`, `Frontend/src/pages/PipelinePage.tsx`, `Frontend/src/components/pipeline/*`, `backend/internal/handlers/registry`, `backend/routes/routes.go`, `backend/internal/models`, `backend/internal/postgres`, `api/openapi.yaml`, `docs/review/api-guide.md`
-- **New APIs**: configuration list/detail/create/update/deprecate endpoints under the public API surface, plus deploy-time config lookup filtered by ownership
-- **Dependencies**: component-release work remains separate; any config snapshot logic must not depend on component identity
+- **Affected code**: `Frontend/src/components/pipeline/DeployPanel.tsx`, `Frontend/src/components/pipeline/DeployPanel.test.tsx`, `Frontend/src/api/pipelineConfigs.ts`, `Frontend/src/api/pipelineApi.ts`, `Frontend/src/api/deployPipelineRun.ts`, `Frontend/src/api/batchJobApi.ts`, `Frontend/src/pages/PipelinePage.tsx`, `backend/internal/handlers/pipeline/handler.go`, `backend/internal/handlers/backfill/handler.go`, `backend/internal/usecase/pipeline/usecase.go`, `backend/internal/usecase/backfill/usecase.go`, `backend/internal/transpiler/*`, `api/openapi.yaml`, `docs/review/api-guide.md`
+- **New APIs**: deploy and batch-create payloads gain config selection fields
+- **Dependencies**: existing standalone config library under `/registry`; existing Kubernetes client wiring already used for Pod diagnostics/exec; current Argo workflow generation path
 
 ## Scope
-- **In scope**: config resource model, `/registry` page structure, config search and inspection, config version history, config lifecycle rules, deploy-time ownership filtering, pipeline-node config references, snapshotting of selected config at save time, component mount-path contract
-- **Out of scope**: binding configs to components, requiring config authoring inside component manager, replacing existing algo/tag/metric/lifecycle registries, user-editable low-level build metadata, making the component editor own config content
+- **In scope**: deploy-panel config-source switcher, saved-config picker UI, local upload UI, inline editor UI, mount-path input UI, draft validation/copy, preview summary in deploy panel, deploy payload contract, backend config snapshot resolution, runtime file mount injection, companion env var projection, batch-job propagation for the same config selection
+- **Out of scope**: multi-file mounts per run, persistent storage of ad hoc upload/inline configs into the shared library, component-manager schema changes, arbitrary key-value env templating from config file content
 
 ## Success Criteria
-- [ ] Users can open `/registry` and clearly distinguish reference registries from configuration management.
-- [ ] Configs can be found by name, description, tag, or owner without going through component pages.
-- [ ] A config can expose multiple immutable versions and identify its current selectable version.
-- [ ] A user can register a config file and later pick only their own configs during deploy.
-- [ ] A pipeline node can point at `configId`, and the saved node keeps an immutable config snapshot.
-- [ ] A component can declare a mount path for the selected config file, and the runtime uses that path to project the file into the container.
-- [ ] Existing registry dictionaries remain read-only and do not become edit forms.
-- [ ] Component and config lifecycles remain decoupled.
+- [ ] The deploy panel shows a clear "配置文件" section with three mutually exclusive source modes.
+- [ ] A user can choose an existing saved config from the platform library and see its metadata summary.
+- [ ] A user can choose a local file for upload and see file name and size before deploy.
+- [ ] A user can edit config content inline and see the draft content source reflected in the summary.
+- [ ] The deploy panel captures a mount path / target file location in the same UI flow.
+- [ ] A deploy request resolves the chosen source into a concrete runtime config snapshot that the backend can mount into the Workflow Pod.
+- [ ] The mounted file is visible in the Pod spec through a dedicated volume mount and the Pod also receives environment variables describing the selected config and target path.
+- [ ] Batch deploys preserve the same config selection across all subtasks.
+- [ ] The UI makes it obvious which parts are draft local input versus previously saved platform configs.
 
 ## Goals (SLO)
-- **Latency**: config list/search p95 < 500 ms for the first 500 records
-- **Concurrency**: repeated config refresh or sync actions stay idempotent
-- **Quality**: config references never resolve to mutable live state after a run is saved
+- **Latency**: switching between config source modes should feel immediate on the client with no full-page reload
+- **Concurrency**: changing config source mode should not trigger duplicate deploy submissions
+- **Quality**: deploy-panel config source interactions are covered by focused frontend tests for mode switching and validation states

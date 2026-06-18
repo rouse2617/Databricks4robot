@@ -1,4 +1,7 @@
-import type { PipelineRunNodeProgress } from "./pipelineApi";
+import type {
+	DeployConfigSelection,
+	PipelineRunNodeProgress,
+} from "./pipelineApi";
 import { request } from "./pipelineClient";
 
 export interface BatchJob {
@@ -23,6 +26,7 @@ export interface CreateBatchJobRequest {
 	assetIds: string[];
 	templateVersion?: number;
 	pilotCount?: number;
+	configSelection?: DeployConfigSelection;
 }
 
 export interface BatchNodeSummary {
