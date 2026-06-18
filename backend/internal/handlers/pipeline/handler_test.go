@@ -408,6 +408,7 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.POST("/api/v1/deploy", h.Deploy)
 	r.POST("/api/v1/deploy/template/:id", h.DeployByTemplate)
 	r.GET("/api/v1/execution-targets", h.ListExecutionTargets)
+	r.GET("/api/v1/pipeline/runtime-mounts", h.ListRuntimeMounts)
 	r.GET("/api/v1/deployments", h.ListDeployments)
 	r.GET("/api/v1/deployments/:id", h.GetDeployment)
 	r.DELETE("/api/v1/deployments/:id", h.DeleteDeployment)
@@ -452,6 +453,65 @@ func TestListExecutionTargets_Default(t *testing.T) {
 	}
 	if resp.Items[0].ID != "default" || resp.Items[0].Namespace != "cyber-databrew-dev" {
 		t.Fatalf("unexpected target: %+v", resp.Items[0])
+	}
+}
+
+func TestListRuntimeMounts(t *testing.T) {
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "cyber-databrew-dev")
+	uc.SetRuntimeMountCatalog(pipelineUC.RuntimeMountCatalog{
+		Secrets: []pipelineUC.RuntimeSecretMountResource{{
+			ID:                  "db-secrets",
+			Name:                "DB secrets",
+			Kind:                "secretProviderClass",
+			SecretProviderClass: "db-spc",
+			DefaultMountPath:    "/mnt/secrets",
+			ReadOnly:            true,
+		}},
+		Storage: []pipelineUC.RuntimeStorageMountResource{{
+			ID:               "scratch",
+			Name:             "Scratch",
+			Kind:             "emptyDir",
+			DefaultMountPath: "/workspace/scratch",
+			AllowWrite:       true,
+		}},
+	})
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline/runtime-mounts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp pipelineUC.RuntimeMountCatalog
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Secrets) != 1 || resp.Secrets[0].SecretProviderClass != "db-spc" { // pragma: allowlist secret
+		t.Fatalf("unexpected secrets catalog: %+v", resp.Secrets)
+	}
+	if len(resp.Storage) != 1 || resp.Storage[0].Kind != "emptyDir" {
+		t.Fatalf("unexpected storage catalog: %+v", resp.Storage)
+	}
+}
+
+func TestListRuntimeMountsReturnsInternalOnInvalidCatalogEnv(t *testing.T) {
+	t.Setenv("PIPELINE_RUNTIME_MOUNT_CATALOG_JSON", `{"secrets":[{"id":"missing-spc"}]}`)
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "cyber-databrew-dev")
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline/runtime-mounts", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "missing-spc") {
+		t.Fatalf("expected response to mention invalid resource, got %s", w.Body.String())
 	}
 }
 

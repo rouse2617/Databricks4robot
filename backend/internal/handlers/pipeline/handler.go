@@ -28,9 +28,9 @@ type BatchSubtaskReconciler interface {
 
 // Handler bundles the pipeline endpoints.
 type Handler struct {
-	uc           *pipelineUC.Usecase
-	pricing      *pipelineUC.PricingConfig
-	batchRuns    BatchSubtaskReconciler
+	uc        *pipelineUC.Usecase
+	pricing   *pipelineUC.PricingConfig
+	batchRuns BatchSubtaskReconciler
 }
 
 type runtimeConfigSelectionRequest struct {
@@ -223,10 +223,10 @@ func (h *Handler) ListVersions(c *gin.Context) {
 // Deploy handles POST /api/v1/deploy.
 func (h *Handler) Deploy(c *gin.Context) {
 	var req struct {
-		Pipeline map[string]interface{} `json:"pipeline" binding:"required"`
-		Name     string                 `json:"name"`
-		AssetIDs []string               `json:"asset_ids"`
-		TargetID string                 `json:"target_id"`
+		Pipeline map[string]interface{}         `json:"pipeline" binding:"required"`
+		Name     string                         `json:"name"`
+		AssetIDs []string                       `json:"asset_ids"`
+		TargetID string                         `json:"target_id"`
 		Config   *runtimeConfigSelectionRequest `json:"configSelection"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -264,10 +264,10 @@ func (h *Handler) DeployByTemplate(c *gin.Context) {
 	}
 
 	var req struct {
-		Name     string   `json:"name"`
-		AssetIDs []string `json:"asset_ids"`
-		TargetID string   `json:"target_id"`
-		Version  int      `json:"version"`
+		Name     string                         `json:"name"`
+		AssetIDs []string                       `json:"asset_ids"`
+		TargetID string                         `json:"target_id"`
+		Version  int                            `json:"version"`
 		Config   *runtimeConfigSelectionRequest `json:"configSelection"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
@@ -286,10 +286,10 @@ func (h *Handler) DeployByTemplate(c *gin.Context) {
 // CreateRun handles POST /api/v1/pipeline-runs.
 func (h *Handler) CreateRun(c *gin.Context) {
 	var req struct {
-		Pipeline map[string]interface{} `json:"pipeline" binding:"required"`
-		Name     string                 `json:"name"`
-		AssetIDs []string               `json:"asset_ids"`
-		TargetID string                 `json:"target_id"`
+		Pipeline map[string]interface{}         `json:"pipeline" binding:"required"`
+		Name     string                         `json:"name"`
+		AssetIDs []string                       `json:"asset_ids"`
+		TargetID string                         `json:"target_id"`
 		Config   *runtimeConfigSelectionRequest `json:"configSelection"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -312,10 +312,10 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Name     string   `json:"name"`
-		AssetIDs []string `json:"asset_ids"`
-		TargetID string   `json:"target_id"`
-		Version  int      `json:"version"`
+		Name     string                         `json:"name"`
+		AssetIDs []string                       `json:"asset_ids"`
+		TargetID string                         `json:"target_id"`
+		Version  int                            `json:"version"`
 		Config   *runtimeConfigSelectionRequest `json:"configSelection"`
 	}
 	// Body is optional: empty body is fine, but a non-empty body that fails to
@@ -353,6 +353,16 @@ func (h *Handler) ListExecutionTargets(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"items": items})
+}
+
+// ListRuntimeMounts handles GET /api/v1/pipeline/runtime-mounts.
+func (h *Handler) ListRuntimeMounts(c *gin.Context) {
+	catalog, err := h.uc.ListRuntimeMounts(c.Request.Context())
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, catalog)
 }
 
 // ListRuns handles GET /api/v1/pipeline-runs.

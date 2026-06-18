@@ -111,4 +111,21 @@ describe("PipelineStepNode", () => {
 		);
 		expect(screen.getByText("配置 Detector Config")).toBeTruthy();
 	});
+
+	it("renders runtime mount badge when node has secret or storage bindings", () => {
+		render(
+			<PipelineStepNode
+				id="n1"
+				type="pipelineStep"
+				data={{
+					...baseData,
+					runtimeSecrets: [{ resourceId: "db-secrets" }],
+					storageMounts: [{ resourceId: "scratch-emptydir", readOnly: false }],
+				}}
+				selected={false}
+				isConnectable
+			/>,
+		);
+		expect(screen.getByText("挂载 密钥 1 / 存储 1")).toBeTruthy();
+	});
 });

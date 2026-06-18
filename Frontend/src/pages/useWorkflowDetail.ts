@@ -344,7 +344,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				error: null,
 			}));
 			loadRunDetailData(name, opts).catch((err) => {
-				console.error(err);
+				if (!isExpectedWorkflowNotFound(err)) {
+					console.error(err);
+				}
 				setRunEventState((current) => ({
 					...current,
 					loading: false,

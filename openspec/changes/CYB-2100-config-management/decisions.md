@@ -69,3 +69,9 @@
 - **Decision**: Commit the change after local frontend verification on port `2617` against the dev backend, without a Cloud Run frontend deploy in this iteration.
 - **Alternatives**: Build and deploy a frontend Cloud Run dev revision before committing.
 - **Rationale**: This is a narrow visual/text-density adjustment with no API contract change; local browser smoke, scoped Biome, related Vitest tests, and production build already passed. The deploy gap is recorded here rather than hidden.
+
+## 2026-06-18 — Commit pipeline connection regression fix from isolated worktree
+- **Context**: The pipeline designer visual polish regressed node connections because the React Flow `onConnect` callback was not wired, and node overflow styling made handles harder to interact with. The user asked to use a new directory and then explicitly asked to commit this fix for later handling.
+- **Decision**: Commit the frontend-only connection fix from `/tmp/cyber-databrew-pr247-connect-fix` after local build, related Vitest, `git diff --check`, and Playwright browser verification on port `2618`; skip Cloud Run frontend deploy before this local commit.
+- **Alternatives**: Complete the full Cloud Run frontend deploy plus Chrome DevTools MCP verification before committing.
+- **Rationale**: The user explicitly requested the commit now, this diff is limited to local pipeline-designer connection behavior, and a real browser verified a persisted edge (`edges: 1`, `paths: 1`) on the isolated local dev server. The skipped deploy gate is recorded here for PR/deploy follow-up.

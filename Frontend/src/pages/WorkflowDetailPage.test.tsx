@@ -10,7 +10,9 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import WorkflowDetailPage from "./WorkflowDetailPage";
+import WorkflowDetailPage, {
+	findPipelineNodeForWorkflowNode,
+} from "./WorkflowDetailPage";
 
 const mockUseWorkflowDetail = vi.fn();
 const mockDeletePipelineRun = vi.fn();
@@ -141,6 +143,55 @@ describe("WorkflowDetailPage", () => {
 	});
 
 	afterEach(cleanup);
+
+	it("maps workflow nodes back to pipeline node snapshots by run node id", () => {
+		const pipelineNode = findPipelineNodeForWorkflowNode(
+			{
+				name: "runtime-pipeline",
+				nodes: [
+					{
+						id: "node-configured",
+						component: { name: "configured probe", image: "busybox" },
+						storageMounts: [
+							{
+								resourceId: "scratch-emptydir",
+								mountPath: "/workspace/scratch",
+							},
+						],
+					},
+				],
+				edges: [],
+			},
+			{
+				id: "run-1",
+				workflowName: "wf-asset",
+				pipelineName: "runtime-pipeline",
+				status: "Running",
+				nodeCount: 1,
+				createdAt: "2026-06-03T00:00:00Z",
+				nodes: [
+					{
+						id: "run-node-1",
+						runId: "run-1",
+						pipelineNodeId: "node-configured",
+						argoNodeId: "argo-node-1",
+					},
+				],
+			},
+			{
+				id: "argo-node-1",
+				name: "wf-asset.step-node-configured",
+				displayName: "configured probe",
+				type: "Pod",
+				phase: "Running",
+			},
+		);
+
+		expect(pipelineNode?.id).toBe("node-configured");
+		expect(pipelineNode?.storageMounts?.[0]?.resourceId).toBe(
+			"scratch-emptydir",
+		);
+	});
 
 	it("renders linked input asset chips from workflow labels", () => {
 		renderWorkflowDetail();
@@ -287,6 +338,56 @@ describe("WorkflowDetailPage", () => {
 			"node-1:Failed",
 		);
 		expect(screen.getByText("main: Error (exit code 1)")).toBeInTheDocument();
+	});
+
+	it("overlays terminal run status on active unmapped DAG nodes", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Running",
+				message: "",
+				nodes: [
+					{
+						id: "argo-node-unknown",
+						name: "wf-asset.unknown",
+						displayName: "unknown",
+						type: "Pod",
+						phase: "Pending",
+						createdAt: "2026-06-03T00:00:00Z",
+					},
+				],
+				createdAt: "2026-06-03T00:09:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: {
+					id: "run-1",
+					workflowName: "wf-asset",
+					pipelineName: "asset-pipeline",
+					status: "Failed",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:09:00Z",
+					finishedAt: "2026-06-03T00:10:00Z",
+					message: "workflow shutdown with strategy: Failed",
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByTestId("mock-dag-view")).toHaveTextContent(
+			"unknown:Failed",
+		);
+		expect(
+			screen.getByText("workflow shutdown with strategy: Failed"),
+		).toBeInTheDocument();
 	});
 
 	it("deletes the DataBrew execution record when a run id is available", async () => {

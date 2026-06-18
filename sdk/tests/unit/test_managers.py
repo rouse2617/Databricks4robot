@@ -339,6 +339,25 @@ class TestPipelineManager:
         result = client.pipelines.list_execution_targets()
         assert result["items"][0]["id"] == "default"
 
+    def test_list_runtime_mounts(self, client):
+        respx.get(f"{BASE_URL}/api/v1/pipeline/runtime-mounts").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "secrets": [],
+                    "storage": [
+                        {
+                            "id": "scratch-emptydir",
+                            "kind": "emptyDir",
+                            "defaultMountPath": "/workspace/scratch",
+                        }
+                    ],
+                },
+            )
+        )
+        result = client.pipelines.list_runtime_mounts()
+        assert result["storage"][0]["id"] == "scratch-emptydir"
+
     def test_deploy_template_with_assets_and_target(self, client):
         route = respx.post(f"{BASE_URL}/api/v1/deploy/template/tmpl-1").mock(
             return_value=httpx.Response(201, json={"id": "dep-1"})

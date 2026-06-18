@@ -1,6 +1,8 @@
 import type {
 	Pipeline,
 	PipelineNodeRuntimeConfig,
+	PipelineNodeRuntimeSecretMount,
+	PipelineNodeRuntimeStorageMount,
 } from "../../components/pipeline/types";
 import type {
 	PipelineCanvasEdge,
@@ -79,6 +81,45 @@ function normalizeRuntimeConfig(
 	};
 }
 
+function normalizeRuntimeSecrets(
+	items: PipelineNodeRuntimeSecretMount[] | undefined,
+): PipelineNodeRuntimeSecretMount[] {
+	return (items || [])
+		.map((item) => {
+			const resourceId = item.resourceId?.trim();
+			if (!resourceId) return null;
+			return {
+				resourceId,
+				...(item.mountPath?.trim() ? { mountPath: item.mountPath.trim() } : {}),
+				...(item.displayName?.trim()
+					? { displayName: item.displayName.trim() }
+					: {}),
+			};
+		})
+		.filter((item): item is PipelineNodeRuntimeSecretMount => Boolean(item));
+}
+
+function normalizeStorageMounts(
+	items: PipelineNodeRuntimeStorageMount[] | undefined,
+): PipelineNodeRuntimeStorageMount[] {
+	return (items || [])
+		.map((item) => {
+			const resourceId = item.resourceId?.trim();
+			if (!resourceId) return null;
+			return {
+				resourceId,
+				...(item.mountPath?.trim() ? { mountPath: item.mountPath.trim() } : {}),
+				...(typeof item.readOnly === "boolean"
+					? { readOnly: item.readOnly }
+					: {}),
+				...(item.displayName?.trim()
+					? { displayName: item.displayName.trim() }
+					: {}),
+			};
+		})
+		.filter((item): item is PipelineNodeRuntimeStorageMount => Boolean(item));
+}
+
 /** Restore canvas state from a saved pipeline JSON. */
 export function designDSLToCanvas(pipeline: Pipeline): {
 	nodes: PipelineCanvasNode[];
@@ -107,6 +148,8 @@ export function designDSLToCanvas(pipeline: Pipeline): {
 				inputPorts: normalizePorts(pn.inputs, defaultInputPorts),
 				outputPorts: normalizePorts(pn.outputs, defaultOutputPorts),
 				runtimeConfig: normalizeRuntimeConfig(pn.runtimeConfig),
+				runtimeSecrets: normalizeRuntimeSecrets(pn.runtimeSecrets),
+				storageMounts: normalizeStorageMounts(pn.storageMounts),
 				...refs,
 			},
 		};

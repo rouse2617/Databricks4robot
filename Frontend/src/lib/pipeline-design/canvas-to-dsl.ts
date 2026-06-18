@@ -3,6 +3,8 @@ import type {
 	PipelineEdgeDef,
 	PipelineNodeDef,
 	PipelineNodeRuntimeConfig,
+	PipelineNodeRuntimeSecretMount,
+	PipelineNodeRuntimeStorageMount,
 } from "../../components/pipeline/types";
 import type {
 	PipelineCanvasEdge,
@@ -54,9 +56,50 @@ function normalizeRuntimeConfig(
 	};
 }
 
+function normalizeRuntimeSecrets(
+	items: PipelineNodeRuntimeSecretMount[] | undefined,
+): PipelineNodeRuntimeSecretMount[] {
+	return (items || [])
+		.map((item) => {
+			const resourceId = item.resourceId?.trim();
+			if (!resourceId) return null;
+			return {
+				resourceId,
+				...(item.mountPath?.trim() ? { mountPath: item.mountPath.trim() } : {}),
+				...(item.displayName?.trim()
+					? { displayName: item.displayName.trim() }
+					: {}),
+			};
+		})
+		.filter((item): item is PipelineNodeRuntimeSecretMount => Boolean(item));
+}
+
+function normalizeStorageMounts(
+	items: PipelineNodeRuntimeStorageMount[] | undefined,
+): PipelineNodeRuntimeStorageMount[] {
+	return (items || [])
+		.map((item) => {
+			const resourceId = item.resourceId?.trim();
+			if (!resourceId) return null;
+			return {
+				resourceId,
+				...(item.mountPath?.trim() ? { mountPath: item.mountPath.trim() } : {}),
+				...(typeof item.readOnly === "boolean"
+					? { readOnly: item.readOnly }
+					: {}),
+				...(item.displayName?.trim()
+					? { displayName: item.displayName.trim() }
+					: {}),
+			};
+		})
+		.filter((item): item is PipelineNodeRuntimeStorageMount => Boolean(item));
+}
+
 function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 	const d = n.data;
 	const runtimeConfig = normalizeRuntimeConfig(d.runtimeConfig);
+	const runtimeSecrets = normalizeRuntimeSecrets(d.runtimeSecrets);
+	const storageMounts = normalizeStorageMounts(d.storageMounts);
 	return {
 		id: n.id,
 		component: {
@@ -96,6 +139,8 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 		inputs: normalizePorts(d.inputPorts, defaultInputPorts),
 		outputs: normalizePorts(d.outputPorts, defaultOutputPorts),
 		...(runtimeConfig ? { runtimeConfig } : {}),
+		...(runtimeSecrets.length > 0 ? { runtimeSecrets } : {}),
+		...(storageMounts.length > 0 ? { storageMounts } : {}),
 	};
 }
 

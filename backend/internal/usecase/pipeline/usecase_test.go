@@ -777,6 +777,261 @@ func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
 	}
 }
 
+func TestDeploy_IncludesRuntimeSecretAndStorageMounts(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "runtime-mount-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-a",
+				"component": map[string]interface{}{
+					"name":  "probe",
+					"image": "busybox",
+				},
+				"runtimeSecrets": []interface{}{
+					map[string]interface{}{
+						"resourceId": "db-secrets",
+						"mountPath":  "/mnt/db-secrets",
+					},
+				},
+				"storageMounts": []interface{}{
+					map[string]interface{}{
+						"resourceId": "model-pvc",
+						"mountPath":  "/workspace/models",
+						"readOnly":   true,
+					},
+					map[string]interface{}{
+						"resourceId": "scratch",
+						"mountPath":  "/workspace/scratch",
+						"readOnly":   false,
+					},
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	uc := newUsecase(newMockAssetRepo())
+	uc.SetRuntimeMountCatalog(RuntimeMountCatalog{
+		Secrets: []RuntimeSecretMountResource{{
+			ID:                  "db-secrets",
+			Name:                "DB secrets",
+			Kind:                runtimeSecretKindSecretProviderClass,
+			SecretProviderClass: "db-secret-provider",
+			DefaultMountPath:    "/mnt/secrets",
+			ReadOnly:            true,
+		}},
+		Storage: []RuntimeStorageMountResource{
+			{
+				ID:               "model-pvc",
+				Name:             "Model PVC",
+				Kind:             runtimeStorageKindPVC,
+				PVCName:          "shared-models",
+				DefaultMountPath: "/workspace/models",
+				ReadOnly:         true,
+				AllowWrite:       false,
+			},
+			{
+				ID:               "scratch",
+				Name:             "Scratch",
+				Kind:             runtimeStorageKindEmptyDir,
+				DefaultMountPath: "/workspace/scratch",
+				ReadOnly:         false,
+				AllowWrite:       true,
+			},
+		},
+	})
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil)
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on deployment")
+	}
+	manifest := *dep.Manifest
+	for _, want := range []string{
+		"db-secret-provider",
+		"secrets-store-gke.csi.k8s.io",
+		"shared-models",
+		"/mnt/db-secrets",
+		"/workspace/models",
+		"/workspace/scratch",
+		"PIPELINE_SECRET_DB_SECRETS_PATH",
+		"PIPELINE_STORAGE_MODEL_PVC_PATH",
+		"PIPELINE_STORAGE_SCRATCH_PATH",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected manifest to contain %q, got %s", want, manifest)
+		}
+	}
+}
+
+func TestDeploy_UsesDefaultExecutionTargetServiceAccountFromEnv(t *testing.T) {
+	t.Setenv("PIPELINE_DEFAULT_SERVICE_ACCOUNT", "cyber-databrew-backend-argo")
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "service-account-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-a",
+				"component": map[string]interface{}{
+					"name":  "probe",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	uc := newUsecase(newMockAssetRepo())
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("Deploy dry-run: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on dry-run deployment")
+	}
+	if !strings.Contains(*dep.Manifest, "serviceaccountname: cyber-databrew-backend-argo") {
+		t.Fatalf("expected manifest service account, got %s", *dep.Manifest)
+	}
+	if dep.ExecutionTarget == nil || dep.ExecutionTarget.ServiceAccount != "cyber-databrew-backend-argo" {
+		t.Fatalf("expected execution target service account, got %+v", dep.ExecutionTarget)
+	}
+}
+
+func TestDeploy_RejectsUnknownRuntimeMountResource(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "runtime-mount-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-a",
+				"component": map[string]interface{}{
+					"name":  "probe",
+					"image": "busybox",
+				},
+				"runtimeSecrets": []interface{}{
+					map[string]interface{}{"resourceId": "missing-secret"},
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	uc := newUsecase(newMockAssetRepo())
+	uc.SetRuntimeMountCatalog(RuntimeMountCatalog{})
+
+	_, err := uc.Deploy(ctx, pipe, "", nil)
+	if err == nil {
+		t.Fatal("expected unknown runtime mount error")
+	}
+	if !errors.Is(err, ErrInvalidArgument) || !strings.Contains(err.Error(), "missing-secret") {
+		t.Fatalf("expected missing-secret invalid argument error, got %v", err)
+	}
+}
+
+func TestDeploy_RejectsRuntimeStorageWriteModeMismatch(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "runtime-mount-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-a",
+				"component": map[string]interface{}{
+					"name":  "probe",
+					"image": "busybox",
+				},
+				"storageMounts": []interface{}{
+					map[string]interface{}{
+						"resourceId": "readonly-pvc",
+						"readOnly":   false,
+					},
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	uc := newUsecase(newMockAssetRepo())
+	uc.SetRuntimeMountCatalog(RuntimeMountCatalog{
+		Storage: []RuntimeStorageMountResource{{
+			ID:               "readonly-pvc",
+			Name:             "Read only PVC",
+			Kind:             runtimeStorageKindPVC,
+			PVCName:          "models",
+			DefaultMountPath: "/workspace/models",
+			ReadOnly:         true,
+			AllowWrite:       false,
+		}},
+	})
+
+	_, err := uc.Deploy(ctx, pipe, "", nil)
+	if err == nil {
+		t.Fatal("expected write mode mismatch error")
+	}
+	if !errors.Is(err, ErrInvalidArgument) || !strings.Contains(err.Error(), "write mode") {
+		t.Fatalf("expected write mode invalid argument error, got %v", err)
+	}
+}
+
+func TestRuntimeMountAllowedOnTargetMatchesIDNameAndNamespace(t *testing.T) {
+	target := &models.ExecutionTarget{
+		ID:        "target-uuid",
+		Name:      "video-proc-dev",
+		Namespace: "video-proc-dev",
+	}
+
+	for _, allowed := range []string{"target-uuid", "video-proc-dev"} {
+		if !runtimeMountAllowedOnTarget(target, []string{allowed}) {
+			t.Fatalf("expected target to allow %q", allowed)
+		}
+	}
+	if runtimeMountAllowedOnTarget(target, []string{"default"}) {
+		t.Fatal("expected target not to allow default")
+	}
+}
+
+func TestDefaultRuntimeMountCatalogLoadsGenericJSONSecretTargets(t *testing.T) {
+	t.Setenv("PIPELINE_RUNTIME_MOUNT_TARGET_IDS", "default")
+	t.Setenv("PIPELINE_RUNTIME_MOUNT_CATALOG_JSON", `{
+		"secrets": [{
+			"id": "platform-db-secrets",
+			"name": "Platform DB secrets",
+			"secretProviderClass": "databrew-platform-db-creds",
+			"defaultMountPath": "/mnt/secrets",
+			"targetIds": ["gpu-pool"]
+		}]
+	}`)
+
+	catalog, err := defaultRuntimeMountCatalog()
+	if err != nil {
+		t.Fatalf("defaultRuntimeMountCatalog: %v", err)
+	}
+
+	var platformSecret *RuntimeSecretMountResource
+	for i := range catalog.Secrets {
+		if catalog.Secrets[i].ID == "platform-db-secrets" {
+			platformSecret = &catalog.Secrets[i]
+			break
+		}
+	}
+	if platformSecret == nil { // pragma: allowlist secret
+		t.Fatalf("expected platform secret in catalog: %+v", catalog.Secrets)
+	}
+	if len(platformSecret.TargetIDs) != 1 || platformSecret.TargetIDs[0] != "gpu-pool" {
+		t.Fatalf("expected resource target IDs, got %+v", platformSecret.TargetIDs)
+	}
+	if len(catalog.Storage) == 0 || len(catalog.Storage[0].TargetIDs) != 1 || catalog.Storage[0].TargetIDs[0] != "default" {
+		t.Fatalf("expected storage to keep global target IDs, got %+v", catalog.Storage)
+	}
+}
+
+func TestDefaultRuntimeMountCatalogRejectsInvalidJSONCatalog(t *testing.T) {
+	t.Setenv("PIPELINE_RUNTIME_MOUNT_CATALOG_JSON", `{"secrets":[{"id":"missing-spc"}]}`)
+
+	if _, err := defaultRuntimeMountCatalog(); err == nil {
+		t.Fatal("expected invalid catalog error")
+	}
+}
+
 func TestDeploy_NodeRuntimeConfigRejectsNotReadyConfig(t *testing.T) {
 	ctx := context.Background()
 	pipe := map[string]interface{}{

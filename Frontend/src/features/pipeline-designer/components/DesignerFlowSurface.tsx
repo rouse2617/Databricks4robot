@@ -5,6 +5,7 @@ import {
 	type Edge,
 	MiniMap,
 	type Node,
+	type OnConnect,
 	type OnEdgesChange,
 	type OnNodesChange,
 	ReactFlow,
@@ -23,6 +24,7 @@ export interface DesignerFlowSurfaceProps {
 	edges: Edge[];
 	onNodesChange: OnNodesChange<Node<PipelineNodeData>>;
 	onEdgesChange: OnEdgesChange<Edge>;
+	onConnect?: OnConnect;
 	readOnlyMode: boolean;
 	onDrop?: (event: DragEvent) => void;
 	onDragOver?: (event: DragEvent) => void;
@@ -41,6 +43,7 @@ export function DesignerFlowSurface({
 	edges,
 	onNodesChange,
 	onEdgesChange,
+	onConnect,
 	readOnlyMode,
 	onDrop,
 	onDragOver,
@@ -58,6 +61,7 @@ export function DesignerFlowSurface({
 				nodeTypes={PIPELINE_NODE_TYPES}
 				onNodesChange={onNodesChange}
 				onEdgesChange={onEdgesChange}
+				onConnect={readOnlyMode ? undefined : onConnect}
 				nodesDraggable={!readOnlyMode}
 				nodesConnectable={!readOnlyMode}
 				elementsSelectable

@@ -313,7 +313,7 @@
 	transition:
 		border-color 0.2s ease,
 		box-shadow 0.2s ease;
-	overflow: hidden;
+	overflow: visible;
 }
 
 .pipeline-node::before {
@@ -508,6 +508,8 @@
 	background: #fff;
 	border: 2px solid #94a3b8;
 	box-shadow: 0 0 0 2px #fff;
+	z-index: 20;
+	pointer-events: all;
 	transition:
 		border-color 0.15s ease,
 		box-shadow 0.15s ease,

@@ -17,6 +17,8 @@ export interface PipelineNodeDef {
 	inputs?: Port[];
 	outputs?: Port[];
 	runtimeConfig?: PipelineNodeRuntimeConfig;
+	runtimeSecrets?: PipelineNodeRuntimeSecretMount[];
+	storageMounts?: PipelineNodeRuntimeStorageMount[];
 }
 
 export interface PipelineNodeRuntimeConfig {
@@ -26,6 +28,19 @@ export interface PipelineNodeRuntimeConfig {
 	fileName?: string;
 	mountPath: string;
 	targetFilename: string;
+	displayName?: string;
+}
+
+export interface PipelineNodeRuntimeSecretMount {
+	resourceId: string;
+	mountPath?: string;
+	displayName?: string;
+}
+
+export interface PipelineNodeRuntimeStorageMount {
+	resourceId: string;
+	mountPath?: string;
+	readOnly?: boolean;
 	displayName?: string;
 }
 
@@ -115,5 +130,7 @@ export interface PipelineNodeData {
 	releaseId?: string;
 	componentVersionLabel?: string;
 	runtimeConfig?: PipelineNodeRuntimeConfig;
+	runtimeSecrets?: PipelineNodeRuntimeSecretMount[];
+	storageMounts?: PipelineNodeRuntimeStorageMount[];
 	[key: string]: unknown;
 }

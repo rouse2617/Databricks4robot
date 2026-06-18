@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/pipelineClient";
 import type { WorkflowDetail, WorkflowNodeStatus } from "../../api/workflowApi";
+import type { PipelineNodeDef } from "./types";
 import { WorkflowNodeDetailPanel } from "./WorkflowNodeDetailPanel";
 
 const mockGetNodePodDiagnostics = vi.fn();
@@ -153,6 +154,63 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		expect(screen.getByText("成功")).toBeTruthy();
+	});
+
+	it("shows node runtime config and mount bindings in the summary tab", () => {
+		const pipelineNode: PipelineNodeDef = {
+			id: "node-configured",
+			component: {
+				name: "Configured Probe",
+				image: "busybox:latest",
+			},
+			runtimeConfig: {
+				mode: "saved",
+				configId: "cfg-probe",
+				version: 7,
+				fileName: "probe.yaml",
+				mountPath: "/workspace/configs",
+				targetFilename: "runtime.yaml",
+				displayName: "Probe Runtime Config",
+			},
+			runtimeSecrets: [
+				{
+					resourceId: "db-secrets",
+					mountPath: "/mnt/db-secrets",
+					displayName: "Database Secrets",
+				},
+			],
+			storageMounts: [
+				{
+					resourceId: "scratch-emptydir",
+					mountPath: "/workspace/scratch",
+					readOnly: false,
+					displayName: "Scratch Workspace",
+				},
+			],
+		};
+
+		render(
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				pipelineNode={pipelineNode}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByText("运行时挂载")).toBeTruthy();
+		expect(screen.getByText("Probe Runtime Config")).toBeTruthy();
+		expect(screen.getByText("/workspace/configs/runtime.yaml")).toBeTruthy();
+		expect(screen.getByText("PIPELINE_CONFIG_PATH")).toBeTruthy();
+		expect(screen.getByText("Database Secrets")).toBeTruthy();
+		expect(screen.getByText("PIPELINE_SECRET_DB_SECRETS_PATH")).toBeTruthy();
+		expect(screen.getByText("Scratch Workspace")).toBeTruthy();
+		expect(
+			screen.getByText("PIPELINE_STORAGE_SCRATCH_EMPTYDIR_PATH"),
+		).toBeTruthy();
+		expect(screen.getByText("ASSET_IDS")).toBeTruthy();
 	});
 
 	it("shows resolved pod name when provided by the API", () => {

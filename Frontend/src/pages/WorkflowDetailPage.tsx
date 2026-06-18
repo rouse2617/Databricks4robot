@@ -39,6 +39,7 @@ import type {
 } from "../api/workflowApi";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { LinkifiedText } from "../components/common/LinkifiedText";
+import type { Pipeline, PipelineNodeDef } from "../components/pipeline/types";
 import {
 	WorkflowNodeDetailPanel,
 	type WorkflowNodeDetailTabKey,
@@ -140,6 +141,51 @@ function buildRunNodeLookup(runNodes: PipelineRunNode[] = []) {
 	return lookup;
 }
 
+function addPipelineNodeLookupKey(
+	map: Map<string, PipelineNodeDef>,
+	key: unknown,
+	node: PipelineNodeDef,
+) {
+	if (typeof key !== "string") return;
+	const normalized = key.trim();
+	if (!normalized || map.has(normalized)) return;
+	map.set(normalized, node);
+	if (normalized.startsWith("step-")) {
+		const stripped = normalized.replace(/^step-/, "");
+		addPipelineNodeLookupKey(map, stripped, node);
+	} else {
+		addPipelineNodeLookupKey(map, `step-${normalized}`, node);
+	}
+}
+
+function buildPipelineNodeLookup(pipeline?: Pipeline | null) {
+	const lookup = new Map<string, PipelineNodeDef>();
+	for (const node of pipeline?.nodes ?? []) {
+		addPipelineNodeLookupKey(lookup, node.id, node);
+		addPipelineNodeLookupKey(lookup, node.component?.name, node);
+	}
+	return lookup;
+}
+
+function workflowNodePipelineLookupKeys(node: WorkflowNodeStatus): string[] {
+	const keys = [
+		node.id,
+		node.name,
+		node.name?.split(".").pop(),
+		node.displayName,
+		node.templateName,
+	];
+	const out: string[] = [];
+	const seen = new Set<string>();
+	for (const rawKey of keys) {
+		const key = rawKey?.trim();
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		out.push(key);
+	}
+	return out;
+}
+
 function findRunNodeSnapshot(
 	lookup: Map<string, PipelineRunNode>,
 	node: WorkflowNodeStatus,
@@ -151,6 +197,26 @@ function findRunNodeSnapshot(
 		(node.templateName ? lookup.get(node.templateName) : undefined) ??
 		null
 	);
+}
+
+export function findPipelineNodeForWorkflowNode(
+	pipeline: Pipeline | null | undefined,
+	run: PipelineRun | null | undefined,
+	node: WorkflowNodeStatus | null | undefined,
+): PipelineNodeDef | null {
+	if (!pipeline || !node) return null;
+	const pipelineNodeLookup = buildPipelineNodeLookup(pipeline);
+	const runNodeLookup = buildRunNodeLookup(run?.nodes);
+	const runNode = findRunNodeSnapshot(runNodeLookup, node);
+	if (runNode?.pipelineNodeId) {
+		const pipelineNode = pipelineNodeLookup.get(runNode.pipelineNodeId);
+		if (pipelineNode) return pipelineNode;
+	}
+	for (const key of workflowNodePipelineLookupKeys(node)) {
+		const pipelineNode = pipelineNodeLookup.get(key);
+		if (pipelineNode) return pipelineNode;
+	}
+	return null;
 }
 
 function getWorkflowNodeSnapshotTime(
@@ -229,6 +295,19 @@ function shouldUseRunTerminalForControlNode(
 	return true;
 }
 
+function shouldUseRunTerminalFallbackForUnmappedNode(
+	workflow: WorkflowDetail,
+	node: WorkflowNodeStatus,
+	run: PipelineRun,
+) {
+	if (!TERMINAL_NODE_PHASES.has(run.status)) return false;
+	if (!ACTIVE_NODE_PHASES.has(node.phase)) return false;
+	const runAt = toTime(run.finishedAt) ?? toTime(run.updatedAt);
+	const nodeAt = getWorkflowNodeSnapshotTime(workflow, node);
+	if (runAt && nodeAt && nodeAt > runAt) return false;
+	return true;
+}
+
 function mergeRunNodeSnapshot(
 	node: WorkflowNodeStatus,
 	runNode: PipelineRunNode,
@@ -261,6 +340,14 @@ function buildDisplayWorkflowNodes(
 			return mergeRunNodeSnapshot(node, runNode);
 		}
 		if (shouldUseRunTerminalForControlNode(workflow, node, run)) {
+			return {
+				...node,
+				phase: run.status,
+				message: run.message || node.message,
+				finishedAt: run.finishedAt || node.finishedAt,
+			};
+		}
+		if (shouldUseRunTerminalFallbackForUnmappedNode(workflow, node, run)) {
 			return {
 				...node,
 				phase: run.status,
@@ -1413,6 +1500,15 @@ export default function WorkflowDetailPage({
 			selectedNode
 		);
 	}, [displayWorkflow, selectedNode]);
+	const displaySelectedPipelineNode = useMemo(
+		() =>
+			findPipelineNodeForWorkflowNode(
+				runEventState.run?.pipelineJSON,
+				runEventState.run,
+				displaySelectedNode,
+			),
+		[displaySelectedNode, runEventState.run],
+	);
 	const canRetryFailedNode = useMemo(() => {
 		const retryOp = operations.find(
 			(operation) => operation.key === "retry" && !operation.disabled,
@@ -1883,6 +1979,7 @@ export default function WorkflowDetailPage({
 			<WorkflowNodeDetailPanel
 				node={displaySelectedNode}
 				workflow={displayWorkflow}
+				pipelineNode={displaySelectedPipelineNode}
 				open={nodePanelOpen}
 				onClose={closeNodeDetailPanel}
 				canRetryWorkflow={canRetryFailedNode}

@@ -361,6 +361,7 @@ func RegisterAll(
 		api.POST("/deploy", pipelineHandler.Deploy)
 		api.POST("/deploy/template/:id", pipelineHandler.DeployByTemplate)
 		api.GET("/execution-targets", pipelineHandler.ListExecutionTargets)
+		api.GET("/pipeline/runtime-mounts", pipelineHandler.ListRuntimeMounts)
 		api.POST("/pipeline-runs", pipelineHandler.CreateRun)
 		api.POST("/pipeline-runs/template/:id", pipelineHandler.CreateRunByTemplate)
 		api.GET("/pipeline-runs", pipelineHandler.ListRuns)

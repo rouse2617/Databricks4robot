@@ -7,6 +7,7 @@ import {
 } from "@ant-design/icons";
 import {
 	applyEdgeChanges,
+	type Connection,
 	type EdgeChange,
 	useEdgesState,
 	useNodesState,
@@ -98,6 +99,37 @@ import { usePipelineTemplateLoader } from "./hooks/usePipelineTemplateLoader";
 import "../../styles/pipeline.css";
 
 const DEFAULT_TARGET_PORT = "input";
+const DEFAULT_SOURCE_PORT = "output";
+const DEFAULT_NODE_WIDTH = 180;
+const DEFAULT_NODE_X_GAP = 80;
+const DEFAULT_NODE_Y_GAP = 160;
+const DEFAULT_NODE_LEFT_PADDING = 80;
+const DEFAULT_NODE_TOP_PADDING = 120;
+
+function defaultNodeScreenPosition(
+	bounds: DOMRect | undefined,
+	nodeCount: number,
+) {
+	const stepX = DEFAULT_NODE_WIDTH + DEFAULT_NODE_X_GAP;
+	const columnCount = bounds
+		? Math.max(
+				1,
+				Math.floor((bounds.width - DEFAULT_NODE_LEFT_PADDING) / stepX),
+			)
+		: 3;
+	const column = nodeCount % columnCount;
+	const row = Math.floor(nodeCount / columnCount);
+	if (!bounds) {
+		return {
+			x: 360 + column * stepX,
+			y: 240 + row * DEFAULT_NODE_Y_GAP,
+		};
+	}
+	return {
+		x: bounds.left + DEFAULT_NODE_LEFT_PADDING + column * stepX,
+		y: bounds.top + DEFAULT_NODE_TOP_PADDING + row * DEFAULT_NODE_Y_GAP,
+	};
+}
 
 function findDuplicateTargetInput(edges: PipelineFlowEdge[]) {
 	const seen = new Map<string, PipelineFlowEdge>();
@@ -391,6 +423,35 @@ function PipelineDesignerCanvasInner({
 		},
 		[messageApi, setEdges],
 	);
+	const onConnect = useCallback(
+		(connection: Connection) => {
+			if (!connection.source || !connection.target) return;
+			const sourceHandle = connection.sourceHandle || DEFAULT_SOURCE_PORT;
+			const targetHandle = connection.targetHandle || DEFAULT_TARGET_PORT;
+			const nextEdge: PipelineFlowEdge = {
+				id: `${connection.source}:${sourceHandle}->${connection.target}:${targetHandle}`,
+				source: connection.source,
+				target: connection.target,
+				sourceHandle,
+				targetHandle,
+			};
+			setEdges((current) => {
+				const withoutSameEdge = current.filter(
+					(edge) => edge.id !== nextEdge.id,
+				);
+				const next = [...withoutSameEdge, nextEdge];
+				const duplicate = findDuplicateTargetInput(next);
+				if (duplicate) {
+					messageApi.warning(
+						`输入端口 ${duplicate.key} 已有连线，请在 join 节点配置不同输入端口后再连接。`,
+					);
+					return current;
+				}
+				return next;
+			});
+		},
+		[messageApi, setEdges],
+	);
 	const canvasSnapshot = useMemo(
 		() => createCanvasSnapshot(pipelineName, nodes, edges),
 		[pipelineName, nodes, edges],
@@ -526,13 +587,7 @@ function PipelineDesignerCanvasInner({
 			if (readOnlyMode) return;
 			const bounds = wrapperRef.current?.getBoundingClientRect();
 			const screenPosition =
-				clientPosition ??
-				(bounds
-					? {
-							x: bounds.left + bounds.width / 2 + nodes.length * 24,
-							y: bounds.top + 140 + nodes.length * 24,
-						}
-					: { x: 360 + nodes.length * 24, y: 240 + nodes.length * 24 });
+				clientPosition ?? defaultNodeScreenPosition(bounds, nodes.length);
 			const position = engine.screenToFlowPosition(screenPosition);
 			const newNode = createPipelineNode(comp, position.x, position.y);
 			engine.addNode(newNode);
@@ -732,7 +787,12 @@ function PipelineDesignerCanvasInner({
 	const assertPipelineRunnable = useCallback(
 		(pipeline: Pipeline, actionLabel: string) => {
 			const validation = validatePipelineForRun(pipeline);
-			if (validation.valid) return true;
+			if (validation.valid) {
+				if (validation.warnings[0]) {
+					messageApi.warning(validation.warnings[0]);
+				}
+				return true;
+			}
 			messageApi.error(`${actionLabel}失败: ${validation.errors[0]}`);
 			return false;
 		},
@@ -1164,6 +1224,7 @@ function PipelineDesignerCanvasInner({
 							edges={edges}
 							onNodesChange={onNodesChange}
 							onEdgesChange={onEdgesChange}
+							onConnect={onConnect}
 							readOnlyMode={readOnlyMode}
 							onDrop={onDrop}
 							onDragOver={onDragOver}

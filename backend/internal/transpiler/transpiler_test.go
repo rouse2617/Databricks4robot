@@ -189,6 +189,136 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 	t.Fatal("step-gpu-step template not found")
 }
 
+func TestTranspileEmitsCSISecretProviderClassVolume(t *testing.T) {
+	p := &Pipeline{
+		Name: "secret-mount",
+		Nodes: []Node{{
+			ID: "secret-step",
+			Component: Component{
+				Name:  "secret",
+				Image: "busybox:latest",
+			},
+			VolumeMounts: []VolumeMount{{
+				Name:                   "secret-vol",
+				MountPath:              "/mnt/secrets",
+				ReadOnly:               true,
+				CSISecretProviderClass: "db-secret-provider",
+			}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "secret-mount"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var volume *corev1.Volume
+	for i := range wf.Spec.Volumes {
+		if wf.Spec.Volumes[i].Name == "secret-vol" {
+			volume = &wf.Spec.Volumes[i]
+			break
+		}
+	}
+	if volume == nil || volume.CSI == nil {
+		t.Fatalf("expected CSI volume, got %#v", wf.Spec.Volumes)
+	}
+	if volume.CSI.Driver != "secrets-store-gke.csi.k8s.io" {
+		t.Fatalf("CSI driver = %q", volume.CSI.Driver)
+	}
+	if volume.CSI.VolumeAttributes["secretProviderClass"] != "db-secret-provider" { // pragma: allowlist secret
+		t.Fatalf("CSI attrs = %#v", volume.CSI.VolumeAttributes)
+	}
+	if volume.CSI.ReadOnly == nil || !*volume.CSI.ReadOnly {
+		t.Fatal("expected CSI readOnly true")
+	}
+	var mounted bool
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-secret-step" || tmpl.Container == nil {
+			continue
+		}
+		for _, mount := range tmpl.Container.VolumeMounts {
+			if mount.Name == "secret-vol" && mount.MountPath == "/mnt/secrets" && mount.ReadOnly {
+				mounted = true
+			}
+		}
+	}
+	if !mounted {
+		t.Fatal("expected secret volume mount in node template")
+	}
+}
+
+func TestTranspileEmitsPVCAndEmptyDirRuntimeVolumes(t *testing.T) {
+	p := &Pipeline{
+		Name: "storage-mount",
+		Nodes: []Node{{
+			ID: "storage-step",
+			Component: Component{
+				Name:  "storage",
+				Image: "busybox:latest",
+			},
+			VolumeMounts: []VolumeMount{
+				{Name: "model-pvc", MountPath: "/workspace/models", PVCName: "shared-models", ReadOnly: true},
+				{Name: "scratch", MountPath: "/workspace/scratch", EmptyDir: true},
+			},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "storage-mount"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	volumes := map[string]corev1.Volume{}
+	for _, volume := range wf.Spec.Volumes {
+		volumes[volume.Name] = volume
+	}
+	if volumes["model-pvc"].PersistentVolumeClaim == nil || volumes["model-pvc"].PersistentVolumeClaim.ClaimName != "shared-models" {
+		t.Fatalf("expected shared-models PVC, got %#v", volumes["model-pvc"])
+	}
+	if !volumes["model-pvc"].PersistentVolumeClaim.ReadOnly {
+		t.Fatal("expected PVC readOnly true")
+	}
+	if volumes["scratch"].EmptyDir == nil {
+		t.Fatalf("expected scratch emptyDir, got %#v", volumes["scratch"])
+	}
+}
+
+func TestTranspileEmitsRuntimeVolumeMountsForScriptNodes(t *testing.T) {
+	p := &Pipeline{
+		Name: "script-storage-mount",
+		Nodes: []Node{{
+			ID: "script-step",
+			Component: Component{
+				Name:    "script",
+				Image:   "python:3.12-alpine",
+				Mode:    "script",
+				Command: []string{"python"},
+				Source:  "print('ok')",
+			},
+			VolumeMounts: []VolumeMount{{
+				Name:      "scratch",
+				MountPath: "/workspace/scratch",
+				EmptyDir:  true,
+			}},
+		}},
+	}
+
+	wf, err := Transpile(p, &Options{Name: "script-storage-mount"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-script-step" || tmpl.Script == nil {
+			continue
+		}
+		for _, mount := range tmpl.Script.VolumeMounts {
+			if mount.Name == "scratch" && mount.MountPath == "/workspace/scratch" {
+				return
+			}
+		}
+		t.Fatalf("expected script volume mount, got %#v", tmpl.Script.VolumeMounts)
+	}
+	t.Fatal("step-script-step script template not found")
+}
+
 func TestTranspileRejectsConsumedOutputWithoutFileWrite(t *testing.T) {
 	p := &Pipeline{
 		Name: "missing-output",

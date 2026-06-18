@@ -17,7 +17,8 @@ function hasRunnableContainerCommand(
 	const command = (component.command ?? []).map((part) => part.trim());
 	const args = normalizeComponentArgs(component.args ?? []);
 	if (command.length === 0) {
-		return args.some((arg) => argText(arg).length > 0);
+		if (args.some((arg) => argText(arg).length > 0)) return true;
+		return (component.image ?? "").trim().length > 0;
 	}
 	if (command.length >= 3 && command[0] === "sh" && command[1] === "-c") {
 		return command.slice(2).some((part) => part.length > 0);
@@ -59,6 +60,15 @@ function componentWritesOutputPath(
 	if (component.command?.some((part) => part.includes(path))) return true;
 	if (component.args?.some((arg) => arg.value?.includes(path))) return true;
 	return false;
+}
+
+function canStaticallyVerifyOutputWrite(
+	component: Pipeline["nodes"][number]["component"],
+) {
+	const nodeType = (component.type || "container").trim().toLowerCase();
+	if (nodeType === "script") return true;
+	const command = (component.command ?? []).map((part) => part.trim());
+	return command.length >= 2 && command[0] === "sh" && command[1] === "-c";
 }
 
 function nodeDeclaresOutput(
@@ -162,9 +172,14 @@ export function validatePipelineForRun(
 			sourceNode &&
 			!componentWritesOutputPath(sourceNode.component, source.port)
 		) {
-			errors.push(
-				`输出 ${edge.source} 被 ${edge.target} 消费，但组件脚本没有写入 /tmp/outputs/${source.port}。`,
-			);
+			const message = `输出 ${edge.source} 被 ${edge.target} 消费，但组件脚本没有写入 /tmp/outputs/${source.port}。`;
+			if (canStaticallyVerifyOutputWrite(sourceNode.component)) {
+				errors.push(message);
+			} else {
+				warnings.push(
+					`${message} 当前组件是镜像内执行逻辑，前端无法静态确认；请确认镜像运行时会生成该文件。`,
+				);
+			}
 		}
 	}
 
@@ -188,9 +203,15 @@ export function validatePipelineForRun(
 
 		for (const output of node.outputs || []) {
 			if (!componentWritesOutputPath(node.component, output.name)) {
-				warnings.push(
-					`${node.id}.${output.name} 未写入 /tmp/outputs/${output.name}；未连接时不会影响运行，连接下游前需要补输出文件。`,
-				);
+				if (canStaticallyVerifyOutputWrite(node.component)) {
+					warnings.push(
+						`${node.id}.${output.name} 未写入 /tmp/outputs/${output.name}；未连接时不会影响运行，连接下游前需要补输出文件。`,
+					);
+				} else {
+					warnings.push(
+						`${node.id}.${output.name} 无法静态确认是否写入 /tmp/outputs/${output.name}；如果连接下游，请确保镜像运行时会产出该文件。`,
+					);
+				}
 			}
 		}
 	}

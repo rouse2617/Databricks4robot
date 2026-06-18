@@ -1884,6 +1884,74 @@ components:
         mountPath: { type: string, example: /workspace/configs }
         targetFilename: { type: string, example: detector.yaml }
         displayName: { type: string }
+    PipelineNodeRuntimeSecretMount:
+      type: object
+      description: Node-local binding to a platform-defined SecretProviderClass catalog entry.
+      required: [resourceId]
+      properties:
+        resourceId: { type: string, description: Runtime secret catalog ID }
+        mountPath:
+          type: string
+          description: Absolute path mounted inside the node container. Defaults to the catalog path.
+          example: /mnt/secrets
+        displayName: { type: string }
+    PipelineNodeRuntimeStorageMount:
+      type: object
+      description: Node-local binding to a platform-defined storage catalog entry such as PVC or emptyDir.
+      required: [resourceId]
+      properties:
+        resourceId: { type: string, description: Runtime storage catalog ID }
+        mountPath:
+          type: string
+          description: Absolute path mounted inside the node container. Defaults to the catalog path.
+          example: /workspace/models
+        readOnly:
+          type: boolean
+          description: Overrides catalog read mode when the resource supports write access.
+        displayName: { type: string }
+    RuntimeSecretMountResource:
+      type: object
+      required: [id, name, kind, secretProviderClass, defaultMountPath, readOnly]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        kind:
+          type: string
+          enum: [secretProviderClass]
+        secretProviderClass: { type: string, description: Kubernetes SecretProviderClass name }
+        defaultMountPath: { type: string, example: /mnt/secrets }
+        readOnly: { type: boolean, example: true }
+        targetIds:
+          type: array
+          items: { type: string }
+    RuntimeStorageMountResource:
+      type: object
+      required: [id, name, kind, defaultMountPath, readOnly, allowWrite]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        kind:
+          type: string
+          enum: [pvc, emptyDir]
+        pvcName: { type: string, description: Kubernetes PVC name when kind=pvc }
+        defaultMountPath: { type: string, example: /workspace/scratch }
+        readOnly: { type: boolean }
+        allowWrite: { type: boolean }
+        targetIds:
+          type: array
+          items: { type: string }
+    RuntimeMountCatalog:
+      type: object
+      required: [secrets, storage]
+      properties:
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/RuntimeSecretMountResource' }
+        storage:
+          type: array
+          items: { $ref: '#/components/schemas/RuntimeStorageMountResource' }
     PipelineNodeDefinition:
       type: object
       required: [id, component]
@@ -1899,6 +1967,12 @@ components:
           items: { $ref: '#/components/schemas/PipelinePort' }
         runtimeConfig:
           $ref: '#/components/schemas/PipelineNodeRuntimeConfig'
+        runtimeSecrets:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineNodeRuntimeSecretMount' }
+        storageMounts:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineNodeRuntimeStorageMount' }
     PipelineEdgeDefinition:
       type: object
       required: [source, target]
@@ -5915,6 +5989,26 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/ExecutionTarget' }
+
+  /api/v1/pipeline/runtime-mounts:
+    get:
+      tags: [Pipeline]
+      summary: List pipeline runtime mount catalog
+      description: Returns platform-defined SecretProviderClass and storage resources that may be mounted into individual pipeline nodes. The response never contains secret values.
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Runtime mount catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeMountCatalog'
+        '500':
+          description: Runtime mount catalog is misconfigured
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /api/v1/pipeline-runs:
     post:

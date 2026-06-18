@@ -204,6 +204,51 @@ describe("useWorkflowDetail", () => {
 		});
 	});
 
+	it("suppresses console output for expected 404 errors while loading run details", async () => {
+		const consoleErrorSpy = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => undefined);
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-1",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [],
+		});
+		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+			id: "run-1",
+			workflowName: "wf-1",
+			pipelineName: "pipeline",
+			status: "Pending",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:01:00Z",
+		});
+		mockListPipelineRunEvents.mockRejectedValue(
+			new ApiError(404, "NOT_FOUND", "run events not found"),
+		);
+		mockListPipelineRunAssetNodes.mockRejectedValue(
+			new ApiError(404, "NOT_FOUND", "run assets not found"),
+		);
+		mockGetPipelineRunCostSummary.mockRejectedValue(
+			new ApiError(404, "NOT_FOUND", "run cost not found"),
+		);
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-1"));
+
+		await waitFor(() =>
+			expect(result.current.runEventState.error).toContain(
+				"run events not found",
+			),
+		);
+
+		expect(consoleErrorSpy).not.toHaveBeenCalled();
+		expect(result.current.assetNodeState.error).toContain(
+			"run events not found",
+		);
+		expect(result.current.costSummaryState.error).toContain(
+			"run events not found",
+		);
+	});
+
 	it("loads bounded log metadata for selected node", async () => {
 		mockGetWorkflow.mockResolvedValue({
 			name: "wf-1",

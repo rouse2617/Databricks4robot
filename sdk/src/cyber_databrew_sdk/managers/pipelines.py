@@ -13,6 +13,9 @@ class PipelineManager(BaseManager):
     def list_execution_targets(self) -> dict[str, Any]:
         return self._request("GET", self._endpoint("pipeline_execution_targets"))
 
+    def list_runtime_mounts(self) -> dict[str, Any]:
+        return self._request("GET", self._endpoint("pipeline_runtime_mounts"))
+
     def deploy_template(
         self,
         template_id: str,

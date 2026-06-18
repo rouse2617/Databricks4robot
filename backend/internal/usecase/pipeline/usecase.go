@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -59,6 +60,7 @@ type Usecase struct {
 	namespace               string
 	pricing                 *PricingConfig
 	resourceGuard           ResourceGuardConfig
+	runtimeMountCatalog     RuntimeMountCatalog
 	now                     func() time.Time
 	workflowTTLSecondsAfter int32
 }
@@ -190,6 +192,10 @@ func (uc *Usecase) argoWorkflowTTLSecondsAfter() int32 {
 		return uc.workflowTTLSecondsAfter
 	}
 	return transpiler.DefaultTTLSecondsAfterCompletion
+}
+
+func defaultExecutionTargetServiceAccount() string {
+	return strings.TrimSpace(os.Getenv("PIPELINE_DEFAULT_SERVICE_ACCOUNT"))
 }
 
 func logPipelineSideEffect(op string, err error) {
@@ -672,6 +678,7 @@ func (uc *Usecase) defaultExecutionTarget() models.ExecutionTarget {
 		Name:                 "Default Argo target",
 		Cluster:              "default",
 		Namespace:            uc.namespace,
+		ServiceAccount:       defaultExecutionTargetServiceAccount(),
 		ArgoServerConfigured: uc.wfClient != nil,
 		Status:               status,
 		Enabled:              true,
@@ -710,6 +717,9 @@ func (uc *Usecase) normalizeExecutionTarget(target *models.ExecutionTarget) {
 	}
 	if target.ID == "default" && target.Namespace == "" {
 		target.Namespace = uc.namespace
+	}
+	if (target.ID == "default" || target.IsDefault) && strings.TrimSpace(target.ServiceAccount) == "" {
+		target.ServiceAccount = defaultExecutionTargetServiceAccount()
 	}
 	if target.ResourceDefaults == nil {
 		target.ResourceDefaults = map[string]interface{}{}
@@ -2344,11 +2354,15 @@ func (uc *Usecase) Deploy(
 			applyNodeRuntimeConfigs(pipe, nodeRuntimeConfigs, volumeName)
 		}
 	}
+	if err := uc.applyRuntimeMounts(pipe, target); err != nil {
+		return nil, err
+	}
 
 	// Transpile to Argo Workflow.
 	wfOpts := &transpiler.Options{
 		Name:            wfName,
 		Namespace:       targetNamespace,
+		ServiceAccount:  target.ServiceAccount,
 		TTLSecondsAfter: uc.argoWorkflowTTLSecondsAfter(),
 		WorkflowParams:  wfParams,
 		GlobalEnv:       globalEnv,

@@ -39,6 +39,8 @@ function PipelineStepNodeInner({
 		data.runtimeConfig?.displayName ||
 		data.runtimeConfig?.fileName ||
 		data.runtimeConfig?.targetFilename;
+	const runtimeSecretCount = data.runtimeSecrets?.length || 0;
+	const storageMountCount = data.storageMounts?.length || 0;
 	const inputPorts = normalizePorts(data.inputPorts, DEFAULT_INPUTS);
 	const outputPorts = normalizePorts(data.outputPorts, DEFAULT_OUTPUTS);
 	return (
@@ -57,6 +59,9 @@ function PipelineStepNodeInner({
 					position={Position.Left}
 					className="node-handle node-handle--input"
 					style={{ top: handleTop(index, inputPorts.length) }}
+					role="button"
+					aria-label={`连接到 ${label} 输入 ${port.name}`}
+					title={`输入 ${port.name}`}
 				/>
 			))}
 			<div className="node-header">
@@ -94,6 +99,14 @@ function PipelineStepNodeInner({
 						配置 {runtimeConfigLabel}
 					</div>
 				) : null}
+				{runtimeSecretCount > 0 || storageMountCount > 0 ? (
+					<div
+						className="node-config-chip"
+						title={`密钥 ${runtimeSecretCount} · 存储 ${storageMountCount}`}
+					>
+						挂载 密钥 {runtimeSecretCount} / 存储 {storageMountCount}
+					</div>
+				) : null}
 				<div className="node-ports">
 					<div className="node-port-list">
 						<span className="node-port-list__label">IN</span>
@@ -121,6 +134,9 @@ function PipelineStepNodeInner({
 					position={Position.Right}
 					className="node-handle node-handle--output"
 					style={{ top: handleTop(index, outputPorts.length) }}
+					role="button"
+					aria-label={`从 ${label} 输出 ${port.name} 连线`}
+					title={`输出 ${port.name}`}
 				/>
 			))}
 		</div>

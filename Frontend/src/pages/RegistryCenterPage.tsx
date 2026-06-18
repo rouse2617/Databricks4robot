@@ -5,9 +5,9 @@ import {
 	EditOutlined,
 	EyeOutlined,
 	FileAddOutlined,
+	InboxOutlined,
 	PlusOutlined,
 	ReloadOutlined,
-	StopOutlined,
 } from "@ant-design/icons";
 import {
 	Alert,
@@ -22,11 +22,13 @@ import {
 	message,
 	Popconfirm,
 	Row,
+	Segmented,
 	Select,
 	Space,
 	Table,
 	Tabs,
 	Tag,
+	Tooltip,
 	Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -116,6 +118,8 @@ interface CompareFormValues {
 	rightVersion?: number;
 }
 
+type ConfigShelf = "active" | "archived";
+
 function versionLabel(version: number) {
 	return `v${version}`;
 }
@@ -135,6 +139,53 @@ function shortHash(value?: string) {
 
 function versionDescriptor(version: ConfigVersionRecord) {
 	return `${version.version} · ${version.summary || "无说明"} · ${version.updatedAt} · ${shortHash(version.contentSha256)}`;
+}
+
+function lifecycleTagColor(
+	lifecycle: UserConfigRecord["lifecycle"] | ConfigVersionRecord["lifecycle"],
+) {
+	if (lifecycle === "ready") return "green";
+	if (lifecycle === "draft") return "gold";
+	return "default";
+}
+
+function lifecycleDisplay(
+	lifecycle: UserConfigRecord["lifecycle"] | ConfigVersionRecord["lifecycle"],
+) {
+	return lifecycle === "deprecated" ? "archived" : lifecycle;
+}
+
+function compactUserName(value?: string) {
+	if (!value) return "—";
+	const [name] = value.split("@");
+	return name || value;
+}
+
+function tagColor(value: string) {
+	const normalized = value.trim().toLowerCase();
+	if (normalized.includes("prod") || normalized.includes("ready"))
+		return "green";
+	if (normalized.includes("test") || normalized.includes("smoke"))
+		return "blue";
+	if (normalized.includes("ui") || normalized.includes("probe"))
+		return "purple";
+	if (normalized.includes("old") || normalized.includes("archive"))
+		return "default";
+	return "geekblue";
+}
+
+function looksLikeTypoConfigName(name?: string) {
+	return Boolean(name?.trim().toLowerCase().endsWith(".ymal"));
+}
+
+function configNameExtra(name?: string) {
+	return looksLikeTypoConfigName(name)
+		? "文件后缀看起来像 .ymal，通常应为 .yaml 或 .yml。"
+		: "支持 .yaml、.yml 或 .json。";
+}
+
+function isArchivedConfig(config: UserConfigRecord) {
+	return config.lifecycle === "deprecated";
 }
 
 function mapConfigVersion(version: PipelineConfigVersion): ConfigVersionRecord {
@@ -316,10 +367,110 @@ function diffCellBackground(
 	return "#f8fafc";
 }
 
+function UserTag({ value }: { value?: string }) {
+	const display = compactUserName(value);
+	return (
+		<Tooltip title={value || "—"}>
+			<Tag color="blue" style={{ maxWidth: 132, marginInlineEnd: 0 }}>
+				<Text
+					style={{
+						maxWidth: 108,
+						display: "inline-block",
+						verticalAlign: "bottom",
+					}}
+					ellipsis={{ tooltip: value }}
+				>
+					{display}
+				</Text>
+			</Tag>
+		</Tooltip>
+	);
+}
+
+function ConfigTagList({ tags }: { tags: string[] }) {
+	if (!tags?.length) return <Text type="secondary">—</Text>;
+	return (
+		<Space wrap size={4}>
+			{tags.map((tag) => (
+				<Tag key={tag} color={tagColor(tag)}>
+					{tag}
+				</Tag>
+			))}
+		</Space>
+	);
+}
+
+function ConfigTitleCell({ row }: { row: UserConfigRecord }) {
+	const typo = looksLikeTypoConfigName(row.name);
+	return (
+		<div style={{ minWidth: 0 }}>
+			<Space size={6} style={{ maxWidth: "100%" }}>
+				<Text strong ellipsis={{ tooltip: row.name }} style={{ maxWidth: 260 }}>
+					{row.name}
+				</Text>
+				<Tag>{row.fileType}</Tag>
+				{typo ? (
+					<Tooltip title="文件后缀可能写错，通常应为 .yaml 或 .yml">
+						<Tag color="gold" style={{ marginInlineEnd: 0 }}>
+							后缀
+						</Tag>
+					</Tooltip>
+				) : null}
+			</Space>
+			<Text
+				style={{
+					display: "block",
+					color: "#475569",
+					fontSize: 12,
+					lineHeight: 1.45,
+					maxWidth: 420,
+				}}
+				ellipsis={{ tooltip: row.description }}
+			>
+				{row.description}
+			</Text>
+		</div>
+	);
+}
+
+function IconActionButton({
+	title,
+	icon,
+	onClick,
+	disabled,
+	danger,
+	loading,
+}: {
+	title: string;
+	icon: React.ReactNode;
+	onClick?: () => void;
+	disabled?: boolean;
+	danger?: boolean;
+	loading?: boolean;
+}) {
+	return (
+		<Tooltip title={title}>
+			<span>
+				<Button
+					size="small"
+					type="text"
+					aria-label={title}
+					icon={icon}
+					onClick={onClick}
+					disabled={disabled}
+					danger={danger}
+					loading={loading}
+				/>
+			</span>
+		</Tooltip>
+	);
+}
+
 export default function RegistryCenterPage() {
 	const [msg, msgCtx] = message.useMessage();
 	const [configRecords, setConfigRecords] = useState<UserConfigRecord[]>([]);
 	const [configQuery, setConfigQuery] = useState("");
+	const [configShelf, setConfigShelf] = useState<ConfigShelf>("active");
 	const [selectedConfigId, setSelectedConfigId] = useState<string | null>(null);
 	const [editingConfig, setEditingConfig] = useState<UserConfigRecord | null>(
 		null,
@@ -356,6 +507,7 @@ export default function RegistryCenterPage() {
 		null,
 	);
 	const [compareLoading, setCompareLoading] = useState(false);
+	const configNameValue = Form.useWatch("name", configForm);
 
 	const refreshConfigs = async () => {
 		setConfigsLoading(true);
@@ -411,14 +563,20 @@ export default function RegistryCenterPage() {
 
 	const filteredConfigs = useMemo(() => {
 		const query = configQuery.trim().toLowerCase();
-		if (!query) return configRecords;
-		return configRecords.filter((cfg) =>
+		const scopedRecords = configRecords.filter((cfg) =>
+			configShelf === "archived"
+				? isArchivedConfig(cfg)
+				: !isArchivedConfig(cfg),
+		);
+		if (!query) return scopedRecords;
+		return scopedRecords.filter((cfg) =>
 			[
 				cfg.name,
 				cfg.owner,
 				cfg.description,
 				cfg.fileType,
 				cfg.lifecycle,
+				lifecycleDisplay(cfg.lifecycle),
 				cfg.latestVersion,
 				...cfg.tags,
 			]
@@ -426,7 +584,7 @@ export default function RegistryCenterPage() {
 				.toLowerCase()
 				.includes(query),
 		);
-	}, [configRecords, configQuery]);
+	}, [configRecords, configQuery, configShelf]);
 
 	const availableConfigTags = useMemo(
 		() => Array.from(new Set(configRecords.flatMap((cfg) => cfg.tags))).sort(),
@@ -570,9 +728,9 @@ export default function RegistryCenterPage() {
 			try {
 				await pipelineConfigApi.deprecate(record.id);
 				await refreshConfigs();
-				msg.success("配置已废弃");
+				msg.success("配置已移入归档区");
 			} catch {
-				msg.error("配置废弃失败");
+				msg.error("配置归档失败");
 			} finally {
 				setDeprecatingConfigId(null);
 			}
@@ -709,33 +867,21 @@ export default function RegistryCenterPage() {
 		{
 			title: "配置",
 			dataIndex: "name",
-			render: (_, row) => (
-				<div>
-					<Space size={6}>
-						<div style={{ fontWeight: 600 }}>{row.name}</div>
-						<Tag>{row.fileType}</Tag>
-					</Space>
-					<Text type="secondary" style={{ fontSize: 12 }}>
-						{row.description}
-					</Text>
-				</div>
-			),
+			render: (_, row) => <ConfigTitleCell row={row} />,
 		},
 		{
 			title: "拥有者",
 			dataIndex: "owner",
-			width: 110,
-			render: (v) => <Tag color="blue">{v}</Tag>,
+			width: 150,
+			render: (v) => <UserTag value={v} />,
 		},
 		{
 			title: "状态",
 			dataIndex: "lifecycle",
 			width: 120,
-			render: (v: UserConfigRecord["lifecycle"]) => {
-				const color =
-					v === "ready" ? "green" : v === "draft" ? "gold" : "default";
-				return <Tag color={color}>{v}</Tag>;
-			},
+			render: (v: UserConfigRecord["lifecycle"]) => (
+				<Tag color={lifecycleTagColor(v)}>{lifecycleDisplay(v)}</Tag>
+			),
 		},
 		{
 			title: "当前版本",
@@ -757,140 +903,159 @@ export default function RegistryCenterPage() {
 		{
 			title: "标签",
 			dataIndex: "tags",
-			render: (v: string[]) => (
-				<Space wrap size={4}>
-					{v.map((tag) => (
-						<Tag key={tag}>{tag}</Tag>
-					))}
-				</Space>
-			),
+			render: (v: string[]) => <ConfigTagList tags={v} />,
 		},
 		{
 			title: "操作",
 			key: "actions",
-			width: 420,
-			render: (_, record) => (
-				<Space size={4} wrap>
-					<Button
-						size="small"
-						icon={<EyeOutlined />}
-						onClick={() => setSelectedConfigId(record.id)}
-					>
-						详情
-					</Button>
-					<Button
-						size="small"
-						icon={<EditOutlined />}
-						onClick={() => openEditConfig(record)}
-					>
-						属性
-					</Button>
-					<Button
-						size="small"
-						icon={<FileAddOutlined />}
-						onClick={() => openCreateVersion(record)}
-					>
-						基于当前版本新建
-					</Button>
-					<Button
-						size="small"
-						icon={<DiffOutlined />}
-						disabled={record.versions.length < 2}
-						onClick={() => handleOpenVersionCompare(record)}
-					>
-						对比版本
-					</Button>
-					<Popconfirm
-						title="废弃配置"
-						description="废弃后不会物理删除，历史引用仍可追溯。"
-						okText="废弃"
-						cancelText="取消"
-						onConfirm={() => handleDeprecateConfig(record)}
-					>
-						<Button
-							size="small"
-							danger
-							icon={<StopOutlined />}
-							loading={deprecatingConfigId === record.id}
-							disabled={record.lifecycle === "deprecated"}
-						>
-							废弃
-						</Button>
-					</Popconfirm>
-				</Space>
-			),
+			width: 250,
+			align: "right",
+			render: (_, record) => {
+				const archived = isArchivedConfig(record);
+				return (
+					<Space size={2} wrap>
+						{archived ? null : (
+							<Button
+								size="small"
+								type="primary"
+								icon={<FileAddOutlined />}
+								onClick={() => openCreateVersion(record)}
+							>
+								新建版本
+							</Button>
+						)}
+						<IconActionButton
+							title="查看详情"
+							icon={<EyeOutlined />}
+							onClick={() => setSelectedConfigId(record.id)}
+						/>
+						{archived ? null : (
+							<IconActionButton
+								title="编辑属性"
+								icon={<EditOutlined />}
+								onClick={() => openEditConfig(record)}
+							/>
+						)}
+						<IconActionButton
+							title="对比版本"
+							icon={<DiffOutlined />}
+							disabled={record.versions.length < 2}
+							onClick={() => handleOpenVersionCompare(record)}
+						/>
+						{archived ? null : (
+							<Popconfirm
+								title="归档配置"
+								description="归档后会从工作区移除，不参与部署选择；历史引用仍可追溯。"
+								okText="归档"
+								cancelText="取消"
+								onConfirm={() => handleDeprecateConfig(record)}
+							>
+								<Button
+									size="small"
+									type="text"
+									danger
+									aria-label="归档配置"
+									icon={<InboxOutlined />}
+									loading={deprecatingConfigId === record.id}
+								/>
+							</Popconfirm>
+						)}
+					</Space>
+				);
+			},
 		},
 	];
 
 	const createVersionCols = (
 		config: UserConfigRecord,
-	): ColumnsType<ConfigVersionRecord> => [
-		{
-			title: "版本",
-			dataIndex: "version",
-			width: 100,
-			render: (v) => <Text code>{v}</Text>,
-		},
-		{
-			title: "状态",
-			dataIndex: "lifecycle",
-			width: 120,
-			render: (v: ConfigVersionRecord["lifecycle"]) => {
-				const color =
-					v === "ready" ? "green" : v === "draft" ? "gold" : "default";
-				return <Tag color={color}>{v}</Tag>;
+	): ColumnsType<ConfigVersionRecord> => {
+		const archived = isArchivedConfig(config);
+		return [
+			{
+				title: "版本",
+				dataIndex: "version",
+				width: 100,
+				render: (v) => <Text code>{v}</Text>,
 			},
-		},
-		{ title: "更新人", dataIndex: "author", width: 120 },
-		{ title: "更新时间", dataIndex: "updatedAt", width: 180 },
-		{ title: "变更说明", dataIndex: "summary" },
-		{
-			title: "文件",
-			key: "content",
-			width: 280,
-			render: (_, version) => (
-				<Space size={4}>
-					<Button
-						size="small"
-						icon={<EyeOutlined />}
-						loading={
-							loadingVersionKey === `${config.id}:${version.versionNumber}`
-						}
-						onClick={() => handleOpenVersionContent(config, version)}
+			{
+				title: "状态",
+				dataIndex: "lifecycle",
+				width: 120,
+				render: (v: ConfigVersionRecord["lifecycle"]) => (
+					<Tag color={lifecycleTagColor(v)}>{lifecycleDisplay(v)}</Tag>
+				),
+			},
+			{
+				title: "更新人",
+				dataIndex: "author",
+				width: 150,
+				render: (v) => <UserTag value={v} />,
+			},
+			{ title: "更新时间", dataIndex: "updatedAt", width: 180 },
+			{
+				title: "变更说明",
+				dataIndex: "summary",
+				render: (summary: string) => (
+					<Text
+						style={{ color: "#475569", maxWidth: 360 }}
+						ellipsis={{ tooltip: summary }}
 					>
-						内容
-					</Button>
-					<Button
-						size="small"
-						icon={<DiffOutlined />}
-						disabled={config.versions.length < 2}
-						onClick={() => handleOpenVersionCompare(config, version)}
-					>
-						对比
-					</Button>
-					<Button
-						size="small"
-						icon={<EditOutlined />}
-						onClick={() => openCreateVersion(config, version)}
-					>
-						基于此版本新建
-					</Button>
-				</Space>
-			),
-		},
-	];
+						{summary}
+					</Text>
+				),
+			},
+			{
+				title: "操作",
+				key: "content",
+				width: archived ? 120 : 190,
+				align: "right",
+				render: (_, version) => (
+					<Space size={2}>
+						<IconActionButton
+							title="查看内容"
+							icon={<EyeOutlined />}
+							loading={
+								loadingVersionKey === `${config.id}:${version.versionNumber}`
+							}
+							onClick={() => handleOpenVersionContent(config, version)}
+						/>
+						<IconActionButton
+							title="对比此版本"
+							icon={<DiffOutlined />}
+							disabled={config.versions.length < 2}
+							onClick={() => handleOpenVersionCompare(config, version)}
+						/>
+						{archived ? null : (
+							<Button
+								size="small"
+								type="link"
+								icon={<EditOutlined />}
+								style={{ paddingInline: 4 }}
+								onClick={() => openCreateVersion(config, version)}
+							>
+								新建版本
+							</Button>
+						)}
+					</Space>
+				),
+			},
+		];
+	};
 
 	const configStats = useMemo(
 		() => ({
 			total: configRecords.length,
+			active: configRecords.filter((cfg) => !isArchivedConfig(cfg)).length,
 			ready: configRecords.filter((cfg) => cfg.lifecycle === "ready").length,
 			draft: configRecords.filter((cfg) => cfg.lifecycle === "draft").length,
-			deprecated: configRecords.filter((cfg) => cfg.lifecycle === "deprecated")
-				.length,
+			archived: configRecords.filter(isArchivedConfig).length,
 			versions: configRecords.reduce((sum, cfg) => sum + cfg.versionCount, 0),
 		}),
 		[configRecords],
 	);
+
+	const emptyConfigText =
+		configShelf === "archived" ? "暂无归档配置" : "暂无工作区配置";
 
 	return (
 		<div>
@@ -957,7 +1122,7 @@ export default function RegistryCenterPage() {
 										{configStats.total}
 									</div>
 									<div style={{ fontSize: 12, color: "#64748b" }}>
-										用户注册的文件记录
+										工作区 {configStats.active} / 归档 {configStats.archived}
 									</div>
 								</Card>
 							</Col>
@@ -993,7 +1158,7 @@ export default function RegistryCenterPage() {
 							items={[
 								{
 									key: "configs",
-									label: `配置库 (${configStats.total})`,
+									label: `配置库 (${configStats.active})`,
 									children: (
 										<Space
 											direction="vertical"
@@ -1004,14 +1169,14 @@ export default function RegistryCenterPage() {
 												type="success"
 												showIcon
 												message="用户配置文件库"
-												description="这里注册的是用户自己维护的文件，不是组件子对象。每个配置可以有多个版本，deploy 时只选择当前用户可用的 ready 版本。"
+												description="这里注册的是用户自己维护的文件，不是组件子对象。工作区只显示可维护配置；归档区保留历史追溯，不参与 deploy 选择。"
 											/>
 											<Row gutter={[12, 12]} align="middle">
 												<Col flex="auto">
 													<Space wrap>
 														<Tag color="green">Ready {configStats.ready}</Tag>
 														<Tag color="gold">Draft {configStats.draft}</Tag>
-														<Tag>Deprecated {configStats.deprecated}</Tag>
+														<Tag>Archived {configStats.archived}</Tag>
 														<Tag color="geekblue">
 															Versions {configStats.versions}
 														</Tag>
@@ -1020,9 +1185,34 @@ export default function RegistryCenterPage() {
 												</Col>
 												<Col>
 													<Space>
+														<Segmented
+															value={configShelf}
+															options={[
+																{
+																	label: `工作区 ${configStats.active}`,
+																	value: "active",
+																},
+																{
+																	label: (
+																		<Space size={4}>
+																			<InboxOutlined />
+																			<span>归档区 {configStats.archived}</span>
+																		</Space>
+																	),
+																	value: "archived",
+																},
+															]}
+															onChange={(value) =>
+																setConfigShelf(value as ConfigShelf)
+															}
+														/>
 														<Input.Search
 															allowClear
-															placeholder="搜索名称 / owner / tag"
+															placeholder={
+																configShelf === "archived"
+																	? "搜索归档配置"
+																	: "搜索名称 / 用户 / tag"
+															}
 															value={configQuery}
 															onChange={(event) =>
 																setConfigQuery(event.target.value)
@@ -1046,21 +1236,32 @@ export default function RegistryCenterPage() {
 												loading={configsLoading}
 												columns={configCols}
 												dataSource={filteredConfigs}
+												locale={{ emptyText: emptyConfigText }}
 												expandable={{
 													expandedRowRender: (record) => (
-														<Table
-															rowKey="version"
-															pagination={false}
-															size="small"
-															columns={createVersionCols(record)}
-															dataSource={record.versions}
-														/>
+														<div
+															style={{
+																borderLeft: "2px solid #dbeafe",
+																marginLeft: 10,
+																paddingLeft: 16,
+																background: "#f8fafc",
+															}}
+														>
+															<Table
+																rowKey="version"
+																pagination={false}
+																size="small"
+																columns={createVersionCols(record)}
+																dataSource={record.versions}
+															/>
+														</div>
 													),
 												}}
 											/>
 											<Paragraph type="secondary" style={{ marginBottom: 0 }}>
 												建议的运行语义是：配置先由用户注册为独立记录，版本变更独立留痕；deploy
-												时只显示当前用户自己可用的 ready 版本。
+												时只显示当前用户自己可用的 ready
+												版本，归档配置只用于查看、内容追溯和版本对比。
 											</Paragraph>
 										</Space>
 									),
@@ -1136,12 +1337,14 @@ export default function RegistryCenterPage() {
 				extra={
 					selectedConfig ? (
 						<Space>
-							<Button
-								icon={<EditOutlined />}
-								onClick={() => openEditConfig(selectedConfig)}
-							>
-								属性
-							</Button>
+							{isArchivedConfig(selectedConfig) ? null : (
+								<Button
+									icon={<EditOutlined />}
+									onClick={() => openEditConfig(selectedConfig)}
+								>
+									属性
+								</Button>
+							)}
 							<Button
 								icon={<DiffOutlined />}
 								disabled={selectedConfig.versions.length < 2}
@@ -1149,13 +1352,15 @@ export default function RegistryCenterPage() {
 							>
 								对比版本
 							</Button>
-							<Button
-								type="primary"
-								icon={<FileAddOutlined />}
-								onClick={() => openCreateVersion(selectedConfig)}
-							>
-								基于当前版本新建
-							</Button>
+							{isArchivedConfig(selectedConfig) ? null : (
+								<Button
+									type="primary"
+									icon={<FileAddOutlined />}
+									onClick={() => openCreateVersion(selectedConfig)}
+								>
+									基于当前版本新建
+								</Button>
+							)}
 						</Space>
 					) : null
 				}
@@ -1173,19 +1378,11 @@ export default function RegistryCenterPage() {
 								<Tag>{selectedConfig.fileType}</Tag>
 							</Descriptions.Item>
 							<Descriptions.Item label="拥有者">
-								<Tag color="blue">{selectedConfig.owner}</Tag>
+								<UserTag value={selectedConfig.owner} />
 							</Descriptions.Item>
 							<Descriptions.Item label="状态">
-								<Tag
-									color={
-										selectedConfig.lifecycle === "ready"
-											? "green"
-											: selectedConfig.lifecycle === "draft"
-												? "gold"
-												: "default"
-									}
-								>
-									{selectedConfig.lifecycle}
+								<Tag color={lifecycleTagColor(selectedConfig.lifecycle)}>
+									{lifecycleDisplay(selectedConfig.lifecycle)}
 								</Tag>
 							</Descriptions.Item>
 							<Descriptions.Item label="当前版本">
@@ -1198,11 +1395,7 @@ export default function RegistryCenterPage() {
 								{selectedConfig.description}
 							</Descriptions.Item>
 							<Descriptions.Item label="标签" span={2}>
-								<Space wrap size={4}>
-									{selectedConfig.tags.map((tag) => (
-										<Tag key={tag}>{tag}</Tag>
-									))}
-								</Space>
+								<ConfigTagList tags={selectedConfig.tags} />
 							</Descriptions.Item>
 						</Descriptions>
 						<Card size="small" title="版本历史">
@@ -1242,6 +1435,7 @@ export default function RegistryCenterPage() {
 						name="name"
 						label="配置名称"
 						rules={[{ required: true, message: "请输入配置名称" }]}
+						extra={configNameExtra(configNameValue)}
 					>
 						<Input placeholder="example.yaml" />
 					</Form.Item>
@@ -1271,7 +1465,7 @@ export default function RegistryCenterPage() {
 							options={[
 								{ label: "draft", value: "draft" },
 								{ label: "ready", value: "ready" },
-								{ label: "deprecated", value: "deprecated" },
+								{ label: "archived", value: "deprecated" },
 							]}
 						/>
 					</Form.Item>
@@ -1574,15 +1768,11 @@ export default function RegistryCenterPage() {
 								{selectedVersionContent.version.version}
 							</Tag>
 							<Tag
-								color={
-									selectedVersionContent.version.lifecycle === "ready"
-										? "green"
-										: selectedVersionContent.version.lifecycle === "draft"
-											? "gold"
-											: "default"
-								}
+								color={lifecycleTagColor(
+									selectedVersionContent.version.lifecycle,
+								)}
 							>
-								{selectedVersionContent.version.lifecycle}
+								{lifecycleDisplay(selectedVersionContent.version.lifecycle)}
 							</Tag>
 							<Text type="secondary">
 								{selectedVersionContent.version.updatedAt} by{" "}

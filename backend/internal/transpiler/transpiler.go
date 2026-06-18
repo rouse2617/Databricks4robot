@@ -24,11 +24,14 @@ type inputSpec struct {
 
 // Volume represents a named volume that can be mounted.
 type Volume struct {
-	Name          string
-	IsEmptyDir    bool
-	PVCName       string
-	ConfigMapName string
-	ConfigMapKey  string
+	Name                   string
+	IsEmptyDir             bool
+	PVCName                string
+	ConfigMapName          string
+	ConfigMapKey           string
+	CSIDriver              string
+	CSISecretProviderClass string
+	ReadOnly               bool
 }
 
 // Options controls how the pipeline is transpiled.
@@ -149,6 +152,14 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 			vol.VolumeSource = corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			}
+		} else if v.CSISecretProviderClass != "" {
+			vol.VolumeSource = corev1.VolumeSource{
+				CSI: &corev1.CSIVolumeSource{
+					Driver:           csiDriver(v.CSIDriver),
+					ReadOnly:         boolPtr(true),
+					VolumeAttributes: map[string]string{"secretProviderClass": v.CSISecretProviderClass},
+				},
+			}
 		} else if v.ConfigMapName != "" {
 			vol.VolumeSource = corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -159,6 +170,7 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 			vol.VolumeSource = corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: v.PVCName,
+					ReadOnly:  v.ReadOnly,
 				},
 			}
 		}
@@ -178,6 +190,18 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 						Name: vm.Name,
 						VolumeSource: corev1.VolumeSource{
 							EmptyDir: &corev1.EmptyDirVolumeSource{},
+						},
+					})
+					seen[vm.Name] = true
+				} else if vm.CSISecretProviderClass != "" {
+					vols = append(vols, corev1.Volume{
+						Name: vm.Name,
+						VolumeSource: corev1.VolumeSource{
+							CSI: &corev1.CSIVolumeSource{
+								Driver:           csiDriver(vm.CSIDriver),
+								ReadOnly:         boolPtr(true),
+								VolumeAttributes: map[string]string{"secretProviderClass": vm.CSISecretProviderClass},
+							},
 						},
 					})
 					seen[vm.Name] = true
@@ -205,6 +229,18 @@ func buildWorkflowVolumes(nodes []Node, extra []Volume) []corev1.Volume {
 		vols = append(vols, corev1.Volume{Name: "temp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
 	}
 	return vols
+}
+
+func csiDriver(driver string) string {
+	driver = strings.TrimSpace(driver)
+	if driver == "" {
+		return "secrets-store-gke.csi.k8s.io"
+	}
+	return driver
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 // buildInputSpecs collects all input parameter specs from edges and arg.From references.

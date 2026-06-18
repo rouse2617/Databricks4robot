@@ -1,7 +1,13 @@
 import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
 import type { Node } from "@xyflow/react";
-import { Alert, Button, Form, Input, Modal, Select } from "antd";
+import { Alert, Button, Collapse, Form, Input, Modal, Select } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import {
+	listRuntimeMounts,
+	type RuntimeMountCatalog,
+	type RuntimeSecretMountResource,
+	type RuntimeStorageMountResource,
+} from "../../api/pipelineApi";
 import {
 	type PipelineConfig,
 	type PipelineConfigVersion,
@@ -11,6 +17,8 @@ import type {
 	Argument,
 	PipelineNodeData,
 	PipelineNodeRuntimeConfig,
+	PipelineNodeRuntimeSecretMount,
+	PipelineNodeRuntimeStorageMount,
 	Port,
 } from "./types";
 
@@ -28,6 +36,15 @@ type PortFormItem = {
 	desc?: string;
 	default_value?: string;
 };
+type RuntimeSecretFormItem = {
+	resourceId?: string;
+	mountPath?: string;
+};
+type RuntimeStorageFormItem = {
+	resourceId?: string;
+	mountPath?: string;
+	readOnly?: boolean;
+};
 
 type FormValues = {
 	label: string;
@@ -41,6 +58,8 @@ type FormValues = {
 	runtimeConfigVersion?: number;
 	runtimeConfigMountPath?: string;
 	runtimeConfigTargetFilename?: string;
+	runtimeSecrets?: RuntimeSecretFormItem[];
+	storageMounts?: RuntimeStorageFormItem[];
 	cpu: string;
 	memory: string;
 	disk: string;
@@ -49,6 +68,10 @@ type FormValues = {
 const DEFAULT_INPUT_PORTS: Port[] = [{ name: "input", type: "asset" }];
 const DEFAULT_OUTPUT_PORTS: Port[] = [{ name: "output", type: "asset" }];
 const DEFAULT_CONFIG_MOUNT_PATH = "/workspace/configs";
+const EMPTY_RUNTIME_MOUNT_CATALOG: RuntimeMountCatalog = {
+	secrets: [],
+	storage: [],
+};
 
 function shortHash(value?: string) {
 	return value ? value.slice(0, 8) : "—";
@@ -124,6 +147,104 @@ function formPortsToPorts(items: PortFormItem[], fallback: Port[]): Port[] {
 		});
 	}
 	return next.length > 0 ? next : fallback;
+}
+
+function runtimeSecretsToForm(
+	items: PipelineNodeRuntimeSecretMount[] | undefined,
+): RuntimeSecretFormItem[] {
+	return (items || []).map((item) => ({
+		resourceId: item.resourceId,
+		mountPath: item.mountPath,
+	}));
+}
+
+function storageMountsToForm(
+	items: PipelineNodeRuntimeStorageMount[] | undefined,
+): RuntimeStorageFormItem[] {
+	return (items || []).map((item) => ({
+		resourceId: item.resourceId,
+		mountPath: item.mountPath,
+		readOnly: item.readOnly,
+	}));
+}
+
+function runtimeSecretsFromForm(
+	items: RuntimeSecretFormItem[] | undefined,
+	resources: RuntimeSecretMountResource[],
+): PipelineNodeRuntimeSecretMount[] {
+	const byId = new Map(resources.map((item) => [item.id, item]));
+	const seen = new Set<string>();
+	const out: PipelineNodeRuntimeSecretMount[] = [];
+	for (const item of items || []) {
+		const resourceId = item.resourceId?.trim();
+		if (!resourceId || seen.has(resourceId)) continue;
+		seen.add(resourceId);
+		const resource = byId.get(resourceId);
+		out.push({
+			resourceId,
+			mountPath:
+				item.mountPath?.trim() || resource?.defaultMountPath || "/mnt/secrets",
+			displayName: resource?.name || resourceId,
+		});
+	}
+	return out;
+}
+
+function storageMountsFromForm(
+	items: RuntimeStorageFormItem[] | undefined,
+	resources: RuntimeStorageMountResource[],
+): PipelineNodeRuntimeStorageMount[] {
+	const byId = new Map(resources.map((item) => [item.id, item]));
+	const seen = new Set<string>();
+	const out: PipelineNodeRuntimeStorageMount[] = [];
+	for (const item of items || []) {
+		const resourceId = item.resourceId?.trim();
+		if (!resourceId || seen.has(resourceId)) continue;
+		seen.add(resourceId);
+		const resource = byId.get(resourceId);
+		const readOnly =
+			typeof item.readOnly === "boolean" ? item.readOnly : resource?.readOnly;
+		out.push({
+			resourceId,
+			mountPath:
+				item.mountPath?.trim() ||
+				resource?.defaultMountPath ||
+				defaultRuntimeStorageMountPath(resource),
+			...(typeof readOnly === "boolean" ? { readOnly } : {}),
+			displayName: resource?.name || resourceId,
+		});
+	}
+	return out;
+}
+
+function defaultRuntimeStorageMountPath(
+	resource: RuntimeStorageMountResource | undefined,
+) {
+	return resource?.kind === "pvc" ? "/workspace/shared" : "/workspace/scratch";
+}
+
+function defaultRuntimeSecretFormItem(
+	resource: RuntimeSecretMountResource | undefined,
+): RuntimeSecretFormItem {
+	return resource
+		? {
+				resourceId: resource.id,
+				mountPath: resource.defaultMountPath || "/mnt/secrets",
+			}
+		: {};
+}
+
+function defaultRuntimeStorageFormItem(
+	resource: RuntimeStorageMountResource | undefined,
+): RuntimeStorageFormItem {
+	return resource
+		? {
+				resourceId: resource.id,
+				mountPath:
+					resource.defaultMountPath || defaultRuntimeStorageMountPath(resource),
+				readOnly: resource.readOnly,
+			}
+		: {};
 }
 
 function PortConfigList({
@@ -231,6 +352,15 @@ export function NodeConfigPanel({
 	const [configVersionsError, setConfigVersionsError] = useState<string | null>(
 		null,
 	);
+	const [runtimeMountCatalog, setRuntimeMountCatalog] =
+		useState<RuntimeMountCatalog>(EMPTY_RUNTIME_MOUNT_CATALOG);
+	const [runtimeMountsLoading, setRuntimeMountsLoading] = useState(false);
+	const [runtimeMountsError, setRuntimeMountsError] = useState<string | null>(
+		null,
+	);
+	const [runtimeSecretAdvancedKeys, setRuntimeSecretAdvancedKeys] = useState<
+		string[]
+	>([]);
 
 	const componentType = String(node.data.type || "").toLowerCase();
 	const isScriptType = componentType === "script";
@@ -258,6 +388,26 @@ export function NodeConfigPanel({
 			})),
 		[configVersions, selectedConfig?.currentVersion],
 	);
+	const runtimeSecretOptions = useMemo(
+		() =>
+			runtimeMountCatalog.secrets.map((resource) => ({
+				value: resource.id,
+				label: `${resource.name} · ${resource.defaultMountPath}${
+					resource.targetIds?.length ? ` · ${resource.targetIds.join("/")}` : ""
+				}`,
+			})),
+		[runtimeMountCatalog.secrets],
+	);
+	const runtimeStorageOptions = useMemo(
+		() =>
+			runtimeMountCatalog.storage.map((resource) => ({
+				value: resource.id,
+				label: `${resource.name} · ${resource.kind} · ${resource.defaultMountPath}${
+					resource.targetIds?.length ? ` · ${resource.targetIds.join("/")}` : ""
+				}`,
+			})),
+		[runtimeMountCatalog.storage],
+	);
 
 	useEffect(() => {
 		if (!open) return;
@@ -276,10 +426,15 @@ export function NodeConfigPanel({
 				runtimeConfig?.mountPath || DEFAULT_CONFIG_MOUNT_PATH,
 			runtimeConfigTargetFilename:
 				runtimeConfig?.targetFilename || runtimeConfig?.fileName || "",
+			runtimeSecrets: runtimeSecretsToForm(node.data.runtimeSecrets),
+			storageMounts: storageMountsToForm(node.data.storageMounts),
 			cpu: node.data.cpu || "",
 			memory: node.data.memory || "",
 			disk: node.data.disk || "",
 		});
+		setRuntimeSecretAdvancedKeys(
+			node.data.runtimeSecrets?.length ? ["runtime-secrets"] : [],
+		);
 	}, [form, node.data, open]);
 
 	useEffect(() => {
@@ -305,6 +460,34 @@ export function NodeConfigPanel({
 			})
 			.finally(() => {
 				if (active) setConfigsLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [open]);
+
+	useEffect(() => {
+		if (!open) return;
+		let active = true;
+		setRuntimeMountsLoading(true);
+		setRuntimeMountsError(null);
+		listRuntimeMounts()
+			.then((catalog) => {
+				if (!active) return;
+				setRuntimeMountCatalog({
+					secrets: catalog.secrets || [],
+					storage: catalog.storage || [],
+				});
+			})
+			.catch((err: unknown) => {
+				if (!active) return;
+				setRuntimeMountCatalog(EMPTY_RUNTIME_MOUNT_CATALOG);
+				setRuntimeMountsError(
+					err instanceof Error ? err.message : "运行挂载资源加载失败",
+				);
+			})
+			.finally(() => {
+				if (active) setRuntimeMountsLoading(false);
 			});
 		return () => {
 			active = false;
@@ -417,6 +600,14 @@ export function NodeConfigPanel({
 				DEFAULT_OUTPUT_PORTS,
 			),
 			runtimeConfig,
+			runtimeSecrets: runtimeSecretsFromForm(
+				values.runtimeSecrets,
+				runtimeMountCatalog.secrets,
+			),
+			storageMounts: storageMountsFromForm(
+				values.storageMounts,
+				runtimeMountCatalog.storage,
+			),
 			cpu: values.cpu || "",
 			memory: values.memory || "",
 			disk: values.disk || "",
@@ -446,6 +637,45 @@ export function NodeConfigPanel({
 		});
 	};
 
+	const handleRuntimeSecretChange = (index: number, resourceId?: string) => {
+		const resource = runtimeMountCatalog.secrets.find(
+			(item) => item.id === resourceId,
+		);
+		const current = [
+			...((form.getFieldValue("runtimeSecrets") ||
+				[]) as RuntimeSecretFormItem[]),
+		];
+		current[index] = {
+			...current[index],
+			resourceId,
+			mountPath: resource?.defaultMountPath || current[index]?.mountPath,
+		};
+		form.setFieldsValue({ runtimeSecrets: current });
+		form.setFields([
+			{ name: ["runtimeSecrets", index, "resourceId"], errors: [] },
+		]);
+	};
+
+	const handleRuntimeStorageChange = (index: number, resourceId?: string) => {
+		const resource = runtimeMountCatalog.storage.find(
+			(item) => item.id === resourceId,
+		);
+		const current = [
+			...((form.getFieldValue("storageMounts") ||
+				[]) as RuntimeStorageFormItem[]),
+		];
+		current[index] = {
+			...current[index],
+			resourceId,
+			mountPath: resource?.defaultMountPath || current[index]?.mountPath,
+			readOnly: resource?.readOnly ?? current[index]?.readOnly,
+		};
+		form.setFieldsValue({ storageMounts: current });
+		form.setFields([
+			{ name: ["storageMounts", index, "resourceId"], errors: [] },
+		]);
+	};
+
 	return (
 		<Modal
 			title="节点配置"
@@ -470,15 +700,27 @@ export function NodeConfigPanel({
 						<Input.TextArea rows={3} placeholder="Python 脚本 source" />
 					</Form.Item>
 				)}
-				<Form.Item label="命令" name="command">
+				<Form.Item
+					label="命令（可选）"
+					name="command"
+					extra="留空时使用镜像 Dockerfile 中的 ENTRYPOINT/CMD；只有需要覆盖镜像入口时填写。"
+				>
 					<Select
 						mode="tags"
 						options={[]}
-						placeholder="按 Enter 添加命令片段"
+						placeholder="可选：例如 sh、-c；按 Enter 添加片段"
 					/>
 				</Form.Item>
-				<Form.Item label="参数" name="args">
-					<Select mode="tags" options={[]} placeholder="按 Enter 添加参数" />
+				<Form.Item
+					label="参数（可选）"
+					name="args"
+					extra="留空时使用镜像默认参数；如果使用 sh -c，参数只填写脚本本体。连接下游时请确保运行时写入 /tmp/outputs/<输出名>。"
+				>
+					<Select
+						mode="tags"
+						options={[]}
+						placeholder="可选：按 Enter 添加参数"
+					/>
 				</Form.Item>
 				<div
 					style={{
@@ -596,6 +838,111 @@ export function NodeConfigPanel({
 						</Form.Item>
 					</div>
 				</div>
+				<div
+					style={{
+						border: "1px solid #e2e8f0",
+						borderRadius: 8,
+						padding: 12,
+						marginBottom: 16,
+					}}
+				>
+					<strong>存储挂载</strong>
+					{runtimeMountsError ? (
+						<Alert
+							type="warning"
+							showIcon
+							message="运行挂载资源加载失败"
+							description={runtimeMountsError}
+							style={{ marginTop: 12, marginBottom: 12 }}
+						/>
+					) : null}
+					<Form.List name="storageMounts">
+						{(fields, { add, remove }) => (
+							<div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+								{fields.map(({ key, ...field }) => (
+									<div
+										key={key}
+										style={{
+											display: "grid",
+											gridTemplateColumns:
+												"minmax(0, 1fr) minmax(0, 1fr) 96px auto",
+											gap: 8,
+											alignItems: "center",
+										}}
+									>
+										<Form.Item
+											{...field}
+											name={[field.name, "resourceId"]}
+											rules={[{ required: true, message: "请选择存储资源" }]}
+											noStyle
+										>
+											<Select
+												aria-label="选择存储资源"
+												allowClear
+												loading={runtimeMountsLoading}
+												options={runtimeStorageOptions}
+												placeholder="选择存储资源"
+												onChange={(value) =>
+													handleRuntimeStorageChange(field.name, value)
+												}
+											/>
+										</Form.Item>
+										<Form.Item
+											{...field}
+											name={[field.name, "mountPath"]}
+											noStyle
+										>
+											<Input
+												aria-label="存储挂载路径"
+												placeholder="/workspace/scratch"
+											/>
+										</Form.Item>
+										<Form.Item
+											{...field}
+											name={[field.name, "readOnly"]}
+											noStyle
+										>
+											<Select
+												aria-label="存储读写模式"
+												options={[
+													{ value: true, label: "只读" },
+													{ value: false, label: "读写" },
+												]}
+											/>
+										</Form.Item>
+										<Button
+											type="text"
+											icon={<MinusCircleOutlined />}
+											onClick={() => remove(field.name)}
+											danger
+										/>
+									</div>
+								))}
+								<Button
+									type="dashed"
+									icon={<PlusOutlined />}
+									onClick={() =>
+										add(
+											defaultRuntimeStorageFormItem(
+												runtimeMountCatalog.storage.length === 1
+													? runtimeMountCatalog.storage[0]
+													: undefined,
+											),
+										)
+									}
+									disabled={runtimeMountsLoading}
+								>
+									新增存储挂载
+								</Button>
+								{!runtimeMountsLoading &&
+								!runtimeMountsError &&
+								runtimeMountCatalog.storage.length === 0 ? (
+									<Alert type="info" showIcon message="暂无平台存储资源" />
+								) : null}
+							</div>
+						)}
+					</Form.List>
+				</div>
 				<Form.Item label="环境变量">
 					<Form.List name="env">
 						{(fields, { add, remove }) => (
@@ -658,6 +1005,121 @@ export function NodeConfigPanel({
 						<Input placeholder="1Gi" />
 					</Form.Item>
 				</div>
+				<Collapse
+					size="small"
+					style={{ marginTop: 4 }}
+					activeKey={runtimeSecretAdvancedKeys}
+					onChange={(keys) => {
+						const nextKeys = Array.isArray(keys) ? keys : [keys];
+						setRuntimeSecretAdvancedKeys(nextKeys.map(String));
+					}}
+					items={[
+						{
+							key: "runtime-secrets",
+							label: "高级配置：密钥挂载",
+							children: (
+								<div style={{ display: "grid", gap: 12 }}>
+									<Alert
+										type="warning"
+										showIcon
+										message="密钥挂载由平台维护"
+										description="只选择平台允许的密钥资源和挂载目录，不在这里填写或展示密钥内容。"
+									/>
+									{runtimeMountsError ? (
+										<Alert
+											type="warning"
+											showIcon
+											message="运行挂载资源加载失败"
+											description={runtimeMountsError}
+										/>
+									) : null}
+									<Form.List name="runtimeSecrets">
+										{(fields, { add, remove }) => (
+											<div style={{ display: "grid", gap: 8 }}>
+												{fields.map(({ key, ...field }) => (
+													<div
+														key={key}
+														style={{
+															display: "grid",
+															gridTemplateColumns:
+																"minmax(0, 1fr) minmax(0, 1fr) auto",
+															gap: 8,
+															alignItems: "center",
+														}}
+													>
+														<Form.Item
+															{...field}
+															name={[field.name, "resourceId"]}
+															rules={[
+																{
+																	required: true,
+																	message: "请选择密钥资源",
+																},
+															]}
+															noStyle
+														>
+															<Select
+																aria-label="选择密钥资源"
+																allowClear
+																loading={runtimeMountsLoading}
+																options={runtimeSecretOptions}
+																placeholder="选择密钥资源"
+																onChange={(value) =>
+																	handleRuntimeSecretChange(field.name, value)
+																}
+															/>
+														</Form.Item>
+														<Form.Item
+															{...field}
+															name={[field.name, "mountPath"]}
+															noStyle
+														>
+															<Input
+																aria-label="密钥挂载路径"
+																placeholder="/mnt/secrets"
+															/>
+														</Form.Item>
+														<Button
+															type="text"
+															icon={<MinusCircleOutlined />}
+															onClick={() => remove(field.name)}
+															danger
+														/>
+													</div>
+												))}
+												<Button
+													type="dashed"
+													icon={<PlusOutlined />}
+													onClick={() =>
+														add(
+															defaultRuntimeSecretFormItem(
+																runtimeMountCatalog.secrets.length === 1
+																	? runtimeMountCatalog.secrets[0]
+																	: undefined,
+															),
+														)
+													}
+													disabled={runtimeMountsLoading}
+												>
+													新增密钥挂载
+												</Button>
+												{!runtimeMountsLoading &&
+												!runtimeMountsError &&
+												runtimeMountCatalog.secrets.length === 0 ? (
+													<Alert
+														type="info"
+														showIcon
+														message="暂无平台密钥资源"
+													/>
+												) : null}
+											</div>
+										)}
+									</Form.List>
+								</div>
+							),
+						},
+					]}
+				/>
 			</Form>
 		</Modal>
 	);

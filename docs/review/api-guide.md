@@ -2486,6 +2486,46 @@ curl -s "$BASE/api/v1/execution-targets" \
 # }
 ```
 
+查询可挂载到节点的运行时资源。该接口只返回平台允许的资源目录，不返回 secret
+内容；节点 DSL 只保存 `resourceId`、`mountPath`、`readOnly`，后端在部署时解析为
+SecretProviderClass、PVC 或 emptyDir。
+
+```bash
+curl -s "$BASE/api/v1/pipeline/runtime-mounts" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 响应示例:
+# {
+#   "secrets": [
+#     {
+#       "id": "platform-db-secrets",
+#       "name": "Platform DB 密钥",
+#       "kind": "secretProviderClass",
+#       "secretProviderClass": "databrew-platform-db-creds", # pragma: allowlist secret
+#       "defaultMountPath": "/mnt/secrets",
+#       "readOnly": true
+#     }
+#   ],
+#   "storage": [
+#     {
+#       "id": "scratch-emptydir",
+#       "name": "临时工作目录",
+#       "kind": "emptyDir",
+#       "defaultMountPath": "/workspace/scratch",
+#       "readOnly": false,
+#       "allowWrite": true
+#     }
+#   ]
+# }
+```
+
+部署时如果节点引用未知 `resourceId`、目标环境不支持该资源、挂载路径不是绝对路径、
+挂载到 `/tmp/outputs` 等保留目录、同节点挂载路径冲突，或只读资源请求写入，接口返回
+`400 INVALID_ARGUMENT`，Workflow 不会提交到 Argo。
+
+如果平台侧 catalog JSON 配置不合法，例如 secret 资源缺少 `secretProviderClass` 或 PVC
+资源缺少 `pvcName`，`GET /api/v1/pipeline/runtime-mounts` 返回 `500`，前端应展示资源加载失败而不是允许用户保存空绑定。
+
 按模板提交 first-class pipeline run。`target_id` 可省略，省略时使用默认执行目标；
 `asset_ids` 可为空，但 UI 应把空资产运行标识为 no-asset run。显式 `asset_ids`
 必须存在且未被软删除；重复或未知 ID 返回 `400 INVALID_ARGUMENT`，`details.field`

@@ -24,7 +24,6 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
-import { ArgoNodeRuntimeInspector } from "../../features/pipeline-designer";
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { ApiError } from "../../api/pipelineClient";
 import type {
@@ -40,6 +39,7 @@ import {
 	getNodePodDiagnostics,
 	type NodePodDiagnostics,
 } from "../../api/workflowApi";
+import { ArgoNodeRuntimeInspector } from "../../features/pipeline-designer";
 import {
 	formatWorkflowPhaseLabel,
 	resolveStatusTagColor,
@@ -49,10 +49,19 @@ import {
 	truncateMiddle,
 } from "../../lib/workflowNodeDisplay";
 import { DurationPanel } from "../common/DurationPanel";
+import type { PipelineNodeDef } from "./types";
 
 type KeyValue = { name: string; value?: string };
 type Artifact = { name: string; path?: string };
 export type WorkflowNodeDetailTabKey = "summary" | "logs" | "runtime" | "io";
+type RuntimeBindingRow = {
+	key: string;
+	type: string;
+	name: string;
+	path: string;
+	mode: string;
+	envName: string;
+};
 
 const keyValueColumns: ColumnsType<{
 	key: string;
@@ -126,6 +135,51 @@ const containerColumns: ColumnsType<{
 		dataIndex: "args",
 		key: "args",
 		render: (args?: string[]) => args?.join(" ") || "—",
+	},
+];
+
+const runtimeBindingColumns: ColumnsType<RuntimeBindingRow> = [
+	{
+		title: "类型",
+		dataIndex: "type",
+		key: "type",
+		width: 76,
+		render: (type: string) => <Tag>{type}</Tag>,
+	},
+	{
+		title: "资源",
+		dataIndex: "name",
+		key: "name",
+		render: (name: string) => (
+			<Typography.Text ellipsis={{ tooltip: name }}>{name}</Typography.Text>
+		),
+	},
+	{
+		title: "挂载路径",
+		dataIndex: "path",
+		key: "path",
+		render: (path: string) =>
+			path === "—" ? "—" : <Typography.Text copyable>{path}</Typography.Text>,
+	},
+	{
+		title: "注入环境变量",
+		dataIndex: "envName",
+		key: "envName",
+		render: (envName: string) =>
+			envName === "—" ? (
+				"—"
+			) : (
+				<Typography.Text code copyable={{ text: envName }}>
+					{envName}
+				</Typography.Text>
+			),
+	},
+	{
+		title: "版本/权限",
+		dataIndex: "mode",
+		key: "mode",
+		width: 96,
+		render: (mode: string) => mode || "—",
 	},
 ];
 
@@ -208,6 +262,79 @@ function formatArtifactRows(items?: Artifact[]) {
 		name: artifact.name,
 		path: artifact.path || "",
 	}));
+}
+
+function joinMountedFilePath(mountPath?: string, fileName?: string) {
+	const base = mountPath?.trim();
+	const name = fileName?.trim();
+	if (!base && !name) return "—";
+	if (!base) return name || "—";
+	if (!name) return base;
+	return `${base.replace(/\/+$/, "")}/${name.replace(/^\/+/, "")}`;
+}
+
+function runtimeMountEnvName(
+	prefix: "PIPELINE_SECRET" | "PIPELINE_STORAGE",
+	id: string,
+) {
+	const suffix = id
+		.trim()
+		.toUpperCase()
+		.replace(/[^A-Z0-9]+/g, "_")
+		.replace(/^_+|_+$/g, "");
+	return `${prefix}_${suffix || "MOUNT"}_PATH`;
+}
+
+function runtimeBindingRows(
+	pipelineNode?: PipelineNodeDef | null,
+): RuntimeBindingRow[] {
+	if (!pipelineNode) return [];
+	const rows: RuntimeBindingRow[] = [];
+	const runtimeConfig = pipelineNode.runtimeConfig;
+	if (runtimeConfig) {
+		rows.push({
+			key: "config",
+			type: "配置",
+			name:
+				runtimeConfig.displayName ||
+				runtimeConfig.fileName ||
+				runtimeConfig.targetFilename ||
+				runtimeConfig.configId,
+			path: joinMountedFilePath(
+				runtimeConfig.mountPath,
+				runtimeConfig.targetFilename || runtimeConfig.fileName,
+			),
+			mode: runtimeConfig.version ? `v${runtimeConfig.version}` : "—",
+			envName: "PIPELINE_CONFIG_PATH",
+		});
+	}
+	for (const [index, item] of (pipelineNode.runtimeSecrets ?? []).entries()) {
+		const resourceId = item.resourceId?.trim();
+		rows.push({
+			key: `secret-${resourceId || index}`,
+			type: "密钥",
+			name: item.displayName || resourceId || "未命名密钥",
+			path: item.mountPath || "—",
+			mode: "只读",
+			envName: resourceId
+				? runtimeMountEnvName("PIPELINE_SECRET", resourceId)
+				: "—",
+		});
+	}
+	for (const [index, item] of (pipelineNode.storageMounts ?? []).entries()) {
+		const resourceId = item.resourceId?.trim();
+		rows.push({
+			key: `storage-${resourceId || index}`,
+			type: "存储",
+			name: item.displayName || resourceId || "未命名存储",
+			path: item.mountPath || "—",
+			mode: item.readOnly ? "只读" : "读写",
+			envName: resourceId
+				? runtimeMountEnvName("PIPELINE_STORAGE", resourceId)
+				: "—",
+		});
+	}
+	return rows;
 }
 
 function formatBytes(value?: number) {
@@ -621,15 +748,69 @@ function RuntimeSection({
 	);
 }
 
+function RuntimeBindingsPanel({
+	pipelineNode,
+}: {
+	pipelineNode?: PipelineNodeDef | null;
+}) {
+	const rows = runtimeBindingRows(pipelineNode);
+	if (!pipelineNode) {
+		return (
+			<Alert
+				type="info"
+				showIcon
+				message="暂无 DataBrew 节点配置快照"
+				description="当前执行没有返回 pipeline JSON，或该 Argo 节点未映射到设计器节点；可继续查看 Pod 环境和日志。"
+			/>
+		);
+	}
+	if (rows.length === 0) {
+		return (
+			<Alert
+				type="info"
+				showIcon
+				message="该节点没有运行时挂载"
+				description="没有绑定配置文件、密钥或存储资源；资产 ID 仍会按部署参数注入到每个 Pod。"
+			/>
+		);
+	}
+	return (
+		<Space direction="vertical" size="small" style={{ width: "100%" }}>
+			<Table
+				size="small"
+				dataSource={rows}
+				columns={runtimeBindingColumns}
+				pagination={false}
+				rowKey="key"
+				scroll={{ x: 620 }}
+			/>
+			<Descriptions size="small" column={1} bordered>
+				<Descriptions.Item label="资产环境变量">
+					<Typography.Text code>ASSET_IDS</Typography.Text>
+					<Typography.Text type="secondary"> / </Typography.Text>
+					<Typography.Text code>ASSET_COUNT</Typography.Text>
+					<Typography.Text type="secondary"> / </Typography.Text>
+					<Typography.Text code>ASSET_0_ID</Typography.Text>
+				</Descriptions.Item>
+			</Descriptions>
+		</Space>
+	);
+}
+
 function RuntimeTab({
 	node,
 	workflowName,
+	pipelineNode,
 }: {
 	node: WorkflowNodeStatus;
 	workflowName: string;
+	pipelineNode?: PipelineNodeDef | null;
 }) {
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<RuntimeSection title="DataBrew 节点挂载">
+				<RuntimeBindingsPanel pipelineNode={pipelineNode} />
+			</RuntimeSection>
 			<RuntimeSection title="Argo 运行时">
 				<ArgoNodeRuntimeInspector node={node} />
 			</RuntimeSection>
@@ -767,9 +948,11 @@ function OutputsTab({ node }: { node: WorkflowNodeStatus }) {
 function SummaryTab({
 	node,
 	workflow,
+	pipelineNode,
 }: {
 	node: WorkflowNodeStatus;
 	workflow: WorkflowDetail;
+	pipelineNode?: PipelineNodeDef | null;
 }) {
 	const podName = getWorkflowNodePodName(node);
 	const memoizationText = node.memoizationStatus
@@ -843,6 +1026,9 @@ function SummaryTab({
 					</Descriptions.Item>
 				) : null}
 			</Descriptions>
+			<RuntimeSection title="运行时挂载">
+				<RuntimeBindingsPanel pipelineNode={pipelineNode} />
+			</RuntimeSection>
 		</Space>
 	);
 }
@@ -857,9 +1043,11 @@ export function WorkflowNodeDetailPanel({
 	onShowLogs,
 	activeTab = "summary",
 	onActiveTabChange,
+	pipelineNode,
 }: {
 	node: WorkflowNodeStatus | null;
 	workflow: WorkflowDetail | null;
+	pipelineNode?: PipelineNodeDef | null;
 	open: boolean;
 	onClose: () => void;
 	onRetryWorkflow?: () => void;
@@ -908,7 +1096,13 @@ export function WorkflowNodeDetailPanel({
 					{
 						key: "summary",
 						label: "概览",
-						children: <SummaryTab node={node} workflow={workflow} />,
+						children: (
+							<SummaryTab
+								node={node}
+								workflow={workflow}
+								pipelineNode={pipelineNode}
+							/>
+						),
 					},
 					{
 						key: "logs",
@@ -926,7 +1120,13 @@ export function WorkflowNodeDetailPanel({
 								<CloudServerOutlined /> 运行环境
 							</>
 						),
-						children: <RuntimeTab node={node} workflowName={workflow.name} />,
+						children: (
+							<RuntimeTab
+								node={node}
+								workflowName={workflow.name}
+								pipelineNode={pipelineNode}
+							/>
+						),
 					},
 					{
 						key: "io",

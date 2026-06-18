@@ -199,6 +199,34 @@ export interface ExecutionTarget {
 	description?: string;
 }
 
+export interface RuntimeSecretMountResource {
+	id: string;
+	name: string;
+	description?: string;
+	kind: "secretProviderClass";
+	secretProviderClass: string;
+	defaultMountPath: string;
+	readOnly: boolean;
+	targetIds?: string[];
+}
+
+export interface RuntimeStorageMountResource {
+	id: string;
+	name: string;
+	description?: string;
+	kind: "pvc" | "emptyDir";
+	pvcName?: string;
+	defaultMountPath: string;
+	readOnly: boolean;
+	allowWrite: boolean;
+	targetIds?: string[];
+}
+
+export interface RuntimeMountCatalog {
+	secrets: RuntimeSecretMountResource[];
+	storage: RuntimeStorageMountResource[];
+}
+
 export type DeployConfigSourceMode = "saved" | "upload" | "inline";
 
 export interface DeployConfigSelectionBase {
@@ -228,6 +256,16 @@ export type DeployConfigSelection =
 	| SavedDeployConfigSelection
 	| UploadDeployConfigSelection
 	| InlineDeployConfigSelection;
+
+export function listRuntimeMounts(): Promise<RuntimeMountCatalog> {
+	return request<Partial<RuntimeMountCatalog>>(
+		"GET",
+		"/pipeline/runtime-mounts",
+	).then((raw) => ({
+		secrets: raw.secrets ?? [],
+		storage: raw.storage ?? [],
+	}));
+}
 
 export function previewDeploy(
 	pipeline: Pipeline,

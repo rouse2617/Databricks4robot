@@ -521,6 +521,21 @@ describe("round-trip: toTranspilerPipeline → fromTranspilerPipeline", () => {
 						targetFilename: "runtime.yaml",
 						displayName: "Step One Config",
 					},
+					runtimeSecrets: [
+						{
+							resourceId: "platform-db-secrets",
+							mountPath: "/mnt/secrets",
+							displayName: "Platform DB 密钥",
+						},
+					],
+					storageMounts: [
+						{
+							resourceId: "scratch-emptydir",
+							mountPath: "/workspace/scratch",
+							readOnly: false,
+							displayName: "临时工作目录",
+						},
+					],
 				},
 			},
 			{
@@ -573,6 +588,21 @@ describe("round-trip: toTranspilerPipeline → fromTranspilerPipeline", () => {
 			targetFilename: "runtime.yaml",
 			displayName: "Step One Config",
 		});
+		expect(nodes[0].data.runtimeSecrets).toEqual([
+			{
+				resourceId: "platform-db-secrets",
+				mountPath: "/mnt/secrets",
+				displayName: "Platform DB 密钥",
+			},
+		]);
+		expect(nodes[0].data.storageMounts).toEqual([
+			{
+				resourceId: "scratch-emptydir",
+				mountPath: "/workspace/scratch",
+				readOnly: false,
+				displayName: "临时工作目录",
+			},
+		]);
 		// Node without resources
 		expect(nodes[1].data.cpu).toBe("");
 		expect(nodes[1].data.memory).toBe("");

@@ -214,6 +214,14 @@ if [[ "$RESP_CODE" == "200" ]]; then
 		bad "execution-targets response shape"
 	fi
 fi
+get "pipeline runtime mounts" "/api/v1/pipeline/runtime-mounts"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); assert isinstance(d.get('secrets', []), list); assert isinstance(d.get('storage', []), list); assert all('id' in i and 'kind' in i and 'defaultMountPath' in i for i in d.get('storage', []))" 2>/dev/null; then
+		ok "pipeline runtime mounts response shape"
+	else
+		bad "pipeline runtime mounts response shape"
+	fi
+fi
 get "pipeline-runs" "/api/v1/pipeline-runs"
 if [[ "$RESP_CODE" == "200" ]]; then
 	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items', []); assert isinstance(items, list); assert all('id' in i and 'status' in i and 'workflowName' in i for i in items)" 2>/dev/null; then
