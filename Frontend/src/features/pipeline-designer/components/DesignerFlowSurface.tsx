@@ -1,11 +1,13 @@
 import {
 	Background,
 	BackgroundVariant,
-	ReactFlow,
+	Controls,
 	type Edge,
+	MiniMap,
 	type Node,
 	type OnEdgesChange,
 	type OnNodesChange,
+	ReactFlow,
 } from "@xyflow/react";
 import type { DragEvent, MouseEvent as ReactMouseEvent } from "react";
 import "@xyflow/react/dist/style.css";
@@ -78,6 +80,14 @@ export function DesignerFlowSurface({
 					color="#cbd5e1"
 					lineWidth={1}
 				/>
+				<MiniMap
+					position="bottom-right"
+					pannable
+					zoomable
+					nodeColor="#bfdbfe"
+					maskColor="rgba(15, 23, 42, 0.08)"
+				/>
+				<Controls showInteractive={false} position="bottom-left" />
 			</ReactFlow>
 		</div>
 	);
