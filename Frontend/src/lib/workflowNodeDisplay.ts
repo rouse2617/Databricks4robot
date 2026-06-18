@@ -9,6 +9,55 @@ export function truncateMiddle(text: string, maxLength: number): string {
 	return `${text.slice(0, edge)}...${text.slice(text.length - edge)}`;
 }
 
+const UUID_PATTERN =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function addPipelineNodeLabel(
+	lookup: Map<string, string>,
+	key: string | undefined,
+	label: string,
+) {
+	const normalized = key?.trim();
+	if (!normalized || lookup.has(normalized)) return;
+	lookup.set(normalized, label);
+}
+
+function addPipelineNodeLabelVariants(
+	lookup: Map<string, string>,
+	nodeId: string,
+	label: string,
+) {
+	const normalized = nodeId.trim();
+	if (!normalized) return;
+	addPipelineNodeLabel(lookup, normalized, label);
+	addPipelineNodeLabel(lookup, `step-${normalized}`, label);
+
+	const withoutStep = normalized.startsWith("step-")
+		? normalized.slice("step-".length)
+		: normalized;
+	if (
+		normalized.startsWith("step-") &&
+		(withoutStep.startsWith("node-") || UUID_PATTERN.test(withoutStep))
+	) {
+		addPipelineNodeLabel(lookup, withoutStep, label);
+	}
+
+	if (withoutStep.startsWith("node-")) {
+		const generatedSuffix = withoutStep.slice("node-".length);
+		addPipelineNodeLabel(lookup, `step-${withoutStep}`, label);
+		if (UUID_PATTERN.test(generatedSuffix)) {
+			addPipelineNodeLabel(lookup, generatedSuffix, label);
+			addPipelineNodeLabel(lookup, `step-${generatedSuffix}`, label);
+		}
+		return;
+	}
+
+	if (UUID_PATTERN.test(withoutStep)) {
+		addPipelineNodeLabel(lookup, `node-${withoutStep}`, label);
+		addPipelineNodeLabel(lookup, `step-node-${withoutStep}`, label);
+	}
+}
+
 export function buildPipelineNodeLabelLookup(
 	pipeline?: Pipeline | null,
 ): Map<string, string> {
@@ -18,14 +67,7 @@ export function buildPipelineNodeLabelLookup(
 	}
 	for (const node of pipeline.nodes) {
 		const label = node.component?.name?.trim() || node.id;
-		const nodeId = node.id.trim();
-		if (!nodeId) continue;
-		lookup.set(nodeId, label);
-		lookup.set(`step-${nodeId}`, label);
-		const stripped = nodeId.replace(/^step-/, "");
-		if (stripped !== nodeId) {
-			lookup.set(`step-${stripped}`, label);
-		}
+		addPipelineNodeLabelVariants(lookup, node.id, label);
 	}
 	return lookup;
 }

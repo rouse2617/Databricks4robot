@@ -132,7 +132,22 @@ func (uc *Usecase) ListReleases(ctx context.Context, filter repository.Component
 	if uc.releaseRepo == nil {
 		return nil, errors.New("component release repository is not configured")
 	}
-	return uc.releaseRepo.FindReleases(ctx, &filter)
+	items, err := uc.releaseRepo.FindReleases(ctx, &filter)
+	if err != nil {
+		return nil, err
+	}
+	normalized := make([]models.PipelineComponentRelease, 0, len(items))
+	for i := range items {
+		release := items[i]
+		if err := normalizeComponentRelease(&release); err != nil {
+			return nil, err
+		}
+		if filter.Selectable != nil && release.Selectable != *filter.Selectable {
+			continue
+		}
+		normalized = append(normalized, release)
+	}
+	return normalized, nil
 }
 
 // GetRelease returns one generated component release by ID.
@@ -144,7 +159,14 @@ func (uc *Usecase) GetRelease(ctx context.Context, id string) (*models.PipelineC
 	if id == "" {
 		return nil, errors.New("id is required")
 	}
-	return uc.releaseRepo.FindReleaseByID(ctx, id)
+	release, err := uc.releaseRepo.FindReleaseByID(ctx, id)
+	if err != nil || release == nil {
+		return release, err
+	}
+	if err := normalizeComponentRelease(release); err != nil {
+		return nil, err
+	}
+	return release, nil
 }
 
 var validComponentTypes = map[string]struct{}{
@@ -324,11 +346,16 @@ func normalizeComponentRelease(release *models.PipelineComponentRelease) error {
 	if release.ReleaseLabel == "" {
 		validationErrors = append(validationErrors, "releaseLabel is required")
 	}
+	runtimeDigest := digestFromImage(release.RuntimeImage)
 	if release.RuntimeImage == "" {
 		validationErrors = append(validationErrors, "runtimeImage is required")
+	} else if !isSHA256Digest(runtimeDigest) {
+		validationErrors = append(validationErrors, "runtimeImage must be digest pinned as image@sha256:<64 hex>")
 	}
-	if release.ImageDigest == "" || !strings.HasPrefix(release.ImageDigest, "sha256:") {
-		validationErrors = append(validationErrors, "imageDigest is required and must be sha256 pinned")
+	if !isSHA256Digest(release.ImageDigest) {
+		validationErrors = append(validationErrors, "imageDigest is required and must be sha256:<64 hex>")
+	} else if runtimeDigest != "" && runtimeDigest != release.ImageDigest {
+		validationErrors = append(validationErrors, "runtimeImage digest must match imageDigest")
 	}
 	if len(release.RuntimeSnapshot.Command) == 0 {
 		validationErrors = append(validationErrors, "runtimeSnapshot.command is required")
@@ -559,6 +586,19 @@ func digestFromImage(image string) string {
 		return ""
 	}
 	return normalizeDigest(parts[1])
+}
+
+func isSHA256Digest(digest string) bool {
+	const prefix = "sha256:"
+	if len(digest) != len(prefix)+64 || !strings.HasPrefix(digest, prefix) {
+		return false
+	}
+	for _, char := range digest[len(prefix):] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func readResourceString(resources map[string]interface{}, key string) string {

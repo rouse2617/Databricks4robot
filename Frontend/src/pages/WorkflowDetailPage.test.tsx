@@ -538,4 +538,86 @@ describe("WorkflowDetailPage", () => {
 		expect(screen.getByText("暂无估算成本")).toBeInTheDocument();
 		expect(screen.getByText("暂无计费配置")).toBeInTheDocument();
 	});
+
+	it("uses pipeline component names for asset node rows", () => {
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Running",
+				nodes: [
+					{
+						id: "argo-node-detector",
+						name: "wf-asset.step-node-detector",
+						displayName: "step-node-detector",
+						type: "Pod",
+						phase: "Pending",
+					},
+				],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+			runEventState: {
+				run: {
+					id: "run-1",
+					workflowName: "wf-asset",
+					pipelineName: "asset-pipeline",
+					status: "Running",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+					pipelineJSON: {
+						name: "asset-pipeline",
+						nodes: [
+							{
+								id: "node-detector",
+								component: {
+									name: "hand-detect-yolov26m",
+									image: "example.com/hand-detect:yolo",
+								},
+							},
+						],
+						edges: [],
+					},
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+			assetNodeState: {
+				items: [
+					{
+						id: "asset-node-1",
+						runId: "run-1",
+						assetId: "no-asset",
+						pipelineNodeId: "step-node-detector",
+						argoNodeId: "wf-asset.step-node-detector",
+						displayName: "step-node-detector",
+						status: "Pending",
+						message:
+							"InvalidImageName: failed to apply default image tag for dummy digest",
+						costSource: "not_available",
+						updatedAt: "2026-06-03T00:00:00Z",
+					},
+				],
+				total: 1,
+				loading: false,
+				error: null,
+				summary: {
+					assetCount: 0,
+					nodeCount: 1,
+					statuses: { Pending: 1 },
+					costSource: "not_available",
+				},
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText("hand-detect-yolov26m")).toBeInTheDocument();
+		expect(screen.getByText("step-node-detector")).toBeInTheDocument();
+		expect(screen.getByText(/InvalidImageName/)).toBeInTheDocument();
+	});
 });

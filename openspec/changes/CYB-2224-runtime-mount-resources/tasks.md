@@ -31,6 +31,9 @@
 - [x] [Frontend] Show selected node runtime config, secret mounts, storage mounts, and injected env names in the execution detail drawer.
 - [x] [Frontend] Move deprecated pipeline configs out of the default config workspace and into an archive shelf for trace/view/diff only.
 - [x] [Frontend] Add an explicit order-only edge mode for CyberPipe-style pipelines where edges control sequencing without consuming `/tmp/outputs` files.
+- [x] [Frontend] Align execution detail asset-node table names with the DAG/component labels while keeping runtime step IDs as secondary diagnostics.
+- [x] [backend] Revalidate generated component release digests on sync/list/get so short or dummy `sha256` values cannot stay selectable.
+- [x] [Frontend] Surface asset-node runtime messages in the execution detail status column so Pending pods expose reasons such as `InvalidImageName`.
 - [x] [Frontend] Add tests for selecting/clearing secret and storage bindings. Covered by DSL round-trip, node badge unit test, and NodeConfigPanel storage interaction test.
 - [ ] [Frontend] Component release detail displays task directory from `technicalMetadata.taskDir` when `taskPath` is absent.
 - [ ] [Frontend] Component release list distinguishes image tag from digest/hash identity and shows full image metadata in tooltips.
@@ -56,10 +59,12 @@ See [`docs/agents/AI-RULES.md` § API contract sync](../../docs/agents/AI-RULES.
 - [x] [Frontend] targeted Vitest for execution detail runtime mount display and workflow-node to pipeline-node mapping.
 - [x] [Frontend] targeted Vitest for Registry Center active/archive config shelf behavior.
 - [x] [Frontend] targeted Vitest for pipeline order-only edge import/export and run validation.
+- [x] [backend] `go test ./internal/usecase/pipeline_component ./internal/handlers/pipeline_component`.
+- [x] [Frontend] targeted Vitest for execution detail asset-node message display and workflow-node mapping.
 - [x] [Frontend] `npm run build`.
 - [x] [SDK] `uv run pytest tests/unit/test_managers.py -q`.
 - [x] [repo] `git diff --check`.
-- [ ] [repo] `pre-commit run --files` on touched files before commit.
+- [x] [repo] `pre-commit run --files` on touched files before commit.
 
 ## Deploy verification
 - [ ] Apply migrations first if any are introduced; none expected for P0.
@@ -67,12 +72,17 @@ See [`docs/agents/AI-RULES.md` § API contract sync](../../docs/agents/AI-RULES.
   - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:bbe2509-cyb2224-20260618082338`
   - Revision: `cyber-databrew-backend-dev-00904-fd2`
   - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
+  - Image: `us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:049fad0-cyb2224-release-digest-20260618224454`
+  - Revision: `cyber-databrew-backend-dev-00908-q6q`
+  - URL: `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app`
 - [x] Deploy frontend dev/CF if frontend code changed; record version/revision.
   - Cloudflare Worker: `cyber-databrew-dev`
   - URL: `https://cyber-databrew-dev.cyberorigin.ai`
   - Wrangler version ID: `b1c732ca-37c5-48bf-b681-86af2f3266d8`
   - Created: `2026-06-18T08:28:56.013Z`
   - UI build ref: `vcyb-2224-dev-202606180826-runtime-mounts (feat/CYB-2224-runtime-mount-resources#bbe2509+runtime-mounts)`
+  - Wrangler version ID: `e944c4b7-1ffc-49dc-afe8-eedc6bace54d`
+  - UI build ref: `v049fad0 (feat/CYB-2224-runtime-mount-resources#049fad0+release-digest-message)`
 - [x] API smoke `GET /api/v1/pipeline/runtime-mounts` on dev.
 - [x] Chrome DevTools MCP: open pipeline designer, bind one secret and one storage mount, save, and verify node badge persists as `密钥 1 / 存储 1`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-designer-secret-storage-badge.png`.
 - [x] Chrome DevTools MCP: deploy a test pipeline and verify no console errors.
@@ -80,6 +90,10 @@ See [`docs/agents/AI-RULES.md` § API contract sync](../../docs/agents/AI-RULES.
 - [x] Chrome DevTools MCP on CF domain: execution detail drawer shows runtime storage mount and env names. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-detail-runtime-mounts-runtime-tab.png`.
 - [x] Chrome DevTools MCP on CF domain: designer node config loads runtime mount catalog and node badge shows storage count. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-designer-storage-mount-badge.png`.
 - [x] Chrome DevTools MCP on CF domain: Registry Center default config workspace hides archived configs; archive shelf shows only archived records with trace/view/diff actions. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-registry-config-archive-shelf.png`.
+- [x] Chrome DevTools MCP on CF domain: execution detail asset-node table uses the same friendly component labels as the DAG and keeps `step-node-*` as secondary diagnostics. Worker version `f3861623-58ee-4ecf-91dc-fc50c311e9ed`; UI build ref `v049fad0 (dev#049fad0+workflow-asset-node-name-fix)`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-detail-asset-node-name-alignment.png`.
+- [x] Chrome DevTools MCP on CF domain: execution detail asset-node table maps real `node-*` template IDs to `step-node-*` runtime rows. Worker version `68bd48ac-40a7-4f19-ab76-44cb3aac4043`; UI build ref `v049fad0 (feat/CYB-2224-runtime-mount-resources#049fad0+workflow-asset-node-name-fix2)`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-detail-asset-node-name-alignment-fix2.png`.
+- [x] Chrome DevTools MCP on CF domain: execution detail asset-node status column shows `InvalidImageName` for a Pending main container, making it clear the algorithm step is not actually running. Worker version `e944c4b7-1ffc-49dc-afe8-eedc6bace54d`; UI build ref `v049fad0 (feat/CYB-2224-runtime-mount-resources#049fad0+release-digest-message)`. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-workflow-detail-pending-message.snapshot.txt`; screenshot tool timed out twice, see `decisions.md`.
+- [x] Backend API smoke: `GET /api/v1/pipeline-component-releases?selectable=true&q=hand-detect-yolov26m` returns `{"items":[]}`; direct search shows the historical dummy release revalidated to `validationStatus=failed` with `imageDigest is required and must be sha256:<64 hex>`.
 - [x] Runtime smoke: UI deployed `cyb2178-probe-20260618115702` as `pipeline-1781771851723-ae379d`; run succeeded in 4s and Pod diagnostics showed `Service Account = cyber-databrew-backend-argo`, mounted secret/storage rows, and normal container events. Evidence: `openspec/changes/CYB-2224-runtime-mount-resources/cf-runtime-mount-pod-detail-success.png`.
 - [x] Runtime smoke: the actual Pod spec contains `PIPELINE_SECRET_DATABREW_SMOKE_SECRET_PATH`, `PIPELINE_STORAGE_SCRATCH_EMPTYDIR_PATH`, CSI driver `secrets-store-gke.csi.k8s.io`, SecretProviderClass `databrew-dev-runtime-mount-smoke`, and `emptyDir` storage mount.
 - [x] Runtime smoke: verify unbound nodes do not receive another node's secret or storage mount. Dry-run two-node manifest shows `step-node-b` has only `PIPELINE_DEPLOYMENT_ID` and `volumemounts: []`.

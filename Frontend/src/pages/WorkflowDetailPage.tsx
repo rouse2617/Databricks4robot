@@ -1170,15 +1170,64 @@ function formatDurationSeconds(startedAt?: string, finishedAt?: string) {
 	return `${minutes}m ${seconds % 60}s`;
 }
 
+function getPipelineLabelFromLookup(
+	pipelineNodeLabels: Map<string, string>,
+	key?: string,
+) {
+	const normalized = key?.trim();
+	if (!normalized) return null;
+	const exact = pipelineNodeLabels.get(normalized);
+	if (exact) return exact;
+	const shortKey = normalized.split(".").pop()?.trim();
+	if (!shortKey || shortKey === normalized) return null;
+	return pipelineNodeLabels.get(shortKey) ?? null;
+}
+
+function getAssetNodeDisplayInfo(
+	row: PipelineRunAssetNode,
+	pipelineNodeLabels: Map<string, string>,
+): { primary: string; secondary: string | null } {
+	if (row.pipelineNodeId === "dag") {
+		return { primary: "运行汇总", secondary: null };
+	}
+	const primary =
+		getPipelineLabelFromLookup(pipelineNodeLabels, row.pipelineNodeId) ??
+		getPipelineLabelFromLookup(pipelineNodeLabels, row.displayName) ??
+		getPipelineLabelFromLookup(pipelineNodeLabels, row.argoNodeId) ??
+		row.displayName ??
+		row.pipelineNodeId ??
+		"-";
+	const secondaryCandidates = [
+		row.displayName,
+		row.pipelineNodeId,
+		row.argoNodeId,
+	];
+	const secondary =
+		secondaryCandidates
+			.map((value) => value?.trim())
+			.find((value) => value && value !== primary) ?? null;
+	return { primary, secondary };
+}
+
+function assetNodeMessageSummary(message?: string): string | null {
+	const normalized = message?.replace(/\s+/g, " ").trim();
+	if (!normalized) return null;
+	const maxLength = 96;
+	if (normalized.length <= maxLength) return normalized;
+	return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
 function WorkflowAssetNodePanel({
 	assetNodeState,
 	costSummaryState,
 	workflowNodeCount,
+	pipelineNodeLabels,
 	onSelectAssetNode,
 }: {
 	assetNodeState: ReturnType<typeof useWorkflowDetail>["assetNodeState"];
 	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"];
 	workflowNodeCount: number;
+	pipelineNodeLabels: Map<string, string>;
 	onSelectAssetNode: (
 		row: PipelineRunAssetNode,
 		action: WorkflowDagNodeAction,
@@ -1321,25 +1370,60 @@ function WorkflowAssetNodePanel({
 					{
 						title: "节点",
 						dataIndex: "displayName",
-						render: (_, row) =>
-							row.pipelineNodeId === "dag"
-								? "运行汇总"
-								: row.displayName || row.pipelineNodeId,
+						render: (_, row) => {
+							const display = getAssetNodeDisplayInfo(row, pipelineNodeLabels);
+							return (
+								<Space direction="vertical" size={0} style={{ maxWidth: 360 }}>
+									<Typography.Text
+										strong
+										ellipsis={{ tooltip: display.primary }}
+									>
+										{display.primary}
+									</Typography.Text>
+									{display.secondary ? (
+										<Typography.Text
+											type="secondary"
+											copyable={{ text: display.secondary }}
+											ellipsis={{ tooltip: display.secondary }}
+											style={{ fontSize: 12, maxWidth: 340 }}
+										>
+											{display.secondary}
+										</Typography.Text>
+									) : null}
+								</Space>
+							);
+						},
 					},
 					{
 						title: "状态",
 						dataIndex: "status",
-						width: 120,
-						render: (value: string) => (
-							<Tag
-								color={eventTagColor({
-									status: value,
-									eventType: value,
-								} as PipelineRunEvent)}
-							>
-								{value || "-"}
-							</Tag>
-						),
+						width: 240,
+						render: (value: string, row) => {
+							const messageSummary = assetNodeMessageSummary(row.message);
+							return (
+								<Space direction="vertical" size={0} style={{ maxWidth: 220 }}>
+									<Tag
+										color={eventTagColor({
+											status: value,
+											eventType: value,
+										} as PipelineRunEvent)}
+									>
+										{value || "-"}
+									</Tag>
+									{messageSummary ? (
+										<Tooltip title={row.message}>
+											<Typography.Text
+												type="secondary"
+												style={{ fontSize: 12, maxWidth: 220 }}
+												ellipsis
+											>
+												{messageSummary}
+											</Typography.Text>
+										</Tooltip>
+									) : null}
+								</Space>
+							);
+						},
 					},
 					{
 						title: "耗时",
@@ -1954,6 +2038,7 @@ export default function WorkflowDetailPage({
 						assetNodeState={assetNodeState}
 						costSummaryState={costSummaryState}
 						workflowNodeCount={displayableNodeCount}
+						pipelineNodeLabels={pipelineNodeLabels}
 						onSelectAssetNode={handleSelectAssetNode}
 					/>
 				) : (

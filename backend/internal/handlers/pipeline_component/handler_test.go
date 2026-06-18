@@ -733,6 +733,106 @@ func TestSyncReleases_MissingDigestIsNotSelectable(t *testing.T) {
 	}
 }
 
+func TestSyncReleases_ShortDigestIsNotSelectable(t *testing.T) {
+	repo := &mockComponentRepo{}
+	usecase := uc.New(repo)
+	h := New(usecase)
+	r := setupRouter(h)
+
+	body := `{"items":[{
+		"componentId":"hand-detect-yolov26m",
+		"taskName":"hand-detect-yolov26m",
+		"releaseLabel":"main-b4d2c1",
+		"imageRepo":"us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m",
+		"imageDigest":"sha256:1234567890abcdef",
+		"runtimeSnapshot":{
+			"command":["python","src/main.py"],
+			"resources":{"cpu":"14000m","memory":"55Gi"}
+		}
+	}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipeline-component-releases/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.PipelineComponentRelease `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := resp.Items[0]
+	if got.Selectable {
+		t.Fatal("expected short digest release to be unselectable")
+	}
+	if got.ValidationStatus != "failed" {
+		t.Fatalf("expected failed validation, got %q", got.ValidationStatus)
+	}
+	if len(got.ValidationErrors) == 0 {
+		t.Fatal("expected validation errors")
+	}
+}
+
+func TestListReleases_RevalidatesLegacySelectableShortDigest(t *testing.T) {
+	repo := &mockComponentRepo{
+		releases: map[string]*models.PipelineComponentRelease{
+			"legacy-bad": {
+				ID:               "legacy-bad",
+				ComponentID:      "hand-detect-yolov26m",
+				TaskName:         "hand-detect-yolov26m",
+				DisplayName:      "hand-detect-yolov26m",
+				ReleaseLabel:     "main-b4d2c1",
+				ImageRepo:        "us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m",
+				ImageDigest:      "sha256:1234567890abcdef",
+				RuntimeImage:     "us-central1-docker.pkg.dev/proj/video-proc-images/hand-detect-yolov26m@sha256:1234567890abcdef",
+				Status:           "ready",
+				Selectable:       true,
+				ValidationStatus: "passed",
+				RuntimeSnapshot: models.ComponentReleaseRuntimeSnapshot{
+					Command:   []string{"python", "src/main.py"},
+					Resources: map[string]interface{}{"cpu": "14000m", "memory": "55Gi"},
+				},
+			},
+		},
+	}
+	usecase := uc.New(repo)
+	h := New(usecase)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-component-releases?selectable=true&q=hand-detect", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var listResp struct {
+		Items []models.PipelineComponentRelease `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(listResp.Items) != 0 {
+		t.Fatalf("expected legacy bad release to be filtered from selectable list, got %d", len(listResp.Items))
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-component-releases/legacy-bad", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 get, got %d: %s", w.Code, w.Body.String())
+	}
+	var got models.PipelineComponentRelease
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal get: %v", err)
+	}
+	if got.Selectable || got.ValidationStatus != "failed" {
+		t.Fatalf("expected revalidated unselectable failed release, selectable=%v validation=%q", got.Selectable, got.ValidationStatus)
+	}
+}
+
 func TestReleaseIngestAuth_AcceptsCITokenOnlyForSyncRoute(t *testing.T) {
 	repo := &mockComponentRepo{}
 	usecase := uc.New(repo)

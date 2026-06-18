@@ -35,3 +35,15 @@
 - **Decision**: Add a designer edge mode that creates order-only dependency edges. These edges round-trip as bare DSL refs (`source: node-a`, `target: node-b`) and are styled separately from data edges.
 - **Alternatives**: Disable output validation globally, or keep all UI edges as `output -> input` and ask component authors to write placeholder output files.
 - **Rationale**: Data-transfer pipelines still need strong `/tmp/outputs` validation, while CyberPipe-style orchestration needs an explicit sequencing primitive that maps cleanly to Argo DAG dependencies.
+
+## 2026-06-18 — Revalidate release records at read time
+- **Context**: Dev contained historical component-release rows marked `selectable=true` even though their `imageDigest` values were short dummy `sha256` strings. A pipeline selected one of those rows and Argo created a Pod stuck in `InvalidImageName`.
+- **Decision**: Strictly require `sha256:<64 hex>` for `imageDigest` and `runtimeImage`, and re-run release normalization on list/get so existing bad rows are filtered out of selectable UI results without waiting for a migration.
+- **Alternatives**: Only fix the sync endpoint, or manually delete bad dev rows.
+- **Rationale**: Sync-only validation prevents new bad data but does not protect users from already persisted bad release rows.
+
+## 2026-06-18 — Chrome MCP screenshot fallback
+- **Context**: After deploying the release-message UI to Cloudflare, Chrome DevTools MCP successfully loaded the page, captured the accessibility snapshot, network requests, console issues, and browser API smoke. The `take_screenshot` call timed out twice on the execution detail page.
+- **Decision**: Store the Chrome MCP snapshot text as verification evidence for this pass and keep the timeout noted here.
+- **Alternatives**: Use Playwright or a non-MCP screenshot path.
+- **Rationale**: The user explicitly asked to use Chrome MCP, and the MCP snapshot contains the exact build ref plus visible `Pending` and `InvalidImageName` text needed for this verification.
