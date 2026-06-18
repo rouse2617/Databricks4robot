@@ -28,7 +28,14 @@ import {
 } from "antd";
 import type { InputRef } from "antd/es/input";
 import type { ColumnsType } from "antd/es/table";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import {
 	type ComponentReleaseIngestSource,
 	createComponent,
@@ -278,6 +285,52 @@ const releaseImageUid = (release?: PipelineComponentReleaseAPI): string =>
 	release?.imageUid ||
 	shortImageUid(release?.imageDigest || release?.runtimeImage || release?.id);
 
+const metadataStringValue = (
+	metadata: Record<string, unknown> | undefined,
+	...keys: string[]
+): string => {
+	for (const key of keys) {
+		const value = metadata?.[key];
+		if (typeof value === "string" && value.trim()) {
+			return value.trim();
+		}
+	}
+	return "";
+};
+
+const releaseTaskPath = (release: PipelineComponentReleaseAPI): string =>
+	release.taskPath ||
+	metadataStringValue(
+		release.technicalMetadata,
+		"taskDir",
+		"taskPath",
+		"task_path",
+	);
+
+const imageTagFromReference = (image?: string): string => {
+	const value = (image || "").trim();
+	if (!value || value.includes("@sha256:")) return "";
+	const lastSlash = value.lastIndexOf("/");
+	const lastColon = value.lastIndexOf(":");
+	return lastColon > lastSlash && lastColon < value.length - 1
+		? value.slice(lastColon + 1)
+		: "";
+};
+
+const releaseImageTag = (release?: PipelineComponentReleaseAPI): string =>
+	release?.imageTag || imageTagFromReference(release?.runtimeImage);
+
+const releaseImageReference = (
+	release?: PipelineComponentReleaseAPI,
+): string => {
+	if (!release) return "";
+	if (release.runtimeImage) return release.runtimeImage;
+	if (release.imageRepo && release.imageTag) {
+		return `${release.imageRepo}:${release.imageTag}`;
+	}
+	return release.imageRepo || "";
+};
+
 const legacyImageUid = (component?: PipelineComponentAPI): string =>
 	component
 		? shortImageUid(formatComponentImage(component.image, component.tag))
@@ -309,6 +362,68 @@ const releaseRefBadge = (
 	};
 };
 
+const isPlainCommitLabel = (value?: string): boolean => {
+	const normalized = normalizeGitCommit(value);
+	return /^[0-9a-f]{7,40}$/i.test(normalized);
+};
+
+const releaseShortCommit = (release: PipelineComponentReleaseAPI): string => {
+	const commit =
+		normalizeGitCommit(release.sourceCommit) ||
+		(isPlainCommitLabel(release.releaseLabel)
+			? normalizeGitCommit(release.releaseLabel)
+			: "");
+	return commit ? commit.slice(0, 7) : "";
+};
+
+const releaseVersionLabel = (
+	release: PipelineComponentReleaseAPI,
+	overrideLabel?: string,
+): string => {
+	const explicit = (overrideLabel || release.releaseLabel || "").trim();
+	if (explicit && !isPlainCommitLabel(explicit)) {
+		return shortTechnicalValue(explicit);
+	}
+
+	const shortCommit = releaseShortCommit(release);
+	if (release.sourceRefType === "tag") {
+		return (
+			shortTechnicalValue(normalizedReleaseRef(release) || explicit) || "-"
+		);
+	}
+	if (release.sourceRefType === "branch") {
+		const ref = normalizedReleaseRef(release) || "branch";
+		return shortTechnicalValue(shortCommit ? `${ref}-${shortCommit}` : ref);
+	}
+	if (release.sourceRefType === "pr") {
+		const ref = normalizedReleaseRef(release) || "pr";
+		return shortTechnicalValue(shortCommit ? `${ref}-${shortCommit}` : ref);
+	}
+	if (shortCommit) return `commit-${shortCommit}`;
+	return shortTechnicalValue(explicit) || "-";
+};
+
+const releaseBuildTrigger = (release: PipelineComponentReleaseAPI): string =>
+	metadataStringValue(
+		release.technicalMetadata,
+		"cloudBuildTrigger",
+		"trigger",
+		"triggerName",
+	);
+
+const releaseVersionTooltip = (release: PipelineComponentReleaseAPI): string =>
+	[
+		`版本: ${release.releaseLabel || "-"}`,
+		`来源: ${sourceRefTypeText(release)} ${release.sourceRef || "-"}`,
+		`Commit: ${formatCommitDisplay(release.sourceCommit)}`,
+		release.buildId ? `Build ID: ${release.buildId}` : "",
+		releaseBuildTrigger(release)
+			? `Trigger: ${releaseBuildTrigger(release)}`
+			: "",
+	]
+		.filter(Boolean)
+		.join("\n");
+
 const buildVersionToggleLabel = (
 	releaseCount: number,
 	expanded: boolean,
@@ -318,9 +433,7 @@ const buildVersionToggleLabel = (
 	return "展开构建版本";
 };
 
-const componentSourceSummary = (
-	record: ComponentLibraryRow,
-): string => {
+const componentSourceSummary = (record: ComponentLibraryRow): string => {
 	if (record.primaryRelease || record.releases.length > 0) {
 		const count = record.releases.length;
 		if (count === 0) return "来自版本库 · 暂无构建版本";
@@ -339,26 +452,15 @@ function ReleaseVersionChip({
 	label?: string;
 }) {
 	const badge = releaseRefBadge(release);
-	const displayText = shortTechnicalValue(
-		normalizeGitCommit(label || release.sourceCommit || release.releaseLabel) ||
-			label ||
-			release.sourceCommit ||
-			release.releaseLabel,
-	);
-	const tooltip =
-		normalizeGitCommit(release.sourceCommit) ||
-		label ||
-		release.sourceCommit ||
-		release.releaseLabel;
 	return (
-		<Tooltip title={tooltip}>
+		<Tooltip title={releaseVersionTooltip(release)}>
 			<Space size={6} align="center">
 				<Tag
 					color={badge.color}
 					style={{ cursor: "pointer", fontFamily: "monospace", margin: 0 }}
 					onClick={onClick}
 				>
-					{displayText}
+					{releaseVersionLabel(release, label)}
 				</Tag>
 				<Tooltip title={badge.tooltip}>
 					<Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -380,20 +482,16 @@ function ReleaseExpandedBuildCell({
 	onClick: () => void;
 }) {
 	const badge = releaseRefBadge(release);
-	const label =
-		shortTechnicalValue(
-			normalizeGitCommit(release.releaseLabel) || release.releaseLabel,
-		) || release.releaseLabel;
 	return (
 		<Space size={6} wrap align="center">
-			<Tooltip title={release.releaseLabel}>
+			<Tooltip title={releaseVersionTooltip(release)}>
 				<Tag
 					color={badge.color}
 					className="component-library-release-grid__build-tag"
 					style={{ cursor: "pointer", margin: 0 }}
 					onClick={onClick}
 				>
-					{label}
+					{releaseVersionLabel(release)}
 				</Tag>
 			</Tooltip>
 			{isPrimary ? (
@@ -465,8 +563,7 @@ function ReleaseExpandedTable({
 		{
 			title: "Tag",
 			key: "tag",
-			sorter: (a, b) =>
-				compareTextAsc(releaseTagText(a), releaseTagText(b)),
+			sorter: (a, b) => compareTextAsc(releaseTagText(a), releaseTagText(b)),
 			render: (_, release) => <ReleaseTagCell release={release} />,
 		},
 		{
@@ -478,12 +575,40 @@ function ReleaseExpandedTable({
 			render: (_, release) => formatDateTime(release.updatedAt),
 		},
 		{
-			title: "镜像 ID",
+			title: "镜像",
 			key: "imageUid",
-			sorter: (a, b) =>
-				compareTextAsc(releaseImageUid(a), releaseImageUid(b)),
-			render: (_, release) =>
-				copyableCode(releaseImageUid(release), releaseImageUid(release)),
+			sorter: (a, b) => compareTextAsc(releaseImageUid(a), releaseImageUid(b)),
+			render: (_, release) => {
+				const imageTag = releaseImageTag(release);
+				const imageUid = releaseImageUid(release);
+				const imageRef = releaseImageReference(release);
+				return (
+					<Tooltip
+						title={[
+							imageRef ? `完整镜像: ${imageRef}` : "",
+							imageTag ? `Tag: ${imageTag}` : "",
+							imageUid ? `Digest 短码: ${imageUid}` : "",
+						]
+							.filter(Boolean)
+							.join("\n")}
+					>
+						<Space direction="vertical" size={0} style={{ maxWidth: 180 }}>
+							<Typography.Text
+								code
+								copyable={imageRef ? { text: imageRef } : false}
+								className="component-library-release-grid__mono"
+							>
+								{imageTag || imageUid || "-"}
+							</Typography.Text>
+							{imageTag && imageUid ? (
+								<Typography.Text type="secondary" style={{ fontSize: 11 }}>
+									Digest {imageUid}
+								</Typography.Text>
+							) : null}
+						</Space>
+					</Tooltip>
+				);
+			},
 		},
 		{
 			title: "操作",
@@ -528,6 +653,8 @@ const releaseSearchText = (release: PipelineComponentReleaseAPI): string =>
 		release.sourceCommit,
 		release.buildId,
 		release.imageTag,
+		releaseTaskPath(release),
+		releaseBuildTrigger(release),
 		releaseImageUid(release),
 		release.imageDigest,
 		release.runtimeImage,
@@ -537,7 +664,12 @@ const releaseSearchText = (release: PipelineComponentReleaseAPI): string =>
 		.toLowerCase();
 
 const releaseIdentityText = (release: PipelineComponentReleaseAPI): string =>
-	[release.componentId, release.taskName, release.displayName, release.taskPath]
+	[
+		release.componentId,
+		release.taskName,
+		release.displayName,
+		releaseTaskPath(release),
+	]
 		.filter(Boolean)
 		.join(" ")
 		.toLowerCase();
@@ -820,11 +952,15 @@ function ReleaseDetail({ release }: { release: PipelineComponentReleaseAPI }) {
 					</Typography.Text>
 				</Descriptions.Item>
 				<Descriptions.Item label="版本">
-					<Tag color={releaseRefBadge(release).color}>
-						{release.releaseLabel}
-					</Tag>
+					<Tooltip title={releaseVersionTooltip(release)}>
+						<Tag color={releaseRefBadge(release).color}>
+							{releaseVersionLabel(release)}
+						</Tag>
+					</Tooltip>
 					<Tooltip title={releaseRefBadge(release).tooltip}>
-						<Tag color={releaseKindColor(release)}>{releaseKindLabel(release)}</Tag>
+						<Tag color={releaseKindColor(release)}>
+							{releaseKindLabel(release)}
+						</Tag>
 					</Tooltip>
 				</Descriptions.Item>
 				<Descriptions.Item label="状态" span={1}>
@@ -836,7 +972,10 @@ function ReleaseDetail({ release }: { release: PipelineComponentReleaseAPI }) {
 						{release.selectable ? "可选择" : "不可选"}
 					</Tag>
 				</Descriptions.Item>
-				<Descriptions.Item label="镜像ID">
+				<Descriptions.Item label="镜像 Tag">
+					{releaseImageTag(release) || "-"}
+				</Descriptions.Item>
+				<Descriptions.Item label="镜像 Digest 短码">
 					{copyableCode(releaseImageUid(release), releaseImageUid(release))}
 				</Descriptions.Item>
 				<Descriptions.Item label="来源类型">
@@ -874,7 +1013,7 @@ function ReleaseDetail({ release }: { release: PipelineComponentReleaseAPI }) {
 					<Typography.Text copyable>{release.componentId}</Typography.Text>
 				</Descriptions.Item>
 				<Descriptions.Item label="任务路径">
-					{release.taskPath || "-"}
+					{releaseTaskPath(release) || "-"}
 				</Descriptions.Item>
 				<Descriptions.Item label="Source Repo">
 					{release.sourceRepo || "-"}
@@ -893,6 +1032,12 @@ function ReleaseDetail({ release }: { release: PipelineComponentReleaseAPI }) {
 					>
 						{formatCommitDisplay(release.sourceCommit)}
 					</Typography.Text>
+				</Descriptions.Item>
+				<Descriptions.Item label="Build ID">
+					{copyableCode(release.buildId, shortTechnicalValue(release.buildId))}
+				</Descriptions.Item>
+				<Descriptions.Item label="Build Trigger">
+					{releaseBuildTrigger(release) || "-"}
 				</Descriptions.Item>
 				<Descriptions.Item label="Image Digest">
 					{copyableCode(
@@ -1493,15 +1638,54 @@ export function ComponentManager() {
 								</Button>
 							) : null}
 						</div>
-						<Typography.Text
-							type="secondary"
-							copyable={
-								record.imageUid ? { text: record.imageUid, tooltips: false } : false
-							}
-							className="component-library-row-image-id"
-						>
-							镜像 ID：{record.imageUid || "-"}
-						</Typography.Text>
+						{record.primaryRelease ? (
+							<Tooltip
+								title={[
+									releaseImageReference(record.primaryRelease)
+										? `完整镜像: ${releaseImageReference(record.primaryRelease)}`
+										: "",
+									releaseImageTag(record.primaryRelease)
+										? `Tag: ${releaseImageTag(record.primaryRelease)}`
+										: "",
+									record.imageUid ? `Digest 短码: ${record.imageUid}` : "",
+								]
+									.filter(Boolean)
+									.join("\n")}
+							>
+								<div className="component-library-row-image-id">
+									<Typography.Text
+										type="secondary"
+										copyable={
+											releaseImageReference(record.primaryRelease)
+												? {
+														text: releaseImageReference(record.primaryRelease),
+														tooltips: false,
+													}
+												: false
+										}
+									>
+										镜像 Tag：{releaseImageTag(record.primaryRelease) || "-"}
+									</Typography.Text>
+									{record.imageUid ? (
+										<Typography.Text type="secondary">
+											Digest：{record.imageUid}
+										</Typography.Text>
+									) : null}
+								</div>
+							</Tooltip>
+						) : (
+							<Typography.Text
+								type="secondary"
+								copyable={
+									record.imageUid
+										? { text: record.imageUid, tooltips: false }
+										: false
+								}
+								className="component-library-row-image-id"
+							>
+								镜像摘要：{record.imageUid || "-"}
+							</Typography.Text>
+						)}
 					</div>
 				);
 			},
@@ -1532,7 +1716,9 @@ export function ComponentManager() {
 								</Typography.Text>
 							</Typography.Text>
 						) : null}
-						{record.releases.length === 0 && !record.legacyComponent ? "-" : null}
+						{record.releases.length === 0 && !record.legacyComponent
+							? "-"
+							: null}
 						{tag ? (
 							<Typography.Text type="secondary" style={{ fontSize: 12 }}>
 								Tag：{tag}
@@ -1662,7 +1848,10 @@ export function ComponentManager() {
 	];
 
 	return (
-		<div className="component-library-page" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+		<div
+			className="component-library-page"
+			style={{ display: "flex", flexDirection: "column", gap: 16 }}
+		>
 			{contextHolder}
 			<div>
 				<div>

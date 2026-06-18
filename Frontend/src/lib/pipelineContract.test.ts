@@ -5,6 +5,7 @@ import {
 	formatEdgeEndpoint,
 	fromTranspilerPipeline,
 	normalizeComponentArgs,
+	PIPELINE_EDGE_KIND_DEPENDENCY,
 	toTranspilerPipeline,
 } from "./pipelineContract";
 
@@ -291,6 +292,22 @@ describe("toTranspilerPipeline", () => {
 		expect(result.edges[0].target).toBe("step-2.input");
 	});
 
+	it("converts dependency edges without port refs", () => {
+		const edges: Edge[] = [
+			{
+				id: "e-1",
+				source: "step-1",
+				target: "step-2",
+				data: { kind: PIPELINE_EDGE_KIND_DEPENDENCY },
+			},
+		];
+		const result = toTranspilerPipeline([], edges, { name: "test" });
+		expect(result.edges[0]).toEqual({
+			source: "step-1",
+			target: "step-2",
+		});
+	});
+
 	it("uses custom version when provided", () => {
 		const result = toTranspilerPipeline([], [], {
 			name: "test",
@@ -417,6 +434,7 @@ describe("fromTranspilerPipeline", () => {
 		expect(edges[0].target).toBe("step-2");
 		expect(edges[0].sourceHandle).toBeUndefined();
 		expect(edges[0].targetHandle).toBeUndefined();
+		expect(edges[0].data?.kind).toBe(PIPELINE_EDGE_KIND_DEPENDENCY);
 	});
 
 	it("assigns sequential edge IDs", () => {

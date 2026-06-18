@@ -30,7 +30,11 @@
 - [x] [Frontend] Show compact node badges for selected secret/storage mounts without exposing low-level details.
 - [x] [Frontend] Show selected node runtime config, secret mounts, storage mounts, and injected env names in the execution detail drawer.
 - [x] [Frontend] Move deprecated pipeline configs out of the default config workspace and into an archive shelf for trace/view/diff only.
+- [x] [Frontend] Add an explicit order-only edge mode for CyberPipe-style pipelines where edges control sequencing without consuming `/tmp/outputs` files.
 - [x] [Frontend] Add tests for selecting/clearing secret and storage bindings. Covered by DSL round-trip, node badge unit test, and NodeConfigPanel storage interaction test.
+- [ ] [Frontend] Component release detail displays task directory from `technicalMetadata.taskDir` when `taskPath` is absent.
+- [ ] [Frontend] Component release list distinguishes image tag from digest/hash identity and shows full image metadata in tooltips.
+- [ ] [docs] Record component release CI ingest token as a required backend dev deploy binding.
 
 ## API contract sync
 See [`docs/agents/AI-RULES.md` § API contract sync](../../docs/agents/AI-RULES.md#api-contract-sync-mandatory).
@@ -51,6 +55,7 @@ See [`docs/agents/AI-RULES.md` § API contract sync](../../docs/agents/AI-RULES.
 - [x] [Frontend] targeted Vitest for pipeline contract and pipeline node display.
 - [x] [Frontend] targeted Vitest for execution detail runtime mount display and workflow-node to pipeline-node mapping.
 - [x] [Frontend] targeted Vitest for Registry Center active/archive config shelf behavior.
+- [x] [Frontend] targeted Vitest for pipeline order-only edge import/export and run validation.
 - [x] [Frontend] `npm run build`.
 - [x] [SDK] `uv run pytest tests/unit/test_managers.py -q`.
 - [x] [repo] `git diff --check`.
@@ -79,6 +84,9 @@ See [`docs/agents/AI-RULES.md` § API contract sync](../../docs/agents/AI-RULES.
 - [x] Runtime smoke: the actual Pod spec contains `PIPELINE_SECRET_DATABREW_SMOKE_SECRET_PATH`, `PIPELINE_STORAGE_SCRATCH_EMPTYDIR_PATH`, CSI driver `secrets-store-gke.csi.k8s.io`, SecretProviderClass `databrew-dev-runtime-mount-smoke`, and `emptyDir` storage mount.
 - [x] Runtime smoke: verify unbound nodes do not receive another node's secret or storage mount. Dry-run two-node manifest shows `step-node-b` has only `PIPELINE_DEPLOYMENT_ID` and `volumemounts: []`.
 - [x] Runtime negative smoke: unknown mount resource fails before workflow creation with `400 INVALID_ARGUMENT` and message `node node-a runtime secret does-not-exist is not available`.
+- [ ] Chrome DevTools MCP on CF domain: component registry shows `hand-track-stereo-databrew-test` task path, image tag, digest identity, and friendlier version label.
+- [ ] DataBrew sync smoke with `X-Databrew-CI-Token` returns `{"items":[]}` after the backend revision binds `COMPONENT_RELEASE_INGEST_TOKEN` or `DATABREW_CI_INGEST_TOKEN`.
+- [ ] Chrome DevTools MCP on CF domain: designer order-only edge mode exports naked edge refs and no longer shows `/tmp/outputs/output` consumption warnings.
 
 ## PR
 - [ ] PR template filled with Linear `CYB-2224` and OpenSpec change-id.

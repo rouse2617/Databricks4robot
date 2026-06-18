@@ -1,9 +1,12 @@
+import { type Edge, type Node, useReactFlow } from "@xyflow/react";
 import {
-	type Edge,
-	type Node,
-	useReactFlow,
-} from "@xyflow/react";
-import { useCallback, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
+	type Dispatch,
+	type SetStateAction,
+	useCallback,
+	useMemo,
+	useRef,
+} from "react";
+import { isDependencyEdge } from "../../../lib/pipeline-design/edge-format";
 import { createPipelineNodeId } from "../model/node-id";
 import type { CanvasEngineAdapter } from "./canvasEngineAdapter";
 
@@ -49,9 +52,7 @@ export function useXyflowCanvasEngine<T extends Node>(
 		(id: string, data: Record<string, unknown>) => {
 			setNodes((current) =>
 				current.map((node) =>
-					node.id === id
-						? { ...node, data: { ...node.data, ...data } }
-						: node,
+					node.id === id ? { ...node, data: { ...node.data, ...data } } : node,
 				),
 			);
 		},
@@ -153,7 +154,9 @@ export function useXyflowCanvasEngine<T extends Node>(
 		const pastedEdges = payload.edges.map((edge) => {
 			const source = idMap.get(edge.source) ?? edge.source;
 			const target = idMap.get(edge.target) ?? edge.target;
-			const handle = edge.targetHandle ?? "input";
+			const handle = isDependencyEdge(edge)
+				? "dependency"
+				: (edge.targetHandle ?? "input");
 			return {
 				...edge,
 				id: `${source}-${target}-${handle}-${createPipelineNodeId()}`,

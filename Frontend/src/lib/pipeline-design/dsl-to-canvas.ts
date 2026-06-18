@@ -9,7 +9,11 @@ import type {
 	PipelineCanvasNode,
 } from "../../features/pipeline-designer/model/canvas-model";
 import { normalizeComponentArgs } from "./args-normalizer";
-import { splitRef } from "./edge-format";
+import {
+	DEPENDENCY_EDGE_STYLE,
+	dependencyEdgeData,
+	splitRef,
+} from "./edge-format";
 import {
 	defaultInputPorts,
 	defaultOutputPorts,
@@ -158,12 +162,20 @@ export function designDSLToCanvas(pipeline: Pipeline): {
 	const edges: PipelineCanvasEdge[] = pipeline.edges.map((pe, i) => {
 		const source = splitRef(pe.source);
 		const target = splitRef(pe.target);
+		const isDependency = !source.port && !target.port;
 		return {
 			id: `e-${i}`,
 			source: source.nodeId,
 			target: target.nodeId,
 			...(source.port ? { sourceHandle: source.port } : {}),
 			...(target.port ? { targetHandle: target.port } : {}),
+			...(isDependency
+				? {
+						animated: true,
+						style: DEPENDENCY_EDGE_STYLE,
+						data: dependencyEdgeData(),
+					}
+				: {}),
 		};
 	});
 

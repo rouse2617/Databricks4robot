@@ -23,3 +23,15 @@
 - **Decision**: Keep DataBrew runtime mounts backed by generic platform configuration only: `PIPELINE_RUNTIME_MOUNT_CATALOG_JSON`, `PIPELINE_RUNTIME_SECRET_RESOURCES_JSON`, `PIPELINE_RUNTIME_STORAGE_RESOURCES_JSON`, plus the existing generic PVC and single-secret envs. Do not add another service's env defaults to dev deploy scripts or catalog code.
 - **Alternatives**: Auto-import dispatch env vars such as DB-specific SecretProviderClass names into the DataBrew catalog.
 - **Rationale**: DataBrew needs a clean product boundary. Platform operators can register any approved SecretProviderClass/PVC through the generic catalog without making users or deploy scripts inherit another service's naming model.
+
+## 2026-06-18 — Component release sync requires a CI token binding
+- **Context**: A manual DataBrew component release sync using `X-Databrew-CI-Token` returned `401 UNAUTHORIZED`, while the same payload with the dev admin token succeeded. Cloud Run dev did not expose `COMPONENT_RELEASE_INGEST_TOKEN` or `DATABREW_CI_INGEST_TOKEN` in the backend revision.
+- **Decision**: Treat the component release ingest token as a required backend dev deploy binding whenever Cloud Build tasks are expected to sync releases into DataBrew.
+- **Alternatives**: Keep using the shared dev admin token in task Cloud Build steps.
+- **Rationale**: CI sync should use a dedicated scoped token so task builds do not depend on the broad dev admin token and so missing deployment wiring is caught immediately.
+
+## 2026-06-18 — CyberPipe sequencing uses explicit order-only edges
+- **Context**: CyberPipe tasks use the same `VIDEO_ID` to query context from Grace, so many pipeline edges only mean "run B after A" and should not imply `/tmp/outputs/<port>` file transfer.
+- **Decision**: Add a designer edge mode that creates order-only dependency edges. These edges round-trip as bare DSL refs (`source: node-a`, `target: node-b`) and are styled separately from data edges.
+- **Alternatives**: Disable output validation globally, or keep all UI edges as `output -> input` and ask component authors to write placeholder output files.
+- **Rationale**: Data-transfer pipelines still need strong `/tmp/outputs` validation, while CyberPipe-style orchestration needs an explicit sequencing primitive that maps cleanly to Argo DAG dependencies.

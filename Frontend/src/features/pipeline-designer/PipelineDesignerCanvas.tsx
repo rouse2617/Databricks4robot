@@ -4,6 +4,7 @@ import {
 	ImportOutlined,
 	PlayCircleOutlined,
 	SaveOutlined,
+	SwapOutlined,
 } from "@ant-design/icons";
 import {
 	applyEdgeChanges,
@@ -20,6 +21,7 @@ import {
 	Input,
 	Menu,
 	Modal,
+	Segmented,
 	Select,
 	Space,
 	Spin,
@@ -38,6 +40,7 @@ import {
 	useEffect,
 	useMemo,
 	useRef,
+	useState,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../../api/assets";
@@ -58,6 +61,11 @@ import type {
 import { usePipelineComponents } from "../../hooks/usePipelineComponents";
 import { usePipelineKeyboardShortcuts } from "../../hooks/usePipelineKeyboardShortcuts";
 import { MAX_BATCH_ASSET_COUNT } from "../../lib/batchAssetLimits";
+import {
+	DEPENDENCY_EDGE_STYLE,
+	dependencyEdgeData,
+	isDependencyEdge,
+} from "../../lib/pipeline-design/edge-format";
 import {
 	fromTranspilerPipeline,
 	toTranspilerPipeline,
@@ -105,6 +113,7 @@ const DEFAULT_NODE_X_GAP = 80;
 const DEFAULT_NODE_Y_GAP = 160;
 const DEFAULT_NODE_LEFT_PADDING = 80;
 const DEFAULT_NODE_TOP_PADDING = 120;
+type EdgeConnectionMode = "data" | "dependency";
 
 function defaultNodeScreenPosition(
 	bounds: DOMRect | undefined,
@@ -134,6 +143,7 @@ function defaultNodeScreenPosition(
 function findDuplicateTargetInput(edges: PipelineFlowEdge[]) {
 	const seen = new Map<string, PipelineFlowEdge>();
 	for (const edge of edges) {
+		if (isDependencyEdge(edge)) continue;
 		if (!edge.target) continue;
 		const targetPort = edge.targetHandle || DEFAULT_TARGET_PORT;
 		const key = `${edge.target}.${targetPort}`;
@@ -324,6 +334,7 @@ function PipelineDesignerCanvasInner({
 	});
 	const [nodes, setNodes, onNodesChange] = useNodesState<PipelineFlowNode>([]);
 	const [edges, setEdges] = useEdgesState<PipelineFlowEdge>([]);
+	const [edgeMode, setEdgeMode] = useState<EdgeConnectionMode>("data");
 	const engine = useXyflowCanvasEngine(nodes, edges, setNodes, setEdges);
 	const workflowNameReplaceRef = useRef(false);
 	const {
@@ -406,6 +417,10 @@ function PipelineDesignerCanvasInner({
 			executionTargets.find((target) => target.id === selectedTargetId) ?? null,
 		[executionTargets, selectedTargetId],
 	);
+	const hasDataEdges = useMemo(
+		() => edges.some((edge) => !isDependencyEdge(edge)),
+		[edges],
+	);
 
 	const onEdgesChange = useCallback(
 		(changes: EdgeChange[]) => {
@@ -426,6 +441,23 @@ function PipelineDesignerCanvasInner({
 	const onConnect = useCallback(
 		(connection: Connection) => {
 			if (!connection.source || !connection.target) return;
+			if (edgeMode === "dependency") {
+				const nextEdge: PipelineFlowEdge = {
+					id: `${connection.source}->${connection.target}:dependency`,
+					source: connection.source,
+					target: connection.target,
+					animated: true,
+					style: DEPENDENCY_EDGE_STYLE,
+					data: dependencyEdgeData(),
+				};
+				setEdges((current) => {
+					const withoutSameEdge = current.filter(
+						(edge) => edge.id !== nextEdge.id,
+					);
+					return [...withoutSameEdge, nextEdge];
+				});
+				return;
+			}
 			const sourceHandle = connection.sourceHandle || DEFAULT_SOURCE_PORT;
 			const targetHandle = connection.targetHandle || DEFAULT_TARGET_PORT;
 			const nextEdge: PipelineFlowEdge = {
@@ -450,8 +482,28 @@ function PipelineDesignerCanvasInner({
 				return next;
 			});
 		},
-		[messageApi, setEdges],
+		[edgeMode, messageApi, setEdges],
 	);
+	const convertDataEdgesToDependencies = useCallback(() => {
+		let convertedCount = 0;
+		setEdges((current) =>
+			current.map((edge) => {
+				if (isDependencyEdge(edge)) return edge;
+				convertedCount += 1;
+				return {
+					...edge,
+					sourceHandle: undefined,
+					targetHandle: undefined,
+					animated: true,
+					style: DEPENDENCY_EDGE_STYLE,
+					data: dependencyEdgeData(edge.data),
+				};
+			}),
+		);
+		if (convertedCount > 0) {
+			messageApi.success(`已将 ${convertedCount} 条连线转为顺序依赖`);
+		}
+	}, [messageApi, setEdges]);
 	const canvasSnapshot = useMemo(
 		() => createCanvasSnapshot(pipelineName, nodes, edges),
 		[pipelineName, nodes, edges],
@@ -1117,6 +1169,34 @@ function PipelineDesignerCanvasInner({
 								}))}
 								aria-label="载入标准流水线示例"
 							/>
+							<Tooltip title="数据连线会传递 /tmp/outputs 文件；顺序连线只控制节点先后。">
+								<div className="pipeline-toolbar__edge-mode">
+									<span className="pipeline-toolbar__edge-mode-label">
+										新增连线
+									</span>
+									<Segmented<EdgeConnectionMode>
+										size="small"
+										value={edgeMode}
+										onChange={setEdgeMode}
+										options={[
+											{ label: "数据", value: "data" },
+											{ label: "顺序", value: "dependency" },
+										]}
+										aria-label="连线模式"
+									/>
+								</div>
+							</Tooltip>
+							{edgeMode === "dependency" && hasDataEdges ? (
+								<Tooltip title="把当前画布已有的数据连线改成只控制先后顺序的依赖线。">
+									<Button
+										size="small"
+										icon={<SwapOutlined />}
+										onClick={convertDataEdgesToDependencies}
+									>
+										已有线转顺序
+									</Button>
+								</Tooltip>
+							) : null}
 							<Tooltip title={deployDisabledReason}>
 								<span>
 									<Button

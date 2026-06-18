@@ -241,7 +241,7 @@ describe("pipeline validation", () => {
 		expect(result.errors[0]).toContain("/tmp/outputs/output");
 	});
 
-	it("warns instead of blocking when an opaque container output is consumed", () => {
+	it("rejects opaque container output consumption without a declared output write", () => {
 		const result = validatePipelineForRun(
 			basePipeline({
 				nodes: [
@@ -272,10 +272,91 @@ describe("pipeline validation", () => {
 			}),
 		);
 
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]).toContain("/tmp/outputs/output");
+		expect(result.errors[0]).toContain("顺序连线");
+	});
+
+	it("does not warn for unused opaque container outputs", () => {
+		const result = validatePipelineForRun(
+			basePipeline({
+				nodes: [
+					{
+						id: "producer",
+						component: {
+							name: "producer",
+							image: "registry.example.com/producer:latest",
+							type: "container",
+							command: ["python", "src/main.py"],
+							args: [],
+						},
+						outputs: [{ name: "output", type: "asset" }],
+					},
+				],
+			}),
+		);
+
+		expect(result.valid).toBe(true);
+		expect(result.warnings).toEqual([]);
+	});
+
+	it("does not warn for unused shell outputs", () => {
+		const result = validatePipelineForRun(
+			basePipeline({
+				nodes: [
+					{
+						id: "producer",
+						component: {
+							name: "producer",
+							image: "busybox",
+							type: "container",
+							command: ["sh", "-c"],
+							args: [{ name: "script", value: "echo only sequencing" }],
+						},
+						outputs: [{ name: "output", type: "asset" }],
+					},
+				],
+			}),
+		);
+
+		expect(result.valid).toBe(true);
+		expect(result.warnings).toEqual([]);
+	});
+
+	it("allows order-only edges without consumed output files", () => {
+		const result = validatePipelineForRun(
+			basePipeline({
+				nodes: [
+					{
+						id: "producer",
+						component: {
+							name: "producer",
+							image: "registry.example.com/producer:latest",
+							type: "container",
+							command: ["python", "src/main.py"],
+							args: [],
+						},
+						outputs: [{ name: "output", type: "asset" }],
+					},
+					{
+						id: "consumer",
+						component: {
+							name: "consumer",
+							image: "registry.example.com/consumer:latest",
+							type: "container",
+							command: ["python", "src/main.py"],
+							args: [],
+						},
+						inputs: [{ name: "input", type: "asset" }],
+					},
+				],
+				edges: [{ source: "producer", target: "consumer" }],
+			}),
+		);
+
 		expect(result.valid).toBe(true);
 		expect(result.errors).toEqual([]);
-		expect(result.warnings[0]).toContain("无法静态确认");
-		expect(result.warnings[0]).toContain("/tmp/outputs/output");
+		expect(result.warnings.every((item) => !item.includes("消费"))).toBe(true);
 	});
 });
 

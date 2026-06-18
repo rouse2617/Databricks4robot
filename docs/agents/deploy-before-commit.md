@@ -85,6 +85,34 @@ Do not hand-edit Cloud Run Console env vars for these keys. The next scripted
 deploy will replace the revision template; keep the canonical values in this
 script or pass explicit overrides.
 
+### Backend component release sync token
+
+If the backend revision is expected to receive component release sync calls from
+Cloud Build, the dev Cloud Run service MUST bind a dedicated CI ingest token.
+Set either `COMPONENT_RELEASE_INGEST_TOKEN` or `DATABREW_CI_INGEST_TOKEN` from
+Secret Manager secret `cyber-databrew-dev-component-release-ingest-token`.
+
+Without this binding, `scripts/databrew_sync_component_release.py` and task
+Cloud Build sync steps fail with `401 UNAUTHORIZED` when they use
+`X-Databrew-CI-Token`.
+
+Verify the binding after backend deploy:
+
+```bash
+export BASE="https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app"
+export CI_TOKEN="$(
+  gcloud secrets versions access latest \
+    --project green-valley-442103 \
+    --secret cyber-databrew-dev-component-release-ingest-token
+)"
+
+curl -sfS -X POST "$BASE/api/v1/pipeline-component-releases/sync" \
+  -H "X-Databrew-CI-Token: ${CI_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"items":[]}'
+# Expected: {"items":[]}; 401 means the Cloud Run revision is missing the token env binding.
+```
+
 ### Frontend — build, push, deploy
 
 Frontend is two images (SPA + nginx wrapper). Match `deploy/cloudrun/frontend-dev.sh` defaults:

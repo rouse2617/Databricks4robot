@@ -18,6 +18,7 @@ import {
 	DEFAULT_INPUT_PORT,
 	DEFAULT_OUTPUT_PORT,
 	formatEdgeEndpoint,
+	isDependencyEdge,
 } from "./edge-format";
 import {
 	defaultInputPorts,
@@ -145,6 +146,12 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 }
 
 function edgeToDef(e: PipelineCanvasEdge): PipelineEdgeDef {
+	if (isDependencyEdge(e)) {
+		return {
+			source: e.source,
+			target: e.target,
+		};
+	}
 	return {
 		source: formatEdgeEndpoint(e.source, e.sourceHandle, DEFAULT_OUTPUT_PORT),
 		target: formatEdgeEndpoint(e.target, e.targetHandle, DEFAULT_INPUT_PORT),

@@ -16,7 +16,10 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { PipelineComponentAPI } from "../api/pipelineComponentApi";
+import type {
+	PipelineComponentAPI,
+	PipelineComponentReleaseAPI,
+} from "../api/pipelineComponentApi";
 import { ComponentManager } from "./ComponentManager";
 
 const apiMocks = vi.hoisted(() => ({
@@ -67,6 +70,52 @@ const components: PipelineComponentAPI[] = [
 		updatedAt: "2026-06-02T15:04:20+08:00",
 	},
 ];
+
+const releaseFromRegistry: PipelineComponentReleaseAPI = {
+	id: "b126b7fd-9fa8-5fea-bf1d-0e2d331577be",
+	imageUid: "26a77873",
+	componentId: "hand-track-stereo-databrew-test",
+	taskName: "hand-track-stereo-databrew-test",
+	displayName: "hand-track-stereo-databrew-test",
+	owner: "ci",
+	releaseLabel: "97f1ae4",
+	channel: "candidate",
+	sourceRepo: "CyberOrigin2077/automated-processing-gcloud",
+	sourceRef: "97f1ae4-test-ref",
+	sourceRefType: "commit",
+	sourceCommit: "97f1ae4-test-ref",
+	buildId: "build-123",
+	imageRepo:
+		"us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/hand-track-stereo",
+	imageTag: "manual-20260617-055352",
+	imageDigest: "sha256:test-digest-303d372",
+	runtimeImage:
+		"us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/hand-track-stereo:manual-20260617-055352",
+	status: "ready",
+	selectable: true,
+	validationStatus: "passed",
+	validationErrors: [],
+	runtimeSnapshot: {
+		image:
+			"us-central1-docker.pkg.dev/green-valley-442103/video-proc-images/hand-track-stereo:manual-20260617-055352",
+		command: ["python", "src/main.py"],
+		inputPorts: [{ name: "input", type: "asset" }],
+		outputPorts: [{ name: "output", type: "asset" }],
+		resources: {
+			cpu: "14000m",
+			memory: "55Gi",
+			gpu: "1",
+			gpuType: "nvidia-l4",
+		},
+	},
+	technicalMetadata: {
+		taskDir: "tasks/hand_track_stereo_databrew_test",
+		cloudBuildTrigger: "hand-track-stereo-build-trigger",
+	},
+	createdAt: "2026-06-18T07:30:00Z",
+	updatedAt: "2026-06-18T07:35:00Z",
+	lastSyncedAt: "2026-06-18T07:35:00Z",
+};
 
 beforeAll(() => {
 	Object.defineProperty(window, "matchMedia", {
@@ -190,5 +239,35 @@ describe("page ComponentManager", () => {
 				document.body.querySelector('input[placeholder="normalize-mcap"]'),
 			).toBeNull();
 		});
+	}, 60000);
+
+	it("shows release task path and separates image tag from digest identity", async () => {
+		apiMocks.listComponents.mockResolvedValue({ items: [] });
+		apiMocks.listComponentReleases.mockResolvedValue({
+			items: [releaseFromRegistry],
+		});
+
+		render(<ComponentManager />);
+
+		expect(
+			await screen.findByText("hand-track-stereo-databrew-test"),
+		).toBeTruthy();
+		expect(screen.getByText("来自版本库 · 1 个构建版本")).toBeTruthy();
+		expect(screen.getByText("commit-97f1ae4")).toBeTruthy();
+		expect(screen.getByText("镜像 Tag：manual-20260617-055352")).toBeTruthy();
+		expect(screen.getByText("Digest：26a77873")).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: /查看当前版本/ }));
+
+		await waitFor(() => {
+			expect(screen.getByRole("dialog", { name: "镜像构建详情" })).toBeTruthy();
+		});
+		expect(
+			screen.getByText("tasks/hand_track_stereo_databrew_test"),
+		).toBeTruthy();
+		expect(screen.getByText("hand-track-stereo-build-trigger")).toBeTruthy();
+		expect(
+			screen.getAllByText("manual-20260617-055352").length,
+		).toBeGreaterThan(0);
 	}, 60000);
 });

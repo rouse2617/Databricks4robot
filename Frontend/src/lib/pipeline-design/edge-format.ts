@@ -1,5 +1,28 @@
+import type { Edge } from "@xyflow/react";
+
 export const DEFAULT_INPUT_PORT = "input";
 export const DEFAULT_OUTPUT_PORT = "output";
+export const PIPELINE_EDGE_KIND_DEPENDENCY = "dependency";
+export const DEPENDENCY_EDGE_STYLE = { strokeDasharray: "6 4" };
+
+export type PipelineEdgeKind = "data" | typeof PIPELINE_EDGE_KIND_DEPENDENCY;
+export type PipelineEdgeData = {
+	kind?: PipelineEdgeKind;
+};
+
+export function isDependencyEdge(edge: Pick<Edge, "data">): boolean {
+	return (
+		(edge.data as PipelineEdgeData | undefined)?.kind ===
+		PIPELINE_EDGE_KIND_DEPENDENCY
+	);
+}
+
+export function dependencyEdgeData(data?: Edge["data"]) {
+	return {
+		...(data ?? {}),
+		kind: PIPELINE_EDGE_KIND_DEPENDENCY,
+	};
+}
 
 /** Format canvas edge endpoints for the transpiler (node-id.port-name). */
 export function formatEdgeEndpoint(
