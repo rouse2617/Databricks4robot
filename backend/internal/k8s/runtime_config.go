@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -23,29 +24,52 @@ func NewRuntimeConfigStore(clientset kubernetes.Interface) *RuntimeConfigStore {
 
 var invalidConfigMapNameChars = regexp.MustCompile(`[^a-z0-9-]+`)
 
-func (s *RuntimeConfigStore) Create(ctx context.Context, namespace string, deploymentID string, input pipelineUC.RuntimeConfigProjection) (string, error) {
+func (s *RuntimeConfigStore) Create(ctx context.Context, namespace string, deploymentID string, input pipelineUC.RuntimeConfigProjection, owner *pipelineUC.RuntimeConfigOwnerReference) (string, error) {
 	if s == nil || s.clientset == nil {
 		return "", fmt.Errorf("%w: runtime config store is not configured", ErrUnavailable)
 	}
 	namespace = strings.TrimSpace(namespace)
 	deploymentID = strings.TrimSpace(deploymentID)
-	fileName := strings.TrimSpace(input.FileName)
-	if namespace == "" || deploymentID == "" || fileName == "" {
-		return "", fmt.Errorf("namespace, deploymentID, and fileName are required")
+	volumeName := strings.TrimSpace(input.VolumeName)
+	if volumeName == "" {
+		volumeName = "runtime-config-" + deploymentID
 	}
-	name := sanitizeRuntimeConfigName("runtime-config-" + deploymentID)
+	fileName := strings.TrimSpace(input.FileName)
+	files := make(map[string]string)
+	for name, content := range input.Files {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		files[name] = content
+	}
+	if fileName != "" {
+		files[fileName] = input.Content
+	}
+	if namespace == "" || deploymentID == "" || len(files) == 0 {
+		return "", fmt.Errorf("namespace, deploymentID, and at least one config file are required")
+	}
+	name := sanitizeRuntimeConfigName(volumeName)
+	ownerRefs := []metav1.OwnerReference(nil)
+	if owner != nil && owner.Name != "" && owner.UID != "" {
+		ownerRefs = append(ownerRefs, metav1.OwnerReference{
+			APIVersion: owner.APIVersion,
+			Kind:       owner.Kind,
+			Name:       owner.Name,
+			UID:        types.UID(owner.UID),
+		})
+	}
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
+			Name:            name,
+			Namespace:       namespace,
+			OwnerReferences: ownerRefs,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "cyber-databrew",
+				"app.kubernetes.io/managed-by":  "cyber-databrew",
 				"cyberorigin.ai/runtime-config": "true",
 			},
 		},
-		Data: map[string]string{
-			fileName: input.Content,
-		},
+		Data: files,
 	}
 	_, err := s.clientset.CoreV1().ConfigMaps(namespace).Create(ctx, configMap, metav1.CreateOptions{})
 	if err != nil {

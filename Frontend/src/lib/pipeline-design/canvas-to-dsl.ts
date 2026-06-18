@@ -2,6 +2,7 @@ import type {
 	Pipeline,
 	PipelineEdgeDef,
 	PipelineNodeDef,
+	PipelineNodeRuntimeConfig,
 } from "../../components/pipeline/types";
 import type {
 	PipelineCanvasEdge,
@@ -33,8 +34,29 @@ function envToMap(
 	return out;
 }
 
+function normalizeRuntimeConfig(
+	config: PipelineNodeRuntimeConfig | undefined,
+): PipelineNodeRuntimeConfig | undefined {
+	if (!config?.configId || !config.version) return undefined;
+	const mountPath = config.mountPath?.trim();
+	const targetFilename = config.targetFilename?.trim();
+	if (!mountPath || !targetFilename) return undefined;
+	return {
+		mode: "saved",
+		configId: config.configId,
+		version: config.version,
+		...(config.fileName?.trim() ? { fileName: config.fileName.trim() } : {}),
+		mountPath,
+		targetFilename,
+		...(config.displayName?.trim()
+			? { displayName: config.displayName.trim() }
+			: {}),
+	};
+}
+
 function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 	const d = n.data;
+	const runtimeConfig = normalizeRuntimeConfig(d.runtimeConfig);
 	return {
 		id: n.id,
 		component: {
@@ -73,6 +95,7 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 		},
 		inputs: normalizePorts(d.inputPorts, defaultInputPorts),
 		outputs: normalizePorts(d.outputPorts, defaultOutputPorts),
+		...(runtimeConfig ? { runtimeConfig } : {}),
 	};
 }
 

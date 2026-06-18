@@ -1826,6 +1826,104 @@ components:
         owner: { type: string, description: "Owner of the new revision", example: "lisi" }
 
     # ── Pipeline ─────────────────────────────────────────────────────────
+    PipelineArgument:
+      type: object
+      properties:
+        name: { type: string }
+        value: { type: string }
+        from: { type: string }
+    PipelinePort:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        desc: { type: string }
+        default_value: { type: string }
+    PipelineNodeComponentResources:
+      type: object
+      properties:
+        cpu: { type: string, example: 500m }
+        memory: { type: string, example: 512Mi }
+        disk: { type: string, example: 1Gi }
+        gpu: { type: string, example: "1" }
+        computeTier: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+    PipelineNodeComponent:
+      type: object
+      required: [name, image]
+      properties:
+        name: { type: string }
+        image: { type: string }
+        type: { type: string, enum: [container, script, resource, suspend] }
+        source: { type: string }
+        command:
+          type: array
+          items: { type: string }
+        args:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineArgument' }
+        resources:
+          $ref: '#/components/schemas/PipelineNodeComponentResources'
+        componentId: { type: string }
+        releaseId: { type: string }
+        componentVersionLabel: { type: string }
+    PipelineNodeRuntimeConfig:
+      type: object
+      description: Node-local saved config-library binding. During deploy this config is mounted only into the node that declares it.
+      required: [mode, configId, version, mountPath, targetFilename]
+      properties:
+        mode:
+          type: string
+          enum: [saved]
+        configId: { type: string }
+        version: { type: integer, minimum: 1 }
+        fileName: { type: string }
+        mountPath: { type: string, example: /workspace/configs }
+        targetFilename: { type: string, example: detector.yaml }
+        displayName: { type: string }
+    PipelineNodeDefinition:
+      type: object
+      required: [id, component]
+      properties:
+        id: { type: string }
+        component:
+          $ref: '#/components/schemas/PipelineNodeComponent'
+        inputs:
+          type: array
+          items: { $ref: '#/components/schemas/PipelinePort' }
+        outputs:
+          type: array
+          items: { $ref: '#/components/schemas/PipelinePort' }
+        runtimeConfig:
+          $ref: '#/components/schemas/PipelineNodeRuntimeConfig'
+    PipelineEdgeDefinition:
+      type: object
+      required: [source, target]
+      properties:
+        source: { type: string, example: step-a.output }
+        target: { type: string, example: step-b.input }
+    PipelineDefinition:
+      type: object
+      required: [name, nodes, edges]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineNodeDefinition' }
+        edges:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineEdgeDefinition' }
+        assetSelection:
+          type: object
+          properties:
+            assetIds:
+              type: array
+              items: { type: string }
+            assetQuery: { type: string }
     PipelineTemplate:
       type: object
       properties:
@@ -1834,8 +1932,7 @@ components:
         version: { type: integer, description: Template version number }
         versionCount: { type: integer, description: Number of saved versions for the same template name }
         pipeline:
-          type: object
-          description: Full pipeline definition (nodes + edges)
+          $ref: '#/components/schemas/PipelineDefinition'
         nodeCount: { type: integer, description: Number of nodes in the pipeline }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -1978,7 +2075,7 @@ components:
         finishedAt: { type: string, format: date-time, nullable: true }
     DeployConfigSelection:
       type: object
-      description: Runtime config source resolved during deploy and projected into the workflow as a mounted file plus companion environment variables.
+      description: Compatibility deploy-level runtime config source. Node-level PipelineNodeRuntimeConfig is the primary product model; deploy-level configSelection is preserved for advanced callers and is applied only as a global fallback when node bindings are present.
       required: [mode, mountPath, targetFilename]
       properties:
         mode:
@@ -5558,8 +5655,7 @@ paths:
               properties:
                 name: { type: string, description: Template name }
                 pipeline:
-                  type: object
-                  description: Full pipeline definition (nodes + edges)
+                  $ref: '#/components/schemas/PipelineDefinition'
       responses:
         '201':
           description: Template created

@@ -13,13 +13,24 @@ type Pipeline struct {
 // Node is a single step in the pipeline.
 // When SubNodes is non-empty this node is a sub-graph (nested DAG).
 type Node struct {
-	ID           string        `json:"id" yaml:"id"`
-	Component    Component     `json:"component" yaml:"component"`
-	Inputs       []Port        `json:"inputs,omitempty" yaml:"inputs,omitempty"`
-	Outputs      []Port        `json:"outputs,omitempty" yaml:"outputs,omitempty"`
-	SubNodes     []Node        `json:"sub_nodes,omitempty" yaml:"sub_nodes,omitempty"`
-	SubEdges     []Edge        `json:"sub_edges,omitempty" yaml:"sub_edges,omitempty"`
-	VolumeMounts []VolumeMount `json:"volume_mounts,omitempty" yaml:"volume_mounts,omitempty"`
+	ID            string                `json:"id" yaml:"id"`
+	Component     Component             `json:"component" yaml:"component"`
+	Inputs        []Port                `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	Outputs       []Port                `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	RuntimeConfig *RuntimeConfigBinding `json:"runtimeConfig,omitempty" yaml:"runtimeConfig,omitempty"`
+	SubNodes      []Node                `json:"sub_nodes,omitempty" yaml:"sub_nodes,omitempty"`
+	SubEdges      []Edge                `json:"sub_edges,omitempty" yaml:"sub_edges,omitempty"`
+	VolumeMounts  []VolumeMount         `json:"volume_mounts,omitempty" yaml:"volume_mounts,omitempty"`
+}
+
+// RuntimeConfigBinding references a saved config-library version for one node.
+type RuntimeConfigBinding struct {
+	Mode           string `json:"mode,omitempty" yaml:"mode,omitempty"`
+	ConfigID       string `json:"configId,omitempty" yaml:"configId,omitempty"`
+	Version        int    `json:"version,omitempty" yaml:"version,omitempty"`
+	FileName       string `json:"fileName,omitempty" yaml:"fileName,omitempty"`
+	MountPath      string `json:"mountPath,omitempty" yaml:"mountPath,omitempty"`
+	TargetFilename string `json:"targetFilename,omitempty" yaml:"targetFilename,omitempty"`
 }
 
 // Component is a pipeline step backed by a container image.

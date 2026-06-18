@@ -16,6 +16,17 @@ export interface PipelineNodeDef {
 	component: Component;
 	inputs?: Port[];
 	outputs?: Port[];
+	runtimeConfig?: PipelineNodeRuntimeConfig;
+}
+
+export interface PipelineNodeRuntimeConfig {
+	mode: "saved";
+	configId: string;
+	version: number;
+	fileName?: string;
+	mountPath: string;
+	targetFilename: string;
+	displayName?: string;
 }
 
 export interface Component {
@@ -103,5 +114,6 @@ export interface PipelineNodeData {
 	componentId?: string;
 	releaseId?: string;
 	componentVersionLabel?: string;
+	runtimeConfig?: PipelineNodeRuntimeConfig;
 	[key: string]: unknown;
 }

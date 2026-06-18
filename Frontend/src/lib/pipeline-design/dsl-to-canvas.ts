@@ -1,4 +1,7 @@
-import type { Pipeline } from "../../components/pipeline/types";
+import type {
+	Pipeline,
+	PipelineNodeRuntimeConfig,
+} from "../../components/pipeline/types";
 import type {
 	PipelineCanvasEdge,
 	PipelineCanvasNode,
@@ -56,6 +59,26 @@ function readComponentRef(component: Record<string, unknown>) {
 	};
 }
 
+function normalizeRuntimeConfig(
+	config: PipelineNodeRuntimeConfig | undefined,
+): PipelineNodeRuntimeConfig | undefined {
+	if (!config?.configId || !config.version) return undefined;
+	const mountPath = config.mountPath?.trim();
+	const targetFilename = config.targetFilename?.trim();
+	if (!mountPath || !targetFilename) return undefined;
+	return {
+		mode: "saved",
+		configId: config.configId,
+		version: config.version,
+		...(config.fileName?.trim() ? { fileName: config.fileName.trim() } : {}),
+		mountPath,
+		targetFilename,
+		...(config.displayName?.trim()
+			? { displayName: config.displayName.trim() }
+			: {}),
+	};
+}
+
 /** Restore canvas state from a saved pipeline JSON. */
 export function designDSLToCanvas(pipeline: Pipeline): {
 	nodes: PipelineCanvasNode[];
@@ -83,6 +106,7 @@ export function designDSLToCanvas(pipeline: Pipeline): {
 				computeTier: pn.component.resources?.computeTier || "",
 				inputPorts: normalizePorts(pn.inputs, defaultInputPorts),
 				outputPorts: normalizePorts(pn.outputs, defaultOutputPorts),
+				runtimeConfig: normalizeRuntimeConfig(pn.runtimeConfig),
 				...refs,
 			},
 		};

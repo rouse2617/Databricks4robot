@@ -138,6 +138,44 @@ describe("toTranspilerPipeline", () => {
 		expect(result.nodes[0].outputs?.[0].name).toBe("output");
 	});
 
+	it("serializes node runtime config binding", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "echo",
+					image: "busybox:latest",
+					command: ["sh", "-c"],
+					args: [{ name: "args", value: "hello" }],
+					cpu: "",
+					memory: "",
+					disk: "",
+					runtimeConfig: {
+						mode: "saved",
+						configId: "cfg-1",
+						version: 2,
+						fileName: "detector.yaml",
+						mountPath: "/workspace/configs",
+						targetFilename: "detector.yaml",
+						displayName: "Detector Config",
+					},
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].runtimeConfig).toEqual({
+			mode: "saved",
+			configId: "cfg-1",
+			version: 2,
+			fileName: "detector.yaml",
+			mountPath: "/workspace/configs",
+			targetFilename: "detector.yaml",
+			displayName: "Detector Config",
+		});
+	});
+
 	it("preserves custom input and output ports from canvas node data", () => {
 		const nodes: Node<PipelineNodeData>[] = [
 			{
@@ -422,6 +460,39 @@ describe("fromTranspilerPipeline", () => {
 			{ name: "summary", type: "string" },
 		]);
 	});
+
+	it("restores node runtime config binding from pipeline JSON", () => {
+		const pipeline: Pipeline = {
+			name: "configured",
+			version: "1",
+			nodes: [
+				{
+					id: "step-1",
+					component: { name: "echo", image: "busybox" },
+					runtimeConfig: {
+						mode: "saved",
+						configId: "cfg-1",
+						version: 2,
+						fileName: "detector.yaml",
+						mountPath: "/workspace/configs",
+						targetFilename: "detector.yaml",
+						displayName: "Detector Config",
+					},
+				},
+			],
+			edges: [],
+		};
+		const { nodes } = fromTranspilerPipeline(pipeline);
+		expect(nodes[0].data.runtimeConfig).toEqual({
+			mode: "saved",
+			configId: "cfg-1",
+			version: 2,
+			fileName: "detector.yaml",
+			mountPath: "/workspace/configs",
+			targetFilename: "detector.yaml",
+			displayName: "Detector Config",
+		});
+	});
 });
 
 // ── Round-trip ───────────────────────────────────────────────────────
@@ -441,6 +512,15 @@ describe("round-trip: toTranspilerPipeline → fromTranspilerPipeline", () => {
 					cpu: "500m",
 					memory: "256Mi",
 					disk: "1Gi",
+					runtimeConfig: {
+						mode: "saved",
+						configId: "cfg-1",
+						version: 3,
+						fileName: "step-one.yaml",
+						mountPath: "/workspace/configs",
+						targetFilename: "runtime.yaml",
+						displayName: "Step One Config",
+					},
 				},
 			},
 			{
@@ -484,6 +564,15 @@ describe("round-trip: toTranspilerPipeline → fromTranspilerPipeline", () => {
 		expect(nodes[0].data.cpu).toBe("500m");
 		expect(nodes[0].data.memory).toBe("256Mi");
 		expect(nodes[0].data.disk).toBe("1Gi");
+		expect(nodes[0].data.runtimeConfig).toEqual({
+			mode: "saved",
+			configId: "cfg-1",
+			version: 3,
+			fileName: "step-one.yaml",
+			mountPath: "/workspace/configs",
+			targetFilename: "runtime.yaml",
+			displayName: "Step One Config",
+		});
 		// Node without resources
 		expect(nodes[1].data.cpu).toBe("");
 		expect(nodes[1].data.memory).toBe("");

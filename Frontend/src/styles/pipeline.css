@@ -328,6 +328,23 @@
 	line-height: 1.4;
 }
 
+.node-config-chip {
+	display: inline-flex;
+	align-items: center;
+	max-width: 100%;
+	margin-top: 6px;
+	border: 1px solid #bfdbfe;
+	border-radius: 4px;
+	padding: 1px 6px;
+	background: #eff6ff;
+	color: #1d4ed8;
+	font-size: 10px;
+	line-height: 16px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .node-ports {
 	display: grid;
 	grid-template-columns: 1fr;

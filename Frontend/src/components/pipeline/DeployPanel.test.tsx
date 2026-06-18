@@ -722,6 +722,10 @@ describe("DeployPanel", () => {
 		fireEvent.click(await screen.findByText("运行"));
 		expect(await screen.findByText("运行流水线")).toBeTruthy();
 		expect(screen.getByTestId("deploy-config-panel")).toBeTruthy();
+		expect(screen.getByText("高级全局配置（兼容）")).toBeTruthy();
+		expect(mockListPipelineConfigs).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByText("启用全局配置 fallback"));
 		expect(screen.getByText("选择已保存配置")).toBeTruthy();
 
 		await waitFor(() => {
@@ -742,6 +746,7 @@ describe("DeployPanel", () => {
 
 		fireEvent.click(await screen.findByText("运行"));
 		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		fireEvent.click(screen.getByText("启用全局配置 fallback"));
 		fireEvent.click(screen.getByText("上传本地文件"));
 
 		const input = screen.getByLabelText("上传配置文件") as HTMLInputElement;
@@ -763,6 +768,7 @@ describe("DeployPanel", () => {
 
 		fireEvent.click(await screen.findByText("运行"));
 		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		fireEvent.click(screen.getByText("启用全局配置 fallback"));
 		fireEvent.click(screen.getByText("在线编辑"));
 
 		fireEvent.change(screen.getByLabelText("在线编辑文件名"), {

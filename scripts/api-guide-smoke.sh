@@ -305,6 +305,16 @@ if [[ "${RUN_WRITES:-0}" == "1" ]]; then
 			bad "pipeline-configs create v2 response shape"
 		fi
 		put_json "pipeline-configs update metadata" "/api/v1/pipeline-configs/${config_id}" '{"name":"'"${config_name}"'","description":"updated api guide smoke config","tags":["smoke","updated"],"fileType":"yaml","lifecycle":"ready"}' >/dev/null
+		node_config_pipeline_name="smoke-node-config-$(date +%s)"
+		node_config_pipeline_body='{"name":"'"${node_config_pipeline_name}"'","pipeline":{"name":"'"${node_config_pipeline_name}"'","nodes":[{"id":"configured-step","component":{"name":"configured-step","image":"busybox","command":["sh","-c"],"args":[{"name":"script","value":"echo ok"}]},"runtimeConfig":{"mode":"saved","configId":"'"${config_id}"'","version":2,"fileName":"'"${config_name}"'","mountPath":"/workspace/configs","targetFilename":"smoke-config.yaml"},"inputs":[],"outputs":[]}],"edges":[]}}'
+		node_config_template=$(post_json "pipelines create with node runtimeConfig" "/api/v1/pipelines" "$node_config_pipeline_body")
+		if echo "$node_config_template" | python3 -c 'import sys,json; d=json.load(sys.stdin); rc=d.get("pipeline",{}).get("nodes",[{}])[0].get("runtimeConfig",{}); assert d.get("id") and rc.get("configId")' 2>/dev/null; then
+			ok "pipelines create node runtimeConfig response shape"
+		else
+			RESP_CODE="json"
+			RESP_BODY="$node_config_template"
+			bad "pipelines create node runtimeConfig response shape"
+		fi
 		post_json "pipeline-configs deprecate" "/api/v1/pipeline-configs/${config_id}/deprecate" '{}' >/dev/null
 	else
 		RESP_CODE="json"

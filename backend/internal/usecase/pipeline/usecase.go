@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -22,8 +23,8 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
-	configUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
+	configUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -91,15 +92,30 @@ type resolvedRuntimeConfig struct {
 	MountPath      string
 	TargetFilename string
 	VolumeName     string
+	ProjectionKey  string
 }
 
 type RuntimeConfigProjection struct {
-	FileName string
-	Content  string
+	FileName   string
+	Content    string
+	Files      map[string]string
+	VolumeName string
+}
+
+type RuntimeConfigOwnerReference struct {
+	APIVersion string
+	Kind       string
+	Name       string
+	UID        string
 }
 
 type RuntimeConfigStore interface {
-	Create(ctx context.Context, namespace, deploymentID string, config RuntimeConfigProjection) (string, error)
+	Create(ctx context.Context, namespace, deploymentID string, config RuntimeConfigProjection, owner *RuntimeConfigOwnerReference) (string, error)
+}
+
+type resolvedNodeRuntimeConfig struct {
+	NodeID string
+	Config *resolvedRuntimeConfig
 }
 
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
@@ -180,6 +196,31 @@ func logPipelineSideEffect(op string, err error) {
 	}
 }
 
+func (uc *Usecase) getWorkflowWithUID(ctx context.Context, name, namespace string) (*wfv1.Workflow, error) {
+	if uc.wfClient == nil {
+		return nil, ErrWorkflowUnavailable
+	}
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		wf, err := uc.wfClient.GetWorkflow(ctx, name, namespace)
+		if err == nil && wf != nil && wf.UID != "" {
+			return wf, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("workflow %s/%s has no UID", namespace, name)
+}
+
 func (uc *Usecase) resolveRuntimeConfig(
 	ctx context.Context,
 	selection *RuntimeConfigSelection,
@@ -258,6 +299,284 @@ func (uc *Usecase) resolveRuntimeConfig(
 	}
 }
 
+const defaultRuntimeConfigMountPath = "/workspace/configs"
+
+var invalidRuntimeConfigProjectionKeyChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+var invalidRuntimeConfigVolumeNameChars = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func (uc *Usecase) resolveNodeRuntimeConfig(
+	ctx context.Context,
+	nodeID string,
+	binding *transpiler.RuntimeConfigBinding,
+) (*resolvedRuntimeConfig, error) {
+	if binding == nil {
+		return nil, nil
+	}
+	mode := strings.TrimSpace(binding.Mode)
+	if mode == "" {
+		mode = "saved"
+	}
+	if mode != "saved" {
+		return nil, fmt.Errorf("%w: node %s runtime config only supports saved mode", ErrInvalidArgument, nodeID)
+	}
+	if uc.pipelineConfigRepo == nil {
+		return nil, fmt.Errorf("%w: node %s runtime config repository is not configured", ErrInvalidArgument, nodeID)
+	}
+	configID := strings.TrimSpace(binding.ConfigID)
+	if configID == "" || binding.Version <= 0 {
+		return nil, fmt.Errorf("%w: node %s saved config requires configId and version", ErrInvalidArgument, nodeID)
+	}
+	cfg, err := uc.pipelineConfigRepo.FindByID(ctx, configID)
+	if err != nil {
+		if errors.Is(err, repository.ErrPipelineConfigNotFound) {
+			return nil, fmt.Errorf("%w: node %s saved config not found", ErrInvalidArgument, nodeID)
+		}
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("%w: node %s saved config not found", ErrInvalidArgument, nodeID)
+	}
+	if cfg.Lifecycle != "ready" {
+		return nil, fmt.Errorf("%w: node %s saved config %s is not ready", ErrInvalidArgument, nodeID, configID)
+	}
+	version, err := uc.pipelineConfigRepo.FindVersion(ctx, configID, binding.Version)
+	if err != nil {
+		if errors.Is(err, repository.ErrPipelineConfigNotFound) {
+			return nil, fmt.Errorf("%w: node %s saved config version not found", ErrInvalidArgument, nodeID)
+		}
+		return nil, err
+	}
+	if version == nil {
+		return nil, fmt.Errorf("%w: node %s saved config version not found", ErrInvalidArgument, nodeID)
+	}
+	if version.Status != "" && version.Status != "ready" {
+		return nil, fmt.Errorf("%w: node %s saved config version %d is not ready", ErrInvalidArgument, nodeID, binding.Version)
+	}
+	fileName := strings.TrimSpace(binding.FileName)
+	if fileName == "" {
+		fileName = strings.TrimSpace(cfg.Name)
+	}
+	mountPath := strings.TrimSpace(binding.MountPath)
+	if mountPath == "" {
+		mountPath = defaultRuntimeConfigMountPath
+	}
+	targetFilename := strings.TrimSpace(binding.TargetFilename)
+	if targetFilename == "" {
+		targetFilename = fileName
+	}
+	if targetFilename == "" {
+		targetFilename = "runtime-config.yaml"
+	}
+	if fileName == "" {
+		fileName = targetFilename
+	}
+	return &resolvedRuntimeConfig{
+		Mode:           "saved",
+		ConfigID:       configID,
+		Version:        binding.Version,
+		FileName:       fileName,
+		Content:        version.Content,
+		MountPath:      mountPath,
+		TargetFilename: targetFilename,
+	}, nil
+}
+
+func (uc *Usecase) resolveNodeRuntimeConfigs(ctx context.Context, pipe *transpiler.Pipeline) ([]resolvedNodeRuntimeConfig, error) {
+	if pipe == nil {
+		return nil, nil
+	}
+	var out []resolvedNodeRuntimeConfig
+	var walk func(nodes []transpiler.Node) error
+	walk = func(nodes []transpiler.Node) error {
+		for i := range nodes {
+			node := nodes[i]
+			if node.RuntimeConfig != nil {
+				config, err := uc.resolveNodeRuntimeConfig(ctx, node.ID, node.RuntimeConfig)
+				if err != nil {
+					return err
+				}
+				if config != nil {
+					out = append(out, resolvedNodeRuntimeConfig{NodeID: node.ID, Config: config})
+				}
+			}
+			if len(node.SubNodes) > 0 {
+				if err := walk(node.SubNodes); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(pipe.Nodes); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func runtimeConfigEnvVars(config *resolvedRuntimeConfig) []transpiler.EnvVar {
+	if config == nil {
+		return nil
+	}
+	env := []transpiler.EnvVar{
+		{Name: "PIPELINE_CONFIG_PATH", Value: path.Join(config.MountPath, config.TargetFilename)},
+		{Name: "PIPELINE_CONFIG_FILENAME", Value: config.TargetFilename},
+		{Name: "PIPELINE_CONFIG_SOURCE", Value: config.Mode},
+	}
+	if config.ConfigID != "" {
+		env = append(env, transpiler.EnvVar{Name: "PIPELINE_CONFIG_ID", Value: config.ConfigID})
+	}
+	if config.Version > 0 {
+		env = append(env, transpiler.EnvVar{Name: "PIPELINE_CONFIG_VERSION", Value: fmt.Sprintf("%d", config.Version)})
+	}
+	return env
+}
+
+func runtimeConfigSubPath(config *resolvedRuntimeConfig) string {
+	if config == nil {
+		return ""
+	}
+	if strings.TrimSpace(config.ProjectionKey) != "" {
+		return strings.TrimSpace(config.ProjectionKey)
+	}
+	return config.TargetFilename
+}
+
+func runtimeConfigVolumeMount(config *resolvedRuntimeConfig) transpiler.VolumeMount {
+	return transpiler.VolumeMount{
+		Name:      config.VolumeName,
+		MountPath: path.Join(config.MountPath, config.TargetFilename),
+		SubPath:   runtimeConfigSubPath(config),
+		ReadOnly:  true,
+	}
+}
+
+func appendRuntimeConfigToNode(node *transpiler.Node, config *resolvedRuntimeConfig) {
+	if node == nil || config == nil {
+		return
+	}
+	node.Component.Env = append(node.Component.Env, runtimeConfigEnvVars(config)...)
+	node.VolumeMounts = append(node.VolumeMounts, runtimeConfigVolumeMount(config))
+}
+
+func runtimeConfigProjectionKey(nodeID, targetFilename string, index int) string {
+	base := strings.Trim(strings.ToLower(strings.TrimSpace(nodeID)+"-"+strings.TrimSpace(targetFilename)), "-._")
+	base = invalidRuntimeConfigProjectionKeyChars.ReplaceAllString(base, "-")
+	base = strings.Trim(base, "-._")
+	if base == "" {
+		base = fmt.Sprintf("runtime-config-%d", index)
+	}
+	if len(base) > 180 {
+		base = strings.Trim(base[:180], "-._")
+	}
+	if base == "" {
+		base = fmt.Sprintf("runtime-config-%d", index)
+	}
+	return fmt.Sprintf("%02d-%s", index, base)
+}
+
+func buildRuntimeConfigProjection(
+	runtimeConfig *resolvedRuntimeConfig,
+	nodeConfigs []resolvedNodeRuntimeConfig,
+) RuntimeConfigProjection {
+	if runtimeConfig != nil && len(nodeConfigs) == 0 {
+		runtimeConfig.ProjectionKey = runtimeConfig.TargetFilename
+		return RuntimeConfigProjection{
+			FileName: runtimeConfig.TargetFilename,
+			Content:  runtimeConfig.Content,
+		}
+	}
+	files := make(map[string]string)
+	index := 1
+	if runtimeConfig != nil {
+		runtimeConfig.ProjectionKey = runtimeConfigProjectionKey("global", runtimeConfig.TargetFilename, index)
+		files[runtimeConfig.ProjectionKey] = runtimeConfig.Content
+		index++
+	}
+	for i := range nodeConfigs {
+		config := nodeConfigs[i].Config
+		if config == nil {
+			continue
+		}
+		config.ProjectionKey = runtimeConfigProjectionKey(nodeConfigs[i].NodeID, config.TargetFilename, index)
+		files[config.ProjectionKey] = config.Content
+		index++
+	}
+	return RuntimeConfigProjection{Files: files}
+}
+
+func runtimeConfigVolumeNameForDeployment(deploymentID string) string {
+	value := strings.ToLower(strings.TrimSpace("runtime-config-" + strings.TrimSpace(deploymentID)))
+	value = invalidRuntimeConfigVolumeNameChars.ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	if value == "" {
+		return "runtime-config"
+	}
+	if len(value) > 63 {
+		value = strings.Trim(value[:63], "-")
+	}
+	if value == "" {
+		return "runtime-config"
+	}
+	return value
+}
+
+func boundNodeIDs(nodeConfigs []resolvedNodeRuntimeConfig) map[string]struct{} {
+	out := make(map[string]struct{}, len(nodeConfigs))
+	for _, item := range nodeConfigs {
+		out[item.NodeID] = struct{}{}
+	}
+	return out
+}
+
+func applyNodeRuntimeConfigs(pipe *transpiler.Pipeline, nodeConfigs []resolvedNodeRuntimeConfig, volumeName string) {
+	if pipe == nil || len(nodeConfigs) == 0 {
+		return
+	}
+	byNode := make(map[string]*resolvedRuntimeConfig, len(nodeConfigs))
+	for i := range nodeConfigs {
+		config := nodeConfigs[i].Config
+		if config == nil {
+			continue
+		}
+		config.VolumeName = volumeName
+		byNode[nodeConfigs[i].NodeID] = config
+	}
+	var walk func(nodes []transpiler.Node)
+	walk = func(nodes []transpiler.Node) {
+		for i := range nodes {
+			if config := byNode[nodes[i].ID]; config != nil {
+				appendRuntimeConfigToNode(&nodes[i], config)
+			}
+			if len(nodes[i].SubNodes) > 0 {
+				walk(nodes[i].SubNodes)
+			}
+		}
+	}
+	walk(pipe.Nodes)
+}
+
+func applyRuntimeConfigToUnboundNodes(
+	pipe *transpiler.Pipeline,
+	config *resolvedRuntimeConfig,
+	bound map[string]struct{},
+) {
+	if pipe == nil || config == nil {
+		return
+	}
+	var walk func(nodes []transpiler.Node)
+	walk = func(nodes []transpiler.Node) {
+		for i := range nodes {
+			if _, ok := bound[nodes[i].ID]; !ok {
+				appendRuntimeConfigToNode(&nodes[i], config)
+			}
+			if len(nodes[i].SubNodes) > 0 {
+				walk(nodes[i].SubNodes)
+			}
+		}
+	}
+	walk(pipe.Nodes)
+}
+
 func applyRuntimeConfigToPipeline(
 	pipe *transpiler.Pipeline,
 	config *resolvedRuntimeConfig,
@@ -267,18 +586,7 @@ func applyRuntimeConfigToPipeline(
 	if pipe == nil || config == nil {
 		return
 	}
-	mountFilePath := path.Join(config.MountPath, config.TargetFilename)
-	*globalEnv = append(*globalEnv,
-		transpiler.EnvVar{Name: "PIPELINE_CONFIG_PATH", Value: mountFilePath},
-		transpiler.EnvVar{Name: "PIPELINE_CONFIG_FILENAME", Value: config.TargetFilename},
-		transpiler.EnvVar{Name: "PIPELINE_CONFIG_SOURCE", Value: config.Mode},
-	)
-	if config.ConfigID != "" {
-		*globalEnv = append(*globalEnv, transpiler.EnvVar{Name: "PIPELINE_CONFIG_ID", Value: config.ConfigID})
-	}
-	if config.Version > 0 {
-		*globalEnv = append(*globalEnv, transpiler.EnvVar{Name: "PIPELINE_CONFIG_VERSION", Value: fmt.Sprintf("%d", config.Version)})
-	}
+	*globalEnv = append(*globalEnv, runtimeConfigEnvVars(config)...)
 	*extraVolumes = append(*extraVolumes, transpiler.Volume{
 		Name:          config.VolumeName,
 		ConfigMapName: config.VolumeName,
@@ -286,12 +594,7 @@ func applyRuntimeConfigToPipeline(
 	var applyNodeMounts func(nodes []transpiler.Node)
 	applyNodeMounts = func(nodes []transpiler.Node) {
 		for i := range nodes {
-			nodes[i].VolumeMounts = append(nodes[i].VolumeMounts, transpiler.VolumeMount{
-				Name:      config.VolumeName,
-				MountPath: mountFilePath,
-				SubPath:   config.TargetFilename,
-				ReadOnly:  true,
-			})
+			nodes[i].VolumeMounts = append(nodes[i].VolumeMounts, runtimeConfigVolumeMount(config))
 			if len(nodes[i].SubNodes) > 0 {
 				applyNodeMounts(nodes[i].SubNodes)
 			}
@@ -1954,6 +2257,10 @@ func (uc *Usecase) Deploy(
 			return nil, err
 		}
 	}
+	nodeRuntimeConfigs, err := uc.resolveNodeRuntimeConfigs(ctx, pipe)
+	if err != nil {
+		return nil, err
+	}
 
 	// Assemble workflow-level params and global env vars from asset IDs.
 	var wfParams []transpiler.Param
@@ -1987,19 +2294,27 @@ func (uc *Usecase) Deploy(
 	}
 
 	var extraVolumes []transpiler.Volume
-	if runtimeConfig != nil {
-		if uc.runtimeConfigStore == nil {
-			return nil, fmt.Errorf("%w: runtime config store is not configured", ErrInvalidArgument)
+	var runtimeConfigProjection *RuntimeConfigProjection
+	if runtimeConfig != nil || len(nodeRuntimeConfigs) > 0 {
+		projection := buildRuntimeConfigProjection(runtimeConfig, nodeRuntimeConfigs)
+		volumeName := runtimeConfigVolumeNameForDeployment(depID)
+		projection.VolumeName = volumeName
+		runtimeConfigProjection = &projection
+		if runtimeConfig != nil {
+			runtimeConfig.VolumeName = volumeName
 		}
-		volumeName, err := uc.runtimeConfigStore.Create(ctx, targetNamespace, depID, RuntimeConfigProjection{
-			FileName: runtimeConfig.TargetFilename,
-			Content:  runtimeConfig.Content,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("create runtime config projection: %w", err)
+		if len(nodeRuntimeConfigs) == 0 {
+			applyRuntimeConfigToPipeline(pipe, runtimeConfig, &globalEnv, &extraVolumes)
+		} else {
+			extraVolumes = append(extraVolumes, transpiler.Volume{
+				Name:          volumeName,
+				ConfigMapName: volumeName,
+			})
+			if runtimeConfig != nil {
+				applyRuntimeConfigToUnboundNodes(pipe, runtimeConfig, boundNodeIDs(nodeRuntimeConfigs))
+			}
+			applyNodeRuntimeConfigs(pipe, nodeRuntimeConfigs, volumeName)
 		}
-		runtimeConfig.VolumeName = volumeName
-		applyRuntimeConfigToPipeline(pipe, runtimeConfig, &globalEnv, &extraVolumes)
 	}
 
 	// Transpile to Argo Workflow.
@@ -2051,6 +2366,9 @@ func (uc *Usecase) Deploy(
 	if uc.wfClient == nil {
 		return nil, ErrWorkflowUnavailable
 	}
+	if runtimeConfigProjection != nil && uc.runtimeConfigStore == nil {
+		return nil, fmt.Errorf("%w: runtime config store is not configured", ErrInvalidArgument)
+	}
 	status := "Pending"
 	if err := uc.wfClient.CreateWorkflow(ctx, wf, targetNamespace); err != nil {
 		if strings.Contains(err.Error(), "argo server URL is empty") {
@@ -2059,11 +2377,34 @@ func (uc *Usecase) Deploy(
 		return nil, fmt.Errorf("create workflow: %w", err)
 	}
 	wfUID := ""
-	phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, targetNamespace)
-	if err == nil && phase != "" {
-		status = string(phase)
+	var wfDetail *wfv1.Workflow
+	if runtimeConfigProjection != nil {
+		wfDetail, err = uc.getWorkflowWithUID(ctx, wfName, targetNamespace)
+		if err != nil {
+			logPipelineSideEffect("delete workflow after runtime config owner lookup failed", uc.wfClient.DeleteWorkflow(ctx, wfName, targetNamespace))
+			return nil, fmt.Errorf("resolve runtime config owner workflow: %w", err)
+		}
+		owner := &RuntimeConfigOwnerReference{
+			APIVersion: "argoproj.io/v1alpha1",
+			Kind:       "Workflow",
+			Name:       wfName,
+			UID:        string(wfDetail.UID),
+		}
+		if _, err := uc.runtimeConfigStore.Create(ctx, targetNamespace, depID, *runtimeConfigProjection, owner); err != nil {
+			logPipelineSideEffect("delete workflow after runtime config projection failed", uc.wfClient.DeleteWorkflow(ctx, wfName, targetNamespace))
+			return nil, fmt.Errorf("create runtime config projection: %w", err)
+		}
 	}
-	if wfDetail, err := uc.wfClient.GetWorkflow(ctx, wfName, targetNamespace); err == nil && wfDetail != nil {
+	if wfDetail == nil {
+		phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, targetNamespace)
+		if err == nil && phase != "" {
+			status = string(phase)
+		}
+		if detail, err := uc.wfClient.GetWorkflow(ctx, wfName, targetNamespace); err == nil && detail != nil {
+			wfDetail = detail
+		}
+	}
+	if wfDetail != nil {
 		wfUID = string(wfDetail.UID)
 		if wfDetail.Status.Phase != "" {
 			status = string(wfDetail.Status.Phase)

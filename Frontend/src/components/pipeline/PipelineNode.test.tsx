@@ -87,4 +87,28 @@ describe("PipelineStepNode", () => {
 		expect(screen.getByTestId("handle-target")).toBeTruthy();
 		expect(screen.getByTestId("handle-source")).toBeTruthy();
 	});
+
+	it("renders runtime config badge when node has a binding", () => {
+		render(
+			<PipelineStepNode
+				id="n1"
+				type="pipelineStep"
+				data={{
+					...baseData,
+					runtimeConfig: {
+						mode: "saved",
+						configId: "cfg-1",
+						version: 1,
+						fileName: "detector.yaml",
+						mountPath: "/workspace/configs",
+						targetFilename: "detector.yaml",
+						displayName: "Detector Config",
+					},
+				}}
+				selected={false}
+				isConnectable
+			/>,
+		);
+		expect(screen.getByText("配置 Detector Config")).toBeTruthy();
+	});
 });

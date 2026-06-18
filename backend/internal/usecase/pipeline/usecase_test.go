@@ -257,7 +257,13 @@ func (m *mockWorkflowClient) GetWorkflow(ctx context.Context, name, namespace st
 	if m.getWorkflowFn != nil {
 		return m.getWorkflowFn(ctx, name, namespace)
 	}
-	return &wfv1.Workflow{}, nil
+	return &wfv1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			UID:       "workflow-uid",
+		},
+	}, nil
 }
 func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
 	return nil
@@ -321,13 +327,18 @@ type mockRuntimeConfigStore struct {
 	lastNamespace    string
 	lastDeploymentID string
 	lastProjection   RuntimeConfigProjection
+	lastOwner        *RuntimeConfigOwnerReference
 	volumeName       string
 }
 
-func (m *mockRuntimeConfigStore) Create(_ context.Context, namespace, deploymentID string, config RuntimeConfigProjection) (string, error) {
+func (m *mockRuntimeConfigStore) Create(_ context.Context, namespace, deploymentID string, config RuntimeConfigProjection, owner *RuntimeConfigOwnerReference) (string, error) {
 	m.lastNamespace = namespace
 	m.lastDeploymentID = deploymentID
 	m.lastProjection = config
+	m.lastOwner = owner
+	if config.VolumeName != "" {
+		return config.VolumeName, nil
+	}
 	if m.volumeName == "" {
 		m.volumeName = "runtime-config-test"
 	}
@@ -504,8 +515,14 @@ func TestDeploy_IncludesRuntimeConfigMountAndEnv(t *testing.T) {
 	if store.lastProjection.Content != "threshold: 0.8\n" {
 		t.Fatalf("unexpected projected content %q", store.lastProjection.Content)
 	}
+	if store.lastProjection.VolumeName == "" {
+		t.Fatal("expected runtime config projection volume name")
+	}
+	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
+		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	}
 	manifest := *dep.Manifest
-	if !strings.Contains(manifest, "runtime-config-test") {
+	if !strings.Contains(manifest, store.lastProjection.VolumeName) {
 		t.Fatalf("expected runtime config volume in manifest, got %s", manifest)
 	}
 	if !strings.Contains(manifest, "PIPELINE_CONFIG_PATH") || !strings.Contains(manifest, "/workspace/configs/effective.yaml") {
@@ -586,11 +603,168 @@ func TestDeployByTemplateID_ForwardsRuntimeConfigSelection(t *testing.T) {
 		t.Fatalf("expected forwarded projected filename effective.yaml, got %q", store.lastProjection.FileName)
 	}
 	manifest := *dep.Manifest
-	if !strings.Contains(manifest, "runtime-config-template") {
+	if store.lastProjection.VolumeName == "" {
+		t.Fatal("expected runtime config projection volume name")
+	}
+	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
+		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	}
+	if !strings.Contains(manifest, store.lastProjection.VolumeName) {
 		t.Fatalf("expected forwarded runtime config volume in manifest, got %s", manifest)
 	}
 	if !strings.Contains(manifest, "PIPELINE_CONFIG_PATH") {
 		t.Fatalf("expected forwarded runtime config env in manifest, got %s", manifest)
+	}
+}
+
+func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "node-config-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-a",
+				"component": map[string]interface{}{
+					"name":  "detector",
+					"image": "busybox",
+				},
+				"runtimeConfig": map[string]interface{}{
+					"mode":           "saved",
+					"configId":       "cfg-a",
+					"version":        1,
+					"fileName":       "a-source.yaml",
+					"mountPath":      "/workspace/configs",
+					"targetFilename": "a.yaml",
+				},
+			},
+			map[string]interface{}{
+				"id": "step-b",
+				"component": map[string]interface{}{
+					"name":  "classifier",
+					"image": "busybox",
+				},
+				"runtimeConfig": map[string]interface{}{
+					"mode":           "saved",
+					"configId":       "cfg-b",
+					"version":        2,
+					"fileName":       "b-source.yaml",
+					"mountPath":      "/workspace/configs",
+					"targetFilename": "b.yaml",
+				},
+			},
+			map[string]interface{}{
+				"id": "step-c",
+				"component": map[string]interface{}{
+					"name":  "unconfigured",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	repo := newMockAssetRepo()
+	repo.assets["asset-a"] = &models.Asset{
+		AssetID:    "asset-a",
+		StorageURI: "gs://bucket/asset-a",
+		AssetType:  "segment",
+	}
+	uc := newUsecase(repo)
+	uc.pipelineConfigRepo = &mockPipelineConfigRepo{
+		configs: map[string]*models.PipelineConfig{
+			"cfg-a": {ID: "cfg-a", Name: "a-source.yaml", Lifecycle: "ready"},
+			"cfg-b": {ID: "cfg-b", Name: "b-source.yaml", Lifecycle: "ready"},
+		},
+		versions: map[string]*models.PipelineConfigVersion{
+			"cfg-a:1": {ConfigID: "cfg-a", Version: 1, Status: "ready", Content: "threshold: 0.8\n"},
+			"cfg-b:2": {ConfigID: "cfg-b", Version: 2, Status: "ready", Content: "labels: [car]\n"},
+		},
+	}
+	store := &mockRuntimeConfigStore{volumeName: "runtime-config-nodes"}
+	uc.runtimeConfigStore = store
+
+	dep, err := uc.Deploy(ctx, pipe, "", []string{"asset-a"})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on deployment")
+	}
+	if len(store.lastProjection.Files) != 2 {
+		t.Fatalf("expected two projected node config files, got %#v", store.lastProjection.Files)
+	}
+	if store.lastProjection.VolumeName == "" {
+		t.Fatal("expected runtime config projection volume name")
+	}
+	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
+		t.Fatalf("expected workflow owner reference, got %#v", store.lastOwner)
+	}
+	if got := store.lastProjection.Files["01-step-a-a.yaml"]; got != "threshold: 0.8\n" {
+		t.Fatalf("unexpected step-a config content %q", got)
+	}
+	if got := store.lastProjection.Files["02-step-b-b.yaml"]; got != "labels: [car]\n" {
+		t.Fatalf("unexpected step-b config content %q", got)
+	}
+	manifest := *dep.Manifest
+	if strings.Count(manifest, "name: PIPELINE_CONFIG_PATH") != 2 {
+		t.Fatalf("expected config env only on two configured nodes, got manifest %s", manifest)
+	}
+	if strings.Count(manifest, "name: ASSET_IDS") != 3 {
+		t.Fatalf("expected asset env on all three nodes, got manifest %s", manifest)
+	}
+	for _, want := range []string{
+		store.lastProjection.VolumeName,
+		"subpath: 01-step-a-a.yaml",
+		"subpath: 02-step-b-b.yaml",
+		"value: cfg-a",
+		"value: cfg-b",
+		"value: asset-a",
+		"value: gs://bucket/asset-a",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected manifest to contain %q, got %s", want, manifest)
+		}
+	}
+}
+
+func TestDeploy_NodeRuntimeConfigRejectsNotReadyConfig(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "node-config-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-a",
+				"component": map[string]interface{}{
+					"name":  "detector",
+					"image": "busybox",
+				},
+				"runtimeConfig": map[string]interface{}{
+					"mode":           "saved",
+					"configId":       "cfg-draft",
+					"version":        1,
+					"mountPath":      "/workspace/configs",
+					"targetFilename": "draft.yaml",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	uc := newUsecase(newMockAssetRepo())
+	uc.pipelineConfigRepo = &mockPipelineConfigRepo{
+		configs: map[string]*models.PipelineConfig{
+			"cfg-draft": {ID: "cfg-draft", Name: "draft.yaml", Lifecycle: "draft"},
+		},
+		versions: map[string]*models.PipelineConfigVersion{
+			"cfg-draft:1": {ConfigID: "cfg-draft", Version: 1, Status: "draft", Content: "draft: true\n"},
+		},
+	}
+	uc.runtimeConfigStore = &mockRuntimeConfigStore{volumeName: "runtime-config-nodes"}
+
+	_, err := uc.Deploy(ctx, pipe, "", nil)
+	if err == nil {
+		t.Fatal("expected deploy to reject draft node config")
+	}
+	if !strings.Contains(err.Error(), "node step-a") || !strings.Contains(err.Error(), "not ready") {
+		t.Fatalf("expected node-specific not-ready error, got %v", err)
 	}
 }
 

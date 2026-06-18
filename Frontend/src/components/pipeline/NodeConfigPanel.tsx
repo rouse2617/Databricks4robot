@@ -1,8 +1,17 @@
 import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
 import type { Node } from "@xyflow/react";
-import { Button, Form, Input, Modal, Select } from "antd";
-import { useEffect } from "react";
-import type { Argument, PipelineNodeData, Port } from "./types";
+import { Alert, Button, Form, Input, Modal, Select } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import {
+	type PipelineConfig,
+	pipelineConfigApi,
+} from "../../api/pipelineConfigs";
+import type {
+	Argument,
+	PipelineNodeData,
+	PipelineNodeRuntimeConfig,
+	Port,
+} from "./types";
 
 interface NodeConfigPanelProps {
 	open: boolean;
@@ -27,6 +36,9 @@ type FormValues = {
 	env?: EnvFormItem[];
 	inputPorts?: PortFormItem[];
 	outputPorts?: PortFormItem[];
+	runtimeConfigId?: string;
+	runtimeConfigMountPath?: string;
+	runtimeConfigTargetFilename?: string;
 	cpu: string;
 	memory: string;
 	disk: string;
@@ -34,6 +46,7 @@ type FormValues = {
 
 const DEFAULT_INPUT_PORTS: Port[] = [{ name: "input", type: "asset" }];
 const DEFAULT_OUTPUT_PORTS: Port[] = [{ name: "output", type: "asset" }];
+const DEFAULT_CONFIG_MOUNT_PATH = "/workspace/configs";
 
 function normalizeArgs(args: Argument[] | undefined): string[] {
 	if (!args || args.length === 0) return [];
@@ -179,12 +192,25 @@ export function NodeConfigPanel({
 	onSave,
 }: NodeConfigPanelProps) {
 	const [form] = Form.useForm<FormValues>();
+	const [configs, setConfigs] = useState<PipelineConfig[]>([]);
+	const [configsLoading, setConfigsLoading] = useState(false);
+	const [configsError, setConfigsError] = useState<string | null>(null);
 
 	const componentType = String(node.data.type || "").toLowerCase();
 	const isScriptType = componentType === "script";
+	const selectedConfigId = Form.useWatch("runtimeConfigId", form);
+	const configOptions = useMemo(
+		() =>
+			configs.map((config) => ({
+				value: config.id,
+				label: `${config.name} · v${config.currentVersion}`,
+			})),
+		[configs],
+	);
 
 	useEffect(() => {
 		if (!open) return;
+		const runtimeConfig = node.data.runtimeConfig;
 		form.setFieldsValue({
 			label: node.data.label || "",
 			source: node.data.source || "",
@@ -193,14 +219,81 @@ export function NodeConfigPanel({
 			env: envToPairs(node.data.env),
 			inputPorts: normalizePorts(node.data.inputPorts, DEFAULT_INPUT_PORTS),
 			outputPorts: normalizePorts(node.data.outputPorts, DEFAULT_OUTPUT_PORTS),
+			runtimeConfigId: runtimeConfig?.configId,
+			runtimeConfigMountPath:
+				runtimeConfig?.mountPath || DEFAULT_CONFIG_MOUNT_PATH,
+			runtimeConfigTargetFilename:
+				runtimeConfig?.targetFilename || runtimeConfig?.fileName || "",
 			cpu: node.data.cpu || "",
 			memory: node.data.memory || "",
 			disk: node.data.disk || "",
 		});
 	}, [form, node.data, open]);
 
+	useEffect(() => {
+		if (!open) return;
+		let active = true;
+		setConfigsLoading(true);
+		setConfigsError(null);
+		pipelineConfigApi
+			.list()
+			.then((result) => {
+				if (!active) return;
+				setConfigs(
+					(result.items || []).filter((config) => config.lifecycle === "ready"),
+				);
+			})
+			.catch((err: unknown) => {
+				if (!active) return;
+				setConfigsError(
+					err instanceof Error ? err.message : "配置列表加载失败",
+				);
+			})
+			.finally(() => {
+				if (active) setConfigsLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [open]);
+
 	const handleSubmit = async () => {
 		const values = await form.validateFields();
+		let runtimeConfig: PipelineNodeRuntimeConfig | undefined;
+		if (values.runtimeConfigId) {
+			const selectedConfig = configs.find(
+				(config) => config.id === values.runtimeConfigId,
+			);
+			const existing =
+				node.data.runtimeConfig?.configId === values.runtimeConfigId
+					? node.data.runtimeConfig
+					: undefined;
+			const version = selectedConfig?.currentVersion || existing?.version || 0;
+			const fileName =
+				selectedConfig?.name ||
+				existing?.fileName ||
+				values.runtimeConfigTargetFilename ||
+				"runtime-config.yaml";
+			if (!version) {
+				form.setFields([
+					{
+						name: "runtimeConfigId",
+						errors: ["请选择可用的 ready 配置"],
+					},
+				]);
+				return;
+			}
+			runtimeConfig = {
+				mode: "saved",
+				configId: values.runtimeConfigId,
+				version,
+				fileName,
+				mountPath:
+					values.runtimeConfigMountPath?.trim() || DEFAULT_CONFIG_MOUNT_PATH,
+				targetFilename: values.runtimeConfigTargetFilename?.trim() || fileName,
+				displayName: selectedConfig?.name || existing?.displayName || fileName,
+			};
+		}
 		const nextData: Partial<PipelineNodeData> = {
 			label: values.label,
 			source: isScriptType ? values.source : node.data.source || "",
@@ -218,6 +311,7 @@ export function NodeConfigPanel({
 				values.outputPorts || [],
 				DEFAULT_OUTPUT_PORTS,
 			),
+			runtimeConfig,
 			cpu: values.cpu || "",
 			memory: values.memory || "",
 			disk: values.disk || "",
@@ -227,12 +321,30 @@ export function NodeConfigPanel({
 		onCancel();
 	};
 
+	const handleConfigChange = (configId?: string) => {
+		if (!configId) {
+			form.setFieldsValue({
+				runtimeConfigTargetFilename: "",
+			});
+			return;
+		}
+		const selectedConfig = configs.find((config) => config.id === configId);
+		if (!selectedConfig) return;
+		const currentTarget = form.getFieldValue("runtimeConfigTargetFilename");
+		form.setFieldsValue({
+			runtimeConfigMountPath:
+				form.getFieldValue("runtimeConfigMountPath") ||
+				DEFAULT_CONFIG_MOUNT_PATH,
+			runtimeConfigTargetFilename: currentTarget || selectedConfig.name,
+		});
+	};
+
 	return (
 		<Modal
 			title="节点配置"
 			open={open}
 			onCancel={onCancel}
-			width={560}
+			width={640}
 			footer={
 				<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
 					<Button onClick={onCancel}>取消</Button>
@@ -280,6 +392,66 @@ export function NodeConfigPanel({
 						emptyPort={{ name: "output", type: "asset" }}
 						outputPathHint
 					/>
+				</div>
+				<div
+					style={{
+						border: "1px solid #e2e8f0",
+						borderRadius: 8,
+						padding: 12,
+						marginBottom: 16,
+					}}
+				>
+					<strong>配置文件</strong>
+					<Form.Item
+						label="配置"
+						name="runtimeConfigId"
+						style={{ marginTop: 12 }}
+					>
+						<Select
+							allowClear
+							loading={configsLoading}
+							options={configOptions}
+							placeholder="选择 ready 配置"
+							onChange={handleConfigChange}
+						/>
+					</Form.Item>
+					{configsError ? (
+						<Alert
+							type="warning"
+							showIcon
+							message="配置列表加载失败"
+							description={configsError}
+							style={{ marginBottom: 12 }}
+						/>
+					) : null}
+					{!configsLoading && !configsError && configs.length === 0 ? (
+						<Alert
+							type="info"
+							showIcon
+							message="暂无 ready 配置"
+							style={{ marginBottom: 12 }}
+						/>
+					) : null}
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns: "1fr 1fr",
+							gap: 12,
+						}}
+					>
+						<Form.Item label="挂载目录" name="runtimeConfigMountPath">
+							<Input
+								placeholder={DEFAULT_CONFIG_MOUNT_PATH}
+								disabled={!selectedConfigId}
+							/>
+						</Form.Item>
+						<Form.Item label="目标文件名" name="runtimeConfigTargetFilename">
+							<Input
+								placeholder="app-config.yaml"
+								disabled={!selectedConfigId}
+							/>
+						</Form.Item>
+					</div>
 				</div>
 				<Form.Item label="环境变量">
 					<Form.List name="env">

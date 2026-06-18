@@ -2514,6 +2514,14 @@ curl -X POST "$BASE/api/v1/pipelines" \
             "command": ["sh", "-c"],
             "args": [{"name": "script", "value": "echo ok"}]
           },
+          "runtimeConfig": {
+            "mode": "saved",
+            "configId": "<PIPELINE_CONFIG_ID>",
+            "version": 1,
+            "fileName": "detector.yaml",
+            "mountPath": "/workspace/configs",
+            "targetFilename": "detector.yaml"
+          },
           "inputs": [],
           "outputs": []
         }
@@ -2534,6 +2542,10 @@ curl -s "$BASE/api/v1/pipelines/<TEMPLATE_ID>/versions" \
 # }
 ```
 
+`runtimeConfig` 是节点级配置绑定。它引用配置库里已经 ready 的配置版本，并随
+pipeline template snapshot 保存。部署时后端会把该配置挂载到声明它的节点，不会挂到
+其他节点；同一次运行选择的 `asset_ids` 仍作为 run 级上下文注入到所有节点 Pod。
+
 ```bash
 curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
   -H "X-Databrew-Token: $TOKEN" \
@@ -2541,14 +2553,7 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
   -d '{
     "target_id": "default",
     "version": 1,
-    "asset_ids": ["SDKT0202", "SDKT0101"],
-    "configSelection": {
-      "mode": "inline",
-      "fileName": "runtime-config.yaml",
-      "content": "foo: bar\nnested:\n  enabled: true",
-      "mountPath": "/workspace/configs",
-      "targetFilename": "app-config.yaml"
-    }
+    "asset_ids": ["SDKT0202", "SDKT0101"]
   }'
 
 # 响应示例:
@@ -2576,8 +2581,12 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
 # 503: Argo backend 未配置
 ```
 
-`configSelection` 为可选。存在时，deploy/runtime 会把配置内容投影成一次性
-ConfigMap，并在所有 pipeline step 容器里同时注入：
+`configSelection` 仍为可选兼容字段，适合旧调用方或明确需要全局 fallback 的高级场景。
+正常产品模型应优先在 pipeline node 上保存 `runtimeConfig`。存在节点级
+`runtimeConfig` 时，节点自己的配置优先；deploy-level `configSelection` 不会覆盖该节点。
+
+兼容字段存在时，deploy/runtime 会把配置内容投影成一次性 ConfigMap。没有节点级配置的
+旧 pipeline 会在所有 pipeline step 容器里同时注入：
 
 - 挂载文件：`<mountPath>/<targetFilename>`
 - 环境变量：`PIPELINE_CONFIG_PATH`、`PIPELINE_CONFIG_FILENAME`、`PIPELINE_CONFIG_SOURCE`

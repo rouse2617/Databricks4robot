@@ -41,7 +41,7 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { assetsApi } from "../../api/assets";
 import { BATCH_ASSET_THRESHOLD } from "../../api/deployPipelineRun";
-import { savePipeline, type ExecutionTarget } from "../../api/pipelineApi";
+import { type ExecutionTarget, savePipeline } from "../../api/pipelineApi";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import AssetPicker, {
 	type AssetPickerHandle,
@@ -73,8 +73,8 @@ import {
 import {
 	apiToRegistered,
 	createPipelineNode,
-	defaultDeployWorkflowName,
 	dedupeComponentsByName,
+	defaultDeployWorkflowName,
 	extractAssetSizeBytes,
 	extractNodeAssetIds,
 	extractPipelineAssetIds,
@@ -230,7 +230,24 @@ function createCanvasSnapshot(
 	nodes: PipelineFlowNode[],
 	edges: PipelineFlowEdge[],
 ): string {
-	return JSON.stringify({ name, nodes, edges });
+	return JSON.stringify({
+		name,
+		nodes: nodes.map((node) => ({
+			id: node.id,
+			type: node.type,
+			position: node.position,
+			data: node.data,
+		})),
+		edges: edges.map((edge) => ({
+			id: edge.id,
+			source: edge.source,
+			target: edge.target,
+			sourceHandle: edge.sourceHandle ?? null,
+			targetHandle: edge.targetHandle ?? null,
+			type: edge.type,
+			data: edge.data,
+		})),
+	});
 }
 
 export function confirmLeaveWithUnsavedChanges(

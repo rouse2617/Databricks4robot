@@ -1,0 +1,17 @@
+Frontend/src/components/pipeline/types.ts
+Frontend/src/components/pipeline/NodeConfigPanel.tsx
+Frontend/src/components/pipeline/PipelineNode.tsx
+Frontend/src/lib/pipeline-design/canvas-to-dsl.ts
+Frontend/src/lib/pipeline-design/dsl-to-canvas.ts
+Frontend/src/lib/pipelineContract.test.ts
+Frontend/src/api/pipelineConfigs.ts
+Frontend/src/components/pipeline/DeployPanel.tsx
+backend/internal/usecase/pipeline/usecase.go
+backend/internal/usecase/pipeline/usecase_test.go
+backend/internal/k8s/runtime_config.go
+backend/internal/transpiler/pipeline.go
+backend/internal/transpiler/transpiler.go
+backend/internal/transpiler/transpiler_test.go
+api/openapi.yaml
+docs/review/api-guide.md
+docs/agents/deploy-verification.md

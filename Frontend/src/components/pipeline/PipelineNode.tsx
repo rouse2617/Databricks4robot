@@ -22,6 +22,10 @@ function PipelineStepNodeInner({
 	const versionHint = data.componentVersionLabel
 		? ` · ${data.componentVersionLabel}`
 		: "";
+	const runtimeConfigLabel =
+		data.runtimeConfig?.displayName ||
+		data.runtimeConfig?.fileName ||
+		data.runtimeConfig?.targetFilename;
 	const inputPorts = normalizePorts(data.inputPorts, DEFAULT_INPUTS);
 	const outputPorts = normalizePorts(data.outputPorts, DEFAULT_OUTPUTS);
 	return (
@@ -51,6 +55,11 @@ function PipelineStepNodeInner({
 			</div>
 			<div className="node-body">
 				<div className="node-info">{data.image}</div>
+				{runtimeConfigLabel ? (
+					<div className="node-config-chip" title={runtimeConfigLabel}>
+						配置 {runtimeConfigLabel}
+					</div>
+				) : null}
 				<div className="node-ports">
 					<div className="node-port-list">
 						<span className="node-port-list__label">IN</span>
