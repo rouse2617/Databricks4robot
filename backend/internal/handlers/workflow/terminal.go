@@ -181,7 +181,7 @@ func (h *Handler) CreateTerminalSession(c *gin.Context) {
 		command = "sh"
 	}
 
-	namespace := h.namespaceFor(c)
+	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
 	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {

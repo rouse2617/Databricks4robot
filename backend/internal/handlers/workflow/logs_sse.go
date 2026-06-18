@@ -130,7 +130,7 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		return
 	}
 
-	namespace := h.namespaceFor(c)
+	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
 
 	workflow, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {

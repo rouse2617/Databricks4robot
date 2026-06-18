@@ -186,7 +186,8 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
 		return
 	}
-	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, h.namespaceFor(c))
+	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
+	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
@@ -319,7 +320,7 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow name and nodeId are required", nil)
 		return
 	}
-	namespace := h.namespaceFor(c)
+	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
 	workflow, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
@@ -379,7 +380,8 @@ func (h *Handler) RetryWorkflow(c *gin.Context) {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
 		return
 	}
-	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, h.namespaceFor(c))
+	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
+	wf, err := h.wfClient.GetWorkflow(c.Request.Context(), name, namespace)
 	if err != nil {
 		if errors.Is(err, argo.ErrNotFound) {
 			httpresp.NotFound(c, "WORKFLOW_NOT_FOUND", err.Error())
@@ -405,7 +407,7 @@ func (h *Handler) ResubmitWorkflow(c *gin.Context) {
 		return
 	}
 
-	namespace := h.namespaceFor(c)
+	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
 	var newWorkflow *wfv1.Workflow
 	var err error
 	if client, ok := h.wfClient.(argo.WorkflowResubmitResultClient); ok {
@@ -469,7 +471,8 @@ func (h *Handler) workflowOperation(c *gin.Context, fn func(context.Context, str
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "name is required", nil)
 		return false
 	}
-	if err := fn(c.Request.Context(), name, h.namespaceFor(c)); err != nil {
+	namespace := h.namespaceForWorkflow(c.Request.Context(), c, name)
+	if err := fn(c.Request.Context(), name, namespace); err != nil {
 		httpresp.Internal(c, err.Error())
 		return false
 	}
@@ -628,6 +631,32 @@ func (h *Handler) appendResubmittedRunEvent(ctx context.Context, run, sourceRun 
 func (h *Handler) namespaceFor(c *gin.Context) string {
 	if namespace := strings.TrimSpace(c.GetString("namespace")); namespace != "" {
 		return namespace
+	}
+	if namespace := strings.TrimSpace(c.Query("namespace")); namespace != "" {
+		return namespace
+	}
+	return h.namespace
+}
+
+func (h *Handler) namespaceForWorkflow(ctx context.Context, c *gin.Context, workflowName string) string {
+	if namespace := strings.TrimSpace(c.GetString("namespace")); namespace != "" {
+		return namespace
+	}
+	if namespace := strings.TrimSpace(c.Query("namespace")); namespace != "" {
+		return namespace
+	}
+	if run, _ := h.findPipelineRunByWorkflow(ctx, workflowName); run != nil {
+		if namespace := strings.TrimSpace(run.ArgoNamespace); namespace != "" {
+			return namespace
+		}
+		if run.ExecutionTarget != nil {
+			if namespace := strings.TrimSpace(run.ExecutionTarget.Namespace); namespace != "" {
+				return namespace
+			}
+		}
+		if namespace := strings.TrimSpace(targetString(run.TargetSnapshot, "namespace")); namespace != "" {
+			return namespace
+		}
 	}
 	return h.namespace
 }

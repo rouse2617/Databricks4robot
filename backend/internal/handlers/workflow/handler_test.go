@@ -633,6 +633,35 @@ func TestGetWorkflow_Success(t *testing.T) {
 	}
 }
 
+func TestGetWorkflow_UsesPipelineRunArgoNamespace(t *testing.T) {
+	var namespaceSeen string
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+			namespaceSeen = namespace
+			return makeWorkflow(name, "Succeeded", 1), nil
+		},
+	}, "default")
+	h.SetRunRepositories(&mockRunRepo{byWorkflow: map[string]*models.PipelineRun{
+		"wf-video": {
+			ID:            "run-1",
+			WorkflowName:  "wf-video",
+			ArgoNamespace: "video-proc-dev",
+		},
+	}}, nil)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/workflows/wf-video", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if namespaceSeen != "video-proc-dev" {
+		t.Fatalf("expected video-proc-dev namespace, got %q", namespaceSeen)
+	}
+}
+
 func TestGetWorkflow_NormalizedEdgesForOmittedDAGStep(t *testing.T) {
 	wf := &wfv1.Workflow{}
 	wf.CreationTimestamp = metav1.Now()
@@ -1318,6 +1347,31 @@ func TestStopWorkflow_SyncsPipelineRunLedger(t *testing.T) {
 	}
 	if len(eventRepo.events) != 1 || eventRepo.events[0].EventType != "run_failed" {
 		t.Fatalf("expected run_failed event, got %#v", eventRepo.events)
+	}
+}
+
+func TestStopWorkflow_UsesPipelineRunArgoNamespace(t *testing.T) {
+	run := &models.PipelineRun{
+		ID:            "run-1",
+		WorkflowName:  "wf-video",
+		Status:        "Running",
+		ArgoNamespace: "video-proc-dev",
+	}
+	runRepo := &mockRunRepo{byWorkflow: map[string]*models.PipelineRun{"wf-video": run}}
+	client := &mockWorkflowClient{}
+	h := New(client, "default")
+	h.SetRunRepositories(runRepo, &mockRunEventRepo{})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/wf-video/stop", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if client.operation != "stop" || client.namespace != "video-proc-dev" {
+		t.Fatalf("expected stop operation in video-proc-dev namespace, got op=%q namespace=%q", client.operation, client.namespace)
 	}
 }
 
