@@ -47,3 +47,21 @@
 - **Decision**: Store the Chrome MCP snapshot text as verification evidence for this pass and keep the timeout noted here.
 - **Alternatives**: Use Playwright or a non-MCP screenshot path.
 - **Rationale**: The user explicitly asked to use Chrome MCP, and the MCP snapshot contains the exact build ref plus visible `Pending` and `InvalidImageName` text needed for this verification.
+
+## 2026-06-18 — CyberPipe video IDs stay on the asset_ids surface
+- **Context**: CyberPipe tasks require `VIDEO_ID` values such as `019dabf3-5685-769f-8ec3-3992767ebe65`, while DataBrew's canonical asset catalog uses 8-character asset IDs. The UI and deploy APIs already model run inputs as `asset_ids`.
+- **Decision**: Keep the external API/UI field as `asset_ids`, but let the pipeline deploy path treat UUID-shaped values as compatible external video IDs. These values remain visible as asset IDs in run history and are injected as `VIDEO_ID`, `ASSET_0_ID`, and batch item asset IDs. Global asset detail routes keep their 8-character validation.
+- **Alternatives**: Add a new `video_ids` API field, force users to register every CyberPipe video as a DataBrew asset, or relax the global asset model.
+- **Rationale**: This preserves the existing deploy UX and batch machinery while avoiding a broad asset-model migration. Restricting compatibility to UUID-shaped IDs avoids silently accepting ordinary mistyped DataBrew asset IDs.
+
+## 2026-06-19 — GPU scheduling stays below the component UI
+- **Context**: CyberPipe GPU tasks need Kubernetes `nvidia.com/gpu` limits plus GKE node scheduling hints. Exposing `gpuType`, `fragile`, `preferredTier`, and target taints in the component form would add too much user burden.
+- **Decision**: Keep the user-facing component resource fields simple. When a component requests GPU, the transpiler emits the GPU limit and `nvidia.com/gpu=present` toleration; `computeTier=gpu-l4` maps to the L4 accelerator selector. Target-specific taints such as `environment=dev` are read from execution target scheduling defaults, not from the component UI.
+- **Alternatives**: Require users to fill detailed scheduler fields per component, hard-code dev taints in the generic transpiler, or keep relying on CyberPipe dispatcher manifests.
+- **Rationale**: The component UI remains focused on resource intent, while the backend owns platform scheduling policy. Keeping dev taints on the execution target avoids accidentally letting production targets tolerate development nodes.
+
+## 2026-06-19 — Commit after deployed backend verification
+- **Context**: The change still includes `Frontend/` execution detail rendering, but the latest user instruction was to stop after the deployed backend was committed and pushed to `dev`.
+- **Decision**: Do not start another browser regression pass in this handoff. Keep the existing Chrome MCP evidence for the execution detail rendering and run scoped local checks on the staged files before commit.
+- **Alternatives**: Repeat full CF browser regression and run full all-files pre-commit.
+- **Rationale**: Backend revision `00916-kxz` was already deployed and API-smoked, and the current worktree contains unrelated `site/` generated artifact churn that should not be swept into this commit.

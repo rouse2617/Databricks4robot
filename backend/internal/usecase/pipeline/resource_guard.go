@@ -51,10 +51,23 @@ func (uc *Usecase) resourceGuardConfig() ResourceGuardConfig {
 
 func (uc *Usecase) resourceGuardForTarget(target *models.ExecutionTarget) ResourceGuardConfig {
 	cfg := uc.resourceGuardConfig()
-	if target == nil || len(target.QuotaPolicy) == 0 {
+	if target == nil {
 		return cfg
 	}
-	policy := target.QuotaPolicy
+	if len(target.QuotaPolicy) == 0 && !target.IsDefault {
+		cfg.MaxCPU = ""
+		cfg.MaxMemory = ""
+		cfg.MaxDisk = ""
+		cfg.MaxGPU = ""
+		return cfg
+	}
+	if len(target.QuotaPolicy) == 0 {
+		return cfg
+	}
+	return applyResourceGuardPolicy(cfg, target.QuotaPolicy)
+}
+
+func applyResourceGuardPolicy(cfg ResourceGuardConfig, policy map[string]interface{}) ResourceGuardConfig {
 	if nested, ok := mapValue(policy, "resourceCeilings", "resourceLimits", "resources", "limits"); ok {
 		if nestedMap, ok := nested.(map[string]interface{}); ok {
 			policy = nestedMap
@@ -270,6 +283,72 @@ func (uc *Usecase) deriveUnschedulableRunFromWorkflow(
 	return string(wfv1.WorkflowError), formatUnschedulableRunMessage(selectedName, now.Sub(selectedSince), selectedMessage), &finishedAt, true
 }
 
+func (uc *Usecase) deriveImageStartupRunFromWorkflow(
+	run *models.PipelineRun,
+	wf *wfv1.Workflow,
+) (string, string, *time.Time, bool) {
+	cfg := uc.resourceGuardConfig()
+	if cfg.UnschedulablePendingThreshold <= 0 {
+		return "", "", nil, false
+	}
+	if wf == nil || !isActiveDeploymentStatus(string(wf.Status.Phase)) {
+		return "", "", nil, false
+	}
+	now := uc.nowUTC()
+	var selectedName string
+	var selectedMessage string
+	var selectedSince time.Time
+	for _, node := range wf.Status.Nodes {
+		if node.Phase != wfv1.NodePending {
+			continue
+		}
+		message := strings.TrimSpace(node.Message)
+		if !isImageStartupFailureMessage(message) {
+			continue
+		}
+		pendingSince := pendingReferenceTime(run, wf, node)
+		if pendingSince.IsZero() || now.Sub(pendingSince) < cfg.UnschedulablePendingThreshold {
+			continue
+		}
+		if selectedSince.IsZero() || pendingSince.Before(selectedSince) {
+			selectedSince = pendingSince
+			selectedName = workflowNodeDisplayName(node)
+			selectedMessage = message
+		}
+	}
+	if selectedMessage == "" {
+		return "", "", nil, false
+	}
+	finishedAt := now
+	return string(wfv1.WorkflowError), formatImageStartupRunMessage(selectedName, now.Sub(selectedSince), selectedMessage), &finishedAt, true
+}
+
+func isImageStartupFailureMessage(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return false
+	}
+	signals := []string{
+		"invalidimagename",
+		"invalid image name",
+		"invalid reference format",
+		"failed to apply default image tag",
+		"couldn't parse image name",
+		"errimagepull",
+		"imagepullbackoff",
+		"failed to pull image",
+		"pull access denied",
+		"manifest unknown",
+		"unauthorized: authentication required",
+	}
+	for _, signal := range signals {
+		if strings.Contains(normalized, signal) {
+			return true
+		}
+	}
+	return false
+}
+
 func isUnschedulableSchedulerMessage(message string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(message))
 	if normalized == "" {
@@ -345,5 +424,20 @@ func formatUnschedulableRunMessage(nodeName string, pendingFor time.Duration, sc
 		nodeName,
 		pendingFor.Round(time.Second),
 		strings.TrimSpace(schedulerMessage),
+	)
+}
+
+func formatImageStartupRunMessage(nodeName string, pendingFor time.Duration, imageMessage string) string {
+	nodeName = strings.TrimSpace(nodeName)
+	if nodeName == "" {
+		nodeName = "unknown"
+	}
+	if pendingFor < 0 {
+		pendingFor = 0
+	}
+	return fmt.Sprintf("Kubernetes 镜像启动失败：节点 %q 已 Pending %s，%s",
+		nodeName,
+		pendingFor.Round(time.Second),
+		strings.TrimSpace(imageMessage),
 	)
 }

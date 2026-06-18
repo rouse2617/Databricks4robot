@@ -311,6 +311,7 @@ const defaultRuntimeConfigMountPath = "/workspace/configs"
 
 var invalidRuntimeConfigProjectionKeyChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 var invalidRuntimeConfigVolumeNameChars = regexp.MustCompile(`[^a-z0-9-]+`)
+var compatibleExternalVideoIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func (uc *Usecase) resolveNodeRuntimeConfig(
 	ctx context.Context,
@@ -1332,6 +1333,7 @@ func (uc *Usecase) appendNodeEvents(ctx context.Context, run *models.PipelineRun
 func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.NodeStatus) []models.PipelineRunNode {
 	out := make([]models.PipelineRunNode, 0, len(nodes))
 	for id, node := range nodes {
+		now := time.Now().UTC()
 		podName := ""
 		if node.Type == wfv1.NodeTypePod {
 			podName = node.Name
@@ -1348,6 +1350,11 @@ func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.Nod
 		if podName != "" {
 			logRef = fmt.Sprintf("/api/v1/workflows/%s/logs?podName=%s", wfName, podName)
 		}
+		phase := pipelineRunNodePhase(node)
+		finishedAt := timePtrFromMeta(node.FinishedAt.Time)
+		if finishedAt == nil && isTerminalWorkflowNodePhase(phase) {
+			finishedAt = &now
+		}
 		out = append(out, models.PipelineRunNode{
 			ID:                uuid.New().String(),
 			RunID:             runID,
@@ -1357,7 +1364,7 @@ func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.Nod
 			DisplayName:       displayName,
 			TemplateName:      node.TemplateName,
 			Type:              string(node.Type),
-			Phase:             string(node.Phase),
+			Phase:             phase,
 			Message:           node.Message,
 			PodName:           podName,
 			HostNodeName:      node.HostNodeName,
@@ -1368,12 +1375,28 @@ func runNodesFromWorkflow(runID string, wfName string, nodes map[string]wfv1.Nod
 			ResourceSummary:   map[string]interface{}{},
 			LogRef:            logRef,
 			StartedAt:         timePtrFromMeta(node.StartedAt.Time),
-			FinishedAt:        timePtrFromMeta(node.FinishedAt.Time),
-			CreatedAt:         time.Now().UTC(),
-			UpdatedAt:         time.Now().UTC(),
+			FinishedAt:        finishedAt,
+			CreatedAt:         now,
+			UpdatedAt:         now,
 		})
 	}
 	return out
+}
+
+func pipelineRunNodePhase(node wfv1.NodeStatus) string {
+	if node.Phase == wfv1.NodePending && isImageStartupFailureMessage(node.Message) {
+		return string(wfv1.NodeError)
+	}
+	return string(node.Phase)
+}
+
+func isTerminalWorkflowNodePhase(phase string) bool {
+	switch phase {
+	case string(wfv1.NodeSucceeded), string(wfv1.NodeFailed), string(wfv1.NodeError):
+		return true
+	default:
+		return false
+	}
 }
 
 func workflowTaskNameCandidates(node models.PipelineRunNode) []string {
@@ -1526,18 +1549,23 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 	}
 	message := wf.Status.Message
 	finishedAt := argoTimeOrZero(wf.Status.FinishedAt.Time)
-	derivedUnschedulable := false
+	derivedFailureReason := ""
 	if derivedStatus, derivedMessage, derivedFinishedAt, ok := deriveTerminalRunFromWorkflowNodes(wf); ok {
 		status = derivedStatus
 		message = derivedMessage
 		if derivedFinishedAt != nil {
 			finishedAt = derivedFinishedAt
 		}
+	} else if derivedStatus, derivedMessage, derivedFinishedAt, ok := uc.deriveImageStartupRunFromWorkflow(run, wf); ok {
+		status = derivedStatus
+		message = derivedMessage
+		finishedAt = derivedFinishedAt
+		derivedFailureReason = "image_startup"
 	} else if derivedStatus, derivedMessage, derivedFinishedAt, ok := uc.deriveUnschedulableRunFromWorkflow(run, wf); ok {
 		status = derivedStatus
 		message = derivedMessage
 		finishedAt = derivedFinishedAt
-		derivedUnschedulable = true
+		derivedFailureReason = "unschedulable"
 	}
 	run.Status = status
 	if string(wf.UID) != "" {
@@ -1564,16 +1592,16 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 			run.FinishedAt = &now
 		}
 	}
-	if derivedUnschedulable {
+	if derivedFailureReason != "" {
 		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
 			EventType:      runEventFailed,
 			SubjectType:    "run",
 			SubjectID:      run.ID,
 			Status:         run.Status,
 			Message:        run.Message,
-			Reason:         "unschedulable",
+			Reason:         derivedFailureReason,
 			OccurredAt:     ptrTimeOrNow(finishedAt),
-			IdempotencyKey: fmt.Sprintf("run_unschedulable:%s", run.ID),
+			IdempotencyKey: fmt.Sprintf("run_%s:%s", derivedFailureReason, run.ID),
 			Payload: map[string]interface{}{
 				"workflowName": run.WorkflowName,
 				"namespace":    run.ArgoNamespace,
@@ -2304,6 +2332,7 @@ func (uc *Usecase) Deploy(
 	var wfParams []transpiler.Param
 	globalEnv := []transpiler.EnvVar{
 		{Name: "PIPELINE_DEPLOYMENT_ID", Value: depID},
+		{Name: "REQUEST_ID", Value: depID},
 	}
 	if len(assetIDs) > 0 {
 		wfParams = append(wfParams, transpiler.Param{
@@ -2314,6 +2343,9 @@ func (uc *Usecase) Deploy(
 			transpiler.EnvVar{Name: "ASSET_IDS", Value: strings.Join(assetIDs, ",")},
 			transpiler.EnvVar{Name: "ASSET_COUNT", Value: fmt.Sprintf("%d", len(assetIDs))},
 		)
+		if len(assetIDs) == 1 {
+			globalEnv = append(globalEnv, transpiler.EnvVar{Name: "VIDEO_ID", Value: assetIDs[0]})
+		}
 		for i, aid := range assetIDs {
 			prefix := fmt.Sprintf("ASSET_%d_", i)
 			globalEnv = append(globalEnv, transpiler.EnvVar{Name: prefix + "ID", Value: aid})
@@ -2360,13 +2392,15 @@ func (uc *Usecase) Deploy(
 
 	// Transpile to Argo Workflow.
 	wfOpts := &transpiler.Options{
-		Name:            wfName,
-		Namespace:       targetNamespace,
-		ServiceAccount:  target.ServiceAccount,
-		TTLSecondsAfter: uc.argoWorkflowTTLSecondsAfter(),
-		WorkflowParams:  wfParams,
-		GlobalEnv:       globalEnv,
-		ExtraVolumes:    extraVolumes,
+		Name:                 wfName,
+		Namespace:            targetNamespace,
+		ServiceAccount:       target.ServiceAccount,
+		TemplateNodeSelector: executionTargetTemplateNodeSelector(target),
+		TemplateTolerations:  executionTargetTemplateTolerations(target),
+		TTLSecondsAfter:      uc.argoWorkflowTTLSecondsAfter(),
+		WorkflowParams:       wfParams,
+		GlobalEnv:            globalEnv,
+		ExtraVolumes:         extraVolumes,
 	}
 	wf, err := transpiler.Transpile(pipe, wfOpts)
 	if err != nil {
@@ -2564,7 +2598,34 @@ func (uc *Usecase) validateDeployAssetIDs(ctx context.Context, assetIDs []string
 	if allowUnknown {
 		return assetvalidation.NormalizeAssetIDs("asset_ids", assetIDs)
 	}
-	return assetvalidation.Validate(ctx, uc.assetRepo, "asset_ids", assetIDs)
+	normalized, err := assetvalidation.Validate(ctx, uc.assetRepo, "asset_ids", assetIDs)
+	if err == nil {
+		return normalized, nil
+	}
+	var validationErr *assetvalidation.ValidationError
+	if !errors.As(err, &validationErr) ||
+		len(validationErr.MissingIDs) == 0 ||
+		len(validationErr.InvalidIDs) > 0 ||
+		len(validationErr.DuplicateIDs) > 0 {
+		return nil, err
+	}
+
+	var unsupportedMissing []string
+	for _, missing := range validationErr.MissingIDs {
+		if !isCompatibleExternalVideoID(missing) {
+			unsupportedMissing = append(unsupportedMissing, missing)
+		}
+	}
+	if len(unsupportedMissing) > 0 {
+		compatErr := *validationErr
+		compatErr.MissingIDs = unsupportedMissing
+		return nil, &compatErr
+	}
+	return assetvalidation.NormalizeAssetIDs("asset_ids", assetIDs)
+}
+
+func isCompatibleExternalVideoID(value string) bool {
+	return compatibleExternalVideoIDPattern.MatchString(strings.TrimSpace(value))
 }
 
 // ── Pipeline Runs ───────────────────────────────────────────────────────

@@ -404,6 +404,37 @@ func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 		}
 	})
 
+	t.Run("external video ID passes compatibility and injects VIDEO_ID", func(t *testing.T) {
+		const videoID = "019dabf3-5685-769f-8ec3-3992767ebe65"
+		repo := newMockAssetRepo()
+		uc := newUsecase(repo)
+
+		dep, err := uc.Deploy(ctx, pipe, "", []string{videoID}, DeployOptions{DryRun: true})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if dep == nil || dep.Manifest == nil {
+			t.Fatal("expected dry-run manifest")
+		}
+		if len(dep.AssetIDs) != 1 || dep.AssetIDs[0] != videoID {
+			t.Fatalf("expected compatible video ID to be preserved, got %#v", dep.AssetIDs)
+		}
+		manifest := *dep.Manifest
+		for _, want := range []string{
+			"name: VIDEO_ID",
+			"value: " + videoID,
+			"name: ASSET_0_ID",
+			"name: REQUEST_ID",
+		} {
+			if !strings.Contains(manifest, want) {
+				t.Fatalf("expected manifest to contain %q, got %s", want, manifest)
+			}
+		}
+		if repo.findCalls != 1 || strings.Join(repo.lastFind, ",") != videoID {
+			t.Fatalf("expected one asset lookup for video ID, calls=%d ids=%v", repo.findCalls, repo.lastFind)
+		}
+	})
+
 	t.Run("no asset IDs skips validation", func(t *testing.T) {
 		repo := newMockAssetRepo()
 		uc := newUsecase(repo)
@@ -761,6 +792,12 @@ func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
 	}
 	if strings.Count(manifest, "name: ASSET_IDS") != 3 {
 		t.Fatalf("expected asset env on all three nodes, got manifest %s", manifest)
+	}
+	if strings.Count(manifest, "name: REQUEST_ID") != 3 {
+		t.Fatalf("expected request id env on all three nodes, got manifest %s", manifest)
+	}
+	if strings.Count(manifest, "name: VIDEO_ID") != 3 {
+		t.Fatalf("expected single-asset video id env on all three nodes, got manifest %s", manifest)
 	}
 	for _, want := range []string{
 		store.lastProjection.VolumeName,
@@ -1487,30 +1524,74 @@ func TestGetWorkflowResourceUsage_FallsBackToDeploymentRepo(t *testing.T) {
 	}
 }
 
-// No-op mocks for SetRunRepositories arguments. The tests in this block do
-// not exercise target or node persistence.
-type mockTargetRepo struct{}
-
-func (mockTargetRepo) Save(_ context.Context, _ *models.ExecutionTarget) error { return nil }
-func (mockTargetRepo) FindAll(_ context.Context) ([]models.ExecutionTarget, error) {
-	return nil, nil
-}
-func (mockTargetRepo) FindByID(_ context.Context, _ string) (*models.ExecutionTarget, error) {
-	return nil, nil
-}
-func (mockTargetRepo) FindDefault(_ context.Context) (*models.ExecutionTarget, error) {
-	return nil, nil
+// No-op by default, with optional in-memory rows for tests that exercise
+// execution-target-specific behavior.
+type mockTargetRepo struct {
+	byID map[string]*models.ExecutionTarget
 }
 
-type mockRunNodeRepo struct{}
-
-func (mockRunNodeRepo) ReplaceByRunID(_ context.Context, _ string, _ []models.PipelineRunNode) error {
+func (m *mockTargetRepo) Save(_ context.Context, target *models.ExecutionTarget) error {
+	if target == nil {
+		return nil
+	}
+	if m.byID == nil {
+		m.byID = map[string]*models.ExecutionTarget{}
+	}
+	copy := *target
+	m.byID[target.ID] = &copy
 	return nil
 }
-func (mockRunNodeRepo) FindByRunID(_ context.Context, _ string) ([]models.PipelineRunNode, error) {
+func (m *mockTargetRepo) FindAll(_ context.Context) ([]models.ExecutionTarget, error) {
+	out := make([]models.ExecutionTarget, 0, len(m.byID))
+	for _, target := range m.byID {
+		out = append(out, *target)
+	}
+	return out, nil
+}
+func (m *mockTargetRepo) FindByID(_ context.Context, id string) (*models.ExecutionTarget, error) {
+	if m.byID == nil {
+		return nil, nil
+	}
+	target := m.byID[id]
+	if target == nil {
+		return nil, nil
+	}
+	copy := *target
+	return &copy, nil
+}
+func (m *mockTargetRepo) FindDefault(_ context.Context) (*models.ExecutionTarget, error) {
+	for _, target := range m.byID {
+		if target.IsDefault {
+			copy := *target
+			return &copy, nil
+		}
+	}
 	return nil, nil
 }
-func (mockRunNodeRepo) DeleteByRunID(_ context.Context, _ string) error { return nil }
+
+type mockRunNodeRepo struct {
+	byRun map[string][]models.PipelineRunNode
+}
+
+func (m *mockRunNodeRepo) ReplaceByRunID(_ context.Context, runID string, nodes []models.PipelineRunNode) error {
+	if m.byRun == nil {
+		m.byRun = map[string][]models.PipelineRunNode{}
+	}
+	m.byRun[runID] = append([]models.PipelineRunNode(nil), nodes...)
+	return nil
+}
+func (m *mockRunNodeRepo) FindByRunID(_ context.Context, runID string) ([]models.PipelineRunNode, error) {
+	if m.byRun == nil {
+		return nil, nil
+	}
+	return append([]models.PipelineRunNode(nil), m.byRun[runID]...), nil
+}
+func (m *mockRunNodeRepo) DeleteByRunID(_ context.Context, runID string) error {
+	if m.byRun != nil {
+		delete(m.byRun, runID)
+	}
+	return nil
+}
 
 type mockRunEventRepo struct {
 	events []models.PipelineRunEvent
@@ -2198,6 +2279,108 @@ func TestRefreshRunForList_MarksLongUnschedulablePendingError(t *testing.T) {
 	}
 	if !foundEvent {
 		t.Fatalf("expected unschedulable run_failed event, got %#v", eventRepo.events)
+	}
+}
+
+func TestRefreshRunForList_MarksLongInvalidImageNamePendingError(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-20 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:            "run-1",
+				WorkflowName:  "wf-1",
+				Status:        "Running",
+				ArgoNamespace: "video-proc-dev",
+				CreatedAt:     startedAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-1" || namespace != "video-proc-dev" {
+			t.Fatalf("unexpected workflow lookup name=%q namespace=%q", name, namespace)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1", CreationTimestamp: metav1.Time{Time: startedAt}},
+			Status: wfv1.WorkflowStatus{
+				Phase:     wfv1.WorkflowRunning,
+				StartedAt: metav1.Time{Time: startedAt},
+				Nodes: map[string]wfv1.NodeStatus{
+					"node-1": {
+						ID:           "node-1",
+						Name:         "wf-1-step",
+						DisplayName:  "step",
+						Type:         wfv1.NodeTypePod,
+						Phase:        wfv1.NodePending,
+						Message:      `InvalidImageName: Failed to apply default image tag "repo/image@sha256:1234": couldn't parse image name "repo/image@sha256:1234": invalid reference format`,
+						StartedAt:    metav1.Time{Time: startedAt},
+						TemplateName: "step",
+					},
+				},
+			},
+		}, nil
+	}
+	eventRepo := &mockRunEventRepo{}
+	nodeRepo := &mockRunNodeRepo{}
+	assetNodeRepo := &mockAssetNodeRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, nodeRepo)
+	uc.SetRunEventRepo(eventRepo)
+	uc.SetObservabilityRepositories(assetNodeRepo, nil, nil)
+	uc.SetResourceGuardConfig(ResourceGuardConfig{UnschedulablePendingThreshold: 15 * time.Minute})
+	uc.now = func() time.Time { return now }
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != string(wfv1.WorkflowError) {
+		t.Fatalf("expected Error for over-threshold invalid image run, got %q", run.Status)
+	}
+	if !strings.Contains(run.Message, "Kubernetes 镜像启动失败") || !strings.Contains(run.Message, "InvalidImageName") {
+		t.Fatalf("expected image diagnostics in message, got %q", run.Message)
+	}
+	if run.FinishedAt == nil || !run.FinishedAt.Equal(now) {
+		t.Fatalf("expected finished_at %v, got %v", now, run.FinishedAt)
+	}
+	if len(nodeRepo.byRun["run-1"]) == 0 {
+		t.Fatal("expected node snapshots to be stored")
+	}
+	foundNodeError := false
+	for _, node := range nodeRepo.byRun["run-1"] {
+		if node.DisplayName == "step" && node.Phase == string(wfv1.NodeError) && strings.Contains(node.Message, "InvalidImageName") {
+			foundNodeError = true
+			if node.FinishedAt == nil {
+				t.Fatal("expected derived image-startup node to have finished_at")
+			}
+			break
+		}
+	}
+	if !foundNodeError {
+		t.Fatalf("expected invalid-image node snapshot Error, got %#v", nodeRepo.byRun["run-1"])
+	}
+	if len(assetNodeRepo.byRun["run-1"]) == 0 {
+		t.Fatal("expected asset-node rows to be stored")
+	}
+	foundAssetNodeError := false
+	for _, row := range assetNodeRepo.byRun["run-1"] {
+		if row.DisplayName == "step" && row.Status == string(wfv1.NodeError) && strings.Contains(row.Message, "InvalidImageName") {
+			foundAssetNodeError = true
+			break
+		}
+	}
+	if !foundAssetNodeError {
+		t.Fatalf("expected invalid-image asset-node Error, got %#v", assetNodeRepo.byRun["run-1"])
+	}
+	foundEvent := false
+	for _, event := range eventRepo.events {
+		if event.EventType == runEventFailed && event.Reason == "image_startup" {
+			foundEvent = true
+			break
+		}
+	}
+	if !foundEvent {
+		t.Fatalf("expected image_startup run_failed event, got %#v", eventRepo.events)
 	}
 }
 

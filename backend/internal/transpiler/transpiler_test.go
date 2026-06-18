@@ -180,6 +180,10 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 		if _, ok := tmpl.Container.Resources.Requests[corev1.ResourceName("nvidia.com/gpu")]; ok {
 			t.Fatal("gpu must not be emitted as a request")
 		}
+		if got := tmpl.NodeSelector["cloud.google.com/gke-accelerator"]; got != "nvidia-l4" {
+			t.Fatalf("gpu node selector = %q, want nvidia-l4", got)
+		}
+		assertTemplateToleration(t, tmpl, "nvidia.com/gpu", "present")
 		disk := tmpl.Container.Resources.Limits[corev1.ResourceEphemeralStorage]
 		if got := disk.String(); got != "50Gi" {
 			t.Fatalf("disk limit = %q, want 50Gi", got)
@@ -187,6 +191,55 @@ func TestTranspileEmitsGPUResourceLimit(t *testing.T) {
 		return
 	}
 	t.Fatal("step-gpu-step template not found")
+}
+
+func assertTemplateToleration(t *testing.T, tmpl wfv1.Template, key, value string) {
+	t.Helper()
+	for _, tol := range tmpl.Tolerations {
+		if tol.Key == key && tol.Value == value && tol.Operator == corev1.TolerationOpEqual && tol.Effect == corev1.TaintEffectNoSchedule {
+			return
+		}
+	}
+	t.Fatalf("missing toleration %s=%s in %#v", key, value, tmpl.Tolerations)
+}
+
+func TestTranspileAppliesTemplateSchedulingDefaults(t *testing.T) {
+	p := &Pipeline{
+		Name: "target-scheduling",
+		Nodes: []Node{{
+			ID: "step-a",
+			Component: Component{
+				Name:  "worker",
+				Image: "busybox:latest",
+			},
+		}},
+	}
+	wf, err := Transpile(p, &Options{
+		Name: "target-scheduling",
+		TemplateNodeSelector: map[string]string{
+			"workload": "databrew",
+		},
+		TemplateTolerations: []corev1.Toleration{{
+			Key:      "environment",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "dev",
+			Effect:   corev1.TaintEffectNoSchedule,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name != "step-a" {
+			continue
+		}
+		if got := tmpl.NodeSelector["workload"]; got != "databrew" {
+			t.Fatalf("node selector = %q, want databrew", got)
+		}
+		assertTemplateToleration(t, tmpl, "environment", "dev")
+		return
+	}
+	t.Fatal("step-a template not found")
 }
 
 func TestTranspileEmitsCSISecretProviderClassVolume(t *testing.T) {

@@ -40,6 +40,8 @@ type Options struct {
 	Namespace             string
 	ServiceAccount        string
 	ImagePullSecrets      []string
+	TemplateNodeSelector  map[string]string
+	TemplateTolerations   []corev1.Toleration
 	TTLSecondsAfter       int32
 	RetryStrategy         *RetryStrategy
 	ActiveDeadlineSeconds int64
@@ -390,6 +392,8 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 	}
 
 	tmpl.Container.Resources = buildK8sResources(node.Component.Resources)
+	applyTemplateSchedulingDefaults(&tmpl, opts)
+	applySchedulingHints(&tmpl, node.Component.Resources)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -637,6 +641,8 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 	}
 
 	tmpl.Script.Resources = buildK8sResources(node.Component.Resources)
+	applyTemplateSchedulingDefaults(&tmpl, opts)
+	applySchedulingHints(&tmpl, node.Component.Resources)
 
 	// Input param declarations (names only — values come from DAG task arguments)
 	var inputParams []wfv1.Parameter
@@ -746,6 +752,75 @@ func buildK8sResources(res *ResourceRequirements) corev1.ResourceRequirements {
 		return corev1.ResourceRequirements{}
 	}
 	return corev1.ResourceRequirements{Limits: limits, Requests: requests}
+}
+
+func applySchedulingHints(tmpl *wfv1.Template, res *ResourceRequirements) {
+	if tmpl == nil || !requiresGPU(res) {
+		return
+	}
+	if tmpl.NodeSelector == nil {
+		tmpl.NodeSelector = map[string]string{}
+	}
+	if isL4ComputeTier(res.ComputeTier) {
+		tmpl.NodeSelector["cloud.google.com/gke-accelerator"] = "nvidia-l4"
+	}
+	appendTemplateToleration(tmpl, corev1.Toleration{
+		Key:      "nvidia.com/gpu",
+		Operator: corev1.TolerationOpEqual,
+		Value:    "present",
+		Effect:   corev1.TaintEffectNoSchedule,
+	})
+}
+
+func applyTemplateSchedulingDefaults(tmpl *wfv1.Template, opts *Options) {
+	if tmpl == nil || opts == nil {
+		return
+	}
+	if len(opts.TemplateNodeSelector) > 0 {
+		if tmpl.NodeSelector == nil {
+			tmpl.NodeSelector = map[string]string{}
+		}
+		for key, value := range opts.TemplateNodeSelector {
+			if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+				continue
+			}
+			tmpl.NodeSelector[key] = value
+		}
+	}
+	for _, toleration := range opts.TemplateTolerations {
+		if strings.TrimSpace(toleration.Key) == "" && toleration.Operator != corev1.TolerationOpExists {
+			continue
+		}
+		appendTemplateToleration(tmpl, toleration)
+	}
+}
+
+func requiresGPU(res *ResourceRequirements) bool {
+	if res == nil || strings.TrimSpace(res.GPU) == "" {
+		return false
+	}
+	q, err := resource.ParseQuantity(strings.TrimSpace(res.GPU))
+	if err != nil {
+		return false
+	}
+	return q.Sign() > 0
+}
+
+func isL4ComputeTier(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(normalized, "l4")
+}
+
+func appendTemplateToleration(tmpl *wfv1.Template, toleration corev1.Toleration) {
+	for _, existing := range tmpl.Tolerations {
+		if existing.Key == toleration.Key &&
+			existing.Operator == toleration.Operator &&
+			existing.Value == toleration.Value &&
+			existing.Effect == toleration.Effect {
+			return
+		}
+	}
+	tmpl.Tolerations = append(tmpl.Tolerations, toleration)
 }
 
 // isShellName reports whether cmd is a single shell name (e.g. ["sh"], ["/bin/sh"]).

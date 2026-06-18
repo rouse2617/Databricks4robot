@@ -44,6 +44,7 @@ import {
 	WorkflowNodeDetailPanel,
 	type WorkflowNodeDetailTabKey,
 } from "../components/pipeline/WorkflowNodeDetailPanel";
+import { isCanonicalAssetId } from "../lib/assetId";
 import { STATUS_COLORS } from "../lib/constants";
 import { resolveWorkflowDetailBackTarget } from "../lib/pipelineNavigation";
 import { formatWorkflowPhaseLabel } from "../lib/statusLabels";
@@ -778,13 +779,23 @@ function WorkflowSummaryCards({
 					"无资产运行"
 				) : resolvedAssetCount > 0 ? (
 					<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-						{visibleResolvedAssetIds.map((assetId) => (
-							<Link key={assetId} to={`/assets/${encodeURIComponent(assetId)}`}>
-								<Tag color="blue" style={{ marginInlineEnd: 0 }}>
+						{visibleResolvedAssetIds.map((assetId) => {
+							const tag = (
+								<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
 									{assetId}
 								</Tag>
-							</Link>
-						))}
+							);
+							return isCanonicalAssetId(assetId) ? (
+								<Link
+									key={assetId}
+									to={`/assets/${encodeURIComponent(assetId)}`}
+								>
+									{tag}
+								</Link>
+							) : (
+								<span key={assetId}>{tag}</span>
+							);
+						})}
 						{hiddenResolvedAssetCount > 0 ? (
 							<Tag>+{hiddenResolvedAssetCount}</Tag>
 						) : null}

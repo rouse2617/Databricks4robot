@@ -70,7 +70,7 @@ function mockWorkflowDetailState(
 			nodes: [],
 			createdAt: "2026-06-03T00:00:00Z",
 			labels: {
-				"asset-ids": "asset-a,asset-b",
+				"asset-ids": "aa111111,bb222222",
 				"template-name": "asset-pipeline",
 				"template-version": "3",
 			},
@@ -196,20 +196,38 @@ describe("WorkflowDetailPage", () => {
 	it("renders linked input asset chips from workflow labels", () => {
 		renderWorkflowDetail();
 
-		expect(screen.getByRole("link", { name: "asset-a" })).toHaveAttribute(
+		expect(screen.getByRole("link", { name: "aa111111" })).toHaveAttribute(
 			"href",
-			"/assets/asset-a",
+			"/assets/aa111111",
 		);
-		expect(screen.getByText("asset-a")).toBeInTheDocument();
-		expect(screen.getByText("asset-b")).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "asset-a" })).toHaveAttribute(
+		expect(screen.getByText("aa111111")).toBeInTheDocument();
+		expect(screen.getByText("bb222222")).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "bb222222" })).toHaveAttribute(
 			"href",
-			"/assets/asset-a",
+			"/assets/bb222222",
 		);
-		expect(screen.getByRole("link", { name: "asset-b" })).toHaveAttribute(
-			"href",
-			"/assets/asset-b",
-		);
+	});
+
+	it("renders external video IDs without asset detail links", () => {
+		const videoID = "019dabf3-5685-769f-8ec3-3992767ebe65";
+		mockWorkflowDetailState({
+			workflow: {
+				name: "wf-asset",
+				status: "Succeeded",
+				nodes: [],
+				createdAt: "2026-06-03T00:00:00Z",
+				labels: {
+					"asset-ids": videoID,
+					"template-name": "asset-pipeline",
+					"template-version": "3",
+				},
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText(videoID)).toBeInTheDocument();
+		expect(screen.queryByRole("link", { name: videoID })).toBeNull();
 	});
 
 	it("uses product-facing copy when run events are unavailable", () => {
