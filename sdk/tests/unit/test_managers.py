@@ -496,6 +496,95 @@ class TestPipelineManager:
 
 
 # =========================================================================
+# RunManager
+# =========================================================================
+
+class TestRunManager:
+    def test_create_from_template_uses_run_api(self, client):
+        route = respx.post(f"{BASE_URL}/api/v1/runs/template/tmpl-1").mock(
+            return_value=httpx.Response(201, json={"id": "run-1"})
+        )
+        result = client.runs.create_from_template(
+            "tmpl-1",
+            asset_ids=["asset-1"],
+            target_id="gpu-l4",
+            version=3,
+        )
+        assert result["id"] == "run-1"
+        assert route.calls.last.request.url.path == "/api/v1/runs/template/tmpl-1"
+        body = route.calls.last.request.read()
+        assert b'"asset_ids":["asset-1"]' in body
+        assert b'"target_id":"gpu-l4"' in body
+        assert b'"version":3' in body
+
+    def test_list_get_and_resolve_by_workflow(self, client):
+        list_route = respx.get(f"{BASE_URL}/api/v1/runs").mock(
+            return_value=httpx.Response(200, json={"items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1").mock(
+            return_value=httpx.Response(200, json={"id": "run-1"})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/by-workflow/wf-1").mock(
+            return_value=httpx.Response(200, json={"id": "run-1"})
+        )
+        assert client.runs.list(view="summary", exclude_batch=True, page=1)["total"] == 0
+        assert dict(list_route.calls.last.request.url.params) == {
+            "view": "summary",
+            "excludeBatch": "true",
+            "page": "1",
+        }
+        assert client.runs.get("run-1")["id"] == "run-1"
+        assert client.runs.get_by_workflow("wf-1")["id"] == "run-1"
+
+    def test_run_subresources_and_runtime_operations(self, client):
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/events").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "evt-1"}], "total": 1})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/nodes").mock(
+            return_value=httpx.Response(200, json={"items": [{"id": "node-1"}], "total": 1})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/asset-nodes").mock(
+            return_value=httpx.Response(200, json={"items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/cost-summary").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1"})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/inputs").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/outputs").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/children").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "items": [], "total": 0})
+        )
+        respx.get(f"{BASE_URL}/api/v1/runs/run-1/runtime").mock(
+            return_value=httpx.Response(200, json={"runId": "run-1", "runtime": {"runtimeType": "argo"}})
+        )
+        for operation in ("retry", "resubmit", "stop", "suspend", "resume", "terminate"):
+            respx.post(f"{BASE_URL}/api/v1/runs/run-1/{operation}").mock(
+                return_value=httpx.Response(200, json={"message": "ok", "id": "run-1"})
+            )
+        respx.delete(f"{BASE_URL}/api/v1/runs/run-1").mock(return_value=httpx.Response(204))
+
+        assert client.runs.events("run-1", limit=10)["items"][0]["id"] == "evt-1"
+        assert client.runs.nodes("run-1")["items"][0]["id"] == "node-1"
+        assert client.runs.asset_nodes("run-1")["total"] == 0
+        assert client.runs.cost_summary("run-1")["runId"] == "run-1"
+        assert client.runs.inputs("run-1")["total"] == 0
+        assert client.runs.outputs("run-1")["total"] == 0
+        assert client.runs.children("run-1")["total"] == 0
+        assert client.runs.runtime("run-1")["runtime"]["runtimeType"] == "argo"
+        assert client.runs.retry("run-1")["id"] == "run-1"
+        assert client.runs.resubmit("run-1")["id"] == "run-1"
+        assert client.runs.stop("run-1")["message"] == "ok"
+        assert client.runs.suspend("run-1")["message"] == "ok"
+        assert client.runs.resume("run-1")["message"] == "ok"
+        assert client.runs.terminate("run-1")["message"] == "ok"
+        assert client.runs.delete("run-1") == {}
+
+
+# =========================================================================
 # PipelineConfigManager
 # =========================================================================
 

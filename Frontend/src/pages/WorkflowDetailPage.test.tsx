@@ -15,7 +15,13 @@ import WorkflowDetailPage, {
 } from "./WorkflowDetailPage";
 
 const mockUseWorkflowDetail = vi.fn();
-const mockDeletePipelineRun = vi.fn();
+const mockDeleteRun = vi.fn();
+const mockRetryRun = vi.fn();
+const mockResubmitRun = vi.fn();
+const mockStopRun = vi.fn();
+const mockSuspendRun = vi.fn();
+const mockResumeRun = vi.fn();
+const mockTerminateRun = vi.fn();
 const mockWorkflowDagView = vi.fn(
 	({
 		nodes,
@@ -34,8 +40,14 @@ vi.mock("./useWorkflowDetail", () => ({
 	useWorkflowDetail: (...args: unknown[]) => mockUseWorkflowDetail(...args),
 }));
 
-vi.mock("../api/pipelineApi", () => ({
-	deletePipelineRun: (...args: unknown[]) => mockDeletePipelineRun(...args),
+vi.mock("../api/runApi", () => ({
+	deleteRun: (...args: unknown[]) => mockDeleteRun(...args),
+	retryRun: (...args: unknown[]) => mockRetryRun(...args),
+	resubmitRun: (...args: unknown[]) => mockResubmitRun(...args),
+	stopRun: (...args: unknown[]) => mockStopRun(...args),
+	suspendRun: (...args: unknown[]) => mockSuspendRun(...args),
+	resumeRun: (...args: unknown[]) => mockResumeRun(...args),
+	terminateRun: (...args: unknown[]) => mockTerminateRun(...args),
 }));
 
 vi.mock("./WorkflowDagView", async (importOriginal) => {
@@ -138,11 +150,31 @@ describe("WorkflowDetailPage", () => {
 			})),
 		});
 		vi.clearAllMocks();
-		mockDeletePipelineRun.mockResolvedValue(undefined);
+		mockDeleteRun.mockResolvedValue(undefined);
+		mockRetryRun.mockResolvedValue({ message: "retry submitted" });
+		mockResubmitRun.mockResolvedValue({ message: "resubmit submitted" });
+		mockStopRun.mockResolvedValue({ message: "stop submitted" });
+		mockSuspendRun.mockResolvedValue({ message: "suspend submitted" });
+		mockResumeRun.mockResolvedValue({ message: "resume submitted" });
+		mockTerminateRun.mockResolvedValue({ message: "terminate submitted" });
 		mockWorkflowDetailState();
 	});
 
 	afterEach(cleanup);
+
+	it("uses runId route params for run-centric detail URLs", () => {
+		render(
+			<MemoryRouter initialEntries={["/runs/run-123"]}>
+				<Routes>
+					<Route path="/runs/:runId" element={<WorkflowDetailPage />} />
+				</Routes>
+			</MemoryRouter>,
+		);
+
+		expect(mockUseWorkflowDetail).toHaveBeenCalledWith("run-123", {
+			lookupMode: "runId",
+		});
+	});
 
 	it("maps workflow nodes back to pipeline node snapshots by run node id", () => {
 		const pipelineNode = findPipelineNodeForWorkflowNode(
@@ -443,9 +475,7 @@ describe("WorkflowDetailPage", () => {
 		const dialog = await screen.findByRole("dialog");
 		fireEvent.click(within(dialog).getByRole("button", { name: /删\s*除/ }));
 
-		await waitFor(() =>
-			expect(mockDeletePipelineRun).toHaveBeenCalledWith("run-1"),
-		);
+		await waitFor(() => expect(mockDeleteRun).toHaveBeenCalledWith("run-1"));
 	});
 
 	it("shows a not-found alert instead of an indefinite spinner", () => {

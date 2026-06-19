@@ -25,13 +25,21 @@ import {
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import {
-	deletePipelineRun,
-	type PipelineRun,
-	type PipelineRunAssetNode,
-	type PipelineRunEvent,
-	type PipelineRunNode,
+import type {
+	PipelineRun,
+	PipelineRunAssetNode,
+	PipelineRunEvent,
+	PipelineRunNode,
 } from "../api/pipelineApi";
+import {
+	deleteRun,
+	resubmitRun,
+	resumeRun,
+	retryRun,
+	stopRun,
+	suspendRun,
+	terminateRun,
+} from "../api/runApi";
 import type {
 	WorkflowDetail,
 	WorkflowLogResponse,
@@ -768,7 +776,7 @@ function eventTagColor(event: PipelineRunEvent) {
 }
 
 function formatRunEventError(error: string) {
-	if (error.includes("未找到关联的 DataBrew pipeline run")) {
+	if (error.includes("未找到关联的 DataBrew Run")) {
 		return "暂无 DataBrew 运行事件。该工作流可能由 Argo 外部提交，仍可查看 DAG、Pod 和日志。";
 	}
 	return error;
@@ -1572,7 +1580,8 @@ export default function WorkflowDetailPage({
 	legacyRoute?: boolean;
 }) {
 	const { message: messageApi } = App.useApp();
-	const { name } = useParams<{ name: string }>();
+	const { name, runId } = useParams<{ name?: string; runId?: string }>();
+	const detailName = name ?? runId;
 	const navigate = useNavigate();
 	const location = useLocation();
 	const backTarget = useMemo(
@@ -1610,7 +1619,10 @@ export default function WorkflowDetailPage({
 		startFollowLogs,
 		stopFollowLogs,
 		downloadLogs,
-	} = useWorkflowDetail(name);
+	} = useWorkflowDetail(
+		detailName,
+		runId ? { lookupMode: "runId" } : undefined,
+	);
 	const pipelineNodeLabels = useMemo(
 		() => buildPipelineNodeLabelLookup(runEventState.run?.pipelineJSON),
 		[runEventState.run?.pipelineJSON],
@@ -1650,6 +1662,34 @@ export default function WorkflowDetailPage({
 				: [],
 		[displayWorkflow],
 	);
+	const runProductOperation = useCallback(
+		async (runId: string, key: WorkflowOperationKey) => {
+			switch (key) {
+				case "delete":
+					await deleteRun(runId);
+					return;
+				case "retry":
+					await retryRun(runId);
+					return;
+				case "resubmit":
+					await resubmitRun(runId);
+					return;
+				case "stop":
+					await stopRun(runId);
+					return;
+				case "suspend":
+					await suspendRun(runId);
+					return;
+				case "resume":
+					await resumeRun(runId);
+					return;
+				case "terminate":
+					await terminateRun(runId);
+					return;
+			}
+		},
+		[],
+	);
 	const displaySelectedNode = useMemo(() => {
 		if (!selectedNode || !displayWorkflow) return selectedNode;
 		return (
@@ -1677,17 +1717,23 @@ export default function WorkflowDetailPage({
 	const executeOperation = useCallback(
 		async (operation: WorkflowOperationConfig) => {
 			if (!displayWorkflow || operation.disabled) return;
+			const runId = runEventState.run?.id;
 			setOperationLoading(operation.key);
 			try {
-				if (operation.key === "delete" && runEventState.run?.id) {
-					await deletePipelineRun(runEventState.run.id);
+				if (operation.key === "delete" && runId) {
+					await deleteRun(runId);
 					messageApi.success?.("执行记录删除已提交");
 					navigate("/pipeline?tab=executions");
 					return;
 				} else if (operation.key === "retry") {
 					const outcome = await runWorkflowRetryWithFeedback(
 						displayWorkflow,
-						() => operation.run(),
+						() =>
+							runId
+								? runProductOperation(runId, "retry").then(() => ({
+										message: "run retry submitted",
+									}))
+								: operation.run(),
 					);
 					if (outcome === "no_progress") {
 						messageApi.warning?.(
@@ -1697,7 +1743,11 @@ export default function WorkflowDetailPage({
 						messageApi.success?.("重试已提交");
 					}
 				} else {
-					await operation.run();
+					if (runId) {
+						await runProductOperation(runId, operation.key);
+					} else {
+						await operation.run();
+					}
 					messageApi.success?.(
 						operation.key === "delete"
 							? "工作流删除已提交"
@@ -1725,6 +1775,7 @@ export default function WorkflowDetailPage({
 			messageApi,
 			navigate,
 			runEventState.run?.id,
+			runProductOperation,
 		],
 	);
 
@@ -1860,12 +1911,12 @@ export default function WorkflowDetailPage({
 	}, [displayWorkflow, messageApi, operations, runOperation]);
 
 	useEffect(() => {
-		if (legacyRoute && name) {
-			navigate(`/pipeline/executions/${encodeURIComponent(name)}`, {
+		if (legacyRoute && detailName) {
+			navigate(`/pipeline/executions/${encodeURIComponent(detailName)}`, {
 				replace: true,
 			});
 		}
-	}, [legacyRoute, name, navigate]);
+	}, [legacyRoute, detailName, navigate]);
 
 	useEffect(() => {
 		if (!selectedNode) {
@@ -1892,7 +1943,7 @@ export default function WorkflowDetailPage({
 		if (runEventState.run || runEventState.items.length > 0) {
 			return (
 				<ExpiredWorkflowLedgerView
-					name={name}
+					name={detailName}
 					runEventState={runEventState}
 					onBack={() => navigate(backTarget)}
 					onRefreshEvents={loadRunEvents}

@@ -193,6 +193,22 @@ func (m *mockPipelineRunRepo) ListSummaries(_ context.Context, filter models.Pip
 	if err != nil {
 		return nil, 0, err
 	}
+	filtered := make([]models.PipelineRun, 0, len(items))
+	for _, item := range items {
+		if filter.BatchJobID != "" {
+			if item.BatchJobID == nil || *item.BatchJobID != filter.BatchJobID {
+				continue
+			}
+		}
+		if filter.ExcludeBatch && item.BatchJobID != nil && strings.TrimSpace(*item.BatchJobID) != "" {
+			continue
+		}
+		if filter.Status != "" && !strings.EqualFold(item.Status, filter.Status) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	items = filtered
 	return items, len(items), nil
 }
 func (m *mockPipelineRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
@@ -277,6 +293,50 @@ func (m *mockPipelineRunNodeRepo) DeleteByRunID(_ context.Context, runID string)
 	return nil
 }
 
+type mockPipelineRunEventRepo struct {
+	events []models.PipelineRunEvent
+}
+
+func (m *mockPipelineRunEventRepo) Append(_ context.Context, event *models.PipelineRunEvent) error {
+	if event == nil {
+		return nil
+	}
+	if event.RunID == "" {
+		event.RunID = event.SubjectID
+	}
+	if event.Sequence == 0 {
+		event.Sequence = int64(len(m.events) + 1)
+	}
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = now()
+	}
+	m.events = append(m.events, *event)
+	return nil
+}
+
+func (m *mockPipelineRunEventRepo) ListByRunID(_ context.Context, runID string, opts models.PipelineRunEventListOptions) (*models.PipelineRunEventListResult, error) {
+	out := make([]models.PipelineRunEvent, 0, len(m.events))
+	for _, event := range m.events {
+		if event.RunID != runID {
+			continue
+		}
+		if opts.EventType != "" && event.EventType != opts.EventType {
+			continue
+		}
+		if opts.SubjectType != "" && event.SubjectType != opts.SubjectType {
+			continue
+		}
+		if opts.Cursor > 0 && event.Sequence <= opts.Cursor {
+			continue
+		}
+		out = append(out, event)
+		if opts.Limit > 0 && len(out) >= opts.Limit {
+			break
+		}
+	}
+	return &models.PipelineRunEventListResult{Items: out, Total: len(out)}, nil
+}
+
 type mockAssetRepo struct {
 	assets map[string]*models.Asset
 }
@@ -315,7 +375,15 @@ func (m *mockAssetRepo) ListDescendants(_ context.Context, _ string) ([]*models.
 	return nil, nil
 }
 
-type mockWorkflowClient struct{}
+type mockWorkflowClient struct {
+	deleteCalls    []string
+	retryCalls     []string
+	stopCalls      []string
+	suspendCalls   []string
+	resumeCalls    []string
+	terminateCalls []string
+	retryErr       error
+}
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
 	return nil
@@ -323,7 +391,8 @@ func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow,
 func (m *mockWorkflowClient) GetWorkflowStatus(_ context.Context, _, _ string) (wfv1.WorkflowPhase, error) {
 	return wfv1.WorkflowSucceeded, nil
 }
-func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, _, _ string) error {
+func (m *mockWorkflowClient) DeleteWorkflow(_ context.Context, name, namespace string) error {
+	m.deleteCalls = append(m.deleteCalls, namespace+"/"+name)
 	return nil
 }
 func (m *mockWorkflowClient) ListWorkflows(_ context.Context, _ string, _ string) ([]wfv1.Workflow, error) {
@@ -332,7 +401,8 @@ func (m *mockWorkflowClient) ListWorkflows(_ context.Context, _ string, _ string
 func (m *mockWorkflowClient) GetWorkflow(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
 	return &wfv1.Workflow{}, nil
 }
-func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
+func (m *mockWorkflowClient) StopWorkflow(_ context.Context, name, namespace string) error {
+	m.stopCalls = append(m.stopCalls, namespace+"/"+name)
 	return nil
 }
 func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
@@ -341,11 +411,23 @@ func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string, 
 func (m *mockWorkflowClient) GetWorkflowLogStream(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
-func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, _, _ string) error     { return nil }
-func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error  { return nil }
-func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, _ string) error   { return nil }
-func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, _ string) error    { return nil }
-func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) RetryWorkflow(_ context.Context, name, namespace string) error {
+	m.retryCalls = append(m.retryCalls, namespace+"/"+name)
+	return m.retryErr
+}
+func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) error { return nil }
+func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, name, namespace string) error {
+	m.suspendCalls = append(m.suspendCalls, namespace+"/"+name)
+	return nil
+}
+func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, name, namespace string) error {
+	m.resumeCalls = append(m.resumeCalls, namespace+"/"+name)
+	return nil
+}
+func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, name, namespace string) error {
+	m.terminateCalls = append(m.terminateCalls, namespace+"/"+name)
+	return nil
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -421,10 +503,36 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.POST("/api/v1/pipeline-runs", h.CreateRun)
 	r.POST("/api/v1/pipeline-runs/template/:id", h.CreateRunByTemplate)
 	r.GET("/api/v1/pipeline-runs", h.ListRuns)
+	r.GET("/api/v1/pipeline-runs/watcher/status", h.GetRunWatcherStatus)
+	r.GET("/api/v1/pipeline-runs/by-workflow/:workflowName", h.GetRunByWorkflowName)
 	r.GET("/api/v1/pipeline-runs/:id", h.GetRun)
 	r.GET("/api/v1/pipeline-runs/:id/events", h.ListRunEvents)
 	r.GET("/api/v1/pipeline-runs/:id/asset-nodes", h.ListRunAssetNodes)
 	r.GET("/api/v1/pipeline-runs/:id/cost-summary", h.GetRunCostSummary)
+	r.POST("/api/v1/pipeline-runs/:id/retry", h.RetryRun)
+	r.POST("/api/v1/pipeline-runs/:id/stop", h.StopRun)
+	r.DELETE("/api/v1/pipeline-runs/:id", h.DeleteRun)
+	r.POST("/api/v1/runs", h.CreateRun)
+	r.POST("/api/v1/runs/template/:id", h.CreateRunByTemplate)
+	r.GET("/api/v1/runs", h.ListRuns)
+	r.GET("/api/v1/runs/watcher/status", h.GetRunWatcherStatus)
+	r.GET("/api/v1/runs/by-workflow/:workflowName", h.GetRunByWorkflowName)
+	r.GET("/api/v1/runs/:id", h.GetRun)
+	r.GET("/api/v1/runs/:id/events", h.ListRunEvents)
+	r.GET("/api/v1/runs/:id/nodes", h.ListRunNodes)
+	r.GET("/api/v1/runs/:id/asset-nodes", h.ListRunAssetNodes)
+	r.GET("/api/v1/runs/:id/cost-summary", h.GetRunCostSummary)
+	r.GET("/api/v1/runs/:id/inputs", h.ListRunInputs)
+	r.GET("/api/v1/runs/:id/outputs", h.ListRunOutputs)
+	r.GET("/api/v1/runs/:id/children", h.ListRunChildren)
+	r.GET("/api/v1/runs/:id/runtime", h.GetRunRuntime)
+	r.POST("/api/v1/runs/:id/retry", h.RetryRunRuntime)
+	r.POST("/api/v1/runs/:id/resubmit", h.ResubmitRun)
+	r.POST("/api/v1/runs/:id/stop", h.StopRun)
+	r.POST("/api/v1/runs/:id/suspend", h.SuspendRun)
+	r.POST("/api/v1/runs/:id/resume", h.ResumeRun)
+	r.POST("/api/v1/runs/:id/terminate", h.TerminateRun)
+	r.DELETE("/api/v1/runs/:id", h.DeleteRun)
 	r.POST("/api/v1/pipeline-assets", h.RegisterOutput)
 	r.GET("/api/v1/assets/:id/pipeline-lineage", h.GetLineage)
 	return r
@@ -573,6 +681,325 @@ func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
 	}
 	if len(resp.Items[0].Nodes) != 2 {
 		t.Fatalf("expected 2 nodes, got %d", len(resp.Items[0].Nodes))
+	}
+}
+
+func TestRunAPI_ListGetByWorkflowAndEvents(t *testing.T) {
+	run := makePipelineRun("run-1", "wf-run-api")
+	runRepo := &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{run.ID: run},
+	}
+	eventRepo := &mockPipelineRunEventRepo{
+		events: []models.PipelineRunEvent{{
+			RunID:       run.ID,
+			EventType:   "run_started",
+			SubjectType: "run",
+			SubjectID:   run.ID,
+			Sequence:    1,
+			OccurredAt:  now(),
+		}},
+	}
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, &mockPipelineRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs?view=summary", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected list 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var listResp struct {
+		Items []models.PipelineRun `json:"items"`
+		Total int                  `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if listResp.Total != 1 || len(listResp.Items) != 1 || listResp.Items[0].ID != run.ID {
+		t.Fatalf("unexpected list response: %+v", listResp)
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs/by-workflow/wf-run-api", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected by-workflow 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var byWorkflow models.PipelineRun
+	if err := json.Unmarshal(w.Body.Bytes(), &byWorkflow); err != nil {
+		t.Fatalf("unmarshal by-workflow: %v", err)
+	}
+	if byWorkflow.ID != run.ID {
+		t.Fatalf("expected run id %q, got %q", run.ID, byWorkflow.ID)
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs/run-1/events?limit=10", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected events 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var events models.PipelineRunEventListResult
+	if err := json.Unmarshal(w.Body.Bytes(), &events); err != nil {
+		t.Fatalf("unmarshal events: %v", err)
+	}
+	if events.Total != 1 || len(events.Items) != 1 || events.Items[0].EventType != "run_started" {
+		t.Fatalf("unexpected events response: %+v", events)
+	}
+}
+
+func TestRunAPI_SubresourcesProjectInputsOutputsChildrenAndRuntime(t *testing.T) {
+	parent := makePipelineRun("run-parent", "wf-parent")
+	parent.AssetIDs = []string{"asset-1"}
+	parent.ExecutionTargetID = "gpu-l4"
+	parent.TargetSnapshot = map[string]interface{}{"namespace": "video-proc-dev", "gpu": "l4"}
+	parent.PipelineJSON = map[string]interface{}{
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "node-a",
+				"runtimeConfig": map[string]interface{}{
+					"configId":       "cfg-1",
+					"version":        2,
+					"fileName":       "node.yaml",
+					"mountPath":      "/mnt/parameters",
+					"targetFilename": "node.yaml",
+					"mode":           "config_version",
+					"content":        "redacted-in-projection",
+				},
+				"component": map[string]interface{}{
+					"args": []interface{}{
+						map[string]interface{}{"name": "threshold", "value": 0.9},
+					},
+				},
+			},
+		},
+	}
+	childBatchID := parent.ID
+	child := makePipelineRun("run-child", "wf-child")
+	child.BatchJobID = &childBatchID
+	runRepo := &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{
+			parent.ID: parent,
+			child.ID:  child,
+		},
+	}
+	nodeRepo := &mockPipelineRunNodeRepo{
+		byRunID: map[string][]models.PipelineRunNode{
+			parent.ID: {{
+				ID:                "node-row-1",
+				RunID:             parent.ID,
+				PipelineNodeID:    "node-a",
+				DisplayName:       "node a",
+				Phase:             "Succeeded",
+				Outputs:           map[string]interface{}{"artifact": "gs://bucket/out.json"},
+				LogRef:            "argo://wf-parent/node-a",
+				ResourcesDuration: map[string]interface{}{"cpu": 42},
+			}},
+		},
+	}
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nodeRepo)
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs/run-parent/nodes", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected nodes 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var nodes struct {
+		Items []models.PipelineRunNode `json:"items"`
+		Total int                      `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &nodes); err != nil {
+		t.Fatalf("unmarshal nodes: %v", err)
+	}
+	if nodes.Total != 1 || nodes.Items[0].PipelineNodeID != "node-a" {
+		t.Fatalf("unexpected nodes response: %+v", nodes)
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs/run-parent/inputs", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected inputs 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var inputs models.RunInputList
+	if err := json.Unmarshal(w.Body.Bytes(), &inputs); err != nil {
+		t.Fatalf("unmarshal inputs: %v", err)
+	}
+	seenTypes := map[string]bool{}
+	for _, item := range inputs.Items {
+		seenTypes[item.Type] = true
+		if item.Type == "config" {
+			if item.RefID != "cfg-1" || item.RefVersion != "2" {
+				t.Fatalf("unexpected config projection: %+v", item)
+			}
+			if _, ok := item.Snapshot["content"]; ok {
+				t.Fatalf("config projection should omit inline content: %+v", item.Snapshot)
+			}
+		}
+	}
+	for _, typ := range []string{"asset", "runtime_target", "config", "parameter"} {
+		if !seenTypes[typ] {
+			t.Fatalf("missing input type %q in %+v", typ, inputs.Items)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs/run-parent/outputs", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected outputs 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var outputs models.RunOutputList
+	if err := json.Unmarshal(w.Body.Bytes(), &outputs); err != nil {
+		t.Fatalf("unmarshal outputs: %v", err)
+	}
+	outputTypes := map[string]bool{}
+	for _, item := range outputs.Items {
+		outputTypes[item.Type] = true
+	}
+	for _, typ := range []string{"node_outputs", "logs", "metrics"} {
+		if !outputTypes[typ] {
+			t.Fatalf("missing output type %q in %+v", typ, outputs.Items)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs/run-parent/children", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected children 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var children models.RunChildList
+	if err := json.Unmarshal(w.Body.Bytes(), &children); err != nil {
+		t.Fatalf("unmarshal children: %v", err)
+	}
+	if children.Total != 1 || len(children.Items) != 1 || children.Items[0].ID != child.ID {
+		t.Fatalf("unexpected children response: %+v", children)
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs/run-parent/runtime", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected runtime 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var runtime models.RunRuntime
+	if err := json.Unmarshal(w.Body.Bytes(), &runtime); err != nil {
+		t.Fatalf("unmarshal runtime: %v", err)
+	}
+	if runtime.Runtime.RuntimeType != "argo" || runtime.Runtime.WorkflowName != "wf-parent" || runtime.Runtime.ExecutionTargetID != "gpu-l4" {
+		t.Fatalf("unexpected runtime response: %+v", runtime)
+	}
+}
+
+func TestRunAPI_RuntimeRetryRetriesWorkflowAndWritesEvents(t *testing.T) {
+	run := makePipelineRun("run-1", "wf-retry")
+	run.Status = "Failed"
+	run.ArgoNamespace = "video-proc-dev"
+	runRepo := &mockPipelineRunRepo{byID: map[string]*models.PipelineRun{run.ID: run}}
+	eventRepo := &mockPipelineRunEventRepo{}
+	wfClient := &mockWorkflowClient{}
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, &mockPipelineRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/runs/run-1/retry", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected retry 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(wfClient.retryCalls) != 1 || wfClient.retryCalls[0] != "video-proc-dev/wf-retry" {
+		t.Fatalf("unexpected retry calls: %+v", wfClient.retryCalls)
+	}
+	if len(runRepo.byID) != 1 {
+		t.Fatalf("runtime retry should not create a new run, repo has %d", len(runRepo.byID))
+	}
+	seen := map[string]bool{}
+	for _, event := range eventRepo.events {
+		seen[event.EventType] = true
+	}
+	for _, typ := range []string{"run_runtime_retry_requested", "run_runtime_retry_succeeded"} {
+		if !seen[typ] {
+			t.Fatalf("missing retry event %q in %+v", typ, eventRepo.events)
+		}
+	}
+}
+
+func TestRunAPI_RuntimeRetryRequiresWorkflowName(t *testing.T) {
+	run := makePipelineRun("run-1", "")
+	runRepo := &mockPipelineRunRepo{byID: map[string]*models.PipelineRun{run.ID: run}}
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, &mockPipelineRunNodeRepo{})
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/runs/run-1/retry", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected retry 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "workflowName") {
+		t.Fatalf("expected workflowName error, got %s", w.Body.String())
+	}
+}
+
+func TestRunAPI_RuntimeOperationsControlWorkflowAndDeleteRun(t *testing.T) {
+	run := makePipelineRun("run-ops", "wf-ops")
+	run.ArgoNamespace = "video-proc-dev"
+	runRepo := &mockPipelineRunRepo{byID: map[string]*models.PipelineRun{run.ID: run}}
+	eventRepo := &mockPipelineRunEventRepo{}
+	wfClient := &mockWorkflowClient{}
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, &mockPipelineRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	for _, tc := range []struct {
+		path string
+		want *[]string
+	}{
+		{path: "/api/v1/runs/run-ops/suspend", want: &wfClient.suspendCalls},
+		{path: "/api/v1/runs/run-ops/resume", want: &wfClient.resumeCalls},
+		{path: "/api/v1/runs/run-ops/terminate", want: &wfClient.terminateCalls},
+		{path: "/api/v1/runs/run-ops/stop", want: &wfClient.stopCalls},
+	} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, tc.path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected %s 200, got %d: %s", tc.path, w.Code, w.Body.String())
+		}
+		if len(*tc.want) != 1 || (*tc.want)[0] != "video-proc-dev/wf-ops" {
+			t.Fatalf("unexpected workflow calls for %s: %+v", tc.path, *tc.want)
+		}
+	}
+	seenEvents := map[string]bool{}
+	for _, event := range eventRepo.events {
+		seenEvents[event.EventType] = true
+	}
+	for _, typ := range []string{"run_stop_requested", "run_stopped"} {
+		if !seenEvents[typ] {
+			t.Fatalf("missing stop event %q in %+v", typ, eventRepo.events)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/v1/runs/run-ops", nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected delete 204, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, ok := runRepo.byID["run-ops"]; ok {
+		t.Fatalf("expected run to be deleted")
+	}
+	if len(wfClient.deleteCalls) != 1 || wfClient.deleteCalls[0] != "video-proc-dev/wf-ops" {
+		t.Fatalf("unexpected delete calls: %+v", wfClient.deleteCalls)
+	}
+
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/v1/runs/run-ops", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected second delete 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

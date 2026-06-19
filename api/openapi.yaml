@@ -52,6 +52,8 @@ tags:
     description: Health check, readiness, metrics, version info
   - name: Pipeline
     description: Pipeline orchestration (Argo Workflows)
+  - name: Runs
+    description: Product execution records served through the Run Kernel boundary, including the run ledger, runtime operations, and run tree projections
 components:
   securitySchemes:
     DatabrewToken:
@@ -2320,6 +2322,91 @@ components:
               estimatedCostUsd: { type: number, format: double, nullable: true }
               costSource: { type: string }
         generatedAt: { type: string, format: date-time }
+    RunInput:
+      type: object
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        nodeId: { type: string }
+        type:
+          type: string
+          description: Input kind, for example asset, runtime_target, config, or parameter.
+        refId: { type: string }
+        refVersion: { type: string }
+        fileName: { type: string }
+        mountPath: { type: string }
+        targetFilename: { type: string }
+        source: { type: string }
+        snapshot:
+          type: object
+          additionalProperties: true
+    RunInputList:
+      type: object
+      properties:
+        runId: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RunInput' }
+        total: { type: integer }
+    RunOutput:
+      type: object
+      properties:
+        id: { type: string }
+        runId: { type: string }
+        nodeId: { type: string }
+        type:
+          type: string
+          description: Output kind, for example node_outputs, logs, or metrics.
+        refId: { type: string }
+        uri: { type: string }
+        snapshot:
+          type: object
+          additionalProperties: true
+    RunOutputList:
+      type: object
+      properties:
+        runId: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RunOutput' }
+        total: { type: integer }
+    RunChildList:
+      type: object
+      properties:
+        runId: { type: string }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRun' }
+        total: { type: integer }
+    RunRuntime:
+      type: object
+      properties:
+        runId: { type: string }
+        runtime:
+          type: object
+          properties:
+            runtimeType: { type: string, example: argo }
+            workflowName: { type: string }
+            namespace: { type: string }
+            uid: { type: string }
+            status: { type: string }
+            message: { type: string }
+            executionTargetId: { type: string }
+            targetSnapshot:
+              type: object
+              additionalProperties: true
+            debugUrl: { type: string }
+    RunNodeList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PipelineRunNode' }
+        total: { type: integer }
+    RunOperationResponse:
+      type: object
+      properties:
+        message: { type: string }
     PipelineComponent:
       type: object
       properties:
@@ -6006,6 +6093,659 @@ paths:
                 $ref: '#/components/schemas/RuntimeMountCatalog'
         '500':
           description: Runtime mount catalog is misconfigured
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── Runs (product execution API) ──────────────────────────────────
+  /api/v1/runs:
+    post:
+      tags: [Runs]
+      summary: Create a Run from an inline pipeline
+      description: Creates the product execution record through the Run Kernel boundary and submits its runtime workflow through the configured adapter. Pipeline design-time templates and runtime workflow names remain references; callers should store the returned run id.
+      security:
+        - DatabrewToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pipeline]
+              properties:
+                pipeline:
+                  type: object
+                  description: Full pipeline definition
+                name: { type: string, description: Optional run name }
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                target_id:
+                  type: string
+                  description: Execution target ID. Defaults to the default target when omitted.
+                configSelection:
+                  $ref: '#/components/schemas/DeployConfigSelection'
+      responses:
+        '201':
+          description: Run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Invalid request, missing asset, or invalid execution target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    get:
+      tags: [Runs]
+      summary: List Runs
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: query
+          name: view
+          schema: { type: string, enum: [summary, full] }
+        - in: query
+          name: batchJobId
+          schema: { type: string }
+        - in: query
+          name: excludeBatch
+          schema: { type: boolean }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: pipelineNodeId
+          schema: { type: string }
+        - in: query
+          name: nodeStatus
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Run list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PipelineRun' }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+
+  /api/v1/runs/template/{id}:
+    post:
+      tags: [Runs]
+      summary: Create Run from a pipeline template
+      description: Creates product Run records through the Run Kernel boundary from a saved pipeline template. A single asset returns one Run; multiple asset IDs may return a collection wrapper.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+          description: Template ID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                version: { type: integer }
+                asset_ids:
+                  type: array
+                  items: { type: string }
+                target_id: { type: string }
+                configSelection:
+                  $ref: '#/components/schemas/DeployConfigSelection'
+      responses:
+        '201':
+          description: Run created. Multiple asset IDs may return a batch object with items and total.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PipelineRun'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/PipelineRun' }
+                      total: { type: integer }
+        '400':
+          description: Invalid request, missing asset, or invalid execution target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Template not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/watcher/status:
+    get:
+      tags: [Runs]
+      summary: Get Run watcher status
+      security:
+        - DatabrewToken: []
+      responses:
+        '200':
+          description: Run watcher health
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunWatcherState' }
+
+  /api/v1/runs/by-workflow/{workflowName}:
+    get:
+      tags: [Runs]
+      summary: Resolve a Run by runtime workflow name
+      description: Compatibility/debug resolver. Product links should prefer /runs/{id}.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: workflowName
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}:
+    get:
+      tags: [Runs]
+      summary: Get a Run by ID
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+    delete:
+      tags: [Runs]
+      summary: Delete a Run
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted successfully }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/events:
+    get:
+      tags: [Runs]
+      summary: List Run ledger events
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: integer, format: int64, minimum: 0 }
+        - in: query
+          name: subjectType
+          schema: { type: string, enum: [run, workflow, node, pod] }
+        - in: query
+          name: eventType
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Run event page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunEventList' }
+        '400':
+          description: Invalid pagination or filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/nodes:
+    get:
+      tags: [Runs]
+      summary: List Run node ledger rows
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run node rows
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunNodeList' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/asset-nodes:
+    get:
+      tags: [Runs]
+      summary: List Run asset-node snapshots
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: assetId
+          schema: { type: string }
+        - in: query
+          name: nodeId
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: orderBy
+          schema: { type: string, enum: [cost, duration, status] }
+      responses:
+        '200':
+          description: Run asset-node snapshot page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunAssetNodeList' }
+        '400':
+          description: Invalid pagination or filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/cost-summary:
+    get:
+      tags: [Runs]
+      summary: Get Run estimated cost summary
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estimated cost summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRunCostSummary' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/inputs:
+    get:
+      tags: [Runs]
+      summary: List Run input projections
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run inputs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunInputList' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/outputs:
+    get:
+      tags: [Runs]
+      summary: List Run output projections
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run outputs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOutputList' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/children:
+    get:
+      tags: [Runs]
+      summary: List child Runs
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Child Runs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunChildList' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/runtime:
+    get:
+      tags: [Runs]
+      summary: Get Run runtime debug reference
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Runtime reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunRuntime' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/retry:
+    post:
+      tags: [Runs]
+      summary: Retry failed runtime nodes in place
+      description: Runtime retry uses the existing Run and workflow when supported. It does not create a new Run.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Runtime retry submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/resubmit:
+    post:
+      tags: [Runs]
+      summary: Resubmit a Run as a new Run
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: New Run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Existing Run spec is invalid for resubmit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/stop:
+    post:
+      tags: [Runs]
+      summary: Stop a Run
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Stop requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOperationResponse' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/suspend:
+    post:
+      tags: [Runs]
+      summary: Suspend a Run runtime workflow
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Suspend requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOperationResponse' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/resume:
+    post:
+      tags: [Runs]
+      summary: Resume a suspended Run runtime workflow
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resume requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOperationResponse' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /api/v1/runs/{id}/terminate:
+    post:
+      tags: [Runs]
+      summary: Terminate a Run runtime workflow
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Terminate requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunOperationResponse' }
+        '400':
+          description: Run has no runtime workflow reference
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

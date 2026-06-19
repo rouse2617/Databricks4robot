@@ -6,9 +6,9 @@ import { type BatchJob, createBatchJob } from "./batchJobApi";
 import {
 	type DeployConfigSelection,
 	type Deployment,
-	deployTemplate,
 	normalizeDeployResults,
 } from "./pipelineApi";
+import { createRunByTemplate } from "./runApi";
 
 export const BATCH_ASSET_THRESHOLD = 2;
 
@@ -42,7 +42,7 @@ export async function deployPipelineForAssets(
 		return { mode: "batch", batchJob };
 	}
 
-	const result = await deployTemplate(
+	const result = await createRunByTemplate(
 		templateId,
 		assetIds,
 		options?.targetId,

@@ -241,6 +241,69 @@ type PipelineRunCostSummary struct {
 	GeneratedAt           time.Time                         `json:"generatedAt"`
 }
 
+// RunInput is the product-facing input projection for a Run. Phase 1 derives
+// these rows from pipeline_runs and pipeline JSON; future storage can persist
+// the same shape in dedicated run_inputs tables.
+type RunInput struct {
+	ID             string                 `json:"id"`
+	RunID          string                 `json:"runId"`
+	NodeID         string                 `json:"nodeId,omitempty"`
+	Type           string                 `json:"type"`
+	RefID          string                 `json:"refId,omitempty"`
+	RefVersion     string                 `json:"refVersion,omitempty"`
+	FileName       string                 `json:"fileName,omitempty"`
+	MountPath      string                 `json:"mountPath,omitempty"`
+	TargetFilename string                 `json:"targetFilename,omitempty"`
+	Source         string                 `json:"source,omitempty"`
+	Snapshot       map[string]interface{} `json:"snapshot,omitempty"`
+}
+
+type RunInputList struct {
+	RunID string     `json:"runId"`
+	Items []RunInput `json:"items"`
+	Total int        `json:"total"`
+}
+
+// RunOutput is the product-facing output projection for a Run.
+type RunOutput struct {
+	ID       string                 `json:"id"`
+	RunID    string                 `json:"runId"`
+	NodeID   string                 `json:"nodeId,omitempty"`
+	Type     string                 `json:"type"`
+	RefID    string                 `json:"refId,omitempty"`
+	URI      string                 `json:"uri,omitempty"`
+	Snapshot map[string]interface{} `json:"snapshot,omitempty"`
+}
+
+type RunOutputList struct {
+	RunID string      `json:"runId"`
+	Items []RunOutput `json:"items"`
+	Total int         `json:"total"`
+}
+
+type RunChildList struct {
+	RunID string        `json:"runId"`
+	Items []PipelineRun `json:"items"`
+	Total int           `json:"total"`
+}
+
+type RunRuntimeRef struct {
+	RuntimeType       string                 `json:"runtimeType"`
+	WorkflowName      string                 `json:"workflowName,omitempty"`
+	Namespace         string                 `json:"namespace,omitempty"`
+	UID               string                 `json:"uid,omitempty"`
+	Status            string                 `json:"status,omitempty"`
+	Message           string                 `json:"message,omitempty"`
+	ExecutionTargetID string                 `json:"executionTargetId,omitempty"`
+	TargetSnapshot    map[string]interface{} `json:"targetSnapshot,omitempty"`
+	DebugURL          string                 `json:"debugUrl,omitempty"`
+}
+
+type RunRuntime struct {
+	RunID   string        `json:"runId"`
+	Runtime RunRuntimeRef `json:"runtime"`
+}
+
 type PipelineRunNodeCostSummary struct {
 	NodeID           string   `json:"nodeId"`
 	DisplayName      string   `json:"displayName,omitempty"`

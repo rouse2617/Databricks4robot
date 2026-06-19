@@ -8,6 +8,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -613,25 +614,42 @@ func applyRuntimeConfigToPipeline(
 }
 
 const (
-	runEventSubmitted            = "run_submitted"
-	runEventScheduled            = "run_scheduled"
-	runEventWorkflowCreated      = "workflow_created"
-	runEventWorkflowObserved     = "workflow_observed"
-	runEventWorkflowPhaseChanged = "workflow_phase_changed"
-	runEventNodeStarted          = "node_started"
-	runEventNodeSucceeded        = "node_succeeded"
-	runEventNodeFailed           = "node_failed"
-	runEventNodeError            = "node_error"
-	runEventPodCreated           = "pod_created"
-	runEventPodPhaseChanged      = "pod_phase_changed"
-	runEventCompleted            = "run_completed"
-	runEventFailed               = "run_failed"
-	runEventRetryRequested       = "run_retry_requested"
-	runEventResubmitted          = "run_resubmitted"
-	runEventStopRequested        = "run_stop_requested"
-	runEventDeleteRequested      = "run_delete_requested"
-	runEventDeleted              = "run_deleted"
-	runEventDeleteFailed         = "run_delete_failed"
+	runEventSubmitted             = "run_submitted"
+	runEventScheduled             = "run_scheduled"
+	runEventWorkflowCreated       = "workflow_created"
+	runEventWorkflowObserved      = "workflow_observed"
+	runEventWorkflowPhaseChanged  = "workflow_phase_changed"
+	runEventNodeStarted           = "node_started"
+	runEventNodeSucceeded         = "node_succeeded"
+	runEventNodeFailed            = "node_failed"
+	runEventNodeError             = "node_error"
+	runEventPodCreated            = "pod_created"
+	runEventPodPhaseChanged       = "pod_phase_changed"
+	runEventCompleted             = "run_completed"
+	runEventFailed                = "run_failed"
+	runEventRetryRequested        = "run_retry_requested"
+	runEventRetryFailed           = "run_retry_failed"
+	runEventRuntimeRetryRequested = "run_runtime_retry_requested"
+	runEventRuntimeRetryFailed    = "run_runtime_retry_failed"
+	runEventRuntimeRetrySucceeded = "run_runtime_retry_succeeded"
+	runEventResubmitRequested     = "run_resubmit_requested"
+	runEventResubmitFailed        = "run_resubmit_failed"
+	runEventResubmitted           = "run_resubmitted"
+	runEventStopRequested         = "run_stop_requested"
+	runEventStopFailed            = "run_stop_failed"
+	runEventStopSucceeded         = "run_stopped"
+	runEventSuspendRequested      = "run_suspend_requested"
+	runEventSuspendFailed         = "run_suspend_failed"
+	runEventSuspendSucceeded      = "run_suspended"
+	runEventResumeRequested       = "run_resume_requested"
+	runEventResumeFailed          = "run_resume_failed"
+	runEventResumeSucceeded       = "run_resumed"
+	runEventTerminateRequested    = "run_terminate_requested"
+	runEventTerminateFailed       = "run_terminate_failed"
+	runEventTerminateSucceeded    = "run_terminated"
+	runEventDeleteRequested       = "run_delete_requested"
+	runEventDeleted               = "run_deleted"
+	runEventDeleteFailed          = "run_delete_failed"
 )
 
 // New creates a Usecase.
@@ -3088,6 +3106,17 @@ func (uc *Usecase) RetryRun(ctx context.Context, id string) (*models.PipelineRun
 		targetID = run.ExecutionTarget.ID
 	}
 	next, err := uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-retry", run.AssetIDs, DeployOptions{TargetID: targetID})
+	if err != nil {
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      runEventRetryFailed,
+			SubjectType:    "run",
+			SubjectID:      run.ID,
+			Status:         run.Status,
+			Message:        "pipeline run retry failed",
+			Reason:         err.Error(),
+			IdempotencyKey: fmt.Sprintf("run_retry_failed:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+		})
+	}
 	if err == nil && next != nil {
 		uc.appendRunEvent(ctx, next, models.PipelineRunEvent{
 			EventType:      runEventResubmitted,
@@ -3106,29 +3135,9 @@ func (uc *Usecase) RetryRun(ctx context.Context, id string) (*models.PipelineRun
 
 // StopRun stops a run's workflow.
 func (uc *Usecase) StopRun(ctx context.Context, id string) error {
-	run, err := uc.GetRun(ctx, id)
-	if err != nil {
-		return err
-	}
-	if run == nil {
-		return ErrDeploymentNotFound
-	}
-	if uc.wfClient == nil {
-		return fmt.Errorf("workflow client not available")
-	}
-	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
-		EventType:      runEventStopRequested,
-		SubjectType:    "run",
-		SubjectID:      run.ID,
-		Status:         run.Status,
-		Message:        "pipeline run stop requested",
-		IdempotencyKey: fmt.Sprintf("run_stop_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+	return uc.runtimeWorkflowOperation(ctx, id, runEventStopRequested, runEventStopSucceeded, runEventStopFailed, "run stop", func(ctx context.Context, name, namespace string) error {
+		return uc.wfClient.StopWorkflow(ctx, name, namespace)
 	})
-	namespace := run.ArgoNamespace
-	if namespace == "" {
-		namespace = uc.namespace
-	}
-	return uc.wfClient.StopWorkflow(ctx, run.WorkflowName, namespace)
 }
 
 // ListRunEvents returns a chronological page of stored events for a run.
@@ -3348,6 +3357,449 @@ func costSourceFromPtr(v *float64) string {
 		return "not_available"
 	}
 	return "estimated_resource_duration"
+}
+
+// ListRunNodes returns the DataBrew node ledger for a run.
+func (uc *Usecase) ListRunNodes(ctx context.Context, id string) ([]models.PipelineRunNode, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	if run.Nodes == nil {
+		return []models.PipelineRunNode{}, nil
+	}
+	return run.Nodes, nil
+}
+
+// ListRunInputs returns a Phase 1 projection of RunInput records.
+func (uc *Usecase) ListRunInputs(ctx context.Context, id string) (*models.RunInputList, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	items := make([]models.RunInput, 0, len(run.AssetIDs)+4)
+	for i, assetID := range run.AssetIDs {
+		items = append(items, models.RunInput{
+			ID:     fmt.Sprintf("%s:asset:%d", run.ID, i),
+			RunID:  run.ID,
+			Type:   "asset",
+			RefID:  assetID,
+			Source: "asset_ids",
+		})
+	}
+	if run.ExecutionTargetID != "" || len(run.TargetSnapshot) > 0 {
+		items = append(items, models.RunInput{
+			ID:       fmt.Sprintf("%s:runtime-target", run.ID),
+			RunID:    run.ID,
+			Type:     "runtime_target",
+			RefID:    run.ExecutionTargetID,
+			Source:   "execution_target",
+			Snapshot: copyStringAnyMap(run.TargetSnapshot),
+		})
+	}
+	collectRunInputsFromPipelineJSON(run.ID, run.PipelineJSON, &items)
+	return &models.RunInputList{RunID: run.ID, Items: items, Total: len(items)}, nil
+}
+
+// ListRunOutputs returns a Phase 1 projection of RunOutput records.
+func (uc *Usecase) ListRunOutputs(ctx context.Context, id string) (*models.RunOutputList, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	items := make([]models.RunOutput, 0, len(run.Nodes)*2)
+	for _, node := range run.Nodes {
+		nodeID := firstNonEmpty(node.PipelineNodeID, node.ArgoNodeID, node.ID)
+		if len(node.Outputs) > 0 {
+			items = append(items, models.RunOutput{
+				ID:       fmt.Sprintf("%s:%s:outputs", run.ID, nodeID),
+				RunID:    run.ID,
+				NodeID:   nodeID,
+				Type:     "node_outputs",
+				Snapshot: copyStringAnyMap(node.Outputs),
+			})
+		}
+		if strings.TrimSpace(node.LogRef) != "" {
+			items = append(items, models.RunOutput{
+				ID:     fmt.Sprintf("%s:%s:logs", run.ID, nodeID),
+				RunID:  run.ID,
+				NodeID: nodeID,
+				Type:   "logs",
+				URI:    node.LogRef,
+			})
+		}
+		metrics := map[string]interface{}{}
+		if len(node.ResourcesDuration) > 0 {
+			metrics["resourcesDuration"] = node.ResourcesDuration
+		}
+		if len(node.ResourceSummary) > 0 {
+			metrics["resourceSummary"] = node.ResourceSummary
+		}
+		if len(metrics) > 0 {
+			items = append(items, models.RunOutput{
+				ID:       fmt.Sprintf("%s:%s:metrics", run.ID, nodeID),
+				RunID:    run.ID,
+				NodeID:   nodeID,
+				Type:     "metrics",
+				Snapshot: metrics,
+			})
+		}
+	}
+	return &models.RunOutputList{RunID: run.ID, Items: items, Total: len(items)}, nil
+}
+
+// ListRunChildren returns child runs for Phase 1 Run Tree views. A batch parent
+// can be represented by a run whose id is used as child batchJobId.
+func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunChildList, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	if uc.runRepo == nil {
+		return &models.RunChildList{RunID: run.ID, Items: []models.PipelineRun{}}, nil
+	}
+	items, total, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
+		BatchJobID: id,
+		Page:       1,
+		PageSize:   500,
+	})
+	if err != nil {
+		return nil, err
+	}
+	children := make([]models.PipelineRun, 0, len(items))
+	for _, child := range items {
+		if child.ID == run.ID {
+			continue
+		}
+		children = append(children, child)
+	}
+	if len(children) != len(items) {
+		total = len(children)
+	}
+	return &models.RunChildList{RunID: run.ID, Items: children, Total: total}, nil
+}
+
+// GetRunRuntime returns runtime debug references without requiring the runtime
+// object to still exist.
+func (uc *Usecase) GetRunRuntime(ctx context.Context, id string) (*models.RunRuntime, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	namespace := run.ArgoNamespace
+	if namespace == "" {
+		namespace = uc.namespace
+	}
+	debugURL := ""
+	if strings.TrimSpace(run.WorkflowName) != "" {
+		debugURL = fmt.Sprintf("/api/v1/workflows/%s", run.WorkflowName)
+	}
+	return &models.RunRuntime{
+		RunID: run.ID,
+		Runtime: models.RunRuntimeRef{
+			RuntimeType:       "argo",
+			WorkflowName:      run.WorkflowName,
+			Namespace:         namespace,
+			UID:               run.ArgoWorkflowUID,
+			Status:            run.Status,
+			Message:           run.Message,
+			ExecutionTargetID: run.ExecutionTargetID,
+			TargetSnapshot:    copyStringAnyMap(run.TargetSnapshot),
+			DebugURL:          debugURL,
+		},
+	}, nil
+}
+
+// RuntimeRetryRun retries failed runtime nodes in-place when the runtime
+// adapter supports it. It does not create a new Run.
+func (uc *Usecase) RuntimeRetryRun(ctx context.Context, id string) (*models.PipelineRun, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	if strings.TrimSpace(run.WorkflowName) == "" {
+		return nil, fmt.Errorf("%w: run has no workflowName", ErrInvalidArgument)
+	}
+	if uc.wfClient == nil {
+		return nil, ErrWorkflowUnavailable
+	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventRuntimeRetryRequested,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "run runtime retry requested",
+		IdempotencyKey: fmt.Sprintf("run_runtime_retry_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+	})
+	namespace := firstNonEmpty(run.ArgoNamespace, uc.namespace)
+	if err := uc.wfClient.RetryWorkflow(ctx, run.WorkflowName, namespace); err != nil {
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      runEventRuntimeRetryFailed,
+			SubjectType:    "run",
+			SubjectID:      run.ID,
+			Status:         run.Status,
+			Message:        "run runtime retry failed",
+			Reason:         err.Error(),
+			IdempotencyKey: fmt.Sprintf("run_runtime_retry_failed:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+		})
+		return nil, err
+	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventRuntimeRetrySucceeded,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "run runtime retry submitted",
+		IdempotencyKey: fmt.Sprintf("run_runtime_retry_succeeded:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+	})
+	return uc.GetRun(ctx, id)
+}
+
+// ResubmitRun creates a new Run from an existing run spec.
+func (uc *Usecase) ResubmitRun(ctx context.Context, id string) (*models.PipelineRun, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventResubmitRequested,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "run resubmit requested",
+		IdempotencyKey: fmt.Sprintf("run_resubmit_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+	})
+	targetID := run.ExecutionTargetID
+	if targetID == "" && run.ExecutionTarget != nil {
+		targetID = run.ExecutionTarget.ID
+	}
+	next, err := uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-resubmit", run.AssetIDs, DeployOptions{TargetID: targetID})
+	if err != nil {
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      runEventResubmitFailed,
+			SubjectType:    "run",
+			SubjectID:      run.ID,
+			Status:         run.Status,
+			Message:        "run resubmit failed",
+			Reason:         err.Error(),
+			IdempotencyKey: fmt.Sprintf("run_resubmit_failed:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+		})
+	}
+	if err == nil && next != nil {
+		uc.appendRunEvent(ctx, next, models.PipelineRunEvent{
+			EventType:      runEventResubmitted,
+			SubjectType:    "run",
+			SubjectID:      next.ID,
+			Status:         next.Status,
+			Message:        "run created from resubmit",
+			IdempotencyKey: fmt.Sprintf("run_resubmitted:%s:%s", next.ID, run.ID),
+			Payload: map[string]interface{}{
+				"sourceRunId": run.ID,
+				"relation":    "resubmit_of",
+			},
+		})
+	}
+	return next, err
+}
+
+func (uc *Usecase) SuspendRun(ctx context.Context, id string) error {
+	return uc.runtimeWorkflowOperation(ctx, id, runEventSuspendRequested, runEventSuspendSucceeded, runEventSuspendFailed, "run suspend", func(ctx context.Context, name, namespace string) error {
+		return uc.wfClient.SuspendWorkflow(ctx, name, namespace)
+	})
+}
+
+func (uc *Usecase) ResumeRun(ctx context.Context, id string) error {
+	return uc.runtimeWorkflowOperation(ctx, id, runEventResumeRequested, runEventResumeSucceeded, runEventResumeFailed, "run resume", func(ctx context.Context, name, namespace string) error {
+		return uc.wfClient.ResumeWorkflow(ctx, name, namespace)
+	})
+}
+
+func (uc *Usecase) TerminateRun(ctx context.Context, id string) error {
+	return uc.runtimeWorkflowOperation(ctx, id, runEventTerminateRequested, runEventTerminateSucceeded, runEventTerminateFailed, "run terminate", func(ctx context.Context, name, namespace string) error {
+		return uc.wfClient.TerminateWorkflow(ctx, name, namespace)
+	})
+}
+
+func (uc *Usecase) runtimeWorkflowOperation(ctx context.Context, id, requestedEvent, succeededEvent, failedEvent, message string, op func(context.Context, string, string) error) error {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return ErrDeploymentNotFound
+	}
+	if strings.TrimSpace(run.WorkflowName) == "" {
+		return fmt.Errorf("%w: run has no workflowName", ErrInvalidArgument)
+	}
+	if uc.wfClient == nil {
+		return ErrWorkflowUnavailable
+	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      requestedEvent,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        message + " requested",
+		IdempotencyKey: fmt.Sprintf("%s:%s:%d", requestedEvent, run.ID, time.Now().UTC().UnixNano()),
+	})
+	namespace := firstNonEmpty(run.ArgoNamespace, uc.namespace)
+	if err := op(ctx, run.WorkflowName, namespace); err != nil {
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      failedEvent,
+			SubjectType:    "run",
+			SubjectID:      run.ID,
+			Status:         run.Status,
+			Message:        message + " failed",
+			Reason:         err.Error(),
+			IdempotencyKey: fmt.Sprintf("%s:%s:%d", failedEvent, run.ID, time.Now().UTC().UnixNano()),
+		})
+		return err
+	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      succeededEvent,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        message + " submitted",
+		IdempotencyKey: fmt.Sprintf("%s:%s:%d", succeededEvent, run.ID, time.Now().UTC().UnixNano()),
+	})
+	return nil
+}
+
+func collectRunInputsFromPipelineJSON(runID string, pipeline map[string]interface{}, items *[]models.RunInput) {
+	if len(pipeline) == 0 || items == nil {
+		return
+	}
+	nodes, _ := interfaceSlice(pipeline["nodes"])
+	for _, nodeAny := range nodes {
+		node, ok := stringAnyMap(nodeAny)
+		if !ok {
+			continue
+		}
+		collectRunInputsFromPipelineNode(runID, node, items)
+	}
+}
+
+func collectRunInputsFromPipelineNode(runID string, node map[string]interface{}, items *[]models.RunInput) {
+	nodeID := stringFromAny(node["id"])
+	if cfg, ok := stringAnyMap(node["runtimeConfig"]); ok {
+		snapshot := copyStringAnyMap(cfg)
+		delete(snapshot, "content")
+		version := stringFromAny(cfg["version"])
+		*items = append(*items, models.RunInput{
+			ID:             fmt.Sprintf("%s:%s:config:%d", runID, nodeID, len(*items)),
+			RunID:          runID,
+			NodeID:         nodeID,
+			Type:           "config",
+			RefID:          stringFromAny(cfg["configId"]),
+			RefVersion:     version,
+			FileName:       stringFromAny(cfg["fileName"]),
+			MountPath:      stringFromAny(cfg["mountPath"]),
+			TargetFilename: stringFromAny(cfg["targetFilename"]),
+			Source:         stringFromAny(cfg["mode"]),
+			Snapshot:       snapshot,
+		})
+	}
+	if component, ok := stringAnyMap(node["component"]); ok {
+		if args, ok := interfaceSlice(component["args"]); ok {
+			for _, argAny := range args {
+				arg, ok := stringAnyMap(argAny)
+				if !ok {
+					continue
+				}
+				name := stringFromAny(arg["name"])
+				if name == "" {
+					continue
+				}
+				*items = append(*items, models.RunInput{
+					ID:       fmt.Sprintf("%s:%s:param:%s", runID, nodeID, name),
+					RunID:    runID,
+					NodeID:   nodeID,
+					Type:     "parameter",
+					RefID:    name,
+					Source:   "component_args",
+					Snapshot: copyStringAnyMap(arg),
+				})
+			}
+		}
+	}
+	for _, key := range []string{"nodes", "subNodes"} {
+		children, _ := interfaceSlice(node[key])
+		for _, childAny := range children {
+			child, ok := stringAnyMap(childAny)
+			if ok {
+				collectRunInputsFromPipelineNode(runID, child, items)
+			}
+		}
+	}
+}
+
+func copyStringAnyMap(in map[string]interface{}) map[string]interface{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func stringAnyMap(in interface{}) (map[string]interface{}, bool) {
+	switch v := in.(type) {
+	case map[string]interface{}:
+		return v, true
+	default:
+		return nil, false
+	}
+}
+
+func interfaceSlice(in interface{}) ([]interface{}, bool) {
+	switch v := in.(type) {
+	case []interface{}:
+		return v, true
+	default:
+		return nil, false
+	}
+}
+
+func stringFromAny(in interface{}) string {
+	switch v := in.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return fmt.Sprintf("%v", v)
+	default:
+		return ""
+	}
 }
 
 // SaveFromDeployment creates a new template from a deployment's pipeline JSON (F7.8).

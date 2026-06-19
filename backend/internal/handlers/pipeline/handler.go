@@ -15,6 +15,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	runKernel "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/run"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
@@ -29,6 +30,7 @@ type BatchSubtaskReconciler interface {
 // Handler bundles the pipeline endpoints.
 type Handler struct {
 	uc        *pipelineUC.Usecase
+	runs      runKernel.Service
 	pricing   *pipelineUC.PricingConfig
 	batchRuns BatchSubtaskReconciler
 }
@@ -65,7 +67,7 @@ func New(uc *pipelineUC.Usecase, pricingPath string, batchRuns BatchSubtaskRecon
 	if strings.TrimSpace(pricingPath) != "" {
 		pricing, _ = pipelineUC.LoadPricing(pricingPath)
 	}
-	return &Handler{uc: uc, pricing: pricing, batchRuns: batchRuns}
+	return &Handler{uc: uc, runs: runKernel.NewService(uc), pricing: pricing, batchRuns: batchRuns}
 }
 
 // SaveTemplate handles POST /api/v1/pipelines.
@@ -296,7 +298,7 @@ func (h *Handler) CreateRun(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
 		return
 	}
-	run, err := h.uc.CreateRun(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, ConfigSelection: req.Config.toUsecase()})
+	run, err := h.runs.CreateRun(c.Request.Context(), req.Pipeline, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, ConfigSelection: req.Config.toUsecase()})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -326,7 +328,7 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		return
 	}
 	if len(req.AssetIDs) > 1 {
-		runs, err := h.uc.CreateRunsByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c), ConfigSelection: req.Config.toUsecase()})
+		runs, err := h.runs.CreateRunsByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c), ConfigSelection: req.Config.toUsecase()})
 		if err != nil {
 			mapDeployError(c, err)
 			return
@@ -337,7 +339,7 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 		c.JSON(http.StatusCreated, gin.H{"items": runs, "total": len(runs)})
 		return
 	}
-	run, err := h.uc.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c), ConfigSelection: req.Config.toUsecase()})
+	run, err := h.runs.CreateRunByTemplateID(c.Request.Context(), id, req.Name, req.AssetIDs, pipelineUC.DeployOptions{TargetID: req.TargetID, TemplateVersion: req.Version, Owner: middleware.GetUserEmail(c), ConfigSelection: req.Config.toUsecase()})
 	if err != nil {
 		mapDeployError(c, err)
 		return
@@ -396,12 +398,12 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		if batchJobID != "" && refreshActive && h.batchRuns != nil {
 			_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
 		}
-		items, total, err = h.uc.ListRunSummaries(c.Request.Context(), filter)
+		items, total, err = h.runs.ListRunSummaries(c.Request.Context(), filter)
 	} else {
 		if batchJobID != "" && h.batchRuns != nil {
 			_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
 		}
-		items, err = h.uc.ListRuns(c.Request.Context(), refreshActive)
+		items, err = h.runs.ListRuns(c.Request.Context(), refreshActive)
 		total = len(items)
 	}
 	if err != nil {
@@ -442,20 +444,20 @@ func (h *Handler) GetRunByWorkflowName(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "workflowName is required", nil)
 		return
 	}
-	run, err := h.uc.GetRunByWorkflowName(c.Request.Context(), workflowName)
+	run, err := h.runs.GetRunByWorkflowName(c.Request.Context(), workflowName)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
 	if run == nil {
-		run, _ = h.uc.GetRun(c.Request.Context(), workflowName)
+		run, _ = h.runs.GetRun(c.Request.Context(), workflowName)
 	}
 	if run == nil && h.batchRuns != nil {
 		if runID, err := h.batchRuns.ReconcileItemByID(c.Request.Context(), workflowName); err == nil && runID != "" {
-			run, _ = h.uc.GetRun(c.Request.Context(), runID)
+			run, _ = h.runs.GetRun(c.Request.Context(), runID)
 		}
 		if run == nil {
-			run, _ = h.uc.GetRunByWorkflowName(c.Request.Context(), workflowName)
+			run, _ = h.runs.GetRunByWorkflowName(c.Request.Context(), workflowName)
 		}
 	}
 	if run == nil {
@@ -473,14 +475,14 @@ func (h *Handler) GetRun(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
 		return
 	}
-	run, err := h.uc.GetRun(c.Request.Context(), id)
+	run, err := h.runs.GetRun(c.Request.Context(), id)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
 	}
 	if run == nil && h.batchRuns != nil {
 		if runID, err := h.batchRuns.ReconcileItemByID(c.Request.Context(), id); err == nil && runID != "" {
-			run, err = h.uc.GetRun(c.Request.Context(), runID)
+			run, err = h.runs.GetRun(c.Request.Context(), runID)
 			if err != nil {
 				httpresp.Internal(c, err.Error())
 				return
@@ -538,7 +540,7 @@ func (h *Handler) ListRunEvents(c *gin.Context) {
 		}
 		to = &v
 	}
-	result, err := h.uc.ListRunEvents(c.Request.Context(), id, models.PipelineRunEventListOptions{
+	result, err := h.runs.ListRunEvents(c.Request.Context(), id, models.PipelineRunEventListOptions{
 		Limit:       limit,
 		Cursor:      cursor,
 		SubjectType: strings.TrimSpace(c.Query("subjectType")),
@@ -575,7 +577,7 @@ func (h *Handler) ListRunAssetNodes(c *gin.Context) {
 		}
 		limit = v
 	}
-	result, err := h.uc.ListRunAssetNodes(c.Request.Context(), id, models.PipelineRunAssetNodeListOptions{
+	result, err := h.runs.ListRunAssetNodes(c.Request.Context(), id, models.PipelineRunAssetNodeListOptions{
 		Limit:   limit,
 		Cursor:  strings.TrimSpace(c.Query("cursor")),
 		AssetID: strings.TrimSpace(c.Query("assetId")),
@@ -601,7 +603,105 @@ func (h *Handler) GetRunCostSummary(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
 		return
 	}
-	result, err := h.uc.GetRunCostSummary(c.Request.Context(), id)
+	result, err := h.runs.GetRunCostSummary(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, result)
+}
+
+// ListRunNodes handles GET /api/v1/runs/:id/nodes.
+func (h *Handler) ListRunNodes(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	items, err := h.runs.ListRunNodes(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	if items == nil {
+		items = []models.PipelineRunNode{}
+	}
+	c.JSON(200, gin.H{"items": items, "total": len(items)})
+}
+
+// ListRunInputs handles GET /api/v1/runs/:id/inputs.
+func (h *Handler) ListRunInputs(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	result, err := h.runs.ListRunInputs(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, result)
+}
+
+// ListRunOutputs handles GET /api/v1/runs/:id/outputs.
+func (h *Handler) ListRunOutputs(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	result, err := h.runs.ListRunOutputs(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, result)
+}
+
+// ListRunChildren handles GET /api/v1/runs/:id/children.
+func (h *Handler) ListRunChildren(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	result, err := h.runs.ListRunChildren(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
+			return
+		}
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(200, result)
+}
+
+// GetRunRuntime handles GET /api/v1/runs/:id/runtime.
+func (h *Handler) GetRunRuntime(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	result, err := h.runs.GetRunRuntime(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")
@@ -615,7 +715,7 @@ func (h *Handler) GetRunCostSummary(c *gin.Context) {
 
 // GetRunWatcherStatus handles GET /api/v1/pipeline-runs/watcher/status.
 func (h *Handler) GetRunWatcherStatus(c *gin.Context) {
-	state, err := h.uc.GetRunWatcherStatus(c.Request.Context())
+	state, err := h.runs.GetRunWatcherStatus(c.Request.Context())
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return
@@ -630,7 +730,45 @@ func (h *Handler) RetryRun(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
 		return
 	}
-	run, err := h.uc.RetryRun(c.Request.Context(), id)
+	run, err := h.runs.RetryRun(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, run)
+}
+
+// RetryRunRuntime handles POST /api/v1/runs/:id/retry.
+func (h *Handler) RetryRunRuntime(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	run, err := h.runs.RuntimeRetryRun(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, run)
+}
+
+// ResubmitRun handles POST /api/v1/runs/:id/resubmit.
+func (h *Handler) ResubmitRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	run, err := h.runs.ResubmitRun(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
@@ -649,15 +787,69 @@ func (h *Handler) StopRun(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
 		return
 	}
-	if err := h.uc.StopRun(c.Request.Context(), id); err != nil {
+	if err := h.runs.StopRun(c.Request.Context(), id); err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 			return
 		}
-		httpresp.Internal(c, err.Error())
+		mapDeployError(c, err)
 		return
 	}
 	c.JSON(200, gin.H{"message": "pipeline run stopped"})
+}
+
+// SuspendRun handles POST /api/v1/runs/:id/suspend.
+func (h *Handler) SuspendRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	if err := h.runs.SuspendRun(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(200, gin.H{"message": "run suspend submitted"})
+}
+
+// ResumeRun handles POST /api/v1/runs/:id/resume.
+func (h *Handler) ResumeRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	if err := h.runs.ResumeRun(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(200, gin.H{"message": "run resume submitted"})
+}
+
+// TerminateRun handles POST /api/v1/runs/:id/terminate.
+func (h *Handler) TerminateRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	if err := h.runs.TerminateRun(c.Request.Context(), id); err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(200, gin.H{"message": "run terminate submitted"})
 }
 
 // DeleteRun handles DELETE /api/v1/pipeline-runs/:id.
@@ -667,7 +859,7 @@ func (h *Handler) DeleteRun(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
 		return
 	}
-	if err := h.uc.DeleteRun(c.Request.Context(), id); err != nil {
+	if err := h.runs.DeleteRun(c.Request.Context(), id); err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
 			return

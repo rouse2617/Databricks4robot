@@ -6,14 +6,14 @@ import { ApiError } from "../api/pipelineClient";
 
 const mockGetWorkflow = vi.fn();
 const mockGetWorkflowLogs = vi.fn();
-const mockListPipelineRuns = vi.fn(() =>
-	Promise.resolve({ items: [], total: 0 }),
+const mockGetWorkflowLogStreamUrl = vi.fn(
+	() => "/api/v1/workflows/wf/logs/stream",
 );
-const mockGetPipelineRun = vi.fn();
-const mockGetPipelineRunByWorkflowName = vi.fn();
-const mockGetPipelineRunCostSummary = vi.fn();
-const mockListPipelineRunAssetNodes = vi.fn();
-const mockListPipelineRunEvents = vi.fn();
+const mockGetRun = vi.fn();
+const mockGetRunByWorkflowName = vi.fn();
+const mockGetRunCostSummary = vi.fn();
+const mockListRunAssetNodes = vi.fn();
+const mockListRunEvents = vi.fn();
 
 class MockEventSource extends EventTarget {
 	static instances: MockEventSource[] = [];
@@ -36,20 +36,17 @@ class MockEventSource extends EventTarget {
 vi.mock("../api/workflowApi", () => ({
 	getWorkflow: (...args: unknown[]) => mockGetWorkflow(...args),
 	getWorkflowLogs: (...args: unknown[]) => mockGetWorkflowLogs(...args),
-	getWorkflowLogStreamUrl: vi.fn(() => "/api/v1/workflows/wf/logs/stream"),
+	getWorkflowLogStreamUrl: (...args: unknown[]) =>
+		mockGetWorkflowLogStreamUrl(...args),
 }));
 
-vi.mock("../api/pipelineApi", () => ({
-	getPipelineRun: (...args: unknown[]) => mockGetPipelineRun(...args),
-	getPipelineRunCostSummary: (...args: unknown[]) =>
-		mockGetPipelineRunCostSummary(...args),
-	listPipelineRunAssetNodes: (...args: unknown[]) =>
-		mockListPipelineRunAssetNodes(...args),
-	listPipelineRunEvents: (...args: unknown[]) =>
-		mockListPipelineRunEvents(...args),
-	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
-	getPipelineRunByWorkflowName: (...args: unknown[]) =>
-		mockGetPipelineRunByWorkflowName(...args),
+vi.mock("../api/runApi", () => ({
+	getRun: (...args: unknown[]) => mockGetRun(...args),
+	getRunByWorkflowName: (...args: unknown[]) =>
+		mockGetRunByWorkflowName(...args),
+	getRunCostSummary: (...args: unknown[]) => mockGetRunCostSummary(...args),
+	listRunAssetNodes: (...args: unknown[]) => mockListRunAssetNodes(...args),
+	listRunEvents: (...args: unknown[]) => mockListRunEvents(...args),
 }));
 
 import { useWorkflowDetail } from "./useWorkflowDetail";
@@ -59,16 +56,14 @@ describe("useWorkflowDetail", () => {
 		vi.clearAllMocks();
 		MockEventSource.instances = [];
 		vi.stubGlobal("EventSource", MockEventSource);
-		mockGetPipelineRun.mockRejectedValue(
-			new ApiError(404, "NOT_FOUND", "not found"),
-		);
-		mockGetPipelineRunByWorkflowName.mockResolvedValue(null);
-		mockGetPipelineRunCostSummary.mockResolvedValue(null);
-		mockListPipelineRunAssetNodes.mockResolvedValue({
+		mockGetRun.mockRejectedValue(new ApiError(404, "NOT_FOUND", "not found"));
+		mockGetRunByWorkflowName.mockResolvedValue(null);
+		mockGetRunCostSummary.mockResolvedValue(null);
+		mockListRunAssetNodes.mockResolvedValue({
 			items: [],
 			summary: null,
 		});
-		mockListPipelineRunEvents.mockResolvedValue({
+		mockListRunEvents.mockResolvedValue({
 			items: [],
 			nextCursor: undefined,
 		});
@@ -83,7 +78,7 @@ describe("useWorkflowDetail", () => {
 		const consoleErrorSpy = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => undefined);
-		mockGetPipelineRunByWorkflowName.mockRejectedValue(
+		mockGetRunByWorkflowName.mockRejectedValue(
 			new ApiError(404, "NOT_FOUND", "not found"),
 		);
 		mockGetWorkflow.mockRejectedValue(
@@ -106,7 +101,7 @@ describe("useWorkflowDetail", () => {
 		mockGetWorkflow.mockRejectedValue(
 			new ApiError(404, "WORKFLOW_NOT_FOUND", "workflow not found"),
 		);
-		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+		mockGetRunByWorkflowName.mockResolvedValue({
 			id: "run-1",
 			workflowName: "wf-expired",
 			pipelineName: "pipeline",
@@ -115,7 +110,7 @@ describe("useWorkflowDetail", () => {
 			createdAt: "2026-06-03T00:00:00Z",
 			finishedAt: "2026-06-03T00:10:00Z",
 		});
-		mockListPipelineRunEvents.mockResolvedValue({
+		mockListRunEvents.mockResolvedValue({
 			items: [
 				{
 					id: "event-1",
@@ -138,11 +133,122 @@ describe("useWorkflowDetail", () => {
 
 		expect(result.current.workflow).toBeNull();
 		expect(result.current.loadError?.kind).toBe("not_found");
-		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledWith("wf-expired");
-		expect(mockListPipelineRunEvents).toHaveBeenCalledWith("run-1", {
+		expect(mockGetRunByWorkflowName).toHaveBeenCalledWith("wf-expired");
+		expect(mockListRunEvents).toHaveBeenCalledWith("run-1", {
 			limit: 100,
 			cursor: undefined,
 		});
+	});
+
+	it("loads run-id detail and resolves runtime workflow for terminal runs", async () => {
+		mockGetRun.mockResolvedValue({
+			id: "run-1",
+			workflowName: "wf-expired",
+			pipelineName: "pipeline",
+			status: "Succeeded",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:00:00Z",
+			finishedAt: "2026-06-03T00:10:00Z",
+		});
+		mockListRunEvents.mockResolvedValue({
+			items: [
+				{
+					id: "event-1",
+					runId: "run-1",
+					eventType: "run_completed",
+					subjectType: "run",
+					subjectId: "run-1",
+					occurredAt: "2026-06-03T00:10:00Z",
+				},
+			],
+			nextCursor: undefined,
+		});
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-expired",
+			status: "Succeeded",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [],
+		});
+
+		const { result } = renderHook(() =>
+			useWorkflowDetail("run-1", { lookupMode: "runId" }),
+		);
+
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		await waitFor(() =>
+			expect(result.current.runEventState.run?.id).toBe("run-1"),
+		);
+
+		expect(result.current.workflow?.name).toBe("wf-expired");
+		expect(result.current.loadError).toBeNull();
+		expect(mockGetRun).toHaveBeenCalledWith("run-1");
+		expect(mockGetWorkflow).toHaveBeenCalledWith("wf-expired");
+		expect(mockGetRunByWorkflowName).not.toHaveBeenCalled();
+		expect(mockListRunEvents).toHaveBeenCalledWith("run-1", {
+			limit: 100,
+			cursor: undefined,
+		});
+	});
+
+	it("uses resolved workflowName for logs and log stream in run-id mode", async () => {
+		mockGetRun.mockResolvedValue({
+			id: "run-1",
+			workflowName: "wf-1",
+			pipelineName: "pipeline",
+			status: "Running",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:00:00Z",
+		});
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-1",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [
+				{
+					id: "node-1",
+					name: "node-1",
+					displayName: "node-1",
+					phase: "Running",
+				},
+			],
+		});
+		mockGetWorkflowLogs.mockResolvedValue({
+			workflowName: "wf-1",
+			nodeId: "node-1",
+			podName: "pod-1",
+			container: "main",
+			source: "argo-live",
+			logs: "hello\n",
+			lineCount: 1,
+			truncated: false,
+			truncation: {
+				bounded: true,
+				tailLines: 200,
+				maxTailLines: 2000,
+				limitBytes: 262144,
+				maxLimitBytes: 2097152,
+			},
+			pagination: { available: false, nextCursor: null },
+			window: { mode: "tail", scope: "bounded-live-window" },
+		});
+
+		const { result } = renderHook(() =>
+			useWorkflowDetail("run-1", { lookupMode: "runId" }),
+		);
+
+		await waitFor(() => expect(result.current.workflow?.name).toBe("wf-1"));
+		const node = result.current.workflow?.nodes[0];
+		act(() => {
+			result.current.selectNode(node ?? null);
+		});
+		await waitFor(() =>
+			expect(mockGetWorkflowLogs).toHaveBeenCalledWith("wf-1", "node-1"),
+		);
+
+		act(() => {
+			result.current.startFollowLogs();
+		});
+		expect(mockGetWorkflowLogStreamUrl).toHaveBeenCalledWith("wf-1", "node-1");
 	});
 
 	it("keeps polling ledger data when workflow is missing but run is still active", async () => {
@@ -150,7 +256,7 @@ describe("useWorkflowDetail", () => {
 		mockGetWorkflow.mockRejectedValue(
 			new ApiError(404, "WORKFLOW_NOT_FOUND", "workflow not found"),
 		);
-		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+		mockGetRunByWorkflowName.mockResolvedValue({
 			id: "run-pending",
 			workflowName: "wf-pending",
 			pipelineName: "pipeline",
@@ -158,7 +264,7 @@ describe("useWorkflowDetail", () => {
 			nodeCount: 1,
 			createdAt: "2026-06-03T00:00:00Z",
 		});
-		mockListPipelineRunEvents.mockResolvedValue({
+		mockListRunEvents.mockResolvedValue({
 			items: [],
 			nextCursor: undefined,
 		});
@@ -169,7 +275,7 @@ describe("useWorkflowDetail", () => {
 		await act(async () => {
 			await Promise.resolve();
 		});
-		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledWith("wf-pending");
+		expect(mockGetRunByWorkflowName).toHaveBeenCalledWith("wf-pending");
 		expect(
 			setIntervalSpy.mock.calls.filter(([, delay]) => delay === 8_000),
 		).toHaveLength(1);
@@ -185,7 +291,7 @@ describe("useWorkflowDetail", () => {
 		});
 
 		expect(mockGetWorkflow).toHaveBeenCalledTimes(2);
-		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledTimes(4);
+		expect(mockGetRunByWorkflowName).toHaveBeenCalledTimes(4);
 	});
 
 	it("maps non-404 API errors to error load error", async () => {
@@ -214,7 +320,7 @@ describe("useWorkflowDetail", () => {
 			createdAt: "2026-06-03T00:00:00Z",
 			nodes: [],
 		});
-		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+		mockGetRunByWorkflowName.mockResolvedValue({
 			id: "run-1",
 			workflowName: "wf-1",
 			pipelineName: "pipeline",
@@ -222,13 +328,13 @@ describe("useWorkflowDetail", () => {
 			nodeCount: 1,
 			createdAt: "2026-06-03T00:01:00Z",
 		});
-		mockListPipelineRunEvents.mockRejectedValue(
+		mockListRunEvents.mockRejectedValue(
 			new ApiError(404, "NOT_FOUND", "run events not found"),
 		);
-		mockListPipelineRunAssetNodes.mockRejectedValue(
+		mockListRunAssetNodes.mockRejectedValue(
 			new ApiError(404, "NOT_FOUND", "run assets not found"),
 		);
-		mockGetPipelineRunCostSummary.mockRejectedValue(
+		mockGetRunCostSummary.mockRejectedValue(
 			new ApiError(404, "NOT_FOUND", "run cost not found"),
 		);
 
@@ -475,7 +581,7 @@ describe("useWorkflowDetail", () => {
 			createdAt: "2026-06-03T00:00:00Z",
 			nodes: [],
 		});
-		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+		mockGetRunByWorkflowName.mockResolvedValue({
 			id: "run-1",
 			workflowName: "wf-1",
 			pipelineName: "pipeline",
@@ -517,7 +623,7 @@ describe("useWorkflowDetail", () => {
 				},
 			],
 		});
-		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+		mockGetRunByWorkflowName.mockResolvedValue({
 			id: "run-1",
 			workflowName: "wf-1",
 			pipelineName: "pipeline",
@@ -541,11 +647,11 @@ describe("useWorkflowDetail", () => {
 		);
 	});
 
-	it("treats workflows as external only after pipeline run lookup misses", async () => {
+	it("treats workflows as external only after Run lookup misses", async () => {
 		const consoleErrorSpy = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => undefined);
-		mockGetPipelineRunByWorkflowName.mockRejectedValue(
+		mockGetRunByWorkflowName.mockRejectedValue(
 			new ApiError(404, "NOT_FOUND", "not found"),
 		);
 		mockGetWorkflow.mockResolvedValue({
@@ -566,17 +672,15 @@ describe("useWorkflowDetail", () => {
 		);
 		await waitFor(() =>
 			expect(result.current.runEventState.error).toBe(
-				"未找到关联的 DataBrew pipeline run",
+				"未找到关联的 DataBrew Run",
 			),
 		);
-		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledWith(
-			"wf-external",
-		);
-		expect(mockGetPipelineRun).toHaveBeenCalledWith("wf-external");
+		expect(mockGetRunByWorkflowName).toHaveBeenCalledWith("wf-external");
+		expect(mockGetRun).toHaveBeenCalledWith("wf-external");
 		expect(consoleErrorSpy).not.toHaveBeenCalled();
 	});
 
-	it("loads pipeline run data for Argo-labeled resubmitted workflows", async () => {
+	it("loads Run data for Argo-labeled resubmitted workflows", async () => {
 		mockGetWorkflow.mockResolvedValue({
 			name: "wf-resubmitted",
 			status: "Succeeded",
@@ -588,12 +692,12 @@ describe("useWorkflowDetail", () => {
 			},
 			nodes: [],
 		});
-		mockGetPipelineRunByWorkflowName.mockResolvedValue({
+		mockGetRunByWorkflowName.mockResolvedValue({
 			id: "run-resubmitted",
 			workflowName: "wf-resubmitted",
 			pipelineJSON: { nodes: [] },
 		});
-		mockListPipelineRunEvents.mockResolvedValue({
+		mockListRunEvents.mockResolvedValue({
 			items: [
 				{
 					id: "event-1",
@@ -612,9 +716,7 @@ describe("useWorkflowDetail", () => {
 			expect(result.current.runEventState.run?.id).toBe("run-resubmitted"),
 		);
 
-		expect(mockGetPipelineRunByWorkflowName).toHaveBeenCalledWith(
-			"wf-resubmitted",
-		);
+		expect(mockGetRunByWorkflowName).toHaveBeenCalledWith("wf-resubmitted");
 		expect(result.current.runEventState.error).toBeNull();
 		expect(result.current.runEventState.items).toHaveLength(1);
 	});

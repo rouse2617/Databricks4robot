@@ -2589,7 +2589,7 @@ pipeline template snapshot 保存。部署时后端会把该配置挂载到声�
 其他节点；同一次运行选择的 `asset_ids` 仍作为 run 级上下文注入到所有节点 Pod。
 
 ```bash
-curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
+curl -X POST "$BASE/api/v1/runs/template/<TEMPLATE_ID>" \
   -H "X-Databrew-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -2640,6 +2640,110 @@ curl -X POST "$BASE/api/v1/pipeline-runs/template/<TEMPLATE_ID>" \
 - `saved`：选择平台已保存配置，需传 `configId`，可选 `version`
 - `upload`：上传本地文件，需传 `fileName + content`
 - `inline`：在线编辑草稿，需传 `fileName + content`
+
+### Run 产品执行 API
+
+`Run` 是 DataBrew 对外的唯一执行实体。`pipeline` 是设计期模板，`workflowName`
+只是 Argo runtime 调试引用；产品链接、批量任务和重试语义都应优先使用 `runId`。
+`/api/v1/pipeline-runs` 仍保留为兼容/debug 入口。
+
+后端通过 Run Kernel 边界承载 `/api/v1/runs`，再由运行时 adapter 对接 Argo 等
+具体执行系统。调用方不需要持有 Argo Workflow 作为产品主键；返回体和错误语义以
+OpenAPI 的 Run 契约为准。
+
+创建、查询和解析 Run：
+
+```bash
+# 从模板启动 Run。多个 asset_ids 时可能返回 {items,total}。
+curl -s -X POST "$BASE/api/v1/runs/template/<TEMPLATE_ID>" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"target_id":"default","asset_ids":["SDKT0202"],"version":1}'
+
+# 直接从 inline pipeline 启动 Run
+curl -s -X POST "$BASE/api/v1/runs" \
+  -H "X-Databrew-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ad-hoc-run","pipeline":{"nodes":[],"edges":[]},"asset_ids":[]}'
+
+curl -s "$BASE/api/v1/runs?view=summary&page=1&pageSize=20" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/watcher/status" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 兼容/调试：由 Argo workflowName 反查 Run
+curl -s "$BASE/api/v1/runs/by-workflow/<WORKFLOW_NAME>" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+Run 子资源：
+
+```bash
+curl -s "$BASE/api/v1/runs/<RUN_ID>/events?limit=100" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/nodes" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/inputs" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/outputs" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/children" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s "$BASE/api/v1/runs/<RUN_ID>/runtime" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+操作语义：
+
+```bash
+# 原地 runtime retry：复用同一个 Run，不创建新 Run
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/retry" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# resubmit：根据已有 Run spec 创建一个新 Run
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/resubmit" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/stop" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/suspend" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/resume" \
+  -H "X-Databrew-Token: $TOKEN"
+
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/terminate" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# 删除 Run：会尽力删除 runtime workflow、节点快照和兼容 deployment 记录。
+# 共享 dev smoke 只对不存在的 id 校验 404，避免误删真实执行记录。
+curl -s -X DELETE "$BASE/api/v1/runs/<RUN_ID>" \
+  -H "X-Databrew-Token: $TOKEN"
+```
+
+常见错误：
+
+| 状态 | 错误码 | 触发条件 |
+|------|--------|----------|
+| `400` | `INVALID_ARGUMENT` | 请求体非法、缺少 runtime workflowName、asset/target 不兼容 |
+| `404` | `ASSET_NOT_FOUND` | Run 或模板不存在 |
+| `503` | `SERVICE_UNAVAILABLE` | Argo runtime 未配置或暂不可用 |
+
+`POST /runs/<RUN_ID>/retry` 是 runtime 原地 retry；`POST /runs/<RUN_ID>/resubmit`
+会创建新的 Run。旧兼容入口 `POST /pipeline-runs/<RUN_ID>/retry` 仍保持“新建一次执行”
+语义，面向历史调用方保留。
+
+### Pipeline run 兼容 API
 
 查询 first-class run 列表和详情。详情会尽量刷新 Argo phase，并在 workflow
 包含节点状态时返回 `nodes`；每个 pod 节点会带 `logRef`，供前端跳转日志。

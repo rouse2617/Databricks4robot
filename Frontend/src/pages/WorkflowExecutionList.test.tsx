@@ -22,7 +22,14 @@ import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const mockListWorkflows = vi.fn();
 const mockDeleteWorkflow = vi.fn();
-const mockListPipelineRuns = vi.fn();
+const mockListRuns = vi.fn();
+const mockDeleteRun = vi.fn();
+const mockRetryRun = vi.fn();
+const mockResubmitRun = vi.fn();
+const mockStopRun = vi.fn();
+const mockSuspendRun = vi.fn();
+const mockResumeRun = vi.fn();
+const mockTerminateRun = vi.fn();
 const mockListPipelines = vi.fn();
 const mockGetPipelineRunWatcherStatus = vi.fn();
 
@@ -40,8 +47,18 @@ vi.mock("../api/workflowApi", () => ({
 vi.mock("../api/pipelineApi", () => ({
 	getPipelineRunWatcherStatus: (...args: unknown[]) =>
 		mockGetPipelineRunWatcherStatus(...args),
-	listPipelineRuns: (...args: unknown[]) => mockListPipelineRuns(...args),
 	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
+}));
+
+vi.mock("../api/runApi", () => ({
+	listRuns: (...args: unknown[]) => mockListRuns(...args),
+	deleteRun: (...args: unknown[]) => mockDeleteRun(...args),
+	retryRun: (...args: unknown[]) => mockRetryRun(...args),
+	resubmitRun: (...args: unknown[]) => mockResubmitRun(...args),
+	stopRun: (...args: unknown[]) => mockStopRun(...args),
+	suspendRun: (...args: unknown[]) => mockSuspendRun(...args),
+	resumeRun: (...args: unknown[]) => mockResumeRun(...args),
+	terminateRun: (...args: unknown[]) => mockTerminateRun(...args),
 }));
 
 vi.mock("antd", async (importOriginal) => {
@@ -71,7 +88,7 @@ const allWorkflows: WorkflowSummary[] = [
 
 // Ledger runs are the source of truth for the executions list. Live Argo
 // workflows are only fetched when a label filter is active (perf optimization),
-// so status filtering is asserted against ledger pipeline-runs.
+// so status filtering is asserted against ledger Runs.
 const ledgerRuns = [
 	{
 		id: "run-success",
@@ -138,7 +155,14 @@ describe("WorkflowExecutionList", () => {
 			});
 		});
 		mockDeleteWorkflow.mockResolvedValue({ message: "deleted" });
-		mockListPipelineRuns.mockResolvedValue({
+		mockDeleteRun.mockResolvedValue(undefined);
+		mockRetryRun.mockResolvedValue({ message: "retry submitted" });
+		mockResubmitRun.mockResolvedValue({ message: "resubmit submitted" });
+		mockStopRun.mockResolvedValue({ message: "stop submitted" });
+		mockSuspendRun.mockResolvedValue({ message: "suspend submitted" });
+		mockResumeRun.mockResolvedValue({ message: "resume submitted" });
+		mockTerminateRun.mockResolvedValue({ message: "terminate submitted" });
+		mockListRuns.mockResolvedValue({
 			items: [
 				{
 					id: "run-1",
@@ -172,7 +196,7 @@ describe("WorkflowExecutionList", () => {
 	});
 
 	it("applies status filters from the URL", async () => {
-		mockListPipelineRuns.mockResolvedValue({ items: ledgerRuns, total: 2 });
+		mockListRuns.mockResolvedValue({ items: ledgerRuns, total: 2 });
 		renderList("/pipeline?tab=executions&status=Failed");
 
 		await waitFor(() => {
@@ -182,7 +206,7 @@ describe("WorkflowExecutionList", () => {
 	});
 
 	it("clears status filters when reset is clicked", async () => {
-		mockListPipelineRuns.mockResolvedValue({ items: ledgerRuns, total: 2 });
+		mockListRuns.mockResolvedValue({ items: ledgerRuns, total: 2 });
 		renderList("/pipeline?tab=executions&status=Failed");
 
 		await waitFor(() => {
@@ -198,14 +222,14 @@ describe("WorkflowExecutionList", () => {
 		});
 	});
 
-	it("merges run-level estimated cost from pipeline runs and shows a quiet empty state otherwise", async () => {
+	it("merges run-level estimated cost from Runs and shows a quiet empty state otherwise", async () => {
 		renderList();
 
 		await waitFor(() => {
 			expect(screen.getByText("successful-run")).toBeInTheDocument();
 		});
 
-		expect(mockListPipelineRuns).toHaveBeenCalledWith(
+		expect(mockListRuns).toHaveBeenCalledWith(
 			expect.objectContaining({
 				view: "summary",
 				excludeBatch: true,
@@ -220,7 +244,7 @@ describe("WorkflowExecutionList", () => {
 
 	it("shows ledger-only runs with estimated cost after live Argo workflow TTL cleanup", async () => {
 		mockListWorkflows.mockResolvedValue({ items: [] });
-		mockListPipelineRuns.mockResolvedValue({
+		mockListRuns.mockResolvedValue({
 			items: [
 				{
 					id: "run-ledger-1",
@@ -247,7 +271,7 @@ describe("WorkflowExecutionList", () => {
 
 	it("keeps ledger records visible when live workflow listing is unavailable", async () => {
 		mockListWorkflows.mockRejectedValue(new Error("argo unavailable"));
-		mockListPipelineRuns.mockResolvedValue({
+		mockListRuns.mockResolvedValue({
 			items: [
 				{
 					id: "run-ledger-2",
@@ -272,8 +296,37 @@ describe("WorkflowExecutionList", () => {
 		expect(screen.getByText("$1.50")).toBeInTheDocument();
 	});
 
+	it("does not append live-only Argo workflows as product execution rows", async () => {
+		mockListWorkflows.mockResolvedValue({
+			items: [
+				{
+					name: "external-live-workflow",
+					status: "Running",
+					nodeCount: 1,
+					createdAt: "2026-06-03T10:00:00Z",
+					labels: { team: "external" },
+				},
+			],
+		});
+		mockListRuns.mockResolvedValue({ items: [], total: 0 });
+
+		renderList("/pipeline?tab=executions&label=team%3Dexternal");
+
+		await waitFor(() => {
+			expect(mockListWorkflows).toHaveBeenCalledWith(
+				expect.objectContaining({ label: ["team=external"] }),
+			);
+		});
+		expect(
+			screen.queryByText("external-live-workflow"),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByText("暂无执行记录，部署流水线后将自动生成"),
+		).toBeInTheDocument();
+	});
+
 	it("filters batch-scoped runs by workflow name", async () => {
-		mockListPipelineRuns.mockResolvedValue({
+		mockListRuns.mockResolvedValue({
 			items: [
 				{
 					id: "run-a",

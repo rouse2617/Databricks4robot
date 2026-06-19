@@ -233,6 +233,8 @@ type mockWorkflowClient struct {
 	getWorkflowFn       func(ctx context.Context, name, namespace string) (*wfv1.Workflow, error)
 	getWorkflowStatusFn func(ctx context.Context, name, namespace string) (wfv1.WorkflowPhase, error)
 	createWorkflowFn    func(ctx context.Context, wf *wfv1.Workflow, namespace string) error
+	stopCalls           []string
+	stopErr             error
 }
 
 func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
@@ -265,8 +267,9 @@ func (m *mockWorkflowClient) GetWorkflow(ctx context.Context, name, namespace st
 		},
 	}, nil
 }
-func (m *mockWorkflowClient) StopWorkflow(_ context.Context, _, _ string) error {
-	return nil
+func (m *mockWorkflowClient) StopWorkflow(_ context.Context, name, namespace string) error {
+	m.stopCalls = append(m.stopCalls, namespace+"/"+name)
+	return m.stopErr
 }
 func (m *mockWorkflowClient) GetWorkflowLogs(_ context.Context, _, _, _ string, _ argo.WorkflowLogOptions) (argo.WorkflowLogResult, error) {
 	return argo.WorkflowLogResult{}, nil
@@ -1664,6 +1667,21 @@ func (m *mockRunEventRepo) ListByRunID(_ context.Context, runID string, _ models
 	return &models.PipelineRunEventListResult{Items: out, Total: len(out)}, nil
 }
 
+func assertRunEvents(t *testing.T, events []models.PipelineRunEvent, runID string, expected ...string) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, event := range events {
+		if event.RunID == runID {
+			seen[event.EventType] = true
+		}
+	}
+	for _, eventType := range expected {
+		if !seen[eventType] {
+			t.Fatalf("expected run %s event %s in %#v", runID, eventType, events)
+		}
+	}
+}
+
 type mockWatcherStateRepo struct {
 	state *models.PipelineRunWatcherState
 }
@@ -1792,6 +1810,154 @@ func TestSavePipelineRun_AppendsScheduledAndWorkflowCreatedEvents(t *testing.T) 
 	for _, eventType := range []string{runEventSubmitted, runEventScheduled, runEventWorkflowCreated} {
 		if !seen[eventType] {
 			t.Fatalf("expected event type %s in %#v", eventType, eventRepo.events)
+		}
+	}
+}
+
+func TestStopRun_AppendsSucceededAndFailedEvents(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-ok": {
+				ID:            "run-ok",
+				WorkflowName:  "wf-ok",
+				Status:        "Running",
+				ArgoNamespace: "video-proc-dev",
+			},
+			"run-fail": {
+				ID:            "run-fail",
+				WorkflowName:  "wf-fail",
+				Status:        "Running",
+				ArgoNamespace: "video-proc-dev",
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{}
+	wfClient := &mockWorkflowClient{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	if err := uc.StopRun(ctx, "run-ok"); err != nil {
+		t.Fatalf("StopRun success path returned error: %v", err)
+	}
+	if len(wfClient.stopCalls) != 1 || wfClient.stopCalls[0] != "video-proc-dev/wf-ok" {
+		t.Fatalf("unexpected stop calls after success: %#v", wfClient.stopCalls)
+	}
+	assertRunEvents(t, eventRepo.events, "run-ok", runEventStopRequested, runEventStopSucceeded)
+
+	wfClient.stopErr = errors.New("argo stop failed")
+	err := uc.StopRun(ctx, "run-fail")
+	if err == nil {
+		t.Fatal("expected StopRun failure")
+	}
+	if len(wfClient.stopCalls) != 2 || wfClient.stopCalls[1] != "video-proc-dev/wf-fail" {
+		t.Fatalf("unexpected stop calls after failure: %#v", wfClient.stopCalls)
+	}
+	assertRunEvents(t, eventRepo.events, "run-fail", runEventStopRequested, runEventStopFailed)
+	var failedEvent *models.PipelineRunEvent
+	for i := range eventRepo.events {
+		event := &eventRepo.events[i]
+		if event.RunID == "run-fail" && event.EventType == runEventStopFailed {
+			failedEvent = event
+			break
+		}
+	}
+	if failedEvent == nil || failedEvent.Reason != "argo stop failed" {
+		t.Fatalf("expected stop failed event reason, got %#v", failedEvent)
+	}
+}
+
+func TestGetRunRuntime_OmitsDebugURLWithoutWorkflowName(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-empty-workflow": {
+				ID:     "run-empty-workflow",
+				Status: "Pending",
+			},
+			"run-with-workflow": {
+				ID:            "run-with-workflow",
+				WorkflowName:  "wf-with-name",
+				Status:        "Running",
+				ArgoNamespace: "video-proc-dev",
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	emptyRuntime, err := uc.GetRunRuntime(ctx, "run-empty-workflow")
+	if err != nil {
+		t.Fatalf("GetRunRuntime empty workflow returned error: %v", err)
+	}
+	if emptyRuntime.Runtime.WorkflowName != "" {
+		t.Fatalf("expected empty workflow name, got %q", emptyRuntime.Runtime.WorkflowName)
+	}
+	if emptyRuntime.Runtime.DebugURL != "" {
+		t.Fatalf("expected empty debug URL for missing workflowName, got %q", emptyRuntime.Runtime.DebugURL)
+	}
+
+	namedRuntime, err := uc.GetRunRuntime(ctx, "run-with-workflow")
+	if err != nil {
+		t.Fatalf("GetRunRuntime named workflow returned error: %v", err)
+	}
+	if namedRuntime.Runtime.DebugURL != "/api/v1/workflows/wf-with-name" {
+		t.Fatalf("unexpected debug URL: %q", namedRuntime.Runtime.DebugURL)
+	}
+}
+
+func TestRetryAndResubmitRun_AppendFailedEventsWhenCreateRunFails(t *testing.T) {
+	ctx := context.Background()
+	validPipe := map[string]interface{}{
+		"name": "event-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-retry": {
+				ID:           "run-retry",
+				PipelineName: "pipe",
+				PipelineJSON: validPipe,
+				AssetIDs:     []string{"missing-asset"},
+				Status:       "Failed",
+			},
+			"run-resubmit": {
+				ID:           "run-resubmit",
+				PipelineName: "pipe",
+				PipelineJSON: validPipe,
+				AssetIDs:     []string{"missing-asset"},
+				Status:       "Failed",
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	if _, err := uc.RetryRun(ctx, "run-retry"); err == nil {
+		t.Fatal("expected RetryRun to fail when source assets are missing")
+	}
+	assertRunEvents(t, eventRepo.events, "run-retry", runEventRetryRequested, runEventRetryFailed)
+
+	if _, err := uc.ResubmitRun(ctx, "run-resubmit"); err == nil {
+		t.Fatal("expected ResubmitRun to fail when source assets are missing")
+	}
+	assertRunEvents(t, eventRepo.events, "run-resubmit", runEventResubmitRequested, runEventResubmitFailed)
+	for _, event := range eventRepo.events {
+		if (event.EventType == runEventRetryFailed || event.EventType == runEventResubmitFailed) &&
+			!strings.Contains(event.Reason, "asset not found") {
+			t.Fatalf("expected failed event reason to include asset validation failure, got %#v", event)
 		}
 	}
 }

@@ -41,11 +41,20 @@ import {
 	getBatchItemAttempts,
 } from "../api/batchJobApi";
 import {
-	listPipelineRuns,
 	listPipelines,
 	type PipelineRun,
 	type PipelineRunNodeProgress,
 } from "../api/pipelineApi";
+import {
+	deleteRun,
+	listRuns,
+	resubmitRun,
+	resumeRun,
+	retryRun,
+	stopRun,
+	suspendRun,
+	terminateRun,
+} from "../api/runApi";
 import {
 	deleteWorkflow,
 	type ListWorkflowsParams,
@@ -98,6 +107,12 @@ interface WorkflowExecutionListProps {
 	onSelectionChange?: (items: WorkflowSummary[]) => void;
 	title?: string;
 }
+
+type ExecutionRecord = WorkflowSummary & {
+	runId?: string;
+	workflowName?: string;
+	pipelineName?: string;
+};
 
 type WorkflowErrorKind = "network" | "service-unavailable";
 
@@ -228,6 +243,12 @@ const normalizeStatus = (value: string | null): string | undefined => {
 const workflowNameForRun = (run: PipelineRun): string =>
 	run.workflowName || run.pipelineName || run.id;
 
+const executionKeyForRun = (run: PipelineRun): string =>
+	run.id || workflowNameForRun(run);
+
+const executionKeyForRecord = (record: ExecutionRecord): string =>
+	record.runId || record.name;
+
 const runMatchesFilters = (
 	run: PipelineRun,
 	liveWorkflow: WorkflowSummary | undefined,
@@ -286,13 +307,16 @@ const runMatchesFilters = (
 const workflowSummaryFromRun = (
 	run: PipelineRun,
 	liveWorkflow?: WorkflowSummary,
-): WorkflowSummary => {
+): ExecutionRecord => {
 	const assetId = run.assetIds?.[0];
 	const mergedLabels = {
 		...(liveWorkflow?.labels ?? {}),
 		...(assetId ? { asset_id: assetId } : {}),
 	};
 	return {
+		runId: run.id,
+		workflowName: run.workflowName,
+		pipelineName: run.pipelineName,
 		name: workflowNameForRun(run),
 		status: liveWorkflow?.status ?? run.status,
 		nodeCount: run.nodeCount ?? liveWorkflow?.nodeCount ?? 0,
@@ -311,23 +335,16 @@ const mergeLedgerRunsWithLiveWorkflows = (
 	liveWorkflows: WorkflowSummary[],
 	pipelineRuns: PipelineRun[],
 	params: ListWorkflowsParams,
-): WorkflowSummary[] => {
+): ExecutionRecord[] => {
 	const liveByName = new Map(liveWorkflows.map((item) => [item.name, item]));
-	const seen = new Set<string>();
 	const ledgerItems = pipelineRuns
 		.filter((run) =>
 			runMatchesFilters(run, liveByName.get(run.workflowName), params),
 		)
 		.map((run) => {
-			const name = workflowNameForRun(run);
-			seen.add(name);
-			if (run.workflowName) {
-				seen.add(run.workflowName);
-			}
 			return workflowSummaryFromRun(run, liveByName.get(run.workflowName));
 		});
-	const liveOnlyItems = liveWorkflows.filter((item) => !seen.has(item.name));
-	return [...ledgerItems, ...liveOnlyItems].sort((a, b) => {
+	return ledgerItems.sort((a, b) => {
 		const left = dayjs(a.createdAt).valueOf();
 		const right = dayjs(b.createdAt).valueOf();
 		return right - left;
@@ -379,22 +396,22 @@ export function WorkflowExecutionList({
 	const messageApiRef = useRef(messageApi);
 	messageApiRef.current = messageApi;
 	const [searchParams, setSearchParams] = useSearchParams();
-	const [items, setItems] = useState<WorkflowSummary[]>([]);
-	const [runIdsByWorkflowName, setRunIdsByWorkflowName] = useState<
+	const [items, setItems] = useState<ExecutionRecord[]>([]);
+	const [runIdsByExecutionKey, setRunIdsByExecutionKey] = useState<
 		Record<string, string>
 	>({});
-	const [templateVersionsByWorkflowName, setTemplateVersionsByWorkflowName] =
+	const [templateVersionsByExecutionKey, setTemplateVersionsByExecutionKey] =
 		useState<Record<string, number>>({});
-	const [templateIdsByWorkflowName, setTemplateIdsByWorkflowName] = useState<
+	const [templateIdsByExecutionKey, setTemplateIdsByExecutionKey] = useState<
 		Record<string, string>
 	>({});
-	const [nodeCountsByWorkflowName, setNodeCountsByWorkflowName] = useState<
+	const [nodeCountsByExecutionKey, setNodeCountsByExecutionKey] = useState<
 		Record<string, number>
 	>({});
-	const [scopeByWorkflowName, setScopeByWorkflowName] = useState<
+	const [scopeByExecutionKey, setScopeByExecutionKey] = useState<
 		Record<string, string>
 	>({});
-	const [nodeProgressByWorkflowName, setNodeProgressByWorkflowName] = useState<
+	const [nodeProgressByExecutionKey, setNodeProgressByExecutionKey] = useState<
 		Record<string, PipelineRunNodeProgress | undefined>
 	>({});
 	const [attemptsDrawerAssetId, setAttemptsDrawerAssetId] = useState<
@@ -466,15 +483,15 @@ export function WorkflowExecutionList({
 				],
 	);
 	const [operationLoading, setOperationLoading] = useState<string | null>(null);
-	const [selectedWorkflowNames, setSelectedWorkflowNames] = useState<string[]>(
+	const [selectedExecutionKeys, setSelectedExecutionKeys] = useState<string[]>(
 		[],
 	);
 	const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 	const [bulkDeleting, setBulkDeleting] = useState(false);
 	const [compareOpen, setCompareOpen] = useState(false);
-	const [compareItems, setCompareItems] = useState<WorkflowSummary[]>([]);
+	const [compareItems, setCompareItems] = useState<ExecutionRecord[]>([]);
 	const [pendingOperation, setPendingOperation] = useState<{
-		record: WorkflowSummary;
+		record: ExecutionRecord;
 		operation: WorkflowOperationConfig;
 	} | null>(null);
 	const [page, setPage] = useState(1);
@@ -484,12 +501,55 @@ export function WorkflowExecutionList({
 	const refreshInFlightRef = useRef(false);
 	const isBatchScope = Boolean(batchJobId);
 	const openWorkflowDetail = useCallback(
-		(workflowName: string) => {
-			navigate(`/pipeline/executions/${workflowName}`, {
-				state: workflowDetailLocationState(batchJobId),
-			});
+		(recordOrName: ExecutionRecord | string) => {
+			if (typeof recordOrName !== "string" && recordOrName.runId) {
+				navigate(`/runs/${encodeURIComponent(recordOrName.runId)}`, {
+					state: workflowDetailLocationState(batchJobId),
+				});
+				return;
+			}
+			const name =
+				typeof recordOrName === "string" ? recordOrName : recordOrName.name;
+			const runId = runIdsByExecutionKey[name];
+			navigate(
+				runId
+					? `/runs/${encodeURIComponent(runId)}`
+					: `/pipeline/executions/${encodeURIComponent(name)}`,
+				{
+					state: workflowDetailLocationState(batchJobId),
+				},
+			);
 		},
-		[batchJobId, navigate],
+		[batchJobId, navigate, runIdsByExecutionKey],
+	);
+
+	const runProductOperation = useCallback(
+		async (runId: string, key: WorkflowOperationKey) => {
+			switch (key) {
+				case "delete":
+					await deleteRun(runId);
+					return;
+				case "retry":
+					await retryRun(runId);
+					return;
+				case "resubmit":
+					await resubmitRun(runId);
+					return;
+				case "stop":
+					await stopRun(runId);
+					return;
+				case "suspend":
+					await suspendRun(runId);
+					return;
+				case "resume":
+					await resumeRun(runId);
+					return;
+				case "terminate":
+					await terminateRun(runId);
+					return;
+			}
+		},
+		[],
 	);
 
 	useEffect(() => {
@@ -582,7 +642,7 @@ export function WorkflowExecutionList({
 		setError(null);
 		try {
 			if (isBatchScope && batchJobId) {
-				const runResponse = await listPipelineRuns({
+				const runResponse = await listRuns({
 					view: "summary",
 					batchJobId,
 					page,
@@ -605,59 +665,68 @@ export function WorkflowExecutionList({
 						? visiblePipelineRuns.length
 						: (runResponse.total ?? pipelineRuns.length),
 				);
-				setRunIdsByWorkflowName(
+				setRunIdsByExecutionKey(
 					Object.fromEntries(
 						visiblePipelineRuns
 							.filter((run) => run.id)
-							.map((run) => [workflowNameForRun(run), run.id] as const),
+							.map((run) => [executionKeyForRun(run), run.id] as const),
 					),
 				);
-				setTemplateVersionsByWorkflowName(
+				setTemplateVersionsByExecutionKey(
 					Object.fromEntries(
 						visiblePipelineRuns
-							.filter((run) => run.workflowName && run.templateVersion)
+							.filter((run) => run.templateVersion)
 							.map(
 								(run) =>
-									[run.workflowName, run.templateVersion as number] as const,
+									[
+										executionKeyForRun(run),
+										run.templateVersion as number,
+									] as const,
 							),
 					),
 				);
-				setTemplateIdsByWorkflowName(
+				setTemplateIdsByExecutionKey(
 					Object.fromEntries(
 						visiblePipelineRuns
-							.filter((run) => run.workflowName && run.templateId)
+							.filter((run) => run.templateId)
 							.map(
-								(run) => [run.workflowName, run.templateId as string] as const,
+								(run) =>
+									[executionKeyForRun(run), run.templateId as string] as const,
 							),
 					),
 				);
-				setNodeCountsByWorkflowName(
+				setNodeCountsByExecutionKey(
 					Object.fromEntries(
-						visiblePipelineRuns
-							.filter((run) => run.workflowName)
-							.map((run) => [run.workflowName, run.nodeCount] as const),
+						visiblePipelineRuns.map(
+							(run) => [executionKeyForRun(run), run.nodeCount] as const,
+						),
 					),
 				);
-				setScopeByWorkflowName(
+				setScopeByExecutionKey(
 					Object.fromEntries(
 						visiblePipelineRuns
-							.filter((run) => run.workflowName && run.scope)
-							.map((run) => [run.workflowName, run.scope as string] as const),
+							.filter((run) => run.scope)
+							.map(
+								(run) =>
+									[executionKeyForRun(run), run.scope as string] as const,
+							),
 					),
 				);
-				setNodeProgressByWorkflowName(
+				setNodeProgressByExecutionKey(
 					Object.fromEntries(
-						visiblePipelineRuns
-							.filter((run) => run.workflowName)
-							.map((run) => [run.workflowName, run.nodeProgress] as const),
+						visiblePipelineRuns.map(
+							(run) => [executionKeyForRun(run), run.nodeProgress] as const,
+						),
 					),
 				);
 				const summaries = visiblePipelineRuns.map((run) =>
 					workflowSummaryFromRun(run),
 				);
 				setItems(summaries);
-				setSelectedWorkflowNames((prev) =>
-					prev.filter((name) => summaries.some((item) => item.name === name)),
+				setSelectedExecutionKeys((prev) =>
+					prev.filter((key) =>
+						summaries.some((item) => executionKeyForRecord(item) === key),
+					),
 				);
 				return;
 			}
@@ -678,7 +747,7 @@ export function WorkflowExecutionList({
 								return { items: [] };
 							})
 						: Promise.resolve({ items: [] }),
-					listPipelineRuns({
+					listRuns({
 						view: "summary",
 						excludeBatch: true,
 						status: statusFilter,
@@ -692,20 +761,23 @@ export function WorkflowExecutionList({
 			const liveWorkflows = liveWorkflowResponse.items || [];
 			const pipelineRuns = pipelineRunResponse.items ?? [];
 			setServerTotal(pipelineRunResponse.total ?? pipelineRuns.length);
-			setRunIdsByWorkflowName(
+			setRunIdsByExecutionKey(
 				Object.fromEntries(
 					pipelineRuns
 						.filter((run) => run.id)
-						.map((run) => [workflowNameForRun(run), run.id] as const),
+						.map((run) => [executionKeyForRun(run), run.id] as const),
 				),
 			);
-			setTemplateVersionsByWorkflowName(
+			setTemplateVersionsByExecutionKey(
 				Object.fromEntries([
 					...pipelineRuns
-						.filter((run) => run.workflowName && run.templateVersion)
+						.filter((run) => run.templateVersion)
 						.map(
 							(run) =>
-								[run.workflowName, run.templateVersion as number] as const,
+								[
+									executionKeyForRun(run),
+									run.templateVersion as number,
+								] as const,
 						),
 					...templates
 						.filter((t) => t.name)
@@ -716,27 +788,30 @@ export function WorkflowExecutionList({
 						),
 				]),
 			);
-			setTemplateIdsByWorkflowName(
+			setTemplateIdsByExecutionKey(
 				Object.fromEntries(
 					pipelineRuns
-						.filter((run) => run.workflowName && run.templateId)
+						.filter((run) => run.templateId)
 						.map(
-							(run) => [run.workflowName, run.templateId as string] as const,
+							(run) =>
+								[executionKeyForRun(run), run.templateId as string] as const,
 						),
 				),
 			);
-			setNodeCountsByWorkflowName(
+			setNodeCountsByExecutionKey(
 				Object.fromEntries(
-					pipelineRuns
-						.filter((run) => run.workflowName)
-						.map((run) => [run.workflowName, run.nodeCount] as const),
+					pipelineRuns.map(
+						(run) => [executionKeyForRun(run), run.nodeCount] as const,
+					),
 				),
 			);
-			setScopeByWorkflowName(
+			setScopeByExecutionKey(
 				Object.fromEntries(
 					pipelineRuns
-						.filter((run) => run.workflowName && run.scope)
-						.map((run) => [run.workflowName, run.scope as string] as const),
+						.filter((run) => run.scope)
+						.map(
+							(run) => [executionKeyForRun(run), run.scope as string] as const,
+						),
 				),
 			);
 			const enrichedItems = mergeLedgerRunsWithLiveWorkflows(
@@ -745,8 +820,10 @@ export function WorkflowExecutionList({
 				params,
 			);
 			setItems(enrichedItems);
-			setSelectedWorkflowNames((prev) =>
-				prev.filter((name) => enrichedItems.some((item) => item.name === name)),
+			setSelectedExecutionKeys((prev) =>
+				prev.filter((key) =>
+					enrichedItems.some((item) => executionKeyForRecord(item) === key),
+				),
 			);
 		} catch (err) {
 			console.error(err);
@@ -851,13 +928,19 @@ export function WorkflowExecutionList({
 
 	const executeOperation = useCallback(
 		async (
-			record: WorkflowSummary,
+			record: ExecutionRecord,
 			operation: WorkflowOperationConfig,
 		): Promise<void> => {
-			const loadingKey = `${record.name}:${operation.key}`;
+			const executionKey = executionKeyForRecord(record);
+			const loadingKey = `${executionKey}:${operation.key}`;
 			setOperationLoading(loadingKey);
 			try {
-				await operation.run();
+				const runId = record.runId ?? runIdsByExecutionKey[executionKey];
+				if (runId) {
+					await runProductOperation(runId, operation.key);
+				} else {
+					await operation.run();
+				}
 				messageApiRef.current.success(`${operation.title}已提交`);
 				await refresh();
 			} catch (err) {
@@ -866,11 +949,11 @@ export function WorkflowExecutionList({
 				setOperationLoading(null);
 			}
 		},
-		[refresh],
+		[refresh, runIdsByExecutionKey, runProductOperation],
 	);
 
 	const runOperation = useCallback(
-		(record: WorkflowSummary, key: WorkflowOperationKey) => {
+		(record: ExecutionRecord, key: WorkflowOperationKey) => {
 			const operation = getAvailableWorkflowOperationConfigs(record).find(
 				(item) => item.key === key,
 			);
@@ -899,11 +982,14 @@ export function WorkflowExecutionList({
 	}, [executeOperation, pendingOperation]);
 
 	const confirmBulkDelete = useCallback(async () => {
-		if (selectedWorkflowNames.length === 0) return;
+		if (selectedExecutionKeys.length === 0) return;
 		setBulkDeleting(true);
 		try {
 			const results = await Promise.allSettled(
-				selectedWorkflowNames.map((name) => deleteWorkflow(name)),
+				selectedExecutionKeys.map((executionKey) => {
+					const runId = runIdsByExecutionKey[executionKey];
+					return runId ? deleteRun(runId) : deleteWorkflow(executionKey);
+				}),
 			);
 			const failedCount = results.filter(
 				(result) => result.status === "rejected",
@@ -913,13 +999,13 @@ export function WorkflowExecutionList({
 				messageApiRef.current.success(`已删除 ${deletedCount} 条执行记录`);
 			if (failedCount > 0)
 				messageApiRef.current.error(`${failedCount} 条执行记录删除失败`);
-			setSelectedWorkflowNames([]);
+			setSelectedExecutionKeys([]);
 			setBulkDeleteOpen(false);
 			await refresh();
 		} finally {
 			setBulkDeleting(false);
 		}
-	}, [refresh, selectedWorkflowNames]);
+	}, [refresh, runIdsByExecutionKey, selectedExecutionKeys]);
 
 	const displayItems = useMemo(() => {
 		if (isBatchScope) return items;
@@ -927,9 +1013,11 @@ export function WorkflowExecutionList({
 		const targetVersion = Number(versionFilter);
 		if (Number.isNaN(targetVersion)) return items;
 		return items.filter(
-			(item) => templateVersionsByWorkflowName[item.name] === targetVersion,
+			(item) =>
+				templateVersionsByExecutionKey[executionKeyForRecord(item)] ===
+				targetVersion,
 		);
-	}, [isBatchScope, items, versionFilter, templateVersionsByWorkflowName]);
+	}, [isBatchScope, items, versionFilter, templateVersionsByExecutionKey]);
 
 	const tableTotal =
 		isBatchScope || labelFilter.length === 0
@@ -961,10 +1049,11 @@ export function WorkflowExecutionList({
 				dataIndex: "name",
 				key: "name",
 				width: isBatchScope ? 280 : 260,
-				render: (name: string, record: WorkflowSummary) => {
-					const runId = runIdsByWorkflowName[record.name];
-					const templateVersion = templateVersionsByWorkflowName[record.name];
-					const scope = scopeByWorkflowName[record.name];
+				render: (name: string, record: ExecutionRecord) => {
+					const executionKey = executionKeyForRecord(record);
+					const runId = record.runId ?? runIdsByExecutionKey[executionKey];
+					const templateVersion = templateVersionsByExecutionKey[executionKey];
+					const scope = scopeByExecutionKey[executionKey];
 					const displayId = toAssetStyleId(runId ?? name);
 					const copyId = runId ?? name;
 					return (
@@ -1010,7 +1099,7 @@ export function WorkflowExecutionList({
 				dataIndex: "status",
 				key: "status",
 				width: isBatchScope ? 110 : 130,
-				render: (s: string, record: WorkflowSummary) => (
+				render: (s: string, record: ExecutionRecord) => (
 					<Space size={4} wrap>
 						<Tag
 							color={STATUS_COLORS[s] || STATUS_ACCENT_COLORS[s] || "default"}
@@ -1032,7 +1121,7 @@ export function WorkflowExecutionList({
 							title: "资产",
 							key: "assetId",
 							width: 200,
-							render: (_: unknown, record: WorkflowSummary) => {
+							render: (_: unknown, record: ExecutionRecord) => {
 								const assetId = getWorkflowLabel(record.labels, "asset_id");
 								if (!assetId) return "—";
 								if (isCanonicalAssetId(assetId)) {
@@ -1062,10 +1151,11 @@ export function WorkflowExecutionList({
 							title: "节点进度",
 							key: "nodeProgress",
 							width: 150,
-							render: (_: unknown, record: WorkflowSummary) => {
-								const progress = nodeProgressByWorkflowName[record.name];
-								const { text, tooltip } =
-									formatPipelineRunNodeProgress(progress);
+							render: (_: unknown, record: ExecutionRecord) => {
+								const executionKey = executionKeyForRecord(record);
+								const { text, tooltip } = formatPipelineRunNodeProgress(
+									nodeProgressByExecutionKey[executionKey],
+								);
 								const content = isBatchScope ? (
 									<Typography.Text
 										style={{
@@ -1095,8 +1185,8 @@ export function WorkflowExecutionList({
 				dataIndex: "nodeCount",
 				key: "nodeCount",
 				width: isBatchScope ? 70 : 90,
-				render: (nodeCount: number, record: WorkflowSummary) =>
-					nodeCountsByWorkflowName[record.name] ?? nodeCount,
+				render: (nodeCount: number, record: ExecutionRecord) =>
+					nodeCountsByExecutionKey[executionKeyForRecord(record)] ?? nodeCount,
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
@@ -1149,7 +1239,7 @@ export function WorkflowExecutionList({
 				dataIndex: "finishedAt",
 				key: "finishedAt",
 				width: 190,
-				render: (value: string | undefined, record: WorkflowSummary) =>
+				render: (value: string | undefined, record: ExecutionRecord) =>
 					renderFinishedTimestamp(value, record),
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
@@ -1157,16 +1247,17 @@ export function WorkflowExecutionList({
 				title: "操作",
 				key: "actions",
 				width: isBatchScope ? 100 : 110,
-				render: (_: unknown, record: WorkflowSummary) => {
+				render: (_: unknown, record: ExecutionRecord) => {
+					const executionKey = executionKeyForRecord(record);
 					const templateId =
-						templateIdsByWorkflowName[record.name] ??
+						templateIdsByExecutionKey[executionKey] ??
 						getWorkflowLabel(record.labels, "template-id");
-					const templateVersion = templateVersionsByWorkflowName[record.name];
-					const scope = scopeByWorkflowName[record.name];
+					const templateVersion = templateVersionsByExecutionKey[executionKey];
+					const scope = scopeByExecutionKey[executionKey];
 					const assetId = getWorkflowLabel(record.labels, "asset_id");
 					const menuItems = getWorkflowOperationMenuItems(record);
 					const hasOperationLoading = operationLoading?.startsWith(
-						`${record.name}:`,
+						`${executionKey}:`,
 					);
 					const openTemplate = (event: MouseEvent<HTMLElement>) => {
 						event.stopPropagation();
@@ -1185,7 +1276,7 @@ export function WorkflowExecutionList({
 					};
 					const viewRun = (event: MouseEvent<HTMLElement>) => {
 						event.stopPropagation();
-						openWorkflowDetail(record.name);
+						openWorkflowDetail(record);
 					};
 
 					if (isBatchScope) {
@@ -1307,16 +1398,16 @@ export function WorkflowExecutionList({
 		return baseColumns;
 	}, [
 		isBatchScope,
-		nodeCountsByWorkflowName,
-		nodeProgressByWorkflowName,
+		nodeCountsByExecutionKey,
+		nodeProgressByExecutionKey,
 		openAttemptsDrawer,
 		openWorkflowDetail,
 		operationLoading,
-		runIdsByWorkflowName,
+		runIdsByExecutionKey,
 		runOperation,
-		scopeByWorkflowName,
-		templateIdsByWorkflowName,
-		templateVersionsByWorkflowName,
+		scopeByExecutionKey,
+		templateIdsByExecutionKey,
+		templateVersionsByExecutionKey,
 		messageApi,
 		navigate,
 	]);
@@ -1340,12 +1431,12 @@ export function WorkflowExecutionList({
 				{!embedded ? (
 					<Button
 						danger
-						disabled={selectedWorkflowNames.length === 0}
+						disabled={selectedExecutionKeys.length === 0}
 						onClick={() => setBulkDeleteOpen(true)}
 					>
 						批量删除
-						{selectedWorkflowNames.length > 0
-							? `（${selectedWorkflowNames.length}）`
+						{selectedExecutionKeys.length > 0
+							? `（${selectedExecutionKeys.length}）`
 							: ""}
 					</Button>
 				) : null}
@@ -1363,27 +1454,27 @@ export function WorkflowExecutionList({
 				<Button
 					type="default"
 					disabled={
-						selectedWorkflowNames.length < 2 || selectedWorkflowNames.length > 3
+						selectedExecutionKeys.length < 2 || selectedExecutionKeys.length > 3
 					}
 					title={
-						selectedWorkflowNames.length < 2
+						selectedExecutionKeys.length < 2
 							? "勾选 2-3 条运行进行对比"
-							: selectedWorkflowNames.length > 3
+							: selectedExecutionKeys.length > 3
 								? "最多选择 3 条运行"
 								: undefined
 					}
 					onClick={() => {
 						setCompareItems(
 							displayItems.filter((item) =>
-								selectedWorkflowNames.includes(item.name),
+								selectedExecutionKeys.includes(executionKeyForRecord(item)),
 							),
 						);
 						setCompareOpen(true);
 					}}
 				>
 					对比选中
-					{selectedWorkflowNames.length > 0
-						? `（${selectedWorkflowNames.length}）`
+					{selectedExecutionKeys.length > 0
+						? `（${selectedExecutionKeys.length}）`
 						: ""}
 				</Button>
 			</div>
@@ -1410,7 +1501,7 @@ export function WorkflowExecutionList({
 						onChange={(val) => setDraftVersionFilter(val)}
 						options={Array.from(
 							new Set(
-								Object.values(templateVersionsByWorkflowName).filter(
+								Object.values(templateVersionsByExecutionKey).filter(
 									(v): v is number => typeof v === "number",
 								),
 							),
@@ -1491,16 +1582,18 @@ export function WorkflowExecutionList({
 					<Table
 						dataSource={displayItems}
 						columns={columns}
-						rowKey="name"
+						rowKey={executionKeyForRecord}
 						loading={loading}
 						size={embedded ? "small" : "middle"}
-						rowSelection={withSelectAllColumn<WorkflowSummary>({
-							selectedRowKeys: selectedWorkflowNames,
+						rowSelection={withSelectAllColumn<ExecutionRecord>({
+							selectedRowKeys: selectedExecutionKeys,
 							onChange: (keys) => {
-								const names = keys as string[];
-								setSelectedWorkflowNames(names);
+								const executionKeys = keys as string[];
+								setSelectedExecutionKeys(executionKeys);
 								onSelectionChange?.(
-									displayItems.filter((item) => names.includes(item.name)),
+									displayItems.filter((item) =>
+										executionKeys.includes(executionKeyForRecord(item)),
+									),
 								);
 							},
 						})}
@@ -1516,7 +1609,7 @@ export function WorkflowExecutionList({
 								) {
 									return;
 								}
-								openWorkflowDetail(record.name);
+								openWorkflowDetail(record);
 							},
 							style: { cursor: "pointer" },
 						})}
@@ -1556,7 +1649,7 @@ export function WorkflowExecutionList({
 			</Modal>
 			<Modal
 				open={bulkDeleteOpen}
-				title={`删除选中的 ${selectedWorkflowNames.length} 条执行记录？`}
+				title={`删除选中的 ${selectedExecutionKeys.length} 条执行记录？`}
 				okText="删除"
 				cancelText="取消"
 				okButtonProps={{ danger: true, loading: bulkDeleting }}
@@ -1624,14 +1717,14 @@ export function WorkflowExecutionList({
 							render: (version?: number) => (version ? `v${version}` : "—"),
 						},
 						{
-							title: "Workflow",
+							title: "Run",
 							render: (_, record) =>
-								record.workflowName ? (
+								record.runId ? (
 									<Button
 										type="link"
 										size="small"
 										onClick={() =>
-											openWorkflowDetail(record.workflowName as string)
+											navigate(`/runs/${encodeURIComponent(record.runId)}`)
 										}
 									>
 										查看

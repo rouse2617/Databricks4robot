@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockCreateBatchJob = vi.fn();
-const mockDeployTemplate = vi.fn();
+const mockCreateRunByTemplate = vi.fn();
 
 vi.mock("./batchJobApi", () => ({
 	createBatchJob: (...args: unknown[]) => mockCreateBatchJob(...args),
 }));
 
+vi.mock("./runApi", () => ({
+	createRunByTemplate: (...args: unknown[]) => mockCreateRunByTemplate(...args),
+}));
+
 vi.mock("./pipelineApi", () => ({
-	deployTemplate: (...args: unknown[]) => mockDeployTemplate(...args),
 	normalizeDeployResults: (result: unknown) =>
 		Array.isArray((result as { items?: unknown[] })?.items)
 			? (result as { items: unknown[] }).items
@@ -20,7 +23,7 @@ import { deployPipelineForAssets } from "./deployPipelineRun";
 describe("deployPipelineForAssets", () => {
 	beforeEach(() => {
 		mockCreateBatchJob.mockReset();
-		mockDeployTemplate.mockReset();
+		mockCreateRunByTemplate.mockReset();
 	});
 
 	it("creates batch job when at least two assets are selected", async () => {
@@ -41,16 +44,16 @@ describe("deployPipelineForAssets", () => {
 			assetIds: ["a1", "a2"],
 			targetId: "video-proc-dev",
 		});
-		expect(mockDeployTemplate).not.toHaveBeenCalled();
+		expect(mockCreateRunByTemplate).not.toHaveBeenCalled();
 	});
 
 	it("deploys single run for one asset", async () => {
-		mockDeployTemplate.mockResolvedValue({ id: "run-1" });
+		mockCreateRunByTemplate.mockResolvedValue({ id: "run-1" });
 
 		const result = await deployPipelineForAssets("tpl-1", ["a1"]);
 
 		expect(result.mode).toBe("single");
-		expect(mockDeployTemplate).toHaveBeenCalledWith(
+		expect(mockCreateRunByTemplate).toHaveBeenCalledWith(
 			"tpl-1",
 			["a1"],
 			undefined,
@@ -68,5 +71,6 @@ describe("deployPipelineForAssets", () => {
 			/最多支持 10,000 个资产/,
 		);
 		expect(mockCreateBatchJob).not.toHaveBeenCalled();
+		expect(mockCreateRunByTemplate).not.toHaveBeenCalled();
 	});
 });

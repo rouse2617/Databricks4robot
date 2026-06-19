@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-	getPipelineRun,
-	getPipelineRunByWorkflowName,
-	getPipelineRunCostSummary,
-	listPipelineRunAssetNodes,
-	listPipelineRunEvents,
-	type PipelineRun,
-	type PipelineRunAssetNode,
-	type PipelineRunCostSummary,
-	type PipelineRunEvent,
+import type {
+	PipelineRun,
+	PipelineRunAssetNode,
+	PipelineRunCostSummary,
+	PipelineRunEvent,
 } from "../api/pipelineApi";
 import { ApiError } from "../api/pipelineClient";
+import {
+	getRun,
+	getRunByWorkflowName,
+	getRunCostSummary,
+	listRunAssetNodes,
+	listRunEvents,
+} from "../api/runApi";
 import {
 	getWorkflow,
 	getWorkflowLogStreamUrl,
@@ -98,6 +100,12 @@ interface UseWorkflowDetailResult {
 	startFollowLogs: () => void;
 	stopFollowLogs: () => void;
 	downloadLogs: () => void;
+}
+
+type WorkflowLookupMode = "workflowName" | "runId";
+
+interface UseWorkflowDetailOptions {
+	lookupMode?: WorkflowLookupMode;
 }
 
 const EMPTY_LOG_STATE: WorkflowLogState = {
@@ -188,16 +196,29 @@ function workflowHasActiveNodesNewerThanRun(
 	});
 }
 
-async function resolvePipelineRun(lookup: string): Promise<PipelineRun | null> {
+async function resolvePipelineRun(
+	lookup: string,
+	mode: WorkflowLookupMode,
+): Promise<PipelineRun | null> {
+	if (mode === "runId") {
+		try {
+			return await getRun(lookup);
+		} catch (err) {
+			if (!(err instanceof ApiError && err.status === 404)) {
+				throw err;
+			}
+			return null;
+		}
+	}
 	try {
-		return await getPipelineRunByWorkflowName(lookup);
+		return await getRunByWorkflowName(lookup);
 	} catch (err) {
 		if (!(err instanceof ApiError && err.status === 404)) {
 			throw err;
 		}
 	}
 	try {
-		return await getPipelineRun(lookup);
+		return await getRun(lookup);
 	} catch (err) {
 		if (!(err instanceof ApiError && err.status === 404)) {
 			throw err;
@@ -241,7 +262,11 @@ export function appendBoundedLogContent(
 	return { content: next, truncated };
 }
 
-export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
+export function useWorkflowDetail(
+	name?: string,
+	options?: UseWorkflowDetailOptions,
+): UseWorkflowDetailResult {
+	const lookupMode = options?.lookupMode ?? "workflowName";
 	const [workflow, setWorkflow] = useState<WorkflowDetail | null>(null);
 	const workflowRef = useRef<WorkflowDetail | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -252,6 +277,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const logStreamBufferRef = useRef<string[]>([]);
 	const logStreamFlushTimerRef = useRef<number | null>(null);
 	const logStreamConnectTimerRef = useRef<number | null>(null);
+	const skipNextRunEventsLoadRef = useRef(false);
 	const [runEventState, setRunEventState] = useState<RunEventState>(
 		EMPTY_RUN_EVENT_STATE,
 	);
@@ -265,39 +291,46 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		EMPTY_COST_SUMMARY_STATE,
 	);
 	workflowRef.current = workflow;
+	const runtimeWorkflowName = useMemo(
+		() =>
+			workflow?.name ??
+			runEventState.run?.workflowName ??
+			(lookupMode === "workflowName" ? name : undefined),
+		[lookupMode, name, runEventState.run?.workflowName, workflow?.name],
+	);
 
 	const loadRunDetailData = useCallback(
 		async (runName: string, opts?: { append?: boolean; cursor?: number }) => {
-			const run = await resolvePipelineRun(runName);
+			const run = await resolvePipelineRun(runName, lookupMode);
 			if (!run) {
 				setRunEventState({
 					run: null,
 					items: [],
 					loading: false,
-					error: "未找到关联的 DataBrew pipeline run",
+					error: "未找到关联的 DataBrew Run",
 				});
 				setAssetNodeState({
 					items: [],
 					loading: false,
-					error: "未找到关联的 DataBrew pipeline run",
+					error: "未找到关联的 DataBrew Run",
 					summary: null,
 				});
 				setCostSummaryState({
 					item: null,
 					loading: false,
-					error: "未找到关联的 DataBrew pipeline run",
+					error: "未找到关联的 DataBrew Run",
 				});
-				return;
+				return null;
 			}
 			const cursor = opts?.append ? opts.cursor : undefined;
 			const [events, assetNodes, costSummary] = await Promise.all([
-				listPipelineRunEvents(run.id, {
+				listRunEvents(run.id, {
 					limit: 100,
 					cursor,
 					...runEventFilters,
 				}),
-				listPipelineRunAssetNodes(run.id, { limit: 500 }),
-				getPipelineRunCostSummary(run.id),
+				listRunAssetNodes(run.id, { limit: 500 }),
+				getRunCostSummary(run.id),
 			]);
 			setRunEventState((current) => ({
 				run,
@@ -319,8 +352,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				loading: false,
 				error: null,
 			});
+			return run;
 		},
-		[runEventFilters],
+		[lookupMode, runEventFilters],
 	);
 
 	const refreshDetailData = useCallback(() => {
@@ -336,6 +370,50 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		if (!name) return;
 		setLoading(true);
 		setLoadError(null);
+		if (lookupMode === "runId") {
+			skipNextRunEventsLoadRef.current = true;
+			loadRunDetailData(name)
+				.then((run) => {
+					if (!run) {
+						setWorkflow(null);
+						setLoadError({
+							kind: "not_found",
+							message: "未找到 DataBrew Run",
+						});
+						return;
+					}
+					if (!run.workflowName) {
+						setWorkflow(null);
+						setLoadError({
+							kind: "not_found",
+							message: "Run has no runtime workflow reference",
+						});
+						return;
+					}
+					return getWorkflow(run.workflowName)
+						.then((detail) => {
+							workflowRef.current = detail;
+							setWorkflow(detail);
+							setLoadError(null);
+						})
+						.catch((err) => {
+							if (!isExpectedWorkflowNotFound(err)) {
+								console.error(err);
+							}
+							setWorkflow(null);
+							setLoadError(toLoadError(err));
+						});
+				})
+				.catch((err) => {
+					if (!isExpectedWorkflowNotFound(err)) {
+						console.error(err);
+					}
+					setWorkflow(null);
+					setLoadError(toLoadError(err));
+				})
+				.finally(() => setLoading(false));
+			return;
+		}
 		getWorkflow(name)
 			.then((detail) => {
 				workflowRef.current = detail;
@@ -355,7 +433,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				}
 			})
 			.finally(() => setLoading(false));
-	}, [name, refreshDetailData]);
+	}, [loadRunDetailData, lookupMode, name, refreshDetailData]);
 
 	useEffect(() => {
 		loadWorkflow();
@@ -364,6 +442,10 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const loadRunEvents = useCallback(
 		(opts?: { append?: boolean; cursor?: number }) => {
 			if (!name) return;
+			if (skipNextRunEventsLoadRef.current) {
+				skipNextRunEventsLoadRef.current = false;
+				return;
+			}
 			setRunEventState((current) => ({
 				...current,
 				loading: true,
@@ -416,12 +498,12 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		ACTIVE_WORKFLOW_STATUSES.has(runEventState.run.status);
 
 	useEffect(() => {
-		if (!name || !shouldPollWorkflow) {
+		if (!runtimeWorkflowName || !shouldPollWorkflow) {
 			return;
 		}
 
 		const timer = window.setInterval(() => {
-			getWorkflow(name)
+			getWorkflow(runtimeWorkflowName)
 				.then((detail) => {
 					workflowRef.current = detail;
 					setWorkflow(detail);
@@ -436,7 +518,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		}, WORKFLOW_POLL_INTERVAL_MS);
 
 		return () => window.clearInterval(timer);
-	}, [name, refreshDetailData, shouldPollWorkflow]);
+	}, [refreshDetailData, runtimeWorkflowName, shouldPollWorkflow]);
 
 	useEffect(() => {
 		if (!name || !shouldPollLedgerOnly) {
@@ -453,7 +535,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 
 	const loadNodeLogs = useCallback(
 		async (nodeId: string, nodePhase?: string) => {
-			if (!name) return;
+			if (!runtimeWorkflowName) return;
 			setLogState((current) => ({
 				...current,
 				loading: true,
@@ -477,12 +559,16 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				}));
 			};
 			try {
-				const res = await getWorkflowLogs(name, nodeId);
+				const res = await getWorkflowLogs(runtimeWorkflowName, nodeId);
 				if (!res.logs?.trim() && shouldTryPrevious) {
 					try {
-						const previous = await getWorkflowLogs(name, nodeId, {
-							previous: true,
-						});
+						const previous = await getWorkflowLogs(
+							runtimeWorkflowName,
+							nodeId,
+							{
+								previous: true,
+							},
+						);
 						if (previous.logs?.trim()) {
 							applyLogResponse({
 								...previous,
@@ -498,9 +584,13 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			} catch (err) {
 				if (shouldTryPrevious) {
 					try {
-						const previous = await getWorkflowLogs(name, nodeId, {
-							previous: true,
-						});
+						const previous = await getWorkflowLogs(
+							runtimeWorkflowName,
+							nodeId,
+							{
+								previous: true,
+							},
+						);
 						if (previous.logs?.trim()) {
 							applyLogResponse({
 								...previous,
@@ -525,7 +615,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				}));
 			}
 		},
-		[name],
+		[runtimeWorkflowName],
 	);
 
 	const clearLogStreamFlushTimer = useCallback(() => {
@@ -574,7 +664,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 
 	const selectNode = useCallback(
 		(node: WorkflowNodeStatus | null) => {
-			if (!node || !name) {
+			if (!node || !runtimeWorkflowName) {
 				clearLogStreamFlushTimer();
 				clearLogStreamConnectTimer();
 				logStreamBufferRef.current = [];
@@ -604,7 +694,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		[
 			clearLogStreamConnectTimer,
 			clearLogStreamFlushTimer,
-			name,
+			runtimeWorkflowName,
 			selectedNodeId,
 		],
 	);
@@ -630,14 +720,14 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	}, [clearLogStreamConnectTimer, flushBufferedLogLines]);
 
 	const startFollowLogs = useCallback(() => {
-		if (!name || !selectedNodeId) return;
+		if (!runtimeWorkflowName || !selectedNodeId) return;
 
 		stopFollowLogs();
 		clearLogStreamFlushTimer();
 		clearLogStreamConnectTimer();
 		logStreamBufferRef.current = [];
 
-		const url = getWorkflowLogStreamUrl(name, selectedNodeId);
+		const url = getWorkflowLogStreamUrl(runtimeWorkflowName, selectedNodeId);
 		const source = new EventSource(url);
 		followSourceRef.current = source;
 
@@ -735,8 +825,8 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		clearLogStreamConnectTimer,
 		clearLogStreamFlushTimer,
 		flushBufferedLogLines,
-		name,
 		queueLogLine,
+		runtimeWorkflowName,
 		selectedNodeId,
 		stopFollowLogs,
 	]);
@@ -744,11 +834,11 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const downloadLogs = useCallback(() => {
 		const content = logState.content;
 		const selNode = selectedNode;
-		if (!content || !name || !selNode) return;
+		if (!content || !runtimeWorkflowName || !selNode) return;
 		const nodeName = selNode.displayName || selNode.name || selNode.id;
 		const response = logState.response;
 		const header = [
-			`# workflow: ${name}`,
+			`# workflow: ${runtimeWorkflowName}`,
 			`# node: ${nodeName}`,
 			`# container: ${response?.container ?? "main"}`,
 			`# scope: ${response?.window?.scope ?? "loaded-log-window"}`,
@@ -761,10 +851,10 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement("a");
 		a.href = url;
-		a.download = `${name}-${nodeName}.log`;
+		a.download = `${runtimeWorkflowName}-${nodeName}.log`;
 		a.click();
 		URL.revokeObjectURL(url);
-	}, [logState.content, logState.response, name, selectedNode]);
+	}, [logState.content, logState.response, runtimeWorkflowName, selectedNode]);
 
 	useEffect(() => {
 		return () => {
@@ -779,14 +869,14 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	}, [clearLogStreamConnectTimer, clearLogStreamFlushTimer]);
 
 	useEffect(() => {
-		if (!selectedNodeId || !name) {
+		if (!selectedNodeId || !runtimeWorkflowName) {
 			return;
 		}
 		const phase = workflow?.nodes.find(
 			(node) => node.id === selectedNodeId,
 		)?.phase;
 		void loadNodeLogs(selectedNodeId, phase);
-	}, [loadNodeLogs, name, selectedNodeId, workflow?.nodes]);
+	}, [loadNodeLogs, runtimeWorkflowName, selectedNodeId, workflow?.nodes]);
 
 	useEffect(() => {
 		if (!workflow || !selectedNodeId) return;
