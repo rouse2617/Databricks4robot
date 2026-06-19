@@ -1673,8 +1673,42 @@ func TestCreateTerminalSession_AllowedPolicyCreatesSession(t *testing.T) {
 	if resp["podName"] == "" || resp["command"] != "pwd" {
 		t.Fatalf("unexpected terminal response %#v", resp)
 	}
+	if resp["containerName"] != "main" {
+		t.Fatalf("expected default containerName main, got %#v", resp["containerName"])
+	}
 	if len(eventRepo.events) != 1 || eventRepo.events[0].EventType != "pod_terminal_session_created" {
 		t.Fatalf("expected created run event, got %#v", eventRepo.events)
+	}
+}
+
+func TestCreateTerminalSession_ResourceDefaultsPolicyCreatesSession(t *testing.T) {
+	h := New(&mockWorkflowClient{
+		getFn: func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+			return makeWorkflow("test-wf", "Running", 1), nil
+		},
+	}, "default")
+	h.SetRunRepositories(&mockRunRepo{run: &models.PipelineRun{
+		ID:                "run-1",
+		WorkflowName:      "test-wf",
+		ExecutionTargetID: "target-1",
+		TargetSnapshot: map[string]interface{}{
+			"resourceDefaults": map[string]interface{}{
+				"terminal": map[string]interface{}{
+					"enabled":         true,
+					"allowedCommands": []interface{}{"sh", "pwd"},
+				},
+			},
+		},
+	}}, &mockRunEventRepo{})
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodPost, "/workflows/test-wf/nodes/a/terminal-sessions", strings.NewReader(`{"command":"pwd"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

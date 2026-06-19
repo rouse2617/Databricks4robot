@@ -2867,7 +2867,9 @@ curl -s "$BASE/api/v1/workflows/<WORKFLOW_NAME>/nodes/<NODE_ID>/pod" \
 
 Pod terminal 是后端持有 Kubernetes 凭据的受控调试入口。默认关闭；只有
 pipeline run 的 execution target snapshot 显式配置 terminal policy 后，后端才会
-创建 session。浏览器只拿 DataBrew session id 和一次性 attach URL，不会拿
+创建 session；实际开启时通常配置 execution target 的
+`resourceDefaults.terminal`，新建 run 会把它写入 target snapshot。浏览器只拿
+DataBrew session id 和一次性 attach URL，不会拿
 kubeconfig、ServiceAccount token 或 GKE 凭据。
 
 创建会话：
@@ -2908,6 +2910,10 @@ WebSocket attach：
 ```text
 GET /api/v1/pod-terminal/sessions/<SESSION_ID>/attach?token=<ONE_TIME_TOKEN>
 ```
+
+`attach` 使用创建 session 时返回的一次性 token 授权；浏览器原生 WebSocket
+不能设置 `X-Databrew-Token`，因此该握手不再要求额外 API header。session
+创建、查询和终止接口仍要求正常 DataBrew API 认证。
 
 Frame 是 JSON 文本：
 

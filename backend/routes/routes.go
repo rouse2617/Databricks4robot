@@ -197,6 +197,14 @@ func RegisterAll(
 		releaseIngest.POST("/pipeline-component-releases/sync", pipelineComponentHandler.SyncReleases)
 	}
 
+	if workflowHandler != nil {
+		terminalAttach := r.Group("/api/v1")
+		if cbMiddleware != nil {
+			terminalAttach.Use(cbMiddleware)
+		}
+		terminalAttach.GET("/pod-terminal/sessions/:id/attach", workflowHandler.AttachTerminalSession)
+	}
+
 	api := r.Group("/api/v1", middleware.JWTAuth(cfg.DatabrewToken, cfg.JWTSecret))
 	if cbMiddleware != nil {
 		api.Use(cbMiddleware)
@@ -416,7 +424,6 @@ func RegisterAll(
 		api.POST("/workflows/:name/nodes/:nodeId/terminal-sessions", workflowHandler.CreateTerminalSession)
 		api.GET("/pod-terminal/sessions/:id", workflowHandler.GetTerminalSession)
 		api.POST("/pod-terminal/sessions/:id/terminate", workflowHandler.TerminateTerminalSession)
-		api.GET("/pod-terminal/sessions/:id/attach", workflowHandler.AttachTerminalSession)
 		api.GET("/workflows/:name", workflowHandler.GetWorkflow)
 		api.POST("/workflows/:name/retry", workflowHandler.RetryWorkflow)
 		api.POST("/workflows/:name/resubmit", workflowHandler.ResubmitWorkflow)

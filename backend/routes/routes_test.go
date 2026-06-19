@@ -19,6 +19,7 @@ import (
 	auditH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/audit"
 	deliveryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/delivery"
 	mcapH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/mcap"
+	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
@@ -219,6 +220,30 @@ func TestRegisterAll(t *testing.T) {
 		"POST /api/v1/deliveries/:id/retry",
 		"POST /api/v1/deliveries/:id/ack",
 	})
+}
+
+func TestPodTerminalAttachRouteUsesAttachTokenBeforeAPIAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+
+	assetHandler := assetH.New(assetUC.New(&routeAssetRepo{}), &routeDeliveryRepo{})
+	mcapHandler := mcapH.New(&routeMcapRepo{})
+	deliveryHandler := deliveryH.New(&routeDeliveryRepo{}, &routeIdemRepo{}, &routeCustomerRepo{})
+	workflowHandler := workflowH.New(nil, "default")
+	cfg := &config.Config{DatabrewToken: "dev-token"}
+
+	RegisterAll(r, cfg, nil, assetHandler, mcapHandler, deliveryHandler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, workflowHandler, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pod-terminal/sessions/missing/attach?token=one-time", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusUnauthorized {
+		t.Fatalf("attach route should rely on one-time token, got API auth 401: %s", w.Body.String())
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected handler-level 404 for missing session, got %d: %s", w.Code, w.Body.String())
+	}
 }
 
 func TestAuditSearchRouteRegisteredWhenHandlerProvided(t *testing.T) {

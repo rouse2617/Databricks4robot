@@ -184,3 +184,9 @@
 - **Decision**: Keep wide registry tables horizontally scrollable inside bounded containers and make the config filter toolbar wrap responsively. Also switch deprecated AntD `Card bordered` stats cards to `variant="outlined"` to remove the console warning.
 - **Alternatives**: Reduce or hide config columns on mobile, increase the page's minimum width, or move the table into a separate mobile-only card layout in this PR.
 - **Rationale**: Registry still needs dense audit/config metadata, and users may need all columns. Bounded table scrolling plus a responsive toolbar fixes document overflow without changing data visibility or introducing a new mobile component surface.
+
+## 2026-06-19 — Terminal attach uses one-time session token
+- **Context**: Pod terminal session creation became allowed once the execution target policy was enabled, but browser WebSocket attach still received `401` because the route was mounted under the API group that requires `X-Databrew-Token` or a JWT. Native browser WebSocket cannot set the `X-Databrew-Token` header.
+- **Decision**: Keep terminal session create/query/terminate behind normal DataBrew API auth, but mount only `GET /api/v1/pod-terminal/sessions/:id/attach` outside the API auth group and rely on the backend-generated, single-use, expiring attach token. Also default terminal exec to Argo's `main` container when the client omits `containerName`.
+- **Alternatives**: Pass the API token in the WebSocket URL, require a reverse-proxy cookie flow, or ask the UI to expose a container selector before opening terminal.
+- **Rationale**: The attach URL is already scoped to one session and one use, and exposing API tokens in a WebSocket query would be worse. Defaulting to `main` matches Argo's business container naming and avoids forcing operators to know about `init` and `wait` sidecars.

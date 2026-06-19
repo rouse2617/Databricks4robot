@@ -218,6 +218,10 @@ func (h *Handler) CreateTerminalSession(c *gin.Context) {
 		h.appendTerminalRunEvent(c.Request.Context(), run, "pod_terminal_session_failed", "failed", nodeID, podName, command, err.Error())
 		return
 	}
+	containerName := strings.TrimSpace(req.ContainerName)
+	if containerName == "" {
+		containerName = "main"
+	}
 
 	now := h.now()
 	maxSeconds := policy.MaxSessionSeconds
@@ -234,7 +238,7 @@ func (h *Handler) CreateTerminalSession(c *gin.Context) {
 		WorkflowName:      name,
 		NodeID:            nodeID,
 		PodName:           podName,
-		ContainerName:     strings.TrimSpace(req.ContainerName),
+		ContainerName:     containerName,
 		Namespace:         namespace,
 		Command:           command,
 		Status:            "created",
@@ -473,6 +477,15 @@ func terminalPolicyFromRun(run *models.PipelineRun) terminalPolicy {
 	raw, _ := run.TargetSnapshot["terminal"].(map[string]interface{})
 	if raw == nil {
 		raw, _ = run.TargetSnapshot["terminalPolicy"].(map[string]interface{})
+	}
+	if raw == nil {
+		resourceDefaults, _ := run.TargetSnapshot["resourceDefaults"].(map[string]interface{})
+		if resourceDefaults != nil {
+			raw, _ = resourceDefaults["terminal"].(map[string]interface{})
+			if raw == nil {
+				raw, _ = resourceDefaults["terminalPolicy"].(map[string]interface{})
+			}
+		}
 	}
 	if raw == nil {
 		return policy
