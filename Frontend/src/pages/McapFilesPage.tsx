@@ -6,10 +6,10 @@ import {
 import {
 	Button,
 	Empty,
+	Grid,
 	Input,
 	Result,
 	Select,
-	Space,
 	Table,
 	Tag,
 	Typography,
@@ -29,6 +29,7 @@ import {
 } from "../lib/productVocabulary";
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 function formatBytes(bytes: number): string {
 	if (!bytes || bytes === 0) return "—";
@@ -47,6 +48,11 @@ const stateFilterOptions = [
 ];
 
 export default function McapFilesPage() {
+	const screens = useBreakpoint();
+	const isNarrow =
+		typeof window !== "undefined" &&
+		window.innerWidth < 768 &&
+		screens.md !== true;
 	const [searchParams, setSearchParams] = useSearchParams();
 	const focusedMcapFileId = searchParams.get("mcap_file_id")?.trim() ?? "";
 	const [files, setFiles] = useState<McapFile[]>([]);
@@ -237,8 +243,25 @@ export default function McapFilesPage() {
 
 	return (
 		<div>
-			<div className="flex items-center justify-between mb-3">
-				<Title level={4} style={{ margin: 0 }}>
+			<div
+				style={{
+					display: "flex",
+					alignItems: isNarrow ? "stretch" : "center",
+					justifyContent: "space-between",
+					gap: 12,
+					flexWrap: "wrap",
+					marginBottom: 12,
+				}}
+			>
+				<Title
+					level={4}
+					style={{
+						margin: 0,
+						flex: isNarrow ? "1 1 100%" : "0 0 auto",
+						minWidth: 0,
+						whiteSpace: "nowrap",
+					}}
+				>
 					<FileOutlined style={{ marginRight: 8 }} />
 					MCAP 文件
 					<Text
@@ -248,7 +271,17 @@ export default function McapFilesPage() {
 						{loading ? "…" : `(${total})`}
 					</Text>
 				</Title>
-				<Space>
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: isNarrow
+							? "minmax(0, 1fr) minmax(0, 1fr)"
+							: "140px 130px auto",
+						gap: 8,
+						width: isNarrow ? "100%" : "auto",
+						minWidth: 0,
+					}}
+				>
 					<Input
 						id="mcap-owner-filter"
 						placeholder="搜索所属方"
@@ -262,7 +295,10 @@ export default function McapFilesPage() {
 							setDebouncedOwnerFilter(ownerFilter.trim());
 							setPage(1);
 						}}
-						style={{ width: 140 }}
+						style={{
+							width: "100%",
+							gridColumn: isNarrow ? "1 / -1" : undefined,
+						}}
 						allowClear
 					/>
 					<Select
@@ -273,13 +309,17 @@ export default function McapFilesPage() {
 							setPage(1);
 						}}
 						options={stateFilterOptions}
-						style={{ width: 130 }}
+						style={{ width: "100%" }}
 						size="middle"
 					/>
-					<Button icon={<ReloadOutlined />} onClick={() => load(page)}>
+					<Button
+						icon={<ReloadOutlined />}
+						onClick={() => load(page)}
+						style={{ width: "100%" }}
+					>
 						刷新
 					</Button>
-				</Space>
+				</div>
 			</div>
 
 			{error ? (

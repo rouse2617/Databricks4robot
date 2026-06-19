@@ -936,6 +936,50 @@ func TestDeploy_UsesDefaultExecutionTargetServiceAccountFromEnv(t *testing.T) {
 	}
 }
 
+func TestDeploy_AliasesSSDeliveryCyberpipeNodeForGraceCompatibility(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "ss-delivery-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "ss_delivery_lerobot",
+				"component": map[string]interface{}{
+					"name":    "ss-delivery-lerobot",
+					"image":   "example.com/ss-delivery-lerobot:latest",
+					"command": []interface{}{"python", "src/main.py"},
+					"env": []interface{}{
+						map[string]interface{}{"name": "TASK_NAME", "value": "ss-delivery-lerobot"},
+						map[string]interface{}{"name": "CYBERPIPE_NODE", "value": "ss_delivery_lerobot"},
+					},
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	uc := newUsecase(newMockAssetRepo())
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("Deploy dry-run: %v", err)
+	}
+	if dep == nil || dep.Manifest == nil {
+		t.Fatal("expected manifest on dry-run deployment")
+	}
+	manifest := *dep.Manifest
+	for _, want := range []string{
+		"name: step-ss-delivery-lerobot",
+		"name: CYBERPIPE_NODE",
+		"value: tony_delivery_lerobot",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected manifest to contain %q, got %s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, "value: ss_delivery_lerobot") {
+		t.Fatalf("expected manifest to alias CYBERPIPE_NODE, got %s", manifest)
+	}
+}
+
 func TestDeploy_RejectsUnknownRuntimeMountResource(t *testing.T) {
 	ctx := context.Background()
 	pipe := map[string]interface{}{
@@ -1444,18 +1488,20 @@ func TestGetWorkflowResourceUsage_UsesRunRepo(t *testing.T) {
 	runRepo := &mockRunRepo{
 		byID: map[string]*models.PipelineRun{
 			"run-1": {
-				ID:           "run-1",
-				WorkflowName: "wf-1",
-				Status:       "Running",
-				Manifest:     &manifest,
+				ID:            "run-1",
+				WorkflowName:  "wf-1",
+				Status:        "Running",
+				Manifest:      &manifest,
+				ArgoNamespace: "video-proc-dev",
 			},
 		},
 		byWf: map[string]*models.PipelineRun{
 			"wf-1": {
-				ID:           "run-1",
-				WorkflowName: "wf-1",
-				Status:       "Running",
-				Manifest:     &manifest,
+				ID:            "run-1",
+				WorkflowName:  "wf-1",
+				Status:        "Running",
+				Manifest:      &manifest,
+				ArgoNamespace: "video-proc-dev",
 			},
 		},
 	}
@@ -1467,7 +1513,10 @@ func TestGetWorkflowResourceUsage_UsesRunRepo(t *testing.T) {
 		t.Fatalf("save legacy deployment: %v", err)
 	}
 	wfClient := &mockWorkflowClient{}
-	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if namespace != "video-proc-dev" {
+			t.Fatalf("expected workflow lookup in video-proc-dev, got %q", namespace)
+		}
 		wf := &wfv1.Workflow{}
 		wf.Status.Phase = wfv1.WorkflowRunning
 		return wf, nil
@@ -1886,6 +1935,84 @@ func TestRefreshRunStatus_KeepsActiveRunWithWorkflowUIDActiveOnNotFound(t *testi
 	}
 }
 
+func TestListRunSummaries_DefaultBatchViewDoesNotRefreshActiveRuns(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				BatchJobID:   &batchJobID,
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	getWorkflowCalls := 0
+	wfClient := &mockWorkflowClient{
+		getWorkflowFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+			getWorkflowCalls++
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+				Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+			}, nil
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	items, total, err := uc.ListRunSummaries(ctx, models.PipelineRunListFilter{BatchJobID: batchJobID})
+	if err != nil {
+		t.Fatalf("ListRunSummaries: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("expected one summary, total=%d len=%d", total, len(items))
+	}
+	if getWorkflowCalls != 0 {
+		t.Fatalf("default batch summary should not refresh Argo, got %d calls", getWorkflowCalls)
+	}
+}
+
+func TestListRunSummaries_RefreshActiveOptInRefreshesActiveRuns(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				BatchJobID:   &batchJobID,
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	getWorkflowCalls := 0
+	wfClient := &mockWorkflowClient{
+		getWorkflowFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+			getWorkflowCalls++
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+				Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+			}, nil
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	_, _, err := uc.ListRunSummaries(ctx, models.PipelineRunListFilter{
+		BatchJobID:    batchJobID,
+		RefreshActive: true,
+	})
+	if err != nil {
+		t.Fatalf("ListRunSummaries: %v", err)
+	}
+	if getWorkflowCalls == 0 {
+		t.Fatal("expected refreshActive batch summary to refresh Argo")
+	}
+}
+
 func TestRefreshRunForList_ReconcilesMisclassifiedError(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
@@ -1915,6 +2042,75 @@ func TestRefreshRunForList_ReconcilesMisclassifiedError(t *testing.T) {
 	uc.RefreshRunForList(ctx, run)
 	if run.Status != "Running" {
 		t.Fatalf("expected reconciled Running status, got %q", run.Status)
+	}
+}
+
+func TestRefreshRunForList_LiveWorkflowWinsOverStaleLedger(t *testing.T) {
+	ctx := context.Background()
+	staleFinishedAt := time.Date(2026, 6, 19, 9, 37, 26, 0, time.UTC)
+	startedAt := time.Date(2026, 6, 19, 9, 30, 50, 0, time.UTC)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:              "run-1",
+				WorkflowName:    "wf-1",
+				Status:          "Error",
+				Message:         staleWorkflowTTLCleanupMessage,
+				ArgoNamespace:   "video-proc-dev",
+				ArgoWorkflowUID: "uid-1",
+				CreatedAt:       startedAt,
+				FinishedAt:      &staleFinishedAt,
+			},
+		},
+	}
+	assetNodeRepo := &mockAssetNodeRepo{
+		byRun: map[string][]models.PipelineRunAssetNode{
+			"run-1": {
+				{RunID: "run-1", PipelineNodeID: "step-1", Status: "Error", Message: staleWorkflowTTLCleanupMessage},
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-1" || namespace != "video-proc-dev" {
+			t.Fatalf("unexpected workflow lookup name=%q namespace=%q", name, namespace)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: "video-proc-dev", UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase:     wfv1.WorkflowRunning,
+				StartedAt: metav1.Time{Time: startedAt},
+				Nodes: map[string]wfv1.NodeStatus{
+					"node-1": {
+						ID:           "node-1",
+						Name:         "wf-1.step-1",
+						DisplayName:  "step-1",
+						Type:         wfv1.NodeTypePod,
+						Phase:        wfv1.NodePending,
+						Message:      "Unschedulable: 0/12 nodes are available: 1 Insufficient ephemeral-storage.",
+						StartedAt:    metav1.Time{Time: startedAt},
+						TemplateName: "step-1",
+					},
+				},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetObservabilityRepositories(assetNodeRepo, nil, nil)
+	uc.SetResourceGuardConfig(ResourceGuardConfig{UnschedulablePendingThreshold: 15 * time.Minute})
+	uc.now = func() time.Time { return startedAt.Add(7 * time.Minute) }
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("expected live workflow to keep run Running, got %q", run.Status)
+	}
+	if run.Message != "" {
+		t.Fatalf("expected stale terminal message cleared, got %q", run.Message)
+	}
+	if run.FinishedAt != nil {
+		t.Fatalf("expected finished_at cleared for live workflow, got %v", run.FinishedAt)
 	}
 }
 
@@ -1954,6 +2150,50 @@ func TestRefreshRunForList_RevivesRecentTTLNotFoundMisclassification(t *testing.
 	}
 	if run.FinishedAt != nil {
 		t.Fatalf("expected revived run to be unfinished, got %v", run.FinishedAt)
+	}
+}
+
+func TestListBatchAssetRuns_RefreshesMisclassifiedAttempt(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	assetID := "asset-1"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Error",
+				Message:      staleWorkflowTTLCleanupMessage,
+				BatchJobID:   &batchJobID,
+				AssetIDs:     []string{assetID},
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, _ string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	runs, err := uc.ListBatchAssetRuns(ctx, batchJobID, assetID)
+	if err != nil {
+		t.Fatalf("ListBatchAssetRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected one run, got %d", len(runs))
+	}
+	if runs[0].Status != "Running" {
+		t.Fatalf("expected returned run status Running, got %q", runs[0].Status)
+	}
+	if runRepo.byID["run-1"].Status != "Running" {
+		t.Fatalf("expected persisted run status Running, got %q", runRepo.byID["run-1"].Status)
 	}
 }
 
@@ -2094,6 +2334,109 @@ func TestReconcileTerminalRunFromLedger_StuckRunningWithSucceededNodes(t *testin
 	}
 }
 
+func TestRefreshRunForList_WorkflowMissingUsesDiagnosticAssetNode(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	createdAt := now.Add(-10 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:              "run-1",
+				WorkflowName:    "wf-1",
+				ArgoWorkflowUID: "uid-1",
+				Status:          "Running",
+				CreatedAt:       createdAt,
+			},
+		},
+	}
+	assetNodeRepo := &mockAssetNodeRepo{
+		byRun: map[string][]models.PipelineRunAssetNode{
+			"run-1": {
+				{
+					RunID:          "run-1",
+					AssetID:        "a1",
+					PipelineNodeID: "step-head-tracking",
+					Status:         "Error",
+					Message:        "Unschedulable: 0/12 nodes are available: 2 Insufficient ephemeral-storage.",
+				},
+				{RunID: "run-1", AssetID: "a1", PipelineNodeID: "step-hand-detection", Status: "Pending"},
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetObservabilityRepositories(assetNodeRepo, nil, nil)
+	uc.now = func() time.Time { return now }
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != string(wfv1.WorkflowError) {
+		t.Fatalf("expected Error from diagnostic asset node, got %q", run.Status)
+	}
+	if !strings.Contains(run.Message, "Insufficient ephemeral-storage") {
+		t.Fatalf("expected scheduler diagnostic message, got %q", run.Message)
+	}
+	if run.FinishedAt == nil || !run.FinishedAt.Equal(now) {
+		t.Fatalf("expected finished_at %v, got %v", now, run.FinishedAt)
+	}
+}
+
+func TestRefreshRunForList_StaleTerminalMessageUsesDiagnosticAssetNode(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
+	finishedAt := now.Add(-time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       string(wfv1.WorkflowError),
+				Message:      staleWorkflowTTLCleanupMessage,
+				FinishedAt:   &finishedAt,
+				CreatedAt:    now.Add(-10 * time.Minute),
+			},
+		},
+	}
+	assetNodeRepo := &mockAssetNodeRepo{
+		byRun: map[string][]models.PipelineRunAssetNode{
+			"run-1": {
+				{
+					RunID:          "run-1",
+					AssetID:        "a1",
+					PipelineNodeID: "step-head-tracking",
+					Status:         "Error",
+					Message:        "Unschedulable: 0/12 nodes are available: 2 Insufficient ephemeral-storage.",
+				},
+				{RunID: "run-1", AssetID: "a1", PipelineNodeID: "step-hand-detection", Status: "Pending"},
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return nil, argo.ErrNotFound
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetObservabilityRepositories(assetNodeRepo, nil, nil)
+	uc.now = func() time.Time { return now }
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != string(wfv1.WorkflowError) {
+		t.Fatalf("expected Error status to remain, got %q", run.Status)
+	}
+	if !strings.Contains(run.Message, "Insufficient ephemeral-storage") {
+		t.Fatalf("expected stale TTL message replaced with scheduler diagnostic, got %q", run.Message)
+	}
+	if run.FinishedAt == nil || !run.FinishedAt.Equal(finishedAt) {
+		t.Fatalf("expected original finished_at %v, got %v", finishedAt, run.FinishedAt)
+	}
+}
+
 func TestInferRunStatusFromAssetNodes(t *testing.T) {
 	status, ok := inferRunStatusFromAssetNodes([]models.PipelineRunAssetNode{
 		{Status: "Succeeded"},
@@ -2109,9 +2452,68 @@ func TestInferRunStatusFromAssetNodes(t *testing.T) {
 	if !ok || status != "Failed" {
 		t.Fatalf("expected Failed, got %q ok=%v", status, ok)
 	}
+	status, ok = inferRunStatusFromAssetNodes([]models.PipelineRunAssetNode{
+		{Status: "Error", Message: "Unschedulable: 0/12 nodes are available: 2 Insufficient ephemeral-storage."},
+		{Status: "Pending"},
+	})
+	if !ok || status != "Error" {
+		t.Fatalf("expected Error with downstream pending placeholders, got %q ok=%v", status, ok)
+	}
+	status, ok = inferRunStatusFromAssetNodes([]models.PipelineRunAssetNode{
+		{Status: "Pending", Message: "Unschedulable: 0/12 nodes are available: 2 Insufficient ephemeral-storage."},
+		{Status: "Pending"},
+	})
+	if ok {
+		t.Fatalf("expected pending scheduler diagnostic to stay non-terminal, got %q", status)
+	}
 	_, ok = inferRunStatusFromAssetNodes([]models.PipelineRunAssetNode{{Status: "Running"}})
 	if ok {
 		t.Fatal("expected non-terminal when nodes still running")
+	}
+}
+
+func TestProjectTerminalActiveAssetNodesMarksRunningNodeError(t *testing.T) {
+	finishedAt := time.Date(2026, 6, 18, 18, 46, 0, 0, time.UTC)
+	result := &models.PipelineRunAssetNodeListResult{
+		Items: []models.PipelineRunAssetNode{
+			{RunID: "run-1", AssetID: "asset-1", PipelineNodeID: "step-a", Status: "Succeeded"},
+			{RunID: "run-1", AssetID: "asset-1", PipelineNodeID: "step-b", Status: "Running"},
+			{RunID: "run-1", AssetID: "asset-1", PipelineNodeID: "step-c", Status: "Pending"},
+		},
+		Summary: models.PipelineRunAssetNodeSummary{
+			Statuses: map[string]int{"Succeeded": 1, "Running": 1, "Pending": 1},
+		},
+	}
+	run := &models.PipelineRun{
+		ID:         "run-1",
+		Status:     "Error",
+		Message:    staleWorkflowTTLCleanupMessage,
+		FinishedAt: &finishedAt,
+	}
+
+	projectTerminalActiveAssetNodes(result, run)
+
+	if result.Items[1].Status != "Error" {
+		t.Fatalf("running node status = %q, want Error", result.Items[1].Status)
+	}
+	if result.Items[1].Message != staleWorkflowTTLCleanupMessage {
+		t.Fatalf("message = %q", result.Items[1].Message)
+	}
+	if result.Items[1].FinishedAt == nil || !result.Items[1].FinishedAt.Equal(finishedAt) {
+		t.Fatalf("finishedAt = %v, want %v", result.Items[1].FinishedAt, finishedAt)
+	}
+	if result.Summary.Statuses["Error"] != 1 || result.Summary.Statuses["Running"] != 0 {
+		t.Fatalf("summary statuses = %#v", result.Summary.Statuses)
+	}
+}
+
+func TestPipelineRunNodePhase_KeepsUnschedulablePendingActive(t *testing.T) {
+	phase := pipelineRunNodePhase(wfv1.NodeStatus{
+		Phase:   wfv1.NodePending,
+		Message: "Unschedulable: 0/12 nodes are available: 2 Insufficient ephemeral-storage.",
+	})
+	if phase != string(wfv1.NodePending) {
+		t.Fatalf("phase = %q, want Pending", phase)
 	}
 }
 

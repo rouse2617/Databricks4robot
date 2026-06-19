@@ -77,45 +77,45 @@ type ExecutionTarget struct {
 // PipelineRun is the first-class execution record for a pipeline run. Legacy
 // deployment endpoints can still project this data as PipelineDeployment.
 type PipelineRun struct {
-	ID                 string                 `json:"id"`
-	TemplateID         *string                `json:"templateId,omitempty"`
-	PipelineName       string                 `json:"pipelineName"`
-	TemplateVersion    *int                   `json:"templateVersion,omitempty"`
-	WorkflowName       string                 `json:"workflowName"`
-	ExecutionTargetID  string                 `json:"executionTargetId"`
-	TargetSnapshot     map[string]interface{} `json:"targetSnapshot,omitempty"`
-	Status             string                 `json:"status"`
-	NodeCount          int                    `json:"nodeCount"`
-	AssetIDs           []string               `json:"assetIds,omitempty"`
-	AssetCount         int                    `json:"assetCount"`
-	NoAssetRun         bool                   `json:"noAssetRun"`
-	Manifest           *string                `json:"manifest,omitempty"`
-	PipelineJSON       map[string]interface{} `json:"pipelineJSON,omitempty"`
-	ArgoNamespace      string                 `json:"argoNamespace"`
-	ArgoWorkflowUID    string                 `json:"argoWorkflowUid,omitempty"`
-	Message            string                 `json:"message,omitempty"`
-	ExecutionTarget    *ExecutionTarget       `json:"executionTarget,omitempty"`
-	Nodes              []PipelineRunNode      `json:"nodes,omitempty"`
-	TotalEstimatedCost *float64               `json:"totalEstimatedCost,omitempty"`
-	Scope              string                 `json:"scope,omitempty"`
-	Owner              string                 `json:"owner,omitempty"`
-	BatchJobID         *string                `json:"batchJobId,omitempty"`
-	LedgerState        string                 `json:"ledgerState"`
-	CreatedAt          time.Time              `json:"createdAt"`
-	UpdatedAt          time.Time              `json:"updatedAt"`
-	StartedAt          *time.Time             `json:"startedAt,omitempty"`
-	FinishedAt         *time.Time             `json:"finishedAt,omitempty"`
+	ID                 string                   `json:"id"`
+	TemplateID         *string                  `json:"templateId,omitempty"`
+	PipelineName       string                   `json:"pipelineName"`
+	TemplateVersion    *int                     `json:"templateVersion,omitempty"`
+	WorkflowName       string                   `json:"workflowName"`
+	ExecutionTargetID  string                   `json:"executionTargetId"`
+	TargetSnapshot     map[string]interface{}   `json:"targetSnapshot,omitempty"`
+	Status             string                   `json:"status"`
+	NodeCount          int                      `json:"nodeCount"`
+	AssetIDs           []string                 `json:"assetIds,omitempty"`
+	AssetCount         int                      `json:"assetCount"`
+	NoAssetRun         bool                     `json:"noAssetRun"`
+	Manifest           *string                  `json:"manifest,omitempty"`
+	PipelineJSON       map[string]interface{}   `json:"pipelineJSON,omitempty"`
+	ArgoNamespace      string                   `json:"argoNamespace"`
+	ArgoWorkflowUID    string                   `json:"argoWorkflowUid,omitempty"`
+	Message            string                   `json:"message,omitempty"`
+	ExecutionTarget    *ExecutionTarget         `json:"executionTarget,omitempty"`
+	Nodes              []PipelineRunNode        `json:"nodes,omitempty"`
+	TotalEstimatedCost *float64                 `json:"totalEstimatedCost,omitempty"`
+	Scope              string                   `json:"scope,omitempty"`
+	Owner              string                   `json:"owner,omitempty"`
+	BatchJobID         *string                  `json:"batchJobId,omitempty"`
+	LedgerState        string                   `json:"ledgerState"`
+	CreatedAt          time.Time                `json:"createdAt"`
+	UpdatedAt          time.Time                `json:"updatedAt"`
+	StartedAt          *time.Time               `json:"startedAt,omitempty"`
+	FinishedAt         *time.Time               `json:"finishedAt,omitempty"`
 	NodeProgress       *PipelineRunNodeProgress `json:"nodeProgress,omitempty"`
 }
 
 // PipelineRunNodeProgress is a compact summary for batch subtask list views.
 type PipelineRunNodeProgress struct {
-	FocusNodeID       string `json:"focusNodeId,omitempty"`
-	FocusNodeName     string `json:"focusNodeName,omitempty"`
-	FocusStatus       string `json:"focusStatus,omitempty"`
-	Message           string `json:"message,omitempty"`
-	Label             string `json:"label,omitempty"`
-	ParallelRunning   int    `json:"parallelRunning,omitempty"`
+	FocusNodeID     string `json:"focusNodeId,omitempty"`
+	FocusNodeName   string `json:"focusNodeName,omitempty"`
+	FocusStatus     string `json:"focusStatus,omitempty"`
+	Message         string `json:"message,omitempty"`
+	Label           string `json:"label,omitempty"`
+	ParallelRunning int    `json:"parallelRunning,omitempty"`
 }
 
 // PipelineRunNode captures per-node Argo state for a pipeline run.
@@ -278,40 +278,41 @@ type PipelineRunNotificationCandidate struct {
 
 // PipelineRunWatcherState stores coarse watcher progress and diagnostics.
 type PipelineRunWatcherState struct {
-	ID                  string     `json:"id"`
-	LastSyncedAt        *time.Time `json:"lastSyncedAt,omitempty"`
-	LastScanStartedAt   *time.Time `json:"lastScanStartedAt,omitempty"`
-	LastScanFinishedAt  *time.Time `json:"lastScanFinishedAt,omitempty"`
-	LastSuccessAt       *time.Time `json:"lastSuccessAt,omitempty"`
-	LastErrorAt         *time.Time `json:"lastErrorAt,omitempty"`
-	ActiveScanLimit     int        `json:"activeScanLimit"`
-	LastSyncedRunCount  int        `json:"lastSyncedRunCount"`
-	ConsecutiveFailures int        `json:"consecutiveFailures"`
-	TotalScans          int64      `json:"totalScans"`
-	TotalErrors         int64      `json:"totalErrors"`
-	ScanLagSeconds      *int64     `json:"scanLagSeconds,omitempty"`
-	LastError           string     `json:"lastError,omitempty"`
-	Healthy             bool       `json:"healthy"`
-	Stale               bool       `json:"stale"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	ID                  string       `json:"id"`
+	LastSyncedAt        *time.Time   `json:"lastSyncedAt,omitempty"`
+	LastScanStartedAt   *time.Time   `json:"lastScanStartedAt,omitempty"`
+	LastScanFinishedAt  *time.Time   `json:"lastScanFinishedAt,omitempty"`
+	LastSuccessAt       *time.Time   `json:"lastSuccessAt,omitempty"`
+	LastErrorAt         *time.Time   `json:"lastErrorAt,omitempty"`
+	ActiveScanLimit     int          `json:"activeScanLimit"`
+	LastSyncedRunCount  int          `json:"lastSyncedRunCount"`
+	ConsecutiveFailures int          `json:"consecutiveFailures"`
+	TotalScans          int64        `json:"totalScans"`
+	TotalErrors         int64        `json:"totalErrors"`
+	ScanLagSeconds      *int64       `json:"scanLagSeconds,omitempty"`
+	LastError           string       `json:"lastError,omitempty"`
+	Healthy             bool         `json:"healthy"`
+	Stale               bool         `json:"stale"`
+	UpdatedAt           time.Time    `json:"updatedAt"`
 	LedgerHealth        LedgerHealth `json:"ledgerHealth,omitempty"`
 }
 
 // LedgerHealth reports how many pipeline runs have ledger events.
 type LedgerHealth struct {
-	TotalRuns       int        `json:"totalRuns"`
-	RunsWithEvents  int        `json:"runsWithEvents"`
-	RunsWithout     int        `json:"runsWithout"`
-	LastBackfillAt  *time.Time `json:"lastBackfillAt,omitempty"`
+	TotalRuns      int        `json:"totalRuns"`
+	RunsWithEvents int        `json:"runsWithEvents"`
+	RunsWithout    int        `json:"runsWithout"`
+	LastBackfillAt *time.Time `json:"lastBackfillAt,omitempty"`
 }
 
 // PipelineRunListFilter scopes summary list queries for batch-aware UIs.
 type PipelineRunListFilter struct {
-	BatchJobID      string
-	ExcludeBatch    bool
-	Status          string
-	PipelineNodeID  string
-	NodeStatus      string
-	Page            int
-	PageSize        int
+	BatchJobID     string
+	ExcludeBatch   bool
+	Status         string
+	PipelineNodeID string
+	NodeStatus     string
+	Page           int
+	PageSize       int
+	RefreshActive  bool
 }

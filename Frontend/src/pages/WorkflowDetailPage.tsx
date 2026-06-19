@@ -781,7 +781,13 @@ function WorkflowSummaryCards({
 					<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
 						{visibleResolvedAssetIds.map((assetId) => {
 							const tag = (
-								<Tag key={assetId} color="blue" style={{ marginInlineEnd: 0 }}>
+								<Tag
+									key={assetId}
+									color="blue"
+									className="workflow-summary-asset-tag"
+									style={{ marginInlineEnd: 0 }}
+									title={assetId}
+								>
 									{assetId}
 								</Tag>
 							);
@@ -832,32 +838,11 @@ function WorkflowSummaryCards({
 	];
 
 	return (
-		<div
-			style={{
-				display: "flex",
-				gap: 12,
-				padding: "8px 24px",
-				borderBottom: "1px solid #e5e7eb",
-				background: "#fff",
-				flexWrap: "wrap",
-			}}
-		>
+		<div className="workflow-summary-cards">
 			{cards.map((card) => (
-				<div
-					key={card.label}
-					style={{
-						flex: "1 1 100px",
-						minWidth: 80,
-						padding: "6px 10px",
-						background: "#f8fafc",
-						borderRadius: 6,
-						border: "1px solid #e5e7eb",
-					}}
-				>
-					<div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 2 }}>
-						{card.label}
-					</div>
-					<div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a" }}>
+				<div key={card.label} className="workflow-summary-card">
+					<div className="workflow-summary-card__label">{card.label}</div>
+					<div className="workflow-summary-card__value">
 						{card.value}
 						{card.extra ? (
 							<Tag color="blue" style={{ marginInlineStart: 4, fontSize: 10 }}>
@@ -1896,16 +1881,7 @@ export default function WorkflowDetailPage({
 				width: "100%",
 			}}
 		>
-			<div
-				style={{
-					padding: "8px 24px",
-					borderBottom: "1px solid #e5e7eb",
-					display: "flex",
-					alignItems: "center",
-					gap: 12,
-					flexWrap: "wrap",
-				}}
-			>
+			<div className="workflow-detail-header">
 				<Button
 					icon={<ArrowLeftOutlined />}
 					size="small"
@@ -1913,7 +1889,9 @@ export default function WorkflowDetailPage({
 				>
 					{backLabel}
 				</Button>
-				<h3 style={{ margin: 0, fontSize: 15 }}>{workflow.name}</h3>
+				<h3 className="workflow-detail-title" title={workflow.name}>
+					{workflow.name}
+				</h3>
 				<Tag color={STATUS_COLORS[displayWorkflow.status] || "default"}>
 					{formatWorkflowPhaseLabel(displayWorkflow.status)}
 				</Tag>
@@ -1952,14 +1930,7 @@ export default function WorkflowDetailPage({
 						</Tag>
 					</Tooltip>
 				) : null}
-				<div
-					style={{
-						marginLeft: "auto",
-						display: "flex",
-						alignItems: "center",
-						gap: 8,
-					}}
-				>
+				<div className="workflow-detail-actions">
 					<Space size={4} wrap>
 						{availableOperations.map((operation) => (
 							<Button
@@ -2014,14 +1985,11 @@ export default function WorkflowDetailPage({
 				}}
 			>
 				<div
+					className="workflow-detail-graph-shell"
 					style={{
 						height: viewMode === "timeline" ? "auto" : graphHeight,
 						minHeight: viewMode === "timeline" ? 280 : graphHeight,
-						margin: "0 24px 12px",
-						border: "1px solid #dbe3ee",
-						borderRadius: 8,
 						overflow: viewMode === "timeline" ? "visible" : "hidden",
-						background: "#eef2f6",
 					}}
 				>
 					{viewMode === "dag" ? (

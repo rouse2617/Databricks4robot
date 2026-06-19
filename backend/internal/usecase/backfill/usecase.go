@@ -238,12 +238,31 @@ func (uc *Usecase) resolveTemplateVersion(ctx context.Context, templateID string
 	return t.Version
 }
 
+func targetIDFromBackfillJob(job *models.BackfillJob) string {
+	if job == nil || job.FilterJSON == nil {
+		return ""
+	}
+	for _, key := range []string{"targetId", "target_id"} {
+		if raw, ok := job.FilterJSON[key]; ok {
+			if value, ok := raw.(string); ok {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
+}
+
 // materializeAndRunBatch materializes items and schedules execution.
 // Returns a channel that delivers any fatal errors encountered during background execution.
 // Callers must drain the returned channel to avoid goroutine leaks.
 func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVersion, pilotCount int, assetIDs []string) <-chan error {
 	errCh := make(chan error, 1)
 	ctx := context.Background()
+	job, err := uc.repo.FindJobByID(ctx, jobID)
+	if err != nil {
+		slog.Warn("materializeAndRunBatch: FindJobByID failed", "jobID", jobID, "err", err)
+	}
+	targetID := targetIDFromBackfillJob(job)
 	items, err := uc.repo.FindItemsByJobID(ctx, jobID)
 	if err != nil {
 		slog.Error("materializeAndRunBatch: FindItemsByJobID failed", "jobID", jobID, "err", err)
@@ -274,6 +293,7 @@ func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVers
 			runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 				TemplateID:      templateID,
 				TemplateVersion: templateVersion,
+				TargetID:        targetID,
 				BatchJobID:      jobID,
 				AssetID:         items[i].AssetID,
 				Status:          "Pending",
@@ -384,12 +404,14 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	if item.WorkflowName != nil {
 		workflowName = strings.TrimSpace(*item.WorkflowName)
 	}
+	targetID := targetIDFromBackfillJob(job)
 
 	if runID == "" && uc.pipelineUC != nil {
 		var initErr error
 		runID, workflowName, initErr = uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      templateID,
 			TemplateVersion: templateVersion,
+			TargetID:        targetID,
 			BatchJobID:      jobID,
 			AssetID:         item.AssetID,
 			Status:          "Pending",
@@ -402,6 +424,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 	deployOpts := pipelineUC.DeployOptions{
 		BatchJobID:         jobID,
 		TemplateVersion:    templateVersion,
+		TargetID:           targetID,
 		AllowUnknownAssets: true,
 		PreallocatedRunID:  runID,
 	}
@@ -427,6 +450,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 				runID, workflowName, _ = uc.pipelineUC.RecordBatchSubtaskFailure(ctx, pipelineUC.BatchSubtaskRunInput{
 					TemplateID:      templateID,
 					TemplateVersion: templateVersion,
+					TargetID:        targetID,
 					BatchJobID:      jobID,
 					AssetID:         item.AssetID,
 					Status:          "Failed",
@@ -437,6 +461,7 @@ func (uc *Usecase) executeItem(ctx context.Context, item models.BackfillItem, te
 				_, workflowName, _ = uc.pipelineUC.RecordBatchSubtaskFailure(ctx, pipelineUC.BatchSubtaskRunInput{
 					TemplateID:      templateID,
 					TemplateVersion: templateVersion,
+					TargetID:        targetID,
 					BatchJobID:      jobID,
 					AssetID:         item.AssetID,
 					RunID:           runID,
@@ -599,6 +624,7 @@ func (uc *Usecase) reconcileItemRun(ctx context.Context, job *models.BackfillJob
 	newRunID, newWorkflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 		TemplateID:      job.TemplateID,
 		TemplateVersion: job.TemplateVersion,
+		TargetID:        targetIDFromBackfillJob(job),
 		BatchJobID:      job.ID,
 		AssetID:         item.AssetID,
 		RunID:           runID,
@@ -756,6 +782,7 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 	if templateVersion <= 0 {
 		templateVersion = uc.resolveTemplateVersion(ctx, templateID)
 	}
+	targetID := targetIDFromBackfillJob(job)
 	result := &RerunResult{
 		Status:          "accepted",
 		DryRun:          req.DryRun,
@@ -789,6 +816,7 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 		runID, workflowName, err := uc.pipelineUC.UpsertBatchSubtaskRun(ctx, pipelineUC.BatchSubtaskRunInput{
 			TemplateID:      templateID,
 			TemplateVersion: templateVersion,
+			TargetID:        targetID,
 			BatchJobID:      jobID,
 			AssetID:         runnable[i].AssetID,
 			Status:          "Pending",
@@ -880,6 +908,10 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	if job == nil {
 		return nil, ErrNotFound
 	}
+	uc.refreshBatchReadModel(ctx, jobID)
+	if fresh, err := uc.repo.FindJobByID(ctx, jobID); err == nil && fresh != nil {
+		job = fresh
+	}
 	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -893,15 +925,22 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 		runsTotal, _ = uc.repo.CountPipelineRunsByBatchJobID(ctx, jobID)
 	}
 	runsWithNodeRows, _ := uc.repo.CountRunsWithNodeRowsByBatchJobID(ctx, jobID)
+	nodeOrder := uc.resolveBatchNodeOrder(ctx, job.TemplateID, job.TemplateVersion)
 	nodesByID := map[string]*models.BatchNodeSummaryNode{}
 	order := 1
 	for _, aggregate := range aggregates {
 		node := nodesByID[aggregate.PipelineNodeID]
 		if node == nil {
+			dagOrder := order
+			if configuredOrder := nodeOrder[normalizeBatchPipelineNodeID(aggregate.PipelineNodeID)]; configuredOrder > 0 {
+				dagOrder = configuredOrder
+			} else if len(nodeOrder) > 0 {
+				dagOrder = len(nodeOrder) + order
+			}
 			node = &models.BatchNodeSummaryNode{
 				PipelineNodeID: aggregate.PipelineNodeID,
 				DisplayName:    aggregate.DisplayName,
-				DagOrder:       order,
+				DagOrder:       dagOrder,
 				Counts: map[string]int{
 					"Pending":   0,
 					"Running":   0,
@@ -958,6 +997,132 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	}, nil
 }
 
+func (uc *Usecase) resolveBatchNodeOrder(ctx context.Context, templateID string, templateVersion int) map[string]int {
+	if uc == nil || uc.pipelineUC == nil || strings.TrimSpace(templateID) == "" {
+		return nil
+	}
+	tmpl, err := uc.pipelineUC.GetTemplateVersion(ctx, templateID, templateVersion)
+	if err != nil || tmpl == nil {
+		return nil
+	}
+	return batchNodeOrderFromPipeline(tmpl.Pipeline)
+}
+
+func batchNodeOrderFromPipeline(pipeline map[string]interface{}) map[string]int {
+	rawNodes, _ := pipeline["nodes"].([]interface{})
+	if len(rawNodes) == 0 {
+		return nil
+	}
+	nodeKeys := make([]string, 0, len(rawNodes))
+	nodeSet := make(map[string]struct{}, len(rawNodes))
+	for _, raw := range rawNodes {
+		node, _ := raw.(map[string]interface{})
+		id, _ := node["id"].(string)
+		key := normalizeBatchPipelineNodeID(id)
+		if key == "" {
+			continue
+		}
+		if _, exists := nodeSet[key]; !exists {
+			nodeSet[key] = struct{}{}
+			nodeKeys = append(nodeKeys, key)
+		}
+	}
+	if len(nodeKeys) == 0 {
+		return nil
+	}
+	if order := batchNodeOrderFromEdges(pipeline, nodeKeys, nodeSet); len(order) > 0 {
+		return order
+	}
+	out := make(map[string]int, len(nodeKeys))
+	for i, key := range nodeKeys {
+		out[key] = i + 1
+	}
+	return out
+}
+
+func batchNodeOrderFromEdges(pipeline map[string]interface{}, nodeKeys []string, nodeSet map[string]struct{}) map[string]int {
+	rawEdges, _ := pipeline["edges"].([]interface{})
+	if len(rawEdges) == 0 {
+		return nil
+	}
+	adjacency := make(map[string][]string, len(nodeKeys))
+	indegree := make(map[string]int, len(nodeKeys))
+	for _, key := range nodeKeys {
+		indegree[key] = 0
+	}
+	seenEdges := map[string]struct{}{}
+	edgeCount := 0
+	for _, raw := range rawEdges {
+		edge, _ := raw.(map[string]interface{})
+		source := normalizeBatchPipelineNodeID(edgeEndpointNodeID(fmt.Sprint(edge["source"])))
+		target := normalizeBatchPipelineNodeID(edgeEndpointNodeID(fmt.Sprint(edge["target"])))
+		if source == "" || target == "" || source == target {
+			continue
+		}
+		if _, ok := nodeSet[source]; !ok {
+			continue
+		}
+		if _, ok := nodeSet[target]; !ok {
+			continue
+		}
+		edgeKey := source + "\x00" + target
+		if _, exists := seenEdges[edgeKey]; exists {
+			continue
+		}
+		seenEdges[edgeKey] = struct{}{}
+		adjacency[source] = append(adjacency[source], target)
+		indegree[target]++
+		edgeCount++
+	}
+	if edgeCount == 0 {
+		return nil
+	}
+	queue := make([]string, 0, len(nodeKeys))
+	for _, key := range nodeKeys {
+		if indegree[key] == 0 {
+			queue = append(queue, key)
+		}
+	}
+	ordered := make([]string, 0, len(nodeKeys))
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		ordered = append(ordered, current)
+		for _, next := range adjacency[current] {
+			indegree[next]--
+			if indegree[next] == 0 {
+				queue = append(queue, next)
+			}
+		}
+	}
+	if len(ordered) != len(nodeKeys) {
+		return nil
+	}
+	out := make(map[string]int, len(ordered))
+	for i, key := range ordered {
+		out[key] = i + 1
+	}
+	return out
+}
+
+func edgeEndpointNodeID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if before, _, ok := strings.Cut(value, "."); ok {
+		return before
+	}
+	return value
+}
+
+func normalizeBatchPipelineNodeID(id string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
+	id = strings.TrimPrefix(id, "step-")
+	id = strings.ReplaceAll(id, "-", "_")
+	return id
+}
+
 func normalizeNodeStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "succeeded", "success", "completed":
@@ -983,8 +1148,18 @@ func (uc *Usecase) ListNodeFailures(ctx context.Context, jobID string, filter re
 	} else if job == nil {
 		return nil, ErrNotFound
 	}
+	uc.refreshBatchReadModel(ctx, jobID)
 	filter.JobID = jobID
 	return uc.repo.ListNodeFailures(ctx, filter)
+}
+
+func (uc *Usecase) refreshBatchReadModel(ctx context.Context, jobID string) {
+	if uc == nil {
+		return
+	}
+	if err := uc.SyncBatchView(ctx, jobID, nil); err != nil {
+		slog.Warn("refreshBatchReadModel: sync batch view failed", "jobID", jobID, "err", err)
+	}
 }
 
 func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {

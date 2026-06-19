@@ -6,6 +6,7 @@ import {
 } from "../../api/lakehouse";
 
 const { Text } = Typography;
+const BRONZE_ALERT_STYLE = { marginBottom: 12, minHeight: 72 } as const;
 
 // Alert thresholds match docs/review/outbox-watermark-alerts.md (Bronze section).
 // Keep these in sync — they decide which Antd alert type we show.
@@ -58,13 +59,23 @@ export default function BronzeSyncStatusAlert() {
 			<Alert
 				type="warning"
 				showIcon
-				style={{ marginBottom: 12 }}
+				style={BRONZE_ALERT_STYLE}
 				message="无法获取湖仓同步状态"
 				description="请检查 BigQuery / Postgres 连接。"
 			/>
 		);
 	}
-	if (progress == null) return null;
+	if (progress == null) {
+		return (
+			<Alert
+				type="info"
+				showIcon
+				style={BRONZE_ALERT_STYLE}
+				message="正在加载湖仓同步状态"
+				description="正在读取 Bronze 与 PG 事件水位。"
+			/>
+		);
+	}
 
 	const outbox_published_max_seq = progress.outbox_published_max_seq ?? 0;
 	const bronze_max_event_seq = progress.bronze_max_event_seq ?? 0;
@@ -96,7 +107,7 @@ export default function BronzeSyncStatusAlert() {
 		<Alert
 			type={alertType}
 			showIcon
-			style={{ marginBottom: 12 }}
+			style={BRONZE_ALERT_STYLE}
 			message={title}
 			description={
 				<Tooltip

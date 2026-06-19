@@ -1,3 +1,4 @@
+import dagre from "dagre";
 import type {
 	Pipeline,
 	PipelineNodeRuntimeConfig,
@@ -19,6 +20,13 @@ import {
 	defaultOutputPorts,
 	normalizePorts,
 } from "./port-normalizer";
+
+const CANVAS_NODE_LAYOUT_WIDTH = 220;
+const CANVAS_NODE_LAYOUT_HEIGHT = 150;
+const CANVAS_NODE_RANK_GAP = 112;
+const CANVAS_NODE_SIBLING_GAP = 72;
+const CANVAS_LAYOUT_MARGIN_X = 120;
+const CANVAS_LAYOUT_MARGIN_Y = 100;
 
 function envToRecords(
 	resources: unknown,
@@ -124,18 +132,79 @@ function normalizeStorageMounts(
 		.filter((item): item is PipelineNodeRuntimeStorageMount => Boolean(item));
 }
 
+function fallbackPosition(index: number) {
+	return {
+		x:
+			CANVAS_LAYOUT_MARGIN_X +
+			index * (CANVAS_NODE_LAYOUT_WIDTH + CANVAS_NODE_RANK_GAP),
+		y: CANVAS_LAYOUT_MARGIN_Y,
+	};
+}
+
+function buildNodePositions(
+	pipeline: Pipeline,
+): Map<string, { x: number; y: number }> {
+	const graph = new dagre.graphlib.Graph();
+	graph.setGraph({
+		rankdir: "LR",
+		ranksep: CANVAS_NODE_RANK_GAP,
+		nodesep: CANVAS_NODE_SIBLING_GAP,
+		marginx: CANVAS_LAYOUT_MARGIN_X,
+		marginy: CANVAS_LAYOUT_MARGIN_Y,
+	});
+	graph.setDefaultEdgeLabel(() => ({}));
+
+	const nodeIds = new Set<string>();
+	for (const node of pipeline.nodes) {
+		nodeIds.add(node.id);
+		graph.setNode(node.id, {
+			width: CANVAS_NODE_LAYOUT_WIDTH,
+			height: CANVAS_NODE_LAYOUT_HEIGHT,
+		});
+	}
+
+	for (const edge of pipeline.edges) {
+		const source = splitRef(edge.source).nodeId;
+		const target = splitRef(edge.target).nodeId;
+		if (nodeIds.has(source) && nodeIds.has(target)) {
+			graph.setEdge(source, target);
+		}
+	}
+
+	dagre.layout(graph);
+
+	const positions = new Map<string, { x: number; y: number }>();
+	pipeline.nodes.forEach((node, index) => {
+		const layoutNode = graph.node(node.id);
+		if (
+			layoutNode &&
+			typeof layoutNode.x === "number" &&
+			typeof layoutNode.y === "number"
+		) {
+			positions.set(node.id, {
+				x: Math.round(layoutNode.x - CANVAS_NODE_LAYOUT_WIDTH / 2),
+				y: Math.round(layoutNode.y - CANVAS_NODE_LAYOUT_HEIGHT / 2),
+			});
+			return;
+		}
+		positions.set(node.id, fallbackPosition(index));
+	});
+	return positions;
+}
+
 /** Restore canvas state from a saved pipeline JSON. */
 export function designDSLToCanvas(pipeline: Pipeline): {
 	nodes: PipelineCanvasNode[];
 	edges: PipelineCanvasEdge[];
 } {
+	const positions = buildNodePositions(pipeline);
 	const nodes: PipelineCanvasNode[] = pipeline.nodes.map((pn, i) => {
 		const component = pn.component as unknown as Record<string, unknown>;
 		const refs = readComponentRef(component);
 		return {
 			id: pn.id,
 			type: "pipelineStep" as const,
-			position: { x: 120 + i * 80, y: 100 + i * 60 },
+			position: positions.get(pn.id) ?? fallbackPosition(i),
 			data: {
 				label: pn.component.name,
 				image: pn.component.image,

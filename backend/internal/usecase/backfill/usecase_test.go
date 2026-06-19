@@ -272,6 +272,25 @@ func TestStringFromBackfillFilterAcceptsTargetAliases(t *testing.T) {
 	}
 }
 
+func TestCreateBackfill_PersistsTargetIDInFilterJSON(t *testing.T) {
+	repo := &trackingBackfillRepo{}
+	uc := New(repo, nil)
+	job, err := uc.CreateBackfill(context.Background(), "batch", "tpl-1", []string{
+		"asset-1",
+	}, CreateBackfillOptions{
+		TargetID: "video-proc-dev",
+	})
+	if err != nil {
+		t.Fatalf("CreateBackfill: %v", err)
+	}
+	if job.FilterJSON == nil {
+		t.Fatal("expected filter json to be stored")
+	}
+	if job.FilterJSON["targetId"] != "video-proc-dev" {
+		t.Fatalf("targetId = %#v, want video-proc-dev", job.FilterJSON["targetId"])
+	}
+}
+
 func TestCreateBackfill_DoesNotDuplicateItemsDuringMaterialization(t *testing.T) {
 	repo := &trackingBackfillRepo{}
 	uc := New(repo, nil)
@@ -356,6 +375,48 @@ func TestGetBatchNodeSummary_UsesLogicalBatchTotalForCoverage(t *testing.T) {
 	node := summary.Nodes[0]
 	if node.Counts["Succeeded"] != 100 || node.Counts["Pending"] != 0 || node.Attempted != 100 {
 		t.Fatalf("unexpected node summary: %+v", node)
+	}
+}
+
+func TestBatchNodeOrderFromPipeline_NormalizesStepIDs(t *testing.T) {
+	order := batchNodeOrderFromPipeline(map[string]interface{}{
+		"nodes": []interface{}{
+			map[string]interface{}{"id": "head_tracking"},
+			map[string]interface{}{"id": "hand_detection"},
+			map[string]interface{}{"id": "hand_tracking"},
+			map[string]interface{}{"id": "find_tony_stats"},
+			map[string]interface{}{"id": "ss_delivery_lerobot"},
+		},
+	})
+	if got := order[normalizeBatchPipelineNodeID("step-head-tracking")]; got != 1 {
+		t.Fatalf("step-head-tracking order = %d, want 1", got)
+	}
+	if got := order[normalizeBatchPipelineNodeID("step-find-tony-stats")]; got != 4 {
+		t.Fatalf("step-find-tony-stats order = %d, want 4", got)
+	}
+}
+
+func TestBatchNodeOrderFromPipeline_PrefersDagEdges(t *testing.T) {
+	order := batchNodeOrderFromPipeline(map[string]interface{}{
+		"nodes": []interface{}{
+			map[string]interface{}{"id": "find_tony_stats"},
+			map[string]interface{}{"id": "hand_detection"},
+			map[string]interface{}{"id": "head_tracking"},
+			map[string]interface{}{"id": "ss_delivery_lerobot"},
+			map[string]interface{}{"id": "hand_tracking"},
+		},
+		"edges": []interface{}{
+			map[string]interface{}{"source": "head_tracking", "target": "hand_detection"},
+			map[string]interface{}{"source": "hand_detection", "target": "hand_tracking"},
+			map[string]interface{}{"source": "hand_tracking", "target": "find_tony_stats"},
+			map[string]interface{}{"source": "find_tony_stats", "target": "ss_delivery_lerobot"},
+		},
+	})
+	if got := order[normalizeBatchPipelineNodeID("step-head-tracking")]; got != 1 {
+		t.Fatalf("step-head-tracking order = %d, want 1", got)
+	}
+	if got := order[normalizeBatchPipelineNodeID("step-ss-delivery-lerobot")]; got != 5 {
+		t.Fatalf("step-ss-delivery-lerobot order = %d, want 5", got)
 	}
 }
 

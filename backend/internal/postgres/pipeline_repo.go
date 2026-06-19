@@ -1523,7 +1523,44 @@ func scanPipelineRunAssetNode(rs rowScanner) (*models.PipelineRunAssetNode, erro
 	); err != nil {
 		return nil, err
 	}
+	row.Status = projectDiagnosticAssetNodeStatus(row.Status, row.Message)
 	return &row, nil
+}
+
+func projectDiagnosticAssetNodeStatus(status, message string) string {
+	if !strings.EqualFold(strings.TrimSpace(status), "Pending") {
+		return status
+	}
+	if isDiagnosticAssetNodeMessage(message) {
+		return "Error"
+	}
+	return status
+}
+
+func isDiagnosticAssetNodeMessage(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return false
+	}
+	signals := []string{
+		"invalidimagename",
+		"invalid image name",
+		"invalid reference format",
+		"failed to apply default image tag",
+		"couldn't parse image name",
+		"errimagepull",
+		"imagepullbackoff",
+		"failed to pull image",
+		"pull access denied",
+		"manifest unknown",
+		"unauthorized: authentication required",
+	}
+	for _, signal := range signals {
+		if strings.Contains(normalized, signal) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *PipelineRunAssetNodeRepo) ReplaceByRunID(ctx context.Context, runID string, rows []models.PipelineRunAssetNode) error {
@@ -1599,7 +1636,7 @@ func (r *PipelineRunAssetNodeRepo) ListByRunID(ctx context.Context, runID string
 	}
 	if strings.TrimSpace(opts.Status) != "" {
 		args = append(args, strings.TrimSpace(opts.Status))
-		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", projectedAssetNodeStatusSQL(""), len(args)))
 	}
 	orderBy := "asset_id ASC, pipeline_node_id ASC"
 	switch strings.TrimSpace(opts.OrderBy) {
@@ -1608,7 +1645,7 @@ func (r *PipelineRunAssetNodeRepo) ListByRunID(ctx context.Context, runID string
 	case "duration":
 		orderBy = "finished_at - started_at DESC NULLS LAST, asset_id ASC"
 	case "status":
-		orderBy = "status ASC, asset_id ASC"
+		orderBy = projectedAssetNodeStatusSQL("") + " ASC, asset_id ASC"
 	}
 	q := `SELECT ` + pipelineRunAssetNodeSelectCols + `
 FROM pipeline_run_asset_nodes

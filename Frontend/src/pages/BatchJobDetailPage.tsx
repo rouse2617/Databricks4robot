@@ -42,7 +42,6 @@ import {
 	resumeBatchJob,
 } from "../api/batchJobApi";
 import {
-	listPipelines,
 	listPipelineVersions,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
@@ -94,6 +93,114 @@ const stableSerialize = (value: unknown): string =>
 
 const sameValue = (left: unknown, right: unknown): boolean =>
 	stableSerialize(left) === stableSerialize(right);
+
+type BatchTemplateMeta = {
+	name: string;
+	versions: PipelineTemplate[];
+};
+
+const batchDetailCacheMs = 3000;
+const batchJobInFlight = new Map<string, Promise<BatchJob>>();
+const batchJobCache = new Map<string, { value: BatchJob; cachedAt: number }>();
+const batchNodeSummaryInFlight = new Map<string, Promise<BatchNodeSummary>>();
+const batchNodeSummaryCache = new Map<
+	string,
+	{ value: BatchNodeSummary; cachedAt: number }
+>();
+const batchTemplateMetaInFlight = new Map<string, Promise<BatchTemplateMeta>>();
+
+export function resetBatchJobDetailRequestCacheForTests(): void {
+	if (!import.meta.env.TEST) return;
+	batchJobInFlight.clear();
+	batchJobCache.clear();
+	batchNodeSummaryInFlight.clear();
+	batchNodeSummaryCache.clear();
+	batchTemplateMetaInFlight.clear();
+}
+
+async function loadBatchJob(
+	jobId: string,
+	opts?: { useCache?: boolean; force?: boolean },
+): Promise<BatchJob> {
+	if (opts?.force) {
+		batchJobCache.delete(jobId);
+	}
+	if (opts?.useCache) {
+		const cached = batchJobCache.get(jobId);
+		if (cached && Date.now() - cached.cachedAt < batchDetailCacheMs) {
+			return cached.value;
+		}
+	}
+	const inFlight = batchJobInFlight.get(jobId);
+	if (inFlight) return inFlight;
+
+	const request = getBatchJob(jobId)
+		.then((value) => {
+			batchJobCache.set(jobId, { value, cachedAt: Date.now() });
+			return value;
+		})
+		.finally(() => {
+			batchJobInFlight.delete(jobId);
+		});
+
+	batchJobInFlight.set(jobId, request);
+	return request;
+}
+
+async function loadBatchNodeSummary(
+	jobId: string,
+	opts?: { useCache?: boolean; force?: boolean },
+): Promise<BatchNodeSummary> {
+	if (opts?.force) {
+		batchNodeSummaryCache.delete(jobId);
+	}
+	if (opts?.useCache) {
+		const cached = batchNodeSummaryCache.get(jobId);
+		if (cached && Date.now() - cached.cachedAt < batchDetailCacheMs) {
+			return cached.value;
+		}
+	}
+	const inFlight = batchNodeSummaryInFlight.get(jobId);
+	if (inFlight) return inFlight;
+
+	const request = getBatchNodeSummary(jobId)
+		.then((value) => {
+			batchNodeSummaryCache.set(jobId, { value, cachedAt: Date.now() });
+			return value;
+		})
+		.finally(() => {
+			batchNodeSummaryInFlight.delete(jobId);
+		});
+
+	batchNodeSummaryInFlight.set(jobId, request);
+	return request;
+}
+
+async function loadBatchTemplateMeta(
+	templateId: string,
+): Promise<BatchTemplateMeta> {
+	const inFlight = batchTemplateMetaInFlight.get(templateId);
+	if (inFlight) return inFlight;
+
+	const request = listPipelineVersions(templateId)
+		.then((versions) => {
+			const template = versions.find((item) => item.id === templateId);
+			return {
+				name: template?.name ?? versions[0]?.name ?? templateId,
+				versions,
+			};
+		})
+		.catch(() => ({
+			name: templateId,
+			versions: [] as PipelineTemplate[],
+		}))
+		.finally(() => {
+			batchTemplateMetaInFlight.delete(templateId);
+		});
+
+	batchTemplateMetaInFlight.set(templateId, request);
+	return request;
+}
 
 function defaultRerunTemplateVersion(
 	job: BatchJob,
@@ -186,6 +293,7 @@ export default function BatchJobDetailPage() {
 	const [loading, setLoading] = useState(true);
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 	const [nodeSummary, setNodeSummary] = useState<BatchNodeSummary | null>(null);
+	const [nodeSummaryLoading, setNodeSummaryLoading] = useState(false);
 	const [drawerNode, setDrawerNode] = useState<BatchNodeSummaryNode | null>(
 		null,
 	);
@@ -214,51 +322,61 @@ export default function BatchJobDetailPage() {
 	templateVersionsRef.current = templateVersions;
 
 	const refresh = useCallback(
-		async (opts?: { silent?: boolean }) => {
+		async (opts?: {
+			force?: boolean;
+			silent?: boolean;
+			useCache?: boolean;
+		}) => {
 			if (!id) return;
 			if (!opts?.silent) {
 				setLoading(true);
 			}
+			const showNodeSummaryLoading = !opts?.silent;
+			if (showNodeSummaryLoading) {
+				setNodeSummaryLoading(true);
+			}
+			const requestOptions = {
+				force: opts?.force,
+				useCache: opts?.useCache,
+			};
+			const nodeSummaryTask = loadBatchNodeSummary(id, requestOptions)
+				.then((summary) =>
+					setNodeSummary((current) =>
+						sameValue(current, summary) ? current : summary,
+					),
+				)
+				.catch(() =>
+					setNodeSummary((current) => (current === null ? current : null)),
+				)
+				.finally(() => {
+					if (showNodeSummaryLoading) {
+						setNodeSummaryLoading(false);
+					}
+				});
 			try {
-				const jobData = await getBatchJob(id);
+				const jobData = await loadBatchJob(id, requestOptions);
 				setJob((current) => (sameValue(current, jobData) ? current : jobData));
-				getBatchNodeSummary(id)
-					.then((summary) =>
-						setNodeSummary((current) =>
-							sameValue(current, summary) ? current : summary,
-						),
-					)
-					.catch(() =>
-						setNodeSummary((current) => (current === null ? current : null)),
-					);
 				const shouldRefreshTemplateMeta =
 					!opts?.silent ||
 					jobRef.current?.templateId !== jobData.templateId ||
 					templateVersionsRef.current.length === 0 ||
 					!templateNameRef.current;
 				if (shouldRefreshTemplateMeta) {
-					const [templates, versions] = await Promise.all([
-						listPipelines({ pageSize: 200 })
-							.then((r) => r.items)
-							.catch(() => [] as PipelineTemplate[]),
-						listPipelineVersions(jobData.templateId).catch(
-							() => [] as PipelineTemplate[],
-						),
-					]);
+					const meta = await loadBatchTemplateMeta(jobData.templateId);
 					setTemplateVersions((current) =>
-						sameValue(current, versions) ? current : versions,
+						sameValue(current, meta.versions) ? current : meta.versions,
 					);
-					const template = templates.find(
-						(item) => item.id === jobData.templateId,
-					);
-					const nextTemplateName = template?.name ?? jobData.templateId;
 					setTemplateName((current) =>
-						current === nextTemplateName ? current : nextTemplateName,
+						current === meta.name ? current : meta.name,
 					);
 				}
+				void nodeSummaryTask;
 			} catch (err) {
 				if (!opts?.silent) {
 					messageRef.current.error(`加载批次详情失败：${String(err)}`);
+				}
+				if (showNodeSummaryLoading) {
+					setNodeSummaryLoading(false);
 				}
 			} finally {
 				if (!opts?.silent) {
@@ -270,7 +388,7 @@ export default function BatchJobDetailPage() {
 	);
 
 	useEffect(() => {
-		void refresh();
+		void refresh({ useCache: true });
 	}, [refresh]);
 
 	const shouldPollJob =
@@ -296,7 +414,7 @@ export default function BatchJobDetailPage() {
 		try {
 			await resumeBatchJob(job.id);
 			message.success("操作已提交");
-			await refresh();
+			await refresh({ force: true });
 		} catch (err) {
 			message.error(`操作失败：${String(err)}`);
 		} finally {
@@ -324,7 +442,7 @@ export default function BatchJobDetailPage() {
 			}
 			setPauseModalOpen(false);
 			setPauseStopRunning(false);
-			await refresh();
+			await refresh({ force: true });
 		} catch (err) {
 			message.error(`暂停失败：${String(err)}`);
 		} finally {
@@ -405,7 +523,7 @@ export default function BatchJobDetailPage() {
 				message.success(feedback.text);
 			}
 			closeRerunModal();
-			await refresh();
+			await refresh({ force: true });
 		} catch (err) {
 			message.error(`重跑失败：${String(err)}`);
 		} finally {
@@ -476,7 +594,10 @@ export default function BatchJobDetailPage() {
 				<Button icon={<ArrowLeftOutlined />} onClick={backToBatchList}>
 					返回批量任务
 				</Button>
-				<Button icon={<ReloadOutlined />} onClick={() => void refresh()}>
+				<Button
+					icon={<ReloadOutlined />}
+					onClick={() => void refresh({ force: true })}
+				>
 					刷新
 				</Button>
 			</Space>
@@ -565,7 +686,7 @@ export default function BatchJobDetailPage() {
 									try {
 										await continueFullBatchJob(job.id);
 										message.success("已继续全量");
-										await refresh();
+										await refresh({ force: true });
 									} catch (err) {
 										message.error(`继续全量失败：${String(err)}`);
 									} finally {
@@ -670,7 +791,11 @@ export default function BatchJobDetailPage() {
 				/>
 			) : null}
 
-			<Card title="节点概览" style={{ marginBottom: 16 }}>
+			<Card
+				className="pipeline-batch-node-overview"
+				title="节点概览"
+				style={{ marginBottom: 16 }}
+			>
 				{nodeSummary && !nodeSummary.dataCoverage.complete ? (
 					<Alert
 						type="info"
@@ -679,78 +804,83 @@ export default function BatchJobDetailPage() {
 						style={{ marginBottom: 12 }}
 					/>
 				) : null}
-				<Table
-					size="small"
-					rowKey="pipelineNodeId"
-					dataSource={nodeSummary?.nodes ?? []}
-					locale={{ emptyText: "暂无节点进度数据，请稍后刷新" }}
-					pagination={false}
-					columns={[
-						{
-							title: "节点",
-							render: (_, record) =>
-								`${record.dagOrder}. ${record.displayName}`,
-						},
-						{ title: "成功", dataIndex: ["counts", "Succeeded"] },
-						{
-							title: "失败",
-							render: (_, record) => {
-								const failed =
-									(record.counts.Failed ?? 0) + (record.counts.Error ?? 0);
-								return failed > 0 ? (
-									<Button
-										type="link"
-										size="small"
-										onClick={() => openNodeDrawer(record, "failed")}
-									>
-										{failed} 失败
-									</Button>
-								) : (
-									0
-								);
+				{nodeSummaryLoading && !nodeSummary ? (
+					<Skeleton active paragraph={{ rows: 4 }} title={false} />
+				) : (
+					<Table
+						size="small"
+						rowKey="pipelineNodeId"
+						dataSource={nodeSummary?.nodes ?? []}
+						loading={nodeSummaryLoading}
+						locale={{ emptyText: "节点进度尚未生成" }}
+						pagination={false}
+						columns={[
+							{
+								title: "节点",
+								render: (_, record) =>
+									`${record.dagOrder}. ${record.displayName}`,
 							},
-						},
-						{
-							title: "运行中",
-							render: (_, record) => {
-								const running = record.counts.Running ?? 0;
-								return running > 0 ? (
-									<Button
-										type="link"
-										size="small"
-										onClick={() => openNodeDrawer(record, "running")}
-									>
-										{running}
-									</Button>
-								) : (
-									0
-								);
+							{ title: "成功", dataIndex: ["counts", "Succeeded"] },
+							{
+								title: "失败",
+								render: (_, record) => {
+									const failed =
+										(record.counts.Failed ?? 0) + (record.counts.Error ?? 0);
+									return failed > 0 ? (
+										<Button
+											type="link"
+											size="small"
+											onClick={() => openNodeDrawer(record, "failed")}
+										>
+											{failed} 失败
+										</Button>
+									) : (
+										0
+									);
+								},
 							},
-						},
-						{
-							title: "未开始",
-							render: (_, record) => {
-								const pending = record.counts.Pending ?? 0;
-								return pending > 0 ? (
-									<Button
-										type="link"
-										size="small"
-										onClick={() => openNodeDrawer(record, "pending")}
-									>
-										{pending}
-									</Button>
-								) : (
-									0
-								);
+							{
+								title: "运行中",
+								render: (_, record) => {
+									const running = record.counts.Running ?? 0;
+									return running > 0 ? (
+										<Button
+											type="link"
+											size="small"
+											onClick={() => openNodeDrawer(record, "running")}
+										>
+											{running}
+										</Button>
+									) : (
+										0
+									);
+								},
 							},
-						},
-						{
-							title: "失败率",
-							render: (_, record) =>
-								`${(record.failureRate * 100).toFixed(2)}%`,
-						},
-					]}
-				/>
+							{
+								title: "未开始",
+								render: (_, record) => {
+									const pending = record.counts.Pending ?? 0;
+									return pending > 0 ? (
+										<Button
+											type="link"
+											size="small"
+											onClick={() => openNodeDrawer(record, "pending")}
+										>
+											{pending}
+										</Button>
+									) : (
+										0
+									);
+								},
+							},
+							{
+								title: "失败率",
+								render: (_, record) =>
+									`${(record.failureRate * 100).toFixed(2)}%`,
+							},
+						]}
+					/>
+				)}
 			</Card>
 
 			<WorkflowExecutionList

@@ -10,7 +10,10 @@ ENV all_proxy=
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+    -u NPM_CONFIG_PROXY -u NPM_CONFIG_HTTPS_PROXY -u npm_config_proxy -u npm_config_https_proxy \
+    npm ci --include=dev --no-audit --no-fund --cache /tmp/npm-cache \
+    && test -x node_modules/.bin/tsc
 COPY . .
 ARG VITE_API_BASE_URL=http://localhost:8080
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL

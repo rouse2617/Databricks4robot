@@ -17,6 +17,7 @@ import {
 	Descriptions,
 	Drawer,
 	Form,
+	Grid,
 	Input,
 	Modal,
 	message,
@@ -466,6 +467,21 @@ function IconActionButton({
 	);
 }
 
+function TableScrollBoundary({ children }: { children: React.ReactNode }) {
+	return (
+		<div
+			style={{
+				width: "100%",
+				maxWidth: "100%",
+				minWidth: 0,
+				overflowX: "auto",
+			}}
+		>
+			{children}
+		</div>
+	);
+}
+
 export default function RegistryCenterPage() {
 	const [msg, msgCtx] = message.useMessage();
 	const [configRecords, setConfigRecords] = useState<UserConfigRecord[]>([]);
@@ -508,6 +524,8 @@ export default function RegistryCenterPage() {
 	);
 	const [compareLoading, setCompareLoading] = useState(false);
 	const configNameValue = Form.useWatch("name", configForm);
+	const screens = Grid.useBreakpoint();
+	const isNarrow = !screens.md;
 
 	const refreshConfigs = async () => {
 		setConfigsLoading(true);
@@ -1100,7 +1118,11 @@ export default function RegistryCenterPage() {
 					>
 						<Row gutter={[12, 12]}>
 							<Col xs={12} md={6}>
-								<Card size="small" bordered style={{ background: "#f8fafc" }}>
+								<Card
+									size="small"
+									variant="outlined"
+									style={{ background: "#f8fafc" }}
+								>
 									<div style={{ fontSize: 12, color: "#64748b" }}>
 										只读注册表
 									</div>
@@ -1116,7 +1138,11 @@ export default function RegistryCenterPage() {
 								</Card>
 							</Col>
 							<Col xs={12} md={6}>
-								<Card size="small" bordered style={{ background: "#f8fafc" }}>
+								<Card
+									size="small"
+									variant="outlined"
+									style={{ background: "#f8fafc" }}
+								>
 									<div style={{ fontSize: 12, color: "#64748b" }}>配置总数</div>
 									<div style={{ fontSize: 20, fontWeight: 700 }}>
 										{configStats.total}
@@ -1127,7 +1153,11 @@ export default function RegistryCenterPage() {
 								</Card>
 							</Col>
 							<Col xs={12} md={6}>
-								<Card size="small" bordered style={{ background: "#f8fafc" }}>
+								<Card
+									size="small"
+									variant="outlined"
+									style={{ background: "#f8fafc" }}
+								>
 									<div style={{ fontSize: 12, color: "#64748b" }}>
 										可部署配置
 									</div>
@@ -1140,7 +1170,11 @@ export default function RegistryCenterPage() {
 								</Card>
 							</Col>
 							<Col xs={12} md={6}>
-								<Card size="small" bordered style={{ background: "#f8fafc" }}>
+								<Card
+									size="small"
+									variant="outlined"
+									style={{ background: "#f8fafc" }}
+								>
 									<div style={{ fontSize: 12, color: "#64748b" }}>版本总数</div>
 									<div style={{ fontSize: 20, fontWeight: 700 }}>
 										{configStats.versions}
@@ -1163,7 +1197,7 @@ export default function RegistryCenterPage() {
 										<Space
 											direction="vertical"
 											size={12}
-											style={{ width: "100%" }}
+											style={{ width: "100%", minWidth: 0 }}
 										>
 											<Alert
 												type="success"
@@ -1172,7 +1206,7 @@ export default function RegistryCenterPage() {
 												description="这里注册的是用户自己维护的文件，不是组件子对象。工作区只显示可维护配置；归档区保留历史追溯，不参与 deploy 选择。"
 											/>
 											<Row gutter={[12, 12]} align="middle">
-												<Col flex="auto">
+												<Col xs={24} lg={12} style={{ minWidth: 0 }}>
 													<Space wrap>
 														<Tag color="green">Ready {configStats.ready}</Tag>
 														<Tag color="gold">Draft {configStats.draft}</Tag>
@@ -1183,8 +1217,16 @@ export default function RegistryCenterPage() {
 														<Tag color="blue">Own / Shared deploy filter</Tag>
 													</Space>
 												</Col>
-												<Col>
-													<Space>
+												<Col xs={24} lg={12} style={{ minWidth: 0 }}>
+													<Space
+														wrap
+														style={{
+															width: "100%",
+															justifyContent: isNarrow
+																? "flex-start"
+																: "flex-end",
+														}}
+													>
 														<Segmented
 															value={configShelf}
 															options={[
@@ -1217,7 +1259,10 @@ export default function RegistryCenterPage() {
 															onChange={(event) =>
 																setConfigQuery(event.target.value)
 															}
-															style={{ width: 260 }}
+															style={{
+																width: isNarrow ? "100%" : 260,
+																maxWidth: "100%",
+															}}
 														/>
 														<Button
 															type="primary"
@@ -1229,35 +1274,44 @@ export default function RegistryCenterPage() {
 													</Space>
 												</Col>
 											</Row>
-											<Table
-												rowKey="id"
-												pagination={false}
-												size="small"
-												loading={configsLoading}
-												columns={configCols}
-												dataSource={filteredConfigs}
-												locale={{ emptyText: emptyConfigText }}
-												expandable={{
-													expandedRowRender: (record) => (
-														<div
-															style={{
-																borderLeft: "2px solid #dbeafe",
-																marginLeft: 10,
-																paddingLeft: 16,
-																background: "#f8fafc",
-															}}
-														>
-															<Table
-																rowKey="version"
-																pagination={false}
-																size="small"
-																columns={createVersionCols(record)}
-																dataSource={record.versions}
-															/>
-														</div>
-													),
-												}}
-											/>
+											<TableScrollBoundary>
+												<Table
+													rowKey="id"
+													pagination={false}
+													size="small"
+													loading={configsLoading}
+													columns={configCols}
+													dataSource={filteredConfigs}
+													scroll={{ x: 960 }}
+													locale={{ emptyText: emptyConfigText }}
+													expandable={{
+														expandedRowRender: (record) => (
+															<div
+																style={{
+																	borderLeft: "2px solid #dbeafe",
+																	marginLeft: 10,
+																	paddingLeft: 16,
+																	background: "#f8fafc",
+																	maxWidth: "100%",
+																	minWidth: 0,
+																	overflow: "hidden",
+																}}
+															>
+																<TableScrollBoundary>
+																	<Table
+																		rowKey="version"
+																		pagination={false}
+																		size="small"
+																		columns={createVersionCols(record)}
+																		dataSource={record.versions}
+																		scroll={{ x: 820 }}
+																	/>
+																</TableScrollBoundary>
+															</div>
+														),
+													}}
+												/>
+											</TableScrollBoundary>
 											<Paragraph type="secondary" style={{ marginBottom: 0 }}>
 												建议的运行语义是：配置先由用户注册为独立记录，版本变更独立留痕；deploy
 												时只显示当前用户自己可用的 ready
@@ -1293,33 +1347,42 @@ export default function RegistryCenterPage() {
 											</Card>
 
 											<Card size="small" title={`Metrics (${metrics.length})`}>
-												<Table
-													rowKey="key"
-													pagination={false}
-													size="small"
-													columns={metricCols}
-													dataSource={metrics}
-												/>
+												<TableScrollBoundary>
+													<Table
+														rowKey="key"
+														pagination={false}
+														size="small"
+														columns={metricCols}
+														dataSource={metrics}
+														scroll={{ x: 680 }}
+													/>
+												</TableScrollBoundary>
 											</Card>
 
 											<Card size="small" title={`Tags (${tags.length})`}>
-												<Table
-													rowKey="key"
-													pagination={false}
-													size="small"
-													columns={tagCols}
-													dataSource={tags}
-												/>
+												<TableScrollBoundary>
+													<Table
+														rowKey="key"
+														pagination={false}
+														size="small"
+														columns={tagCols}
+														dataSource={tags}
+														scroll={{ x: 680 }}
+													/>
+												</TableScrollBoundary>
 											</Card>
 
 											<Card size="small" title={`Algos (${algos.length})`}>
-												<Table
-													rowKey="key"
-													pagination={false}
-													size="small"
-													columns={algoCols}
-													dataSource={algos}
-												/>
+												<TableScrollBoundary>
+													<Table
+														rowKey="key"
+														pagination={false}
+														size="small"
+														columns={algoCols}
+														dataSource={algos}
+														scroll={{ x: 760 }}
+													/>
+												</TableScrollBoundary>
 											</Card>
 										</Space>
 									),

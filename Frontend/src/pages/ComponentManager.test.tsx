@@ -149,6 +149,14 @@ function getResourceInput(container: HTMLElement, name: string) {
 	return input as HTMLInputElement;
 }
 
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((next) => {
+		resolve = next;
+	});
+	return { promise, resolve };
+}
+
 beforeEach(() => {
 	apiMocks.createComponent.mockReset();
 	apiMocks.deleteComponent.mockReset();
@@ -165,6 +173,21 @@ afterEach(() => {
 });
 
 describe("page ComponentManager", () => {
+	it("waits for release data before showing the merged component table", async () => {
+		const releases = deferred<{ items: PipelineComponentReleaseAPI[] }>();
+		apiMocks.listComponentReleases.mockReturnValue(releases.promise);
+
+		render(<ComponentManager />);
+
+		await waitFor(() => {
+			expect(apiMocks.listComponents).toHaveBeenCalled();
+		});
+		expect(screen.queryByText("报告生成")).toBeNull();
+
+		releases.resolve({ items: [] });
+		expect(await screen.findByText("报告生成")).toBeTruthy();
+	});
+
 	it("prefills the edit form with the selected component", async () => {
 		render(<ComponentManager />);
 

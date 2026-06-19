@@ -12,7 +12,7 @@ describe("normalizeGitCommit", () => {
 	});
 
 	it("keeps full-length SHAs unchanged", () => {
-		const full = "a86a258f91fad9c64a0123456789abcdef01234567";
+		const full = "a86a258f91fad9c64a0123456789abcdef01234567"; // pragma: allowlist secret
 		expect(normalizeGitCommit(full)).toBe(full);
 	});
 

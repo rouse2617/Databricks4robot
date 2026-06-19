@@ -34,9 +34,12 @@ import type {
 	WorkflowPodCost,
 	WorkflowPodEvent,
 	WorkflowPodMetrics,
+	WorkflowPodResourceUsage,
+	WorkflowResourceUsageReport,
 } from "../../api/workflowApi";
 import {
 	getNodePodDiagnostics,
+	getWorkflowNodeResourceUsage,
 	type NodePodDiagnostics,
 } from "../../api/workflowApi";
 import { ArgoNodeRuntimeInspector } from "../../features/pipeline-designer";
@@ -359,6 +362,33 @@ function getMetricPercent(used?: number, limit?: number) {
 	return Math.min(100, Math.round((used / limit) * 100));
 }
 
+function formatRequestLimit(request?: string, limit?: string) {
+	const req = request?.trim();
+	const lim = limit?.trim();
+	if (req && lim) return `request / limit: ${req} / ${lim}`;
+	if (req) return `request: ${req}`;
+	if (lim) return `limit: ${lim}`;
+	return "request / limit: —";
+}
+
+function hasResourceUsageSnapshot(pod?: WorkflowPodResourceUsage | null) {
+	if (!pod) return false;
+	return Boolean(
+		pod.cpu_request ||
+			pod.memory_request ||
+			pod.cpu_limit ||
+			pod.memory_limit ||
+			pod.cpu_resource_duration ||
+			pod.memory_resource_duration ||
+			pod.cpu_usage ||
+			pod.memory_usage,
+	);
+}
+
+function firstResourcePod(report?: WorkflowResourceUsageReport | null) {
+	return report?.pods?.[0] ?? null;
+}
+
 function CopyableEllipsisText({
 	text,
 	maxLength = 40,
@@ -563,7 +593,21 @@ function PodTab({
 	);
 }
 
-function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
+function MonitoringTab({
+	metrics,
+	resourceReport,
+	resourceLoading,
+	resourceError,
+	onRefreshResources,
+}: {
+	metrics?: WorkflowPodMetrics;
+	resourceReport?: WorkflowResourceUsageReport | null;
+	resourceLoading?: boolean;
+	resourceError?: string | null;
+	onRefreshResources?: () => void;
+}) {
+	const resourcePod = firstResourcePod(resourceReport);
+	const hasResourceSnapshot = hasResourceUsageSnapshot(resourcePod);
 	const cpuPercent = getMetricPercent(
 		metrics?.cpuCores,
 		metrics?.cpuLimitCores || metrics?.cpuRequestCores,
@@ -572,17 +616,53 @@ function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
 		metrics?.memoryBytes,
 		metrics?.memoryLimitBytes || metrics?.memoryRequestBytes,
 	);
+	const hasLiveMetrics = Boolean(metrics);
+	const showResourceError =
+		Boolean(resourceError) && !hasLiveMetrics && !hasResourceSnapshot;
+	const showResourceLoading =
+		Boolean(resourceLoading) && !hasLiveMetrics && !hasResourceSnapshot;
+	const alertType = showResourceError
+		? "warning"
+		: hasLiveMetrics || hasResourceSnapshot
+			? "success"
+			: "info";
+	const alertMessage = showResourceError
+		? "监控数据不可用"
+		: hasLiveMetrics
+			? "监控快照"
+			: hasResourceSnapshot
+				? "资源规格快照"
+				: showResourceLoading
+					? "正在加载监控数据"
+					: "暂无监控数据";
+	const alertDescription = showResourceError
+		? resourceError
+		: hasLiveMetrics
+			? `采样时间：${metrics?.sampledAt ? formatRelativeTime(metrics.sampledAt) : "—"}`
+			: hasResourceSnapshot
+				? `采样时间：${resourceReport?.observed_at ? formatRelativeTime(resourceReport.observed_at) : "—"} · 实时指标：${resourceReport?.source?.metrics || "unavailable"}`
+				: showResourceLoading
+					? "正在读取该节点的资源请求、限制和资源耗时。"
+					: "当前运行未返回 CPU、内存、GPU、网络或存储指标。";
 
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<Alert
-				type={metrics ? "success" : "info"}
+				type={alertType}
 				showIcon
-				message={metrics ? "监控快照" : "暂无监控数据"}
-				description={
-					metrics
-						? `采样时间：${metrics.sampledAt ? formatRelativeTime(metrics.sampledAt) : "—"}`
-						: "当前运行未返回 CPU、内存、GPU、网络或存储指标。"
+				message={alertMessage}
+				description={alertDescription}
+				action={
+					onRefreshResources ? (
+						<Button
+							size="small"
+							icon={<ReloadOutlined />}
+							loading={resourceLoading}
+							onClick={onRefreshResources}
+						>
+							刷新
+						</Button>
+					) : undefined
 				}
 			/>
 			<Row gutter={[12, 12]}>
@@ -590,12 +670,20 @@ function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
 					<Card size="small">
 						<Statistic
 							title="CPU"
-							value={metrics?.cpuCores ?? "—"}
+							value={
+								metrics?.cpuCores ??
+								resourcePod?.cpu_resource_duration ??
+								resourcePod?.cpu_usage ??
+								"—"
+							}
 							suffix={typeof metrics?.cpuCores === "number" ? "cores" : ""}
 						/>
 						<Typography.Text type="secondary">
 							{cpuPercent === undefined
-								? "request / limit: —"
+								? formatRequestLimit(
+										resourcePod?.cpu_request,
+										resourcePod?.cpu_limit,
+									)
 								: `用量 ${cpuPercent}%`}
 						</Typography.Text>
 					</Card>
@@ -604,11 +692,20 @@ function MonitoringTab({ metrics }: { metrics?: WorkflowPodMetrics }) {
 					<Card size="small">
 						<Statistic
 							title="Memory"
-							value={formatBytes(metrics?.memoryBytes)}
+							value={
+								typeof metrics?.memoryBytes === "number"
+									? formatBytes(metrics.memoryBytes)
+									: resourcePod?.memory_resource_duration ||
+										resourcePod?.memory_usage ||
+										"—"
+							}
 						/>
 						<Typography.Text type="secondary">
 							{memoryPercent === undefined
-								? "request / limit: —"
+								? formatRequestLimit(
+										resourcePod?.memory_request,
+										resourcePod?.memory_limit,
+									)
 								: `用量 ${memoryPercent}%`}
 						</Typography.Text>
 					</Card>
@@ -683,6 +780,46 @@ function BillingTab({ cost }: { cost?: WorkflowPodCost }) {
 					</Card>
 				</Col>
 			</Row>
+		</Space>
+	);
+}
+
+function DebugTab({ node }: { node: WorkflowNodeStatus }) {
+	const debug = node.debug;
+	const execEnabled = Boolean(debug?.execEnabled);
+	const reason =
+		debug?.reason ||
+		(execEnabled
+			? "该节点允许创建 Pod 终端会话。"
+			: "当前节点或执行目标未开启 Pod 终端。");
+	const allowedCommands = debug?.allowedCommands?.join(", ") || "—";
+
+	return (
+		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+			<Alert
+				type={execEnabled ? "success" : "info"}
+				showIcon
+				message={execEnabled ? "终端可用" : "终端不可用"}
+				description={reason}
+			/>
+			<Descriptions size="small" column={1} layout="vertical" bordered>
+				<Descriptions.Item label="Pod exec">
+					<Tag color={execEnabled ? "green" : "default"}>
+						{execEnabled ? "enabled" : "disabled"}
+					</Tag>
+				</Descriptions.Item>
+				<Descriptions.Item label="日志流">
+					<Tag color={debug?.logStreamEnabled ? "green" : "default"}>
+						{debug?.logStreamEnabled ? "enabled" : "disabled"}
+					</Tag>
+				</Descriptions.Item>
+				<Descriptions.Item label="允许命令">
+					<Typography.Text code>{allowedCommands}</Typography.Text>
+				</Descriptions.Item>
+				<Descriptions.Item label="最长会话">
+					{debug?.maxSessionSeconds ? `${debug.maxSessionSeconds}s` : "—"}
+				</Descriptions.Item>
+			</Descriptions>
 		</Space>
 	);
 }
@@ -806,6 +943,47 @@ function RuntimeTab({
 	workflowName: string;
 	pipelineNode?: PipelineNodeDef | null;
 }) {
+	const [resourceReport, setResourceReport] =
+		useState<WorkflowResourceUsageReport | null>(null);
+	const [resourceLoading, setResourceLoading] = useState(false);
+	const [resourceError, setResourceError] = useState<string | null>(null);
+	const [resourceRefreshTrigger, refreshResources] = useReducer(
+		(count) => count + 1,
+		0,
+	);
+
+	useEffect(() => {
+		if (!workflowName || !node.id) return undefined;
+		let cancelled = false;
+		const requestSeq = resourceRefreshTrigger;
+		setResourceLoading(true);
+		setResourceError(null);
+		getWorkflowNodeResourceUsage(workflowName, node.id)
+			.then((data) => {
+				if (!cancelled && requestSeq === resourceRefreshTrigger) {
+					setResourceReport(data);
+				}
+			})
+			.catch((err) => {
+				if (!cancelled && requestSeq === resourceRefreshTrigger) {
+					setResourceReport(null);
+					if (err instanceof ApiError && err.status === 404) {
+						setResourceError("当前节点尚未生成资源快照，或对应 Pod 已被清理。");
+						return;
+					}
+					setResourceError(err instanceof Error ? err.message : String(err));
+				}
+			})
+			.finally(() => {
+				if (!cancelled && requestSeq === resourceRefreshTrigger) {
+					setResourceLoading(false);
+				}
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [workflowName, node.id, resourceRefreshTrigger]);
+
 	return (
 		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
 			<RuntimeSection title="DataBrew 节点挂载">
@@ -818,18 +996,19 @@ function RuntimeTab({
 				<PodTab node={node} workflowName={workflowName} />
 			</RuntimeSection>
 			<RuntimeSection title="监控">
-				<MonitoringTab metrics={node.metrics} />
+				<MonitoringTab
+					metrics={node.metrics}
+					resourceReport={resourceReport}
+					resourceLoading={resourceLoading}
+					resourceError={resourceError}
+					onRefreshResources={refreshResources}
+				/>
 			</RuntimeSection>
 			<RuntimeSection title="计费">
 				<BillingTab cost={node.cost} />
 			</RuntimeSection>
 			<RuntimeSection title="调试">
-				<Alert
-					type="info"
-					showIcon
-					message="终端调试"
-					description="终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。"
-				/>
+				<DebugTab node={node} />
 			</RuntimeSection>
 		</Space>
 	);

@@ -437,6 +437,62 @@ describe("fromTranspilerPipeline", () => {
 		expect(edges[0].data?.kind).toBe(PIPELINE_EDGE_KIND_DEPENDENCY);
 	});
 
+	it("lays out sequential templates without overlapping nodes", () => {
+		const pipeline: Pipeline = {
+			name: "cyberpipe",
+			version: "1",
+			nodes: [
+				{
+					id: "head_tracking",
+					component: { name: "head-track-pycuvslam", image: "img" },
+				},
+				{
+					id: "hand_detection",
+					component: { name: "hand-detect-yolov26m", image: "img" },
+				},
+				{
+					id: "hand_tracking",
+					component: { name: "hand-track-stereo", image: "img" },
+				},
+				{
+					id: "find_tony_stats",
+					component: { name: "find-toni-stats", image: "img" },
+				},
+				{
+					id: "ss_delivery_lerobot",
+					component: { name: "ss-delivery-lerobot", image: "img" },
+				},
+			],
+			edges: [
+				{ source: "head_tracking", target: "hand_detection" },
+				{ source: "hand_detection", target: "hand_tracking" },
+				{ source: "hand_tracking", target: "find_tony_stats" },
+				{ source: "find_tony_stats", target: "ss_delivery_lerobot" },
+			],
+		};
+
+		const { nodes } = fromTranspilerPipeline(pipeline);
+		const orderedNodes = [
+			"head_tracking",
+			"hand_detection",
+			"hand_tracking",
+			"find_tony_stats",
+			"ss_delivery_lerobot",
+		].map((id) => nodes.find((node) => node.id === id));
+
+		for (const node of orderedNodes) {
+			expect(node).toBeTruthy();
+		}
+		for (let i = 1; i < orderedNodes.length; i += 1) {
+			const previous = orderedNodes[i - 1];
+			const current = orderedNodes[i];
+			expect(current?.position.x ?? 0).toBeGreaterThan(
+				(previous?.position.x ?? 0) + 220,
+			);
+			expect(current?.position.y).toBe(previous?.position.y);
+		}
+	});
+
 	it("assigns sequential edge IDs", () => {
 		const pipeline: Pipeline = {
 			name: "multi-edge",

@@ -522,12 +522,13 @@ func (r *BackfillRepo) FindItemsByScope(ctx context.Context, filter repository.B
 	if joinNode {
 		args = append(args, filter.PipelineNodeID)
 		where = append(where, fmt.Sprintf("n.pipeline_node_id = $%d", len(args)))
+		statusExpr := projectedAssetNodeStatusSQLWithRun("n", "pr")
 		statuses := filter.NodeStatuses
 		if len(statuses) == 0 {
 			statuses = []string{"Failed", "Error"}
 		}
 		args = append(args, statuses)
-		where = append(where, fmt.Sprintf("n.status = ANY($%d)", len(args)))
+		where = append(where, fmt.Sprintf("%s = ANY($%d)", statusExpr, len(args)))
 	}
 	from := "FROM backfill_items bi"
 	if joinNode {
@@ -572,12 +573,80 @@ func (r *BackfillRepo) PrepareItemsForRerun(ctx context.Context, itemIDs []strin
 	return nil
 }
 
+func projectedAssetNodeStatusSQL(alias string) string {
+	prefix := ""
+	if strings.TrimSpace(alias) != "" {
+		prefix = strings.TrimSpace(alias) + "."
+	}
+	status := prefix + "status"
+	message := "LOWER(COALESCE(" + prefix + "message, ''))"
+	signals := []string{
+		"invalidimagename",
+		"invalid image name",
+		"invalid reference format",
+		"failed to apply default image tag",
+		"couldn't parse image name",
+		"errimagepull",
+		"imagepullbackoff",
+		"failed to pull image",
+		"pull access denied",
+		"manifest unknown",
+		"unauthorized: authentication required",
+	}
+	parts := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		parts = append(parts, message+" LIKE '%"+strings.ReplaceAll(signal, "'", "''")+"%'")
+	}
+	return "CASE WHEN LOWER(COALESCE(" + status + ", '')) = 'pending' AND (" + strings.Join(parts, " OR ") + ") THEN 'Error' ELSE COALESCE(NULLIF(" + status + ", ''), 'Pending') END"
+}
+
+func projectedSchedulerDiagnosticNodeSQL(alias string) string {
+	prefix := ""
+	if strings.TrimSpace(alias) != "" {
+		prefix = strings.TrimSpace(alias) + "."
+	}
+	message := "LOWER(COALESCE(" + prefix + "message, ''))"
+	signals := []string{
+		"unschedulable",
+		"insufficient cpu",
+		"insufficient memory",
+		"insufficient ephemeral-storage",
+		"insufficient nvidia.com/gpu",
+		"untolerated taint",
+		"didn't match pod's node affinity",
+		"didn't match node selector",
+		"preemption is not helpful",
+	}
+	parts := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		parts = append(parts, message+" LIKE '%"+strings.ReplaceAll(signal, "'", "''")+"%'")
+	}
+	return strings.Join(parts, " OR ")
+}
+
+func projectedAssetNodeStatusSQLWithRun(nodeAlias, runAlias string) string {
+	base := projectedAssetNodeStatusSQL(nodeAlias)
+	nodePrefix := ""
+	if strings.TrimSpace(nodeAlias) != "" {
+		nodePrefix = strings.TrimSpace(nodeAlias) + "."
+	}
+	runPrefix := ""
+	if strings.TrimSpace(runAlias) != "" {
+		runPrefix = strings.TrimSpace(runAlias) + "."
+	}
+	nodeStatus := "LOWER(COALESCE(" + nodePrefix + "status, ''))"
+	runTerminal := "LOWER(COALESCE(" + runPrefix + "status, '')) IN ('failed', 'error', 'expired')"
+	schedulerDiagnostic := projectedSchedulerDiagnosticNodeSQL(nodeAlias)
+	return "CASE WHEN " + runTerminal + " AND (" + nodeStatus + " = 'running' OR (" + nodeStatus + " = 'pending' AND (" + schedulerDiagnostic + "))) THEN 'Error' ELSE " + base + " END"
+}
+
 func (r *BackfillRepo) AggregateNodeStatusByBatchJobID(ctx context.Context, jobID string) ([]repository.BatchNodeStatusAggregate, error) {
-	const q = `
+	statusExpr := projectedAssetNodeStatusSQLWithRun("n", "pr")
+	q := `
 SELECT
   n.pipeline_node_id,
   COALESCE(NULLIF(n.display_name, ''), n.pipeline_node_id) AS display_name,
-  COALESCE(NULLIF(n.status, ''), 'Pending') AS status,
+  ` + statusExpr + ` AS status,
   COUNT(*) AS cnt
 FROM pipeline_run_asset_nodes n
 INNER JOIN pipeline_runs pr ON pr.id = n.run_id
@@ -635,8 +704,9 @@ func (r *BackfillRepo) ListNodeFailures(ctx context.Context, filter repository.B
 	if len(statuses) == 0 {
 		statuses = []string{"Failed", "Error"}
 	}
+	statusExpr := projectedAssetNodeStatusSQLWithRun("n", "pr")
 	args := []any{filter.JobID, filter.PipelineNodeID, statuses}
-	where := []string{"bi.job_id = $1", "n.pipeline_node_id = $2", "n.status = ANY($3)"}
+	where := []string{"bi.job_id = $1", "n.pipeline_node_id = $2", statusExpr + " = ANY($3)"}
 	if q := strings.TrimSpace(filter.Query); q != "" {
 		args = append(args, "%"+q+"%")
 		where = append(where, fmt.Sprintf("bi.asset_id ILIKE $%d", len(args)))
@@ -694,7 +764,7 @@ WITH current_items AS (
 SELECT
   bi.id, bi.asset_id, pr.id, COALESCE(pr.workflow_name, bi.workflow_name, ''),
   n.pipeline_node_id, COALESCE(NULLIF(n.display_name, ''), n.pipeline_node_id),
-  COALESCE(n.status, ''), COALESCE(n.message, ''), n.started_at, n.finished_at
+  ` + statusExpr + `, COALESCE(NULLIF(n.message, ''), NULLIF(pr.message, ''), ''), n.started_at, n.finished_at
 FROM current_items bi
 INNER JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
 INNER JOIN pipeline_run_asset_nodes n ON n.run_id = pr.id AND n.asset_id = bi.asset_id

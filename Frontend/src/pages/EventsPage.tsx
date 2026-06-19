@@ -7,6 +7,7 @@ import {
 	Alert,
 	Button,
 	Card,
+	Grid,
 	Modal,
 	message,
 	Radio,
@@ -33,6 +34,7 @@ import {
 dayjs.extend(relativeTime);
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 // ─── Event type color mapping ───
 
@@ -187,6 +189,11 @@ function initialAssetIdFromSearch(searchParams: URLSearchParams): string {
 }
 
 export default function EventsPage() {
+	const screens = useBreakpoint();
+	const isNarrow =
+		typeof window !== "undefined" &&
+		window.innerWidth < 768 &&
+		screens.md !== true;
 	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [assetId, setAssetId] = useState(() =>
@@ -395,13 +402,13 @@ export default function EventsPage() {
 			)}
 
 			<Card size="small" style={{ marginBottom: 16 }}>
-				<Space wrap>
+				<Space wrap style={{ width: "100%" }}>
 					<div
 						style={{
 							display: "flex",
 							alignItems: "center",
 							gap: 8,
-							width: 240,
+							width: isNarrow ? "100%" : 240,
 							padding: "0 10px",
 							borderRadius: 6,
 							border: `1px solid ${
@@ -473,6 +480,7 @@ export default function EventsPage() {
 						columns={columns}
 						dataSource={events}
 						size="small"
+						scroll={{ x: 740 }}
 						pagination={false}
 						locale={{ emptyText: loading ? " " : "暂无事件" }}
 					/>

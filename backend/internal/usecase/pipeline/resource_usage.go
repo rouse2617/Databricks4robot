@@ -21,6 +21,11 @@ func buildPodResourceUsageReport(wf *wfv1.Workflow, manifest *string, observedAt
 		return []PodResourceUsage{}
 	}
 	reqs := templateResourcesFromManifest(manifest)
+	for name, spec := range templateResourcesFromWorkflow(wf) {
+		if _, ok := reqs[name]; !ok || reqs[name].empty() {
+			reqs[name] = spec
+		}
+	}
 	pods := make([]PodResourceUsage, 0)
 	for _, node := range wf.Status.Nodes {
 		if node.Type != wfv1.NodeTypePod {
@@ -60,6 +65,10 @@ func buildPodResourceUsageReport(wf *wfv1.Workflow, manifest *string, observedAt
 	return pods
 }
 
+func (spec templateResourceSpec) empty() bool {
+	return spec.CPURequest == "" && spec.MemoryRequest == "" && spec.CPULimit == "" && spec.MemoryLimit == ""
+}
+
 func specSource(manifest *string) string {
 	if manifest == nil || strings.TrimSpace(*manifest) == "" {
 		return "unavailable"
@@ -87,6 +96,34 @@ func templateResourcesFromManifest(manifest *string) map[string]templateResource
 	}
 	var wf wfv1.Workflow
 	if err := sigsyaml.Unmarshal([]byte(*manifest), &wf); err != nil {
+		return out
+	}
+	for _, tmpl := range wf.Spec.Templates {
+		if tmpl.Name == "" {
+			continue
+		}
+		var res corev1.ResourceRequirements
+		switch {
+		case tmpl.Container != nil:
+			res = tmpl.Container.Resources
+		case tmpl.Script != nil:
+			res = tmpl.Script.Resources
+		default:
+			continue
+		}
+		out[tmpl.Name] = templateResourceSpec{
+			CPURequest:    quantityString(res.Requests[corev1.ResourceCPU]),
+			MemoryRequest: quantityString(res.Requests[corev1.ResourceMemory]),
+			CPULimit:      quantityString(res.Limits[corev1.ResourceCPU]),
+			MemoryLimit:   quantityString(res.Limits[corev1.ResourceMemory]),
+		}
+	}
+	return out
+}
+
+func templateResourcesFromWorkflow(wf *wfv1.Workflow) map[string]templateResourceSpec {
+	out := make(map[string]templateResourceSpec)
+	if wf == nil {
 		return out
 	}
 	for _, tmpl := range wf.Spec.Templates {

@@ -391,12 +391,12 @@ func (h *Handler) ListRuns(c *gin.Context) {
 			NodeStatus:     nodeStatus,
 			Page:           page,
 			PageSize:       pageSize,
+			RefreshActive:  refreshActive,
+		}
+		if batchJobID != "" && refreshActive && h.batchRuns != nil {
+			_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
 		}
 		items, total, err = h.uc.ListRunSummaries(c.Request.Context(), filter)
-		if err == nil && batchJobID != "" && h.batchRuns != nil {
-			_ = h.batchRuns.SyncBatchView(c.Request.Context(), batchJobID, items)
-			items, total, err = h.uc.ListRunSummaries(c.Request.Context(), filter)
-		}
 	} else {
 		if batchJobID != "" && h.batchRuns != nil {
 			_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)

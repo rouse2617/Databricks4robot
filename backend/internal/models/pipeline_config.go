@@ -32,4 +32,3 @@ type PipelineConfigVersion struct {
 	Author           string    `json:"author"`
 	CreatedAt        time.Time `json:"createdAt"`
 }
-

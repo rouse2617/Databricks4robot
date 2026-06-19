@@ -16,6 +16,7 @@ import (
 type BatchSubtaskRunInput struct {
 	TemplateID      string
 	TemplateVersion int
+	TargetID        string
 	BatchJobID      string
 	AssetID         string
 	RunID           string
@@ -81,7 +82,7 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 		workflowName = batchSubtaskWorkflowName(t.Name, assetID, runID, in.ForceNewAttempt)
 	}
 
-	target, err := uc.resolveExecutionTarget(ctx, "")
+	target, err := uc.resolveExecutionTarget(ctx, in.TargetID)
 	if err != nil {
 		return "", "", err
 	}

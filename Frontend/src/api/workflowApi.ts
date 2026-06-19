@@ -107,6 +107,48 @@ export interface WorkflowPodMetrics {
 	sampledAt?: string;
 }
 
+export interface WorkflowResourceValues {
+	cpu?: string;
+	memory?: string;
+	[key: string]: string | undefined;
+}
+
+export interface WorkflowResourceUsageSource {
+	workflow?: string;
+	metrics?: string;
+	spec?: string;
+}
+
+export interface WorkflowPodResourceUsage {
+	pod_name: string;
+	node_id: string;
+	node_name?: string;
+	template_name?: string;
+	observed_at?: string;
+	live_metrics_available?: boolean;
+	requests?: WorkflowResourceValues;
+	limits?: WorkflowResourceValues;
+	resource_duration?: WorkflowResourceValues;
+	cpu_usage?: string;
+	memory_usage?: string;
+	cpu_resource_duration?: string;
+	memory_resource_duration?: string;
+	cpu_request?: string;
+	memory_request?: string;
+	cpu_limit?: string;
+	memory_limit?: string;
+}
+
+export interface WorkflowResourceUsageReport {
+	deployment_id?: string;
+	workflow_name: string;
+	status?: string;
+	observed_at?: string;
+	source?: WorkflowResourceUsageSource;
+	live_metrics_available?: boolean;
+	pods: WorkflowPodResourceUsage[];
+}
+
 export interface WorkflowPodCost {
 	totalCostUsd?: number;
 	cpuCostUsd?: number;
@@ -280,6 +322,16 @@ export function getNodePodDiagnostics(
 	return request(
 		"GET",
 		`/workflows/${encodeURIComponent(workflowName)}/nodes/${encodeURIComponent(nodeId)}/pod`,
+	);
+}
+
+export function getWorkflowNodeResourceUsage(
+	workflowName: string,
+	nodeId: string,
+): Promise<WorkflowResourceUsageReport> {
+	return request(
+		"GET",
+		`/workflows/${encodeURIComponent(workflowName)}/nodes/${encodeURIComponent(nodeId)}/resources`,
 	);
 }
 

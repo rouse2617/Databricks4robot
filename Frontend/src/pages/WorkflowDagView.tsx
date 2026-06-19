@@ -121,7 +121,10 @@ export function buildDagElements(
 	const normalizedSearch = nodeSearch.trim().toLowerCase();
 	const visibleNodes = displayableNodes.filter((node) => {
 		if (normalizedSearch.length === 0) return true;
-		const displayText = getWorkflowNodeDisplayText(node, pipelineLabels).toLowerCase();
+		const displayText = getWorkflowNodeDisplayText(
+			node,
+			pipelineLabels,
+		).toLowerCase();
 		return (
 			displayText.includes(normalizedSearch) ||
 			node.name.toLowerCase().includes(normalizedSearch)
@@ -215,7 +218,10 @@ export function buildDagElements(
 			: index * (DAG_NODE_WIDTH + DAG_NODE_GAP);
 		const layoutY = hasLayout ? dagreNode.y : 0;
 		const isSelected = node.id === selectedNodeId;
-		const displayText = getWorkflowNodeDisplayText(node, pipelineLabels).toLowerCase();
+		const displayText = getWorkflowNodeDisplayText(
+			node,
+			pipelineLabels,
+		).toLowerCase();
 		const matchesSearch =
 			normalizedSearch.length === 0 ||
 			displayText.includes(normalizedSearch) ||
@@ -270,9 +276,12 @@ function FitViewOnGraphChange({ graphKey }: { graphKey: string }): null {
 	useEffect(() => {
 		if (!graphKey) return;
 		const frame = requestAnimationFrame(() => {
+			const narrow =
+				typeof window !== "undefined" &&
+				window.matchMedia("(max-width: 640px)").matches;
 			void fitView({
-				padding: 0.08,
-				minZoom: DAG_FIT_MIN_ZOOM,
+				padding: narrow ? 0.16 : 0.08,
+				minZoom: narrow ? 0.35 : DAG_FIT_MIN_ZOOM,
 				maxZoom: DAG_FIT_MAX_ZOOM,
 				duration: 200,
 			});

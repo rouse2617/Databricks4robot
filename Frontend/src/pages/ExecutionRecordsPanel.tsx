@@ -1,8 +1,16 @@
-import { Segmented } from "antd";
-import { useMemo } from "react";
+import { Segmented, Spin } from "antd";
+import { lazy, Suspense, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { BatchJobList } from "./BatchJobList";
-import { WorkflowExecutionList } from "./WorkflowExecutionList";
+
+const BatchJobList = lazy(async () => {
+	const mod = await import("./BatchJobList");
+	return { default: mod.BatchJobList };
+});
+
+const WorkflowExecutionList = lazy(async () => {
+	const mod = await import("./WorkflowExecutionList");
+	return { default: mod.WorkflowExecutionList };
+});
 
 type ExecutionView = "single" | "batch";
 
@@ -12,6 +20,21 @@ interface ExecutionRecordsPanelProps {
 
 function parseExecutionView(value: string | null): ExecutionView {
 	return value === "batch" ? "batch" : "single";
+}
+
+function ExecutionViewFallback() {
+	return (
+		<div
+			style={{
+				minHeight: 220,
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+			}}
+		>
+			<Spin size="small" />
+		</div>
+	);
 }
 
 export function ExecutionRecordsPanel({
@@ -42,11 +65,13 @@ export function ExecutionRecordsPanel({
 				]}
 				style={{ marginBottom: 16 }}
 			/>
-			{executionView === "single" ? (
-				<WorkflowExecutionList active={active} embedded />
-			) : (
-				<BatchJobList active={active} />
-			)}
+			<Suspense fallback={<ExecutionViewFallback />}>
+				{executionView === "single" ? (
+					<WorkflowExecutionList active={active} embedded />
+				) : (
+					<BatchJobList active={active} />
+				)}
+			</Suspense>
 		</div>
 	);
 }

@@ -1,4 +1,11 @@
-import { LockOutlined, MoreOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+	EyeOutlined,
+	ForkOutlined,
+	HistoryOutlined,
+	LockOutlined,
+	MoreOutlined,
+	ReloadOutlined,
+} from "@ant-design/icons";
 import {
 	Alert,
 	App,
@@ -17,9 +24,17 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
+import type { Breakpoint } from "antd/es/_util/responsiveObserver";
 import dayjs, { type Dayjs } from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	type MouseEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
 	type BackfillItemAttemptsResult,
@@ -67,6 +82,8 @@ import { RunComparisonModal } from "./RunComparisonModal";
 
 const { RangePicker } = DatePicker;
 dayjs.extend(relativeTime);
+
+const BATCH_DETAIL_WIDE_ONLY: Breakpoint[] = ["xxl"];
 
 interface WorkflowExecutionListProps {
 	active?: boolean;
@@ -790,10 +807,12 @@ export function WorkflowExecutionList({
 
 	const resetFilters = useCallback(() => {
 		setDraftStatusFilter(undefined);
+		setDraftVersionFilter(undefined);
 		setDraftNameSearch("");
 		setDraftLabelFilter([]);
 		setDraftDateRange([null, null]);
 		setStatusFilter(undefined);
+		setVersionFilter(undefined);
 		setNameSearch("");
 		setLabelFilter([]);
 		setDateRange([null, null]);
@@ -941,7 +960,7 @@ export function WorkflowExecutionList({
 				title: "名称",
 				dataIndex: "name",
 				key: "name",
-				width: 260,
+				width: isBatchScope ? 280 : 260,
 				render: (name: string, record: WorkflowSummary) => {
 					const runId = runIdsByWorkflowName[record.name];
 					const templateVersion = templateVersionsByWorkflowName[record.name];
@@ -990,7 +1009,7 @@ export function WorkflowExecutionList({
 				title: "状态",
 				dataIndex: "status",
 				key: "status",
-				width: 130,
+				width: isBatchScope ? 110 : 130,
 				render: (s: string, record: WorkflowSummary) => (
 					<Space size={4} wrap>
 						<Tag
@@ -1012,7 +1031,7 @@ export function WorkflowExecutionList({
 						{
 							title: "资产",
 							key: "assetId",
-							width: 120,
+							width: 200,
 							render: (_: unknown, record: WorkflowSummary) => {
 								const assetId = getWorkflowLabel(record.labels, "asset_id");
 								if (!assetId) return "—";
@@ -1020,24 +1039,53 @@ export function WorkflowExecutionList({
 									return <AssetIdLink id={assetId} />;
 								}
 								return (
-									<Typography.Text code style={{ fontSize: 12 }}>
-										{assetId}
-									</Typography.Text>
+									<Tooltip title={assetId}>
+										<Typography.Text
+											code
+											style={{
+												display: "inline-block",
+												fontSize: 12,
+												maxWidth: 190,
+												overflow: "hidden",
+												textOverflow: "ellipsis",
+												verticalAlign: "bottom",
+												whiteSpace: "nowrap",
+											}}
+										>
+											{assetId}
+										</Typography.Text>
+									</Tooltip>
 								);
 							},
 						},
 						{
 							title: "节点进度",
 							key: "nodeProgress",
-							width: 180,
+							width: 150,
 							render: (_: unknown, record: WorkflowSummary) => {
 								const progress = nodeProgressByWorkflowName[record.name];
 								const { text, tooltip } =
 									formatPipelineRunNodeProgress(progress);
+								const content = isBatchScope ? (
+									<Typography.Text
+										style={{
+											display: "inline-block",
+											maxWidth: 135,
+											overflow: "hidden",
+											textOverflow: "ellipsis",
+											verticalAlign: "bottom",
+											whiteSpace: "nowrap",
+										}}
+									>
+										{text}
+									</Typography.Text>
+								) : (
+									text
+								);
 								if (tooltip) {
-									return <Tooltip title={tooltip}>{text}</Tooltip>;
+									return <Tooltip title={tooltip}>{content}</Tooltip>;
 								}
-								return text;
+								return content;
 							},
 						},
 					]
@@ -1046,23 +1094,25 @@ export function WorkflowExecutionList({
 				title: "节点数",
 				dataIndex: "nodeCount",
 				key: "nodeCount",
-				width: 100,
+				width: isBatchScope ? 70 : 90,
 				render: (nodeCount: number, record: WorkflowSummary) =>
 					nodeCountsByWorkflowName[record.name] ?? nodeCount,
+				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
 				title: "标签",
 				dataIndex: "labels",
 				key: "labels",
-				width: 240,
+				width: isBatchScope ? 200 : 240,
 				render: (labels?: Record<string, string>) => (
 					<WorkflowLabels labels={labels} />
 				),
+				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
 				title: "耗时",
 				key: "duration",
-				width: 140,
+				width: isBatchScope ? 110 : 140,
 				render: (_: unknown, record: WorkflowSummary) => (
 					<DurationPanel
 						phase={record.status}
@@ -1084,6 +1134,7 @@ export function WorkflowExecutionList({
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					(getWorkflowEstimatedCost(a) ?? -1) -
 					(getWorkflowEstimatedCost(b) ?? -1),
+				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
 				title: "创建时间",
@@ -1091,6 +1142,7 @@ export function WorkflowExecutionList({
 				key: "createdAt",
 				width: 190,
 				render: renderTimestamp,
+				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
 				title: "完成时间",
@@ -1099,11 +1151,12 @@ export function WorkflowExecutionList({
 				width: 190,
 				render: (value: string | undefined, record: WorkflowSummary) =>
 					renderFinishedTimestamp(value, record),
+				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
 			{
 				title: "操作",
 				key: "actions",
-				width: 110,
+				width: isBatchScope ? 100 : 110,
 				render: (_: unknown, record: WorkflowSummary) => {
 					const templateId =
 						templateIdsByWorkflowName[record.name] ??
@@ -1115,6 +1168,90 @@ export function WorkflowExecutionList({
 					const hasOperationLoading = operationLoading?.startsWith(
 						`${record.name}:`,
 					);
+					const openTemplate = (event: MouseEvent<HTMLElement>) => {
+						event.stopPropagation();
+						if (!templateId) return;
+						const params = new URLSearchParams({
+							templateId,
+							tab: "design",
+						});
+						if (templateVersion) {
+							params.set("templateVersion", String(templateVersion));
+						}
+						if (scope === "prod") {
+							params.set("readonly", "1");
+						}
+						navigate(`/pipeline?${params.toString()}`);
+					};
+					const viewRun = (event: MouseEvent<HTMLElement>) => {
+						event.stopPropagation();
+						openWorkflowDetail(record.name);
+					};
+
+					if (isBatchScope) {
+						return (
+							<Space size={2} wrap={false}>
+								{assetId ? (
+									<Tooltip title="执行历史">
+										<Button
+											aria-label="执行历史"
+											type="text"
+											size="small"
+											icon={<HistoryOutlined />}
+											onClick={(event) => {
+												event.stopPropagation();
+												void openAttemptsDrawer(assetId);
+											}}
+										/>
+									</Tooltip>
+								) : null}
+								{templateId ? (
+									<Tooltip title="打开模板">
+										<Button
+											aria-label="打开模板"
+											type="text"
+											size="small"
+											icon={<ForkOutlined />}
+											onClick={openTemplate}
+										/>
+									</Tooltip>
+								) : null}
+								<Tooltip title="查看执行">
+									<Button
+										aria-label="查看执行"
+										type="text"
+										size="small"
+										icon={<EyeOutlined />}
+										onClick={viewRun}
+									/>
+								</Tooltip>
+								<Dropdown
+									menu={{
+										items: menuItems,
+										onClick: ({ key, domEvent }) => {
+											domEvent.stopPropagation();
+											runOperation(record, key as WorkflowOperationKey);
+										},
+									}}
+									trigger={["click"]}
+								>
+									<Button
+										aria-label="更多操作"
+										type="text"
+										size="small"
+										icon={<MoreOutlined />}
+										loading={hasOperationLoading}
+										onClick={(event) => {
+											event.stopPropagation();
+											if (menuItems.length === 0) {
+												messageApi.info("当前状态暂无可用操作");
+											}
+										}}
+									/>
+								</Dropdown>
+							</Space>
+						);
+					}
 
 					return (
 						<div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -1131,35 +1268,11 @@ export function WorkflowExecutionList({
 								</Button>
 							) : null}
 							{templateId ? (
-								<Button
-									type="link"
-									size="small"
-									onClick={(event) => {
-										event.stopPropagation();
-										const params = new URLSearchParams({
-											templateId,
-											tab: "design",
-										});
-										if (templateVersion) {
-											params.set("templateVersion", String(templateVersion));
-										}
-										if (scope === "prod") {
-											params.set("readonly", "1");
-										}
-										navigate(`/pipeline?${params.toString()}`);
-									}}
-								>
+								<Button type="link" size="small" onClick={openTemplate}>
 									模板
 								</Button>
 							) : null}
-							<Button
-								type="link"
-								size="small"
-								onClick={(event) => {
-									event.stopPropagation();
-									openWorkflowDetail(record.name);
-								}}
-							>
+							<Button type="link" size="small" onClick={viewRun}>
 								查看
 							</Button>
 							<Dropdown
@@ -1209,6 +1322,7 @@ export function WorkflowExecutionList({
 	]);
 
 	const showSkeleton = loading && !initializedOnce;
+	const tableScrollX = isBatchScope ? "max-content" : 1500;
 
 	return (
 		<div className="pipeline-execution-list">
@@ -1286,52 +1400,62 @@ export function WorkflowExecutionList({
 						value: status,
 					}))}
 				/>
-				<Select
-					id="workflow-execution-version-filter"
-					allowClear
-					placeholder="模板版本"
-					style={{ minWidth: 120, flex: "0 0 120px" }}
-					value={draftVersionFilter}
-					onChange={(val) => setDraftVersionFilter(val)}
-					options={Array.from(
-						new Set(
-							Object.values(templateVersionsByWorkflowName).filter(
-								(v): v is number => typeof v === "number",
+				{!isBatchScope ? (
+					<Select
+						id="workflow-execution-version-filter"
+						allowClear
+						placeholder="模板版本"
+						style={{ minWidth: 120, flex: "0 0 120px" }}
+						value={draftVersionFilter}
+						onChange={(val) => setDraftVersionFilter(val)}
+						options={Array.from(
+							new Set(
+								Object.values(templateVersionsByWorkflowName).filter(
+									(v): v is number => typeof v === "number",
+								),
 							),
-						),
-					)
-						.sort((a, b) => b - a)
-						.map((v) => ({ label: `v${v}`, value: String(v) }))}
-				/>
+						)
+							.sort((a, b) => b - a)
+							.map((v) => ({ label: `v${v}`, value: String(v) }))}
+					/>
+				) : null}
 				<Input.Search
 					id="workflow-execution-name-search"
 					allowClear
 					placeholder="按名称搜索"
-					style={{ minWidth: 200, flex: "1 1 200px" }}
+					style={
+						isBatchScope
+							? { minWidth: 280, maxWidth: 520, flex: "1 1 360px" }
+							: { minWidth: 200, flex: "1 1 200px" }
+					}
 					value={draftNameSearch}
 					onChange={(event) => setDraftNameSearch(event.target.value)}
 					onSearch={applyFilters}
 				/>
-				<RangePicker
-					id="workflow-execution-date-range"
-					value={draftDateRange}
-					placeholder={["创建开始时间", "完成截止时间"]}
-					onChange={(values) =>
-						setDraftDateRange([values?.[0] ?? null, values?.[1] ?? null])
-					}
-					style={{ minWidth: 300, flex: "1 1 280px" }}
-				/>
-				<Select
-					id="workflow-execution-label-filter"
-					mode="multiple"
-					allowClear
-					maxTagCount="responsive"
-					placeholder="标签筛选"
-					style={{ minWidth: 220, flex: "1 1 240px" }}
-					value={draftLabelFilter}
-					onChange={(values) => setDraftLabelFilter(values)}
-					options={labelSelectOptions}
-				/>
+				{!isBatchScope ? (
+					<>
+						<RangePicker
+							id="workflow-execution-date-range"
+							value={draftDateRange}
+							placeholder={["创建开始时间", "完成截止时间"]}
+							onChange={(values) =>
+								setDraftDateRange([values?.[0] ?? null, values?.[1] ?? null])
+							}
+							style={{ minWidth: 300, flex: "1 1 280px" }}
+						/>
+						<Select
+							id="workflow-execution-label-filter"
+							mode="multiple"
+							allowClear
+							maxTagCount="responsive"
+							placeholder="标签筛选"
+							style={{ minWidth: 220, flex: "1 1 240px" }}
+							value={draftLabelFilter}
+							onChange={(values) => setDraftLabelFilter(values)}
+							options={labelSelectOptions}
+						/>
+					</>
+				) : null}
 				<Button type="primary" onClick={applyFilters} disabled={!filtersDirty}>
 					应用
 				</Button>
@@ -1369,6 +1493,7 @@ export function WorkflowExecutionList({
 						columns={columns}
 						rowKey="name"
 						loading={loading}
+						size={embedded ? "small" : "middle"}
 						rowSelection={withSelectAllColumn<WorkflowSummary>({
 							selectedRowKeys: selectedWorkflowNames,
 							onChange: (keys) => {
@@ -1379,7 +1504,7 @@ export function WorkflowExecutionList({
 								);
 							},
 						})}
-						scroll={{ x: 1200 }}
+						scroll={{ x: tableScrollX }}
 						rowClassName={() => "pipeline-execution-table-row"}
 						onRow={(record) => ({
 							onClick: (event) => {
@@ -1391,7 +1516,6 @@ export function WorkflowExecutionList({
 								) {
 									return;
 								}
-								openWorkflowDetail(record.name);
 								openWorkflowDetail(record.name);
 							},
 							style: { cursor: "pointer" },

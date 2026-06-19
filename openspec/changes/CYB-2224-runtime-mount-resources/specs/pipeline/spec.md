@@ -86,6 +86,59 @@ The system SHALL preserve the execution target selected when creating a batch pi
 - **And** the user selects the `video-proc-dev` execution target
 - **And** the user provides multiple asset or video IDs
 - **When** the user creates the batch job
-- **Then** DataBrew stores the selected execution target with the batch job
-- **And** every child pipeline run created from that batch job uses the selected execution target instead of the default target
-- **And** target-specific runtime mounts and scheduling defaults remain available during workflow creation
+- **Then** the batch creation request includes the selected execution target ID/name
+- **And** DataBrew stores the selected execution target with the batch job
+- **And** each materialized, rerun, or continue-full child pipeline run resolves that same target before validating resources or creating workflow ledger rows
+- **And** child runs use the selected target's namespace, service account, quota policy, runtime mounts, and scheduling defaults instead of the default target
+
+### Requirement: CyberPipe delivery step key remains compatible with Grace
+The system SHALL preserve existing DataBrew pipeline node IDs while allowing component runtime env values to match the step keys accepted by Grace.
+
+**Priority**: P0 (Critical)
+**Rationale**: Existing templates, histories, and UI routes refer to `ss_delivery_lerobot`, while the component image currently validates the runtime step key as `tony_delivery_lerobot`.
+
+#### Scenario: SS delivery node is rendered with Grace-compatible env
+- **Given** a saved pipeline contains a node with ID `ss_delivery_lerobot`
+- **And** that node has component env `CYBERPIPE_NODE=ss_delivery_lerobot`
+- **When** DataBrew generates the Argo manifest for deployment
+- **Then** the Argo template and DAG task remain named `step-ss-delivery-lerobot`
+- **And** only the container env `CYBERPIPE_NODE` is set to `tony_delivery_lerobot`
+- **And** the saved template, DAG edges, and UI display continue to use `ss_delivery_lerobot`
+
+### Requirement: Batch execution diagnostics remain terminal-consistent
+The system SHALL avoid showing active node progress for child runs that are already terminal failed/error/expired.
+
+**Priority**: P0 (Critical)
+**Rationale**: Argo workflow cleanup or late watcher snapshots can leave durable node rows with `Running` even though the run itself is terminal. Showing both states makes the batch look stuck after it has already failed.
+
+#### Scenario: Terminal run has a stale running node snapshot
+- **Given** a batch child run has status `Error`, `Failed`, or `Expired`
+- **And** its latest asset-node snapshot still contains a `Running` node row
+- **When** DataBrew renders batch subtask progress, node summary, node failure detail, or run asset-node detail
+- **Then** the stale `Running` node is projected as `Error`
+- **And** the run-level terminal message is used when the node row has no message
+- **And** downstream `Pending` placeholder nodes remain pending instead of being marked failed
+
+#### Scenario: Batch read model refreshes before node aggregation
+- **Given** Argo has reached a newer terminal state than the persisted batch read rows
+- **When** DataBrew serves the batch node summary, node failure list, or item attempt history
+- **Then** DataBrew refreshes the batch read model for that job before returning the response
+- **And** the response reflects the latest child run and node states available from Argo or durable ledger rows
+
+#### Scenario: Batch node summary follows the deployed DAG order
+- **Given** a deployed batch template version has ordered DAG edges
+- **When** DataBrew renders the batch node summary
+- **Then** nodes are ordered by the deployed DAG sequence
+- **And** DataBrew falls back to saved node array order only when no usable DAG edge order exists
+
+### Requirement: Backend dev deploy preserves pipeline runtime JSON knobs
+The system SHALL preserve explicit pipeline scheduling and runtime mount JSON overrides when deploying the backend dev Cloud Run service.
+
+**Priority**: P1 (High)
+**Rationale**: Dev deploys use a generated Cloud Run env file. Without explicit pass-through, shell-provided scheduling or runtime-mount JSON values are silently dropped from the new revision.
+
+#### Scenario: Operator deploys backend dev with runtime JSON overrides
+- **Given** an operator runs `deploy/cloudrun/backend-dev.sh` with pipeline template scheduling or runtime mount JSON override environment variables
+- **When** the script creates the Cloud Run revision env file
+- **Then** the resulting revision includes those JSON override variables
+- **And** later deploys do not require manual Cloud Run console edits to retain them

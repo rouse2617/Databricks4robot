@@ -118,9 +118,11 @@ function KpiCard({
 					display: "flex",
 					justifyContent: "space-between",
 					alignItems: "flex-start",
+					gap: 12,
+					minWidth: 0,
 				}}
 			>
-				<div>
+				<div style={{ minWidth: 0, flex: "1 1 auto" }}>
 					<Text
 						type="secondary"
 						style={{ fontSize: 12, fontWeight: 500, letterSpacing: "0.05em" }}
@@ -136,11 +138,19 @@ function KpiCard({
 						}}
 					>
 						<span
+							title={String(value)}
 							style={{
+								display: "block",
+								minWidth: 0,
+								maxWidth: "100%",
+								overflow: "hidden",
+								textOverflow: "ellipsis",
+								whiteSpace: "nowrap",
 								fontSize: 28,
 								fontWeight: 700,
 								color: "var(--color-text)",
 								fontVariantNumeric: "tabular-nums",
+								lineHeight: 1.18,
 							}}
 						>
 							{value}
@@ -179,6 +189,7 @@ function KpiCard({
 					style={{
 						width: 44,
 						height: 44,
+						flex: "0 0 44px",
 						borderRadius: 12,
 						background: iconBg,
 						display: "flex",
@@ -370,6 +381,21 @@ function normalizeQualityDistRows(raw: unknown): QualityDistRow[] {
 
 function lakehouseItemRows(raw: unknown): Record<string, unknown>[] {
 	return asRecordArray(asRecord(raw)?.items);
+}
+
+function lakehouseStableRowKey(
+	prefix: string,
+	row: Record<string, unknown>,
+	fields: string[],
+): string {
+	for (const field of fields) {
+		const value = row[field];
+		if (typeof value === "string" && value) return `${prefix}-${value}`;
+		if (typeof value === "number" && Number.isFinite(value)) {
+			return `${prefix}-${value}`;
+		}
+	}
+	return `${prefix}-${JSON.stringify(row)}`;
 }
 
 function normalizeOverview(raw: LakehouseOverviewResponse): DashboardMetrics {
@@ -1669,7 +1695,15 @@ export default function DashboardPage() {
 							</Text>
 							{trainingRows.length > 0 ? (
 								<Table
-									rowKey={(_, i) => `train-${i}`}
+									rowKey={(row) =>
+										lakehouseStableRowKey("train", row, [
+											"snapshot_id",
+											"dataset_id",
+											"item_id",
+											"asset_id",
+											"created_at",
+										])
+									}
 									columns={trainingColumns}
 									dataSource={trainingRows}
 									size="small"
@@ -1706,7 +1740,14 @@ export default function DashboardPage() {
 							</Text>
 							{recomputeRows.length > 0 ? (
 								<Table
-									rowKey={(_, i) => `rec-${i}`}
+									rowKey={(row) =>
+										lakehouseStableRowKey("rec", row, [
+											"asset_id",
+											"algo_name",
+											"algo_version",
+											"updated_at",
+										])
+									}
 									columns={recomputeColumns}
 									dataSource={recomputeRows}
 									size="small"
@@ -1741,7 +1782,14 @@ export default function DashboardPage() {
 							</Text>
 							{customerRows.length > 0 ? (
 								<Table
-									rowKey={(_, i) => `cust-${i}`}
+									rowKey={(row) =>
+										lakehouseStableRowKey("cust", row, [
+											"delivery_id",
+											"asset_id",
+											"mcap_file_id",
+											"delivered_at",
+										])
+									}
 									columns={customerColumns}
 									dataSource={customerRows}
 									size="small"

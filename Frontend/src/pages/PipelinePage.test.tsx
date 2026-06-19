@@ -335,20 +335,20 @@ describe("PipelinePage", () => {
 	});
 
 	// ── Render & structure ──────────────────────────────────────────
-	it("renders the design toolbar and node config panel", () => {
+	it("renders the design toolbar and node config panel", async () => {
 		renderPage();
+		expect(await screen.findByText("保存")).toBeInTheDocument();
 		expect(screen.getAllByText("组件").length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText("保存")).toBeInTheDocument();
 		expect(screen.getByText("节点配置")).toBeInTheDocument();
 		expect(
 			screen.getByText("已保存流水线请到「流水线」页签管理。"),
 		).toBeInTheDocument();
 	});
 
-	it("shows canvas toolbar buttons by default", () => {
+	it("shows canvas toolbar buttons by default", async () => {
 		renderPage();
+		expect(await screen.findByText("保存")).toBeInTheDocument();
 		expect(screen.getAllByText("部署").length).toBeGreaterThanOrEqual(1);
-		expect(screen.getByText("保存")).toBeInTheDocument();
 		expect(screen.getByText("导出")).toBeInTheDocument();
 		expect(screen.getByText("导入")).toBeInTheDocument();
 	});
@@ -368,9 +368,11 @@ describe("PipelinePage", () => {
 		});
 	});
 
-	it("shows component palette on canvas view", () => {
+	it("shows component palette on canvas view", async () => {
 		renderPage();
-		expect(screen.getByRole("heading", { name: "组件" })).toBeInTheDocument();
+		expect(
+			await screen.findByRole("heading", { name: "组件" }),
+		).toBeInTheDocument();
 	});
 
 	it("shows saved pipelines in the pipeline management tab", async () => {
@@ -624,6 +626,7 @@ describe("PipelinePage", () => {
 				[],
 				"default",
 				undefined,
+				undefined,
 			);
 		});
 
@@ -748,6 +751,7 @@ describe("PipelinePage", () => {
 				"tmpl-001",
 				[],
 				"default",
+				undefined,
 				undefined,
 			);
 		});

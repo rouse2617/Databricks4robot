@@ -430,6 +430,25 @@ func setupRouter(h *Handler) *gin.Engine {
 	return r
 }
 
+type mockBatchSubtaskReconciler struct {
+	reconcileCalls int
+	syncCalls      int
+}
+
+func (m *mockBatchSubtaskReconciler) ReconcileSubtaskRuns(context.Context, string) error {
+	m.reconcileCalls++
+	return nil
+}
+
+func (m *mockBatchSubtaskReconciler) ReconcileItemByID(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (m *mockBatchSubtaskReconciler) SyncBatchView(context.Context, string, []models.PipelineRun) error {
+	m.syncCalls++
+	return nil
+}
+
 func TestListExecutionTargets_Default(t *testing.T) {
 	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "cyber-databrew-dev")
 	h := New(uc, "", nil)
@@ -596,6 +615,57 @@ func TestListRuns_SummaryViewSkipsHeavyFields(t *testing.T) {
 	}
 	if item.TotalEstimatedCost != nil {
 		t.Fatalf("summary view should not compute totalEstimatedCost, got %v", item.TotalEstimatedCost)
+	}
+}
+
+func TestListRuns_BatchSummaryDefaultSkipsBatchSync(t *testing.T) {
+	batchJobID := "batch-1"
+	run := makePipelineRun("run-1", "wf-batch-summary")
+	run.BatchJobID = &batchJobID
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{run.ID: run},
+	}, &mockPipelineRunNodeRepo{})
+	batchRuns := &mockBatchSubtaskReconciler{}
+	h := New(uc, "", batchRuns)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs?view=summary&batchJobId=batch-1&page=1&pageSize=20", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if batchRuns.reconcileCalls != 0 || batchRuns.syncCalls != 0 {
+		t.Fatalf("default batch summary should be read-only, reconcile=%d sync=%d", batchRuns.reconcileCalls, batchRuns.syncCalls)
+	}
+}
+
+func TestListRuns_BatchSummaryRefreshOptInReconcilesOnce(t *testing.T) {
+	batchJobID := "batch-1"
+	run := makePipelineRun("run-1", "wf-batch-summary")
+	run.BatchJobID = &batchJobID
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{run.ID: run},
+	}, &mockPipelineRunNodeRepo{})
+	batchRuns := &mockBatchSubtaskReconciler{}
+	h := New(uc, "", batchRuns)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipeline-runs?view=summary&batchJobId=batch-1&refresh=true&page=1&pageSize=20", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if batchRuns.reconcileCalls != 1 {
+		t.Fatalf("expected one reconcile call, got %d", batchRuns.reconcileCalls)
+	}
+	if batchRuns.syncCalls != 0 {
+		t.Fatalf("summary refresh should not use double-list SyncBatchView, got %d sync calls", batchRuns.syncCalls)
 	}
 }
 

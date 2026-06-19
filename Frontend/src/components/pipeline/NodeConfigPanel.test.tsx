@@ -212,4 +212,49 @@ describe("NodeConfigPanel", () => {
 		expect(screen.getByRole("button", { name: /新增密钥挂载/ })).toBeTruthy();
 		expect(screen.getByLabelText("密钥挂载路径")).toHaveValue("/mnt/secrets");
 	});
+
+	it("keeps a saved template config reference without requesting hidden details", async () => {
+		const node = makeNode();
+		node.data.runtimeConfig = {
+			mode: "saved",
+			configId: "d7d3046c-624e-42b8-93ba-51ba8045ff08",
+			version: 1,
+			fileName: "hand-detect-yolov26m.latest.yaml",
+			mountPath: "/mnt/parameters",
+			targetFilename: "hand-detect-yolov26m.latest.yaml",
+			displayName: "hand-detect-yolov26m.latest.yaml · v1",
+		};
+		const onSave = vi.fn();
+		const onCancel = vi.fn();
+
+		render(
+			<NodeConfigPanel open node={node} onCancel={onCancel} onSave={onSave} />,
+		);
+
+		await waitFor(() => expect(mockListConfigs).toHaveBeenCalled());
+		expect(await screen.findByText("保留模板配置引用")).toBeTruthy();
+		expect(mockGetConfig).not.toHaveBeenCalled();
+		expect(screen.queryByText("配置版本加载失败")).toBeNull();
+		expect(screen.queryByText("暂无 ready 配置版本")).toBeNull();
+
+		fireEvent.click(screen.getByRole("button", { name: /保\s*存/ }));
+
+		await waitFor(() => {
+			expect(onSave).toHaveBeenCalledWith(
+				"node-1",
+				expect.objectContaining({
+					runtimeConfig: {
+						mode: "saved",
+						configId: "d7d3046c-624e-42b8-93ba-51ba8045ff08",
+						version: 1,
+						fileName: "hand-detect-yolov26m.latest.yaml",
+						mountPath: "/mnt/parameters",
+						targetFilename: "hand-detect-yolov26m.latest.yaml",
+						displayName: "hand-detect-yolov26m.latest.yaml · v1",
+					},
+				}),
+			);
+		});
+		expect(onCancel).toHaveBeenCalled();
+	});
 });

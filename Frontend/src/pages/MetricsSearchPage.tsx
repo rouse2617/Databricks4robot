@@ -3,6 +3,7 @@ import {
 	Button,
 	Card,
 	Empty,
+	Grid,
 	InputNumber,
 	Select,
 	Space,
@@ -17,6 +18,7 @@ import { type MetricRegistryItem, registryApi } from "../api/registry";
 import { COLUMN_LABELS } from "../lib/productVocabulary";
 
 const { Title, Text } = Typography;
+const { useBreakpoint } = Grid;
 
 type Row = {
 	id: string;
@@ -25,6 +27,11 @@ type Row = {
 const DEFAULT_PAGE_SIZE = 100;
 
 export default function MetricsSearchPage() {
+	const screens = useBreakpoint();
+	const isNarrow =
+		typeof window !== "undefined" &&
+		window.innerWidth < 768 &&
+		screens.md !== true;
 	const [metrics, setMetrics] = useState<MetricRegistryItem[]>([]);
 	const [lifecycleStates, setLifecycleStates] = useState<string[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -118,9 +125,19 @@ export default function MetricsSearchPage() {
 			</Typography.Paragraph>
 
 			<Card size="small" style={{ marginBottom: 16 }}>
-				<Space wrap>
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: isNarrow
+							? "minmax(0, 1fr)"
+							: "minmax(260px, 360px) 90px 120px 180px auto",
+						gap: 8,
+						alignItems: "center",
+						width: "100%",
+					}}
+				>
 					<Select
-						style={{ width: 360 }}
+						style={{ width: "100%" }}
 						placeholder="选择指标"
 						options={metricOptions}
 						value={metricKey || undefined}
@@ -136,12 +153,13 @@ export default function MetricsSearchPage() {
 							{ label: "<", value: "lt" },
 							{ label: "<=", value: "lte" },
 						]}
-						style={{ width: 90 }}
+						style={{ width: "100%" }}
 					/>
 					<InputNumber
 						value={value}
 						onChange={(v) => setValue(typeof v === "number" ? v : 0)}
 						step={0.01}
+						style={{ width: "100%" }}
 					/>
 					<Select
 						allowClear
@@ -149,16 +167,17 @@ export default function MetricsSearchPage() {
 						value={lifecycleState || undefined}
 						onChange={(v) => setLifecycleState(v ?? "")}
 						options={lifecycleStates.map((s) => ({ label: s, value: s }))}
-						style={{ width: 180 }}
+						style={{ width: "100%" }}
 					/>
 					<Button
 						type="primary"
 						onClick={() => void runSearch()}
 						loading={loading}
+						style={{ width: isNarrow ? "100%" : undefined }}
 					>
 						检索
 					</Button>
-				</Space>
+				</div>
 			</Card>
 
 			{error && (
@@ -175,11 +194,7 @@ export default function MetricsSearchPage() {
 				title={
 					<span>
 						命中资产{" "}
-						{loading ? (
-							<Tag>正在加载…</Tag>
-						) : (
-							<Tag color="blue">{total}</Tag>
-						)}
+						{loading ? <Tag>正在加载…</Tag> : <Tag color="blue">{total}</Tag>}
 					</span>
 				}
 			>
@@ -188,6 +203,7 @@ export default function MetricsSearchPage() {
 					loading={loading}
 					dataSource={rows}
 					pagination={false}
+					scroll={isNarrow ? { x: 420 } : undefined}
 					columns={[
 						{
 							title: COLUMN_LABELS.assetId,

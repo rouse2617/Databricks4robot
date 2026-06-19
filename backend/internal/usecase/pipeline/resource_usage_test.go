@@ -87,6 +87,41 @@ func TestBuildPodResourceUsageReportFiltersNode(t *testing.T) {
 	}
 }
 
+func TestBuildPodResourceUsageReportFallsBackToLiveWorkflowSpec(t *testing.T) {
+	wf := &wfv1.Workflow{}
+	wf.Spec.Templates = []wfv1.Template{
+		{
+			Name: "main",
+			Container: &corev1.Container{
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("14"),
+						corev1.ResourceMemory: resource.MustParse("55Gi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("14"),
+						corev1.ResourceMemory: resource.MustParse("55Gi"),
+					},
+				},
+			},
+		},
+	}
+	wf.Status.Nodes = wfv1.Nodes{
+		"pod-1": {ID: "pod-1", Type: wfv1.NodeTypePod, TemplateName: "main"},
+	}
+
+	pods := buildPodResourceUsageReport(wf, nil, "2026-01-01T00:00:00Z", "")
+	if len(pods) != 1 {
+		t.Fatalf("expected 1 pod, got %d", len(pods))
+	}
+	if pods[0].CPURequest != "14" || pods[0].MemoryRequest != "55Gi" {
+		t.Fatalf("expected live spec requests, got %#v", pods[0])
+	}
+	if pods[0].CPULimit != "14" || pods[0].MemoryLimit != "55Gi" {
+		t.Fatalf("expected live spec limits, got %#v", pods[0])
+	}
+}
+
 func TestQuantityString(t *testing.T) {
 	if quantityString(resource.MustParse("0")) != "" {
 		t.Fatal("expected empty for zero quantity")

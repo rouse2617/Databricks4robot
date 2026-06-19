@@ -70,3 +70,117 @@
 - **Decision**: Preserve active pipeline runs as running when Argo lookup returns `NotFound` but no terminal ledger proves completion/failure, until the normal stale-active-run limit is reached. Also keep the short workflow creation visibility grace period independent of workflow UID.
 - **Alternatives**: Increase the global unschedulable threshold or disable list refresh. Both would hide unrelated diagnostics and would not address transient workflow visibility.
 - **Rationale**: The authoritative workflow and pods were still running in `video-proc-dev`; list refresh should not persist a terminal TTL state for an active run just because one Argo lookup temporarily failed.
+
+## 2026-06-19 — Batch jobs inherit the selected execution target
+- **Context**: A browser-created CyberPipe batch selected `video-proc-dev`, but the `POST /api/v1/backfill` request did not carry the selected target. Backend materialization therefore created child runs on the default target and failed resource validation at the default 8 CPU ceiling.
+- **Decision**: Treat `targetId` as part of the batch job contract. The UI sends it for multi-asset deploys, the backend stores it in the job filter JSON, and materialize/rerun paths pass it into subtask run creation and deploy options.
+- **Alternatives**: Let users run each video as separate direct deployments, manually patch old jobs, or make the default target permissive enough for video processing.
+- **Rationale**: Execution target controls namespace, service account, quota policy, and scheduling defaults. Keeping batch and direct deploy target semantics aligned fixes the root cause without weakening the default target guardrails.
+
+## 2026-06-19 — Cross-namespace runtime ConfigMap projection needs dev RBAC
+- **Context**: After batch target propagation was fixed, the next browser-created `video-proc-dev` batch failed before workflow creation because `system:serviceaccount:cyber-databrew-dev:cyber-databrew-backend-argo` could not create ConfigMaps in `video-proc-dev`.
+- **Decision**: Add a dev overlay Role/RoleBinding in `video-proc-dev` that grants this backend service account only `create`, `get`, and `delete` on ConfigMaps for runtime config projection.
+- **Alternatives**: Disable runtime config projection for cross-namespace targets, use the target workflow service account for backend-side ConfigMap creation, or grant broad edit/admin in `video-proc-dev`.
+- **Rationale**: Runtime config projection is created before workflow submission by the backend Kubernetes client. A narrow ConfigMap-only RoleBinding keeps the target namespace boundary explicit without broadening application privileges.
+
+## 2026-06-19 — Batch summary lists are read-only by default
+- **Context**: The local batch detail page for `3c365f4a-1392-4685-907c-a766408ca510` loaded slowly because `GET /api/v1/pipeline-runs?view=summary&batchJobId=...` synchronously reconciled and refreshed active child runs from Argo, then the handler queried the list a second time. With two running subtasks this single table request took about 8 seconds and was repeated by polling.
+- **Decision**: Make summary list requests read-only by default. They still attach persisted node progress, but active Argo refresh and batch reconciliation only run when the caller explicitly sets `refresh=true`.
+- **Alternatives**: Increase the frontend polling interval, remove the subtask table, or keep implicit refresh and parallelize Argo calls.
+- **Rationale**: Page reads should not perform slow cluster-side synchronization. The detail endpoint, watcher, and explicit refresh path remain available for state reconciliation, while the UI can render quickly from durable ledger rows.
+
+## 2026-06-19 — SS delivery node keeps UI ID but uses Grace step key alias
+- **Context**: Retrying batch `3c365f4a-1392-4685-907c-a766408ca510` after the scheduler fixes moved execution past `head_tracking`, but the old run failed in `find_tony_stats` because the Grace schema accepted `tony_delivery_lerobot` while the template component env passed `CYBERPIPE_NODE=ss_delivery_lerobot`.
+- **Decision**: During backend manifest generation, rewrite only `CYBERPIPE_NODE=ss_delivery_lerobot` to `tony_delivery_lerobot`. Keep the DataBrew node ID, Argo template name, DAG dependencies, UI labels, and saved template edges as `ss_delivery_lerobot`.
+- **Alternatives**: Rename the saved node/template everywhere, change the component image schema, or keep failing until all templates are manually patched.
+- **Rationale**: The alias is the smallest compatibility bridge: Grace receives the step key it already understands, while existing templates and UI history remain stable.
+
+## 2026-06-19 — Terminal runs cannot show active node progress
+- **Context**: After a retry, one child run was terminal `Error` with message `Argo 工作流已被 TTL 清理`, but its last durable asset-node snapshot still had `step-hand-detection` as `Running`. The batch list therefore looked failed and still running at the same time.
+- **Decision**: When a run is terminal failed/error/expired and its node snapshot still contains `Running` rows, project those active rows as `Error` in batch node progress, node summary/failure SQL, and run asset-node detail responses. Use the run-level terminal message when the node row has no message.
+- **Alternatives**: Leave the raw stale node status visible, mark every downstream `Pending` node as failed, or add a migration to rewrite historical rows.
+- **Rationale**: The workflow is no longer active, so a `Running` node is stale diagnostic data. Projecting only the active node to `Error` preserves downstream `Pending` placeholders while making the UI state coherent.
+
+## 2026-06-19 — Batch detail UX favors the active task workflow
+- **Context**: The local batch detail page was visually dense: the embedded subtask table filter row wrapped into three rows, and the page fetched the full pipeline template list only to resolve the current batch template name.
+- **Decision**: In batch scope, keep only status and name filters in the subtask table; hide version/date/label filters that are more useful on the global execution list. Resolve the batch template name from `GET /pipelines/{id}/versions` and in-flight dedupe that metadata request instead of calling `GET /pipelines?page_size=200`.
+- **Alternatives**: Keep the global execution filter set inside batch detail, or increase page width/padding without reducing controls.
+- **Rationale**: Batch detail is an operational page for a known template and a small set of child runs. Removing low-value filters and the large metadata request improves first-screen scanability and removes avoidable latency.
+
+## 2026-06-19 — Batch read endpoints refresh before aggregating
+- **Context**: The target batch finished successfully in Argo, but stale durable `pipeline_runs` and asset-node rows could still make the UI show an old running/error state until another background sync occurred.
+- **Decision**: Refresh the batch read model before serving node summary, node failure, and item-attempt reads, then aggregate from the refreshed durable rows. Resolve node display order from the deployed template version DAG edges before falling back to saved node order.
+- **Alternatives**: Leave read endpoints purely passive and rely on polling/watcher timing, or have the frontend call a separate refresh endpoint before every read.
+- **Rationale**: Batch detail is the operator's source of truth during incident handling. A read that presents stale terminal state is worse than a slightly more expensive targeted refresh, and DAG-derived ordering keeps the UI aligned with the actual workflow sequence.
+
+## 2026-06-19 — Backend dev deploy script passes runtime JSON overrides
+- **Context**: `deploy/cloudrun/backend-dev.sh` builds a full `--env-vars-file`, which replaces the revision environment. Passing `PIPELINE_TEMPLATE_TOLERATIONS_JSON` or `PIPELINE_RUNTIME_SECRET_RESOURCES_JSON` in the shell did not reach Cloud Run unless the script explicitly wrote them into that env file.
+- **Decision**: Add pass-through override support for pipeline template scheduling JSON and runtime mount catalog JSON variables in the backend dev deploy script.
+- **Alternatives**: Manually edit Cloud Run env vars after every deploy, store these values only in Kubernetes ConfigMaps, or rely on execution target defaults for every future target.
+- **Rationale**: Scripted deploys must be reproducible. Preserving the generic runtime JSON knobs keeps dev revisions self-describing and avoids accidental loss of scheduling or secret-mount config on the next deploy.
+
+## 2026-06-19 — Designer preserves inaccessible saved config references
+- **Context**: The CyberPipe template references SDK-owned ready pipeline configs. The configs and version files exist, but a normal browser user receives `404` from `GET /pipeline-configs/{id}` because the backend hides configs owned by another user. NodeConfigPanel treated that as a missing version and blocked editing the template node.
+- **Decision**: When a node already carries the same saved runtime config id/version and the config list does not include that config for the current account, the panel keeps a local saved-version option, shows an informational notice, and preserves the template reference on save without requesting the hidden detail endpoint.
+- **Alternatives**: Make all user-scoped configs globally readable, or require manual migration of existing SDK-created configs before the template can be edited.
+- **Rationale**: The UI should not corrupt or block a visible template because the current user cannot inspect an existing config's content. This preserves deployable template references without broadening backend config read permissions or producing avoidable browser 404s.
+
+## 2026-06-19 — Saved templates use DAG auto-layout
+- **Context**: Saved pipeline JSON does not persist React Flow node positions. The designer restored templates with `x: 120 + i*80` and `y: 100 + i*60`, while node cards are about 180px wide, so every reload compressed sequential CyberPipe templates into overlapping cards.
+- **Decision**: Restore saved templates through a dagre left-to-right layout with node dimensions and rank gaps that match the current node card size.
+- **Alternatives**: Persist canvas coordinates in the DSL immediately, or ask users to manually spread nodes after every load.
+- **Rationale**: Backend template normalization currently drops unknown front-end-only layout fields, so auto-layout fixes both old and new templates without changing backend API shape.
+
+## 2026-06-19 — Active Unschedulable waits for autoscaling
+- **Context**: Batch `c67f512c-2bbc-48d3-8164-6e906a41716c` initially showed node failures because Kubernetes reported `Unschedulable` while GKE was adding L4 nodes. A few minutes later the same Pods scheduled, `head-tracking` succeeded, and downstream GPU nodes kept running.
+- **Decision**: Treat active `Pending` scheduler diagnostics as active Pending in node snapshots, batch summaries, and node failure filters. Keep the existing run-level `PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD` guard, and project diagnostic Pending nodes to `Error` only when the run is terminal failed/error/expired.
+- **Alternatives**: Keep failing immediately on any scheduler diagnostic, or remove scheduler diagnostics entirely from the UI.
+- **Rationale**: During GPU autoscaling, `Unschedulable` is often a transient scheduling signal rather than an algorithm failure. Operators still need the message while the Pod is pending, but the batch should not count it as failed until the workflow has actually crossed the configured terminal threshold.
+
+## 2026-06-19 — Workflow monitoring follows the execution target namespace
+- **Context**: The workflow detail resource endpoint returned 500 for `video-proc-dev` runs because the run row existed in DataBrew but the resource collector queried Argo in the default namespace instead of the run's `ArgoNamespace`.
+- **Decision**: Resolve workflow resource usage and node resource usage through `pipeline_runs.argo_namespace`, falling back to the deployment execution target namespace only for legacy rows.
+- **Alternatives**: Keep using the default Argo namespace, or require the frontend to pass a namespace query parameter.
+- **Rationale**: Namespace is part of the execution target contract and is already persisted with the run. The frontend should not have to know cluster routing details to show Pod/resource monitoring.
+
+## 2026-06-19 — Monitoring displays resource snapshots without live metrics
+- **Context**: Dev does not currently expose live metrics through the workflow resource API, but Argo still provides `resourcesDuration` and the live Workflow spec contains CPU/Memory request/limit values. The UI previously showed `暂无监控数据` because it only rendered `node.metrics`.
+- **Decision**: Populate request/limit values from the live Workflow spec when the stored manifest loses Kubernetes `Quantity` amounts, and have the runtime drawer fetch node resource usage to display a `资源规格快照` when live metrics are unavailable.
+- **Alternatives**: Hide the monitoring section until metrics-server/OpenCost style live metrics are available, or overload `node.metrics` in the workflow detail payload.
+- **Rationale**: Operators need to see what the Pod requested and how much Argo resourceDuration accrued even before full live metrics are integrated. A separate resource endpoint keeps the workflow payload small while making monitoring useful.
+
+## 2026-06-19 — Terminal UI surfaces backend policy state
+- **Context**: The node card had a terminal button, but the runtime drawer only showed a stale generic message saying terminal debugging had moved to the node card. On `video-proc-dev`, backend debug capabilities correctly report `execEnabled=false` with reason `Pod 终端未启用，请在执行目标配置中开启`.
+- **Decision**: Keep the terminal button mapped to the runtime drawer for now, but render `node.debug` directly: Pod exec enabled/disabled, disabled reason, log stream state, allowed commands, and max session length.
+- **Alternatives**: Implement a full WebSocket terminal UI in this PR, or remove the terminal button until target policies enable exec.
+- **Rationale**: The immediate user-facing bug was missing/unclear terminal status. Showing the backend policy state removes ambiguity without shipping a partial interactive shell. A full terminal client can be layered on the existing `createTerminalSession` API later.
+
+## 2026-06-19 — Pre-commit all-files fallback
+- **Context**: After dev deployment verification, `pre-commit run --all-files` could not complete on this machine. The Homebrew Python 3.14 pre-commit entrypoint failed importing `pyexpat`; the `uv tool run pre-commit` path then exposed repository-wide, pre-existing blockers: Terraform/TFLint binaries are not installed locally, and tracked generated `site/` artifacts plus unrelated existing test files trigger detect-secrets. The hook also auto-edited many unrelated tracked generated files, which were restored before staging.
+- **Decision**: Run the same pre-commit hook set against the intended PR files only, using `GOPROXY=https://goproxy.cn,direct uv tool run pre-commit run --files ...`; this passed for all files in scope.
+- **Alternatives**: Commit broad generated `site/` formatting churn and unrelated secret-baseline changes, install Terraform/TFLint and update global repo hygiene in this PR, or skip pre-commit entirely.
+- **Rationale**: This PR must stay scoped to the pipeline/runtime/UI fix. The scoped pre-commit run proves the files being committed pass the configured checks while avoiding unrelated generated artifact churn.
+
+## 2026-06-19 — Final performance pass used Playwright after Chrome MCP transport closed
+- **Context**: The final UI performance pass touched frontend code and started with Chrome DevTools MCP, but the MCP server returned `Transport closed` for `list_pages` and trace calls after prior traces.
+- **Decision**: Record the MCP outage here, then use the repository's Playwright Chromium dependency for browser-based cold-load timing, network/console checks, and workflow runtime drawer verification. The earlier deployed monitoring pass still has Chrome MCP evidence; this final fallback covered the new performance/CLS changes.
+- **Alternatives**: Stop and ask the user to restart MCP, or rely only on curl/build output.
+- **Rationale**: The user needed an immediate browser verification. Playwright still exercises the real deployed browser UI while preserving the required audit note for the unavailable MCP transport.
+
+## 2026-06-19 — Refresh dev K8s bridge token for Pod diagnostics
+- **Context**: Pod diagnostics on backend revision `00934-xb6` initially returned `403 K8S_FORBIDDEN`. The Cloud Run secret `cyber-databrew-dev-k8s-bearer-token:latest` decoded to service account `system:serviceaccount:cyber-databrew-dev:cyber-databrew-backend-argo` and expired at `2026-06-19T02:28:36Z`; current RBAC still allowed pods/events in `video-proc-dev`. <!-- pragma: allowlist secret -->
+- **Decision**: Generate a fresh 48h Kubernetes service account token, add Secret Manager version `6`, and create a new Cloud Run backend revision by updating the K8s secret bindings without changing the backend image.
+- **Alternatives**: Disable Pod diagnostics, broaden RBAC, or wait for the next backend image deploy to reload secrets.
+- **Rationale**: The failure was credential expiry, not application logic or RBAC. Refreshing the bridge token restores diagnostics while keeping the target namespace permissions unchanged.
+
+## 2026-06-19 — Full-page UI/UX audit uses Playwright fallback again
+- **Context**: The user requested testing every page from a UI/UX perspective. The diff still touches `Frontend/`, so Chrome DevTools MCP was retried first, but `list_pages` again failed with `Transport closed`.
+- **Decision**: Record the MCP outage here and run Playwright Chromium against local Vite for the full route set: 13 core app pages plus 7 pipeline pages, each in desktop and 390px mobile viewports. Fix only confirmed product issues from that pass: mobile MCAP title/filter overflow, mobile Events table page overflow, mobile Component Registry table usability, Workflow summary UUID clipping, dashboard KPI/chart placeholders, and modal deprecation console noise.
+- **Alternatives**: Stop until the MCP server is restarted, or broadly redesign all legacy table pages in this PR.
+- **Rationale**: Playwright provides real browser layout, console, network, screenshot, and timing evidence immediately. Restricting fixes to observed issues keeps the CYB-2224 PR scoped while still addressing the user's full-page UI/UX concern.
+
+## 2026-06-19 — Registry mobile overflow stays inside controls
+- **Context**: The deployed full-page audit found the final remaining business-page issue on `/registry` at 390px: the config workspace table and toolbar expanded the document width even when the table had `scroll.x`.
+- **Decision**: Keep wide registry tables horizontally scrollable inside bounded containers and make the config filter toolbar wrap responsively. Also switch deprecated AntD `Card bordered` stats cards to `variant="outlined"` to remove the console warning.
+- **Alternatives**: Reduce or hide config columns on mobile, increase the page's minimum width, or move the table into a separate mobile-only card layout in this PR.
+- **Rationale**: Registry still needs dense audit/config metadata, and users may need all columns. Bounded table scrolling plus a responsive toolbar fixes document overflow without changing data visibility or introducing a new mobile component surface.

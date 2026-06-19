@@ -295,6 +295,52 @@ func TestSyncJobProgress_PausedStillUpdatesCounts(t *testing.T) {
 	}
 }
 
+func TestGetBatchNodeSummary_SyncsActiveRunsBeforeAggregating(t *testing.T) {
+	ctx := context.Background()
+	jobID := "job-1"
+	runID := "run-1"
+	repo := &pausedSyncRepo{
+		job: &models.BackfillJob{
+			ID:         jobID,
+			Status:     "running",
+			TotalCount: 1,
+		},
+		items: []models.BackfillItem{
+			{
+				ID:            "item-1",
+				JobID:         jobID,
+				AssetID:       "asset-1",
+				Status:        "running",
+				PipelineRunID: &runID,
+			},
+		},
+	}
+	runRepo := &syncTestRunRepo{
+		byID: map[string]*models.PipelineRun{
+			runID: {
+				ID:              runID,
+				WorkflowName:    "wf-1",
+				Status:          "Running",
+				ArgoWorkflowUID: "uid-1",
+			},
+		},
+	}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+
+	summary, err := uc.GetBatchNodeSummary(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetBatchNodeSummary: %v", err)
+	}
+	if summary.Subtasks.Completed != 1 || summary.Subtasks.Running != 0 {
+		t.Fatalf("expected refreshed completed summary, got %+v", summary.Subtasks)
+	}
+	if repo.job.Status != "completed" {
+		t.Fatalf("expected job completed after summary sync, got %q", repo.job.Status)
+	}
+}
+
 func TestSyncJobProgress_DoesNotOverwriteConcurrentPause(t *testing.T) {
 	ctx := context.Background()
 	jobID := "job-1"

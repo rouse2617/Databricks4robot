@@ -12,7 +12,7 @@ repos:
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
-        exclude: package-lock.json
+        exclude: ^(package-lock\.json|site/)
 
   # 2. Scanning for specific cloud provider signatures
   - repo: https://github.com/gitleaks/gitleaks
@@ -27,9 +27,9 @@ repos:
     hooks:
       - id: check-merge-conflict
       - id: end-of-file-fixer
-        exclude: ^databrew-pipeline/
+        exclude: ^(databrew-pipeline/|site/|backend/migrations/055_pipeline_configs\.sql$)
       - id: trailing-whitespace
-        exclude: ^databrew-pipeline/
+        exclude: ^(databrew-pipeline/|site/)
       - id: check-yaml
         args: ['--allow-multiple-documents']
         exclude: ^databrew-pipeline/

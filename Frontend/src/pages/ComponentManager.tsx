@@ -14,6 +14,7 @@ import {
 	Descriptions,
 	Empty,
 	Form,
+	Grid,
 	Input,
 	Modal,
 	message,
@@ -21,6 +22,7 @@ import {
 	Segmented,
 	Select,
 	Space,
+	Spin,
 	Table,
 	Tag,
 	Tooltip,
@@ -61,6 +63,8 @@ import {
 	normalizeComponentArgs,
 	normalizeShellCommandArgs,
 } from "../lib/pipelineContract";
+
+const { useBreakpoint } = Grid;
 
 type EnvRow = { name?: string; value?: string };
 type PortRow = {
@@ -1179,6 +1183,11 @@ function PortFormList({
 }
 
 export function ComponentManager() {
+	const screens = useBreakpoint();
+	const isNarrow =
+		typeof window !== "undefined" &&
+		window.innerWidth < 768 &&
+		screens.md !== true;
 	const [items, setItems] = useState<PipelineComponentAPI[]>([]);
 	const [releases, setReleases] = useState<PipelineComponentReleaseAPI[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -1389,6 +1398,8 @@ export function ComponentManager() {
 			.filter((row) => row.releases.length > 0)
 			.map((row) => row.legacyComponent?.id || row.key);
 	}, [expandedRowKeys, libraryRows, search]);
+	const libraryRowsReady = !loading && !releaseLoading;
+	const displayedLibraryRows = libraryRowsReady ? libraryRows : [];
 
 	const isCreateMode = modalMode === "create";
 	const isEditMode = modalMode === "edit";
@@ -1576,11 +1587,223 @@ export function ComponentManager() {
 		);
 	};
 
+	const renderLibraryActions = (
+		record: ComponentLibraryRow,
+		variant: "table" | "mobile" = "table",
+	) => {
+		const component = record.legacyComponent;
+		const linkedToReleaseLibrary = Boolean(record.primaryRelease && component);
+		const showComponentActions =
+			Boolean(component) &&
+			!record.primaryRelease &&
+			libraryTypeFilter !== "release";
+		const isSystemComponent = component?.source === "system";
+		const deleteButton = component ? (
+			<Button
+				type="link"
+				size="small"
+				danger
+				disabled={isSystemComponent}
+				icon={<DeleteOutlined />}
+				aria-label="删除组件"
+				onClick={() => {
+					if (isSystemComponent) return;
+					setConfirmDeleteId(component.id);
+				}}
+			>
+				删除
+			</Button>
+		) : null;
+		return (
+			<Space
+				size={variant === "mobile" ? 6 : 4}
+				wrap
+				className={
+					variant === "mobile"
+						? "component-library-mobile-card__actions"
+						: "component-library-row-actions"
+				}
+				style={{
+					whiteSpace: variant === "mobile" ? "normal" : "nowrap",
+					justifyContent: variant === "mobile" ? "flex-start" : "flex-end",
+				}}
+			>
+				{record.primaryRelease ? (
+					<Button
+						type="link"
+						size="small"
+						icon={<EyeOutlined />}
+						onClick={() =>
+							openReleaseView(
+								record.primaryRelease as PipelineComponentReleaseAPI,
+							)
+						}
+					>
+						{variant === "mobile" ? "查看版本" : "查看当前版本"}
+					</Button>
+				) : null}
+				{linkedToReleaseLibrary && record.releases.length === 0 ? (
+					<Tooltip title="该任务已接入版本库，等待 CI 同步镜像构建版本">
+						<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+							暂无可用版本
+						</Typography.Text>
+					</Tooltip>
+				) : null}
+				{record.primaryRelease && showComponentActions ? (
+					<Typography.Text type="secondary">|</Typography.Text>
+				) : null}
+				{showComponentActions && component ? (
+					<Button
+						type="link"
+						size="small"
+						icon={<EyeOutlined />}
+						aria-label="查看组件定义"
+						onClick={() => openView(component)}
+					>
+						组件定义
+					</Button>
+				) : null}
+				{showComponentActions && component ? (
+					<Button
+						type="link"
+						size="small"
+						icon={<EditOutlined />}
+						aria-label="编辑组件"
+						onClick={() => openEdit(component)}
+					>
+						编辑
+					</Button>
+				) : null}
+				{showComponentActions && component && deleteButton ? (
+					isSystemComponent ? (
+						<Tooltip title="系统来源组件禁止删除">{deleteButton}</Tooltip>
+					) : confirmDeleteId === component.id ? (
+						<Popconfirm
+							title="删除组件"
+							description={`确认删除 ${component.name}？此操作无法撤销。`}
+							okText="确认删除"
+							cancelText="取消"
+							open
+							onCancel={() => setConfirmDeleteId(null)}
+							onConfirm={() => handleDelete(component)}
+							destroyOnHidden
+						>
+							{deleteButton}
+						</Popconfirm>
+					) : (
+						deleteButton
+					)
+				) : null}
+			</Space>
+		);
+	};
+
+	const renderMobileLibraryCard = (record: ComponentLibraryRow) => {
+		const rowKey = getRowKey(record);
+		const expanded = activeExpandedRowKeys.includes(rowKey);
+		const canExpand = record.releases.length > 0;
+		const imageTag = record.primaryRelease
+			? releaseImageTag(record.primaryRelease)
+			: "";
+		const imageRef = record.primaryRelease
+			? releaseImageReference(record.primaryRelease)
+			: "";
+		return (
+			<li className="component-library-mobile-card" key={rowKey}>
+				<div className="component-library-mobile-card__header">
+					{canExpand ? (
+						<Button
+							type="text"
+							size="small"
+							className="component-library-row-expand"
+							icon={expanded ? <DownOutlined /> : <RightOutlined />}
+							aria-label={expanded ? "收起镜像构建版本" : "展开镜像构建版本"}
+							aria-expanded={expanded}
+							onClick={() => toggleRowExpanded(rowKey)}
+						/>
+					) : (
+						<span className="component-library-row-expand component-library-row-expand--placeholder" />
+					)}
+					<Tooltip title={record.name}>
+						<span className="component-library-mobile-card__title">
+							{record.name}
+						</span>
+					</Tooltip>
+				</div>
+				<div className="component-library-mobile-card__meta">
+					<Typography.Text type="secondary">
+						{componentSourceSummary(record)}
+					</Typography.Text>
+					{record.primaryRelease ? (
+						<ReleaseVersionChip
+							release={record.primaryRelease}
+							onClick={() =>
+								openReleaseView(
+									record.primaryRelease as PipelineComponentReleaseAPI,
+								)
+							}
+						/>
+					) : null}
+				</div>
+				<Tooltip
+					title={[
+						imageRef ? `完整镜像: ${imageRef}` : "",
+						imageTag ? `Tag: ${imageTag}` : "",
+						record.imageUid ? `Digest 短码: ${record.imageUid}` : "",
+					]
+						.filter(Boolean)
+						.join("\n")}
+				>
+					<div className="component-library-mobile-card__image">
+						<Typography.Text
+							type="secondary"
+							copyable={
+								imageRef
+									? { text: imageRef, tooltips: false }
+									: record.imageUid
+										? { text: record.imageUid, tooltips: false }
+										: false
+							}
+						>
+							{record.primaryRelease
+								? `镜像 Tag：${imageTag || "-"}`
+								: `镜像摘要：${record.imageUid || "-"}`}
+						</Typography.Text>
+						{record.primaryRelease && record.imageUid ? (
+							<Typography.Text type="secondary">
+								Digest：{record.imageUid}
+							</Typography.Text>
+						) : null}
+					</div>
+				</Tooltip>
+				{renderLibraryActions(record, "mobile")}
+				{canExpand && expanded ? (
+					<div className="component-library-mobile-card__versions">
+						{record.releases.map((release) => (
+							<div
+								key={release.id}
+								className="component-library-mobile-card__version"
+							>
+								<ReleaseVersionChip
+									release={release}
+									onClick={() => openReleaseView(release)}
+								/>
+								<Typography.Text type="secondary">
+									{releaseImageTag(release) || releaseImageUid(release) || "-"}
+								</Typography.Text>
+							</div>
+						))}
+					</div>
+				) : null}
+			</li>
+		);
+	};
+
 	const libraryColumns: ColumnsType<ComponentLibraryRow> = [
 		{
 			title: "组件信息",
 			key: "name",
-			width: 320,
+			width: isNarrow ? 300 : 320,
 			sorter: (a, b) => compareTextAsc(a.name, b.name),
 			render: (_, record) => {
 				const rowKey = getRowKey(record);
@@ -1690,160 +1913,65 @@ export function ComponentManager() {
 				);
 			},
 		},
-		{
-			title: "默认执行版本",
-			key: "versions",
-			width: 240,
-			render: (_, record) => {
-				const tag = releaseTagText(record.primaryRelease);
-				return (
-					<Space direction="vertical" size={4} style={{ maxWidth: 240 }}>
-						{record.primaryRelease ? (
-							<ReleaseVersionChip
-								release={record.primaryRelease}
-								onClick={() =>
-									openReleaseView(
-										record.primaryRelease as PipelineComponentReleaseAPI,
-									)
-								}
-							/>
-						) : null}
-						{record.releases.length === 0 && record.legacyComponent ? (
-							<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-								默认镜像：
-								<Typography.Text code>
-									{record.legacyComponent.tag || "latest"}
-								</Typography.Text>
-							</Typography.Text>
-						) : null}
-						{record.releases.length === 0 && !record.legacyComponent
-							? "-"
-							: null}
-						{tag ? (
-							<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-								Tag：{tag}
-							</Typography.Text>
-						) : null}
-					</Space>
-				);
-			},
-		},
-		{
-			title: "最近更新时间",
-			key: "updatedAt",
-			width: 160,
-			sorter: (a, b) => compareDateAsc(a.updatedAt, b.updatedAt),
-			defaultSortOrder: "descend",
-			render: (_, record) => formatDateTime(record.updatedAt),
-		},
+		...(!isNarrow
+			? [
+					{
+						title: "默认执行版本",
+						key: "versions",
+						width: 240,
+						render: (_: unknown, record: ComponentLibraryRow) => {
+							const tag = releaseTagText(record.primaryRelease);
+							return (
+								<Space direction="vertical" size={4} style={{ maxWidth: 240 }}>
+									{record.primaryRelease ? (
+										<ReleaseVersionChip
+											release={record.primaryRelease}
+											onClick={() =>
+												openReleaseView(
+													record.primaryRelease as PipelineComponentReleaseAPI,
+												)
+											}
+										/>
+									) : null}
+									{record.releases.length === 0 && record.legacyComponent ? (
+										<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+											默认镜像：
+											<Typography.Text code>
+												{record.legacyComponent.tag || "latest"}
+											</Typography.Text>
+										</Typography.Text>
+									) : null}
+									{record.releases.length === 0 && !record.legacyComponent
+										? "-"
+										: null}
+									{tag ? (
+										<Typography.Text type="secondary" style={{ fontSize: 12 }}>
+											Tag：{tag}
+										</Typography.Text>
+									) : null}
+								</Space>
+							);
+						},
+					},
+					{
+						title: "最近更新时间",
+						key: "updatedAt",
+						width: 160,
+						sorter: (a: ComponentLibraryRow, b: ComponentLibraryRow) =>
+							compareDateAsc(a.updatedAt, b.updatedAt),
+						defaultSortOrder: "descend" as const,
+						render: (_: unknown, record: ComponentLibraryRow) =>
+							formatDateTime(record.updatedAt),
+					},
+				]
+			: []),
 		{
 			title: "操作",
 			key: "actions",
-			width: 180,
-			fixed: "right",
+			width: isNarrow ? 150 : 180,
+			fixed: isNarrow ? undefined : "right",
 			className: "component-library-row-actions-cell",
-			render: (_, record) => {
-				const component = record.legacyComponent;
-				const linkedToReleaseLibrary = Boolean(
-					record.primaryRelease && component,
-				);
-				const showComponentActions =
-					Boolean(component) &&
-					!record.primaryRelease &&
-					libraryTypeFilter !== "release";
-				const isSystemComponent = component?.source === "system";
-				const deleteButton = component ? (
-					<Button
-						type="link"
-						size="small"
-						danger
-						disabled={isSystemComponent}
-						icon={<DeleteOutlined />}
-						aria-label="删除组件"
-						onClick={() => {
-							if (isSystemComponent) return;
-							setConfirmDeleteId(component.id);
-						}}
-					>
-						删除
-					</Button>
-				) : null;
-				return (
-					<Space
-						size={4}
-						wrap
-						className="component-library-row-actions"
-						style={{ whiteSpace: "nowrap", justifyContent: "flex-end" }}
-					>
-						{record.primaryRelease ? (
-							<Button
-								type="link"
-								size="small"
-								icon={<EyeOutlined />}
-								onClick={() =>
-									openReleaseView(
-										record.primaryRelease as PipelineComponentReleaseAPI,
-									)
-								}
-							>
-								查看当前版本
-							</Button>
-						) : null}
-						{linkedToReleaseLibrary && record.releases.length === 0 ? (
-							<Tooltip title="该任务已接入版本库，等待 CI 同步镜像构建版本">
-								<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-									暂无可用版本
-								</Typography.Text>
-							</Tooltip>
-						) : null}
-						{record.primaryRelease && showComponentActions ? (
-							<Typography.Text type="secondary">|</Typography.Text>
-						) : null}
-						{showComponentActions && component ? (
-							<Button
-								type="link"
-								size="small"
-								icon={<EyeOutlined />}
-								aria-label="查看组件定义"
-								onClick={() => openView(component)}
-							>
-								组件定义
-							</Button>
-						) : null}
-						{showComponentActions && component ? (
-							<Button
-								type="link"
-								size="small"
-								icon={<EditOutlined />}
-								aria-label="编辑组件"
-								onClick={() => openEdit(component)}
-							>
-								编辑
-							</Button>
-						) : null}
-						{showComponentActions && component && deleteButton ? (
-							isSystemComponent ? (
-								<Tooltip title="系统来源组件禁止删除">{deleteButton}</Tooltip>
-							) : confirmDeleteId === component.id ? (
-								<Popconfirm
-									title="删除组件"
-									description={`确认删除 ${component.name}？此操作无法撤销。`}
-									okText="确认删除"
-									cancelText="取消"
-									open
-									onCancel={() => setConfirmDeleteId(null)}
-									onConfirm={() => handleDelete(component)}
-									destroyOnHidden
-								>
-									{deleteButton}
-								</Popconfirm>
-							) : (
-								deleteButton
-							)
-						) : null}
-					</Space>
-				);
-			},
+			render: (_, record) => renderLibraryActions(record),
 		},
 	];
 
@@ -1882,7 +2010,12 @@ export function ComponentManager() {
 							minWidth: 0,
 						}}
 					>
-						<div style={{ minWidth: 280, flex: "0 1 340px" }}>
+						<div
+							style={{
+								minWidth: isNarrow ? 0 : 280,
+								flex: isNarrow ? "1 1 100%" : "0 1 340px",
+							}}
+						>
 							<Input.Search
 								id="component-manager-search"
 								allowClear
@@ -1966,16 +2099,27 @@ export function ComponentManager() {
 				/>
 			) : null}
 
-			{!loading && !releaseLoading && libraryRows.length === 0 ? (
+			{libraryRowsReady && libraryRows.length === 0 ? (
 				<Empty description="暂无组件；可以新建 legacy 组件，或同步平台生成的任务版本" />
+			) : isNarrow ? (
+				<ul className="component-library-mobile-list" aria-label="组件列表">
+					{libraryRowsReady ? (
+						displayedLibraryRows.map(renderMobileLibraryCard)
+					) : (
+						<div className="component-library-mobile-list__loading">
+							<Spin />
+						</div>
+					)}
+				</ul>
 			) : (
 				<Table
 					className="component-library-table"
 					rowKey={(record) => record.legacyComponent?.id || record.key}
 					loading={loading || releaseLoading}
 					columns={libraryColumns}
-					dataSource={libraryRows}
-					scroll={{ x: 1100 }}
+					dataSource={displayedLibraryRows}
+					scroll={{ x: isNarrow ? 480 : 1100, y: 520 }}
+					tableLayout="fixed"
 					expandable={{
 						showExpandColumn: false,
 						expandedRowKeys: activeExpandedRowKeys,

@@ -46,6 +46,21 @@ func TestDerive_RunningShowsCurrentNode(t *testing.T) {
 	}
 }
 
+func TestDeriveWithMessage_TerminalErrorProjectsRunningNode(t *testing.T) {
+	rows := []models.PipelineRunAssetNode{
+		{PipelineNodeID: "step-a", DisplayName: "Read", Status: "Succeeded"},
+		{PipelineNodeID: "step-b", DisplayName: "Transform", Status: "Running"},
+		{PipelineNodeID: "step-c", DisplayName: "Write", Status: "Pending"},
+	}
+	got := DeriveWithMessage(rows, "Error", "Argo workflow was cleaned up")
+	if got.FocusNodeName != "Transform" || got.FocusStatus != "Error" {
+		t.Fatalf("unexpected focus: %+v", got)
+	}
+	if got.Message != "Argo workflow was cleaned up" {
+		t.Fatalf("message = %q", got.Message)
+	}
+}
+
 func TestDerive_EmptyRowsPending(t *testing.T) {
 	got := Derive(nil, "Pending")
 	if got == nil || got.Label != "未开始" {

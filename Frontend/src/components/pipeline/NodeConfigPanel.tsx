@@ -100,6 +100,37 @@ function configVersionOptionLabel(
 		.join(" · ");
 }
 
+function httpStatus(err: unknown): number | undefined {
+	if (!err || typeof err !== "object") return undefined;
+	const response = (err as { response?: { status?: unknown } }).response;
+	return typeof response?.status === "number" ? response.status : undefined;
+}
+
+function savedRuntimeConfigVersion(
+	runtimeConfig: PipelineNodeRuntimeConfig | undefined,
+	configId: string,
+): PipelineConfigVersion | null {
+	if (runtimeConfig?.configId !== configId || !runtimeConfig.version) {
+		return null;
+	}
+	return {
+		id: `${configId}:v${runtimeConfig.version}`,
+		configId,
+		version: runtimeConfig.version,
+		status: "ready",
+		contentSha256: "",
+		contentSizeBytes: 0,
+		summary: "模板中已保存的版本引用",
+		author: "",
+		createdAt: "",
+	};
+}
+
+function runtimeConfigDisplayName(name: string, version: number): string {
+	const suffix = ` · v${version}`;
+	return name.endsWith(suffix) ? name : `${name}${suffix}`;
+}
+
 function normalizeArgs(args: Argument[] | undefined): string[] {
 	if (!args || args.length === 0) return [];
 	return args
@@ -352,6 +383,9 @@ export function NodeConfigPanel({
 	const [configVersionsError, setConfigVersionsError] = useState<string | null>(
 		null,
 	);
+	const [configVersionsNotice, setConfigVersionsNotice] = useState<
+		string | null
+	>(null);
 	const [runtimeMountCatalog, setRuntimeMountCatalog] =
 		useState<RuntimeMountCatalog>(EMPTY_RUNTIME_MOUNT_CATALOG);
 	const [runtimeMountsLoading, setRuntimeMountsLoading] = useState(false);
@@ -369,14 +403,29 @@ export function NodeConfigPanel({
 		() => configs.find((config) => config.id === selectedConfigId),
 		[configs, selectedConfigId],
 	);
-	const configOptions = useMemo(
-		() =>
-			configs.map((config) => ({
-				value: config.id,
-				label: `${config.name} · 当前 v${config.currentVersion} · ${config.lifecycle}`,
-			})),
-		[configs],
-	);
+	const configOptions = useMemo(() => {
+		const options = configs.map((config) => ({
+			value: config.id,
+			label: `${config.name} · 当前 v${config.currentVersion} · ${config.lifecycle}`,
+		}));
+		const runtimeConfig = node.data.runtimeConfig;
+		const shouldShowSavedReference =
+			selectedConfigId &&
+			runtimeConfig?.configId === selectedConfigId &&
+			!configs.some((config) => config.id === selectedConfigId);
+		if (shouldShowSavedReference) {
+			options.unshift({
+				value: selectedConfigId,
+				label: `${
+					runtimeConfig.displayName ||
+					runtimeConfig.fileName ||
+					runtimeConfig.targetFilename ||
+					selectedConfigId
+				} · 模板引用`,
+			});
+		}
+		return options;
+	}, [configs, node.data.runtimeConfig, selectedConfigId]);
 	const configVersionOptions = useMemo(
 		() =>
 			configVersions.map((version) => ({
@@ -498,12 +547,41 @@ export function NodeConfigPanel({
 		if (!open || !selectedConfigId) {
 			setConfigVersions([]);
 			setConfigVersionsError(null);
+			setConfigVersionsNotice(null);
 			setConfigVersionsLoading(false);
+			return;
+		}
+		const existingVersion = savedRuntimeConfigVersion(
+			node.data.runtimeConfig,
+			selectedConfigId,
+		);
+		const selectedConfigIsListed = configs.some(
+			(config) => config.id === selectedConfigId,
+		);
+		if (existingVersion && !selectedConfigIsListed) {
+			setConfigVersionsError(null);
+			if (configsLoading) {
+				setConfigVersions([]);
+				setConfigVersionsNotice(null);
+				setConfigVersionsLoading(true);
+				return;
+			}
+			setConfigVersions([existingVersion]);
+			setConfigVersionsLoading(false);
+			setConfigVersionsNotice(
+				"当前账号不能查看该配置详情；保存节点时会保留模板里的配置版本引用。",
+			);
+			if (!form.getFieldValue("runtimeConfigVersion")) {
+				form.setFieldsValue({
+					runtimeConfigVersion: existingVersion.version,
+				});
+			}
 			return;
 		}
 		let active = true;
 		setConfigVersionsLoading(true);
 		setConfigVersionsError(null);
+		setConfigVersionsNotice(null);
 		pipelineConfigApi
 			.get(selectedConfigId)
 			.then((config) => {
@@ -523,10 +601,25 @@ export function NodeConfigPanel({
 						)?.version ?? readyVersions[0]?.version;
 					form.setFieldsValue({ runtimeConfigVersion: defaultVersion });
 				}
+				setConfigVersionsNotice(null);
 			})
 			.catch((err: unknown) => {
 				if (!active) return;
+				if (existingVersion && [403, 404].includes(httpStatus(err) || 0)) {
+					setConfigVersions([existingVersion]);
+					setConfigVersionsError(null);
+					setConfigVersionsNotice(
+						"当前账号不能查看该配置详情；保存节点时会保留模板里的配置版本引用。",
+					);
+					if (!form.getFieldValue("runtimeConfigVersion")) {
+						form.setFieldsValue({
+							runtimeConfigVersion: existingVersion.version,
+						});
+					}
+					return;
+				}
 				setConfigVersions([]);
+				setConfigVersionsNotice(null);
 				setConfigVersionsError(
 					err instanceof Error ? err.message : "配置版本加载失败",
 				);
@@ -537,7 +630,14 @@ export function NodeConfigPanel({
 		return () => {
 			active = false;
 		};
-	}, [form, open, selectedConfigId]);
+	}, [
+		configs,
+		configsLoading,
+		form,
+		node.data.runtimeConfig,
+		open,
+		selectedConfigId,
+	]);
 
 	const handleSubmit = async () => {
 		const values = await form.validateFields();
@@ -579,7 +679,7 @@ export function NodeConfigPanel({
 				mountPath:
 					values.runtimeConfigMountPath?.trim() || DEFAULT_CONFIG_MOUNT_PATH,
 				targetFilename: values.runtimeConfigTargetFilename?.trim() || fileName,
-				displayName: `${displayName} · v${version}`,
+				displayName: runtimeConfigDisplayName(displayName, version),
 			};
 		}
 		const nextData: Partial<PipelineNodeData> = {
@@ -798,7 +898,19 @@ export function NodeConfigPanel({
 							style={{ marginBottom: 12 }}
 						/>
 					) : null}
-					{!configsLoading && !configsError && configs.length === 0 ? (
+					{configVersionsNotice ? (
+						<Alert
+							type="info"
+							showIcon
+							message="保留模板配置引用"
+							description={configVersionsNotice}
+							style={{ marginBottom: 12 }}
+						/>
+					) : null}
+					{!configsLoading &&
+					!configsError &&
+					configs.length === 0 &&
+					!selectedConfigId ? (
 						<Alert
 							type="info"
 							showIcon

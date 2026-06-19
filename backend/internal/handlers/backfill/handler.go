@@ -31,6 +31,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		AssetIDs        []string `json:"assetIds" binding:"required,min=1"`
 		TargetID        string   `json:"targetId,omitempty"`
 		TemplateVersion int      `json:"templateVersion,omitempty"`
+		TargetIDLegacy  string   `json:"target_id,omitempty"`
 		PilotCount      int      `json:"pilotCount,omitempty"`
 		Config          *struct {
 			Mode           string `json:"mode"`
@@ -48,8 +49,8 @@ func (h *Handler) CreateJob(c *gin.Context) {
 	}
 
 	job, err := h.uc.CreateBackfill(c.Request.Context(), req.Name, req.TemplateID, req.AssetIDs, uc.CreateBackfillOptions{
-		TargetID:        req.TargetID,
 		TemplateVersion: req.TemplateVersion,
+		TargetID:        firstNonEmpty(req.TargetID, req.TargetIDLegacy),
 		PilotCount:      req.PilotCount,
 		ConfigSelection: func() *pipelineUC.RuntimeConfigSelection {
 			if req.Config == nil {
@@ -71,6 +72,15 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		return
 	}
 	c.JSON(201, job)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // ListJobs handles GET /api/v1/backfill.

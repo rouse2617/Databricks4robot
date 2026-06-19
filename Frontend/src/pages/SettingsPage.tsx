@@ -30,6 +30,7 @@ import { useAuth } from "../hooks/useAuth";
 import { extractApiErrorMessage } from "../lib/apiError";
 
 const { Title, Text } = Typography;
+const SEARCH_ADMIN_NOTICE_STYLE = { marginBottom: 16, minHeight: 72 } as const;
 
 type ReindexPhase = "idle" | "reindexing" | "paused" | "done" | "error";
 
@@ -326,11 +327,21 @@ export default function SettingsPage() {
 				<BronzeSyncStatusAlert />
 			</Card>
 
+			{!searchStatusLoaded && (
+				<Alert
+					type="info"
+					showIcon
+					style={SEARCH_ADMIN_NOTICE_STYLE}
+					message="正在加载搜索管理配置"
+					description="正在确认当前环境是否开放 ES 重建与对账管理接口。"
+				/>
+			)}
+
 			{searchStatusLoaded && !adminSearchEnabled && (
 				<Alert
 					type="info"
 					showIcon
-					style={{ marginBottom: 16 }}
+					style={SEARCH_ADMIN_NOTICE_STYLE}
 					message="搜索管理工具未启用"
 					description="当前环境未开放 ES 重建与对账管理接口；搜索状态仍可查看。"
 				/>

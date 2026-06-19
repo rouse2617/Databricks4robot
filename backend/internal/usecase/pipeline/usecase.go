@@ -1807,6 +1807,12 @@ func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRu
 		uc.refreshRunStatus(ctx, run)
 	}
 	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
+	if isActiveDeploymentStatus(run.Status) && !isStaleWorkflowUnavailableMessage(run.Message) {
+		if fresh, err := uc.runRepo.FindByID(ctx, run.ID); err == nil && fresh != nil {
+			*run = *fresh
+		}
+		return
+	}
 	uc.reconcileTerminalRunFromLedger(ctx, run)
 	if fresh, err := uc.runRepo.FindByID(ctx, run.ID); err == nil && fresh != nil {
 		*run = *fresh
@@ -1860,50 +1866,84 @@ func needsLedgerReconcile(run *models.PipelineRun) bool {
 // reconcileTerminalRunFromLedger infers a terminal run status from durable
 // asset-node rows when Argo has already TTL'd the workflow CR.
 func (uc *Usecase) reconcileTerminalRunFromLedger(ctx context.Context, run *models.PipelineRun) bool {
-	if uc.runRepo == nil || run == nil || !needsLedgerReconcile(run) {
+	if uc.runRepo == nil || run == nil {
 		return false
 	}
 	if uc.assetNodeRepo == nil {
+		return false
+	}
+	if !needsLedgerReconcile(run) && !isActiveDeploymentStatus(run.Status) && !isStaleWorkflowUnavailableMessage(run.Message) {
 		return false
 	}
 	result, err := uc.assetNodeRepo.ListByRunID(ctx, run.ID, models.PipelineRunAssetNodeListOptions{Limit: 500})
 	if err != nil || result == nil || len(result.Items) == 0 {
 		return false
 	}
-	status, ok := inferRunStatusFromAssetNodes(result.Items)
+	status, message, ok := inferTerminalRunFromAssetNodes(result.Items)
 	if !ok {
 		return false
 	}
 	run.Status = status
+	if trimmed := strings.TrimSpace(message); trimmed != "" && (strings.TrimSpace(run.Message) == "" || isStaleWorkflowUnavailableMessage(run.Message)) {
+		run.Message = trimmed
+	}
+	if run.FinishedAt == nil || run.FinishedAt.IsZero() {
+		now := uc.nowUTC()
+		run.FinishedAt = &now
+	}
 	uc.persistRunObservation(ctx, run)
 	return true
 }
 
 func inferRunStatusFromAssetNodes(nodes []models.PipelineRunAssetNode) (string, bool) {
+	status, _, ok := inferTerminalRunFromAssetNodes(nodes)
+	return status, ok
+}
+
+func inferTerminalRunFromAssetNodes(nodes []models.PipelineRunAssetNode) (string, string, bool) {
 	if len(nodes) == 0 {
-		return "", false
+		return "", "", false
 	}
-	hasFailed := false
-	hasActive := false
+	hasRunning := false
+	hasPending := false
+	failureStatus := ""
+	failureMessage := ""
 	for _, node := range nodes {
 		switch strings.ToLower(strings.TrimSpace(node.Status)) {
-		case "failed", "error":
-			hasFailed = true
-		case "running", "pending":
-			hasActive = true
+		case "error":
+			if failureStatus == "" || failureStatus == string(wfv1.WorkflowFailed) {
+				failureStatus = string(wfv1.WorkflowError)
+				failureMessage = strings.TrimSpace(node.Message)
+			}
+		case "failed":
+			if failureStatus == "" {
+				failureStatus = string(wfv1.WorkflowFailed)
+				failureMessage = strings.TrimSpace(node.Message)
+			}
+		case "running":
+			hasRunning = true
+		case "pending":
+			if isImageStartupFailureMessage(node.Message) {
+				if failureStatus == "" {
+					failureStatus = string(wfv1.WorkflowError)
+					failureMessage = strings.TrimSpace(node.Message)
+				}
+				continue
+			}
+			hasPending = true
 		case "succeeded", "success", "skipped", "omitted", "completed":
 			// terminal success path
 		default:
-			hasActive = true
+			hasPending = true
 		}
 	}
-	if hasActive {
-		return "", false
+	if failureStatus != "" && !hasRunning {
+		return failureStatus, failureMessage, true
 	}
-	if hasFailed {
-		return string(wfv1.WorkflowFailed), true
+	if hasRunning || hasPending {
+		return "", "", false
 	}
-	return string(wfv1.WorkflowSucceeded), true
+	return string(wfv1.WorkflowSucceeded), "", true
 }
 
 func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun) {
@@ -2262,6 +2302,21 @@ func (uc *Usecase) GetTemplate(ctx context.Context, id string) (*models.Pipeline
 	return uc.templateRepo.FindByID(ctx, id)
 }
 
+func (uc *Usecase) GetTemplateVersion(ctx context.Context, id string, version int) (*models.PipelineTemplate, error) {
+	t, err := uc.templateRepo.FindByID(ctx, id)
+	if err != nil || t == nil || version <= 0 || t.Version == version {
+		return t, err
+	}
+	versioned, err := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, version)
+	if err != nil {
+		return nil, err
+	}
+	if versioned != nil {
+		return versioned, nil
+	}
+	return t, nil
+}
+
 // DeleteTemplate removes a pipeline template.
 var ErrTemplateNotOwned = errors.New("template is not owned by current user")
 
@@ -2291,6 +2346,33 @@ func (uc *Usecase) DeleteTemplate(ctx context.Context, id, owner string) error {
 }
 
 // ── Deploy ────────────────────────────────────────────────────────
+
+const (
+	ssDeliveryLerobotNodeKey   = "ss_delivery_lerobot"
+	tonyDeliveryLerobotStepKey = "tony_delivery_lerobot"
+	cyberpipeNodeEnvName       = "CYBERPIPE_NODE"
+)
+
+func applyCyberpipeNodeCompatibilityAliases(pipe *transpiler.Pipeline) {
+	if pipe == nil {
+		return
+	}
+	var walk func(nodes []transpiler.Node)
+	walk = func(nodes []transpiler.Node) {
+		for i := range nodes {
+			for j := range nodes[i].Component.Env {
+				env := &nodes[i].Component.Env[j]
+				if env.Name == cyberpipeNodeEnvName && env.Value == ssDeliveryLerobotNodeKey {
+					env.Value = tonyDeliveryLerobotStepKey
+				}
+			}
+			if len(nodes[i].SubNodes) > 0 {
+				walk(nodes[i].SubNodes)
+			}
+		}
+	}
+	walk(pipe.Nodes)
+}
 
 // Deploy transpiles a pipeline and submits it as an Argo Workflow.
 // pipelineArg is the raw pipeline JSON map. name overrides the workflow name.
@@ -2323,6 +2405,7 @@ func (uc *Usecase) Deploy(
 	if err := json.Unmarshal(normalizedRaw, &pipelineArg); err != nil {
 		return nil, fmt.Errorf("unmarshal normalized pipeline: %w", err)
 	}
+	applyCyberpipeNodeCompatibilityAliases(pipe)
 
 	pipeName := pipe.Name
 	if name != "" {
@@ -2799,12 +2882,14 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		}
 		return out, len(out), nil
 	}
-	if len(filter) > 0 && (filter[0].BatchJobID != "" || filter[0].ExcludeBatch || filter[0].Status != "" || filter[0].Page > 0 || filter[0].PageSize > 0) {
+	if len(filter) > 0 {
 		items, total, err := uc.runRepo.ListSummaries(ctx, filter[0])
 		if err != nil {
 			return nil, 0, err
 		}
-		uc.refreshRunSummariesForList(ctx, items)
+		if filter[0].RefreshActive {
+			uc.refreshRunSummariesForList(ctx, items)
+		}
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
 		}
@@ -2843,7 +2928,14 @@ func (uc *Usecase) ListBatchAssetRuns(ctx context.Context, batchJobID, assetID s
 	if uc.runRepo == nil {
 		return nil, nil
 	}
-	return uc.runRepo.FindAllByBatchJobAndAssetID(ctx, batchJobID, assetID)
+	runs, err := uc.runRepo.FindAllByBatchJobAndAssetID(ctx, batchJobID, assetID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range runs {
+		uc.RefreshRunForList(ctx, &runs[i])
+	}
+	return runs, nil
 }
 
 // ListAssetNodesByRunIDs returns asset-node rows for multiple runs.
@@ -3101,7 +3193,78 @@ func (uc *Usecase) ListRunAssetNodes(ctx context.Context, id string, opts models
 		}
 		return &models.PipelineRunAssetNodeListResult{Items: rows, Total: len(rows), Summary: summary}, nil
 	}
-	return uc.assetNodeRepo.ListByRunID(ctx, id, opts)
+	result, err := uc.assetNodeRepo.ListByRunID(ctx, id, opts)
+	if err != nil {
+		return nil, err
+	}
+	projectTerminalActiveAssetNodes(result, run)
+	return result, nil
+}
+
+func projectTerminalActiveAssetNodes(result *models.PipelineRunAssetNodeListResult, run *models.PipelineRun) {
+	if result == nil || run == nil || !isTerminalFailureRunStatus(run.Status) {
+		return
+	}
+	changed := false
+	for i := range result.Items {
+		status := strings.TrimSpace(result.Items[i].Status)
+		isActiveRunning := strings.EqualFold(status, "Running")
+		isPendingDiagnostic := strings.EqualFold(status, "Pending") &&
+			(isImageStartupFailureMessage(result.Items[i].Message) ||
+				isUnschedulableSchedulerMessage(result.Items[i].Message))
+		if !isActiveRunning && !isPendingDiagnostic {
+			continue
+		}
+		result.Items[i].Status = "Error"
+		if strings.TrimSpace(result.Items[i].Message) == "" {
+			result.Items[i].Message = strings.TrimSpace(run.Message)
+		}
+		if result.Items[i].FinishedAt == nil && run.FinishedAt != nil && !run.FinishedAt.IsZero() {
+			finishedAt := *run.FinishedAt
+			result.Items[i].FinishedAt = &finishedAt
+		}
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	result.Summary = summarizeAssetNodeRows(result.Items)
+}
+
+func isTerminalFailureRunStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "error", "expired":
+		return true
+	default:
+		return false
+	}
+}
+
+func summarizeAssetNodeRows(rows []models.PipelineRunAssetNode) models.PipelineRunAssetNodeSummary {
+	summary := models.PipelineRunAssetNodeSummary{
+		Statuses:   map[string]int{},
+		CostSource: "not_available",
+	}
+	assets := map[string]bool{}
+	nodes := map[string]bool{}
+	var totalCost float64
+	hasCost := false
+	for _, row := range rows {
+		summary.Statuses[row.Status]++
+		assets[row.AssetID] = true
+		nodes[row.PipelineNodeID] = true
+		if row.EstimatedCostUSD != nil {
+			totalCost += *row.EstimatedCostUSD
+			hasCost = true
+		}
+	}
+	summary.AssetCount = len(assets)
+	summary.NodeCount = len(nodes)
+	if hasCost {
+		summary.TotalEstimatedCostUSD = &totalCost
+		summary.CostSource = "estimated_resource_duration"
+	}
+	return summary
 }
 
 func durationSeconds(startedAt, finishedAt *time.Time) *int64 {
@@ -3663,7 +3826,11 @@ func (uc *Usecase) GetResourceUsage(ctx context.Context, deploymentID string) (*
 	}
 
 	if uc.wfClient != nil && d.WorkflowName != "" {
-		wf, err := uc.wfClient.GetWorkflow(ctx, d.WorkflowName, uc.namespace)
+		namespace := uc.namespace
+		if d.ExecutionTarget != nil && strings.TrimSpace(d.ExecutionTarget.Namespace) != "" {
+			namespace = strings.TrimSpace(d.ExecutionTarget.Namespace)
+		}
+		wf, err := uc.wfClient.GetWorkflow(ctx, d.WorkflowName, namespace)
 		if err != nil {
 			return nil, fmt.Errorf("get workflow: %w", err)
 		}
@@ -3699,6 +3866,7 @@ func (uc *Usecase) getWorkflowResourceUsage(ctx context.Context, workflowName, n
 
 	var manifest *string
 	var deploymentID string
+	namespace := uc.namespace
 	// Prefer the first-class pipeline_runs table (workflow_name UNIQUE) so we
 	// avoid a full table scan over pipeline_deployments. Fall back to the
 	// legacy compatibility read only when the run repo has no matching row.
@@ -3706,6 +3874,9 @@ func (uc *Usecase) getWorkflowResourceUsage(ctx context.Context, workflowName, n
 		if run, err := uc.runRepo.FindByWorkflowName(ctx, workflowName); err == nil && run != nil {
 			manifest = run.Manifest
 			deploymentID = run.ID
+			if strings.TrimSpace(run.ArgoNamespace) != "" {
+				namespace = strings.TrimSpace(run.ArgoNamespace)
+			}
 		}
 	}
 	if manifest == nil && uc.deploymentRepo != nil {
@@ -3714,13 +3885,16 @@ func (uc *Usecase) getWorkflowResourceUsage(ctx context.Context, workflowName, n
 				if deployments[i].WorkflowName == workflowName {
 					manifest = deployments[i].Manifest
 					deploymentID = deployments[i].ID
+					if deployments[i].ExecutionTarget != nil && strings.TrimSpace(deployments[i].ExecutionTarget.Namespace) != "" {
+						namespace = strings.TrimSpace(deployments[i].ExecutionTarget.Namespace)
+					}
 					break
 				}
 			}
 		}
 	}
 
-	wf, err := uc.wfClient.GetWorkflow(ctx, workflowName, uc.namespace)
+	wf, err := uc.wfClient.GetWorkflow(ctx, workflowName, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("get workflow: %w", err)
 	}

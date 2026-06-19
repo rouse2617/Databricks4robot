@@ -249,6 +249,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					loading={loading}
 					columns={columns}
 					dataSource={jobs}
+					scroll={{ x: 1190 }}
 					pagination={{ pageSize: 20, showSizeChanger: true }}
 					onRow={(record) => ({
 						onClick: () =>

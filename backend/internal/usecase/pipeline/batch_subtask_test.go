@@ -113,6 +113,70 @@ func TestUpsertBatchSubtaskRunForceNewAttemptCreatesFreshRun(t *testing.T) {
 	}
 }
 
+func TestUpsertBatchSubtaskRunUsesRequestedExecutionTarget(t *testing.T) {
+	t.Parallel()
+
+	const (
+		batchJobID = "job-1"
+		assetID    = "23324"
+		templateID = "tmpl-1"
+		targetID   = "target-video"
+	)
+
+	runRepo := &mockRunRepo{byID: map[string]*models.PipelineRun{}}
+	templateRepo := &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			templateID: {ID: templateID, Name: "video-pipe", Version: 1, NodeCount: 5, Scope: "dev"},
+		},
+	}
+	targetRepo := &mockTargetRepo{
+		byID: map[string]*models.ExecutionTarget{
+			"default": {
+				ID:        "default",
+				Name:      "Default Argo target",
+				Namespace: "cyber-databrew-dev",
+				Enabled:   true,
+				IsDefault: true,
+			},
+			targetID: {
+				ID:             targetID,
+				Name:           "video-proc-dev",
+				Namespace:      "video-proc-dev",
+				ServiceAccount: "workflow-runner",
+				Enabled:        true,
+			},
+		},
+	}
+
+	uc := New(templateRepo, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(targetRepo, runRepo, nil)
+
+	runID, _, err := uc.UpsertBatchSubtaskRun(context.Background(), BatchSubtaskRunInput{
+		TemplateID:      templateID,
+		TemplateVersion: 1,
+		TargetID:        targetID,
+		BatchJobID:      batchJobID,
+		AssetID:         assetID,
+		Status:          "Pending",
+	})
+	if err != nil {
+		t.Fatalf("UpsertBatchSubtaskRun() error = %v", err)
+	}
+	saved := runRepo.byID[runID]
+	if saved == nil {
+		t.Fatal("expected run to be saved")
+	}
+	if saved.ExecutionTargetID != targetID {
+		t.Fatalf("ExecutionTargetID = %q, want %q", saved.ExecutionTargetID, targetID)
+	}
+	if saved.ArgoNamespace != "video-proc-dev" {
+		t.Fatalf("ArgoNamespace = %q, want video-proc-dev", saved.ArgoNamespace)
+	}
+	if saved.ExecutionTarget == nil || saved.ExecutionTarget.ServiceAccount != "workflow-runner" {
+		t.Fatalf("ExecutionTarget = %+v, want workflow-runner target", saved.ExecutionTarget)
+	}
+}
+
 func TestRecordBatchSubtaskFailurePersistsMessageAndEvent(t *testing.T) {
 	t.Parallel()
 

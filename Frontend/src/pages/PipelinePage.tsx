@@ -1,19 +1,78 @@
-import { ReactFlowProvider } from "@xyflow/react";
-import { App, Tabs } from "antd";
-import { useCallback, useMemo, useState } from "react";
+import { App, Spin, Tabs } from "antd";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import ErrorBoundary from "../components/ErrorBoundary";
-import { DeployPanel } from "../components/pipeline/DeployPanel";
-import {
-	confirmLeaveWithUnsavedChanges,
-	PipelineDesignerCanvas,
-} from "../features/pipeline-designer";
-import { ComponentManager } from "./ComponentManager";
-import { ExecutionRecordsPanel } from "./ExecutionRecordsPanel";
 
 import "../styles/pipeline.css";
 
 type PipelineTab = "design" | "pipelines" | "executions" | "components";
+
+const PipelineDesignerTab = lazy(async () => {
+	const [{ ReactFlowProvider }, { PipelineDesignerCanvas }] = await Promise.all(
+		[
+			import("@xyflow/react"),
+			import("../features/pipeline-designer/PipelineDesignerCanvas"),
+		],
+	);
+
+	return {
+		default: ({
+			onDirtyChange,
+		}: {
+			onDirtyChange: (dirty: boolean) => void;
+		}) => (
+			<ReactFlowProvider>
+				<PipelineDesignerCanvas onDirtyChange={onDirtyChange} />
+			</ReactFlowProvider>
+		),
+	};
+});
+
+const DeployPanel = lazy(async () => {
+	const mod = await import("../components/pipeline/DeployPanel");
+	return { default: mod.DeployPanel };
+});
+
+const ExecutionRecordsPanel = lazy(async () => {
+	const mod = await import("./ExecutionRecordsPanel");
+	return { default: mod.ExecutionRecordsPanel };
+});
+
+const ComponentManager = lazy(async () => {
+	const mod = await import("./ComponentManager");
+	return { default: mod.ComponentManager };
+});
+
+function confirmLeaveWithUnsavedChanges(
+	modal: ReturnType<typeof App.useApp>["modal"],
+): Promise<boolean> {
+	return new Promise((resolve) => {
+		modal.confirm({
+			title: "离开当前编辑？",
+			content: "存在未保存的变更，离开后这些修改会丢失。",
+			okText: "离开",
+			okType: "danger",
+			cancelText: "继续编辑",
+			onOk: () => resolve(true),
+			onCancel: () => resolve(false),
+		});
+	});
+}
+
+function TabFallback() {
+	return (
+		<div
+			className="pipeline-tab-fallback"
+			style={{
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+			}}
+		>
+			<Spin size="small" />
+		</div>
+	);
+}
 
 function resolvePipelineTab(raw: string | null): PipelineTab {
 	switch (raw) {
@@ -75,8 +134,8 @@ export default function PipelinePage() {
 			<Tabs
 				activeKey={activeTab}
 				onChange={onTabChange}
-				destroyOnHidden={false}
-				animated={{ inkBar: true, tabPane: true }}
+				destroyOnHidden
+				animated={{ inkBar: true, tabPane: false }}
 				items={[
 					{
 						key: "design",
@@ -87,9 +146,9 @@ export default function PipelinePage() {
 									title="流水线设计错误"
 									subTitle="设计画布加载失败，可重试或刷新页面"
 								>
-									<ReactFlowProvider>
-										<PipelineDesignerCanvas onDirtyChange={setDesignDirty} />
-									</ReactFlowProvider>
+									<Suspense fallback={<TabFallback />}>
+										<PipelineDesignerTab onDirtyChange={setDesignDirty} />
+									</Suspense>
 								</ErrorBoundary>
 							</div>
 						),
@@ -99,7 +158,9 @@ export default function PipelinePage() {
 						label: tabLabel("流水线", "管理已保存的流水线"),
 						children: (
 							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--management">
-								<DeployPanel variant="full" />
+								<Suspense fallback={<TabFallback />}>
+									<DeployPanel variant="full" />
+								</Suspense>
 							</div>
 						),
 					},
@@ -108,7 +169,9 @@ export default function PipelinePage() {
 						label: tabLabel("执行记录", "查看和管理流水线运行"),
 						children: (
 							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--executions">
-								<ExecutionRecordsPanel active={activeTab === "executions"} />
+								<Suspense fallback={<TabFallback />}>
+									<ExecutionRecordsPanel active={activeTab === "executions"} />
+								</Suspense>
 							</div>
 						),
 					},
@@ -117,7 +180,9 @@ export default function PipelinePage() {
 						label: tabLabel("组件", "管理可复用的步骤定义"),
 						children: (
 							<div className="pipeline-tab-content pipeline-tab-content--panel">
-								<ComponentManager />
+								<Suspense fallback={<TabFallback />}>
+									<ComponentManager />
+								</Suspense>
 							</div>
 						),
 					},

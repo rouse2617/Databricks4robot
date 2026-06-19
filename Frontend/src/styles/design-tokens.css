@@ -172,6 +172,19 @@
 	max-width: 1280px;
 }
 
+.page-container--dashboard .ant-row,
+.page-container--dashboard .ant-col,
+.page-container--dashboard .ant-card,
+.page-container--dashboard .ant-card-body,
+.page-container--dashboard .ant-table-wrapper {
+	min-width: 0;
+	max-width: 100%;
+}
+
+.page-container--dashboard .ant-typography {
+	overflow-wrap: anywhere;
+}
+
 .page-container--form {
 	max-width: 960px;
 }

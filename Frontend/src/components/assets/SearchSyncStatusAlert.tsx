@@ -8,6 +8,7 @@ import {
 } from "../../api/search";
 
 const { Text } = Typography;
+const STATUS_ALERT_STYLE = { marginBottom: 12, minHeight: 154 } as const;
 
 /**
  * Search index sync status and PG↔ES audit (settings page; formerly on assets discovery).
@@ -61,14 +62,24 @@ export default function SearchSyncStatusAlert({
 			<Alert
 				type="warning"
 				showIcon
-				style={{ marginBottom: 12 }}
+				style={STATUS_ALERT_STYLE}
 				message="无法获取搜索索引状态"
 				description="请检查网络或登录态；关键词搜索仍可能可用。"
 			/>
 		);
 	}
 
-	if (status == null) return null;
+	if (status == null) {
+		return (
+			<Alert
+				type="info"
+				showIcon
+				style={STATUS_ALERT_STYLE}
+				message="正在加载搜索索引状态"
+				description="正在读取 Elasticsearch 连接、同步模式和 PG / ES 水位。"
+			/>
+		);
+	}
 
 	const pgMaxEventSeq = progress?.pg_max_event_seq ?? 0;
 	const outboxPublishedMaxSeq = progress?.outbox_published_max_seq ?? 0;
@@ -181,7 +192,7 @@ export default function SearchSyncStatusAlert({
 				<Alert
 					type="error"
 					showIcon
-					style={{ marginBottom: 12 }}
+					style={STATUS_ALERT_STYLE}
 					message="Elasticsearch 未连接"
 					description="关键词搜索不可用，可切换到「结构化」模式使用 PostgreSQL 列表。"
 					action={auditAction}
@@ -203,7 +214,7 @@ export default function SearchSyncStatusAlert({
 				<Alert
 					type="success"
 					showIcon
-					style={{ marginBottom: 12 }}
+					style={STATUS_ALERT_STYLE}
 					message="搜索索引：Outbox 自动同步"
 					description={
 						<>
@@ -232,7 +243,7 @@ export default function SearchSyncStatusAlert({
 				<Alert
 					type="info"
 					showIcon
-					style={{ marginBottom: 12 }}
+					style={STATUS_ALERT_STYLE}
 					message="搜索索引：开发环境定时对齐"
 					description={
 						<>
@@ -261,7 +272,7 @@ export default function SearchSyncStatusAlert({
 			<Alert
 				type="warning"
 				showIcon
-				style={{ marginBottom: 12 }}
+				style={STATUS_ALERT_STYLE}
 				message="搜索索引：无自动同步"
 				description={
 					<>

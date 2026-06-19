@@ -8,6 +8,7 @@ import type { PipelineNodeDef } from "./types";
 import { WorkflowNodeDetailPanel } from "./WorkflowNodeDetailPanel";
 
 const mockGetNodePodDiagnostics = vi.fn();
+const mockGetWorkflowNodeResourceUsage = vi.fn();
 
 vi.mock("../../api/workflowApi", async () => {
 	const actual = await vi.importActual<typeof import("../../api/workflowApi")>(
@@ -17,6 +18,8 @@ vi.mock("../../api/workflowApi", async () => {
 		...actual,
 		getNodePodDiagnostics: (...args: unknown[]) =>
 			mockGetNodePodDiagnostics(...args),
+		getWorkflowNodeResourceUsage: (...args: unknown[]) =>
+			mockGetWorkflowNodeResourceUsage(...args),
 	};
 });
 
@@ -68,6 +71,7 @@ const baseWorkflow: WorkflowDetail = {
 describe("WorkflowNodeDetailPanel", () => {
 	beforeEach(() => {
 		mockGetNodePodDiagnostics.mockReset();
+		mockGetWorkflowNodeResourceUsage.mockReset();
 		mockGetNodePodDiagnostics.mockResolvedValue({
 			namespace: "default",
 			podName: "pod-1",
@@ -75,6 +79,17 @@ describe("WorkflowNodeDetailPanel", () => {
 			containers: [],
 			podConditions: [],
 			podEvents: [],
+		});
+		mockGetWorkflowNodeResourceUsage.mockResolvedValue({
+			workflow_name: "ml-training-pipeline",
+			observed_at: "2026-01-15T10:05:00Z",
+			source: {
+				workflow: "argo-live",
+				metrics: "unavailable",
+				spec: "stored-manifest",
+			},
+			live_metrics_available: false,
+			pods: [],
 		});
 	});
 
@@ -408,7 +423,56 @@ describe("WorkflowNodeDetailPanel", () => {
 		expect(screen.getByText("$0.1200")).toBeTruthy();
 	});
 
-	it("shows runtime terminal guidance before backend exec is available", () => {
+	it("renders resource usage snapshot when live metrics are unavailable", async () => {
+		mockGetWorkflowNodeResourceUsage.mockResolvedValueOnce({
+			workflow_name: "ml-training-pipeline",
+			observed_at: "2026-01-15T10:05:00Z",
+			source: {
+				workflow: "argo-live",
+				metrics: "unavailable",
+				spec: "stored-manifest",
+			},
+			live_metrics_available: false,
+			pods: [
+				{
+					pod_name: "pod-1",
+					node_id: "wf-node-1",
+					template_name: "train-step",
+					observed_at: "2026-01-15T10:05:00Z",
+					live_metrics_available: false,
+					cpu_resource_duration: "53s",
+					memory_resource_duration: "30m59s",
+					cpu_request: "3500m",
+					memory_request: "12Gi",
+					cpu_limit: "3500m",
+					memory_limit: "12Gi",
+				},
+			],
+		});
+		render(
+			<WorkflowNodeDetailPanel
+				node={baseNode}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
+
+		await waitFor(() => expect(screen.getByText("资源规格快照")).toBeTruthy());
+		expect(mockGetWorkflowNodeResourceUsage).toHaveBeenCalledWith(
+			"ml-training-pipeline",
+			"wf-node-1",
+		);
+		expect(screen.getByText("53s")).toBeTruthy();
+		expect(screen.getByText("30m59s")).toBeTruthy();
+		expect(screen.getByText("request / limit: 3500m / 3500m")).toBeTruthy();
+		expect(screen.getByText("request / limit: 12Gi / 12Gi")).toBeTruthy();
+	});
+
+	it("shows terminal disabled state before backend exec is available", () => {
 		render(
 			<WorkflowNodeDetailPanel
 				node={baseNode}
@@ -419,15 +483,15 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
-		expect(screen.getByText("终端调试")).toBeTruthy();
+		expect(screen.getByText("终端不可用")).toBeTruthy();
 		expect(
-			screen.getByText(
-				/终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。/,
-			),
+			screen.getByText("当前节点或执行目标未开启 Pod 终端。"),
 		).toBeTruthy();
+		expect(screen.getByText("Pod exec")).toBeTruthy();
+		expect(screen.getByText("允许命令")).toBeTruthy();
 	});
 
-	it("keeps runtime terminal guidance even when backend marks exec enabled", () => {
+	it("shows terminal enabled state when backend marks exec enabled", () => {
 		render(
 			<WorkflowNodeDetailPanel
 				node={{
@@ -445,12 +509,11 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
-		expect(screen.getByText("终端调试")).toBeTruthy();
+		expect(screen.getByText("终端可用")).toBeTruthy();
 		expect(
-			screen.getByText(
-				/终端调试已移至节点卡片。在 DAG 上选择一个节点，即可找到终端入口。/,
-			),
+			screen.getByText("Pod terminal is available for this running node."),
 		).toBeTruthy();
+		expect(screen.getByText("sh, pwd")).toBeTruthy();
 	});
 
 	it("opens the requested compact tab", () => {

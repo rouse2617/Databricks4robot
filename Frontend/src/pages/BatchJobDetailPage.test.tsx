@@ -27,7 +27,6 @@ const mockPauseBatchJob = vi.fn();
 const mockRerunBatchJob = vi.fn();
 const mockResumeBatchJob = vi.fn();
 const mockContinueFullBatchJob = vi.fn();
-const mockListPipelines = vi.fn();
 const mockListPipelineVersions = vi.fn();
 
 vi.mock("antd", async () => {
@@ -61,7 +60,6 @@ vi.mock("../api/pipelineApi", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../api/pipelineApi")>();
 	return {
 		...actual,
-		listPipelines: (...args: unknown[]) => mockListPipelines(...args),
 		listPipelineVersions: (...args: unknown[]) =>
 			mockListPipelineVersions(...args),
 	};
@@ -71,7 +69,10 @@ vi.mock("./WorkflowExecutionList", () => ({
 	WorkflowExecutionList: () => <div data-testid="workflow-execution-list" />,
 }));
 
-import BatchJobDetailPage, { formatRerunFeedback } from "./BatchJobDetailPage";
+import BatchJobDetailPage, {
+	formatRerunFeedback,
+	resetBatchJobDetailRequestCacheForTests,
+} from "./BatchJobDetailPage";
 
 function renderBatchJobDetail() {
 	return render(
@@ -102,6 +103,7 @@ beforeAll(() => {
 describe("BatchJobDetailPage", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		resetBatchJobDetailRequestCacheForTests();
 		let refreshCount = 0;
 		mockGetBatchJob.mockImplementation(async () => {
 			refreshCount += 1;
@@ -158,21 +160,6 @@ describe("BatchJobDetailPage", () => {
 		});
 		mockResumeBatchJob.mockResolvedValue(undefined);
 		mockContinueFullBatchJob.mockResolvedValue(undefined);
-		mockListPipelines.mockResolvedValue({
-			items: [
-				{
-					id: "tmpl-1",
-					name: "Template 1",
-					version: 3,
-					pipeline: { name: "Template 1", version: "3", nodes: [], edges: [] },
-					nodeCount: 0,
-					createdAt: "2026-06-17T00:00:00Z",
-				},
-			],
-			total: 1,
-			page: 1,
-			pageSize: 200,
-		});
 		mockListPipelineVersions.mockResolvedValue([
 			{
 				id: "tmpl-1",
@@ -262,7 +249,6 @@ describe("BatchJobDetailPage", () => {
 
 		expect(await screen.findByText("Batch 1")).toBeInTheDocument();
 		await waitFor(() => expect(mockGetBatchJob).toHaveBeenCalledTimes(1));
-		expect(mockListPipelines).toHaveBeenCalledTimes(1);
 		expect(mockListPipelineVersions).toHaveBeenCalledTimes(1);
 
 		const pollOnce = setIntervalSpy.mock.calls.find(
@@ -276,7 +262,6 @@ describe("BatchJobDetailPage", () => {
 
 		await waitFor(() => expect(mockGetBatchJob).toHaveBeenCalledTimes(2));
 		expect(mockGetBatchNodeSummary).toHaveBeenCalledTimes(2);
-		expect(mockListPipelines).toHaveBeenCalledTimes(1);
 		expect(mockListPipelineVersions).toHaveBeenCalledTimes(1);
 	});
 });

@@ -14,6 +14,7 @@ import {
 	Card,
 	Descriptions,
 	Divider,
+	Grid,
 	Tag,
 	Tooltip,
 	Typography,
@@ -32,6 +33,7 @@ import { countStatuses, parseAlgoEntries } from "../assets/AlgoSummaryCell";
 import PreviewPlayer from "../assets/PreviewPlayer";
 
 const { Text } = Typography;
+const { useBreakpoint } = Grid;
 
 // ─── Props ───
 
@@ -112,9 +114,11 @@ function AlgoSummaryInline({ asset }: { asset: Asset }) {
 
 function PreviewMediaPanel({
 	manifest,
+	isNarrow,
 }: {
 	manifest: PreviewManifest | null;
 	asset: Asset;
+	isNarrow: boolean;
 }) {
 	const availability = manifest?.availability ?? "missing";
 	const badge = AVAILABILITY_BADGE[availability];
@@ -122,7 +126,7 @@ function PreviewMediaPanel({
 		return (
 			<div
 				style={{
-					flex: "0 0 60%",
+					flex: isNarrow ? "1 1 100%" : "0 0 60%",
 					display: "flex",
 					flexDirection: "column",
 					justifyContent: "center",
@@ -153,7 +157,7 @@ function PreviewMediaPanel({
 		return (
 			<div
 				style={{
-					flex: "0 0 60%",
+					flex: isNarrow ? "1 1 100%" : "0 0 60%",
 					display: "flex",
 					flexDirection: "column",
 					justifyContent: "center",
@@ -189,7 +193,7 @@ function PreviewMediaPanel({
 	return (
 		<div
 			style={{
-				flex: "0 0 60%",
+				flex: isNarrow ? "1 1 100%" : "0 0 60%",
 				display: "flex",
 				flexDirection: "column",
 				justifyContent: "center",
@@ -236,7 +240,13 @@ function PreviewMediaPanel({
 
 // ─── Right Panel: Asset Summary ───
 
-function AssetSummaryPanel({ asset }: { asset: Asset }) {
+function AssetSummaryPanel({
+	asset,
+	isNarrow,
+}: {
+	asset: Asset;
+	isNarrow: boolean;
+}) {
 	const priority = asset.tags?.priority;
 	const quality = asset.tags?.quality;
 	const fileCount = asset.files ? Object.keys(asset.files).length : 0;
@@ -244,8 +254,9 @@ function AssetSummaryPanel({ asset }: { asset: Asset }) {
 	return (
 		<div
 			style={{
-				flex: "0 0 40%",
-				paddingLeft: 16,
+				flex: isNarrow ? "1 1 100%" : "0 0 40%",
+				paddingLeft: isNarrow ? 0 : 16,
+				paddingTop: isNarrow ? 16 : 0,
 				display: "flex",
 				flexDirection: "column",
 				justifyContent: "flex-start",
@@ -275,7 +286,12 @@ function AssetSummaryPanel({ asset }: { asset: Asset }) {
 				size="small"
 				styles={{
 					label: { fontSize: 12, color: "#8c8c8c", width: 80 },
-					content: { fontSize: 12 },
+					content: {
+						fontSize: 12,
+						minWidth: 0,
+						overflowWrap: "anywhere",
+						wordBreak: "break-word",
+					},
 				}}
 			>
 				<Descriptions.Item label="Owner">
@@ -306,6 +322,11 @@ export default function AssetPreviewHero({
 	asset,
 	previewManifest,
 }: AssetPreviewHeroProps) {
+	const screens = useBreakpoint();
+	const isNarrow =
+		typeof window !== "undefined" &&
+		window.innerWidth < 768 &&
+		screens.md !== true;
 	return (
 		<Card
 			size="small"
@@ -315,12 +336,17 @@ export default function AssetPreviewHero({
 			<div
 				style={{
 					display: "flex",
+					flexDirection: isNarrow ? "column" : "row",
 					minHeight: 200,
 					gap: 0,
 				}}
 			>
-				<PreviewMediaPanel manifest={previewManifest} asset={asset} />
-				<AssetSummaryPanel asset={asset} />
+				<PreviewMediaPanel
+					manifest={previewManifest}
+					asset={asset}
+					isNarrow={isNarrow}
+				/>
+				<AssetSummaryPanel asset={asset} isNarrow={isNarrow} />
 			</div>
 		</Card>
 	);

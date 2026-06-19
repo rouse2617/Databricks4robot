@@ -493,7 +493,7 @@ func TestNormalizeStoredCommit_StripsZeroPadding(t *testing.T) {
 	if got != "b68162f" {
 		t.Fatalf("expected stripped commit, got %q", got)
 	}
-	full := "a86a258f91fad9c64a0123456789abcdef0123456"
+	full := "a86a258f91fad9c64a0123456789abcdef0123456" // pragma: allowlist secret
 	if normalizeStoredCommit(full) != full {
 		t.Fatalf("expected full commit preserved, got %q", normalizeStoredCommit(full))
 	}
