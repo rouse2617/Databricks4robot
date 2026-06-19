@@ -70,6 +70,7 @@ vi.mock("./WorkflowExecutionList", () => ({
 }));
 
 import BatchJobDetailPage, {
+	batchJobPollIntervalMs,
 	formatRerunFeedback,
 	resetBatchJobDetailRequestCacheForTests,
 } from "./BatchJobDetailPage";
@@ -214,6 +215,13 @@ describe("BatchJobDetailPage", () => {
 			level: "success",
 			text: "重跑已提交",
 		});
+	});
+
+	it("uses status-aware batch polling intervals", () => {
+		expect(batchJobPollIntervalMs("running")).toBe(5_000);
+		expect(batchJobPollIntervalMs("paused")).toBe(30_000);
+		expect(batchJobPollIntervalMs("completed")).toBeNull();
+		expect(batchJobPollIntervalMs("failed")).toBeNull();
 	});
 
 	it("keeps a single polling interval while a running batch refreshes", async () => {

@@ -141,6 +141,9 @@ const TERMINAL_WORKFLOW_STATUSES = new Set([
 	"Omitted",
 ]);
 const WORKFLOW_POLL_INTERVAL_MS = 8_000;
+const LOG_STREAM_FLUSH_INTERVAL_MS = 100;
+const LOG_STREAM_CONNECT_GRACE_MS = 5_000;
+const LOG_CLIENT_BUFFER_LINES = 5_000;
 const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
 function toErrorMessage(err: unknown): string {
 	if (err instanceof Error) {
@@ -203,19 +206,39 @@ async function resolvePipelineRun(lookup: string): Promise<PipelineRun | null> {
 	return null;
 }
 
-function appendBoundedLogContent(
+export function appendBoundedLogContent(
 	current: string | null,
-	line: string,
+	lines: string | string[],
 ): { content: string; truncated: boolean } {
-	const prefix = current && !current.endsWith("\n") ? "\n" : "";
-	const next = `${current ?? ""}${prefix}${line}\n`;
-	if (next.length <= LOG_CLIENT_BUFFER_CHARS) {
-		return { content: next, truncated: false };
+	const nextLines = (Array.isArray(lines) ? lines : [lines])
+		.map((line) => line.replace(/\r$/, ""))
+		.filter((line) => line.length > 0);
+	if (nextLines.length === 0) {
+		return { content: current ?? "", truncated: false };
 	}
-	return {
-		content: next.slice(-LOG_CLIENT_BUFFER_CHARS),
-		truncated: true,
-	};
+	const prefix = current && !current.endsWith("\n") ? "\n" : "";
+	let next = `${current ?? ""}${prefix}${nextLines.join("\n")}\n`;
+	let truncated = false;
+	if (next.length > LOG_CLIENT_BUFFER_CHARS) {
+		next = next.slice(-LOG_CLIENT_BUFFER_CHARS);
+		const firstLineBreak = next.indexOf("\n");
+		if (firstLineBreak >= 0) {
+			next = next.slice(firstLineBreak + 1);
+		}
+		truncated = true;
+	}
+	const contentWithoutTrailingBreak = next.endsWith("\n")
+		? next.slice(0, -1)
+		: next;
+	const allLines =
+		contentWithoutTrailingBreak === ""
+			? []
+			: contentWithoutTrailingBreak.split("\n");
+	if (allLines.length > LOG_CLIENT_BUFFER_LINES) {
+		next = `${allLines.slice(-LOG_CLIENT_BUFFER_LINES).join("\n")}\n`;
+		truncated = true;
+	}
+	return { content: next, truncated };
 }
 
 export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
@@ -226,6 +249,9 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [logState, setLogState] = useState<WorkflowLogState>(EMPTY_LOG_STATE);
 	const followSourceRef = useRef<EventSource | null>(null);
+	const logStreamBufferRef = useRef<string[]>([]);
+	const logStreamFlushTimerRef = useRef<number | null>(null);
+	const logStreamConnectTimerRef = useRef<number | null>(null);
 	const [runEventState, setRunEventState] = useState<RunEventState>(
 		EMPTY_RUN_EVENT_STATE,
 	);
@@ -502,9 +528,56 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		[name],
 	);
 
+	const clearLogStreamFlushTimer = useCallback(() => {
+		if (logStreamFlushTimerRef.current !== null) {
+			window.clearTimeout(logStreamFlushTimerRef.current);
+			logStreamFlushTimerRef.current = null;
+		}
+	}, []);
+
+	const clearLogStreamConnectTimer = useCallback(() => {
+		if (logStreamConnectTimerRef.current !== null) {
+			window.clearTimeout(logStreamConnectTimerRef.current);
+			logStreamConnectTimerRef.current = null;
+		}
+	}, []);
+
+	const flushBufferedLogLines = useCallback(() => {
+		clearLogStreamFlushTimer();
+		const lines = logStreamBufferRef.current.splice(0);
+		if (lines.length === 0) return;
+		setLogState((prev) => {
+			const next = appendBoundedLogContent(prev.content, lines);
+			return {
+				...prev,
+				content: next.content,
+				clientTruncated: prev.clientTruncated || next.truncated,
+				loading: false,
+				followStatus: "connected",
+				followMessage: "实时日志已连接",
+			};
+		});
+	}, [clearLogStreamFlushTimer]);
+
+	const queueLogLine = useCallback(
+		(line: string) => {
+			logStreamBufferRef.current.push(line);
+			if (logStreamFlushTimerRef.current === null) {
+				logStreamFlushTimerRef.current = window.setTimeout(
+					flushBufferedLogLines,
+					LOG_STREAM_FLUSH_INTERVAL_MS,
+				);
+			}
+		},
+		[flushBufferedLogLines],
+	);
+
 	const selectNode = useCallback(
 		(node: WorkflowNodeStatus | null) => {
 			if (!node || !name) {
+				clearLogStreamFlushTimer();
+				clearLogStreamConnectTimer();
+				logStreamBufferRef.current = [];
 				setSelectedNodeId(null);
 				setLogState((current) => ({
 					...EMPTY_LOG_STATE,
@@ -513,6 +586,11 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				return;
 			}
 			const nodeChanged = node.id !== selectedNodeId;
+			if (nodeChanged) {
+				clearLogStreamFlushTimer();
+				clearLogStreamConnectTimer();
+				logStreamBufferRef.current = [];
+			}
 			setSelectedNodeId(node.id);
 			setLogState((current) => ({
 				...current,
@@ -523,7 +601,12 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				clientTruncated: nodeChanged ? false : current.clientTruncated,
 			}));
 		},
-		[name, selectedNodeId],
+		[
+			clearLogStreamConnectTimer,
+			clearLogStreamFlushTimer,
+			name,
+			selectedNodeId,
+		],
 	);
 
 	const selectedNode = useMemo(() => {
@@ -532,6 +615,8 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 	}, [workflow, selectedNodeId]);
 
 	const stopFollowLogs = useCallback(() => {
+		flushBufferedLogLines();
+		clearLogStreamConnectTimer();
 		if (followSourceRef.current) {
 			followSourceRef.current.close();
 			followSourceRef.current = null;
@@ -542,12 +627,15 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			followStatus: "idle",
 			followMessage: "实时日志已停止",
 		}));
-	}, []);
+	}, [clearLogStreamConnectTimer, flushBufferedLogLines]);
 
 	const startFollowLogs = useCallback(() => {
 		if (!name || !selectedNodeId) return;
 
 		stopFollowLogs();
+		clearLogStreamFlushTimer();
+		clearLogStreamConnectTimer();
+		logStreamBufferRef.current = [];
 
 		const url = getWorkflowLogStreamUrl(name, selectedNodeId);
 		const source = new EventSource(url);
@@ -562,6 +650,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		}));
 
 		source.onopen = () => {
+			clearLogStreamConnectTimer();
 			setLogState((prev) => ({
 				...prev,
 				following: true,
@@ -569,6 +658,20 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				followMessage: "实时日志已连接",
 			}));
 		};
+
+		logStreamConnectTimerRef.current = window.setTimeout(() => {
+			logStreamConnectTimerRef.current = null;
+			if (followSourceRef.current !== source) return;
+			setLogState((prev) =>
+				prev.followStatus === "connecting"
+					? {
+							...prev,
+							followStatus: "connected",
+							followMessage: "实时日志已连接，等待日志事件",
+						}
+					: prev,
+			);
+		}, LOG_STREAM_CONNECT_GRACE_MS);
 
 		source.addEventListener("log", (event: MessageEvent) => {
 			try {
@@ -580,19 +683,7 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 							? data.content
 							: "";
 				if (line) {
-					setLogState((prev) => ({
-						...prev,
-						...(() => {
-							const next = appendBoundedLogContent(prev.content, line);
-							return {
-								content: next.content,
-								clientTruncated: prev.clientTruncated || next.truncated,
-							};
-						})(),
-						loading: false,
-						followStatus: "connected",
-						followMessage: "实时日志已连接",
-					}));
+					queueLogLine(line);
 				}
 			} catch {
 				// ignore malformed events
@@ -612,6 +703,8 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 			} catch {
 				// ignore malformed events
 			}
+			flushBufferedLogLines();
+			clearLogStreamConnectTimer();
 			source.close();
 			if (followSourceRef.current === source) {
 				followSourceRef.current = null;
@@ -625,6 +718,8 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 		});
 
 		source.onerror = () => {
+			flushBufferedLogLines();
+			clearLogStreamConnectTimer();
 			source.close();
 			if (followSourceRef.current === source) {
 				followSourceRef.current = null;
@@ -636,7 +731,15 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 				followMessage: "实时日志连接已断开",
 			}));
 		};
-	}, [name, selectedNodeId, stopFollowLogs]);
+	}, [
+		clearLogStreamConnectTimer,
+		clearLogStreamFlushTimer,
+		flushBufferedLogLines,
+		name,
+		queueLogLine,
+		selectedNodeId,
+		stopFollowLogs,
+	]);
 
 	const downloadLogs = useCallback(() => {
 		const content = logState.content;
@@ -665,12 +768,15 @@ export function useWorkflowDetail(name?: string): UseWorkflowDetailResult {
 
 	useEffect(() => {
 		return () => {
+			clearLogStreamFlushTimer();
+			clearLogStreamConnectTimer();
+			logStreamBufferRef.current = [];
 			if (followSourceRef.current) {
 				followSourceRef.current.close();
 				followSourceRef.current = null;
 			}
 		};
-	}, []);
+	}, [clearLogStreamConnectTimer, clearLogStreamFlushTimer]);
 
 	useEffect(() => {
 		if (!selectedNodeId || !name) {

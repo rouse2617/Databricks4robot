@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/pipelineClient";
 import type { WorkflowDetail, WorkflowNodeStatus } from "../../api/workflowApi";
@@ -9,6 +15,29 @@ import { WorkflowNodeDetailPanel } from "./WorkflowNodeDetailPanel";
 
 const mockGetNodePodDiagnostics = vi.fn();
 const mockGetWorkflowNodeResourceUsage = vi.fn();
+const mockCreateTerminalSession = vi.fn();
+const mockTerminateTerminalSession = vi.fn();
+const mockGetTerminalAttachUrl = vi.fn((url: string) => url);
+
+class MockWebSocket {
+	static instances: MockWebSocket[] = [];
+	onopen: (() => void) | null = null;
+	onmessage: ((event: MessageEvent) => void) | null = null;
+	onerror: (() => void) | null = null;
+	onclose: (() => void) | null = null;
+	closed = false;
+	url: string;
+
+	constructor(url: string) {
+		this.url = url;
+		MockWebSocket.instances.push(this);
+	}
+
+	close() {
+		this.closed = true;
+		this.onclose?.();
+	}
+}
 
 vi.mock("../../api/workflowApi", async () => {
 	const actual = await vi.importActual<typeof import("../../api/workflowApi")>(
@@ -20,6 +49,12 @@ vi.mock("../../api/workflowApi", async () => {
 			mockGetNodePodDiagnostics(...args),
 		getWorkflowNodeResourceUsage: (...args: unknown[]) =>
 			mockGetWorkflowNodeResourceUsage(...args),
+		createTerminalSession: (...args: unknown[]) =>
+			mockCreateTerminalSession(...args),
+		terminateTerminalSession: (...args: unknown[]) =>
+			mockTerminateTerminalSession(...args),
+		getTerminalAttachUrl: (...args: unknown[]) =>
+			mockGetTerminalAttachUrl(...args),
 	};
 });
 
@@ -91,6 +126,32 @@ describe("WorkflowNodeDetailPanel", () => {
 			live_metrics_available: false,
 			pods: [],
 		});
+		mockCreateTerminalSession.mockResolvedValue({
+			id: "terminal-session-1",
+			workflowName: "ml-training-pipeline",
+			nodeId: "wf-node-1",
+			podName: "pod-1",
+			namespace: "default",
+			command: "sh",
+			status: "created",
+			attachUrl: "ws://terminal-session-1",
+			expiresAt: "2026-01-15T10:15:00Z",
+			createdAt: "2026-01-15T10:00:00Z",
+		});
+		mockTerminateTerminalSession.mockResolvedValue({
+			id: "terminal-session-1",
+			workflowName: "ml-training-pipeline",
+			nodeId: "wf-node-1",
+			podName: "pod-1",
+			namespace: "default",
+			command: "sh",
+			status: "terminated",
+			expiresAt: "2026-01-15T10:15:00Z",
+			createdAt: "2026-01-15T10:00:00Z",
+		});
+		mockGetTerminalAttachUrl.mockImplementation((url: string) => url);
+		MockWebSocket.instances = [];
+		vi.stubGlobal("WebSocket", MockWebSocket);
 	});
 
 	it("renders permission-specific fallback when pod diagnostics returns 403", async () => {
@@ -511,9 +572,79 @@ describe("WorkflowNodeDetailPanel", () => {
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
 		expect(screen.getByText("终端可用")).toBeTruthy();
 		expect(
-			screen.getByText("Pod terminal is available for this running node."),
-		).toBeTruthy();
+			screen.getAllByText("Pod terminal is available for this running node."),
+		).toHaveLength(2);
 		expect(screen.getByText("sh, pwd")).toBeTruthy();
+	});
+
+	it("shows backend terminal error codes when session creation fails", async () => {
+		mockCreateTerminalSession.mockRejectedValueOnce(
+			new ApiError(403, "POD_EXEC_FORBIDDEN", "command blocked"),
+		);
+		render(
+			<WorkflowNodeDetailPanel
+				node={{
+					...baseNode,
+					debug: {
+						execEnabled: true,
+						allowedCommands: ["sh"],
+						reason: "terminal enabled",
+					},
+				}}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
+		fireEvent.click(screen.getByRole("button", { name: "进入终端" }));
+
+		await waitFor(() => expect(screen.getByText("终端连接失败")).toBeTruthy());
+		expect(
+			screen.getByText("POD_EXEC_FORBIDDEN: command blocked"),
+		).toBeTruthy();
+	});
+
+	it("allows reopening a terminal session after the websocket exits", async () => {
+		render(
+			<WorkflowNodeDetailPanel
+				node={{
+					...baseNode,
+					debug: {
+						execEnabled: true,
+						allowedCommands: ["sh"],
+						reason: "terminal enabled",
+					},
+				}}
+				workflow={baseWorkflow}
+				open
+				onClose={vi.fn()}
+				onShowLogs={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
+		fireEvent.click(screen.getByRole("button", { name: "进入终端" }));
+
+		await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+		await waitFor(() => expect(screen.getByText("created")).toBeTruthy());
+		const socket = MockWebSocket.instances[0];
+		await act(async () => {
+			socket.onopen?.();
+		});
+		await waitFor(() => expect(screen.getByText("attached")).toBeTruthy());
+		await act(async () => {
+			socket.onmessage?.(
+				new MessageEvent("message", {
+					data: JSON.stringify({ type: "exit", exitCode: 0 }),
+				}),
+			);
+		});
+
+		await waitFor(() => {
+			const reopenButton = screen.getByText("重新打开终端").closest("button");
+			expect(reopenButton).toBeEnabled();
+		});
 	});
 
 	it("opens the requested compact tab", () => {

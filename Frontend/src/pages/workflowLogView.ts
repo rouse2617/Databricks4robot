@@ -1,7 +1,7 @@
 import type { WorkflowNodeStatus } from "../api/workflowApi";
 
 export const LOG_MAX_RENDER_CHARS = 250_000;
-export const LOG_MAX_RENDER_LINES = 2_000;
+export const LOG_MAX_RENDER_LINES = 5_000;
 
 export type VisibleLogContent = {
 	content: string;

@@ -471,7 +471,7 @@ describe("WorkflowDetailPage", () => {
 		expect(screen.queryByText("正在加载执行记录…")).not.toBeInTheDocument();
 	});
 
-	it("shows workflow node count and explicit unavailable cost copy", () => {
+	it("shows workflow node count without unavailable cost noise", () => {
 		mockWorkflowDetailState({
 			workflow: {
 				name: "wf-asset",
@@ -553,8 +553,8 @@ describe("WorkflowDetailPage", () => {
 		renderWorkflowDetail();
 
 		expect(screen.getByText("节点 2")).toBeInTheDocument();
-		expect(screen.getByText("暂无估算成本")).toBeInTheDocument();
-		expect(screen.getByText("暂无计费配置")).toBeInTheDocument();
+		expect(screen.queryByText("暂无估算成本")).not.toBeInTheDocument();
+		expect(screen.queryByText("暂无计费配置")).not.toBeInTheDocument();
 	});
 
 	it("uses pipeline component names for asset node rows", () => {

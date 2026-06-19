@@ -104,6 +104,77 @@ function buildHighlightedLogNodes(logContent: string, keyword: string) {
 	});
 }
 
+const LOG_VIRTUAL_ROW_HEIGHT = 18;
+const LOG_VIRTUAL_OVERSCAN_ROWS = 12;
+
+function VirtualLogContent({
+	content,
+	search,
+	scrollTop,
+	viewportHeight,
+}: {
+	content: string;
+	search: string;
+	scrollTop: number;
+	viewportHeight: number;
+}) {
+	const lines = useMemo(() => {
+		const raw = content.endsWith("\n") ? content.slice(0, -1) : content;
+		return raw === "" ? [] : raw.split("\n");
+	}, [content]);
+	const rowCount = lines.length;
+	const visibleCount = Math.max(
+		1,
+		Math.ceil(viewportHeight / LOG_VIRTUAL_ROW_HEIGHT) +
+			LOG_VIRTUAL_OVERSCAN_ROWS * 2,
+	);
+	const start = Math.max(
+		0,
+		Math.floor(scrollTop / LOG_VIRTUAL_ROW_HEIGHT) - LOG_VIRTUAL_OVERSCAN_ROWS,
+	);
+	const end = Math.min(rowCount, start + visibleCount);
+	const visibleRows = [];
+	for (let absoluteIndex = start; absoluteIndex < end; absoluteIndex += 1) {
+		const line = lines[absoluteIndex] ?? "";
+		visibleRows.push({
+			key: `${absoluteIndex}-${line.slice(0, 24)}`,
+			line,
+		});
+	}
+
+	return (
+		<div
+			style={{
+				height: rowCount * LOG_VIRTUAL_ROW_HEIGHT,
+				minHeight: "100%",
+				position: "relative",
+			}}
+		>
+			<div
+				style={{
+					position: "absolute",
+					top: start * LOG_VIRTUAL_ROW_HEIGHT,
+					left: 0,
+					right: 0,
+				}}
+			>
+				{visibleRows.map((row) => (
+					<div
+						key={row.key}
+						style={{
+							height: LOG_VIRTUAL_ROW_HEIGHT,
+							lineHeight: `${LOG_VIRTUAL_ROW_HEIGHT}px`,
+							whiteSpace: "pre",
+						}}
+					>
+						{row.line ? buildHighlightedLogNodes(row.line, search) : "\u00a0"}
+					</div>
+				))}
+			</div>
+		</div>
+	);
+}
+
 const ACTIVE_NODE_PHASES = new Set(["Running", "Pending"]);
 const TERMINAL_NODE_PHASES = new Set([
 	"Succeeded",
@@ -393,6 +464,10 @@ function WorkflowLogPanel({
 }) {
 	const { message: messageApi } = App.useApp();
 	const logBodyRef = useRef<HTMLDivElement | null>(null);
+	const [logViewport, setLogViewport] = useState({
+		scrollTop: 0,
+		viewportHeight: 360,
+	});
 	const visibleLog = useMemo(
 		() =>
 			logContent === null
@@ -400,10 +475,6 @@ function WorkflowLogPanel({
 				: prepareVisibleLogContent(logContent, selectedNode),
 		[logContent, selectedNode],
 	);
-	const logElement =
-		visibleLog === null
-			? null
-			: buildHighlightedLogNodes(visibleLog.content, search);
 	const followStatusMeta: Record<
 		WorkflowLogFollowStatus,
 		{ color: string; label: string }
@@ -417,6 +488,14 @@ function WorkflowLogPanel({
 	const followMeta = followStatusMeta[followStatus];
 	const paginationUnavailable =
 		logResponse?.pagination && logResponse.pagination.available === false;
+	const syncLogViewport = useCallback(() => {
+		const el = logBodyRef.current;
+		if (!el) return;
+		setLogViewport({
+			scrollTop: el.scrollTop,
+			viewportHeight: el.clientHeight || 360,
+		});
+	}, []);
 
 	useEffect(() => {
 		if (
@@ -427,8 +506,13 @@ function WorkflowLogPanel({
 			logBodyRef.current
 		) {
 			logBodyRef.current.scrollTop = logBodyRef.current.scrollHeight;
+			syncLogViewport();
 		}
-	}, [selectedNode, loading, error, visibleLog]);
+	}, [selectedNode, loading, error, visibleLog, syncLogViewport]);
+
+	useEffect(() => {
+		syncLogViewport();
+	}, [syncLogViewport]);
 
 	return (
 		<div
@@ -581,12 +665,11 @@ function WorkflowLogPanel({
 					</div>
 					<div
 						ref={logBodyRef}
+						onScroll={syncLogViewport}
 						style={{
 							flex: 1,
 							fontSize: 11,
 							fontFamily: '"SF Mono", "Fira Code", monospace',
-							whiteSpace: "pre-wrap",
-							wordBreak: "break-word",
 							overflow: "auto",
 							background: "#f8f9fa",
 							padding: 12,
@@ -596,7 +679,14 @@ function WorkflowLogPanel({
 							lineHeight: 1.55,
 						}}
 					>
-						{logElement}
+						{visibleLog ? (
+							<VirtualLogContent
+								content={visibleLog.content}
+								search={search}
+								scrollTop={logViewport.scrollTop}
+								viewportHeight={logViewport.viewportHeight}
+							/>
+						) : null}
 					</div>
 				</>
 			)}
@@ -1261,6 +1351,7 @@ function WorkflowAssetNodePanel({
 	const costSyncPending =
 		costSummaryState.loading ||
 		(expectedNodeCount > 0 && !hasCostRows && totalEstimatedCost == null);
+	const showCostSummary = !costUnavailable;
 	return (
 		<div
 			style={{
@@ -1297,29 +1388,23 @@ function WorkflowAssetNodePanel({
 					<Typography.Text type="secondary">
 						节点 {expectedNodeCount}
 					</Typography.Text>
-					<Typography.Text type="secondary">
-						总成本{" "}
-						{costSyncPending
-							? "同步中"
-							: costUnavailable
-								? "暂无估算"
-								: formatCost(totalEstimatedCost)}
-					</Typography.Text>
-					<Tag
-						color={
-							costSyncPending || costSyncPartial
-								? "orange"
-								: costUnavailable
-									? "default"
-									: "blue"
-						}
-					>
-						{costSyncPending
-							? "同步中"
-							: costSyncPartial
-								? `部分同步 ${syncedNodeCount}/${expectedNodeCount}`
-								: formatCostSource(costSource)}
-					</Tag>
+					{showCostSummary ? (
+						<>
+							<Typography.Text type="secondary">
+								总成本{" "}
+								{costSyncPending ? "同步中" : formatCost(totalEstimatedCost)}
+							</Typography.Text>
+							<Tag
+								color={costSyncPending || costSyncPartial ? "orange" : "blue"}
+							>
+								{costSyncPending
+									? "同步中"
+									: costSyncPartial
+										? `部分同步 ${syncedNodeCount}/${expectedNodeCount}`
+										: formatCostSource(costSource)}
+							</Tag>
+						</>
+					) : null}
 				</Space>
 			</div>
 			{costSyncPending || costSyncPartial ? (
@@ -1328,14 +1413,6 @@ function WorkflowAssetNodePanel({
 					showIcon
 					message="成本快照仍在同步"
 					description="Argo 节点状态会先返回，DataBrew 成本汇总可能延迟几秒；刷新后会补齐节点耗时与估算成本。"
-					style={{ margin: "8px 10px 0" }}
-				/>
-			) : costUnavailable ? (
-				<Alert
-					type="warning"
-					showIcon
-					message="暂无估算成本"
-					description="后端未加载计费配置，或当前资源组合没有价格映射；节点状态、日志和 Pod 诊断不受影响。"
 					style={{ margin: "8px 10px 0" }}
 				/>
 			) : null}

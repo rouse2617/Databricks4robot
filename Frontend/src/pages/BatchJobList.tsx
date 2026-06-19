@@ -15,6 +15,7 @@ import {
 	Tag,
 	Typography,
 } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -27,6 +28,10 @@ import {
 	retryFailedBatchItems,
 } from "../api/batchJobApi";
 import { listPipelines, type PipelineTemplate } from "../api/pipelineApi";
+import {
+	batchJobCreatedAtMs,
+	sortBatchJobsByCreatedDesc,
+} from "../lib/batchJobs";
 import { batchJobDetailLocationState } from "../lib/pipelineNavigation";
 import {
 	formatBatchJobStatus,
@@ -60,7 +65,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					.then((r) => r.items)
 					.catch(() => []),
 			]);
-			setJobs(jobItems);
+			setJobs(sortBatchJobsByCreatedDesc(jobItems));
 			setTemplates(templateItems);
 		} catch (err) {
 			message.error(`加载批次任务失败：${String(err)}`);
@@ -93,7 +98,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		}
 	};
 
-	const columns = [
+	const columns: ColumnsType<BatchJob> = [
 		{
 			title: "批次名称",
 			dataIndex: "name",
@@ -160,6 +165,9 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			dataIndex: "createdAt",
 			key: "createdAt",
 			width: 180,
+			defaultSortOrder: "descend",
+			sortDirections: ["descend", "ascend", "descend"],
+			sorter: (a, b) => batchJobCreatedAtMs(a) - batchJobCreatedAtMs(b),
 			render: (value: string) => dayjs(value).format("YYYY-MM-DD HH:mm:ss"),
 		},
 		{

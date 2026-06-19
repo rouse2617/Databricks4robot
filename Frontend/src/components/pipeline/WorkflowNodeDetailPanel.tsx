@@ -13,6 +13,7 @@ import {
 	Drawer,
 	Empty,
 	Row,
+	Select,
 	Space,
 	Statistic,
 	Table,
@@ -24,7 +25,14 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import type React from "react";
-import { useEffect, useMemo, useReducer, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useReducer,
+	useRef,
+	useState,
+} from "react";
 import { ApiError } from "../../api/pipelineClient";
 import type {
 	WorkflowDetail,
@@ -38,9 +46,13 @@ import type {
 	WorkflowResourceUsageReport,
 } from "../../api/workflowApi";
 import {
+	createTerminalSession,
 	getNodePodDiagnostics,
+	getTerminalAttachUrl,
 	getWorkflowNodeResourceUsage,
 	type NodePodDiagnostics,
+	type TerminalSession,
+	terminateTerminalSession,
 } from "../../api/workflowApi";
 import { ArgoNodeRuntimeInspector } from "../../features/pipeline-designer";
 import {
@@ -824,6 +836,248 @@ function DebugTab({ node }: { node: WorkflowNodeStatus }) {
 	);
 }
 
+type TerminalFrame = {
+	type?: string;
+	status?: string;
+	data?: string;
+	code?: string;
+	message?: string;
+	exitCode?: number;
+	reason?: string;
+};
+
+const TERMINAL_OUTPUT_BUFFER_CHARS = 200_000;
+
+function appendTerminalOutput(current: string, chunk: string) {
+	const next = `${current}${chunk}`;
+	if (next.length <= TERMINAL_OUTPUT_BUFFER_CHARS) return next;
+	return next.slice(-TERMINAL_OUTPUT_BUFFER_CHARS);
+}
+
+function formatTerminalError(err: unknown): string {
+	if (err instanceof ApiError) {
+		return `${err.code}: ${err.message}`;
+	}
+	if (err instanceof Error) return err.message;
+	return String(err);
+}
+
+function TerminalSessionPanel({
+	node,
+	workflowName,
+}: {
+	node: WorkflowNodeStatus;
+	workflowName: string;
+}) {
+	const debug = node.debug;
+	const execEnabled = Boolean(debug?.execEnabled);
+	const allowedCommands = useMemo(
+		() =>
+			debug?.allowedCommands && debug.allowedCommands.length > 0
+				? debug.allowedCommands
+				: ["sh"],
+		[debug?.allowedCommands],
+	);
+	const [command, setCommand] = useState(allowedCommands[0] ?? "sh");
+	const [session, setSession] = useState<TerminalSession | null>(null);
+	const [output, setOutput] = useState("");
+	const [connecting, setConnecting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [restartReady, setRestartReady] = useState(false);
+	const socketRef = useRef<WebSocket | null>(null);
+
+	useEffect(() => {
+		if (!allowedCommands.includes(command)) {
+			setCommand(allowedCommands[0] ?? "sh");
+		}
+	}, [allowedCommands, command]);
+
+	useEffect(() => {
+		return () => {
+			socketRef.current?.close();
+			socketRef.current = null;
+		};
+	}, []);
+
+	const closeSocket = useCallback(() => {
+		socketRef.current?.close();
+		socketRef.current = null;
+	}, []);
+
+	const startTerminal = useCallback(async () => {
+		if (!execEnabled) return;
+		closeSocket();
+		setConnecting(true);
+		setError(null);
+		setOutput("");
+		setRestartReady(false);
+		try {
+			const created = await createTerminalSession(workflowName, node.id, {
+				command,
+			});
+			setSession(created);
+			if (!created.attachUrl) {
+				setError("POD_EXEC_UNAVAILABLE: 后端未返回终端 attach URL");
+				return;
+			}
+			const socket = new WebSocket(getTerminalAttachUrl(created.attachUrl));
+			socketRef.current = socket;
+			socket.onopen = () => {
+				setConnecting(false);
+				setSession((current) =>
+					current ? { ...current, status: "attached" } : current,
+				);
+			};
+			socket.onmessage = (event) => {
+				let frame: TerminalFrame;
+				try {
+					frame = JSON.parse(String(event.data));
+				} catch {
+					frame = { type: "stdout", data: String(event.data) };
+				}
+				if (frame.type === "stdout" || frame.type === "stderr") {
+					const prefix = frame.type === "stderr" ? "[stderr] " : "";
+					setOutput((current) =>
+						appendTerminalOutput(current, `${prefix}${frame.data ?? ""}`),
+					);
+					return;
+				}
+				if (frame.type === "status") {
+					setSession((current) =>
+						current
+							? { ...current, status: frame.status || current.status }
+							: current,
+					);
+					return;
+				}
+				if (frame.type === "error") {
+					setConnecting(false);
+					setRestartReady(true);
+					setError(
+						`${frame.code || "POD_EXEC_FAILED"}: ${frame.message || "terminal attach failed"}`,
+					);
+					return;
+				}
+				if (frame.type === "exit") {
+					setConnecting(false);
+					setRestartReady(true);
+					setSession((current) =>
+						current
+							? {
+									...current,
+									status: frame.exitCode === 0 ? "ended" : "failed",
+								}
+							: current,
+					);
+					closeSocket();
+				}
+			};
+			socket.onerror = () => {
+				setConnecting(false);
+				setRestartReady(true);
+				setError("POD_EXEC_FAILED: WebSocket 连接失败");
+			};
+			socket.onclose = () => {
+				setConnecting(false);
+				socketRef.current = null;
+			};
+		} catch (err) {
+			setError(formatTerminalError(err));
+			setConnecting(false);
+		}
+	}, [closeSocket, command, execEnabled, node.id, workflowName]);
+
+	const terminate = useCallback(async () => {
+		const currentSession = session;
+		closeSocket();
+		if (!currentSession) return;
+		setConnecting(false);
+		setRestartReady(true);
+		try {
+			const next = await terminateTerminalSession(currentSession.id);
+			setSession(next);
+		} catch (err) {
+			setError(formatTerminalError(err));
+		}
+	}, [closeSocket, session]);
+
+	const terminalInactive =
+		restartReady ||
+		!session ||
+		["ended", "failed", "terminated", "expired"].includes(session.status);
+
+	return (
+		<Space direction="vertical" size="small" style={{ width: "100%" }}>
+			<Alert
+				type={execEnabled ? "success" : "info"}
+				showIcon
+				message={execEnabled ? "Pod 终端可进入" : "Pod 终端不可进入"}
+				description={
+					debug?.reason ||
+					(execEnabled
+						? "使用后端一次性 attach token 连接当前 Pod。"
+						: "当前执行目标未开启 Pod 终端，或 Pod 不在可进入状态。")
+				}
+			/>
+			<Space wrap>
+				<Select
+					size="small"
+					style={{ width: 140 }}
+					value={command}
+					disabled={!execEnabled || !terminalInactive}
+					options={allowedCommands.map((item) => ({
+						label: item,
+						value: item,
+					}))}
+					onChange={setCommand}
+				/>
+				<Button
+					type="primary"
+					size="small"
+					disabled={!execEnabled || !terminalInactive}
+					loading={connecting}
+					onClick={() => void startTerminal()}
+				>
+					{restartReady || session ? "重新打开终端" : "进入终端"}
+				</Button>
+				<Button
+					size="small"
+					disabled={!session || terminalInactive}
+					onClick={() => void terminate()}
+				>
+					结束会话
+				</Button>
+				{session ? <Tag>{session.status}</Tag> : null}
+			</Space>
+			{error ? (
+				<Alert
+					type="error"
+					showIcon
+					message="终端连接失败"
+					description={error}
+				/>
+			) : null}
+			<pre
+				style={{
+					minHeight: 96,
+					maxHeight: 220,
+					overflow: "auto",
+					margin: 0,
+					padding: 10,
+					border: "1px solid #e5e7eb",
+					borderRadius: 6,
+					background: "#0f172a",
+					color: "#e2e8f0",
+					fontSize: 12,
+					whiteSpace: "pre-wrap",
+				}}
+			>
+				{output || "终端输出会显示在这里。"}
+			</pre>
+		</Space>
+	);
+}
+
 function LogsTab({
 	node,
 	onShowLogs,
@@ -1009,6 +1263,9 @@ function RuntimeTab({
 			</RuntimeSection>
 			<RuntimeSection title="调试">
 				<DebugTab node={node} />
+			</RuntimeSection>
+			<RuntimeSection title="终端">
+				<TerminalSessionPanel node={node} workflowName={workflowName} />
 			</RuntimeSection>
 		</Space>
 	);

@@ -215,6 +215,17 @@ function defaultRerunTemplateVersion(
 	return Math.max(...versions.map((item) => item.version));
 }
 
+export function batchJobPollIntervalMs(status?: string | null): number | null {
+	switch (status) {
+		case "running":
+			return 5_000;
+		case "paused":
+			return 30_000;
+		default:
+			return null;
+	}
+}
+
 function nodeStatusForDrawerFilter(
 	filter: NodeDrawerFilter,
 ): string | undefined {
@@ -391,18 +402,17 @@ export default function BatchJobDetailPage() {
 		void refresh({ useCache: true });
 	}, [refresh]);
 
-	const shouldPollJob =
-		job != null && ["running", "paused"].includes(job.status);
+	const pollIntervalMs = batchJobPollIntervalMs(job?.status);
 
 	useEffect(() => {
-		if (!shouldPollJob) {
+		if (pollIntervalMs === null) {
 			return;
 		}
 		const timer = window.setInterval(() => {
 			void refresh({ silent: true });
-		}, 5000);
+		}, pollIntervalMs);
 		return () => window.clearInterval(timer);
-	}, [refresh, shouldPollJob]);
+	}, [pollIntervalMs, refresh]);
 
 	const backToBatchList = useCallback(() => {
 		goBackFromBatchJobDetail(navigate, location.state);

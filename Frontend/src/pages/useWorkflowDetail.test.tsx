@@ -375,6 +375,66 @@ describe("useWorkflowDetail", () => {
 		expect(result.current.logState.followStatus).toBe("connected");
 	});
 
+	it("moves stalled workflow log streams out of the connecting state", async () => {
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-1",
+			status: "Running",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [
+				{
+					id: "node-1",
+					name: "node-1",
+					displayName: "node-1",
+					phase: "Running",
+				},
+			],
+		});
+		mockGetWorkflowLogs.mockResolvedValue({
+			workflowName: "wf-1",
+			nodeId: "node-1",
+			podName: "pod-1",
+			container: "main",
+			source: "argo-live",
+			logs: "",
+			lineCount: 0,
+			truncated: false,
+			truncation: {
+				bounded: true,
+				tailLines: 200,
+				maxTailLines: 2000,
+				limitBytes: 262144,
+				maxLimitBytes: 2097152,
+			},
+			pagination: { available: false, nextCursor: null },
+			window: { mode: "tail", scope: "bounded-live-window" },
+		});
+
+		const { result } = renderHook(() => useWorkflowDetail("wf-1"));
+
+		await waitFor(() => expect(result.current.workflow).not.toBeNull());
+		const node = result.current.workflow?.nodes[0];
+		expect(node).toBeDefined();
+		act(() => {
+			result.current.selectNode(node ?? null);
+		});
+		await waitFor(() => expect(result.current.logState.content).toBe(""));
+
+		vi.useFakeTimers();
+		act(() => {
+			result.current.startFollowLogs();
+		});
+		expect(result.current.logState.followStatus).toBe("connecting");
+
+		act(() => {
+			vi.advanceTimersByTime(5_000);
+		});
+
+		expect(result.current.logState.followStatus).toBe("connected");
+		expect(result.current.logState.followMessage).toBe(
+			"实时日志已连接，等待日志事件",
+		);
+	});
+
 	it("keeps a single polling interval while an active workflow refreshes", async () => {
 		mockGetWorkflow.mockResolvedValue({
 			name: "wf-1",
