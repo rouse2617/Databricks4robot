@@ -282,9 +282,39 @@ type RunOutputList struct {
 }
 
 type RunChildList struct {
-	RunID string        `json:"runId"`
-	Items []PipelineRun `json:"items"`
-	Total int           `json:"total"`
+	RunID     string          `json:"runId"`
+	Items     []PipelineRun   `json:"items"`
+	Relations []RunRelation   `json:"relations"`
+	Summary   RunChildSummary `json:"summary"`
+	Total     int             `json:"total"`
+}
+
+// RunRelation is a product-facing relation projection between two Runs. Phase
+// two derives batch_child relations from existing child run metadata; later
+// storage can persist the same shape in a dedicated relation table.
+type RunRelation struct {
+	ID           string `json:"id"`
+	ParentRunID  string `json:"parentRunId"`
+	ChildRunID   string `json:"childRunId"`
+	RelationType string `json:"relationType"`
+	Source       string `json:"source,omitempty"`
+	AssetID      string `json:"assetId,omitempty"`
+}
+
+// RunChildSummary captures deterministic aggregate status for a parent Run's
+// immediate children without requiring a live runtime workflow.
+type RunChildSummary struct {
+	Total           int            `json:"total"`
+	Statuses        map[string]int `json:"statuses"`
+	AggregateStatus string         `json:"aggregateStatus"`
+	ActiveCount     int            `json:"activeCount"`
+	TerminalCount   int            `json:"terminalCount"`
+	SucceededCount  int            `json:"succeededCount"`
+	FailedCount     int            `json:"failedCount"`
+	CancelledCount  int            `json:"cancelledCount"`
+	PendingCount    int            `json:"pendingCount"`
+	RunningCount    int            `json:"runningCount"`
+	SuspendedCount  int            `json:"suspendedCount"`
 }
 
 type RunRuntimeRef struct {

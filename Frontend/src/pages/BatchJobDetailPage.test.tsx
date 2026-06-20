@@ -28,6 +28,7 @@ const mockRerunBatchJob = vi.fn();
 const mockResumeBatchJob = vi.fn();
 const mockContinueFullBatchJob = vi.fn();
 const mockListPipelineVersions = vi.fn();
+const mockListRunChildren = vi.fn();
 
 vi.mock("antd", async () => {
 	const actual = await vi.importActual<typeof import("antd")>("antd");
@@ -62,6 +63,14 @@ vi.mock("../api/pipelineApi", async (importOriginal) => {
 		...actual,
 		listPipelineVersions: (...args: unknown[]) =>
 			mockListPipelineVersions(...args),
+	};
+});
+
+vi.mock("../api/runApi", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../api/runApi")>();
+	return {
+		...actual,
+		listRunChildren: (...args: unknown[]) => mockListRunChildren(...args),
 	};
 });
 
@@ -171,6 +180,42 @@ describe("BatchJobDetailPage", () => {
 				createdAt: "2026-06-17T00:00:00Z",
 			},
 		]);
+		mockListRunChildren.mockResolvedValue({
+			runId: "batch-1",
+			items: [
+				{
+					id: "run-1",
+					pipelineName: "Template 1",
+					workflowName: "wf-1",
+					status: "Running",
+					nodeCount: 1,
+					createdAt: "2026-06-17T00:00:00Z",
+					assetIds: ["asset-1"],
+				},
+			],
+			relations: [
+				{
+					id: "batch-1:run-1:batch_child",
+					parentRunId: "batch-1",
+					childRunId: "run-1",
+					relationType: "batch_child",
+				},
+			],
+			summary: {
+				total: 1,
+				statuses: { Running: 1 },
+				aggregateStatus: "Running",
+				activeCount: 1,
+				terminalCount: 0,
+				succeededCount: 0,
+				failedCount: 0,
+				cancelledCount: 0,
+				pendingCount: 0,
+				runningCount: 1,
+				suspendedCount: 0,
+			},
+			total: 1,
+		});
 	});
 
 	afterEach(() => {
@@ -271,5 +316,14 @@ describe("BatchJobDetailPage", () => {
 		await waitFor(() => expect(mockGetBatchJob).toHaveBeenCalledTimes(2));
 		expect(mockGetBatchNodeSummary).toHaveBeenCalledTimes(2);
 		expect(mockListPipelineVersions).toHaveBeenCalledTimes(1);
+	});
+
+	it("renders batch child runs summary from the Run API", async () => {
+		renderBatchJobDetail();
+
+		expect(await screen.findByText("批次运行")).toBeInTheDocument();
+		expect(mockListRunChildren).toHaveBeenCalledWith("batch-1");
+		expect(screen.getByText("子运行 1")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "asset-1" })).toBeInTheDocument();
 	});
 });

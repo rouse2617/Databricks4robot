@@ -110,7 +110,24 @@ PY
     "/api/v1/runs/${RUN}/asset-nodes?limit=20" \
     "/api/v1/runs/${RUN}/cost-summary"; do
     request GET "$path"
-    if [[ "$CODE" == "200" ]]; then
+    if [[ "$CODE" == "200" ]] && [[ "$path" == "/api/v1/runs/${RUN}/children" ]]; then
+      if BODY_JSON="$BODY" python3 - <<'PY' >/dev/null 2>&1
+import json, os
+d = json.loads(os.environ["BODY_JSON"])
+assert isinstance(d.get("items"), list)
+assert isinstance(d.get("relations"), list)
+summary = d.get("summary")
+assert isinstance(summary, dict)
+assert isinstance(summary.get("statuses"), dict)
+assert isinstance(summary.get("aggregateStatus"), str)
+assert summary.get("total") == d.get("total")
+PY
+      then
+        ok "GET ${path} schema"
+      else
+        bad "GET ${path} schema"
+      fi
+    elif [[ "$CODE" == "200" ]]; then
       ok "GET ${path}"
     else
       bad "GET ${path}"

@@ -182,6 +182,7 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 			}); err != nil {
 				return nil, err
 			}
+			uc.ensureBatchParentRun(txCtx, job)
 			go func() {
 				if err := <-uc.materializeAndRunBatch(job.ID, templateID, templateVersion, pilotCount, assetIDsCopy); err != nil {
 					slog.Error("CreateBackfill: materializeAndRunBatch failed", "jobID", job.ID, "err", err)
@@ -215,6 +216,7 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 			return nil, fmt.Errorf("save backfill items: %w", err)
 		}
 	}
+	uc.ensureBatchParentRun(ctx, job)
 	go func() {
 		if err := <-uc.materializeAndRunBatch(job.ID, templateID, templateVersion, pilotCount, assetIDsCopy); err != nil {
 			slog.Error("CreateBackfill (fallback): materializeAndRunBatch failed", "jobID", job.ID, "err", err)
@@ -262,6 +264,7 @@ func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVers
 	if err != nil {
 		slog.Warn("materializeAndRunBatch: FindJobByID failed", "jobID", jobID, "err", err)
 	}
+	uc.ensureBatchParentRun(ctx, job)
 	targetID := targetIDFromBackfillJob(job)
 	items, err := uc.repo.FindItemsByJobID(ctx, jobID)
 	if err != nil {
@@ -329,6 +332,7 @@ func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVers
 		close(errCh)
 		return errCh
 	}
+	uc.ensureBatchParentRunByID(ctx, jobID)
 	if uc.pipelineUC != nil && len(itemsToRun) > 0 {
 		go func() {
 			slog.Info("materializeAndRunBatch: starting runItems", "jobID", jobID, "templateID", templateID)
@@ -735,6 +739,7 @@ func (uc *Usecase) ResumeJob(ctx context.Context, id string) error {
 	if err := uc.repo.UpdateJobStatus(ctx, id, "running"); err != nil {
 		return err
 	}
+	uc.ensureBatchParentRunByID(ctx, id)
 	items, err := uc.repo.FindItemsByJobID(ctx, id)
 	if err != nil {
 		return err
@@ -842,6 +847,7 @@ func (uc *Usecase) Rerun(ctx context.Context, jobID string, req RerunRequest) (*
 		if err := uc.repo.UpdateJobStatus(ctx, jobID, "running"); err != nil {
 			return nil, err
 		}
+		uc.ensureBatchParentRunByID(ctx, jobID)
 		if uc.pipelineUC != nil {
 			go func() {
 				slog.Info("Rerun: starting runItems", "jobID", jobID, "templateID", templateID)
@@ -1176,6 +1182,7 @@ func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {
 	if err := uc.repo.UpdateJobPilotPhase(ctx, jobID, "running", "done"); err != nil {
 		return err
 	}
+	uc.ensureBatchParentRunByID(ctx, jobID)
 	items, err := uc.repo.FindItemsByJobIDWithStatuses(ctx, jobID, []string{"pending"})
 	if err != nil {
 		return err
@@ -1235,12 +1242,16 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 		return nil
 	}
 	if latestJob.Status == "paused" {
-		return uc.repo.UpdateJobProgress(ctx, jobID, summary.Completed, summary.Failed, "paused")
+		return uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, "paused")
 	}
 	if latestJob.PilotPhase == "running" && latestJob.PilotCount > 0 {
 		attemptedPilot := summary.Completed + summary.Failed
 		if attemptedPilot >= latestJob.PilotCount && summary.Pending > 0 {
-			return uc.repo.UpdateJobPilotPhase(ctx, jobID, "pilot_review", "review")
+			if err := uc.repo.UpdateJobPilotPhase(ctx, jobID, "pilot_review", "review"); err != nil {
+				return err
+			}
+			uc.ensureBatchParentRunByID(ctx, jobID)
+			return nil
 		}
 	}
 	jobStatus := deriveJobStatus(summary, latestJob.TotalCount)
@@ -1249,9 +1260,44 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 	}
 	if latestJob.PilotPhase == "running" && jobStatus == "completed" {
 		_ = uc.repo.UpdateJobPilotPhase(ctx, jobID, jobStatus, "done")
+		uc.ensureBatchParentRunByID(ctx, jobID)
 		return nil
 	}
-	return uc.repo.UpdateJobProgress(ctx, jobID, summary.Completed, summary.Failed, jobStatus)
+	return uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, jobStatus)
+}
+
+func (uc *Usecase) updateJobProgressAndParentRun(ctx context.Context, jobID string, completed, failed int, status string) error {
+	if err := uc.repo.UpdateJobProgress(ctx, jobID, completed, failed, status); err != nil {
+		return err
+	}
+	uc.ensureBatchParentRunByID(ctx, jobID)
+	return nil
+}
+
+func (uc *Usecase) ensureBatchParentRunByID(ctx context.Context, jobID string) {
+	job, err := uc.repo.FindJobByID(ctx, jobID)
+	if err != nil {
+		slog.Warn("ensureBatchParentRunByID: FindJobByID failed", "jobID", jobID, "err", err)
+		return
+	}
+	uc.ensureBatchParentRun(ctx, job)
+}
+
+func (uc *Usecase) ensureBatchParentRun(ctx context.Context, job *models.BackfillJob) {
+	if uc == nil || uc.pipelineUC == nil || job == nil {
+		return
+	}
+	if err := uc.pipelineUC.UpsertBatchParentRun(ctx, pipelineUC.BatchParentRunInput{
+		ID:              job.ID,
+		Name:            job.Name,
+		TemplateID:      job.TemplateID,
+		TemplateVersion: job.TemplateVersion,
+		TargetID:        targetIDFromBackfillJob(job),
+		Status:          job.Status,
+		AssetCount:      job.TotalCount,
+	}); err != nil {
+		slog.Warn("ensureBatchParentRun: upsert parent run failed", "jobID", job.ID, "err", err)
+	}
 }
 
 func deriveJobStatus(summary repository.BackfillItemStatusSummary, totalCount int) string {

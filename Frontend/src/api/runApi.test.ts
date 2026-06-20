@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRunByTemplate, listRuns, retryRun } from "./runApi";
+import {
+	createRunByTemplate,
+	listRunChildren,
+	listRuns,
+	retryRun,
+} from "./runApi";
 
 describe("runApi", () => {
 	afterEach(() => {
@@ -78,5 +83,49 @@ describe("runApi", () => {
 			"/api/v1/runs/run-1/retry",
 			expect.objectContaining({ method: "POST" }),
 		);
+	});
+
+	it("reads enriched run children through /runs/:id/children", async () => {
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					runId: "batch-1",
+					items: [{ id: "run-1", status: "Running" }],
+					relations: [
+						{
+							id: "batch-1:run-1:batch_child",
+							parentRunId: "batch-1",
+							childRunId: "run-1",
+							relationType: "batch_child",
+							source: "pipeline_runs.batch_job_id",
+						},
+					],
+					summary: {
+						total: 1,
+						statuses: { Running: 1 },
+						aggregateStatus: "Running",
+						activeCount: 1,
+						terminalCount: 0,
+						succeededCount: 0,
+						failedCount: 0,
+						cancelledCount: 0,
+						pendingCount: 0,
+						runningCount: 1,
+						suspendedCount: 0,
+					},
+					total: 1,
+				}),
+				{ headers: { "content-type": "application/json" }, status: 200 },
+			),
+		);
+
+		const result = await listRunChildren("batch-1");
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/v1/runs/batch-1/children",
+			expect.objectContaining({ method: "GET" }),
+		);
+		expect(result.summary.aggregateStatus).toBe("Running");
+		expect(result.relations?.[0]?.relationType).toBe("batch_child");
 	});
 });

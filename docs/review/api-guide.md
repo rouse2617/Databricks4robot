@@ -2702,6 +2702,45 @@ curl -s "$BASE/api/v1/runs/<RUN_ID>/runtime" \
   -H "X-Databrew-Token: $TOKEN"
 ```
 
+Batch / Backfill 在 Runtime OS 中按父 Run + 子 Run 树查看。新建批量任务会尽力创建一个
+`id == backfill_job.id` 的父 Run；子任务 Run 继续通过 `batchJobId` 指向父 Run。
+`/runs/<BATCH_JOB_ID>/children` 返回兼容的 `items/total`，并额外包含关系投影和聚合状态：
+
+```json
+{
+  "runId": "batch-1",
+  "items": [{ "id": "run-1", "status": "Running", "batchJobId": "batch-1" }],
+  "relations": [
+    {
+      "id": "batch-1:run-1:batch_child",
+      "parentRunId": "batch-1",
+      "childRunId": "run-1",
+      "relationType": "batch_child",
+      "source": "pipeline_runs.batch_job_id"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "statuses": { "Running": 1 },
+    "aggregateStatus": "Running",
+    "activeCount": 1,
+    "terminalCount": 0,
+    "succeededCount": 0,
+    "failedCount": 0,
+    "cancelledCount": 0,
+    "pendingCount": 0,
+    "runningCount": 1,
+    "suspendedCount": 0
+  },
+  "total": 1
+}
+```
+
+聚合规则是确定性的：存在运行中子 Run 时为 `Running`，存在等待子 Run 时为
+`Pending`；没有 active 子 Run 后，`Error` / `Expired` / `Failed` 会反映失败，
+全部成功才是 `Succeeded`。历史批量任务如果还没有父 Run，`/runs/<id>` 可能仍会 404；
+批量详情页会保留旧 backfill 数据作为兜底。
+
 操作语义：
 
 ```bash

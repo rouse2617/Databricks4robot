@@ -556,7 +556,28 @@ class TestRunManager:
             return_value=httpx.Response(200, json={"runId": "run-1", "items": [], "total": 0})
         )
         respx.get(f"{BASE_URL}/api/v1/runs/run-1/children").mock(
-            return_value=httpx.Response(200, json={"runId": "run-1", "items": [], "total": 0})
+            return_value=httpx.Response(
+                200,
+                json={
+                    "runId": "run-1",
+                    "items": [],
+                    "relations": [],
+                    "summary": {
+                        "total": 0,
+                        "statuses": {},
+                        "aggregateStatus": "Pending",
+                        "activeCount": 0,
+                        "terminalCount": 0,
+                        "succeededCount": 0,
+                        "failedCount": 0,
+                        "cancelledCount": 0,
+                        "pendingCount": 0,
+                        "runningCount": 0,
+                        "suspendedCount": 0,
+                    },
+                    "total": 0,
+                },
+            )
         )
         respx.get(f"{BASE_URL}/api/v1/runs/run-1/runtime").mock(
             return_value=httpx.Response(200, json={"runId": "run-1", "runtime": {"runtimeType": "argo"}})
@@ -573,7 +594,9 @@ class TestRunManager:
         assert client.runs.cost_summary("run-1")["runId"] == "run-1"
         assert client.runs.inputs("run-1")["total"] == 0
         assert client.runs.outputs("run-1")["total"] == 0
-        assert client.runs.children("run-1")["total"] == 0
+        children = client.runs.children("run-1")
+        assert children["total"] == 0
+        assert children["summary"]["aggregateStatus"] == "Pending"
         assert client.runs.runtime("run-1")["runtime"]["runtimeType"] == "argo"
         assert client.runs.retry("run-1")["id"] == "run-1"
         assert client.runs.resubmit("run-1")["id"] == "run-1"

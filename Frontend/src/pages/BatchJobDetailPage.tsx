@@ -45,6 +45,11 @@ import {
 	listPipelineVersions,
 	type PipelineTemplate,
 } from "../api/pipelineApi";
+import {
+	listRunChildren,
+	type RunChildrenResponse,
+	type RunChildSummary,
+} from "../api/runApi";
 import type { WorkflowSummary } from "../api/workflowApi";
 import {
 	goBackFromBatchJobDetail,
@@ -108,6 +113,11 @@ const batchNodeSummaryCache = new Map<
 	{ value: BatchNodeSummary; cachedAt: number }
 >();
 const batchTemplateMetaInFlight = new Map<string, Promise<BatchTemplateMeta>>();
+const batchRunTreeInFlight = new Map<string, Promise<RunChildrenResponse>>();
+const batchRunTreeCache = new Map<
+	string,
+	{ value: RunChildrenResponse; cachedAt: number }
+>();
 
 export function resetBatchJobDetailRequestCacheForTests(): void {
 	if (!import.meta.env.TEST) return;
@@ -116,6 +126,8 @@ export function resetBatchJobDetailRequestCacheForTests(): void {
 	batchNodeSummaryInFlight.clear();
 	batchNodeSummaryCache.clear();
 	batchTemplateMetaInFlight.clear();
+	batchRunTreeInFlight.clear();
+	batchRunTreeCache.clear();
 }
 
 async function loadBatchJob(
@@ -199,6 +211,35 @@ async function loadBatchTemplateMeta(
 		});
 
 	batchTemplateMetaInFlight.set(templateId, request);
+	return request;
+}
+
+async function loadBatchRunTree(
+	jobId: string,
+	opts?: { useCache?: boolean; force?: boolean },
+): Promise<RunChildrenResponse> {
+	if (opts?.force) {
+		batchRunTreeCache.delete(jobId);
+	}
+	if (opts?.useCache) {
+		const cached = batchRunTreeCache.get(jobId);
+		if (cached && Date.now() - cached.cachedAt < batchDetailCacheMs) {
+			return cached.value;
+		}
+	}
+	const inFlight = batchRunTreeInFlight.get(jobId);
+	if (inFlight) return inFlight;
+
+	const request = listRunChildren(jobId)
+		.then((value) => {
+			batchRunTreeCache.set(jobId, { value, cachedAt: Date.now() });
+			return value;
+		})
+		.finally(() => {
+			batchRunTreeInFlight.delete(jobId);
+		});
+
+	batchRunTreeInFlight.set(jobId, request);
 	return request;
 }
 
@@ -289,6 +330,17 @@ export function formatRerunFeedback(result: {
 	return { level: "success", text: "重跑已提交" };
 }
 
+function runTreeSummaryItems(summary: RunChildSummary) {
+	return [
+		{ label: "总数", value: summary.total },
+		{ label: "运行中", value: summary.runningCount },
+		{ label: "等待中", value: summary.pendingCount },
+		{ label: "成功", value: summary.succeededCount },
+		{ label: "失败", value: summary.failedCount },
+		{ label: "暂停", value: summary.suspendedCount },
+	].filter((item) => item.value > 0 || item.label === "总数");
+}
+
 export default function BatchJobDetailPage() {
 	const { id = "" } = useParams();
 	const navigate = useNavigate();
@@ -305,6 +357,8 @@ export default function BatchJobDetailPage() {
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 	const [nodeSummary, setNodeSummary] = useState<BatchNodeSummary | null>(null);
 	const [nodeSummaryLoading, setNodeSummaryLoading] = useState(false);
+	const [runTree, setRunTree] = useState<RunChildrenResponse | null>(null);
+	const [runTreeLoading, setRunTreeLoading] = useState(false);
 	const [drawerNode, setDrawerNode] = useState<BatchNodeSummaryNode | null>(
 		null,
 	);
@@ -346,6 +400,9 @@ export default function BatchJobDetailPage() {
 			if (showNodeSummaryLoading) {
 				setNodeSummaryLoading(true);
 			}
+			if (!opts?.silent) {
+				setRunTreeLoading(true);
+			}
 			const requestOptions = {
 				force: opts?.force,
 				useCache: opts?.useCache,
@@ -362,6 +419,18 @@ export default function BatchJobDetailPage() {
 				.finally(() => {
 					if (showNodeSummaryLoading) {
 						setNodeSummaryLoading(false);
+					}
+				});
+			const runTreeTask = loadBatchRunTree(id, requestOptions)
+				.then((tree) =>
+					setRunTree((current) => (sameValue(current, tree) ? current : tree)),
+				)
+				.catch(() =>
+					setRunTree((current) => (current === null ? current : null)),
+				)
+				.finally(() => {
+					if (!opts?.silent) {
+						setRunTreeLoading(false);
 					}
 				});
 			try {
@@ -382,12 +451,16 @@ export default function BatchJobDetailPage() {
 					);
 				}
 				void nodeSummaryTask;
+				void runTreeTask;
 			} catch (err) {
 				if (!opts?.silent) {
 					messageRef.current.error(`加载批次详情失败：${String(err)}`);
 				}
 				if (showNodeSummaryLoading) {
 					setNodeSummaryLoading(false);
+				}
+				if (!opts?.silent) {
+					setRunTreeLoading(false);
 				}
 			} finally {
 				if (!opts?.silent) {
@@ -799,6 +872,67 @@ export default function BatchJobDetailPage() {
 					}
 					style={{ marginBottom: 16 }}
 				/>
+			) : null}
+
+			{runTree || runTreeLoading ? (
+				<Card
+					className="pipeline-batch-run-tree"
+					title="批次运行"
+					style={{ marginBottom: 16 }}
+					extra={
+						<Button
+							type="link"
+							size="small"
+							onClick={() => navigate(`/runs/${encodeURIComponent(job.id)}`)}
+						>
+							查看批次 Run
+						</Button>
+					}
+				>
+					{runTreeLoading && !runTree ? (
+						<Skeleton active paragraph={{ rows: 2 }} title={false} />
+					) : runTree?.summary ? (
+						<Space direction="vertical" size={12} style={{ width: "100%" }}>
+							<Space wrap>
+								<Tag
+									color={resolveStatusTagColor(runTree.summary.aggregateStatus)}
+								>
+									{formatWorkflowPhaseLabel(runTree.summary.aggregateStatus)}
+								</Tag>
+								{runTreeSummaryItems(runTree.summary).map((item) => (
+									<Text key={item.label} type="secondary">
+										{item.label} {item.value}
+									</Text>
+								))}
+								<Text type="secondary">
+									子运行 {runTree.relations?.length ?? 0}
+								</Text>
+							</Space>
+							{runTree.items.length > 0 ? (
+								<Space wrap size={[8, 8]}>
+									{runTree.items.slice(0, 8).map((child) => (
+										<Button
+											key={child.id}
+											size="small"
+											onClick={() =>
+												navigate(`/runs/${encodeURIComponent(child.id)}`)
+											}
+										>
+											{child.assetIds?.[0] ?? child.id.slice(0, 8)}
+										</Button>
+									))}
+									{runTree.items.length > 8 ? (
+										<Text type="secondary">
+											+{runTree.items.length - 8} 个子运行
+										</Text>
+									) : null}
+								</Space>
+							) : (
+								<Text type="secondary">子运行尚未生成</Text>
+							)}
+						</Space>
+					) : null}
+				</Card>
 			) : null}
 
 			<Card

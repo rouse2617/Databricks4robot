@@ -177,6 +177,73 @@ func TestUpsertBatchSubtaskRunUsesRequestedExecutionTarget(t *testing.T) {
 	}
 }
 
+func TestUpsertBatchParentRunPreservesAssetCountWithoutAssetIDs(t *testing.T) {
+	t.Parallel()
+
+	const (
+		batchJobID = "batch-1"
+		templateID = "tmpl-1"
+		targetID   = "target-video"
+	)
+
+	runRepo := &mockRunRepo{byID: map[string]*models.PipelineRun{}}
+	templateRepo := &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			templateID: {
+				ID:        templateID,
+				Name:      "video-pipe",
+				Version:   1,
+				NodeCount: 5,
+				Scope:     "dev",
+				Pipeline:  map[string]interface{}{"nodes": []interface{}{}, "edges": []interface{}{}},
+			},
+		},
+	}
+	targetRepo := &mockTargetRepo{
+		byID: map[string]*models.ExecutionTarget{
+			targetID: {
+				ID:        targetID,
+				Name:      "video-proc-dev",
+				Namespace: "video-proc-dev",
+				Enabled:   true,
+			},
+		},
+	}
+
+	uc := New(templateRepo, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(targetRepo, runRepo, nil)
+
+	err := uc.UpsertBatchParentRun(context.Background(), BatchParentRunInput{
+		ID:              batchJobID,
+		Name:            "Batch 1",
+		TemplateID:      templateID,
+		TemplateVersion: 1,
+		TargetID:        targetID,
+		Status:          "running",
+		AssetCount:      10000,
+	})
+	if err != nil {
+		t.Fatalf("UpsertBatchParentRun() error = %v", err)
+	}
+
+	saved := runRepo.byID[batchJobID]
+	if saved == nil {
+		t.Fatal("expected parent run to be saved")
+	}
+	if saved.BatchJobID != nil {
+		t.Fatalf("parent BatchJobID = %v, want nil", *saved.BatchJobID)
+	}
+	if len(saved.AssetIDs) != 0 || saved.AssetCount != 10000 {
+		t.Fatalf("asset projection = ids:%v count:%d, want ids empty count 10000", saved.AssetIDs, saved.AssetCount)
+	}
+	if saved.Status != "Running" {
+		t.Fatalf("status = %q, want Running", saved.Status)
+	}
+	if saved.ExecutionTargetID != targetID || saved.ArgoNamespace != "video-proc-dev" {
+		t.Fatalf("target = %q namespace=%q", saved.ExecutionTargetID, saved.ArgoNamespace)
+	}
+}
+
 func TestRecordBatchSubtaskFailurePersistsMessageAndEvent(t *testing.T) {
 	t.Parallel()
 

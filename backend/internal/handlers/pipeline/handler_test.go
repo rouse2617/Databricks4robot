@@ -876,6 +876,12 @@ func TestRunAPI_SubresourcesProjectInputsOutputsChildrenAndRuntime(t *testing.T)
 	if children.Total != 1 || len(children.Items) != 1 || children.Items[0].ID != child.ID {
 		t.Fatalf("unexpected children response: %+v", children)
 	}
+	if children.Summary.Total != 1 || children.Summary.AggregateStatus != "Succeeded" {
+		t.Fatalf("unexpected children summary: %+v", children.Summary)
+	}
+	if len(children.Relations) != 1 || children.Relations[0].RelationType != "batch_child" {
+		t.Fatalf("unexpected children relations: %+v", children.Relations)
+	}
 
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/runs/run-parent/runtime", nil))

@@ -9,7 +9,22 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	runstate "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/state"
 )
+
+// BatchParentRunInput describes the inspectable parent Run for a batch/backfill
+// job. It does not create a runtime workflow; child Runs remain associated via
+// their BatchJobID field.
+type BatchParentRunInput struct {
+	ID              string
+	Name            string
+	TemplateID      string
+	TemplateVersion int
+	TargetID        string
+	Status          string
+	Message         string
+	AssetCount      int
+}
 
 // BatchSubtaskRunInput describes a batch subtask ledger row that should look
 // like any other pipeline run in list/detail views.
@@ -26,6 +41,100 @@ type BatchSubtaskRunInput struct {
 	// ForceNewAttempt creates a fresh pipeline run instead of reusing the latest
 	// batch+asset run (used when rerunning a backfill subtask).
 	ForceNewAttempt bool
+}
+
+// UpsertBatchParentRun creates or updates the parent Run record for a batch job
+// so the batch can be inspected through /runs/:id and /runs/:id/children.
+func (uc *Usecase) UpsertBatchParentRun(ctx context.Context, in BatchParentRunInput) error {
+	if uc.runRepo == nil {
+		return fmt.Errorf("pipeline run repository is not configured")
+	}
+	runID := strings.TrimSpace(in.ID)
+	templateID := strings.TrimSpace(in.TemplateID)
+	if runID == "" || templateID == "" {
+		return fmt.Errorf("%w: id and templateId are required", ErrInvalidArgument)
+	}
+
+	t, err := uc.templateRepo.FindByID(ctx, templateID)
+	if err != nil {
+		return err
+	}
+	if t == nil {
+		return ErrTemplateNotFound
+	}
+	if in.TemplateVersion > 0 && in.TemplateVersion != t.Version {
+		versioned, err := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, in.TemplateVersion)
+		if err != nil {
+			return err
+		}
+		if versioned == nil {
+			return ErrTemplateNotFound
+		}
+		t = versioned
+		templateID = t.ID
+	}
+
+	target, err := uc.resolveExecutionTarget(ctx, in.TargetID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	templateIDCopy := templateID
+	var templateVersion *int
+	if t.Version > 0 {
+		v := t.Version
+		templateVersion = &v
+	}
+	status := runstate.NormalizeRunStatus(in.Status)
+	startedAt, finishedAt := batchParentRunTimestamps(status, now, nil)
+	pipelineName := strings.TrimSpace(in.Name)
+	if pipelineName == "" {
+		pipelineName = t.Name
+	}
+
+	run := &models.PipelineRun{
+		ID:                runID,
+		TemplateID:        &templateIDCopy,
+		TemplateVersion:   templateVersion,
+		PipelineName:      pipelineName,
+		ExecutionTargetID: target.ID,
+		TargetSnapshot:    executionTargetSnapshot(target),
+		Status:            status,
+		NodeCount:         t.NodeCount,
+		AssetCount:        in.AssetCount,
+		NoAssetRun:        true,
+		PipelineJSON:      t.Pipeline,
+		ArgoNamespace:     target.Namespace,
+		ExecutionTarget:   target,
+		Scope:             t.Scope,
+		Message:           strings.TrimSpace(in.Message),
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		StartedAt:         startedAt,
+		FinishedAt:        finishedAt,
+	}
+	if run.ArgoNamespace == "" {
+		run.ArgoNamespace = uc.namespace
+	}
+
+	if existing, err := uc.runRepo.FindByID(ctx, runID); err == nil && existing != nil {
+		run.CreatedAt = existing.CreatedAt
+		if strings.TrimSpace(existing.WorkflowName) != "" {
+			run.WorkflowName = existing.WorkflowName
+		}
+		if strings.TrimSpace(existing.ArgoWorkflowUID) != "" {
+			run.ArgoWorkflowUID = existing.ArgoWorkflowUID
+		}
+		if strings.TrimSpace(in.Message) == "" {
+			run.Message = existing.Message
+		}
+		run.StartedAt, run.FinishedAt = batchParentRunTimestamps(status, now, existing)
+	} else if err != nil {
+		return err
+	}
+
+	return uc.runRepo.Save(ctx, run)
 }
 
 // UpsertBatchSubtaskRun creates or updates a first-class pipeline run for a
@@ -297,4 +406,30 @@ func isTerminalBatchSubtaskStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func batchParentRunTimestamps(status string, now time.Time, existing *models.PipelineRun) (*time.Time, *time.Time) {
+	var startedAt *time.Time
+	var finishedAt *time.Time
+	if existing != nil {
+		startedAt = existing.StartedAt
+		finishedAt = existing.FinishedAt
+	}
+	switch {
+	case runstate.IsActiveStatus(status):
+		finishedAt = nil
+		if status == runstate.StatusRunning || status == runstate.StatusSuspended {
+			if startedAt == nil {
+				startedAt = &now
+			}
+		}
+	case runstate.IsTerminalStatus(status):
+		if startedAt == nil {
+			startedAt = &now
+		}
+		if finishedAt == nil {
+			finishedAt = &now
+		}
+	}
+	return startedAt, finishedAt
 }

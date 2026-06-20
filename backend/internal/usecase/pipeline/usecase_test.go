@@ -1409,7 +1409,22 @@ func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRun
 	if err != nil {
 		return nil, 0, err
 	}
-	return items, len(items), nil
+	filtered := make([]models.PipelineRun, 0, len(items))
+	for _, item := range items {
+		if filter.BatchJobID != "" {
+			if item.BatchJobID == nil || *item.BatchJobID != filter.BatchJobID {
+				continue
+			}
+		}
+		if filter.ExcludeBatch && item.BatchJobID != nil && strings.TrimSpace(*item.BatchJobID) != "" {
+			continue
+		}
+		if filter.Status != "" && !strings.EqualFold(item.Status, filter.Status) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, len(filtered), nil
 }
 func (m *mockRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
 	if m.byID == nil {
@@ -1471,6 +1486,62 @@ func (m *mockRunRepo) UpdateLedgerState(_ context.Context, id, ledgerState strin
 		r.LedgerState = ledgerState
 	}
 	return nil
+}
+
+func TestListRunChildrenReturnsRelationsAndSummary(t *testing.T) {
+	t.Parallel()
+
+	const parentID = "batch-1"
+	childBatchID := parentID
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			parentID: {
+				ID:           parentID,
+				PipelineName: "Batch 1",
+				Status:       "Running",
+				CreatedAt:    time.Now().UTC(),
+			},
+			"child-running": {
+				ID:         "child-running",
+				Status:     "Running",
+				BatchJobID: &childBatchID,
+				AssetIDs:   []string{"asset-1"},
+				CreatedAt:  time.Now().UTC(),
+			},
+			"child-failed": {
+				ID:         "child-failed",
+				Status:     "Failed",
+				BatchJobID: &childBatchID,
+				AssetIDs:   []string{"asset-2"},
+				CreatedAt:  time.Now().UTC(),
+			},
+			"unrelated": {
+				ID:        "unrelated",
+				Status:    "Succeeded",
+				CreatedAt: time.Now().UTC(),
+			},
+		},
+	}
+
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+
+	got, err := uc.ListRunChildren(context.Background(), parentID)
+	if err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	if got.RunID != parentID || got.Total != 2 || len(got.Items) != 2 {
+		t.Fatalf("children = %+v, want 2 children for %s", got, parentID)
+	}
+	if len(got.Relations) != 2 {
+		t.Fatalf("relations = %d, want 2: %+v", len(got.Relations), got.Relations)
+	}
+	if got.Summary.Total != 2 || got.Summary.AggregateStatus != "Running" {
+		t.Fatalf("summary = %+v, want Running total=2", got.Summary)
+	}
+	if got.Summary.RunningCount != 1 || got.Summary.FailedCount != 1 {
+		t.Fatalf("summary counts = %+v, want running=1 failed=1", got.Summary)
+	}
 }
 
 // trackingDeploymentRepo wraps mockDeploymentRepo to count FindAll calls so

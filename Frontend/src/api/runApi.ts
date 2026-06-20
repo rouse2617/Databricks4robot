@@ -62,7 +62,32 @@ export interface RunOutputListResponse {
 export interface RunChildrenResponse {
 	runId: string;
 	items: PipelineRun[];
+	relations: RunRelation[];
+	summary: RunChildSummary;
 	total: number;
+}
+
+export interface RunRelation {
+	id: string;
+	parentRunId: string;
+	childRunId: string;
+	relationType: "batch_child" | string;
+	source?: string;
+	assetId?: string;
+}
+
+export interface RunChildSummary {
+	total: number;
+	statuses: Record<string, number>;
+	aggregateStatus: string;
+	activeCount: number;
+	terminalCount: number;
+	succeededCount: number;
+	failedCount: number;
+	cancelledCount: number;
+	pendingCount: number;
+	runningCount: number;
+	suspendedCount: number;
 }
 
 export interface RunRuntime {

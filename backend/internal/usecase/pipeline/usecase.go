@@ -24,6 +24,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	runstate "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/state"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	configUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline_config"
@@ -940,9 +941,13 @@ func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
 		return
 	}
 	if len(run.AssetIDs) == 0 {
-		run.AssetIDs = assetIDsFromPipelineJSON(run.PipelineJSON)
+		if assetIDs := assetIDsFromPipelineJSON(run.PipelineJSON); len(assetIDs) > 0 {
+			run.AssetIDs = assetIDs
+		}
 	}
-	run.AssetCount = len(run.AssetIDs)
+	if len(run.AssetIDs) > 0 {
+		run.AssetCount = len(run.AssetIDs)
+	}
 	if run.ExecutionTarget == nil {
 		if uc.targetRepo != nil && run.ExecutionTargetID != "" {
 			if target, err := uc.targetRepo.FindByID(ctx, run.ExecutionTargetID); err == nil && target != nil {
@@ -3468,7 +3473,12 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunC
 		return nil, ErrDeploymentNotFound
 	}
 	if uc.runRepo == nil {
-		return &models.RunChildList{RunID: run.ID, Items: []models.PipelineRun{}}, nil
+		return &models.RunChildList{
+			RunID:     run.ID,
+			Items:     []models.PipelineRun{},
+			Relations: []models.RunRelation{},
+			Summary:   runstate.AggregateChildRuns(nil),
+		}, nil
 	}
 	items, total, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
 		BatchJobID: id,
@@ -3488,7 +3498,13 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunC
 	if len(children) != len(items) {
 		total = len(children)
 	}
-	return &models.RunChildList{RunID: run.ID, Items: children, Total: total}, nil
+	return &models.RunChildList{
+		RunID:     run.ID,
+		Items:     children,
+		Relations: runstate.BuildBatchChildRelations(run.ID, children),
+		Summary:   runstate.AggregateChildRuns(children),
+		Total:     total,
+	}, nil
 }
 
 // GetRunRuntime returns runtime debug references without requiring the runtime

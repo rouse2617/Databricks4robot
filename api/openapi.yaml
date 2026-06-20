@@ -2377,7 +2377,45 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/PipelineRun' }
+        relations:
+          type: array
+          description: Projected Run relations. Batch trees derive batch_child rows from existing child run metadata until a relation table exists.
+          items: { $ref: '#/components/schemas/RunRelation' }
+        summary:
+          $ref: '#/components/schemas/RunChildSummary'
         total: { type: integer }
+    RunRelation:
+      type: object
+      properties:
+        id: { type: string }
+        parentRunId: { type: string }
+        childRunId: { type: string }
+        relationType:
+          type: string
+          description: Relationship kind, for example batch_child.
+        source:
+          type: string
+          description: Projection source, for example pipeline_runs.batch_job_id.
+        assetId: { type: string }
+    RunChildSummary:
+      type: object
+      properties:
+        total: { type: integer }
+        statuses:
+          type: object
+          additionalProperties:
+            type: integer
+        aggregateStatus:
+          type: string
+          description: Deterministic aggregate child status.
+        activeCount: { type: integer }
+        terminalCount: { type: integer }
+        succeededCount: { type: integer }
+        failedCount: { type: integer }
+        cancelledCount: { type: integer }
+        pendingCount: { type: integer }
+        runningCount: { type: integer }
+        suspendedCount: { type: integer }
     RunRuntime:
       type: object
       properties:
@@ -6518,7 +6556,7 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Child Runs
+          description: Child Runs with projected relations and aggregate child status summary
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RunChildList' }
