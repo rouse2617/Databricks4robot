@@ -71,6 +71,8 @@ func TestAggregateChildRuns(t *testing.T) {
 				FailedCount:     1,
 				RunningCount:    1,
 				PendingCount:    1,
+				HasFailures:     true,
+				HasBlocking:     true,
 			},
 		},
 		{
@@ -85,6 +87,7 @@ func TestAggregateChildRuns(t *testing.T) {
 				AggregateStatus: StatusError,
 				TerminalCount:   2,
 				FailedCount:     2,
+				HasFailures:     true,
 			},
 		},
 	}
@@ -135,6 +138,26 @@ func TestAggregateChildRunsTopFailureReasons(t *testing.T) {
 	if got := summary.TopFailureReasons[1]; got.Reason != "image_startup" || got.Count != 1 {
 		t.Fatalf("second reason = %+v, want image_startup count=1", got)
 	}
+	if !summary.HasFailures {
+		t.Fatal("expected summary to report failures")
+	}
+}
+
+func TestAggregateChildRunsGenericFailureWithoutMessage(t *testing.T) {
+	t.Parallel()
+
+	summary := AggregateChildRuns([]models.PipelineRun{
+		{ID: "run-empty-message", Status: "Failed", WorkflowName: "wf"},
+	})
+	if !summary.HasFailures {
+		t.Fatal("expected summary to report failures")
+	}
+	if len(summary.TopFailureReasons) != 1 {
+		t.Fatalf("top reasons = %+v, want one generic failure", summary.TopFailureReasons)
+	}
+	if got := summary.TopFailureReasons[0]; got.Reason != "run_failed" || got.Count != 1 || got.Message == "" {
+		t.Fatalf("top reason = %+v, want generic run_failed with default message", got)
+	}
 }
 
 func TestAnnotateRunDiagnosticsPendingWithoutRuntime(t *testing.T) {
@@ -168,6 +191,43 @@ func TestAnnotateRunDiagnosticsFailure(t *testing.T) {
 	}
 	if run.BlockingReason != "" || run.BlockingMessage != "" {
 		t.Fatalf("blocking fields = %q/%q, want empty", run.BlockingReason, run.BlockingMessage)
+	}
+}
+
+func TestAnnotateRunDiagnosticsFailureWithoutTopLevelMessageUsesNodeMessage(t *testing.T) {
+	t.Parallel()
+
+	run := models.PipelineRun{
+		ID:           "run-node-failed",
+		Status:       "Error",
+		WorkflowName: "wf",
+		Nodes: []models.PipelineRunNode{
+			{
+				ID:      "node-1",
+				Phase:   "Error",
+				Message: "InvalidImageName: couldn't parse image name",
+			},
+		},
+	}
+	AnnotateRunDiagnostics(&run)
+	if run.FailureReason != "image_startup" {
+		t.Fatalf("failure reason = %q, want image_startup", run.FailureReason)
+	}
+	if run.Message != "" {
+		t.Fatalf("run message = %q, want original empty message preserved", run.Message)
+	}
+}
+
+func TestAnnotateRunDiagnosticsGenericFailureWithoutMessage(t *testing.T) {
+	t.Parallel()
+
+	run := models.PipelineRun{ID: "run-failed", Status: "Failed", WorkflowName: "wf"}
+	AnnotateRunDiagnostics(&run)
+	if run.FailureReason != "run_failed" {
+		t.Fatalf("failure reason = %q, want run_failed", run.FailureReason)
+	}
+	if run.Message != "" {
+		t.Fatalf("run message = %q, want original empty message preserved", run.Message)
 	}
 }
 
@@ -216,7 +276,9 @@ func assertSummary(t *testing.T, got, want models.RunChildSummary) {
 		got.CancelledCount != want.CancelledCount ||
 		got.PendingCount != want.PendingCount ||
 		got.RunningCount != want.RunningCount ||
-		got.SuspendedCount != want.SuspendedCount {
+		got.SuspendedCount != want.SuspendedCount ||
+		got.HasFailures != want.HasFailures ||
+		got.HasBlocking != want.HasBlocking {
 		t.Fatalf("summary = %+v, want %+v", got, want)
 	}
 	if len(got.Statuses) != len(want.Statuses) {

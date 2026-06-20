@@ -342,6 +342,25 @@ function runTreeSummaryItems(summary: RunChildSummary) {
 	].filter((item) => item.value > 0 || item.label === "总数");
 }
 
+function runTreeHealthTags(summary: RunChildSummary) {
+	const tags = [];
+	if (summary.hasFailures) {
+		tags.push(
+			<Tag key="failures" color="error">
+				已有失败
+			</Tag>,
+		);
+	}
+	if (summary.hasBlocking) {
+		tags.push(
+			<Tag key="blocking" color="warning">
+				存在阻塞
+			</Tag>,
+		);
+	}
+	return tags;
+}
+
 const RUN_TREE_REASON_LABELS: Record<string, string> = {
 	unschedulable: "调度失败",
 	resource_incompatible: "资源不匹配",
@@ -940,6 +959,7 @@ export default function BatchJobDetailPage() {
 								>
 									{formatWorkflowPhaseLabel(runTree.summary.aggregateStatus)}
 								</Tag>
+								{runTreeHealthTags(runTree.summary)}
 								{runTreeSummaryItems(runTree.summary).map((item) => (
 									<Text key={item.label} type="secondary">
 										{item.label} {item.value}

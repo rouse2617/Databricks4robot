@@ -320,6 +320,8 @@ type RunChildSummary struct {
 	PendingCount      int                 `json:"pendingCount"`
 	RunningCount      int                 `json:"runningCount"`
 	SuspendedCount    int                 `json:"suspendedCount"`
+	HasFailures       bool                `json:"hasFailures"`
+	HasBlocking       bool                `json:"hasBlocking"`
 	TopFailureReasons []RunBlockingReason `json:"topFailureReasons,omitempty"`
 }
 

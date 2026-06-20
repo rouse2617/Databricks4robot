@@ -102,6 +102,9 @@ func AnnotateRunDiagnostics(run *models.PipelineRun) {
 func ClassifyRunDiagnostic(run models.PipelineRun) (models.RunBlockingReason, bool) {
 	status := NormalizeRunStatus(run.Status)
 	message := strings.TrimSpace(run.Message)
+	if message == "" {
+		message = representativeNodeDiagnosticMessage(run.Nodes)
+	}
 	reason := classifyRunDiagnosticReason(status, message, run.WorkflowName, run.ArgoWorkflowUID)
 	if reason == "" {
 		return models.RunBlockingReason{}, false
@@ -122,6 +125,29 @@ func ClassifyRunDiagnostic(run models.PipelineRun) (models.RunBlockingReason, bo
 	return diag, true
 }
 
+func representativeNodeDiagnosticMessage(nodes []models.PipelineRunNode) string {
+	for _, node := range nodes {
+		if IsFailureStatus(node.Phase) || IsCancelledStatus(node.Phase) {
+			if message := strings.TrimSpace(node.Message); message != "" {
+				return message
+			}
+		}
+	}
+	for _, node := range nodes {
+		if IsActiveStatus(node.Phase) {
+			if message := strings.TrimSpace(node.Message); message != "" {
+				return message
+			}
+		}
+	}
+	for _, node := range nodes {
+		if message := strings.TrimSpace(node.Message); message != "" {
+			return message
+		}
+	}
+	return ""
+}
+
 func classifyRunDiagnosticReason(status, message, workflowName, workflowUID string) string {
 	normalizedMessage := strings.ToLower(strings.TrimSpace(message))
 	switch {
@@ -139,7 +165,7 @@ func classifyRunDiagnosticReason(status, message, workflowName, workflowUID stri
 		return "runtime_not_submitted"
 	case IsCancelledStatus(status):
 		return "cancelled"
-	case IsFailureStatus(status) && normalizedMessage != "":
+	case IsFailureStatus(status):
 		return "run_failed"
 	default:
 		return ""
@@ -161,6 +187,8 @@ func defaultDiagnosticMessage(reason string) string {
 		return "Run 已创建，正在等待提交到运行时。"
 	case "cancelled":
 		return "Run 已取消。"
+	case "run_failed":
+		return "Run 已失败，暂无更具体的运行时诊断。"
 	default:
 		return ""
 	}
@@ -204,8 +232,18 @@ func AggregateChildRuns(children []models.PipelineRun) models.RunChildSummary {
 			}
 		}
 	}
+	summary.HasFailures = summary.FailedCount > 0 || summary.CancelledCount > 0
 	summary.AggregateStatus = aggregateStatus(summary)
 	summary.TopFailureReasons = topRunDiagnostics(children, 5)
+	summary.HasBlocking = summary.PendingCount > 0 || summary.SuspendedCount > 0
+	if !summary.HasBlocking {
+		for _, reason := range summary.TopFailureReasons {
+			switch reason.Reason {
+			case "runtime_not_submitted", "unschedulable", "resource_incompatible", "stale_running":
+				summary.HasBlocking = true
+			}
+		}
+	}
 	return summary
 }
 

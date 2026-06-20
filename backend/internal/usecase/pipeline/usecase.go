@@ -3660,6 +3660,13 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunC
 		return nil, err
 	}
 	if run == nil {
+		if uc.runRepo != nil {
+			if fallback, fallbackErr := uc.listBatchRunChildren(ctx, id, ""); fallbackErr != nil {
+				return nil, fallbackErr
+			} else if fallback.Total > 0 {
+				return fallback, nil
+			}
+		}
 		return nil, ErrDeploymentNotFound
 	}
 	if uc.runRepo == nil {
@@ -3670,42 +3677,57 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunC
 			Summary:   runstate.AggregateChildRuns(nil),
 		}, nil
 	}
-	items, total, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
-		BatchJobID: id,
-		Page:       1,
-		PageSize:   500,
-	})
+	result, err := uc.listBatchRunChildren(ctx, id, run.ID)
 	if err != nil {
 		return nil, err
 	}
-	children := make([]models.PipelineRun, 0, len(items))
-	childIDs := map[string]struct{}{}
-	for _, child := range items {
-		if child.ID == run.ID {
-			continue
-		}
-		children = append(children, child)
+	childIDs := make(map[string]struct{}, len(result.Items))
+	relationKeys := make(map[string]struct{}, len(result.Relations))
+	for _, child := range result.Items {
 		childIDs[child.ID] = struct{}{}
 	}
-	relations := runstate.BuildBatchChildRelations(run.ID, children)
-	relationKeys := make(map[string]struct{}, len(relations))
-	for _, relation := range relations {
+	for _, relation := range result.Relations {
 		relationKeys[runRelationKey(relation.ChildRunID, relation.RelationType)] = struct{}{}
 	}
 	eventChildren, eventRelations, err := uc.listEventDerivedRunChildren(ctx, run.ID, childIDs, relationKeys)
 	if err != nil {
 		return nil, err
 	}
-	children = append(children, eventChildren...)
-	relations = append(relations, eventRelations...)
+	result.Items = append(result.Items, eventChildren...)
+	result.Relations = append(result.Relations, eventRelations...)
+	annotateRunDiagnostics(result.Items)
+	result.Total = len(result.Items)
+	result.Summary = runstate.AggregateChildRuns(result.Items)
+	return result, nil
+}
+
+func (uc *Usecase) listBatchRunChildren(ctx context.Context, batchJobID, parentRunID string) (*models.RunChildList, error) {
+	items, _, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
+		BatchJobID: batchJobID,
+		Page:       1,
+		PageSize:   500,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if parentRunID == "" {
+		parentRunID = batchJobID
+	}
+	children := make([]models.PipelineRun, 0, len(items))
+	for _, child := range items {
+		if child.ID == parentRunID {
+			continue
+		}
+		children = append(children, child)
+	}
 	annotateRunDiagnostics(children)
-	total = len(children)
+	relations := runstate.BuildBatchChildRelations(parentRunID, children)
 	return &models.RunChildList{
-		RunID:     run.ID,
+		RunID:     parentRunID,
 		Items:     children,
 		Relations: relations,
 		Summary:   runstate.AggregateChildRuns(children),
-		Total:     total,
+		Total:     len(children),
 	}, nil
 }
 

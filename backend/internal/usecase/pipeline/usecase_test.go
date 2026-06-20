@@ -2034,6 +2034,53 @@ func TestListRunChildrenReturnsRelationsAndSummary(t *testing.T) {
 	}
 }
 
+func TestListRunChildrenFallsBackToBatchChildrenWithoutParentRun(t *testing.T) {
+	t.Parallel()
+
+	const batchID = "legacy-batch"
+	childBatchID := batchID
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"child-running": {
+				ID:         "child-running",
+				Status:     "Running",
+				BatchJobID: &childBatchID,
+				AssetIDs:   []string{"asset-1"},
+				CreatedAt:  time.Now().UTC(),
+			},
+			"child-failed": {
+				ID:           "child-failed",
+				Status:       "Failed",
+				Message:      "InvalidImageName: could not parse image name",
+				WorkflowName: "wf-child-failed",
+				BatchJobID:   &childBatchID,
+				AssetIDs:     []string{"asset-2"},
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+
+	got, err := uc.ListRunChildren(context.Background(), batchID)
+	if err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	if got.RunID != batchID || got.Total != 2 || len(got.Items) != 2 {
+		t.Fatalf("children = %+v, want legacy batch children", got)
+	}
+	if len(got.Relations) != 2 || got.Relations[0].ParentRunID != batchID {
+		t.Fatalf("relations = %+v, want batch parent relations", got.Relations)
+	}
+	if got.Summary.AggregateStatus != "Running" || !got.Summary.HasFailures {
+		t.Fatalf("summary = %+v, want running with failures", got.Summary)
+	}
+	if len(got.Summary.TopFailureReasons) != 1 || got.Summary.TopFailureReasons[0].Reason != "image_startup" {
+		t.Fatalf("top failure reasons = %+v, want image_startup", got.Summary.TopFailureReasons)
+	}
+}
+
 func TestListRunChildrenIncludesEventDerivedRelations(t *testing.T) {
 	t.Parallel()
 

@@ -28,16 +28,20 @@
 - [x] [backend] Update `ListRunChildren` to return child Runs, relation projections, and aggregate summary without requiring live Argo workflows.
 - [x] [backend] Add normalized Run diagnostic projection fields (`failureReason`, `blockingReason`, `blockingMessage`) from existing status/message data.
 - [x] [backend] Add `topFailureReasons` aggregation to child Run summaries.
+- [x] [backend] Project generic failure reasons when failed Runs have no top-level message and infer Run diagnostics from failed node messages.
+- [x] [backend] Add `hasFailures` and `hasBlocking` child summary flags so active batches can show already-failed or blocked work.
 - [x] [backend] Ensure new backfill/batch jobs can materialize a parent Run record that `/runs/:id` can inspect.
 - [x] [backend] Preserve legacy backfill, deployment, workflow, and pipeline-run endpoint behavior.
 - [x] [Frontend] Type enriched `RunChildrenResponse` in `runApi`.
 - [x] [Frontend] Show Run Tree summary and child Run links on Batch Detail using `runApi.getRunChildren` or equivalent Run API calls.
 - [x] [Frontend] Surface normalized blocking/failure reason tags in Execution Hub and top child reasons in Batch Detail.
 - [x] [Frontend] Keep `/runs/:id` Run-ledger centered when the runtime workflow is missing or not yet submitted.
+- [x] [Frontend] Show Batch Run Tree health tags when an active batch already has failures or blocking children.
 
 ## API Contract Sync
 - [x] [api] Update `api/openapi.yaml` for enriched `RunChildList`, `RunRelation`, and `RunChildSummary`.
 - [x] [api] Update `api/openapi.yaml` for Run diagnostic reason fields and `RunBlockingReason`.
+- [x] [api] Update `api/openapi.yaml`, SDK generated models, smoke script, and frontend types for `RunChildSummary.hasFailures/hasBlocking`.
 - [x] [docs] Update `docs/review/api-guide.md` to document Batch as parent Run plus child Runs.
 - [x] [scripts] Extend `scripts/smoke-runs-dev.sh` to verify children summary fields on a known or synthetic Run Tree when available.
 - [x] [openspec] Keep behavior delta aligned with implemented scope.
@@ -72,6 +76,8 @@
 | public-dev-worker | `wrangler deploy --assets /tmp/cyb3002-site-publish.QG1lPk` | Worker version `3e68c25a-d193-4f03-8480-d3d6a91047ac` | `https://cyber-databrew-dev.cyberorigin.ai` |
 | frontend-dev | `cyber-databrew-frontend:8522248-run-ledger-fallback2-20260620194756` | `cyber-databrew-frontend-dev-00401-sx4` | `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app` |
 | public-dev-worker | `wrangler deploy --assets /tmp/cyb3002-ledger-site-publish.yznz6p` | Worker version `d4c5901a-b602-403b-af9b-85bd98ed304f` | `https://cyber-databrew-dev.cyberorigin.ai` |
+| backend-dev | `cyber-databrew-backend:c43d921-run-diag-fallback-20260620201905` | `cyber-databrew-backend-dev-00970-2m9` | `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app` |
+| local-vite | `v0.1.1 (local)` | `http://127.0.0.1:5182` | Cloud Run backend `cyber-databrew-backend-dev-00970-2m9` |
 
 ### Deploy verification evidence
 - Backend smoke: `source scripts/dev-backend-env.sh && bash scripts/smoke-runs-dev.sh` -> `23 passed, 0 failed`.
@@ -91,6 +97,10 @@
 - Chrome MCP public dev Run ledger fallback: `deploy-verify-run-ledger-fallback-final.png` at `/runs/e0fa8796-5564-4ddb-a3a1-4d7d58c7c899?verify=cyb3002-ledger-fallback-final` shows `底层 Runtime 已不可用，正在展示 DataBrew 历史账本`, Run inputs, `运行上下文`, `video-proc-dev`, saved config inputs, and diagnostic tag `Runtime 不可用`.
 - Chrome MCP network checks for the fallback page: `/api/v1/runs/:id`, `/events`, `/asset-nodes`, `/cost-summary`, `/inputs`, `/outputs`, and `/runtime` returned 200; `/api/v1/workflows/cyb2224-video-proc-five-step-smoke-disk20-20260618173304-88fa0a` returned the expected 404 that triggered ledger fallback.
 - Chrome MCP console check for the fallback page: one expected resource error from the workflow 404; no React/runtime exceptions.
+- Backend smoke after fallback deploy: `source scripts/dev-backend-env.sh && bash scripts/smoke-runs-dev.sh` -> `23 passed, 0 failed`.
+- API spot-check after fallback deploy: `/api/v1/runs/3224bbdd-121a-40a5-ba7f-568be2b6a69a/children` returned 200 for a legacy batch without a parent Run projection, `summary.aggregateStatus=Running`, `summary.hasFailures=true`, and top reason `runtime_missing`.
+- Chrome MCP local Vite Run detail: `local-run-detail-20260620.png` at `http://127.0.0.1:5182/runs/a573704b-6644-41f1-bda4-f3b6bd797ec0?verify=local-run-diagnostics`; `/api/v1/runs/:id`, `/events`, `/asset-nodes`, `/cost-summary`, `/inputs`, `/outputs`, `/runtime`, and workflow requests returned 200.
+- Chrome MCP local Vite Batch Detail: `local-batch-run-tree-health-20260620.png` at `http://127.0.0.1:5182/pipeline/batch/3224bbdd-121a-40a5-ba7f-568be2b6a69a?verify=local-run-tree-health` shows `批次运行`, `已有失败`, `主要阻塞 / 失败原因`, and `Runtime 不可用`; all batch and Run Tree requests returned 200 and console had no errors beyond Vite/React dev info.
 
 ## PR
 - [ ] PR template includes Linear placeholder/real CYB, OpenSpec change-id, test evidence, deploy evidence, and any local environment limitations.

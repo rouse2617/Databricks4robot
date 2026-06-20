@@ -202,17 +202,19 @@ describe("BatchJobDetailPage", () => {
 				},
 			],
 			summary: {
-				total: 1,
-				statuses: { Running: 1 },
+				total: 2,
+				statuses: { Running: 1, Failed: 1 },
 				aggregateStatus: "Running",
 				activeCount: 1,
-				terminalCount: 0,
+				terminalCount: 1,
 				succeededCount: 0,
-				failedCount: 0,
+				failedCount: 1,
 				cancelledCount: 0,
 				pendingCount: 0,
 				runningCount: 1,
 				suspendedCount: 0,
+				hasFailures: true,
+				hasBlocking: true,
 			},
 			total: 1,
 		});
@@ -323,6 +325,8 @@ describe("BatchJobDetailPage", () => {
 
 		expect(await screen.findByText("批次运行")).toBeInTheDocument();
 		expect(mockListRunChildren).toHaveBeenCalledWith("batch-1");
+		expect(screen.getByText("已有失败")).toBeInTheDocument();
+		expect(screen.getByText("存在阻塞")).toBeInTheDocument();
 		expect(screen.getByText("子运行 1")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "asset-1" })).toBeInTheDocument();
 	});

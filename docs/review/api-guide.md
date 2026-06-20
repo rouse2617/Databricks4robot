@@ -2750,6 +2750,8 @@ Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy �
     "pendingCount": 0,
     "runningCount": 0,
     "suspendedCount": 0,
+    "hasFailures": true,
+    "hasBlocking": false,
     "topFailureReasons": [
       {
         "reason": "unschedulable",

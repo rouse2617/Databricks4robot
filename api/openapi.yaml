@@ -2434,6 +2434,12 @@ components:
         pendingCount: { type: integer }
         runningCount: { type: integer }
         suspendedCount: { type: integer }
+        hasFailures:
+          type: boolean
+          description: True when any child Run has failed, errored, expired, or been cancelled.
+        hasBlocking:
+          type: boolean
+          description: True when any child Run is pending/suspended or has a blocking diagnostic reason.
         topFailureReasons:
           type: array
           description: Top normalized failure or blocking reasons across immediate child Runs.

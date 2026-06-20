@@ -90,6 +90,8 @@ export interface RunChildSummary {
 	pendingCount: number;
 	runningCount: number;
 	suspendedCount: number;
+	hasFailures: boolean;
+	hasBlocking: boolean;
 	topFailureReasons?: RunBlockingReason[];
 }
 

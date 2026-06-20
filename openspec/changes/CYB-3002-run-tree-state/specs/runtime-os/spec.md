@@ -39,6 +39,17 @@ The system SHALL aggregate child Run statuses into a deterministic parent status
 - **When** the system aggregates the Run Tree status
 - **Then** the summary reports detailed counts and the aggregate status remains active
 
+#### Scenario: Active Run Tree already has failures
+- **Given** a parent Run has running children and failed children
+- **When** the system aggregates the Run Tree status
+- **Then** the aggregate status may remain Running
+- **And** the summary reports `hasFailures=true` so the UI can show "已有失败"
+
+#### Scenario: Run Tree has blocking children
+- **Given** a parent Run has pending or suspended children, or children with blocking diagnostics
+- **When** the system aggregates the Run Tree status
+- **Then** the summary reports `hasBlocking=true` so the UI can show "存在阻塞"
+
 ### Requirement: Run Tree diagnostics explain blocked and failed children
 The system SHALL expose normalized child Run failure or blocking reasons from existing Run ledger/runtime diagnostics without requiring clients to parse raw Kubernetes or Argo messages.
 
@@ -59,6 +70,19 @@ The system SHALL expose normalized child Run failure or blocking reasons from ex
 - **Given** a Run or child Run contains image pull, invalid image name, or image parsing diagnostics
 - **When** the system projects Run diagnostics
 - **Then** the Run includes `failureReason=image_startup` and the original message remains available in `message`
+
+#### Scenario: Run detail has node diagnostics but no top-level message
+- **Given** a Run is Failed, Error, or Expired with an empty top-level message
+- **And** at least one Run node has a failure diagnostic message
+- **When** the system projects Run diagnostics for `/runs/:id`
+- **Then** the Run includes the normalized `failureReason` from the node diagnostic
+- **And** the representative diagnostic message is available to product surfaces
+
+#### Scenario: Run fails without a detailed runtime message
+- **Given** a Run is Failed, Error, or Expired with no detailed runtime message
+- **When** the system projects Run diagnostics
+- **Then** the Run includes a generic `failureReason=run_failed`
+- **And** Batch top failure reason aggregation can count it
 
 #### Scenario: Run is rejected by target resource compatibility
 - **Given** Run validation rejects a node because its requested CPU, memory, or GPU exceeds the execution target capability

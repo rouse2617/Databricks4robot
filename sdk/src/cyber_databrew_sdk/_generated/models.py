@@ -2649,6 +2649,14 @@ class RunChildSummary(BaseModel):
     pendingCount: int | None = None
     runningCount: int | None = None
     suspendedCount: int | None = None
+    hasFailures: bool | None = Field(
+        None,
+        description='True when any child Run has failed, errored, expired, or been cancelled.',
+    )
+    hasBlocking: bool | None = Field(
+        None,
+        description='True when any child Run is pending/suspended or has a blocking diagnostic reason.',
+    )
     topFailureReasons: list[RunBlockingReason] | None = Field(
         None,
         description='Top normalized failure or blocking reasons across immediate child Runs.',
