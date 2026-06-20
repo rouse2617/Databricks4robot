@@ -951,6 +951,27 @@ func TestRunAPI_RuntimeRetryRequiresWorkflowName(t *testing.T) {
 	}
 }
 
+func TestRunAPI_RuntimeRetryRejectsUnsupportedState(t *testing.T) {
+	run := makePipelineRun("run-1", "wf-retry")
+	run.Status = "Running"
+	runRepo := &mockPipelineRunRepo{byID: map[string]*models.PipelineRun{run.ID: run}}
+	eventRepo := &mockPipelineRunEventRepo{}
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, &mockPipelineRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/runs/run-1/retry", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected retry 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "runtime retry only supports failed or errored runs") {
+		t.Fatalf("expected retry state error, got %s", w.Body.String())
+	}
+}
+
 func TestRunAPI_RerunCreatesNewRun(t *testing.T) {
 	run := makePipelineRun("run-source", "wf-source")
 	run.PipelineJSON = map[string]interface{}{

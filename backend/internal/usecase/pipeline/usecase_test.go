@@ -2320,6 +2320,36 @@ func TestListRunInputsPrefersDurableInputs(t *testing.T) {
 	}
 }
 
+func TestPersistRunInputs_CleansInvalidUUIDIDs(t *testing.T) {
+	t.Parallel()
+
+	run := &models.PipelineRun{
+		ID:                "run-invalid-input-ids",
+		Status:            "Succeeded",
+		AssetIDs:          []string{"asset-1", "asset-2"},
+		ExecutionTargetID: "target-1",
+		TargetSnapshot:    map[string]interface{}{"region": "us-east1"},
+		PipelineJSON:      map[string]interface{}{"nodes": []interface{}{}},
+	}
+	inputRepo := &mockRunInputRepo{}
+
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, &mockRunRepo{byID: map[string]*models.PipelineRun{run.ID: run}}, &mockRunNodeRepo{})
+	uc.SetRunFactRepositories(&mockRunRelationRepo{}, inputRepo)
+
+	if err := uc.persistRunInputs(context.Background(), run); err != nil {
+		t.Fatalf("persistRunInputs: %v", err)
+	}
+	if len(inputRepo.inputs) != 3 {
+		t.Fatalf("expected 3 run inputs, got %d", len(inputRepo.inputs))
+	}
+	for _, input := range inputRepo.inputs {
+		if strings.TrimSpace(input.ID) != "" {
+			t.Fatalf("expected sanitized UUID IDs, got %q", input.ID)
+		}
+	}
+}
+
 // trackingDeploymentRepo wraps mockDeploymentRepo to count FindAll calls so
 // the CYB-1537 tests can assert whether the legacy scan ran.
 type trackingDeploymentRepo struct {
@@ -2812,6 +2842,72 @@ func TestRuntimeRetryRun_UsesRuntimeAdapterWithoutWorkflowClient(t *testing.T) {
 		t.Fatalf("unexpected adapter retry refs: %#v", adapter.retryRefs)
 	}
 	assertRunEvents(t, eventRepo.events, "run-retry", runEventRuntimeRetryRequested, runEventRuntimeRetrySucceeded)
+}
+
+func TestRuntimeRetryRun_RejectsNonRetryableStatus(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-running": {
+				ID:            "run-running",
+				WorkflowName:  "wf-running",
+				Status:        "Running",
+				ArgoNamespace: "video-proc-dev",
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{}
+	adapter := &mockRuntimeAdapter{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRuntimeAdapter(adapter)
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	_, err := uc.RuntimeRetryRun(ctx, "run-running")
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "runtime retry only supports failed or errored runs") {
+		t.Fatalf("unexpected retry error: %v", err)
+	}
+	if len(adapter.retryRefs) != 0 {
+		t.Fatalf("runtime adapter should not be called when status is not retryable, refs: %#v", adapter.retryRefs)
+	}
+	assertRunEvents(t, eventRepo.events, "run-running")
+}
+
+func TestRuntimeRetryRun_MapsRetryRuntimeErrorToInvalidArgument(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-failed": {
+				ID:            "run-failed",
+				WorkflowName:  "wf-failed",
+				Status:        "Failed",
+				ArgoNamespace: "video-proc-dev",
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{}
+	adapter := &mockRuntimeAdapter{
+		retryErr: errors.New("To retry a succeeded workflow"),
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRuntimeAdapter(adapter)
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	_, err := uc.RuntimeRetryRun(ctx, "run-failed")
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+	if len(eventRepo.events) == 0 || eventRepo.events[len(eventRepo.events)-1].EventType != runEventRuntimeRetryFailed {
+		t.Fatalf("expected run_runtime_retry_failed event, got %#v", eventRepo.events)
+	}
+	last := eventRepo.events[len(eventRepo.events)-1]
+	if !strings.Contains(last.Reason, "to retry a succeeded workflow") {
+		t.Fatalf("expected mapped retry reason, got %q", last.Reason)
+	}
 }
 
 func TestRuntimeControlRejectsMissingWorkflowBeforeAdapterCall(t *testing.T) {

@@ -1036,6 +1036,15 @@ func (uc *Usecase) persistRunInputs(ctx context.Context, run *models.PipelineRun
 		return nil
 	}
 	inputs := materializeRunInputs(run)
+	for i := range inputs {
+		id := strings.TrimSpace(inputs[i].ID)
+		if id == "" {
+			continue
+		}
+		if _, err := uuid.Parse(id); err != nil {
+			inputs[i].ID = ""
+		}
+	}
 	if len(inputs) == 0 {
 		return nil
 	}
@@ -3975,6 +3984,9 @@ func (uc *Usecase) RuntimeRetryRun(ctx context.Context, id string) (*models.Pipe
 	if strings.TrimSpace(run.WorkflowName) == "" {
 		return nil, fmt.Errorf("%w: run has no workflowName", ErrInvalidArgument)
 	}
+	if !isRetryableRunStatusForRuntimeRetry(run.Status) {
+		return nil, fmt.Errorf("%w: runtime retry only supports failed or errored runs", ErrInvalidArgument)
+	}
 	if !uc.runtimeControlConfigured() {
 		return nil, ErrWorkflowUnavailable
 	}
@@ -3987,6 +3999,9 @@ func (uc *Usecase) RuntimeRetryRun(ctx context.Context, id string) (*models.Pipe
 		IdempotencyKey: fmt.Sprintf("run_runtime_retry_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
 	})
 	if err := uc.retryRuntimeRun(ctx, run); err != nil {
+		if mapped := classifyRuntimeRetryError(err); mapped != nil {
+			err = mapped
+		}
 		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
 			EventType:      runEventRuntimeRetryFailed,
 			SubjectType:    "run",
@@ -4007,6 +4022,33 @@ func (uc *Usecase) RuntimeRetryRun(ctx context.Context, id string) (*models.Pipe
 		IdempotencyKey: fmt.Sprintf("run_runtime_retry_succeeded:%s:%d", run.ID, time.Now().UTC().UnixNano()),
 	})
 	return uc.GetRun(ctx, id)
+}
+
+func isRetryableRunStatusForRuntimeRetry(status string) bool {
+	switch runstate.NormalizeRunStatus(status) {
+	case runstate.StatusFailed, runstate.StatusError:
+		return true
+	default:
+		return false
+	}
+}
+
+func classifyRuntimeRetryError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if msg == "" {
+		return nil
+	}
+	switch {
+	case strings.Contains(msg, "retry only supports failed"):
+		return fmt.Errorf("%w: %s", ErrInvalidArgument, msg)
+	case strings.Contains(msg, "to retry a succeeded workflow"):
+		return fmt.Errorf("%w: %s", ErrInvalidArgument, msg)
+	default:
+		return nil
+	}
 }
 
 // ResubmitRun creates a new Run from an existing run spec.
