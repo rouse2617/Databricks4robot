@@ -586,6 +586,127 @@ describe("WorkflowDetailPage", () => {
 		expect(screen.queryByText("正在加载执行记录…")).not.toBeInTheDocument();
 	});
 
+	it("keeps Run ledger visible when the runtime workflow is missing", () => {
+		mockWorkflowDetailState({
+			workflow: null,
+			loading: false,
+			loadError: {
+				kind: "not_found",
+				message: "workflow not found",
+			},
+			runEventState: {
+				run: {
+					id: "run-ttl",
+					workflowName: "wf-expired",
+					pipelineName: "asset-pipeline",
+					status: "Error",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+					finishedAt: "2026-06-03T00:10:00Z",
+					assetIds: ["aa111111"],
+					message: "workflow not found",
+				},
+				items: [
+					{
+						id: "event-1",
+						runId: "run-ttl",
+						workflowName: "wf-expired",
+						eventType: "run_failed",
+						subjectType: "run",
+						subjectId: "run-ttl",
+						status: "Error",
+						message: "workflow not found",
+						sequence: 1,
+						occurredAt: "2026-06-03T00:10:00Z",
+						observedAt: "2026-06-03T00:10:00Z",
+						createdAt: "2026-06-03T00:10:00Z",
+					},
+				],
+				total: 1,
+				loading: false,
+				error: null,
+			},
+			runMetadataState: {
+				inputs: {
+					runId: "run-ttl",
+					total: 1,
+					items: [
+						{
+							id: "input-asset",
+							runId: "run-ttl",
+							type: "asset",
+							refId: "aa111111",
+							source: "run",
+						},
+					],
+				},
+				outputs: { runId: "run-ttl", total: 0, items: [] },
+				runtime: {
+					runId: "run-ttl",
+					runtime: {
+						runtimeType: "argo",
+						workflowName: "wf-expired",
+						namespace: "video-proc-dev",
+						status: "missing",
+					},
+				},
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(
+			screen.getByText("底层 Runtime 已不可用，正在展示 DataBrew 历史账本"),
+		).toBeInTheDocument();
+		expect(screen.getByText("run-ttl")).toBeInTheDocument();
+		expect(screen.getByText("Runtime 不可用")).toBeInTheDocument();
+		expect(screen.getByText("运行上下文")).toBeInTheDocument();
+		expect(screen.getAllByText("wf-expired").length).toBeGreaterThan(0);
+		expect(screen.getByText("video-proc-dev")).toBeInTheDocument();
+		expect(screen.queryByText("未找到工作流")).not.toBeInTheDocument();
+	});
+
+	it("explains pending Runs that have not been submitted to runtime", () => {
+		mockWorkflowDetailState({
+			workflow: null,
+			loading: false,
+			loadError: {
+				kind: "not_found",
+				message: "Run has no runtime workflow reference",
+			},
+			runEventState: {
+				run: {
+					id: "run-pending",
+					pipelineName: "asset-pipeline",
+					status: "Pending",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+					noAssetRun: true,
+					blockingReason: "runtime_not_submitted",
+					blockingMessage: "等待提交到运行时",
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(
+			screen.getByText("Run 已创建，等待提交到 Runtime"),
+		).toBeInTheDocument();
+		expect(screen.getByText(/DAG、Pod、实时日志暂不可用/)).toBeInTheDocument();
+		expect(screen.getByText("run-pending")).toBeInTheDocument();
+		expect(screen.getByText("无资产运行")).toBeInTheDocument();
+		expect(screen.getByText("等待提交")).toBeInTheDocument();
+		expect(screen.getByText("等待提交到运行时")).toBeInTheDocument();
+		expect(screen.queryByText("未找到工作流")).not.toBeInTheDocument();
+	});
+
 	it("shows workflow node count without unavailable cost noise", () => {
 		mockWorkflowDetailState({
 			workflow: {

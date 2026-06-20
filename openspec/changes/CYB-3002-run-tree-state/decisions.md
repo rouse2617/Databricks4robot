@@ -47,3 +47,9 @@
 - **Decision**: Treat the standing user instruction as approval to continue through pre-commit, commit, and push after dev deploy verification passes.
 - **Alternatives**: Ask again after every deploy verification.
 - **Rationale**: Repository rule precedence gives the latest explicit user instruction priority when it does not weaken safety, secrets handling, tests, or deploy verification.
+
+## 2026-06-20 — Runtime missing fallback reason can be inferred
+- **Context**: Public dev verification found a Run whose workflow lookup returned 404 while the Run detail payload did not include a persisted `failureReason`.
+- **Decision**: In the Run Inspector fallback branch, infer the visible diagnostic `Runtime 不可用` when the Run has a runtime workflow reference and that workflow lookup enters the not-found fallback.
+- **Alternatives**: Require the backend Run detail endpoint to backfill `failureReason=runtime_missing` before the UI can explain the page.
+- **Rationale**: The frontend already has enough request context to explain the runtime adapter failure immediately, and this keeps the slice frontend-only while preserving a future backend normalization cleanup.

@@ -1127,16 +1127,35 @@ function WorkflowRunContextPanel({
 function ExpiredWorkflowLedgerView({
 	name,
 	runEventState,
+	runMetadataState,
 	onBack,
 	onRefreshEvents,
 }: {
 	name?: string;
 	runEventState: ReturnType<typeof useWorkflowDetail>["runEventState"];
+	runMetadataState: ReturnType<typeof useWorkflowDetail>["runMetadataState"];
 	onBack: () => void;
 	onRefreshEvents: () => void;
 }) {
+	const run = runEventState.run;
 	const latestEvents = runEventState.items.slice(-10);
-	const isPendingLedger = runEventState.run?.status === "Pending";
+	const runtime = runMetadataState.runtime?.runtime;
+	const hasRuntimeReference = Boolean(
+		run?.workflowName || runtime?.workflowName,
+	);
+	const isRuntimeNotSubmitted =
+		run?.blockingReason === "runtime_not_submitted" ||
+		(run?.status === "Pending" && !hasRuntimeReference);
+	const runTitle =
+		run?.pipelineName || run?.workflowName || name || run?.id || "运行详情";
+	const assetIds =
+		run?.assetIds && run.assetIds.length > 0 ? run.assetIds : undefined;
+	const reason =
+		run?.blockingReason ||
+		run?.failureReason ||
+		(!isRuntimeNotSubmitted && hasRuntimeReference ? "runtime_missing" : "");
+	const reasonLabel = reason ? formatRunDiagnosticReason(reason) : undefined;
+	const reasonMessage = run?.blockingMessage || run?.message;
 
 	return (
 		<div style={{ padding: 24 }}>
@@ -1146,43 +1165,108 @@ function ExpiredWorkflowLedgerView({
 						返回
 					</Button>
 					<Typography.Title level={4} style={{ margin: 0 }}>
-						{name || runEventState.run?.workflowName || "运行详情"}
+						{runTitle}
 					</Typography.Title>
-					{runEventState.run?.status ? (
-						<Tag color={STATUS_COLORS[runEventState.run.status] || "default"}>
-							{runEventState.run.status}
+					{run?.status ? (
+						<Tag color={STATUS_COLORS[run.status] || "default"}>
+							{formatWorkflowPhaseLabel(run.status)}
 						</Tag>
 					) : null}
 				</Space>
 				<Alert
-					type={isPendingLedger ? "info" : "warning"}
+					type={isRuntimeNotSubmitted ? "info" : "warning"}
 					showIcon
 					message={
-						isPendingLedger
-							? "子任务尚未提交到 Argo"
-							: "Argo 工作流已不可用，正在展示历史记录"
+						isRuntimeNotSubmitted
+							? "Run 已创建，等待提交到 Runtime"
+							: "底层 Runtime 已不可用，正在展示 DataBrew 历史账本"
 					}
 					description={
-						isPendingLedger
-							? "该批量子任务仍在排队或等待重试，DAG、Pod 实时状态和日志暂不可用；页面会随提交进度自动更新。"
-							: "Workflow 可能已被 Argo TTL 清理，DAG、Pod 实时状态和实时日志暂不可用；提交记录、状态变化和节点事件仍会在此保留。"
+						isRuntimeNotSubmitted
+							? "该 Run 已记录到 DataBrew，正在等待提交到运行时；DAG、Pod、实时日志暂不可用，页面会随账本更新自动恢复。"
+							: "底层 workflow 可能已被 TTL 清理或暂时不可访问；状态、输入、输出、事件和失败原因仍以 DataBrew 账本为准。"
 					}
 					action={
 						<Button size="small" onClick={onRefreshEvents}>
-							刷新事件
+							刷新账本
 						</Button>
 					}
 				/>
+				{run ? (
+					<Card title="Run">
+						<Descriptions
+							size="small"
+							column={{ xs: 1, sm: 2, lg: 3 }}
+							bordered
+						>
+							<Descriptions.Item label="Run ID">
+								{metadataText(run.id, true)}
+							</Descriptions.Item>
+							<Descriptions.Item label="Pipeline">
+								{metadataText(run.pipelineName)}
+							</Descriptions.Item>
+							<Descriptions.Item label="模板">
+								{run.templateId || run.templateVersion
+									? metadataText(
+											`${run.templateId || "-"}${run.templateVersion ? ` v${run.templateVersion}` : ""}`,
+											Boolean(run.templateId),
+										)
+									: metadataText(undefined)}
+							</Descriptions.Item>
+							<Descriptions.Item label="输入">
+								{run.noAssetRun ? (
+									<Tag color="default">无资产运行</Tag>
+								) : assetIds ? (
+									<Space size={4} wrap>
+										{assetIds.map((assetId) =>
+											isCanonicalAssetId(assetId) ? (
+												<Link key={assetId} to={`/assets/${assetId}`}>
+													<Tag color="blue">{assetId}</Tag>
+												</Link>
+											) : (
+												<Tag key={assetId}>{assetId}</Tag>
+											),
+										)}
+									</Space>
+								) : (
+									metadataText(undefined)
+								)}
+							</Descriptions.Item>
+							<Descriptions.Item label="Runtime">
+								{metadataText(runtime?.runtimeType || "argo")}
+							</Descriptions.Item>
+							<Descriptions.Item label="Workflow">
+								{metadataText(run.workflowName || runtime?.workflowName, true)}
+							</Descriptions.Item>
+							<Descriptions.Item label="创建时间">
+								{metadataText(run.createdAt)}
+							</Descriptions.Item>
+							<Descriptions.Item label="完成时间">
+								{metadataText(run.finishedAt)}
+							</Descriptions.Item>
+							<Descriptions.Item label="诊断">
+								<Space size={6} wrap>
+									{reasonLabel ? <Tag color="orange">{reasonLabel}</Tag> : null}
+									{reasonMessage ? (
+										<Typography.Text type="secondary">
+											{reasonMessage}
+										</Typography.Text>
+									) : (
+										metadataText(undefined)
+									)}
+								</Space>
+							</Descriptions.Item>
+						</Descriptions>
+					</Card>
+				) : null}
 				<Card
 					title="执行记录"
 					extra={
-						runEventState.run ? (
+						run ? (
 							<Space size={8}>
-								<Typography.Text type="secondary">
-									ID {runEventState.run.id}
-								</Typography.Text>
-								{runEventState.run.templateVersion ? (
-									<Tag>模板 v{runEventState.run.templateVersion}</Tag>
+								<Typography.Text type="secondary">ID {run.id}</Typography.Text>
+								{run.templateVersion ? (
+									<Tag>模板 v{run.templateVersion}</Tag>
 								) : null}
 							</Space>
 						) : null
@@ -1242,9 +1326,28 @@ function ExpiredWorkflowLedgerView({
 						</Space>
 					)}
 				</Card>
+				{run ? (
+					<div className="workflow-ledger-context">
+						<WorkflowRunMetadataPanel runMetadataState={runMetadataState} />
+					</div>
+				) : null}
 			</Space>
 		</div>
 	);
+}
+
+function formatRunDiagnosticReason(reason: string) {
+	const labels: Record<string, string> = {
+		runtime_not_submitted: "等待提交",
+		runtime_missing: "Runtime 不可用",
+		stale_running: "运行状态过期",
+		unschedulable: "调度失败",
+		resource_incompatible: "资源不匹配",
+		image_startup: "镜像启动",
+		cancelled: "已取消",
+		run_failed: "运行失败",
+	};
+	return labels[reason] || reason;
 }
 
 function formatCost(value?: number | null) {
@@ -2134,6 +2237,7 @@ export default function WorkflowDetailPage({
 				<ExpiredWorkflowLedgerView
 					name={detailName}
 					runEventState={runEventState}
+					runMetadataState={runMetadataState}
 					onBack={() => navigate(backTarget)}
 					onRefreshEvents={loadRunEvents}
 				/>

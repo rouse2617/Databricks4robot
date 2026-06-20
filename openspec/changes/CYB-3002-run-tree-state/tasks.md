@@ -33,6 +33,7 @@
 - [x] [Frontend] Type enriched `RunChildrenResponse` in `runApi`.
 - [x] [Frontend] Show Run Tree summary and child Run links on Batch Detail using `runApi.getRunChildren` or equivalent Run API calls.
 - [x] [Frontend] Surface normalized blocking/failure reason tags in Execution Hub and top child reasons in Batch Detail.
+- [x] [Frontend] Keep `/runs/:id` Run-ledger centered when the runtime workflow is missing or not yet submitted.
 
 ## API Contract Sync
 - [x] [api] Update `api/openapi.yaml` for enriched `RunChildList`, `RunRelation`, and `RunChildSummary`.
@@ -46,6 +47,7 @@
 - [x] [backend] `cd backend && go test ./internal/runtimeos/state ./internal/usecase/pipeline ./internal/usecase/backfill ./internal/handlers/pipeline`.
 - [x] [backend] `cd backend && go test ./...`.
 - [x] [Frontend] `cd Frontend && npm run test -- src/api/runApi.test.ts src/pages/BatchJobDetailPage.test.tsx --run`.
+- [x] [Frontend] `cd Frontend && npm run test -- src/pages/WorkflowDetailPage.test.tsx --run`.
 - [x] [Frontend] `cd Frontend && npm run build`.
 - [x] [SDK] `cd sdk && uv run pytest tests/unit/ -q`.
 - [x] [repo] `git diff --check`.
@@ -68,6 +70,8 @@
 | backend-dev | `cyber-databrew-backend:054576d-run-diag2-20260620185222` | `cyber-databrew-backend-dev-00968-nn8` | `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app` |
 | frontend-dev | `cyber-databrew-frontend:054576d-run-diag2-20260620185834` | `cyber-databrew-frontend-dev-00399-kn8` | `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app` |
 | public-dev-worker | `wrangler deploy --assets /tmp/cyb3002-site-publish.QG1lPk` | Worker version `3e68c25a-d193-4f03-8480-d3d6a91047ac` | `https://cyber-databrew-dev.cyberorigin.ai` |
+| frontend-dev | `cyber-databrew-frontend:8522248-run-ledger-fallback2-20260620194756` | `cyber-databrew-frontend-dev-00401-sx4` | `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app` |
+| public-dev-worker | `wrangler deploy --assets /tmp/cyb3002-ledger-site-publish.yznz6p` | Worker version `d4c5901a-b602-403b-af9b-85bd98ed304f` | `https://cyber-databrew-dev.cyberorigin.ai` |
 
 ### Deploy verification evidence
 - Backend smoke: `source scripts/dev-backend-env.sh && bash scripts/smoke-runs-dev.sh` -> `23 passed, 0 failed`.
@@ -84,6 +88,9 @@
 - Final Chrome MCP public dev Batch Detail: `deploy-verify-batch-children-final.png` shows `批次运行`, `子运行 1`, and child Run link; `/api/v1/runs/02972429-30df-49dd-9ba4-5bdf50069549/children`, `/api/v1/backfill/...`, and child summary requests returned 200; console had no messages.
 - Final Chrome MCP frontend Cloud Run: `deploy-verify-cloudrun-frontend-final.png` shows version `v054576d-run-diag2-20260620185834 (dev#054576d)`; console had no messages and app data requests returned 200 after initial dev auth.
 - Final Chrome MCP local Vite: `deploy-verify-local-runs-final.png` at `http://127.0.0.1:5181/runs?verify=cyb3002-final` shows the same normalized reason tags; `/api/v1/runs?view=summary&excludeBatch=true&page=1&pageSize=20` returned 200.
+- Chrome MCP public dev Run ledger fallback: `deploy-verify-run-ledger-fallback-final.png` at `/runs/e0fa8796-5564-4ddb-a3a1-4d7d58c7c899?verify=cyb3002-ledger-fallback-final` shows `底层 Runtime 已不可用，正在展示 DataBrew 历史账本`, Run inputs, `运行上下文`, `video-proc-dev`, saved config inputs, and diagnostic tag `Runtime 不可用`.
+- Chrome MCP network checks for the fallback page: `/api/v1/runs/:id`, `/events`, `/asset-nodes`, `/cost-summary`, `/inputs`, `/outputs`, and `/runtime` returned 200; `/api/v1/workflows/cyb2224-video-proc-five-step-smoke-disk20-20260618173304-88fa0a` returned the expected 404 that triggered ledger fallback.
+- Chrome MCP console check for the fallback page: one expected resource error from the workflow 404; no React/runtime exceptions.
 
 ## PR
 - [ ] PR template includes Linear placeholder/real CYB, OpenSpec change-id, test evidence, deploy evidence, and any local environment limitations.

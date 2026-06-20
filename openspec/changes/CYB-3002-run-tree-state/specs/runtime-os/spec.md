@@ -81,6 +81,25 @@ The system SHALL expose projected RunRelation rows from existing Run metadata un
 - **When** the system builds RunRelation projections
 - **Then** it does not create a child relation for that Run
 
+### Requirement: Run detail remains inspectable when runtime is missing
+The system SHALL keep `/runs/:id` centered on the DataBrew Run ledger when the underlying runtime workflow is not yet submitted or no longer available.
+
+**Priority**: P0 (Critical)
+**Rationale**: Runtime OS treats Argo as a runtime adapter. Users must be able to inspect a Run by Run ID even if the runtime object is pending, expired, or missing.
+
+#### Scenario: Runtime workflow has been cleaned up or is temporarily unavailable
+- **Given** a DataBrew Run exists with ledger status, inputs, outputs, runtime reference, and events
+- **And** the runtime workflow lookup returns not found
+- **When** a user opens `/runs/:id`
+- **Then** the page displays the Run ledger, diagnostic reason, inputs, outputs, runtime debug reference, and recent events
+- **And** the page does not present the Run as a missing workflow
+
+#### Scenario: Run exists before runtime submission
+- **Given** a DataBrew Run exists in Pending status without a runtime workflow reference
+- **When** a user opens `/runs/:id`
+- **Then** the page explains that the Run is waiting to submit to Runtime
+- **And** DAG, Pod, realtime logs, and terminal controls are shown as temporarily unavailable instead of failing as not found
+
 ## MODIFIED Requirements
 
 ### Requirement: Run detail exposes stable ledger subresources
