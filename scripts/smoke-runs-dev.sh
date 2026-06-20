@@ -124,6 +124,7 @@ assert isinstance(summary.get("aggregateStatus"), str)
 assert summary.get("total") == d.get("total")
 assert isinstance(summary.get("hasFailures"), bool)
 assert isinstance(summary.get("hasBlocking"), bool)
+assert isinstance(summary.get("healthStatus"), str)
 assert isinstance(summary.get("topFailureReasons", []), list)
 PY
       then

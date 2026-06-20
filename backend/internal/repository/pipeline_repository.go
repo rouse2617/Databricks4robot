@@ -116,6 +116,18 @@ type PipelineRunEventRepository interface {
 	ListByRunID(ctx context.Context, runID string, opts models.PipelineRunEventListOptions) (*models.PipelineRunEventListResult, error)
 }
 
+// RunRelationRepository stores durable Run tree lineage facts.
+type RunRelationRepository interface {
+	Upsert(ctx context.Context, relation *models.RunRelation) error
+	ListByParentRunID(ctx context.Context, parentRunID string) ([]models.RunRelation, error)
+}
+
+// RunInputRepository stores durable product Run input facts.
+type RunInputRepository interface {
+	UpsertMany(ctx context.Context, inputs []models.RunInput) error
+	ListByRunID(ctx context.Context, runID string) ([]models.RunInput, error)
+}
+
 // PipelineRunAssetNodeRepository stores derived asset × node execution rows.
 type PipelineRunAssetNodeRepository interface {
 	ReplaceByRunID(ctx context.Context, runID string, rows []models.PipelineRunAssetNode) error

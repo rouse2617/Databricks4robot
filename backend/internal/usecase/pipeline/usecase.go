@@ -52,6 +52,8 @@ type Usecase struct {
 	runRepo                 repository.PipelineRunRepository
 	runNodeRepo             repository.PipelineRunNodeRepository
 	runEventRepo            repository.PipelineRunEventRepository
+	runRelationRepo         repository.RunRelationRepository
+	runInputRepo            repository.RunInputRepository
 	assetNodeRepo           repository.PipelineRunAssetNodeRepository
 	notifyRepo              repository.PipelineRunNotificationRepository
 	watcherRepo             repository.PipelineRunWatcherStateRepository
@@ -176,6 +178,15 @@ func (uc *Usecase) SetRunRepositories(
 // SetRunEventRepo wires durable pipeline run event persistence.
 func (uc *Usecase) SetRunEventRepo(r repository.PipelineRunEventRepository) {
 	uc.runEventRepo = r
+}
+
+// SetRunFactRepositories wires durable Run Kernel facts for lineage and inputs.
+func (uc *Usecase) SetRunFactRepositories(
+	relationRepo repository.RunRelationRepository,
+	inputRepo repository.RunInputRepository,
+) {
+	uc.runRelationRepo = relationRepo
+	uc.runInputRepo = inputRepo
 }
 
 // SetObservabilityRepositories wires optional pipeline observability
@@ -960,6 +971,19 @@ func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDepl
 	if err := uc.runRepo.Save(ctx, run); err != nil {
 		return err
 	}
+	logPipelineSideEffect("persist run inputs", uc.persistRunInputs(ctx, run))
+	if len(opts) > 0 && strings.TrimSpace(opts[0].BatchJobID) != "" {
+		logPipelineSideEffect("persist batch child run relation", uc.persistRunRelation(ctx, &models.RunRelation{
+			ParentRunID:  strings.TrimSpace(opts[0].BatchJobID),
+			ChildRunID:   run.ID,
+			RelationType: "batch_child",
+			Source:       "run_kernel",
+			Snapshot: map[string]interface{}{
+				"batchJobId": strings.TrimSpace(opts[0].BatchJobID),
+				"workflow":   run.WorkflowName,
+			},
+		}))
+	}
 	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
 		EventType:      runEventSubmitted,
 		SubjectType:    "run",
@@ -1005,6 +1029,59 @@ func (uc *Usecase) savePipelineRun(ctx context.Context, dep *models.PipelineDepl
 		})
 	}
 	return nil
+}
+
+func (uc *Usecase) persistRunInputs(ctx context.Context, run *models.PipelineRun) error {
+	if uc.runInputRepo == nil || run == nil {
+		return nil
+	}
+	inputs := materializeRunInputs(run)
+	if len(inputs) == 0 {
+		return nil
+	}
+	return uc.runInputRepo.UpsertMany(ctx, inputs)
+}
+
+func materializeRunInputs(run *models.PipelineRun) []models.RunInput {
+	if run == nil {
+		return nil
+	}
+	items := make([]models.RunInput, 0, len(run.AssetIDs)+4)
+	for i, assetID := range run.AssetIDs {
+		assetID = strings.TrimSpace(assetID)
+		if assetID == "" {
+			continue
+		}
+		items = append(items, models.RunInput{
+			ID:     fmt.Sprintf("%s:asset:%d", run.ID, i),
+			RunID:  run.ID,
+			Type:   "asset",
+			RefID:  assetID,
+			Source: "asset_ids",
+		})
+	}
+	if run.ExecutionTargetID != "" || len(run.TargetSnapshot) > 0 {
+		items = append(items, models.RunInput{
+			ID:       fmt.Sprintf("%s:runtime-target", run.ID),
+			RunID:    run.ID,
+			Type:     "runtime_target",
+			RefID:    run.ExecutionTargetID,
+			Source:   "execution_target",
+			Snapshot: copyStringAnyMap(run.TargetSnapshot),
+		})
+	}
+	collectRunInputsFromPipelineJSON(run.ID, run.PipelineJSON, &items)
+	return items
+}
+
+func (uc *Usecase) persistRunRelation(ctx context.Context, relation *models.RunRelation) error {
+	if uc.runRelationRepo == nil || relation == nil {
+		return nil
+	}
+	if relation.Source == "" {
+		relation.Source = "run_kernel"
+	}
+	return uc.runRelationRepo.Upsert(ctx, relation)
 }
 
 func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
@@ -3578,27 +3655,16 @@ func (uc *Usecase) ListRunInputs(ctx context.Context, id string) (*models.RunInp
 	if run == nil {
 		return nil, ErrDeploymentNotFound
 	}
-	items := make([]models.RunInput, 0, len(run.AssetIDs)+4)
-	for i, assetID := range run.AssetIDs {
-		items = append(items, models.RunInput{
-			ID:     fmt.Sprintf("%s:asset:%d", run.ID, i),
-			RunID:  run.ID,
-			Type:   "asset",
-			RefID:  assetID,
-			Source: "asset_ids",
-		})
+	if uc.runInputRepo != nil {
+		items, err := uc.runInputRepo.ListByRunID(ctx, run.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) > 0 {
+			return &models.RunInputList{RunID: run.ID, Items: items, Total: len(items)}, nil
+		}
 	}
-	if run.ExecutionTargetID != "" || len(run.TargetSnapshot) > 0 {
-		items = append(items, models.RunInput{
-			ID:       fmt.Sprintf("%s:runtime-target", run.ID),
-			RunID:    run.ID,
-			Type:     "runtime_target",
-			RefID:    run.ExecutionTargetID,
-			Source:   "execution_target",
-			Snapshot: copyStringAnyMap(run.TargetSnapshot),
-		})
-	}
-	collectRunInputsFromPipelineJSON(run.ID, run.PipelineJSON, &items)
+	items := materializeRunInputs(run)
 	return &models.RunInputList{RunID: run.ID, Items: items, Total: len(items)}, nil
 }
 
@@ -3677,6 +3743,13 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunC
 			Summary:   runstate.AggregateChildRuns(nil),
 		}, nil
 	}
+	if uc.runRelationRepo != nil {
+		if result, err := uc.listDurableRunChildren(ctx, run.ID); err != nil {
+			return nil, err
+		} else if result.Total > 0 || len(result.Relations) > 0 {
+			return result, nil
+		}
+	}
 	result, err := uc.listBatchRunChildren(ctx, id, run.ID)
 	if err != nil {
 		return nil, err
@@ -3699,6 +3772,53 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunC
 	result.Total = len(result.Items)
 	result.Summary = runstate.AggregateChildRuns(result.Items)
 	return result, nil
+}
+
+func (uc *Usecase) listDurableRunChildren(ctx context.Context, parentRunID string) (*models.RunChildList, error) {
+	if uc.runRelationRepo == nil || uc.runRepo == nil {
+		return &models.RunChildList{
+			RunID:     parentRunID,
+			Items:     []models.PipelineRun{},
+			Relations: []models.RunRelation{},
+			Summary:   runstate.AggregateChildRuns(nil),
+		}, nil
+	}
+	relations, err := uc.runRelationRepo.ListByParentRunID(ctx, parentRunID)
+	if err != nil {
+		return nil, err
+	}
+	children := make([]models.PipelineRun, 0, len(relations))
+	outRelations := make([]models.RunRelation, 0, len(relations))
+	seenChildren := map[string]struct{}{}
+	for _, relation := range relations {
+		childID := strings.TrimSpace(relation.ChildRunID)
+		if childID == "" || childID == parentRunID {
+			continue
+		}
+		child, err := uc.runRepo.FindByID(ctx, childID)
+		if err != nil {
+			return nil, err
+		}
+		if child == nil {
+			continue
+		}
+		if relation.Source == "" {
+			relation.Source = "run_relations"
+		}
+		outRelations = append(outRelations, relation)
+		if _, ok := seenChildren[child.ID]; !ok {
+			children = append(children, *child)
+			seenChildren[child.ID] = struct{}{}
+		}
+	}
+	annotateRunDiagnostics(children)
+	return &models.RunChildList{
+		RunID:     parentRunID,
+		Items:     children,
+		Relations: outRelations,
+		Summary:   runstate.AggregateChildRuns(children),
+		Total:     len(children),
+	}, nil
 }
 
 func (uc *Usecase) listBatchRunChildren(ctx context.Context, batchJobID, parentRunID string) (*models.RunChildList, error) {
@@ -3941,6 +4061,22 @@ func (uc *Usecase) appendChildRunRelationEvent(ctx context.Context, source, chil
 	if source == nil || child == nil || strings.TrimSpace(relation) == "" {
 		return
 	}
+	logPipelineSideEffect("persist child run relation", uc.persistRunRelation(ctx, &models.RunRelation{
+		ParentRunID:  source.ID,
+		ChildRunID:   child.ID,
+		RelationType: strings.TrimSpace(relation),
+		Source:       "run_kernel",
+		Snapshot: map[string]interface{}{
+			"eventType":      eventType,
+			"sourceRunId":    source.ID,
+			"childRunId":     child.ID,
+			"relation":       strings.TrimSpace(relation),
+			"sourceStatus":   source.Status,
+			"childStatus":    child.Status,
+			"sourceWorkflow": source.WorkflowName,
+			"childWorkflow":  child.WorkflowName,
+		},
+	}))
 	uc.appendRunEvent(ctx, source, models.PipelineRunEvent{
 		EventType:      eventType,
 		SubjectType:    "run",

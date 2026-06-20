@@ -244,7 +244,23 @@ func AggregateChildRuns(children []models.PipelineRun) models.RunChildSummary {
 			}
 		}
 	}
+	summary.HealthStatus = aggregateHealthStatus(summary)
 	return summary
+}
+
+func aggregateHealthStatus(summary models.RunChildSummary) string {
+	switch {
+	case summary.Total == 0:
+		return "pending"
+	case summary.FailedCount == summary.Total || summary.CancelledCount == summary.Total:
+		return "failed"
+	case summary.HasFailures:
+		return "degraded"
+	case summary.HasBlocking:
+		return "warning"
+	default:
+		return "healthy"
+	}
 }
 
 func topRunDiagnostics(children []models.PipelineRun, limit int) []models.RunBlockingReason {

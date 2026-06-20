@@ -39,6 +39,7 @@ func TestAggregateChildRuns(t *testing.T) {
 			want: models.RunChildSummary{
 				Statuses:        map[string]int{},
 				AggregateStatus: StatusPending,
+				HealthStatus:    "pending",
 			},
 		},
 		{
@@ -51,6 +52,7 @@ func TestAggregateChildRuns(t *testing.T) {
 				Total:           2,
 				Statuses:        map[string]int{StatusSucceeded: 2},
 				AggregateStatus: StatusSucceeded,
+				HealthStatus:    "healthy",
 				TerminalCount:   2,
 				SucceededCount:  2,
 			},
@@ -73,6 +75,7 @@ func TestAggregateChildRuns(t *testing.T) {
 				PendingCount:    1,
 				HasFailures:     true,
 				HasBlocking:     true,
+				HealthStatus:    "degraded",
 			},
 		},
 		{
@@ -88,6 +91,7 @@ func TestAggregateChildRuns(t *testing.T) {
 				TerminalCount:   2,
 				FailedCount:     2,
 				HasFailures:     true,
+				HealthStatus:    "failed",
 			},
 		},
 	}
@@ -278,7 +282,8 @@ func assertSummary(t *testing.T, got, want models.RunChildSummary) {
 		got.RunningCount != want.RunningCount ||
 		got.SuspendedCount != want.SuspendedCount ||
 		got.HasFailures != want.HasFailures ||
-		got.HasBlocking != want.HasBlocking {
+		got.HasBlocking != want.HasBlocking ||
+		got.HealthStatus != want.HealthStatus {
 		t.Fatalf("summary = %+v, want %+v", got, want)
 	}
 	if len(got.Statuses) != len(want.Statuses) {

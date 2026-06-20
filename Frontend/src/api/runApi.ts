@@ -92,6 +92,13 @@ export interface RunChildSummary {
 	suspendedCount: number;
 	hasFailures: boolean;
 	hasBlocking: boolean;
+	healthStatus?:
+		| "healthy"
+		| "warning"
+		| "degraded"
+		| "failed"
+		| "pending"
+		| string;
 	topFailureReasons?: RunBlockingReason[];
 }
 

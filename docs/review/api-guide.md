@@ -2735,7 +2735,7 @@ Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy �
       "parentRunId": "batch-1",
       "childRunId": "run-1",
       "relationType": "batch_child",
-      "source": "pipeline_runs.batch_job_id"
+      "source": "run_kernel"
     }
   ],
   "summary": {
@@ -2752,6 +2752,7 @@ Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy �
     "suspendedCount": 0,
     "hasFailures": true,
     "hasBlocking": false,
+    "healthStatus": "failed",
     "topFailureReasons": [
       {
         "reason": "unschedulable",

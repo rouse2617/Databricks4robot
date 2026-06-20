@@ -244,9 +244,9 @@ type PipelineRunCostSummary struct {
 	GeneratedAt           time.Time                         `json:"generatedAt"`
 }
 
-// RunInput is the product-facing input projection for a Run. Phase 1 derives
-// these rows from pipeline_runs and pipeline JSON; future storage can persist
-// the same shape in dedicated run_inputs tables.
+// RunInput is the product-facing input fact for a Run. New Runs persist this
+// shape in run_inputs; historical Runs can still derive it from pipeline_runs
+// and pipeline JSON.
 type RunInput struct {
 	ID             string                 `json:"id"`
 	RunID          string                 `json:"runId"`
@@ -261,6 +261,8 @@ type RunInput struct {
 	ProjectionKey  string                 `json:"projectionKey,omitempty"`
 	Source         string                 `json:"source,omitempty"`
 	Snapshot       map[string]interface{} `json:"snapshot,omitempty"`
+	CreatedAt      *time.Time             `json:"createdAt,omitempty"`
+	UpdatedAt      *time.Time             `json:"updatedAt,omitempty"`
 }
 
 type RunInputList struct {
@@ -294,16 +296,19 @@ type RunChildList struct {
 	Total     int             `json:"total"`
 }
 
-// RunRelation is a product-facing relation projection between two Runs. Phase
-// two derives batch_child relations from existing child run metadata; later
-// storage can persist the same shape in a dedicated relation table.
+// RunRelation is a product-facing relation fact between two Runs. New
+// relationships persist in run_relations; historical Runs can still derive
+// compatible projection rows.
 type RunRelation struct {
-	ID           string `json:"id"`
-	ParentRunID  string `json:"parentRunId"`
-	ChildRunID   string `json:"childRunId"`
-	RelationType string `json:"relationType"`
-	Source       string `json:"source,omitempty"`
-	AssetID      string `json:"assetId,omitempty"`
+	ID           string                 `json:"id"`
+	ParentRunID  string                 `json:"parentRunId"`
+	ChildRunID   string                 `json:"childRunId"`
+	RelationType string                 `json:"relationType"`
+	Source       string                 `json:"source,omitempty"`
+	AssetID      string                 `json:"assetId,omitempty"`
+	Snapshot     map[string]interface{} `json:"snapshot,omitempty"`
+	CreatedAt    *time.Time             `json:"createdAt,omitempty"`
+	UpdatedAt    *time.Time             `json:"updatedAt,omitempty"`
 }
 
 // RunChildSummary captures deterministic aggregate status for a parent Run's
@@ -322,6 +327,7 @@ type RunChildSummary struct {
 	SuspendedCount    int                 `json:"suspendedCount"`
 	HasFailures       bool                `json:"hasFailures"`
 	HasBlocking       bool                `json:"hasBlocking"`
+	HealthStatus      string              `json:"healthStatus,omitempty"`
 	TopFailureReasons []RunBlockingReason `json:"topFailureReasons,omitempty"`
 }
 

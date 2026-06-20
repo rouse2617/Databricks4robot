@@ -10,6 +10,7 @@ dependencies = [
     "mcap>=1.1.1",
     "python-dateutil>=2.9.0",
     "types-python-dateutil>=2.9.0",
+    "email-validator>=2.2.0",
 ]
 
 [project.optional-dependencies]

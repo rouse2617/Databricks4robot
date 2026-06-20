@@ -388,6 +388,76 @@ func (m *mockPipelineConfigRepo) CreateVersion(context.Context, string, *models.
 func (m *mockPipelineConfigRepo) FindVersion(_ context.Context, configID string, version int) (*models.PipelineConfigVersion, error) {
 	return m.versions[fmt.Sprintf("%s:%d", configID, version)], nil
 }
+
+type mockRunRelationRepo struct {
+	relations []models.RunRelation
+}
+
+func (m *mockRunRelationRepo) Upsert(_ context.Context, relation *models.RunRelation) error {
+	if relation == nil {
+		return nil
+	}
+	for i := range m.relations {
+		existing := &m.relations[i]
+		if existing.ParentRunID == relation.ParentRunID &&
+			existing.ChildRunID == relation.ChildRunID &&
+			existing.RelationType == relation.RelationType {
+			m.relations[i] = *relation
+			return nil
+		}
+	}
+	m.relations = append(m.relations, *relation)
+	return nil
+}
+
+func (m *mockRunRelationRepo) ListByParentRunID(_ context.Context, parentRunID string) ([]models.RunRelation, error) {
+	out := []models.RunRelation{}
+	for _, relation := range m.relations {
+		if relation.ParentRunID == parentRunID {
+			out = append(out, relation)
+		}
+	}
+	return out, nil
+}
+
+type mockRunInputRepo struct {
+	inputs []models.RunInput
+}
+
+func (m *mockRunInputRepo) UpsertMany(_ context.Context, inputs []models.RunInput) error {
+	for _, input := range inputs {
+		replaced := false
+		for i := range m.inputs {
+			existing := &m.inputs[i]
+			if existing.RunID == input.RunID &&
+				existing.Type == input.Type &&
+				existing.NodeID == input.NodeID &&
+				existing.RefID == input.RefID &&
+				existing.RefVersion == input.RefVersion &&
+				existing.MountPath == input.MountPath &&
+				existing.TargetFilename == input.TargetFilename &&
+				existing.ProjectionKey == input.ProjectionKey {
+				m.inputs[i] = input
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			m.inputs = append(m.inputs, input)
+		}
+	}
+	return nil
+}
+
+func (m *mockRunInputRepo) ListByRunID(_ context.Context, runID string) ([]models.RunInput, error) {
+	out := []models.RunInput{}
+	for _, input := range m.inputs {
+		if input.RunID == runID {
+			out = append(out, input)
+		}
+	}
+	return out, nil
+}
 func (m *mockPipelineConfigRepo) FindVersions(context.Context, string) ([]models.PipelineConfigVersion, error) {
 	return nil, nil
 }
@@ -2157,6 +2227,96 @@ func TestListRunChildrenIncludesEventDerivedRelations(t *testing.T) {
 	}
 	if got.Summary.Total != 2 || got.Summary.AggregateStatus != "Running" {
 		t.Fatalf("unexpected summary: %+v", got.Summary)
+	}
+}
+
+func TestListRunChildrenPrefersDurableRelations(t *testing.T) {
+	t.Parallel()
+
+	const parentID = "run-parent"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			parentID: {
+				ID:           parentID,
+				PipelineName: "source",
+				Status:       "Succeeded",
+				CreatedAt:    time.Now().UTC(),
+			},
+			"run-child": {
+				ID:           "run-child",
+				PipelineName: "source-rerun",
+				Status:       "Failed",
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	relationRepo := &mockRunRelationRepo{relations: []models.RunRelation{
+		{
+			ID:           "rel-1",
+			ParentRunID:  parentID,
+			ChildRunID:   "run-child",
+			RelationType: "rerun_of",
+			Source:       "run_kernel",
+		},
+	}}
+
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+	uc.SetRunFactRepositories(relationRepo, nil)
+
+	got, err := uc.ListRunChildren(context.Background(), parentID)
+	if err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	if got.Total != 1 || len(got.Items) != 1 || got.Items[0].ID != "run-child" {
+		t.Fatalf("durable children = %+v, want run-child", got)
+	}
+	if len(got.Relations) != 1 || got.Relations[0].RelationType != "rerun_of" || got.Relations[0].Source != "run_kernel" {
+		t.Fatalf("durable relations = %+v, want rerun_of from run_kernel", got.Relations)
+	}
+	if got.Summary.HealthStatus != "failed" {
+		t.Fatalf("summary health = %q, want failed", got.Summary.HealthStatus)
+	}
+}
+
+func TestListRunInputsPrefersDurableInputs(t *testing.T) {
+	t.Parallel()
+
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:                "run-1",
+				PipelineName:      "pipe",
+				Status:            "Running",
+				ExecutionTargetID: "target-1",
+				AssetIDs:          []string{"legacy-asset"},
+				PipelineJSON: map[string]interface{}{
+					"nodes": []interface{}{},
+				},
+				CreatedAt: time.Now().UTC(),
+			},
+		},
+	}
+	inputRepo := &mockRunInputRepo{inputs: []models.RunInput{
+		{
+			ID:     "input-1",
+			RunID:  "run-1",
+			Type:   "asset",
+			RefID:  "durable-asset",
+			Source: "run_inputs",
+		},
+	}}
+
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+	uc.SetRunFactRepositories(nil, inputRepo)
+
+	got, err := uc.ListRunInputs(context.Background(), "run-1")
+	if err != nil {
+		t.Fatalf("ListRunInputs() error = %v", err)
+	}
+	if got.Total != 1 || len(got.Items) != 1 || got.Items[0].RefID != "durable-asset" {
+		t.Fatalf("inputs = %+v, want durable input only", got)
 	}
 }
 

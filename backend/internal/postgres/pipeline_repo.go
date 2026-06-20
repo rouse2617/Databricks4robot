@@ -1497,6 +1497,216 @@ LIMIT $2`
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// RunRelationRepo
+// ──────────────────────────────────────────────────────────────────────────────
+
+type RunRelationRepo struct {
+	c *Client
+}
+
+func NewRunRelationRepo(c *Client) *RunRelationRepo { return &RunRelationRepo{c: c} }
+
+var _ repository.RunRelationRepository = (*RunRelationRepo)(nil)
+
+const runRelationSelectCols = `id, parent_run_id, child_run_id, relation_type, asset_id, source, snapshot, created_at, updated_at`
+
+func scanRunRelation(rs rowScanner) (*models.RunRelation, error) {
+	var (
+		relation models.RunRelation
+		snapshot []byte
+		created  time.Time
+		updated  time.Time
+	)
+	if err := rs.Scan(
+		&relation.ID, &relation.ParentRunID, &relation.ChildRunID, &relation.RelationType,
+		&relation.AssetID, &relation.Source, &snapshot, &created, &updated,
+	); err != nil {
+		return nil, err
+	}
+	relation.Snapshot = mapFromJSON(snapshot)
+	relation.CreatedAt = &created
+	relation.UpdatedAt = &updated
+	return &relation, nil
+}
+
+func (r *RunRelationRepo) Upsert(ctx context.Context, relation *models.RunRelation) error {
+	if relation == nil {
+		return errors.New("postgres RunRelationRepo.Upsert: nil relation")
+	}
+	now := time.Now().UTC()
+	if relation.ID == "" {
+		relation.ID = uuid.New().String()
+	}
+	createdAt := now
+	if relation.CreatedAt != nil && !relation.CreatedAt.IsZero() {
+		createdAt = relation.CreatedAt.UTC()
+	}
+	updatedAt := now
+	relation.CreatedAt = &createdAt
+	relation.UpdatedAt = &updatedAt
+	snapshot, err := marshalMapForJSONB(relation.Snapshot)
+	if err != nil {
+		return fmt.Errorf("postgres RunRelationRepo.Upsert marshal snapshot: %w", err)
+	}
+	const q = `
+INSERT INTO run_relations (
+  id, parent_run_id, child_run_id, relation_type, asset_id, source, snapshot, created_at, updated_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9
+)
+ON CONFLICT (parent_run_id, child_run_id, relation_type) DO UPDATE SET
+  asset_id = EXCLUDED.asset_id,
+  source = EXCLUDED.source,
+  snapshot = EXCLUDED.snapshot,
+  updated_at = EXCLUDED.updated_at`
+	db := dbFromCtx(ctx, r.c.db)
+	if err := db.Exec(ctx, q,
+		relation.ID, relation.ParentRunID, relation.ChildRunID, relation.RelationType,
+		relation.AssetID, relation.Source, snapshot, createdAt, updatedAt,
+	); err != nil {
+		return fmt.Errorf("postgres RunRelationRepo.Upsert: %w", err)
+	}
+	return nil
+}
+
+func (r *RunRelationRepo) ListByParentRunID(ctx context.Context, parentRunID string) ([]models.RunRelation, error) {
+	q := `SELECT ` + runRelationSelectCols + `
+FROM run_relations
+WHERE parent_run_id = $1
+ORDER BY created_at ASC, child_run_id ASC, relation_type ASC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, parentRunID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres RunRelationRepo.ListByParentRunID: %w", err)
+	}
+	defer rows.Close()
+	out := []models.RunRelation{}
+	for rows.Next() {
+		relation, err := scanRunRelation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres RunRelationRepo.ListByParentRunID scan: %w", err)
+		}
+		out = append(out, *relation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres RunRelationRepo.ListByParentRunID rows: %w", err)
+	}
+	return out, nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// RunInputRepo
+// ──────────────────────────────────────────────────────────────────────────────
+
+type RunInputRepo struct {
+	c *Client
+}
+
+func NewRunInputRepo(c *Client) *RunInputRepo { return &RunInputRepo{c: c} }
+
+var _ repository.RunInputRepository = (*RunInputRepo)(nil)
+
+const runInputSelectCols = `id, run_id, node_id, type, ref_id, ref_version, file_name, mount_path,
+  target_filename, content_hash, projection_key, source, snapshot, created_at, updated_at`
+
+func scanRunInput(rs rowScanner) (*models.RunInput, error) {
+	var (
+		input    models.RunInput
+		snapshot []byte
+		created  time.Time
+		updated  time.Time
+	)
+	if err := rs.Scan(
+		&input.ID, &input.RunID, &input.NodeID, &input.Type, &input.RefID, &input.RefVersion,
+		&input.FileName, &input.MountPath, &input.TargetFilename, &input.ContentHash,
+		&input.ProjectionKey, &input.Source, &snapshot, &created, &updated,
+	); err != nil {
+		return nil, err
+	}
+	input.Snapshot = mapFromJSON(snapshot)
+	input.CreatedAt = &created
+	input.UpdatedAt = &updated
+	return &input, nil
+}
+
+func (r *RunInputRepo) UpsertMany(ctx context.Context, inputs []models.RunInput) error {
+	if len(inputs) == 0 {
+		return nil
+	}
+	const q = `
+INSERT INTO run_inputs (
+  id, run_id, node_id, type, ref_id, ref_version, file_name, mount_path,
+  target_filename, content_hash, projection_key, source, snapshot, created_at, updated_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8,
+  $9, $10, $11, $12, $13::jsonb, $14, $15
+)
+ON CONFLICT (run_id, type, node_id, ref_id, ref_version, mount_path, target_filename, projection_key) DO UPDATE SET
+  file_name = EXCLUDED.file_name,
+  content_hash = EXCLUDED.content_hash,
+  source = EXCLUDED.source,
+  snapshot = EXCLUDED.snapshot,
+  updated_at = EXCLUDED.updated_at`
+	return r.c.WithTx(ctx, func(txCtx context.Context) error {
+		db := dbFromCtx(txCtx, r.c.db)
+		now := time.Now().UTC()
+		for i := range inputs {
+			input := &inputs[i]
+			if strings.TrimSpace(input.RunID) == "" || strings.TrimSpace(input.Type) == "" {
+				continue
+			}
+			if input.ID == "" {
+				input.ID = uuid.New().String()
+			}
+			createdAt := now
+			if input.CreatedAt != nil && !input.CreatedAt.IsZero() {
+				createdAt = input.CreatedAt.UTC()
+			}
+			updatedAt := now
+			input.CreatedAt = &createdAt
+			input.UpdatedAt = &updatedAt
+			snapshot, err := marshalMapForJSONB(input.Snapshot)
+			if err != nil {
+				return fmt.Errorf("postgres RunInputRepo.UpsertMany marshal snapshot: %w", err)
+			}
+			if err := db.Exec(txCtx, q,
+				input.ID, input.RunID, input.NodeID, input.Type, input.RefID, input.RefVersion,
+				input.FileName, input.MountPath, input.TargetFilename, input.ContentHash,
+				input.ProjectionKey, input.Source, snapshot, createdAt, updatedAt,
+			); err != nil {
+				return fmt.Errorf("postgres RunInputRepo.UpsertMany: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func (r *RunInputRepo) ListByRunID(ctx context.Context, runID string) ([]models.RunInput, error) {
+	q := `SELECT ` + runInputSelectCols + `
+FROM run_inputs
+WHERE run_id = $1
+ORDER BY created_at ASC, type ASC, node_id ASC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q, runID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres RunInputRepo.ListByRunID: %w", err)
+	}
+	defer rows.Close()
+	out := []models.RunInput{}
+	for rows.Next() {
+		input, err := scanRunInput(rows)
+		if err != nil {
+			return nil, fmt.Errorf("postgres RunInputRepo.ListByRunID scan: %w", err)
+		}
+		out = append(out, *input)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres RunInputRepo.ListByRunID rows: %w", err)
+	}
+	return out, nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // PipelineRunAssetNodeRepo
 // ──────────────────────────────────────────────────────────────────────────────
 

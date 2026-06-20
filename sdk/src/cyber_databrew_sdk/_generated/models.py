@@ -2079,9 +2079,10 @@ class RunRelation(BaseModel):
     )
     source: str | None = Field(
         None,
-        description='Projection source, for example pipeline_runs.batch_job_id or pipeline_run_events.',
+        description='Relation source, for example run_kernel, run_relations, pipeline_runs.batch_job_id, or pipeline_run_events.',
     )
     assetId: str | None = None
+    snapshot: dict[str, Any] | None = None
 
 
 class RunBlockingReason(BaseModel):
@@ -2656,6 +2657,10 @@ class RunChildSummary(BaseModel):
     hasBlocking: bool | None = Field(
         None,
         description='True when any child Run is pending/suspended or has a blocking diagnostic reason.',
+    )
+    healthStatus: str | None = Field(
+        None,
+        description='Aggregate health hint such as healthy, warning, degraded, failed, or pending.',
     )
     topFailureReasons: list[RunBlockingReason] | None = Field(
         None,

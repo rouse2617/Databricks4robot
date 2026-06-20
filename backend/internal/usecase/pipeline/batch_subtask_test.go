@@ -177,6 +177,79 @@ func TestUpsertBatchSubtaskRunUsesRequestedExecutionTarget(t *testing.T) {
 	}
 }
 
+func TestUpsertBatchSubtaskRunPersistsRunFacts(t *testing.T) {
+	t.Parallel()
+
+	const (
+		batchJobID = "job-1"
+		assetID    = "asset-1"
+		templateID = "tmpl-1"
+		targetID   = "target-video"
+	)
+	runRepo := &mockRunRepo{byID: map[string]*models.PipelineRun{}}
+	relationRepo := &mockRunRelationRepo{}
+	inputRepo := &mockRunInputRepo{}
+	templateRepo := &mockTemplateRepo{
+		byID: map[string]*models.PipelineTemplate{
+			templateID: {ID: templateID, Name: "video-pipe", Version: 1, NodeCount: 5, Scope: "dev"},
+		},
+	}
+	targetRepo := &mockTargetRepo{
+		byID: map[string]*models.ExecutionTarget{
+			"default": {
+				ID:        "default",
+				Name:      "Default target",
+				Namespace: "cyber-databrew-dev",
+				Enabled:   true,
+				IsDefault: true,
+			},
+			targetID: {
+				ID:        targetID,
+				Name:      "Video target",
+				Namespace: "video-proc-dev",
+				Enabled:   true,
+			},
+		},
+	}
+
+	uc := New(templateRepo, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(targetRepo, runRepo, nil)
+	uc.SetRunFactRepositories(relationRepo, inputRepo)
+
+	runID, _, err := uc.UpsertBatchSubtaskRun(context.Background(), BatchSubtaskRunInput{
+		TemplateID:      templateID,
+		TemplateVersion: 1,
+		TargetID:        targetID,
+		BatchJobID:      batchJobID,
+		AssetID:         assetID,
+		Status:          "Pending",
+	})
+	if err != nil {
+		t.Fatalf("UpsertBatchSubtaskRun() error = %v", err)
+	}
+	if len(relationRepo.relations) != 1 {
+		t.Fatalf("relations = %+v, want one batch_child relation", relationRepo.relations)
+	}
+	relation := relationRepo.relations[0]
+	if relation.ParentRunID != batchJobID || relation.ChildRunID != runID || relation.RelationType != "batch_child" || relation.AssetID != assetID {
+		t.Fatalf("relation = %+v, want batch child fact", relation)
+	}
+	inputs, err := inputRepo.ListByRunID(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("ListByRunID() error = %v", err)
+	}
+	byType := map[string]models.RunInput{}
+	for _, input := range inputs {
+		byType[input.Type] = input
+	}
+	if byType["asset"].RefID != assetID {
+		t.Fatalf("asset input = %+v, want %s", byType["asset"], assetID)
+	}
+	if byType["runtime_target"].RefID != targetID {
+		t.Fatalf("runtime target input = %+v, want %s", byType["runtime_target"], targetID)
+	}
+}
+
 func TestUpsertBatchParentRunPreservesAssetCountWithoutAssetIDs(t *testing.T) {
 	t.Parallel()
 

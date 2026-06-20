@@ -2397,7 +2397,7 @@ components:
           items: { $ref: '#/components/schemas/PipelineRun' }
         relations:
           type: array
-          description: Projected Run relations. Batch trees derive batch_child rows from child run metadata; rerun/resubmit/legacy retry rows can be projected from RunEvent ledger payloads until a relation table exists.
+          description: Durable Run relations when available, with legacy projection fallback for historical data.
           items: { $ref: '#/components/schemas/RunRelation' }
         summary:
           $ref: '#/components/schemas/RunChildSummary'
@@ -2413,8 +2413,11 @@ components:
           description: Relationship kind, for example batch_child, retry_of, resubmit_of, or rerun_of.
         source:
           type: string
-          description: Projection source, for example pipeline_runs.batch_job_id or pipeline_run_events.
+          description: Relation source, for example run_kernel, run_relations, pipeline_runs.batch_job_id, or pipeline_run_events.
         assetId: { type: string }
+        snapshot:
+          type: object
+          additionalProperties: true
     RunChildSummary:
       type: object
       properties:
@@ -2440,6 +2443,9 @@ components:
         hasBlocking:
           type: boolean
           description: True when any child Run is pending/suspended or has a blocking diagnostic reason.
+        healthStatus:
+          type: string
+          description: Aggregate health hint such as healthy, warning, degraded, failed, or pending.
         topFailureReasons:
           type: array
           description: Top normalized failure or blocking reasons across immediate child Runs.

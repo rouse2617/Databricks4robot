@@ -215,6 +215,7 @@ describe("BatchJobDetailPage", () => {
 				suspendedCount: 0,
 				hasFailures: true,
 				hasBlocking: true,
+				healthStatus: "degraded",
 			},
 			total: 1,
 		});

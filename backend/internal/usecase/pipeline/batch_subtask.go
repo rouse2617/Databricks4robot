@@ -98,6 +98,7 @@ func (uc *Usecase) UpsertBatchParentRun(ctx context.Context, in BatchParentRunIn
 		TemplateID:        &templateIDCopy,
 		TemplateVersion:   templateVersion,
 		PipelineName:      pipelineName,
+		WorkflowName:      batchParentWorkflowName(runID),
 		ExecutionTargetID: target.ID,
 		TargetSnapshot:    executionTargetSnapshot(target),
 		Status:            status,
@@ -134,7 +135,25 @@ func (uc *Usecase) UpsertBatchParentRun(ctx context.Context, in BatchParentRunIn
 		return err
 	}
 
-	return uc.runRepo.Save(ctx, run)
+	if err := uc.runRepo.Save(ctx, run); err != nil {
+		return err
+	}
+	logPipelineSideEffect("persist batch parent run inputs", uc.persistRunInputs(ctx, run))
+	return nil
+}
+
+func batchParentWorkflowName(runID string) string {
+	value := strings.TrimSpace(runID)
+	if value == "" {
+		return "batch-parent"
+	}
+	value = strings.ToLower(value)
+	value = invalidRuntimeConfigVolumeNameChars.ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	if value == "" {
+		value = "batch-parent"
+	}
+	return "batch-parent-" + value
 }
 
 // UpsertBatchSubtaskRun creates or updates a first-class pipeline run for a
@@ -265,6 +284,19 @@ func (uc *Usecase) UpsertBatchSubtaskRun(ctx context.Context, in BatchSubtaskRun
 	if err := uc.runRepo.Save(ctx, run); err != nil {
 		return "", "", err
 	}
+	logPipelineSideEffect("persist batch subtask run inputs", uc.persistRunInputs(ctx, run))
+	logPipelineSideEffect("persist batch child run relation", uc.persistRunRelation(ctx, &models.RunRelation{
+		ParentRunID:  batchJobID,
+		ChildRunID:   run.ID,
+		RelationType: "batch_child",
+		Source:       "run_kernel",
+		AssetID:      assetID,
+		Snapshot: map[string]interface{}{
+			"batchJobId": batchJobID,
+			"assetId":    assetID,
+			"workflow":   run.WorkflowName,
+		},
+	}))
 	return runID, workflowName, nil
 }
 
