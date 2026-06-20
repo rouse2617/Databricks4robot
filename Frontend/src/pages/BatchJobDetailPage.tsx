@@ -47,6 +47,7 @@ import {
 } from "../api/pipelineApi";
 import {
 	listRunChildren,
+	type RunBlockingReason,
 	type RunChildrenResponse,
 	type RunChildSummary,
 } from "../api/runApi";
@@ -339,6 +340,46 @@ function runTreeSummaryItems(summary: RunChildSummary) {
 		{ label: "失败", value: summary.failedCount },
 		{ label: "暂停", value: summary.suspendedCount },
 	].filter((item) => item.value > 0 || item.label === "总数");
+}
+
+const RUN_TREE_REASON_LABELS: Record<string, string> = {
+	unschedulable: "调度失败",
+	resource_incompatible: "资源不匹配",
+	image_startup: "镜像启动",
+	runtime_not_submitted: "等待提交",
+	runtime_missing: "Runtime 不可用",
+	stale_running: "超时",
+	cancelled: "已取消",
+	run_failed: "运行失败",
+};
+
+function formatRunTreeReasonLabel(reason: string) {
+	return RUN_TREE_REASON_LABELS[reason] ?? reason;
+}
+
+function renderRunTreeReason(reason: RunBlockingReason) {
+	return (
+		<Space key={reason.reason} size={6} wrap>
+			<Tag
+				color={reason.reason === "runtime_not_submitted" ? "warning" : "error"}
+			>
+				{formatRunTreeReasonLabel(reason.reason)}
+			</Tag>
+			<Text type="secondary">
+				{reason.count ?? 1} 个
+				{reason.exampleAssetId ? ` · 例: ${reason.exampleAssetId}` : ""}
+			</Text>
+			{reason.message ? (
+				<Text
+					type="secondary"
+					ellipsis={{ tooltip: reason.message }}
+					style={{ maxWidth: 520 }}
+				>
+					{reason.message}
+				</Text>
+			) : null}
+		</Space>
+	);
 }
 
 export default function BatchJobDetailPage() {
@@ -908,6 +949,25 @@ export default function BatchJobDetailPage() {
 									子运行 {runTree.relations?.length ?? 0}
 								</Text>
 							</Space>
+							{runTree.summary.topFailureReasons?.length ? (
+								<Alert
+									type={
+										runTree.summary.failedCount > 0 ||
+										runTree.summary.cancelledCount > 0
+											? "error"
+											: "warning"
+									}
+									showIcon
+									message="主要阻塞 / 失败原因"
+									description={
+										<Space direction="vertical" size={4}>
+											{runTree.summary.topFailureReasons
+												.slice(0, 3)
+												.map(renderRunTreeReason)}
+										</Space>
+									}
+								/>
+							) : null}
 							{runTree.items.length > 0 ? (
 								<Space wrap size={[8, 8]}>
 									{runTree.items.slice(0, 8).map((child) => (

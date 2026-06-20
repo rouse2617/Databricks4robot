@@ -94,6 +94,9 @@ type PipelineRun struct {
 	ArgoNamespace      string                   `json:"argoNamespace"`
 	ArgoWorkflowUID    string                   `json:"argoWorkflowUid,omitempty"`
 	Message            string                   `json:"message,omitempty"`
+	FailureReason      string                   `json:"failureReason,omitempty"`
+	BlockingReason     string                   `json:"blockingReason,omitempty"`
+	BlockingMessage    string                   `json:"blockingMessage,omitempty"`
 	ExecutionTarget    *ExecutionTarget         `json:"executionTarget,omitempty"`
 	Nodes              []PipelineRunNode        `json:"nodes,omitempty"`
 	TotalEstimatedCost *float64                 `json:"totalEstimatedCost,omitempty"`
@@ -306,17 +309,30 @@ type RunRelation struct {
 // RunChildSummary captures deterministic aggregate status for a parent Run's
 // immediate children without requiring a live runtime workflow.
 type RunChildSummary struct {
-	Total           int            `json:"total"`
-	Statuses        map[string]int `json:"statuses"`
-	AggregateStatus string         `json:"aggregateStatus"`
-	ActiveCount     int            `json:"activeCount"`
-	TerminalCount   int            `json:"terminalCount"`
-	SucceededCount  int            `json:"succeededCount"`
-	FailedCount     int            `json:"failedCount"`
-	CancelledCount  int            `json:"cancelledCount"`
-	PendingCount    int            `json:"pendingCount"`
-	RunningCount    int            `json:"runningCount"`
-	SuspendedCount  int            `json:"suspendedCount"`
+	Total             int                 `json:"total"`
+	Statuses          map[string]int      `json:"statuses"`
+	AggregateStatus   string              `json:"aggregateStatus"`
+	ActiveCount       int                 `json:"activeCount"`
+	TerminalCount     int                 `json:"terminalCount"`
+	SucceededCount    int                 `json:"succeededCount"`
+	FailedCount       int                 `json:"failedCount"`
+	CancelledCount    int                 `json:"cancelledCount"`
+	PendingCount      int                 `json:"pendingCount"`
+	RunningCount      int                 `json:"runningCount"`
+	SuspendedCount    int                 `json:"suspendedCount"`
+	TopFailureReasons []RunBlockingReason `json:"topFailureReasons,omitempty"`
+}
+
+// RunBlockingReason is a normalized user-facing diagnostic projection. It is
+// derived from run status, event, and node messages until failure details are
+// stored in a dedicated Run Kernel table.
+type RunBlockingReason struct {
+	Reason       string `json:"reason"`
+	Message      string `json:"message,omitempty"`
+	Count        int    `json:"count,omitempty"`
+	ExampleRunID string `json:"exampleRunId,omitempty"`
+	ExampleAsset string `json:"exampleAssetId,omitempty"`
+	Source       string `json:"source,omitempty"`
 }
 
 type RunRuntimeRef struct {

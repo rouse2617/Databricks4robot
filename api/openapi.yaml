@@ -2135,6 +2135,18 @@ components:
         argoNamespace: { type: string }
         argoWorkflowUid: { type: string }
         message: { type: string }
+        failureReason:
+          type: string
+          description: Normalized terminal failure reason derived from Run ledger, events, or runtime diagnostics.
+          example: unschedulable
+        blockingReason:
+          type: string
+          description: Normalized active-state blocking reason when the Run is waiting or blocked.
+          example: runtime_not_submitted
+        blockingMessage:
+          type: string
+          description: Human-readable blocking diagnostic for active Runs.
+          example: Run 已创建，正在等待提交到运行时。
         executionTarget:
           $ref: '#/components/schemas/ExecutionTarget'
         nodes:
@@ -2422,6 +2434,32 @@ components:
         pendingCount: { type: integer }
         runningCount: { type: integer }
         suspendedCount: { type: integer }
+        topFailureReasons:
+          type: array
+          description: Top normalized failure or blocking reasons across immediate child Runs.
+          items:
+            $ref: '#/components/schemas/RunBlockingReason'
+    RunBlockingReason:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Normalized reason code such as unschedulable, resource_incompatible, image_startup, runtime_not_submitted, runtime_missing, or run_failed.
+        message:
+          type: string
+          description: Representative diagnostic message for this reason.
+        count:
+          type: integer
+          description: Number of child Runs matching this reason when returned in a summary.
+        exampleRunId:
+          type: string
+          description: Example Run ID carrying this reason.
+        exampleAssetId:
+          type: string
+          description: Example asset ID carrying this reason when available.
+        source:
+          type: string
+          description: Projection source for the diagnostic.
     RunRuntime:
       type: object
       properties:

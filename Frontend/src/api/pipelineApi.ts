@@ -74,6 +74,9 @@ export interface PipelineRun extends Deployment {
 	argoNamespace?: string;
 	argoWorkflowUid?: string;
 	message?: string;
+	failureReason?: string;
+	blockingReason?: string;
+	blockingMessage?: string;
 	noAssetRun?: boolean;
 	nodes?: PipelineRunNode[];
 	ledgerState?: string;

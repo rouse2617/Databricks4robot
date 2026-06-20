@@ -1037,6 +1037,7 @@ func (uc *Usecase) enrichRun(ctx context.Context, run *models.PipelineRun) {
 		}
 	}
 	uc.refreshAssetNodes(ctx, run)
+	runstate.AnnotateRunDiagnostics(run)
 }
 
 func timePtrFromMeta(t time.Time) *time.Time {
@@ -1895,6 +1896,7 @@ func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRu
 		return
 	}
 	if !needsRunListRefresh(run) && !needsMisclassifiedReconcile(run) {
+		runstate.AnnotateRunDiagnostics(run)
 		return
 	}
 	if isActiveDeploymentStatus(run.Status) {
@@ -1905,12 +1907,14 @@ func (uc *Usecase) RefreshRunForList(ctx context.Context, run *models.PipelineRu
 		if fresh, err := uc.runRepo.FindByID(ctx, run.ID); err == nil && fresh != nil {
 			*run = *fresh
 		}
+		runstate.AnnotateRunDiagnostics(run)
 		return
 	}
 	uc.reconcileTerminalRunFromLedger(ctx, run)
 	if fresh, err := uc.runRepo.FindByID(ctx, run.ID); err == nil && fresh != nil {
 		*run = *fresh
 	}
+	runstate.AnnotateRunDiagnostics(run)
 }
 
 func needsMisclassifiedReconcile(run *models.PipelineRun) bool {
@@ -3048,6 +3052,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
 		}
+		annotateRunDiagnostics(items)
 		return items, total, nil
 	}
 	items, err := uc.runRepo.FindAllSummaries(ctx)
@@ -3055,7 +3060,14 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		return nil, 0, err
 	}
 	uc.refreshRunSummariesForList(ctx, items)
+	annotateRunDiagnostics(items)
 	return items, len(items), nil
+}
+
+func annotateRunDiagnostics(items []models.PipelineRun) {
+	for i := range items {
+		runstate.AnnotateRunDiagnostics(&items[i])
+	}
 }
 
 func (uc *Usecase) attachBatchNodeProgress(ctx context.Context, items []models.PipelineRun) {
@@ -3686,6 +3698,7 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunC
 	}
 	children = append(children, eventChildren...)
 	relations = append(relations, eventRelations...)
+	annotateRunDiagnostics(children)
 	total = len(children)
 	return &models.RunChildList{
 		RunID:     run.ID,

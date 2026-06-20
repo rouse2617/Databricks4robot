@@ -220,6 +220,44 @@ const renderEstimatedCost = (_: unknown, record: WorkflowSummary) => {
 	);
 };
 
+const RUN_REASON_LABELS: Record<string, string> = {
+	unschedulable: "调度失败",
+	resource_incompatible: "资源不匹配",
+	image_startup: "镜像启动",
+	runtime_not_submitted: "等待提交",
+	runtime_missing: "Runtime 不可用",
+	stale_running: "超时",
+	cancelled: "已取消",
+	run_failed: "运行失败",
+};
+
+const RUN_REASON_COLORS: Record<string, string> = {
+	unschedulable: "error",
+	resource_incompatible: "error",
+	image_startup: "error",
+	runtime_not_submitted: "warning",
+	runtime_missing: "default",
+	stale_running: "error",
+	cancelled: "default",
+	run_failed: "error",
+};
+
+const formatRunReasonLabel = (reason?: string): string =>
+	reason ? (RUN_REASON_LABELS[reason] ?? reason) : "";
+
+const renderRunReasonTag = (reason?: string, message?: string) => {
+	if (!reason) return null;
+	const tag = (
+		<Tag
+			color={RUN_REASON_COLORS[reason] ?? "default"}
+			style={{ marginInlineEnd: 0 }}
+		>
+			{formatRunReasonLabel(reason)}
+		</Tag>
+	);
+	return message ? <Tooltip title={message}>{tag}</Tooltip> : tag;
+};
+
 const datesEqual = (a: Dayjs | null, b: Dayjs | null): boolean => {
 	if (!a && !b) return true;
 	if (!a || !b) return false;
@@ -320,6 +358,10 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		createdAt: run.createdAt,
 		finishedAt: run.finishedAt,
 		labels,
+		message: run.message,
+		failureReason: run.failureReason,
+		blockingReason: run.blockingReason,
+		blockingMessage: run.blockingMessage,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
@@ -1077,6 +1119,10 @@ export function WorkflowExecutionList({
 								<Tag color="warning">疑似僵尸</Tag>
 							</Tooltip>
 						) : null}
+						{renderRunReasonTag(
+							record.blockingReason || record.failureReason,
+							record.blockingMessage || record.message,
+						)}
 					</Space>
 				),
 			},

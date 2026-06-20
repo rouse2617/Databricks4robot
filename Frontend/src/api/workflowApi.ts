@@ -4,6 +4,9 @@ export interface WorkflowSummary {
 	name: string;
 	status: string;
 	message?: string;
+	failureReason?: string;
+	blockingReason?: string;
+	blockingMessage?: string;
 	nodeCount: number;
 	createdAt: string;
 	finishedAt?: string;

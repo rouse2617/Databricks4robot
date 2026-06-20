@@ -26,13 +26,17 @@
 - [x] [backend] Add `runtimeos/state` status normalization and child aggregation helper with table-driven tests.
 - [x] [backend] Add `RunRelation` and `RunChildSummary` projection models.
 - [x] [backend] Update `ListRunChildren` to return child Runs, relation projections, and aggregate summary without requiring live Argo workflows.
+- [x] [backend] Add normalized Run diagnostic projection fields (`failureReason`, `blockingReason`, `blockingMessage`) from existing status/message data.
+- [x] [backend] Add `topFailureReasons` aggregation to child Run summaries.
 - [x] [backend] Ensure new backfill/batch jobs can materialize a parent Run record that `/runs/:id` can inspect.
 - [x] [backend] Preserve legacy backfill, deployment, workflow, and pipeline-run endpoint behavior.
 - [x] [Frontend] Type enriched `RunChildrenResponse` in `runApi`.
 - [x] [Frontend] Show Run Tree summary and child Run links on Batch Detail using `runApi.getRunChildren` or equivalent Run API calls.
+- [x] [Frontend] Surface normalized blocking/failure reason tags in Execution Hub and top child reasons in Batch Detail.
 
 ## API Contract Sync
 - [x] [api] Update `api/openapi.yaml` for enriched `RunChildList`, `RunRelation`, and `RunChildSummary`.
+- [x] [api] Update `api/openapi.yaml` for Run diagnostic reason fields and `RunBlockingReason`.
 - [x] [docs] Update `docs/review/api-guide.md` to document Batch as parent Run plus child Runs.
 - [x] [scripts] Extend `scripts/smoke-runs-dev.sh` to verify children summary fields on a known or synthetic Run Tree when available.
 - [x] [openspec] Keep behavior delta aligned with implemented scope.
@@ -61,12 +65,13 @@
 ### Deploy record
 | Service | Image tag / version | Revision | URL |
 |---------|---------------------|----------|-----|
-| backend-dev | `cyber-databrew-backend:4d51ec2-cyb3002-runtree-20260620154925` | `cyber-databrew-backend-dev-00963-wmj` | `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app` |
-| frontend-dev | `cyber-databrew-frontend:4d51ec2-cyb3002-runtree-20260620154925` | `cyber-databrew-frontend-dev-00397-rbd` | `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app` |
-| public-dev-worker | `wrangler deploy --assets /tmp/cyb3002-site-publish.*` | Worker version `594741cd-eb4b-4ee4-b2f8-231e95e23fbd` | `https://cyber-databrew-dev.cyberorigin.ai` |
+| backend-dev | `cyber-databrew-backend:054576d-run-diag2-20260620185222` | `cyber-databrew-backend-dev-00968-nn8` | `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app` |
+| frontend-dev | `cyber-databrew-frontend:054576d-run-diag2-20260620185834` | `cyber-databrew-frontend-dev-00399-kn8` | `https://cyber-databrew-frontend-dev-wtttm6suaq-uc.a.run.app` |
+| public-dev-worker | `wrangler deploy --assets /tmp/cyb3002-site-publish.QG1lPk` | Worker version `3e68c25a-d193-4f03-8480-d3d6a91047ac` | `https://cyber-databrew-dev.cyberorigin.ai` |
 
 ### Deploy verification evidence
-- Backend smoke: `source scripts/dev-backend-env.sh && bash scripts/smoke-runs-dev.sh` -> `16 passed, 0 failed`.
+- Backend smoke: `source scripts/dev-backend-env.sh && bash scripts/smoke-runs-dev.sh` -> `23 passed, 0 failed`.
+- API spot-check: `/api/v1/runs?view=summary&page=1&pageSize=50` returns normalized `failureReason` values including `resource_incompatible`, `runtime_missing`, and `image_startup`.
 - Synthetic batch job: `02972429-30df-49dd-9ba4-5bdf50069549`; child Run: `9981892a-1873-4715-8f64-e785009ed5db`.
 - API smoke: `/api/v1/runs/02972429-30df-49dd-9ba4-5bdf50069549/children` returned `total=1`, `summary.aggregateStatus=Running/Succeeded`, and `relations[0].relationType=batch_child`.
 - Chrome MCP screenshot: `deploy-verify-batch-run-tree.png` shows public dev Batch Detail with `运行树`, `关系 1`, and child Run link.
@@ -75,6 +80,10 @@
 - Chrome MCP console checks: no runtime console errors on Batch Detail; child Run only reports an existing accessibility issue for one form field missing `id`/`name`.
 - Performance trace: `perf-batch-run-tree-public-dev.trace.json.json.gz`; LCP 1365 ms, CLS 0.01, render-blocking estimated savings 0 ms.
 - After user feedback, visible UI copy changed from `运行树`/`关系` to `批次运行`/`子运行`. This wording-only update was verified locally at `http://127.0.0.1:5178/pipeline/batch/02972429-30df-49dd-9ba4-5bdf50069549?verify=cyb3002-local-label` against the dev backend; console had no errors and `/api/v1/runs/.../children` returned 200.
+- Final Chrome MCP public dev `/runs`: `deploy-verify-runs-diagnostics-final.png` shows reason tags such as `Runtime 不可用`, `镜像启动`, and `调度失败`; network `/api/v1/runs?view=summary&excludeBatch=true&page=1&pageSize=20` returned 200.
+- Final Chrome MCP public dev Batch Detail: `deploy-verify-batch-children-final.png` shows `批次运行`, `子运行 1`, and child Run link; `/api/v1/runs/02972429-30df-49dd-9ba4-5bdf50069549/children`, `/api/v1/backfill/...`, and child summary requests returned 200; console had no messages.
+- Final Chrome MCP frontend Cloud Run: `deploy-verify-cloudrun-frontend-final.png` shows version `v054576d-run-diag2-20260620185834 (dev#054576d)`; console had no messages and app data requests returned 200 after initial dev auth.
+- Final Chrome MCP local Vite: `deploy-verify-local-runs-final.png` at `http://127.0.0.1:5181/runs?verify=cyb3002-final` shows the same normalized reason tags; `/api/v1/runs?view=summary&excludeBatch=true&page=1&pageSize=20` returned 200.
 
 ## PR
 - [ ] PR template includes Linear placeholder/real CYB, OpenSpec change-id, test evidence, deploy evidence, and any local environment limitations.

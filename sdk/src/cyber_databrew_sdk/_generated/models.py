@@ -1830,6 +1830,21 @@ class PipelineRun(BaseModel):
     argoNamespace: str | None = None
     argoWorkflowUid: str | None = None
     message: str | None = None
+    failureReason: str | None = Field(
+        None,
+        description='Normalized terminal failure reason derived from Run ledger, events, or runtime diagnostics.',
+        examples=['unschedulable'],
+    )
+    blockingReason: str | None = Field(
+        None,
+        description='Normalized active-state blocking reason when the Run is waiting or blocked.',
+        examples=['runtime_not_submitted'],
+    )
+    blockingMessage: str | None = Field(
+        None,
+        description='Human-readable blocking diagnostic for active Runs.',
+        examples=['Run 已创建，正在等待提交到运行时。'],
+    )
     executionTarget: ExecutionTarget | None = None
     nodes: list[PipelineRunNode] | None = None
     totalEstimatedCost: float | None = Field(
@@ -2069,20 +2084,27 @@ class RunRelation(BaseModel):
     assetId: str | None = None
 
 
-class RunChildSummary(BaseModel):
-    total: int | None = None
-    statuses: dict[str, int] | None = None
-    aggregateStatus: str | None = Field(
-        None, description='Deterministic aggregate child status.'
+class RunBlockingReason(BaseModel):
+    reason: str | None = Field(
+        None,
+        description='Normalized reason code such as unschedulable, resource_incompatible, image_startup, runtime_not_submitted, runtime_missing, or run_failed.',
     )
-    activeCount: int | None = None
-    terminalCount: int | None = None
-    succeededCount: int | None = None
-    failedCount: int | None = None
-    cancelledCount: int | None = None
-    pendingCount: int | None = None
-    runningCount: int | None = None
-    suspendedCount: int | None = None
+    message: str | None = Field(
+        None, description='Representative diagnostic message for this reason.'
+    )
+    count: int | None = Field(
+        None,
+        description='Number of child Runs matching this reason when returned in a summary.',
+    )
+    exampleRunId: str | None = Field(
+        None, description='Example Run ID carrying this reason.'
+    )
+    exampleAssetId: str | None = Field(
+        None, description='Example asset ID carrying this reason when available.'
+    )
+    source: str | None = Field(
+        None, description='Projection source for the diagnostic.'
+    )
 
 
 class Runtime(BaseModel):
@@ -2613,15 +2635,24 @@ class PipelineDeployment(BaseModel):
     finishedAt: AwareDatetime | None = None
 
 
-class RunChildList(BaseModel):
-    runId: str | None = None
-    items: list[PipelineRun] | None = None
-    relations: list[RunRelation] | None = Field(
-        None,
-        description='Projected Run relations. Batch trees derive batch_child rows from child run metadata; rerun/resubmit/legacy retry rows can be projected from RunEvent ledger payloads until a relation table exists.',
-    )
-    summary: RunChildSummary | None = None
+class RunChildSummary(BaseModel):
     total: int | None = None
+    statuses: dict[str, int] | None = None
+    aggregateStatus: str | None = Field(
+        None, description='Deterministic aggregate child status.'
+    )
+    activeCount: int | None = None
+    terminalCount: int | None = None
+    succeededCount: int | None = None
+    failedCount: int | None = None
+    cancelledCount: int | None = None
+    pendingCount: int | None = None
+    runningCount: int | None = None
+    suspendedCount: int | None = None
+    topFailureReasons: list[RunBlockingReason] | None = Field(
+        None,
+        description='Top normalized failure or blocking reasons across immediate child Runs.',
+    )
 
 
 class PipelineComponent(BaseModel):
@@ -2818,6 +2849,17 @@ class WorkflowNodePodDiagnostics(BaseModel):
     containers: list[WorkflowNodePodContainer]
     podConditions: list[WorkflowNodePodCondition]
     podEvents: list[WorkflowNodePodEvent]
+
+
+class RunChildList(BaseModel):
+    runId: str | None = None
+    items: list[PipelineRun] | None = None
+    relations: list[RunRelation] | None = Field(
+        None,
+        description='Projected Run relations. Batch trees derive batch_child rows from child run metadata; rerun/resubmit/legacy retry rows can be projected from RunEvent ledger payloads until a relation table exists.',
+    )
+    summary: RunChildSummary | None = None
+    total: int | None = None
 
 
 class WorkflowDetail(BaseModel):

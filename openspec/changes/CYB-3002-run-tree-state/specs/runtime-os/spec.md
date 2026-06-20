@@ -39,6 +39,32 @@ The system SHALL aggregate child Run statuses into a deterministic parent status
 - **When** the system aggregates the Run Tree status
 - **Then** the summary reports detailed counts and the aggregate status remains active
 
+### Requirement: Run Tree diagnostics explain blocked and failed children
+The system SHALL expose normalized child Run failure or blocking reasons from existing Run ledger/runtime diagnostics without requiring clients to parse raw Kubernetes or Argo messages.
+
+**Priority**: P0 (Critical)
+**Rationale**: Operators need Batch and Run views to explain why work is stuck or failed before opening individual Pods or runtime debug panels.
+
+#### Scenario: Child Runs fail because Kubernetes cannot schedule them
+- **Given** child Runs contain scheduler diagnostic messages such as insufficient CPU, memory, ephemeral storage, or unschedulable
+- **When** a client requests the parent Run's children
+- **Then** the response includes normalized `unschedulable` diagnostics on child Runs and in the parent summary `topFailureReasons`
+
+#### Scenario: Child Runs exist before runtime submission
+- **Given** a child Run is pending and does not yet have a runtime workflow reference
+- **When** the system projects Run diagnostics
+- **Then** the child Run includes `blockingReason=runtime_not_submitted` and a user-readable `blockingMessage`
+
+#### Scenario: Runtime image startup fails
+- **Given** a Run or child Run contains image pull, invalid image name, or image parsing diagnostics
+- **When** the system projects Run diagnostics
+- **Then** the Run includes `failureReason=image_startup` and the original message remains available in `message`
+
+#### Scenario: Run is rejected by target resource compatibility
+- **Given** Run validation rejects a node because its requested CPU, memory, or GPU exceeds the execution target capability
+- **When** the system projects Run diagnostics
+- **Then** the Run includes `failureReason=resource_incompatible` and the original validation message remains available in `message`
+
 ### Requirement: RunRelation projection is available before relation-table migration
 The system SHALL expose projected RunRelation rows from existing Run metadata until a dedicated relation table exists.
 

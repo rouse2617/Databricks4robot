@@ -2720,7 +2720,15 @@ Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy �
 ```json
 {
   "runId": "batch-1",
-  "items": [{ "id": "run-1", "status": "Running", "batchJobId": "batch-1" }],
+  "items": [
+    {
+      "id": "run-1",
+      "status": "Error",
+      "batchJobId": "batch-1",
+      "failureReason": "unschedulable",
+      "message": "Unschedulable: 0/12 nodes are available: 2 Insufficient memory."
+    }
+  ],
   "relations": [
     {
       "id": "batch-1:run-1:batch_child",
@@ -2732,16 +2740,25 @@ Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy �
   ],
   "summary": {
     "total": 1,
-    "statuses": { "Running": 1 },
-    "aggregateStatus": "Running",
-    "activeCount": 1,
-    "terminalCount": 0,
+    "statuses": { "Error": 1 },
+    "aggregateStatus": "Error",
+    "activeCount": 0,
+    "terminalCount": 1,
     "succeededCount": 0,
-    "failedCount": 0,
+    "failedCount": 1,
     "cancelledCount": 0,
     "pendingCount": 0,
-    "runningCount": 1,
-    "suspendedCount": 0
+    "runningCount": 0,
+    "suspendedCount": 0,
+    "topFailureReasons": [
+      {
+        "reason": "unschedulable",
+        "message": "Unschedulable: 0/12 nodes are available: 2 Insufficient memory.",
+        "count": 1,
+        "exampleRunId": "run-1",
+        "source": "pipeline_runs"
+      }
+    ]
   },
   "total": 1
 }
@@ -2751,6 +2768,13 @@ Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy �
 `Pending`；没有 active 子 Run 后，`Error` / `Expired` / `Failed` 会反映失败，
 全部成功才是 `Succeeded`。历史批量任务如果还没有父 Run，`/runs/<id>` 可能仍会 404；
 批量详情页会保留旧 backfill 数据作为兜底。
+
+Run 响应会尽力提供结构化诊断：终态失败使用 `failureReason`，活跃但未推进的 Run 使用
+`blockingReason` / `blockingMessage`。常见 reason 包括 `unschedulable`、
+`resource_incompatible`、`image_startup`、`runtime_not_submitted`、
+`runtime_missing`、`stale_running` 和 `run_failed`。这些字段是从 Run ledger、
+节点快照、资源守卫、Kubernetes/Argo 消息中推导的稳定产品诊断；原始 runtime 细节仍保留在
+`message`、Events 和 Runtime Debug 中。
 
 操作语义：
 

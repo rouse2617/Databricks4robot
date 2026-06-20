@@ -90,6 +90,16 @@ export interface RunChildSummary {
 	pendingCount: number;
 	runningCount: number;
 	suspendedCount: number;
+	topFailureReasons?: RunBlockingReason[];
+}
+
+export interface RunBlockingReason {
+	reason: string;
+	message?: string;
+	count?: number;
+	exampleRunId?: string;
+	exampleAssetId?: string;
+	source?: string;
 }
 
 export interface RunRuntime {

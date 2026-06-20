@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -73,6 +74,98 @@ func IsCancelledStatus(status string) bool {
 	return NormalizeRunStatus(status) == StatusCancelled
 }
 
+// AnnotateRunDiagnostics attaches normalized failure/blocking fields to a Run
+// without changing its persisted status or raw runtime message.
+func AnnotateRunDiagnostics(run *models.PipelineRun) {
+	if run == nil {
+		return
+	}
+	run.FailureReason = ""
+	run.BlockingReason = ""
+	run.BlockingMessage = ""
+	diag, ok := ClassifyRunDiagnostic(*run)
+	if !ok {
+		return
+	}
+	status := NormalizeRunStatus(run.Status)
+	if IsFailureStatus(status) || IsCancelledStatus(status) {
+		run.FailureReason = diag.Reason
+		return
+	}
+	run.BlockingReason = diag.Reason
+	run.BlockingMessage = diag.Message
+}
+
+// ClassifyRunDiagnostic returns a stable reason code and representative
+// message for product surfaces that need to explain why a Run is blocked or
+// failed without exposing Argo/Kubernetes as the primary product model.
+func ClassifyRunDiagnostic(run models.PipelineRun) (models.RunBlockingReason, bool) {
+	status := NormalizeRunStatus(run.Status)
+	message := strings.TrimSpace(run.Message)
+	reason := classifyRunDiagnosticReason(status, message, run.WorkflowName, run.ArgoWorkflowUID)
+	if reason == "" {
+		return models.RunBlockingReason{}, false
+	}
+	if message == "" {
+		message = defaultDiagnosticMessage(reason)
+	}
+	diag := models.RunBlockingReason{
+		Reason:       reason,
+		Message:      message,
+		Count:        1,
+		ExampleRunID: strings.TrimSpace(run.ID),
+		Source:       "pipeline_runs",
+	}
+	if len(run.AssetIDs) == 1 {
+		diag.ExampleAsset = run.AssetIDs[0]
+	}
+	return diag, true
+}
+
+func classifyRunDiagnosticReason(status, message, workflowName, workflowUID string) string {
+	normalizedMessage := strings.ToLower(strings.TrimSpace(message))
+	switch {
+	case containsAny(normalizedMessage, "unschedulable", "insufficient cpu", "insufficient memory", "insufficient ephemeral-storage", "didn't match pod affinity", "didn't match pod anti-affinity"):
+		return "unschedulable"
+	case containsAny(normalizedMessage, "不支持该资源规格", "最大可用", "resource limit", "resource quota", "quota exceeded", "exceeds target"):
+		return "resource_incompatible"
+	case containsAny(normalizedMessage, "imagepullbackoff", "errimagepull", "invalidimagename", "invalid image", "failed to apply default image tag", "couldn't parse image name", "manifest unknown", "pull access denied"):
+		return "image_startup"
+	case containsAny(normalizedMessage, "stale run: exceeded maximum active duration"):
+		return "stale_running"
+	case containsAny(normalizedMessage, "argo 工作流已被 ttl 清理", "workflow not found", "workflow service unavailable"):
+		return "runtime_missing"
+	case strings.EqualFold(status, StatusPending) && strings.TrimSpace(workflowName) == "" && strings.TrimSpace(workflowUID) == "":
+		return "runtime_not_submitted"
+	case IsCancelledStatus(status):
+		return "cancelled"
+	case IsFailureStatus(status) && normalizedMessage != "":
+		return "run_failed"
+	default:
+		return ""
+	}
+}
+
+func containsAny(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultDiagnosticMessage(reason string) string {
+	switch reason {
+	case "runtime_not_submitted":
+		return "Run 已创建，正在等待提交到运行时。"
+	case "cancelled":
+		return "Run 已取消。"
+	default:
+		return ""
+	}
+}
+
 // AggregateChildRuns computes a stable summary for child Run rows without
 // reaching into the runtime system.
 func AggregateChildRuns(children []models.PipelineRun) models.RunChildSummary {
@@ -112,7 +205,59 @@ func AggregateChildRuns(children []models.PipelineRun) models.RunChildSummary {
 		}
 	}
 	summary.AggregateStatus = aggregateStatus(summary)
+	summary.TopFailureReasons = topRunDiagnostics(children, 5)
 	return summary
+}
+
+func topRunDiagnostics(children []models.PipelineRun, limit int) []models.RunBlockingReason {
+	if len(children) == 0 || limit <= 0 {
+		return nil
+	}
+	type bucket struct {
+		reason string
+		count  int
+		first  models.RunBlockingReason
+	}
+	buckets := map[string]*bucket{}
+	for _, child := range children {
+		diag, ok := ClassifyRunDiagnostic(child)
+		if !ok {
+			continue
+		}
+		key := diag.Reason
+		if key == "" {
+			continue
+		}
+		current := buckets[key]
+		if current == nil {
+			diag.Count = 0
+			current = &bucket{reason: key, first: diag}
+			buckets[key] = current
+		}
+		current.count++
+		if current.first.Message == "" && diag.Message != "" {
+			current.first.Message = diag.Message
+		}
+	}
+	if len(buckets) == 0 {
+		return nil
+	}
+	out := make([]models.RunBlockingReason, 0, len(buckets))
+	for _, bucket := range buckets {
+		item := bucket.first
+		item.Count = bucket.count
+		out = append(out, item)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Count == out[j].Count {
+			return out[i].Reason < out[j].Reason
+		}
+		return out[i].Count > out[j].Count
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func aggregateStatus(summary models.RunChildSummary) string {

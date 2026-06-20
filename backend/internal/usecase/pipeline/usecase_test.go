@@ -1991,11 +1991,13 @@ func TestListRunChildrenReturnsRelationsAndSummary(t *testing.T) {
 				CreatedAt:  time.Now().UTC(),
 			},
 			"child-failed": {
-				ID:         "child-failed",
-				Status:     "Failed",
-				BatchJobID: &childBatchID,
-				AssetIDs:   []string{"asset-2"},
-				CreatedAt:  time.Now().UTC(),
+				ID:           "child-failed",
+				Status:       "Failed",
+				Message:      "Unschedulable: 0/12 nodes are available: 2 Insufficient memory.",
+				WorkflowName: "wf-child-failed",
+				BatchJobID:   &childBatchID,
+				AssetIDs:     []string{"asset-2"},
+				CreatedAt:    time.Now().UTC(),
 			},
 			"unrelated": {
 				ID:        "unrelated",
@@ -2023,6 +2025,12 @@ func TestListRunChildrenReturnsRelationsAndSummary(t *testing.T) {
 	}
 	if got.Summary.RunningCount != 1 || got.Summary.FailedCount != 1 {
 		t.Fatalf("summary counts = %+v, want running=1 failed=1", got.Summary)
+	}
+	if len(got.Summary.TopFailureReasons) != 1 || got.Summary.TopFailureReasons[0].Reason != "unschedulable" {
+		t.Fatalf("top failure reasons = %+v, want unschedulable", got.Summary.TopFailureReasons)
+	}
+	if got.Items[1].FailureReason == "" && got.Items[0].FailureReason == "" {
+		t.Fatalf("expected child failure reason annotation in %+v", got.Items)
 	}
 }
 

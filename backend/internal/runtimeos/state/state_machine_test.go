@@ -98,6 +98,93 @@ func TestAggregateChildRuns(t *testing.T) {
 	}
 }
 
+func TestAggregateChildRunsTopFailureReasons(t *testing.T) {
+	t.Parallel()
+
+	children := []models.PipelineRun{
+		{
+			ID:           "run-unsched-1",
+			Status:       "Error",
+			Message:      "Unschedulable: 0/12 nodes are available: 2 Insufficient memory.",
+			AssetIDs:     []string{"asset-1"},
+			WorkflowName: "wf-1",
+		},
+		{
+			ID:           "run-unsched-2",
+			Status:       "Failed",
+			Message:      "0/12 nodes are available: 1 Insufficient cpu.",
+			AssetIDs:     []string{"asset-2"},
+			WorkflowName: "wf-2",
+		},
+		{
+			ID:           "run-image",
+			Status:       "Error",
+			Message:      "InvalidImageName: couldn't parse image name",
+			AssetIDs:     []string{"asset-3"},
+			WorkflowName: "wf-3",
+		},
+	}
+
+	summary := AggregateChildRuns(children)
+	if len(summary.TopFailureReasons) != 2 {
+		t.Fatalf("top reasons = %+v, want 2", summary.TopFailureReasons)
+	}
+	if got := summary.TopFailureReasons[0]; got.Reason != "unschedulable" || got.Count != 2 || got.ExampleRunID != "run-unsched-1" || got.ExampleAsset != "asset-1" {
+		t.Fatalf("top reason = %+v, want unschedulable count=2", got)
+	}
+	if got := summary.TopFailureReasons[1]; got.Reason != "image_startup" || got.Count != 1 {
+		t.Fatalf("second reason = %+v, want image_startup count=1", got)
+	}
+}
+
+func TestAnnotateRunDiagnosticsPendingWithoutRuntime(t *testing.T) {
+	t.Parallel()
+
+	run := models.PipelineRun{ID: "run-pending", Status: "Pending"}
+	AnnotateRunDiagnostics(&run)
+	if run.BlockingReason != "runtime_not_submitted" {
+		t.Fatalf("blocking reason = %q, want runtime_not_submitted", run.BlockingReason)
+	}
+	if run.FailureReason != "" {
+		t.Fatalf("failure reason = %q, want empty", run.FailureReason)
+	}
+	if run.BlockingMessage == "" {
+		t.Fatal("expected default blocking message")
+	}
+}
+
+func TestAnnotateRunDiagnosticsFailure(t *testing.T) {
+	t.Parallel()
+
+	run := models.PipelineRun{
+		ID:           "run-failed",
+		Status:       "Error",
+		Message:      "ImagePullBackOff: pull access denied",
+		WorkflowName: "wf",
+	}
+	AnnotateRunDiagnostics(&run)
+	if run.FailureReason != "image_startup" {
+		t.Fatalf("failure reason = %q, want image_startup", run.FailureReason)
+	}
+	if run.BlockingReason != "" || run.BlockingMessage != "" {
+		t.Fatalf("blocking fields = %q/%q, want empty", run.BlockingReason, run.BlockingMessage)
+	}
+}
+
+func TestAnnotateRunDiagnosticsResourceIncompatible(t *testing.T) {
+	t.Parallel()
+
+	run := models.PipelineRun{
+		ID:      "run-resource",
+		Status:  "Failed",
+		Message: `invalid argument: 执行目标 "Default Argo target"不支持该资源规格：节点请求 cpu=14000m，最大可用 cpu=8。`,
+	}
+	AnnotateRunDiagnostics(&run)
+	if run.FailureReason != "resource_incompatible" {
+		t.Fatalf("failure reason = %q, want resource_incompatible", run.FailureReason)
+	}
+}
+
 func TestBuildBatchChildRelations(t *testing.T) {
 	t.Parallel()
 
