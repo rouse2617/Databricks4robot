@@ -3951,15 +3951,22 @@ func (uc *Usecase) GetRunRuntime(ctx context.Context, id string) (*models.RunRun
 	if namespace == "" {
 		namespace = uc.namespace
 	}
+
+	runtimeType := "argo"
+	workflowName := strings.TrimSpace(run.WorkflowName)
+	if isBatchParentWorkflowName(workflowName) {
+		runtimeType = "none"
+		workflowName = ""
+	}
 	debugURL := ""
-	if strings.TrimSpace(run.WorkflowName) != "" {
-		debugURL = fmt.Sprintf("/api/v1/workflows/%s", run.WorkflowName)
+	if workflowName != "" {
+		debugURL = fmt.Sprintf("/api/v1/workflows/%s", workflowName)
 	}
 	return &models.RunRuntime{
 		RunID: run.ID,
 		Runtime: models.RunRuntimeRef{
-			RuntimeType:       "argo",
-			WorkflowName:      run.WorkflowName,
+			RuntimeType:       runtimeType,
+			WorkflowName:      workflowName,
 			Namespace:         namespace,
 			UID:               run.ArgoWorkflowUID,
 			Status:            run.Status,

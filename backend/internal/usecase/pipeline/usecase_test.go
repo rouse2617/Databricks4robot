@@ -3084,6 +3084,35 @@ func TestGetRunRuntime_OmitsDebugURLWithoutWorkflowName(t *testing.T) {
 	}
 }
 
+func TestGetRunRuntime_BatchParentRunHasNoRuntime(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"batch-parent": {
+				ID:           "batch-parent",
+				Status:       "Succeeded",
+				WorkflowName: "batch-parent-batch-parent",
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	runtime, err := uc.GetRunRuntime(ctx, "batch-parent")
+	if err != nil {
+		t.Fatalf("GetRunRuntime batch parent returned error: %v", err)
+	}
+	if runtime.Runtime.RuntimeType != "none" {
+		t.Fatalf("runtimeType = %q, want none", runtime.Runtime.RuntimeType)
+	}
+	if runtime.Runtime.WorkflowName != "" {
+		t.Fatalf("expected batch parent workflowName empty, got %q", runtime.Runtime.WorkflowName)
+	}
+	if runtime.Runtime.DebugURL != "" {
+		t.Fatalf("expected no debug URL for batch parent, got %q", runtime.Runtime.DebugURL)
+	}
+}
+
 func TestRetryAndResubmitRun_AppendFailedEventsWhenCreateRunFails(t *testing.T) {
 	ctx := context.Background()
 	validPipe := map[string]interface{}{

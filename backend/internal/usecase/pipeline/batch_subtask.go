@@ -304,6 +304,10 @@ func isBatchSubtaskPlaceholderWorkflowName(name string) bool {
 	return strings.Contains(strings.TrimSpace(name), "-batch-")
 }
 
+func isBatchParentWorkflowName(name string) bool {
+	return strings.HasPrefix(strings.TrimSpace(name), "batch-parent-")
+}
+
 func shouldPreserveBatchSubtaskWorkflowName(existing *models.PipelineRun, incoming string) bool {
 	if existing == nil {
 		return false
