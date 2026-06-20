@@ -2651,6 +2651,10 @@ curl -X POST "$BASE/api/v1/runs/template/<TEMPLATE_ID>" \
 具体执行系统。调用方不需要持有 Argo Workflow 作为产品主键；返回体和错误语义以
 OpenAPI 的 Run 契约为准。
 
+非 dry-run 的 Run 创建同样先进入 Run Kernel，再通过 `RuntimeAdapter.Submit`
+提交具体运行时任务；未配置 adapter 的旧部署仍会回退到 legacy workflow client。
+dry-run 只返回 preview manifest，不创建 runtime job。
+
 创建、查询和解析 Run：
 
 ```bash
@@ -2702,9 +2706,16 @@ curl -s "$BASE/api/v1/runs/<RUN_ID>/runtime" \
   -H "X-Databrew-Token: $TOKEN"
 ```
 
+`/runs/<RUN_ID>/inputs` 会把 Config 作为 Run 输入展示：deploy-level
+`configSelection` 和 node-level `runtimeConfig` 都返回 `type=config`，
+包含 `configId` / `refVersion`、`fileName`、`mountPath`、`targetFilename`、
+`contentHash` 和可选 `projectionKey`。接口不会返回原始 config content。
+
 Batch / Backfill 在 Runtime OS 中按父 Run + 子 Run 树查看。新建批量任务会尽力创建一个
 `id == backfill_job.id` 的父 Run；子任务 Run 继续通过 `batchJobId` 指向父 Run。
-`/runs/<BATCH_JOB_ID>/children` 返回兼容的 `items/total`，并额外包含关系投影和聚合状态：
+`/runs/<RUN_ID>/children` 返回兼容的 `items/total`，并额外包含关系投影和聚合状态。
+Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy 全量重试创建的新 Run
+会通过 RunEvent ledger 投影为 `rerun_of`、`resubmit_of`、`retry_of`：
 
 ```json
 {
@@ -2743,6 +2754,10 @@ Batch / Backfill 在 Runtime OS 中按父 Run + 子 Run 树查看。新建批量
 
 操作语义：
 
+这些操作是产品 Run 生命周期控制。后端先用 `runId` 读取 DataBrew Run，再解析保存的
+runtime ref（当前为 Argo workflow name / namespace / uid），最后通过 RuntimeAdapter
+调用具体运行时。`/api/v1/workflows/*` 保留为 runtime debug / 兼容入口，不是产品控制主路径。
+
 ```bash
 # 原地 runtime retry：复用同一个 Run，不创建新 Run
 curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/retry" \
@@ -2750,6 +2765,10 @@ curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/retry" \
 
 # resubmit：根据已有 Run spec 创建一个新 Run
 curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/resubmit" \
+  -H "X-Databrew-Token: $TOKEN"
+
+# rerun：产品级全量重跑，创建一个 relation=rerun_of 的新 Run
+curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/rerun" \
   -H "X-Databrew-Token: $TOKEN"
 
 curl -s -X POST "$BASE/api/v1/runs/<RUN_ID>/stop" \
@@ -2779,8 +2798,9 @@ curl -s -X DELETE "$BASE/api/v1/runs/<RUN_ID>" \
 | `503` | `SERVICE_UNAVAILABLE` | Argo runtime 未配置或暂不可用 |
 
 `POST /runs/<RUN_ID>/retry` 是 runtime 原地 retry；`POST /runs/<RUN_ID>/resubmit`
-会创建新的 Run。旧兼容入口 `POST /pipeline-runs/<RUN_ID>/retry` 仍保持“新建一次执行”
-语义，面向历史调用方保留。
+会创建新的 Run 并记录 `resubmit_of`；`POST /runs/<RUN_ID>/rerun`
+是产品级全量重跑，会创建新的 Run 并记录 `rerun_of`。旧兼容入口
+`POST /pipeline-runs/<RUN_ID>/retry` 仍保持“新建一次执行”语义，面向历史调用方保留。
 
 ### Pipeline run 兼容 API
 
@@ -2808,8 +2828,8 @@ curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>" \
 `workflow_observed`、`workflow_phase_changed`、`pod_created`、
 `pod_phase_changed`、`node_started`、`node_succeeded`、`node_failed`、
 `node_error`、`run_completed`、`run_failed`、`run_retry_requested`、
-`run_resubmitted`、`run_delete_requested`、`run_deleted` 和
-`run_delete_failed`。
+`run_resubmitted`、`run_rerun_requested`、`run_rerun_created`、`run_rerun_failed`、
+`run_delete_requested`、`run_deleted` 和 `run_delete_failed`。
 
 ```bash
 curl -s "$BASE/api/v1/pipeline-runs/<RUN_ID>/events?limit=100" \

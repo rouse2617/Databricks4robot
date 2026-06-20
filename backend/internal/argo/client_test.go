@@ -75,3 +75,26 @@ func TestClientGetWorkflowLogsDetectsLimitBytesTruncation(t *testing.T) {
 		t.Fatalf("expected truncated result, got %#v", result)
 	}
 }
+
+func TestClientGetWorkflowLogsPreservesEntryBoundaries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"result":{"podName":"pod","content":"first"}}` +
+				`{"result":{"podName":"pod","content":"second"}}`,
+		))
+	}))
+	defer server.Close()
+
+	client := NewClientFromConfig(&Config{ServerURL: server.URL})
+	result, err := client.GetWorkflowLogs(context.Background(), "wf-1", "pod", "cyber-databrew-dev", WorkflowLogOptions{})
+	if err != nil {
+		t.Fatalf("GetWorkflowLogs returned error: %v", err)
+	}
+	if result.Logs != "pod first\npod second\n" {
+		t.Fatalf("logs = %q, want separate pod-prefixed log lines", result.Logs)
+	}
+	if result.LineCount != 2 {
+		t.Fatalf("lineCount = %d, want 2", result.LineCount)
+	}
+}

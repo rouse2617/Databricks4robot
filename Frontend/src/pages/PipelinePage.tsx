@@ -7,6 +7,10 @@ import "../styles/pipeline.css";
 
 type PipelineTab = "design" | "pipelines" | "executions" | "components";
 
+interface PipelinePageProps {
+	defaultTab?: PipelineTab;
+}
+
 const PipelineDesignerTab = lazy(async () => {
 	const [{ ReactFlowProvider }, { PipelineDesignerCanvas }] = await Promise.all(
 		[
@@ -74,8 +78,13 @@ function TabFallback() {
 	);
 }
 
-function resolvePipelineTab(raw: string | null): PipelineTab {
+function resolvePipelineTab(
+	raw: string | null,
+	defaultTab: PipelineTab = "design",
+): PipelineTab {
 	switch (raw) {
+		case "design":
+			return "design";
 		case "templates":
 		case "pipelines":
 			return "pipelines";
@@ -84,17 +93,19 @@ function resolvePipelineTab(raw: string | null): PipelineTab {
 		case "components":
 			return "components";
 		default:
-			return "design";
+			return defaultTab;
 	}
 }
 
-export default function PipelinePage() {
+export default function PipelinePage({
+	defaultTab = "design",
+}: PipelinePageProps) {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const { modal } = App.useApp();
 	const [designDirty, setDesignDirty] = useState(false);
 	const activeTab = useMemo(
-		() => resolvePipelineTab(searchParams.get("tab")),
-		[searchParams],
+		() => resolvePipelineTab(searchParams.get("tab"), defaultTab),
+		[defaultTab, searchParams],
 	);
 	const onTabChange = useCallback(
 		async (nextTab: string) => {
@@ -104,7 +115,7 @@ export default function PipelinePage() {
 				setDesignDirty(false);
 			}
 			const next = new URLSearchParams(searchParams);
-			if (nextTab === "design") {
+			if (nextTab === defaultTab) {
 				next.delete("tab");
 			} else {
 				next.set("tab", nextTab);
@@ -117,7 +128,7 @@ export default function PipelinePage() {
 			}
 			setSearchParams(next, { replace: true });
 		},
-		[activeTab, designDirty, modal, searchParams, setSearchParams],
+		[activeTab, defaultTab, designDirty, modal, searchParams, setSearchParams],
 	);
 
 	const tabLabel = useCallback((title: string, subtitle: string) => {

@@ -168,6 +168,7 @@ ENDPOINTS: dict[str, str] = {
     "run_runtime": "/api/v1/runs/{run_id}/runtime",
     "run_retry": "/api/v1/runs/{run_id}/retry",
     "run_resubmit": "/api/v1/runs/{run_id}/resubmit",
+    "run_rerun": "/api/v1/runs/{run_id}/rerun",
     "run_stop": "/api/v1/runs/{run_id}/stop",
     "run_suspend": "/api/v1/runs/{run_id}/suspend",
     "run_resume": "/api/v1/runs/{run_id}/resume",

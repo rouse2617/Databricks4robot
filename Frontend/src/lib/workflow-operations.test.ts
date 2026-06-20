@@ -9,9 +9,9 @@ import {
 
 describe("workflow retry eligibility", () => {
 	it("detects stopped workflows", () => {
-		expect(isWorkflowStopped({ name: "wf", status: "Failed", message: "Stopped" })).toBe(
-			true,
-		);
+		expect(
+			isWorkflowStopped({ name: "wf", status: "Failed", message: "Stopped" }),
+		).toBe(true);
 	});
 
 	it("disables retry for stopped failed workflows", () => {
@@ -59,5 +59,8 @@ describe("getWorkflowOperationConfirmText", () => {
 	it("differentiates retry and resubmit copy", () => {
 		expect(getWorkflowOperationConfirmText("retry")).toContain("失败");
 		expect(getWorkflowOperationConfirmText("resubmit")).toContain("全新执行");
+		expect(getWorkflowOperationConfirmText("rerun")).toContain(
+			"产品级全量重跑",
+		);
 	});
 });

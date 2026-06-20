@@ -101,15 +101,19 @@ func parseLogLines(raw []byte, allowPartial bool) (string, error) {
 }
 
 func appendLogEntry(builder *strings.Builder, entry logStreamEntry) {
-	content := entry.Result.Content
+	content := strings.TrimRight(entry.Result.Content, "\r\n")
 	if content == "" {
 		return
+	}
+	if builder.Len() > 0 && !strings.HasSuffix(builder.String(), "\n") {
+		builder.WriteByte('\n')
 	}
 	if entry.Result.PodName != "" {
 		builder.WriteString(entry.Result.PodName)
 		builder.WriteString(" ")
 	}
 	builder.WriteString(content)
+	builder.WriteByte('\n')
 }
 
 func countLogLines(logs string) int {

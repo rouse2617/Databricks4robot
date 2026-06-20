@@ -1107,15 +1107,20 @@ export default function BatchJobDetailPage() {
 						},
 						{ title: "消息", dataIndex: "message", ellipsis: true },
 						{
-							title: "Workflow",
+							title: "运行",
 							render: (_, record) => (
 								<Button
 									type="link"
 									size="small"
 									onClick={() =>
-										navigate(`/pipeline/executions/${record.workflowName}`, {
-											state: workflowDetailLocationState(job.id),
-										})
+										navigate(
+											record.runId
+												? `/runs/${encodeURIComponent(record.runId)}`
+												: `/pipeline/executions/${encodeURIComponent(
+														record.workflowName,
+													)}`,
+											{ state: workflowDetailLocationState(job.id) },
+										)
 									}
 								>
 									查看

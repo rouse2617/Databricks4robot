@@ -12,8 +12,11 @@ const mockGetWorkflowLogStreamUrl = vi.fn(
 const mockGetRun = vi.fn();
 const mockGetRunByWorkflowName = vi.fn();
 const mockGetRunCostSummary = vi.fn();
+const mockGetRunRuntime = vi.fn();
 const mockListRunAssetNodes = vi.fn();
 const mockListRunEvents = vi.fn();
+const mockListRunInputs = vi.fn();
+const mockListRunOutputs = vi.fn();
 
 class MockEventSource extends EventTarget {
 	static instances: MockEventSource[] = [];
@@ -45,8 +48,11 @@ vi.mock("../api/runApi", () => ({
 	getRunByWorkflowName: (...args: unknown[]) =>
 		mockGetRunByWorkflowName(...args),
 	getRunCostSummary: (...args: unknown[]) => mockGetRunCostSummary(...args),
+	getRunRuntime: (...args: unknown[]) => mockGetRunRuntime(...args),
 	listRunAssetNodes: (...args: unknown[]) => mockListRunAssetNodes(...args),
 	listRunEvents: (...args: unknown[]) => mockListRunEvents(...args),
+	listRunInputs: (...args: unknown[]) => mockListRunInputs(...args),
+	listRunOutputs: (...args: unknown[]) => mockListRunOutputs(...args),
 }));
 
 import { useWorkflowDetail } from "./useWorkflowDetail";
@@ -66,6 +72,20 @@ describe("useWorkflowDetail", () => {
 		mockListRunEvents.mockResolvedValue({
 			items: [],
 			nextCursor: undefined,
+		});
+		mockListRunInputs.mockResolvedValue({
+			runId: "run-1",
+			items: [],
+			total: 0,
+		});
+		mockListRunOutputs.mockResolvedValue({
+			runId: "run-1",
+			items: [],
+			total: 0,
+		});
+		mockGetRunRuntime.mockResolvedValue({
+			runId: "run-1",
+			runtime: { runtimeType: "argo" },
 		});
 	});
 
@@ -169,6 +189,38 @@ describe("useWorkflowDetail", () => {
 			createdAt: "2026-06-03T00:00:00Z",
 			nodes: [],
 		});
+		mockListRunInputs.mockResolvedValue({
+			runId: "run-1",
+			total: 1,
+			items: [
+				{
+					id: "input-config",
+					runId: "run-1",
+					type: "config",
+					refId: "cfg-1",
+				},
+			],
+		});
+		mockListRunOutputs.mockResolvedValue({
+			runId: "run-1",
+			total: 1,
+			items: [
+				{
+					id: "output-logs",
+					runId: "run-1",
+					type: "logs",
+					refId: "wf-expired",
+				},
+			],
+		});
+		mockGetRunRuntime.mockResolvedValue({
+			runId: "run-1",
+			runtime: {
+				runtimeType: "argo",
+				workflowName: "wf-expired",
+				namespace: "video-proc-dev",
+			},
+		});
 
 		const { result } = renderHook(() =>
 			useWorkflowDetail("run-1", { lookupMode: "runId" }),
@@ -188,6 +240,65 @@ describe("useWorkflowDetail", () => {
 			limit: 100,
 			cursor: undefined,
 		});
+		expect(mockListRunInputs).toHaveBeenCalledWith("run-1");
+		expect(mockListRunOutputs).toHaveBeenCalledWith("run-1");
+		expect(mockGetRunRuntime).toHaveBeenCalledWith("run-1");
+		expect(result.current.runMetadataState.inputs?.items[0]?.refId).toBe(
+			"cfg-1",
+		);
+		expect(result.current.runMetadataState.outputs?.items[0]?.type).toBe(
+			"logs",
+		);
+		expect(result.current.runMetadataState.runtime?.runtime.namespace).toBe(
+			"video-proc-dev",
+		);
+		expect(result.current.runMetadataState.error).toBeNull();
+	});
+
+	it("keeps Run detail usable when metadata endpoints fail", async () => {
+		mockGetRun.mockResolvedValue({
+			id: "run-1",
+			workflowName: "wf-1",
+			pipelineName: "pipeline",
+			status: "Succeeded",
+			nodeCount: 1,
+			createdAt: "2026-06-03T00:00:00Z",
+		});
+		mockGetWorkflow.mockResolvedValue({
+			name: "wf-1",
+			status: "Succeeded",
+			createdAt: "2026-06-03T00:00:00Z",
+			nodes: [],
+		});
+		mockListRunEvents.mockResolvedValue({
+			items: [
+				{
+					id: "event-1",
+					runId: "run-1",
+					eventType: "run_completed",
+					subjectType: "run",
+					subjectId: "run-1",
+					occurredAt: "2026-06-03T00:10:00Z",
+				},
+			],
+			nextCursor: undefined,
+		});
+		mockListRunInputs.mockRejectedValue(new Error("inputs unavailable"));
+
+		const { result } = renderHook(() =>
+			useWorkflowDetail("run-1", { lookupMode: "runId" }),
+		);
+
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		await waitFor(() =>
+			expect(result.current.runEventState.items.length).toBe(1),
+		);
+
+		expect(result.current.workflow?.name).toBe("wf-1");
+		expect(result.current.loadError).toBeNull();
+		expect(result.current.runMetadataState.error).toContain(
+			"inputs unavailable",
+		);
 	});
 
 	it("uses resolved workflowName for logs and log stream in run-id mode", async () => {

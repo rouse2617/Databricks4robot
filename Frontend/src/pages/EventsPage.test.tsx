@@ -45,7 +45,7 @@ describe("EventsPage", () => {
 			</MemoryRouter>,
 		);
 		expect(screen.getByText("事件流总览")).toBeTruthy();
-		expect(screen.getByPlaceholderText("输入 Asset ID 筛选")).toBeTruthy();
+		expect(screen.getByPlaceholderText("输入资产 ID 筛选")).toBeTruthy();
 	});
 
 	it("renders event type filter select", () => {
@@ -64,7 +64,7 @@ describe("EventsPage", () => {
 			</MemoryRouter>,
 		);
 		const input = screen.getByPlaceholderText(
-			"输入 Asset ID 筛选",
+			"输入资产 ID 筛选",
 		) as HTMLInputElement;
 
 		await waitFor(() => {
@@ -97,7 +97,7 @@ describe("EventsPage", () => {
 			</MemoryRouter>,
 		);
 		const input = screen.getByPlaceholderText(
-			"输入 Asset ID 筛选",
+			"输入资产 ID 筛选",
 		) as HTMLInputElement;
 		await waitFor(() => {
 			expect(input.value).toBe(id);

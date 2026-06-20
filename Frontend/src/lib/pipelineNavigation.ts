@@ -1,8 +1,8 @@
 import type { NavigateFunction } from "react-router-dom";
 
-export const PIPELINE_EXECUTIONS_URL = "/pipeline?tab=executions";
-export const PIPELINE_BATCH_LIST_URL =
-	"/pipeline?tab=executions&executionView=batch";
+export const PIPELINE_RUNS_URL = "/runs";
+export const PIPELINE_EXECUTIONS_URL = PIPELINE_RUNS_URL;
+export const PIPELINE_BATCH_LIST_URL = "/runs?executionView=batch";
 
 export type WorkflowDetailLocationState = {
 	fromBatchJobId?: string;
@@ -17,7 +17,7 @@ export function resolveWorkflowDetailBackTarget(state: unknown): string {
 	if (batchId) {
 		return `/pipeline/batch/${batchId}`;
 	}
-	return PIPELINE_EXECUTIONS_URL;
+	return PIPELINE_RUNS_URL;
 }
 
 export function workflowDetailLocationState(
@@ -40,8 +40,8 @@ export function resolveBatchJobDetailBackTarget(state: unknown): string {
 
 export function goToPipelineBatchJobList(navigate: NavigateFunction): void {
 	navigate({
-		pathname: "/pipeline",
-		search: "?tab=executions&executionView=batch",
+		pathname: "/runs",
+		search: "?executionView=batch",
 	});
 	if (typeof window !== "undefined") {
 		window.scrollTo(0, 0);

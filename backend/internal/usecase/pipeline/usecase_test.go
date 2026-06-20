@@ -17,6 +17,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/filter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	runtimeadapter "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 )
 
@@ -237,9 +238,9 @@ type mockWorkflowClient struct {
 	stopErr             error
 }
 
-func (m *mockWorkflowClient) CreateWorkflow(_ context.Context, _ *wfv1.Workflow, _ string) error {
+func (m *mockWorkflowClient) CreateWorkflow(ctx context.Context, wf *wfv1.Workflow, namespace string) error {
 	if m.createWorkflowFn != nil {
-		return m.createWorkflowFn(context.Background(), nil, "")
+		return m.createWorkflowFn(ctx, wf, namespace)
 	}
 	return nil
 }
@@ -282,6 +283,74 @@ func (m *mockWorkflowClient) ResubmitWorkflow(_ context.Context, _, _ string) er
 func (m *mockWorkflowClient) SuspendWorkflow(_ context.Context, _, _ string) error   { return nil }
 func (m *mockWorkflowClient) ResumeWorkflow(_ context.Context, _, _ string) error    { return nil }
 func (m *mockWorkflowClient) TerminateWorkflow(_ context.Context, _, _ string) error { return nil }
+
+type mockRuntimeAdapter struct {
+	submitRuns    []runtimeadapter.RunRef
+	submitSpecs   []runtimeadapter.RuntimeSpec
+	submitJob     *runtimeadapter.RuntimeJob
+	submitErr     error
+	retryRefs     []runtimeadapter.RuntimeRef
+	stopRefs      []runtimeadapter.RuntimeRef
+	suspendRefs   []runtimeadapter.RuntimeRef
+	resumeRefs    []runtimeadapter.RuntimeRef
+	terminateRefs []runtimeadapter.RuntimeRef
+	retryErr      error
+	stopErr       error
+}
+
+func (m *mockRuntimeAdapter) Submit(_ context.Context, run runtimeadapter.RunRef, spec runtimeadapter.RuntimeSpec) (*runtimeadapter.RuntimeJob, error) {
+	m.submitRuns = append(m.submitRuns, run)
+	m.submitSpecs = append(m.submitSpecs, spec)
+	if m.submitErr != nil {
+		return nil, m.submitErr
+	}
+	if m.submitJob != nil {
+		return m.submitJob, nil
+	}
+	return &runtimeadapter.RuntimeJob{
+		Ref: runtimeadapter.RuntimeRef{
+			RuntimeType: spec.RuntimeType,
+			Name:        "adapter-workflow",
+			Namespace:   spec.Namespace,
+			UID:         "adapter-workflow-uid",
+		},
+	}, nil
+}
+func (m *mockRuntimeAdapter) Get(_ context.Context, ref runtimeadapter.RuntimeRef) (*runtimeadapter.RuntimeJobStatus, error) {
+	return &runtimeadapter.RuntimeJobStatus{Ref: ref}, nil
+}
+func (m *mockRuntimeAdapter) Stop(_ context.Context, ref runtimeadapter.RuntimeRef) error {
+	m.stopRefs = append(m.stopRefs, ref)
+	return m.stopErr
+}
+func (m *mockRuntimeAdapter) Suspend(_ context.Context, ref runtimeadapter.RuntimeRef) error {
+	m.suspendRefs = append(m.suspendRefs, ref)
+	return nil
+}
+func (m *mockRuntimeAdapter) Resume(_ context.Context, ref runtimeadapter.RuntimeRef) error {
+	m.resumeRefs = append(m.resumeRefs, ref)
+	return nil
+}
+func (m *mockRuntimeAdapter) Terminate(_ context.Context, ref runtimeadapter.RuntimeRef) error {
+	m.terminateRefs = append(m.terminateRefs, ref)
+	return nil
+}
+func (m *mockRuntimeAdapter) Retry(_ context.Context, ref runtimeadapter.RuntimeRef, _ runtimeadapter.RetryOptions) (*runtimeadapter.RuntimeJob, error) {
+	m.retryRefs = append(m.retryRefs, ref)
+	if m.retryErr != nil {
+		return nil, m.retryErr
+	}
+	return &runtimeadapter.RuntimeJob{Ref: ref}, nil
+}
+func (m *mockRuntimeAdapter) Resubmit(_ context.Context, ref runtimeadapter.RuntimeRef, _ runtimeadapter.ResubmitOptions) (*runtimeadapter.RuntimeJob, error) {
+	return &runtimeadapter.RuntimeJob{Ref: ref}, nil
+}
+func (m *mockRuntimeAdapter) Logs(context.Context, runtimeadapter.RuntimeRef, string, runtimeadapter.LogOptions) (*runtimeadapter.LogResult, error) {
+	return &runtimeadapter.LogResult{}, nil
+}
+func (m *mockRuntimeAdapter) LogStream(context.Context, runtimeadapter.RuntimeRef, string, runtimeadapter.LogOptions) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
 
 func newMockAssetRepo() *mockAssetRepo {
 	return &mockAssetRepo{assets: make(map[string]*models.Asset)}
@@ -494,6 +563,198 @@ func TestDeploy_ValidatesAssetExistence(t *testing.T) {
 	})
 }
 
+func TestDeploy_UsesRuntimeAdapterSubmitWhenConfigured(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "adapter-submit-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	adapter := &mockRuntimeAdapter{
+		submitJob: &runtimeadapter.RuntimeJob{
+			Ref: runtimeadapter.RuntimeRef{
+				RuntimeType: "argo",
+				Name:        "adapter-workflow",
+				Namespace:   "runtime-ns",
+				UID:         "adapter-uid",
+			},
+			Raw: &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "adapter-workflow",
+					Namespace: "runtime-ns",
+					UID:       "adapter-uid",
+				},
+				Status: wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+			},
+		},
+	}
+	depRepo := &mockDeploymentRepo{}
+	runRepo := &mockRunRepo{}
+	uc := New(&mockTemplateRepo{}, depRepo, newMockAssetRepo(), nil, "runtime-ns")
+	uc.SetRuntimeAdapter(adapter)
+	uc.SetRunRepositories(nil, runRepo, &mockRunNodeRepo{})
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil)
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if dep == nil {
+		t.Fatal("expected deployment")
+	}
+	if len(adapter.submitRuns) != 1 || len(adapter.submitSpecs) != 1 {
+		t.Fatalf("expected one adapter submit, got runs=%d specs=%d", len(adapter.submitRuns), len(adapter.submitSpecs))
+	}
+	if adapter.submitRuns[0].ID != dep.ID || adapter.submitRuns[0].Name != dep.PipelineName {
+		t.Fatalf("unexpected run ref %#v for dep %#v", adapter.submitRuns[0], dep)
+	}
+	spec := adapter.submitSpecs[0]
+	if spec.RuntimeType != "argo" || spec.Namespace != "runtime-ns" {
+		t.Fatalf("unexpected runtime spec %#v", spec)
+	}
+	wf, ok := spec.Manifest.(*wfv1.Workflow)
+	if !ok || wf == nil {
+		t.Fatalf("expected workflow manifest, got %#v", spec.Manifest)
+	}
+	if wf.Name != dep.WorkflowName {
+		t.Fatalf("expected submitted workflow %q, got %q", dep.WorkflowName, wf.Name)
+	}
+	if dep.Status != string(wfv1.WorkflowRunning) {
+		t.Fatalf("expected status Running from adapter job, got %q", dep.Status)
+	}
+	run := runRepo.byID[dep.ID]
+	if run == nil {
+		t.Fatal("expected pipeline run to be saved")
+	}
+	if run.ArgoWorkflowUID != "adapter-uid" {
+		t.Fatalf("expected adapter workflow uid, got %q", run.ArgoWorkflowUID)
+	}
+	if run.Status != string(wfv1.WorkflowRunning) || run.WorkflowName != dep.WorkflowName {
+		t.Fatalf("unexpected saved run %#v", run)
+	}
+}
+
+func TestDeploy_FallsBackToWorkflowClientSubmitWithoutAdapter(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "fallback-submit-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	var createdName, createdNamespace string
+	wfClient := &mockWorkflowClient{
+		createWorkflowFn: func(_ context.Context, wf *wfv1.Workflow, namespace string) error {
+			if wf != nil {
+				createdName = wf.Name
+			}
+			createdNamespace = namespace
+			return nil
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), wfClient, "fallback-ns")
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil)
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if createdName != dep.WorkflowName {
+		t.Fatalf("expected workflow client to create %q, got %q", dep.WorkflowName, createdName)
+	}
+	if createdNamespace != "fallback-ns" {
+		t.Fatalf("expected namespace fallback-ns, got %q", createdNamespace)
+	}
+}
+
+func TestDeploy_DryRunDoesNotSubmitRuntimeAdapter(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "dry-run-submit-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	adapter := &mockRuntimeAdapter{}
+	depRepo := &mockDeploymentRepo{}
+	uc := New(&mockTemplateRepo{}, depRepo, newMockAssetRepo(), nil, "dry-run-ns")
+	uc.SetRuntimeAdapter(adapter)
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("Deploy dry-run: %v", err)
+	}
+	if dep == nil || dep.Status != "Preview" || dep.Manifest == nil {
+		t.Fatalf("expected preview deployment with manifest, got %#v", dep)
+	}
+	if len(adapter.submitRuns) != 0 {
+		t.Fatalf("expected dry-run not to submit runtime, got %d submits", len(adapter.submitRuns))
+	}
+	if len(depRepo.saved) != 0 {
+		t.Fatalf("expected dry-run not to persist deployment, got %d saves", len(depRepo.saved))
+	}
+}
+
+func TestDeploy_RuntimeAdapterSubmitFailureDoesNotPersistRun(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "adapter-submit-fail-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	adapter := &mockRuntimeAdapter{submitErr: errors.New("adapter submit denied")}
+	depRepo := &mockDeploymentRepo{}
+	runRepo := &mockRunRepo{}
+	uc := New(&mockTemplateRepo{}, depRepo, newMockAssetRepo(), nil, "runtime-ns")
+	uc.SetRuntimeAdapter(adapter)
+	uc.SetRunRepositories(nil, runRepo, &mockRunNodeRepo{})
+
+	_, err := uc.Deploy(ctx, pipe, "", nil)
+	if err == nil {
+		t.Fatal("expected adapter submit error")
+	}
+	if !strings.Contains(err.Error(), "create workflow") || !strings.Contains(err.Error(), "adapter submit denied") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(adapter.submitRuns) != 1 {
+		t.Fatalf("expected one submit attempt, got %d", len(adapter.submitRuns))
+	}
+	if len(depRepo.saved) != 0 {
+		t.Fatalf("expected deployment not to be saved, got %d saves", len(depRepo.saved))
+	}
+	if len(runRepo.byID) != 0 {
+		t.Fatalf("expected run not to be saved, got %d saves", len(runRepo.byID))
+	}
+}
+
 func TestDeploy_RejectsResourceAboveConfiguredCeiling(t *testing.T) {
 	ctx := context.Background()
 	pipe := map[string]interface{}{
@@ -615,6 +876,72 @@ func TestDeploy_IncludesRuntimeConfigMountAndEnv(t *testing.T) {
 	}
 	if !strings.Contains(manifest, "subpath: effective.yaml") {
 		t.Fatalf("expected config subPath mount in manifest, got %s", manifest)
+	}
+}
+
+func TestDeploy_RuntimeAdapterSubmitPreservesRuntimeConfigOwnerLookup(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "adapter-config-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	createdThroughWorkflowClient := false
+	wfClient := &mockWorkflowClient{
+		createWorkflowFn: func(context.Context, *wfv1.Workflow, string) error {
+			createdThroughWorkflowClient = true
+			return nil
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), wfClient, "runtime-ns")
+	uc.SetRuntimeAdapter(&mockRuntimeAdapter{})
+	uc.pipelineConfigRepo = &mockPipelineConfigRepo{
+		configs: map[string]*models.PipelineConfig{
+			"cfg-1": {ID: "cfg-1", Name: "detector.yaml"},
+		},
+		versions: map[string]*models.PipelineConfigVersion{
+			"cfg-1:2": {
+				ConfigID: "cfg-1",
+				Version:  2,
+				Content:  "threshold: 0.8\n",
+			},
+		},
+	}
+	store := &mockRuntimeConfigStore{volumeName: "runtime-config-adapter"}
+	uc.runtimeConfigStore = store
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{
+		ConfigSelection: &RuntimeConfigSelection{
+			Mode:           "saved",
+			ConfigID:       "cfg-1",
+			Version:        2,
+			FileName:       "detector.yaml",
+			MountPath:      "/workspace/configs",
+			TargetFilename: "effective.yaml",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if dep == nil {
+		t.Fatal("expected deployment")
+	}
+	if createdThroughWorkflowClient {
+		t.Fatal("expected submit to use runtime adapter, not workflow client")
+	}
+	if store.lastOwner == nil || store.lastOwner.Kind != "Workflow" || store.lastOwner.UID != "workflow-uid" {
+		t.Fatalf("expected workflow owner reference from lookup, got %#v", store.lastOwner)
+	}
+	if store.lastNamespace != "runtime-ns" || store.lastDeploymentID != dep.ID {
+		t.Fatalf("unexpected runtime config store target namespace=%q deployment=%q", store.lastNamespace, store.lastDeploymentID)
 	}
 }
 
@@ -814,6 +1141,161 @@ func TestDeploy_IncludesNodeRuntimeConfigsAndAssetEnv(t *testing.T) {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected manifest to contain %q, got %s", want, manifest)
 		}
+	}
+}
+
+func TestListRunInputs_IncludesMaterializedRuntimeConfigs(t *testing.T) {
+	ctx := context.Background()
+	pipe := map[string]interface{}{
+		"name": "run-input-config-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-a",
+				"component": map[string]interface{}{
+					"name":  "detector",
+					"image": "busybox",
+				},
+				"runtimeConfig": map[string]interface{}{
+					"mode":           "saved",
+					"configId":       "cfg-node",
+					"version":        2,
+					"fileName":       "node-source.yaml",
+					"mountPath":      "/workspace/configs",
+					"targetFilename": "node.yaml",
+				},
+			},
+			map[string]interface{}{
+				"id": "step-b",
+				"component": map[string]interface{}{
+					"name":  "consumer",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	runRepo := &mockRunRepo{}
+	uc := newUsecase(newMockAssetRepo())
+	uc.SetRunRepositories(nil, runRepo, &mockRunNodeRepo{})
+	uc.pipelineConfigRepo = &mockPipelineConfigRepo{
+		configs: map[string]*models.PipelineConfig{
+			"cfg-global": {ID: "cfg-global", Name: "global-source.yaml", Lifecycle: "ready"},
+			"cfg-node":   {ID: "cfg-node", Name: "node-source.yaml", Lifecycle: "ready"},
+		},
+		versions: map[string]*models.PipelineConfigVersion{
+			"cfg-global:1": {ConfigID: "cfg-global", Version: 1, Status: "ready", Content: "global: true\n"},
+			"cfg-node:2":   {ConfigID: "cfg-node", Version: 2, Status: "ready", Content: "node: true\n"},
+		},
+	}
+	uc.runtimeConfigStore = &mockRuntimeConfigStore{volumeName: "runtime-config-inputs"}
+
+	dep, err := uc.Deploy(ctx, pipe, "", nil, DeployOptions{
+		ConfigSelection: &RuntimeConfigSelection{
+			Mode:           "saved",
+			ConfigID:       "cfg-global",
+			Version:        1,
+			FileName:       "global-source.yaml",
+			MountPath:      "/workspace/global",
+			TargetFilename: "global.yaml",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	rawMaterialized, ok := dep.PipelineJSON[runConfigInputsPipelineJSONKey].([]interface{})
+	if !ok || len(rawMaterialized) != 2 {
+		t.Fatalf("expected two materialized config inputs, got %#v", dep.PipelineJSON[runConfigInputsPipelineJSONKey])
+	}
+
+	inputs, err := uc.ListRunInputs(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("ListRunInputs: %v", err)
+	}
+	configInputs := make([]models.RunInput, 0, 2)
+	for _, item := range inputs.Items {
+		if item.Type == "config" {
+			configInputs = append(configInputs, item)
+		}
+	}
+	if len(configInputs) != 2 {
+		t.Fatalf("expected two config inputs, got %#v", configInputs)
+	}
+	byRef := map[string]models.RunInput{}
+	for _, item := range configInputs {
+		byRef[item.RefID] = item
+		if item.ContentHash == "" || !strings.HasPrefix(item.ContentHash, "sha256:") {
+			t.Fatalf("expected content hash on %#v", item)
+		}
+		if _, ok := item.Snapshot["content"]; ok {
+			t.Fatalf("expected raw content to be omitted from snapshot %#v", item.Snapshot)
+		}
+		if item.ProjectionKey == "" {
+			t.Fatalf("expected projection key on %#v", item)
+		}
+	}
+	global := byRef["cfg-global"]
+	if global.NodeID != "" || global.RefVersion != "1" || global.FileName != "global-source.yaml" || global.TargetFilename != "global.yaml" || global.MountPath != "/workspace/global" {
+		t.Fatalf("unexpected global config input %#v", global)
+	}
+	if global.ContentHash != runtimeConfigContentHash("global: true\n") {
+		t.Fatalf("unexpected global content hash %q", global.ContentHash)
+	}
+	node := byRef["cfg-node"]
+	if node.NodeID != "step-a" || node.RefVersion != "2" || node.FileName != "node-source.yaml" || node.TargetFilename != "node.yaml" {
+		t.Fatalf("unexpected node config input %#v", node)
+	}
+	if node.ContentHash != runtimeConfigContentHash("node: true\n") {
+		t.Fatalf("unexpected node content hash %q", node.ContentHash)
+	}
+}
+
+func TestListRunInputs_LegacyRuntimeConfigFallbackOmitsContent(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-legacy-config": {
+				ID:           "run-legacy-config",
+				PipelineName: "legacy-config",
+				Status:       "Running",
+				PipelineJSON: map[string]interface{}{
+					"nodes": []interface{}{
+						map[string]interface{}{
+							"id": "step-a",
+							"runtimeConfig": map[string]interface{}{
+								"mode":           "inline",
+								"fileName":       "inline.yaml",
+								"mountPath":      "/workspace/configs",
+								"targetFilename": "inline.yaml",
+								"content":        "secret: true\n",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(nil, runRepo, &mockRunNodeRepo{})
+
+	inputs, err := uc.ListRunInputs(ctx, "run-legacy-config")
+	if err != nil {
+		t.Fatalf("ListRunInputs: %v", err)
+	}
+	var configInput *models.RunInput
+	for i := range inputs.Items {
+		if inputs.Items[i].Type == "config" {
+			configInput = &inputs.Items[i]
+			break
+		}
+	}
+	if configInput == nil {
+		t.Fatalf("expected config input, got %#v", inputs.Items)
+	}
+	if configInput.ContentHash != runtimeConfigContentHash("secret: true\n") {
+		t.Fatalf("unexpected content hash %q", configInput.ContentHash)
+	}
+	if _, ok := configInput.Snapshot["content"]; ok {
+		t.Fatalf("expected raw content to be omitted from snapshot %#v", configInput.Snapshot)
 	}
 }
 
@@ -1544,6 +2026,85 @@ func TestListRunChildrenReturnsRelationsAndSummary(t *testing.T) {
 	}
 }
 
+func TestListRunChildrenIncludesEventDerivedRelations(t *testing.T) {
+	t.Parallel()
+
+	const parentID = "run-parent"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			parentID: {
+				ID:           parentID,
+				PipelineName: "source",
+				Status:       "Succeeded",
+				CreatedAt:    time.Now().UTC(),
+			},
+			"run-rerun": {
+				ID:           "run-rerun",
+				PipelineName: "source-rerun",
+				Status:       "Running",
+				CreatedAt:    time.Now().UTC(),
+			},
+			"run-resubmit": {
+				ID:           "run-resubmit",
+				PipelineName: "source-resubmit",
+				Status:       "Succeeded",
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{
+		events: []models.PipelineRunEvent{
+			{
+				RunID:       parentID,
+				EventType:   runEventRerunCreated,
+				SubjectType: "run",
+				SubjectID:   "run-rerun",
+				Payload: map[string]interface{}{
+					"sourceRunId": parentID,
+					"childRunId":  "run-rerun",
+					"relation":    "rerun_of",
+				},
+			},
+			{
+				RunID:       parentID,
+				EventType:   runEventResubmitted,
+				SubjectType: "run",
+				SubjectID:   "run-resubmit",
+				Payload: map[string]interface{}{
+					"sourceRunId": parentID,
+					"childRunId":  "run-resubmit",
+					"relation":    "resubmit_of",
+				},
+			},
+		},
+	}
+
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+	uc.SetRunEventRepo(eventRepo)
+
+	got, err := uc.ListRunChildren(context.Background(), parentID)
+	if err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	if got.Total != 2 || len(got.Items) != 2 || len(got.Relations) != 2 {
+		t.Fatalf("unexpected event-derived children: %+v", got)
+	}
+	relations := map[string]string{}
+	for _, relation := range got.Relations {
+		relations[relation.ChildRunID] = relation.RelationType
+		if relation.Source != "pipeline_run_events" {
+			t.Fatalf("unexpected relation source: %+v", relation)
+		}
+	}
+	if relations["run-rerun"] != "rerun_of" || relations["run-resubmit"] != "resubmit_of" {
+		t.Fatalf("unexpected event-derived relations: %+v", got.Relations)
+	}
+	if got.Summary.Total != 2 || got.Summary.AggregateStatus != "Running" {
+		t.Fatalf("unexpected summary: %+v", got.Summary)
+	}
+}
+
 // trackingDeploymentRepo wraps mockDeploymentRepo to count FindAll calls so
 // the CYB-1537 tests can assert whether the legacy scan ran.
 type trackingDeploymentRepo struct {
@@ -1939,6 +2500,240 @@ func TestStopRun_AppendsSucceededAndFailedEvents(t *testing.T) {
 	}
 }
 
+func TestStopRun_UsesRuntimeAdapterWhenConfigured(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-ok": {
+				ID:              "run-ok",
+				WorkflowName:    "wf-ok",
+				Status:          "Running",
+				ArgoNamespace:   "video-proc-dev",
+				ArgoWorkflowUID: "uid-ok",
+			},
+			"run-fail": {
+				ID:            "run-fail",
+				WorkflowName:  "wf-fail",
+				Status:        "Running",
+				ArgoNamespace: "video-proc-dev",
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{}
+	wfClient := &mockWorkflowClient{
+		getWorkflowFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: "uid-ok"},
+			}, nil
+		},
+	}
+	adapter := &mockRuntimeAdapter{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRuntimeAdapter(adapter)
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	if err := uc.StopRun(ctx, "run-ok"); err != nil {
+		t.Fatalf("StopRun success path returned error: %v", err)
+	}
+	if len(adapter.stopRefs) != 1 {
+		t.Fatalf("expected adapter stop call, got %#v", adapter.stopRefs)
+	}
+	ref := adapter.stopRefs[0]
+	if ref.Name != "wf-ok" || ref.Namespace != "video-proc-dev" || ref.UID != "uid-ok" {
+		t.Fatalf("unexpected adapter stop ref: %#v", ref)
+	}
+	if len(wfClient.stopCalls) != 0 {
+		t.Fatalf("expected legacy workflow client to be bypassed, got %#v", wfClient.stopCalls)
+	}
+	assertRunEvents(t, eventRepo.events, "run-ok", runEventStopRequested, runEventStopSucceeded)
+
+	adapter.stopErr = errors.New("runtime stop failed")
+	err := uc.StopRun(ctx, "run-fail")
+	if err == nil {
+		t.Fatal("expected StopRun failure")
+	}
+	assertRunEvents(t, eventRepo.events, "run-fail", runEventStopRequested, runEventStopFailed)
+	var failedEvent *models.PipelineRunEvent
+	for i := range eventRepo.events {
+		event := &eventRepo.events[i]
+		if event.RunID == "run-fail" && event.EventType == runEventStopFailed {
+			failedEvent = event
+			break
+		}
+	}
+	if failedEvent == nil || failedEvent.Reason != "runtime stop failed" {
+		t.Fatalf("expected adapter stop failure reason, got %#v", failedEvent)
+	}
+}
+
+func TestRuntimeRetryRun_UsesRuntimeAdapterWithoutWorkflowClient(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-retry": {
+				ID:            "run-retry",
+				WorkflowName:  "wf-retry",
+				Status:        "Failed",
+				ArgoNamespace: "video-proc-dev",
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{}
+	adapter := &mockRuntimeAdapter{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRuntimeAdapter(adapter)
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	run, err := uc.RuntimeRetryRun(ctx, "run-retry")
+	if err != nil {
+		t.Fatalf("RuntimeRetryRun returned error: %v", err)
+	}
+	if run == nil || run.ID != "run-retry" {
+		t.Fatalf("expected same run identity, got %#v", run)
+	}
+	if len(adapter.retryRefs) != 1 || adapter.retryRefs[0].Name != "wf-retry" || adapter.retryRefs[0].Namespace != "video-proc-dev" {
+		t.Fatalf("unexpected adapter retry refs: %#v", adapter.retryRefs)
+	}
+	assertRunEvents(t, eventRepo.events, "run-retry", runEventRuntimeRetryRequested, runEventRuntimeRetrySucceeded)
+}
+
+func TestRuntimeControlRejectsMissingWorkflowBeforeAdapterCall(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-no-runtime": {
+				ID:     "run-no-runtime",
+				Status: "Running",
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{}
+	adapter := &mockRuntimeAdapter{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRuntimeAdapter(adapter)
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+
+	err := uc.StopRun(ctx, "run-no-runtime")
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected invalid argument, got %v", err)
+	}
+	if len(adapter.stopRefs) != 0 {
+		t.Fatalf("adapter should not be called without workflowName: %#v", adapter.stopRefs)
+	}
+	if len(eventRepo.events) != 0 {
+		t.Fatalf("no events should be written before runtime ref validation, got %#v", eventRepo.events)
+	}
+}
+
+func TestRerunRun_CreatesNewRunAndEvents(t *testing.T) {
+	ctx := context.Background()
+	validPipe := map[string]interface{}{
+		"name": "rerun-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+		runConfigInputsPipelineJSONKey: []interface{}{
+			map[string]interface{}{
+				"scope":          "global",
+				"mode":           "saved",
+				"configId":       "cfg-global",
+				"version":        1,
+				"fileName":       "global.yaml",
+				"mountPath":      "/workspace/configs",
+				"targetFilename": "global.yaml",
+				"contentHash":    runtimeConfigContentHash("global: true\n"),
+				"projectionKey":  "runtime-config-global.yaml",
+			},
+		},
+	}
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-source": {
+				ID:                "run-source",
+				PipelineName:      "rerun-pipe",
+				PipelineJSON:      validPipe,
+				Status:            "Succeeded",
+				ExecutionTargetID: "default",
+			},
+		},
+	}
+	eventRepo := &mockRunEventRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, newMockAssetRepo(), &mockWorkflowClient{}, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(eventRepo)
+	uc.pipelineConfigRepo = &mockPipelineConfigRepo{
+		configs: map[string]*models.PipelineConfig{
+			"cfg-global": {ID: "cfg-global", Name: "global.yaml", Lifecycle: "ready"},
+		},
+		versions: map[string]*models.PipelineConfigVersion{
+			"cfg-global:1": {ConfigID: "cfg-global", Version: 1, Status: "ready", Content: "global: true\n"},
+		},
+	}
+	uc.runtimeConfigStore = &mockRuntimeConfigStore{volumeName: "runtime-config-rerun"}
+
+	next, err := uc.RerunRun(ctx, "run-source")
+	if err != nil {
+		t.Fatalf("RerunRun: %v", err)
+	}
+	if next == nil || next.ID == "run-source" {
+		t.Fatalf("expected new run, got %#v", next)
+	}
+	if !strings.Contains(next.PipelineName, "rerun") {
+		t.Fatalf("expected rerun suffix in pipeline name, got %q", next.PipelineName)
+	}
+	inputs, err := uc.ListRunInputs(ctx, next.ID)
+	if err != nil {
+		t.Fatalf("ListRunInputs: %v", err)
+	}
+	foundConfig := false
+	for _, input := range inputs.Items {
+		if input.Type == "config" && input.RefID == "cfg-global" {
+			foundConfig = true
+			if input.ContentHash != runtimeConfigContentHash("global: true\n") {
+				t.Fatalf("unexpected rerun config hash %q", input.ContentHash)
+			}
+		}
+	}
+	if !foundConfig {
+		t.Fatalf("expected rerun to preserve saved deploy-level config input, got %#v", inputs.Items)
+	}
+	assertRunEvents(t, eventRepo.events, "run-source", runEventRerunRequested)
+	assertRunEvents(t, eventRepo.events, "run-source", runEventRerunCreated)
+	assertRunEvents(t, eventRepo.events, next.ID, runEventRerunCreated)
+	for _, event := range eventRepo.events {
+		if event.RunID == next.ID && event.EventType == runEventRerunCreated {
+			if event.Payload["sourceRunId"] != "run-source" || event.Payload["childRunId"] != next.ID || event.Payload["relation"] != "rerun_of" {
+				t.Fatalf("unexpected rerun payload %#v", event.Payload)
+			}
+		}
+		if event.RunID == "run-source" && event.EventType == runEventRerunCreated {
+			if event.Payload["sourceRunId"] != "run-source" || event.Payload["childRunId"] != next.ID || event.Payload["relation"] != "rerun_of" {
+				t.Fatalf("unexpected source rerun payload %#v", event.Payload)
+			}
+		}
+	}
+	children, err := uc.ListRunChildren(ctx, "run-source")
+	if err != nil {
+		t.Fatalf("ListRunChildren: %v", err)
+	}
+	if children.Total != 1 || len(children.Items) != 1 || children.Items[0].ID != next.ID {
+		t.Fatalf("unexpected rerun children: %+v", children)
+	}
+	if len(children.Relations) != 1 || children.Relations[0].RelationType != "rerun_of" || children.Relations[0].ChildRunID != next.ID {
+		t.Fatalf("unexpected rerun relations: %+v", children.Relations)
+	}
+}
+
 func TestGetRunRuntime_OmitsDebugURLWithoutWorkflowName(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
@@ -2009,6 +2804,13 @@ func TestRetryAndResubmitRun_AppendFailedEventsWhenCreateRunFails(t *testing.T) 
 				AssetIDs:     []string{"missing-asset"},
 				Status:       "Failed",
 			},
+			"run-rerun": {
+				ID:           "run-rerun",
+				PipelineName: "pipe",
+				PipelineJSON: validPipe,
+				AssetIDs:     []string{"missing-asset"},
+				Status:       "Failed",
+			},
 		},
 	}
 	eventRepo := &mockRunEventRepo{}
@@ -2025,8 +2827,12 @@ func TestRetryAndResubmitRun_AppendFailedEventsWhenCreateRunFails(t *testing.T) 
 		t.Fatal("expected ResubmitRun to fail when source assets are missing")
 	}
 	assertRunEvents(t, eventRepo.events, "run-resubmit", runEventResubmitRequested, runEventResubmitFailed)
+	if _, err := uc.RerunRun(ctx, "run-rerun"); err == nil {
+		t.Fatal("expected RerunRun to fail when source assets are missing")
+	}
+	assertRunEvents(t, eventRepo.events, "run-rerun", runEventRerunRequested, runEventRerunFailed)
 	for _, event := range eventRepo.events {
-		if (event.EventType == runEventRetryFailed || event.EventType == runEventResubmitFailed) &&
+		if (event.EventType == runEventRetryFailed || event.EventType == runEventResubmitFailed || event.EventType == runEventRerunFailed) &&
 			!strings.Contains(event.Reason, "asset not found") {
 			t.Fatalf("expected failed event reason to include asset validation failure, got %#v", event)
 		}

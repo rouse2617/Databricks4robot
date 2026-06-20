@@ -780,6 +780,25 @@ func (h *Handler) ResubmitRun(c *gin.Context) {
 	c.JSON(http.StatusCreated, run)
 }
 
+// RerunRun handles POST /api/v1/runs/:id/rerun.
+func (h *Handler) RerunRun(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
+		return
+	}
+	run, err := h.runs.RerunRun(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
+			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
+			return
+		}
+		mapDeployError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, run)
+}
+
 // StopRun handles POST /api/v1/pipeline-runs/:id/stop.
 func (h *Handler) StopRun(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))

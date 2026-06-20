@@ -77,11 +77,11 @@ function ProtectedRoutes() {
 						/>
 						<Route
 							path="/workflows"
-							element={<Navigate to="/pipeline?tab=executions" replace />}
+							element={<Navigate to="/runs" replace />}
 						/>
 						<Route
 							path="/runs"
-							element={<Navigate to="/pipeline?tab=executions" replace />}
+							element={<PipelinePage defaultTab="executions" />}
 						/>
 						<Route
 							path="/workflows/:name"

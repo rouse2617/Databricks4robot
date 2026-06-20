@@ -116,7 +116,7 @@ describe("AssetsResultsPane", () => {
 	it("renders table with data", () => {
 		render(<AssetsResultsPane {...defaultProps} />);
 		// Ant Design Table renders header + measure row, so use getAllByText
-		const headers = screen.getAllByText("Asset ID");
+		const headers = screen.getAllByText("资产 ID");
 		expect(headers.length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText("12.5s")).toBeTruthy();
 		expect(screen.getByText("warehouse")).toBeTruthy();
@@ -213,8 +213,8 @@ describe("AssetsResultsPane", () => {
 				selectedColumns={["asset_id", "env"]}
 			/>,
 		);
-		// Asset ID appears in header + measure row
-		const assetIdHeaders = screen.getAllByText("Asset ID");
+		// 资产 ID appears in header + measure row
+		const assetIdHeaders = screen.getAllByText("资产 ID");
 		expect(assetIdHeaders.length).toBeGreaterThanOrEqual(1);
 		// 环境 column header present
 		const envHeaders = screen.getAllByText("环境");

@@ -1222,10 +1222,7 @@ export function DeployPanel({
 				) : null}
 				<div className="deploy-panel-compact__section-header">
 					<div className="deploy-section-title">最近执行</div>
-					<Link
-						to="/pipeline?tab=executions"
-						className="deploy-panel-compact__link"
-					>
+					<Link to="/runs" className="deploy-panel-compact__link">
 						查看全部
 					</Link>
 				</div>
@@ -1259,7 +1256,13 @@ export function DeployPanel({
 									size="small"
 									icon={<LinkOutlined />}
 									onClick={() =>
-										navigate(`/pipeline/executions/${d.workflowName}`)
+										navigate(
+											d.id
+												? `/runs/${encodeURIComponent(d.id)}`
+												: `/pipeline/executions/${encodeURIComponent(
+														d.workflowName,
+													)}`,
+										)
 									}
 								>
 									查看
@@ -1317,7 +1320,7 @@ export function DeployPanel({
 					<Button
 						size="small"
 						icon={<LinkOutlined />}
-						onClick={() => navigate("/pipeline?tab=executions")}
+						onClick={() => navigate("/runs")}
 					>
 						执行记录
 					</Button>

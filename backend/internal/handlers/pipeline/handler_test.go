@@ -528,6 +528,7 @@ func setupRouter(h *Handler) *gin.Engine {
 	r.GET("/api/v1/runs/:id/runtime", h.GetRunRuntime)
 	r.POST("/api/v1/runs/:id/retry", h.RetryRunRuntime)
 	r.POST("/api/v1/runs/:id/resubmit", h.ResubmitRun)
+	r.POST("/api/v1/runs/:id/rerun", h.RerunRun)
 	r.POST("/api/v1/runs/:id/stop", h.StopRun)
 	r.POST("/api/v1/runs/:id/suspend", h.SuspendRun)
 	r.POST("/api/v1/runs/:id/resume", h.ResumeRun)
@@ -947,6 +948,37 @@ func TestRunAPI_RuntimeRetryRequiresWorkflowName(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "workflowName") {
 		t.Fatalf("expected workflowName error, got %s", w.Body.String())
+	}
+}
+
+func TestRunAPI_RerunCreatesNewRun(t *testing.T) {
+	run := makePipelineRun("run-source", "wf-source")
+	run.PipelineJSON = map[string]interface{}{
+		"name": "rerun-handler-pipe",
+		"nodes": []interface{}{
+			map[string]interface{}{
+				"id": "step-1",
+				"component": map[string]interface{}{
+					"name":  "test",
+					"image": "busybox",
+				},
+			},
+		},
+		"edges": []interface{}{},
+	}
+	runRepo := &mockPipelineRunRepo{byID: map[string]*models.PipelineRun{run.ID: run}}
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, &mockWorkflowClient{}, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, &mockPipelineRunNodeRepo{})
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/runs/run-source/rerun", nil))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected rerun 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(runRepo.byID) != 2 {
+		t.Fatalf("expected rerun to create a new run, repo has %d", len(runRepo.byID))
 	}
 }
 

@@ -582,7 +582,7 @@ class TestRunManager:
         respx.get(f"{BASE_URL}/api/v1/runs/run-1/runtime").mock(
             return_value=httpx.Response(200, json={"runId": "run-1", "runtime": {"runtimeType": "argo"}})
         )
-        for operation in ("retry", "resubmit", "stop", "suspend", "resume", "terminate"):
+        for operation in ("retry", "resubmit", "rerun", "stop", "suspend", "resume", "terminate"):
             respx.post(f"{BASE_URL}/api/v1/runs/run-1/{operation}").mock(
                 return_value=httpx.Response(200, json={"message": "ok", "id": "run-1"})
             )
@@ -600,6 +600,7 @@ class TestRunManager:
         assert client.runs.runtime("run-1")["runtime"]["runtimeType"] == "argo"
         assert client.runs.retry("run-1")["id"] == "run-1"
         assert client.runs.resubmit("run-1")["id"] == "run-1"
+        assert client.runs.rerun("run-1")["id"] == "run-1"
         assert client.runs.stop("run-1")["message"] == "ok"
         assert client.runs.suspend("run-1")["message"] == "ok"
         assert client.runs.resume("run-1")["message"] == "ok"

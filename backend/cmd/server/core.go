@@ -23,6 +23,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/postgres"
+	runtimeArgo "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter/argo"
 	actionUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/action"
 	algorunUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/algorun"
 	assetUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/asset"
@@ -109,6 +110,9 @@ func setupCore(inf *infra) *coreHandlers {
 	pipelineRunWatcherStateRepo := postgres.NewPipelineRunWatcherStateRepo(pg)
 	pipelineConfigRepo := postgres.NewPipelineConfigRepo(pg)
 	puc := pipelineUC.New(pipelineTemplateRepo, pipelineDeploymentRepo, assetRepo, inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace)
+	if inf.workflowClient != nil {
+		puc.SetRuntimeAdapter(runtimeArgo.New(inf.workflowClient, inf.cfg.ArgoWorkflowsNamespace))
+	}
 	puc.SetArgoWorkflowTTLSecondsAfterCompletion(inf.cfg.ArgoWorkflowTTLSecondsAfterCompletion)
 	puc.SetResourceGuardConfig(pipelineUC.ResourceGuardConfig{
 		MaxCPU:                        inf.cfg.PipelineResourceMaxCPU,

@@ -535,7 +535,7 @@ function PipelineDesignerCanvasInner({
 
 	useEffect(() => {
 		dispatch({ type: "deploy/setSelectedAssetIds", assetIds: queryAssetIds });
-	}, [queryAssetIds]);
+	}, [queryAssetIds, dispatch]);
 
 	const updateSelectedAssetIds = useCallback(
 		(nextIds: string[]) => {
@@ -548,7 +548,7 @@ function PipelineDesignerCanvasInner({
 			}
 			setSearchParams(nextParams, { replace: true });
 		},
-		[searchParams, setSearchParams],
+		[searchParams, setSearchParams, dispatch],
 	);
 
 	const loadPipelineToCanvas = useCallback(
@@ -566,7 +566,7 @@ function PipelineDesignerCanvasInner({
 			dispatch({ type: "canvas/setJsonOutput", json: null });
 			markCanvasClean(nextName, n, e);
 		},
-		[engine, markCanvasClean, pipelineName, setEdges, setNodes],
+		[engine, markCanvasClean, pipelineName, setEdges, setNodes, dispatch],
 	);
 
 	const loadPipelineFromSessionStorage = useCallback(() => {
@@ -612,6 +612,7 @@ function PipelineDesignerCanvasInner({
 			modal,
 			navigate,
 			templateVersions,
+			dispatch,
 		],
 	);
 
@@ -647,7 +648,7 @@ function PipelineDesignerCanvasInner({
 			dispatch({ type: "canvas/selectNode", nodeId: newNode.id });
 			dispatch({ type: "canvas/setEditingNodeId", nodeId: null });
 		},
-		[engine, nodes.length, readOnlyMode],
+		[engine, nodes.length, readOnlyMode, dispatch],
 	);
 
 	const onDrop = useCallback(
@@ -676,7 +677,7 @@ function PipelineDesignerCanvasInner({
 			dispatch({ type: "canvas/selectNode", nodeId: node.id });
 			engine.selectElements([node.id, ...connectedEdgeIds]);
 		},
-		[edges, engine],
+		[edges, engine, dispatch],
 	);
 
 	const onNodeClick = useCallback(
@@ -687,14 +688,14 @@ function PipelineDesignerCanvasInner({
 				dispatch({ type: "canvas/setEditingNodeId", nodeId: node.id });
 			}
 		},
-		[selectNodeWithEdges],
+		[selectNodeWithEdges, dispatch],
 	);
 	const onPaneClick = useCallback(() => {
 		dispatch({ type: "canvas/selectNode", nodeId: null });
 		dispatch({ type: "canvas/closeContextMenu" });
 		dispatch({ type: "canvas/setEditingNodeId", nodeId: null });
 		engine.deselectAll();
-	}, [engine]);
+	}, [engine, dispatch]);
 
 	const onPaneContextMenu = useCallback(
 		(event: React.MouseEvent | MouseEvent) => {
@@ -712,7 +713,7 @@ function PipelineDesignerCanvasInner({
 				},
 			});
 		},
-		[engine],
+		[engine, dispatch],
 	);
 
 	const onNodeContextMenu = useCallback(
@@ -730,7 +731,7 @@ function PipelineDesignerCanvasInner({
 				},
 			});
 		},
-		[selectNodeWithEdges],
+		[selectNodeWithEdges, dispatch],
 	);
 
 	const updateNodeData = useCallback(
@@ -742,7 +743,7 @@ function PipelineDesignerCanvasInner({
 
 	const closeNodeConfig = useCallback(() => {
 		dispatch({ type: "canvas/setEditingNodeId", nodeId: null });
-	}, []);
+	}, [dispatch]);
 
 	const saveNodeConfig = useCallback(
 		(id: string, data: Partial<PipelineNodeData>) => {
@@ -820,6 +821,7 @@ function PipelineDesignerCanvasInner({
 			messageApi,
 			selectNodeWithEdges,
 			selectedNodeId,
+			dispatch,
 		],
 	);
 
@@ -899,7 +901,7 @@ function PipelineDesignerCanvasInner({
 		return () => {
 			alive = false;
 		};
-	}, [selectedNodeAssetId]);
+	}, [selectedNodeAssetId, dispatch]);
 
 	const selectedNodeAssetInfo = useMemo(() => {
 		if (!selectedNodeAsset) {
@@ -919,12 +921,12 @@ function PipelineDesignerCanvasInner({
 			type: "canvas/setJsonOutput",
 			json: JSON.stringify(buildPipelineJSON(), null, 2),
 		});
-	}, [buildPipelineJSON]);
+	}, [buildPipelineJSON, dispatch]);
 
 	const importPipeline = useCallback(() => {
 		dispatch({ type: "canvas/setImportText", text: "" });
 		dispatch({ type: "canvas/setImportModalOpen", open: true });
-	}, []);
+	}, [dispatch]);
 
 	const applyImportedPipeline = useCallback(() => {
 		const text = importText.trim();
@@ -949,7 +951,15 @@ function PipelineDesignerCanvasInner({
 		} catch {
 			messageApi.error("无效的 JSON");
 		}
-	}, [importText, markCanvasClean, messageApi, pipelineName]);
+	}, [
+		importText,
+		markCanvasClean,
+		messageApi,
+		pipelineName,
+		setNodes,
+		setEdges,
+		dispatch,
+	]);
 
 	const applyExampleToCanvas = useCallback(
 		(example: PipelineExample) => {
@@ -973,7 +983,7 @@ function PipelineDesignerCanvasInner({
 			markCanvasClean(example.pipeline.name, positionedNodes, exampleEdges);
 			messageApi.success(`已载入示例: ${example.label}`);
 		},
-		[engine, markCanvasClean, messageApi],
+		[engine, markCanvasClean, messageApi, setNodes, setEdges, dispatch],
 	);
 
 	const loadExample = useCallback(
@@ -1013,7 +1023,15 @@ function PipelineDesignerCanvasInner({
 				markCanvasClean(pipelineName, [], []);
 			},
 		});
-	}, [engine, markCanvasClean, modal.confirm, pipelineName]);
+	}, [
+		engine,
+		markCanvasClean,
+		modal.confirm,
+		pipelineName,
+		setEdges,
+		setNodes,
+		dispatch,
+	]);
 
 	const handleSave = useCallback(async () => {
 		try {
@@ -1051,6 +1069,8 @@ function PipelineDesignerCanvasInner({
 		markCanvasClean,
 		nodes,
 		templateVersions,
+		edges,
+		dispatch,
 	]);
 
 	const canDeploy = nodes.length > 0 && !readOnlyMode;
@@ -1067,11 +1087,17 @@ function PipelineDesignerCanvasInner({
 			type: "deploy/openDialog",
 			name: defaultDeployWorkflowName(),
 		});
-	}, [nodes.length, buildPipelineJSON, assertPipelineRunnable, messageApi]);
+	}, [
+		nodes.length,
+		buildPipelineJSON,
+		assertPipelineRunnable,
+		messageApi,
+		dispatch,
+	]);
 
 	const closeDeployDialog = useCallback(() => {
 		dispatch({ type: "deploy/resetDialog" });
-	}, []);
+	}, [dispatch]);
 
 	const { handleDeploy, handlePreviewDeploy } = usePipelineDeploy({
 		assetPickerRef,
@@ -1967,16 +1993,20 @@ function PipelineDesignerCanvasInner({
 										onClick={() => {
 											closeDeployDialog();
 											navigate(
-												`/pipeline/executions/${deployDialog.result?.workflowName}`,
+												deployDialog.result?.id
+													? `/runs/${encodeURIComponent(deployDialog.result.id)}`
+													: `/pipeline/executions/${encodeURIComponent(
+															deployDialog.result?.workflowName ?? "",
+														)}`,
 											);
 										}}
 									>
-										查看 Workflow
+										查看运行
 									</Button>
 									<Button
 										onClick={() => {
 											closeDeployDialog();
-											navigate("/pipeline?tab=executions");
+											navigate("/runs");
 										}}
 									>
 										查看记录

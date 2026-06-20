@@ -1,2 +1,0 @@
-const u="/pipeline/executions/";function i(R,r,e){var c,d;const t=r==null?void 0:r.trim(),n=(c=e==null?void 0:e.parentRunId)==null?void 0:c.trim(),m=encodeURIComponent(((d=e==null?void 0:e.pathName)==null?void 0:d.trim())||R);if(!t&&!n)return`${u}${m}`;const a=new URLSearchParams;return t&&a.set("runId",t),n&&a.set("parentRunId",n),`${u}${m}?${a.toString()}`}export{i as b};
-//# sourceMappingURL=workflowNavigation-CNO7RuWY.js.map

@@ -33,6 +33,9 @@ import type {
 } from "../api/pipelineApi";
 import {
 	deleteRun,
+	type RunInput,
+	type RunOutput,
+	rerunRun,
 	resubmitRun,
 	resumeRun,
 	retryRun,
@@ -752,6 +755,9 @@ const RUN_EVENT_LABELS: Record<string, string> = {
 	run_failed: "运行失败",
 	run_retry_requested: "请求重试",
 	run_resubmitted: "重新提交",
+	run_rerun_requested: "请求重新运行",
+	run_rerun_created: "已创建重新运行",
+	run_rerun_failed: "重新运行失败",
 	run_stop_requested: "请求停止",
 	run_delete_requested: "请求删除",
 	run_deleted: "删除完成",
@@ -771,7 +777,7 @@ function eventTagColor(event: PipelineRunEvent) {
 	if (/failed|error/i.test(status)) return "red";
 	if (/succeeded|completed/i.test(status)) return "green";
 	if (/running|started|submitted|created/i.test(status)) return "blue";
-	if (/stop|delete|retry|resubmit/i.test(status)) return "orange";
+	if (/stop|delete|retry|resubmit|rerun/i.test(status)) return "orange";
 	return "default";
 }
 
@@ -1574,6 +1580,184 @@ function WorkflowAssetNodePanel({
 	);
 }
 
+function metadataValue(value?: string | number | null) {
+	if (value == null || value === "") return "-";
+	return String(value);
+}
+
+function metadataText(value?: string | number | null, copyable = false) {
+	const text = metadataValue(value);
+	return (
+		<Typography.Text
+			copyable={copyable && text !== "-" ? { text } : false}
+			ellipsis={{ tooltip: text }}
+			style={{ maxWidth: 260 }}
+		>
+			{text}
+		</Typography.Text>
+	);
+}
+
+function runInputRef(input: RunInput) {
+	if (input.refId && input.refVersion)
+		return `${input.refId}@${input.refVersion}`;
+	return input.refId ?? input.refVersion ?? "-";
+}
+
+function WorkflowRunMetadataPanel({
+	runMetadataState,
+}: {
+	runMetadataState: ReturnType<typeof useWorkflowDetail>["runMetadataState"];
+}) {
+	const runtime = runMetadataState.runtime?.runtime;
+	const inputs = runMetadataState.inputs?.items ?? [];
+	const outputs = runMetadataState.outputs?.items ?? [];
+
+	return (
+		<div
+			style={{
+				margin: "0 24px 12px",
+				border: "1px solid #e5e7eb",
+				borderRadius: 8,
+				background: "#fff",
+				overflow: "hidden",
+			}}
+		>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "space-between",
+					gap: 12,
+					padding: "8px 10px",
+					borderBottom: "1px solid #e5e7eb",
+				}}
+			>
+				<div>
+					<Typography.Text strong>运行上下文</Typography.Text>
+					<Typography.Text
+						type="secondary"
+						style={{ display: "block", fontSize: 12 }}
+					>
+						Run Inputs、Outputs 与 runtime debug 引用。
+					</Typography.Text>
+				</div>
+				{runMetadataState.loading ? <Spin size="small" /> : null}
+			</div>
+			{runMetadataState.error ? (
+				<Alert
+					type="warning"
+					showIcon
+					message="部分运行上下文加载失败"
+					description={runMetadataState.error}
+					style={{ margin: "8px 10px 0" }}
+				/>
+			) : null}
+			<div style={{ padding: "10px", display: "grid", gap: 12 }}>
+				<Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} bordered>
+					<Descriptions.Item label="Runtime">
+						{metadataText(runtime?.runtimeType)}
+					</Descriptions.Item>
+					<Descriptions.Item label="Workflow">
+						{metadataText(runtime?.workflowName, true)}
+					</Descriptions.Item>
+					<Descriptions.Item label="Namespace">
+						{metadataText(runtime?.namespace, true)}
+					</Descriptions.Item>
+					<Descriptions.Item label="UID">
+						{metadataText(runtime?.uid, true)}
+					</Descriptions.Item>
+					<Descriptions.Item label="状态">
+						{metadataText(runtime?.status)}
+					</Descriptions.Item>
+					<Descriptions.Item label="执行目标">
+						{metadataText(runtime?.executionTargetId, true)}
+					</Descriptions.Item>
+				</Descriptions>
+
+				<Table<RunInput>
+					size="small"
+					rowKey="id"
+					dataSource={inputs}
+					pagination={false}
+					loading={runMetadataState.loading}
+					locale={{ emptyText: "暂无运行输入" }}
+					columns={[
+						{
+							title: "类型",
+							dataIndex: "type",
+							width: 120,
+							render: (value: string) => <Tag>{value}</Tag>,
+						},
+						{
+							title: "引用",
+							render: (_, row) => metadataText(runInputRef(row), true),
+						},
+						{
+							title: "节点",
+							dataIndex: "nodeId",
+							width: 160,
+							render: (value?: string) => metadataText(value, true),
+						},
+						{
+							title: "挂载",
+							width: 220,
+							render: (_, row) =>
+								metadataText(row.mountPath || row.targetFilename),
+						},
+						{
+							title: "文件",
+							width: 180,
+							render: (_, row) =>
+								metadataText(row.targetFilename || row.fileName),
+						},
+						{
+							title: "来源",
+							dataIndex: "source",
+							width: 150,
+							render: (value?: string) => metadataText(value),
+						},
+					]}
+				/>
+
+				<Table<RunOutput>
+					size="small"
+					rowKey="id"
+					dataSource={outputs}
+					pagination={false}
+					loading={runMetadataState.loading}
+					locale={{ emptyText: "暂无运行输出" }}
+					columns={[
+						{
+							title: "类型",
+							dataIndex: "type",
+							width: 140,
+							render: (value: string) => <Tag color="blue">{value}</Tag>,
+						},
+						{
+							title: "节点",
+							dataIndex: "nodeId",
+							width: 180,
+							render: (value?: string) => metadataText(value, true),
+						},
+						{
+							title: "引用",
+							dataIndex: "refId",
+							width: 220,
+							render: (value?: string) => metadataText(value, true),
+						},
+						{
+							title: "URI",
+							dataIndex: "uri",
+							render: (value?: string) => metadataText(value, true),
+						},
+					]}
+				/>
+			</div>
+		</div>
+	);
+}
+
 export default function WorkflowDetailPage({
 	legacyRoute = false,
 }: {
@@ -1615,6 +1799,7 @@ export default function WorkflowDetailPage({
 		loadRunEvents,
 		assetNodeState,
 		costSummaryState,
+		runMetadataState,
 		setLogSearch,
 		startFollowLogs,
 		stopFollowLogs,
@@ -1674,6 +1859,9 @@ export default function WorkflowDetailPage({
 				case "resubmit":
 					await resubmitRun(runId);
 					return;
+				case "rerun":
+					await rerunRun(runId);
+					return;
 				case "stop":
 					await stopRun(runId);
 					return;
@@ -1723,7 +1911,7 @@ export default function WorkflowDetailPage({
 				if (operation.key === "delete" && runId) {
 					await deleteRun(runId);
 					messageApi.success?.("执行记录删除已提交");
-					navigate("/pipeline?tab=executions");
+					navigate("/runs");
 					return;
 				} else if (operation.key === "retry") {
 					const outcome = await runWorkflowRetryWithFeedback(
@@ -1755,11 +1943,11 @@ export default function WorkflowDetailPage({
 					);
 				}
 				if (operation.key === "delete") {
-					navigate("/pipeline?tab=executions");
+					navigate("/runs");
 					return;
 				}
-				if (operation.key === "resubmit") {
-					navigate("/pipeline?tab=executions");
+				if (operation.key === "resubmit" || operation.key === "rerun") {
+					navigate("/runs");
 					return;
 				}
 				loadWorkflow();
@@ -1785,6 +1973,7 @@ export default function WorkflowDetailPage({
 				operation.key === "delete" ||
 				operation.key === "terminate" ||
 				operation.key === "resubmit" ||
+				operation.key === "rerun" ||
 				operation.key === "retry"
 			) {
 				setConfirmOperation(operation);
@@ -2158,6 +2347,9 @@ export default function WorkflowDetailPage({
 						/>
 					</div>
 				)}
+				{runEventState.run ? (
+					<WorkflowRunMetadataPanel runMetadataState={runMetadataState} />
+				) : null}
 				<WorkflowRunContextPanel
 					runEventState={runEventState}
 					runEventFilters={runEventFilters}

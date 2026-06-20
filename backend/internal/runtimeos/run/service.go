@@ -2,14 +2,27 @@ package run
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
-// Service is the Run Kernel boundary for product execution operations. Phase 1
-// delegates to the existing pipeline usecase while routes and UI move to Run
-// semantics.
+// LifecycleOperation names product Run lifecycle controls. Runtime-specific
+// execution remains behind the pipeline/runtime adapter boundary.
+type LifecycleOperation string
+
+const (
+	LifecycleRuntimeRetry LifecycleOperation = "runtime_retry"
+	LifecycleStop         LifecycleOperation = "stop"
+	LifecycleSuspend      LifecycleOperation = "suspend"
+	LifecycleResume       LifecycleOperation = "resume"
+	LifecycleTerminate    LifecycleOperation = "terminate"
+)
+
+// Service is the Run Kernel boundary for product execution operations. It
+// keeps product routes Run-centric while the existing pipeline usecase still
+// owns persistence during the incremental Runtime OS migration.
 type Service interface {
 	CreateRun(ctx context.Context, pipeline map[string]interface{}, name string, assetIDs []string, opts ...pipelineUC.DeployOptions) (*models.PipelineRun, error)
 	CreateRunByTemplateID(ctx context.Context, templateID, name string, assetIDs []string, opts ...pipelineUC.DeployOptions) (*models.PipelineRun, error)
@@ -22,6 +35,8 @@ type Service interface {
 	RetryRun(ctx context.Context, id string) (*models.PipelineRun, error)
 	RuntimeRetryRun(ctx context.Context, id string) (*models.PipelineRun, error)
 	ResubmitRun(ctx context.Context, id string) (*models.PipelineRun, error)
+	RerunRun(ctx context.Context, id string) (*models.PipelineRun, error)
+	ControlRun(ctx context.Context, id string, op LifecycleOperation) (*models.PipelineRun, error)
 	StopRun(ctx context.Context, id string) error
 	SuspendRun(ctx context.Context, id string) error
 	ResumeRun(ctx context.Context, id string) error
@@ -51,6 +66,7 @@ type PipelineUsecase interface {
 	RetryRun(ctx context.Context, id string) (*models.PipelineRun, error)
 	RuntimeRetryRun(ctx context.Context, id string) (*models.PipelineRun, error)
 	ResubmitRun(ctx context.Context, id string) (*models.PipelineRun, error)
+	RerunRun(ctx context.Context, id string) (*models.PipelineRun, error)
 	StopRun(ctx context.Context, id string) error
 	SuspendRun(ctx context.Context, id string) error
 	ResumeRun(ctx context.Context, id string) error
@@ -112,27 +128,52 @@ func (s *service) RetryRun(ctx context.Context, id string) (*models.PipelineRun,
 }
 
 func (s *service) RuntimeRetryRun(ctx context.Context, id string) (*models.PipelineRun, error) {
-	return s.pipeline.RuntimeRetryRun(ctx, id)
+	return s.ControlRun(ctx, id, LifecycleRuntimeRetry)
 }
 
 func (s *service) ResubmitRun(ctx context.Context, id string) (*models.PipelineRun, error) {
 	return s.pipeline.ResubmitRun(ctx, id)
 }
 
+func (s *service) RerunRun(ctx context.Context, id string) (*models.PipelineRun, error) {
+	return s.pipeline.RerunRun(ctx, id)
+}
+
+func (s *service) ControlRun(ctx context.Context, id string, op LifecycleOperation) (*models.PipelineRun, error) {
+	switch op {
+	case LifecycleRuntimeRetry:
+		return s.pipeline.RuntimeRetryRun(ctx, id)
+	case LifecycleStop:
+		return nil, s.pipeline.StopRun(ctx, id)
+	case LifecycleSuspend:
+		return nil, s.pipeline.SuspendRun(ctx, id)
+	case LifecycleResume:
+		return nil, s.pipeline.ResumeRun(ctx, id)
+	case LifecycleTerminate:
+		return nil, s.pipeline.TerminateRun(ctx, id)
+	default:
+		return nil, fmt.Errorf("unsupported run lifecycle operation %q", op)
+	}
+}
+
 func (s *service) StopRun(ctx context.Context, id string) error {
-	return s.pipeline.StopRun(ctx, id)
+	_, err := s.ControlRun(ctx, id, LifecycleStop)
+	return err
 }
 
 func (s *service) SuspendRun(ctx context.Context, id string) error {
-	return s.pipeline.SuspendRun(ctx, id)
+	_, err := s.ControlRun(ctx, id, LifecycleSuspend)
+	return err
 }
 
 func (s *service) ResumeRun(ctx context.Context, id string) error {
-	return s.pipeline.ResumeRun(ctx, id)
+	_, err := s.ControlRun(ctx, id, LifecycleResume)
+	return err
 }
 
 func (s *service) TerminateRun(ctx context.Context, id string) error {
-	return s.pipeline.TerminateRun(ctx, id)
+	_, err := s.ControlRun(ctx, id, LifecycleTerminate)
+	return err
 }
 
 func (s *service) ListRunEvents(ctx context.Context, id string, opts models.PipelineRunEventListOptions) (*models.PipelineRunEventListResult, error) {

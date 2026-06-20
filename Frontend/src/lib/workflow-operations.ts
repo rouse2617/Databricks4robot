@@ -31,6 +31,7 @@ export type WorkflowOperationKey =
 	| "suspend"
 	| "terminate"
 	| "resubmit"
+	| "rerun"
 	| "delete";
 
 type WorkflowLike = Pick<
@@ -97,6 +98,12 @@ export const WORKFLOW_OPERATIONS: Record<
 		phases: ["Succeeded", "Failed", "Error"],
 		action: resubmitWorkflow,
 	},
+	rerun: {
+		title: "重新运行",
+		icon: createElement(RedoOutlined),
+		phases: ["Succeeded", "Failed", "Error"],
+		action: resubmitWorkflow,
+	},
 	delete: {
 		title: "删除",
 		icon: createElement(DeleteOutlined),
@@ -113,6 +120,7 @@ export const WORKFLOW_OPERATION_ORDER: WorkflowOperationKey[] = [
 	"suspend",
 	"terminate",
 	"resubmit",
+	"rerun",
 	"delete",
 ];
 
@@ -186,7 +194,10 @@ export function getWorkflowOperationConfirmText(
 		return "将重试工作流中失败或出错的节点，不会从头重新执行。若工作流曾被手动停止，请改用「重提交」。";
 	}
 	if (key === "resubmit") {
-		return "将基于当前工作流模板重新提交一次全新执行。";
+		return "将基于当前工作流模板重新提交一次全新执行，适合 runtime resubmit 场景。";
+	}
+	if (key === "rerun") {
+		return "将基于当前 DataBrew Run 规格创建一次产品级全量重跑，并记录 rerun_of 关系。";
 	}
 	if (key === "delete") {
 		return "若这是 DataBrew 执行记录，将从执行记录列表删除，并尝试删除关联 Argo Workflow；外部 Workflow 只会删除 Argo Workflow。";

@@ -119,21 +119,26 @@ export default function LineageTab({ assetId }: LineageTabProps) {
 					style={{ marginBottom: 16 }}
 				>
 					<Descriptions column={1} size="small">
-						{pipelineLineage?.workflow_name && (
-							<Descriptions.Item label="Workflow">
+						{(pipelineLineage?.deployment_id ||
+							pipelineLineage?.workflow_name) && (
+							<Descriptions.Item label="运行">
 								<Text
 									code
 									style={{ cursor: "pointer", color: "#1677ff" }}
 									onClick={() => {
+										const runId = pipelineLineage?.deployment_id;
 										const wf = pipelineLineage?.workflow_name;
-										if (wf) {
+										if (runId) {
+											navigate(`/runs/${encodeURIComponent(runId)}`);
+										} else if (wf) {
 											navigate(
 												`/pipeline/executions/${encodeURIComponent(wf)}`,
 											);
 										}
 									}}
 								>
-									{pipelineLineage?.workflow_name}
+									{pipelineLineage?.deployment_id ??
+										pipelineLineage?.workflow_name}
 								</Text>
 							</Descriptions.Item>
 						)}

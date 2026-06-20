@@ -194,6 +194,9 @@ class RunManager(BaseManager):
     def resubmit(self, run_id: str) -> dict[str, Any]:
         return self._request("POST", self._endpoint("run_resubmit", run_id=run_id))
 
+    def rerun(self, run_id: str) -> dict[str, Any]:
+        return self._request("POST", self._endpoint("run_rerun", run_id=run_id))
+
     def stop(self, run_id: str) -> dict[str, Any]:
         return self._request("POST", self._endpoint("run_stop", run_id=run_id))
 

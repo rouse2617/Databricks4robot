@@ -25,6 +25,15 @@ describe("workflowLogView", () => {
 		);
 	});
 
+	it("falls back to inferred prefixes when selected pod name differs from argo log prefix", () => {
+		const content =
+			"wf-step-123456 firstwf-step-123456 secondwf-step-123456 third";
+
+		expect(normalizeLogContent(content, { podName: "wf.step" })).toBe(
+			"wf-step-123456 first\nwf-step-123456 second\nwf-step-123456 third",
+		);
+	});
+
 	it("renders only the tail of very long logs by character and line limits", () => {
 		const lines = Array.from({ length: 10 }, (_, index) => `line-${index + 1}`);
 		const visible = prepareVisibleLogContent(lines.join("\n"), null, 30, 3);

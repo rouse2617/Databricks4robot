@@ -3,6 +3,7 @@ import {
 	createRunByTemplate,
 	listRunChildren,
 	listRuns,
+	rerunRun,
 	retryRun,
 } from "./runApi";
 
@@ -81,6 +82,28 @@ describe("runApi", () => {
 
 		expect(fetchMock).toHaveBeenCalledWith(
 			"/api/v1/runs/run-1/retry",
+			expect.objectContaining({ method: "POST" }),
+		);
+	});
+
+	it("reruns a run as a new product run through /runs/:id/rerun", async () => {
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					id: "run-2",
+					workflowName: "wf-2",
+					status: "Pending",
+					nodeCount: 1,
+					createdAt: "2026-06-02T00:00:00Z",
+				}),
+				{ headers: { "content-type": "application/json" }, status: 201 },
+			),
+		);
+
+		await rerunRun("run-1");
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/v1/runs/run-1/rerun",
 			expect.objectContaining({ method: "POST" }),
 		);
 	});

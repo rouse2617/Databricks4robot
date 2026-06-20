@@ -603,9 +603,7 @@ describe("DeployPanel", () => {
 		expect(await screen.findByText("最近执行")).toBeTruthy();
 		expect(await screen.findByText("查看")).toBeTruthy();
 		fireEvent.click(screen.getByText("查看"));
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/pipeline/executions/wf-my-workflow",
-		);
+		expect(mockNavigate).toHaveBeenCalledWith("/runs/dep-001");
 	});
 
 	it("refreshes data after successful deploy", async () => {

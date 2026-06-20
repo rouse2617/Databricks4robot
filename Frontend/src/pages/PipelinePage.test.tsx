@@ -28,6 +28,7 @@ vi.mock("react-router-dom", async (importOriginal) => {
 // ── Mock pipelineApi ──────────────────────────────────────────────
 const mockSavePipeline = vi.fn();
 const mockDeployTemplate = vi.fn();
+const mockCreateRunByTemplate = vi.fn();
 const mockListPipelines = vi
 	.fn()
 	.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
@@ -82,6 +83,24 @@ vi.mock("../api/pipelineApi", () => ({
 	deleteDeployment: (...args: unknown[]) => mockDeleteDeployment(...args),
 	previewDeploy: (...args: unknown[]) => mockPreviewDeploy(...args),
 	retryDeployment: (...args: unknown[]) => mockRetryDeployment(...args),
+}));
+
+vi.mock("../api/runApi", () => ({
+	createRunByTemplate: (...args: unknown[]) => mockCreateRunByTemplate(...args),
+	listRuns: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+	getRunWatcherStatus: vi.fn().mockResolvedValue({
+		healthy: true,
+		lastSyncedRunCount: 0,
+		scanLimit: 100,
+		scanDelaySeconds: 6,
+	}),
+	deleteRun: vi.fn(),
+	retryRun: vi.fn(),
+	resubmitRun: vi.fn(),
+	stopRun: vi.fn(),
+	suspendRun: vi.fn(),
+	resumeRun: vi.fn(),
+	terminateRun: vi.fn(),
 }));
 
 // ── Mock batchJobApi (used by deployPipelineForAssets for ≥2 assets) ──
@@ -166,10 +185,12 @@ vi.mock("antd", async (importOriginal) => {
 });
 
 // ── Helpers ───────────────────────────────────────────────────────
-function renderPage(initialEntry = "/pipeline") {
+type TestPipelineTab = "design" | "pipelines" | "executions" | "components";
+
+function renderPage(initialEntry = "/pipeline", defaultTab?: TestPipelineTab) {
 	return render(
 		<MemoryRouter initialEntries={[initialEntry]}>
-			<PipelinePage />
+			<PipelinePage defaultTab={defaultTab} />
 		</MemoryRouter>,
 	);
 }
@@ -229,6 +250,10 @@ async function getMockMessage() {
 	return antd.message;
 }
 
+async function findSaveButton() {
+	return screen.findByText("保存", undefined, { timeout: 5000 });
+}
+
 /** Open deploy modal and wait until step summary is rendered. */
 async function openDeployModal() {
 	fireEvent.click(screen.getByRole("button", { name: /play-circle/i }));
@@ -269,6 +294,7 @@ beforeAll(() => {
 function resetPipelineMocks() {
 	mockSavePipeline.mockReset();
 	mockDeployTemplate.mockReset();
+	mockCreateRunByTemplate.mockReset();
 	mockCreateBatchJob.mockReset();
 	mockCreateBatchJob.mockResolvedValue({
 		id: "batch-001",
@@ -337,7 +363,7 @@ describe("PipelinePage", () => {
 	// ── Render & structure ──────────────────────────────────────────
 	it("renders the design toolbar and node config panel", async () => {
 		renderPage();
-		expect(await screen.findByText("保存")).toBeInTheDocument();
+		expect(await findSaveButton()).toBeInTheDocument();
 		expect(screen.getAllByText("组件").length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText("节点配置")).toBeInTheDocument();
 		expect(
@@ -347,7 +373,7 @@ describe("PipelinePage", () => {
 
 	it("shows canvas toolbar buttons by default", async () => {
 		renderPage();
-		expect(await screen.findByText("保存")).toBeInTheDocument();
+		expect(await findSaveButton()).toBeInTheDocument();
 		expect(screen.getAllByText("部署").length).toBeGreaterThanOrEqual(1);
 		expect(screen.getByText("导出")).toBeInTheDocument();
 		expect(screen.getByText("导入")).toBeInTheDocument();
@@ -424,6 +450,16 @@ describe("PipelinePage", () => {
 		expect(pipelineTab).toHaveAttribute("aria-selected", "true");
 	});
 
+	it("opens execution records when executions is the default tab", async () => {
+		renderPage("/runs", "executions");
+
+		expect(await screen.findByText("单次执行")).toBeInTheDocument();
+		const executionsTab = document.querySelector(
+			'[role="tab"][aria-controls$="panel-executions"]',
+		);
+		expect(executionsTab).toHaveAttribute("aria-selected", "true");
+	});
+
 	// ── Export ──────────────────────────────────────────────────────
 	it("shows JSON output on export", () => {
 		renderPage();
@@ -441,7 +477,7 @@ describe("PipelinePage", () => {
 		});
 		renderPage();
 		await importOneNodePipeline("imported-pipeline");
-		fireEvent.click(screen.getByText("保存"));
+		fireEvent.click(await findSaveButton());
 		await waitFor(() => expect(mockSavePipeline).toHaveBeenCalledTimes(1));
 		expect(mockSavePipeline).toHaveBeenCalledWith(
 			"imported-pipeline",
@@ -482,7 +518,7 @@ describe("PipelinePage", () => {
 			name: "my-pipeline",
 		});
 		renderPage();
-		fireEvent.click(screen.getByText("保存"));
+		fireEvent.click(await findSaveButton());
 		await waitFor(() => expect(mockSavePipeline).toHaveBeenCalledTimes(1));
 		expect(mockSavePipeline).toHaveBeenCalledWith(
 			"my-pipeline",
@@ -500,7 +536,7 @@ describe("PipelinePage", () => {
 			version: 2,
 		});
 		renderPage();
-		fireEvent.click(screen.getByText("保存"));
+		fireEvent.click(await findSaveButton());
 		await waitFor(() => expect(mockSavePipeline).toHaveBeenCalledTimes(1));
 		await waitFor(() => {
 			expect(mockNavigate).toHaveBeenCalledWith(
@@ -513,7 +549,7 @@ describe("PipelinePage", () => {
 	it("shows error on save failure", async () => {
 		mockSavePipeline.mockRejectedValueOnce(new Error("Network error"));
 		renderPage();
-		fireEvent.click(screen.getByText("保存"));
+		fireEvent.click(await findSaveButton());
 		const msg = await getMockMessage();
 		await waitFor(() =>
 			expect(msg.error).toHaveBeenCalledWith(
@@ -601,7 +637,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-nodes",
 		});
-		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+		mockCreateRunByTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
@@ -621,7 +657,7 @@ describe("PipelinePage", () => {
 
 		await waitFor(() => {
 			expect(mockSavePipeline).toHaveBeenCalled();
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockCreateRunByTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				[],
 				"default",
@@ -632,7 +668,7 @@ describe("PipelinePage", () => {
 
 		await waitFor(() => {
 			// Ant Design 5 adds spacing in Chinese chars ("关 闭"), use regex
-			expect(screen.getByText(/查看 Workflow/)).toBeInTheDocument();
+			expect(screen.getByText(/查看运行/)).toBeInTheDocument();
 			expect(screen.getByText(/关.*闭/)).toBeInTheDocument();
 		});
 	});
@@ -642,7 +678,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-nodes",
 		});
-		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+		mockCreateRunByTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
@@ -667,13 +703,13 @@ describe("PipelinePage", () => {
 				}),
 			);
 		});
-		expect(mockDeployTemplate).not.toHaveBeenCalled();
+		expect(mockCreateRunByTemplate).not.toHaveBeenCalled();
 		await waitFor(() =>
 			expect(mockNavigate).toHaveBeenCalledWith(
 				"/pipeline/batch/batch-001",
 				expect.objectContaining({
 					state: expect.objectContaining({
-						returnTo: "/pipeline?tab=executions&executionView=batch",
+						returnTo: "/runs?executionView=batch",
 					}),
 				}),
 			),
@@ -685,7 +721,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-assets",
 		});
-		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+		mockCreateRunByTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage("/pipeline?asset_ids=asset-a,asset-b");
 		await importOneNodePipeline("with-assets");
@@ -717,7 +753,7 @@ describe("PipelinePage", () => {
 				"/pipeline/batch/batch-001",
 				expect.objectContaining({
 					state: expect.objectContaining({
-						returnTo: "/pipeline?tab=executions&executionView=batch",
+						returnTo: "/runs?executionView=batch",
 					}),
 				}),
 			),
@@ -729,7 +765,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-assets",
 		});
-		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+		mockCreateRunByTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage("/pipeline?asset_ids=asset-a");
 		await importOneNodePipeline("with-assets");
@@ -747,7 +783,7 @@ describe("PipelinePage", () => {
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() => {
-			expect(mockDeployTemplate).toHaveBeenCalledWith(
+			expect(mockCreateRunByTemplate).toHaveBeenCalledWith(
 				"tmpl-001",
 				[],
 				"default",
@@ -762,7 +798,9 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-nodes",
 		});
-		mockDeployTemplate.mockRejectedValueOnce(new Error("Cluster unavailable"));
+		mockCreateRunByTemplate.mockRejectedValueOnce(
+			new Error("Cluster unavailable"),
+		);
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
@@ -775,12 +813,12 @@ describe("PipelinePage", () => {
 		});
 	});
 
-	it("navigates to workflow on '查看 Workflow'", async () => {
+	it("navigates to run detail on '查看运行'", async () => {
 		mockSavePipeline.mockResolvedValueOnce({
 			id: "tmpl-001",
 			name: "with-nodes",
 		});
-		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+		mockCreateRunByTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
@@ -788,9 +826,10 @@ describe("PipelinePage", () => {
 		fireEvent.click(getModalDeployBtn());
 
 		await waitFor(() =>
-			expect(screen.getByText("查看 Workflow")).toBeInTheDocument(),
+			expect(screen.getByText("查看运行")).toBeInTheDocument(),
 		);
-		fireEvent.click(screen.getByText("查看 Workflow"));
+		fireEvent.click(screen.getByText("查看运行"));
+		expect(mockNavigate).toHaveBeenCalledWith("/runs/dep-001");
 	});
 
 	it("opens execution records on '查看记录'", async () => {
@@ -798,7 +837,7 @@ describe("PipelinePage", () => {
 			id: "tmpl-001",
 			name: "with-nodes",
 		});
-		mockDeployTemplate.mockResolvedValueOnce(mockDeployResult());
+		mockCreateRunByTemplate.mockResolvedValueOnce(mockDeployResult());
 
 		renderPage();
 		await importOneNodePipeline("with-nodes");
@@ -810,10 +849,8 @@ describe("PipelinePage", () => {
 		);
 		fireEvent.click(screen.getByText(/查看记录/));
 
-		// "查看记录" navigates to the executions tab (useNavigate is mocked).
-		await waitFor(() =>
-			expect(mockNavigate).toHaveBeenCalledWith("/pipeline?tab=executions"),
-		);
+		// "查看记录" navigates to the run-centric executions page.
+		await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/runs"));
 	});
 
 	// ── Component registry ──────────────────────────────────────────
@@ -905,7 +942,7 @@ describe("PipelinePage", () => {
 			name: "from-storage",
 		});
 		renderPage();
-		fireEvent.click(screen.getByText("保存"));
+		fireEvent.click(await findSaveButton());
 		await waitFor(
 			() =>
 				expect(mockSavePipeline).toHaveBeenCalledWith(

@@ -18,6 +18,7 @@ const mockUseWorkflowDetail = vi.fn();
 const mockDeleteRun = vi.fn();
 const mockRetryRun = vi.fn();
 const mockResubmitRun = vi.fn();
+const mockRerunRun = vi.fn();
 const mockStopRun = vi.fn();
 const mockSuspendRun = vi.fn();
 const mockResumeRun = vi.fn();
@@ -44,6 +45,7 @@ vi.mock("../api/runApi", () => ({
 	deleteRun: (...args: unknown[]) => mockDeleteRun(...args),
 	retryRun: (...args: unknown[]) => mockRetryRun(...args),
 	resubmitRun: (...args: unknown[]) => mockResubmitRun(...args),
+	rerunRun: (...args: unknown[]) => mockRerunRun(...args),
 	stopRun: (...args: unknown[]) => mockStopRun(...args),
 	suspendRun: (...args: unknown[]) => mockSuspendRun(...args),
 	resumeRun: (...args: unknown[]) => mockResumeRun(...args),
@@ -126,6 +128,13 @@ function mockWorkflowDetailState(
 			loading: false,
 			error: null,
 		},
+		runMetadataState: {
+			inputs: null,
+			outputs: null,
+			runtime: null,
+			loading: false,
+			error: null,
+		},
 		setLogSearch: vi.fn(),
 		startFollowLogs: vi.fn(),
 		stopFollowLogs: vi.fn(),
@@ -153,6 +162,7 @@ describe("WorkflowDetailPage", () => {
 		mockDeleteRun.mockResolvedValue(undefined);
 		mockRetryRun.mockResolvedValue({ message: "retry submitted" });
 		mockResubmitRun.mockResolvedValue({ message: "resubmit submitted" });
+		mockRerunRun.mockResolvedValue({ message: "rerun submitted" });
 		mockStopRun.mockResolvedValue({ message: "stop submitted" });
 		mockSuspendRun.mockResolvedValue({ message: "suspend submitted" });
 		mockResumeRun.mockResolvedValue({ message: "resume submitted" });
@@ -327,6 +337,81 @@ describe("WorkflowDetailPage", () => {
 			screen.queryByRole("button", { name: /终止/ }),
 		).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /重提交/ })).toBeInTheDocument();
+	});
+
+	it("renders Run inputs, outputs, and runtime metadata", () => {
+		mockWorkflowDetailState({
+			runEventState: {
+				run: {
+					id: "run-1",
+					workflowName: "wf-asset",
+					pipelineName: "asset-pipeline",
+					status: "Succeeded",
+					nodeCount: 1,
+					createdAt: "2026-06-03T00:00:00Z",
+				},
+				items: [],
+				total: 0,
+				loading: false,
+				error: null,
+			},
+			runMetadataState: {
+				inputs: {
+					runId: "run-1",
+					total: 1,
+					items: [
+						{
+							id: "input-config",
+							runId: "run-1",
+							nodeId: "node-1",
+							type: "config",
+							refId: "cfg-1",
+							refVersion: "2",
+							mountPath: "/mnt/parameters",
+							targetFilename: "params.yaml",
+							source: "runtime_config",
+						},
+					],
+				},
+				outputs: {
+					runId: "run-1",
+					total: 1,
+					items: [
+						{
+							id: "output-logs",
+							runId: "run-1",
+							nodeId: "node-1",
+							type: "logs",
+							refId: "wf-asset/node-1",
+							uri: "argo://wf-asset/node-1",
+						},
+					],
+				},
+				runtime: {
+					runId: "run-1",
+					runtime: {
+						runtimeType: "argo",
+						workflowName: "wf-asset",
+						namespace: "video-proc-dev",
+						uid: "uid-1",
+						status: "Succeeded",
+						executionTargetId: "target-gpu",
+					},
+				},
+				loading: false,
+				error: null,
+			},
+		});
+
+		renderWorkflowDetail();
+
+		expect(screen.getByText("运行上下文")).toBeInTheDocument();
+		expect(screen.getByText("cfg-1@2")).toBeInTheDocument();
+		expect(screen.getByText("/mnt/parameters")).toBeInTheDocument();
+		expect(screen.getByText("params.yaml")).toBeInTheDocument();
+		expect(screen.getByText("argo://wf-asset/node-1")).toBeInTheDocument();
+		expect(screen.getByText("video-proc-dev")).toBeInTheDocument();
+		expect(screen.getByText("target-gpu")).toBeInTheDocument();
 	});
 
 	it("overlays DAG node status from the DataBrew run node snapshot", () => {

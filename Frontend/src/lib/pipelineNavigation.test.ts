@@ -12,16 +12,12 @@ import {
 describe("pipelineNavigation", () => {
 	it("returns batch detail when opened from a batch subtask", () => {
 		expect(
-			resolveWorkflowDetailBackTarget(
-				workflowDetailLocationState("job-123"),
-			),
+			resolveWorkflowDetailBackTarget(workflowDetailLocationState("job-123")),
 		).toBe("/pipeline/batch/job-123");
 	});
 
 	it("returns single execution list by default", () => {
-		expect(resolveWorkflowDetailBackTarget(null)).toBe(
-			"/pipeline?tab=executions",
-		);
+		expect(resolveWorkflowDetailBackTarget(null)).toBe("/runs");
 	});
 
 	it("defines batch list url with executionView=batch", () => {
@@ -34,9 +30,7 @@ describe("pipelineNavigation", () => {
 				batchJobDetailLocationState("/pipeline?tab=pipelines"),
 			),
 		).toBe("/pipeline?tab=pipelines");
-		expect(resolveBatchJobDetailBackTarget(null)).toBe(
-			PIPELINE_BATCH_LIST_URL,
-		);
+		expect(resolveBatchJobDetailBackTarget(null)).toBe(PIPELINE_BATCH_LIST_URL);
 	});
 
 	it("navigates to batch list with executions tab and batch view", () => {
@@ -46,8 +40,8 @@ describe("pipelineNavigation", () => {
 			.mockImplementation(() => undefined);
 		goToPipelineBatchJobList(navigate);
 		expect(navigate).toHaveBeenCalledWith({
-			pathname: "/pipeline",
-			search: "?tab=executions&executionView=batch",
+			pathname: "/runs",
+			search: "?executionView=batch",
 		});
 		expect(scrollTo).toHaveBeenCalledWith(0, 0);
 		scrollTo.mockRestore();
@@ -63,8 +57,8 @@ describe("pipelineNavigation", () => {
 			batchJobDetailLocationState(PIPELINE_BATCH_LIST_URL),
 		);
 		expect(navigate).toHaveBeenCalledWith({
-			pathname: "/pipeline",
-			search: "?tab=executions&executionView=batch",
+			pathname: "/runs",
+			search: "?executionView=batch",
 		});
 		expect(scrollTo).toHaveBeenCalledWith(0, 0);
 		scrollTo.mockRestore();

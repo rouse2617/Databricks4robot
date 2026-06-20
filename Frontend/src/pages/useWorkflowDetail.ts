@@ -10,8 +10,14 @@ import {
 	getRun,
 	getRunByWorkflowName,
 	getRunCostSummary,
+	getRunRuntime,
 	listRunAssetNodes,
 	listRunEvents,
+	listRunInputs,
+	listRunOutputs,
+	type RunInputListResponse,
+	type RunOutputListResponse,
+	type RunRuntime,
 } from "../api/runApi";
 import {
 	getWorkflow,
@@ -75,6 +81,14 @@ interface CostSummaryState {
 	error: string | null;
 }
 
+interface RunMetadataState {
+	inputs: RunInputListResponse | null;
+	outputs: RunOutputListResponse | null;
+	runtime: RunRuntime | null;
+	loading: boolean;
+	error: string | null;
+}
+
 export type WorkflowLoadErrorKind = "not_found" | "error";
 
 export interface WorkflowLoadError {
@@ -96,6 +110,7 @@ interface UseWorkflowDetailResult {
 	loadRunEvents: (opts?: { append?: boolean; cursor?: number }) => void;
 	assetNodeState: AssetNodeState;
 	costSummaryState: CostSummaryState;
+	runMetadataState: RunMetadataState;
 	setLogSearch: (query: string) => void;
 	startFollowLogs: () => void;
 	stopFollowLogs: () => void;
@@ -136,6 +151,14 @@ const EMPTY_ASSET_NODE_STATE: AssetNodeState = {
 
 const EMPTY_COST_SUMMARY_STATE: CostSummaryState = {
 	item: null,
+	loading: false,
+	error: null,
+};
+
+const EMPTY_RUN_METADATA_STATE: RunMetadataState = {
+	inputs: null,
+	outputs: null,
+	runtime: null,
 	loading: false,
 	error: null,
 };
@@ -290,6 +313,9 @@ export function useWorkflowDetail(
 	const [costSummaryState, setCostSummaryState] = useState<CostSummaryState>(
 		EMPTY_COST_SUMMARY_STATE,
 	);
+	const [runMetadataState, setRunMetadataState] = useState<RunMetadataState>(
+		EMPTY_RUN_METADATA_STATE,
+	);
 	workflowRef.current = workflow;
 	const runtimeWorkflowName = useMemo(
 		() =>
@@ -320,18 +346,52 @@ export function useWorkflowDetail(
 					loading: false,
 					error: "未找到关联的 DataBrew Run",
 				});
+				setRunMetadataState({
+					...EMPTY_RUN_METADATA_STATE,
+					error: "未找到关联的 DataBrew Run",
+				});
 				return null;
 			}
 			const cursor = opts?.append ? opts.cursor : undefined;
-			const [events, assetNodes, costSummary] = await Promise.all([
-				listRunEvents(run.id, {
-					limit: 100,
-					cursor,
-					...runEventFilters,
-				}),
-				listRunAssetNodes(run.id, { limit: 500 }),
-				getRunCostSummary(run.id),
-			]);
+			setRunMetadataState((current) => ({
+				...current,
+				loading: true,
+				error: null,
+			}));
+			const [events, assetNodes, costSummary, metadataResults] =
+				await Promise.all([
+					listRunEvents(run.id, {
+						limit: 100,
+						cursor,
+						...runEventFilters,
+					}),
+					listRunAssetNodes(run.id, { limit: 500 }),
+					getRunCostSummary(run.id),
+					Promise.allSettled([
+						listRunInputs(run.id),
+						listRunOutputs(run.id),
+						getRunRuntime(run.id),
+					] as const),
+				]);
+			const metadataError = metadataResults
+				.filter((result) => result.status === "rejected")
+				.map((result) =>
+					result.status === "rejected" ? toErrorMessage(result.reason) : "",
+				)
+				.filter(Boolean)
+				.join("; ");
+			const inputs =
+				metadataResults[0].status === "fulfilled"
+					? metadataResults[0].value
+					: null;
+			const outputs =
+				metadataResults[1].status === "fulfilled"
+					? metadataResults[1].value
+					: null;
+			const runtime =
+				metadataResults[2].status === "fulfilled"
+					? metadataResults[2].value
+					: null;
 			setRunEventState((current) => ({
 				run,
 				items: opts?.append
@@ -351,6 +411,13 @@ export function useWorkflowDetail(
 				item: costSummary,
 				loading: false,
 				error: null,
+			});
+			setRunMetadataState({
+				inputs,
+				outputs,
+				runtime,
+				loading: false,
+				error: metadataError || null,
 			});
 			return run;
 		},
@@ -466,6 +533,11 @@ export function useWorkflowDetail(
 					error: toErrorMessage(err),
 				}));
 				setCostSummaryState((current) => ({
+					...current,
+					loading: false,
+					error: toErrorMessage(err),
+				}));
+				setRunMetadataState((current) => ({
 					...current,
 					loading: false,
 					error: toErrorMessage(err),
@@ -917,6 +989,7 @@ export function useWorkflowDetail(
 			items: [...assetNodeState.items],
 		},
 		costSummaryState: { ...costSummaryState },
+		runMetadataState: { ...runMetadataState },
 		setLogSearch: useCallback((query: string) => {
 			setLogState((current) => ({ ...current, search: query }));
 		}, []),

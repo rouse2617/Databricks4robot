@@ -33,6 +33,8 @@ export interface RunInput {
 	fileName?: string;
 	mountPath?: string;
 	targetFilename?: string;
+	contentHash?: string;
+	projectionKey?: string;
 	source?: string;
 	snapshot?: Record<string, unknown>;
 }
@@ -310,6 +312,10 @@ export function resubmitRun(id: string): Promise<PipelineRun> {
 		"POST",
 		`/runs/${encodeURIComponent(id)}/resubmit`,
 	);
+}
+
+export function rerunRun(id: string): Promise<PipelineRun> {
+	return request<PipelineRun>("POST", `/runs/${encodeURIComponent(id)}/rerun`);
 }
 
 export function stopRun(id: string): Promise<{ message: string }> {

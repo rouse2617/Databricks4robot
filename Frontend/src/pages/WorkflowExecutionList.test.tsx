@@ -17,7 +17,6 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { WorkflowSummary } from "../api/workflowApi";
 import { WorkflowExecutionList } from "./WorkflowExecutionList";
 
 const mockListWorkflows = vi.fn();
@@ -30,8 +29,6 @@ const mockStopRun = vi.fn();
 const mockSuspendRun = vi.fn();
 const mockResumeRun = vi.fn();
 const mockTerminateRun = vi.fn();
-const mockListPipelines = vi.fn();
-const mockGetPipelineRunWatcherStatus = vi.fn();
 
 vi.mock("../api/workflowApi", () => ({
 	listWorkflows: (...args: unknown[]) => mockListWorkflows(...args),
@@ -42,12 +39,6 @@ vi.mock("../api/workflowApi", () => ({
 	suspendWorkflow: vi.fn(),
 	resumeWorkflow: vi.fn(),
 	terminateWorkflow: vi.fn(),
-}));
-
-vi.mock("../api/pipelineApi", () => ({
-	getPipelineRunWatcherStatus: (...args: unknown[]) =>
-		mockGetPipelineRunWatcherStatus(...args),
-	listPipelines: (...args: unknown[]) => mockListPipelines(...args),
 }));
 
 vi.mock("../api/runApi", () => ({
@@ -69,26 +60,8 @@ vi.mock("antd", async (importOriginal) => {
 	};
 });
 
-const allWorkflows: WorkflowSummary[] = [
-	{
-		name: "successful-run",
-		status: "Succeeded",
-		nodeCount: 2,
-		createdAt: "2026-06-02T01:00:00Z",
-		finishedAt: "2026-06-02T01:00:20Z",
-	},
-	{
-		name: "failed-run",
-		status: "Failed",
-		nodeCount: 1,
-		createdAt: "2026-06-02T02:00:00Z",
-		finishedAt: "2026-06-02T02:00:10Z",
-	},
-];
-
-// Ledger runs are the source of truth for the executions list. Live Argo
-// workflows are only fetched when a label filter is active (perf optimization),
-// so status filtering is asserted against ledger Runs.
+// Ledger runs are the source of truth for the executions list. Runtime Argo
+// workflow listing is not part of the product list data path.
 const ledgerRuns = [
 	{
 		id: "run-success",
@@ -146,14 +119,6 @@ beforeAll(() => {
 
 describe("WorkflowExecutionList", () => {
 	beforeEach(() => {
-		mockListWorkflows.mockImplementation((params = {}) => {
-			const status = (params as { status?: string }).status;
-			return Promise.resolve({
-				items: status
-					? allWorkflows.filter((item) => item.status === status)
-					: allWorkflows,
-			});
-		});
 		mockDeleteWorkflow.mockResolvedValue({ message: "deleted" });
 		mockDeleteRun.mockResolvedValue(undefined);
 		mockRetryRun.mockResolvedValue({ message: "retry submitted" });
@@ -175,18 +140,6 @@ describe("WorkflowExecutionList", () => {
 				},
 			],
 			total: 1,
-		});
-		mockListPipelines.mockResolvedValue({ items: [] });
-		mockGetPipelineRunWatcherStatus.mockResolvedValue({
-			id: "default",
-			activeScanLimit: 100,
-			lastSyncedRunCount: 2,
-			consecutiveFailures: 0,
-			totalScans: 5,
-			totalErrors: 0,
-			scanLagSeconds: 8,
-			healthy: true,
-			stale: false,
 		});
 	});
 
@@ -269,8 +222,7 @@ describe("WorkflowExecutionList", () => {
 		expect(screen.getByText("ID: runledge")).toBeInTheDocument();
 	});
 
-	it("keeps ledger records visible when live workflow listing is unavailable", async () => {
-		mockListWorkflows.mockRejectedValue(new Error("argo unavailable"));
+	it("loads ledger records without querying runtime workflow list", async () => {
 		mockListRuns.mockResolvedValue({
 			items: [
 				{
@@ -294,9 +246,10 @@ describe("WorkflowExecutionList", () => {
 		});
 		expect(screen.queryByText("服务不可用")).not.toBeInTheDocument();
 		expect(screen.getByText("$1.50")).toBeInTheDocument();
+		expect(mockListWorkflows).not.toHaveBeenCalled();
 	});
 
-	it("does not append live-only Argo workflows as product execution rows", async () => {
+	it("does not query Argo workflows for product label filters", async () => {
 		mockListWorkflows.mockResolvedValue({
 			items: [
 				{
@@ -313,10 +266,11 @@ describe("WorkflowExecutionList", () => {
 		renderList("/pipeline?tab=executions&label=team%3Dexternal");
 
 		await waitFor(() => {
-			expect(mockListWorkflows).toHaveBeenCalledWith(
-				expect.objectContaining({ label: ["team=external"] }),
+			expect(mockListRuns).toHaveBeenCalledWith(
+				expect.objectContaining({ view: "summary", excludeBatch: true }),
 			);
 		});
+		expect(mockListWorkflows).not.toHaveBeenCalled();
 		expect(
 			screen.queryByText("external-live-workflow"),
 		).not.toBeInTheDocument();

@@ -386,6 +386,7 @@ func RegisterAll(
 		api.GET("/runs/:id/runtime", pipelineHandler.GetRunRuntime)
 		api.POST("/runs/:id/retry", pipelineHandler.RetryRunRuntime)
 		api.POST("/runs/:id/resubmit", pipelineHandler.ResubmitRun)
+		api.POST("/runs/:id/rerun", pipelineHandler.RerunRun)
 		api.POST("/runs/:id/stop", pipelineHandler.StopRun)
 		api.POST("/runs/:id/suspend", pipelineHandler.SuspendRun)
 		api.POST("/runs/:id/resume", pipelineHandler.ResumeRun)

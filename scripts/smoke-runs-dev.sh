@@ -4,6 +4,7 @@
 # Usage:
 #   bash scripts/smoke-runs-dev.sh
 #   RUN_ID=<run-id> bash scripts/smoke-runs-dev.sh
+#   RUN_RERUN_SOURCE_ID=<safe-run-id> bash scripts/smoke-runs-dev.sh
 #
 # Requires: curl, python3; sources scripts/dev-backend-env.sh
 set -euo pipefail
@@ -135,6 +136,24 @@ PY
   done
 fi
 
+RERUN_SOURCE="${RUN_RERUN_SOURCE_ID:-}"
+if [[ -n "$RERUN_SOURCE" ]]; then
+  request POST "/api/v1/runs/${RERUN_SOURCE}/rerun"
+  if [[ "$CODE" == "201" ]] && BODY_JSON="$BODY" SOURCE_RUN_ID="$RERUN_SOURCE" python3 - <<'PY' >/dev/null 2>&1
+import json, os
+d = json.loads(os.environ["BODY_JSON"])
+assert d.get("id") and d.get("id") != os.environ["SOURCE_RUN_ID"]
+assert d.get("status") in {"Pending", "Running", "Succeeded", "Failed", "Error", "Suspended"}
+PY
+  then
+    ok "POST /api/v1/runs/${RERUN_SOURCE}/rerun"
+  else
+    bad "POST /api/v1/runs/${RERUN_SOURCE}/rerun"
+  fi
+else
+  echo "  SKIP rerun happy path; set RUN_RERUN_SOURCE_ID to a safe source run"
+fi
+
 request GET "/api/v1/runs/not-a-real-run"
 [[ "$CODE" == "404" ]] && ok "unknown run -> 404" || bad "unknown run"
 
@@ -146,6 +165,11 @@ request GET "/api/v1/runs/not-a-real-run/inputs"
 
 request DELETE "/api/v1/runs/not-a-real-run"
 [[ "$CODE" == "404" ]] && ok "unknown run delete -> 404" || bad "unknown run delete"
+
+for op in retry resubmit rerun stop suspend resume terminate; do
+  request POST "/api/v1/runs/not-a-real-run/${op}"
+  [[ "$CODE" == "404" ]] && ok "unknown run ${op} -> 404" || bad "unknown run ${op}"
+done
 
 echo "=== done: ${PASS} passed, ${FAIL} failed ==="
 [[ "$FAIL" -eq 0 ]]

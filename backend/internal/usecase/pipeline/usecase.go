@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,6 +26,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/batchprogress"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
+	runtimeadapter "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/adapter"
 	runstate "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/state"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/transpiler"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
@@ -59,6 +62,7 @@ type Usecase struct {
 	pipelineConfigRepo      repository.PipelineConfigRepository
 	runtimeConfigStore      RuntimeConfigStore
 	wfClient                argo.WorkflowClient
+	runtimeAdapter          runtimeadapter.RuntimeAdapter
 	namespace               string
 	pricing                 *PricingConfig
 	resourceGuard           ResourceGuardConfig
@@ -124,6 +128,8 @@ type resolvedNodeRuntimeConfig struct {
 	Config *resolvedRuntimeConfig
 }
 
+const runConfigInputsPipelineJSONKey = "_run_config_inputs"
+
 // SetAssetEventRepo sets the asset event repository (optional, for F4.3+).
 func (uc *Usecase) SetAssetEventRepo(r repository.AssetEventRepository) {
 	uc.assetEventRepo = r
@@ -147,6 +153,12 @@ func (uc *Usecase) SetPipelineConfigRepo(r repository.PipelineConfigRepository) 
 
 func (uc *Usecase) SetRuntimeConfigStore(store RuntimeConfigStore) {
 	uc.runtimeConfigStore = store
+}
+
+// SetRuntimeAdapter wires the Run Kernel runtime boundary. When unset, legacy
+// workflow-client operations remain available for compatibility and tests.
+func (uc *Usecase) SetRuntimeAdapter(adapter runtimeadapter.RuntimeAdapter) {
+	uc.runtimeAdapter = adapter
 }
 
 // SetRunRepositories wires first-class pipeline run persistence. The legacy
@@ -531,6 +543,62 @@ func runtimeConfigVolumeNameForDeployment(deploymentID string) string {
 	return value
 }
 
+func materializedRuntimeConfigRunInputs(
+	runtimeConfig *resolvedRuntimeConfig,
+	nodeConfigs []resolvedNodeRuntimeConfig,
+) []interface{} {
+	total := len(nodeConfigs)
+	if runtimeConfig != nil {
+		total++
+	}
+	if total == 0 {
+		return nil
+	}
+	items := make([]interface{}, 0, total)
+	if runtimeConfig != nil {
+		items = append(items, runtimeConfigRunInputMetadata("global", "", runtimeConfig))
+	}
+	for _, nodeConfig := range nodeConfigs {
+		if nodeConfig.Config == nil {
+			continue
+		}
+		items = append(items, runtimeConfigRunInputMetadata("node", nodeConfig.NodeID, nodeConfig.Config))
+	}
+	return items
+}
+
+func runtimeConfigRunInputMetadata(scope, nodeID string, config *resolvedRuntimeConfig) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	item := map[string]interface{}{
+		"scope":          scope,
+		"mode":           config.Mode,
+		"fileName":       config.FileName,
+		"mountPath":      config.MountPath,
+		"targetFilename": config.TargetFilename,
+		"contentHash":    runtimeConfigContentHash(config.Content),
+	}
+	if strings.TrimSpace(nodeID) != "" {
+		item["nodeId"] = strings.TrimSpace(nodeID)
+	}
+	if strings.TrimSpace(config.ConfigID) != "" {
+		item["configId"] = strings.TrimSpace(config.ConfigID)
+	}
+	if config.Version > 0 {
+		item["version"] = config.Version
+	}
+	if strings.TrimSpace(config.ProjectionKey) != "" {
+		item["projectionKey"] = strings.TrimSpace(config.ProjectionKey)
+	}
+	return item
+}
+
+func runtimeConfigContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func boundNodeIDs(nodeConfigs []resolvedNodeRuntimeConfig) map[string]struct{} {
 	out := make(map[string]struct{}, len(nodeConfigs))
 	for _, item := range nodeConfigs {
@@ -636,6 +704,9 @@ const (
 	runEventResubmitRequested     = "run_resubmit_requested"
 	runEventResubmitFailed        = "run_resubmit_failed"
 	runEventResubmitted           = "run_resubmitted"
+	runEventRerunRequested        = "run_rerun_requested"
+	runEventRerunFailed           = "run_rerun_failed"
+	runEventRerunCreated          = "run_rerun_created"
 	runEventStopRequested         = "run_stop_requested"
 	runEventStopFailed            = "run_stop_failed"
 	runEventStopSucceeded         = "run_stopped"
@@ -2428,6 +2499,7 @@ func (uc *Usecase) Deploy(
 	if err := json.Unmarshal(normalizedRaw, &pipelineArg); err != nil {
 		return nil, fmt.Errorf("unmarshal normalized pipeline: %w", err)
 	}
+	delete(pipelineArg, runConfigInputsPipelineJSONKey)
 	applyCyberpipeNodeCompatibilityAliases(pipe)
 
 	pipeName := pipe.Name
@@ -2539,6 +2611,9 @@ func (uc *Usecase) Deploy(
 			applyNodeRuntimeConfigs(pipe, nodeRuntimeConfigs, volumeName)
 		}
 	}
+	if configInputs := materializedRuntimeConfigRunInputs(runtimeConfig, nodeRuntimeConfigs); len(configInputs) > 0 {
+		pipelineArg[runConfigInputsPipelineJSONKey] = configInputs
+	}
 	if err := uc.applyRuntimeMounts(pipe, target); err != nil {
 		return nil, err
 	}
@@ -2591,22 +2666,33 @@ func (uc *Usecase) Deploy(
 		}, nil
 	}
 
-	// Submit to Argo workflow engine.
-	if uc.wfClient == nil {
+	// Submit to the runtime backend. Prefer the Run Kernel adapter; keep the
+	// legacy Argo client path as a fallback while migration is in progress.
+	if !uc.runtimeSubmitConfigured() {
 		return nil, ErrWorkflowUnavailable
 	}
 	if runtimeConfigProjection != nil && uc.runtimeConfigStore == nil {
 		return nil, fmt.Errorf("%w: runtime config store is not configured", ErrInvalidArgument)
 	}
+	if runtimeConfigProjection != nil && uc.wfClient == nil {
+		return nil, fmt.Errorf("%w: runtime config owner lookup requires workflow client", ErrWorkflowUnavailable)
+	}
 	status := "Pending"
-	if err := uc.wfClient.CreateWorkflow(ctx, wf, targetNamespace); err != nil {
+	runtimeJob, err := uc.submitRuntimeWorkflow(ctx, depID, pipeName, wf, targetNamespace)
+	if err != nil {
 		if strings.Contains(err.Error(), "argo server URL is empty") {
+			return nil, fmt.Errorf("%w: create workflow", ErrWorkflowUnavailable)
+		}
+		if errors.Is(err, ErrWorkflowUnavailable) {
 			return nil, fmt.Errorf("%w: create workflow", ErrWorkflowUnavailable)
 		}
 		return nil, fmt.Errorf("create workflow: %w", err)
 	}
 	wfUID := ""
-	var wfDetail *wfv1.Workflow
+	if runtimeJob != nil {
+		wfUID = strings.TrimSpace(runtimeJob.Ref.UID)
+	}
+	wfDetail := workflowFromRuntimeJob(runtimeJob)
 	if runtimeConfigProjection != nil {
 		wfDetail, err = uc.getWorkflowWithUID(ctx, wfName, targetNamespace)
 		if err != nil {
@@ -2624,7 +2710,7 @@ func (uc *Usecase) Deploy(
 			return nil, fmt.Errorf("create runtime config projection: %w", err)
 		}
 	}
-	if wfDetail == nil {
+	if uc.wfClient != nil && (wfDetail == nil || wfUID == "" || status == "Pending") {
 		phase, err := uc.wfClient.GetWorkflowStatus(ctx, wfName, targetNamespace)
 		if err == nil && phase != "" {
 			status = string(phase)
@@ -2697,6 +2783,52 @@ func (uc *Usecase) Deploy(
 	}
 
 	return dep, nil
+}
+
+func (uc *Usecase) runtimeSubmitConfigured() bool {
+	return uc.runtimeAdapter != nil || uc.wfClient != nil
+}
+
+func (uc *Usecase) submitRuntimeWorkflow(ctx context.Context, runID, runName string, wf *wfv1.Workflow, namespace string) (*runtimeadapter.RuntimeJob, error) {
+	if uc.runtimeAdapter != nil {
+		return uc.runtimeAdapter.Submit(ctx,
+			runtimeadapter.RunRef{ID: runID, Name: runName},
+			runtimeadapter.RuntimeSpec{
+				RuntimeType: "argo",
+				Namespace:   namespace,
+				Manifest:    wf,
+			},
+		)
+	}
+	if uc.wfClient == nil {
+		return nil, ErrWorkflowUnavailable
+	}
+	if err := uc.wfClient.CreateWorkflow(ctx, wf, namespace); err != nil {
+		return nil, err
+	}
+	return &runtimeadapter.RuntimeJob{
+		Ref: runtimeadapter.RuntimeRef{
+			RuntimeType: "argo",
+			Name:        strings.TrimSpace(wf.Name),
+			Namespace:   firstNonEmpty(namespace, wf.Namespace),
+			UID:         string(wf.UID),
+		},
+		Raw: wf,
+	}, nil
+}
+
+func workflowFromRuntimeJob(job *runtimeadapter.RuntimeJob) *wfv1.Workflow {
+	if job == nil {
+		return nil
+	}
+	switch raw := job.Raw.(type) {
+	case *wfv1.Workflow:
+		return raw
+	case wfv1.Workflow:
+		return &raw
+	default:
+		return nil
+	}
 }
 
 // DeployByTemplateID deploys a saved template.
@@ -3106,11 +3238,7 @@ func (uc *Usecase) RetryRun(ctx context.Context, id string) (*models.PipelineRun
 		Message:        "pipeline run retry requested",
 		IdempotencyKey: fmt.Sprintf("run_retry_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
 	})
-	targetID := run.ExecutionTargetID
-	if targetID == "" && run.ExecutionTarget != nil {
-		targetID = run.ExecutionTarget.ID
-	}
-	next, err := uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-retry", run.AssetIDs, DeployOptions{TargetID: targetID})
+	next, err := uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-retry", run.AssetIDs, deployOptionsFromSourceRun(run))
 	if err != nil {
 		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
 			EventType:      runEventRetryFailed,
@@ -3132,17 +3260,67 @@ func (uc *Usecase) RetryRun(ctx context.Context, id string) (*models.PipelineRun
 			IdempotencyKey: fmt.Sprintf("run_resubmitted:%s:%s", next.ID, run.ID),
 			Payload: map[string]interface{}{
 				"sourceRunId": run.ID,
+				"childRunId":  next.ID,
+				"relation":    "retry_of",
 			},
 		})
+		uc.appendChildRunRelationEvent(ctx, run, next, "retry_of", runEventResubmitted, "pipeline run retry child created")
+	}
+	return next, err
+}
+
+// RerunRun creates a new Run from the original Run spec. Unlike runtime retry,
+// this is a product-level full rerun and therefore returns a new Run identity.
+func (uc *Usecase) RerunRun(ctx context.Context, id string) (*models.PipelineRun, error) {
+	run, err := uc.GetRun(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if run == nil {
+		return nil, ErrDeploymentNotFound
+	}
+	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+		EventType:      runEventRerunRequested,
+		SubjectType:    "run",
+		SubjectID:      run.ID,
+		Status:         run.Status,
+		Message:        "run rerun requested",
+		IdempotencyKey: fmt.Sprintf("run_rerun_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+	})
+	next, err := uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-rerun", run.AssetIDs, deployOptionsFromSourceRun(run))
+	if err != nil {
+		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
+			EventType:      runEventRerunFailed,
+			SubjectType:    "run",
+			SubjectID:      run.ID,
+			Status:         run.Status,
+			Message:        "run rerun failed",
+			Reason:         err.Error(),
+			IdempotencyKey: fmt.Sprintf("run_rerun_failed:%s:%d", run.ID, time.Now().UTC().UnixNano()),
+		})
+	}
+	if err == nil && next != nil {
+		uc.appendRunEvent(ctx, next, models.PipelineRunEvent{
+			EventType:      runEventRerunCreated,
+			SubjectType:    "run",
+			SubjectID:      next.ID,
+			Status:         next.Status,
+			Message:        "run created from rerun",
+			IdempotencyKey: fmt.Sprintf("run_rerun_created:%s:%s", next.ID, run.ID),
+			Payload: map[string]interface{}{
+				"sourceRunId": run.ID,
+				"childRunId":  next.ID,
+				"relation":    "rerun_of",
+			},
+		})
+		uc.appendChildRunRelationEvent(ctx, run, next, "rerun_of", runEventRerunCreated, "run rerun child created")
 	}
 	return next, err
 }
 
 // StopRun stops a run's workflow.
 func (uc *Usecase) StopRun(ctx context.Context, id string) error {
-	return uc.runtimeWorkflowOperation(ctx, id, runEventStopRequested, runEventStopSucceeded, runEventStopFailed, "run stop", func(ctx context.Context, name, namespace string) error {
-		return uc.wfClient.StopWorkflow(ctx, name, namespace)
-	})
+	return uc.runtimeWorkflowOperation(ctx, id, runEventStopRequested, runEventStopSucceeded, runEventStopFailed, "run stop", uc.stopRuntimeRun)
 }
 
 // ListRunEvents returns a chronological page of stored events for a run.
@@ -3489,22 +3667,110 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string) (*models.RunC
 		return nil, err
 	}
 	children := make([]models.PipelineRun, 0, len(items))
+	childIDs := map[string]struct{}{}
 	for _, child := range items {
 		if child.ID == run.ID {
 			continue
 		}
 		children = append(children, child)
+		childIDs[child.ID] = struct{}{}
 	}
-	if len(children) != len(items) {
-		total = len(children)
+	relations := runstate.BuildBatchChildRelations(run.ID, children)
+	relationKeys := make(map[string]struct{}, len(relations))
+	for _, relation := range relations {
+		relationKeys[runRelationKey(relation.ChildRunID, relation.RelationType)] = struct{}{}
 	}
+	eventChildren, eventRelations, err := uc.listEventDerivedRunChildren(ctx, run.ID, childIDs, relationKeys)
+	if err != nil {
+		return nil, err
+	}
+	children = append(children, eventChildren...)
+	relations = append(relations, eventRelations...)
+	total = len(children)
 	return &models.RunChildList{
 		RunID:     run.ID,
 		Items:     children,
-		Relations: runstate.BuildBatchChildRelations(run.ID, children),
+		Relations: relations,
 		Summary:   runstate.AggregateChildRuns(children),
 		Total:     total,
 	}, nil
+}
+
+func (uc *Usecase) listEventDerivedRunChildren(ctx context.Context, parentRunID string, childIDs map[string]struct{}, relationKeys map[string]struct{}) ([]models.PipelineRun, []models.RunRelation, error) {
+	if uc.runEventRepo == nil || uc.runRepo == nil {
+		return nil, nil, nil
+	}
+	events, err := uc.runEventRepo.ListByRunID(ctx, parentRunID, models.PipelineRunEventListOptions{Limit: 500})
+	if err != nil {
+		return nil, nil, err
+	}
+	if events == nil || len(events.Items) == 0 {
+		return nil, nil, nil
+	}
+	children := []models.PipelineRun{}
+	relations := []models.RunRelation{}
+	for _, event := range events.Items {
+		childID, relationType, ok := runRelationFromEvent(parentRunID, event)
+		if !ok {
+			continue
+		}
+		key := runRelationKey(childID, relationType)
+		if _, exists := relationKeys[key]; exists {
+			continue
+		}
+		child, err := uc.runRepo.FindByID(ctx, childID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if child == nil || child.ID == parentRunID {
+			continue
+		}
+		if _, exists := childIDs[child.ID]; !exists {
+			children = append(children, *child)
+			childIDs[child.ID] = struct{}{}
+		}
+		relations = append(relations, models.RunRelation{
+			ID:           fmt.Sprintf("%s:%s:%s", parentRunID, child.ID, relationType),
+			ParentRunID:  parentRunID,
+			ChildRunID:   child.ID,
+			RelationType: relationType,
+			Source:       "pipeline_run_events",
+		})
+		relationKeys[key] = struct{}{}
+	}
+	return children, relations, nil
+}
+
+func runRelationFromEvent(parentRunID string, event models.PipelineRunEvent) (string, string, bool) {
+	sourceRunID := strings.TrimSpace(stringFromAny(event.Payload["sourceRunId"]))
+	if sourceRunID != "" && sourceRunID != parentRunID {
+		return "", "", false
+	}
+	relationType := strings.TrimSpace(stringFromAny(event.Payload["relation"]))
+	if !supportedRunRelationType(relationType) {
+		return "", "", false
+	}
+	childID := strings.TrimSpace(stringFromAny(event.Payload["childRunId"]))
+	if childID == "" && event.SubjectType == "run" && event.SubjectID != parentRunID {
+		childID = strings.TrimSpace(event.SubjectID)
+	}
+	if childID == "" || childID == parentRunID {
+		return "", "", false
+	}
+	return childID, relationType, true
+}
+
+func supportedRunRelationType(relationType string) bool {
+	switch relationType {
+	case "retry_of", "resubmit_of", "rerun_of":
+		return true
+	default:
+		return false
+	}
+}
+
+func runRelationKey(childRunID, relationType string) string {
+	return childRunID + "\x00" + relationType
 }
 
 // GetRunRuntime returns runtime debug references without requiring the runtime
@@ -3554,7 +3820,7 @@ func (uc *Usecase) RuntimeRetryRun(ctx context.Context, id string) (*models.Pipe
 	if strings.TrimSpace(run.WorkflowName) == "" {
 		return nil, fmt.Errorf("%w: run has no workflowName", ErrInvalidArgument)
 	}
-	if uc.wfClient == nil {
+	if !uc.runtimeControlConfigured() {
 		return nil, ErrWorkflowUnavailable
 	}
 	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
@@ -3565,8 +3831,7 @@ func (uc *Usecase) RuntimeRetryRun(ctx context.Context, id string) (*models.Pipe
 		Message:        "run runtime retry requested",
 		IdempotencyKey: fmt.Sprintf("run_runtime_retry_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
 	})
-	namespace := firstNonEmpty(run.ArgoNamespace, uc.namespace)
-	if err := uc.wfClient.RetryWorkflow(ctx, run.WorkflowName, namespace); err != nil {
+	if err := uc.retryRuntimeRun(ctx, run); err != nil {
 		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
 			EventType:      runEventRuntimeRetryFailed,
 			SubjectType:    "run",
@@ -3606,11 +3871,7 @@ func (uc *Usecase) ResubmitRun(ctx context.Context, id string) (*models.Pipeline
 		Message:        "run resubmit requested",
 		IdempotencyKey: fmt.Sprintf("run_resubmit_requested:%s:%d", run.ID, time.Now().UTC().UnixNano()),
 	})
-	targetID := run.ExecutionTargetID
-	if targetID == "" && run.ExecutionTarget != nil {
-		targetID = run.ExecutionTarget.ID
-	}
-	next, err := uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-resubmit", run.AssetIDs, DeployOptions{TargetID: targetID})
+	next, err := uc.CreateRun(ctx, run.PipelineJSON, run.PipelineName+"-resubmit", run.AssetIDs, deployOptionsFromSourceRun(run))
 	if err != nil {
 		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
 			EventType:      runEventResubmitFailed,
@@ -3632,32 +3893,95 @@ func (uc *Usecase) ResubmitRun(ctx context.Context, id string) (*models.Pipeline
 			IdempotencyKey: fmt.Sprintf("run_resubmitted:%s:%s", next.ID, run.ID),
 			Payload: map[string]interface{}{
 				"sourceRunId": run.ID,
+				"childRunId":  next.ID,
 				"relation":    "resubmit_of",
 			},
 		})
+		uc.appendChildRunRelationEvent(ctx, run, next, "resubmit_of", runEventResubmitted, "run resubmit child created")
 	}
 	return next, err
 }
 
-func (uc *Usecase) SuspendRun(ctx context.Context, id string) error {
-	return uc.runtimeWorkflowOperation(ctx, id, runEventSuspendRequested, runEventSuspendSucceeded, runEventSuspendFailed, "run suspend", func(ctx context.Context, name, namespace string) error {
-		return uc.wfClient.SuspendWorkflow(ctx, name, namespace)
+func (uc *Usecase) appendChildRunRelationEvent(ctx context.Context, source, child *models.PipelineRun, relation, eventType, message string) {
+	if source == nil || child == nil || strings.TrimSpace(relation) == "" {
+		return
+	}
+	uc.appendRunEvent(ctx, source, models.PipelineRunEvent{
+		EventType:      eventType,
+		SubjectType:    "run",
+		SubjectID:      child.ID,
+		Status:         child.Status,
+		Message:        message,
+		IdempotencyKey: fmt.Sprintf("%s:%s:%s:%s", eventType, source.ID, child.ID, relation),
+		Payload: map[string]interface{}{
+			"sourceRunId": source.ID,
+			"childRunId":  child.ID,
+			"relation":    relation,
+		},
 	})
+}
+
+func deployOptionsFromSourceRun(run *models.PipelineRun) DeployOptions {
+	opts := DeployOptions{}
+	if run == nil {
+		return opts
+	}
+	if run.ExecutionTargetID != "" {
+		opts.TargetID = run.ExecutionTargetID
+	} else if run.ExecutionTarget != nil {
+		opts.TargetID = run.ExecutionTarget.ID
+	}
+	opts.ConfigSelection = deployLevelConfigSelectionFromRunInputs(run.PipelineJSON)
+	return opts
+}
+
+func deployLevelConfigSelectionFromRunInputs(pipeline map[string]interface{}) *RuntimeConfigSelection {
+	rawInputs, ok := interfaceSlice(pipeline[runConfigInputsPipelineJSONKey])
+	if !ok {
+		return nil
+	}
+	for _, rawInput := range rawInputs {
+		cfg, ok := stringAnyMap(rawInput)
+		if !ok || stringFromAny(cfg["scope"]) != "global" {
+			continue
+		}
+		mode := stringFromAny(cfg["mode"])
+		if mode == "" {
+			mode = stringFromAny(cfg["source"])
+		}
+		if mode != "saved" {
+			return nil
+		}
+		configID := stringFromAny(cfg["configId"])
+		version, _ := strconv.Atoi(stringFromAny(cfg["version"]))
+		if configID == "" || version <= 0 {
+			return nil
+		}
+		return &RuntimeConfigSelection{
+			Mode:           "saved",
+			ConfigID:       configID,
+			Version:        version,
+			FileName:       stringFromAny(cfg["fileName"]),
+			MountPath:      stringFromAny(cfg["mountPath"]),
+			TargetFilename: stringFromAny(cfg["targetFilename"]),
+		}
+	}
+	return nil
+}
+
+func (uc *Usecase) SuspendRun(ctx context.Context, id string) error {
+	return uc.runtimeWorkflowOperation(ctx, id, runEventSuspendRequested, runEventSuspendSucceeded, runEventSuspendFailed, "run suspend", uc.suspendRuntimeRun)
 }
 
 func (uc *Usecase) ResumeRun(ctx context.Context, id string) error {
-	return uc.runtimeWorkflowOperation(ctx, id, runEventResumeRequested, runEventResumeSucceeded, runEventResumeFailed, "run resume", func(ctx context.Context, name, namespace string) error {
-		return uc.wfClient.ResumeWorkflow(ctx, name, namespace)
-	})
+	return uc.runtimeWorkflowOperation(ctx, id, runEventResumeRequested, runEventResumeSucceeded, runEventResumeFailed, "run resume", uc.resumeRuntimeRun)
 }
 
 func (uc *Usecase) TerminateRun(ctx context.Context, id string) error {
-	return uc.runtimeWorkflowOperation(ctx, id, runEventTerminateRequested, runEventTerminateSucceeded, runEventTerminateFailed, "run terminate", func(ctx context.Context, name, namespace string) error {
-		return uc.wfClient.TerminateWorkflow(ctx, name, namespace)
-	})
+	return uc.runtimeWorkflowOperation(ctx, id, runEventTerminateRequested, runEventTerminateSucceeded, runEventTerminateFailed, "run terminate", uc.terminateRuntimeRun)
 }
 
-func (uc *Usecase) runtimeWorkflowOperation(ctx context.Context, id, requestedEvent, succeededEvent, failedEvent, message string, op func(context.Context, string, string) error) error {
+func (uc *Usecase) runtimeWorkflowOperation(ctx context.Context, id, requestedEvent, succeededEvent, failedEvent, message string, op func(context.Context, *models.PipelineRun) error) error {
 	run, err := uc.GetRun(ctx, id)
 	if err != nil {
 		return err
@@ -3668,7 +3992,7 @@ func (uc *Usecase) runtimeWorkflowOperation(ctx context.Context, id, requestedEv
 	if strings.TrimSpace(run.WorkflowName) == "" {
 		return fmt.Errorf("%w: run has no workflowName", ErrInvalidArgument)
 	}
-	if uc.wfClient == nil {
+	if !uc.runtimeControlConfigured() {
 		return ErrWorkflowUnavailable
 	}
 	uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
@@ -3679,8 +4003,7 @@ func (uc *Usecase) runtimeWorkflowOperation(ctx context.Context, id, requestedEv
 		Message:        message + " requested",
 		IdempotencyKey: fmt.Sprintf("%s:%s:%d", requestedEvent, run.ID, time.Now().UTC().UnixNano()),
 	})
-	namespace := firstNonEmpty(run.ArgoNamespace, uc.namespace)
-	if err := op(ctx, run.WorkflowName, namespace); err != nil {
+	if err := op(ctx, run); err != nil {
 		uc.appendRunEvent(ctx, run, models.PipelineRunEvent{
 			EventType:      failedEvent,
 			SubjectType:    "run",
@@ -3703,39 +4026,155 @@ func (uc *Usecase) runtimeWorkflowOperation(ctx context.Context, id, requestedEv
 	return nil
 }
 
+func (uc *Usecase) runtimeControlConfigured() bool {
+	return uc.runtimeAdapter != nil || uc.wfClient != nil
+}
+
+func (uc *Usecase) runtimeRefForRun(run *models.PipelineRun) runtimeadapter.RuntimeRef {
+	if run == nil {
+		return runtimeadapter.RuntimeRef{RuntimeType: "argo", Namespace: uc.namespace}
+	}
+	return runtimeadapter.RuntimeRef{
+		RuntimeType: "argo",
+		Name:        strings.TrimSpace(run.WorkflowName),
+		Namespace:   firstNonEmpty(run.ArgoNamespace, uc.namespace),
+		UID:         strings.TrimSpace(run.ArgoWorkflowUID),
+	}
+}
+
+func (uc *Usecase) retryRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
+	if uc.runtimeAdapter != nil {
+		_, err := uc.runtimeAdapter.Retry(ctx, uc.runtimeRefForRun(run), runtimeadapter.RetryOptions{})
+		return err
+	}
+	if uc.wfClient == nil {
+		return ErrWorkflowUnavailable
+	}
+	return uc.wfClient.RetryWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+}
+
+func (uc *Usecase) stopRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
+	if uc.runtimeAdapter != nil {
+		return uc.runtimeAdapter.Stop(ctx, uc.runtimeRefForRun(run))
+	}
+	if uc.wfClient == nil {
+		return ErrWorkflowUnavailable
+	}
+	return uc.wfClient.StopWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+}
+
+func (uc *Usecase) suspendRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
+	if uc.runtimeAdapter != nil {
+		return uc.runtimeAdapter.Suspend(ctx, uc.runtimeRefForRun(run))
+	}
+	if uc.wfClient == nil {
+		return ErrWorkflowUnavailable
+	}
+	return uc.wfClient.SuspendWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+}
+
+func (uc *Usecase) resumeRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
+	if uc.runtimeAdapter != nil {
+		return uc.runtimeAdapter.Resume(ctx, uc.runtimeRefForRun(run))
+	}
+	if uc.wfClient == nil {
+		return ErrWorkflowUnavailable
+	}
+	return uc.wfClient.ResumeWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+}
+
+func (uc *Usecase) terminateRuntimeRun(ctx context.Context, run *models.PipelineRun) error {
+	if uc.runtimeAdapter != nil {
+		return uc.runtimeAdapter.Terminate(ctx, uc.runtimeRefForRun(run))
+	}
+	if uc.wfClient == nil {
+		return ErrWorkflowUnavailable
+	}
+	return uc.wfClient.TerminateWorkflow(ctx, run.WorkflowName, firstNonEmpty(run.ArgoNamespace, uc.namespace))
+}
+
 func collectRunInputsFromPipelineJSON(runID string, pipeline map[string]interface{}, items *[]models.RunInput) {
 	if len(pipeline) == 0 || items == nil {
 		return
 	}
+	hasMaterializedConfigInputs := collectMaterializedRunConfigInputs(runID, pipeline, items)
 	nodes, _ := interfaceSlice(pipeline["nodes"])
 	for _, nodeAny := range nodes {
 		node, ok := stringAnyMap(nodeAny)
 		if !ok {
 			continue
 		}
-		collectRunInputsFromPipelineNode(runID, node, items)
+		collectRunInputsFromPipelineNode(runID, node, items, !hasMaterializedConfigInputs)
 	}
 }
 
-func collectRunInputsFromPipelineNode(runID string, node map[string]interface{}, items *[]models.RunInput) {
-	nodeID := stringFromAny(node["id"])
-	if cfg, ok := stringAnyMap(node["runtimeConfig"]); ok {
+func collectMaterializedRunConfigInputs(runID string, pipeline map[string]interface{}, items *[]models.RunInput) bool {
+	rawInputs, ok := interfaceSlice(pipeline[runConfigInputsPipelineJSONKey])
+	if !ok || len(rawInputs) == 0 {
+		return false
+	}
+	start := len(*items)
+	for _, rawInput := range rawInputs {
+		cfg, ok := stringAnyMap(rawInput)
+		if !ok {
+			continue
+		}
 		snapshot := copyStringAnyMap(cfg)
 		delete(snapshot, "content")
-		version := stringFromAny(cfg["version"])
+		source := stringFromAny(cfg["mode"])
+		if source == "" {
+			source = stringFromAny(cfg["source"])
+		}
 		*items = append(*items, models.RunInput{
-			ID:             fmt.Sprintf("%s:%s:config:%d", runID, nodeID, len(*items)),
+			ID:             fmt.Sprintf("%s:config:%d", runID, len(*items)),
 			RunID:          runID,
-			NodeID:         nodeID,
+			NodeID:         stringFromAny(cfg["nodeId"]),
 			Type:           "config",
 			RefID:          stringFromAny(cfg["configId"]),
-			RefVersion:     version,
+			RefVersion:     stringFromAny(cfg["version"]),
 			FileName:       stringFromAny(cfg["fileName"]),
 			MountPath:      stringFromAny(cfg["mountPath"]),
 			TargetFilename: stringFromAny(cfg["targetFilename"]),
-			Source:         stringFromAny(cfg["mode"]),
+			ContentHash:    stringFromAny(cfg["contentHash"]),
+			ProjectionKey:  stringFromAny(cfg["projectionKey"]),
+			Source:         source,
 			Snapshot:       snapshot,
 		})
+	}
+	return len(*items) > start
+}
+
+func collectRunInputsFromPipelineNode(runID string, node map[string]interface{}, items *[]models.RunInput, includeConfig bool) {
+	nodeID := stringFromAny(node["id"])
+	if includeConfig {
+		if cfg, ok := stringAnyMap(node["runtimeConfig"]); ok {
+			contentHash := ""
+			if rawContent, ok := cfg["content"]; ok {
+				if content, ok := rawContent.(string); ok {
+					contentHash = runtimeConfigContentHash(content)
+				} else {
+					contentHash = runtimeConfigContentHash(fmt.Sprintf("%v", rawContent))
+				}
+			}
+			snapshot := copyStringAnyMap(cfg)
+			delete(snapshot, "content")
+			version := stringFromAny(cfg["version"])
+			*items = append(*items, models.RunInput{
+				ID:             fmt.Sprintf("%s:%s:config:%d", runID, nodeID, len(*items)),
+				RunID:          runID,
+				NodeID:         nodeID,
+				Type:           "config",
+				RefID:          stringFromAny(cfg["configId"]),
+				RefVersion:     version,
+				FileName:       stringFromAny(cfg["fileName"]),
+				MountPath:      stringFromAny(cfg["mountPath"]),
+				TargetFilename: stringFromAny(cfg["targetFilename"]),
+				ContentHash:    contentHash,
+				ProjectionKey:  stringFromAny(cfg["projectionKey"]),
+				Source:         stringFromAny(cfg["mode"]),
+				Snapshot:       snapshot,
+			})
+		}
 	}
 	if component, ok := stringAnyMap(node["component"]); ok {
 		if args, ok := interfaceSlice(component["args"]); ok {
@@ -3765,7 +4204,7 @@ func collectRunInputsFromPipelineNode(runID string, node map[string]interface{},
 		for _, childAny := range children {
 			child, ok := stringAnyMap(childAny)
 			if ok {
-				collectRunInputsFromPipelineNode(runID, child, items)
+				collectRunInputsFromPipelineNode(runID, child, items, includeConfig)
 			}
 		}
 	}

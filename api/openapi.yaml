@@ -1212,8 +1212,8 @@ components:
         gcs_path: { type: string, example: "gs://databrew-uploads/2024/03/run-001.mcap" }
         mcap_uri: { type: string, example: "gs://databrew-uploads/2024/03/run-001.mcap" }
         size_bytes: { type: integer, format: int64, example: 104857600 }
-        raw_hash_md5: { type: string, example: "d41d8cd98f00b204e9800998ecf8427e" }
-        raw_hash_sha256: { type: string, example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
+        raw_hash_md5: { type: string, example: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+        raw_hash_sha256: { type: string, example: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
         ingest_state: { type: string, example: "uploaded" }
         file_duration_ms: { type: integer, format: int64, example: 3600000 }
         start_timestamp_ns: { type: integer, format: int64, example: 1700000000000000000 }
@@ -2336,6 +2336,12 @@ components:
         fileName: { type: string }
         mountPath: { type: string }
         targetFilename: { type: string }
+        contentHash:
+          type: string
+          description: Immutable hash of config content when available. Raw config content is not returned.
+        projectionKey:
+          type: string
+          description: Runtime materialization key for config projection when available.
         source: { type: string }
         snapshot:
           type: object
@@ -2379,7 +2385,7 @@ components:
           items: { $ref: '#/components/schemas/PipelineRun' }
         relations:
           type: array
-          description: Projected Run relations. Batch trees derive batch_child rows from existing child run metadata until a relation table exists.
+          description: Projected Run relations. Batch trees derive batch_child rows from child run metadata; rerun/resubmit/legacy retry rows can be projected from RunEvent ledger payloads until a relation table exists.
           items: { $ref: '#/components/schemas/RunRelation' }
         summary:
           $ref: '#/components/schemas/RunChildSummary'
@@ -2392,10 +2398,10 @@ components:
         childRunId: { type: string }
         relationType:
           type: string
-          description: Relationship kind, for example batch_child.
+          description: Relationship kind, for example batch_child, retry_of, resubmit_of, or rerun_of.
         source:
           type: string
-          description: Projection source, for example pipeline_runs.batch_job_id.
+          description: Projection source, for example pipeline_runs.batch_job_id or pipeline_run_events.
         assetId: { type: string }
     RunChildSummary:
       type: object
@@ -6593,7 +6599,7 @@ paths:
     post:
       tags: [Runs]
       summary: Retry failed runtime nodes in place
-      description: Runtime retry uses the existing Run and workflow when supported. It does not create a new Run.
+      description: Runtime retry uses the existing Run and stored runtime reference through the RuntimeAdapter. It does not create a new Run.
       security:
         - DatabrewToken: []
       parameters:
@@ -6627,6 +6633,7 @@ paths:
     post:
       tags: [Runs]
       summary: Resubmit a Run as a new Run
+      description: Resubmit creates a new Run from the existing Run spec and records relation metadata as resubmit_of.
       security:
         - DatabrewToken: []
       parameters:
@@ -6656,10 +6663,45 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
 
+  /api/v1/runs/{id}/rerun:
+    post:
+      tags: [Runs]
+      summary: Rerun a Run as a new product Run
+      description: Rerun is a product-level full rerun. It creates a new Run from the source Run spec and records relation metadata as rerun_of. Use /runs/{id}/retry for same-Run runtime retry.
+      security:
+        - DatabrewToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: New Run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineRun' }
+        '400':
+          description: Existing Run spec is invalid for rerun
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Runtime backend unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
   /api/v1/runs/{id}/stop:
     post:
       tags: [Runs]
-      summary: Stop a Run
+      summary: Stop a Run through its runtime adapter
+      description: Product Run control resolves the stored runtime reference from runId and delegates the stop call to the configured RuntimeAdapter.
       security:
         - DatabrewToken: []
       parameters:
@@ -6692,7 +6734,8 @@ paths:
   /api/v1/runs/{id}/suspend:
     post:
       tags: [Runs]
-      summary: Suspend a Run runtime workflow
+      summary: Suspend a Run through its runtime adapter
+      description: Product Run control resolves the stored runtime reference from runId and delegates the suspend call to the configured RuntimeAdapter.
       security:
         - DatabrewToken: []
       parameters:
@@ -6725,7 +6768,8 @@ paths:
   /api/v1/runs/{id}/resume:
     post:
       tags: [Runs]
-      summary: Resume a suspended Run runtime workflow
+      summary: Resume a Run through its runtime adapter
+      description: Product Run control resolves the stored runtime reference from runId and delegates the resume call to the configured RuntimeAdapter.
       security:
         - DatabrewToken: []
       parameters:
@@ -6758,7 +6802,8 @@ paths:
   /api/v1/runs/{id}/terminate:
     post:
       tags: [Runs]
-      summary: Terminate a Run runtime workflow
+      summary: Terminate a Run through its runtime adapter
+      description: Product Run control resolves the stored runtime reference from runId and delegates the terminate call to the configured RuntimeAdapter.
       security:
         - DatabrewToken: []
       parameters:

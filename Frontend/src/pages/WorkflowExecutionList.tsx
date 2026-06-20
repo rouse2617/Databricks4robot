@@ -40,11 +40,7 @@ import {
 	type BackfillItemAttemptsResult,
 	getBatchItemAttempts,
 } from "../api/batchJobApi";
-import {
-	listPipelines,
-	type PipelineRun,
-	type PipelineRunNodeProgress,
-} from "../api/pipelineApi";
+import type { PipelineRun, PipelineRunNodeProgress } from "../api/pipelineApi";
 import {
 	deleteRun,
 	listRuns,
@@ -55,12 +51,7 @@ import {
 	suspendRun,
 	terminateRun,
 } from "../api/runApi";
-import {
-	deleteWorkflow,
-	type ListWorkflowsParams,
-	listWorkflows,
-	type WorkflowSummary,
-} from "../api/workflowApi";
+import { deleteWorkflow, type WorkflowSummary } from "../api/workflowApi";
 import AssetIdLink from "../components/common/AssetIdLink";
 import { DurationPanel } from "../components/common/DurationPanel";
 import { WorkflowLabels } from "../components/common/WorkflowLabels";
@@ -122,6 +113,14 @@ type WorkflowErrorState = {
 };
 
 const activeWorkflowStatuses = new Set(["Running", "Pending", "Suspended"]);
+
+interface RunListFilterParams {
+	status?: string;
+	name?: string;
+	label?: string[];
+	createdAfter?: string;
+	finishedBefore?: string;
+}
 
 const STALE_ACTIVE_RUN_MS = 48 * 60 * 60 * 1000;
 
@@ -249,13 +248,18 @@ const executionKeyForRun = (run: PipelineRun): string =>
 const executionKeyForRecord = (record: ExecutionRecord): string =>
 	record.runId || record.name;
 
+const labelsForRun = (run: PipelineRun): Record<string, string> | undefined => {
+	const labels: Record<string, string> = {};
+	const assetId = run.assetIds?.[0];
+	if (assetId) labels.asset_id = assetId;
+	return Object.keys(labels).length > 0 ? labels : undefined;
+};
+
 const runMatchesFilters = (
 	run: PipelineRun,
-	liveWorkflow: WorkflowSummary | undefined,
-	params: ListWorkflowsParams,
+	params: RunListFilterParams,
 ): boolean => {
-	const status = liveWorkflow?.status ?? run.status;
-	if (params.status && status !== params.status) {
+	if (params.status && run.status !== params.status) {
 		return false;
 	}
 
@@ -272,14 +276,14 @@ const runMatchesFilters = (
 	}
 
 	if (params.createdAfter) {
-		const createdAt = dayjs(liveWorkflow?.createdAt ?? run.createdAt);
+		const createdAt = dayjs(run.createdAt);
 		if (createdAt.isValid() && createdAt.isBefore(dayjs(params.createdAfter))) {
 			return false;
 		}
 	}
 
 	if (params.finishedBefore) {
-		const finishedAt = dayjs(liveWorkflow?.finishedAt ?? run.finishedAt);
+		const finishedAt = dayjs(run.finishedAt);
 		if (
 			finishedAt.isValid() &&
 			finishedAt.isAfter(dayjs(params.finishedBefore))
@@ -289,7 +293,7 @@ const runMatchesFilters = (
 	}
 
 	if (params.label?.length) {
-		const labels = liveWorkflow?.labels ?? {};
+		const labels = labelsForRun(run) ?? {};
 		return params.label.every((filter) => {
 			const separatorIndex = filter.indexOf("=");
 			if (separatorIndex < 0) {
@@ -304,46 +308,32 @@ const runMatchesFilters = (
 	return true;
 };
 
-const workflowSummaryFromRun = (
-	run: PipelineRun,
-	liveWorkflow?: WorkflowSummary,
-): ExecutionRecord => {
-	const assetId = run.assetIds?.[0];
-	const mergedLabels = {
-		...(liveWorkflow?.labels ?? {}),
-		...(assetId ? { asset_id: assetId } : {}),
-	};
+const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
+	const labels = labelsForRun(run);
 	return {
 		runId: run.id,
 		workflowName: run.workflowName,
 		pipelineName: run.pipelineName,
 		name: workflowNameForRun(run),
-		status: liveWorkflow?.status ?? run.status,
-		nodeCount: run.nodeCount ?? liveWorkflow?.nodeCount ?? 0,
-		createdAt: liveWorkflow?.createdAt ?? run.createdAt,
-		finishedAt: liveWorkflow?.finishedAt ?? run.finishedAt,
-		labels: Object.keys(mergedLabels).length > 0 ? mergedLabels : undefined,
-		estimatedCostUsd: liveWorkflow?.estimatedCostUsd,
+		status: run.status,
+		nodeCount: run.nodeCount ?? 0,
+		createdAt: run.createdAt,
+		finishedAt: run.finishedAt,
+		labels,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
-				: liveWorkflow?.totalEstimatedCost,
+				: undefined,
 	};
 };
 
-const mergeLedgerRunsWithLiveWorkflows = (
-	liveWorkflows: WorkflowSummary[],
+const runSummariesFromRuns = (
 	pipelineRuns: PipelineRun[],
-	params: ListWorkflowsParams,
+	params: RunListFilterParams,
 ): ExecutionRecord[] => {
-	const liveByName = new Map(liveWorkflows.map((item) => [item.name, item]));
 	const ledgerItems = pipelineRuns
-		.filter((run) =>
-			runMatchesFilters(run, liveByName.get(run.workflowName), params),
-		)
-		.map((run) => {
-			return workflowSummaryFromRun(run, liveByName.get(run.workflowName));
-		});
+		.filter((run) => runMatchesFilters(run, params))
+		.map((run) => workflowSummaryFromRun(run));
 	return ledgerItems.sort((a, b) => {
 		const left = dayjs(a.createdAt).valueOf();
 		const right = dayjs(b.createdAt).valueOf();
@@ -731,34 +721,20 @@ export function WorkflowExecutionList({
 				return;
 			}
 
-			const params: ListWorkflowsParams = {
+			const params: RunListFilterParams = {
 				status: statusFilter,
 				name: nameSearch.trim().toLowerCase() || undefined,
 				label: labelFilter.length ? labelFilter : undefined,
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
 			};
-			const shouldLoadLiveWorkflows = labelFilter.length > 0;
-			const [liveWorkflowResponse, pipelineRunResponse, templates] =
-				await Promise.all([
-					shouldLoadLiveWorkflows
-						? listWorkflows(params).catch((err) => {
-								console.warn("live workflow list unavailable", err);
-								return { items: [] };
-							})
-						: Promise.resolve({ items: [] }),
-					listRuns({
-						view: "summary",
-						excludeBatch: true,
-						status: statusFilter,
-						page,
-						pageSize,
-					}),
-					listPipelines({ pageSize: 200 })
-						.then((r) => r.items)
-						.catch(() => []),
-				]);
-			const liveWorkflows = liveWorkflowResponse.items || [];
+			const pipelineRunResponse = await listRuns({
+				view: "summary",
+				excludeBatch: true,
+				status: statusFilter,
+				page,
+				pageSize,
+			});
 			const pipelineRuns = pipelineRunResponse.items ?? [];
 			setServerTotal(pipelineRunResponse.total ?? pipelineRuns.length);
 			setRunIdsByExecutionKey(
@@ -769,8 +745,8 @@ export function WorkflowExecutionList({
 				),
 			);
 			setTemplateVersionsByExecutionKey(
-				Object.fromEntries([
-					...pipelineRuns
+				Object.fromEntries(
+					pipelineRuns
 						.filter((run) => run.templateVersion)
 						.map(
 							(run) =>
@@ -779,14 +755,7 @@ export function WorkflowExecutionList({
 									run.templateVersion as number,
 								] as const,
 						),
-					...templates
-						.filter((t) => t.name)
-						.flatMap((t) =>
-							liveWorkflows
-								.filter((item) => item.name.startsWith(`${t.name}-`))
-								.map((item) => [item.name, t.version] as const),
-						),
-				]),
+				),
 			);
 			setTemplateIdsByExecutionKey(
 				Object.fromEntries(
@@ -814,11 +783,7 @@ export function WorkflowExecutionList({
 						),
 				),
 			);
-			const enrichedItems = mergeLedgerRunsWithLiveWorkflows(
-				liveWorkflows,
-				pipelineRuns,
-				params,
-			);
+			const enrichedItems = runSummariesFromRuns(pipelineRuns, params);
 			setItems(enrichedItems);
 			setSelectedExecutionKeys((prev) =>
 				prev.filter((key) =>

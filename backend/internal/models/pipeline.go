@@ -254,6 +254,8 @@ type RunInput struct {
 	FileName       string                 `json:"fileName,omitempty"`
 	MountPath      string                 `json:"mountPath,omitempty"`
 	TargetFilename string                 `json:"targetFilename,omitempty"`
+	ContentHash    string                 `json:"contentHash,omitempty"`
+	ProjectionKey  string                 `json:"projectionKey,omitempty"`
 	Source         string                 `json:"source,omitempty"`
 	Snapshot       map[string]interface{} `json:"snapshot,omitempty"`
 }

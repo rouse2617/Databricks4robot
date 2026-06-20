@@ -57,14 +57,23 @@ function resolveSelectedKey(pathname: string): string {
 	if (pathname.startsWith("/settings")) return "/settings";
 	if (pathname.startsWith("/registry")) return "/registry";
 	if (pathname.startsWith("/pipeline")) return "/pipeline";
+	if (pathname.startsWith("/runs")) return "/pipeline";
 	if (pathname.startsWith("/workflows")) return "/pipeline";
 	if (pathname.startsWith("/algo-runs")) return "/algo-runs";
 	if (pathname.startsWith("/algo")) return "/algo";
 	return "/assets";
 }
 
+function isPipelinePagePath(pathname: string): boolean {
+	return (
+		pathname.startsWith("/pipeline") ||
+		pathname.startsWith("/runs") ||
+		pathname.startsWith("/workflows")
+	);
+}
+
 function isFullBleedPage(pathname: string): boolean {
-	return pathname.startsWith("/pipeline");
+	return isPipelinePagePath(pathname);
 }
 
 function resolvePageContainerClass(pathname: string): string {
@@ -75,10 +84,7 @@ function resolvePageContainerClass(pathname: string): string {
 	if (pathname.startsWith("/settings")) {
 		return "page-container page-container--form";
 	}
-	if (
-		pathname.startsWith("/algo") &&
-		!pathname.startsWith("/algo-runs")
-	) {
+	if (pathname.startsWith("/algo") && !pathname.startsWith("/algo-runs")) {
 		return "page-container page-container--matrix";
 	}
 	return "page-container page-container--table";

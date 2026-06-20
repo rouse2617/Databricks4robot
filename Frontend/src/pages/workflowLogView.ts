@@ -54,7 +54,8 @@ export function normalizeLogContent(
 	}
 	const podName = selectedNode?.podName?.trim();
 	if (podName) {
-		return splitRepeatedPrefix(normalized, podName);
+		const splitBySelectedPod = splitRepeatedPrefix(normalized, podName);
+		if (splitBySelectedPod !== normalized) return splitBySelectedPod;
 	}
 	return splitRepeatedPrefix(normalized, inferRepeatedLogPrefix(normalized));
 }
