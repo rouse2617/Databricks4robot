@@ -176,6 +176,25 @@ const LOG_STREAM_FLUSH_INTERVAL_MS = 100;
 const LOG_STREAM_CONNECT_GRACE_MS = 5_000;
 const LOG_CLIENT_BUFFER_LINES = 5_000;
 const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
+const WORKFLOW_FETCH_TIMEOUT_MS = 20_000;
+const RUN_DETAIL_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(
+	promise: Promise<T>,
+	label: string,
+	timeoutMs: number,
+): Promise<T> {
+	return Promise.race<T>([
+		promise,
+		new Promise<T>((_, reject) => {
+			window.setTimeout(
+				() => reject(new Error(`${label} 请求超时（${timeoutMs}ms）`)),
+				timeoutMs,
+			);
+		}),
+	]);
+}
+
 function toErrorMessage(err: unknown): string {
 	if (err instanceof Error) {
 		return err.message;
@@ -325,52 +344,52 @@ export function useWorkflowDetail(
 		[lookupMode, name, runEventState.run?.workflowName, workflow?.name],
 	);
 
-	const loadRunDetailData = useCallback(
-		async (runName: string, opts?: { append?: boolean; cursor?: number }) => {
-			const run = await resolvePipelineRun(runName, lookupMode);
-			if (!run) {
-				setRunEventState({
-					run: null,
-					items: [],
-					loading: false,
-					error: "未找到关联的 DataBrew Run",
-				});
-				setAssetNodeState({
-					items: [],
-					loading: false,
-					error: "未找到关联的 DataBrew Run",
-					summary: null,
-				});
-				setCostSummaryState({
-					item: null,
-					loading: false,
-					error: "未找到关联的 DataBrew Run",
-				});
-				setRunMetadataState({
-					...EMPTY_RUN_METADATA_STATE,
-					error: "未找到关联的 DataBrew Run",
-				});
-				return null;
-			}
+	const loadRunLedgerData = useCallback(
+		async (run: PipelineRun, opts?: { append?: boolean; cursor?: number }) => {
 			const cursor = opts?.append ? opts.cursor : undefined;
 			setRunMetadataState((current) => ({
 				...current,
 				loading: true,
 				error: null,
 			}));
+
 			const [events, assetNodes, costSummary, metadataResults] =
 				await Promise.all([
-					listRunEvents(run.id, {
-						limit: 100,
-						cursor,
-						...runEventFilters,
-					}),
-					listRunAssetNodes(run.id, { limit: 500 }),
-					getRunCostSummary(run.id),
+					withTimeout(
+						listRunEvents(run.id, {
+							limit: 100,
+							cursor,
+							...runEventFilters,
+						}),
+						"获取运行事件",
+						RUN_DETAIL_TIMEOUT_MS,
+					),
+					withTimeout(
+						listRunAssetNodes(run.id, { limit: 500 }),
+						"获取资源节点",
+						RUN_DETAIL_TIMEOUT_MS,
+					),
+					withTimeout(
+						getRunCostSummary(run.id),
+						"获取成本汇总",
+						RUN_DETAIL_TIMEOUT_MS,
+					),
 					Promise.allSettled([
-						listRunInputs(run.id),
-						listRunOutputs(run.id),
-						getRunRuntime(run.id),
+						withTimeout(
+							listRunInputs(run.id),
+							"获取运行输入",
+							RUN_DETAIL_TIMEOUT_MS,
+						),
+						withTimeout(
+							listRunOutputs(run.id),
+							"获取运行输出",
+							RUN_DETAIL_TIMEOUT_MS,
+						),
+						withTimeout(
+							getRunRuntime(run.id),
+							"获取运行时信息",
+							RUN_DETAIL_TIMEOUT_MS,
+						),
 					] as const),
 				]);
 			const metadataError = metadataResults
@@ -421,7 +440,39 @@ export function useWorkflowDetail(
 			});
 			return run;
 		},
-		[lookupMode, runEventFilters],
+		[runEventFilters],
+	);
+
+	const loadRunDetailData = useCallback(
+		async (runName: string, opts?: { append?: boolean; cursor?: number }) => {
+			const run = await resolvePipelineRun(runName, lookupMode);
+			if (!run) {
+				setRunEventState({
+					run: null,
+					items: [],
+					loading: false,
+					error: "未找到关联的 DataBrew Run",
+				});
+				setAssetNodeState({
+					items: [],
+					loading: false,
+					error: "未找到关联的 DataBrew Run",
+					summary: null,
+				});
+				setCostSummaryState({
+					item: null,
+					loading: false,
+					error: "未找到关联的 DataBrew Run",
+				});
+				setRunMetadataState({
+					...EMPTY_RUN_METADATA_STATE,
+					error: "未找到关联的 DataBrew Run",
+				});
+				return null;
+			}
+			return loadRunLedgerData(run, opts);
+		},
+		[loadRunLedgerData, lookupMode],
 	);
 
 	const refreshDetailData = useCallback(() => {
@@ -439,7 +490,7 @@ export function useWorkflowDetail(
 		setLoadError(null);
 		if (lookupMode === "runId") {
 			skipNextRunEventsLoadRef.current = true;
-			loadRunDetailData(name)
+			getRun(name)
 				.then((run) => {
 					if (!run) {
 						setWorkflow(null);
@@ -449,6 +500,34 @@ export function useWorkflowDetail(
 						});
 						return;
 					}
+
+					void loadRunLedgerData(run).catch((err) => {
+						if (!isExpectedWorkflowNotFound(err)) {
+							console.error(err);
+						}
+						const message = toErrorMessage(err);
+						setRunEventState((current) => ({
+							...current,
+							loading: false,
+							error: message,
+						}));
+						setAssetNodeState((current) => ({
+							...current,
+							loading: false,
+							error: message,
+						}));
+						setCostSummaryState((current) => ({
+							...current,
+							loading: false,
+							error: message,
+						}));
+						setRunMetadataState((current) => ({
+							...current,
+							loading: false,
+							error: message,
+						}));
+					});
+
 					if (!run.workflowName) {
 						setWorkflow(null);
 						setLoadError({
@@ -457,11 +536,16 @@ export function useWorkflowDetail(
 						});
 						return;
 					}
-					return getWorkflow(run.workflowName)
+					return withTimeout(
+						getWorkflow(run.workflowName),
+						"获取运行详情",
+						WORKFLOW_FETCH_TIMEOUT_MS,
+					)
 						.then((detail) => {
 							workflowRef.current = detail;
 							setWorkflow(detail);
 							setLoadError(null);
+							return detail;
 						})
 						.catch((err) => {
 							if (!isExpectedWorkflowNotFound(err)) {
@@ -469,6 +553,7 @@ export function useWorkflowDetail(
 							}
 							setWorkflow(null);
 							setLoadError(toLoadError(err));
+							return null;
 						});
 				})
 				.catch((err) => {
@@ -478,7 +563,9 @@ export function useWorkflowDetail(
 					setWorkflow(null);
 					setLoadError(toLoadError(err));
 				})
-				.finally(() => setLoading(false));
+				.finally(() => {
+					setLoading(false);
+				});
 			return;
 		}
 		getWorkflow(name)
@@ -500,7 +587,7 @@ export function useWorkflowDetail(
 				}
 			})
 			.finally(() => setLoading(false));
-	}, [loadRunDetailData, lookupMode, name, refreshDetailData]);
+	}, [loadRunLedgerData, lookupMode, name, refreshDetailData]);
 
 	useEffect(() => {
 		loadWorkflow();

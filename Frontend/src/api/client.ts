@@ -1,6 +1,9 @@
 import axios from "axios";
 
 export const UNAUTHORIZED_EVENT = "***";
+const DEV_ACCESS_TOKEN = import.meta.env.DEV
+	? (import.meta.env.VITE_DEV_ACCESS_TOKEN ?? "").trim()
+	: "";
 
 /** Default timeout for most API calls */
 const DEFAULT_TIMEOUT = 30_000;
@@ -14,6 +17,10 @@ export const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use((config) => {
+	if (DEV_ACCESS_TOKEN) {
+		config.headers = config.headers ?? {};
+		config.headers["X-Databrew-Token"] = DEV_ACCESS_TOKEN;
+	}
 	config.withCredentials = true;
 	return config;
 });
