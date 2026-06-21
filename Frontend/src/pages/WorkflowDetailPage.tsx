@@ -1344,6 +1344,7 @@ function formatRunDiagnosticReason(reason: string) {
 		unschedulable: "调度失败",
 		resource_incompatible: "资源不匹配",
 		image_startup: "镜像启动",
+		runtime_config_projection_failed: "运行配置投影失败",
 		cancelled: "已取消",
 		run_failed: "运行失败",
 	};

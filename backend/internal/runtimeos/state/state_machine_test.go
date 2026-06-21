@@ -222,6 +222,20 @@ func TestAnnotateRunDiagnosticsFailureWithoutTopLevelMessageUsesNodeMessage(t *t
 	}
 }
 
+func TestAnnotateRunDiagnosticsRuntimeConfigProjectionFailed(t *testing.T) {
+	t.Parallel()
+
+	run := models.PipelineRun{
+		ID:      "run-config",
+		Status:  "Error",
+		Message: "create runtime config projection failed: configmap forbidden",
+	}
+	AnnotateRunDiagnostics(&run)
+	if run.FailureReason != "runtime_config_projection_failed" {
+		t.Fatalf("failure reason = %q, want runtime_config_projection_failed", run.FailureReason)
+	}
+}
+
 func TestAnnotateRunDiagnosticsGenericFailureWithoutMessage(t *testing.T) {
 	t.Parallel()
 

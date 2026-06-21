@@ -157,6 +157,8 @@ func classifyRunDiagnosticReason(status, message, workflowName, workflowUID stri
 		return "resource_incompatible"
 	case containsAny(normalizedMessage, "imagepullbackoff", "errimagepull", "invalidimagename", "invalid image", "failed to apply default image tag", "couldn't parse image name", "manifest unknown", "pull access denied"):
 		return "image_startup"
+	case containsAny(normalizedMessage, "create runtime config projection", "runtime config projection", "configmap", "insufficient privileges", "forbidden", "unauthorized"):
+		return "runtime_config_projection_failed"
 	case containsAny(normalizedMessage, "stale run: exceeded maximum active duration"):
 		return "stale_running"
 	case containsAny(normalizedMessage, "argo 工作流已被 ttl 清理", "workflow not found", "workflow service unavailable"):
@@ -187,6 +189,8 @@ func defaultDiagnosticMessage(reason string) string {
 		return "Run 已创建，正在等待提交到运行时。"
 	case "cancelled":
 		return "Run 已取消。"
+	case "runtime_config_projection_failed":
+		return "运行配置投影失败。"
 	case "run_failed":
 		return "Run 已失败，暂无更具体的运行时诊断。"
 	default:

@@ -227,6 +227,7 @@ const RUN_REASON_LABELS: Record<string, string> = {
 	runtime_not_submitted: "等待提交",
 	runtime_missing: "Runtime 不可用",
 	stale_running: "超时",
+	runtime_config_projection_failed: "运行配置投影失败",
 	cancelled: "已取消",
 	run_failed: "运行失败",
 };
@@ -238,6 +239,7 @@ const RUN_REASON_COLORS: Record<string, string> = {
 	runtime_not_submitted: "warning",
 	runtime_missing: "default",
 	stale_running: "error",
+	runtime_config_projection_failed: "error",
 	cancelled: "default",
 	run_failed: "error",
 };
