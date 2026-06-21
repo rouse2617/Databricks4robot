@@ -63,7 +63,8 @@ func buildConfig(kubeconfigPath string) (*rest.Config, error) {
 	}
 
 	token := os.Getenv("K8S_BEARER_TOKEN")
-	endpoint := os.Getenv("K8S_API_ENDPOINT")
+	token = strings.TrimSpace(token)
+	endpoint := strings.TrimSpace(os.Getenv("K8S_API_ENDPOINT"))
 	if token != "" && endpoint != "" {
 		tls, err := buildTLSConfig()
 		if err != nil {
