@@ -76,4 +76,50 @@ describe("ComponentPalette", () => {
 		expect(screen.queryByText("Load Data")).toBeNull();
 		expect(screen.getByText("Render Report")).toBeTruthy();
 	});
+
+	it("groups releases and allows choosing a specific version", () => {
+		const onAdd = vi.fn();
+		const currentRelease: RegisteredComponent = {
+			...sampleComponent,
+			id: "release-current",
+			componentId: "echo-test",
+			releaseId: "release-current",
+			name: "echo-test",
+			releaseLabel: "commit-fff999",
+			sourceCommit: "fff999",
+		};
+		const previousRelease: RegisteredComponent = {
+			...sampleComponent,
+			id: "release-previous",
+			componentId: "echo-test",
+			releaseId: "release-previous",
+			name: "echo-test",
+			releaseLabel: "commit-aaa111",
+			sourceCommit: "aaa111",
+		};
+
+		render(
+			<ComponentPalette
+				components={[previousRelease, currentRelease]}
+				onDragStart={vi.fn()}
+				onAddComponent={onAdd}
+			/>,
+		);
+
+		expect(screen.getByText("2 个版本")).toBeTruthy();
+		fireEvent.click(
+			screen.getByRole("button", { name: "添加组件 echo-test" }),
+		);
+		expect(onAdd).toHaveBeenLastCalledWith(currentRelease);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: "展开组件 echo-test 版本" }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: "添加组件 echo-test 版本 commit-aaa111",
+			}),
+		);
+		expect(onAdd).toHaveBeenLastCalledWith(previousRelease);
+	});
 });

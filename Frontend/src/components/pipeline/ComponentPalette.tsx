@@ -1,5 +1,5 @@
-import { CopyOutlined } from "@ant-design/icons";
-import { Alert, Button, Input, message, Spin, Tooltip } from "antd";
+import { CopyOutlined, DownOutlined, RightOutlined } from "@ant-design/icons";
+import { Alert, Button, Input, message, Spin, Tag, Tooltip } from "antd";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { componentPaletteMeta } from "./componentDisplay";
@@ -25,6 +25,46 @@ async function copyImageReference(image: string) {
 	}
 }
 
+function componentGroupKey(component: RegisteredComponent): string {
+	return (
+		component.componentId?.trim() ||
+		component.name.trim().toLowerCase() ||
+		component.id
+	);
+}
+
+function componentVersionText(component: RegisteredComponent): string {
+	const meta = componentPaletteMeta(component);
+	return (
+		component.releaseLabel ||
+		component.tag ||
+		component.imageUid ||
+		meta.subtitle ||
+		component.id
+	);
+}
+
+function compareComponentVersions(
+	left: RegisteredComponent,
+	right: RegisteredComponent,
+) {
+	const leftLabel = componentVersionText(left);
+	const rightLabel = componentVersionText(right);
+	if (leftLabel !== rightLabel) return rightLabel.localeCompare(leftLabel);
+	return left.id.localeCompare(right.id);
+}
+
+function groupComponents(components: RegisteredComponent[]) {
+	const buckets = new Map<string, RegisteredComponent[]>();
+	for (const component of components) {
+		const key = componentGroupKey(component);
+		buckets.set(key, [...(buckets.get(key) ?? []), component]);
+	}
+	return Array.from(buckets.values())
+		.map((versions) => [...versions].sort(compareComponentVersions))
+		.sort((left, right) => left[0].name.localeCompare(right[0].name));
+}
+
 export function ComponentPalette({
 	components,
 	onDragStart,
@@ -35,6 +75,7 @@ export function ComponentPalette({
 	disabled = false,
 }: Props) {
 	const [query, setQuery] = useState("");
+	const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
 	const interactionDisabled = loading || disabled;
 	const filteredComponents = useMemo(() => {
 		const keyword = query.trim().toLowerCase();
@@ -55,7 +96,19 @@ export function ComponentPalette({
 				.includes(keyword),
 		);
 	}, [components, query]);
+	const componentGroups = useMemo(
+		() => groupComponents(filteredComponents),
+		[filteredComponents],
+	);
 	const hasQuery = query.trim().length > 0;
+	const toggleExpanded = (key: string) => {
+		setExpandedKeys((current) => {
+			const next = new Set(current);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
+		});
+	};
 
 	return (
 		<aside
@@ -67,8 +120,8 @@ export function ComponentPalette({
 				<h3>组件</h3>
 				<span className="palette-count">
 					{hasQuery
-						? `${filteredComponents.length}/${components.length}`
-						: components.length}
+						? `${componentGroups.length}/${groupComponents(components).length}`
+						: componentGroups.length}
 				</span>
 			</div>
 			<Input.Search
@@ -103,11 +156,15 @@ export function ComponentPalette({
 					style={{ marginBottom: 8 }}
 				/>
 			) : null}
-			{filteredComponents.map((c) => {
+			{componentGroups.map((versions) => {
+				const c = versions[0];
 				const meta = componentPaletteMeta(c);
+				const groupKey = componentGroupKey(c);
+				const expanded = expandedKeys.has(groupKey);
+				const hasVersions = versions.length > 1;
 				return (
 					<div
-						key={c.id}
+						key={groupKey}
 						className={`palette-item ${interactionDisabled ? "is-disabled" : ""}`}
 						title={
 							disabled
@@ -115,6 +172,19 @@ export function ComponentPalette({
 								: `${meta.title}\n\n点击添加到画布，也可以拖拽放置`
 						}
 					>
+						{hasVersions ? (
+							<button
+								type="button"
+								className="palette-expand"
+								aria-label={`${expanded ? "收起" : "展开"}组件 ${c.name} 版本`}
+								onClick={(event) => {
+									event.stopPropagation();
+									toggleExpanded(groupKey);
+								}}
+							>
+								{expanded ? <DownOutlined /> : <RightOutlined />}
+							</button>
+						) : null}
 						<button
 							type="button"
 							className="palette-card-main"
@@ -130,9 +200,16 @@ export function ComponentPalette({
 						>
 							<div className="pi-content">
 								<div className="pi-label">{c.name}</div>
-								{meta.subtitle ? (
-									<div className="pi-subtitle">{meta.subtitle}</div>
-								) : null}
+								<div className="palette-version-line">
+									{meta.subtitle ? (
+										<span className="pi-subtitle">{meta.subtitle}</span>
+									) : null}
+									{hasVersions ? (
+										<Tag className="palette-version-count">
+											{versions.length} 个版本
+										</Tag>
+									) : null}
+								</div>
 							</div>
 						</button>
 						{c.image ? (
@@ -149,6 +226,49 @@ export function ComponentPalette({
 									<CopyOutlined />
 								</button>
 							</Tooltip>
+						) : null}
+						{hasVersions && expanded ? (
+							<div className="palette-version-list">
+								{versions.map((version, index) => {
+									const versionMeta = componentPaletteMeta(version);
+									const versionText = componentVersionText(version);
+									return (
+										<button
+											key={version.id}
+											type="button"
+											className="palette-version-row"
+											draggable={!interactionDisabled}
+											disabled={interactionDisabled}
+											aria-label={`添加组件 ${version.name} 版本 ${versionText}`}
+											title={versionMeta.title}
+											onDragStart={
+												interactionDisabled
+													? undefined
+													: (event) => onDragStart(event, version)
+											}
+											onClick={
+												interactionDisabled
+													? undefined
+													: () => onAddComponent?.(version)
+											}
+										>
+											<span className="palette-version-row__label">
+												{versionText}
+											</span>
+											{index === 0 ? (
+												<Tag className="palette-version-default">
+													默认
+												</Tag>
+											) : null}
+											{version.sourceCommit ? (
+												<span className="palette-version-row__commit">
+													{version.sourceCommit.slice(0, 8)}
+												</span>
+											) : null}
+										</button>
+									);
+								})}
+							</div>
 						) : null}
 					</div>
 				);

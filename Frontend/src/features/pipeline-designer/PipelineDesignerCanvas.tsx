@@ -82,7 +82,6 @@ import {
 import {
 	apiToRegistered,
 	createPipelineNode,
-	dedupeComponentsByName,
 	defaultDeployWorkflowName,
 	extractAssetSizeBytes,
 	extractNodeAssetIds,
@@ -114,6 +113,10 @@ const DEFAULT_NODE_Y_GAP = 160;
 const DEFAULT_NODE_LEFT_PADDING = 80;
 const DEFAULT_NODE_TOP_PADDING = 120;
 type EdgeConnectionMode = "data" | "dependency";
+
+function keepAllRegisteredComponents(components: RegisteredComponent[]) {
+	return components;
+}
 
 function defaultNodeScreenPosition(
 	bounds: DOMRect | undefined,
@@ -344,7 +347,7 @@ function PipelineDesignerCanvasInner({
 		reload: reloadComponents,
 	} = usePipelineComponents(
 		apiToRegistered,
-		dedupeComponentsByName,
+		keepAllRegisteredComponents,
 		releaseToRegistered,
 	);
 	const cleanCanvasSnapshotRef = useRef<string | null>(null);
