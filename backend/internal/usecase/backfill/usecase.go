@@ -34,6 +34,9 @@ type Usecase struct {
 	pipelineUC *pipelineUC.Usecase
 	// pgClient enables WithTx for transactional SaveJob+SaveItems in CreateBackfill.
 	pgClient any // *postgres.Client — set via NewWithPostgres
+
+	lastSync   map[string]time.Time
+	lastSyncMu sync.Mutex
 }
 
 // New creates a Usecase without transaction support.
@@ -1196,7 +1199,38 @@ func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {
 	return nil
 }
 
+// syncProgressMinInterval avoids back-to-back full syncs when multiple
+// callers (GetJob, GetBatchNodeSummary, refreshBatchReadModel) trigger
+// syncJobProgress on the same page load.
+const syncProgressMinInterval = 30 * time.Second
+
+func (uc *Usecase) shouldSyncProgress(jobID string) bool {
+	uc.lastSyncMu.Lock()
+	defer uc.lastSyncMu.Unlock()
+	if uc.lastSync == nil {
+		return true
+	}
+	last, ok := uc.lastSync[jobID]
+	if !ok {
+		return true
+	}
+	return time.Since(last) >= syncProgressMinInterval
+}
+
+func (uc *Usecase) markSyncProgressDone(jobID string) {
+	uc.lastSyncMu.Lock()
+	defer uc.lastSyncMu.Unlock()
+	if uc.lastSync == nil {
+		uc.lastSync = make(map[string]time.Time)
+	}
+	uc.lastSync[jobID] = time.Now()
+}
+
 func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
+	if !uc.shouldSyncProgress(jobID) {
+		return nil
+	}
+	uc.markSyncProgressDone(jobID)
 	job, err := uc.repo.FindJobByID(ctx, jobID)
 	if err != nil || job == nil {
 		return err
@@ -1207,25 +1241,29 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 		if err != nil {
 			return err
 		}
-		for _, item := range ledgerItems {
-			if item.PipelineRunID == nil || strings.TrimSpace(*item.PipelineRunID) == "" {
-				continue
-			}
-			run, err := uc.pipelineUC.GetRun(ctx, *item.PipelineRunID)
-			if err != nil || run == nil {
-				continue
-			}
-			mapped := mapRunStatusToItem(run.Status)
-			if mapped == "completed" {
-				mapped = uc.resolveCompletionStatus(ctx, job, item)
-			}
-			if mapped != item.Status {
-				wf := run.WorkflowName
-				errMsg := ""
-				if mapped == "failed" {
-					errMsg = strings.TrimSpace(run.Message)
+		if len(ledgerItems) > 0 {
+			// Batch-fetch all runs for this batch job instead of N individual GetRun calls.
+			runsByID := uc.fetchBatchRunsByIDMap(ctx, jobID, ledgerItems)
+			for _, item := range ledgerItems {
+				if item.PipelineRunID == nil || strings.TrimSpace(*item.PipelineRunID) == "" {
+					continue
 				}
-				_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, wf, errMsg)
+				run, ok := runsByID[*item.PipelineRunID]
+				if !ok || run == nil {
+					continue
+				}
+				mapped := mapRunStatusToItem(run.Status)
+				if mapped == "completed" {
+					mapped = uc.resolveCompletionStatus(ctx, job, item)
+				}
+				if mapped != item.Status {
+					wf := run.WorkflowName
+					errMsg := ""
+					if mapped == "failed" {
+						errMsg = strings.TrimSpace(run.Message)
+					}
+					_ = uc.repo.UpdateItemStatus(ctx, item.ID, mapped, wf, errMsg)
+				}
 			}
 		}
 	}
@@ -1264,6 +1302,42 @@ func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
 		return nil
 	}
 	return uc.updateJobProgressAndParentRun(ctx, jobID, summary.Completed, summary.Failed, jobStatus)
+}
+
+// fetchBatchRunsByIDMap retrieves runs for a batch job in a single query
+// and indexes them by ID for O(1) lookup during item sync. Falls back to
+// individual GetRun calls if ListSummaries returns no rows (e.g. in tests
+// where the mock only implements the older interface).
+func (uc *Usecase) fetchBatchRunsByIDMap(ctx context.Context, jobID string, items []models.BackfillItem) map[string]*models.PipelineRun {
+	m := make(map[string]*models.PipelineRun)
+	if uc.pipelineUC == nil {
+		return m
+	}
+	all, _, err := uc.pipelineUC.ListRunSummaries(ctx, models.PipelineRunListFilter{
+		BatchJobID: jobID,
+		PageSize:   max(len(items), 1),
+	})
+	if err != nil || len(all) == 0 {
+		if err != nil {
+			slog.Warn("syncJobProgress: batch listing runs failed, falling back to per-item", "jobID", jobID, "err", err)
+		}
+		// Fall back to per-item GetRun for backwards compatibility with test mocks.
+		for _, item := range items {
+			if item.PipelineRunID == nil || *item.PipelineRunID == "" {
+				continue
+			}
+			run, err := uc.pipelineUC.GetRun(ctx, *item.PipelineRunID)
+			if err != nil || run == nil {
+				continue
+			}
+			m[run.ID] = run
+		}
+		return m
+	}
+	for i := range all {
+		m[all[i].ID] = &all[i]
+	}
+	return m
 }
 
 func (uc *Usecase) updateJobProgressAndParentRun(ctx context.Context, jobID string, completed, failed int, status string) error {
