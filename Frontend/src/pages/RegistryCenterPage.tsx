@@ -14,9 +14,7 @@ import {
 	Button,
 	Card,
 	Col,
-	Collapse,
 	Descriptions,
-		Divider,
 	Drawer,
 	Form,
 	Grid,
@@ -37,7 +35,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { type Monaco } from "@monaco-editor/react";
 import type { AlgoRegistryItem } from "../api/algoRegistry";
 import {
 	type PipelineConfig,
@@ -387,62 +385,6 @@ function diffCellBackground(
 	if (kind === "removed" && side === "left") return "#fddcd7";
 	if (kind === "added" && side === "right") return "#dafbe1";
 	return "#f8fafc";
-}
-
-interface SideBySideDiffProps {
-	leftLabel: string;
-	rightLabel: string;
-	rows: VersionDiffRow[];
-}
-
-function SideBySideDiff({ leftLabel, rightLabel, rows }: SideBySideDiffProps) {
-	const changedCount = rows.filter((r) => r.kind !== "equal").length;
-	return (
-		<div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden" }}>
-			<div
-				style={{
-					display: "grid",
-					gridTemplateColumns: "64px minmax(0, 1fr) 64px minmax(0, 1fr)",
-					background: "#f8fafc",
-					borderBottom: "1px solid #e2e8f0",
-					fontWeight: 600,
-				}}
-			>
-				<div style={{ padding: "8px 10px" }}>行</div>
-				<div style={{ padding: "8px 10px" }}>{leftLabel}</div>
-				<div style={{ padding: "8px 10px" }}>行</div>
-				<div style={{ padding: "8px 10px" }}>{rightLabel}</div>
-			</div>
-			<div style={{ maxHeight: 340, overflow: "auto" }}>
-				{rows.map((row) => (
-					<div
-						key={row.key}
-						style={{
-							display: "grid",
-							gridTemplateColumns: "64px minmax(0, 1fr) 64px minmax(0, 1fr)",
-							borderBottom: "1px solid #eef2f7",
-						}}
-					>
-						<div style={{ padding: "2px 6px", color: "#64748b", background: "#f8fafc", textAlign: "right", fontFamily: "monospace", fontSize: 11 }}>
-							{row.leftLine ?? ""}
-						</div>
-						<pre style={{ margin: 0, padding: "2px 6px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace", fontSize: 11, background: diffCellBackground(row.kind, "left") }}>
-							{row.leftText ?? ""}
-						</pre>
-						<div style={{ padding: "2px 6px", color: "#64748b", background: "#f8fafc", textAlign: "right", fontFamily: "monospace", fontSize: 11 }}>
-							{row.rightLine ?? ""}
-						</div>
-						<pre style={{ margin: 0, padding: "2px 6px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace", fontSize: 11, background: diffCellBackground(row.kind, "right") }}>
-							{row.rightText ?? ""}
-						</pre>
-					</div>
-				))}
-			</div>
-			<div style={{ padding: "6px 10px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: 12 }}>
-				<Text type="secondary">变更 {changedCount} 行 / 共 {rows.length} 行</Text>
-			</div>
-		</div>
-	);
 }
 
 function UserTag({ value }: { value?: string }) {
@@ -1091,8 +1033,7 @@ export default function RegistryCenterPage() {
 								description="归档后会从工作区移除，不参与部署选择；历史引用仍可追溯。"
 								okText="归档"
 								cancelText="取消"
-					style={{ top: 20 }}
-					bodyStyle={{ maxHeight: "calc(80vh - 120px)", overflowY: "auto", paddingTop: 12 }}
+								style={{ top: 20 }}
 								onConfirm={() => handleDeprecateConfig(record)}
 							>
 								<Button
@@ -1771,7 +1712,7 @@ export default function RegistryCenterPage() {
 											fontSize: 12,
 											fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
 										}}
-										beforeMount={(monaco) => {
+										beforeMount={(monaco: Monaco) => {
 											monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
 												validate: true,
 												allowComments: true,
@@ -1796,7 +1737,7 @@ export default function RegistryCenterPage() {
 											value: v.versionNumber,
 										}))}
 									/>
-									
+
 								</div>
 								{diffPreviewRows.length > 0 ? (
 									<div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden" }}>
