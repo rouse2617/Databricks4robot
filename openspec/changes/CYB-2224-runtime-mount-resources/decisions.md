@@ -196,3 +196,8 @@
 - **Decision**: Keep runtime mount resources generic and operator-provided. Update `deploy/cloudrun/backend-dev.sh` so absent pipeline JSON overrides preserve existing Cloud Run revision values for `PIPELINE_TEMPLATE_*` and `PIPELINE_RUNTIME_*` catalog variables instead of clearing them during full env-file deploys.
 - **Alternatives**: Hard-code `video-proc-dev-db-creds` in backend code or the deploy script, manually edit Cloud Run env vars after every deploy, or let the UI surface pre-submit failures as missing runs.
 - **Rationale**: DataBrew should not depend on another service's naming model, but scripted deploys also must not erase platform catalog registration. Preserving existing generic JSON envs keeps dev deploys reproducible while allowing operators to register approved SecretProviderClass/PVC resources per target.
+## 2026-06-22 — Refresh batch child run summaries before aggregation
+- **Context**: Batch detail pages could keep showing stale child failures such as `Runtime 不可用 / Argo 工作流已被 TTL 清理` after the underlying Argo workflows had moved to Running or Succeeded.
+- **Decision**: Refresh active/stale child run summaries through the canonical run lookup path when building durable relation and batch fallback children, and scope the dev smoke runtime secret to DataBrew targets only.
+- **Alternatives**: Rely only on the persisted `pipeline_runs` row from `run_relations`, or ask the frontend to ignore stale top failure reasons while children are active.
+- **Rationale**: The backend aggregation is the source of truth for the batch page; refreshing at aggregation time keeps UI, child rows, and actual Argo state consistent without requiring frontend heuristics.

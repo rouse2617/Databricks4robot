@@ -1930,6 +1930,7 @@ type mockRunRepo struct {
 	byWf         map[string]*models.PipelineRun
 	findAllErr   error
 	findAllCalls int
+	listFilters  []models.PipelineRunListFilter
 }
 
 func (m *mockRunRepo) Save(_ context.Context, r *models.PipelineRun) error {
@@ -1958,6 +1959,7 @@ func (m *mockRunRepo) FindAllSummaries(_ context.Context) ([]models.PipelineRun,
 	return m.FindAll(context.Background())
 }
 func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	m.listFilters = append(m.listFilters, filter)
 	items, err := m.FindAll(context.Background())
 	if err != nil {
 		return nil, 0, err
@@ -2158,6 +2160,9 @@ func TestListRunChildrenFallsBackToBatchChildrenWithoutParentRun(t *testing.T) {
 	}
 	if len(got.Summary.TopFailureReasons) != 1 || got.Summary.TopFailureReasons[0].Reason != "image_startup" {
 		t.Fatalf("top failure reasons = %+v, want image_startup", got.Summary.TopFailureReasons)
+	}
+	if len(runRepo.listFilters) != 1 || !runRepo.listFilters[0].RefreshActive {
+		t.Fatalf("ListRunChildren batch filter = %+v, want RefreshActive=true", runRepo.listFilters)
 	}
 }
 

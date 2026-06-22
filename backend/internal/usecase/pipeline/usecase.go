@@ -3817,6 +3817,12 @@ func (uc *Usecase) listDurableRunChildren(ctx context.Context, parentRunID strin
 		if child == nil {
 			continue
 		}
+		if needsRunListRefresh(child) {
+			if fresh, refreshErr := uc.GetRun(ctx, child.ID); refreshErr == nil && fresh != nil {
+				stripRunHeavyFields(fresh)
+				child = fresh
+			}
+		}
 		if relation.Source == "" {
 			relation.Source = "run_relations"
 		}
@@ -3838,12 +3844,24 @@ func (uc *Usecase) listDurableRunChildren(ctx context.Context, parentRunID strin
 
 func (uc *Usecase) listBatchRunChildren(ctx context.Context, batchJobID, parentRunID string) (*models.RunChildList, error) {
 	items, _, err := uc.runRepo.ListSummaries(ctx, models.PipelineRunListFilter{
-		BatchJobID: batchJobID,
-		Page:       1,
-		PageSize:   500,
+		BatchJobID:    batchJobID,
+		Page:          1,
+		PageSize:      500,
+		RefreshActive: true,
 	})
 	if err != nil {
 		return nil, err
+	}
+	for i := range items {
+		if !needsRunListRefresh(&items[i]) {
+			continue
+		}
+		fresh, refreshErr := uc.GetRun(ctx, items[i].ID)
+		if refreshErr != nil || fresh == nil {
+			continue
+		}
+		stripRunHeavyFields(fresh)
+		items[i] = *fresh
 	}
 	if parentRunID == "" {
 		parentRunID = batchJobID
