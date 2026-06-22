@@ -1747,6 +1747,10 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		message = derivedMessage
 		finishedAt = derivedFinishedAt
 		derivedFailureReason = "unschedulable"
+	} else if derivedStatus, ok := deriveActiveRunFromWorkflowNodes(wf); ok {
+		status = derivedStatus
+		message = ""
+		finishedAt = nil
 	}
 	run.Status = status
 	if string(wf.UID) != "" {
@@ -1791,6 +1795,25 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 	}
 	uc.persistRunObservation(ctx, run)
 	uc.replaceRunNodesFromWorkflow(ctx, run, wf)
+}
+
+func deriveActiveRunFromWorkflowNodes(wf *wfv1.Workflow) (string, bool) {
+	if wf == nil || wf.Status.Phase != "" {
+		return "", false
+	}
+	hasPending := false
+	for _, node := range wf.Status.Nodes {
+		switch node.Phase {
+		case wfv1.NodeRunning:
+			return string(wfv1.WorkflowRunning), true
+		case wfv1.NodePending:
+			hasPending = true
+		}
+	}
+	if hasPending {
+		return string(wfv1.WorkflowPending), true
+	}
+	return "", false
 }
 
 func deriveTerminalRunFromWorkflowNodes(wf *wfv1.Workflow) (string, string, *time.Time, bool) {
@@ -1881,15 +1904,15 @@ func workflowUnavailableMessage(run *models.PipelineRun) string {
 }
 
 func (uc *Usecase) markRunWorkflowNotFound(ctx context.Context, run *models.PipelineRun) {
-	if uc.reconcileTerminalRunFromLedger(ctx, run) {
-		return
-	}
 	if shouldPreserveActiveWorkflowNotFound(run, uc.nowUTC()) {
 		if isStaleWorkflowUnavailableMessage(run.Message) {
 			run.Message = ""
 		}
 		run.FinishedAt = nil
 		uc.persistRunObservation(ctx, run)
+		return
+	}
+	if uc.reconcileTerminalRunFromLedger(ctx, run) {
 		return
 	}
 	if isPendingBatchWorkflowCreation(run) {
@@ -3141,6 +3164,7 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
 		}
+		normalizeActiveRunRuntimeFields(items)
 		annotateRunDiagnostics(items)
 		return items, total, nil
 	}
@@ -3149,8 +3173,25 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		return nil, 0, err
 	}
 	uc.refreshRunSummariesForList(ctx, items)
+	normalizeActiveRunRuntimeFields(items)
 	annotateRunDiagnostics(items)
 	return items, len(items), nil
+}
+
+func normalizeActiveRunRuntimeFields(items []models.PipelineRun) {
+	for i := range items {
+		normalizeActiveRunRuntimeField(&items[i])
+	}
+}
+
+func normalizeActiveRunRuntimeField(run *models.PipelineRun) {
+	if run == nil || !isActiveDeploymentStatus(run.Status) {
+		return
+	}
+	run.FinishedAt = nil
+	if isStaleWorkflowUnavailableMessage(run.Message) {
+		run.Message = ""
+	}
 }
 
 func annotateRunDiagnostics(items []models.PipelineRun) {
@@ -4619,7 +4660,7 @@ func isPendingBatchWorkflowCreation(run *models.PipelineRun) bool {
 
 func isMisclassifiedTerminalRunStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "error", "expired":
+	case "failed", "error", "expired":
 		return true
 	default:
 		return false

@@ -3385,6 +3385,53 @@ func TestRefreshRunStatus_KeepsActiveRunWithWorkflowUIDActiveOnNotFound(t *testi
 	}
 }
 
+func TestRefreshRunStatus_PreservesRecentActiveRunBeforeStaleLedger(t *testing.T) {
+	ctx := context.Background()
+	finishedAt := time.Now().UTC().Add(-1 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				FinishedAt:   &finishedAt,
+				Message:      staleWorkflowTTLCleanupMessage,
+				CreatedAt:    time.Now().UTC().Add(-10 * time.Minute),
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return nil, argo.ErrNotFound
+	}
+	assetNodeRepo := &mockAssetNodeRepo{
+		byRun: map[string][]models.PipelineRunAssetNode{
+			"run-1": {
+				{RunID: "run-1", PipelineNodeID: "step-1", Status: "Error", Message: staleWorkflowTTLCleanupMessage},
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetObservabilityRepositories(assetNodeRepo, nil, nil)
+
+	uc.refreshRunStatus(ctx, runRepo.byID["run-1"])
+
+	run := runRepo.byID["run-1"]
+	if run.Status != "Running" {
+		t.Fatalf("expected recent active run to stay Running, got %q", run.Status)
+	}
+	if run.Message != "" {
+		t.Fatalf("expected stale TTL message cleared, got %q", run.Message)
+	}
+	if run.FinishedAt != nil {
+		t.Fatalf("expected active run finished_at cleared, got %v", run.FinishedAt)
+	}
+}
+
 func TestListRunSummaries_DefaultBatchViewDoesNotRefreshActiveRuns(t *testing.T) {
 	ctx := context.Background()
 	batchJobID := "batch-1"
@@ -3421,6 +3468,52 @@ func TestListRunSummaries_DefaultBatchViewDoesNotRefreshActiveRuns(t *testing.T)
 	}
 	if getWorkflowCalls != 0 {
 		t.Fatalf("default batch summary should not refresh Argo, got %d calls", getWorkflowCalls)
+	}
+}
+
+func TestListRunSummaries_NormalizesActiveStaleTerminalFields(t *testing.T) {
+	ctx := context.Background()
+	finishedAt := time.Now().UTC().Add(-1 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				FinishedAt:   &finishedAt,
+				Message:      staleWorkflowTTLCleanupMessage,
+				CreatedAt:    time.Now().UTC(),
+			},
+		},
+	}
+	getWorkflowCalls := 0
+	wfClient := &mockWorkflowClient{
+		getWorkflowFn: func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+			getWorkflowCalls++
+			return &wfv1.Workflow{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+				Status:     wfv1.WorkflowStatus{Phase: wfv1.WorkflowRunning},
+			}, nil
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	items, total, err := uc.ListRunSummaries(ctx, models.PipelineRunListFilter{ExcludeBatch: true})
+	if err != nil {
+		t.Fatalf("ListRunSummaries: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("expected one summary, total=%d len=%d", total, len(items))
+	}
+	if getWorkflowCalls != 0 {
+		t.Fatalf("default summary should not refresh Argo, got %d calls", getWorkflowCalls)
+	}
+	if items[0].FinishedAt != nil {
+		t.Fatalf("expected active summary finished_at cleared, got %v", items[0].FinishedAt)
+	}
+	if items[0].Message != "" {
+		t.Fatalf("expected stale active summary message cleared, got %q", items[0].Message)
 	}
 }
 
@@ -3785,6 +3878,67 @@ func TestGetRun_ReconcilesMisclassifiedError(t *testing.T) {
 	}
 }
 
+func TestGetRun_ReconcilesMisclassifiedFailedWithRunningNodes(t *testing.T) {
+	ctx := context.Background()
+	finishedAt := time.Now().UTC().Add(-10 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Failed",
+				FinishedAt:   &finishedAt,
+				Message:      "run_failed",
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Nodes: map[string]wfv1.NodeStatus{
+					"wf-1": {
+						ID:          "wf-1",
+						Name:        "wf-1",
+						DisplayName: "wf-1",
+						Type:        wfv1.NodeTypeDAG,
+						Phase:       wfv1.NodeRunning,
+					},
+					"wf-1-123": {
+						ID:           "wf-1-123",
+						Name:         "wf-1.step-a",
+						DisplayName:  "step-a",
+						TemplateName: "step-a",
+						Type:         wfv1.NodeTypePod,
+						Phase:        wfv1.NodeRunning,
+					},
+				},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+
+	run, err := uc.GetRun(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if run.Status != "Running" {
+		t.Fatalf("expected reconciled Running status, got %q", run.Status)
+	}
+	if run.FinishedAt != nil {
+		t.Fatalf("expected active run finished_at cleared, got %v", run.FinishedAt)
+	}
+	if len(run.Nodes) == 0 || run.Nodes[0].Phase != "Running" {
+		t.Fatalf("expected running nodes to be refreshed, got %#v", run.Nodes)
+	}
+}
+
 type mockAssetNodeRepo struct {
 	byRun map[string][]models.PipelineRunAssetNode
 }
@@ -3854,7 +4008,7 @@ func TestReconcileTerminalRunFromLedger_StuckRunningWithSucceededNodes(t *testin
 func TestRefreshRunForList_WorkflowMissingUsesDiagnosticAssetNode(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
-	createdAt := now.Add(-10 * time.Minute)
+	createdAt := now.Add(-staleActiveRunMaxAge - time.Minute)
 	runRepo := &mockRunRepo{
 		byID: map[string]*models.PipelineRun{
 			"run-1": {
