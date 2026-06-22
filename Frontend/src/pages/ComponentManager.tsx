@@ -285,6 +285,21 @@ const shortImageUid = (identity?: string): string => {
 	return (hash >>> 0).toString(16).padStart(8, "0");
 };
 
+const CATEGORY_DEFS: Array<{ pattern: RegExp; id: string; color: string }> = [
+	{ pattern: /^cyberpipe-/, id: "cyberpipe", color: "#1677ff" },
+	{ pattern: /^cyb2178-/, id: "cyb2178", color: "#722ed1" },
+	{ pattern: /^hand-track-/, id: "hand-track", color: "#fa8c16" },
+	{ pattern: /^(smoke-|output-writer-)/, id: "tools", color: "#52c41a" },
+];
+
+function deriveCategory(name: string): { id: string; color: string } | null {
+	if (!name) return null;
+	for (const def of CATEGORY_DEFS) {
+		if (def.pattern.test(name)) return { id: def.id, color: def.color };
+	}
+	return null;
+}
+
 const releaseImageUid = (release?: PipelineComponentReleaseAPI): string =>
 	release?.imageUid ||
 	shortImageUid(release?.imageDigest || release?.runtimeImage || release?.id);
@@ -2118,8 +2133,14 @@ export function ComponentManager() {
 					loading={loading || releaseLoading}
 					columns={libraryColumns}
 					dataSource={displayedLibraryRows}
-					scroll={{ x: isNarrow ? 480 : 1100, y: 520 }}
+					scroll={{ x: isNarrow ? 480 : 1100 }}
 					tableLayout="fixed"
+					onRow={(record) => {
+						const cat = deriveCategory(record.name);
+						return cat
+							? { className: `component-cat component-cat--${cat.id}` }
+							: {};
+					}}
 					expandable={{
 						showExpandColumn: false,
 						expandedRowKeys: activeExpandedRowKeys,
