@@ -1926,6 +1926,7 @@ func TestRetryDeployment_PreservesInputAssetIDs(t *testing.T) {
 
 type mockRunRepo struct {
 	byID         map[string]*models.PipelineRun
+	summaryByID  map[string]*models.PipelineRun
 	byWf         map[string]*models.PipelineRun
 	findAllErr   error
 	findAllCalls int
@@ -1979,6 +1980,15 @@ func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRun
 	return filtered, len(filtered), nil
 }
 func (m *mockRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	if m.byID == nil {
+		return nil, nil
+	}
+	return m.byID[id], nil
+}
+func (m *mockRunRepo) FindSummaryByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	if m.summaryByID != nil {
+		return m.summaryByID[id], nil
+	}
 	if m.byID == nil {
 		return nil, nil
 	}
@@ -3613,6 +3623,73 @@ func TestGetRun_ReconcilesNewBatchPlaceholderErrorToPending(t *testing.T) {
 	}
 	if run.FinishedAt != nil {
 		t.Fatalf("finishedAt = %v, want nil", run.FinishedAt)
+	}
+}
+
+func TestGetRun_ReturnsBackfillOnlyFailedSummary(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	finishedAt := time.Now().UTC()
+	runRepo := &mockRunRepo{
+		summaryByID: map[string]*models.PipelineRun{
+			"item-1": {
+				ID:            "item-1",
+				Status:        "Failed",
+				Message:       "invalid argument: node head_tracking runtime secret video-proc-dev-db-creds is not available",
+				FailureReason: "run_failed",
+				BatchJobID:    &batchJobID,
+				AssetIDs:      []string{"asset-1"},
+				AssetCount:    1,
+				CreatedAt:     time.Now().UTC(),
+				FinishedAt:    &finishedAt,
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	run, err := uc.GetRun(ctx, "item-1")
+	if err != nil {
+		t.Fatalf("GetRun() error = %v", err)
+	}
+	if run == nil {
+		t.Fatal("GetRun() returned nil for summary-only failed batch item")
+	}
+	if run.Status != "Failed" || run.Message == "" {
+		t.Fatalf("run = %+v, want failed summary with message", run)
+	}
+	if run.WorkflowName != "" {
+		t.Fatalf("workflowName = %q, want empty for pre-submit failure", run.WorkflowName)
+	}
+}
+
+func TestListRunEvents_ReturnsEmptyForBackfillOnlyFailedSummary(t *testing.T) {
+	ctx := context.Background()
+	batchJobID := "batch-1"
+	finishedAt := time.Now().UTC()
+	runRepo := &mockRunRepo{
+		summaryByID: map[string]*models.PipelineRun{
+			"item-1": {
+				ID:         "item-1",
+				Status:     "Failed",
+				Message:    "invalid argument: runtime secret is not available",
+				BatchJobID: &batchJobID,
+				AssetIDs:   []string{"asset-1"},
+				AssetCount: 1,
+				CreatedAt:  time.Now().UTC(),
+				FinishedAt: &finishedAt,
+			},
+		},
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	result, err := uc.ListRunEvents(ctx, "item-1", models.PipelineRunEventListOptions{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListRunEvents() error = %v", err)
+	}
+	if result == nil || len(result.Items) != 0 {
+		t.Fatalf("events = %+v, want empty event list", result)
 	}
 }
 

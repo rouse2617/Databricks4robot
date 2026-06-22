@@ -120,6 +120,40 @@ remove_env() {
   mv "${file}.tmp" "$file"
 }
 
+current_cloudrun_env_value() {
+  local key="$1"
+  gcloud run services describe "${SERVICE_NAME}" \
+    --project "${PROJECT_ID}" \
+    --region "${REGION}" \
+    --format=json 2>/dev/null \
+    | python3 -c 'import json,sys
+key=sys.argv[1]
+try:
+    svc=json.load(sys.stdin)
+except Exception:
+    print("")
+    raise SystemExit(0)
+for item in svc.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("env", []):
+    if item.get("name") == key and "value" in item:
+        print(item.get("value") or "")
+        break
+' "${key}"
+}
+
+preserve_current_cloudrun_env_if_unset() {
+  local key="$1"
+  local file="$2"
+  if grep -q "^${key}=" "${file}"; then
+    return 0
+  fi
+  local current_value
+  current_value="$(current_cloudrun_env_value "${key}" || true)"
+  if [[ -n "${current_value}" ]]; then
+    echo "INFO: Preserving existing Cloud Run env ${key}."
+    upsert_env "${key}" "${current_value}" "${file}"
+  fi
+}
+
 # True if ELASTICSEARCH_URL points at in-cluster DNS / headless names Cloud Run cannot resolve.
 _elasticsearch_url_is_in_cluster() {
   local u="$1"
@@ -290,6 +324,11 @@ remove_env "ARGO_AUTH_TOKEN" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_RESOURCE_MAX_DISK_OVERRIDE}" ]] && upsert_env "PIPELINE_RESOURCE_MAX_DISK" "${PIPELINE_RESOURCE_MAX_DISK_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_RESOURCE_MAX_GPU_OVERRIDE}" ]] && upsert_env "PIPELINE_RESOURCE_MAX_GPU" "${PIPELINE_RESOURCE_MAX_GPU_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD_OVERRIDE}" ]] && upsert_env "PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD" "${PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD_OVERRIDE}" "${ENV_KV_FILE}"
+[[ -z "${PIPELINE_TEMPLATE_NODE_SELECTOR_JSON_OVERRIDE}" ]] && preserve_current_cloudrun_env_if_unset "PIPELINE_TEMPLATE_NODE_SELECTOR_JSON" "${ENV_KV_FILE}"
+[[ -z "${PIPELINE_TEMPLATE_TOLERATIONS_JSON_OVERRIDE}" ]] && preserve_current_cloudrun_env_if_unset "PIPELINE_TEMPLATE_TOLERATIONS_JSON" "${ENV_KV_FILE}"
+[[ -z "${PIPELINE_RUNTIME_MOUNT_CATALOG_JSON_OVERRIDE}" ]] && preserve_current_cloudrun_env_if_unset "PIPELINE_RUNTIME_MOUNT_CATALOG_JSON" "${ENV_KV_FILE}"
+[[ -z "${PIPELINE_RUNTIME_SECRET_RESOURCES_JSON_OVERRIDE}" ]] && preserve_current_cloudrun_env_if_unset "PIPELINE_RUNTIME_SECRET_RESOURCES_JSON" "${ENV_KV_FILE}"
+[[ -z "${PIPELINE_RUNTIME_STORAGE_RESOURCES_JSON_OVERRIDE}" ]] && preserve_current_cloudrun_env_if_unset "PIPELINE_RUNTIME_STORAGE_RESOURCES_JSON" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_TEMPLATE_NODE_SELECTOR_JSON_OVERRIDE}" ]] && upsert_env "PIPELINE_TEMPLATE_NODE_SELECTOR_JSON" "${PIPELINE_TEMPLATE_NODE_SELECTOR_JSON_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_TEMPLATE_TOLERATIONS_JSON_OVERRIDE}" ]] && upsert_env "PIPELINE_TEMPLATE_TOLERATIONS_JSON" "${PIPELINE_TEMPLATE_TOLERATIONS_JSON_OVERRIDE}" "${ENV_KV_FILE}"
 [[ -n "${PIPELINE_RUNTIME_MOUNT_CATALOG_JSON_OVERRIDE}" ]] && upsert_env "PIPELINE_RUNTIME_MOUNT_CATALOG_JSON" "${PIPELINE_RUNTIME_MOUNT_CATALOG_JSON_OVERRIDE}" "${ENV_KV_FILE}"

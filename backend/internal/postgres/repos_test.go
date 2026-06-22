@@ -31,7 +31,9 @@ type fakeDB struct {
 	execArgs         [][]any
 }
 
-func (f *fakeDB) QueryRow(_ context.Context, _ string, _ ...any) rowScanner {
+func (f *fakeDB) QueryRow(_ context.Context, q string, args ...any) rowScanner {
+	f.querySQLs = append(f.querySQLs, q)
+	f.queryArgs = append(f.queryArgs, args)
 	if f.queryRow == nil {
 		return &fakeRow{err: errNoRows}
 	}
@@ -115,10 +117,10 @@ func TestPipelineRunRepoListSummariesBatchUsesBackfillItemStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSummaries() error = %v", err)
 	}
-	if len(db.querySQLs) != 1 {
-		t.Fatalf("expected 1 list query, got %d", len(db.querySQLs))
+	if len(db.querySQLs) != 2 {
+		t.Fatalf("expected count + list queries, got %d", len(db.querySQLs))
 	}
-	q := db.querySQLs[0]
+	q := db.querySQLs[1]
 	for _, want := range []string{
 		"WHEN 'completed' THEN 'Succeeded'",
 		"CASE WHEN bi.status = 'completed' THEN ''",
@@ -132,8 +134,37 @@ func TestPipelineRunRepoListSummariesBatchUsesBackfillItemStatus(t *testing.T) {
 	if strings.Contains(q, "pr.status = $2") {
 		t.Fatalf("batch-scoped status filter should not use raw pipeline run status:\n%s", q)
 	}
-	if got := db.queryArgs[0]; !reflect.DeepEqual(got, []any{"job-1", "Succeeded", 20, 0}) {
+	if got := db.queryArgs[1]; !reflect.DeepEqual(got, []any{"job-1", "Succeeded", 20, 0}) {
 		t.Fatalf("query args = %#v, want job/status/page args", got)
+	}
+}
+
+func TestPipelineRunRepoFindSummaryByIDIncludesBackfillOnlyItem(t *testing.T) {
+	db := &fakeDB{
+		queryRow: &fakeRow{err: errNoRows},
+	}
+	repo := NewPipelineRunRepo(&Client{db: db})
+
+	_, err := repo.FindSummaryByID(context.Background(), "item-1")
+	if err != nil {
+		t.Fatalf("FindSummaryByID() error = %v", err)
+	}
+	if len(db.querySQLs) != 1 {
+		t.Fatalf("expected 1 query, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[0]
+	for _, want := range []string{
+		"FROM pipeline_runs pr",
+		"FROM backfill_items",
+		"WHERE id = $1 OR pipeline_run_id = $1",
+		"LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("FindSummaryByID query missing %q:\n%s", want, q)
+		}
+	}
+	if got := db.queryArgs[0]; !reflect.DeepEqual(got, []any{"item-1"}) {
+		t.Fatalf("query args = %#v, want item id", got)
 	}
 }
 
@@ -152,10 +183,10 @@ func TestPipelineRunRepoListSummariesExcludeBatchUsesPipelineRunsOnly(t *testing
 	if err != nil {
 		t.Fatalf("ListSummaries() error = %v", err)
 	}
-	if len(db.querySQLs) != 1 {
-		t.Fatalf("expected 1 list query, got %d", len(db.querySQLs))
+	if len(db.querySQLs) != 2 {
+		t.Fatalf("expected count + list queries, got %d", len(db.querySQLs))
 	}
-	q := db.querySQLs[0]
+	q := db.querySQLs[1]
 	for _, want := range []string{
 		"FROM pipeline_runs pr",
 		"pr.batch_job_id IS NULL",

@@ -86,6 +86,9 @@ func (m *mockRunRepo) ListSummaries(context.Context, models.PipelineRunListFilte
 	return nil, 0, nil
 }
 func (m *mockRunRepo) FindByID(context.Context, string) (*models.PipelineRun, error) { return nil, nil }
+func (m *mockRunRepo) FindSummaryByID(context.Context, string) (*models.PipelineRun, error) {
+	return nil, nil
+}
 func (m *mockRunRepo) FindByWorkflowName(_ context.Context, workflowName string) (*models.PipelineRun, error) {
 	if m.byWorkflow != nil {
 		return m.byWorkflow[workflowName], nil

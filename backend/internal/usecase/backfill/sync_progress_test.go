@@ -189,6 +189,12 @@ func (m *syncTestRunRepo) FindByID(_ context.Context, id string) (*models.Pipeli
 	}
 	return m.byID[id], nil
 }
+func (m *syncTestRunRepo) FindSummaryByID(_ context.Context, id string) (*models.PipelineRun, error) {
+	if m.byID == nil {
+		return nil, nil
+	}
+	return m.byID[id], nil
+}
 func (m *syncTestRunRepo) FindByWorkflowName(context.Context, string) (*models.PipelineRun, error) {
 	return nil, nil
 }

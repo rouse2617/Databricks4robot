@@ -808,6 +808,11 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 	return &r, nil
 }
 
+const pipelineRunSummaryOuterCols = `id, template_id, pipeline_name, template_version, workflow_name,
+  execution_target_id, status, node_count, asset_ids, asset_count, no_asset_run,
+  argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
+  created_at, updated_at, started_at, finished_at`
+
 // Save inserts or updates a pipeline run.
 func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) error {
 	if run == nil {
@@ -1078,6 +1083,53 @@ func (r *PipelineRunRepo) FindByID(ctx context.Context, id string) (*models.Pipe
 FROM pipeline_runs
 WHERE id = $1`
 	return r.findOne(ctx, q, id, "FindByID")
+}
+
+// FindSummaryByID returns a lightweight run projection by id. It also covers
+// backfill items that failed before a pipeline_runs row was materialized.
+func (r *PipelineRunRepo) FindSummaryByID(ctx context.Context, id string) (*models.PipelineRun, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
+	q := `SELECT ` + pipelineRunSummaryOuterCols + `
+FROM (
+  SELECT ` + pipelineRunSummarySelectSQL(false) + `, 0 AS source_order
+  FROM pipeline_runs pr
+  WHERE pr.id = $1
+  UNION ALL
+  SELECT ` + pipelineRunSummarySelectSQL(true) + `, 1 AS source_order
+  FROM (
+    SELECT DISTINCT ON (job_id, asset_id) *
+    FROM backfill_items
+    WHERE id = $1 OR pipeline_run_id = $1
+    ORDER BY job_id, asset_id,
+      CASE status
+        WHEN 'completed' THEN 0
+        WHEN 'failed' THEN 1
+        WHEN 'cancelled' THEN 1
+        WHEN 'running' THEN 2
+        WHEN 'pending' THEN 3
+        ELSE 4
+      END,
+      CASE WHEN pipeline_run_id IS NULL OR pipeline_run_id = '' THEN 1 ELSE 0 END,
+      finished_at DESC NULLS LAST,
+      started_at DESC NULLS LAST,
+      created_at DESC
+  ) bi
+  LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
+) s
+ORDER BY source_order
+LIMIT 1`
+	db := dbFromCtx(ctx, r.c.db)
+	run, err := scanPipelineRunSummary(db.QueryRow(ctx, q, id))
+	if err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres PipelineRunRepo.FindSummaryByID: %w", err)
+	}
+	return run, nil
 }
 
 // FindByWorkflowName returns a pipeline run by Argo workflow name.

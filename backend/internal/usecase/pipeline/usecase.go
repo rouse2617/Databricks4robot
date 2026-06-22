@@ -3247,6 +3247,12 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 		return nil, err
 	}
 	if run == nil {
+		run, err = uc.runRepo.FindSummaryByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if run == nil {
 		return nil, nil
 	}
 	uc.refreshPipelineRunStatus(ctx, run)
@@ -3426,7 +3432,7 @@ func (uc *Usecase) ListRunEvents(ctx context.Context, id string, opts models.Pip
 	if uc.runRepo == nil {
 		return nil, ErrDeploymentNotFound
 	}
-	run, err := uc.runRepo.FindByID(ctx, id)
+	run, err := uc.GetRun(ctx, id)
 	if err != nil {
 		return nil, err
 	}
