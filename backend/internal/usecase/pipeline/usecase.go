@@ -2659,7 +2659,10 @@ func (uc *Usecase) Deploy(
 			transpiler.EnvVar{Name: "ASSET_COUNT", Value: fmt.Sprintf("%d", len(assetIDs))},
 		)
 		if len(assetIDs) == 1 {
-			globalEnv = append(globalEnv, transpiler.EnvVar{Name: "VIDEO_ID", Value: assetIDs[0]})
+			globalEnv = append(globalEnv,
+				transpiler.EnvVar{Name: "VIDEO_ID", Value: assetIDs[0]},
+				transpiler.EnvVar{Name: "ASSET_ID", Value: assetIDs[0]},
+			)
 		}
 		for i, aid := range assetIDs {
 			prefix := fmt.Sprintf("ASSET_%d_", i)
