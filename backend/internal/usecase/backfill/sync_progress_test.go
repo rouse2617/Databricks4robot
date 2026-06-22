@@ -170,7 +170,9 @@ func (r *pausedSyncRepo) FindItemsByAssetID(context.Context, string) ([]models.B
 }
 
 type syncTestRunRepo struct {
-	byID map[string]*models.PipelineRun
+	byID           map[string]*models.PipelineRun
+	summaries      []models.PipelineRun
+	lastListFilter *models.PipelineRunListFilter
 }
 
 func (m *syncTestRunRepo) Save(context.Context, *models.PipelineRun) error { return nil }
@@ -180,8 +182,14 @@ func (m *syncTestRunRepo) FindAll(context.Context) ([]models.PipelineRun, error)
 func (m *syncTestRunRepo) FindAllSummaries(context.Context) ([]models.PipelineRun, error) {
 	return nil, nil
 }
-func (m *syncTestRunRepo) ListSummaries(context.Context, models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
-	return nil, 0, nil
+func (m *syncTestRunRepo) ListSummaries(_ context.Context, filter models.PipelineRunListFilter) ([]models.PipelineRun, int, error) {
+	m.lastListFilter = &filter
+	if m.summaries == nil {
+		return nil, 0, nil
+	}
+	out := make([]models.PipelineRun, len(m.summaries))
+	copy(out, m.summaries)
+	return out, len(out), nil
 }
 func (m *syncTestRunRepo) FindByID(_ context.Context, id string) (*models.PipelineRun, error) {
 	if m.byID == nil {
@@ -344,6 +352,115 @@ func TestGetBatchNodeSummary_SyncsActiveRunsBeforeAggregating(t *testing.T) {
 	}
 	if repo.job.Status != "completed" {
 		t.Fatalf("expected job completed after summary sync, got %q", repo.job.Status)
+	}
+}
+
+func TestGetJob_ForcesProgressSyncDespiteRecentThrottle(t *testing.T) {
+	ctx := context.Background()
+	jobID := "job-1"
+	runID := "run-1"
+	repo := &pausedSyncRepo{
+		job: &models.BackfillJob{
+			ID:         jobID,
+			Status:     "running",
+			TotalCount: 1,
+		},
+		items: []models.BackfillItem{
+			{
+				ID:            "item-1",
+				JobID:         jobID,
+				AssetID:       "asset-1",
+				Status:        "running",
+				PipelineRunID: &runID,
+			},
+		},
+	}
+	runRepo := &syncTestRunRepo{
+		byID: map[string]*models.PipelineRun{
+			runID: {
+				ID:              runID,
+				WorkflowName:    "wf-1",
+				Status:          "Succeeded",
+				ArgoWorkflowUID: "uid-1",
+			},
+		},
+	}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+	uc.lastSync = map[string]time.Time{jobID: time.Now()}
+
+	job, err := uc.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job")
+	}
+	if job.Status != "completed" {
+		t.Fatalf("expected job completed despite throttle, got %q", job.Status)
+	}
+	if job.CompletedCount != 1 {
+		t.Fatalf("expected completedCount=1, got %d", job.CompletedCount)
+	}
+}
+
+func TestSyncJobProgress_RefreshesBatchScopedActiveRunSummaries(t *testing.T) {
+	ctx := context.Background()
+	jobID := "job-1"
+	runID := "run-1"
+	repo := &pausedSyncRepo{
+		job: &models.BackfillJob{
+			ID:         jobID,
+			Status:     "running",
+			TotalCount: 1,
+		},
+		items: []models.BackfillItem{
+			{
+				ID:            "item-1",
+				JobID:         jobID,
+				AssetID:       "asset-1",
+				Status:        "running",
+				PipelineRunID: &runID,
+			},
+		},
+	}
+	runRepo := &syncTestRunRepo{
+		byID: map[string]*models.PipelineRun{
+			runID: {
+				ID:              runID,
+				WorkflowName:    "wf-1",
+				Status:          "Running",
+				ArgoWorkflowUID: "uid-1",
+			},
+		},
+		summaries: []models.PipelineRun{
+			{
+				ID:              runID,
+				WorkflowName:    "wf-1",
+				Status:          "Running",
+				ArgoWorkflowUID: "uid-1",
+			},
+		},
+	}
+	pipeline := pipelineUC.New(nil, nil, nil, syncTestWorkflowClient{}, "default")
+	pipeline.SetRunRepositories(nil, runRepo, nil)
+	uc := New(repo, pipeline)
+
+	if err := uc.syncJobProgressForce(ctx, jobID); err != nil {
+		t.Fatalf("syncJobProgressForce: %v", err)
+	}
+	if runRepo.lastListFilter == nil || !runRepo.lastListFilter.RefreshActive {
+		t.Fatalf("expected batch sync to request active refresh, got %+v", runRepo.lastListFilter)
+	}
+	if repo.items[0].Status != "completed" {
+		t.Fatalf("expected item completed, got %q", repo.items[0].Status)
+	}
+	if repo.job.Status != "completed" {
+		t.Fatalf("expected job completed, got %q", repo.job.Status)
+	}
+	if repo.job.CompletedCount != 1 {
+		t.Fatalf("expected completedCount=1, got %d", repo.job.CompletedCount)
 	}
 }
 

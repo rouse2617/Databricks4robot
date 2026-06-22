@@ -543,7 +543,7 @@ func (uc *Usecase) SyncBatchView(ctx context.Context, jobID string, runs []model
 			uc.pipelineUC.RefreshRunForList(ctx, &runs[i])
 		}
 	}
-	return uc.syncJobProgress(ctx, jobID)
+	return uc.syncJobProgressForce(ctx, jobID)
 }
 
 // ReconcileItemByID materializes or repairs the ledger row for a single backfill item.
@@ -682,7 +682,7 @@ func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, 
 	if job == nil {
 		return nil, nil
 	}
-	_ = uc.syncJobProgress(ctx, id)
+	_ = uc.syncJobProgressForce(ctx, id)
 	_ = uc.ReconcileSubtaskRuns(ctx, id)
 	return uc.repo.FindJobByID(ctx, id)
 }
@@ -1227,7 +1227,15 @@ func (uc *Usecase) markSyncProgressDone(jobID string) {
 }
 
 func (uc *Usecase) syncJobProgress(ctx context.Context, jobID string) error {
-	if !uc.shouldSyncProgress(jobID) {
+	return uc.syncJobProgressInternal(ctx, jobID, false)
+}
+
+func (uc *Usecase) syncJobProgressForce(ctx context.Context, jobID string) error {
+	return uc.syncJobProgressInternal(ctx, jobID, true)
+}
+
+func (uc *Usecase) syncJobProgressInternal(ctx context.Context, jobID string, force bool) error {
+	if !force && !uc.shouldSyncProgress(jobID) {
 		return nil
 	}
 	uc.markSyncProgressDone(jobID)
@@ -1314,8 +1322,9 @@ func (uc *Usecase) fetchBatchRunsByIDMap(ctx context.Context, jobID string, item
 		return m
 	}
 	all, _, err := uc.pipelineUC.ListRunSummaries(ctx, models.PipelineRunListFilter{
-		BatchJobID: jobID,
-		PageSize:   max(len(items), 1),
+		BatchJobID:    jobID,
+		PageSize:      max(len(items), 1),
+		RefreshActive: true,
 	})
 	if err != nil || len(all) == 0 {
 		if err != nil {
