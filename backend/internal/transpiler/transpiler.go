@@ -416,7 +416,7 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 		if arg.From != "" {
 			containerArgs = append(containerArgs, fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(arg.Name)))
 		} else if arg.Value != "" {
-			containerArgs = append(containerArgs, arg.Value)
+			containerArgs = append(containerArgs, splitArgValue(arg.Value)...)
 		} else {
 			containerArgs = append(containerArgs, fmt.Sprintf("{{inputs.parameters.%s}}", safeParamName(arg.Name)))
 		}
@@ -834,6 +834,26 @@ func isShellBinary(name string) bool {
 
 // shellScriptArgIndex finds the args entry that contains the shell script body.
 // Argo container templates commonly use either Command=["sh"], Args=["-c", "..."]
+// splitArgValue splits a combined arg value like "--flag=value" or
+// " --flag value" into separate elements so the container runtime passes
+// them as individual argv entries.
+func splitArgValue(raw string) []string {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return nil
+	}
+	// "--flag=value" → ["--flag", "value"]
+	if idx := strings.IndexByte(v, '='); idx > 2 && strings.HasPrefix(v, "--") {
+		return []string{v[:idx], v[idx+1:]}
+	}
+	// "--flag value" → ["--flag", "value"]
+	if idx := strings.IndexByte(v, ' '); idx > 2 && strings.HasPrefix(v, "--") {
+		return []string{v[:idx], strings.TrimSpace(v[idx+1:])}
+	}
+	return []string{v}
+}
+
+
 // or Command=["sh", "-c"], Args=["..."].
 func shellScriptArgIndex(cmd []string, args []string) int {
 	if len(cmd) != 1 {
