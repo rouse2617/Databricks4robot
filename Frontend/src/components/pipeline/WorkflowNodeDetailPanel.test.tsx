@@ -378,6 +378,7 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByText("输入/输出"));
+		fireEvent.click(screen.getByText("节点参数"));
 		expect(screen.getByText("lr")).toBeTruthy();
 	});
 
@@ -398,6 +399,7 @@ describe("WorkflowNodeDetailPanel", () => {
 			/>,
 		);
 		fireEvent.click(screen.getByText("输入/输出"));
+		fireEvent.click(screen.getByText("节点输出"));
 		expect(screen.getByText("0")).toBeTruthy();
 	});
 

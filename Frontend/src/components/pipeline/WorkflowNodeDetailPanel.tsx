@@ -9,6 +9,7 @@ import {
 	Button,
 	Card,
 	Col,
+	Collapse,
 	Descriptions,
 	Drawer,
 	Empty,
@@ -77,21 +78,25 @@ type RuntimeBindingRow = {
 	mode: string;
 	envName: string;
 };
+type KeyValueRow = { key: string; name: string; value: string };
+type ArtifactRow = { key: string; name: string; path: string };
 
-const keyValueColumns: ColumnsType<{
-	key: string;
-	name: string;
-	value: string;
-}> = [
+const keyValueColumns: ColumnsType<KeyValueRow> = [
 	{ title: "名称", dataIndex: "name", key: "name" },
-	{ title: "值", dataIndex: "value", key: "value" },
+	{
+		title: "值",
+		dataIndex: "value",
+		key: "value",
+		render: (value: string) =>
+			value ? (
+				<Typography.Text copyable={{ text: value }}>{value}</Typography.Text>
+			) : (
+				"—"
+			),
+	},
 ];
 
-const artifactColumns: ColumnsType<{
-	key: string;
-	name: string;
-	path: string;
-}> = [
+const artifactColumns: ColumnsType<ArtifactRow> = [
 	{ title: "名称", dataIndex: "name", key: "name" },
 	{
 		title: "路径",
@@ -108,6 +113,27 @@ const artifactColumns: ColumnsType<{
 				</a>
 			);
 		},
+	},
+];
+
+const diagnosticColumns: ColumnsType<ArtifactRow> = [
+	{
+		title: "类型",
+		dataIndex: "name",
+		key: "name",
+		width: 96,
+		render: (name: string) => <Tag color="blue">{name || "diagnostic"}</Tag>,
+	},
+	{
+		title: "入口",
+		dataIndex: "path",
+		key: "path",
+		render: (path: string) =>
+			path ? (
+				<Typography.Text copyable={{ text: path }}>{path}</Typography.Text>
+			) : (
+				"—"
+			),
 	},
 ];
 
@@ -277,6 +303,53 @@ function formatArtifactRows(items?: Artifact[]) {
 		name: artifact.name,
 		path: artifact.path || "",
 	}));
+}
+
+function isRunInputParameter(row: KeyValueRow) {
+	const name = row.name.toLowerCase();
+	return (
+		name === "asset" ||
+		name === "asset_id" ||
+		name === "asset_ids" ||
+		name === "runtime_target" ||
+		name === "execution_target" ||
+		name === "target"
+	);
+}
+
+function isDiagnosticArtifact(row: ArtifactRow) {
+	const name = row.name.toLowerCase();
+	const path = row.path.toLowerCase();
+	return (
+		name === "logs" ||
+		name === "metrics" ||
+		name.includes("log") ||
+		name.includes("metric") ||
+		path.includes("/logs") ||
+		path.includes("/metrics")
+	);
+}
+
+function renderCompactTable<T extends { key: string }>({
+	rows,
+	columns,
+	empty,
+}: {
+	rows: T[];
+	columns: ColumnsType<T>;
+	empty: string;
+}) {
+	return rows.length === 0 ? (
+		<Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={empty} />
+	) : (
+		<Table
+			size="small"
+			dataSource={rows}
+			columns={columns}
+			pagination={false}
+			rowKey="key"
+		/>
+	);
 }
 
 function joinMountedFilePath(mountPath?: string, fileName?: string) {
@@ -1272,112 +1345,151 @@ function RuntimeTab({
 }
 
 function InputOutputTab({ node }: { node: WorkflowNodeStatus }) {
-	return (
-		<Space direction="vertical" style={{ width: "100%" }}>
-			<InputsTab node={node} />
-			<OutputsTab node={node} />
-		</Space>
+	const inputParameters = formatKvRows(node.inputs?.parameters);
+	const inputArtifacts = formatArtifactRows(node.inputs?.artifacts);
+	const outputParameters = formatKvRows(node.outputs?.parameters);
+	const outputArtifacts = formatArtifactRows(node.outputs?.artifacts);
+	const runInputParameters = inputParameters.filter(isRunInputParameter);
+	const nodeParameters = inputParameters.filter(
+		(row) => !isRunInputParameter(row),
 	);
-}
-
-function InputsTab({ node }: { node: WorkflowNodeStatus }) {
-	const parameters = formatKvRows(node.inputs?.parameters);
-	const artifacts = formatArtifactRows(node.inputs?.artifacts);
-
-	return (
-		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
-			<div>
-				<div style={{ marginBottom: 8, fontWeight: 600 }}>输入参数</div>
-				{parameters.length === 0 ? (
-					<Empty description="暂无输入参数" />
-				) : (
-					<Table
-						size="small"
-						dataSource={parameters}
-						columns={keyValueColumns}
-						pagination={false}
-						rowKey="key"
-					/>
-				)}
-			</div>
-			<div>
-				<div style={{ marginBottom: 8, fontWeight: 600 }}>输入产物</div>
-				{artifacts.length === 0 ? (
-					<Empty description="暂无输入产物" />
-				) : (
-					<Table
-						size="small"
-						dataSource={artifacts}
-						columns={artifactColumns}
-						pagination={false}
-						rowKey="key"
-					/>
-				)}
-			</div>
-		</Space>
+	const diagnostics = outputArtifacts.filter(isDiagnosticArtifact);
+	const realOutputArtifacts = outputArtifacts.filter(
+		(row) => !isDiagnosticArtifact(row),
 	);
-}
-
-function OutputsTab({ node }: { node: WorkflowNodeStatus }) {
-	const parameters = formatKvRows(node.outputs?.parameters);
-	const artifacts = formatArtifactRows(node.outputs?.artifacts);
+	const outputResult =
+		typeof node.outputs?.result === "string" && node.outputs.result.trim()
+			? node.outputs.result
+			: "";
+	const outputExitCode =
+		typeof node.outputs?.exitCode === "number" ||
+		typeof node.outputs?.exitCode === "string"
+			? String(node.outputs.exitCode)
+			: "";
+	const runtimeInputRows: KeyValueRow[] = [
+		...runInputParameters,
+		{
+			key: "workflow-node",
+			name: "node",
+			value: node.displayName || node.name || node.id,
+		},
+		{
+			key: "workflow-pod",
+			name: "pod",
+			value: getWorkflowNodePodName(node) || "",
+		},
+	].filter((row) => row.value);
+	const outputSummaryRows: KeyValueRow[] = [
+		...outputParameters,
+		...(outputResult
+			? [{ key: "output-result", name: "result", value: outputResult }]
+			: []),
+		...(outputExitCode
+			? [{ key: "output-exit-code", name: "exitCode", value: outputExitCode }]
+			: []),
+	];
+	const diagnosticRows: ArtifactRow[] = [
+		...diagnostics,
+		{
+			key: "diagnostic-pod",
+			name: "pod",
+			path: getWorkflowNodePodName(node) || "",
+		},
+	].filter((row) => row.path);
 
 	return (
-		<Space direction="vertical" size="middle" style={{ width: "100%" }}>
-			<Row gutter={[12, 12]}>
-				<Col span={24}>
-					<Card size="small" title="结果">
-						<Typography.Paragraph>
-							<pre
-								style={{
-									margin: 0,
-									whiteSpace: "pre-wrap",
-									wordBreak: "break-all",
-								}}
-							>
-								{node.outputs?.result || "—"}
-							</pre>
-						</Typography.Paragraph>
-					</Card>
-				</Col>
-				<Col span={24}>
-					<Card size="small" title="退出码">
-						{typeof node.outputs?.exitCode === "number" ||
-						typeof node.outputs?.exitCode === "string"
-							? node.outputs.exitCode
-							: "—"}
-					</Card>
-				</Col>
-			</Row>
-			<div>
-				<div style={{ marginBottom: 8, fontWeight: 600 }}>输出参数</div>
-				{parameters.length === 0 ? (
-					<Empty description="暂无输出参数" />
-				) : (
-					<Table
-						size="small"
-						dataSource={parameters}
-						columns={keyValueColumns}
-						pagination={false}
-						rowKey="key"
-					/>
-				)}
-			</div>
-			<div>
-				<div style={{ marginBottom: 8, fontWeight: 600 }}>输出产物</div>
-				{artifacts.length === 0 ? (
-					<Empty description="暂无输出产物" />
-				) : (
-					<Table
-						size="small"
-						dataSource={artifacts}
-						columns={artifactColumns}
-						pagination={false}
-						rowKey="key"
-					/>
-				)}
-			</div>
-		</Space>
+		<Collapse
+			defaultActiveKey={["run-inputs"]}
+			items={[
+				{
+					key: "run-inputs",
+					label: "运行输入",
+					children: (
+						<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+							<div>
+								<div style={{ marginBottom: 8, fontWeight: 600 }}>
+									资产、target、全局输入
+								</div>
+								{renderCompactTable({
+									rows: runtimeInputRows,
+									columns: keyValueColumns,
+									empty: "暂无运行输入",
+								})}
+							</div>
+							<div>
+								<div style={{ marginBottom: 8, fontWeight: 600 }}>输入产物</div>
+								{renderCompactTable({
+									rows: inputArtifacts,
+									columns: artifactColumns,
+									empty: "暂无输入产物",
+								})}
+							</div>
+						</Space>
+					),
+				},
+				{
+					key: "node-parameters",
+					label: "节点参数",
+					children: (
+						<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+							<div>
+								<div style={{ marginBottom: 8, fontWeight: 600 }}>
+									command / args / config
+								</div>
+								{renderCompactTable({
+									rows: nodeParameters,
+									columns: keyValueColumns,
+									empty: "暂无节点参数",
+								})}
+							</div>
+						</Space>
+					),
+				},
+				{
+					key: "node-outputs",
+					label: "节点输出",
+					children: (
+						<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+							<div>
+								<div style={{ marginBottom: 8, fontWeight: 600 }}>输出值</div>
+								{renderCompactTable({
+									rows: outputSummaryRows,
+									columns: keyValueColumns,
+									empty: "暂无输出值",
+								})}
+							</div>
+							<div>
+								<div style={{ marginBottom: 8, fontWeight: 600 }}>输出产物</div>
+								{renderCompactTable({
+									rows: realOutputArtifacts,
+									columns: artifactColumns,
+									empty: "暂无真实输出产物",
+								})}
+							</div>
+							<Alert
+								type="info"
+								showIcon
+								message="下游消费关系"
+								description="当前运行详情未返回稳定的消费者字段；后端补齐后这里会显示 output 被哪些下游 input 消费。"
+							/>
+						</Space>
+					),
+				},
+				{
+					key: "diagnostics",
+					label: "诊断入口",
+					children: (
+						<Space direction="vertical" size="middle" style={{ width: "100%" }}>
+							{renderCompactTable({
+								rows: diagnosticRows,
+								columns: diagnosticColumns,
+								empty: "暂无日志、metrics 或 Pod 入口",
+							})}
+						</Space>
+					),
+				},
+			]}
+		/>
 	);
 }
 
