@@ -308,7 +308,7 @@
 
 .palette-version-row {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto minmax(0, auto);
+	grid-template-columns: minmax(0, 2fr) auto minmax(0, 1fr);
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
