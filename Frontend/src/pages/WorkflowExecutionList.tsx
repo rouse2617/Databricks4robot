@@ -837,7 +837,8 @@ export function WorkflowExecutionList({
 		} catch (err) {
 			console.error(err);
 			setError(describeWorkflowError(err));
-			setItems([]);
+			// Keep existing items on transient failures instead of clearing
+			// the list, which makes it look like no runs exist.
 		} finally {
 			setLoading(false);
 			setInitializedOnce(true);
@@ -1425,7 +1426,7 @@ export function WorkflowExecutionList({
 		navigate,
 	]);
 
-	const showSkeleton = loading && !initializedOnce;
+	const showSkeleton = !initializedOnce;
 	const tableScrollX = isBatchScope ? "max-content" : 1500;
 
 	return (
