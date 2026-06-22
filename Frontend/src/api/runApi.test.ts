@@ -151,4 +151,42 @@ describe("runApi", () => {
 		expect(result.summary.aggregateStatus).toBe("Running");
 		expect(result.relations?.[0]?.relationType).toBe("batch_child");
 	});
+
+	it("adds pagination query params when listing run children", async () => {
+		const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					runId: "batch-1",
+					items: [],
+					relations: [],
+					summary: {
+						total: 0,
+						statuses: {},
+						aggregateStatus: "Pending",
+						activeCount: 0,
+						terminalCount: 0,
+						succeededCount: 0,
+						failedCount: 0,
+						cancelledCount: 0,
+						pendingCount: 0,
+						runningCount: 0,
+						suspendedCount: 0,
+					},
+					total: 816,
+					page: 2,
+					pageSize: 20,
+				}),
+				{ headers: { "content-type": "application/json" }, status: 200 },
+			),
+		);
+
+		const result = await listRunChildren("batch-1", { page: 2, pageSize: 20 });
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/api/v1/runs/batch-1/children?page=2&pageSize=20",
+			expect.objectContaining({ method: "GET" }),
+		);
+		expect(result.total).toBe(816);
+		expect(result.page).toBe(2);
+	});
 });

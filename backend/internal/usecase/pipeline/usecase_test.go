@@ -2294,6 +2294,58 @@ func TestListRunChildrenPrefersDurableRelations(t *testing.T) {
 	}
 }
 
+func TestListRunChildrenPaginatesDurableRelations(t *testing.T) {
+	t.Parallel()
+
+	const parentID = "run-parent"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			parentID: {
+				ID:        parentID,
+				Status:    "Running",
+				CreatedAt: time.Now().UTC(),
+			},
+		},
+	}
+	relationRepo := &mockRunRelationRepo{}
+	for i := 1; i <= 25; i++ {
+		childID := fmt.Sprintf("run-child-%02d", i)
+		runRepo.byID[childID] = &models.PipelineRun{
+			ID:        childID,
+			Status:    "Pending",
+			CreatedAt: time.Now().UTC(),
+		}
+		relationRepo.relations = append(relationRepo.relations, models.RunRelation{
+			ID:           fmt.Sprintf("rel-%02d", i),
+			ParentRunID:  parentID,
+			ChildRunID:   childID,
+			RelationType: "batch_child",
+			Source:       "run_relations",
+		})
+	}
+
+	uc := New(&mockTemplateRepo{}, nil, nil, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, runRepo, nil)
+	uc.SetRunFactRepositories(relationRepo, nil)
+
+	got, err := uc.ListRunChildren(context.Background(), parentID, models.PipelineRunListFilter{
+		Page:     2,
+		PageSize: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListRunChildren() error = %v", err)
+	}
+	if got.Total != 25 || got.Page != 2 || got.PageSize != 10 {
+		t.Fatalf("pagination metadata = %+v, want total=25 page=2 pageSize=10", got)
+	}
+	if len(got.Items) != 10 || got.Items[0].ID != "run-child-11" || got.Items[9].ID != "run-child-20" {
+		t.Fatalf("durable page children = %+v, want children 11-20", got.Items)
+	}
+	if len(got.Relations) != 10 || got.Relations[0].ChildRunID != "run-child-11" {
+		t.Fatalf("durable page relations = %+v, want child 11 first", got.Relations)
+	}
+}
+
 func TestListRunInputsPrefersDurableInputs(t *testing.T) {
 	t.Parallel()
 

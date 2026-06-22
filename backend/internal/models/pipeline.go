@@ -294,6 +294,8 @@ type RunChildList struct {
 	Relations []RunRelation   `json:"relations"`
 	Summary   RunChildSummary `json:"summary"`
 	Total     int             `json:"total"`
+	Page      int             `json:"page,omitempty"`
+	PageSize  int             `json:"pageSize,omitempty"`
 }
 
 // RunRelation is a product-facing relation fact between two Runs. New

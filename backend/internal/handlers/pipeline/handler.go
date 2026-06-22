@@ -682,7 +682,12 @@ func (h *Handler) ListRunChildren(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
 		return
 	}
-	result, err := h.runs.ListRunChildren(c.Request.Context(), id)
+	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
+	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
+	result, err := h.runs.ListRunChildren(c.Request.Context(), id, models.PipelineRunListFilter{
+		Page:     page,
+		PageSize: pageSize,
+	})
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrDeploymentNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, "pipeline run not found")

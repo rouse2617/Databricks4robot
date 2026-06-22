@@ -67,6 +67,8 @@ export interface RunChildrenResponse {
 	relations: RunRelation[];
 	summary: RunChildSummary;
 	total: number;
+	page?: number;
+	pageSize?: number;
 }
 
 export interface RunRelation {
@@ -133,6 +135,11 @@ export interface ListRunsOptions {
 	status?: string;
 	pipelineNodeId?: string;
 	nodeStatus?: string;
+	page?: number;
+	pageSize?: number;
+}
+
+export interface ListRunChildrenOptions {
 	page?: number;
 	pageSize?: number;
 }
@@ -304,10 +311,16 @@ export function listRunOutputs(runId: string): Promise<RunOutputListResponse> {
 	);
 }
 
-export function listRunChildren(runId: string): Promise<RunChildrenResponse> {
+export function listRunChildren(
+	runId: string,
+	options?: ListRunChildrenOptions,
+): Promise<RunChildrenResponse> {
+	const search = new URLSearchParams();
+	if (options?.page) search.set("page", String(options.page));
+	if (options?.pageSize) search.set("pageSize", String(options.pageSize));
 	return request<RunChildrenResponse>(
 		"GET",
-		`/runs/${encodeURIComponent(runId)}/children`,
+		withSearch(`/runs/${encodeURIComponent(runId)}/children`, search),
 	);
 }
 

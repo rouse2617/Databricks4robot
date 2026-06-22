@@ -2699,7 +2699,7 @@ curl -s "$BASE/api/v1/runs/<RUN_ID>/inputs" \
 curl -s "$BASE/api/v1/runs/<RUN_ID>/outputs" \
   -H "X-Databrew-Token: $TOKEN"
 
-curl -s "$BASE/api/v1/runs/<RUN_ID>/children" \
+curl -s "$BASE/api/v1/runs/<RUN_ID>/children?page=1&pageSize=20" \
   -H "X-Databrew-Token: $TOKEN"
 
 curl -s "$BASE/api/v1/runs/<RUN_ID>/runtime" \
@@ -2713,7 +2713,9 @@ curl -s "$BASE/api/v1/runs/<RUN_ID>/runtime" \
 
 Batch / Backfill 在 Runtime OS 中按父 Run + 子 Run 树查看。新建批量任务会尽力创建一个
 `id == backfill_job.id` 的父 Run；子任务 Run 继续通过 `batchJobId` 指向父 Run。
-`/runs/<RUN_ID>/children` 返回兼容的 `items/total`，并额外包含关系投影和聚合状态。
+`/runs/<RUN_ID>/children` 返回兼容的 `items/total/page/pageSize`，并额外包含关系投影和聚合状态。
+该接口支持 `page` / `pageSize` 分页，默认 `page=1&pageSize=20`，`pageSize` 最大 100，
+用于批次详情页的子 Run 预览；完整子任务表格仍应使用 `/runs?batchJobId=...` 分页查询。
 Batch 子任务投影为 `batch_child`；由重新运行、重提交、legacy 全量重试创建的新 Run
 会通过 RunEvent ledger 投影为 `rerun_of`、`resubmit_of`、`retry_of`：
 

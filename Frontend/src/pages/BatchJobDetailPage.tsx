@@ -231,7 +231,7 @@ async function loadBatchRunTree(
 	const inFlight = batchRunTreeInFlight.get(jobId);
 	if (inFlight) return inFlight;
 
-	const request = listRunChildren(jobId)
+	const request = listRunChildren(jobId, { page: 1, pageSize: 20 })
 		.then((value) => {
 			batchRunTreeCache.set(jobId, { value, cachedAt: Date.now() });
 			return value;
@@ -955,22 +955,36 @@ export default function BatchJobDetailPage() {
 					) : runTree?.summary ? (
 						<Space direction="vertical" size={12} style={{ width: "100%" }}>
 							<Space wrap>
-								<Tag
-									color={resolveStatusTagColor(runTree.summary.aggregateStatus)}
-								>
-									{formatWorkflowPhaseLabel(runTree.summary.aggregateStatus)}
-								</Tag>
-								{runTreeHealthTags(runTree.summary)}
-								{runTreeSummaryItems(runTree.summary).map((item) => (
-									<Text key={item.label} type="secondary">
-										{item.label} {item.value}
-									</Text>
-								))}
-								<Text type="secondary">
-									子运行 {runTree.relations?.length ?? 0}
-								</Text>
+								{runTree.total > runTree.items.length ? (
+									<>
+										<Tag color="blue">预览</Tag>
+										<Text type="secondary">
+											已加载 {runTree.items.length} / {runTree.total}
+										</Text>
+									</>
+								) : (
+									<>
+										<Tag
+											color={resolveStatusTagColor(
+												runTree.summary.aggregateStatus,
+											)}
+										>
+											{formatWorkflowPhaseLabel(
+												runTree.summary.aggregateStatus,
+											)}
+										</Tag>
+										{runTreeHealthTags(runTree.summary)}
+										{runTreeSummaryItems(runTree.summary).map((item) => (
+											<Text key={item.label} type="secondary">
+												{item.label} {item.value}
+											</Text>
+										))}
+									</>
+								)}
+								<Text type="secondary">子运行 {runTree.total}</Text>
 							</Space>
-							{runTree.summary.topFailureReasons?.length ? (
+							{runTree.total <= runTree.items.length &&
+							runTree.summary.topFailureReasons?.length ? (
 								<Alert
 									type={
 										runTree.summary.failedCount > 0 ||
@@ -1002,9 +1016,9 @@ export default function BatchJobDetailPage() {
 											{child.assetIds?.[0] ?? child.id.slice(0, 8)}
 										</Button>
 									))}
-									{runTree.items.length > 8 ? (
+									{runTree.total > 8 ? (
 										<Text type="secondary">
-											+{runTree.items.length - 8} 个子运行
+											+{runTree.total - 8} 个子运行
 										</Text>
 									) : null}
 								</Space>

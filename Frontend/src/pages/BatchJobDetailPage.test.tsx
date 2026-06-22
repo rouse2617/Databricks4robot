@@ -325,7 +325,10 @@ describe("BatchJobDetailPage", () => {
 		renderBatchJobDetail();
 
 		expect(await screen.findByText("批次运行")).toBeInTheDocument();
-		expect(mockListRunChildren).toHaveBeenCalledWith("batch-1");
+		expect(mockListRunChildren).toHaveBeenCalledWith("batch-1", {
+			page: 1,
+			pageSize: 20,
+		});
 		expect(screen.getByText("已有失败")).toBeInTheDocument();
 		expect(screen.getByText("存在阻塞")).toBeInTheDocument();
 		expect(screen.getByText("子运行 1")).toBeInTheDocument();

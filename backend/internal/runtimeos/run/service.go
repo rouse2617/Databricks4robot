@@ -47,7 +47,7 @@ type Service interface {
 	ListRunNodes(ctx context.Context, id string) ([]models.PipelineRunNode, error)
 	ListRunInputs(ctx context.Context, id string) (*models.RunInputList, error)
 	ListRunOutputs(ctx context.Context, id string) (*models.RunOutputList, error)
-	ListRunChildren(ctx context.Context, id string) (*models.RunChildList, error)
+	ListRunChildren(ctx context.Context, id string, filters ...models.PipelineRunListFilter) (*models.RunChildList, error)
 	GetRunRuntime(ctx context.Context, id string) (*models.RunRuntime, error)
 	GetRunWatcherStatus(ctx context.Context) (*models.PipelineRunWatcherState, error)
 }
@@ -77,7 +77,7 @@ type PipelineUsecase interface {
 	ListRunNodes(ctx context.Context, id string) ([]models.PipelineRunNode, error)
 	ListRunInputs(ctx context.Context, id string) (*models.RunInputList, error)
 	ListRunOutputs(ctx context.Context, id string) (*models.RunOutputList, error)
-	ListRunChildren(ctx context.Context, id string) (*models.RunChildList, error)
+	ListRunChildren(ctx context.Context, id string, filters ...models.PipelineRunListFilter) (*models.RunChildList, error)
 	GetRunRuntime(ctx context.Context, id string) (*models.RunRuntime, error)
 	GetRunWatcherStatus(ctx context.Context) (*models.PipelineRunWatcherState, error)
 }
@@ -200,8 +200,8 @@ func (s *service) ListRunOutputs(ctx context.Context, id string) (*models.RunOut
 	return s.pipeline.ListRunOutputs(ctx, id)
 }
 
-func (s *service) ListRunChildren(ctx context.Context, id string) (*models.RunChildList, error) {
-	return s.pipeline.ListRunChildren(ctx, id)
+func (s *service) ListRunChildren(ctx context.Context, id string, filters ...models.PipelineRunListFilter) (*models.RunChildList, error) {
+	return s.pipeline.ListRunChildren(ctx, id, filters...)
 }
 
 func (s *service) GetRunRuntime(ctx context.Context, id string) (*models.RunRuntime, error) {
