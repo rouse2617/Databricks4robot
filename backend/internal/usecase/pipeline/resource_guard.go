@@ -283,6 +283,20 @@ func (uc *Usecase) deriveUnschedulableRunFromWorkflow(
 	return string(wfv1.WorkflowError), formatUnschedulableRunMessage(selectedName, now.Sub(selectedSince), selectedMessage), &finishedAt, true
 }
 
+// imageStartupThreshold derives a shorter threshold for image startup failures
+// that might be transient (network blip). Terminal failures (e.g. ImagePullBackOff)
+// are detected immediately without waiting.
+func imageStartupThreshold(baseThreshold time.Duration) time.Duration {
+	if baseThreshold <= 0 {
+		return 0
+	}
+	short := baseThreshold / 3
+	if short < 1*time.Minute {
+		short = 1 * time.Minute
+	}
+	return short
+}
+
 func (uc *Usecase) deriveImageStartupRunFromWorkflow(
 	run *models.PipelineRun,
 	wf *wfv1.Workflow,
@@ -298,16 +312,19 @@ func (uc *Usecase) deriveImageStartupRunFromWorkflow(
 	var selectedName string
 	var selectedMessage string
 	var selectedSince time.Time
+
+	// First pass: terminal image failures (ImagePullBackOff, invalid name, etc.)
+	// — no time threshold, these will never self-resolve.
 	for _, node := range wf.Status.Nodes {
 		if node.Phase != wfv1.NodePending {
 			continue
 		}
 		message := strings.TrimSpace(node.Message)
-		if !isImageStartupFailureMessage(message) {
+		if !isTerminalImageFailure(message) {
 			continue
 		}
 		pendingSince := pendingReferenceTime(run, wf, node)
-		if pendingSince.IsZero() || now.Sub(pendingSince) < cfg.UnschedulablePendingThreshold {
+		if pendingSince.IsZero() {
 			continue
 		}
 		if selectedSince.IsZero() || pendingSince.Before(selectedSince) {
@@ -316,6 +333,33 @@ func (uc *Usecase) deriveImageStartupRunFromWorkflow(
 			selectedMessage = message
 		}
 	}
+
+	// Second pass: other image failures that might be transient.
+	// Use a shorter threshold (base / 3, min 1 min).
+	if selectedMessage == "" {
+		shortThreshold := imageStartupThreshold(cfg.UnschedulablePendingThreshold)
+		if shortThreshold > 0 {
+			for _, node := range wf.Status.Nodes {
+				if node.Phase != wfv1.NodePending {
+					continue
+				}
+				message := strings.TrimSpace(node.Message)
+				if !isImageStartupFailureMessage(message) || isTerminalImageFailure(message) {
+					continue
+				}
+				pendingSince := pendingReferenceTime(run, wf, node)
+				if pendingSince.IsZero() || now.Sub(pendingSince) < shortThreshold {
+					continue
+				}
+				if selectedSince.IsZero() || pendingSince.Before(selectedSince) {
+					selectedSince = pendingSince
+					selectedName = workflowNodeDisplayName(node)
+					selectedMessage = message
+				}
+			}
+		}
+	}
+
 	if selectedMessage == "" {
 		return "", "", nil, false
 	}
@@ -340,6 +384,30 @@ func isImageStartupFailureMessage(message string) bool {
 		"pull access denied",
 		"manifest unknown",
 		"unauthorized: authentication required",
+	}
+	for _, signal := range signals {
+		if strings.Contains(normalized, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTerminalImageFailure reports whether an image startup error will never self-resolve.
+// These failures skip the pending threshold and mark the run as failed immediately.
+func isTerminalImageFailure(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return false
+	}
+	signals := []string{
+		"imagepullbackoff",
+		"invalidimagename",
+		"invalid image name",
+		"invalid reference format",
+		"manifest unknown",
+		"failed to apply default image tag",
+		"couldn't parse image name",
 	}
 	for _, signal := range signals {
 		if strings.Contains(normalized, signal) {

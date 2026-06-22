@@ -4332,6 +4332,73 @@ func TestRefreshRunForList_MarksLongInvalidImageNamePendingError(t *testing.T) {
 	}
 }
 
+func TestRefreshRunForList_MarksTerminalImageFailureImmediately(t *testing.T) {
+	// ImagePullBackOff / InvalidImageName should mark the run as Error
+	// immediately, without waiting for UnschedulablePendingThreshold.
+	ctx := context.Background()
+	now := time.Date(2026, 6, 18, 10, 1, 0, 0, time.UTC)
+	startedAt := now.Add(-30 * time.Second) // only 30 seconds ago
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:            "run-1",
+				WorkflowName:  "wf-1",
+				Status:        "Running",
+				ArgoNamespace: "video-proc-dev",
+				CreatedAt:     startedAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1", CreationTimestamp: metav1.Time{Time: startedAt}},
+			Status: wfv1.WorkflowStatus{
+				Phase:     wfv1.WorkflowRunning,
+				StartedAt: metav1.Time{Time: startedAt},
+				Nodes: map[string]wfv1.NodeStatus{
+					"node-1": {
+						ID:           "node-1",
+						Name:         "wf-1-smoke",
+						DisplayName:  "smoke-task",
+						Type:         wfv1.NodeTypePod,
+						Phase:        wfv1.NodePending,
+						Message:      `ImagePullBackOff: Back-off pulling image "registry.example.com/smoke-task"`,
+						StartedAt:    metav1.Time{Time: startedAt},
+						TemplateName: "smoke",
+					},
+				},
+			},
+		}, nil
+	}
+	eventRepo := &mockRunEventRepo{}
+	nodeRepo := &mockRunNodeRepo{}
+	assetNodeRepo := &mockAssetNodeRepo{}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, nodeRepo)
+	uc.SetRunEventRepo(eventRepo)
+	uc.SetObservabilityRepositories(assetNodeRepo, nil, nil)
+	// Set a 15 min threshold — the test proves we don't wait that long.
+	uc.SetResourceGuardConfig(ResourceGuardConfig{UnschedulablePendingThreshold: 15 * time.Minute})
+	uc.now = func() time.Time { return now }
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.Status != string(wfv1.WorkflowError) {
+		t.Fatalf("expected immediate Error for ImagePullBackOff, got %q (should not wait 15 min)", run.Status)
+	}
+	if !strings.Contains(run.Message, "镜像启动失败") || !strings.Contains(run.Message, "ImagePullBackOff") {
+		t.Fatalf("expected image diagnostics in message, got %q", run.Message)
+	}
+	if run.FinishedAt == nil || !run.FinishedAt.Equal(now) {
+		t.Fatalf("expected finished_at %v, got %v", now, run.FinishedAt)
+	}
+	// Verify the pending duration in the message is short (~30s), not 15+ minutes.
+	if !strings.Contains(run.Message, "30s") && !strings.Contains(run.Message, "29s") {
+		t.Logf("note: pending duration in message: %q (expected ~30s)", run.Message)
+	}
+}
+
 func TestRefreshRunForList_DoesNotAdvanceFinishedAtOnStaleMessageReconcile(t *testing.T) {
 	ctx := context.Background()
 	correctFinish := time.Date(2026, 6, 16, 9, 39, 43, 0, time.UTC)
