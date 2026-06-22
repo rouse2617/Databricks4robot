@@ -2051,11 +2051,25 @@ func (uc *Usecase) refreshRunSummariesForList(ctx context.Context, items []model
 		return
 	}
 	refreshed := 0
+	// Pass 1: fix misclassified Failed/Error/Expired runs first.
+	// These are the ones users see as inaccurate — a run marked Failed
+	// in the DB while its Argo workflow is still Running.
 	for i := range items {
 		if refreshed >= maxActiveDeploymentStatusRefresh {
 			break
 		}
-		if !needsRunListRefresh(&items[i]) {
+		if !needsMisclassifiedReconcile(&items[i]) {
+			continue
+		}
+		refreshed++
+		uc.RefreshRunForList(ctx, &items[i])
+	}
+	// Pass 2: refresh active runs (Running/Pending).
+	for i := range items {
+		if refreshed >= maxActiveDeploymentStatusRefresh {
+			break
+		}
+		if !isActiveDeploymentStatus(items[i].Status) {
 			continue
 		}
 		refreshed++
