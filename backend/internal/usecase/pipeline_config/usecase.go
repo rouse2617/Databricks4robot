@@ -16,8 +16,9 @@ import (
 const MaxConfigFileBytes = 1 << 20
 
 var (
-	ErrConfigNotFound = errors.New("config not found")
-	ErrInvalidConfig  = errors.New("invalid config")
+	ErrConfigNotFound   = errors.New("config not found")
+	ErrInvalidConfig    = errors.New("invalid config")
+	ErrConfigNameExists = errors.New("config name already exists")
 )
 
 // Usecase orchestrates standalone pipeline config file operations.
@@ -111,7 +112,7 @@ func (uc *Usecase) Create(ctx context.Context, in CreateConfigInput) (*models.Pi
 		return nil, err
 	}
 	if err := uc.repo.Create(ctx, cfg, version); err != nil {
-		return nil, err
+		if errors.Is(err, repository.ErrPipelineConfigNameExists) { return nil, ErrConfigNameExists }; return nil, err
 	}
 	cfg.VersionCount = 1
 	cfg.Versions = []models.PipelineConfigVersion{withoutContent(*version)}
@@ -139,7 +140,7 @@ func (uc *Usecase) Update(ctx context.Context, id string, in UpdateConfigInput) 
 		if errors.Is(err, repository.ErrPipelineConfigNotFound) {
 			return nil, ErrConfigNotFound
 		}
-		return nil, err
+		if errors.Is(err, repository.ErrPipelineConfigNameExists) { return nil, ErrConfigNameExists }; return nil, err
 	}
 	return uc.Get(ctx, id)
 }
@@ -166,7 +167,7 @@ func (uc *Usecase) CreateVersion(ctx context.Context, configID string, in Create
 		if errors.Is(err, repository.ErrPipelineConfigNotFound) {
 			return nil, ErrConfigNotFound
 		}
-		return nil, err
+		if errors.Is(err, repository.ErrPipelineConfigNameExists) { return nil, ErrConfigNameExists }; return nil, err
 	}
 	return version, nil
 }

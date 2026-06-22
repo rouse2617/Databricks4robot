@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/jackc/pgx/v5/pgconn"
 	"errors"
 	"fmt"
 	"strings"
@@ -140,7 +141,7 @@ INSERT INTO pipeline_configs (
 			cfg.ID, cfg.Name, cfg.Description, cfg.Owner, cfg.Scope, tags, cfg.FileType,
 			cfg.Lifecycle, cfg.CurrentVersion, cfg.CreatedAt, cfg.UpdatedAt,
 		); err != nil {
-			return fmt.Errorf("postgres PipelineConfigRepo.Create config: %w", err)
+			if isPgUniqueViolation(err) { return repository.ErrPipelineConfigNameExists }; return fmt.Errorf("postgres PipelineConfigRepo.Create config: %w", err)
 		}
 		const versionQ = `
 INSERT INTO pipeline_config_versions (
@@ -282,7 +283,7 @@ WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	rows, err := db.ExecResult(ctx, q, cfg.ID, cfg.Name, cfg.Description, tags, cfg.FileType, cfg.Lifecycle, cfg.UpdatedAt)
 	if err != nil {
-		return fmt.Errorf("postgres PipelineConfigRepo.UpdateMetadata: %w", err)
+		if isPgUniqueViolation(err) { return repository.ErrPipelineConfigNameExists }; return fmt.Errorf("postgres PipelineConfigRepo.UpdateMetadata: %w", err)
 	}
 	if rows == 0 {
 		return repository.ErrPipelineConfigNotFound
@@ -404,4 +405,9 @@ WHERE config_id = $1 AND version = $2`, id, currentVersion); err != nil {
 		}
 		return nil
 	})
+}
+
+func isPgUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

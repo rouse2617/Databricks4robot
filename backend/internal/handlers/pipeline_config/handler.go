@@ -228,6 +228,8 @@ func writeConfigError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, uc.ErrConfigNotFound):
 		httpresp.NotFound(c, httpresp.CodeConfigNotFound, "config not found")
+	case errors.Is(err, uc.ErrConfigNameExists):
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 	case errors.Is(err, uc.ErrInvalidConfig):
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
 	default:

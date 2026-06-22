@@ -14,7 +14,9 @@ import {
 	Button,
 	Card,
 	Col,
+	Collapse,
 	Descriptions,
+		Divider,
 	Drawer,
 	Form,
 	Grid,
@@ -34,7 +36,8 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Editor from "@monaco-editor/react";
 import type { AlgoRegistryItem } from "../api/algoRegistry";
 import {
 	type PipelineConfig,
@@ -175,14 +178,32 @@ function tagColor(value: string) {
 	return "geekblue";
 }
 
+const VALID_CONFIG_EXTENSIONS = [".yaml", ".yml", ".json"];
+const CONFIG_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\.(yaml|yml|json)$/;
+const CONFIG_NAME_MAX_LENGTH = 96;
+
 function looksLikeTypoConfigName(name?: string) {
-	return Boolean(name?.trim().toLowerCase().endsWith(".ymal"));
+	const lower = (name || "").trim().toLowerCase();
+	if (lower.endsWith(".ymal")) return "文件后缀看起来像 .ymal，通常应为 .yaml 或 .yml。";
+	if (/\.(yam|yml|yaml|ym|josn|jso|yml\.yaml)$/.test(lower)) return "文件后缀可能拼写有误，有效后缀：.yaml / .yml / .json";
+	return null;
 }
 
-function configNameExtra(name?: string) {
-	return looksLikeTypoConfigName(name)
-		? "文件后缀看起来像 .ymal，通常应为 .yaml 或 .yml。"
-		: "支持 .yaml、.yml 或 .json。";
+function configNameExtra(name?: string): string {
+	const trimmed = (name || "").trim();
+	if (!trimmed) return "推荐格式：<组件>-<环境>.yaml，例如 head-track-detector.yaml、hand-detect-dev.yaml、node-a-config.yaml";
+
+	const typo = looksLikeTypoConfigName(trimmed);
+	if (typo) return `⚠ ${typo}`;
+
+	const hasExtension = VALID_CONFIG_EXTENSIONS.some((ext) => trimmed.toLowerCase().endsWith(ext));
+	if (!hasExtension) return "⚠ 需要文件扩展名 .yaml / .yml / .json";
+
+	if (/[A-Z]/.test(trimmed)) return "⚠ 建议使用全小写字母";
+
+	if (trimmed.length > CONFIG_NAME_MAX_LENGTH) return `⚠ 名称不能超过 ${CONFIG_NAME_MAX_LENGTH} 字符`;
+
+	return "✓ 格式正确";
 }
 
 function isArchivedConfig(config: UserConfigRecord) {
@@ -362,10 +383,66 @@ function diffCellBackground(
 	side: "left" | "right",
 ) {
 	if (kind === "equal") return "#ffffff";
-	if (kind === "changed") return "#fff7e6";
-	if (kind === "removed" && side === "left") return "#fff1f0";
-	if (kind === "added" && side === "right") return "#f6ffed";
+	if (kind === "changed") return "#fff3cd";
+	if (kind === "removed" && side === "left") return "#fddcd7";
+	if (kind === "added" && side === "right") return "#dafbe1";
 	return "#f8fafc";
+}
+
+interface SideBySideDiffProps {
+	leftLabel: string;
+	rightLabel: string;
+	rows: VersionDiffRow[];
+}
+
+function SideBySideDiff({ leftLabel, rightLabel, rows }: SideBySideDiffProps) {
+	const changedCount = rows.filter((r) => r.kind !== "equal").length;
+	return (
+		<div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden" }}>
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: "64px minmax(0, 1fr) 64px minmax(0, 1fr)",
+					background: "#f8fafc",
+					borderBottom: "1px solid #e2e8f0",
+					fontWeight: 600,
+				}}
+			>
+				<div style={{ padding: "8px 10px" }}>行</div>
+				<div style={{ padding: "8px 10px" }}>{leftLabel}</div>
+				<div style={{ padding: "8px 10px" }}>行</div>
+				<div style={{ padding: "8px 10px" }}>{rightLabel}</div>
+			</div>
+			<div style={{ maxHeight: 340, overflow: "auto" }}>
+				{rows.map((row) => (
+					<div
+						key={row.key}
+						style={{
+							display: "grid",
+							gridTemplateColumns: "64px minmax(0, 1fr) 64px minmax(0, 1fr)",
+							borderBottom: "1px solid #eef2f7",
+						}}
+					>
+						<div style={{ padding: "2px 6px", color: "#64748b", background: "#f8fafc", textAlign: "right", fontFamily: "monospace", fontSize: 11 }}>
+							{row.leftLine ?? ""}
+						</div>
+						<pre style={{ margin: 0, padding: "2px 6px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace", fontSize: 11, background: diffCellBackground(row.kind, "left") }}>
+							{row.leftText ?? ""}
+						</pre>
+						<div style={{ padding: "2px 6px", color: "#64748b", background: "#f8fafc", textAlign: "right", fontFamily: "monospace", fontSize: 11 }}>
+							{row.rightLine ?? ""}
+						</div>
+						<pre style={{ margin: 0, padding: "2px 6px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace", fontSize: 11, background: diffCellBackground(row.kind, "right") }}>
+							{row.rightText ?? ""}
+						</pre>
+					</div>
+				))}
+			</div>
+			<div style={{ padding: "6px 10px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", fontSize: 12 }}>
+				<Text type="secondary">变更 {changedCount} 行 / 共 {rows.length} 行</Text>
+			</div>
+		</div>
+	);
 }
 
 function UserTag({ value }: { value?: string }) {
@@ -523,6 +600,48 @@ export default function RegistryCenterPage() {
 		null,
 	);
 	const [compareLoading, setCompareLoading] = useState(false);
+	const [diffPreviewRows, setDiffPreviewRows] = useState<VersionDiffRow[]>([]);
+	const [diffBaseVersionNumber, setDiffBaseVersionNumber] = useState<number | null>(null);
+	const [diffBaseContent, setDiffBaseContent] = useState<string>("");
+	const diffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const versionContentValue = Form.useWatch("content", versionForm);
+
+	const loadDiffBaseVersion = useCallback(
+		async (configId: string, versionNumber: number) => {
+			try {
+				const detail = await pipelineConfigApi.getVersion(configId, versionNumber);
+				setDiffBaseContent(detail.content || "");
+			} catch {
+				setDiffBaseContent("");
+			}
+		},
+		[],
+	);
+
+	// When modal opens or versionSource changes, default to source version
+	useEffect(() => {
+		if (versionTarget && versionSource) {
+			const vn = versionSource.versionNumber;
+			setDiffBaseVersionNumber(vn);
+			setDiffBaseContent(versionSource.content || "");
+		}
+	}, [versionTarget, versionSource]);
+
+	// Debounced diff computation
+	useEffect(() => {
+		if (diffTimerRef.current) clearTimeout(diffTimerRef.current);
+		diffTimerRef.current = setTimeout(() => {
+			if (diffBaseContent && versionContentValue) {
+				setDiffPreviewRows(buildVersionDiffRows(diffBaseContent, versionContentValue));
+			} else {
+				setDiffPreviewRows([]);
+			}
+		}, 400);
+		return () => {
+			if (diffTimerRef.current) clearTimeout(diffTimerRef.current);
+		};
+	}, [versionContentValue, diffBaseContent]);
 	const configNameValue = Form.useWatch("name", configForm);
 	const screens = Grid.useBreakpoint();
 	const isNarrow = !screens.md;
@@ -663,8 +782,14 @@ export default function RegistryCenterPage() {
 				setConfigModalOpen(false);
 				setEditingConfig(null);
 				configForm.resetFields();
-			} catch {
-				msg.error(editingConfig ? "配置更新失败" : "配置创建失败");
+			} catch (err: any) {
+				const detail: string =
+					err?.response?.data?.message || "";
+				if (detail.toLowerCase().includes("already exists")) {
+					msg.error("配置名称已存在，请换一个名称");
+				} else {
+					msg.error(editingConfig ? "配置更新失败" : "配置创建失败");
+				}
 			} finally {
 				setSavingConfig(false);
 			}
@@ -966,6 +1091,8 @@ export default function RegistryCenterPage() {
 								description="归档后会从工作区移除，不参与部署选择；历史引用仍可追溯。"
 								okText="归档"
 								cancelText="取消"
+					style={{ top: 20 }}
+					bodyStyle={{ maxHeight: "calc(80vh - 120px)", overflowY: "auto", paddingTop: 12 }}
 								onConfirm={() => handleDeprecateConfig(record)}
 							>
 								<Button
@@ -1486,6 +1613,8 @@ export default function RegistryCenterPage() {
 				okText={editingConfig ? "保存属性" : "创建"}
 				confirmLoading={savingConfig}
 				cancelText="取消"
+					style={{ top: 20 }}
+					bodyStyle={{ maxHeight: "calc(80vh - 120px)", overflowY: "auto", paddingTop: 12 }}
 				destroyOnHidden
 			>
 				<Form
@@ -1497,7 +1626,7 @@ export default function RegistryCenterPage() {
 					<Form.Item
 						name="name"
 						label="配置名称"
-						rules={[{ required: true, message: "请输入配置名称" }]}
+						rules={[{ required: true, message: "请输入配置名称" },{ pattern: CONFIG_NAME_PATTERN, message: "仅小写字母、数字、连字符、点号，以 .yaml/.yml/.json 结尾" },{ max: CONFIG_NAME_MAX_LENGTH, message: `不能超过 ${CONFIG_NAME_MAX_LENGTH} 字符` }]}
 						extra={configNameExtra(configNameValue)}
 					>
 						<Input placeholder="example.yaml" />
@@ -1547,6 +1676,7 @@ export default function RegistryCenterPage() {
 								rows={10}
 								placeholder={"key: value\n# yaml 或 json 文件内容"}
 								style={{ fontFamily: "monospace" }}
+								spellCheck={false}
 							/>
 						</Form.Item>
 					) : null}
@@ -1556,61 +1686,168 @@ export default function RegistryCenterPage() {
 			<Modal
 				title={
 					versionTarget
-						? versionSource
-							? `基于 ${versionSource.version} 编辑为新版本：${versionTarget.name}`
-							: `新增版本：${versionTarget.name}`
-						: "新增版本"
+						? `创建新版本：${versionTarget.name}`
+						: "创建新版本"
 				}
 				open={Boolean(versionTarget)}
+				width={1200}
 				onCancel={() => {
 					setVersionTarget(null);
 					setVersionSource(null);
 					versionForm.resetFields();
+					setDiffPreviewRows([]);
+					setDiffBaseContent("");
 				}}
 				onOk={() => versionForm.submit()}
 				okText="创建版本"
 				confirmLoading={savingVersion}
 				cancelText="取消"
+				style={{ top: 20 }}
+				bodyStyle={{ padding: "20px 24px" }}
 				destroyOnHidden
+				footer={(_, { OkBtn, CancelBtn }) => (
+					<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+						<CancelBtn />
+						<OkBtn />
+					</div>
+				)}
 			>
-				<Form
-					form={versionForm}
-					layout="vertical"
-					requiredMark={false}
-					onFinish={handleCreateVersion}
-				>
-					<Form.Item
-						name="summary"
-						label="变更说明"
-						rules={[{ required: true, message: "请输入变更说明" }]}
-					>
-						<Input.TextArea rows={3} placeholder="说明这次版本改了什么" />
-					</Form.Item>
-					<Form.Item
-						name="lifecycle"
-						label="版本状态"
-						rules={[{ required: true, message: "请选择版本状态" }]}
-					>
-						<Select
-							options={[
-								{ label: "draft", value: "draft" },
-								{ label: "ready", value: "ready" },
-							]}
-						/>
-					</Form.Item>
-					<Form.Item
-						name="content"
-						label="文件内容"
-						rules={[{ required: true, message: "请输入配置文件内容" }]}
-					>
-						<Input.TextArea
-							rows={12}
-							placeholder="复制或编辑完整配置文件内容"
-							style={{ fontFamily: "monospace" }}
-						/>
-					</Form.Item>
+				{versionTarget && versionSource ? (
+				<Form form={versionForm} onFinish={handleCreateVersion}>
+					<div>
+						<div style={{
+							display: "flex", alignItems: "center", gap: 8, marginBottom: 16,
+							padding: "6px 12px", background: "#f6f8fa", borderRadius: 6, border: "1px solid #d0d7de",
+						}}>
+							<Tag color="blue" style={{ margin: 0 }}>Base {versionSource.version}</Tag>
+							<Text type="secondary">→</Text>
+							<Tag color="green" style={{ margin: 0 }}>Next v{(versionTarget.currentVersion || 0) + 1}</Tag>
+							<Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
+								{versionSource.summary} · {versionSource.updatedAt}
+							</Text>
+							<Tag color={diffPreviewRows.length > 0 ? "blue" : "default"} style={{ margin: 0, fontSize: 11 }}>
+								+{diffPreviewRows.filter(r => r.kind === "added").length} −{diffPreviewRows.filter(r => r.kind === "removed").length}
+							</Tag>
+							<Form.Item name="lifecycle" noStyle>
+								<Select
+									size="small"
+									style={{ width: 100 }}
+									options={[
+										{ label: "Draft", value: "draft" },
+										{ label: "Ready", value: "ready" },
+									]}
+								/>
+							</Form.Item>
+						</div>
+
+												<div style={{ marginBottom: 16 }}>
+							<Text strong style={{ fontSize: 13, display: "block", marginBottom: 6 }}>变更说明</Text>
+							<Form.Item
+								name="summary"
+								rules={[{ required: true, message: "请输入变更说明" }]}
+								style={{ marginBottom: 0 }}
+							>
+								<Input.TextArea rows={2} placeholder={`基于 ${versionSource.version} 做了什么修改`} />
+							</Form.Item>
+						</div>
+					<Row gutter={16}>
+							<Col span={16}>
+								<div style={{ marginBottom: 8, fontWeight: 600, fontSize: 13 }}>YAML 编辑器</div>
+								<Form.Item
+									name="content"
+									rules={[{ required: true, message: "请输入配置内容" }]}
+									style={{ marginBottom: 0 }}
+								>
+									<Editor
+										height="420px"
+										defaultLanguage="yaml"
+										theme="vs"
+										options={{
+											minimap: { enabled: false },
+											lineNumbers: "on",
+											tabSize: 2,
+											renderWhitespace: "selection",
+											scrollBeyondLastLine: false,
+											fontSize: 12,
+											fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+										}}
+										beforeMount={(monaco) => {
+											monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+												validate: true,
+												allowComments: true,
+											});
+										}}
+									/>
+								</Form.Item>
+							</Col>
+							<Col span={8}>
+								<div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+									<Text strong style={{ fontSize: 13 }}>变更预览</Text>
+									<Select
+										size="small"
+										style={{ width: 90 }}
+										value={diffBaseVersionNumber ?? versionSource.versionNumber}
+										onChange={async (vn: number) => {
+											setDiffBaseVersionNumber(vn);
+											await loadDiffBaseVersion(versionTarget.id, vn);
+										}}
+										options={versionTarget.versions.map((v) => ({
+											label: v.version,
+											value: v.versionNumber,
+										}))}
+									/>
+									
+								</div>
+								{diffPreviewRows.length > 0 ? (
+									<div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden" }}>
+										<div style={{
+											display: "grid", gridTemplateColumns: "40px minmax(0, 1fr) 40px minmax(0, 1fr)",
+											background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontWeight: 600, fontSize: 11,
+										}}>
+											<div style={{ padding: "4px 6px" }}></div>
+											<div style={{ padding: "4px 6px" }}>{versionSource.version}</div>
+											<div style={{ padding: "4px 6px" }}></div>
+											<div style={{ padding: "4px 6px" }}>当前</div>
+										</div>
+										<div style={{ maxHeight: 378, overflow: "auto" }}>
+											{diffPreviewRows.map((row) => (
+												<div key={row.key} style={{
+													display: "grid", gridTemplateColumns: "40px minmax(0, 1fr) 40px minmax(0, 1fr)",
+													borderBottom: "1px solid #f0f2f5", fontSize: 11,
+												}}>
+													<div style={{ padding: "1px 4px", color: "#94a3b8", background: "#f8fafc", textAlign: "right", fontFamily: "monospace" }}>
+														{row.leftLine ?? ""}
+													</div>
+													<pre style={{ margin: 0, padding: "1px 4px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace", background: diffCellBackground(row.kind, "left") }}>
+														{row.leftText ?? ""}
+													</pre>
+													<div style={{ padding: "1px 4px", color: "#94a3b8", background: "#f8fafc", textAlign: "right", fontFamily: "monospace" }}>
+														{row.rightLine ?? ""}
+													</div>
+													<pre style={{ margin: 0, padding: "1px 4px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace", background: diffCellBackground(row.kind, "right") }}>
+														{row.rightText ?? ""}
+													</pre>
+												</div>
+											))}
+										</div>
+									</div>
+								) : (
+									<div style={{ height: 420, display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed #d9d9d9", borderRadius: 6 }}>
+										<Text type="secondary">编辑左侧 YAML 后，此处实时显示差异</Text>
+									</div>
+								)}
+							</Col>
+						</Row>
+
+{/* DESCRIPTION_MOVED */}
+
+					</div>
 				</Form>
+				) : (
+					<Alert type="info" showIcon message="请先在配置列表中选择一个配置，再点击「新建版本」" />
+				)}
 			</Modal>
+
 
 			<Modal
 				title={

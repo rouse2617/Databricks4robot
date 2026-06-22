@@ -10,6 +10,10 @@ import (
 // ErrPipelineConfigNotFound is returned when a config mutation targets a missing config.
 var ErrPipelineConfigNotFound = errors.New("pipeline config not found")
 
+// ErrPipelineConfigNameExists is returned when creating/updating a config
+// with a name that already belongs to another config.
+var ErrPipelineConfigNameExists = errors.New("pipeline config name already exists")
+
 // PipelineConfigFilter scopes config library list queries.
 type PipelineConfigFilter struct {
 	Query     string
