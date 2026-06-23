@@ -1503,6 +1503,17 @@ function SummaryTab({
 	pipelineNode?: PipelineNodeDef | null;
 }) {
 	const podName = getWorkflowNodePodName(node);
+	const versionLabel =
+		node.versionLabel ||
+		pipelineNode?.component?.componentVersionLabel ||
+		node.templateName ||
+		"—";
+	const commitLabel = node.sourceCommit || "—";
+	const imageLabel =
+		node.image ||
+		pipelineNode?.component?.image ||
+		node.containers?.[0]?.image ||
+		"—";
 	const memoizationText = node.memoizationStatus
 		? `命中=${node.memoizationStatus.hit ? "是" : "否"}，key=${node.memoizationStatus.key}，cache=${node.memoizationStatus.cacheName}`
 		: "—";
@@ -1530,6 +1541,15 @@ function SummaryTab({
 				</Descriptions.Item>
 				<Descriptions.Item label="类型">
 					{node.type || node.templateName || "—"}
+				</Descriptions.Item>
+				<Descriptions.Item label="版本">
+					{versionLabel === "—" ? "—" : <CopyableEllipsisText text={versionLabel} />}
+				</Descriptions.Item>
+				<Descriptions.Item label="Commit">
+					{commitLabel === "—" ? "—" : <CopyableEllipsisText text={commitLabel} maxLength={12} />}
+				</Descriptions.Item>
+				<Descriptions.Item label="镜像">
+					{imageLabel === "—" ? "—" : <CopyableEllipsisText text={imageLabel} maxLength={52} />}
 				</Descriptions.Item>
 				<Descriptions.Item label="状态">
 					<Tag color={resolveStatusTagColor(node.phase)}>

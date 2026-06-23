@@ -221,6 +221,7 @@
 	justify-content: center;
 	width: 20px;
 	height: 20px;
+	margin-top: 6px;
 	padding: 0;
 	border: 0;
 	background: transparent;
@@ -232,6 +233,7 @@
 	display: flex;
 	flex: 1;
 	min-width: 0;
+	max-width: calc(100% - 58px);
 	padding: 0;
 	border: 0;
 	background: transparent;
@@ -277,6 +279,7 @@
 .palette-version-line {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
 	gap: 6px;
 	min-width: 0;
 	margin-top: 3px;
@@ -301,6 +304,7 @@
 	gap: 4px;
 	flex-basis: 100%;
 	max-height: 200px;
+	width: calc(100% - 30px);
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	padding-right: 2px;
@@ -312,7 +316,7 @@
 
 .palette-version-row {
 	display: grid;
-	grid-template-columns: minmax(0, 2fr) auto minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
@@ -349,6 +353,7 @@
 }
 
 .palette-version-row__commit {
+	grid-column: 1 / -1;
 	color: var(--color-text-secondary, #64748b);
 	font-family:
 		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",

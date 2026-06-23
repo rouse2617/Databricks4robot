@@ -29,6 +29,9 @@ export interface WorkflowNodeStatus {
 	displayName: string;
 	type?: string;
 	templateName?: string;
+	versionLabel?: string;
+	sourceCommit?: string;
+	image?: string;
 	phase: string;
 	message?: string;
 	cluster?: string;

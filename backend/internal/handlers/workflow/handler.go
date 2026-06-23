@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,6 +48,9 @@ type workflowNodeItem struct {
 	DisplayName       string   `json:"displayName"`
 	Type              string   `json:"type"`
 	TemplateName      string   `json:"templateName"`
+	VersionLabel      string   `json:"versionLabel,omitempty"`
+	SourceCommit      string   `json:"sourceCommit,omitempty"`
+	Image             string   `json:"image,omitempty"`
 	Phase             string   `json:"phase"`
 	Message           string   `json:"message,omitempty"`
 	PodName           string   `json:"podName,omitempty"`
@@ -246,6 +250,11 @@ func buildWorkflowDetailNodes(h *Handler, run *models.PipelineRun, wf *wfv1.Work
 			EstimatedDuration: int64(n.EstimatedDuration),
 			Children:          n.Children,
 		}
+		if info := lookupWorkflowNodeRuntimeInfo(run, n.TemplateName); info != nil {
+			ni.VersionLabel = info.VersionLabel
+			ni.SourceCommit = info.SourceCommit
+			ni.Image = info.Image
+		}
 		if !n.StartedAt.IsZero() {
 			t := workflowTimeString(n.StartedAt.Time)
 			ni.StartedAt = &t
@@ -310,6 +319,92 @@ func workflowTemplateDisplayType(t wfv1.Template) string {
 
 func workflowTimeString(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
+}
+
+type workflowNodeRuntimeMetadata struct {
+	VersionLabel string
+	SourceCommit string
+	Image        string
+}
+
+func lookupWorkflowNodeRuntimeInfo(run *models.PipelineRun, templateName string) *workflowNodeRuntimeMetadata {
+	if run == nil || len(run.PipelineJSON) == 0 {
+		return nil
+	}
+	nodeID := strings.TrimSpace(templateName)
+	nodeID = strings.TrimPrefix(nodeID, "step-")
+	if nodeID == "" {
+		return nil
+	}
+	if info, ok := findWorkflowNodeRuntimeInfo(run.PipelineJSON["nodes"], nodeID); ok {
+		return &info
+	}
+	return nil
+}
+
+func findWorkflowNodeRuntimeInfo(rawNodes any, targetID string) (workflowNodeRuntimeMetadata, bool) {
+	nodes, ok := interfaceSlice(rawNodes)
+	if !ok {
+		return workflowNodeRuntimeMetadata{}, false
+	}
+	for _, raw := range nodes {
+		node, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		nodeID, _ := node["id"].(string)
+		if strings.TrimSpace(nodeID) == targetID {
+			return workflowNodeRuntimeMetadata{
+				VersionLabel: firstWorkflowNodeString(node, "componentVersionLabel", "versionLabel", "releaseLabel", "tag"),
+				SourceCommit: firstWorkflowNodeString(node, "sourceCommit", "commit"),
+				Image:        firstWorkflowNodeString(node, "image"),
+			}, true
+		}
+		if info, ok := findWorkflowNodeRuntimeInfo(node["sub_nodes"], targetID); ok {
+			return info, true
+		}
+	}
+	return workflowNodeRuntimeMetadata{}, false
+}
+
+func firstWorkflowNodeString(node map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := node[key]; ok {
+			if text := strings.TrimSpace(asWorkflowNodeString(value)); text != "" {
+				return text
+			}
+		}
+	}
+	if component, ok := node["component"].(map[string]any); ok {
+		for _, key := range keys {
+			if value, ok := component[key]; ok {
+				if text := strings.TrimSpace(asWorkflowNodeString(value)); text != "" {
+					return text
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func asWorkflowNodeString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
+	}
+}
+
+func interfaceSlice(in any) ([]any, bool) {
+	switch v := in.(type) {
+	case []any:
+		return v, true
+	default:
+		return nil, false
+	}
 }
 
 // GetWorkflowLogs handles GET /api/v1/workflows/:name/logs?nodeId=xxx
