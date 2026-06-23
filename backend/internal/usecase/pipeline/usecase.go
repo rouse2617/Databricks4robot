@@ -2077,16 +2077,18 @@ func needsRunListRefresh(run *models.PipelineRun) bool {
 	return needsMisclassifiedReconcile(run)
 }
 
-// refreshMisclassifiedRunSummaries only fixes misclassified terminal runs
-// in the list view. It skips active runs which are refreshed asynchronously
-// by the background watcher, keeping list API latency low.
+// refreshMisclassifiedRunSummaries fixes misclassified terminal runs in the
+// list view. Only the first few items are refreshed synchronously to keep
+// list API latency acceptable; the remaining items are handled by the
+// background watcher.
 func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items []models.PipelineRun) {
 	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
 		return
 	}
 	refreshed := 0
+	const misclassifedRefreshBatch = 3
 	for i := range items {
-		if refreshed >= maxActiveDeploymentStatusRefresh {
+		if refreshed >= misclassifedRefreshBatch {
 			break
 		}
 		if !needsMisclassifiedReconcile(&items[i]) {
