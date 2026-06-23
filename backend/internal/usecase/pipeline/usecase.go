@@ -2086,7 +2086,12 @@ func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items [
 		return
 	}
 	refreshCutoff := time.Now().UTC().Add(-1 * time.Hour)
+	refreshed := 0
+	const maxRefresh = 5
 	for i := range items {
+		if refreshed >= maxRefresh {
+			break
+		}
 		if !needsMisclassifiedReconcile(&items[i]) {
 			continue
 		}
@@ -2096,6 +2101,7 @@ func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items [
 		if items[i].CreatedAt.Before(refreshCutoff) {
 			continue
 		}
+		refreshed++
 		uc.RefreshRunForList(ctx, &items[i])
 	}
 }
@@ -3183,6 +3189,8 @@ func (uc *Usecase) CreateRunByTemplateID(ctx context.Context, templateID, name s
 
 // CreateRunsByTemplateID deploys one pipeline run per asset when multiple asset
 // IDs are provided; zero or one asset uses a single run as before.
+// Multiple assets are created concurrently with a concurrency limit of 5
+// to reduce total wall-clock time from O(N*T) to O(T).
 func (uc *Usecase) CreateRunsByTemplateID(ctx context.Context, templateID, name string, assetIDs []string, opts ...DeployOptions) ([]models.PipelineRun, error) {
 	if len(assetIDs) <= 1 {
 		run, err := uc.CreateRunByTemplateID(ctx, templateID, name, assetIDs, opts...)
@@ -3191,13 +3199,39 @@ func (uc *Usecase) CreateRunsByTemplateID(ctx context.Context, templateID, name 
 		}
 		return []models.PipelineRun{*run}, nil
 	}
-	runs := make([]models.PipelineRun, 0, len(assetIDs))
-	for _, assetID := range assetIDs {
-		run, err := uc.CreateRunByTemplateID(ctx, templateID, name, []string{assetID}, opts...)
-		if err != nil {
-			return runs, err
+
+	type result struct {
+		run *models.PipelineRun
+		err error
+		idx int
+	}
+	results := make(chan result, len(assetIDs))
+	sem := make(chan struct{}, 5)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	for idx, assetID := range assetIDs {
+		go func(i int, aid string) {
+			sem <- struct{}{}
+			r, err := uc.CreateRunByTemplateID(ctx, templateID, name, []string{aid}, opts...)
+			<-sem
+			res := result{idx: i, err: err}
+			if err == nil {
+				res.run = r
+			}
+			results <- res
+		}(idx, assetID)
+	}
+
+	runs := make([]models.PipelineRun, len(assetIDs))
+	for range assetIDs {
+		res := <-results
+		if res.err != nil {
+			cancel()
+			return runs, res.err
 		}
-		runs = append(runs, *run)
+		runs[res.idx] = *res.run
 	}
 	return runs, nil
 }
