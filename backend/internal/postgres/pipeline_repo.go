@@ -1133,7 +1133,7 @@ func (r *PipelineRunRepo) FindSummaryByID(ctx context.Context, id string) (*mode
 	q := `SELECT ` + pipelineRunSummaryOuterCols + `
 FROM (
   SELECT ` + pipelineRunSummarySelectSQL(false) + `, 0 AS source_order
-  FROM pipeline_runs pr
+  FROM pipeline_runs pr LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
   WHERE pr.id = $1
   UNION ALL
   SELECT ` + pipelineRunSummarySelectSQL(true) + `, 1 AS source_order
