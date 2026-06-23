@@ -1914,7 +1914,17 @@ func workflowUnavailableMessage(run *models.PipelineRun) string {
 }
 
 func (uc *Usecase) markRunWorkflowNotFound(ctx context.Context, run *models.PipelineRun) {
+	slog.Warn("markRunWorkflowNotFound called",
+		"runID", run.ID,
+		"workflowName", run.WorkflowName,
+		"currentStatus", run.Status,
+		"currentMessage", run.Message,
+	)
 	if shouldPreserveActiveWorkflowNotFound(run, uc.nowUTC()) {
+		slog.Info("markRunWorkflowNotFound preserved active",
+			"runID", run.ID,
+			"newStatus", "Running",
+		)
 		if isStaleWorkflowUnavailableMessage(run.Message) {
 			run.Message = ""
 		}
@@ -1938,6 +1948,12 @@ func (uc *Usecase) markRunWorkflowNotFound(ctx context.Context, run *models.Pipe
 	}
 	run.Status = deploymentStatusExpired
 	run.Message = workflowUnavailableMessage(run)
+	slog.Info("markRunWorkflowNotFound writing stale status",
+		"runID", run.ID,
+		"workflowName", run.WorkflowName,
+		"newStatus", run.Status,
+		"newMessage", run.Message,
+	)
 	uc.persistRunObservation(ctx, run)
 }
 
@@ -2108,17 +2124,41 @@ func (uc *Usecase) reconcileTerminalRunFromLedger(ctx context.Context, run *mode
 	if uc.assetNodeRepo == nil {
 		return false
 	}
-	if !needsLedgerReconcile(run) && !isActiveDeploymentStatus(run.Status) && !isStaleWorkflowUnavailableMessage(run.Message) {
+	needsReconcile := needsLedgerReconcile(run)
+	isActive := isActiveDeploymentStatus(run.Status)
+	isStale := isStaleWorkflowUnavailableMessage(run.Message)
+	if !needsReconcile && !isActive && !isStale {
 		return false
 	}
 	result, err := uc.assetNodeRepo.ListByRunID(ctx, run.ID, models.PipelineRunAssetNodeListOptions{Limit: 500})
 	if err != nil || result == nil || len(result.Items) == 0 {
+		slog.Info("reconcileTerminalRunFromLedger no asset nodes",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"currentStatus", run.Status,
+			"needsReconcile", needsReconcile,
+			"isActive", isActive,
+		)
 		return false
 	}
 	status, message, ok := inferTerminalRunFromAssetNodes(result.Items)
 	if !ok {
+		slog.Info("reconcileTerminalRunFromLedger cannot infer",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"currentStatus", run.Status,
+			"assetNodeCount", len(result.Items),
+		)
 		return false
 	}
+	slog.Warn("reconcileTerminalRunFromLedger overriding status",
+		"runID", run.ID,
+		"workflowName", run.WorkflowName,
+		"oldStatus", run.Status,
+		"newStatus", status,
+		"newMessage", message,
+		"assetNodeCount", len(result.Items),
+	)
 	run.Status = status
 	if trimmed := strings.TrimSpace(message); trimmed != "" && (strings.TrimSpace(run.Message) == "" || isStaleWorkflowUnavailableMessage(run.Message)) {
 		run.Message = trimmed
@@ -2195,6 +2235,11 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	}
 	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil {
+		slog.Warn("refreshRunStatus GetWorkflow failed",
+			"runID", run.ID,
+			"err", err,
+			"isNotFound", errors.Is(err, argo.ErrNotFound),
+		)
 		if errors.Is(err, argo.ErrNotFound) {
 			if shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
 				if isPendingBatchWorkflowCreation(run) && isStaleWorkflowUnavailableMessage(run.Message) {
@@ -2210,6 +2255,12 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 	if wf == nil {
 		return
 	}
+	slog.Info("refreshRunStatus GetWorkflow succeeded",
+		"runID", run.ID,
+		"workflowName", run.WorkflowName,
+		"wfPhase", wf.Status.Phase,
+		"wfMessage", wf.Status.Message,
+	)
 	uc.applyWorkflowToRun(ctx, run, wf)
 	uc.maybeMarkStaleRun(ctx, run, wf)
 }
