@@ -146,6 +146,7 @@ func setupCore(inf *infra) *coreHandlers {
 	puc.StartRunEventWatcher(context.Background(), 3*time.Second, 100)
 
 	backfillRepo := postgres.NewBackfillRepo(pg)
+	puc.SetBackfillRepo(backfillRepo)
 	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
 	backfillUC := backfillUC.New(backfillRepo, puc)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)

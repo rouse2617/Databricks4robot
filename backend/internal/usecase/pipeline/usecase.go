@@ -57,6 +57,7 @@ type Usecase struct {
 	assetNodeRepo           repository.PipelineRunAssetNodeRepository
 	notifyRepo              repository.PipelineRunNotificationRepository
 	watcherRepo             repository.PipelineRunWatcherStateRepository
+		backfillRepo            repository.BackfillRepository
 	assetRepo               repository.AssetRepository
 	assetEventRepo          repository.AssetEventRepository
 	relationWriter          repository.AssetRelationWriter
@@ -187,6 +188,10 @@ func (uc *Usecase) SetRunFactRepositories(
 ) {
 	uc.runRelationRepo = relationRepo
 	uc.runInputRepo = inputRepo
+}
+
+func (uc *Usecase) SetBackfillRepo(r repository.BackfillRepository) {
+	uc.backfillRepo = r
 }
 
 // SetObservabilityRepositories wires optional pipeline observability

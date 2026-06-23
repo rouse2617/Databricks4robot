@@ -373,6 +373,8 @@ func RegisterAll(
 		api.POST("/runs", pipelineHandler.CreateRun)
 		api.POST("/runs/template/:id", pipelineHandler.CreateRunByTemplate)
 		api.GET("/runs", pipelineHandler.ListRuns)
+		api.POST("/runs/batch", pipelineHandler.CreateBatchRun)
+		api.GET("/runs/batch/:batchId", pipelineHandler.GetBatchStatus)
 		api.GET("/runs/watcher/status", pipelineHandler.GetRunWatcherStatus)
 		api.GET("/runs/by-workflow/:workflowName", pipelineHandler.GetRunByWorkflowName)
 		api.GET("/runs/:id", pipelineHandler.GetRun)
