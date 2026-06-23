@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -2081,36 +2080,7 @@ func needsRunListRefresh(run *models.PipelineRun) bool {
 	return needsMisclassifiedReconcile(run)
 }
 
-// refreshMisclassifiedRunSummaries fixes misclassified terminal runs in the
-// list view. We process up to 3 items whose workflow is likely still active
-// (recent creation). Older expired runs are skipped since they will be
-// handled by the background watcher.
-func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items []models.PipelineRun) {
-	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
-		return
-	}
-	refreshCutoff := time.Now().UTC().Add(-5 * time.Minute)
-	// Process eligible items concurrently (semaphore=5) so the list
-	// stays fast even with many recent misclassified runs.
-	sem := make(chan struct{}, 5)
-	var wg sync.WaitGroup
-	for i := range items {
-		if !needsMisclassifiedReconcile(&items[i]) {
-			continue
-		}
-		if items[i].CreatedAt.Before(refreshCutoff) {
-			continue
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			uc.RefreshRunForList(ctx, &items[idx])
-			<-sem
-		}(i)
-	}
-	wg.Wait()
-}
+
 
 func (uc *Usecase) refreshRunSummariesForList(ctx context.Context, items []models.PipelineRun) {
 	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
@@ -2735,7 +2705,7 @@ func (uc *Usecase) Deploy(
 		pipeName = name
 	}
 
-	wfName := pipeName + "-" + uuid.New().String()[:6]
+	wfName := pipeName + "-" + uuid.New().String()[:8]
 	depID := uuid.New().String()
 	templateID := ""
 	templateVersion := 0
@@ -3308,15 +3278,10 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		// Refresh misclassified runs so the list view shows live Argo
 		// status instead of stale DB records. Active runs are refreshed
 		// asynchronously by the background watcher.
-		// Normalize before refresh to clean up stale messages on active
-		// runs — reduces false positives in needsMisclassifiedReconcile
-		// and avoids unnecessary Argo calls for Running + stale-message rows.
-		normalizeActiveRunRuntimeFields(items)
 		if filter[0].RefreshActive {
 			uc.refreshRunSummariesForList(ctx, items)
-		} else {
-			uc.refreshMisclassifiedRunSummaries(ctx, items)
 		}
+		normalizeActiveRunRuntimeFields(items)
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
 		}
