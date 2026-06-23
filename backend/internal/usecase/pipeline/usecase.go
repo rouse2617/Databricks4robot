@@ -3246,6 +3246,14 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		}
 		normalizeActiveRunRuntimeFields(items)
 		annotateRunDiagnostics(items)
+		for i := range items {
+			if items[i].ID == "e4089577-c5d3-4e1c-bd39-415b77f121ba" {
+				slog.Warn("ListRunSummaries returning e4089577",
+					"status", items[i].Status,
+					"message", items[i].Message,
+				)
+			}
+		}
 		return items, total, nil
 	}
 	items, err := uc.runRepo.FindAllSummaries(ctx)
