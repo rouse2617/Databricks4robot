@@ -3238,9 +3238,9 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		if err != nil {
 			return nil, 0, err
 		}
-		if filter[0].RefreshActive {
-			uc.refreshRunSummariesForList(ctx, items)
-		}
+		// Always refresh misclassified runs so the list view shows
+		// live Argo status instead of stale DB records.
+		uc.refreshRunSummariesForList(ctx, items)
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
 		}
