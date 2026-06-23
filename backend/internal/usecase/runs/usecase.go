@@ -483,7 +483,12 @@ func (uc *Usecase) refreshPipelineStatus(ctx context.Context, run *models.Databr
 	if uc.pipelineUC == nil {
 		return nil
 	}
+	// Retry once on transient failures — the pipeline usecase may be
+	// racing with other goroutines writing to the same run.
 	pipelineRun, err := uc.pipelineUC.GetRun(ctx, run.ID)
+	if err != nil && run.ID != "" {
+		pipelineRun, err = uc.pipelineUC.GetRun(ctx, run.ID)
+	}
 	if err != nil || pipelineRun == nil {
 		return nil
 	}
