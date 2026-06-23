@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -832,6 +833,14 @@ const pipelineRunSummaryOuterCols = `id, template_id, pipeline_name, template_ve
 func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) error {
 	if run == nil {
 		return errors.New("postgres PipelineRunRepo.Save: nil run")
+	}
+	// DEBUG: track who writes what status
+	if run.ID == "e4089577-c5d3-4e1c-bd39-415b77f121ba" {
+		slog.Warn("PipelineRunRepo.Save writing status",
+			"runID", run.ID,
+			"status", run.Status,
+			"message", run.Message,
+		)
 	}
 	now := time.Now().UTC()
 	if run.ID == "" {
