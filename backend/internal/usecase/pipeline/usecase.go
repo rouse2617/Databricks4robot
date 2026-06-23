@@ -2062,7 +2062,10 @@ func needsMisclassifiedReconcile(run *models.PipelineRun) bool {
 	if run == nil {
 		return false
 	}
-	return isMisclassifiedTerminalRunStatus(run.Status) || isStaleWorkflowUnavailableMessage(run.Message)
+	// Only reconcile truly terminal misclassified statuses (Failed/Error/Expired).
+	// Running + stale message is not misclassified — normalizeActiveRunRuntimeField
+	// handles cleaning up the message locally without an Argo call.
+	return isMisclassifiedTerminalRunStatus(run.Status)
 }
 
 func needsRunListRefresh(run *models.PipelineRun) bool {
@@ -3305,6 +3308,10 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		// Refresh misclassified runs so the list view shows live Argo
 		// status instead of stale DB records. Active runs are refreshed
 		// asynchronously by the background watcher.
+		// Normalize before refresh to clean up stale messages on active
+		// runs — reduces false positives in needsMisclassifiedReconcile
+		// and avoids unnecessary Argo calls for Running + stale-message rows.
+		normalizeActiveRunRuntimeFields(items)
 		if filter[0].RefreshActive {
 			uc.refreshRunSummariesForList(ctx, items)
 		} else {
@@ -3313,7 +3320,6 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
 		}
-		normalizeActiveRunRuntimeFields(items)
 		annotateRunDiagnostics(items)
 		// Strip heavy fields that are only needed on the detail page.
 		for i := range items {
