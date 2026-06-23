@@ -4,6 +4,7 @@ import {
 	BarsOutlined,
 	CopyOutlined,
 	ReloadOutlined,
+	VerticalAlignBottomOutlined,
 } from "@ant-design/icons";
 import Ansi from "ansi-to-react";
 import {
@@ -83,108 +84,6 @@ import {
 	prepareVisibleLogContent,
 } from "./workflowLogView";
 import "../styles/pipeline.css";
-
-function buildHighlightedLogNodes(logContent: string, keyword: string) {
-	const normalized = keyword.trim();
-	if (!normalized) {
-		return [<Ansi key="raw-log">{logContent}</Ansi>];
-	}
-
-	const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	const pattern = new RegExp(`(${escaped})`, "gi");
-	const parts = logContent.split(pattern);
-	let offset = 0;
-	let segmentIndex = 0;
-	return parts.flatMap((part) => {
-		const key = `log-chunk-${offset}-${offset + part.length}`;
-		offset += part.length;
-		const isMatch = segmentIndex % 2 === 1;
-		segmentIndex += 1;
-		if (!part) return [];
-		if (isMatch) {
-			return (
-				<mark
-					key={key}
-					style={{ background: "#fef08a", padding: 0, borderRadius: 0 }}
-				>
-					<Ansi>{part}</Ansi>
-				</mark>
-			);
-		}
-		return <Ansi key={key}>{part}</Ansi>;
-	});
-}
-
-const LOG_VIRTUAL_ROW_HEIGHT = 18;
-const LOG_VIRTUAL_OVERSCAN_ROWS = 12;
-
-function VirtualLogContent({
-	content,
-	search,
-	scrollTop,
-	viewportHeight,
-}: {
-	content: string;
-	search: string;
-	scrollTop: number;
-	viewportHeight: number;
-}) {
-	const lines = useMemo(() => {
-		const raw = content.endsWith("\n") ? content.slice(0, -1) : content;
-		return raw === "" ? [] : raw.split("\n");
-	}, [content]);
-	const rowCount = lines.length;
-	const visibleCount = Math.max(
-		1,
-		Math.ceil(viewportHeight / LOG_VIRTUAL_ROW_HEIGHT) +
-			LOG_VIRTUAL_OVERSCAN_ROWS * 2,
-	);
-	const start = Math.max(
-		0,
-		Math.floor(scrollTop / LOG_VIRTUAL_ROW_HEIGHT) - LOG_VIRTUAL_OVERSCAN_ROWS,
-	);
-	const end = Math.min(rowCount, start + visibleCount);
-	const visibleRows = [];
-	for (let absoluteIndex = start; absoluteIndex < end; absoluteIndex += 1) {
-		const line = lines[absoluteIndex] ?? "";
-		visibleRows.push({
-			key: `${absoluteIndex}-${line.slice(0, 24)}`,
-			line,
-		});
-	}
-
-	return (
-		<div
-			style={{
-				height: rowCount * LOG_VIRTUAL_ROW_HEIGHT,
-				minHeight: "100%",
-				position: "relative",
-			}}
-		>
-			<div
-				style={{
-					position: "absolute",
-					top: start * LOG_VIRTUAL_ROW_HEIGHT,
-					left: 0,
-					right: 0,
-				}}
-			>
-				{visibleRows.map((row) => (
-					<div
-						key={row.key}
-						style={{
-							height: LOG_VIRTUAL_ROW_HEIGHT,
-							lineHeight: `${LOG_VIRTUAL_ROW_HEIGHT}px`,
-							whiteSpace: "pre",
-						}}
-					>
-						{row.line ? buildHighlightedLogNodes(row.line, search) : "\u00a0"}
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
 
 const ACTIVE_NODE_PHASES = new Set(["Running", "Pending"]);
 const TERMINAL_NODE_PHASES = new Set([
@@ -475,10 +374,26 @@ function WorkflowLogPanel({
 }) {
 	const { message: messageApi } = App.useApp();
 	const logBodyRef = useRef<HTMLDivElement | null>(null);
-	const [logViewport, setLogViewport] = useState({
-		scrollTop: 0,
-		viewportHeight: 360,
-	});
+	const userScrolledUpRef = useRef(false);
+	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+
+	const handleLogScroll = useCallback(() => {
+		const el = logBodyRef.current;
+		if (!el) return;
+		const threshold = Math.max(el.clientHeight * 0.3, 60);
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+		userScrolledUpRef.current = !atBottom;
+		setShowScrollToBottom(!atBottom);
+	}, []);
+
+	const scrollToLogBottom = useCallback(() => {
+		const el = logBodyRef.current;
+		if (!el) return;
+		el.scrollTop = el.scrollHeight;
+		userScrolledUpRef.current = false;
+		setShowScrollToBottom(false);
+	}, []);
+
 	const visibleLog = useMemo(
 		() =>
 			logContent === null
@@ -499,31 +414,22 @@ function WorkflowLogPanel({
 	const followMeta = followStatusMeta[followStatus];
 	const paginationUnavailable =
 		logResponse?.pagination && logResponse.pagination.available === false;
-	const syncLogViewport = useCallback(() => {
-		const el = logBodyRef.current;
-		if (!el) return;
-		setLogViewport({
-			scrollTop: el.scrollTop,
-			viewportHeight: el.clientHeight || 360,
-		});
-	}, []);
-
+	// Scroll to bottom on initial load (new node selected)
 	useEffect(() => {
-		if (
-			selectedNode &&
-			!loading &&
-			!error &&
-			visibleLog !== null &&
-			logBodyRef.current
-		) {
+		if (selectedNode && !loading && !error && visibleLog !== null && logBodyRef.current) {
 			logBodyRef.current.scrollTop = logBodyRef.current.scrollHeight;
-			syncLogViewport();
+			userScrolledUpRef.current = false;
+			setShowScrollToBottom(false);
 		}
-	}, [selectedNode, loading, error, visibleLog, syncLogViewport]);
+	}, [selectedNode, loading, error]);
 
+	// Auto-scroll on new content, but only when user hasn't scrolled up
 	useEffect(() => {
-		syncLogViewport();
-	}, [syncLogViewport]);
+		const el = logBodyRef.current;
+		if (!el || !visibleLog || loading || error) return;
+		if (userScrolledUpRef.current) return;
+		el.scrollTop = el.scrollHeight;
+	});
 
 	return (
 		<div
@@ -675,29 +581,45 @@ function WorkflowLogPanel({
 						</Button>
 					</div>
 					<div
-						ref={logBodyRef}
-						onScroll={syncLogViewport}
-						style={{
-							flex: 1,
-							fontSize: 11,
-							fontFamily: '"SF Mono", "Fira Code", monospace',
-							overflow: "auto",
-							background: "#f8f9fa",
-							padding: 12,
-							borderRadius: 6,
-							border: "1px solid #e5e7eb",
-							minHeight: 0,
-							lineHeight: 1.55,
-						}}
+						style={{ position: "relative", flex: 1, minHeight: 0 }}
 					>
-						{visibleLog ? (
-							<VirtualLogContent
-								content={visibleLog.content}
-								search={search}
-								scrollTop={logViewport.scrollTop}
-								viewportHeight={logViewport.viewportHeight}
-							/>
-						) : null}
+						<div
+							ref={logBodyRef}
+							onScroll={handleLogScroll}
+							style={{
+								height: "100%",
+								fontSize: 11,
+								fontFamily: '"SF Mono", "Fira Code", monospace',
+								overflow: "auto",
+								background: "#f8f9fa",
+								padding: 12,
+								borderRadius: 6,
+								border: "1px solid #e5e7eb",
+								lineHeight: 1.55,
+								whiteSpace: "pre-wrap",
+								wordBreak: "break-all",
+							}}
+						>
+							<Ansi>{visibleLog?.content ?? ""}</Ansi>
+						</div>
+						{showScrollToBottom && (
+							<Button
+								type="primary"
+								size="small"
+								icon={<VerticalAlignBottomOutlined />}
+								onClick={scrollToLogBottom}
+								style={{
+									position: "absolute",
+									bottom: 16,
+									right: 16,
+									borderRadius: 20,
+									boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+									zIndex: 10,
+								}}
+							>
+								回到底部
+							</Button>
+						)}
 					</div>
 				</>
 			)}
