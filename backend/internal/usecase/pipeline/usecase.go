@@ -3379,10 +3379,22 @@ func (uc *Usecase) GetRun(ctx context.Context, id string) (*models.PipelineRun, 
 	if run == nil {
 		return nil, nil
 	}
+	initialStatus := run.Status
+	initialMessage := run.Message
 	uc.refreshPipelineRunStatus(ctx, run)
 	uc.reconcileTerminalRunFromLedger(ctx, run)
 	uc.reconcileMisclassifiedRunFromArgo(ctx, run)
 	uc.enrichRun(ctx, run)
+	if run.Status != initialStatus || run.Message != initialMessage {
+		slog.Warn("GetRun status changed",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"oldStatus", initialStatus,
+			"newStatus", run.Status,
+			"oldMessage", initialMessage,
+			"newMessage", run.Message,
+		)
+	}
 	return run, nil
 }
 
