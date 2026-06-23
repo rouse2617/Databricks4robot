@@ -33,12 +33,16 @@
 - [x] [Frontend] Pass the execution search box to the Run list API and render template names.
 - [x] [api] Sync OpenAPI and API guide for Run summary cost/template search.
 - [x] [scripts] Extend Run API smoke coverage for summary query/cost fields.
+- [x] [backend] Reconcile bounded anomalous terminal Run rows from the watcher without adding Argo calls to default `/runs` list reads.
+- [x] [backend] Sync repaired batch child Run statuses back to linked backfill items.
 
 ## Verification
 
 - [x] [Frontend] `cd Frontend && npx biome check src/pages/WorkflowExecutionList.tsx src/pages/WorkflowExecutionList.test.tsx`.
 - [x] [Frontend] `cd Frontend && npm run test -- src/pages/WorkflowExecutionList.test.tsx --run`.
 - [x] [backend] `cd backend && go test ./internal/handlers/pipeline ./internal/postgres/...`.
+- [x] [backend] `cd backend && go test ./internal/usecase/pipeline`.
+- [x] [backend] `cd backend && go test ./internal/usecase/pipeline ./internal/usecase/backfill`.
 - [x] [Frontend] `cd Frontend && npx biome check src/pages/WorkflowExecutionList.tsx src/pages/WorkflowExecutionList.test.tsx src/api/runApi.ts src/api/runApi.test.ts`.
 - [x] [Frontend] `cd Frontend && npm run test -- src/pages/WorkflowExecutionList.test.tsx src/api/runApi.test.ts --run`.
 - [x] [Frontend] `cd Frontend && npx biome check src/pages/PipelinePage.tsx src/pages/PipelinePage.test.tsx src/lib/pipelineNavigation.ts src/components/pipeline/DeployPanel.tsx`.
@@ -50,6 +54,8 @@
 ## Deploy Verification
 
 - [x] Deployed backend dev image `cyber-databrew-backend:81cfddd-runtimeos-20260620100915` to revision `cyber-databrew-backend-dev-00966-564`.
+- [x] Deployed backend dev image `cyber-databrew-backend:1792c0a9-watcher-anomaly-20260623193359` to revision `cyber-databrew-backend-dev-01048-b69`.
+- [x] Backend dev smoke after watcher anomaly deploy: `/readyz` healthy; `/api/v1/runs/watcher/status` returned `healthy=true, stale=false, lastSyncedRunCount=58`; `/api/v1/runs?view=summary&excludeBatch=true&page=1&pageSize=2` returned 200 with 2 items.
 - [x] Deployed frontend dev image `cyber-databrew-frontend:81cfddd-runtimeos-20260620101541` to revision `cyber-databrew-frontend-dev-00398-fk7`.
 - [x] Published Cloudflare Worker static assets for `https://cyber-databrew-dev.cyberorigin.ai/`, version `18e8d1c0-8174-4732-b6c0-df57c57414b9`.
 - [x] Used Chrome DevTools MCP to verify deployed `/runs` list loads from the public dev domain without runtime console errors.

@@ -41,3 +41,24 @@
 - **Decision**: Treat disabled terminal controls with the explicit message "Pod 已完成，终端仅支持运行中的 Pod" as expected behavior, while still verifying Pod diagnostics and resource monitoring APIs return 200.
 - **Alternatives**: Create another long-running dev workflow only to verify interactive exec in this pass.
 - **Rationale**: This deploy verification focused on the run list/detail/log/Pod/monitoring regression surface; completed Pods should not expose exec, and the current UI states that clearly.
+
+## 2026-06-23 - Watcher owns bounded anomaly repair
+
+- **Context**: Default `/runs` summary reads must stay DB-backed for large Run counts, but terminal rows misclassified as workflow-unavailable can remain stale unless a user opens the detail page.
+- **Decision**: Add a bounded anomaly-repair pass to the background watcher for recent or stale-message terminal rows, while keeping default list reads passive.
+- **Alternatives**: Re-enable Argo reconciliation from default list reads, or require users to open detail pages to repair each row.
+- **Rationale**: Background repair preserves Runtime OS list scalability and lets stale summaries converge automatically.
+
+## 2026-06-23 - Batch child repairs sync item status
+
+- **Context**: Batch-scoped summaries derive status from `backfill_items.status` before `pipeline_runs.status`, so repairing only the Run ledger can leave batch pages showing stale failures.
+- **Decision**: When a refreshed batch child Run is persisted, sync the linked backfill item status from the repaired Run.
+- **Alternatives**: Leave item repair to batch detail refresh only.
+- **Rationale**: Watcher-driven convergence should apply to both global Run summaries and batch child summaries.
+
+## 2026-06-23 - Pre-commit all-files false positive
+
+- **Context**: `pre-commit run --all-files` failed in `detect-secrets` on tracked `.agent/reports/databrew-user-guide.html:300`, an unrelated embedded base64 screenshot line.
+- **Decision**: Keep this runtime fix scoped and run pre-commit on changed files, which passed.
+- **Alternatives**: Modify the unrelated report file to add an allowlist marker.
+- **Rationale**: The failing file is outside this change and is not staged; changing it would mix unrelated report maintenance into the backend watcher fix.

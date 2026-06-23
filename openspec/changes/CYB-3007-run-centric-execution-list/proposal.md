@@ -39,3 +39,8 @@ The Execution Hub list had already moved its primary data path to `/api/v1/runs`
 - Duration, cost, created time, and finished time table headers expose working sort controls.
 - Run summary list rows include available estimated total cost and template name metadata.
 - The execution list search box finds Runs whose saved template name matches the query.
+- Background Run watcher reconciles bounded anomalous terminal rows so stale
+  `runtime_missing` / TTL-cleanup summaries converge without making `/runs`
+  page reads query Argo.
+- Batch child Run repairs also update the linked backfill item status so
+  batch-scoped lists do not keep showing the old item-level failure.

@@ -87,3 +87,37 @@ The Execution Hub product list SHALL expose available Run cost snapshots and SHA
 - **When** the user searches the execution list using a pipeline template name
 - **Then** the Run list API matches Runs linked to that template name
 - **Then** the table shows matching Runs even when they are not on the first unfiltered page
+
+### Requirement: Run summary anomalies converge through the watcher
+
+The system SHALL reconcile bounded anomalous terminal Run rows through the
+background watcher while keeping default execution list reads backed by the Run
+summary ledger.
+
+**Priority**: P1 (High)
+**Rationale**: Large execution lists must not poll Argo from page reads, but rows
+misclassified as runtime-missing or TTL-cleaned still need to converge without
+requiring users to open every Run detail page.
+
+#### Scenario: Watcher repairs a stale terminal summary
+
+- **Given** a Run summary row is marked `Error` with a stale workflow-unavailable message
+- **And** the referenced runtime workflow is still available and terminally succeeded
+- **When** the background Run watcher scans
+- **Then** the watcher updates the Run ledger to `Succeeded`
+- **Then** a later `/runs` summary page read shows the repaired status from the DB
+
+#### Scenario: Execution list does not repair by polling Argo
+
+- **Given** the user opens `/runs`
+- **When** the frontend requests the Run summary list without explicit refresh
+- **Then** the backend returns DB summary rows without querying Argo per row
+- **Then** any anomaly reconciliation is left to the watcher, detail refresh, or explicit refresh path
+
+#### Scenario: Watcher repair updates batch item status
+
+- **Given** a batch child Run is linked to a backfill item
+- **And** the child Run and item are marked failed because the workflow looked unavailable
+- **When** the background Run watcher repairs the child Run to `Succeeded`
+- **Then** the linked backfill item status is updated to completed
+- **Then** the batch-scoped execution list no longer keeps showing the old item failure

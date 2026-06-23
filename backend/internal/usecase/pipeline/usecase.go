@@ -57,7 +57,7 @@ type Usecase struct {
 	assetNodeRepo           repository.PipelineRunAssetNodeRepository
 	notifyRepo              repository.PipelineRunNotificationRepository
 	watcherRepo             repository.PipelineRunWatcherStateRepository
-		backfillRepo            repository.BackfillRepository
+	backfillRepo            repository.BackfillRepository
 	assetRepo               repository.AssetRepository
 	assetEventRepo          repository.AssetEventRepository
 	relationWriter          repository.AssetRelationWriter
@@ -1863,7 +1863,11 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 	}
 	existing, err := uc.runRepo.FindByID(ctx, run.ID)
 	if err != nil || existing == nil {
-		logPipelineSideEffect("save pipeline run observation", uc.runRepo.Save(ctx, run))
+		saveErr := uc.runRepo.Save(ctx, run)
+		logPipelineSideEffect("save pipeline run observation", saveErr)
+		if saveErr == nil {
+			uc.syncBackfillItemStatusFromRun(ctx, run)
+		}
 		return
 	}
 	existingWasActive := isActiveDeploymentStatus(existing.Status)
@@ -1895,8 +1899,53 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 	if run.StartedAt != nil {
 		existing.StartedAt = run.StartedAt
 	}
-	logPipelineSideEffect("save pipeline run observation", uc.runRepo.Save(ctx, existing))
+	saveErr := uc.runRepo.Save(ctx, existing)
+	logPipelineSideEffect("save pipeline run observation", saveErr)
+	if saveErr == nil {
+		uc.syncBackfillItemStatusFromRun(ctx, existing)
+	}
 	*run = *existing
+}
+
+func (uc *Usecase) syncBackfillItemStatusFromRun(ctx context.Context, run *models.PipelineRun) {
+	if uc.backfillRepo == nil || run == nil || strings.TrimSpace(run.ID) == "" {
+		return
+	}
+	if run.BatchJobID == nil || strings.TrimSpace(*run.BatchJobID) == "" {
+		return
+	}
+	item, err := uc.backfillRepo.FindItemByPipelineRunID(ctx, run.ID)
+	if err != nil || item == nil {
+		if err != nil {
+			slog.Warn("syncBackfillItemStatusFromRun: find item failed", "runID", run.ID, "err", err)
+		}
+		return
+	}
+	nextStatus := mapRunStatusToBackfillItem(run.Status)
+	if nextStatus == "" || strings.EqualFold(strings.TrimSpace(item.Status), nextStatus) {
+		return
+	}
+	errMsg := ""
+	if nextStatus == "failed" {
+		errMsg = strings.TrimSpace(run.Message)
+	}
+	logPipelineSideEffect("sync backfill item status from run",
+		uc.backfillRepo.UpdateItemStatus(ctx, item.ID, nextStatus, run.WorkflowName, errMsg))
+}
+
+func mapRunStatusToBackfillItem(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "succeeded", "success":
+		return "completed"
+	case "failed", "error", "expired":
+		return "failed"
+	case "pending":
+		return "pending"
+	case "running", "unknown":
+		return "running"
+	default:
+		return ""
+	}
 }
 
 func isStaleWorkflowUnavailableMessage(message string) bool {
@@ -2084,8 +2133,6 @@ func needsRunListRefresh(run *models.PipelineRun) bool {
 	}
 	return needsMisclassifiedReconcile(run)
 }
-
-
 
 func (uc *Usecase) refreshRunSummariesForList(ctx context.Context, items []models.PipelineRun) {
 	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
@@ -2380,6 +2427,20 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		uc.refreshPipelineRunStatus(ctx, &runs[i])
 		synced++
 	}
+	anomalyLimit := watcherAnomalyReconcileLimit(limit)
+	anomalyReconciled := 0
+	now := time.Now().UTC()
+	for i := range runs {
+		if anomalyReconciled >= anomalyLimit {
+			break
+		}
+		if !needsWatcherAnomalyReconcile(&runs[i], now) {
+			continue
+		}
+		uc.RefreshRunForList(ctx, &runs[i])
+		anomalyReconciled++
+	}
+	synced += anomalyReconciled
 	// Backfill: scan completed runs (within the last 7 days) that may be
 	// missing their ledger events (e.g. they completed before watcher scan).
 	backfillLimit := limit / 2
@@ -2424,6 +2485,62 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		logPipelineSideEffect("save pipeline watcher state", uc.watcherRepo.Save(ctx, &nextState))
 	}
 	return synced, nil
+}
+
+func watcherAnomalyReconcileLimit(limit int) int {
+	if limit <= 0 {
+		limit = 100
+	}
+	n := limit / 4
+	if n < 5 {
+		n = 5
+	}
+	if n > 25 {
+		n = 25
+	}
+	return n
+}
+
+func needsWatcherAnomalyReconcile(run *models.PipelineRun, now time.Time) bool {
+	if run == nil || isActiveDeploymentStatus(run.Status) {
+		return false
+	}
+	if strings.TrimSpace(run.WorkflowName) == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(run.LedgerState), "has_ledger") {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(run.LedgerState), "no_ledger") {
+		return false
+	}
+	if isStaleWorkflowUnavailableMessage(run.Message) {
+		return runObservedRecently(run, now, 7*24*time.Hour)
+	}
+	if !needsMisclassifiedReconcile(run) {
+		return false
+	}
+	return runObservedRecently(run, now, 7*24*time.Hour)
+}
+
+func runObservedRecently(run *models.PipelineRun, now time.Time, window time.Duration) bool {
+	if run == nil || window <= 0 {
+		return false
+	}
+	ref := run.FinishedAt
+	if ref == nil || ref.IsZero() {
+		ref = &run.UpdatedAt
+	}
+	if ref == nil || ref.IsZero() {
+		ref = run.StartedAt
+	}
+	if ref == nil || ref.IsZero() {
+		ref = &run.CreatedAt
+	}
+	if ref == nil || ref.IsZero() {
+		return false
+	}
+	return now.Sub(*ref) >= 0 && now.Sub(*ref) < window
 }
 
 // GetRunWatcherStatus returns the persisted pipeline watcher health snapshot.

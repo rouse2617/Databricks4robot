@@ -2655,6 +2655,39 @@ func (m *mockWatcherStateRepo) FindByID(_ context.Context, _ string) (*models.Pi
 	return &copy, nil
 }
 
+type watcherBackfillRepo struct {
+	repository.BackfillRepository
+	itemsByRunID map[string]*models.BackfillItem
+	updated      []models.BackfillItem
+}
+
+func (m *watcherBackfillRepo) FindItemByPipelineRunID(_ context.Context, pipelineRunID string) (*models.BackfillItem, error) {
+	if m.itemsByRunID == nil {
+		return nil, nil
+	}
+	return m.itemsByRunID[pipelineRunID], nil
+}
+
+func (m *watcherBackfillRepo) UpdateItemStatus(_ context.Context, id, status, workflowName, errorMsg string) error {
+	for _, item := range m.itemsByRunID {
+		if item == nil || item.ID != id {
+			continue
+		}
+		item.Status = status
+		if workflowName != "" {
+			item.WorkflowName = &workflowName
+		}
+		if errorMsg != "" {
+			item.ErrorMessage = &errorMsg
+		} else {
+			item.ErrorMessage = nil
+		}
+		m.updated = append(m.updated, *item)
+		return nil
+	}
+	return nil
+}
+
 func TestListRunEvents_ReturnsStoredEvents(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
@@ -3289,6 +3322,80 @@ func TestSyncActiveRunEvents_SavesWatcherHealth(t *testing.T) {
 	}
 	if !status.Healthy || status.Stale {
 		t.Fatalf("expected healthy non-stale watcher, got %#v", status)
+	}
+}
+
+func TestSyncActiveRunEvents_ReconcilesMisclassifiedTerminalRun(t *testing.T) {
+	ctx := context.Background()
+	createdAt := time.Now().UTC().Add(-10 * time.Minute)
+	finishedAt := time.Now().UTC().Add(-5 * time.Minute)
+	batchJobID := "batch-1"
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Error",
+				Message:      staleWorkflowTTLCleanupMessage,
+				CreatedAt:    createdAt,
+				FinishedAt:   &finishedAt,
+				BatchJobID:   &batchJobID,
+			},
+		},
+	}
+	runID := "run-1"
+	backfillRepo := &watcherBackfillRepo{
+		itemsByRunID: map[string]*models.BackfillItem{
+			runID: {
+				ID:            "item-1",
+				JobID:         batchJobID,
+				AssetID:       "asset-1",
+				Status:        "failed",
+				PipelineRunID: &runID,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	getWorkflowCalls := 0
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		getWorkflowCalls++
+		if name != "wf-1" {
+			t.Fatalf("unexpected workflow name %q", name)
+		}
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", Namespace: namespace, UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase:      wfv1.WorkflowSucceeded,
+				FinishedAt: metav1.Time{Time: finishedAt},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+	uc.SetRunEventRepo(&mockRunEventRepo{})
+	uc.SetBackfillRepo(backfillRepo)
+
+	synced, err := uc.SyncActiveRunEvents(ctx, 25)
+	if err != nil {
+		t.Fatalf("SyncActiveRunEvents: %v", err)
+	}
+	if synced == 0 {
+		t.Fatal("expected watcher to count the reconciled anomalous run")
+	}
+	if getWorkflowCalls == 0 {
+		t.Fatal("expected watcher to reconcile terminal anomaly through Argo")
+	}
+	if got := runRepo.byID["run-1"].Status; got != string(wfv1.WorkflowSucceeded) {
+		t.Fatalf("expected Succeeded after watcher reconcile, got %q", got)
+	}
+	if runRepo.byID["run-1"].Message != "" {
+		t.Fatalf("expected stale runtime message cleared, got %q", runRepo.byID["run-1"].Message)
+	}
+	if got := backfillRepo.itemsByRunID[runID].Status; got != "completed" {
+		t.Fatalf("expected batch item completed after run repair, got %q", got)
+	}
+	if len(backfillRepo.updated) != 1 {
+		t.Fatalf("expected one batch item status update, got %d", len(backfillRepo.updated))
 	}
 }
 
