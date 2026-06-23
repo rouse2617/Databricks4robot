@@ -436,7 +436,8 @@ func (uc *Usecase) ResubmitRun(ctx context.Context, id string) error {
 		return err
 	}
 	if run.Type == models.RunTypePipeline && uc.pipelineUC != nil {
-		return uc.pipelineUC.ResubmitRun(ctx, id)
+		_, err = uc.pipelineUC.ResubmitRun(ctx, id)
+		return err
 	}
 	return uc.directWorkflowOp(ctx, run, uc.wfClient.ResubmitWorkflow)
 }
@@ -466,12 +467,35 @@ func (uc *Usecase) directWorkflowOp(ctx context.Context, run *models.DatabrewRun
 }
 
 func (uc *Usecase) enrichRunView(ctx context.Context, run *models.DatabrewRun) {
+	// Refresh pipeline status and sync back to the in-memory DatabrewRun.
+	// This ensures the list view reflects the latest Argo workflow state
+	// instead of a previously-persisted stale status like "Error".
+	pipelineRun := uc.refreshPipelineStatus(ctx, run)
 	run.StatusLabel = statusLabel(run.Status)
 	run.Actions = runActionsForStatus(run.Status)
-	run.Summary = uc.buildSummary(ctx, run)
+	run.Summary = uc.buildSummary(ctx, run, pipelineRun)
 }
 
-func (uc *Usecase) buildSummary(ctx context.Context, run *models.DatabrewRun) any {
+// refreshPipelineStatus fetches the latest pipeline run from the pipeline
+// usecase and syncs status/message/finishedAt back to the DatabrewRun.
+// Returns the PipelineRun so buildSummary can reuse it without a second fetch.
+func (uc *Usecase) refreshPipelineStatus(ctx context.Context, run *models.DatabrewRun) *models.PipelineRun {
+	if uc.pipelineUC == nil {
+		return nil
+	}
+	pipelineRun, err := uc.pipelineUC.GetRun(ctx, run.ID)
+	if err != nil || pipelineRun == nil {
+		return nil
+	}
+	if pipelineRun.Status != run.Status {
+		run.Status = pipelineRun.Status
+		run.Message = pipelineRun.Message
+		run.FinishedAt = pipelineRun.FinishedAt
+	}
+	return pipelineRun
+}
+
+func (uc *Usecase) buildSummary(ctx context.Context, run *models.DatabrewRun, pipelineRun *models.PipelineRun) any {
 	switch run.Type {
 	case models.RunTypeComponentBuild:
 		ext, err := uc.componentBuildRepo.FindByRunID(ctx, run.ID)
@@ -494,11 +518,7 @@ func (uc *Usecase) buildSummary(ctx context.Context, run *models.DatabrewRun) an
 			"releaseVersion":  ext.ReleaseVersion,
 		}
 	default:
-		if uc.pipelineUC == nil {
-			return map[string]interface{}{}
-		}
-		pipelineRun, err := uc.pipelineUC.GetRun(ctx, run.ID)
-		if err != nil || pipelineRun == nil {
+		if pipelineRun == nil {
 			return map[string]interface{}{}
 		}
 		return map[string]interface{}{
