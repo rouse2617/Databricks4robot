@@ -2086,18 +2086,14 @@ func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items [
 		return
 	}
 	refreshed := 0
-	const misclassifedRefreshBatch = 3
-	for i := range items {
+	const misclassifedRefreshBatch = 5
+	// Process from the end (oldest first) so long-running pipelines
+	// that started hours ago are covered before newer short-lived runs.
+	for i := len(items) - 1; i >= 0; i-- {
 		if refreshed >= misclassifedRefreshBatch {
 			break
 		}
 		if !needsMisclassifiedReconcile(&items[i]) {
-			continue
-		}
-		// Skip runs created more than 30 minutes ago — their workflow is
-		// likely already terminal or GC'd, and refreshing them here would
-		// just add latency without user-visible benefit.
-		if items[i].CreatedAt.Before(time.Now().UTC().Add(-30 * time.Minute)) {
 			continue
 		}
 		refreshed++
