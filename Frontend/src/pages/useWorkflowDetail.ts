@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import type {
 	PipelineRun,
 	PipelineRunAssetNode,
@@ -172,7 +172,7 @@ const TERMINAL_WORKFLOW_STATUSES = new Set([
 	"Omitted",
 ]);
 const WORKFLOW_POLL_INTERVAL_MS = 8_000;
-const LOG_STREAM_FLUSH_INTERVAL_MS = 500;
+const LOG_STREAM_FLUSH_INTERVAL_MS = 1000;
 const LOG_STREAM_CONNECT_GRACE_MS = 5_000;
 const LOG_CLIENT_BUFFER_LINES = 5_000;
 const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
@@ -795,16 +795,18 @@ export function useWorkflowDetail(
 		clearLogStreamFlushTimer();
 		const lines = logStreamBufferRef.current.splice(0);
 		if (lines.length === 0) return;
-		setLogState((prev) => {
-			const next = appendBoundedLogContent(prev.content, lines);
-			return {
-				...prev,
-				content: next.content,
-				clientTruncated: prev.clientTruncated || next.truncated,
-				loading: false,
-				followStatus: "connected",
-				followMessage: "实时日志已连接",
-			};
+		startTransition(() => {
+			setLogState((prev) => {
+				const next = appendBoundedLogContent(prev.content, lines);
+				return {
+					...prev,
+					content: next.content,
+					clientTruncated: prev.clientTruncated || next.truncated,
+					loading: false,
+					followStatus: "connected",
+					followMessage: "实时日志已连接",
+				};
+			});
 		});
 	}, [clearLogStreamFlushTimer]);
 
