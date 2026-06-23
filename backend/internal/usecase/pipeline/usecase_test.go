@@ -1977,6 +1977,14 @@ func (m *mockRunRepo) ListSummaries(_ context.Context, filter models.PipelineRun
 		if filter.Status != "" && !strings.EqualFold(item.Status, filter.Status) {
 			continue
 		}
+		if query := strings.ToLower(strings.TrimSpace(filter.Query)); query != "" {
+			if !strings.Contains(strings.ToLower(item.ID), query) &&
+				!strings.Contains(strings.ToLower(item.PipelineName), query) &&
+				!strings.Contains(strings.ToLower(item.WorkflowName), query) &&
+				!strings.Contains(strings.ToLower(item.TemplateName), query) {
+				continue
+			}
+		}
 		filtered = append(filtered, item)
 	}
 	return filtered, len(filtered), nil

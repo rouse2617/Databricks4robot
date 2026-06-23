@@ -2673,6 +2673,9 @@ curl -s -X POST "$BASE/api/v1/runs" \
 curl -s "$BASE/api/v1/runs?view=summary&page=1&pageSize=20" \
   -H "X-Databrew-Token: $TOKEN"
 
+curl -s "$BASE/api/v1/runs?view=summary&q=<TEMPLATE_OR_RUN_NAME>&page=1&pageSize=20" \
+  -H "X-Databrew-Token: $TOKEN"
+
 curl -s "$BASE/api/v1/runs/watcher/status" \
   -H "X-Databrew-Token: $TOKEN"
 
@@ -2683,6 +2686,11 @@ curl -s "$BASE/api/v1/runs/<RUN_ID>" \
 curl -s "$BASE/api/v1/runs/by-workflow/<WORKFLOW_NAME>" \
   -H "X-Databrew-Token: $TOKEN"
 ```
+
+`GET /runs?view=summary` 返回轻量列表行，支持 `q` 按 Run ID、pipeline name、
+workflow name、以及关联的 pipeline template name 做大小写不敏感搜索。列表行会返回
+`templateName`（有模板关联时）和已落库节点成本快照聚合出的 `totalEstimatedCost`。
+没有成本快照的历史 Run 会保持 `totalEstimatedCost: null` / 省略，调用方不能把它当作 0。
 
 Run 子资源：
 

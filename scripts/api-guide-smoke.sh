@@ -230,6 +230,14 @@ if [[ "$RESP_CODE" == "200" ]]; then
 		bad "pipeline-runs response shape"
 	fi
 fi
+get "runs summary with search" "/api/v1/runs?view=summary&q=pipeline&page=1&pageSize=5"
+if [[ "$RESP_CODE" == "200" ]]; then
+	if echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items', []); assert isinstance(items, list); assert all(('totalEstimatedCost' not in i) or (i.get('totalEstimatedCost') is None) or isinstance(i.get('totalEstimatedCost'), (int,float)) for i in items)" 2>/dev/null; then
+		ok "runs summary search/cost response shape"
+	else
+		bad "runs summary search/cost response shape"
+	fi
+fi
 if [[ -n "${PIPELINE_TEMPLATE_ID:-}" ]]; then
 	inline_run_payload='{"target_id":"default","configSelection":{"mode":"inline","fileName":"runtime-config.yaml","content":"foo: bar\nnested:\n  enabled: true","mountPath":"/workspace/configs","targetFilename":"app-config.yaml"}}'
 	inline_run_body=$(post_json "pipeline run template with inline configSelection" "/api/v1/pipeline-runs/template/${PIPELINE_TEMPLATE_ID}" "$inline_run_payload")

@@ -729,7 +729,13 @@ const batchItemRunStatusExpr = `CASE bi.status
 
 func pipelineRunSummarySelectSQL(batchScoped bool) string {
 	if !batchScoped {
-		return qualifyPipelineRunCols(pipelineRunSummarySelectCols, "pr")
+		return qualifyPipelineRunCols(pipelineRunSummarySelectCols, "pr") + `,
+  COALESCE(pt.name, '') AS template_name,
+  (
+    SELECT SUM(n.estimated_cost_usd)
+    FROM pipeline_run_nodes n
+    WHERE n.run_id = pr.id AND n.estimated_cost_usd IS NOT NULL
+  ) AS total_estimated_cost`
 	}
 	return `COALESCE(pr.id, bi.id) AS id,
   pr.template_id,
@@ -751,7 +757,13 @@ func pipelineRunSummarySelectSQL(batchScoped bool) string {
   COALESCE(pr.created_at, bi.created_at) AS created_at,
   COALESCE(pr.updated_at, bi.created_at) AS updated_at,
   COALESCE(pr.started_at, bi.started_at) AS started_at,
-  COALESCE(pr.finished_at, bi.finished_at) AS finished_at`
+  COALESCE(pr.finished_at, bi.finished_at) AS finished_at,
+  COALESCE(pt.name, '') AS template_name,
+  (
+    SELECT SUM(n.estimated_cost_usd)
+    FROM pipeline_run_nodes n
+    WHERE n.run_id = pr.id AND n.estimated_cost_usd IS NOT NULL
+  ) AS total_estimated_cost`
 }
 
 func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
@@ -761,6 +773,7 @@ func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 		templateVer *int
 		assetIDs    []string
 		batchJobID  *string
+		totalCost   *float64
 	)
 	if err := rs.Scan(
 		&r.ID, &templateID, &r.PipelineName, &templateVer, &r.WorkflowName,
@@ -768,6 +781,7 @@ func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 		&r.ArgoNamespace, &r.ArgoWorkflowUID, &r.Message,
 		&r.Scope, &r.Owner, &batchJobID,
 		&r.CreatedAt, &r.UpdatedAt, &r.StartedAt, &r.FinishedAt,
+		&r.TemplateName, &totalCost,
 	); err != nil {
 		return nil, err
 	}
@@ -775,6 +789,7 @@ func scanPipelineRunSummary(rs rowScanner) (*models.PipelineRun, error) {
 	r.TemplateVersion = templateVer
 	r.AssetIDs = assetIDs
 	r.BatchJobID = batchJobID
+	r.TotalEstimatedCost = totalCost
 	return &r, nil
 }
 
@@ -811,7 +826,7 @@ func scanPipelineRun(rs rowScanner) (*models.PipelineRun, error) {
 const pipelineRunSummaryOuterCols = `id, template_id, pipeline_name, template_version, workflow_name,
   execution_target_id, status, node_count, asset_ids, asset_count, no_asset_run,
   argo_namespace, argo_workflow_uid, message, scope, owner, batch_job_id,
-  created_at, updated_at, started_at, finished_at`
+  created_at, updated_at, started_at, finished_at, template_name, total_estimated_cost`
 
 // Save inserts or updates a pipeline run.
 func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) error {
@@ -910,7 +925,8 @@ func (r *PipelineRunRepo) FindAll(ctx context.Context) ([]models.PipelineRun, er
 
 // FindAllSummaries returns lightweight pipeline runs for list endpoints.
 func (r *PipelineRunRepo) FindAllSummaries(ctx context.Context) ([]models.PipelineRun, error) {
-	return r.findAllPipelineRuns(ctx, pipelineRunSummarySelectCols, scanPipelineRunSummary, "FindAllSummaries")
+	items, _, err := r.ListSummaries(ctx, models.PipelineRunListFilter{})
+	return items, err
 }
 
 // ListSummaries returns filtered/paginated summary rows.
@@ -920,7 +936,9 @@ func (r *PipelineRunRepo) ListSummaries(ctx context.Context, filter models.Pipel
 		args   []any
 		argPos = 1
 	)
-	fromSQL := "FROM pipeline_runs pr"
+	fromSQL := `
+FROM pipeline_runs pr
+LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 	if filter.BatchJobID != "" {
 		fromSQL = `
 FROM (
@@ -941,7 +959,8 @@ FROM (
     started_at DESC NULLS LAST,
     created_at DESC
 ) bi
-LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id`
+LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
+LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
 		args = append(args, filter.BatchJobID)
 		argPos++
 	}
@@ -955,6 +974,16 @@ LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id`
 		}
 		conds = append(conds, fmt.Sprintf("%s = $%d", statusExpr, argPos))
 		args = append(args, filter.Status)
+		argPos++
+	}
+	if query := strings.ToLower(strings.TrimSpace(filter.Query)); query != "" {
+		conds = append(conds, fmt.Sprintf(`(
+  LOWER(COALESCE(pr.id, '')) LIKE $%d OR
+  LOWER(COALESCE(pr.pipeline_name, '')) LIKE $%d OR
+  LOWER(COALESCE(pr.workflow_name, '')) LIKE $%d OR
+  LOWER(COALESCE(pt.name, '')) LIKE $%d
+)`, argPos, argPos, argPos, argPos))
+		args = append(args, "%"+query+"%")
 		argPos++
 	}
 	if filter.BatchJobID != "" && strings.TrimSpace(filter.PipelineNodeID) != "" {

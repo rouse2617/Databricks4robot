@@ -26,11 +26,21 @@
 - [x] [Frontend] Add `/runs` as the stable run-centric execution list route.
 - [x] [Frontend] Move deploy, batch, and detail return navigation to `/runs` when a Run id is available.
 - [x] [Frontend] Move asset lineage Run navigation to `/runs/{runId}` when lineage exposes a deployment id.
+- [x] [Frontend] Add execution table sorters for duration, estimated total cost, created time, and finished time.
+- [x] [Frontend] Add regression coverage for sortable execution metric columns.
+- [x] [backend] Add Run summary `q` search and template-name matching.
+- [x] [backend] Include persisted summary `totalEstimatedCost` and `templateName` in Run list rows.
+- [x] [Frontend] Pass the execution search box to the Run list API and render template names.
+- [x] [api] Sync OpenAPI and API guide for Run summary cost/template search.
+- [x] [scripts] Extend Run API smoke coverage for summary query/cost fields.
 
 ## Verification
 
 - [x] [Frontend] `cd Frontend && npx biome check src/pages/WorkflowExecutionList.tsx src/pages/WorkflowExecutionList.test.tsx`.
 - [x] [Frontend] `cd Frontend && npm run test -- src/pages/WorkflowExecutionList.test.tsx --run`.
+- [x] [backend] `cd backend && go test ./internal/handlers/pipeline ./internal/postgres/...`.
+- [x] [Frontend] `cd Frontend && npx biome check src/pages/WorkflowExecutionList.tsx src/pages/WorkflowExecutionList.test.tsx src/api/runApi.ts src/api/runApi.test.ts`.
+- [x] [Frontend] `cd Frontend && npm run test -- src/pages/WorkflowExecutionList.test.tsx src/api/runApi.test.ts --run`.
 - [x] [Frontend] `cd Frontend && npx biome check src/pages/PipelinePage.tsx src/pages/PipelinePage.test.tsx src/lib/pipelineNavigation.ts src/components/pipeline/DeployPanel.tsx`.
 - [x] [Frontend] `cd Frontend && npm run test -- src/pages/PipelinePage.test.tsx src/lib/pipelineNavigation.test.ts src/components/pipeline/DeployPanel.test.tsx --run`.
 - [x] [Frontend] Include this page in the final full frontend build/test pass: `cd Frontend && npm run test -- --run` and `cd Frontend && npm run build`.

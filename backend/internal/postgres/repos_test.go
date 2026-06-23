@@ -126,6 +126,8 @@ func TestPipelineRunRepoListSummariesBatchUsesBackfillItemStatus(t *testing.T) {
 		"CASE WHEN bi.status = 'completed' THEN ''",
 		"COALESCE(pr.started_at, bi.started_at)",
 		"LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id",
+		"LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id",
+		"total_estimated_cost",
 	} {
 		if !strings.Contains(q, want) {
 			t.Fatalf("list query missing %q:\n%s", want, q)
@@ -158,6 +160,8 @@ func TestPipelineRunRepoFindSummaryByIDIncludesBackfillOnlyItem(t *testing.T) {
 		"FROM backfill_items",
 		"WHERE id = $1 OR pipeline_run_id = $1",
 		"LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id",
+		"template_name",
+		"total_estimated_cost",
 	} {
 		if !strings.Contains(q, want) {
 			t.Fatalf("FindSummaryByID query missing %q:\n%s", want, q)
@@ -189,8 +193,10 @@ func TestPipelineRunRepoListSummariesExcludeBatchUsesPipelineRunsOnly(t *testing
 	q := db.querySQLs[1]
 	for _, want := range []string{
 		"FROM pipeline_runs pr",
+		"LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id",
 		"pr.batch_job_id IS NULL",
 		"ORDER BY pr.created_at DESC",
+		"total_estimated_cost",
 	} {
 		if !strings.Contains(q, want) {
 			t.Fatalf("list query missing %q:\n%s", want, q)
@@ -200,6 +206,40 @@ func TestPipelineRunRepoListSummariesExcludeBatchUsesPipelineRunsOnly(t *testing
 		if strings.Contains(q, bad) {
 			t.Fatalf("list query should not reference batch items %q:\n%s", bad, q)
 		}
+	}
+}
+
+func TestPipelineRunRepoListSummariesQueryMatchesTemplateName(t *testing.T) {
+	db := &fakeDB{
+		queryRow: &fakeRow{values: []any{0}},
+		rows:     &fakeRows{},
+	}
+	repo := NewPipelineRunRepo(&Client{db: db})
+
+	_, _, err := repo.ListSummaries(context.Background(), models.PipelineRunListFilter{
+		Query:    "Customer Template",
+		Page:     1,
+		PageSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("ListSummaries() error = %v", err)
+	}
+	if len(db.querySQLs) != 2 {
+		t.Fatalf("expected count + list queries, got %d", len(db.querySQLs))
+	}
+	q := db.querySQLs[1]
+	for _, want := range []string{
+		"LOWER(COALESCE(pr.id, '')) LIKE $1",
+		"LOWER(COALESCE(pr.pipeline_name, '')) LIKE $1",
+		"LOWER(COALESCE(pr.workflow_name, '')) LIKE $1",
+		"LOWER(COALESCE(pt.name, '')) LIKE $1",
+	} {
+		if !strings.Contains(q, want) {
+			t.Fatalf("list query missing %q:\n%s", want, q)
+		}
+	}
+	if got := db.queryArgs[1]; !reflect.DeepEqual(got, []any{"%customer template%", 20, 0}) {
+		t.Fatalf("query args = %#v, want query/page args", got)
 	}
 }
 

@@ -1815,6 +1815,9 @@ class PipelineRunNode(BaseModel):
 class PipelineRun(BaseModel):
     id: str | None = Field(None, description='Pipeline run ID')
     templateId: str | None = None
+    templateName: str | None = Field(
+        None, description='Linked pipeline template name when available'
+    )
     pipelineName: str | None = None
     templateVersion: int | None = None
     workflowName: str | None = None
@@ -2869,10 +2872,12 @@ class RunChildList(BaseModel):
     items: list[PipelineRun] | None = None
     relations: list[RunRelation] | None = Field(
         None,
-        description='Projected Run relations. Batch trees derive batch_child rows from child run metadata; rerun/resubmit/legacy retry rows can be projected from RunEvent ledger payloads until a relation table exists.',
+        description='Durable Run relations when available, with legacy projection fallback for historical data.',
     )
     summary: RunChildSummary | None = None
     total: int | None = None
+    page: int | None = None
+    pageSize: int | None = None
 
 
 class WorkflowDetail(BaseModel):

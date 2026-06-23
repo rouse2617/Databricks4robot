@@ -24,12 +24,13 @@ describe("runApi", () => {
 			view: "summary",
 			excludeBatch: true,
 			status: "Running",
+			q: "customer template",
 			page: 2,
 			pageSize: 50,
 		});
 
 		expect(fetchMock).toHaveBeenCalledWith(
-			"/api/v1/runs?view=summary&excludeBatch=true&status=Running&page=2&pageSize=50",
+			"/api/v1/runs?view=summary&excludeBatch=true&status=Running&q=customer+template&page=2&pageSize=50",
 			expect.objectContaining({ method: "GET" }),
 		);
 	});

@@ -2114,6 +2114,7 @@ components:
       properties:
         id: { type: string, description: Pipeline run ID }
         templateId: { type: string, nullable: true }
+        templateName: { type: string, description: Linked pipeline template name when available }
         pipelineName: { type: string }
         templateVersion: { type: integer, nullable: true }
         workflowName: { type: string }
@@ -6273,6 +6274,10 @@ paths:
           name: status
           schema: { type: string }
         - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive search across Run ID, pipeline name, workflow name, and linked template name.
+        - in: query
           name: pipelineNodeId
           schema: { type: string }
         - in: query
@@ -6952,6 +6957,35 @@ paths:
       description: Returns first-class pipeline runs ordered by creation time.
       security:
         - DatabrewToken: []
+      parameters:
+        - in: query
+          name: view
+          schema: { type: string, enum: [summary, full] }
+        - in: query
+          name: batchJobId
+          schema: { type: string }
+        - in: query
+          name: excludeBatch
+          schema: { type: boolean }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive search across Run ID, pipeline name, workflow name, and linked template name.
+        - in: query
+          name: pipelineNodeId
+          schema: { type: string }
+        - in: query
+          name: nodeStatus
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1 }
       responses:
         '200':
           description: Pipeline run list

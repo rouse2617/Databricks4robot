@@ -527,10 +527,16 @@ class TestRunManager:
         respx.get(f"{BASE_URL}/api/v1/runs/by-workflow/wf-1").mock(
             return_value=httpx.Response(200, json={"id": "run-1"})
         )
-        assert client.runs.list(view="summary", exclude_batch=True, page=1)["total"] == 0
+        assert client.runs.list(
+            view="summary",
+            exclude_batch=True,
+            q="daily-ingest-template",
+            page=1,
+        )["total"] == 0
         assert dict(list_route.calls.last.request.url.params) == {
             "view": "summary",
             "excludeBatch": "true",
+            "q": "daily-ingest-template",
             "page": "1",
         }
         assert client.runs.get("run-1")["id"] == "run-1"

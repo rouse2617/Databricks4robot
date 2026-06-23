@@ -206,6 +206,14 @@ func (m *mockPipelineRunRepo) ListSummaries(_ context.Context, filter models.Pip
 		if filter.Status != "" && !strings.EqualFold(item.Status, filter.Status) {
 			continue
 		}
+		if query := strings.ToLower(strings.TrimSpace(filter.Query)); query != "" {
+			if !strings.Contains(strings.ToLower(item.ID), query) &&
+				!strings.Contains(strings.ToLower(item.PipelineName), query) &&
+				!strings.Contains(strings.ToLower(item.WorkflowName), query) &&
+				!strings.Contains(strings.ToLower(item.TemplateName), query) {
+				continue
+			}
+		}
 		filtered = append(filtered, item)
 	}
 	items = filtered
@@ -685,6 +693,54 @@ func TestListRuns_ReturnsTotalEstimatedCost(t *testing.T) {
 	}
 	if len(resp.Items[0].Nodes) != 2 {
 		t.Fatalf("expected 2 nodes, got %d", len(resp.Items[0].Nodes))
+	}
+}
+
+func TestListRunsSummaryReturnsCostTemplateAndQuery(t *testing.T) {
+	matchingCost := 0.0042
+	matching := makePipelineRun("run-match", "wf-match")
+	matching.PipelineName = "nightly-product-line"
+	matching.TemplateName = "customer-ingest-template"
+	matching.TotalEstimatedCost = &matchingCost
+	other := makePipelineRun("run-other", "wf-other")
+	other.PipelineName = "other-pipeline"
+	other.TemplateName = "unrelated-template"
+	uc := pipelineUC.New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, nil, "cyber-databrew-dev")
+	uc.SetRunRepositories(nil, &mockPipelineRunRepo{
+		byID: map[string]*models.PipelineRun{
+			matching.ID: matching,
+			other.ID:    other,
+		},
+	}, &mockPipelineRunNodeRepo{})
+	h := New(uc, "", nil)
+	r := setupRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runs?view=summary&q=ingest", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.PipelineRun `json:"items"`
+		Total int                  `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Items) != 1 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	item := resp.Items[0]
+	if item.ID != matching.ID {
+		t.Fatalf("matched run id=%q, want %q", item.ID, matching.ID)
+	}
+	if item.TemplateName != "customer-ingest-template" {
+		t.Fatalf("templateName=%q", item.TemplateName)
+	}
+	if item.TotalEstimatedCost == nil || *item.TotalEstimatedCost != matchingCost {
+		t.Fatalf("totalEstimatedCost=%v, want %v", item.TotalEstimatedCost, matchingCost)
 	}
 }
 

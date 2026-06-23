@@ -68,6 +68,7 @@ class RunManager(BaseManager):
         exclude_batch: bool | None = None,
         batch_job_id: str | None = None,
         status: str | None = None,
+        q: str | None = None,
         pipeline_node_id: str | None = None,
         node_status: str | None = None,
         page: int | None = None,
@@ -82,6 +83,8 @@ class RunManager(BaseManager):
             params["batchJobId"] = batch_job_id
         if status is not None:
             params["status"] = status
+        if q is not None:
+            params["q"] = q
         if pipeline_node_id is not None:
             params["pipelineNodeId"] = pipeline_node_id
         if node_status is not None:

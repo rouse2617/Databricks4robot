@@ -374,6 +374,7 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	batchJobID := strings.TrimSpace(c.Query("batchJobId"))
 	excludeBatch := strings.EqualFold(c.Query("excludeBatch"), "true") || c.Query("excludeBatch") == "1"
 	statusFilter := strings.TrimSpace(c.Query("status"))
+	query := strings.TrimSpace(c.Query("q"))
 	pipelineNodeID := strings.TrimSpace(c.Query("pipelineNodeId"))
 	nodeStatus := strings.TrimSpace(c.Query("nodeStatus"))
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
@@ -389,6 +390,7 @@ func (h *Handler) ListRuns(c *gin.Context) {
 			BatchJobID:     batchJobID,
 			ExcludeBatch:   excludeBatch,
 			Status:         statusFilter,
+			Query:          query,
 			PipelineNodeID: pipelineNodeID,
 			NodeStatus:     nodeStatus,
 			Page:           page,
@@ -414,9 +416,6 @@ func (h *Handler) ListRuns(c *gin.Context) {
 		items = []models.PipelineRun{}
 	}
 	if summaryView {
-		for i := range items {
-			items[i].TotalEstimatedCost = nil
-		}
 		resp := gin.H{"items": items, "total": total}
 		if page > 0 || pageSize > 0 || batchJobID != "" || excludeBatch {
 			if page < 1 {

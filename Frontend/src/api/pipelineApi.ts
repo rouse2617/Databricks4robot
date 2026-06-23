@@ -69,6 +69,7 @@ export interface PipelineRunNode {
 }
 
 export interface PipelineRun extends Deployment {
+	templateName?: string;
 	executionTargetId?: string;
 	targetSnapshot?: Record<string, unknown>;
 	argoNamespace?: string;

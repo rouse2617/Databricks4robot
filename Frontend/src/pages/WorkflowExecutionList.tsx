@@ -103,6 +103,7 @@ type ExecutionRecord = WorkflowSummary & {
 	runId?: string;
 	workflowName?: string;
 	pipelineName?: string;
+	templateName?: string;
 };
 
 type WorkflowErrorKind = "network" | "service-unavailable";
@@ -190,6 +191,26 @@ const getWorkflowEstimatedCost = (record: WorkflowSummary): number | null => {
 		return record.totalEstimatedCost;
 	}
 	return null;
+};
+
+const getTimestampSortValue = (value?: string): number => {
+	if (!value) return Number.NEGATIVE_INFINITY;
+	const timestamp = new Date(value).getTime();
+	return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+};
+
+const getDurationSortValue = (record: WorkflowSummary): number => {
+	const startedAt = getTimestampSortValue(record.createdAt);
+	if (startedAt === Number.NEGATIVE_INFINITY) {
+		return Number.NEGATIVE_INFINITY;
+	}
+	const finishedAt = getTimestampSortValue(record.finishedAt);
+	const endedAt =
+		finishedAt === Number.NEGATIVE_INFINITY ? Date.now() : finishedAt;
+	if (endedAt < startedAt) {
+		return Number.NEGATIVE_INFINITY;
+	}
+	return endedAt - startedAt;
 };
 
 const getEstimatedCostTooltip = (record: WorkflowSummary): string => {
@@ -306,11 +327,13 @@ const runMatchesFilters = (
 	const name = workflowNameForRun(run).toLowerCase();
 	const pipelineName = (run.pipelineName ?? "").toLowerCase();
 	const runID = (run.id ?? "").toLowerCase();
+	const templateName = (run.templateName ?? "").toLowerCase();
 	if (
 		params.name &&
 		!name.includes(params.name) &&
 		!pipelineName.includes(params.name) &&
-		!runID.includes(params.name)
+		!runID.includes(params.name) &&
+		!templateName.includes(params.name)
 	) {
 		return false;
 	}
@@ -354,6 +377,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		runId: run.id,
 		workflowName: run.workflowName,
 		pipelineName: run.pipelineName,
+		templateName: run.templateName,
 		name: workflowNameForRun(run),
 		status: run.status,
 		nodeCount: run.nodeCount ?? 0,
@@ -767,7 +791,6 @@ export function WorkflowExecutionList({
 
 			const params: RunListFilterParams = {
 				status: statusFilter,
-				name: nameSearch.trim().toLowerCase() || undefined,
 				label: labelFilter.length ? labelFilter : undefined,
 				createdAfter: dateRange[0]?.toISOString(),
 				finishedBefore: dateRange[1]?.toISOString(),
@@ -776,6 +799,7 @@ export function WorkflowExecutionList({
 				view: "summary",
 				excludeBatch: true,
 				status: statusFilter,
+				q: nameSearch.trim() || undefined,
 				page,
 				pageSize,
 			});
@@ -1066,6 +1090,7 @@ export function WorkflowExecutionList({
 					const scope = scopeByExecutionKey[executionKey];
 					const displayId = toAssetStyleId(runId ?? name);
 					const copyId = runId ?? name;
+					const templateName = record.templateName?.trim();
 					return (
 						<div style={{ minWidth: 0 }}>
 							<Typography.Text strong ellipsis={{ tooltip: name }}>
@@ -1079,6 +1104,15 @@ export function WorkflowExecutionList({
 							>
 								ID: {displayId}
 							</Typography.Text>
+							{templateName ? (
+								<Typography.Text
+									type="secondary"
+									style={{ display: "block", fontSize: 12 }}
+									ellipsis={{ tooltip: `模板：${templateName}` }}
+								>
+									模板：{templateName}
+								</Typography.Text>
+							) : null}
 							<div
 								style={{
 									marginTop: 4,
@@ -1217,6 +1251,8 @@ export function WorkflowExecutionList({
 				title: "耗时",
 				key: "duration",
 				width: isBatchScope ? 110 : 140,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					getDurationSortValue(a) - getDurationSortValue(b),
 				render: (_: unknown, record: WorkflowSummary) => (
 					<DurationPanel
 						phase={record.status}
@@ -1245,6 +1281,10 @@ export function WorkflowExecutionList({
 				dataIndex: "createdAt",
 				key: "createdAt",
 				width: 190,
+				defaultSortOrder: "descend" as const,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					getTimestampSortValue(a.createdAt) -
+					getTimestampSortValue(b.createdAt),
 				render: renderTimestamp,
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
 			},
@@ -1253,6 +1293,9 @@ export function WorkflowExecutionList({
 				dataIndex: "finishedAt",
 				key: "finishedAt",
 				width: 190,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					getTimestampSortValue(a.finishedAt) -
+					getTimestampSortValue(b.finishedAt),
 				render: (value: string | undefined, record: ExecutionRecord) =>
 					renderFinishedTimestamp(value, record),
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,

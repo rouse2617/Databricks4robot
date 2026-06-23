@@ -1,0 +1,2 @@
+import{a as t}from"./index-Cq9CUGmd.js";const a={list:()=>t.get("/pipeline-configs").then(e=>e.data),get:e=>t.get(`/pipeline-configs/${e}`).then(i=>i.data),create:e=>t.post("/pipeline-configs",e).then(i=>i.data),update:(e,i)=>t.put(`/pipeline-configs/${e}`,i).then(n=>n.data),createVersion:(e,i)=>t.post(`/pipeline-configs/${e}/versions`,i).then(n=>n.data),getVersion:(e,i)=>t.get(`/pipeline-configs/${e}/versions/${i}`).then(n=>n.data),deprecate:e=>t.post(`/pipeline-configs/${e}/deprecate`,{}).then(i=>i.data)};export{a as p};
+//# sourceMappingURL=pipelineConfigs-DNv-AkSc.js.map

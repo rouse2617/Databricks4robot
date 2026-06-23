@@ -79,6 +79,7 @@ type ExecutionTarget struct {
 type PipelineRun struct {
 	ID                 string                   `json:"id"`
 	TemplateID         *string                  `json:"templateId,omitempty"`
+	TemplateName       string                   `json:"templateName,omitempty"`
 	PipelineName       string                   `json:"pipelineName"`
 	TemplateVersion    *int                     `json:"templateVersion,omitempty"`
 	WorkflowName       string                   `json:"workflowName"`
@@ -431,6 +432,7 @@ type PipelineRunListFilter struct {
 	BatchJobID     string
 	ExcludeBatch   bool
 	Status         string
+	Query          string
 	PipelineNodeID string
 	NodeStatus     string
 	Page           int

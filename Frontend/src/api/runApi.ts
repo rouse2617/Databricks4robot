@@ -133,6 +133,7 @@ export interface ListRunsOptions {
 	excludeBatch?: boolean;
 	batchJobId?: string;
 	status?: string;
+	q?: string;
 	pipelineNodeId?: string;
 	nodeStatus?: string;
 	page?: number;
@@ -151,6 +152,7 @@ function buildRunListSearch(options?: ListRunsOptions) {
 	if (options?.excludeBatch) search.set("excludeBatch", "true");
 	if (options?.batchJobId) search.set("batchJobId", options.batchJobId);
 	if (options?.status) search.set("status", options.status);
+	if (options?.q) search.set("q", options.q);
 	if (options?.pipelineNodeId) {
 		search.set("pipelineNodeId", options.pipelineNodeId);
 	}

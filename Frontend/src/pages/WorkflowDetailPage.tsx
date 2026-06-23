@@ -410,7 +410,7 @@ function WorkflowLogPanel({
 	const listOuterRef = useRef<HTMLDivElement | null>(null);
 	const userScrolledUpRef = useRef(false);
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-	
+
 
 	// Measure available space for the virtual list whenever content model changes
 	const [listSize, setListSize] = useState({ height: 0, width: 0 });
