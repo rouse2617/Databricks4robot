@@ -2086,7 +2086,7 @@ func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items [
 		return
 	}
 	refreshed := 0
-	const misclassifedRefreshBatch = 3
+	const misclassifedRefreshBatch = 10
 	for i := range items {
 		if refreshed >= misclassifedRefreshBatch {
 			break
