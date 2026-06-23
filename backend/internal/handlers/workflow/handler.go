@@ -41,6 +41,7 @@ type Handler struct {
 	terminalStore   *terminalSessionStore
 	terminalNowFunc func() time.Time
 	sseRingBuffers  *ringBufferStore
+	archiveStore    ArchiveLogStore
 }
 
 type workflowNodeItem struct {
@@ -74,6 +75,7 @@ func New(wfClient argo.WorkflowClient, namespace string) *Handler {
 		terminalStore:   newTerminalSessionStore(),
 		terminalNowFunc: time.Now,
 		sseRingBuffers:  newRingBufferStore(),
+		archiveStore:    NewNoopArchiveStore(),
 	}
 }
 
@@ -83,6 +85,10 @@ func (h *Handler) SetPodClient(podClient k8s.PodClient) {
 
 func (h *Handler) SetExecClient(execClient k8s.ExecClient) {
 	h.execClient = execClient
+}
+
+func (h *Handler) SetArchiveStore(store ArchiveLogStore) {
+	h.archiveStore = store
 }
 
 func (h *Handler) SetRunRepositories(runRepo repository.PipelineRunRepository, eventRepo repository.PipelineRunEventRepository) {
@@ -425,6 +431,36 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 	}
 	podName, ok := resolveCachedWorkflowPodName(workflow, nodeId)
 	if !ok {
+		// Try archive fallback when live pod is unavailable (e.g. pod GC'd)
+		result, archiveErr := h.archiveStore.GetLogs(c.Request.Context(), name, nodeId, "", argo.WorkflowLogOptions{})
+		if archiveErr != nil {
+			httpresp.Internal(c, archiveErr.Error())
+			return
+		}
+		if result != nil {
+			c.JSON(200, gin.H{
+				"workflowName": name,
+				"nodeId":       nodeId,
+				"podName":      "",
+				"container":    "",
+				"source":       result.Source,
+				"logs":         result.Logs,
+				"lineCount":    result.LineCount,
+				"truncated":    false,
+				"truncation": gin.H{
+					"bounded": true,
+				},
+				"pagination": gin.H{
+					"available": false,
+					"reason":    "archive logs do not support cursor pagination",
+				},
+				"window": gin.H{
+					"mode":  "archive",
+					"scope": result.Source,
+				},
+			})
+			return
+		}
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
 		return
 	}
