@@ -40,6 +40,7 @@ type Handler struct {
 	runEventRepo    repository.PipelineRunEventRepository
 	terminalStore   *terminalSessionStore
 	terminalNowFunc func() time.Time
+	sseRingBuffers  *ringBufferStore
 }
 
 type workflowNodeItem struct {
@@ -72,6 +73,7 @@ func New(wfClient argo.WorkflowClient, namespace string) *Handler {
 		namespace:       namespace,
 		terminalStore:   newTerminalSessionStore(),
 		terminalNowFunc: time.Now,
+		sseRingBuffers:  newRingBufferStore(),
 	}
 }
 
