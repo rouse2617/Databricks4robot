@@ -7,6 +7,7 @@ import {
 	VerticalAlignBottomOutlined,
 } from "@ant-design/icons";
 import Ansi from "ansi-to-react";
+import { List, type ListImperativeAPI, type RowComponentProps } from "react-window";
 import {
 	Alert,
 	App,
@@ -80,8 +81,9 @@ import {
 } from "./WorkflowDagView";
 import { WorkflowTimelineView } from "./WorkflowTimelineView";
 import {
-	LOG_MAX_RENDER_LINES,
-	prepareVisibleLogContent,
+	LOG_ROW_HEIGHT,
+	buildContentModel,
+	type LogContentModel,
 } from "./workflowLogView";
 import "../styles/pipeline.css";
 
@@ -341,10 +343,30 @@ function buildDisplayWorkflowNodes(
 	});
 }
 
+/** Single row renderer for the virtual log list. */
+function LogRow({ index, style, ariaAttributes, data: model }: RowComponentProps<{ data: LogContentModel }>) {
+	const line = model.lines[index];
+	if (!line) return null;
+	return (
+		<div
+			{...ariaAttributes}
+			style={{
+				...style,
+				background: line.searchMatch ? "#fff3cd" : "transparent",
+				whiteSpace: "pre",
+				overflow: "hidden",
+				textOverflow: "ellipsis",
+			}}
+		>
+			<Ansi>{line.text}</Ansi>
+		</div>
+	);
+}
+
 function WorkflowLogPanel({
 	selectedNode,
 	loading,
-	logContent,
+	logLines,
 	error,
 	search,
 	following,
@@ -359,7 +381,7 @@ function WorkflowLogPanel({
 }: {
 	selectedNode: WorkflowNodeStatus | null;
 	loading: boolean;
-	logContent: string | null;
+	logLines: string[];
 	error: string | null;
 	search: string;
 	following: boolean;
@@ -373,33 +395,54 @@ function WorkflowLogPanel({
 	onDownload: () => void;
 }) {
 	const { message: messageApi } = App.useApp();
-	const logBodyRef = useRef<HTMLDivElement | null>(null);
+	const listRef = useRef<ListImperativeAPI | null>(null);
+	const listOuterRef = useRef<HTMLDivElement | null>(null);
 	const userScrolledUpRef = useRef(false);
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+	const [listContainerSize, setListContainerSize] = useState({ height: 360, width: 600 });
 
-	const handleLogScroll = useCallback(() => {
-		const el = logBodyRef.current;
+	// Measure the log panel container for virtual list dimensions
+	useEffect(() => {
+		const el = listOuterRef.current;
 		if (!el) return;
-		const threshold = Math.max(el.clientHeight * 0.3, 60);
-		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-		userScrolledUpRef.current = !atBottom;
-		setShowScrollToBottom(!atBottom);
+		const observer = new ResizeObserver((entries) => {
+			for (const entry of entries) {
+				setListContainerSize({
+					height: entry.contentRect.height,
+					width: entry.contentRect.width,
+				});
+			}
+		});
+		observer.observe(el);
+		const rect = el.getBoundingClientRect();
+		if (rect.height > 0) setListContainerSize({ height: rect.height, width: rect.width });
+		return () => observer.disconnect();
 	}, []);
 
+	const handleLogVirtualScroll = useCallback(
+		({ scrollOffset, scrollUpdateWasRequested }: { scrollOffset: number; scrollUpdateWasRequested: boolean }) => {
+			const el = listOuterRef.current;
+			if (!el) return;
+			const threshold = Math.max(el.clientHeight * 0.3, 60);
+			const atBottom = el.scrollHeight - scrollOffset - el.clientHeight < threshold;
+			userScrolledUpRef.current = !atBottom && !scrollUpdateWasRequested;
+			setShowScrollToBottom(!atBottom && !scrollUpdateWasRequested);
+		},
+		[],
+	);
+
 	const scrollToLogBottom = useCallback(() => {
-		const el = logBodyRef.current;
-		if (!el) return;
-		el.scrollTop = el.scrollHeight;
+		listRef.current?.scrollToRow({ index: contentModel.lines.length - 1, align: "end" });
 		userScrolledUpRef.current = false;
 		setShowScrollToBottom(false);
 	}, []);
 
-	const visibleLog = useMemo(
+	const contentModel = useMemo(
 		() =>
-			logContent === null
+			logLines.length === 0
 				? null
-				: prepareVisibleLogContent(logContent, selectedNode),
-		[logContent, selectedNode],
+				: buildContentModel(logLines, search, false),
+		[logLines, selectedNode],
 	);
 	const followStatusMeta: Record<
 		WorkflowLogFollowStatus,
@@ -408,6 +451,7 @@ function WorkflowLogPanel({
 		idle: { color: "default", label: "未连接" },
 		connecting: { color: "processing", label: "连接中" },
 		connected: { color: "green", label: "实时中" },
+		reconnecting: { color: "orange", label: "重连中" },
 		ended: { color: "blue", label: "已结束" },
 		error: { color: "red", label: "已断开" },
 	};
@@ -416,8 +460,8 @@ function WorkflowLogPanel({
 		logResponse?.pagination && logResponse.pagination.available === false;
 	// Scroll to bottom on initial load (new node selected)
 	useEffect(() => {
-		if (selectedNode && !loading && !error && visibleLog !== null && logBodyRef.current) {
-			logBodyRef.current.scrollTop = logBodyRef.current.scrollHeight;
+		if (selectedNode && !loading && !error && contentModel && contentModel.lines.length > 0) {
+			listRef.current?.scrollToRow({ index: contentModel.lines.length - 1, align: "end" });
 			userScrolledUpRef.current = false;
 			setShowScrollToBottom(false);
 		}
@@ -425,10 +469,9 @@ function WorkflowLogPanel({
 
 	// Auto-scroll on new content, but only when user hasn't scrolled up
 	useEffect(() => {
-		const el = logBodyRef.current;
-		if (!el || !visibleLog || loading || error) return;
+		if (!contentModel || contentModel.lines.length === 0 || loading || error) return;
 		if (userScrolledUpRef.current) return;
-		el.scrollTop = el.scrollHeight;
+		listRef.current?.scrollToRow({ index: contentModel.lines.length - 1, align: "end" });
 	});
 
 	return (
@@ -464,13 +507,13 @@ function WorkflowLogPanel({
 				) : (
 					<Button
 						disabled={!selectedNode}
-						loading={followStatus === "connecting"}
+						loading={followStatus === "connecting" || followStatus === "reconnecting"}
 						onClick={onFollow}
 					>
 						实时日志
 					</Button>
 				)}
-				<Button disabled={!selectedNode || !logContent} onClick={onDownload}>
+				<Button disabled={!selectedNode || logLines.length === 0} onClick={onDownload}>
 					下载当前窗口
 				</Button>
 			</div>
@@ -509,7 +552,7 @@ function WorkflowLogPanel({
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>
 					点击 DAG 或时间线节点查看该节点日志
 				</div>
-			) : loading && logContent === null ? (
+			) : loading && logLines.length === 0 ? (
 				<div style={{ textAlign: "center", padding: 40 }}>
 					<Spin />
 				</div>
@@ -517,7 +560,7 @@ function WorkflowLogPanel({
 				<div
 					style={{ color: "#dc2626", fontSize: 13 }}
 				>{`获取日志失败：${error}`}</div>
-			) : logContent === null ? (
+			) : logLines.length === 0 ? (
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>暂无日志</div>
 			) : (
 				<>
@@ -533,12 +576,12 @@ function WorkflowLogPanel({
 							}
 						/>
 					)}
-					{visibleLog?.truncated && (
+					{contentModel?.truncated && (
 						<Alert
 							type="warning"
 							showIcon
 							style={{ marginBottom: 8 }}
-							message={`日志较大，当前仅显示尾部 ${visibleLog.content.length.toLocaleString()} 字符 / ${Math.min(visibleLog.totalLines, LOG_MAX_RENDER_LINES).toLocaleString()} 行。`}
+							message={`日志较大，当前仅显示尾部 ${contentModel.lines.map(l => l.text).join("\n").length.toLocaleString()} 字符 / ${Math.min(contentModel.totalLines, logLines.length).toLocaleString()} 行。`}
 							description="完整大日志需要后端 tail、分页或流式接口支持；当前视图会限制渲染量以避免浏览器卡顿。"
 						/>
 					)}
@@ -563,8 +606,8 @@ function WorkflowLogPanel({
 						}}
 					>
 						<span>
-							显示 {visibleLog?.content.length.toLocaleString()} 字符 /{" "}
-							{visibleLog?.totalLines.toLocaleString()} 行
+							显示 {(logLines.join("\n").length).toLocaleString()} 字符 /{" "}
+							{contentModel?.totalLines.toLocaleString() ?? 0} 行
 							{logResponse?.truncated ? "，服务端已按字节上限截断" : ""}
 							{search.trim() ? `，搜索：${search.trim()}` : ""}
 						</span>
@@ -572,55 +615,57 @@ function WorkflowLogPanel({
 							size="small"
 							icon={<CopyOutlined />}
 							onClick={async () => {
-								if (!visibleLog) return;
-								await navigator.clipboard.writeText(visibleLog.content);
+								if (!contentModel) return;
+								await navigator.clipboard.writeText(contentModel.lines.map(l => l.text).join("\n"));
 								messageApi.success?.("已复制当前可见日志");
 							}}
 						>
 							复制可见日志
 						</Button>
 					</div>
-					<div
-						style={{ position: "relative", flex: 1, minHeight: 0 }}
-					>
-						<div
-							ref={logBodyRef}
-							onScroll={handleLogScroll}
-							style={{
-								height: "100%",
-								fontSize: 11,
-								fontFamily: '"SF Mono", "Fira Code", monospace',
-								overflow: "auto",
-								background: "#f8f9fa",
-								padding: 12,
-								borderRadius: 6,
-								border: "1px solid #e5e7eb",
-								lineHeight: 1.55,
-								whiteSpace: "pre-wrap",
-								wordBreak: "break-all",
-							}}
-						>
-							<Ansi>{visibleLog?.content ?? ""}</Ansi>
+						<div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+							{contentModel && contentModel.lines.length > 0 ? (
+									<div
+										ref={listOuterRef}
+										style={{ flex: 1, minHeight: 0 }}
+									>
+										<List
+											listRef={listRef}
+											rowComponent={LogRow}
+											rowCount={contentModel.lines.length}
+											rowHeight={LOG_ROW_HEIGHT}
+											rowProps={{ data: contentModel }}
+											height={listContainerSize.height}
+											width={listContainerSize.width}
+											style={{
+												fontSize: 11,
+												fontFamily: '"SF Mono", "Fira Code", monospace',
+												background: "#f8f9fa",
+												borderRadius: 6,
+												border: "1px solid #e5e7eb",
+											}}
+										/>
+									</div>
+							) : null}
+							{showScrollToBottom && (
+								<Button
+									type="primary"
+									size="small"
+									icon={<VerticalAlignBottomOutlined />}
+									onClick={scrollToLogBottom}
+									style={{
+										position: "absolute",
+										bottom: 16,
+										right: 16,
+										borderRadius: 20,
+										boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+										zIndex: 10,
+									}}
+								>
+									回到底部
+								</Button>
+							)}
 						</div>
-						{showScrollToBottom && (
-							<Button
-								type="primary"
-								size="small"
-								icon={<VerticalAlignBottomOutlined />}
-								onClick={scrollToLogBottom}
-								style={{
-									position: "absolute",
-									bottom: 16,
-									right: 16,
-									borderRadius: 20,
-									boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-									zIndex: 10,
-								}}
-							>
-								回到底部
-							</Button>
-						)}
-					</div>
 				</>
 			)}
 			{selectedNode && (
@@ -2439,7 +2484,7 @@ export default function WorkflowDetailPage({
 				<WorkflowLogPanel
 					selectedNode={displaySelectedNode}
 					loading={logState.loading}
-					logContent={logState.content}
+					logLines={logState.lines}
 					error={logState.error}
 					search={logState.search}
 					following={logState.following}

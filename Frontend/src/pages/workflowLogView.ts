@@ -1,15 +1,18 @@
 import type { WorkflowNodeStatus } from "../api/workflowApi";
 
-export const LOG_MAX_RENDER_CHARS = 250_000;
-export const LOG_MAX_RENDER_LINES = 5_000;
+export const LOG_ROW_HEIGHT = 20;
 
-export type VisibleLogContent = {
-	content: string;
-	truncated: boolean;
-	hiddenChars: number;
-	hiddenLines: number;
+export interface LogLineEntry {
+	text: string;
+	index: number;
+	searchMatch: boolean;
+}
+
+export interface LogContentModel {
+	lines: LogLineEntry[];
 	totalLines: number;
-};
+	truncated: boolean;
+}
 
 function countLines(value: string): number {
 	if (value === "") return 0;
@@ -60,25 +63,35 @@ export function normalizeLogContent(
 	return splitRepeatedPrefix(normalized, inferRepeatedLogPrefix(normalized));
 }
 
-export function prepareVisibleLogContent(
-	logContent: string,
-	selectedNode: Pick<WorkflowNodeStatus, "podName"> | null = null,
-	maxChars = LOG_MAX_RENDER_CHARS,
-	maxLines = LOG_MAX_RENDER_LINES,
-): VisibleLogContent {
-	const normalized = normalizeLogContent(logContent, selectedNode);
-	const totalLines = countLines(normalized);
-	const hiddenChars = Math.max(0, normalized.length - maxChars);
-	const charLimited =
-		hiddenChars > 0 ? normalized.slice(-maxChars) : normalized;
-	const lines = charLimited.split("\n");
-	const hiddenLines = Math.max(0, lines.length - maxLines);
-	const visibleLines = hiddenLines > 0 ? lines.slice(-maxLines) : lines;
+/** Split normalized log content into individual lines. */
+export function splitIntoLines(content: string): string[] {
+	const raw = content.endsWith("\n") ? content.slice(0, -1) : content;
+	return raw === "" ? [] : raw.split("\n");
+}
+
+/** Build a LogContentModel from raw lines and an optional search query. */
+export function buildContentModel(
+	lines: string[],
+	search: string,
+	_truncated?: boolean,
+): LogContentModel {
+	const normalized = search.trim();
+	const pattern = normalized
+		? new RegExp(escapeRegex(normalized), "gi")
+		: null;
+
+	const entries: LogLineEntry[] = [];
+	for (let i = 0; i < lines.length; i += 1) {
+		entries.push({
+			text: lines[i],
+			index: i,
+			searchMatch: pattern ? pattern.test(lines[i]) : false,
+		});
+	}
+
 	return {
-		content: visibleLines.join("\n"),
-		truncated: hiddenChars > 0 || hiddenLines > 0,
-		hiddenChars,
-		hiddenLines,
-		totalLines,
+		lines: entries,
+		totalLines: lines.length,
+		truncated: _truncated ?? false,
 	};
 }

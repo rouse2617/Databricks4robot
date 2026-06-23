@@ -32,11 +32,19 @@ export type WorkflowLogFollowStatus =
 	| "idle"
 	| "connecting"
 	| "connected"
+	| "reconnecting"
 	| "ended"
 	| "error";
 
+export interface LogOptions {
+	container: string;
+	previous: boolean;
+	tailLines: number;
+	timestamps: boolean;
+}
+
 interface WorkflowLogState {
-	content: string | null;
+	lines: string[];
 	loading: boolean;
 	error: string | null;
 	search: string;
@@ -45,6 +53,7 @@ interface WorkflowLogState {
 	followMessage: string | null;
 	response: WorkflowLogResponse | null;
 	clientTruncated: boolean;
+	options: LogOptions;
 }
 
 interface RunEventState {
@@ -124,7 +133,7 @@ interface UseWorkflowDetailOptions {
 }
 
 const EMPTY_LOG_STATE: WorkflowLogState = {
-	content: null,
+	lines: [],
 	loading: false,
 	error: null,
 	search: "",
@@ -133,6 +142,12 @@ const EMPTY_LOG_STATE: WorkflowLogState = {
 	followMessage: null,
 	response: null,
 	clientTruncated: false,
+	options: {
+		container: "main",
+		previous: false,
+		tailLines: 200,
+		timestamps: false,
+	},
 };
 
 const EMPTY_RUN_EVENT_STATE: RunEventState = {
@@ -269,39 +284,35 @@ async function resolvePipelineRun(
 	return null;
 }
 
-export function appendBoundedLogContent(
-	current: string | null,
-	lines: string | string[],
-): { content: string; truncated: boolean } {
-	const nextLines = (Array.isArray(lines) ? lines : [lines])
+/** Append incoming log lines to an existing lines array with buffer limits. */
+export function appendBoundedLogLines(
+	current: string[],
+	incoming: string[],
+): { lines: string[]; truncated: boolean } {
+	const cleaned = incoming
 		.map((line) => line.replace(/\r$/, ""))
 		.filter((line) => line.length > 0);
-	if (nextLines.length === 0) {
-		return { content: current ?? "", truncated: false };
+	if (cleaned.length === 0) {
+		return { lines: current, truncated: false };
 	}
-	const prefix = current && !current.endsWith("\n") ? "\n" : "";
-	let next = `${current ?? ""}${prefix}${nextLines.join("\n")}\n`;
+	let allLines = [...current, ...cleaned];
 	let truncated = false;
-	if (next.length > LOG_CLIENT_BUFFER_CHARS) {
-		next = next.slice(-LOG_CLIENT_BUFFER_CHARS);
-		const firstLineBreak = next.indexOf("\n");
-		if (firstLineBreak >= 0) {
-			next = next.slice(firstLineBreak + 1);
-		}
-		truncated = true;
-	}
-	const contentWithoutTrailingBreak = next.endsWith("\n")
-		? next.slice(0, -1)
-		: next;
-	const allLines =
-		contentWithoutTrailingBreak === ""
-			? []
-			: contentWithoutTrailingBreak.split("\n");
 	if (allLines.length > LOG_CLIENT_BUFFER_LINES) {
-		next = `${allLines.slice(-LOG_CLIENT_BUFFER_LINES).join("\n")}\n`;
+		allLines = allLines.slice(-LOG_CLIENT_BUFFER_LINES);
 		truncated = true;
 	}
-	return { content: next, truncated };
+	return { lines: allLines, truncated };
+}
+
+const MAX_RECONNECT_DELAY_MS = 30_000;
+const INITIAL_RECONNECT_DELAY_MS = 1_000;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
+function calculateBackoff(attempt: number): number {
+	return Math.min(
+		INITIAL_RECONNECT_DELAY_MS * Math.pow(2, attempt),
+		MAX_RECONNECT_DELAY_MS,
+	);
 }
 
 export function useWorkflowDetail(
@@ -319,6 +330,9 @@ export function useWorkflowDetail(
 	const logStreamBufferRef = useRef<string[]>([]);
 	const logStreamFlushTimerRef = useRef<number | null>(null);
 	const logStreamConnectTimerRef = useRef<number | null>(null);
+	const reconnectAttemptRef = useRef(0);
+	const reconnectTimerRef = useRef<number | null>(null);
+	const lastEventIdRef = useRef<string | null>(null);
 	const skipNextRunEventsLoadRef = useRef(false);
 	const [runEventState, setRunEventState] = useState<RunEventState>(
 		EMPTY_RUN_EVENT_STATE,
@@ -697,7 +711,7 @@ export function useWorkflowDetail(
 			if (!runtimeWorkflowName) return;
 			setLogState((current) => ({
 				...current,
-				loading: current.content == null,
+				loading: current.lines.length === 0,
 				error: null,
 			}));
 			const shouldTryPrevious =
@@ -706,7 +720,7 @@ export function useWorkflowDetail(
 				res: Awaited<ReturnType<typeof getWorkflowLogs>>,
 			) => {
 				setLogState((current) => ({
-					content: res.logs || "",
+					lines: res.logs ? res.logs.split("\n") : [],
 					loading: false,
 					error: null,
 					search: current.search,
@@ -762,7 +776,7 @@ export function useWorkflowDetail(
 					}
 				}
 				setLogState((current) => ({
-					content: null,
+					lines: [],
 					loading: false,
 					error: toErrorMessage(err),
 					search: current.search,
@@ -797,10 +811,10 @@ export function useWorkflowDetail(
 		if (lines.length === 0) return;
 		startTransition(() => {
 			setLogState((prev) => {
-				const next = appendBoundedLogContent(prev.content, lines);
+				const next = appendBoundedLogLines(prev.lines, lines);
 				return {
 					...prev,
-					content: next.content,
+					lines: next.lines,
 					clientTruncated: prev.clientTruncated || next.truncated,
 					loading: false,
 					followStatus: "connected",
@@ -845,7 +859,7 @@ export function useWorkflowDetail(
 			setSelectedNodeId(node.id);
 			setLogState((current) => ({
 				...current,
-				content: nodeChanged ? "" : current.content,
+				lines: nodeChanged ? [] : current.lines,
 				loading: nodeChanged ? false : current.loading,
 				error: null,
 				response: nodeChanged ? null : current.response,
@@ -993,9 +1007,9 @@ export function useWorkflowDetail(
 	]);
 
 	const downloadLogs = useCallback(() => {
-		const content = logState.content;
+		const content = logState.lines.join("\n");
 		const selNode = selectedNode;
-		if (!content || !runtimeWorkflowName || !selNode) return;
+		if (!logState.lines.length || !runtimeWorkflowName || !selNode) return;
 		const nodeName = selNode.displayName || selNode.name || selNode.id;
 		const response = logState.response;
 		const header = [
@@ -1015,7 +1029,7 @@ export function useWorkflowDetail(
 		a.download = `${runtimeWorkflowName}-${nodeName}.log`;
 		a.click();
 		URL.revokeObjectURL(url);
-	}, [logState.content, logState.response, runtimeWorkflowName, selectedNode]);
+	}, [logState.lines, logState.response, runtimeWorkflowName, selectedNode]);
 
 	useEffect(() => {
 		return () => {
