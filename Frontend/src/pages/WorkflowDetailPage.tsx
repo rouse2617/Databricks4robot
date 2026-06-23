@@ -410,23 +410,34 @@ function WorkflowLogPanel({
 	const listOuterRef = useRef<HTMLDivElement | null>(null);
 	const userScrolledUpRef = useRef(false);
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-	const [listContainerSize, setListContainerSize] = useState({ height: 400, width: 800 });
+	
 
-	// Measure the log panel container for virtual list dimensions
+	// Measure available space for the virtual list whenever content model changes
+	const [listSize, setListSize] = useState({ height: 0, width: 0 });
+
+	const contentModel = useMemo(
+		() =>
+			logLines.length === 0
+				? null
+				: buildContentModel(logLines, search, false),
+		[logLines, selectedNode],
+	);
+
 	useLayoutEffect(() => {
 		const el = listOuterRef.current;
 		if (!el) return;
-		const measure = () => {
-			const rect = el.getBoundingClientRect();
-			if (rect.height > 0) {
-				setListContainerSize({ height: rect.height, width: rect.width });
+		const rect = el.getBoundingClientRect();
+		if (rect.height > 0) {
+			setListSize({ height: rect.height, width: rect.width });
+		}
+		const observer = new ResizeObserver((entries) => {
+			for (const entry of entries) {
+				setListSize({ height: entry.contentRect.height, width: entry.contentRect.width });
 			}
-		};
-		measure();
-		const observer = new ResizeObserver(() => measure());
+		});
 		observer.observe(el);
 		return () => observer.disconnect();
-	}, []);
+	}, [contentModel]);
 
 	const handleLogVirtualScroll = useCallback(
 		({ scrollOffset, scrollUpdateWasRequested }: { scrollOffset: number; scrollUpdateWasRequested: boolean }) => {
@@ -446,13 +457,6 @@ function WorkflowLogPanel({
 		setShowScrollToBottom(false);
 	}, []);
 
-	const contentModel = useMemo(
-		() =>
-			logLines.length === 0
-				? null
-				: buildContentModel(logLines, search, false),
-		[logLines, selectedNode],
-	);
 	const followStatusMeta: Record<
 		WorkflowLogFollowStatus,
 		{ color: string; label: string }
@@ -644,8 +648,8 @@ function WorkflowLogPanel({
 											rowHeight={LOG_ROW_HEIGHT}
 											rowProps={{ data: contentModel }}
 											style={{
-												height: listContainerSize.height,
-												width: listContainerSize.width,
+												height: listSize.height || 400,
+												width: listSize.width || 800,
 												fontSize: 11,
 												fontFamily: '"SF Mono", "Fira Code", monospace',
 												background: "#f8f9fa",
