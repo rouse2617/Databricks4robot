@@ -2077,6 +2077,26 @@ func needsRunListRefresh(run *models.PipelineRun) bool {
 	return needsMisclassifiedReconcile(run)
 }
 
+// refreshMisclassifiedRunSummaries only fixes misclassified terminal runs
+// in the list view. It skips active runs which are refreshed asynchronously
+// by the background watcher, keeping list API latency low.
+func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items []models.PipelineRun) {
+	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
+		return
+	}
+	refreshed := 0
+	for i := range items {
+		if refreshed >= maxActiveDeploymentStatusRefresh {
+			break
+		}
+		if !needsMisclassifiedReconcile(&items[i]) {
+			continue
+		}
+		refreshed++
+		uc.RefreshRunForList(ctx, &items[i])
+	}
+}
+
 func (uc *Usecase) refreshRunSummariesForList(ctx context.Context, items []models.PipelineRun) {
 	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
 		return
@@ -3238,9 +3258,14 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		if err != nil {
 			return nil, 0, err
 		}
-		// Always refresh misclassified runs so the list view shows
-		// live Argo status instead of stale DB records.
-		uc.refreshRunSummariesForList(ctx, items)
+		// Refresh misclassified runs so the list view shows live Argo
+		// status instead of stale DB records. Active runs are refreshed
+		// asynchronously by the background watcher.
+		if filter[0].RefreshActive {
+			uc.refreshRunSummariesForList(ctx, items)
+		} else {
+			uc.refreshMisclassifiedRunSummaries(ctx, items)
+		}
 		if filter[0].BatchJobID != "" {
 			uc.attachBatchNodeProgress(ctx, items)
 		}
