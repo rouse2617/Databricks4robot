@@ -1033,6 +1033,12 @@ export function useWorkflowDetail(
 		if (!selectedNodeId || !runtimeWorkflowName) {
 			return;
 		}
+		// When log streaming is active, skip poll-triggered log fetches.
+		// The SSE stream provides real-time content; replacing it with an
+		// HTTP snapshot causes visible flicker/refresh.
+		if (followSourceRef.current) {
+			return;
+		}
 		const phase = workflow?.nodes.find(
 			(node) => node.id === selectedNodeId,
 		)?.phase;
