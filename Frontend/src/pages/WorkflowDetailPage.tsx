@@ -25,7 +25,7 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type {
 	PipelineRun,
@@ -399,23 +399,21 @@ function WorkflowLogPanel({
 	const listOuterRef = useRef<HTMLDivElement | null>(null);
 	const userScrolledUpRef = useRef(false);
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-	const [listContainerSize, setListContainerSize] = useState({ height: 360, width: 600 });
+	const [listContainerSize, setListContainerSize] = useState({ height: 400, width: 800 });
 
 	// Measure the log panel container for virtual list dimensions
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const el = listOuterRef.current;
 		if (!el) return;
-		const observer = new ResizeObserver((entries) => {
-			for (const entry of entries) {
-				setListContainerSize({
-					height: entry.contentRect.height,
-					width: entry.contentRect.width,
-				});
+		const measure = () => {
+			const rect = el.getBoundingClientRect();
+			if (rect.height > 0) {
+				setListContainerSize({ height: rect.height, width: rect.width });
 			}
-		});
+		};
+		measure();
+		const observer = new ResizeObserver(() => measure());
 		observer.observe(el);
-		const rect = el.getBoundingClientRect();
-		if (rect.height > 0) setListContainerSize({ height: rect.height, width: rect.width });
 		return () => observer.disconnect();
 	}, []);
 
@@ -623,21 +621,20 @@ function WorkflowLogPanel({
 							复制可见日志
 						</Button>
 					</div>
-						<div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+						<div
+							ref={listOuterRef}
+							style={{ position: "relative", flex: 1, minHeight: 0 }}
+						>
 							{contentModel && contentModel.lines.length > 0 ? (
-									<div
-										ref={listOuterRef}
-										style={{ flex: 1, minHeight: 0 }}
-									>
 										<List
 											listRef={listRef}
 											rowComponent={LogRow}
 											rowCount={contentModel.lines.length}
 											rowHeight={LOG_ROW_HEIGHT}
 											rowProps={{ data: contentModel }}
-											height={listContainerSize.height}
-											width={listContainerSize.width}
 											style={{
+												height: listContainerSize.height,
+												width: listContainerSize.width,
 												fontSize: 11,
 												fontFamily: '"SF Mono", "Fira Code", monospace',
 												background: "#f8f9fa",
@@ -645,8 +642,7 @@ function WorkflowLogPanel({
 												border: "1px solid #e5e7eb",
 											}}
 										/>
-									</div>
-							) : null}
+						) : null}
 							{showScrollToBottom && (
 								<Button
 									type="primary"
