@@ -14,16 +14,16 @@ export interface LogContentModel {
 	truncated: boolean;
 }
 
-function countLines(value: string): number {
-	if (value === "") return 0;
-	let lines = 1;
-	for (let index = 0; index < value.length; index += 1) {
-		if (value.charCodeAt(index) === 10) {
-			lines += 1;
-		}
-	}
-	return lines;
-}
+// function countLines(value: string): number {
+// 	if (value === "") return 0;
+// 	let lines = 1;
+// 	for (let index = 0; index < value.length; index += 1) {
+// 		if (value.charCodeAt(index) === 10) {
+// 			lines += 1;
+// 		}
+// 	}
+// 	return lines;
+// }
 
 function escapeRegex(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

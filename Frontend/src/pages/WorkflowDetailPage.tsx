@@ -439,23 +439,25 @@ function WorkflowLogPanel({
 		return () => observer.disconnect();
 	}, [contentModel]);
 
-	const handleLogVirtualScroll = useCallback(
-		({ scrollOffset, scrollUpdateWasRequested }: { scrollOffset: number; scrollUpdateWasRequested: boolean }) => {
-			const el = listOuterRef.current;
-			if (!el) return;
-			const threshold = Math.max(el.clientHeight * 0.3, 60);
-			const atBottom = el.scrollHeight - scrollOffset - el.clientHeight < threshold;
-			userScrolledUpRef.current = !atBottom && !scrollUpdateWasRequested;
-			setShowScrollToBottom(!atBottom && !scrollUpdateWasRequested);
-		},
-		[],
-	);
+	// const handleLogVirtualScroll = useCallback(
+	// 	({ scrollOffset, scrollUpdateWasRequested }: { scrollOffset: number; scrollUpdateWasRequested: boolean }) => {
+	// 		const el = listOuterRef.current;
+	// 		if (!el) return;
+	// 		const threshold = Math.max(el.clientHeight * 0.3, 60);
+	// 		const atBottom = el.scrollHeight - scrollOffset - el.clientHeight < threshold;
+	// 		userScrolledUpRef.current = !atBottom && !scrollUpdateWasRequested;
+	// 		setShowScrollToBottom(!atBottom && !scrollUpdateWasRequested);
+	// 	},
+	// 	[],
+	// );
 
 	const scrollToLogBottom = useCallback(() => {
-		listRef.current?.scrollToRow({ index: contentModel.lines.length - 1, align: "end" });
+		if (contentModel) {
+			listRef.current?.scrollToRow({ index: contentModel.lines.length - 1, align: "end" });
+		}
 		userScrolledUpRef.current = false;
 		setShowScrollToBottom(false);
-	}, []);
+	}, [contentModel]);
 
 	const followStatusMeta: Record<
 		WorkflowLogFollowStatus,

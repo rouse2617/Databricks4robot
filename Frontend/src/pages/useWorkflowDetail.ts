@@ -190,7 +190,7 @@ const WORKFLOW_POLL_INTERVAL_MS = 8_000;
 const LOG_STREAM_FLUSH_INTERVAL_MS = 1000;
 const LOG_STREAM_CONNECT_GRACE_MS = 5_000;
 const LOG_CLIENT_BUFFER_LINES = 5_000;
-const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
+// const LOG_CLIENT_BUFFER_CHARS = 1_000_000;
 const WORKFLOW_FETCH_TIMEOUT_MS = 20_000;
 const RUN_DETAIL_TIMEOUT_MS = 20_000;
 
@@ -729,6 +729,7 @@ export function useWorkflowDetail(
 					followMessage: current.followMessage,
 					response: res,
 					clientTruncated: false,
+					options: current.options,
 				}));
 			};
 			try {
@@ -785,6 +786,7 @@ export function useWorkflowDetail(
 					followMessage: current.followMessage,
 					response: null,
 					clientTruncated: false,
+					options: current.options,
 				}));
 			}
 		},
