@@ -1083,6 +1083,8 @@ export function WorkflowExecutionList({
 				dataIndex: "name",
 				key: "name",
 				width: isBatchScope ? 280 : 260,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					(a.name ?? "").localeCompare(b.name ?? ""),
 				render: (name: string, record: ExecutionRecord) => {
 					const executionKey = executionKeyForRecord(record);
 					const runId = record.runId ?? runIdsByExecutionKey[executionKey];
@@ -1143,6 +1145,8 @@ export function WorkflowExecutionList({
 				dataIndex: "status",
 				key: "status",
 				width: isBatchScope ? 110 : 130,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					(a.status ?? "").localeCompare(b.status ?? ""),
 				render: (s: string, record: ExecutionRecord) => (
 					<Space size={4} wrap>
 						<Tag
@@ -1233,6 +1237,8 @@ export function WorkflowExecutionList({
 				dataIndex: "nodeCount",
 				key: "nodeCount",
 				width: isBatchScope ? 70 : 90,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					(a.nodeCount ?? 0) - (b.nodeCount ?? 0),
 				render: (nodeCount: number, record: ExecutionRecord) =>
 					nodeCountsByExecutionKey[executionKeyForRecord(record)] ?? nodeCount,
 				responsive: isBatchScope ? BATCH_DETAIL_WIDE_ONLY : undefined,
