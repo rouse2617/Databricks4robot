@@ -2078,20 +2078,26 @@ func needsRunListRefresh(run *models.PipelineRun) bool {
 }
 
 // refreshMisclassifiedRunSummaries fixes misclassified terminal runs in the
-// list view. Only the first few items are refreshed synchronously to keep
-// list API latency acceptable; the remaining items are handled by the
-// background watcher.
+// list view. We process up to 3 items whose workflow is likely still active
+// (recent creation). Older expired runs are skipped since they will be
+// handled by the background watcher.
 func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items []models.PipelineRun) {
 	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
 		return
 	}
 	refreshed := 0
-	const misclassifedRefreshBatch = 10
+	const misclassifedRefreshBatch = 3
 	for i := range items {
 		if refreshed >= misclassifedRefreshBatch {
 			break
 		}
 		if !needsMisclassifiedReconcile(&items[i]) {
+			continue
+		}
+		// Skip runs created more than 30 minutes ago — their workflow is
+		// likely already terminal or GC'd, and refreshing them here would
+		// just add latency without user-visible benefit.
+		if items[i].CreatedAt.Before(time.Now().UTC().Add(-30 * time.Minute)) {
 			continue
 		}
 		refreshed++
