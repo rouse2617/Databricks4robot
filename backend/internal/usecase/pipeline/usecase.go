@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -2086,24 +2087,26 @@ func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items [
 		return
 	}
 	refreshCutoff := time.Now().UTC().Add(-1 * time.Hour)
-	refreshed := 0
-	const maxRefresh = 5
+	// Process eligible items concurrently (semaphore=5) so the list
+	// stays fast even with many recent misclassified runs.
+	sem := make(chan struct{}, 5)
+	var wg sync.WaitGroup
 	for i := range items {
-		if refreshed >= maxRefresh {
-			break
-		}
 		if !needsMisclassifiedReconcile(&items[i]) {
 			continue
 		}
-		// Only refresh recently-created runs. Older misclassified runs
-		// are genuinely terminal and will be fixed by the background
-		// watcher when their workflow is re-examined.
 		if items[i].CreatedAt.Before(refreshCutoff) {
 			continue
 		}
-		refreshed++
-		uc.RefreshRunForList(ctx, &items[i])
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			uc.RefreshRunForList(ctx, &items[idx])
+			<-sem
+		}(i)
 	}
+	wg.Wait()
 }
 
 func (uc *Usecase) refreshRunSummariesForList(ctx context.Context, items []models.PipelineRun) {
