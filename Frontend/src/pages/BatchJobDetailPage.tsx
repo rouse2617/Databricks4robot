@@ -5,6 +5,7 @@ import {
 	PlayCircleOutlined,
 	RedoOutlined,
 	ReloadOutlined,
+	WarningOutlined,
 } from "@ant-design/icons";
 import {
 	Alert,
@@ -266,6 +267,47 @@ export function batchJobPollIntervalMs(status?: string | null): number | null {
 		default:
 			return null;
 	}
+}
+
+/**
+ * 基于节点概览数据计算批次的真实运行状态
+ * 用于修正后端返回的 status 可能不准确的问题
+ */
+function computeActualBatchStatus(
+	job: BatchJob,
+	nodeSummary: BatchNodeSummary | null,
+): "running" | "paused" | "completed" | "failed" {
+	// 如果没有节点概览数据，信任后端状态
+	if (!nodeSummary) {
+		return job.status as "running" | "paused" | "completed" | "failed";
+	}
+
+	const { subtasks } = nodeSummary;
+	const totalProcessed = subtasks.completed + subtasks.failed;
+	const allFinished = totalProcessed >= subtasks.total;
+
+	// 如果被明确暂停，返回暂停状态
+	if (subtasks.paused) {
+		return "paused";
+	}
+
+	// 如果所有任务都已完成或失败
+	if (allFinished) {
+		// 如果有失败的任务，状态为失败
+		if (subtasks.failed > 0) {
+			return "failed";
+		}
+		// 全部成功
+		return "completed";
+	}
+
+	// 如果有运行中或等待中的任务
+	if (subtasks.running > 0 || subtasks.pending > 0) {
+		return "running";
+	}
+
+	// 默认返回后端状态
+	return job.status as "running" | "paused" | "completed" | "failed";
 }
 
 function nodeStatusForDrawerFilter(
@@ -715,6 +757,9 @@ export default function BatchJobDetailPage() {
 		.map((item) => item.labels?.asset_id ?? item.labels?.assetId ?? "")
 		.filter(Boolean);
 
+	// 计算真实的批次状态（基于节点概览数据）
+	const actualStatus = job ? computeActualBatchStatus(job, nodeSummary) : null;
+
 	if (loading && !job) {
 		return <Skeleton active paragraph={{ rows: 8 }} />;
 	}
@@ -762,7 +807,7 @@ export default function BatchJobDetailPage() {
 						<Text type="secondary">批次 ID: {job.id}</Text>
 					</div>
 					<Space wrap>
-						{job.status === "running" ? (
+						{actualStatus === "running" ? (
 							<Button
 								icon={<PauseCircleOutlined />}
 								loading={actionLoading === "pause"}
@@ -771,7 +816,7 @@ export default function BatchJobDetailPage() {
 								暂停
 							</Button>
 						) : null}
-						{job.status === "paused" ? (
+						{actualStatus === "paused" ? (
 							<Button
 								type="primary"
 								icon={<PlayCircleOutlined />}
@@ -852,9 +897,16 @@ export default function BatchJobDetailPage() {
 						{
 							label: "状态",
 							children: (
-								<Tag color={resolveStatusTagColor(job.status)}>
-									{formatBatchJobStatus(job.status)}
-								</Tag>
+								<>
+									<Tag color={resolveStatusTagColor(actualStatus ?? job.status)}>
+										{formatBatchJobStatus(actualStatus ?? job.status)}
+									</Tag>
+									{actualStatus && actualStatus !== job.status ? (
+										<Tooltip title={`后端状态: ${formatBatchJobStatus(job.status)}, 根据子任务实际状态计算为: ${formatBatchJobStatus(actualStatus)}`}>
+											<WarningOutlined style={{ color: '#faad14', marginLeft: 4 }} />
+										</Tooltip>
+									) : null}
+								</>
 							),
 						},
 						{

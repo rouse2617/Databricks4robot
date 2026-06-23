@@ -124,6 +124,12 @@ export function WorkflowDagNode({
 			data.onAction?.(workflowNode, action);
 		};
 
+	// Omitted/Skipped 节点没有运行，禁用需要 Pod 的操作
+	const hasNotRun = phase === "Omitted" || phase === "Skipped";
+	const canViewLogs = !hasNotRun;
+	const canViewRuntime = !hasNotRun;
+	const canViewTerminal = !hasNotRun;
+
 	return (
 		<div
 			className={[
@@ -217,23 +223,25 @@ export function WorkflowDagNode({
 				) : null}
 
 				<div className="workflow-dag-node__actions">
-					<Tooltip title="查看日志">
+					<Tooltip title={canViewLogs ? "查看日志" : "节点未运行，无日志"}>
 						<Button
 							type="text"
 							size="small"
 							shape="circle"
 							icon={<FileTextOutlined />}
 							aria-label="查看日志"
+							disabled={!canViewLogs}
 							onClick={openAction("logs")}
 						/>
 					</Tooltip>
-					<Tooltip title="运行环境">
+					<Tooltip title={canViewRuntime ? "运行环境" : "节点未运行"}>
 						<Button
 							type="text"
 							size="small"
 							shape="circle"
 							icon={<CloudServerOutlined />}
 							aria-label="运行环境"
+							disabled={!canViewRuntime}
 							onClick={openAction("runtime")}
 						/>
 					</Tooltip>
@@ -248,13 +256,14 @@ export function WorkflowDagNode({
 							IO
 						</Button>
 					</Tooltip>
-					<Tooltip title="终端">
+					<Tooltip title={canViewTerminal ? "终端" : "节点未运行"}>
 						<Button
 							type="text"
 							size="small"
 							shape="circle"
 							icon={<CodeOutlined />}
 							aria-label="终端"
+							disabled={!canViewTerminal}
 							onClick={openAction("terminal")}
 						/>
 					</Tooltip>
