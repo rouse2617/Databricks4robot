@@ -1862,6 +1862,16 @@ func (uc *Usecase) persistRunObservation(ctx context.Context, run *models.Pipeli
 		return
 	}
 	existingWasActive := isActiveDeploymentStatus(existing.Status)
+	if existing.Status != run.Status || existing.Message != run.Message {
+		slog.Info("persistRunObservation status change",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"oldStatus", existing.Status,
+			"newStatus", run.Status,
+			"oldMessage", existing.Message,
+			"newMessage", run.Message,
+		)
+	}
 	existing.Status = run.Status
 	if isActiveDeploymentStatus(run.Status) {
 		existing.FinishedAt = nil
