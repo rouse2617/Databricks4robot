@@ -2085,18 +2085,17 @@ func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items [
 	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
 		return
 	}
-	refreshed := 0
-	const misclassifedRefreshBatch = 5
-	// Process from the end (oldest first) so long-running pipelines
-	// that started hours ago are covered before newer short-lived runs.
-	for i := len(items) - 1; i >= 0; i-- {
-		if refreshed >= misclassifedRefreshBatch {
-			break
-		}
+	refreshCutoff := time.Now().UTC().Add(-1 * time.Hour)
+	for i := range items {
 		if !needsMisclassifiedReconcile(&items[i]) {
 			continue
 		}
-		refreshed++
+		// Only refresh recently-created runs. Older misclassified runs
+		// are genuinely terminal and will be fixed by the background
+		// watcher when their workflow is re-examined.
+		if items[i].CreatedAt.Before(refreshCutoff) {
+			continue
+		}
 		uc.RefreshRunForList(ctx, &items[i])
 	}
 }
