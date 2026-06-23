@@ -2086,7 +2086,7 @@ func (uc *Usecase) refreshMisclassifiedRunSummaries(ctx context.Context, items [
 	if uc.runRepo == nil || uc.wfClient == nil || len(items) == 0 {
 		return
 	}
-	refreshCutoff := time.Now().UTC().Add(-1 * time.Hour)
+	refreshCutoff := time.Now().UTC().Add(-5 * time.Minute)
 	// Process eligible items concurrently (semaphore=5) so the list
 	// stays fast even with many recent misclassified runs.
 	sem := make(chan struct{}, 5)
@@ -3294,7 +3294,11 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 		return out, len(out), nil
 	}
 	if len(filter) > 0 {
+		t0 := time.Now()
 		items, total, err := uc.runRepo.ListSummaries(ctx, filter[0])
+		if elapsed := time.Since(t0); elapsed > 300*time.Millisecond {
+			slog.Warn("ListSummaries slow query", "elapsed", elapsed.String(), "total", total)
+		}
 		if err != nil {
 			return nil, 0, err
 		}
