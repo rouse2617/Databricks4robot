@@ -509,7 +509,7 @@ function WorkflowLogPanel({
 				<div style={{ color: "#9ca3af", fontSize: 13 }}>
 					点击 DAG 或时间线节点查看该节点日志
 				</div>
-			) : loading ? (
+			) : loading && logContent === null ? (
 				<div style={{ textAlign: "center", padding: 40 }}>
 					<Spin />
 				</div>

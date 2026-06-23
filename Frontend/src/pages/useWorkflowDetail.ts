@@ -697,7 +697,7 @@ export function useWorkflowDetail(
 			if (!runtimeWorkflowName) return;
 			setLogState((current) => ({
 				...current,
-				loading: true,
+				loading: current.content == null,
 				error: null,
 			}));
 			const shouldTryPrevious =
