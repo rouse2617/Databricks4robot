@@ -13,11 +13,8 @@ import {
 	App,
 	Button,
 	Card,
-	Checkbox,
-	Collapse,
 	Descriptions,
 	Input,
-	InputNumber,
 	Modal,
 	Segmented,
 	Select,
@@ -90,13 +87,13 @@ import {
 } from "./workflowLogView";
 import "../styles/pipeline.css";
 
-const SOURCE_COLORS: Record<string, string> = {
-	"argo-live": "green",
-	"archive-loki": "purple",
-	"archive-s3": "geekblue",
-	"archive-gcs": "cyan",
-	unavailable: "red",
-};
+// const SOURCE_COLORS: Record<string, string> = {
+// 	"argo-live": "green",
+// 	"archive-loki": "purple",
+// 	"archive-s3": "geekblue",
+// 	"archive-gcs": "cyan",
+// 	unavailable: "red",
+// };
 
 const ACTIVE_NODE_PHASES = new Set(["Running", "Pending"]);
 const TERMINAL_NODE_PHASES = new Set([
