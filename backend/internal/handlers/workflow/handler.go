@@ -421,7 +421,7 @@ func (h *Handler) GetWorkflowLogs(c *gin.Context) {
 		httpresp.Internal(c, err.Error())
 		return
 	}
-	podName, ok := resolveWorkflowPodName(workflow, nodeId)
+	podName, ok := resolveCachedWorkflowPodName(workflow, nodeId)
 	if !ok {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
 		return

@@ -138,7 +138,7 @@ func (h *Handler) StreamWorkflowLogs(c *gin.Context) {
 		return
 	}
 
-	podName, ok := resolveWorkflowPodName(workflow, nodeID)
+	podName, ok := resolveCachedWorkflowPodName(workflow, nodeID)
 	if !ok {
 		httpresp.BadRequest(c, "INVALID_ARGUMENT", "workflow pod node not found", nil)
 		return
