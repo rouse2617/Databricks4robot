@@ -1073,16 +1073,16 @@ export function useWorkflowDetail(
 			return;
 		}
 		// When log streaming is active, skip poll-triggered log fetches.
-		// The SSE stream provides real-time content; replacing it with an
-		// HTTP snapshot causes visible flicker/refresh.
-		if (followSourceRef.current) {
-			return;
-		}
+		// Only fetch when the selected node changes, not when the
+		// workflow poll returns a new object reference (prevents
+		// log content from being replaced by HTTP snapshots).
+		// SSE streaming has its own followSourceRef guard in loadNodeLogs.
 		const phase = workflow?.nodes.find(
 			(node) => node.id === selectedNodeId,
 		)?.phase;
 		void loadNodeLogs(selectedNodeId, phase);
-	}, [loadNodeLogs, runtimeWorkflowName, selectedNodeId, workflow?.nodes]);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [loadNodeLogs, runtimeWorkflowName, selectedNodeId]);
 
 	useEffect(() => {
 		if (!workflow || !selectedNodeId) return;
