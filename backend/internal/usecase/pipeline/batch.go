@@ -141,7 +141,7 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 				return
 			}
 
-			_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, item.ID, run.ID, run.WorkflowName, string(run.Status))
+			_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, item.ID, run.ID, run.WorkflowName, "completed")
 			_ = uc.backfillRepo.IncrementCompleted(ctx, jobID)
 		}(items[i])
 	}
