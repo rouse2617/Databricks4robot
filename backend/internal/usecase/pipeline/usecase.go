@@ -1982,6 +1982,11 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 	}
 	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil || wf == nil {
+		slog.Warn("reconcileMisclassifiedRunFromArgo GetWorkflow failed",
+			"runID", run.ID,
+			"workflowName", run.WorkflowName,
+			"err", err,
+		)
 		if errors.Is(err, argo.ErrNotFound) {
 			if uc.reconcileTerminalRunFromLedger(ctx, run) {
 				return
