@@ -1156,6 +1156,7 @@ FROM (
       created_at DESC
   ) bi
   LEFT JOIN pipeline_runs pr ON pr.id = bi.pipeline_run_id
+  LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id
 ) s
 ORDER BY source_order
 LIMIT 1`
