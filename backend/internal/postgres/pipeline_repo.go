@@ -834,11 +834,11 @@ func (r *PipelineRunRepo) Save(ctx context.Context, run *models.PipelineRun) err
 	if run == nil {
 		return errors.New("postgres PipelineRunRepo.Save: nil run")
 	}
-	// DEBUG: track who writes what status
-	if run.ID == "e4089577-c5d3-4e1c-bd39-415b77f121ba" {
-		slog.Warn("PipelineRunRepo.Save writing status",
+	// DEBUG: track who writes Error status
+	if run.Status == "Error" {
+		slog.Warn("PipelineRunRepo.Save writing Error status",
 			"runID", run.ID,
-			"status", run.Status,
+			"workflowName", run.WorkflowName,
 			"message", run.Message,
 		)
 	}
