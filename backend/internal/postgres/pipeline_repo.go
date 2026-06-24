@@ -990,8 +990,9 @@ LEFT JOIN pipeline_templates pt ON pt.id = pr.template_id`
   LOWER(COALESCE(pr.id, '')) LIKE $%d OR
   LOWER(COALESCE(pr.pipeline_name, '')) LIKE $%d OR
   LOWER(COALESCE(pr.workflow_name, '')) LIKE $%d OR
-  LOWER(COALESCE(pt.name, '')) LIKE $%d
-)`, argPos, argPos, argPos, argPos))
+  LOWER(COALESCE(pt.name, '')) LIKE $%d OR
+  LOWER(COALESCE(pr.owner, '')) LIKE $%d
+)`, argPos, argPos, argPos, argPos, argPos))
 		args = append(args, "%"+query+"%")
 		argPos++
 	}

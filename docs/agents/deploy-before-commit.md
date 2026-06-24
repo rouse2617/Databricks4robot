@@ -207,3 +207,9 @@ Premature commits without a verified deploy create false confidence: the commit 
 ❌ Make backend change → `go build` passes → `git commit` → `git push` → tell user "done"
 
 ✅ Make change → local tests → build image → push → deploy dev → targeted + regression verification (see `deploy-verification.md`) → PR evidence → ask user "verified, commit?" → wait → `git commit` → `git push`
+
+### Frontend commit hash（必须）
+
+前端部署（`wrangler deploy`）前必须确保 `site/` 由最新的构建产物更新。
+`vite.config.ts` 会自动从 git commit hash 取版本号，无需手动传环境变量。
+部署后在页面左下角检查版本号是否正确（格式为 `v<version> (<commit>)`）。

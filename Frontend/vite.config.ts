@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -9,7 +10,18 @@ const appVersion =
 	process.env.VITE_APP_VERSION || process.env.npm_package_version || "dev";
 const buildRef =
 	(process.env.VITE_BUILD_REF ?? "").trim() ||
-	(previewId ? `preview/${previewId}` : "local");
+	(previewId ? `preview/${previewId}` : getGitCommit());
+function getGitCommit(): string {
+	try {
+		return execSync("git rev-parse --short HEAD", {
+			encoding: "utf-8",
+			timeout: 3000,
+		}).trim();
+	} catch {
+		return "unknown";
+	}
+}
+
 const DEV_PORT = 5176;
 const DEFAULT_LOCAL_API = "http://localhost:8080";
 const apiProxyTarget = process.env.VITE_API_BASE_URL || DEFAULT_LOCAL_API;

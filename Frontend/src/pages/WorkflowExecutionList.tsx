@@ -389,6 +389,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		failureReason: run.failureReason,
 		blockingReason: run.blockingReason,
 		blockingMessage: run.blockingMessage,
+		owner: run.owner,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
@@ -1591,7 +1592,8 @@ export function WorkflowExecutionList({
 				<Input.Search
 					id="workflow-execution-name-search"
 					allowClear
-					placeholder="按名称搜索"
+					placeholder="搜索名称 / ID / 模板 / 用户 / asset_id"
+					style={{ width: 420 }}
 					style={
 						isBatchScope
 							? { minWidth: 280, maxWidth: 520, flex: "1 1 360px" }
