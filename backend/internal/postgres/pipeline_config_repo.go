@@ -296,12 +296,12 @@ func (r *PipelineConfigRepo) UpdateVersionStatus(ctx context.Context, configID s
 	versionRow := &models.PipelineConfigVersion{}
 	if err := r.c.db.QueryRow(ctx, `
 UPDATE pipeline_config_versions
-SET status = $3, updated_at = NOW()
+SET status = $3
 WHERE config_id = $1 AND version = $2
-RETURNING version, status, content, summary, author, created_at, updated_at
+RETURNING version, status, content, summary, author, created_at
 `, configID, version, status).Scan(
 		&versionRow.Version, &versionRow.Status, &versionRow.Content,
-		&versionRow.Summary, &versionRow.Author, &versionRow.CreatedAt, new(time.Time),
+		&versionRow.Summary, &versionRow.Author, &versionRow.CreatedAt,
 	); err != nil {
 		if errors.Is(err, errNoRows) {
 			return nil, repository.ErrPipelineConfigNotFound
@@ -312,6 +312,11 @@ RETURNING version, status, content, summary, author, created_at, updated_at
 }
 
 // CreateVersion appends a new immutable version and advances current_version.
+func (r *PipelineConfigRepo) UpdateLifecycle(ctx context.Context, configID string, lifecycle string) error {
+	err := r.c.db.Exec(ctx, `UPDATE pipeline_configs SET lifecycle = $2 WHERE id = $1`, configID, lifecycle)
+	return err
+}
+
 func (r *PipelineConfigRepo) CreateVersion(ctx context.Context, configID string, version *models.PipelineConfigVersion) error {
 	if version == nil {
 		return errors.New("postgres PipelineConfigRepo.CreateVersion: nil version")

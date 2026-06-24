@@ -29,6 +29,8 @@ type PipelineConfigRepository interface {
 	FindByID(ctx context.Context, id string) (*models.PipelineConfig, error)
 	UpdateMetadata(ctx context.Context, config *models.PipelineConfig) error
 	CreateVersion(ctx context.Context, configID string, version *models.PipelineConfigVersion) error
+	UpdateVersionStatus(ctx context.Context, configID string, version int, status string) (*models.PipelineConfigVersion, error)
+	UpdateLifecycle(ctx context.Context, configID string, lifecycle string) error
 	FindVersion(ctx context.Context, configID string, version int) (*models.PipelineConfigVersion, error)
 	FindVersions(ctx context.Context, configID string) ([]models.PipelineConfigVersion, error)
 	Deprecate(ctx context.Context, id string) error

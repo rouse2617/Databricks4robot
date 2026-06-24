@@ -172,6 +172,28 @@ func (uc *Usecase) CreateVersion(ctx context.Context, configID string, in Create
 	return version, nil
 }
 
+func (uc *Usecase) UpdateVersionStatus(ctx context.Context, configID string, version int, status string) (*models.PipelineConfigVersion, error) {
+	if strings.TrimSpace(configID) == "" || version <= 0 {
+		return nil, fmt.Errorf("%w: config id and version are required", ErrInvalidConfig)
+	}
+	status, err := normalizeLifecycle(status, "draft")
+	if err != nil {
+		return nil, err
+	}
+	updated, err := uc.repo.UpdateVersionStatus(ctx, configID, version, status)
+	if err != nil {
+		if errors.Is(err, repository.ErrPipelineConfigNotFound) {
+			return nil, ErrConfigNotFound
+		}
+		return nil, err
+	}
+	// Sync the config lifecycle when the active version changes.
+	if status == "ready" || status == "deprecated" {
+		_ = uc.repo.UpdateLifecycle(ctx, configID, status)
+	}
+	return updated, nil
+}
+
 func (uc *Usecase) GetVersion(ctx context.Context, configID string, version int) (*models.PipelineConfigVersion, error) {
 	if strings.TrimSpace(configID) == "" || version <= 0 {
 		return nil, fmt.Errorf("%w: config id and version are required", ErrInvalidConfig)
