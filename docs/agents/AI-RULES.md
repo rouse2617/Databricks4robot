@@ -248,11 +248,40 @@ The `end-of-file-fixer` pre-commit hook fails when a file has trailing blank lin
 **Check:** `pre-commit run end-of-file-fixer --all-files` before committing, or manually verify the file ends with a single `\n` (no extra blank lines). When using the Edit/Write tools, ensure the last line of content is not followed by an empty line.
 
 ### P8. Argo Server lives in K8s, not Cloud Run — use ARGO_SERVER_URL
+
+**UPDATE (2026-06-24):** K8s auth is now Workload Identity. See above — do NOT use `K8S_BEARER_TOKEN`.
+
+### P9. Cloud Run dev deploy command
+
+```bash
+gcloud run deploy cyber-databrew-backend-dev \
+  --image=us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:dev-latest \
+  --region=us-central1 --project=green-valley-442103 \
+  --service-account=cyber-databrew-dev@green-valley-442103.iam.gserviceaccount.com
+```
+**Must include `--service-account`** — omitting it reverts to Compute Engine default SA and breaks K8s WI auth.
+
+### P10. grace_video asset type (UUID asset IDs)
+
+Since 2026-06-24, DataBrew supports UUID-format asset IDs alongside the original 8-char format. The `grace_video` asset type:
+- Uses UUID as `asset_id` (Grace segmentation_id)
+- Does NOT require `mcap_file_id` (schema bypasses it)
+- DB constraints updated: `assets_asset_id_check`, `chk_mcap_file_required`, etc.
+- Migration: `backend/migrations/058_grace_video_asset_id.sql`
+- Trigger: `trg_nullify_empty_mcap` converts empty mcap_file_id to NULL
+- When creating grace_video assets, set `asset_type: "grace_video"` and skip `mcap_file_id`
 Argo Workflows API server runs inside the dev K8s cluster (e.g. `http://10.2.1.211:2746`), NOT on Cloud Run. The Cloud Run service `cyber-databrew-pipeline-ui-dev` is a separate UI proxy, not the Argo API.
 
 **Symptoms of confusion:** `ARGO_BASE_URL` pointing at the Cloud Run pipeline-ui returns `{"code":"UNAUTHORIZED","message":"invalid token: ... unexpected signing method: RS256"}` because that proxy uses different auth (SSO/OIDC) and can't verify K8s SA tokens.
 
-**Check:** On Cloud Run dev backend, `ARGO_SERVER_URL` should be the K8s in-cluster IP (e.g. `http://10.2.1.211:2746`) and `ARGO_WORKFLOWS_NAMESPACE=cyber-databrew-dev`. K8s ServiceAccount tokens (RS256) work because the K8s-based Argo server verifies them via TokenReview. Note that `deploy/cloudrun/backend-dev.sh` uses `--env-vars-file`, which overwrites revision environment variables on deploy. Therefore, do not hand-edit Cloud Run Console env vars for backend dev; keep canonical values in the script or pass explicit overrides. Pod diagnostics use `K8S_API_ENDPOINT`, `K8S_BEARER_TOKEN=cyber-databrew-dev-k8s-bearer-token:latest`, and `K8S_CA_DATA=cyber-databrew-dev-k8s-ca-data:latest`. The bearer token is a dev bridge and expires; refresh the Secret Manager version or move to dynamic identity / agent mode for long-term use.
+**Check:** On Cloud Run dev backend, `ARGO_SERVER_URL` should be the K8s in-cluster IP (e.g. `http://10.2.1.211:2746`) and `ARGO_WORKFLOWS_NAMESPACE=cyber-databrew-dev`. K8s ServiceAccount tokens (RS256) work because the K8s-based Argo server verifies them via TokenReview. Note that `deploy/cloudrun/backend-dev.sh` uses `--env-vars-file`, which overwrites revision environment variables on deploy. Therefore, do not hand-edit Cloud Run Console env vars for backend dev; keep canonical values in the script or pass explicit overrides. **K8s auth for Cloud Run is Workload Identity (since 2026-06-24).** The old static `K8S_BEARER_TOKEN` approach is deprecated — tokens expired every 2 days. Current env:
+```
+K8S_USE_METADATA_TOKEN=true       ← WI enabled, token auto-refreshes
+K8S_AUDIENCE=https://34.59.48.233
+K8S_API_ENDPOINT=https://34.59.48.233
+K8S_CA_DATA  → Secret: cyber-databrew-dev-k8s-ca-data
+```
+**Do NOT remove `K8S_USE_METADATA_TOKEN` or change the SA when redeploying.** SA must be `cyber-databrew-dev@green-valley-442103.iam.gserviceaccount.com`. K8s SA `cyber-databrew-backend-argo` has WI binding to this GCP SA. Losing these causes `create runtime config projection: Unauthorized` on every pipeline run.
 
 ## What NOT to do
 
