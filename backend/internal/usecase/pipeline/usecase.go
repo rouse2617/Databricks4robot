@@ -1974,10 +1974,18 @@ func (uc *Usecase) markRunWorkflowNotFound(ctx context.Context, run *models.Pipe
 		"currentStatus", run.Status,
 		"currentMessage", run.Message,
 	)
-	if shouldPreserveActiveWorkflowNotFound(run, uc.nowUTC()) {
+	shouldPreserve := shouldPreserveActiveWorkflowNotFound(run, uc.nowUTC())
+	slog.Info("markRunWorkflowNotFound preserve check",
+		"runID", run.ID,
+		"workflowName", run.WorkflowName,
+		"status", run.Status,
+		"shouldPreserve", shouldPreserve,
+		"isActiveDeployment", isActiveDeploymentStatus(run.Status),
+	)
+	if shouldPreserve {
 		slog.Info("markRunWorkflowNotFound preserved active",
 			"runID", run.ID,
-			"newStatus", "Running",
+			"newStatus", run.Status,
 		)
 		if isStaleWorkflowUnavailableMessage(run.Message) {
 			run.Message = ""
@@ -2002,11 +2010,13 @@ func (uc *Usecase) markRunWorkflowNotFound(ctx context.Context, run *models.Pipe
 	}
 	run.Status = deploymentStatusExpired
 	run.Message = workflowUnavailableMessage(run)
-	slog.Info("markRunWorkflowNotFound writing stale status",
+	slog.Warn("markRunWorkflowNotFound writing terminal status (non-preserve path)",
 		"runID", run.ID,
 		"workflowName", run.WorkflowName,
 		"newStatus", run.Status,
 		"newMessage", run.Message,
+		"createdAt", run.CreatedAt,
+		"ageHours", time.Now().UTC().Sub(run.CreatedAt).Hours(),
 	)
 	uc.persistRunObservation(ctx, run)
 }
@@ -2067,15 +2077,25 @@ func (uc *Usecase) reconcileMisclassifiedRunFromArgo(ctx context.Context, run *m
 			"workflowName", run.WorkflowName,
 			"err", err,
 		)
+		if errors.Is(err, argo.ErrUnexpectedNotFound) {
+			slog.Warn("reconcileMisclassifiedRunFromArgo: unexpected 404 (config error) — not Argo, skip",
+				"runID", run.ID, "workflowName", run.WorkflowName)
+			return
+		}
 		if errors.Is(err, argo.ErrNotFound) {
 			if uc.reconcileTerminalRunFromLedger(ctx, run) {
 				return
 			}
 			if shouldReviveMisclassifiedWorkflowNotFound(run, uc.nowUTC()) {
+				slog.Info("reconcileMisclassifiedRunFromArgo reviving run",
+					"runID", run.ID, "workflowName", run.WorkflowName)
 				run.Status = string(wfv1.WorkflowRunning)
 				run.Message = ""
 				run.FinishedAt = nil
 				uc.persistRunObservation(ctx, run)
+			} else {
+				slog.Info("reconcileMisclassifiedRunFromArgo not reviving",
+					"runID", run.ID, "workflowName", run.WorkflowName)
 			}
 		}
 		return
@@ -2297,6 +2317,11 @@ func (uc *Usecase) refreshRunStatus(ctx context.Context, run *models.PipelineRun
 			"err", err,
 			"isNotFound", errors.Is(err, argo.ErrNotFound),
 		)
+		if errors.Is(err, argo.ErrUnexpectedNotFound) {
+			slog.Warn("refreshRunStatus: unexpected 404 (config error) -- skip markRunWorkflowNotFound",
+				"runID", run.ID, "workflowName", run.WorkflowName)
+			return
+		}
 		if errors.Is(err, argo.ErrNotFound) {
 			if shouldWaitForWorkflowCreation(run, time.Now().UTC()) {
 				if isPendingBatchWorkflowCreation(run) && isStaleWorkflowUnavailableMessage(run.Message) {
@@ -2364,6 +2389,11 @@ func (uc *Usecase) backfillRunStatus(ctx context.Context, run *models.PipelineRu
 	}
 	wf, err := uc.wfClient.GetWorkflow(ctx, run.WorkflowName, namespace)
 	if err != nil {
+		if errors.Is(err, argo.ErrUnexpectedNotFound) {
+			slog.Warn("backfillRunStatus: unexpected 404 (config error) -- skip ledger update",
+				"runID", run.ID, "workflowName", run.WorkflowName)
+			return
+		}
 		if errors.Is(err, argo.ErrNotFound) {
 			run.LedgerState = "no_ledger"
 			logPipelineSideEffect("update pipeline run ledger state",

@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -21,8 +22,12 @@ type Config struct {
 
 // ConfigFromEnv builds an Argo client config from environment variables.
 func ConfigFromEnv() *Config {
+	serverURL := firstNonEmptyEnv("ARGO_SERVER_URL", "ARGO_BASE_URL")
+	slog.Info("argo client config",
+		"server_url_set", serverURL != "",
+	)
 	return &Config{
-		ServerURL:          firstNonEmptyEnv("ARGO_SERVER_URL", "ARGO_BASE_URL"),
+		ServerURL:          serverURL,
 		Token:              firstNonEmptyEnv("ARGO_AUTH_TOKEN", "ARGO_TOKEN"),
 		InsecureSkipVerify: parseBoolEnv("ARGO_INSECURE_SKIP_VERIFY"),
 		CACertBase64:       strings.TrimSpace(os.Getenv("ARGO_CA_CERT_BASE64")),

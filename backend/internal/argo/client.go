@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,12 @@ import (
 
 // ErrNotFound indicates the requested Argo resource does not exist.
 var ErrNotFound = errors.New("argo resource not found")
+
+// ErrUnexpectedNotFound indicates a 404 response that did NOT come from the
+// Argo API server — likely a misconfigured base URL pointing to a non-Argo
+// service (e.g. the DataBrew backend or pipeline UI). Callers MUST NOT treat
+// this as "workflow genuinely not found" and MUST NOT write terminal status.
+var ErrUnexpectedNotFound = errors.New("argo unexpected not found: response is not from Argo API")
 
 // WorkflowClient defines the interface for managing Argo Workflows.
 type WorkflowClient interface {
@@ -274,6 +281,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 	if err != nil {
 		return nil, err
 	}
+		slog.Info("argo_client_request", "method", method, "endpoint", endpoint, "serverURL", c.serverURL)
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return nil, fmt.Errorf("create argo request: %w", err)
@@ -302,7 +310,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 			message = resp.Status
 		}
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("%w: %s", ErrNotFound, message)
+			// Distinguish between a genuine Argo API 404 (JSON with gRPC
+			// code=5) and a non-Argo 404 (HTML, plain text, or JSON with
+			// code=404) that indicates a misconfigured base URL.
+			if IsArgo404Response(message) {
+				return nil, fmt.Errorf("%w: %s", ErrNotFound, message)
+			}
+			return nil, fmt.Errorf("%w: body=%q", ErrUnexpectedNotFound, message)
 		}
 		return nil, fmt.Errorf("argo API %s %s failed: %s", method, path, message)
 	}
@@ -338,4 +352,11 @@ func authorizationHeader(token string) string {
 		return token
 	}
 	return "Bearer " + token
+}
+
+// IsArgo404Response returns true when a 404 response body originates from
+// the Argo API server (JSON with gRPC code 5) versus a non-Argo service
+// such as the DataBrew backend (HTML, plain text, or JSON with code 404).
+func IsArgo404Response(body string) bool {
+	return strings.Contains(body, `"code":5`) || strings.Contains(body, `"code": 5`)
 }
