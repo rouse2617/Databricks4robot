@@ -150,6 +150,17 @@ func representativeNodeDiagnosticMessage(nodes []models.PipelineRunNode) string 
 
 func classifyRunDiagnosticReason(status, message, workflowName, workflowUID string) string {
 	normalizedMessage := strings.ToLower(strings.TrimSpace(message))
+	// Batch parent runs have synthetic workflow names and never have a real
+	// Argo workflow. Their terminal status comes from child aggregation.
+	if strings.HasPrefix(strings.TrimSpace(workflowName), "batch-parent-") || strings.HasPrefix(strings.TrimSpace(workflowName), "backfill-parent-") {
+		if strings.EqualFold(status, StatusSucceeded) {
+			return "" // no diagnostic — succeeded
+		}
+		if IsFailureStatus(status) {
+			return "run_failed"
+		}
+		return "runtime_not_submitted"
+	}
 	switch {
 	case containsAny(normalizedMessage, "unschedulable", "insufficient cpu", "insufficient memory", "insufficient ephemeral-storage", "didn't match pod affinity", "didn't match pod anti-affinity"):
 		return "unschedulable"
