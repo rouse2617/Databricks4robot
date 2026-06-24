@@ -4,9 +4,11 @@ import {
 	DiffOutlined,
 	EditOutlined,
 	CheckCircleOutlined,
+	CopyOutlined,
 	EyeOutlined,
 	FileAddOutlined,
 	InboxOutlined,
+	EllipsisOutlined,
 	PlusOutlined,
 	ReloadOutlined,
 } from "@ant-design/icons";
@@ -16,11 +18,15 @@ import {
 	Card,
 	Col,
 	Descriptions,
+	Divider,
 	Drawer,
+	Dropdown,
 	Form,
 	Grid,
 	Input,
 	Modal,
+	Collapse,
+	Empty,
 	message,
 	Popconfirm,
 	Row,
@@ -548,6 +554,44 @@ export default function RegistryCenterPage() {
 	const [diffBaseContent, setDiffBaseContent] = useState<string>("");
 	const diffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+	const [editVersionState, setEditVersionState] = useState<{
+		visible: boolean;
+		configId: string;
+		versionNumber: number;
+		content: string;
+		summary: string;
+		saving: boolean;
+	}>({
+		visible: false,
+		configId: "",
+		versionNumber: 0,
+		content: "",
+		summary: "",
+		saving: false,
+	});
+
+	// When edit modal opens, load version content from API
+	useEffect(() => {
+		console.log("[editVersion] useEffect fired", editVersionState.visible, editVersionState.configId, editVersionState.versionNumber);
+		if (editVersionState.visible && editVersionState.configId && editVersionState.versionNumber) {
+			console.log("[editVersion] calling getVersion", editVersionState.configId, editVersionState.versionNumber);
+			const result = pipelineConfigApi.getVersion(editVersionState.configId, editVersionState.versionNumber);
+			console.log("[editVersion] getVersion returned", result);
+			result
+				.then(detail => {
+					console.log("[editVersion] getVersion success", detail);
+					setEditVersionState(prev => ({
+						...prev,
+						content: detail.content || "",
+					}));
+				})
+				.catch((err) => {
+					console.log("[editVersion] getVersion error", err);
+					msg.error("读取版本内容失败");
+				});
+		}
+	}, [editVersionState.visible, editVersionState.configId, editVersionState.versionNumber]);
+
 	const versionContentValue = Form.useWatch("content", versionForm);
 
 	const loadDiffBaseVersion = useCallback(
@@ -659,6 +703,8 @@ export default function RegistryCenterPage() {
 				lifecycleDisplay(cfg.lifecycle),
 				cfg.latestVersion,
 				...cfg.tags,
+				...cfg.versions.map(v => v.summary),
+				...cfg.versions.map(v => v.version),
 			]
 				.join(" ")
 				.toLowerCase()
@@ -849,6 +895,20 @@ export default function RegistryCenterPage() {
 		})();
 	};
 
+	const handleOpenEditVersion = (
+		config: UserConfigRecord,
+		version: ConfigVersionRecord,
+	) => {
+		setEditVersionState({
+			visible: true,
+			configId: config.id,
+			versionNumber: version.versionNumber,
+			content: "",
+			summary: version.summary === "—" ? "" : (version.summary || ""),
+			saving: false,
+		});
+	};
+
 	const handleOpenVersionCompare = (
 		config: UserConfigRecord,
 		version?: ConfigVersionRecord,
@@ -999,73 +1059,46 @@ export default function RegistryCenterPage() {
 			render: (_, record) => {
 				const archived = isArchivedConfig(record);
 				return (
-					<Space size={2} wrap>
-						{archived ? null : (
-							<Button
-								size="small"
-								type="primary"
-								icon={<FileAddOutlined />}
-								onClick={() => openCreateVersion(record)}
-							>
-								新建版本
-							</Button>
-						)}
-						{!archived && record.lifecycle === "draft" ? (
-							<Button
-								size="small"
-								icon={<CheckCircleOutlined />}
-								onClick={async () => {
-									try {
-										await pipelineConfigApi.updateVersionStatus(record.id, record.currentVersion, "ready");
-										msg.success("已标记为 Ready");
-										refreshConfigs();
-									} catch (err) {
-										msg.error(`标记失败: ${err}`);
-									}
-								}}
-							>
-								设为 Ready
-							</Button>
-						) : null}
-						<IconActionButton
-							title="查看详情"
-							icon={<EyeOutlined />}
-							onClick={() => setSelectedConfigId(record.id)}
-						/>
-						{archived ? null : (
-							<IconActionButton
-								title="编辑属性"
-								icon={<EditOutlined />}
-								onClick={() => openEditConfig(record)}
-							/>
-						)}
-						<IconActionButton
-							title="对比版本"
-							icon={<DiffOutlined />}
-							disabled={record.versions.length < 2}
-							onClick={() => handleOpenVersionCompare(record)}
-						/>
-						{archived ? null : (
-							<Popconfirm
-								title="归档配置"
-								description="归档后会从工作区移除，不参与部署选择；历史引用仍可追溯。"
-								okText="归档"
-								cancelText="取消"
-								style={{ top: 20 }}
-								onConfirm={() => handleDeprecateConfig(record)}
-							>
+						<Space size={2} wrap>
+							{archived ? null : (
 								<Button
 									size="small"
-									type="text"
-									danger
-									aria-label="归档配置"
-									icon={<InboxOutlined />}
-									loading={deprecatingConfigId === record.id}
-								/>
-							</Popconfirm>
-						)}
-					</Space>
-				);
+									type="primary"
+									icon={<FileAddOutlined />}
+									onClick={(e) => { e.stopPropagation(); openCreateVersion(record); }}
+								>
+									新建版本
+								</Button>
+							)}
+							<IconActionButton
+								title="查看详情"
+								icon={<EyeOutlined />}
+								onClick={() => setSelectedConfigId(record.id)}
+							/>
+							<Dropdown menu={{
+								items: [
+									...(archived ? [] : [
+										{ key: "edit", icon: <EditOutlined />, label: "编辑属性", onClick: () => openEditConfig(record) },
+									]),
+									...(record.lifecycle === "draft" && !archived ? [{
+										key: "ready", icon: <CheckCircleOutlined />, label: "发布为 Ready",
+										onClick: async () => {
+											try {
+												await pipelineConfigApi.updateVersionStatus(record.id, record.currentVersion, "ready");
+												msg.success("已发布为 Ready");
+												refreshConfigs();
+											} catch (err) {
+												msg.error(`发布失败: ${err}`);
+											}
+										}
+									}] : []),
+									...(record.versions.length >= 2 ? [{ key: "diff", icon: <DiffOutlined />, label: "对比版本", onClick: () => handleOpenVersionCompare(record) }] : []),
+									...(!archived ? [{ key: "divider", type: "divider" }, { key: "archive", icon: <InboxOutlined />, label: "归档配置", danger: true, onClick: () => handleDeprecateConfig(record) }] : []),
+								].filter(Boolean) as any,
+							}}>
+								<Button size="small" icon={<EllipsisOutlined />}>更多</Button>
+							</Dropdown>
+						</Space>				);
 			},
 		},
 	];
@@ -1078,8 +1111,15 @@ export default function RegistryCenterPage() {
 			{
 				title: "版本",
 				dataIndex: "version",
-				width: 100,
-				render: (v) => <Text code>{v}</Text>,
+				width: 130,
+				render: (v, record: ConfigVersionRecord) => (
+					<Space size={4}>
+						<Text code>{v}</Text>
+						{record.versionNumber === config.currentVersion ? (
+							<Tag color="blue" style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px" }}>当前</Tag>
+						) : null}
+					</Space>
+				),
 			},
 			{
 				title: "状态",
@@ -1141,20 +1181,134 @@ export default function RegistryCenterPage() {
 							</Button>
 						)}
 						{!archived && version.lifecycle === "draft" ? (
-							<Button
-								size="small"
-								type="link"
-								icon={<EditOutlined />}
-								style={{ paddingInline: 4, color: "#faad14" }}
-								onClick={() => openCreateVersion(config, version)}
-							>
-								编辑
-							</Button>
+							<>
+								<Button
+									size="small"
+									type="link"
+									icon={<CheckCircleOutlined />}
+									style={{ paddingInline: 4, color: "#52c41a" }}
+									onClick={async () => {
+										try {
+											await pipelineConfigApi.updateVersionStatus(config.id, version.versionNumber, "ready");
+											msg.success("已发布为 Ready");
+											refreshConfigs();
+										} catch (err) {
+											msg.error(`发布失败: ${err}`);
+										}
+									}}
+								>
+									发布为 Ready
+								</Button>
+								<Button
+									size="small"
+									type="link"
+									icon={<EditOutlined />}
+									style={{ paddingInline: 4, color: "#faad14" }}
+									onClick={() => handleOpenEditVersion(config, version)}
+								>
+									编辑
+								</Button>
+							</>
 						) : null}
 					</Space>
 				),
 			},
 		];
+	};
+
+	const ContentPreviewTab = ({ config: cfg }: { config: UserConfigRecord }) => {
+		const [content, setContent] = useState<string | null>(null);
+		const [loading, setLoading] = useState(false);
+		useEffect(() => {
+			void (async () => {
+				setLoading(true);
+				try {
+					const detail = await pipelineConfigApi.getVersion(cfg.id, cfg.currentVersion);
+					setContent(detail.content || "");
+				} catch { setContent(null); }
+				finally { setLoading(false); }
+			})();
+		}, [cfg.id, cfg.currentVersion]);
+		if (loading) return <ContentLoadingState title="加载内容…" />;
+		if (content === null) return <ContentErrorState title="加载失败" onRetry={() => setLoading(true)} />;
+		if (!content) return <Empty description="版本内容为空" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+		return (
+			<div>
+				<div style={{ marginBottom: 8, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+					<Button size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(content); msg.success("已复制"); }}>复制</Button>
+				</div>
+				<Input.TextArea
+					rows={20}
+					value={content}
+					readOnly
+					style={{ fontFamily: "monospace", fontSize: 12, background: "#f8fafc" }}
+				/>
+			</div>
+		);
+	};
+
+	const VersionHistoryTab = ({ config: cfg }: { config: UserConfigRecord }) => {
+		const [loadingVersionKey, setLocalLoading] = useState<string | null>(null);
+		const handleViewContent = async (version: ConfigVersionRecord) => {
+			const key = `${cfg.id}:${version.versionNumber}`;
+			setLocalLoading(key);
+			try {
+				const detail = await pipelineConfigApi.getVersion(cfg.id, version.versionNumber);
+				setSelectedVersionContent({ configName: cfg.name, version: mapConfigVersion(detail) });
+			} catch { msg.error("读取失败"); }
+			finally { setLocalLoading(null); }
+		};
+		const handlePublishReady = async (version: ConfigVersionRecord) => {
+			try {
+				await pipelineConfigApi.updateVersionStatus(cfg.id, version.versionNumber, "ready");
+				msg.success("已发布为 Ready");
+				refreshConfigs();
+			} catch (err) { msg.error(`发布失败: ${err}`); }
+		};
+		return (
+			<Space direction="vertical" size={8} style={{ width: "100%" }}>
+				{cfg.versions.length === 0 ? (
+					<Empty description="暂无版本" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+				) : (
+					[...cfg.versions].sort((a, b) => b.versionNumber - a.versionNumber).map((version) => {
+						const isCurrent = version.versionNumber === cfg.currentVersion;
+						const isDraft = version.lifecycle === "draft";
+						return (
+							<Card
+								key={version.versionNumber}
+								size="small"
+								style={{
+									borderLeft: isCurrent ? "3px solid #1677ff" : "1px solid #d9d9d9",
+									background: isCurrent ? "#f0f5ff" : undefined,
+								}}
+							>
+								<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+									<Space size={6}>
+										<Text code strong style={{ fontSize: 14 }}>{version.version}</Text>
+										{isCurrent ? <Tag color="blue" style={{ marginRight: 0 }}>当前版本</Tag> : null}
+										<Tag color={lifecycleTagColor(version.lifecycle)} style={{ marginRight: 0 }}>{lifecycleDisplay(version.lifecycle)}</Tag>
+									</Space>
+								</div>
+								<div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
+									{version.author} · {version.updatedAt}
+								</div>
+								<Text style={{ color: "#475569", fontSize: 13 }}>{version.summary}</Text>
+								<div style={{ marginTop: 8 }}>
+									<Space size={4}>
+										<Button size="small" type="link" icon={<EyeOutlined />} loading={loadingVersionKey === `${cfg.id}:${version.versionNumber}`} onClick={() => handleViewContent(version)}>查看</Button>
+										{cfg.versions.length >= 2 ? <Button size="small" type="link" icon={<DiffOutlined />} onClick={() => handleOpenVersionCompare(cfg, version)}>对比</Button> : null}
+										<Button size="small" type="link" icon={<FileAddOutlined />} onClick={() => openCreateVersion(cfg, version)}>基于此版本创建</Button>
+										{isDraft && !isArchivedConfig(cfg) ? (
+											<Button size="small" type="link" icon={<CheckCircleOutlined />} style={{ color: "#52c41a" }} onClick={() => handlePublishReady(version)}>发布为 Ready</Button>
+										) : null}
+									</Space>
+								</div>
+							</Card>
+						);
+					})
+				)}
+			</Space>
+		);
 	};
 
 	const configStats = useMemo(
@@ -1305,13 +1459,13 @@ export default function RegistryCenterPage() {
 											<Row gutter={[12, 12]} align="middle">
 												<Col xs={24} lg={12} style={{ minWidth: 0 }}>
 													<Space wrap>
-														<Tag color="green">Ready {configStats.ready}</Tag>
-														<Tag color="gold">Draft {configStats.draft}</Tag>
-														<Tag>Archived {configStats.archived}</Tag>
+														<Tag color="green">可用 {configStats.ready}</Tag>
+														<Tag color="gold">草稿 {configStats.draft}</Tag>
+														<Tag>已归档 {configStats.archived}</Tag>
 														<Tag color="geekblue">
-															Versions {configStats.versions}
+															版本 {configStats.versions}
 														</Tag>
-														<Tag color="blue">Own / Shared deploy filter</Tag>
+														<Tag color="blue">部署可见</Tag>
 													</Space>
 												</Col>
 												<Col xs={24} lg={12} style={{ minWidth: 0 }}>
@@ -1350,7 +1504,7 @@ export default function RegistryCenterPage() {
 															placeholder={
 																configShelf === "archived"
 																	? "搜索归档配置"
-																	: "搜索名称 / 用户 / tag"
+																	: "搜索名称 / owner / tag / 版本号 / 说明"
 															}
 															value={configQuery}
 															onChange={(event) =>
@@ -1380,33 +1534,12 @@ export default function RegistryCenterPage() {
 													columns={configCols}
 													dataSource={filteredConfigs}
 													scroll={{ x: 960 }}
+													onRow={(record) => ({
+														onClick: () => setSelectedConfigId(record.id),
+														style: { cursor: "pointer" },
+													})}
 													locale={{ emptyText: emptyConfigText }}
-													expandable={{
-														expandedRowRender: (record) => (
-															<div
-																style={{
-																	borderLeft: "2px solid #dbeafe",
-																	marginLeft: 10,
-																	paddingLeft: 16,
-																	background: "#f8fafc",
-																	maxWidth: "100%",
-																	minWidth: 0,
-																	overflow: "hidden",
-																}}
-															>
-																<TableScrollBoundary>
-																	<Table
-																		rowKey="version"
-																		pagination={false}
-																		size="small"
-																		columns={createVersionCols(record)}
-																		dataSource={record.versions}
-																		scroll={{ x: 820 }}
-																	/>
-																</TableScrollBoundary>
-															</div>
-														),
-													}}
+	
 												/>
 											</TableScrollBoundary>
 											<Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -1490,21 +1623,23 @@ export default function RegistryCenterPage() {
 				</Space>
 			)}
 			<Drawer
-				title={selectedConfig ? selectedConfig.name : "配置详情"}
+				title={selectedConfig ? (
+					<Space size={4} style={{ lineHeight: 1.4 }}>
+						<Text strong style={{ fontSize: 16 }}>{selectedConfig.name}</Text>
+						<Tag>{selectedConfig.fileType}</Tag>
+						<Tag color={lifecycleTagColor(selectedConfig.lifecycle)}>{lifecycleDisplay(selectedConfig.lifecycle)}</Tag>
+						<Text type="secondary" style={{ fontSize: 13 }}>
+							当前 {selectedConfig.latestVersion} · {selectedConfig.versionCount} 个版本
+						</Text>
+					</Space>
+				) : "配置详情"}
 				width={720}
 				open={Boolean(selectedConfig)}
 				onClose={() => setSelectedConfigId(null)}
+				maskStyle={{ backgroundColor: "rgba(0,0,0,0.08)" }}
 				extra={
 					selectedConfig ? (
 						<Space>
-							{isArchivedConfig(selectedConfig) ? null : (
-								<Button
-									icon={<EditOutlined />}
-									onClick={() => openEditConfig(selectedConfig)}
-								>
-									属性
-								</Button>
-							)}
 							<Button
 								icon={<DiffOutlined />}
 								disabled={selectedConfig.versions.length < 2}
@@ -1526,49 +1661,90 @@ export default function RegistryCenterPage() {
 				}
 			>
 				{selectedConfig ? (
-					<Space direction="vertical" size={16} style={{ width: "100%" }}>
-						<Descriptions column={2} size="small" bordered>
-							<Descriptions.Item label="配置 ID" span={2}>
-								<Text code>{selectedConfig.id}</Text>
-							</Descriptions.Item>
-							<Descriptions.Item label="文件名">
-								<Text code>{selectedConfig.name}</Text>
-							</Descriptions.Item>
-							<Descriptions.Item label="文件类型">
-								<Tag>{selectedConfig.fileType}</Tag>
-							</Descriptions.Item>
-							<Descriptions.Item label="拥有者">
-								<UserTag value={selectedConfig.owner} />
-							</Descriptions.Item>
-							<Descriptions.Item label="状态">
-								<Tag color={lifecycleTagColor(selectedConfig.lifecycle)}>
-									{lifecycleDisplay(selectedConfig.lifecycle)}
-								</Tag>
-							</Descriptions.Item>
-							<Descriptions.Item label="当前版本">
-								<Tag color="geekblue">{selectedConfig.latestVersion}</Tag>
-							</Descriptions.Item>
-							<Descriptions.Item label="更新时间">
-								{selectedConfig.updatedAt}
-							</Descriptions.Item>
-							<Descriptions.Item label="描述" span={2}>
-								{selectedConfig.description}
-							</Descriptions.Item>
-							<Descriptions.Item label="标签" span={2}>
-								<ConfigTagList tags={selectedConfig.tags} />
-							</Descriptions.Item>
-						</Descriptions>
-						<Card size="small" title="版本历史">
-							<Table
-								rowKey="version"
-								pagination={false}
-								size="small"
-								columns={createVersionCols(selectedConfig)}
-								dataSource={selectedConfig.versions}
-							/>
-						</Card>
-					</Space>
-				) : null}
+					<Tabs
+						items={[
+							{
+								key: "info",
+								label: "属性",
+								children: (
+									<Space direction="vertical" size={12} style={{ width: "100%" }}>
+										<Card size="small" variant="outlined" style={{ background: "#fafafa" }}>
+											<Space direction="vertical" size={8} style={{ width: "100%" }}>
+												<Row gutter={[16, 8]}>
+													<Col span={12}>
+														<Text type="secondary" style={{ fontSize: 12 }}>状态</Text>
+														<div><Tag color={lifecycleTagColor(selectedConfig.lifecycle)}>{lifecycleDisplay(selectedConfig.lifecycle)}</Tag></div>
+													</Col>
+													<Col span={12}>
+														<Text type="secondary" style={{ fontSize: 12 }}>当前版本</Text>
+														<div style={{ fontWeight: 600 }}>{selectedConfig.latestVersion}</div>
+													</Col>
+													<Col span={12}>
+														<Text type="secondary" style={{ fontSize: 12 }}>Owner</Text>
+														<div><UserTag value={selectedConfig.owner} /></div>
+													</Col>
+													<Col span={12}>
+														<Text type="secondary" style={{ fontSize: 12 }}>最近更新</Text>
+														<div style={{ fontSize: 13 }}>{selectedConfig.updatedAt}</div>
+													</Col>
+												</Row>
+												{selectedConfig.lifecycle === "draft" ? (
+													<Alert type="warning" showIcon message="当前版本是 Draft，不能用于部署" style={{ marginBottom: 0 }} />
+												) : selectedConfig.lifecycle === "deprecated" ? (
+													<Alert type="error" showIcon message="该配置已归档，不参与部署选择" style={{ marginBottom: 0 }} />
+												) : (
+													<Alert type="success" showIcon message={`当前部署可用版本：${selectedConfig.latestVersion} ${lifecycleDisplay(selectedConfig.lifecycle)}`} style={{ marginBottom: 0 }} />
+												)}
+											</Space>
+										</Card>
+										<Collapse ghost items={[
+											{
+												key: "more",
+												label: "更多信息",
+												children: (
+													<Descriptions column={1} size="small">
+														<Descriptions.Item label="配置 ID">
+															<Space size={4}>
+																<Text code style={{ fontSize: 12 }}>{selectedConfig.id}</Text>
+																<Button type="link" size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(selectedConfig.id); msg.success("已复制"); }} />
+															</Space>
+														</Descriptions.Item>
+														<Descriptions.Item label="文件类型"><Tag>{selectedConfig.fileType}</Tag></Descriptions.Item>
+														<Descriptions.Item label="描述">{selectedConfig.description}</Descriptions.Item>
+														<Descriptions.Item label="标签"><ConfigTagList tags={selectedConfig.tags} /></Descriptions.Item>
+													</Descriptions>
+												),
+											},
+										]} />
+									</Space>
+								),
+							},
+							{
+								key: "content",
+								label: "内容",
+								children: (
+									<ContentPreviewTab config={selectedConfig} />
+								),
+							},
+							{
+								key: "history",
+								label: "版本历史",
+								children: (
+									<VersionHistoryTab config={selectedConfig} />
+								),
+							},
+							{
+								key: "references",
+								label: "引用关系",
+								children: (
+									<Card size="small">
+										<Empty description="暂未接入引用数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+									</Card>
+								),
+							},
+						]}
+					/>
+					) : null}
 			</Drawer>
 
 			<Modal
@@ -1818,6 +1994,68 @@ export default function RegistryCenterPage() {
 				)}
 			</Modal>
 
+			<Modal
+				title={`编辑版本 v${editVersionState.versionNumber}`}
+				open={editVersionState.visible}
+				width={700}
+				okText="保存"
+				cancelText="取消"
+				confirmLoading={editVersionState.saving}
+				onCancel={() =>
+					setEditVersionState((prev) => ({
+						...prev,
+						visible: false,
+						saving: false,
+					}))
+				}
+				onOk={async () => {
+					setEditVersionState((prev) => ({ ...prev, saving: true }));
+					try {
+						await pipelineConfigApi.updateVersionContent(
+							editVersionState.configId,
+							editVersionState.versionNumber,
+							editVersionState.content,
+							editVersionState.summary,
+						);
+						msg.success("版本已更新");
+						setEditVersionState((prev) => ({
+							...prev,
+							visible: false,
+							saving: false,
+						}));
+						refreshConfigs();
+					} catch (err) {
+						msg.error(`更新失败: ${err}`);
+						setEditVersionState((prev) => ({ ...prev, saving: false }));
+					}
+				}}
+			>
+				<div key={editVersionState.versionNumber}>
+					<div style={{ marginBottom: 6, fontWeight: 500 }}>变更说明</div>
+					<Input.TextArea
+						rows={2}
+						defaultValue={editVersionState.summary}
+						onChange={(e) =>
+							setEditVersionState((prev) => ({
+								...prev,
+								summary: e.target.value,
+							}))
+						}
+						style={{ marginBottom: 14 }}
+					/>
+					<div style={{ marginBottom: 6, fontWeight: 500 }}>文件内容</div>
+					<Input.TextArea
+						rows={12}
+						defaultValue={editVersionState.content}
+						onChange={(e) =>
+							setEditVersionState((prev) => ({
+								...prev,
+								content: e.target.value,
+							}))
+						}
+					/>
+				</div>
+			</Modal>
 
 			<Modal
 				title={

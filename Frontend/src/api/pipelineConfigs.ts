@@ -97,6 +97,11 @@ export const pipelineConfigApi = {
 			.put<PipelineConfigVersion>(`/pipeline-configs/${id}/versions/${version}/status`, { status })
 			.then((r) => r.data),
 
+	updateVersionContent: (id: string, version: number, content: string, summary: string) =>
+		apiClient
+			.put<PipelineConfigVersion>(`/pipeline-configs/${id}/versions/${version}`, { content, summary })
+			.then((r) => r.data),
+
 	deprecate: (id: string) =>
 		apiClient
 			.post<PipelineConfig>(`/pipeline-configs/${id}/deprecate`, {})
