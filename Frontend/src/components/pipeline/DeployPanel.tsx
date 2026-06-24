@@ -277,6 +277,9 @@ function TemplateCard({
 								Dev 草稿
 							</Tag>
 						)}
+						{template.owner ? (
+							<Tag style={{ fontSize: 11, marginLeft: 4 }}>{template.owner}</Tag>
+						) : null}
 						{activeVersion != null && activeVersion < template.version ? (
 							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
 								活跃: v{activeVersion}
@@ -316,6 +319,9 @@ function TemplateCard({
 								Dev 草稿
 							</Tag>
 						)}
+						{template.owner ? (
+							<Tag style={{ fontSize: 11, marginLeft: 4 }}>{template.owner}</Tag>
+						) : null}
 						{activeVersion != null && activeVersion < template.version ? (
 							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
 								活跃: v{activeVersion}

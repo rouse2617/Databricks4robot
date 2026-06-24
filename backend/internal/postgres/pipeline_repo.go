@@ -186,8 +186,8 @@ WHERE rn = 1`
 	args := []any{}
 	argPos := 1
 	if query != "" {
-		baseCTE += fmt.Sprintf(" AND name ILIKE $%d", argPos)
-		countCTE += fmt.Sprintf(" AND name ILIKE $%d", argPos)
+		baseCTE += fmt.Sprintf(" AND (name ILIKE $%d OR owner ILIKE $%d)", argPos, argPos)
+		countCTE += fmt.Sprintf(" AND (name ILIKE $%d OR owner ILIKE $%d)", argPos, argPos)
 		args = append(args, "%"+query+"%")
 		argPos++
 	}

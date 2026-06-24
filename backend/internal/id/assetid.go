@@ -9,12 +9,13 @@ import (
 const AssetIDLen = 8
 
 var assetIDPattern = regexp.MustCompile(`^[0-9A-Za-z]{8}$`)
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 const assetAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-// ValidateAssetID returns true if s is exactly 8 alphanumeric characters (ASCII).
+// ValidateAssetID returns true if s is exactly 8 alphanumeric characters (ASCII) or a UUID.
 func ValidateAssetID(s string) bool {
-	return assetIDPattern.MatchString(s)
+	return assetIDPattern.MatchString(s) || uuidPattern.MatchString(s)
 }
 
 // GenerateAssetID returns a cryptographically random 8-character alphanumeric ID.
