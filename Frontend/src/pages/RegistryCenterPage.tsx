@@ -3,6 +3,7 @@ import {
 	BranchesOutlined,
 	DiffOutlined,
 	EditOutlined,
+	CheckCircleOutlined,
 	EyeOutlined,
 	FileAddOutlined,
 	InboxOutlined,
@@ -1009,6 +1010,23 @@ export default function RegistryCenterPage() {
 								新建版本
 							</Button>
 						)}
+						{!archived && record.lifecycle === "draft" ? (
+							<Button
+								size="small"
+								icon={<CheckCircleOutlined />}
+								onClick={async () => {
+									try {
+										await pipelineConfigApi.updateVersionStatus(record.id, record.currentVersion, "ready");
+										msg.success("已标记为 Ready");
+										refreshConfigs();
+									} catch (err) {
+										msg.error(`标记失败: ${err}`);
+									}
+								}}
+							>
+								设为 Ready
+							</Button>
+						) : null}
 						<IconActionButton
 							title="查看详情"
 							icon={<EyeOutlined />}

@@ -1593,10 +1593,9 @@ export function WorkflowExecutionList({
 					id="workflow-execution-name-search"
 					allowClear
 					placeholder="搜索名称 / ID / 模板 / 用户 / asset_id"
-					style={{ width: 420 }}
 					style={
 						isBatchScope
-							? { minWidth: 280, maxWidth: 520, flex: "1 1 360px" }
+							? { width: 420, minWidth: 280, maxWidth: 520, flex: "1 1 360px" }
 							: { minWidth: 200, flex: "1 1 200px" }
 					}
 					value={draftNameSearch}

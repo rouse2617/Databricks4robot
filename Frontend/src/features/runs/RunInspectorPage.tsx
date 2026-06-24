@@ -9,7 +9,6 @@ export { RunListPage } from "./RunListPage";
 export function RunInspectorPage() {
 	const { runId } = useParams<{ runId: string }>();
 	const [workflowName, setWorkflowName] = useState<string | null>(null);
-	const [runType, setRunType] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -21,7 +20,6 @@ export function RunInspectorPage() {
 			.then((run) => {
 				if (!alive) return;
 				setWorkflowName(run.runtime.resourceName);
-				setRunType(run.type);
 			})
 			.catch((err) => {
 				if (!alive) return;
@@ -46,9 +44,6 @@ export function RunInspectorPage() {
 	return (
 		<WorkflowDetailPage
 			legacyRoute={false}
-			runId={runId}
-			workflowName={workflowName}
-			runType={runType ?? undefined}
 		/>
 	);
 }
@@ -76,7 +71,7 @@ export function RunRedirectFromWorkflowName() {
 	}, [name]);
 
 	if (missing && name) {
-		return <WorkflowDetailPage legacyRoute workflowName={name} />;
+		return <WorkflowDetailPage legacyRoute />;
 	}
 	if (!targetRunId) {
 		return (
