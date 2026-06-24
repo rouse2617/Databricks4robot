@@ -1539,7 +1539,7 @@ export default function RegistryCenterPage() {
 														style: { cursor: "pointer" },
 													})}
 													locale={{ emptyText: emptyConfigText }}
-	
+
 												/>
 											</TableScrollBoundary>
 											<Paragraph type="secondary" style={{ marginBottom: 0 }}>
