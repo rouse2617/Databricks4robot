@@ -14,7 +14,7 @@ import (
 
 // CreateBatchJob creates an async batch job that will create pipeline runs
 // for each asset ID in the background. Returns immediately with a batch ID.
-func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int) (*models.BackfillJob, error) {
+func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int, owner string) (*models.BackfillJob, error) {
 	if uc.backfillRepo == nil {
 		return nil, fmt.Errorf("%w: backfill repository is not configured", ErrInvalidArgument)
 	}
@@ -85,7 +85,7 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 	}
 
 	// Process in background — never use request context for goroutines.
-	go uc.processBatchJob(context.Background(), batchID, templateID, targetID, resolvedVersion, items)
+	go uc.processBatchJob(context.Background(), batchID, templateID, targetID, resolvedVersion, items, owner)
 
 	return job, nil
 }
@@ -105,7 +105,7 @@ func (uc *Usecase) GetBatchJobStatus(ctx context.Context, batchID string) (*mode
 // processBatchJob runs assets concurrently (max 5 at a time) and creates
 // pipeline runs via CreateRunByTemplateID. Errors are per-item — one failure
 // does not cancel the batch.
-func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targetID string, templateVersion int, items []models.BackfillItem) {
+func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targetID string, templateVersion int, items []models.BackfillItem, owner string) {
 	slog.Info("batch job started", "batchID", jobID, "totalItems", len(items))
 
 	if err := uc.backfillRepo.UpdateJobStatus(ctx, jobID, "processing"); err != nil {
@@ -130,6 +130,7 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 				TemplateVersion:   templateVersion,
 				BatchJobID:        jobID,
 				AllowUnknownAssets: true,
+				Owner:             owner,
 			}}
 
 			run, err := uc.CreateRunByTemplateID(ctx, templateID, "", []string{item.AssetID}, opts...)

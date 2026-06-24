@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
@@ -39,7 +40,8 @@ func (h *Handler) CreateBatchRun(c *gin.Context) {
 		req.TargetID = "default"
 	}
 
-	job, err := h.uc.CreateBatchJob(c.Request.Context(), req.TemplateID, req.Name, req.AssetIDs, req.TargetID, req.Version)
+	owner := middleware.GetUserEmail(c)
+	job, err := h.uc.CreateBatchJob(c.Request.Context(), req.TemplateID, req.Name, req.AssetIDs, req.TargetID, req.Version, owner)
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrTemplateNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())
