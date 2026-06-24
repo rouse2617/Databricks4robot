@@ -1127,10 +1127,13 @@ function ExpiredWorkflowLedgerView({
 		run?.pipelineName || run?.workflowName || name || run?.id || "运行详情";
 	const assetIds =
 		run?.assetIds && run.assetIds.length > 0 ? run.assetIds : undefined;
+		const isBatchParent =
+			run?.workflowName?.startsWith("batch-parent-") ||
+			run?.workflowName?.startsWith("backfill-parent-");
 	const reason =
 		run?.blockingReason ||
 		run?.failureReason ||
-		(!isRuntimeNotSubmitted && hasRuntimeReference ? "runtime_missing" : "");
+		(!isRuntimeNotSubmitted && !isBatchParent && hasRuntimeReference ? "runtime_missing" : "");
 	const reasonLabel = reason ? formatRunDiagnosticReason(reason) : undefined;
 	const reasonMessage = run?.blockingMessage || run?.message;
 
