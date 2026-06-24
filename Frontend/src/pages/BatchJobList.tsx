@@ -56,8 +56,8 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		templates.map((item) => [item.id, item.name]),
 	);
 
-	const refresh = useCallback(async () => {
-		setLoading(true);
+	const refresh = useCallback(async (silent = false) => {
+		if (!silent) setLoading(true);
 		try {
 			const [jobItems, templateItems] = await Promise.all([
 				listBatchJobs(),
@@ -70,7 +70,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		} catch (err) {
 			message.error(`加载批次任务失败：${String(err)}`);
 		} finally {
-			setLoading(false);
+			if (!silent) setLoading(false);
 		}
 	}, [message]);
 
@@ -79,6 +79,19 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			void refresh();
 		}
 	}, [active, refresh]);
+
+	// Auto-refresh when there are running/paused jobs
+	useEffect(() => {
+		if (!active) return;
+		const hasActive = jobs.some(
+			(j) => j.status === "running" || j.status === "paused",
+		);
+		if (!hasActive) return;
+		const id = setInterval(() => {
+			void refresh(true);
+		}, 10_000);
+		return () => clearInterval(id);
+	}, [active, jobs, refresh]);
 
 	const runAction = async (
 		jobId: string,
