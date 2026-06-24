@@ -3,6 +3,7 @@ package pipeline_config
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -189,7 +190,9 @@ func (uc *Usecase) UpdateVersionStatus(ctx context.Context, configID string, ver
 	}
 	// Sync the config lifecycle when the active version changes.
 	if status == "ready" || status == "deprecated" {
-		_ = uc.repo.UpdateLifecycle(ctx, configID, status)
+		if syncErr := uc.repo.UpdateLifecycle(ctx, configID, status); syncErr != nil {
+			slog.Warn("UpdateVersionStatus: failed to sync config lifecycle", "configID", configID, "version", version, "err", syncErr)
+		}
 	}
 	return updated, nil
 }
