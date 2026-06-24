@@ -1,7 +1,7 @@
 {
   "grace": {
-    "api_url": "https://grace.cyberorigin.ai/api",
-    "username": "grace-service-prod"
+    "api_url": "https://dev.cyber-grace.pages.dev/api",
+    "username": "grace-service-dev"
   },
   "databrew": {
     "api_url": "https://cyber-databrew-dev.cyberorigin.ai/api/v1"
