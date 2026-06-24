@@ -1,2 +1,0 @@
-import{a as e}from"./index-D6lJZPD_.js";const s={listAlgos:()=>e.get("/algo-registry").then(t=>t.data.items),listTags:()=>e.get("/tag-registry").then(t=>t.data.items),listMetrics:()=>e.get("/metric-registry").then(t=>t.data.items),listLifecycleStates:()=>e.get("/lifecycle-states").then(t=>t.data.items),getActionLabelRegistry:()=>e.get("/action-label-registry").then(t=>t.data)};export{s as r};
-//# sourceMappingURL=registry-g2JPPWaj.js.map

@@ -312,6 +312,25 @@ RETURNING version, status, content, summary, author, created_at
 }
 
 // CreateVersion appends a new immutable version and advances current_version.
+func (r *PipelineConfigRepo) UpdateVersionContent(ctx context.Context, configID string, version int, content string, summary string) (*models.PipelineConfigVersion, error) {
+	versionRow := &models.PipelineConfigVersion{}
+	if err := r.c.db.QueryRow(ctx, `
+UPDATE pipeline_config_versions
+SET content = $3, summary = $4, content_sha256 = encode(sha256($3::bytea), 'hex'), content_size_bytes = length($3)
+WHERE config_id = $1 AND version = $2
+RETURNING version, status, content, summary, author, created_at
+`, configID, version, content, summary).Scan(
+		&versionRow.Version, &versionRow.Status, &versionRow.Content,
+		&versionRow.Summary, &versionRow.Author, &versionRow.CreatedAt,
+	); err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, repository.ErrPipelineConfigNotFound
+		}
+		return nil, fmt.Errorf("postgres PipelineConfigRepo.UpdateVersionContent: %w", err)
+	}
+	return versionRow, nil
+}
+
 func (r *PipelineConfigRepo) UpdateLifecycle(ctx context.Context, configID string, lifecycle string) error {
 	err := r.c.db.Exec(ctx, `UPDATE pipeline_configs SET lifecycle = $2 WHERE id = $1`, configID, lifecycle)
 	return err

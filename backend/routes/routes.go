@@ -425,6 +425,7 @@ func RegisterAll(
 			api.POST("/pipeline-configs/:id/versions", pipelineConfigHandler.CreateVersion)
 			api.GET("/pipeline-configs/:id/versions/:version", pipelineConfigHandler.GetVersion)
 			api.PUT("/pipeline-configs/:id/versions/:version/status", pipelineConfigHandler.UpdateVersionStatus)
+			api.PUT("/pipeline-configs/:id/versions/:version", pipelineConfigHandler.UpdateVersionContent)
 			api.POST("/pipeline-configs/:id/deprecate", pipelineConfigHandler.Deprecate)
 		}
 

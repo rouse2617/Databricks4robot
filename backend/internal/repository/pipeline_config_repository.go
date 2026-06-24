@@ -31,6 +31,7 @@ type PipelineConfigRepository interface {
 	CreateVersion(ctx context.Context, configID string, version *models.PipelineConfigVersion) error
 	UpdateVersionStatus(ctx context.Context, configID string, version int, status string) (*models.PipelineConfigVersion, error)
 	UpdateLifecycle(ctx context.Context, configID string, lifecycle string) error
+	UpdateVersionContent(ctx context.Context, configID string, version int, content string, summary string) (*models.PipelineConfigVersion, error)
 	FindVersion(ctx context.Context, configID string, version int) (*models.PipelineConfigVersion, error)
 	FindVersions(ctx context.Context, configID string) ([]models.PipelineConfigVersion, error)
 	Deprecate(ctx context.Context, id string) error

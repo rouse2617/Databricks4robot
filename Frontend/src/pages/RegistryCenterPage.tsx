@@ -1140,6 +1140,17 @@ export default function RegistryCenterPage() {
 								新建版本
 							</Button>
 						)}
+						{!archived && version.lifecycle === "draft" ? (
+							<Button
+								size="small"
+								type="link"
+								icon={<EditOutlined />}
+								style={{ paddingInline: 4, color: "#faad14" }}
+								onClick={() => openCreateVersion(config, version)}
+							>
+								编辑
+							</Button>
+						) : null}
 					</Space>
 				),
 			},

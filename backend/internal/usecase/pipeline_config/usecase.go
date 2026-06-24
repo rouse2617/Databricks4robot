@@ -197,6 +197,28 @@ func (uc *Usecase) UpdateVersionStatus(ctx context.Context, configID string, ver
 	return updated, nil
 }
 
+func (uc *Usecase) UpdateVersionContent(ctx context.Context, configID string, version int, content string, summary string) (*models.PipelineConfigVersion, error) {
+	if strings.TrimSpace(configID) == "" || version <= 0 {
+		return nil, fmt.Errorf("%w: config id and version are required", ErrInvalidConfig)
+	}
+	// Only allow editing draft versions.
+	existing, err := uc.repo.FindVersion(ctx, configID, version)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrConfigNotFound
+	}
+	if existing.Status != "draft" {
+		return nil, fmt.Errorf("%w: only draft versions can be edited", ErrInvalidConfig)
+	}
+	updated, err := uc.repo.UpdateVersionContent(ctx, configID, version, content, summary)
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
 func (uc *Usecase) GetVersion(ctx context.Context, configID string, version int) (*models.PipelineConfigVersion, error) {
 	if strings.TrimSpace(configID) == "" || version <= 0 {
 		return nil, fmt.Errorf("%w: config id and version are required", ErrInvalidConfig)
