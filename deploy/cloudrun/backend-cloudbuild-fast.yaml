@@ -14,10 +14,10 @@ steps:
           --cache-from=type=registry,ref=${_CACHE_IMAGE} \
           --cache-to=type=registry,ref=${_CACHE_IMAGE},mode=max \
           --build-arg BUILDKIT_INLINE_CACHE=1 \
-          -f Dockerfile \
+          -f backend/Dockerfile \
           -t ${_IMAGE} \
           --push \
-          .
+          backend
 
 substitutions:
   _CACHE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:buildcache
