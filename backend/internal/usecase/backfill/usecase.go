@@ -1378,6 +1378,7 @@ func (uc *Usecase) ensureBatchParentRun(ctx context.Context, job *models.Backfil
 		TargetID:        targetIDFromBackfillJob(job),
 		Status:          job.Status,
 		AssetCount:      job.TotalCount,
+		BatchJobID:      job.ID,
 	}); err != nil {
 		slog.Warn("ensureBatchParentRun: upsert parent run failed", "jobID", job.ID, "err", err)
 	}

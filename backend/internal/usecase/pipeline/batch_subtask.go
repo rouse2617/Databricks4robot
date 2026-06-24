@@ -24,6 +24,7 @@ type BatchParentRunInput struct {
 	Status          string
 	Message         string
 	AssetCount      int
+	BatchJobID      string
 }
 
 // BatchSubtaskRunInput describes a batch subtask ledger row that should look
@@ -109,6 +110,7 @@ func (uc *Usecase) UpsertBatchParentRun(ctx context.Context, in BatchParentRunIn
 		ArgoNamespace:     target.Namespace,
 		ExecutionTarget:   target,
 		Scope:             t.Scope,
+		BatchJobID:        batchJobIDPtr(in.BatchJobID),
 		Message:           strings.TrimSpace(in.Message),
 		CreatedAt:         now,
 		UpdatedAt:         now,
@@ -468,4 +470,12 @@ func batchParentRunTimestamps(status string, now time.Time, existing *models.Pip
 		}
 	}
 	return startedAt, finishedAt
+}
+
+func batchJobIDPtr(id string) *string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	return &id
 }
