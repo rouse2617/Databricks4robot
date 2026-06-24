@@ -133,6 +133,30 @@ func (h *Handler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
+// UpdateVersionStatus handles PUT /api/v1/pipeline-configs/:id/versions/:version/status.
+func (h *Handler) UpdateVersionStatus(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	versionStr := strings.TrimSpace(c.Param("version"))
+	version, parseErr := strconv.Atoi(versionStr)
+	if parseErr != nil || version <= 0 {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid version", nil)
+		return
+	}
+	var req struct {
+		Status  string `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "invalid request body", map[string]any{"error": err.Error()})
+		return
+	}
+	updated, err := h.uc.UpdateVersionStatus(c.Request.Context(), id, version, req.Status)
+	if err != nil {
+		writeConfigError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, updated)
+}
+
 // CreateVersion handles POST /api/v1/pipeline-configs/:id/versions.
 func (h *Handler) CreateVersion(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))

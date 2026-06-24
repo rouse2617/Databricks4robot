@@ -291,6 +291,26 @@ WHERE id = $1`
 	return nil
 }
 
+// UpdateVersionStatus updates the status of a specific version.
+func (r *PipelineConfigRepo) UpdateVersionStatus(ctx context.Context, configID string, version int, status string) (*models.PipelineConfigVersion, error) {
+	versionRow := &models.PipelineConfigVersion{}
+	if err := r.c.db.QueryRow(ctx, `
+UPDATE pipeline_config_versions
+SET status = $3, updated_at = NOW()
+WHERE config_id = $1 AND version = $2
+RETURNING version, status, content, summary, author, created_at, updated_at
+`, configID, version, status).Scan(
+		&versionRow.Version, &versionRow.Status, &versionRow.Content,
+		&versionRow.Summary, &versionRow.Author, &versionRow.CreatedAt, new(time.Time),
+	); err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, repository.ErrPipelineConfigNotFound
+		}
+		return nil, fmt.Errorf("postgres PipelineConfigRepo.UpdateVersionStatus: %w", err)
+	}
+	return versionRow, nil
+}
+
 // CreateVersion appends a new immutable version and advances current_version.
 func (r *PipelineConfigRepo) CreateVersion(ctx context.Context, configID string, version *models.PipelineConfigVersion) error {
 	if version == nil {
