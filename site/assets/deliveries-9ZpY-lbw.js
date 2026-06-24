@@ -1,0 +1,2 @@
+import{a as i}from"./index-DCKY0g46.js";const s={list:e=>{const t=new URLSearchParams;return e!=null&&e.page&&t.set("page",String(e.page)),e!=null&&e.page_size&&t.set("page_size",String(e.page_size)),e!=null&&e.status&&t.set("status",e.status),i.get(`/deliveries?${t.toString()}`).then(g=>g.data)},get:e=>i.get(`/deliveries/${e}`).then(t=>t.data),commit:(e,t)=>i.post("/deliveries",e,{headers:{"Idempotency-Key":t}}).then(g=>g.data),listItems:e=>i.get(`/deliveries/${e}/items`).then(t=>t.data.items)};export{s as d};
+//# sourceMappingURL=deliveries-9ZpY-lbw.js.map

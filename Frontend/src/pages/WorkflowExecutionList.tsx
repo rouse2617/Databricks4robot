@@ -104,6 +104,7 @@ type ExecutionRecord = WorkflowSummary & {
 	workflowName?: string;
 	pipelineName?: string;
 	templateName?: string;
+	owner?: string;
 };
 
 type WorkflowErrorKind = "network" | "service-unavailable";
@@ -1232,8 +1233,22 @@ export function WorkflowExecutionList({
 						},
 					]
 				: []),
-			{
-				title: "节点数",
+				{
+					title: "所属用户",
+					dataIndex: "owner",
+					key: "owner",
+					width: 160,
+					sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+						((a as any).owner ?? "").localeCompare((b as any).owner ?? ""),
+					render: (owner: string) =>
+						owner ? (
+							<Typography.Text copyable={{ text: owner }}>{owner}</Typography.Text>
+						) : (
+							<Typography.Text type="secondary">—</Typography.Text>
+						),
+				},
+				{
+					title: "节点数",
 				dataIndex: "nodeCount",
 				key: "nodeCount",
 				width: isBatchScope ? 70 : 90,
