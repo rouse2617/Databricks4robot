@@ -1,0 +1,17 @@
+{
+  "grace": {
+    "api_url": "https://grace.cyberorigin.ai/api",
+    "username": "grace-service-prod"
+  },
+  "databrew": {
+    "api_url": "https://cyber-databrew-dev.cyberorigin.ai/api/v1"
+  },
+  "pipeline": {
+    "template_id": "555b133e-406d-4bea-b0bc-78b95193cf56",
+    "target_id": "a03ad932-397f-4a3b-a3d8-1cfb13a6dd54"
+  },
+  "sync": {
+    "page_size": 1000,
+    "step_key": "transcode_algo_input"
+  }
+}
