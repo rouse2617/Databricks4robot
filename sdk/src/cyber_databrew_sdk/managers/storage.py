@@ -26,6 +26,7 @@ import io
 import logging
 import datetime
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import IO, Any, BinaryIO
 
@@ -45,6 +46,34 @@ class FileInfo:
     type: str  # "file" | "dir"
 
 
+class _SignedURLFile(io.RawIOBase):
+    """Read a file via signed URL using HTTP."""
+    def __init__(self, url: str, mode: str = "rb") -> None:
+        import httpx
+        self._client = httpx.Client(timeout=None)
+        self._resp = self._client.stream("GET", url, follow_redirects=True)
+        self._resp.__enter__()
+        self._pos = 0
+
+    def readable(self) -> bool: return True
+    def read(self, n: int = -1) -> bytes:
+        data = self._resp.read() if n == -1 else self._resp.read(n)
+        self._pos += len(data)
+        return data
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        if not self._resp: raise OSError("closed")
+        self._resp.close()
+        # Range-based reseek not implemented for simplicity
+        return self._pos
+    def tell(self) -> int: return self._pos
+    def close(self) -> None:
+        if self._resp:
+            try: self._resp.__exit__(None, None, None)
+            except: pass
+        if self._client: self._client.close()
+    def __enter__(self) -> _SignedURLFile: return self
+    def __exit__(self, *a: Any) -> None: self.close()
+
 class StorageManager(BaseManager):
     """POSIX-like file operations backed by Arrow fs."""
 
@@ -52,6 +81,7 @@ class StorageManager(BaseManager):
         super().__init__(*args, **kwargs)
         self._gcs: pa_fs.FileSystem | None = None
         self._gcs_token: str | None = None
+        self._last_signed_url: str | None = None
 
     @property
     def fs(self) -> pa_fs.FileSystem:
@@ -79,6 +109,11 @@ class StorageManager(BaseManager):
     def open(self, uri: str, mode: str = "rb") -> BinaryIO:
         if uri.startswith("gs://") or uri.startswith("asset://"):
             path = self._arrow_path(uri)
+            # If a signed URL was resolved, use HTTP download
+            if self._last_signed_url:
+                url = self._last_signed_url
+                self._last_signed_url = None
+                return _SignedURLFile(url, mode)
             if "r" in mode:
                 return self.fs.open_input_stream(path)
             return self.fs.open_output_stream(path)
@@ -207,7 +242,31 @@ class StorageManager(BaseManager):
     # --- internal ---
 
     def _resolve_asset(self, uri: str) -> str | None:
-        asset_id = uri[len("asset://"):].strip("/")
+        # asset://grace:<video_id> → backend resolve → signed URL
+        # We return the signed URL directly and let Arrow fs handle it.
+        rest = uri[len("asset://"):]
+        if ":" in rest:
+            source, _, asset_id = rest.partition(":")
+            source = source.strip()
+            asset_id = asset_id.strip("/")
+            try:
+                result = self._request("POST", "storage_resolve", json_body={
+                    "source": source,
+                    "id": asset_id,
+                    "env": "dev",  # TODO: read from config
+                })
+                url = result.get("url", "")
+                if url:
+                    # Arrow fs can't read signed URLs directly, so return
+                    # the bucket/object path and use signed URL for open().
+                    self._last_signed_url = url
+                    return f"{result['bucket']}/{result['object']}"
+            except Exception as exc:
+                _logger.warning("resolve failed for %s: %s", uri, exc)
+            return None
+
+        # Fallback: legacy asset ID (mcap-based)
+        asset_id = rest.strip("/")
         try:
             locator = self._request("GET", "asset_mcap_locator", asset_id=asset_id)
             mcap_id = locator.get("mcap_file_id")
