@@ -293,11 +293,22 @@ DataBrew pipeline runs dispatch to K8s namespaces via execution targets. Current
 | `a03ad932-...` | `video-proc-dev` | `argo-workflows-workflow-controller-video-proc-dev` |
 | `video-proc-prod` | `video-proc-prod` | `argo-workflows-workflow-controller-video-proc-prod` (2026-06-25) |
 
+**video-proc-dev** (16d ago):
+- Deploy: `argo-workflows-workflow-controller-video-proc-dev`
+- SA: `argo-workflow`, `argo-workflows-workflow-controller`, `workflow-runner`
+- Role: `argo-workflows-workflow`, `argo-workflows-workflow-controller`, `cyber-databrew-backend-runtime-config`, `cyber-databrew-resource-capacity-reader`
+
+**video-proc-prod** (2026-06-25):
+- Deploy: `argo-workflows-workflow-controller-video-proc-prod`
+- SA: `argo-workflows-workflow-controller`, `workflow-runner`
+- Role: `argo-workflows-workflow`, `argo-workflows-workflow-controller`, `cyber-databrew-backend-runtime-config`
+- ConfigMap: `argo-workflows-workflow-controller-configmap` (copied from `cyber-databrew-dev`)
+
 **To add a new execution target namespace**, replicate these from an existing one (e.g. `video-proc-dev`):
 1. SA `argo-workflows-workflow-controller` + SA `workflow-runner`
 2. Role `argo-workflows-workflow` + Role `argo-workflows-workflow-controller` + Role `cyber-databrew-backend-runtime-config`
 3. RoleBinding for each Role → corresponding SA
-4. Argo Controller Deployment + ConfigMap (namespaced mode)
+4. Argo Controller Deployment + ConfigMap (namespaced mode, `--namespaced` flag)
 5. DB: `INSERT INTO execution_targets ...`
 
 **Do NOT create or modify K8s Secrets** without explicit approval. Secret content must come from the user.
