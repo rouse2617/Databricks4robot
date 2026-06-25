@@ -171,6 +171,42 @@ class CyberDatabrewClient:
         return instance
 
     # ------------------------------------------------------------------
+    # Filesystem operations (delegated to StorageManager)
+    # ------------------------------------------------------------------
+
+    def open(self, uri: str, mode: str = "rb") -> Any:
+        """Open a file for reading/writing."""
+        return self.storage.open(uri, mode)
+
+    def read(self, uri: str) -> bytes:
+        """Read entire file."""
+        return self.storage.read(uri)
+
+    def write(self, uri: str, data: bytes | str) -> int:
+        """Write data to a file."""
+        return self.storage.write(uri, data)
+
+    def stat(self, uri: str) -> Any:
+        """Get file metadata."""
+        return self.storage.stat(uri)
+
+    def listdir(self, uri: str) -> list[Any]:
+        """List directory entries."""
+        return self.storage.listdir(uri)
+
+    def copy(self, src: str, dst: str) -> None:
+        """Copy file."""
+        return self.storage.copy(src, dst)
+
+    def delete(self, uri: str) -> None:
+        """Delete file."""
+        return self.storage.delete(uri)
+
+    def exists(self, uri: str) -> bool:
+        """Check file existence."""
+        return self.storage.exists(uri)
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
