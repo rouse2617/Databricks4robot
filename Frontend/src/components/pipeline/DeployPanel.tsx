@@ -44,6 +44,8 @@ import {
 	type ListPipelinesParams,
 	listDeployments,
 	listExecutionTargets,
+	listRuntimeMounts,
+	type RuntimeMountCatalog,
 	listPipelines,
 	listPipelineVersions,
 	type PipelineTemplate,
@@ -482,6 +484,7 @@ export function DeployPanel({
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
+	const [targetWarning, setTargetWarning] = useState<string | null>(null);
 	const [deploying, setDeploying] = useState(false);
 	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
 	const assetPickerRef = useRef<AssetPickerHandle>(null);
