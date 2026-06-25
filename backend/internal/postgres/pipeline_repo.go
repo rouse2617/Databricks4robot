@@ -175,7 +175,7 @@ FROM latest
 WHERE rn = 1`
 	countCTE := `
 WITH latest AS (
-	SELECT name, scope,
+	SELECT name, scope, owner,
 	       ROW_NUMBER() OVER (PARTITION BY name ORDER BY version DESC, updated_at DESC) AS rn
 	FROM pipeline_templates
 )
