@@ -20,8 +20,23 @@ window.addEventListener("error", (event) => {
 		(target as HTMLScriptElement | null)?.localName === "script";
 	if (isChunkError) {
 		event.preventDefault();
-		console.warn("[chunk-load] detected stale chunk, reloading...");
-		window.location.reload();
+		const toast = document.createElement("div");
+		toast.textContent = "版本已更新，正在重新加载…";
+		Object.assign(toast.style, {
+			position: "fixed",
+			top: "16px",
+			left: "50%",
+			transform: "translateX(-50%)",
+			background: "#1677ff",
+			color: "#fff",
+			padding: "10px 24px",
+			borderRadius: "8px",
+			fontSize: "14px",
+			zIndex: "999999",
+			boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+		});
+		document.body.appendChild(toast);
+		setTimeout(() => window.location.reload(), 2000);
 	}
 });
 
