@@ -13,6 +13,7 @@ import {
 	Alert,
 	App,
 	Button,
+	Card,
 	Checkbox,
 	Input,
 	Modal,
@@ -1496,7 +1497,7 @@ export function DeployPanel({
 			</div>
 
 			<Modal
-				title="运行流水线"
+				title={selectedAssetIds.length > 0 ? `运行流水线（${selectedAssetIds.length} 个资产）` : "运行流水线（无资产）"}
 				open={assetModalOpen}
 				onCancel={closeAssetModal}
 				onOk={handleDeployConfirm}
@@ -1562,13 +1563,13 @@ export function DeployPanel({
 					/>
 				</div>
 				<div className="deploy-run-field" data-testid="deploy-config-panel">
-					<div className="deploy-run-field__label">高级全局配置（兼容）</div>
+					<div className="deploy-run-field__label">高级全局配置（可选）</div>
 					<Space direction="vertical" size={12} style={{ width: "100%" }}>
 						<Checkbox
 							checked={globalConfigEnabled}
 							onChange={(event) => setGlobalConfigEnabled(event.target.checked)}
 						>
-							启用全局配置 fallback
+							启用全局配置
 						</Checkbox>
 						{globalConfigEnabled ? (
 							<Space direction="vertical" size={12} style={{ width: "100%" }}>
