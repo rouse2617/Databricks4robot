@@ -174,6 +174,19 @@ class CyberDatabrewClient:
     # Filesystem operations (delegated to StorageManager)
     # ------------------------------------------------------------------
 
+    def set_gcs_token(self, token: str) -> None:
+        """Set GCS access token for local development.
+
+        Usage::
+
+            import subprocess
+            token = subprocess.check_output(
+                ["gcloud", "auth", "print-access-token"]
+            ).decode().strip()
+            sdk.set_gcs_token(token)
+        """
+        self.storage.set_gcs_token(token)
+
     def open(self, uri: str, mode: str = "rb") -> Any:
         """Open a file for reading/writing."""
         return self.storage.open(uri, mode)

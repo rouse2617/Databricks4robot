@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,7 +17,12 @@ type SourceResolver interface {
 }
 
 // ---------------------------------------------------------------------------
-// Grace API resolver (temporary — will be replaced)
+// Grace API resolver
+//
+// Uses Basic Auth (base64-encoded username:password). Grace does not use
+// Bearer tokens — the /auth/token endpoint does not exist on its API.
+// This is a temporary integration; the resolver interface exists so Grace
+// can be swapped out later.
 // ---------------------------------------------------------------------------
 
 type GraceResolver struct {
@@ -24,38 +30,40 @@ type GraceResolver struct {
 	prodURL, prodUsername, prodPassword string
 }
 
-type graceAuthResp struct {
-	Token string `json:"token"`
-}
+// -- Grace API response types (nested from full Video model) --
+//
+// GET /grace/videos/{uuid}
+// → storage_meta.gcs.video is a plain string (GCS URI of raw MCAP/video)
+// → storage_meta.gcs.algo_inputs is a dict {name: {uri, width, height, …}}
 
 type graceVideoResp struct {
 	StorageMeta *graceStorageMeta `json:"storage_meta"`
 }
 
 type graceStorageMeta struct {
-	Gcs *graceGcsMeta `json:"gcs"`
+	Gcs *graceStorageMedium `json:"gcs"`
 }
 
-type graceGcsMeta struct {
-	Video       *graceGcsRef  `json:"video"`
-	AlgoInputs  *graceGcsAlgo `json:"algo_inputs"`
+// StorageMediumMetadata (GCS branch) — "video" is a raw GCS string, not a nested object.
+type graceStorageMedium struct {
+	Video      string                         `json:"video"`
+	AlgoInputs map[string]graceVariantMeta    `json:"algo_inputs"`
 }
 
-type graceGcsRef struct {
+type graceVariantMeta struct {
 	URI string `json:"uri"`
 }
 
-type graceGcsAlgo struct {
-	Mcap *graceGcsRef `json:"mcap"`
+// GET /grace/videos/{uuid}/algo-input
+// → Direct VideoVariantMetadata: {uri, width, height, fps, …}
+type graceAlgoVariantResp struct {
+	URI    string  `json:"uri"`
+	Width  *int    `json:"width,omitempty"`
+	Height *int    `json:"height,omitempty"`
+	FPS    *float64 `json:"fps,omitempty"`
 }
 
-type graceAlgoInputResp struct {
-	ResultRef *graceAlgoResultRef `json:"result_ref"`
-}
-
-type graceAlgoResultRef struct {
-	GcsURI string `json:"gcs_uri"`
-}
+// ---------------------------------------------------------------------------
 
 func (g *GraceResolver) Resolve(ctx context.Context, id, env string) (string, error) {
 	// Parse id: "video_id" or "video_id/sub_path"
@@ -68,70 +76,46 @@ func (g *GraceResolver) Resolve(ctx context.Context, id, env string) (string, er
 		return "", fmt.Errorf("grace resolver: %s credentials not configured", env)
 	}
 
-	// 1. Authenticate
-	token, err := g.authenticate(ctx, baseURL, username, password)
-	if err != nil {
-		return "", fmt.Errorf("grace auth: %w", err)
-	}
+	// Build the static Basic Auth header (no token endpoint required).
+	authHeader := basicAuthHeader(username, password)
 
-	// 2. Resolve based on sub-path
+	// Resolve based on sub-path
 	var gcsURI string
+	var err error
 	switch subPath {
 	case "", "algo_input":
-		gcsURI, err = g.getAlgoInput(ctx, baseURL, token, videoID)
+		gcsURI, err = g.getAlgoInput(ctx, baseURL, authHeader, videoID)
 		if err != nil {
 			return "", fmt.Errorf("grace get_algo_input: %w", err)
 		}
 	case "raw":
-		gcsURI, err = g.getRawVideo(ctx, baseURL, token, videoID)
+		gcsURI, err = g.getRawVideo(ctx, baseURL, authHeader, videoID)
 		if err != nil {
 			return "", fmt.Errorf("grace get_raw_video: %w", err)
 		}
 	default:
 		return "", fmt.Errorf("unknown grace sub-path: %s", subPath)
 	}
-	if err != nil {
-		return "", fmt.Errorf("grace resolve: %w", err)
-	}
 
 	gcsPath := strings.TrimPrefix(gcsURI, "gs://")
 	return gcsPath, nil
 }
 
-func (g *GraceResolver) authenticate(ctx context.Context, baseURL, username, password string) (string, error) {
-	url := fmt.Sprintf("%s/auth/token", strings.TrimRight(baseURL, "/"))
-	body := fmt.Sprintf(`{"username":"%s","password":"%s"}`, username, password)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("grace auth returned %d: %s", resp.StatusCode, string(b))
-	}
-
-	var authResp graceAuthResp
-	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
-		return "", err
-	}
-	return authResp.Token, nil
+// basicAuthHeader builds a static Basic Authorization header value.
+func basicAuthHeader(username, password string) string {
+	raw := username + ":" + password
+	encoded := base64.StdEncoding.EncodeToString([]byte(raw))
+	return "Basic " + encoded
 }
 
-func (g *GraceResolver) getRawVideo(ctx context.Context, baseURL, token, videoID string) (string, error) {
-	url := fmt.Sprintf("%s/video/%s", strings.TrimRight(baseURL, "/"), videoID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// getRawVideo calls GET /grace/videos/{id} and extracts storage_meta.gcs.video.
+func (g *GraceResolver) getRawVideo(ctx context.Context, baseURL, authHeader, videoID string) (string, error) {
+	u := fmt.Sprintf("%s/grace/videos/%s", strings.TrimRight(baseURL, "/"), videoID)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -144,23 +128,38 @@ func (g *GraceResolver) getRawVideo(ctx context.Context, baseURL, token, videoID
 		return "", fmt.Errorf("grace get_video returned %d: %s", resp.StatusCode, string(b))
 	}
 
-	var result graceVideoResp
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// The response is the full Video JSON model.
+	// storage_meta.gcs.video is a plain GCS string.
+	var raw json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return "", err
 	}
-	if result.StorageMeta != nil && result.StorageMeta.Gcs != nil && result.StorageMeta.Gcs.Video != nil {
-		return result.StorageMeta.Gcs.Video.URI, nil
+
+	// Navigate the nested structure using raw messages to extract just the video field.
+	var nested struct {
+		StorageMeta *struct {
+			Gcs *struct {
+				Video *string `json:"video"`
+			} `json:"gcs"`
+		} `json:"storage_meta"`
 	}
-	return "", fmt.Errorf("get_video %s: no storage_meta.gcs.video.uri field", videoID)
+	if err := json.Unmarshal(raw, &nested); err != nil {
+		return "", err
+	}
+	if nested.StorageMeta != nil && nested.StorageMeta.Gcs != nil && nested.StorageMeta.Gcs.Video != nil {
+		return *nested.StorageMeta.Gcs.Video, nil
+	}
+	return "", fmt.Errorf("get_video %s: no storage_meta.gcs.video field", videoID)
 }
 
-func (g *GraceResolver) getAlgoInput(ctx context.Context, baseURL, token, videoID string) (string, error) {
-	url := fmt.Sprintf("%s/video/%s/algo-input", strings.TrimRight(baseURL, "/"), videoID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+// getAlgoInput calls GET /grace/videos/{id}/algo-input and extracts the URI.
+func (g *GraceResolver) getAlgoInput(ctx context.Context, baseURL, authHeader, videoID string) (string, error) {
+	u := fmt.Sprintf("%s/grace/videos/%s/algo-input", strings.TrimRight(baseURL, "/"), videoID)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authHeader)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -173,7 +172,7 @@ func (g *GraceResolver) getAlgoInput(ctx context.Context, baseURL, token, videoI
 		return "", fmt.Errorf("grace algo-input returned %d: %s", resp.StatusCode, string(b))
 	}
 
-	var result graceAlgoInputResp
+	var result graceAlgoVariantResp
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}

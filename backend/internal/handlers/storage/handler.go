@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"net/http"
 	"os"
 	"strings"
@@ -9,7 +8,6 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/gin-gonic/gin"
-	"google.golang.org/api/option"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 )
@@ -18,14 +16,12 @@ type Handler struct {
 	gcsClient *storage.Client
 }
 
-func NewHandler(ctx context.Context) (*Handler, error) {
-	client, err := storage.NewClient(ctx, option.WithUserAgent("cyber-databrew-backend"))
-	if err != nil {
-		return nil, err
-	}
+// NewHandler creates a storage handler using an existing GCS client.
+// The GCS client is owned by the caller (infra) and must outlive this handler.
+func NewHandler(gcsClient *storage.Client) *Handler {
 	// Register default resolvers on first init.
 	initResolvers()
-	return &Handler{gcsClient: client}, nil
+	return &Handler{gcsClient: gcsClient}
 }
 
 func initResolvers() {
@@ -84,11 +80,20 @@ func (h *Handler) Resolve(c *gin.Context) {
 		return
 	}
 
+	resp := gin.H{
+		"gcs_path": gcsPath,
+		"bucket":   bucket,
+		"object":   object,
+		"source":   req.Source,
+		"env":      env,
+	}
+
+	// Attempt to sign the URL — best-effort. The backend's SA may not have
+	// signBlob permission. The caller can use gcs_path + Arrow fs directly.
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	if method == "" {
 		method = "GET"
 	}
-
 	ttl := req.TTL
 	if ttl <= 0 {
 		ttl = 900
@@ -96,25 +101,16 @@ func (h *Handler) Resolve(c *gin.Context) {
 	if ttl > 86400 {
 		ttl = 86400
 	}
-
-	signedURL, err := storage.SignedURL(bucket, object, &storage.SignedURLOptions{
+	if signedURL, err := storage.SignedURL(bucket, object, &storage.SignedURLOptions{
 		Method:  method,
 		Expires: time.Now().Add(time.Duration(ttl) * time.Second),
-	})
-	if err != nil {
-		httpresp.Internal(c, "failed to sign URL: "+err.Error())
-		return
+	}); err == nil {
+		resp["url"] = signedURL
+		resp["method"] = method
+		resp["expiresIn"] = ttl
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"url":       signedURL,
-		"method":    method,
-		"expiresIn": ttl,
-		"bucket":    bucket,
-		"object":    object,
-		"source":    req.Source,
-		"env":       env,
-	})
+	c.JSON(http.StatusOK, resp)
 }
 
 // --------------------------------------------------------------------------

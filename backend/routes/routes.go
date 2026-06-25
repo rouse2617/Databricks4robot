@@ -32,6 +32,7 @@ import (
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	registryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/registry"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
@@ -68,11 +69,13 @@ func RegisterAll(
 	queryHandler *queryH.Handler,
 	workflowHandler *workflowH.Handler,
 	backfillHandler *backfillH.Handler,
+	storageHandler *storageH.Handler,
 ) {
 	// Suppress unused warnings for handler params that don't have route
 	// registrations wired yet (routes are registered in follow-up PRs).
 	_, _, _, _ = algoRunHandler, pipelineHandler, pipelineConfigHandler, pipelineComponentHandler
 	_ = workflowHandler
+	_ = storageHandler
 
 	r.Use(middleware.RequestID())
 	r.Use(middleware.HTTPMetrics())
@@ -474,6 +477,12 @@ func RegisterAll(
 			api.POST("/backfill/:id/retry-failed", backfillHandler.RetryFailed)
 			api.POST("/backfill/:id/continue-full", backfillHandler.ContinueFull)
 			api.POST("/backfill/results", backfillHandler.UploadResult)
+		}
+
+		// Storage (GCS signed URL proxy + source resolver)
+		if storageHandler != nil {
+			api.POST("/storage/resolve", storageHandler.Resolve)
+			api.POST("/storage/sign-url", storageHandler.SignURL)
 		}
 
 		if queryHandler != nil {

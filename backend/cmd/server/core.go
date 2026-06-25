@@ -19,6 +19,7 @@ import (
 	pipelineComponentH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_component"
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"       // NEW
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
@@ -171,6 +172,12 @@ func setupCore(inf *infra) *coreHandlers {
 	workflowHandler.SetExecClient(inf.execClient)
 	workflowHandler.SetRunRepositories(pipelineRunRepo, pipelineRunEventRepo)
 
+	// ── Storage (GCS signed URL proxy + Grace resolver) ──
+	var storageHandler *storageH.Handler
+	if inf.gcsClient != nil {
+		storageHandler = storageH.NewHandler(inf.gcsClient)
+	}
+
 	return &coreHandlers{
 		asset:             assetHandler,
 		algo:              algoHandler,
@@ -187,6 +194,7 @@ func setupCore(inf *infra) *coreHandlers {
 		backfill:          backfillHandler,
 		query:             queryHandler,
 		workflow:          workflowHandler,
+		storage:           storageHandler,
 		assetUC:           assetUsecase,
 	}
 }
