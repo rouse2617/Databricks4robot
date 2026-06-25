@@ -32,6 +32,11 @@ const (
 	codeWindowTimebaseMismatch  = "WINDOW_TIMEBASE_MISMATCH"
 )
 
+func isSupportedSchema(name string) bool {
+	n := strings.ToLower(name)
+	return strings.Contains(n, "compressedvideo") || strings.Contains(n, "safari_sdk.protos.image")
+}
+
 // videoTimescale is the fMP4 media timescale we emit. 90 kHz is the standard
 // choice for H.264 in MPEG transports — high enough to express common frame
 // intervals (3000 ticks @ 30 fps, 3750 @ 24 fps) without rounding drift.
@@ -246,10 +251,10 @@ func pickTopic(rs io.ReadSeeker, hint string) (string, error) {
 			if s == nil {
 				return "", fmt.Errorf("requested topic %q has no schema", hint)
 			}
-			if !strings.Contains(strings.ToLower(s.Name), "compressedvideo") {
+			if !isSupportedSchema(s.Name) {
 				return "", fmt.Errorf("requested topic %q is not a supported video schema", hint)
 			}
-			if codec, ok := detectTopicCodec(rs, hint); ok && codec == "h264" {
+			if codec, ok := detectTopicCodec(rs, hint); ok && (codec == "h264" || codec == "jpeg") {
 				return hint, nil
 			}
 			break
@@ -279,12 +284,11 @@ func pickTopic(rs io.ReadSeeker, hint string) (string, error) {
 		if s == nil {
 			continue
 		}
-		n := strings.ToLower(s.Name)
-		if !strings.Contains(n, "compressedvideo") {
+		if !isSupportedSchema(s.Name) {
 			continue
 		}
 		score := topicPreferenceScore(ch.Topic)
-		if codec, ok := detectTopicCodec(rs, ch.Topic); ok && codec == "h264" {
+		if codec, ok := detectTopicCodec(rs, ch.Topic); ok && (codec == "h264" || codec == "jpeg") {
 			if score > bestH264Score || (score == bestH264Score && (bestH264Topic == "" || ch.Topic < bestH264Topic)) {
 				bestH264Topic = ch.Topic
 				bestH264Score = score
@@ -326,6 +330,13 @@ func detectTopicCodec(rs io.ReadSeeker, topic string) (string, bool) {
 		if ch == nil || ch.Topic != topic {
 			continue
 		}
+		// Try safari protos image first (JPEG wrapped in protobuf)
+		if jpeg, _, _, derr := remux.DecodeSafariImage(m.Data); derr == nil && len(jpeg) > 0 {
+			if jpeg[0] == 0xFF && jpeg[1] == 0xD8 {
+				return "jpeg", true
+			}
+		}
+
 		annexB, format, derr := remux.DecodeFoxgloveCompressedVideo(m.Data)
 		if derr != nil {
 			continue
@@ -456,16 +467,19 @@ func streamSegments(
 			endNs = info.Statistics.MessageEndTime
 		}
 	}
-	isH265 := false
-	if codec, ok := detectTopicCodec(rs, topic); ok && codec == "h265" {
-		isH265 = true
-	}
+	topicCodec, _ := detectTopicCodec(rs, topic)
+	isH265 := topicCodec == "h265"
+	isJPEG := topicCodec == "jpeg"
 	if clipSeconds > 0 {
 		clipNs := uint64(clipSeconds) * 1_000_000_000
 		if endNs > startNs && endNs-startNs > clipNs {
 			endNs = startNs + clipNs
 			mode = mode + "_clip"
 		}
+	}
+	if isJPEG {
+		streamSafariJPEG(c, topic, startNs, endNs, mode, clipSeconds, openForTranscode)
+		return
 	}
 	if isH265 {
 		streamSegmentsViaFFmpeg(c, topic, startNs, endNs, mode, clipSeconds, openForTranscode)
@@ -1202,6 +1216,139 @@ func monotonicDelta(last, current uint64) (delta uint64, nextLast uint64) {
 		return current - last, current
 	}
 	return 0, last
+}
+
+// streamSafariJPEG streams safari_sdk.protos.Image frames as MP4 via ffmpeg
+// image2pipe input. Similar to the H.265 path but feeds JPEG frames instead of
+// HEVC elementary stream.
+func streamSafariJPEG(
+	c *gin.Context,
+	topic string,
+	startNs, endNs uint64,
+	mode string,
+	clipSeconds int64,
+	openForTranscode func(ctx context.Context) (io.ReadSeeker, func(), error),
+) {
+	assetID := c.Param("id")
+
+	setHeaders := func() {
+		c.Writer.Header().Set("Content-Type", "video/mp4")
+		c.Writer.Header().Set("Cache-Control", "no-store")
+		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
+		c.Writer.Header().Set("X-Accel-Buffering", "no")
+		c.Writer.Header().Set("X-Preview-Codec", "jpeg→h264")
+		c.Writer.Header().Set("X-Preview-Topic", topic)
+		c.Writer.Header().Set("X-Preview-Window-StartNs", strconv.FormatUint(startNs, 10))
+		c.Writer.Header().Set("X-Preview-Window-EndNs", strconv.FormatUint(endNs, 10))
+		c.Writer.Header().Set("X-Preview-Mode", mode)
+	}
+	setHeaders()
+	c.Writer.WriteHeader(http.StatusOK)
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+	defer cancel()
+
+	// Re-read the MCAP (the caller's reader was already consumed by detectTopicCodec)
+	rs, closer, err := openForTranscode(ctx)
+	if err != nil {
+		log.Printf("[preview] asset=%s topic=%s safari_open_err=%v", assetID, topic, err)
+		return
+	}
+	if closer != nil {
+		defer closer()
+	}
+	if _, err := rs.Seek(0, io.SeekStart); err != nil {
+		log.Printf("[preview] asset=%s topic=%s safari_seek_err=%v", assetID, topic, err)
+		return
+	}
+	r, err := mcap.NewReader(rs)
+	if err != nil {
+		log.Printf("[preview] asset=%s topic=%s safari_reader_err=%v", assetID, topic, err)
+		return
+	}
+	defer r.Close()
+
+	opts := []mcap.ReadOpt{mcap.WithTopics([]string{topic})}
+	if startNs > 0 { opts = append(opts, mcap.AfterNanos(startNs)) }
+	if endNs > 0 { opts = append(opts, mcap.BeforeNanos(endNs)) }
+	it, err := r.Messages(opts...)
+	if err != nil {
+		log.Printf("[preview] asset=%s topic=%s safari_iter_err=%v", assetID, topic, err)
+		return
+	}
+
+	// Spawn ffmpeg: JPEG frames on stdin → MP4 on stdout
+	cmd := exec.CommandContext(ctx,
+		"ffmpeg",
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-f", "image2pipe", "-r", "30", "-i", "pipe:0",
+		"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+		"-crf", "28", "-pix_fmt", "yuv420p",
+		"-movflags", "frag_keyframe+empty_moov+default_base_moof",
+		"-f", "mp4", "pipe:1",
+	)
+	stdin, _ := cmd.StdinPipe()
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		log.Printf("[preview] asset=%s topic=%s safari_ffmpeg_start_err=%v", assetID, topic, err)
+		return
+	}
+
+	// Copy ffmpeg stdout → HTTP response in background
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(c.Writer, stdout)
+		copyDone <- err
+	}()
+	go func() {
+		b, _ := io.ReadAll(stderr)
+		if len(b) > 0 {
+			log.Printf("[preview] asset=%s topic=%s safari_ffmpeg_stderr=%s", assetID, topic, strings.TrimSpace(string(b)))
+		}
+	}()
+
+	// Feed JPEG frames to ffmpeg
+	feedDone := make(chan error, 1)
+	go func() {
+		defer stdin.Close()
+		var msg mcap.Message
+		var maxFrames int
+		if clipSeconds > 0 { maxFrames = int(clipSeconds) * 30 }
+		count := 0
+		for {
+			_, ch, m, err := it.NextInto(&msg)
+			if err != nil || m == nil { break }
+			if ch == nil || ch.Topic != topic { continue }
+
+			jpeg, _, _, derr := remux.DecodeSafariImage(m.Data)
+			if derr != nil { continue }
+			if len(jpeg) == 0 { continue }
+			if jpeg[0] != 0xFF || jpeg[1] != 0xD8 { continue }
+
+			if _, werr := stdin.Write(jpeg); werr != nil {
+				feedDone <- werr
+				return
+			}
+			count++
+			if maxFrames > 0 && count >= maxFrames { break }
+		}
+		feedDone <- nil
+	}()
+
+	feedErr := <-feedDone
+	copyErr := <-copyDone
+	waitErr := cmd.Wait()
+
+	if feedErr != nil && !errors.Is(feedErr, context.Canceled) {
+		log.Printf("[preview] asset=%s topic=%s safari_feed_err=%v", assetID, topic, feedErr)
+	}
+	if copyErr != nil && !errors.Is(copyErr, context.Canceled) {
+		log.Printf("[preview] asset=%s topic=%s safari_copy_err=%v", assetID, topic, copyErr)
+	}
+	if waitErr != nil && !errors.Is(waitErr, context.Canceled) {
+		log.Printf("[preview] asset=%s topic=%s safari_wait_err=%v", assetID, topic, waitErr)
+	}
 }
 
 func shouldForceFlushPending(sampleCount int, pendingDurTicks, pendingBytes uint64) bool {

@@ -163,7 +163,8 @@ func buildPreviewSources(assetID string, topics []CandidateVideoTopic) ([]Previe
 }
 
 func isSupportedVideoSchema(schemaName string) bool {
-	return strings.Contains(strings.ToLower(schemaName), "compressedvideo")
+	n := strings.ToLower(schemaName)
+	return strings.Contains(n, "compressedvideo") || strings.Contains(n, "safari_sdk.protos.image")
 }
 
 func topicPreferenceScore(topic string) int {
