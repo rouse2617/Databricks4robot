@@ -1249,6 +1249,20 @@ export function WorkflowExecutionList({
 						),
 				},
 				{
+					title: "NS",
+					dataIndex: "argoNamespace",
+					key: "argoNamespace",
+					width: 160,
+					sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+						((a as any).argoNamespace ?? "").localeCompare((b as any).argoNamespace ?? ""),
+					render: (ns: string) =>
+						ns ? (
+							<Tag color="purple" style={{ fontSize: 11 }}>{ns}</Tag>
+						) : (
+							<Typography.Text type="secondary">—</Typography.Text>
+						),
+				},
+				{
 					title: "节点数",
 				dataIndex: "nodeCount",
 				key: "nodeCount",
@@ -1592,7 +1606,7 @@ export function WorkflowExecutionList({
 				<Input.Search
 					id="workflow-execution-name-search"
 					allowClear
-					placeholder="搜索名称 / ID / 模板 / 用户 / asset_id"
+					placeholder="搜索名称 / ID / 模板 / 用户 / ns / asset_id"
 					style={
 						isBatchScope
 							? { width: 420, minWidth: 280, maxWidth: 520, flex: "1 1 360px" }
