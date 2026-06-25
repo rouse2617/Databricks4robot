@@ -10,6 +10,21 @@ import App from "./App";
 import "./index.css";
 import { installConsoleWarningFilter } from "./lib/consoleWarningFilter";
 
+// Catch dynamic import failures (chunk not found after deploy) and auto-reload.
+window.addEventListener("error", (event) => {
+	const target = event.target as HTMLElement | null;
+	const isChunkError =
+		event.message?.includes("Failed to fetch dynamically imported module") ||
+		event.message?.includes("Importing a module script failed") ||
+		target?.localName === "link" ||
+		(target as HTMLScriptElement | null)?.localName === "script";
+	if (isChunkError) {
+		event.preventDefault();
+		console.warn("[chunk-load] detected stale chunk, reloading...");
+		window.location.reload();
+	}
+});
+
 dayjs.extend(relativeTime);
 dayjs.locale("zh-cn");
 installConsoleWarningFilter();
