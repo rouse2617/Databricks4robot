@@ -1249,18 +1249,22 @@ export function WorkflowExecutionList({
 						),
 				},
 				{
-					title: "NS",
+					title: "命名空间",
 					dataIndex: "argoNamespace",
 					key: "argoNamespace",
-					width: 160,
+					width: 150,
 					sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 						((a as any).argoNamespace ?? "").localeCompare((b as any).argoNamespace ?? ""),
-					render: (ns: string) =>
-						ns ? (
-							<Tag color="purple" style={{ fontSize: 11 }}>{ns}</Tag>
-						) : (
-							<Typography.Text type="secondary">—</Typography.Text>
-						),
+					render: (ns: string) => {
+						if (!ns) return <Typography.Text type="secondary">—</Typography.Text>;
+						const color = ns.includes("prod") ? "red" : ns.includes("dev") ? "blue" : "purple";
+						const shortName = ns.split("/").pop() || ns;
+						return (
+							<Tooltip title={ns}>
+								<Tag color={color} style={{ fontSize: 11 }}>{shortName}</Tag>
+							</Tooltip>
+						);
+					},
 				},
 				{
 					title: "节点数",
@@ -1606,7 +1610,7 @@ export function WorkflowExecutionList({
 				<Input.Search
 					id="workflow-execution-name-search"
 					allowClear
-					placeholder="搜索名称 / ID / 模板 / 用户 / ns / asset_id"
+					placeholder="搜索名称 / ID / 模板 / 用户 / 命名空间 / asset_id"
 					style={
 						isBatchScope
 							? { width: 420, minWidth: 280, maxWidth: 520, flex: "1 1 360px" }
