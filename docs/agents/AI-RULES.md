@@ -283,6 +283,25 @@ K8S_CA_DATA  → Secret: cyber-databrew-dev-k8s-ca-data
 ```
 **Do NOT remove `K8S_USE_METADATA_TOKEN` or change the SA when redeploying.** SA must be `cyber-databrew-dev@green-valley-442103.iam.gserviceaccount.com`. K8s SA `cyber-databrew-backend-argo` has WI binding to this GCP SA. Losing these causes `create runtime config projection: Unauthorized` on every pipeline run.
 
+### Execution targets (Argo namespaces)
+
+DataBrew pipeline runs dispatch to K8s namespaces via execution targets. Current targets:
+
+| Target ID | Namespace | Argo Controller |
+|-----------|-----------|-----------------|
+| `default` | `cyber-databrew-dev` | `argo-workflows-workflow-controller` (shared) |
+| `a03ad932-...` | `video-proc-dev` | `argo-workflows-workflow-controller-video-proc-dev` |
+| `video-proc-prod` | `video-proc-prod` | `argo-workflows-workflow-controller-video-proc-prod` (2026-06-25) |
+
+**To add a new execution target namespace**, replicate these from an existing one (e.g. `video-proc-dev`):
+1. SA `argo-workflows-workflow-controller` + SA `workflow-runner`
+2. Role `argo-workflows-workflow` + Role `argo-workflows-workflow-controller` + Role `cyber-databrew-backend-runtime-config`
+3. RoleBinding for each Role → corresponding SA
+4. Argo Controller Deployment + ConfigMap (namespaced mode)
+5. DB: `INSERT INTO execution_targets ...`
+
+**Do NOT create or modify K8s Secrets** without explicit approval. Secret content must come from the user.
+
 ## What NOT to do
 
 - Do NOT ask users to run a ritual prompt like "prepare environment per project standards"
