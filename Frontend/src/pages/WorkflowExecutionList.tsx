@@ -390,6 +390,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		blockingReason: run.blockingReason,
 		blockingMessage: run.blockingMessage,
 		owner: run.owner,
+		argoNamespace: (run as any).argoNamespace,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
