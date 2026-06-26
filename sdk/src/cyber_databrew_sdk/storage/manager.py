@@ -1,12 +1,18 @@
-"""StorageManager — routes file operations to the correct backend.
+"""StorageManager — pure IO layer. No business logic.
+
+Knows nothing about ``asset://``, users, auth, or path mapping.
+It only routes ``gs://``, ``s3://``, ``file://``, and local paths to
+the right backend for read/write.
+
+Business-layer concerns (auth, path resolution, ``asset://``) are
+handled by ``client.py`` before calling this class.
 
 Usage::
 
     from cyber_databrew_sdk.storage.manager import StorageManager
 
-    mgr = StorageManager(requestor, config)
-    mgr.read("gs://bucket/file.mcap")
-    mgr.read("s3://bucket/file.mcap")
+    mgr = StorageManager()
+    mgr.read("gs://bucket/file.mcap")       # ← already resolved path
     mgr.read("/local/path/file.bin")
 """
 
@@ -17,7 +23,6 @@ import logging
 from pathlib import Path
 from typing import IO, Any
 
-from cyber_databrew_sdk._base_manager import BaseManager
 from cyber_databrew_sdk.storage.backend import Backend, FileInfo
 from cyber_databrew_sdk.storage.gcs import GCSBackend
 from cyber_databrew_sdk.storage.local import LocalBackend
@@ -34,27 +39,34 @@ def _parse_uri(uri: str) -> tuple[str, str]:
     return "", uri
 
 
-class StorageManager(BaseManager):
-    """Unified storage manager — routes to the right backend by URI protocol.
+class StorageManager:
+    """Pure IO storage layer — routes protocols to backends.
 
-    +----------------+------------------+---------------------+
-    | Protocol       | Backend          | Authentication      |
-    +----------------+------------------+---------------------+
-    | ``gs://``      | GCSBackend       | GKE SA / ADC / token|
-    | ``s3://``      | S3Backend (WIP)  | AWS credentials     |
-    | local / ``file://`` | LocalBackend | —                   |
-    | ``asset://``   | GCSBackend       | backend resolve     |
-    +----------------+------------------+---------------------+
+    +----------------+------------------+
+    | Protocol       | Backend          |
+    +----------------+------------------+
+    | ``gs://``      | GCSBackend       |
+    | ``s3://``      | S3Backend (WIP)  |
+    | local / ``file://`` | LocalBackend |
+    +----------------+------------------+
+
+    ``asset://`` is NOT handled here.  The business layer resolves it
+    first and passes a ``gs://`` path.
+
+    Legacy MCAP methods accept an optional ``_requestor`` for
+    backward compatibility with the old manager interface.
     """
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, requestor: Any = None, config: Any = None) -> None:
+        # Keep for legacy MCAP methods; unused for pure IO operations.
+        self._requestor = requestor
+        self._cfg = config
         self._gcs_backend: GCSBackend | None = None
         self._local_backend: LocalBackend | None = None
         self._proxy_backend: ProxyBackend | None = None
         self._gcs_token: str | None = None
 
-    # ── backend resolution ───────────────────────────────────────────
+    # ── backends ─────────────────────────────────────────────────────
 
     @property
     def gcs(self) -> GCSBackend:
@@ -68,26 +80,15 @@ class StorageManager(BaseManager):
             self._local_backend = LocalBackend()
         return self._local_backend
 
-    @property
-    def proxy(self) -> ProxyBackend:
-        if self._proxy_backend is None:
-            self._proxy_backend = ProxyBackend(self)
-        return self._proxy_backend
-
     def set_gcs_token(self, token: str) -> None:
         """Set GCS access token (local dev without ADC)."""
         self._gcs_token = token
-        self._gcs_backend = None  # force re-init
+        self._gcs_backend = None
 
-    def resolve_backend(self, uri: str) -> tuple[Backend, str]:
-        """Resolve URI → ``(backend, path_without_protocol)``."""
-        if uri.startswith("asset://"):
-            path = self._resolve_asset(uri)
-            if not path:
-                raise FileNotFoundError(f"cannot resolve asset URI: {uri}")
-            # path is "bucket/object" (gcs)
-            return self.gcs, path
+    # ── URI → backend routing (protocol only, no business) ───────────
 
+    def resolve(self, uri: str) -> tuple[Backend, str]:
+        """Resolve protocol to backend.  No asset:// support here."""
         proto, path = _parse_uri(uri)
         if proto == "gs":
             return self.gcs, path
@@ -97,60 +98,22 @@ class StorageManager(BaseManager):
             return self.local, path
         raise ValueError(f"unknown protocol: {proto}")
 
-    # ── asset URI resolution ─────────────────────────────────────────
-
-    def _resolve_asset(self, uri: str) -> str | None:
-        """Resolve ``asset://source:id/subpath`` → ``bucket/object``."""
-        rest = uri[len("asset://"):]
-        if ":" in rest:
-            source, _, asset_id = rest.partition(":")
-            source = source.strip()
-            asset_id = asset_id.strip("/")
-            try:
-                result = self._request("POST", "storage_resolve", json_body={
-                    "source": source,
-                    "id": asset_id,
-                    "env": "dev",
-                })
-                gcs_path = result.get("gcs_path", "")
-                if gcs_path:
-                    return gcs_path[5:] if gcs_path.startswith("gs://") else gcs_path
-            except Exception as exc:
-                _logger.warning("resolve failed for %s: %s", uri, exc)
-            return None
-
-        # Legacy: asset://<plain_id>
-        asset_id = rest.strip("/")
-        try:
-            locator = self._request("GET", self._cfg.resolve("asset_mcap_locator", asset_id=asset_id))
-            mcap_id = locator.get("mcap_file_id")
-            if mcap_id:
-                info = self._request("GET", self._cfg.resolve("storage_file_info", mcap_id=mcap_id))
-                gcs_path = info.get("gcs_path") or info.get("storage_path", "")
-                if gcs_path:
-                    return gcs_path[5:] if gcs_path.startswith("gs://") else gcs_path
-        except Exception as exc:
-            _logger.warning("legacy asset resolve failed for %s: %s", uri, exc)
-        return None
-
-    # ── convenience: translate local paths for the local backend ─────
-
     @staticmethod
     def _local_path(uri: str) -> str:
         if uri.startswith("file://"):
             return uri[7:]
         return uri
 
-    # ── public API ───────────────────────────────────────────────────
+    # ── public API (pure IO, no business logic) ──────────────────────
 
     def open(self, uri: str, mode: str = "rb") -> IO[Any]:
-        backend, path = self.resolve_backend(uri)
+        backend, path = self.resolve(uri)
         if isinstance(backend, LocalBackend):
             path = self._local_path(uri)
         return backend.open(path, mode)
 
     def read(self, uri: str) -> bytes:
-        backend, path = self.resolve_backend(uri)
+        backend, path = self.resolve(uri)
         if isinstance(backend, LocalBackend):
             path = self._local_path(uri)
         return backend.read(path)
@@ -158,26 +121,26 @@ class StorageManager(BaseManager):
     def write(self, uri: str, data: bytes | str) -> int:
         if isinstance(data, str):
             data = data.encode("utf-8")
-        backend, path = self.resolve_backend(uri)
+        backend, path = self.resolve(uri)
         if isinstance(backend, LocalBackend):
             path = self._local_path(uri)
         return backend.write(path, data)
 
     def stat(self, uri: str) -> FileInfo:
-        backend, path = self.resolve_backend(uri)
+        backend, path = self.resolve(uri)
         if isinstance(backend, LocalBackend):
             path = self._local_path(uri)
         return backend.stat(path)
 
     def listdir(self, uri: str) -> list[FileInfo]:
-        backend, path = self.resolve_backend(uri)
+        backend, path = self.resolve(uri)
         if isinstance(backend, LocalBackend):
             path = self._local_path(uri)
         return backend.listdir(path)
 
     def copy(self, src: str, dst: str) -> None:
-        backend_src, path_src = self.resolve_backend(src)
-        backend_dst, path_dst = self.resolve_backend(dst)
+        backend_src, path_src = self.resolve(src)
+        backend_dst, path_dst = self.resolve(dst)
         if isinstance(backend_src, type(backend_dst)):
             backend_src.copy(path_src, path_dst)
         else:
@@ -185,7 +148,7 @@ class StorageManager(BaseManager):
             backend_dst.write(path_dst, data)
 
     def delete(self, uri: str) -> None:
-        backend, path = self.resolve_backend(uri)
+        backend, path = self.resolve(uri)
         if isinstance(backend, LocalBackend):
             path = self._local_path(uri)
         backend.delete(path)
@@ -198,7 +161,7 @@ class StorageManager(BaseManager):
             return False
 
     def download(self, uri: str, output_path: str | Path) -> Path:
-        backend, path = self.resolve_backend(uri)
+        backend, path = self.resolve(uri)
         if isinstance(backend, LocalBackend):
             import shutil
             output_path = Path(output_path)
@@ -211,7 +174,7 @@ class StorageManager(BaseManager):
         local_path = Path(local_path)
         if not local_path.exists():
             raise FileNotFoundError(f"local file not found: {local_path}")
-        backend, path = self.resolve_backend(uri)
+        backend, path = self.resolve(uri)
         if isinstance(backend, LocalBackend):
             import shutil
             shutil.copy2(local_path, Path(self._local_path(uri)))
@@ -221,10 +184,10 @@ class StorageManager(BaseManager):
     # ── legacy MCAP methods ──────────────────────────────────────────
 
     def list_files(self, **kwargs: Any) -> dict[str, Any]:
-        return self._request("GET", "storage_files_list", params=kwargs)
+        return self._requestor.request("GET", "storage_files_list", params=kwargs)
 
     def get_file_info(self, mcap_id: str) -> dict[str, Any]:
-        return self._request("GET", self._cfg.resolve("storage_file_info", mcap_id=mcap_id))
+        return self._requestor.request("GET", self._cfg.resolve("storage_file_info", mcap_id=mcap_id))
 
     def download_mcap(self, mcap_file_id: str, output_path: str | Path) -> Path:
         import httpx
@@ -240,7 +203,7 @@ class StorageManager(BaseManager):
         return output_path
 
     def download_asset_mcap(self, asset_id: str, output_path: str | Path) -> Path:
-        locator = self._request("GET", self._cfg.resolve("asset_mcap_locator", asset_id=asset_id))
+        locator = self._requestor.request("GET", self._cfg.resolve("asset_mcap_locator", asset_id=asset_id))
         return self.download_mcap(locator["mcap_file_id"], output_path)
 
     def open_mcap(self, mcap_file_id: str) -> IO[bytes]:
@@ -252,7 +215,8 @@ class StorageManager(BaseManager):
         return io.BytesIO(resp.content)
 
     def finalize_upload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", "storage_upload_finalize", json_body=payload)
+        return self._requestor.request("POST", "storage_upload_finalize", json_body=payload)
 
     def get_messages(self, mcap_id: str) -> dict[str, Any]:
-        return self._request("GET", self._cfg.resolve("storage_mcap_messages", mcap_id=mcap_id))
+        return self._requestor.request("GET", self._cfg.resolve("storage_mcap_messages", mcap_id=mcap_id))
+
