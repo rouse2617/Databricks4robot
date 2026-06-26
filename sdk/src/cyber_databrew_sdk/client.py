@@ -30,7 +30,7 @@ _logger = logging.getLogger(__name__)
 # Each manager is lazily imported on first access.
 _managers: dict[str, tuple[str, str]] = {
     "assets": ("cyber_databrew_sdk.managers.assets", "AssetManager"),
-    "storage": ("cyber_databrew_sdk.managers.storage", "StorageManager"),
+    "storage": ("cyber_databrew_sdk.storage.manager", "StorageManager"),
     "delivery": ("cyber_databrew_sdk.managers.delivery", "DeliveryManager"),
     "algo_runs": ("cyber_databrew_sdk.managers.algo_runs", "AlgoRunManager"),
     "search": ("cyber_databrew_sdk.managers.search", "SearchManager"),
