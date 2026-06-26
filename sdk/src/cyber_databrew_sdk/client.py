@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -218,6 +219,17 @@ class CyberDatabrewClient:
     def exists(self, uri: str) -> bool:
         """Check file existence."""
         return self.storage.exists(uri)
+
+    def download(self, uri: str, output_path: str | Path) -> Path:
+        """Download a GCS file to local disk.
+
+        Uses parallel chunked download (transfer_manager) for speed.
+        The file is written directly to ``output_path`` without loading
+        into memory.
+
+        Returns the output path.
+        """
+        return self.storage.download(uri, output_path)
 
     # ------------------------------------------------------------------
     # Lifecycle

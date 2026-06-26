@@ -1,10 +1,10 @@
-"""DataBrewFS — POSIX-like file interface backed by Arrow GcsFileSystem.
+"""DataBrewFS — POSIX-like file interface backed by gcsfs + transfer_manager.
 
-Pods in GKE have a service account with GCS access, so ``gs://`` paths
-are handled directly via PyArrow ``GcsFileSystem``.  ``asset://`` URIs
-(such as ``asset://grace:video_id/raw``) are resolved through the DataBrew
-backend, which calls the external source API (e.g. Grace) and returns a
-GCS path that Arrow fs then reads directly.
+Pods in GKE have a service account with GCS access. ``gs://`` paths use
+``gcsfs.GCSFileSystem`` (POSIX semantics, including seek/tell). Bulk
+reads/writes (``read()``, ``write()``) use ``transfer_manager`` for
+maximum throughput.  ``asset://`` URIs are resolved through the DataBrew
+backend.
 
 Usage::
 
@@ -12,34 +12,36 @@ Usage::
 
     sdk = CyberDatabrew(token="...")
 
-    # Read GCS file directly (pod SA has permissions)
-    data = sdk.read("gs://co-prod-gv-cybercap/raw/e6c57180dab96076b923999acb45ad59.mcap")
+    # Full file download (fast path)
+    data = sdk.read("gs://bucket/file.mcap")
 
-    # Read resolved asset
-    data = sdk.read("asset://grace:019ed9c5-.../raw")
+    # Stream with seek (POSIX)
+    with sdk.open("gs://bucket/file.mcap", "rb") as f:
+        f.seek(1024)
+        chunk = f.read(8192)
 
-    # Write
-    sdk.write("gs://my-bucket/output/result.json", data)
-
-    # Stream read
-    with sdk.open("gs://my-bucket/video.mp4", "rb") as f:
-        chunk = f.read(8 * 1024 * 1024)
+    sdk.write("gs://bucket/out.bin", data)
+    info = sdk.stat("gs://bucket/file.bin")
 """
 
 from __future__ import annotations
 
 import io
 import logging
-import datetime
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
-import pyarrow.fs as pa_fs
+import gcsfs
 
 from cyber_databrew_sdk._base_manager import BaseManager
 
 _logger = logging.getLogger(__name__)
+
+# Files below this threshold use simple upload/download;
+# above it, use transfer_manager for parallel throughput.
+_TRANSFER_THRESHOLD = 100 * 1024 * 1024  # 100 MiB
 
 
 @dataclass
@@ -51,71 +53,104 @@ class FileInfo:
     type: str  # "file" | "dir"
 
 
+# ---------------------------------------------------------------------------
+# Transfer-manager helpers (lazy import — heavy deps)
+# ---------------------------------------------------------------------------
+
+def _transfer_download(bucket_name: str, object_path: str, local_path: str) -> None:
+    """Parallel chunked download via ``transfer_manager``."""
+    from google.cloud import storage
+    from google.cloud.storage import transfer_manager
+
+    client = storage.Client()
+    blob = client.bucket(bucket_name).blob(object_path)
+    transfer_manager.download_chunks_concurrently(blob, local_path)
+
+
+def _transfer_upload(local_path: str, bucket_name: str, object_path: str) -> None:
+    """Parallel chunked upload via ``transfer_manager``."""
+    from google.cloud import storage
+    from google.cloud.storage import transfer_manager
+
+    client = storage.Client()
+    blob = client.bucket(bucket_name).blob(object_path)
+    transfer_manager.upload_chunks_concurrently(local_path, blob)
+
+
+def _transfer_read(bucket_name: str, object_path: str) -> bytes:
+    """Download via transfer_manager and return in-memory bytes."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp_name = tmp.name
+    try:
+        _transfer_download(bucket_name, object_path, tmp_name)
+        with open(tmp_name, "rb") as f:
+            return f.read()
+    finally:
+        os.unlink(tmp_name)
+
+
+def _transfer_write(bucket_name: str, object_path: str, data: bytes) -> None:
+    """Upload bytes via transfer_manager using a temp file."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(data)
+        tmp_name = tmp.name
+    try:
+        _transfer_upload(tmp_name, bucket_name, object_path)
+    finally:
+        os.unlink(tmp_name)
+
+
+# ---------------------------------------------------------------------------
+# StorageManager
+# ---------------------------------------------------------------------------
+
 class StorageManager(BaseManager):
-    """File operations backed by Arrow GcsFileSystem (for GCS) + backend
-    resolve (for ``asset://`` URIs)."""
+    """File operations backed by gcsfs + transfer_manager."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._gcs: pa_fs.FileSystem | None = None
-        self._gcs_token: str | None = None
+        self._gcsfs: gcsfs.GCSFileSystem | None = None
 
     # ------------------------------------------------------------------
-    # Arrow GcsFileSystem
+    # gcsfs — POSIX-style filesystem with seek support
     # ------------------------------------------------------------------
-
-    def set_gcs_token(self, token: str) -> None:
-        """Set a GCS access token for Arrow fs.
-
-        Call this on your dev machine when ADC is unavailable::
-
-            import subprocess
-            token = subprocess.check_output(
-                ["gcloud", "auth", "print-access-token"]
-            ).decode().strip()
-            sdk.storage.set_gcs_token(token)
-
-        In GKE, skip this — the Pod's service account is used automatically.
-        """
-        self._gcs_token = token
-        self._gcs = None  # force re-init
 
     @property
-    def fs(self) -> pa_fs.FileSystem:
-        """Lazily-initialized Arrow GcsFileSystem.
+    def fs(self) -> gcsfs.GCSFileSystem:
+        """Lazily-initialized gcsfs filesystem.
 
         In GKE, uses the Pod's service account (ADC) automatically.
-        On dev machines, call ``set_gcs_token()`` first.
+        For local dev, set ``GOOGLE_APPLICATION_CREDENTIALS``.
         """
-        if self._gcs is None:
-            kw = {}
-            if self._gcs_token:
-                kw["access_token"] = self._gcs_token
-                kw["credential_token_expiration"] = (
-                    datetime.datetime.now() + datetime.timedelta(hours=1)
-                )
-            self._gcs = pa_fs.GcsFileSystem(**kw)
-        return self._gcs
+        if self._gcsfs is None:
+            self._gcsfs = gcsfs.GCSFileSystem()
+        return self._gcsfs
+
+    def set_gcs_token(self, token: str) -> None:
+        """Set an explicit GCS access token (local development)."""
+        self._gcsfs = gcsfs.GCSFileSystem(token=token)
 
     # ------------------------------------------------------------------
-    # GCS URI helpers
+    # URI helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _gcs_path(uri: str) -> str:
-        """Strip ``gs://`` prefix → ``bucket/object`` for Arrow fs."""
-        return uri[5:]
-
-    @staticmethod
-    def _bucket_object(uri: str) -> tuple[str, str]:
-        """Parse ``gs://bucket/object`` → ``(bucket, object)``."""
+    def _parse_gcs_uri(uri: str) -> tuple[str, str]:
+        """Parse ``gs://bucket/path/to/obj`` → ``(bucket, object)``."""
         path = uri[5:]
         bucket, _, obj = path.partition("/")
         return bucket, obj
 
     @staticmethod
+    def _gcs_path(uri: str) -> str:
+        """Strip ``gs://`` prefix."""
+        return uri[5:]
+
+    @staticmethod
     def _local_path(uri: str) -> str:
-        """Strip ``file://`` prefix → local path."""
+        """Strip ``file://`` prefix."""
         return uri[7:] if uri.startswith("file://") else uri
 
     # ------------------------------------------------------------------
@@ -123,10 +158,7 @@ class StorageManager(BaseManager):
     # ------------------------------------------------------------------
 
     def _resolve_asset(self, uri: str) -> str | None:
-        """Resolve ``asset://source:id/subpath`` → GCS path (``bucket/object``).
-
-        Returns None on failure.
-        """
+        """Resolve ``asset://source:id/subpath`` → ``bucket/object``."""
         rest = uri[len("asset://"):]
         if ":" in rest:
             source, _, asset_id = rest.partition(":")
@@ -136,7 +168,7 @@ class StorageManager(BaseManager):
                 result = self._request("POST", "storage_resolve", json_body={
                     "source": source,
                     "id": asset_id,
-                    "env": "dev",  # TODO: read from config
+                    "env": "dev",
                 })
                 gcs_path = result.get("gcs_path", "")
                 if gcs_path:
@@ -145,7 +177,7 @@ class StorageManager(BaseManager):
                 _logger.warning("resolve failed for %s: %s", uri, exc)
             return None
 
-        # Legacy: plain asset://<id> → MCAP locator
+        # Legacy: asset://<plain_id>
         asset_id = rest.strip("/")
         try:
             locator = self._request("GET", self._cfg.resolve("asset_mcap_locator", asset_id=asset_id))
@@ -164,71 +196,87 @@ class StorageManager(BaseManager):
     # ------------------------------------------------------------------
 
     def open(self, uri: str, mode: str = "rb") -> IO[Any]:
-        """Open a file for reading/writing.
-
-        ``gs://`` → Arrow GcsFileSystem
-        ``asset://`` → backend resolve → Arrow GcsFileSystem
-        local → built-in ``open()``
-        """
+        """Open a file for reading/writing (supports seek/tell with gcsfs)."""
         if uri.startswith("gs://"):
-            path = self._gcs_path(uri)
-            if "r" in mode:
-                return self.fs.open_input_file(path)
-            return self.fs.open_output_stream(path)
+            return self.fs.open(self._gcs_path(uri), mode)
         if uri.startswith("asset://"):
             path = self._resolve_asset(uri)
             if not path:
                 raise FileNotFoundError(f"cannot resolve asset URI: {uri}")
-            if "r" in mode:
-                return self.fs.open_input_file(path)
-            return self.fs.open_output_stream(path)
+            return self.fs.open(path, mode)
         return open(self._local_path(uri), mode)
 
     def read(self, uri: str) -> bytes:
-        """Read entire file into memory."""
-        if uri.startswith("gs://") or uri.startswith("asset://"):
-            path = self._gcs_path(uri) if uri.startswith("gs://") else self._resolve_asset(uri)
-            if not path:
-                raise FileNotFoundError(f"cannot resolve: {uri}")
-            return self.fs.open_input_stream(path).read()
-        return Path(self._local_path(uri)).read_bytes()
-
-    def write(self, uri: str, data: bytes | str) -> int:
-        """Write entire file."""
-        if isinstance(data, str):
-            data = data.encode("utf-8")
+        """Read entire file — uses transfer_manager for files > 100 MiB."""
         if uri.startswith("gs://"):
-            with self.fs.open_output_stream(self._gcs_path(uri)) as f:
-                f.write(data)
-            return len(data)
+            bucket, obj = self._parse_gcs_uri(uri)
+            # Fast check via gcsfs
+            try:
+                info = self.fs.info(self._gcs_path(uri))
+                size = info.get("size", 0)
+            except Exception:
+                size = 0
+            if size > _TRANSFER_THRESHOLD:
+                return _transfer_read(bucket, obj)
+            return self.fs.open(self._gcs_path(uri), "rb").read()
+
         if uri.startswith("asset://"):
             path = self._resolve_asset(uri)
             if not path:
                 raise FileNotFoundError(f"cannot resolve: {uri}")
-            with self.fs.open_output_stream(path) as f:
+            return self.fs.open(path, "rb").read()
+
+        return Path(self._local_path(uri)).read_bytes()
+
+    def write(self, uri: str, data: bytes | str) -> int:
+        """Write entire file — uses transfer_manager for data > 100 MiB."""
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+
+        if uri.startswith("gs://"):
+            if len(data) > _TRANSFER_THRESHOLD:
+                bucket, obj = self._parse_gcs_uri(uri)
+                _transfer_write(bucket, obj, data)
+            else:
+                with self.fs.open(self._gcs_path(uri), "wb") as f:
+                    f.write(data)
+            return len(data)
+
+        if uri.startswith("asset://"):
+            path = self._resolve_asset(uri)
+            if not path:
+                raise FileNotFoundError(f"cannot resolve: {uri}")
+            with self.fs.open(path, "wb") as f:
                 f.write(data)
             return len(data)
+
         Path(self._local_path(uri)).write_bytes(data)
         return len(data)
 
     def stat(self, uri: str) -> FileInfo:
         """Get file metadata."""
-        if uri.startswith("gs://") or uri.startswith("asset://"):
-            path = self._gcs_path(uri) if uri.startswith("gs://") else self._resolve_asset(uri)
-            if not path:
-                raise FileNotFoundError(f"cannot resolve: {uri}")
+        if uri.startswith("gs://"):
             try:
-                info = self.fs.get_file_info(path)
+                info = self.fs.info(self._gcs_path(uri))
+            except FileNotFoundError:
+                raise
             except Exception as exc:
                 raise FileNotFoundError(str(uri)) from exc
-            if info.type == pa_fs.FileType.NotFound:
-                raise FileNotFoundError(str(uri))
+            if info.get("type") == "directory":
+                return FileInfo(name=uri, size=0, mtime=None, type="dir")
             return FileInfo(
                 name=uri,
-                size=info.size,
-                mtime=info.mtime_ns / 1e9 if info.mtime_ns is not None else None,
-                type="dir" if info.type == pa_fs.FileType.Directory else "file",
+                size=info.get("size", 0),
+                mtime=info.get("mtime", None),
+                type="file",
             )
+
+        if uri.startswith("asset://"):
+            path = self._resolve_asset(uri)
+            if not path:
+                raise FileNotFoundError(f"cannot resolve: {uri}")
+            return self._gcsfs_info(uri, path)
+
         p = Path(self._local_path(uri))
         if not p.exists():
             raise FileNotFoundError(str(uri))
@@ -242,18 +290,32 @@ class StorageManager(BaseManager):
 
     def listdir(self, uri: str) -> list[FileInfo]:
         """List directory entries."""
-        if uri.startswith("gs://") or uri.startswith("asset://"):
-            path = self._gcs_path(uri) if uri.startswith("gs://") else self._resolve_asset(uri)
+        if uri.startswith("gs://"):
+            path = self._gcs_path(uri).rstrip("/") + "/"
+            try:
+                entries = self.fs.ls(path)
+            except Exception as exc:
+                raise FileNotFoundError(str(uri)) from exc
+            results = []
+            for e in entries:
+                if isinstance(e, dict):
+                    name = e.get("name", "")
+                    results.append(FileInfo(
+                        name=name,
+                        size=e.get("size", 0),
+                        mtime=e.get("mtime", None),
+                        type="dir" if e.get("type") == "directory" else "file",
+                    ))
+                else:
+                    results.append(FileInfo(name=str(e), size=0, mtime=None, type="file"))
+            return results
+
+        if uri.startswith("asset://"):
+            path = self._resolve_asset(uri)
             if not path:
                 raise FileNotFoundError(f"cannot resolve: {uri}")
-            selector = pa_fs.FileSelector(path.rstrip("/") + "/")
-            infos = self.fs.get_file_info(selector)
-            return [FileInfo(
-                name=info.path or "",
-                size=info.size,
-                mtime=info.mtime_ns / 1e9 if info.mtime_ns is not None else None,
-                type="dir" if info.type == pa_fs.FileType.Directory else "file",
-            ) for info in infos]
+            return self._gcsfs_listdir(uri, path)
+
         p = Path(self._local_path(uri))
         if not p.is_dir():
             raise NotADirectoryError(str(uri))
@@ -261,24 +323,21 @@ class StorageManager(BaseManager):
         for entry in p.iterdir():
             st = entry.stat()
             results.append(FileInfo(
-                name=entry.name, size=st.st_size, mtime=st.st_mtime,
+                name=entry.name,
+                size=st.st_size,
+                mtime=st.st_mtime,
                 type="dir" if entry.is_dir() else "file",
             ))
         return results
 
     def copy(self, src: str, dst: str) -> None:
-        """Copy file via Arrow fs (GCS server-side copy when both paths are GCS)."""
-        src_path = self._gcs_path(src) if src.startswith("gs://") else (
-            self._resolve_asset(src) if src.startswith("asset://") else self._local_path(src)
-        )
-        dst_path = self._gcs_path(dst) if dst.startswith("gs://") else (
-            self._resolve_asset(dst) if dst.startswith("asset://") else self._local_path(dst)
-        )
-        if not src_path or not dst_path:
-            raise FileNotFoundError(f"cannot resolve: {src} or {dst}")
-        is_gcs = src.startswith("gs://") or dst.startswith("gs://")
-        if is_gcs:
-            self.fs.copy_file(src_path, dst_path)
+        """Copy file — uses gcsfs cp for GCS paths, fallback read+write."""
+        if src.startswith("gs://") or dst.startswith("gs://"):
+            src_path = self._gcs_path(src) if src.startswith("gs://") else self._resolve_asset(src)
+            dst_path = self._gcs_path(dst) if dst.startswith("gs://") else self._resolve_asset(dst)
+            if not src_path or not dst_path:
+                raise FileNotFoundError(f"cannot resolve: {src} or {dst}")
+            self.fs.cp(src_path, dst_path)
             return
         data = self.read(src)
         self.write(dst, data)
@@ -286,14 +345,42 @@ class StorageManager(BaseManager):
     def delete(self, uri: str) -> None:
         """Delete file."""
         if uri.startswith("gs://"):
-            self.fs.delete_file(self._gcs_path(uri))
+            self.fs.rm(self._gcs_path(uri))
         elif uri.startswith("asset://"):
             path = self._resolve_asset(uri)
             if not path:
                 raise FileNotFoundError(f"cannot resolve: {uri}")
-            self.fs.delete_file(path)
+            self.fs.rm(path)
         else:
             Path(self._local_path(uri)).unlink()
+
+    def download(self, uri: str, output_path: str | Path) -> Path:
+        """Download a file to local disk via transfer_manager (no memory buffering).
+
+        Uses parallel chunked download for files > 100 MiB.
+        Returns the output path.
+        """
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if uri.startswith("gs://"):
+            bucket, obj = self._parse_gcs_uri(uri)
+            _transfer_download(bucket, obj, str(output_path))
+            return output_path
+
+        if uri.startswith("asset://"):
+            path = self._resolve_asset(uri)
+            if not path:
+                raise FileNotFoundError(f"cannot resolve: {uri}")
+            # path is "bucket/object"
+            bucket, obj = path.split("/", 1)
+            _transfer_download(bucket, obj, str(output_path))
+            return output_path
+
+        # Local file: copy
+        import shutil
+        shutil.copy2(self._local_path(uri), output_path)
+        return output_path
 
     def exists(self, uri: str) -> bool:
         """Check file existence."""
@@ -303,13 +390,47 @@ class StorageManager(BaseManager):
         except (FileNotFoundError, NotADirectoryError):
             return False
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _gcsfs_info(self, uri: str, path: str) -> FileInfo:
+        try:
+            info = self.fs.info(path)
+        except Exception as exc:
+            raise FileNotFoundError(str(uri)) from exc
+        return FileInfo(
+            name=uri,
+            size=info.get("size", 0),
+            mtime=info.get("mtime", None),
+            type="dir" if info.get("type") == "directory" else "file",
+        )
+
+    def _gcsfs_listdir(self, uri: str, path: str) -> list[FileInfo]:
+        try:
+            entries = self.fs.ls(path.rstrip("/") + "/")
+        except Exception as exc:
+            raise FileNotFoundError(str(uri)) from exc
+        results = []
+        for e in entries:
+            if isinstance(e, dict):
+                results.append(FileInfo(
+                    name=e.get("name", ""),
+                    size=e.get("size", 0),
+                    mtime=e.get("mtime", None),
+                    type="dir" if e.get("type") == "directory" else "file",
+                ))
+            else:
+                results.append(FileInfo(name=str(e), size=0, mtime=None, type="file"))
+        return results
+
     # --- legacy MCAP methods ---
 
     def list_files(self, **kwargs: Any) -> dict[str, Any]:
         return self._request("GET", "storage_files_list", params=kwargs)
 
     def get_file_info(self, mcap_id: str) -> dict[str, Any]:
-        return self._request("GET", "storage_file_info", mcap_id=mcap_id)
+        return self._request("GET", self._cfg.resolve("storage_file_info", mcap_id=mcap_id))
 
     def download_mcap(self, mcap_file_id: str, output_path: str | Path) -> Path:
         import httpx
@@ -325,7 +446,7 @@ class StorageManager(BaseManager):
         return output_path
 
     def download_asset_mcap(self, asset_id: str, output_path: str | Path) -> Path:
-        locator = self._request("GET", "asset_mcap_locator", asset_id=asset_id)
+        locator = self._request("GET", self._cfg.resolve("asset_mcap_locator", asset_id=asset_id))
         return self.download_mcap(locator["mcap_file_id"], output_path)
 
     def open_mcap(self, mcap_file_id: str) -> IO[bytes]:
@@ -340,4 +461,4 @@ class StorageManager(BaseManager):
         return self._request("POST", "storage_upload_finalize", json_body=payload)
 
     def get_messages(self, mcap_id: str) -> dict[str, Any]:
-        return self._request("GET", "storage_mcap_messages", mcap_id=mcap_id)
+        return self._request("GET", self._cfg.resolve("storage_mcap_messages", mcap_id=mcap_id))
