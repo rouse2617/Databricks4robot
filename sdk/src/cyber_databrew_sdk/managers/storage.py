@@ -59,7 +59,7 @@ def _gcs_transfer_download(bucket: str, obj: str, local_path: str) -> None:
     blob = client.bucket(bucket).blob(obj)
     transfer_manager.download_chunks_concurrently(
         blob, local_path,
-        worker_type="process", max_workers=4,
+        worker_type="process", max_workers=8,
     )
 
 
