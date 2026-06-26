@@ -209,62 +209,11 @@ class CyberDatabrewClient:
     # Asset URI resolution (business layer — not in storage)
     # ------------------------------------------------------------------
 
-    def _resolve_asset(self, uri: str) -> str:
-        """Resolve ``asset://source:id/subpath`` → ``gs://bucket/object``.
-
-        Calls the backend's resolve endpoint.  Raises ``FileNotFoundError``
-        on failure.
-        """
-        rest = uri[len("asset://"):]
-        if ":" in rest:
-            source, _, asset_id = rest.partition(":")
-            source = source.strip()
-            asset_id = asset_id.strip("/")
-            try:
-                result = self._requestor.request("POST", "storage_resolve", json_body={
-                    "source": source,
-                    "id": asset_id,
-                    "env": "dev",
-                })
-                gcs_path = result.get("gcs_path", "")
-                if gcs_path:
-                    if not gcs_path.startswith("gs://"):
-                        gcs_path = f"gs://{gcs_path}"
-                    return gcs_path
-            except Exception as exc:
-                _logger.warning("resolve failed for %s: %s", uri, exc)
-
-            raise FileNotFoundError(f"cannot resolve asset URI: {uri}")
-
-        # Legacy: asset://<plain_id> → MCAP locator
-        asset_id = rest.strip("/")
-        try:
-            locator = self._requestor.request(
-                "GET", self._config.resolve("asset_mcap_locator", asset_id=asset_id)
-            )
-            mcap_id = locator.get("mcap_file_id")
-            if mcap_id:
-                info = self._requestor.request(
-                    "GET", self._config.resolve("storage_file_info", mcap_id=mcap_id)
-                )
-                gcs_path = info.get("gcs_path") or info.get("storage_path", "")
-                if gcs_path:
-                    if not gcs_path.startswith("gs://"):
-                        gcs_path = f"gs://{gcs_path}"
-                    return gcs_path
-        except Exception as exc:
-            _logger.warning("legacy asset resolve failed for %s: %s", uri, exc)
-
-        raise FileNotFoundError(f"cannot resolve asset URI: {uri}")
-
-    def _resolve_uri(self, uri: str) -> str:
-        """Resolve business URIs (``asset://``) to storage URIs (``gs://``)."""
-        if uri.startswith("asset://"):
-            return self._resolve_asset(uri)
-        return uri
-
     # ------------------------------------------------------------------
     # Filesystem operations (delegated to StorageManager)
+    #
+    # URI 解析 (asset:// → gs://) 和 POSIX 语义 (open/seek/tell) 都在
+    # 存储层完成。业务层不关心路径怎么映射。
     # ------------------------------------------------------------------
 
     def set_gcs_token(self, token: str) -> None:
@@ -282,35 +231,35 @@ class CyberDatabrewClient:
 
     def open(self, uri: str, mode: str = "rb") -> Any:
         """Open a file for reading/writing."""
-        return self.storage.open(self._resolve_uri(uri), mode)
+        return self.storage.open(uri, mode)
 
     def read(self, uri: str) -> bytes:
         """Read entire file."""
-        return self.storage.read(self._resolve_uri(uri))
+        return self.storage.read(uri)
 
     def write(self, uri: str, data: bytes | str) -> int:
         """Write data to a file."""
-        return self.storage.write(self._resolve_uri(uri), data)
+        return self.storage.write(uri, data)
 
     def stat(self, uri: str) -> Any:
         """Get file metadata."""
-        return self.storage.stat(self._resolve_uri(uri))
+        return self.storage.stat(uri)
 
     def listdir(self, uri: str) -> list[Any]:
         """List directory entries."""
-        return self.storage.listdir(self._resolve_uri(uri))
+        return self.storage.listdir(uri)
 
     def copy(self, src: str, dst: str) -> None:
         """Copy file."""
-        return self.storage.copy(self._resolve_uri(src), self._resolve_uri(dst))
+        return self.storage.copy(src, dst)
 
     def delete(self, uri: str) -> None:
         """Delete file."""
-        return self.storage.delete(self._resolve_uri(uri))
+        return self.storage.delete(uri)
 
     def exists(self, uri: str) -> bool:
         """Check file existence."""
-        return self.storage.exists(self._resolve_uri(uri))
+        return self.storage.exists(uri)
 
     def upload(self, local_path: str | Path, uri: str) -> None:
         """Upload a local file to cloud storage.
@@ -322,7 +271,7 @@ class CyberDatabrewClient:
             local_path: Path to the local file.
             uri: Destination URI (``gs://bucket/object``, etc.).
         """
-        return self.storage.upload(local_path, self._resolve_uri(uri))
+        return self.storage.upload(local_path, uri)
 
     def download(self, uri: str, output_path: str | Path) -> Path:
         """Download a cloud file to local disk.
@@ -333,7 +282,7 @@ class CyberDatabrewClient:
 
         Returns the output path.
         """
-        return self.storage.download(self._resolve_uri(uri), output_path)
+        return self.storage.download(uri, output_path)
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -40,25 +40,23 @@ def _parse_uri(uri: str) -> tuple[str, str]:
 
 
 class StorageManager:
-    """Pure IO storage layer — routes protocols to backends.
+    """Unified storage layer — POSIX IO + URI resolution.
 
-    +----------------+------------------+
-    | Protocol       | Backend          |
-    +----------------+------------------+
-    | ``gs://``      | GCSBackend       |
-    | ``s3://``      | S3Backend (WIP)  |
-    | local / ``file://`` | LocalBackend |
-    +----------------+------------------+
+    +----------------+------------------+--------------------+
+    | Protocol       | Backend          | POSIX (seek/tell)  |
+    +----------------+------------------+--------------------+
+    | ``gs://``      | GCSBackend       | ✅ gcsfs            |
+    | ``s3://``      | S3Backend (WIP)  | ✅ s3fs             |
+    | ``asset://``   | resolve → GCS    | ✅ (经 gcsfs)       |
+    | local / ``file://`` | LocalBackend | ✅ built-in        |
+    +----------------+------------------+--------------------+
 
-    ``asset://`` is NOT handled here.  The business layer resolves it
-    first and passes a ``gs://`` path.
-
-    Legacy MCAP methods accept an optional ``_requestor`` for
-    backward compatibility with the old manager interface.
+    ``asset://`` URIs are resolved via the backend API and delegated
+    to the appropriate protocol backend.
     """
 
     def __init__(self, requestor: Any = None, config: Any = None) -> None:
-        # Keep for legacy MCAP methods; unused for pure IO operations.
+        # requestor + config needed for asset:// resolution and legacy MCAP
         self._requestor = requestor
         self._cfg = config
         self._gcs_backend: GCSBackend | None = None
@@ -88,7 +86,18 @@ class StorageManager:
     # ── URI → backend routing (protocol only, no business) ───────────
 
     def resolve(self, uri: str) -> tuple[Backend, str]:
-        """Resolve protocol to backend.  No asset:// support here."""
+        """Resolve URI → ``(backend, path)``.
+
+        - ``gs://bucket/obj`` → (GCSBackend, "bucket/obj")
+        - ``asset://grace:id`` → resolve → (GCSBackend, "bucket/obj")
+        - ``/local/path`` → (LocalBackend, "/local/path")
+        """
+        if uri.startswith("asset://"):
+            resolved = self._resolve_asset(uri)
+            if not resolved:
+                raise FileNotFoundError(f"cannot resolve: {uri}")
+            return self.gcs, resolved
+
         proto, path = _parse_uri(uri)
         if proto == "gs":
             return self.gcs, path
@@ -97,6 +106,40 @@ class StorageManager:
         if proto == "file" or not proto:
             return self.local, path
         raise ValueError(f"unknown protocol: {proto}")
+
+    def _resolve_asset(self, uri: str) -> str | None:
+        """Resolve ``asset://source:id/subpath`` → ``bucket/object``."""
+        rest = uri[len("asset://"):]
+        if ":" in rest:
+            source, _, asset_id = rest.partition(":")
+            source = source.strip()
+            asset_id = asset_id.strip("/")
+            try:
+                result = self._requestor.request("POST", "storage_resolve", json_body={
+                    "source": source,
+                    "id": asset_id,
+                    "env": "dev",
+                })
+                gcs_path = result.get("gcs_path", "")
+                if gcs_path:
+                    return gcs_path[5:] if gcs_path.startswith("gs://") else gcs_path
+            except Exception as exc:
+                _logger.warning("resolve failed for %s: %s", uri, exc)
+            return None
+
+        # Legacy: asset://<plain_id>
+        asset_id = rest.strip("/")
+        try:
+            locator = self._requestor.request("GET", self._cfg.resolve("asset_mcap_locator", asset_id=asset_id))
+            mcap_id = locator.get("mcap_file_id")
+            if mcap_id:
+                info = self._requestor.request("GET", self._cfg.resolve("storage_file_info", mcap_id=mcap_id))
+                gcs_path = info.get("gcs_path") or info.get("storage_path", "")
+                if gcs_path:
+                    return gcs_path[5:] if gcs_path.startswith("gs://") else gcs_path
+        except Exception as exc:
+            _logger.warning("legacy asset resolve failed for %s: %s", uri, exc)
+        return None
 
     @staticmethod
     def _local_path(uri: str) -> str:
