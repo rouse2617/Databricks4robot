@@ -51,16 +51,12 @@ class FileInfo:
 # ---------------------------------------------------------------------------
 
 def _gcs_transfer_download(bucket: str, obj: str, local_path: str) -> None:
-    """GCS parallel chunked download via ``transfer_manager`` (thread pool)."""
+    """GCS download via ``blob.download_to_filename`` (single-stream ~200 MB/s)."""
     from google.cloud import storage
-    from google.cloud.storage import transfer_manager
 
     client = storage.Client()
     blob = client.bucket(bucket).blob(obj)
-    transfer_manager.download_chunks_concurrently(
-        blob, local_path,
-        worker_type="process", max_workers=8,
-    )
+    blob.download_to_filename(local_path)
 
 
 def _gcs_transfer_upload(local_path: str, bucket: str, obj: str) -> None:
@@ -151,21 +147,12 @@ class StorageManager(BaseManager):
         self._fsspec_caches.pop("gs", None)  # force re-init
 
     def _fs(self, protocol: str) -> fsspec.AbstractFileSystem:
+        """Get or create an fsspec filesystem for the given protocol."""
         if protocol not in self._fsspec_caches:
             kwargs = {}
             if protocol == "gs" and self._gcs_token:
                 kwargs["token"] = self._gcs_token
             self._fsspec_caches[protocol] = fsspec.filesystem(protocol, **kwargs)
-        return self._fsspec_caches[protocol]
-
-    # ------------------------------------------------------------------
-    # fsspec filesystem resolution
-    # ------------------------------------------------------------------
-
-    def _fs(self, protocol: str) -> fsspec.AbstractFileSystem:
-        """Get or create an fsspec filesystem for the given protocol."""
-        if protocol not in self._fsspec_caches:
-            self._fsspec_caches[protocol] = fsspec.filesystem(protocol)
         return self._fsspec_caches[protocol]
 
     def _resolve(self, uri: str) -> tuple[fsspec.AbstractFileSystem, str, str]:
@@ -325,8 +312,15 @@ class StorageManager(BaseManager):
             shutil.copy2(local_path, Path(_parse_uri(uri)[1]))
             return
 
-        fs, path, proto = self._resolve(uri)
-        bucket, obj = self._cloud_path(proto, path)
+        if uri.startswith("asset://"):
+            resolved = self._resolve_asset(uri)
+            if not resolved:
+                raise FileNotFoundError(f"cannot resolve: {uri}")
+            proto = resolved.split("/", 1)[0]
+            bucket, obj = resolved[len(proto)+1:].split("/", 1)
+        else:
+            proto, path = _parse_uri(uri)
+            bucket, obj = self._cloud_path(proto, path)
 
         size = local_path.stat().st_size
         if size > _TRANSFER_THRESHOLD and proto == "gs":
@@ -334,11 +328,13 @@ class StorageManager(BaseManager):
         elif size > _TRANSFER_THRESHOLD and proto == "s3":
             self._bulk_write(proto, bucket, obj, local_path.read_bytes())
         else:
-            with fs.open(path, "wb") as f:
+            # Small file — use gcsfs for simplicity
+            fs = self._fs(proto)
+            with fs.open(f"{bucket}/{obj}", "wb") as f:
                 f.write(local_path.read_bytes())
 
     def download(self, uri: str, output_path: str | Path) -> Path:
-        """Download file to local disk via high-speed channel."""
+        """Download file to local disk — no fsspec init overhead."""
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -347,8 +343,16 @@ class StorageManager(BaseManager):
             shutil.copy2(_parse_uri(uri)[1], output_path)
             return output_path
 
-        fs, path, proto = self._resolve(uri)
-        bucket, obj = self._cloud_path(proto, path)
+        if uri.startswith("asset://"):
+            resolved = self._resolve_asset(uri)
+            if not resolved:
+                raise FileNotFoundError(f"cannot resolve: {uri}")
+            proto = resolved.split("/", 1)[0]
+            bucket, obj = resolved[len(proto)+1:].split("/", 1)
+        else:
+            proto, path = _parse_uri(uri)
+            bucket, obj = self._cloud_path(proto, path)
+
         self._bulk_download(proto, bucket, obj, str(output_path))
         return output_path
 
