@@ -18,10 +18,9 @@ import httpx
 
 _logger = logging.getLogger(__name__)
 
-# Default endpoints
-# API via nexus backend (no /api prefix — the user sets GRACE_URL directly)
-_DEV_URL = "https://nexus.cyberorigin.ai"
-_PROD_URL = "https://nexus.cyberorigin.ai"
+# Default endpoints (from grace-sync config.json)
+_DEV_URL = "https://dev.cyber-grace.pages.dev/api"
+_PROD_URL = "https://grace.cyberorigin.ai"
 
 
 @dataclass
