@@ -156,6 +156,23 @@ class CyberDatabrewClient:
     # Lazy manager access — Stripe's __getattr__ + _subservices pattern
     # ------------------------------------------------------------------
 
+    def email_login(self, email: str) -> dict[str, Any]:
+        """Login with email — backend returns a JWT token.
+
+        Usage::
+
+            sdk = CyberDatabrewClient()
+            result = sdk.email_login("user@company.com")
+            # Now sdk is authenticated with the returned token
+        """
+        result = self._requestor.request("POST", "/api/v1/auth/email-login", json_body={
+            "email": email,
+        })
+        token = result.get("token", "")
+        if token:
+            self._requestor._auth_headers["X-Databrew-Token"] = token
+        return result
+
     def __getattr__(self, name: str) -> Any:
         """Lazily import and instantiate manager on first access."""
         try:

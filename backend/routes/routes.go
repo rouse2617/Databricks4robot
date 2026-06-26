@@ -142,8 +142,9 @@ func RegisterAll(
 			c.SetCookie("databrew_session", jwtToken, 86400, "/", "", secureSessionCookie, true)
 			c.JSON(http.StatusOK, gin.H{
 				"authenticated": true,
-				"email":         email,
-				"role":          "user",
+				"token":        jwtToken,
+				"email":        email,
+				"role":         "user",
 			})
 		})
 
