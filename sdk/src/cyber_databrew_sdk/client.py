@@ -220,8 +220,20 @@ class CyberDatabrewClient:
         """Check file existence."""
         return self.storage.exists(uri)
 
+    def upload(self, local_path: str | Path, uri: str) -> None:
+        """Upload a local file to cloud storage.
+
+        Uses parallel chunked upload (transfer_manager) for large files.
+        Avoids loading the entire file into memory.
+
+        Args:
+            local_path: Path to the local file.
+            uri: Destination URI (``gs://bucket/object``, etc.).
+        """
+        return self.storage.upload(local_path, uri)
+
     def download(self, uri: str, output_path: str | Path) -> Path:
-        """Download a GCS file to local disk.
+        """Download a cloud file to local disk.
 
         Uses parallel chunked download (transfer_manager) for speed.
         The file is written directly to ``output_path`` without loading
