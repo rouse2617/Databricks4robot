@@ -88,6 +88,7 @@ class CyberDatabrewClient:
         token: str | None = None,
         email: str | None = None,
         *,
+        env: str | None = None,
         auth: AuthProvider | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
@@ -102,6 +103,8 @@ class CyberDatabrewClient:
                    Defaults to CYBER_DATABREW_TOKEN, then DATABREW_TOKEN env var.
             email: User email for X-User-Email header (audit-only).
                    Defaults to CYBER_DATABREW_EMAIL env var.
+            env: Environment (``"dev"`` or ``"prod"``).  Required for asset
+                 resolution.  Defaults to CYBER_DATABREW_ENV env var.
             auth: Custom AuthProvider (overrides token+email default).
             base_url: API base URL. Defaults to CYBER_DATABREW_BASE_URL
                       or http://localhost:8080.
@@ -112,6 +115,7 @@ class CyberDatabrewClient:
                     of the config's values (except ``auth`` still applies).
         """
         self._closed = False
+        self._env = env or os.environ.get("CYBER_DATABREW_ENV", "")
 
         # 1. Resolve config
         if config is not None:
@@ -201,12 +205,15 @@ class CyberDatabrewClient:
 
         module = import_module(import_from)
         manager_cls = getattr(module, service_class)
-        instance = manager_cls(self._requestor, self._config)
+        kwargs = {}
+        if name == "storage":
+            kwargs["env"] = self._env
+        instance = manager_cls(self._requestor, self._config, **kwargs)
         setattr(self, name, instance)
         return instance
 
     # ------------------------------------------------------------------
-    # Asset URI resolution (business layer — not in storage)
+    # Filesystem operations (delegated to StorageManager)
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------

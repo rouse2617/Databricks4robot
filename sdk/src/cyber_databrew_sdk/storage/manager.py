@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from pathlib import Path
 from typing import IO, Any
 
@@ -57,11 +58,13 @@ class StorageManager:
     """
 
     def __init__(self, requestor: Any = None, config: Any = None,
-                 default_source: str | None = "grace") -> None:
+                 default_source: str | None = "grace",
+                 env: str | None = None) -> None:
         # requestor + config needed for asset:// resolution and legacy MCAP
         self._requestor = requestor
         self._cfg = config
         self._default_source = default_source
+        self._env = env or os.environ.get("CYBER_DATABREW_ENV", "")
         self._gcs_backend: GCSBackend | None = None
         self._local_backend: LocalBackend | None = None
         self._proxy_backend: ProxyBackend | None = None
@@ -154,7 +157,11 @@ class StorageManager:
         # Route to the right resolver
         try:
             if source == "grace":
-                resolver = GraceResolver(env="dev")
+                if not self._env:
+                    raise ValueError(
+                        "must set CYBER_DATABREW_ENV=dev or CYBER_DATABREW_ENV=prod"
+                    )
+                resolver = GraceResolver(env=self._env)
                 gcs_uri = resolver.resolve(asset_id, sub_path=sub_path or "raw")
                 return gcs_uri[5:] if gcs_uri.startswith("gs://") else gcs_uri
             else:
@@ -171,6 +178,24 @@ class StorageManager:
         except Exception as exc:
             _logger.warning("resolve failed for %s: %s", uri, exc)
         return None
+
+    def _detect_env(self) -> str:
+        """Detect environment from DataBrew base URL.
+
+        - ``localhost`` or ``-dev``  → ``dev``
+        环 otherwise               → ``prod``
+        """
+        # 1. Explicit env var override
+        if env := os.environ.get("CYBER_DATABREW_ENV"):
+            return env
+
+        # 2. Detect from base URL
+        base = self._requestor._base_url if self._requestor else ""
+        if "localhost" in base or "-dev" in base:
+            return "dev"
+
+        # 3. Default: prod
+        return "prod"
 
     def _legacy_resolve(self, asset_id: str) -> str | None:
         """Legacy: asset://<plain_id> → MCAP locator."""
