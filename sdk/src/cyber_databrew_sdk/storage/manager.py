@@ -23,6 +23,7 @@ import logging
 from pathlib import Path
 from typing import IO, Any
 
+from cyber_databrew_sdk.resolver.grace import GraceResolver
 from cyber_databrew_sdk.storage.backend import Backend, FileInfo
 from cyber_databrew_sdk.storage.gcs import GCSBackend
 from cyber_databrew_sdk.storage.local import LocalBackend
@@ -55,10 +56,12 @@ class StorageManager:
     to the appropriate protocol backend.
     """
 
-    def __init__(self, requestor: Any = None, config: Any = None) -> None:
+    def __init__(self, requestor: Any = None, config: Any = None,
+                 default_source: str | None = "grace") -> None:
         # requestor + config needed for asset:// resolution and legacy MCAP
         self._requestor = requestor
         self._cfg = config
+        self._default_source = default_source
         self._gcs_backend: GCSBackend | None = None
         self._local_backend: LocalBackend | None = None
         self._proxy_backend: ProxyBackend | None = None
@@ -90,8 +93,15 @@ class StorageManager:
 
         - ``gs://bucket/obj`` → (GCSBackend, "bucket/obj")
         - ``asset://grace:id`` → resolve → (GCSBackend, "bucket/obj")
+        - ``019ed9c5-...`` (bare ID) → resolve → (GCSBackend, "bucket/obj")
         - ``/local/path`` → (LocalBackend, "/local/path")
         """
+        # Bare asset ID (no protocol) → try asset resolution
+        if "://" not in uri and self._default_source and not uri.startswith("/"):
+            resolved = self._resolve_asset(uri)
+            if resolved:
+                return self.gcs, resolved
+
         if uri.startswith("asset://"):
             resolved = self._resolve_asset(uri)
             if not resolved:
@@ -108,27 +118,62 @@ class StorageManager:
         raise ValueError(f"unknown protocol: {proto}")
 
     def _resolve_asset(self, uri: str) -> str | None:
-        """Resolve ``asset://source:id/subpath`` → ``bucket/object``."""
-        rest = uri[len("asset://"):]
+        """Resolve asset URI → ``bucket/object``.
+
+        Supports::
+
+            asset://019ed9c5-...          ← 简洁格式（推荐）
+            asset://grace:019ed9c5-.../raw ← 完整格式
+            019ed9c5-...                   ← 裸 ID
+        """
+        # Normalize all forms to "asset://source:id/subpath"
+        if "://" in uri and not uri.startswith("asset://"):
+            return None  # not an asset URI
+
+        if not uri.startswith("asset://"):
+            # Bare ID → asset://grace:{id}/raw
+            uri = f"asset://{self._default_source}:{uri.strip('/')}/raw" \
+                if self._default_source else f"asset://{uri.strip('/')}"
+
+        rest = uri[len("asset://"):].strip("/")
+
         if ":" in rest:
-            source, _, asset_id = rest.partition(":")
+            # asset://source:id/subpath or asset://id (no :)
+            source, _, path = rest.partition(":")
             source = source.strip()
-            asset_id = asset_id.strip("/")
-            try:
+        elif self._default_source and rest:
+            # asset://id (no source) → 用 default_source
+            source = self._default_source
+            path = rest
+        else:
+            # Legacy: asset://<plain_id>
+            return self._legacy_resolve(rest)
+
+        asset_id, _, sub_path = path.partition("/")
+
+        # Route to the right resolver
+        try:
+            if source == "grace":
+                resolver = GraceResolver(env="dev")
+                gcs_uri = resolver.resolve(asset_id, sub_path=sub_path or "raw")
+                return gcs_uri[5:] if gcs_uri.startswith("gs://") else gcs_uri
+            else:
+                # Custom source → backend resolve
+                resolve_id = f"{asset_id}/{sub_path}" if sub_path else f"{asset_id}/raw"
                 result = self._requestor.request("POST", "storage_resolve", json_body={
                     "source": source,
-                    "id": asset_id,
+                    "id": resolve_id,
                     "env": "dev",
                 })
                 gcs_path = result.get("gcs_path", "")
                 if gcs_path:
                     return gcs_path[5:] if gcs_path.startswith("gs://") else gcs_path
-            except Exception as exc:
-                _logger.warning("resolve failed for %s: %s", uri, exc)
-            return None
+        except Exception as exc:
+            _logger.warning("resolve failed for %s: %s", uri, exc)
+        return None
 
-        # Legacy: asset://<plain_id>
-        asset_id = rest.strip("/")
+    def _legacy_resolve(self, asset_id: str) -> str | None:
+        """Legacy: asset://<plain_id> → MCAP locator."""
         try:
             locator = self._requestor.request("GET", self._cfg.resolve("asset_mcap_locator", asset_id=asset_id))
             mcap_id = locator.get("mcap_file_id")
@@ -138,7 +183,7 @@ class StorageManager:
                 if gcs_path:
                     return gcs_path[5:] if gcs_path.startswith("gs://") else gcs_path
         except Exception as exc:
-            _logger.warning("legacy asset resolve failed for %s: %s", uri, exc)
+            _logger.warning("legacy asset resolve failed for %s: %s", asset_id, exc)
         return None
 
     @staticmethod

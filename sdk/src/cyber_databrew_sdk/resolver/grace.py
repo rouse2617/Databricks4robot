@@ -58,9 +58,10 @@ class GraceResolver:
         # Prefer explicit params, fallback to env vars, then defaults
         prefix = "CYBER_DATABREW_GRACE"
         self._cfg = GraceConfig(
-            url=url or os.environ.get(f"{prefix}_URL") or (_DEV_URL if env == "dev" else _PROD_URL),
-            username=username or os.environ.get(f"{prefix}_USERNAME") or "",
-            password=password or os.environ.get(f"{prefix}_PASSWORD") or "",
+            url=url or os.environ.get(f"{prefix}_URL") or os.environ.get("GRACE_URL")
+                 or (_DEV_URL if env == "dev" else _PROD_URL),
+            username=username or os.environ.get(f"{prefix}_USERNAME") or os.environ.get("AUTH_USERNAME") or "",
+            password=password or os.environ.get(f"{prefix}_PASSWORD") or os.environ.get("AUTH_PASSWORD") or "",
         )
         self._client = httpx.Client(timeout=30)
         self._headers = {"Authorization": self._cfg.auth_header}
