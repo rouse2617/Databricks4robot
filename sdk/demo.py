@@ -153,9 +153,11 @@ def demo(sdk: CyberDatabrewClient) -> None:
 
 
 def main() -> None:
-    sdk = CyberDatabrewClient(base_url=BASE_URL, token=TOKEN)
+    sdk = CyberDatabrewClient()
+    # 自动从环境变量读 EMAIL / TOKEN / BASE_URL
+    # 有 email 无 token 时自动调用 email_login
 
-    # 本地开发: 从 gcloud 获取临时 token
+    # 本地开发: 从 gcloud 获取临时 GCS token
     gcs_token = os.environ.get("GCS_TOKEN")
     if gcs_token:
         sdk.set_gcs_token(gcs_token)

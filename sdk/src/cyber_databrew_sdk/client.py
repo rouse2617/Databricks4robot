@@ -132,12 +132,13 @@ class CyberDatabrewClient:
             )
 
         # 2. Resolve auth (config may override token/email, but explicit auth wins)
+        t = token or os.environ.get("CYBER_DATABREW_TOKEN") or os.environ.get("DATABREW_TOKEN")
+        e = email or os.environ.get("CYBER_DATABREW_EMAIL")
+
         if auth is not None:
             auth_headers = auth.get_headers()
         else:
             auth_headers = {}
-            t = token or os.environ.get("CYBER_DATABREW_TOKEN") or os.environ.get("DATABREW_TOKEN")
-            e = email or os.environ.get("CYBER_DATABREW_EMAIL")
             if t:
                 auth_headers["X-Databrew-Token"] = t
             if e:
@@ -152,18 +153,30 @@ class CyberDatabrewClient:
             enable_tracing=enable_tracing,
         )
 
+        # 4. Auto login: if email is set and no token, call email_login
+        if e and not t:
+            try:
+                self.email_login(e)
+            except Exception as exc:
+                _logger.info("auto login skipped for %s: %s", e, exc)
+
     # ------------------------------------------------------------------
-    # Lazy manager access — Stripe's __getattr__ + _subservices pattern
+    # Email login
     # ------------------------------------------------------------------
 
     def email_login(self, email: str) -> dict[str, Any]:
         """Login with email — backend returns a JWT token.
 
+        Called automatically on init when email is set and no token.
+
         Usage::
 
+            sdk = CyberDatabrewClient(email="user@company.com")
+            # auto login on init
+
+            # or explicit:
             sdk = CyberDatabrewClient()
-            result = sdk.email_login("user@company.com")
-            # Now sdk is authenticated with the returned token
+            sdk.email_login("user@company.com")
         """
         result = self._requestor.request("POST", "/api/v1/auth/email-login", json_body={
             "email": email,
@@ -172,6 +185,10 @@ class CyberDatabrewClient:
         if token:
             self._requestor._auth_headers["X-Databrew-Token"] = token
         return result
+
+    # ------------------------------------------------------------------
+    # Lazy manager access — Stripe's __getattr__ + _subservices pattern
+    # ------------------------------------------------------------------
 
     def __getattr__(self, name: str) -> Any:
         """Lazily import and instantiate manager on first access."""
