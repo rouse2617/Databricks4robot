@@ -2203,6 +2203,40 @@ tr:hover .node-copy-icon,
 	min-width: 0;
 }
 
+/* Compact KPI variant — inline label:value, no card border */
+.workflow-summary-cards--compact {
+	gap: 4px;
+	padding: 4px 24px;
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	border-bottom: none;
+	background: transparent;
+}
+.workflow-summary-cards--compact .workflow-summary-card {
+	flex: 0 0 auto;
+	min-width: 0;
+	padding: 2px 12px;
+	background: transparent;
+	border: none;
+	border-right: 1px solid #e5e7eb;
+	border-radius: 0;
+	white-space: nowrap;
+}
+.workflow-summary-cards--compact .workflow-summary-card:last-child {
+	border-right: none;
+}
+.workflow-summary-cards--compact .workflow-summary-card__label {
+	display: inline;
+	font-size: 11px;
+	color: #94a3b8;
+	margin-right: 4px;
+}
+.workflow-summary-cards--compact .workflow-summary-card__value {
+	display: inline;
+	font-size: 12px;
+	font-weight: 600;
+}
+
 .workflow-summary-card__value a,
 .workflow-summary-card__value span {
 	display: inline-block;

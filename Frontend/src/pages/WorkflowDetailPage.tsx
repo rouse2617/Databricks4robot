@@ -21,6 +21,7 @@ import {
 	Space,
 	Spin,
 	Table,
+	Tabs,
 	Tag,
 	Tooltip,
 	Typography,
@@ -919,18 +920,18 @@ function WorkflowSummaryCards({
 	];
 
 	return (
-		<div className="workflow-summary-cards">
+		<div className="workflow-summary-cards workflow-summary-cards--compact">
 			{cards.map((card) => (
 				<div key={card.label} className="workflow-summary-card">
-					<div className="workflow-summary-card__label">{card.label}</div>
-					<div className="workflow-summary-card__value">
+					<span className="workflow-summary-card__label">{card.label}</span>
+					<span className="workflow-summary-card__value">
 						{card.value}
 						{card.extra ? (
 							<Tag color="blue" style={{ marginInlineStart: 4, fontSize: 10 }}>
 								{card.extra}
 							</Tag>
 						) : null}
-					</div>
+					</span>
 				</div>
 			))}
 		</div>
@@ -1861,6 +1862,7 @@ export default function WorkflowDetailPage({
 		? "返回批次详情"
 		: "返回";
 	const [viewMode, setViewMode] = useState<"dag" | "timeline">("dag");
+	const [splitRatio, setSplitRatio] = useState(0.55);
 	const [operationLoading, setOperationLoading] =
 		useState<WorkflowOperationKey | null>(null);
 	const [confirmOperation, setConfirmOperation] =
@@ -2272,7 +2274,7 @@ export default function WorkflowDetailPage({
 		displayWorkflow.nodes,
 	);
 	const graphHeight =
-		displayableNodeCount <= 1 ? 320 : displayableNodeCount <= 5 ? 420 : 500;
+		displayableNodeCount <= 1 ? 240 : displayableNodeCount <= 5 ? 320 : 400;
 
 	return (
 		<div
@@ -2376,24 +2378,45 @@ export default function WorkflowDetailPage({
 				runEventState={runEventState}
 				costSummaryState={costSummaryState}
 			/>
-			<div
-				style={{
-					flex: 1,
-					minHeight: 0,
-					minWidth: 0,
-					overflowY: "auto",
-					background: "#f8fafc",
-					paddingTop: 12,
-				}}
-			>
+			<div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+				{/* Canvas — top zone */}
 				<div
 					className="workflow-detail-graph-shell"
 					style={{
-						height: viewMode === "timeline" ? "auto" : graphHeight,
-						minHeight: viewMode === "timeline" ? 280 : graphHeight,
+						height: viewMode === "timeline" ? "auto" : `calc(100% * ${splitRatio})`,
+						minHeight: viewMode === "timeline" ? 200 : 280,
+						position: "relative",
 						overflow: viewMode === "timeline" ? "visible" : "hidden",
+						background: "#f8fafc",
+						paddingTop: 8,
+						flexShrink: 1,
 					}}
 				>
+					{/* Drag handle — resize canvas/bottom split */}
+					<div
+						onMouseDown={(e) => {
+							e.preventDefault();
+							const el = (e.target as HTMLElement).parentElement;
+							if (!el) return;
+							const h = el.parentElement?.clientHeight || 600;
+							const sy = e.clientY;
+							const sr = splitRatio;
+							const mv = (ev: MouseEvent) => setSplitRatio(Math.max(0.2, Math.min(0.8, sr + (ev.clientY - sy) / h)));
+							const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+							window.addEventListener("mousemove", mv);
+							window.addEventListener("mouseup", up);
+						}}
+						style={{
+							position: "absolute",
+							bottom: -4,
+							left: 0,
+							right: 0,
+							height: 8,
+							zIndex: 10,
+							cursor: "row-resize",
+							background: "transparent",
+						}}
+					/>
 					{viewMode === "dag" ? (
 						<WorkflowDagView
 							nodes={displayWorkflow.nodes}
@@ -2414,35 +2437,57 @@ export default function WorkflowDetailPage({
 						/>
 					)}
 				</div>
-				{runEventState.run || runEventState.items.length > 0 ? (
-					<WorkflowAssetNodePanel
-						assetNodeState={assetNodeState}
-						costSummaryState={costSummaryState}
-						workflowNodeCount={displayableNodeCount}
-						pipelineNodeLabels={pipelineNodeLabels}
-						onSelectAssetNode={handleSelectAssetNode}
+				{/* Bottom — tabbed panel */}
+				<div style={{ flexGrow: 0, flexShrink: 0, height: 200, borderTop: "1px solid #e2e8f0", background: "#fff" }}>
+					<Tabs
+						size="small"
+						defaultActiveKey="detail"
+						items={[
+							{
+								key: "detail",
+								label: "节点明细",
+								children: runEventState.run || runEventState.items.length > 0 ? (
+									<div style={{ overflow: "auto", height: 158 }}>
+										<WorkflowAssetNodePanel
+											assetNodeState={assetNodeState}
+											costSummaryState={costSummaryState}
+											workflowNodeCount={displayableNodeCount}
+											pipelineNodeLabels={pipelineNodeLabels}
+											onSelectAssetNode={handleSelectAssetNode}
+										/>
+									</div>
+								) : (
+									<Alert type="info" showIcon message="暂无资产节点明细" style={{ margin: 8 }} />
+								)
+							},
+							{
+								key: "metadata",
+								label: "运行上下文",
+								children: runEventState.run ? (
+									<div style={{ overflow: "auto", height: 158 }}>
+										<WorkflowRunMetadataPanel runMetadataState={runMetadataState} />
+									</div>
+								) : null
+							},
+							{
+								key: "events",
+								label: "事件时间线",
+								children: (
+									<div style={{ overflow: "auto", height: 158 }}>
+										<WorkflowRunContextPanel
+											runEventState={runEventState}
+											runEventFilters={runEventFilters}
+											onFilterEvents={handleFilterEvents}
+											onRefreshEvents={handleRefreshEvents}
+											onLoadMoreEvents={handleLoadMoreEvents}
+											onSelectNodeEvent={handleSelectEventNode}
+										/>
+									</div>
+								)
+							},
+						]}
 					/>
-				) : (
-					<div style={{ padding: "12px 24px" }}>
-						<Alert
-							type="info"
-							showIcon
-							message="暂无资产节点明细"
-							description="此工作流不是由 DataBrew 部署，没有资产绑定信息。仍可使用 DAG、Pod 日志和终端调试。"
-						/>
-					</div>
-				)}
-				{runEventState.run ? (
-					<WorkflowRunMetadataPanel runMetadataState={runMetadataState} />
-				) : null}
-				<WorkflowRunContextPanel
-					runEventState={runEventState}
-					runEventFilters={runEventFilters}
-					onFilterEvents={handleFilterEvents}
-					onRefreshEvents={handleRefreshEvents}
-					onLoadMoreEvents={handleLoadMoreEvents}
-					onSelectNodeEvent={handleSelectEventNode}
-				/>
+				</div>
 			</div>
 
 			<WorkflowNodeDetailPanel
