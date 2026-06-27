@@ -54,6 +54,7 @@ import {
 import { request } from "../../api/pipelineClient";
 import {
 	type PipelineConfig,
+	type PipelineConfigVersion,
 	pipelineConfigApi,
 } from "../../api/pipelineConfigs";
 import { toAssetStyleId } from "../../lib/idDisplay";
@@ -93,6 +94,7 @@ export function buildDeployConfigSelection(input: {
 	uploadDraftFile: UploadDraftFile | null;
 	inlineDraftName: string;
 	inlineDraftContent: string;
+	selectedConfigVersion?: number;
 	configMountPath: string;
 	configTargetFilename: string;
 }): DeployConfigSelection | undefined {
@@ -105,7 +107,7 @@ export function buildDeployConfigSelection(input: {
 		return {
 			mode: "saved",
 			configId: input.selectedSavedConfig.id,
-			version: input.selectedSavedConfig.currentVersion,
+			version: input.selectedConfigVersion ?? input.selectedSavedConfig.currentVersion,
 			fileName: input.selectedSavedConfig.name,
 			mountPath,
 			targetFilename,
@@ -520,6 +522,8 @@ export function DeployPanel({
 	const [selectedSavedConfigId, setSelectedSavedConfigId] = useState<
 		string | undefined
 	>();
+	const [selectedConfigVersion, setSelectedConfigVersion] = useState<number>(1);
+	const [configVersions, setConfigVersions] = useState<PipelineConfigVersion[]>([]);
 	const [uploadDraftFile, setUploadDraftFile] =
 		useState<UploadDraftFile | null>(null);
 	const [inlineDraftName, setInlineDraftName] = useState("runtime-config.yaml");
@@ -927,6 +931,7 @@ export function DeployPanel({
 			? buildDeployConfigSelection({
 					configSourceMode,
 					selectedSavedConfig,
+					selectedConfigVersion,
 					uploadDraftFile,
 					inlineDraftName,
 					inlineDraftContent,
@@ -1606,8 +1611,15 @@ export function DeployPanel({
 												const selected = savedConfigs.find(
 													(config) => config.id === value,
 												);
-												if (selected && !configTargetFilename.trim()) {
-													setConfigTargetFilename(selected.name);
+												if (selected) {
+													if (!configTargetFilename.trim()) {
+														setConfigTargetFilename(selected.name);
+													}
+													setSelectedConfigVersion(selected.currentVersion);
+													// Fetch versions
+													pipelineConfigApi.get(value).then((cfg) => {
+														setConfigVersions(cfg.versions || []);
+													}).catch(() => {});
 												}
 											}}
 											options={savedConfigs.map((config) => ({
@@ -1615,6 +1627,19 @@ export function DeployPanel({
 												label: `${config.name} · ${config.owner} · ${config.lifecycle} · v${config.currentVersion}`,
 											}))}
 										/>
+										{selectedSavedConfig && configVersions.length > 0 ? (
+											<Select
+												aria-label="选择配置版本"
+												size="small"
+												value={selectedConfigVersion}
+												onChange={(v) => setSelectedConfigVersion(v)}
+												style={{ width: "100%" }}
+												options={configVersions.map((ver) => ({
+													value: ver.version,
+													label: `v${ver.version} · ${ver.status} · ${ver.author} · ${ver.createdAt?.slice(0, 10)}`,
+												}))}
+											/>
+										) : null}
 										{savedConfigsError ? (
 											<Alert
 												type="error"
