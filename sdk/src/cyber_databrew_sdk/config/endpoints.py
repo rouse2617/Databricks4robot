@@ -37,6 +37,8 @@ ENDPOINTS: dict[str, str] = {
     "storage_mcap_download": "/api/v1/mcap-files/{mcap_file_id}/bytes",
     "storage_upload_finalize": "/api/v1/mcap/upload/finalize",
     "storage_mcap_messages": "/api/v1/mcap/{mcap_id}/messages",
+    "storage_resolve": "/api/v1/storage/resolve",
+    "storage_sign_url": "/api/v1/storage/sign-url",
     # ── Delivery ──────────────────────────────────────────────────────
     "delivery_get": "/api/v1/deliveries/{delivery_id}",
     "delivery_list": "/api/v1/deliveries",

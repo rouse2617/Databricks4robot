@@ -21,7 +21,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	type BatchJob,
-	batchJobProgress,
+	batchJobProgress, batchJobProgressStatus,
 	listBatchJobs,
 	pauseBatchJob,
 	resumeBatchJob,
@@ -153,7 +153,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					<Progress
 						percent={batchJobProgress(record)}
 						size="small"
-						status={record.failedCount > 0 ? "exception" : "active"}
+						status={batchJobProgressStatus(record)}
 					/>
 					<Text type="secondary" style={{ fontSize: 12 }}>
 						{record.completedCount} 成功 · {record.failedCount} 失败 · 共{" "}

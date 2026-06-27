@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -29,7 +30,7 @@ _logger = logging.getLogger(__name__)
 # Each manager is lazily imported on first access.
 _managers: dict[str, tuple[str, str]] = {
     "assets": ("cyber_databrew_sdk.managers.assets", "AssetManager"),
-    "storage": ("cyber_databrew_sdk.managers.storage", "StorageManager"),
+    "storage": ("cyber_databrew_sdk.storage.manager", "StorageManager"),
     "delivery": ("cyber_databrew_sdk.managers.delivery", "DeliveryManager"),
     "algo_runs": ("cyber_databrew_sdk.managers.algo_runs", "AlgoRunManager"),
     "search": ("cyber_databrew_sdk.managers.search", "SearchManager"),
@@ -87,6 +88,7 @@ class CyberDatabrewClient:
         token: str | None = None,
         email: str | None = None,
         *,
+        env: str | None = None,
         auth: AuthProvider | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
@@ -101,6 +103,8 @@ class CyberDatabrewClient:
                    Defaults to CYBER_DATABREW_TOKEN, then DATABREW_TOKEN env var.
             email: User email for X-User-Email header (audit-only).
                    Defaults to CYBER_DATABREW_EMAIL env var.
+            env: Environment (``"dev"`` or ``"prod"``).  Required for asset
+                 resolution.  Defaults to CYBER_DATABREW_ENV env var.
             auth: Custom AuthProvider (overrides token+email default).
             base_url: API base URL. Defaults to CYBER_DATABREW_BASE_URL
                       or http://localhost:8080.
@@ -111,6 +115,7 @@ class CyberDatabrewClient:
                     of the config's values (except ``auth`` still applies).
         """
         self._closed = False
+        self._env = env or os.environ.get("CYBER_DATABREW_ENV", "")
 
         # 1. Resolve config
         if config is not None:
@@ -131,12 +136,13 @@ class CyberDatabrewClient:
             )
 
         # 2. Resolve auth (config may override token/email, but explicit auth wins)
+        t = token or os.environ.get("CYBER_DATABREW_TOKEN") or os.environ.get("DATABREW_TOKEN")
+        e = email or os.environ.get("CYBER_DATABREW_EMAIL")
+
         if auth is not None:
             auth_headers = auth.get_headers()
         else:
             auth_headers = {}
-            t = token or os.environ.get("CYBER_DATABREW_TOKEN") or os.environ.get("DATABREW_TOKEN")
-            e = email or os.environ.get("CYBER_DATABREW_EMAIL")
             if t:
                 auth_headers["X-Databrew-Token"] = t
             if e:
@@ -150,6 +156,39 @@ class CyberDatabrewClient:
             http_client=http_client,
             enable_tracing=enable_tracing,
         )
+
+        # 4. Auto login: if email is set and no token, call email_login
+        if e and not t:
+            try:
+                self.email_login(e)
+            except Exception as exc:
+                _logger.info("auto login skipped for %s: %s", e, exc)
+
+    # ------------------------------------------------------------------
+    # Email login
+    # ------------------------------------------------------------------
+
+    def email_login(self, email: str) -> dict[str, Any]:
+        """Login with email — backend returns a JWT token.
+
+        Called automatically on init when email is set and no token.
+
+        Usage::
+
+            sdk = CyberDatabrewClient(email="user@company.com")
+            # auto login on init
+
+            # or explicit:
+            sdk = CyberDatabrewClient()
+            sdk.email_login("user@company.com")
+        """
+        result = self._requestor.request("POST", "/api/v1/auth/email-login", json_body={
+            "email": email,
+        })
+        token = result.get("token", "")
+        if token:
+            self._requestor._auth_headers["X-Databrew-Token"] = token
+        return result
 
     # ------------------------------------------------------------------
     # Lazy manager access — Stripe's __getattr__ + _subservices pattern
@@ -166,9 +205,91 @@ class CyberDatabrewClient:
 
         module = import_module(import_from)
         manager_cls = getattr(module, service_class)
-        instance = manager_cls(self._requestor, self._config)
+        kwargs = {}
+        if name == "storage":
+            kwargs["env"] = self._env
+        instance = manager_cls(self._requestor, self._config, **kwargs)
         setattr(self, name, instance)
         return instance
+
+    # ------------------------------------------------------------------
+    # Filesystem operations (delegated to StorageManager)
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Filesystem operations (delegated to StorageManager)
+    #
+    # URI 解析 (asset:// → gs://) 和 POSIX 语义 (open/seek/tell) 都在
+    # 存储层完成。业务层不关心路径怎么映射。
+    # ------------------------------------------------------------------
+
+    def set_gcs_token(self, token: str) -> None:
+        """Set GCS access token for local development.
+
+        Usage::
+
+            import subprocess
+            token = subprocess.check_output(
+                ["gcloud", "auth", "print-access-token"]
+            ).decode().strip()
+            sdk.set_gcs_token(token)
+        """
+        self.storage.set_gcs_token(token)
+
+    def open(self, uri: str, mode: str = "rb") -> Any:
+        """Open a file for reading/writing."""
+        return self.storage.open(uri, mode)
+
+    def read(self, uri: str) -> bytes:
+        """Read entire file."""
+        return self.storage.read(uri)
+
+    def write(self, uri: str, data: bytes | str) -> int:
+        """Write data to a file."""
+        return self.storage.write(uri, data)
+
+    def stat(self, uri: str) -> Any:
+        """Get file metadata."""
+        return self.storage.stat(uri)
+
+    def listdir(self, uri: str) -> list[Any]:
+        """List directory entries."""
+        return self.storage.listdir(uri)
+
+    def copy(self, src: str, dst: str) -> None:
+        """Copy file."""
+        return self.storage.copy(src, dst)
+
+    def delete(self, uri: str) -> None:
+        """Delete file."""
+        return self.storage.delete(uri)
+
+    def exists(self, uri: str) -> bool:
+        """Check file existence."""
+        return self.storage.exists(uri)
+
+    def upload(self, local_path: str | Path, uri: str) -> None:
+        """Upload a local file to cloud storage.
+
+        Uses parallel chunked upload (transfer_manager) for large files.
+        Avoids loading the entire file into memory.
+
+        Args:
+            local_path: Path to the local file.
+            uri: Destination URI (``gs://bucket/object``, etc.).
+        """
+        return self.storage.upload(local_path, uri)
+
+    def download(self, uri: str, output_path: str | Path) -> Path:
+        """Download a cloud file to local disk.
+
+        Uses parallel chunked download (transfer_manager) for speed.
+        The file is written directly to ``output_path`` without loading
+        into memory.
+
+        Returns the output path.
+        """
+        return self.storage.download(uri, output_path)
 
     # ------------------------------------------------------------------
     # Lifecycle

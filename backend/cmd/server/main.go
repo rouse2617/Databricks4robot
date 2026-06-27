@@ -23,6 +23,7 @@ import (
 	pipelineConfigH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/pipeline_config"
 	queryH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/query"
 	searchH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/search"
+	storageH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/storage"
 	workflowH "github.com/CyberOrigin2077/cyber-databrew/internal/handlers/workflow"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/k8s"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/lakehouse"
@@ -94,6 +95,7 @@ type coreHandlers struct {
 	pipelineConfig    *pipelineConfigH.Handler
 	pipelineComponent *pipelineComponentH.Handler
 	backfill          *backfillH.Handler
+		storage           *storageH.Handler
 	assetUC           *assetUC.Usecase
 }
 

@@ -262,9 +262,9 @@ function defaultRerunTemplateVersion(
 export function batchJobPollIntervalMs(status?: string | null): number | null {
 	switch (status) {
 		case "running":
-			return 5_000;
-		case "paused":
 			return 30_000;
+		case "paused":
+			return 60_000;
 		default:
 			return null;
 	}

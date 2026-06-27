@@ -229,6 +229,17 @@ export function batchJobProgress(job: BatchJob): number {
 	);
 }
 
+export function batchJobProgressStatus(
+	job: BatchJob,
+): "success" | "exception" | "active" | "normal" {
+	if (job.status === "completed") {
+		return job.failedCount > 0 ? "exception" : "success";
+	}
+	if (job.status === "failed") return "exception";
+	if (job.status === "paused") return "normal";
+	return "active";
+}
+
 export interface BackfillItemAttempt {
 	runId: string;
 	attemptNo: number;
