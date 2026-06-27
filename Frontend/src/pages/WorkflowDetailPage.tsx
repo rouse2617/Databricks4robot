@@ -1738,72 +1738,37 @@ function WorkflowRunMetadataPanel({
 					style={{ margin: "8px 10px 0" }}
 				/>
 			) : null}
-			<div style={{ padding: "10px", display: "grid", gap: 12 }}>
-				<Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} bordered>
-					<Descriptions.Item label="Runtime">
-						{metadataText(runtime?.runtimeType)}
-					</Descriptions.Item>
-					<Descriptions.Item label="Workflow">
-						{metadataText(runtime?.workflowName, true)}
-					</Descriptions.Item>
-					<Descriptions.Item label="Namespace">
-						{metadataText(runtime?.namespace, true)}
-					</Descriptions.Item>
-					<Descriptions.Item label="UID">
-						{metadataText(runtime?.uid, true)}
-					</Descriptions.Item>
-					<Descriptions.Item label="状态">
-						{metadataText(runtime?.status)}
-					</Descriptions.Item>
-					<Descriptions.Item label="执行目标">
-						{metadataText(runtime?.executionTargetId, true)}
-					</Descriptions.Item>
-				</Descriptions>
+			<div style={{ padding: "8px 10px" }}>
+				<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "2px 16px", fontSize: 12 }}>
+					{[
+						{ label: "Runtime", val: runtime?.runtimeType },
+						{ label: "Workflow", val: runtime?.workflowName, mono: true },
+						{ label: "Namespace", val: runtime?.namespace, mono: true },
+						{ label: "UID", val: runtime?.uid, mono: true },
+						{ label: "状态", val: runtime?.status },
+						{ label: "执行目标", val: runtime?.executionTargetId, mono: true },
+					].filter((kv) => kv.val).map((kv) => (
+						<div key={kv.label} title={kv.val}>
+							<span style={{ color: "#94a3b8", marginRight: 6 }}>{kv.label}</span>
+							<span style={{ fontFamily: kv.mono ? "var(--font-mono)" : "inherit", fontWeight: 500, color: "#1e293b" }}>
+								{kv.val && kv.val.length > 40 ? kv.val.slice(0, 40) + "…" : kv.val ?? ""}
+							</span>
+						</div>
+					))}
+				</div>
 
-				<Table<RunInput>
-					size="small"
-					rowKey="id"
-					dataSource={inputs}
-					pagination={false}
-					loading={runMetadataState.loading}
-					locale={{ emptyText: "暂无运行输入" }}
-					columns={[
-						{
-							title: "类型",
-							dataIndex: "type",
-							width: 120,
-							render: (value: string) => <Tag>{value}</Tag>,
-						},
-						{
-							title: "引用",
-							render: (_, row) => metadataText(runInputRef(row), true),
-						},
-						{
-							title: "节点",
-							dataIndex: "nodeId",
-							width: 160,
-							render: (value?: string) => metadataText(value, true),
-						},
-						{
-							title: "挂载",
-							width: 220,
-							render: (_, row) =>
-								metadataText(row.mountPath || row.targetFilename),
-						},
-						{
-							title: "文件",
-							width: 180,
-							render: (_, row) =>
-								metadataText(row.targetFilename || row.fileName),
-						},
-						{
-							title: "来源",
-							dataIndex: "source",
-							width: 150,
-							render: (value?: string) => metadataText(value),
-						},
-					]}
-				/>
+				{inputs.length > 0 ? (
+					<div style={{ marginTop: 6, fontSize: 12 }}>
+						<span style={{ color: "#475569", fontWeight: 500, fontSize: 11 }}>输入 ({inputs.length})</span>
+						{inputs.slice(0, 6).map((row) => (
+							<div key={row.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "1px 0" }}>
+								<Tag style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px", margin: 0 }}>{row.type}</Tag>
+								<span style={{ fontFamily: "var(--font-mono)", color: "#64748b", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{runInputRef(row) || "-"}</span>
+							</div>
+						))}
+						{inputs.length > 6 ? <span style={{ color: "#94a3b8", fontSize: 10, marginTop: 2 }}>+{inputs.length - 6} 更多</span> : null}
+					</div>
+				) : null}
 
 				<Table<RunOutput>
 					size="small"
