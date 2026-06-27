@@ -1544,9 +1544,9 @@ export function DeployPanel({
 					/>
 				</div>
 				<div className="deploy-run-field">
-					<div className="deploy-run-field__label">执行目标</div>
+					<div className="deploy-run-field__label">存储池</div>
 					<Select
-						aria-label="执行目标"
+						aria-label="存储池"
 						value={selectedTargetId}
 						onChange={setSelectedTargetId}
 						style={{ width: "100%" }}
@@ -1565,7 +1565,7 @@ export function DeployPanel({
 								]
 						).map((target) => ({
 							value: target.id,
-							label: `${target.name} · ${target.cluster}/${target.namespace}`,
+							label: target.description ? `${target.name}  ${target.description}` : target.name,
 							disabled: target.status !== "available",
 						}))}
 					/>

@@ -1625,7 +1625,7 @@ function PipelineDesignerCanvasInner({
 								type="secondary"
 								style={{ fontSize: 12, marginBottom: 16 }}
 							>
-								选择执行目标和资产后，将流水线转换为 Argo Workflow 并提交到
+								选择存储池和资产后，将流水线转换为 Argo Workflow 并提交到
 								Kubernetes
 								集群。选择多个资产时，会为每个资产各下发一条执行记录。
 							</Typography.Paragraph>
@@ -1704,7 +1704,7 @@ function PipelineDesignerCanvasInner({
 										color: "#64748b",
 									}}
 								>
-									执行目标
+									存储池
 									<Select
 										id="pp-execution-target"
 										value={selectedTargetId}
@@ -1856,8 +1856,7 @@ function PipelineDesignerCanvasInner({
 									</div>
 									{selectedExecutionTarget ? (
 										<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-											执行目标：{selectedExecutionTarget.cluster}/
-											{selectedExecutionTarget.namespace}
+											存储池：{selectedExecutionTarget.name}
 										</Typography.Text>
 									) : null}
 									<Collapse
