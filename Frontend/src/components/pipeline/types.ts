@@ -51,7 +51,7 @@ export interface Component {
 	source?: string;
 	command?: string[];
 	args?: Argument[];
-	env?: Record<string, string>;
+	env?: Argument[];
 	resources?: ResourceRequirements;
 	componentId?: string;
 	releaseId?: string;

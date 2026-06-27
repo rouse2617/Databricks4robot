@@ -28,11 +28,7 @@ const CANVAS_NODE_SIBLING_GAP = 72;
 const CANVAS_LAYOUT_MARGIN_X = 120;
 const CANVAS_LAYOUT_MARGIN_Y = 100;
 
-function envToRecords(
-	resources: unknown,
-): Array<{ name: string; value: string }> {
-	if (!resources || typeof resources !== "object") return [];
-	const raw = (resources as { env?: unknown }).env;
+function normalizeEnv(raw: unknown): Array<{ name: string; value: string }> {
 	if (!raw) return [];
 	if (Array.isArray(raw)) {
 		return raw
@@ -54,6 +50,18 @@ function envToRecords(
 				value: String(value || ""),
 			}),
 		);
+	}
+	return [];
+}
+
+function readComponentEnv(
+	component: Record<string, unknown>,
+): Array<{ name: string; value: string }> {
+	const direct = normalizeEnv(component.env);
+	if (direct.length > 0) return direct;
+	const resources = component.resources;
+	if (resources && typeof resources === "object") {
+		return normalizeEnv((resources as { env?: unknown }).env);
 	}
 	return [];
 }
@@ -212,7 +220,7 @@ export function designDSLToCanvas(pipeline: Pipeline): {
 				source: (pn.component as { source?: string }).source || "custom",
 				command: pn.component.command || [],
 				args: normalizeComponentArgs(pn.component.args as unknown[]),
-				env: envToRecords(pn.component.resources),
+				env: readComponentEnv(component),
 				cpu: pn.component.resources?.cpu || "",
 				memory: pn.component.resources?.memory || "",
 				disk: pn.component.resources?.disk || "",

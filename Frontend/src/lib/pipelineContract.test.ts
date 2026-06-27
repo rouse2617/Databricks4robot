@@ -261,6 +261,99 @@ describe("toTranspilerPipeline", () => {
 		expect(result.nodes[0].component.resources).toBeUndefined();
 	});
 
+	it("emits env at component.env as an array (backend []EnvVar contract)", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "with-env",
+					image: "busybox",
+					command: ["sh", "-c"],
+					args: [],
+					env: [
+						{ name: "QA_CONFIG", value: "mode=fast;limit=100" },
+						{ name: "QA_THRESHOLD", value: "0.85" },
+						{ name: "", value: "ignored" },
+					],
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].component.env).toEqual([
+			{ name: "QA_CONFIG", value: "mode=fast;limit=100" },
+			{ name: "QA_THRESHOLD", value: "0.85" },
+		]);
+		// env must not be nested under resources (backend ignores it there)
+		expect(result.nodes[0].component.resources?.env).toBeUndefined();
+	});
+
+	it("omits component.env when no env vars are set", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "no-env",
+					image: "busybox",
+					command: [],
+					args: [],
+				},
+			},
+		];
+		const result = toTranspilerPipeline(nodes, [], { name: "test" });
+		expect(result.nodes[0].component.env).toBeUndefined();
+	});
+
+	it("round-trips env through component.env", () => {
+		const nodes: Node<PipelineNodeData>[] = [
+			{
+				id: "step-1",
+				type: "pipelineStep",
+				position: { x: 0, y: 0 },
+				data: {
+					label: "with-env",
+					image: "busybox",
+					command: ["sh", "-c"],
+					args: [],
+					env: [{ name: "QA_CONFIG", value: "mode=fast" }],
+				},
+			},
+		];
+		const dsl = toTranspilerPipeline(nodes, [], { name: "test" });
+		const restored = fromTranspilerPipeline(dsl);
+		expect(restored.nodes[0].data.env).toEqual([
+			{ name: "QA_CONFIG", value: "mode=fast" },
+		]);
+	});
+
+	it("restores legacy env stored under resources.env (backward compat)", () => {
+		const legacy: Pipeline = {
+			name: "legacy",
+			version: "1",
+			nodes: [
+				{
+					id: "step-1",
+					component: {
+						name: "legacy",
+						image: "busybox",
+						resources: {
+							cpu: "250m",
+							env: { QA_CONFIG: "mode=fast" },
+						},
+					},
+				},
+			],
+			edges: [],
+		};
+		const restored = fromTranspilerPipeline(legacy);
+		expect(restored.nodes[0].data.env).toEqual([
+			{ name: "QA_CONFIG", value: "mode=fast" },
+		]);
+	});
+
 	it("converts edges with source/target handles", () => {
 		const edges: Edge[] = [
 			{

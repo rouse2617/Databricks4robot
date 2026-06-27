@@ -26,13 +26,13 @@ import {
 	normalizePorts,
 } from "./port-normalizer";
 
-function envToMap(
+function envToList(
 	env: Array<{ name: string; value?: string }>,
-): Record<string, string> {
-	const out: Record<string, string> = {};
+): Array<{ name: string; value: string }> {
+	const out: Array<{ name: string; value: string }> = [];
 	for (const item of env) {
-		if (!item.name || item.value === undefined) continue;
-		out[item.name] = item.value;
+		if (!item?.name) continue;
+		out.push({ name: item.name, value: item.value ?? "" });
 	}
 	return out;
 }
@@ -101,6 +101,7 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 	const runtimeConfig = normalizeRuntimeConfig(d.runtimeConfig);
 	const runtimeSecrets = normalizeRuntimeSecrets(d.runtimeSecrets);
 	const storageMounts = normalizeStorageMounts(d.storageMounts);
+	const env = envToList(d.env ?? []);
 	return {
 		id: n.id,
 		component: {
@@ -113,18 +114,14 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 				d.command || [],
 				normalizeComponentArgs(d.args as unknown[]),
 			),
+			...(env.length > 0 ? { env } : {}),
 			...(d.componentId ? { componentId: d.componentId } : {}),
 			...(d.releaseId ? { releaseId: d.releaseId } : {}),
 			...(d.componentVersionLabel
 				? { componentVersionLabel: d.componentVersionLabel }
 				: {}),
 			resources:
-				d.cpu ||
-				d.memory ||
-				d.disk ||
-				d.gpu ||
-				d.computeTier ||
-				(d.env && d.env.length > 0)
+				d.cpu || d.memory || d.disk || d.gpu || d.computeTier
 					? {
 							cpu: d.cpu,
 							memory: d.memory,
@@ -133,7 +130,6 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 							computeTier: d.computeTier,
 							type: d.type || "container",
 							source: d.source || "custom",
-							env: d.env ? envToMap(d.env) : undefined,
 						}
 					: undefined,
 		},
