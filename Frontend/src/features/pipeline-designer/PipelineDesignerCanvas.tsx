@@ -1,4 +1,5 @@
 import {
+	ColumnWidthOutlined,
 	DeleteOutlined,
 	ExportOutlined,
 	ImportOutlined,
@@ -62,6 +63,7 @@ import { usePipelineComponents } from "../../hooks/usePipelineComponents";
 import { usePipelineKeyboardShortcuts } from "../../hooks/usePipelineKeyboardShortcuts";
 import { MAX_BATCH_ASSET_COUNT } from "../../lib/batchAssetLimits";
 import {
+	DATA_EDGE_STYLE,
 	DEPENDENCY_EDGE_STYLE,
 	dependencyEdgeData,
 	isDependencyEdge,
@@ -102,6 +104,7 @@ import {
 } from "./hooks/useDesignerReducer";
 import { usePipelineDeploy } from "./hooks/usePipelineDeploy";
 import { usePipelineTemplateLoader } from "./hooks/usePipelineTemplateLoader";
+import { computeDagreLayout } from "../../lib/autoLayout";
 
 import "../../styles/pipeline.css";
 
@@ -469,6 +472,7 @@ function PipelineDesignerCanvasInner({
 				target: connection.target,
 				sourceHandle,
 				targetHandle,
+				style: DATA_EDGE_STYLE,
 			};
 			setEdges((current) => {
 				const withoutSameEdge = current.filter(
@@ -1246,6 +1250,23 @@ function PipelineDesignerCanvasInner({
 									</Button>
 								</Tooltip>
 							) : null}
+							<Tooltip title="一键拓扑布局 (Dagre)">
+								<Button
+									size="small"
+									icon={<ColumnWidthOutlined />}
+									onClick={() => {
+										const layout = computeDagreLayout(nodes, edges, "LR");
+										setNodes((nds) =>
+											nds.map((n) => ({
+												...n,
+												position: layout[n.id] ?? n.position,
+											})),
+										);
+									}}
+								>
+									自动布局
+								</Button>
+							</Tooltip>
 							<Tooltip title={deployDisabledReason}>
 								<span>
 									<Button

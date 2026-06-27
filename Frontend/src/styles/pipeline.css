@@ -25,7 +25,7 @@
 	height: calc(100vh - 49px);
 	overflow: hidden;
 	position: relative;
-	background: #eef2f6;
+	background: #f4f6f9;
 }
 
 .pipeline-toolbar {
@@ -92,16 +92,26 @@
 .pipeline-toolbar__actions {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 4px;
 	margin-left: auto;
 	flex-shrink: 0;
+}
+
+.pipeline-toolbar__actions > * {
+	margin-left: 4px;
+}
+
+.pipeline-toolbar__actions > .pipeline-toolbar__edge-mode {
+	margin-right: 8px;
+	padding-right: 10px;
+	border-right: 1px solid var(--color-border, #e2e8f0);
 }
 
 .pipeline-toolbar__secondary-actions {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	padding-left: 4px;
+	gap: 4px;
+	padding-left: 10px;
 	border-left: 1px solid var(--color-border, #e2e8f0);
 }
 
@@ -940,11 +950,36 @@
 }
 
 .deploy-panel__section-card {
-	padding: 14px 16px 16px;
-	margin-bottom: 16px;
+	padding: 16px 16px 20px;
+	margin-bottom: 22px;
 	background: #fff;
 	border: 1px solid var(--color-border, #e2e8f0);
 	border-radius: 8px;
+}
+
+/* deploy form: tight label-input, loose form-group */
+.deploy-run-field__label {
+	margin-bottom: 4px !important;
+	font-size: 13px;
+	color: #475569;
+	font-weight: 500;
+}
+
+.deploy-run-field__label + .ant-select,
+.deploy-run-field__label + .ant-input,
+.deploy-run-field__label + div {
+	margin-bottom: 18px;
+}
+
+/* soften danger "清空" — redirect fear to the confirm modal */
+.pipeline-toolbar__actions .ant-btn-dangerous:not(:hover) {
+	border-color: transparent;
+	color: #94a3b8;
+}
+.pipeline-toolbar__actions .ant-btn-dangerous:hover {
+	color: #ef4444;
+	border-color: #fca5a5;
+	background: #fef2f2;
 }
 
 .deploy-panel__history-title {
@@ -1719,10 +1754,34 @@
 	border-top: 1px solid var(--color-border, #e2e8f0);
 }
 
+/* ── Copy icon hover behavior ──────────────── */
+
+.node-copy-icon {
+	color: #cbd5e1;
+	transition: color 0.15s;
+	font-size: 12px;
+}
+
+tr:hover .node-copy-icon,
+.node-copy-icon:hover {
+	color: var(--color-primary, #3b82f6);
+}
+
 /* ── React Flow Overrides ─────────────────────── */
 
 .react-flow__background {
-	opacity: 0.65;
+	opacity: 0.15;
+}
+
+.react-flow__background pattern circle,
+.react-flow__background pattern line {
+	stroke: #94a3b8;
+	stroke-width: 0.8;
+}
+
+.react-flow__background pattern circle {
+	fill: #94a3b8;
+	r: 1.2;
 }
 
 .react-flow__minimap {

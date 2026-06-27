@@ -84,7 +84,7 @@ function PipelineStepNodeInner({
 									void copyImageReference(data.image || "");
 								}}
 							>
-								<CopyOutlined />
+								<CopyOutlined className="node-copy-icon" />
 							</button>
 						</Tooltip>
 					) : null}

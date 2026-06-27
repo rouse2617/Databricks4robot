@@ -3,7 +3,18 @@ import type { Edge } from "@xyflow/react";
 export const DEFAULT_INPUT_PORT = "input";
 export const DEFAULT_OUTPUT_PORT = "output";
 export const PIPELINE_EDGE_KIND_DEPENDENCY = "dependency";
-export const DEPENDENCY_EDGE_STYLE = { strokeDasharray: "6 4" };
+/** Data edges (asset transfer) — solid line with animated flow */
+export const DATA_EDGE_STYLE = {
+	stroke: "#3b82f6",
+	strokeWidth: 2,
+	animated: false,
+};
+/** Dependency edges (control flow) — dashed line */
+export const DEPENDENCY_EDGE_STYLE = {
+	stroke: "#64748b",
+	strokeWidth: 1.5,
+	strokeDasharray: "6 4",
+};
 
 export type PipelineEdgeKind = "data" | typeof PIPELINE_EDGE_KIND_DEPENDENCY;
 export type PipelineEdgeData = {
