@@ -2504,7 +2504,7 @@ export default function WorkflowDetailPage({
 				width="50%"
 				onClose={handleCloseNodeLogs}
 				destroyOnClose
-				styles={{ body: { padding: 0, background: "#1a1b26" } }}
+				styles={{ body: { padding: 0 } }}
 			>
 				<WorkflowLogPanel
 					selectedNode={displaySelectedNode}

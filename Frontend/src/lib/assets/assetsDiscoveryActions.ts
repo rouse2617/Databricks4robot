@@ -96,7 +96,13 @@ export type AssetsDiscoveryAction =
 	| {
 			type: "FACETS_SUCCESS";
 			payload: {
-				aggregations: Record<string, { key: string; doc_count: number }[]>;
+				aggregations?: Record<string, { key: string; doc_count: number }[]>;
+				/**
+				 * Authoritative total from the dedicated count/facets query
+				 * (postgres count fallback when ES is unavailable). Applied even
+				 * when no aggregation buckets are returned.
+				 */
+				total?: number;
 			};
 	  }
 	| { type: "MARK_RESULTS_FRESH" }

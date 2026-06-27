@@ -429,7 +429,21 @@ export function assetsDiscoveryReducer(
 				...state,
 				resultsState: {
 					...state.resultsState,
-					aggregations: action.payload.aggregations,
+					...(action.payload.aggregations
+						? { aggregations: action.payload.aggregations }
+						: {}),
+					...(action.payload.total != null
+						? {
+								// Floor by the rows already shown so the count can
+								// never drop below the current page (defensive against
+								// an unreliable backend count).
+								total: Math.max(
+									action.payload.total,
+									state.resultsState.items.length,
+								),
+								totalApprox: false,
+							}
+						: {}),
 				},
 			};
 

@@ -9,7 +9,7 @@
 		"dev:preview": "bash ../scripts/dev-local.sh --preview",
 		"dev:remote": "VITE_API_BASE_URL=https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app vite --host",
 		"build": "vite build",
-"typecheck": "tsc -b",
+		"typecheck": "tsc -b",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
 		"preview": "vite preview",
