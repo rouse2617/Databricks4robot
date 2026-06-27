@@ -14,6 +14,7 @@ import {
 	Button,
 	Card,
 	Descriptions,
+	Drawer,
 	Input,
 	Modal,
 	Segmented,
@@ -965,12 +966,12 @@ function WorkflowRunContextPanel({
 	return (
 		<div
 			style={{
-				margin: "0 24px 12px",
+				margin: "0 8px 4px",
 				border: "1px solid #e5e7eb",
 				borderRadius: 8,
 				background: "#fff",
 				overflow: "hidden",
-				padding: 10,
+				padding: 6,
 			}}
 		>
 			<div
@@ -1454,7 +1455,7 @@ function WorkflowAssetNodePanel({
 	return (
 		<div
 			style={{
-				margin: "0 24px 12px",
+				margin: "0 8px 4px",
 				border: "1px solid #e5e7eb",
 				borderRadius: 8,
 				background: "#fff",
@@ -1701,7 +1702,7 @@ function WorkflowRunMetadataPanel({
 	return (
 		<div
 			style={{
-				margin: "0 24px 12px",
+				margin: "0 8px 4px",
 				border: "1px solid #e5e7eb",
 				borderRadius: 8,
 				background: "#fff",
@@ -2492,18 +2493,18 @@ export default function WorkflowDetailPage({
 					: null}
 			</Modal>
 
-			<Modal
+			<Drawer
 				open={showNodeLogs}
 				title={
 					displaySelectedNode
 						? `${displaySelectedNode.displayName || displaySelectedNode.name} 日志`
 						: "日志"
 				}
-				width="80%"
-				onCancel={handleCloseNodeLogs}
-				footer={null}
-				style={{ top: 32 }}
-				styles={{ body: { height: "calc(100vh - 180px)", padding: 0 } }}
+				placement="right"
+				width="50%"
+				onClose={handleCloseNodeLogs}
+				destroyOnClose
+				styles={{ body: { padding: 0, background: "#1a1b26" } }}
 			>
 				<WorkflowLogPanel
 					selectedNode={displaySelectedNode}
@@ -2521,7 +2522,7 @@ export default function WorkflowDetailPage({
 					onStop={stopFollowLogs}
 					onDownload={downloadLogs}
 				/>
-			</Modal>
+			</Drawer>
 		</div>
 	);
 }
