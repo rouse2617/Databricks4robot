@@ -2403,16 +2403,17 @@ export default function WorkflowDetailPage({
 					)}
 				</div>
 				{/* Bottom — tabbed panel */}
-				<div style={{ flexGrow: 0, flexShrink: 0, height: 200, borderTop: "1px solid #e2e8f0", background: "#fff" }}>
+				<div style={{ flex: 1, minHeight: 0, borderTop: "1px solid #e2e8f0", background: "#fff", display: "flex", flexDirection: "column" }}>
 					<Tabs
 						size="small"
 						defaultActiveKey="detail"
+						style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
 						items={[
 							{
 								key: "detail",
 								label: "节点明细",
 								children: runEventState.run || runEventState.items.length > 0 ? (
-									<div style={{ overflow: "auto", height: 158 }}>
+									<div style={{ flex: 1, overflow: "auto" }}>
 										<WorkflowAssetNodePanel
 											assetNodeState={assetNodeState}
 											costSummaryState={costSummaryState}
@@ -2429,7 +2430,7 @@ export default function WorkflowDetailPage({
 								key: "metadata",
 								label: "运行上下文",
 								children: runEventState.run ? (
-									<div style={{ overflow: "auto", height: 158 }}>
+									<div style={{ flex: 1, overflow: "auto" }}>
 										<WorkflowRunMetadataPanel runMetadataState={runMetadataState} />
 									</div>
 								) : null
@@ -2438,7 +2439,7 @@ export default function WorkflowDetailPage({
 								key: "events",
 								label: "事件时间线",
 								children: (
-									<div style={{ overflow: "auto", height: 158 }}>
+									<div style={{ flex: 1, overflow: "auto" }}>
 										<WorkflowRunContextPanel
 											runEventState={runEventState}
 											runEventFilters={runEventFilters}
