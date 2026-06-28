@@ -30,6 +30,10 @@ done
 
 echo "==> ci-local (${MODE})"
 
+if [[ "$(uname -s)" == "Darwin" ]] && [[ -d /opt/homebrew/opt/expat/lib ]]; then
+	export DYLD_LIBRARY_PATH="/opt/homebrew/opt/expat/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+fi
+
 if ! command -v pre-commit >/dev/null 2>&1; then
   echo "Install pre-commit: pip install pre-commit==3.7.1" >&2
   exit 1

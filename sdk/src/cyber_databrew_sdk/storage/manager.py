@@ -332,4 +332,3 @@ class StorageManager:
 
     def get_messages(self, mcap_id: str) -> dict[str, Any]:
         return self._requestor.request("GET", self._cfg.resolve("storage_mcap_messages", mcap_id=mcap_id))
-

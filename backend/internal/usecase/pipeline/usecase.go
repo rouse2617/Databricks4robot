@@ -78,6 +78,9 @@ type Usecase struct {
 	// goroutines so StopBatchRuns can halt further run creation.
 	batchCancelMu sync.Mutex
 	batchCancels  map[string]context.CancelFunc
+
+	watcherLedgerMu     sync.RWMutex
+	watcherLedgerHealth models.LedgerHealth
 }
 
 type DeployOptions struct {
@@ -1351,6 +1354,9 @@ func watcherStateWithHealth(state *models.PipelineRunWatcherState) *models.Pipel
 }
 
 func cloneWatcherState(state *models.PipelineRunWatcherState, limit int) models.PipelineRunWatcherState {
+	if limit <= 0 {
+		limit = 50
+	}
 	out := models.PipelineRunWatcherState{ID: "default", ActiveScanLimit: limit}
 	if state != nil {
 		out = *state
@@ -2502,12 +2508,15 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		return 0, nil
 	}
 	if limit <= 0 {
-		limit = 100
+		limit = 50
 	}
 	var prior *models.PipelineRunWatcherState
 	if uc.watcherRepo != nil {
 		if state, err := uc.watcherRepo.FindByID(ctx, "default"); err == nil && state != nil && state.ActiveScanLimit > 0 {
 			limit = state.ActiveScanLimit
+			if limit > 50 {
+				limit = 50
+			}
 			prior = state
 		}
 	}
@@ -2516,7 +2525,7 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 	nextState.LastScanStartedAt = &scanStartedAt
 	nextState.ActiveScanLimit = limit
 	nextState.TotalScans++
-	runs, err := uc.runRepo.FindAll(ctx)
+	runs, err := uc.loadRunsForWatcherSync(ctx)
 	if err != nil {
 		if uc.watcherRepo != nil {
 			now := time.Now().UTC()
@@ -2595,9 +2604,45 @@ func (uc *Usecase) SyncActiveRunEvents(ctx context.Context, limit int) (int, err
 		nextState.ConsecutiveFailures = 0
 		nextState.LastError = ""
 		nextState.ScanLagSeconds = &lag
+		uc.setWatcherLedgerHealth(computeLedgerHealth(runs, &now))
 		logPipelineSideEffect("save pipeline watcher state", uc.watcherRepo.Save(ctx, &nextState))
 	}
 	return synced, nil
+}
+
+func (uc *Usecase) loadRunsForWatcherSync(ctx context.Context) ([]models.PipelineRun, error) {
+	if uc.runRepo == nil {
+		return nil, nil
+	}
+	return uc.runRepo.FindAllSummaries(ctx)
+}
+
+func computeLedgerHealth(runs []models.PipelineRun, lastBackfill *time.Time) models.LedgerHealth {
+	total := len(runs)
+	hasEvents := 0
+	for i := range runs {
+		if runs[i].LedgerState == "has_ledger" {
+			hasEvents++
+		}
+	}
+	return models.LedgerHealth{
+		TotalRuns:      total,
+		RunsWithEvents: hasEvents,
+		RunsWithout:    total - hasEvents,
+		LastBackfillAt: lastBackfill,
+	}
+}
+
+func (uc *Usecase) setWatcherLedgerHealth(health models.LedgerHealth) {
+	uc.watcherLedgerMu.Lock()
+	uc.watcherLedgerHealth = health
+	uc.watcherLedgerMu.Unlock()
+}
+
+func (uc *Usecase) watcherLedgerHealthSnapshot() models.LedgerHealth {
+	uc.watcherLedgerMu.RLock()
+	defer uc.watcherLedgerMu.RUnlock()
+	return uc.watcherLedgerHealth
 }
 
 func watcherAnomalyReconcileLimit(limit int) int {
@@ -2670,22 +2715,10 @@ func (uc *Usecase) GetRunWatcherStatus(ctx context.Context) (*models.PipelineRun
 		return nil, err
 	}
 	if state == nil {
-		state = &models.PipelineRunWatcherState{ID: "default", ActiveScanLimit: 100}
+		state = &models.PipelineRunWatcherState{ID: "default", ActiveScanLimit: 50}
 	}
-	if runs, err := uc.runRepo.FindAll(ctx); err == nil {
-		total := len(runs)
-		hasEvents := 0
-		for _, r := range runs {
-			if r.LedgerState == "has_ledger" {
-				hasEvents++
-			}
-		}
-		state.LedgerHealth = models.LedgerHealth{
-			TotalRuns:      total,
-			RunsWithEvents: hasEvents,
-			RunsWithout:    total - hasEvents,
-			LastBackfillAt: state.LastSyncedAt,
-		}
+	if cached := uc.watcherLedgerHealthSnapshot(); cached.TotalRuns > 0 {
+		state.LedgerHealth = cached
 	}
 	return watcherStateWithHealth(state), nil
 }

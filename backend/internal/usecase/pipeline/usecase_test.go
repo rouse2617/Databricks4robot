@@ -3345,6 +3345,9 @@ func TestSyncActiveRunEvents_SavesWatcherHealth(t *testing.T) {
 	if !status.Healthy || status.Stale {
 		t.Fatalf("expected healthy non-stale watcher, got %#v", status)
 	}
+	if status.LedgerHealth.TotalRuns != 1 || status.LedgerHealth.RunsWithEvents != 0 {
+		t.Fatalf("unexpected cached ledger health: %#v", status.LedgerHealth)
+	}
 }
 
 func TestSyncActiveRunEvents_ReconcilesMisclassifiedTerminalRun(t *testing.T) {
