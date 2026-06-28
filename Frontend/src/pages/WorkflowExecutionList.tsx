@@ -413,6 +413,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		status: run.status,
 		nodeCount: run.nodeCount ?? 0,
 		createdAt: run.createdAt,
+		startedAt: run.startedAt,
 		finishedAt: run.finishedAt,
 		labels,
 		message: run.message,

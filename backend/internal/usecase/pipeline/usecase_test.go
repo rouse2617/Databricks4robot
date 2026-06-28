@@ -3794,6 +3794,44 @@ func TestRefreshRunForList_LiveWorkflowWinsOverStaleLedger(t *testing.T) {
 	}
 }
 
+func TestRefreshRunForList_PersistsWorkflowStartedAt(t *testing.T) {
+	ctx := context.Background()
+	createdAt := time.Date(2026, 6, 28, 4, 0, 0, 0, time.UTC)
+	startedAt := createdAt.Add(2 * time.Minute)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Pending",
+				CreatedAt:    createdAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, name, namespace string) (*wfv1.Workflow, error) {
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase:     wfv1.WorkflowRunning,
+				StartedAt: metav1.Time{Time: startedAt},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	run := runRepo.byID["run-1"]
+	uc.RefreshRunForList(ctx, run)
+	if run.StartedAt == nil || !run.StartedAt.Equal(startedAt) {
+		t.Fatalf("expected startedAt %v, got %v", startedAt, run.StartedAt)
+	}
+	saved := runRepo.byID["run-1"]
+	if saved.StartedAt == nil || !saved.StartedAt.Equal(startedAt) {
+		t.Fatalf("expected persisted startedAt %v, got %v", startedAt, saved.StartedAt)
+	}
+}
+
 func TestRefreshRunForList_RevivesRecentTTLNotFoundMisclassification(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{

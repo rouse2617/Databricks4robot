@@ -1838,6 +1838,9 @@ func (uc *Usecase) applyWorkflowToRun(ctx context.Context, run *models.PipelineR
 		finishedAt = nil
 	}
 	run.Status = status
+	if startedAt := argoTimeOrZero(wf.Status.StartedAt.Time); startedAt != nil {
+		run.StartedAt = startedAt
+	}
 	if string(wf.UID) != "" {
 		run.ArgoWorkflowUID = string(wf.UID)
 	}
