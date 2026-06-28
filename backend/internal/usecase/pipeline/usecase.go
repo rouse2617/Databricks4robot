@@ -2950,10 +2950,11 @@ func (uc *Usecase) Deploy(
 			depID = strings.TrimSpace(opts[0].PreallocatedRunID)
 		}
 	}
-	target, err := uc.resolveExecutionTarget(ctx, "")
+	resolveTargetID := ""
 	if len(opts) > 0 {
-		target, err = uc.resolveExecutionTarget(ctx, opts[0].TargetID)
+		resolveTargetID = opts[0].TargetID
 	}
+	target, err := uc.resolveExecutionTarget(ctx, resolveTargetID)
 	if err != nil {
 		return nil, err
 	}
