@@ -142,7 +142,9 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		go func() {
 			defer wg.Done()
 			for item := range work {
-				_ = uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "processing", "", "")
+				if err := uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "processing", "", ""); err != nil {
+					slog.Warn("batch job: mark item processing failed", "batchID", jobID, "itemID", item.ID, "err", err)
+				}
 				opts := []DeployOptions{{
 					TargetID:          targetID,
 					TemplateVersion:   templateVersion,
@@ -171,11 +173,19 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		if r.err != nil {
 			errMsg := r.err.Error()
 			slog.Warn("batch job: asset failed", "assetID", r.item.AssetID, "err", errMsg)
-			_ = uc.backfillRepo.UpdateItemStatus(ctx, r.item.ID, "failed", "", errMsg)
-			_ = uc.backfillRepo.IncrementFailed(ctx, jobID)
+			if err := uc.backfillRepo.UpdateItemStatus(ctx, r.item.ID, "failed", "", errMsg); err != nil {
+				slog.Warn("batch job: mark item failed failed", "batchID", jobID, "itemID", r.item.ID, "err", err)
+			}
+			if err := uc.backfillRepo.IncrementFailed(ctx, jobID); err != nil {
+				slog.Warn("batch job: increment failed counter failed", "batchID", jobID, "err", err)
+			}
 		} else {
-			_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, r.item.ID, r.runID, "", "completed")
-			_ = uc.backfillRepo.IncrementCompleted(ctx, jobID)
+			if err := uc.backfillRepo.UpdateItemPipelineRun(ctx, r.item.ID, r.runID, "", "completed"); err != nil {
+				slog.Warn("batch job: bind item run failed", "batchID", jobID, "itemID", r.item.ID, "err", err)
+			}
+			if err := uc.backfillRepo.IncrementCompleted(ctx, jobID); err != nil {
+				slog.Warn("batch job: increment completed counter failed", "batchID", jobID, "err", err)
+			}
 		}
 	}
 
@@ -191,7 +201,9 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		status = "failed"
 	}
 	total := summary.Completed + summary.Failed + summary.Pending + summary.Running
-	_ = uc.backfillRepo.UpdateJobProgress(ctx, jobID, summary.Completed, summary.Failed, status)
+	if err := uc.backfillRepo.UpdateJobProgress(ctx, jobID, summary.Completed, summary.Failed, status); err != nil {
+		slog.Warn("batch job: update final progress failed", "batchID", jobID, "err", err)
+	}
 
 	slog.Info("batch job completed",
 		"batchID", jobID,

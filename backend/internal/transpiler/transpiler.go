@@ -461,14 +461,9 @@ func buildContainerTemplate(node Node, inputs []inputSpec, consumedOutputs map[s
 		tmpl.Container.VolumeMounts = volMounts
 	}
 	// GlobalEnv (asset IDs, deployment ID, etc.) injected into every container.
-	if len(opts.GlobalEnv) > 0 {
-		for _, env := range opts.GlobalEnv {
-			tmpl.Container.Env = append(tmpl.Container.Env, corev1.EnvVar{
-				Name:  env.Name,
-				Value: env.Value,
-			})
-		}
-	}
+	// Global values override a component env of the same name instead of
+	// emitting duplicate entries, which Kubernetes resolves ambiguously.
+	tmpl.Container.Env = mergeGlobalEnv(tmpl.Container.Env, opts.GlobalEnv)
 
 	// Retry strategy
 	if opts.RetryStrategy != nil && opts.RetryStrategy.Limit > 0 {
@@ -689,15 +684,8 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 		}
 		tmpl.Script.VolumeMounts = volMounts
 	}
-	// GlobalEnv injected into every node.
-	if len(opts.GlobalEnv) > 0 {
-		for _, env := range opts.GlobalEnv {
-			tmpl.Script.Env = append(tmpl.Script.Env, corev1.EnvVar{
-				Name:  env.Name,
-				Value: env.Value,
-			})
-		}
-	}
+	// GlobalEnv injected into every node (override duplicates, see container path).
+	tmpl.Script.Env = mergeGlobalEnv(tmpl.Script.Env, opts.GlobalEnv)
 
 	// Retry strategy
 	if opts.RetryStrategy != nil && opts.RetryStrategy.Limit > 0 {
@@ -717,6 +705,29 @@ func buildScriptTemplate(node Node, inputs []inputSpec, consumedOutputs map[stri
 }
 
 // --- helpers ---
+
+// mergeGlobalEnv appends platform-injected global env vars to a container's env
+// list. When a global var shares a name with an existing component env var the
+// global value overrides it in place rather than producing a duplicate entry
+// (Kubernetes resolves duplicate env names ambiguously and warns).
+func mergeGlobalEnv(base []corev1.EnvVar, global []EnvVar) []corev1.EnvVar {
+	if len(global) == 0 {
+		return base
+	}
+	index := make(map[string]int, len(base))
+	for i, e := range base {
+		index[e.Name] = i
+	}
+	for _, env := range global {
+		if i, ok := index[env.Name]; ok {
+			base[i].Value = env.Value
+			continue
+		}
+		base = append(base, corev1.EnvVar{Name: env.Name, Value: env.Value})
+		index[env.Name] = len(base) - 1
+	}
+	return base
+}
 
 func buildK8sResources(res *ResourceRequirements) corev1.ResourceRequirements {
 	if res == nil {

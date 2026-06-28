@@ -29,12 +29,157 @@ func ValidatePipeline(p *Pipeline) error {
 		return &ValidationError{Problems: []string{"pipeline is required"}}
 	}
 	var problems []string
+	problems = append(problems, validateDanglingEdges(p)...)
+	problems = append(problems, validateNormalizedNameCollisions(p)...)
 	problems = append(problems, validateDuplicateTargetInputs(p)...)
 	problems = append(problems, validateConsumedOutputFiles(p)...)
+	problems = append(problems, validateNoCycles(p)...)
 	if len(problems) > 0 {
 		return &ValidationError{Problems: problems}
 	}
 	return nil
+}
+
+// validateDanglingEdges reports edges whose source or target node id does not
+// exist in the pipeline, which would otherwise produce broken Argo dependencies.
+func validateDanglingEdges(p *Pipeline) []string {
+	nodes := make(map[string]bool, len(p.Nodes))
+	for _, node := range p.Nodes {
+		nodes[node.ID] = true
+	}
+	var problems []string
+	for _, edge := range p.Edges {
+		src, _ := edge.ResolveSource()
+		tgt, _ := edge.ResolveTarget()
+		if src != "" && !nodes[src] {
+			problems = append(problems, fmt.Sprintf("edge %q -> %q references unknown source node %q", edge.Source, edge.Target, src))
+		}
+		if tgt != "" && !nodes[tgt] {
+			problems = append(problems, fmt.Sprintf("edge %q -> %q references unknown target node %q", edge.Source, edge.Target, tgt))
+		}
+	}
+	for _, node := range p.Nodes {
+		if len(node.SubNodes) == 0 {
+			continue
+		}
+		sub := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
+		for _, problem := range validateDanglingEdges(sub) {
+			problems = append(problems, fmt.Sprintf("%s: %s", node.ID, problem))
+		}
+	}
+	return problems
+}
+
+// validateNoCycles reports a cycle in the node dependency graph. Argo rejects
+// cyclic DAGs at submission time; catching it earlier yields a clearer error.
+func validateNoCycles(p *Pipeline) []string {
+	exists := make(map[string]bool, len(p.Nodes))
+	for _, node := range p.Nodes {
+		exists[node.ID] = true
+	}
+	adj := make(map[string][]string)
+	for _, edge := range p.Edges {
+		src, _ := edge.ResolveSource()
+		tgt, _ := edge.ResolveTarget()
+		if !exists[src] || !exists[tgt] {
+			continue // dangling edges are reported separately
+		}
+		adj[src] = append(adj[src], tgt)
+	}
+
+	const (
+		white = 0
+		gray  = 1
+		black = 2
+	)
+	color := make(map[string]int, len(p.Nodes))
+	var problems []string
+	cycleFound := false
+	var dfs func(node string)
+	dfs = func(node string) {
+		if cycleFound {
+			return
+		}
+		color[node] = gray
+		for _, next := range adj[node] {
+			if cycleFound {
+				return
+			}
+			switch color[next] {
+			case gray:
+				cycleFound = true
+				problems = append(problems, fmt.Sprintf("pipeline graph has a cycle involving node %q", next))
+				return
+			case white:
+				dfs(next)
+			}
+		}
+		color[node] = black
+	}
+	for _, node := range p.Nodes {
+		if color[node.ID] == white {
+			dfs(node.ID)
+		}
+	}
+
+	for _, node := range p.Nodes {
+		if len(node.SubNodes) == 0 {
+			continue
+		}
+		sub := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
+		for _, problem := range validateNoCycles(sub) {
+			problems = append(problems, fmt.Sprintf("%s: %s", node.ID, problem))
+		}
+	}
+	return problems
+}
+
+// validateNormalizedNameCollisions reports node ids or port names that are
+// distinct in the DSL but collapse to the same Argo template/parameter name
+// after normalization (templateName / safeParamName), which would otherwise
+// silently overwrite templates or parameters.
+func validateNormalizedNameCollisions(p *Pipeline) []string {
+	var problems []string
+	seenTemplate := make(map[string]string, len(p.Nodes))
+	for _, node := range p.Nodes {
+		norm := templateName(node.ID)
+		if prior, ok := seenTemplate[norm]; ok {
+			problems = append(problems, fmt.Sprintf("node ids %q and %q map to the same workflow template name %q", prior, node.ID, norm))
+			continue
+		}
+		seenTemplate[norm] = node.ID
+	}
+	for _, node := range p.Nodes {
+		problems = append(problems, validatePortNameCollisions(node)...)
+	}
+	for _, node := range p.Nodes {
+		if len(node.SubNodes) == 0 {
+			continue
+		}
+		sub := &Pipeline{Nodes: node.SubNodes, Edges: node.SubEdges}
+		for _, problem := range validateNormalizedNameCollisions(sub) {
+			problems = append(problems, fmt.Sprintf("%s: %s", node.ID, problem))
+		}
+	}
+	return problems
+}
+
+func validatePortNameCollisions(node Node) []string {
+	var problems []string
+	check := func(kind string, ports []Port) {
+		seen := make(map[string]string, len(ports))
+		for _, port := range ports {
+			norm := safeParamName(port.Name)
+			if prior, ok := seen[norm]; ok {
+				problems = append(problems, fmt.Sprintf("node %q has %s ports %q and %q that map to the same parameter name %q", node.ID, kind, prior, port.Name, norm))
+				continue
+			}
+			seen[norm] = port.Name
+		}
+	}
+	check("input", node.Inputs)
+	check("output", node.Outputs)
+	return problems
 }
 
 // NormalizePipeline mutates a pipeline into the canonical shape accepted by

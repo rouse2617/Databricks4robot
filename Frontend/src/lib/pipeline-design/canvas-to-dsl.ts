@@ -128,8 +128,6 @@ function nodeToDef(n: PipelineCanvasNode): PipelineNodeDef {
 							disk: d.disk,
 							gpu: d.gpu,
 							computeTier: d.computeTier,
-							type: d.type || "container",
-							source: d.source || "custom",
 						}
 					: undefined,
 		},

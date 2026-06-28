@@ -1,9 +1,11 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -20,44 +22,46 @@ type PricingConfig struct {
 }
 
 var (
-	pricingCache     *PricingConfig
-	pricingCacheOnce sync.Once
-	pricingCacheErr  error
+	pricingMu     sync.Mutex
+	pricingByPath = map[string]*PricingConfig{}
 )
 
-// LoadPricing reads the GCP pricing YAML and caches it process-wide.
-// Returns the cached config on subsequent calls without re-reading the file.
+// LoadPricing reads the GCP pricing YAML and caches it process-wide, keyed by
+// path. Successful loads are cached so subsequent calls for the same path skip
+// the file read; transient read/parse failures are not cached so a later fixed
+// file can still load. Different paths are cached independently.
 func LoadPricing(path string) (*PricingConfig, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	pricingCacheOnce.Do(func() {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			pricingCacheErr = fmt.Errorf("read pricing file: %w", err)
-			return
-		}
-		var cfg PricingConfig
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			pricingCacheErr = fmt.Errorf("parse pricing yaml: %w", err)
-			return
-		}
-		if cfg.CalibrationFactor == 0 {
-			cfg.CalibrationFactor = 1.0
-		}
-		if cfg.Prices == nil {
-			cfg.Prices = map[string]any{}
-		}
-		pricingCache = &cfg
-	})
-	return pricingCache, pricingCacheErr
+	pricingMu.Lock()
+	defer pricingMu.Unlock()
+	if cfg, ok := pricingByPath[path]; ok {
+		return cfg, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read pricing file: %w", err)
+	}
+	var cfg PricingConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse pricing yaml: %w", err)
+	}
+	if cfg.CalibrationFactor == 0 {
+		cfg.CalibrationFactor = 1.0
+	}
+	if cfg.Prices == nil {
+		cfg.Prices = map[string]any{}
+	}
+	pricingByPath[path] = &cfg
+	return &cfg, nil
 }
 
 // resetPricingCache clears the cached pricing (used in tests).
 func resetPricingCache() {
-	pricingCacheOnce = sync.Once{}
-	pricingCache = nil
-	pricingCacheErr = nil
+	pricingMu.Lock()
+	defer pricingMu.Unlock()
+	pricingByPath = map[string]*PricingConfig{}
 }
 
 // resourcesDurationToCost computes estimated cost in USD from Argo's
@@ -208,6 +212,14 @@ func toFloat64(v any) (float64, bool) {
 		return float64(val), true
 	case uint:
 		return float64(val), true
+	case int32:
+		return float64(val), true
+	case json.Number:
+		f, err := val.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
+		return f, err == nil
 	default:
 		return 0, false
 	}
