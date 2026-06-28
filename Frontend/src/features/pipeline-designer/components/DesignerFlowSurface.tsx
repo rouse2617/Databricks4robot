@@ -73,6 +73,8 @@ export function DesignerFlowSurface({
 				onPaneContextMenu={onPaneContextMenu}
 				onError={onError}
 				onlyRenderVisibleElements
+				snapToGrid
+				snapGrid={[20, 20]}
 				minZoom={0.2}
 				maxZoom={2}
 				proOptions={{ hideAttribution: true }}
