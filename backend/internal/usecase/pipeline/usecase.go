@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,6 +73,11 @@ type Usecase struct {
 	runtimeMountCatalog     RuntimeMountCatalog
 	now                     func() time.Time
 	workflowTTLSecondsAfter int32
+
+	// batchCancels holds cancel funcs for in-flight batch submission
+	// goroutines so StopBatchRuns can halt further run creation.
+	batchCancelMu sync.Mutex
+	batchCancels  map[string]context.CancelFunc
 }
 
 type DeployOptions struct {
@@ -814,8 +820,39 @@ func (uc *Usecase) StopBatchRuns(ctx context.Context, batchJobID, owner string) 
 		}
 		stopped++
 	}
+	// Halt the background submission goroutine so it stops creating new runs
+	// for any items that have not been submitted yet.
+	uc.cancelBatch(batchJobID)
 	_ = uc.backfillRepo.UpdateJobStatus(ctx, batchJobID, "cancelled")
 	return stopped, failed, nil
+}
+
+func (uc *Usecase) registerBatchCancel(jobID string, cancel context.CancelFunc) {
+	uc.batchCancelMu.Lock()
+	if uc.batchCancels == nil {
+		uc.batchCancels = make(map[string]context.CancelFunc)
+	}
+	uc.batchCancels[jobID] = cancel
+	uc.batchCancelMu.Unlock()
+}
+
+func (uc *Usecase) unregisterBatchCancel(jobID string) {
+	uc.batchCancelMu.Lock()
+	delete(uc.batchCancels, jobID)
+	uc.batchCancelMu.Unlock()
+}
+
+// cancelBatch cancels the in-flight submission goroutine for a batch job.
+// Returns false when no submission is currently tracked (already finished).
+func (uc *Usecase) cancelBatch(jobID string) bool {
+	uc.batchCancelMu.Lock()
+	cancel := uc.batchCancels[jobID]
+	uc.batchCancelMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
 }
 
 func (uc *Usecase) defaultExecutionTarget() models.ExecutionTarget {

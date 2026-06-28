@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -85,7 +86,10 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 	}
 
 	// Process in background — never use request context for goroutines.
-	go uc.processBatchJob(context.Background(), batchID, templateID, targetID, resolvedVersion, items, owner, maxConcurrency)
+	// A dedicated cancellable context lets StopBatchRuns halt submission.
+	jobCtx, cancel := context.WithCancel(context.Background())
+	uc.registerBatchCancel(batchID, cancel)
+	go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, maxConcurrency)
 
 	return job, nil
 }
@@ -113,6 +117,7 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 	if submitWorkers <= 0 {
 		submitWorkers = defaultSubmitWorkers
 	}
+	defer uc.unregisterBatchCancel(jobID)
 	slog.Info("batch job started", "batchID", jobID, "totalItems", len(items), "workers", submitWorkers)
 
 	if err := uc.backfillRepo.UpdateJobStatus(ctx, jobID, "processing"); err != nil {
@@ -141,22 +146,35 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for item := range work {
-				if err := uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "processing", "", ""); err != nil {
-					slog.Warn("batch job: mark item processing failed", "batchID", jobID, "itemID", item.ID, "err", err)
-				}
-				opts := []DeployOptions{{
-					TargetID:          targetID,
-					TemplateVersion:   templateVersion,
-					BatchJobID:        jobID,
-					AllowUnknownAssets: true,
-					Owner:             owner,
-				}}
-				run, err := uc.CreateRunByTemplateID(ctx, templateID, "", []string{item.AssetID}, opts...)
-				if err != nil {
-					results <- result{item: item, err: err}
-				} else {
-					results <- result{item: item, runID: run.ID}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case item, ok := <-work:
+					if !ok {
+						return
+					}
+					// select picks a ready case at random, so re-check
+					// cancellation before submitting to make stop prompt.
+					if ctx.Err() != nil {
+						return
+					}
+					if err := uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "processing", "", ""); err != nil {
+						slog.Warn("batch job: mark item processing failed", "batchID", jobID, "itemID", item.ID, "err", err)
+					}
+					opts := []DeployOptions{{
+						TargetID:           targetID,
+						TemplateVersion:    templateVersion,
+						BatchJobID:         jobID,
+						AllowUnknownAssets: true,
+						Owner:              owner,
+					}}
+					run, err := uc.CreateRunByTemplateID(ctx, templateID, "", []string{item.AssetID}, opts...)
+					if err != nil {
+						results <- result{item: item, err: err}
+					} else {
+						results <- result{item: item, runID: run.ID}
+					}
 				}
 			}
 		}()
@@ -171,6 +189,11 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 	// Collect results
 	for r := range results {
 		if r.err != nil {
+			// A cancelled batch surfaces context errors on in-flight submits;
+			// these are not real asset failures, so leave the item untouched.
+			if errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded) {
+				continue
+			}
 			errMsg := r.err.Error()
 			slog.Warn("batch job: asset failed", "assetID", r.item.AssetID, "err", errMsg)
 			if err := uc.backfillRepo.UpdateItemStatus(ctx, r.item.ID, "failed", "", errMsg); err != nil {
@@ -197,7 +220,12 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 	}
 
 	status := "completed"
-	if summary.Failed > 0 && summary.Completed == 0 {
+	switch {
+	case ctx.Err() != nil:
+		// StopBatchRuns cancelled this batch mid-flight; preserve the
+		// cancelled status instead of overwriting it with completed/failed.
+		status = "cancelled"
+	case summary.Failed > 0 && summary.Completed == 0:
 		status = "failed"
 	}
 	total := summary.Completed + summary.Failed + summary.Pending + summary.Running

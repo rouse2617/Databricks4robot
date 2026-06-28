@@ -464,6 +464,24 @@ func (m *mockPipelineConfigRepo) FindVersions(context.Context, string) ([]models
 func (m *mockPipelineConfigRepo) Deprecate(context.Context, string) error {
 	return nil
 }
+func (m *mockPipelineConfigRepo) UpdateVersionStatus(_ context.Context, configID string, version int, status string) (*models.PipelineConfigVersion, error) {
+	if v := m.versions[fmt.Sprintf("%s:%d", configID, version)]; v != nil {
+		v.Status = status
+		return v, nil
+	}
+	return nil, nil
+}
+func (m *mockPipelineConfigRepo) UpdateLifecycle(context.Context, string, string) error {
+	return nil
+}
+func (m *mockPipelineConfigRepo) UpdateVersionContent(_ context.Context, configID string, version int, content string, summary string) (*models.PipelineConfigVersion, error) {
+	if v := m.versions[fmt.Sprintf("%s:%d", configID, version)]; v != nil {
+		v.Content = content
+		v.Summary = summary
+		return v, nil
+	}
+	return nil, nil
+}
 
 type mockRuntimeConfigStore struct {
 	lastNamespace    string
@@ -2571,6 +2589,10 @@ func (m *mockTargetRepo) FindDefault(_ context.Context) (*models.ExecutionTarget
 		}
 	}
 	return nil, nil
+}
+func (m *mockTargetRepo) Delete(_ context.Context, id string) error {
+	delete(m.byID, id)
+	return nil
 }
 
 type mockRunNodeRepo struct {
