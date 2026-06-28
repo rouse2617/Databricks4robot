@@ -15,7 +15,12 @@ import (
 
 // CreateBatchJob creates an async batch job that will create pipeline runs
 // for each asset ID in the background. Returns immediately with a batch ID.
-func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int, maxConcurrency int, owner string) (*models.BackfillJob, error) {
+//
+// submitWorkers caps how many goroutines submit workflows to Argo in parallel
+// from this process. It does NOT limit the actual cluster-side concurrency of
+// the submitted runs — that is governed by Argo controller parallelism. Callers
+// must not treat it as a true concurrency limit on running workflows.
+func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int, submitWorkers int, owner string) (*models.BackfillJob, error) {
 	if uc.backfillRepo == nil {
 		return nil, fmt.Errorf("%w: backfill repository is not configured", ErrInvalidArgument)
 	}
@@ -89,7 +94,7 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 	// A dedicated cancellable context lets StopBatchRuns halt submission.
 	jobCtx, cancel := context.WithCancel(context.Background())
 	uc.registerBatchCancel(batchID, cancel)
-	go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, maxConcurrency)
+	go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, submitWorkers)
 
 	return job, nil
 }
