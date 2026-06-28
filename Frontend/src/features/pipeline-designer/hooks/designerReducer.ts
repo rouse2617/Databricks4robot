@@ -1,4 +1,8 @@
-import type { Deployment, ExecutionTarget, PipelineTemplate } from "../../../api/pipelineApi";
+import type {
+	Deployment,
+	ExecutionTarget,
+	PipelineTemplate,
+} from "../../../api/pipelineApi";
 import type { Asset } from "../../../api/types";
 import type { CanvasMenuState } from "../model/canvas-model";
 

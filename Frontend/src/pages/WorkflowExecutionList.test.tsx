@@ -229,7 +229,7 @@ describe("WorkflowExecutionList", () => {
 			expect(screen.getByText("successful-run")).toBeInTheDocument();
 		});
 
-		fireEvent.change(screen.getByPlaceholderText("按名称搜索"), {
+		fireEvent.change(screen.getByPlaceholderText(/搜索名称/), {
 			target: { value: "daily-ingest-template" },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "search" }));
@@ -426,7 +426,7 @@ describe("WorkflowExecutionList", () => {
 			expect(screen.getByText("pipeline-bbb")).toBeInTheDocument();
 		});
 
-		fireEvent.change(screen.getByPlaceholderText("按名称搜索"), {
+		fireEvent.change(screen.getByPlaceholderText(/搜索名称/), {
 			target: { value: "bbb" },
 		});
 		fireEvent.click(screen.getByRole("button", { name: "search" }));

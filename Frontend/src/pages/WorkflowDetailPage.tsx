@@ -480,9 +480,10 @@ function WorkflowLogPanel({
 			displayLines.length === 0
 				? null
 				: buildContentModel(displayLines, search, false),
-		[displayLines, selectedNode],
+		[displayLines, search],
 	);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure list container after content model changes
 	useLayoutEffect(() => {
 		const el = listOuterRef.current;
 		if (!el) return;
@@ -550,6 +551,7 @@ function WorkflowLogPanel({
 	const paginationUnavailable =
 		logResponse?.pagination && logResponse.pagination.available === false;
 	// Scroll to bottom on initial load (new node selected)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll only when node/load state changes, not on every content update
 	useEffect(() => {
 		if (
 			selectedNode &&
@@ -2008,14 +2010,26 @@ function WorkflowRunMetadataPanel({
 						{ label: "UID", val: runtime?.uid, mono: true },
 						{ label: "状态", val: runtime?.status },
 						{ label: "存储池", val: runtime?.executionTargetId, mono: true },
-					].filter((kv) => kv.val).map((kv) => (
-						<div key={kv.label} title={kv.val}>
-							<span style={{color: "#94a3b8", marginRight: 6}}>{kv.label}</span>
-							<span style={{fontFamily: kv.mono ? "var(--font-mono)" : "inherit", fontWeight: 500, color: "#1e293b"}}>
-								{kv.val && kv.val.length > 40 ? kv.val.slice(0, 40) + "…" : kv.val ?? ""}
-							</span>
-						</div>
-					))}
+					]
+						.filter((kv) => kv.val)
+						.map((kv) => (
+							<div key={kv.label} title={kv.val}>
+								<span style={{ color: "#94a3b8", marginRight: 6 }}>
+									{kv.label}
+								</span>
+								<span
+									style={{
+										fontFamily: kv.mono ? "var(--font-mono)" : "inherit",
+										fontWeight: 500,
+										color: "#1e293b",
+									}}
+								>
+									{kv.val && kv.val.length > 40
+										? kv.val.slice(0, 40) + "…"
+										: (kv.val ?? "")}
+								</span>
+							</div>
+						))}
 				</div>
 
 				{inputs.length > 0 ? (
@@ -2770,9 +2784,7 @@ export default function WorkflowDetailPage({
 								window.addEventListener("mousemove", mv);
 								window.addEventListener("mouseup", up);
 							}}
-							onDoubleClick={() =>
-								setSplitRatio(WORKFLOW_SPLIT_RATIO_DEFAULT)
-							}
+							onDoubleClick={() => setSplitRatio(WORKFLOW_SPLIT_RATIO_DEFAULT)}
 							onKeyDown={(e) => {
 								if (e.key === "ArrowUp" || e.key === "ArrowDown") {
 									e.preventDefault();

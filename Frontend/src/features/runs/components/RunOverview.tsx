@@ -1,6 +1,6 @@
 import { Card, Descriptions, Tag } from "antd";
 import { useEffect, useState } from "react";
-import { getRun, type DatabrewRun } from "../api/runsApi";
+import { type DatabrewRun, getRun } from "../api/runsApi";
 
 const TYPE_LABELS: Record<string, string> = {
 	pipeline: "流水线运行",

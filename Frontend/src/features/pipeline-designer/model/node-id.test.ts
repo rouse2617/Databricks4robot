@@ -11,7 +11,9 @@ describe("createPipelineNodeId", () => {
 	});
 
 	it("generates unique ids", () => {
-		const ids = new Set(Array.from({ length: 20 }, () => createPipelineNodeId()));
+		const ids = new Set(
+			Array.from({ length: 20 }, () => createPipelineNodeId()),
+		);
 		expect(ids.size).toBe(20);
 	});
 });
@@ -29,9 +31,9 @@ describe("parseLegacyStepCounter", () => {
 
 describe("maxLegacyStepCounter", () => {
 	it("returns highest legacy counter", () => {
-		expect(
-			maxLegacyStepCounter(["step-1", "node-x", "step-9", "step-4"]),
-		).toBe(9);
+		expect(maxLegacyStepCounter(["step-1", "node-x", "step-9", "step-4"])).toBe(
+			9,
+		);
 	});
 
 	it("returns 0 when no legacy ids", () => {

@@ -107,9 +107,7 @@ describe("ComponentPalette", () => {
 		);
 
 		expect(screen.getByText("2 个版本")).toBeTruthy();
-		fireEvent.click(
-			screen.getByRole("button", { name: "添加组件 echo-test" }),
-		);
+		fireEvent.click(screen.getByRole("button", { name: "添加组件 echo-test" }));
 		expect(onAdd).toHaveBeenLastCalledWith(currentRelease);
 
 		fireEvent.click(

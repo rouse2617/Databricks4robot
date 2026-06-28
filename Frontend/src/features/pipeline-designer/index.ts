@@ -14,16 +14,14 @@ export {
 } from "./hooks/designerReducer";
 export { useDesignerReducer } from "./hooks/useDesignerReducer";
 export {
-	confirmLeaveWithUnsavedChanges,
-	PipelineDesignerCanvas,
-} from "./PipelineDesignerCanvas";
-export type { PipelineDesignerCanvasProps } from "./PipelineDesignerCanvas";
-export type {
-	ArgoNodeRuntimeView,
-} from "./model/runtime-model";
-export { toArgoNodeRuntimeView } from "./model/runtime-model";
-export {
 	createPipelineNodeId,
 	maxLegacyStepCounter,
 	parseLegacyStepCounter,
 } from "./model/node-id";
+export type { ArgoNodeRuntimeView } from "./model/runtime-model";
+export { toArgoNodeRuntimeView } from "./model/runtime-model";
+export type { PipelineDesignerCanvasProps } from "./PipelineDesignerCanvas";
+export {
+	confirmLeaveWithUnsavedChanges,
+	PipelineDesignerCanvas,
+} from "./PipelineDesignerCanvas";

@@ -1,5 +1,5 @@
-import { request } from "../../../api/pipelineClient";
 import type { PipelineRun } from "../../../api/pipelineApi";
+import { request } from "../../../api/pipelineClient";
 
 export type RunType = "pipeline" | "component_build" | "rag_build";
 
@@ -61,7 +61,9 @@ export function getRun(runId: string): Promise<DatabrewRun> {
 	return request<DatabrewRun>("GET", `/runs/${encodeURIComponent(runId)}`);
 }
 
-export function getRunByWorkflowName(workflowName: string): Promise<DatabrewRun> {
+export function getRunByWorkflowName(
+	workflowName: string,
+): Promise<DatabrewRun> {
 	return request<DatabrewRun>(
 		"GET",
 		`/runs/by-workflow/${encodeURIComponent(workflowName)}`,
@@ -75,7 +77,9 @@ export function getRunRuntime(runId: string): Promise<Record<string, unknown>> {
 	);
 }
 
-export function getRunArtifacts(runId: string): Promise<{ items: Record<string, unknown>[] }> {
+export function getRunArtifacts(
+	runId: string,
+): Promise<{ items: Record<string, unknown>[] }> {
 	return request<{ items: Record<string, unknown>[] }>(
 		"GET",
 		`/runs/${encodeURIComponent(runId)}/artifacts`,
@@ -83,11 +87,19 @@ export function getRunArtifacts(runId: string): Promise<{ items: Record<string, 
 }
 
 export function retryRun(runId: string): Promise<PipelineRun> {
-	return request<PipelineRun>("POST", `/runs/${encodeURIComponent(runId)}/retry`, {});
+	return request<PipelineRun>(
+		"POST",
+		`/runs/${encodeURIComponent(runId)}/retry`,
+		{},
+	);
 }
 
 export function stopRun(runId: string): Promise<{ message: string }> {
-	return request<{ message: string }>("POST", `/runs/${encodeURIComponent(runId)}/stop`, {});
+	return request<{ message: string }>(
+		"POST",
+		`/runs/${encodeURIComponent(runId)}/stop`,
+		{},
+	);
 }
 
 export function suspendRun(runId: string): Promise<{ message: string }> {

@@ -1,8 +1,8 @@
 import { useReducer } from "react";
 import {
-	designerReducer,
 	type DesignerAction,
 	type DesignerState,
+	designerReducer,
 	initialDesignerState,
 } from "./designerReducer";
 

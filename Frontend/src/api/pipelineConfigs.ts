@@ -92,14 +92,29 @@ export const pipelineConfigApi = {
 			.get<PipelineConfigVersion>(`/pipeline-configs/${id}/versions/${version}`)
 			.then((r) => r.data),
 
-	updateVersionStatus: (id: string, version: number, status: PipelineConfigLifecycle) =>
+	updateVersionStatus: (
+		id: string,
+		version: number,
+		status: PipelineConfigLifecycle,
+	) =>
 		apiClient
-			.put<PipelineConfigVersion>(`/pipeline-configs/${id}/versions/${version}/status`, { status })
+			.put<PipelineConfigVersion>(
+				`/pipeline-configs/${id}/versions/${version}/status`,
+				{ status },
+			)
 			.then((r) => r.data),
 
-	updateVersionContent: (id: string, version: number, content: string, summary: string) =>
+	updateVersionContent: (
+		id: string,
+		version: number,
+		content: string,
+		summary: string,
+	) =>
 		apiClient
-			.put<PipelineConfigVersion>(`/pipeline-configs/${id}/versions/${version}`, { content, summary })
+			.put<PipelineConfigVersion>(
+				`/pipeline-configs/${id}/versions/${version}`,
+				{ content, summary },
+			)
 			.then((r) => r.data),
 
 	deprecate: (id: string) =>

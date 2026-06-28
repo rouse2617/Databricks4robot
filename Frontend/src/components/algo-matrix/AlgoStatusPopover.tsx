@@ -3,12 +3,12 @@ import { Button, Descriptions, message, Popover, Tag } from "antd";
 import dayjs from "dayjs";
 import { type ReactNode, useState } from "react";
 import { assetsApi } from "../../api/assets";
-import RunIdLink from "../asset-detail/RunIdLink";
 import {
 	COLUMN_LABELS,
 	formatBusinessStatusLabel,
 	resolveBusinessStatusTagColor,
 } from "../../lib/productVocabulary";
+import RunIdLink from "../asset-detail/RunIdLink";
 
 interface AlgoDetail {
 	status?: string;

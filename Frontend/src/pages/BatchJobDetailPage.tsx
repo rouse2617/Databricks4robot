@@ -899,12 +899,18 @@ export default function BatchJobDetailPage() {
 							label: "状态",
 							children: (
 								<>
-									<Tag color={resolveStatusTagColor(actualStatus ?? job.status)}>
+									<Tag
+										color={resolveStatusTagColor(actualStatus ?? job.status)}
+									>
 										{formatBatchJobStatus(actualStatus ?? job.status)}
 									</Tag>
 									{actualStatus && actualStatus !== job.status ? (
-										<Tooltip title={`后端状态: ${formatBatchJobStatus(job.status)}, 根据子任务实际状态计算为: ${formatBatchJobStatus(actualStatus)}`}>
-											<WarningOutlined style={{ color: '#faad14', marginLeft: 4 }} />
+										<Tooltip
+											title={`后端状态: ${formatBatchJobStatus(job.status)}, 根据子任务实际状态计算为: ${formatBatchJobStatus(actualStatus)}`}
+										>
+											<WarningOutlined
+												style={{ color: "#faad14", marginLeft: 4 }}
+											/>
 										</Tooltip>
 									) : null}
 								</>
@@ -1070,9 +1076,7 @@ export default function BatchJobDetailPage() {
 										</Button>
 									))}
 									{runTree.total > 8 ? (
-										<Text type="secondary">
-											+{runTree.total - 8} 个子运行
-										</Text>
+										<Text type="secondary">+{runTree.total - 8} 个子运行</Text>
 									) : null}
 								</Space>
 							) : (

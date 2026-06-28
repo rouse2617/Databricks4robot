@@ -296,9 +296,7 @@ export function apiToRegistered(
 		source: normalizedSource,
 		image: formatImage(api.image, api.tag),
 		tag: api.tag,
-		command:
-			api.command ??
-			((resources.command as string[] | undefined) ?? []),
+		command: api.command ?? (resources.command as string[] | undefined) ?? [],
 		args: normalizeComponentArgs(
 			(api.args && api.args.length > 0
 				? api.args
@@ -344,7 +342,7 @@ export function releaseToRegistered(
 		sourceCommit: release.sourceCommit,
 		imageUid: release.imageUid,
 		command:
-			snapshot.command ?? ((resources.command as string[] | undefined) ?? []),
+			snapshot.command ?? (resources.command as string[] | undefined) ?? [],
 		args: normalizeComponentArgs(
 			(snapshot.args && snapshot.args.length > 0
 				? snapshot.args

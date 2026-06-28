@@ -151,7 +151,9 @@ const renderTimestamp = (value?: string) => {
 	// 瘦身：相对时间为主（最易扫读），精简绝对时间为辅（去秒，同年省略年份），
 	// 完整时间放到 Tooltip，避免在窄列里堆叠两行长数字。
 	const sameYear = parsed.year() === dayjs().year();
-	const compactAbsolute = parsed.format(sameYear ? "MM-DD HH:mm" : "YYYY-MM-DD HH:mm");
+	const compactAbsolute = parsed.format(
+		sameYear ? "MM-DD HH:mm" : "YYYY-MM-DD HH:mm",
+	);
 	return (
 		<Tooltip title={parsed.format("YYYY-MM-DD HH:mm:ss")}>
 			<div style={{ lineHeight: 1.35 }}>

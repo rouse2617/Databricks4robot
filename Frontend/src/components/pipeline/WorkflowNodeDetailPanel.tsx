@@ -1543,13 +1543,25 @@ function SummaryTab({
 					{node.type || node.templateName || "—"}
 				</Descriptions.Item>
 				<Descriptions.Item label="版本">
-					{versionLabel === "—" ? "—" : <CopyableEllipsisText text={versionLabel} />}
+					{versionLabel === "—" ? (
+						"—"
+					) : (
+						<CopyableEllipsisText text={versionLabel} />
+					)}
 				</Descriptions.Item>
 				<Descriptions.Item label="Commit">
-					{commitLabel === "—" ? "—" : <CopyableEllipsisText text={commitLabel} maxLength={12} />}
+					{commitLabel === "—" ? (
+						"—"
+					) : (
+						<CopyableEllipsisText text={commitLabel} maxLength={12} />
+					)}
 				</Descriptions.Item>
 				<Descriptions.Item label="镜像">
-					{imageLabel === "—" ? "—" : <CopyableEllipsisText text={imageLabel} maxLength={52} />}
+					{imageLabel === "—" ? (
+						"—"
+					) : (
+						<CopyableEllipsisText text={imageLabel} maxLength={52} />
+					)}
 				</Descriptions.Item>
 				<Descriptions.Item label="状态">
 					<Tag color={resolveStatusTagColor(node.phase)}>

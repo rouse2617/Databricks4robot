@@ -21,7 +21,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	type BatchJob,
-	batchJobProgress, batchJobProgressStatus,
+	batchJobProgress,
+	batchJobProgressStatus,
 	listBatchJobs,
 	pauseBatchJob,
 	resumeBatchJob,
@@ -56,23 +57,26 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 		templates.map((item) => [item.id, item.name]),
 	);
 
-	const refresh = useCallback(async (silent = false) => {
-		if (!silent) setLoading(true);
-		try {
-			const [jobItems, templateItems] = await Promise.all([
-				listBatchJobs(),
-				listPipelines({ pageSize: 200 })
-					.then((r) => r.items)
-					.catch(() => []),
-			]);
-			setJobs(sortBatchJobsByCreatedDesc(jobItems));
-			setTemplates(templateItems);
-		} catch (err) {
-			message.error(`加载批次任务失败：${String(err)}`);
-		} finally {
-			if (!silent) setLoading(false);
-		}
-	}, [message]);
+	const refresh = useCallback(
+		async (silent = false) => {
+			if (!silent) setLoading(true);
+			try {
+				const [jobItems, templateItems] = await Promise.all([
+					listBatchJobs(),
+					listPipelines({ pageSize: 200 })
+						.then((r) => r.items)
+						.catch(() => []),
+				]);
+				setJobs(sortBatchJobsByCreatedDesc(jobItems));
+				setTemplates(templateItems);
+			} catch (err) {
+				message.error(`加载批次任务失败：${String(err)}`);
+			} finally {
+				if (!silent) setLoading(false);
+			}
+		},
+		[message],
+	);
 
 	useEffect(() => {
 		if (active) {

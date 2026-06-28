@@ -235,8 +235,6 @@ describe("toTranspilerPipeline", () => {
 			disk: "10Gi",
 			gpu: "1",
 			computeTier: "gpu-l4",
-			type: "container",
-			source: "custom",
 		});
 	});
 

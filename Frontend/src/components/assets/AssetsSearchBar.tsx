@@ -325,7 +325,11 @@ const SEARCH_MODE_OPTIONS: {
 	disabled: boolean;
 	tooltip?: string;
 }[] = [
-	{ value: "structured", label: SEARCH_MODE_LABELS.structured, disabled: false },
+	{
+		value: "structured",
+		label: SEARCH_MODE_LABELS.structured,
+		disabled: false,
+	},
 	{ value: "keyword", label: SEARCH_MODE_LABELS.keyword, disabled: false },
 	{
 		value: "semantic",

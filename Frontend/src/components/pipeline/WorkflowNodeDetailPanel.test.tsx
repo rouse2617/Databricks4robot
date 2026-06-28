@@ -357,7 +357,7 @@ describe("WorkflowNodeDetailPanel", () => {
 		);
 		fireEvent.click(screen.getByRole("tab", { name: /运行环境/ }));
 		expect(screen.getByText("main")).toBeTruthy();
-		expect(screen.getByText("python:3.11")).toBeTruthy();
+		expect(screen.getAllByText("python:3.11").length).toBeGreaterThan(0);
 	});
 
 	it("renders inputs in i/o tab", () => {

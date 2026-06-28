@@ -13,7 +13,6 @@ import {
 	Alert,
 	App,
 	Button,
-	Card,
 	Checkbox,
 	Input,
 	Modal,
@@ -44,8 +43,6 @@ import {
 	type ListPipelinesParams,
 	listDeployments,
 	listExecutionTargets,
-	listRuntimeMounts,
-	type RuntimeMountCatalog,
 	listPipelines,
 	listPipelineVersions,
 	type PipelineTemplate,
@@ -107,7 +104,8 @@ export function buildDeployConfigSelection(input: {
 		return {
 			mode: "saved",
 			configId: input.selectedSavedConfig.id,
-			version: input.selectedConfigVersion ?? input.selectedSavedConfig.currentVersion,
+			version:
+				input.selectedConfigVersion ?? input.selectedSavedConfig.currentVersion,
 			fileName: input.selectedSavedConfig.name,
 			mountPath,
 			targetFilename,
@@ -316,7 +314,9 @@ function TemplateCard({
 							</Tag>
 						)}
 						{template.owner ? (
-							<Tag style={{ fontSize: 11, marginLeft: 4 }}>{template.owner}</Tag>
+							<Tag style={{ fontSize: 11, marginLeft: 4 }}>
+								{template.owner}
+							</Tag>
 						) : null}
 						{recommended ? (
 							<Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>
@@ -343,7 +343,9 @@ function TemplateCard({
 							</Tag>
 						)}
 						{template.owner ? (
-							<Tag style={{ fontSize: 11, marginLeft: 4 }}>{template.owner}</Tag>
+							<Tag style={{ fontSize: 11, marginLeft: 4 }}>
+								{template.owner}
+							</Tag>
 						) : null}
 						{recommended ? (
 							<Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>
@@ -502,7 +504,6 @@ export function DeployPanel({
 	const [deployTargetId, setDeployTargetId] = useState<string | null>(null);
 	const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
 	const [selectedTargetId, setSelectedTargetId] = useState<string>("default");
-	const [targetWarning, setTargetWarning] = useState<string | null>(null);
 	const [deploying, setDeploying] = useState(false);
 	const [assetPickerResetKey, setAssetPickerResetKey] = useState(0);
 	const assetPickerRef = useRef<AssetPickerHandle>(null);
@@ -539,7 +540,15 @@ export function DeployPanel({
 		string | undefined
 	>();
 	const [selectedConfigVersion, setSelectedConfigVersion] = useState<number>(1);
-	const [quotaMap, setQuotaMap] = useState<Record<string, { cpu: { used: string; hard: string }; memory: { used: string; hard: string } }>>({});
+	const [quotaMap, setQuotaMap] = useState<
+		Record<
+			string,
+			{
+				cpu: { used: string; hard: string };
+				memory: { used: string; hard: string };
+			}
+		>
+	>({});
 
 	// Fetch live quota data
 	useEffect(() => {
@@ -548,7 +557,9 @@ export function DeployPanel({
 			.then((data) => setQuotaMap(data.items || {}))
 			.catch(() => {});
 	}, []);
-	const [configVersions, setConfigVersions] = useState<PipelineConfigVersion[]>([]);
+	const [configVersions, setConfigVersions] = useState<PipelineConfigVersion[]>(
+		[],
+	);
 	const [uploadDraftFile, setUploadDraftFile] =
 		useState<UploadDraftFile | null>(null);
 	const [inlineDraftName, setInlineDraftName] = useState("runtime-config.yaml");
@@ -1552,7 +1563,11 @@ export function DeployPanel({
 			</div>
 
 			<Modal
-				title={selectedAssetIds.length > 0 ? `运行流水线（${selectedAssetIds.length} 个资产）` : "运行流水线（无资产）"}
+				title={
+					selectedAssetIds.length > 0
+						? `运行流水线（${selectedAssetIds.length} 个资产）`
+						: "运行流水线（无资产）"
+				}
 				open={assetModalOpen}
 				onCancel={closeAssetModal}
 				onOk={handleDeployConfirm}
@@ -1616,7 +1631,9 @@ export function DeployPanel({
 							return {
 								value: target.id,
 								label: `${target.name}${usage}`,
-								title: q ? `CPU: ${q.cpu.used}/${q.cpu.hard}  MEM: ${q.memory.used}/${q.memory.hard}` : "",
+								title: q
+									? `CPU: ${q.cpu.used}/${q.cpu.hard}  MEM: ${q.memory.used}/${q.memory.hard}`
+									: "",
 								disabled: target.status !== "available",
 							};
 						})}
@@ -1669,9 +1686,12 @@ export function DeployPanel({
 													}
 													setSelectedConfigVersion(selected.currentVersion);
 													// Fetch versions
-													pipelineConfigApi.get(value).then((cfg) => {
-														setConfigVersions(cfg.versions || []);
-													}).catch(() => {});
+													pipelineConfigApi
+														.get(value)
+														.then((cfg) => {
+															setConfigVersions(cfg.versions || []);
+														})
+														.catch(() => {});
 												}
 											}}
 											options={savedConfigs.map((config) => ({

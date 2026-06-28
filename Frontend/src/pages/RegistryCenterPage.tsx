@@ -1,34 +1,33 @@
 import {
 	ApartmentOutlined,
 	BranchesOutlined,
-	DiffOutlined,
-	EditOutlined,
 	CheckCircleOutlined,
 	CopyOutlined,
+	DiffOutlined,
+	EditOutlined,
+	EllipsisOutlined,
 	EyeOutlined,
 	FileAddOutlined,
 	InboxOutlined,
-	EllipsisOutlined,
 	PlusOutlined,
 	ReloadOutlined,
 } from "@ant-design/icons";
+import Editor, { type Monaco } from "@monaco-editor/react";
 import {
 	Alert,
 	Button,
 	Card,
 	Col,
+	Collapse,
 	Descriptions,
-	Divider,
 	Drawer,
 	Dropdown,
+	Empty,
 	Form,
 	Grid,
 	Input,
 	Modal,
-	Collapse,
-	Empty,
 	message,
-	Popconfirm,
 	Row,
 	Segmented,
 	Select,
@@ -42,7 +41,6 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Editor, { type Monaco } from "@monaco-editor/react";
 import type { AlgoRegistryItem } from "../api/algoRegistry";
 import {
 	type PipelineConfig,
@@ -55,9 +53,9 @@ import {
 	ContentErrorState,
 	ContentLoadingState,
 } from "../components/common/PageContentState";
+import PoolManager from "../components/pipeline/PoolManager";
 import { COLUMN_LABELS } from "../lib/productVocabulary";
 
-import PoolManager from "../components/pipeline/PoolManager";
 const { Title, Text, Paragraph } = Typography;
 
 interface UserConfigRecord {
@@ -185,29 +183,36 @@ function tagColor(value: string) {
 }
 
 const VALID_CONFIG_EXTENSIONS = [".yaml", ".yml", ".json"];
-const CONFIG_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\.(yaml|yml|json)$/;
+const CONFIG_NAME_PATTERN =
+	/^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)*\.(yaml|yml|json)$/;
 const CONFIG_NAME_MAX_LENGTH = 96;
 
 function looksLikeTypoConfigName(name?: string) {
 	const lower = (name || "").trim().toLowerCase();
-	if (lower.endsWith(".ymal")) return "文件后缀看起来像 .ymal，通常应为 .yaml 或 .yml。";
-	if (/\.(yam|yml|yaml|ym|josn|jso|yml\.yaml)$/.test(lower)) return "文件后缀可能拼写有误，有效后缀：.yaml / .yml / .json";
+	if (lower.endsWith(".ymal"))
+		return "文件后缀看起来像 .ymal，通常应为 .yaml 或 .yml。";
+	if (/\.(yam|yml|yaml|ym|josn|jso|yml\.yaml)$/.test(lower))
+		return "文件后缀可能拼写有误，有效后缀：.yaml / .yml / .json";
 	return null;
 }
 
 function configNameExtra(name?: string): string {
 	const trimmed = (name || "").trim();
-	if (!trimmed) return "推荐格式：<组件>-<环境>.yaml，例如 head-track-detector.yaml、hand-detect-dev.yaml、node-a-config.yaml";
+	if (!trimmed)
+		return "推荐格式：<组件>-<环境>.yaml，例如 head-track-detector.yaml、hand-detect-dev.yaml、node-a-config.yaml";
 
 	const typo = looksLikeTypoConfigName(trimmed);
 	if (typo) return `⚠ ${typo}`;
 
-	const hasExtension = VALID_CONFIG_EXTENSIONS.some((ext) => trimmed.toLowerCase().endsWith(ext));
+	const hasExtension = VALID_CONFIG_EXTENSIONS.some((ext) =>
+		trimmed.toLowerCase().endsWith(ext),
+	);
 	if (!hasExtension) return "⚠ 需要文件扩展名 .yaml / .yml / .json";
 
 	if (/[A-Z]/.test(trimmed)) return "⚠ 建议使用全小写字母";
 
-	if (trimmed.length > CONFIG_NAME_MAX_LENGTH) return `⚠ 名称不能超过 ${CONFIG_NAME_MAX_LENGTH} 字符`;
+	if (trimmed.length > CONFIG_NAME_MAX_LENGTH)
+		return `⚠ 名称不能超过 ${CONFIG_NAME_MAX_LENGTH} 字符`;
 
 	return "✓ 格式正确";
 }
@@ -543,15 +548,12 @@ export default function RegistryCenterPage() {
 	const [configsLoading, setConfigsLoading] = useState(false);
 	const [savingConfig, setSavingConfig] = useState(false);
 	const [savingVersion, setSavingVersion] = useState(false);
-	const [deprecatingConfigId, setDeprecatingConfigId] = useState<string | null>(
-		null,
-	);
-	const [loadingVersionKey, setLoadingVersionKey] = useState<string | null>(
-		null,
-	);
+	const [, setDeprecatingConfigId] = useState<string | null>(null);
 	const [compareLoading, setCompareLoading] = useState(false);
 	const [diffPreviewRows, setDiffPreviewRows] = useState<VersionDiffRow[]>([]);
-	const [diffBaseVersionNumber, setDiffBaseVersionNumber] = useState<number | null>(null);
+	const [diffBaseVersionNumber, setDiffBaseVersionNumber] = useState<
+		number | null
+	>(null);
 	const [diffBaseContent, setDiffBaseContent] = useState<string>("");
 	const diffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -573,32 +575,38 @@ export default function RegistryCenterPage() {
 
 	// When edit modal opens, load version content from API
 	useEffect(() => {
-		console.log("[editVersion] useEffect fired", editVersionState.visible, editVersionState.configId, editVersionState.versionNumber);
-		if (editVersionState.visible && editVersionState.configId && editVersionState.versionNumber) {
-			console.log("[editVersion] calling getVersion", editVersionState.configId, editVersionState.versionNumber);
-			const result = pipelineConfigApi.getVersion(editVersionState.configId, editVersionState.versionNumber);
-			console.log("[editVersion] getVersion returned", result);
-			result
-				.then(detail => {
-					console.log("[editVersion] getVersion success", detail);
-					setEditVersionState(prev => ({
+		if (
+			editVersionState.visible &&
+			editVersionState.configId &&
+			editVersionState.versionNumber
+		) {
+			pipelineConfigApi
+				.getVersion(editVersionState.configId, editVersionState.versionNumber)
+				.then((detail) => {
+					setEditVersionState((prev) => ({
 						...prev,
 						content: detail.content || "",
 					}));
 				})
-				.catch((err) => {
-					console.log("[editVersion] getVersion error", err);
+				.catch(() => {
 					msg.error("读取版本内容失败");
 				});
 		}
-	}, [editVersionState.visible, editVersionState.configId, editVersionState.versionNumber]);
+	}, [
+		editVersionState.visible,
+		editVersionState.configId,
+		editVersionState.versionNumber,
+	]);
 
 	const versionContentValue = Form.useWatch("content", versionForm);
 
 	const loadDiffBaseVersion = useCallback(
 		async (configId: string, versionNumber: number) => {
 			try {
-				const detail = await pipelineConfigApi.getVersion(configId, versionNumber);
+				const detail = await pipelineConfigApi.getVersion(
+					configId,
+					versionNumber,
+				);
 				setDiffBaseContent(detail.content || "");
 			} catch {
 				setDiffBaseContent("");
@@ -621,7 +629,9 @@ export default function RegistryCenterPage() {
 		if (diffTimerRef.current) clearTimeout(diffTimerRef.current);
 		diffTimerRef.current = setTimeout(() => {
 			if (diffBaseContent && versionContentValue) {
-				setDiffPreviewRows(buildVersionDiffRows(diffBaseContent, versionContentValue));
+				setDiffPreviewRows(
+					buildVersionDiffRows(diffBaseContent, versionContentValue),
+				);
 			} else {
 				setDiffPreviewRows([]);
 			}
@@ -704,8 +714,8 @@ export default function RegistryCenterPage() {
 				lifecycleDisplay(cfg.lifecycle),
 				cfg.latestVersion,
 				...cfg.tags,
-				...cfg.versions.map(v => v.summary),
-				...cfg.versions.map(v => v.version),
+				...cfg.versions.map((v) => v.summary),
+				...cfg.versions.map((v) => v.version),
 			]
 				.join(" ")
 				.toLowerCase()
@@ -773,8 +783,7 @@ export default function RegistryCenterPage() {
 				setEditingConfig(null);
 				configForm.resetFields();
 			} catch (err: any) {
-				const detail: string =
-					err?.response?.data?.message || "";
+				const detail: string = err?.response?.data?.message || "";
 				if (detail.toLowerCase().includes("already exists")) {
 					msg.error("配置名称已存在，请换一个名称");
 				} else {
@@ -870,32 +879,6 @@ export default function RegistryCenterPage() {
 		})();
 	};
 
-	const handleOpenVersionContent = (
-		config: UserConfigRecord,
-		version: ConfigVersionRecord,
-	) => {
-		void (async () => {
-			const loadingKey = `${config.id}:${version.versionNumber}`;
-			setLoadingVersionKey(loadingKey);
-			try {
-				const detail = await pipelineConfigApi.getVersion(
-					config.id,
-					version.versionNumber,
-				);
-				setSelectedVersionContent({
-					configName: config.name,
-					version: mapConfigVersion(detail),
-				});
-			} catch {
-				msg.error("读取版本内容失败");
-			} finally {
-				setLoadingVersionKey((current) =>
-					current === loadingKey ? null : current,
-				);
-			}
-		})();
-	};
-
 	const handleOpenEditVersion = (
 		config: UserConfigRecord,
 		version: ConfigVersionRecord,
@@ -905,7 +888,7 @@ export default function RegistryCenterPage() {
 			configId: config.id,
 			versionNumber: version.versionNumber,
 			content: "",
-			summary: version.summary === "—" ? "" : (version.summary || ""),
+			summary: version.summary === "—" ? "" : version.summary || "",
 			saving: false,
 		});
 	};
@@ -1060,162 +1043,94 @@ export default function RegistryCenterPage() {
 			render: (_, record) => {
 				const archived = isArchivedConfig(record);
 				return (
-						<Space size={2} wrap>
-							{archived ? null : (
-								<Button
-									size="small"
-									type="primary"
-									icon={<FileAddOutlined />}
-									onClick={(e) => { e.stopPropagation(); openCreateVersion(record); }}
-								>
-									新建版本
-								</Button>
-							)}
-							<IconActionButton
-								title="查看详情"
-								icon={<EyeOutlined />}
-								onClick={() => setSelectedConfigId(record.id)}
-							/>
-							<Dropdown menu={{
-								items: [
-									...(archived ? [] : [
-										{ key: "edit", icon: <EditOutlined />, label: "编辑属性", onClick: () => openEditConfig(record) },
-									]),
-									...(record.lifecycle === "draft" && !archived ? [{
-										key: "ready", icon: <CheckCircleOutlined />, label: "发布为 Ready",
-										onClick: async () => {
-											try {
-												await pipelineConfigApi.updateVersionStatus(record.id, record.currentVersion, "ready");
-												msg.success("已发布为 Ready");
-												refreshConfigs();
-											} catch (err) {
-												msg.error(`发布失败: ${err}`);
-											}
-										}
-									}] : []),
-									...(record.versions.length >= 2 ? [{ key: "diff", icon: <DiffOutlined />, label: "对比版本", onClick: () => handleOpenVersionCompare(record) }] : []),
-									...(!archived ? [{ key: "divider", type: "divider" }, { key: "archive", icon: <InboxOutlined />, label: "归档配置", danger: true, onClick: () => handleDeprecateConfig(record) }] : []),
-								].filter(Boolean) as any,
-							}}>
-								<Button size="small" icon={<EllipsisOutlined />}>更多</Button>
-							</Dropdown>
-						</Space>				);
-			},
-		},
-	];
-
-	const createVersionCols = (
-		config: UserConfigRecord,
-	): ColumnsType<ConfigVersionRecord> => {
-		const archived = isArchivedConfig(config);
-		return [
-			{
-				title: "版本",
-				dataIndex: "version",
-				width: 130,
-				render: (v, record: ConfigVersionRecord) => (
-					<Space size={4}>
-						<Text code>{v}</Text>
-						{record.versionNumber === config.currentVersion ? (
-							<Tag color="blue" style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px" }}>当前</Tag>
-						) : null}
-					</Space>
-				),
-			},
-			{
-				title: "状态",
-				dataIndex: "lifecycle",
-				width: 120,
-				render: (v: ConfigVersionRecord["lifecycle"]) => (
-					<Tag color={lifecycleTagColor(v)}>{lifecycleDisplay(v)}</Tag>
-				),
-			},
-			{
-				title: "更新人",
-				dataIndex: "author",
-				width: 150,
-				render: (v) => <UserTag value={v} />,
-			},
-			{ title: "更新时间", dataIndex: "updatedAt", width: 180 },
-			{
-				title: "变更说明",
-				dataIndex: "summary",
-				render: (summary: string) => (
-					<Text
-						style={{ color: "#475569", maxWidth: 360 }}
-						ellipsis={{ tooltip: summary }}
-					>
-						{summary}
-					</Text>
-				),
-			},
-			{
-				title: "操作",
-				key: "content",
-				width: archived ? 120 : 190,
-				align: "right",
-				render: (_, version) => (
-					<Space size={2}>
-						<IconActionButton
-							title="查看内容"
-							icon={<EyeOutlined />}
-							loading={
-								loadingVersionKey === `${config.id}:${version.versionNumber}`
-							}
-							onClick={() => handleOpenVersionContent(config, version)}
-						/>
-						<IconActionButton
-							title="对比此版本"
-							icon={<DiffOutlined />}
-							disabled={config.versions.length < 2}
-							onClick={() => handleOpenVersionCompare(config, version)}
-						/>
+					<Space size={2} wrap>
 						{archived ? null : (
 							<Button
 								size="small"
-								type="link"
-								icon={<EditOutlined />}
-								style={{ paddingInline: 4 }}
-								onClick={() => openCreateVersion(config, version)}
+								type="primary"
+								icon={<FileAddOutlined />}
+								onClick={(e) => {
+									e.stopPropagation();
+									openCreateVersion(record);
+								}}
 							>
 								新建版本
 							</Button>
 						)}
-						{!archived && version.lifecycle === "draft" ? (
-							<>
-								<Button
-									size="small"
-									type="link"
-									icon={<CheckCircleOutlined />}
-									style={{ paddingInline: 4, color: "#52c41a" }}
-									onClick={async () => {
-										try {
-											await pipelineConfigApi.updateVersionStatus(config.id, version.versionNumber, "ready");
-											msg.success("已发布为 Ready");
-											refreshConfigs();
-										} catch (err) {
-											msg.error(`发布失败: ${err}`);
-										}
-									}}
-								>
-									发布为 Ready
-								</Button>
-								<Button
-									size="small"
-									type="link"
-									icon={<EditOutlined />}
-									style={{ paddingInline: 4, color: "#faad14" }}
-									onClick={() => handleOpenEditVersion(config, version)}
-								>
-									编辑
-								</Button>
-							</>
-						) : null}
+						<IconActionButton
+							title="查看详情"
+							icon={<EyeOutlined />}
+							onClick={() => setSelectedConfigId(record.id)}
+						/>
+						<Dropdown
+							menu={{
+								items: [
+									...(archived
+										? []
+										: [
+												{
+													key: "edit",
+													icon: <EditOutlined />,
+													label: "编辑属性",
+													onClick: () => openEditConfig(record),
+												},
+											]),
+									...(record.lifecycle === "draft" && !archived
+										? [
+												{
+													key: "ready",
+													icon: <CheckCircleOutlined />,
+													label: "发布为 Ready",
+													onClick: async () => {
+														try {
+															await pipelineConfigApi.updateVersionStatus(
+																record.id,
+																record.currentVersion,
+																"ready",
+															);
+															msg.success("已发布为 Ready");
+															refreshConfigs();
+														} catch (err) {
+															msg.error(`发布失败: ${err}`);
+														}
+													},
+												},
+											]
+										: []),
+									...(record.versions.length >= 2
+										? [
+												{
+													key: "diff",
+													icon: <DiffOutlined />,
+													label: "对比版本",
+													onClick: () => handleOpenVersionCompare(record),
+												},
+											]
+										: []),
+									...(!archived
+										? [
+												{ key: "divider", type: "divider" },
+												{
+													key: "archive",
+													icon: <InboxOutlined />,
+													label: "归档配置",
+													danger: true,
+													onClick: () => handleDeprecateConfig(record),
+												},
+											]
+										: []),
+								].filter(Boolean) as any,
+							}}
+						>
+							<Button size="small" icon={<EllipsisOutlined />}>
+								更多
+							</Button>
+						</Dropdown>
 					</Space>
-				),
+				);
 			},
-		];
-	};
+		},
+	];
 
 	const ContentPreviewTab = ({ config: cfg }: { config: UserConfigRecord }) => {
 		const [content, setContent] = useState<string | null>(null);
@@ -1224,25 +1139,60 @@ export default function RegistryCenterPage() {
 			void (async () => {
 				setLoading(true);
 				try {
-					const detail = await pipelineConfigApi.getVersion(cfg.id, cfg.currentVersion);
+					const detail = await pipelineConfigApi.getVersion(
+						cfg.id,
+						cfg.currentVersion,
+					);
 					setContent(detail.content || "");
-				} catch { setContent(null); }
-				finally { setLoading(false); }
+				} catch {
+					setContent(null);
+				} finally {
+					setLoading(false);
+				}
 			})();
 		}, [cfg.id, cfg.currentVersion]);
 		if (loading) return <ContentLoadingState title="加载内容…" />;
-		if (content === null) return <ContentErrorState title="加载失败" onRetry={() => setLoading(true)} />;
-		if (!content) return <Empty description="版本内容为空" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+		if (content === null)
+			return (
+				<ContentErrorState title="加载失败" onRetry={() => setLoading(true)} />
+			);
+		if (!content)
+			return (
+				<Empty
+					description="版本内容为空"
+					image={Empty.PRESENTED_IMAGE_SIMPLE}
+				/>
+			);
 		return (
 			<div>
-				<div style={{ marginBottom: 8, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-					<Button size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(content); msg.success("已复制"); }}>复制</Button>
+				<div
+					style={{
+						marginBottom: 8,
+						display: "flex",
+						justifyContent: "flex-end",
+						gap: 8,
+					}}
+				>
+					<Button
+						size="small"
+						icon={<CopyOutlined />}
+						onClick={() => {
+							navigator.clipboard.writeText(content);
+							msg.success("已复制");
+						}}
+					>
+						复制
+					</Button>
 				</div>
 				<Input.TextArea
 					rows={20}
 					value={content}
 					readOnly
-					style={{ fontFamily: "monospace", fontSize: 12, background: "#f8fafc" }}
+					style={{
+						fontFamily: "monospace",
+						fontSize: 12,
+						background: "#f8fafc",
+					}}
 				/>
 			</div>
 		);
@@ -1254,59 +1204,146 @@ export default function RegistryCenterPage() {
 			const key = `${cfg.id}:${version.versionNumber}`;
 			setLocalLoading(key);
 			try {
-				const detail = await pipelineConfigApi.getVersion(cfg.id, version.versionNumber);
-				setSelectedVersionContent({ configName: cfg.name, version: mapConfigVersion(detail) });
-			} catch { msg.error("读取失败"); }
-			finally { setLocalLoading(null); }
+				const detail = await pipelineConfigApi.getVersion(
+					cfg.id,
+					version.versionNumber,
+				);
+				setSelectedVersionContent({
+					configName: cfg.name,
+					version: mapConfigVersion(detail),
+				});
+			} catch {
+				msg.error("读取失败");
+			} finally {
+				setLocalLoading(null);
+			}
 		};
 		const handlePublishReady = async (version: ConfigVersionRecord) => {
 			try {
-				await pipelineConfigApi.updateVersionStatus(cfg.id, version.versionNumber, "ready");
+				await pipelineConfigApi.updateVersionStatus(
+					cfg.id,
+					version.versionNumber,
+					"ready",
+				);
 				msg.success("已发布为 Ready");
 				refreshConfigs();
-			} catch (err) { msg.error(`发布失败: ${err}`); }
+			} catch (err) {
+				msg.error(`发布失败: ${err}`);
+			}
 		};
 		return (
 			<Space direction="vertical" size={8} style={{ width: "100%" }}>
 				{cfg.versions.length === 0 ? (
 					<Empty description="暂无版本" image={Empty.PRESENTED_IMAGE_SIMPLE} />
 				) : (
-					[...cfg.versions].sort((a, b) => b.versionNumber - a.versionNumber).map((version) => {
-						const isCurrent = version.versionNumber === cfg.currentVersion;
-						const isDraft = version.lifecycle === "draft";
-						return (
-							<Card
-								key={version.versionNumber}
-								size="small"
-								style={{
-									borderLeft: isCurrent ? "3px solid #1677ff" : "1px solid #d9d9d9",
-									background: isCurrent ? "#f0f5ff" : undefined,
-								}}
-							>
-								<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-									<Space size={6}>
-										<Text code strong style={{ fontSize: 14 }}>{version.version}</Text>
-										{isCurrent ? <Tag color="blue" style={{ marginRight: 0 }}>当前版本</Tag> : null}
-										<Tag color={lifecycleTagColor(version.lifecycle)} style={{ marginRight: 0 }}>{lifecycleDisplay(version.lifecycle)}</Tag>
-									</Space>
-								</div>
-								<div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
-									{version.author} · {version.updatedAt}
-								</div>
-								<Text style={{ color: "#475569", fontSize: 13 }}>{version.summary}</Text>
-								<div style={{ marginTop: 8 }}>
-									<Space size={4}>
-										<Button size="small" type="link" icon={<EyeOutlined />} loading={loadingVersionKey === `${cfg.id}:${version.versionNumber}`} onClick={() => handleViewContent(version)}>查看</Button>
-										{cfg.versions.length >= 2 ? <Button size="small" type="link" icon={<DiffOutlined />} onClick={() => handleOpenVersionCompare(cfg, version)}>对比</Button> : null}
-										<Button size="small" type="link" icon={<FileAddOutlined />} onClick={() => openCreateVersion(cfg, version)}>基于此版本创建</Button>
-										{isDraft && !isArchivedConfig(cfg) ? (
-											<Button size="small" type="link" icon={<CheckCircleOutlined />} style={{ color: "#52c41a" }} onClick={() => handlePublishReady(version)}>发布为 Ready</Button>
-										) : null}
-									</Space>
-								</div>
-							</Card>
-						);
-					})
+					[...cfg.versions]
+						.sort((a, b) => b.versionNumber - a.versionNumber)
+						.map((version) => {
+							const isCurrent = version.versionNumber === cfg.currentVersion;
+							const isDraft = version.lifecycle === "draft";
+							return (
+								<Card
+									key={version.versionNumber}
+									size="small"
+									style={{
+										borderLeft: isCurrent
+											? "3px solid #1677ff"
+											: "1px solid #d9d9d9",
+										background: isCurrent ? "#f0f5ff" : undefined,
+									}}
+								>
+									<div
+										style={{
+											display: "flex",
+											justifyContent: "space-between",
+											alignItems: "center",
+											marginBottom: 4,
+										}}
+									>
+										<Space size={6}>
+											<Text code strong style={{ fontSize: 14 }}>
+												{version.version}
+											</Text>
+											{isCurrent ? (
+												<Tag color="blue" style={{ marginRight: 0 }}>
+													当前版本
+												</Tag>
+											) : null}
+											<Tag
+												color={lifecycleTagColor(version.lifecycle)}
+												style={{ marginRight: 0 }}
+											>
+												{lifecycleDisplay(version.lifecycle)}
+											</Tag>
+										</Space>
+									</div>
+									<div
+										style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}
+									>
+										{version.author} · {version.updatedAt}
+									</div>
+									<Text style={{ color: "#475569", fontSize: 13 }}>
+										{version.summary}
+									</Text>
+									<div style={{ marginTop: 8 }}>
+										<Space size={4}>
+											<Button
+												size="small"
+												type="link"
+												icon={<EyeOutlined />}
+												loading={
+													loadingVersionKey ===
+													`${cfg.id}:${version.versionNumber}`
+												}
+												onClick={() => handleViewContent(version)}
+											>
+												查看
+											</Button>
+											{cfg.versions.length >= 2 ? (
+												<Button
+													size="small"
+													type="link"
+													icon={<DiffOutlined />}
+													onClick={() => handleOpenVersionCompare(cfg, version)}
+												>
+													对比
+												</Button>
+											) : null}
+											<Button
+												size="small"
+												type="link"
+												icon={<FileAddOutlined />}
+												onClick={() => openCreateVersion(cfg, version)}
+											>
+												基于此版本创建
+											</Button>
+											{isDraft && !isArchivedConfig(cfg) ? (
+												<>
+													<Button
+														size="small"
+														type="link"
+														icon={<CheckCircleOutlined />}
+														style={{ color: "#52c41a" }}
+														onClick={() => handlePublishReady(version)}
+													>
+														发布为 Ready
+													</Button>
+													<Button
+														size="small"
+														type="link"
+														icon={<EditOutlined />}
+														style={{ color: "#faad14" }}
+														onClick={() => handleOpenEditVersion(cfg, version)}
+													>
+														编辑
+													</Button>
+												</>
+											) : null}
+										</Space>
+									</div>
+								</Card>
+							);
+						})
 				)}
 			</Space>
 		);
@@ -1540,7 +1577,6 @@ export default function RegistryCenterPage() {
 														style: { cursor: "pointer" },
 													})}
 													locale={{ emptyText: emptyConfigText }}
-
 												/>
 											</TableScrollBoundary>
 											<Paragraph type="secondary" style={{ marginBottom: 0 }}>
@@ -1554,9 +1590,7 @@ export default function RegistryCenterPage() {
 								{
 									key: "pools",
 									label: `资源池`,
-									children: (
-										<PoolManager />
-									),
+									children: <PoolManager />,
 								},
 								{
 									key: "registry",
@@ -1631,16 +1665,25 @@ export default function RegistryCenterPage() {
 				</Space>
 			)}
 			<Drawer
-				title={selectedConfig ? (
-					<Space size={4} style={{ lineHeight: 1.4 }}>
-						<Text strong style={{ fontSize: 16 }}>{selectedConfig.name}</Text>
-						<Tag>{selectedConfig.fileType}</Tag>
-						<Tag color={lifecycleTagColor(selectedConfig.lifecycle)}>{lifecycleDisplay(selectedConfig.lifecycle)}</Tag>
-						<Text type="secondary" style={{ fontSize: 13 }}>
-							当前 {selectedConfig.latestVersion} · {selectedConfig.versionCount} 个版本
-						</Text>
-					</Space>
-				) : "配置详情"}
+				title={
+					selectedConfig ? (
+						<Space size={4} style={{ lineHeight: 1.4 }}>
+							<Text strong style={{ fontSize: 16 }}>
+								{selectedConfig.name}
+							</Text>
+							<Tag>{selectedConfig.fileType}</Tag>
+							<Tag color={lifecycleTagColor(selectedConfig.lifecycle)}>
+								{lifecycleDisplay(selectedConfig.lifecycle)}
+							</Tag>
+							<Text type="secondary" style={{ fontSize: 13 }}>
+								当前 {selectedConfig.latestVersion} ·{" "}
+								{selectedConfig.versionCount} 个版本
+							</Text>
+						</Space>
+					) : (
+						"配置详情"
+					)
+				}
 				width={720}
 				open={Boolean(selectedConfig)}
 				onClose={() => setSelectedConfigId(null)}
@@ -1675,84 +1718,153 @@ export default function RegistryCenterPage() {
 								key: "info",
 								label: "属性",
 								children: (
-									<Space direction="vertical" size={12} style={{ width: "100%" }}>
-										<Card size="small" variant="outlined" style={{ background: "#fafafa" }}>
-											<Space direction="vertical" size={8} style={{ width: "100%" }}>
+									<Space
+										direction="vertical"
+										size={12}
+										style={{ width: "100%" }}
+									>
+										<Card
+											size="small"
+											variant="outlined"
+											style={{ background: "#fafafa" }}
+										>
+											<Space
+												direction="vertical"
+												size={8}
+												style={{ width: "100%" }}
+											>
 												<Row gutter={[16, 8]}>
 													<Col span={12}>
-														<Text type="secondary" style={{ fontSize: 12 }}>状态</Text>
-														<div><Tag color={lifecycleTagColor(selectedConfig.lifecycle)}>{lifecycleDisplay(selectedConfig.lifecycle)}</Tag></div>
+														<Text type="secondary" style={{ fontSize: 12 }}>
+															状态
+														</Text>
+														<div>
+															<Tag
+																color={lifecycleTagColor(
+																	selectedConfig.lifecycle,
+																)}
+															>
+																{lifecycleDisplay(selectedConfig.lifecycle)}
+															</Tag>
+														</div>
 													</Col>
 													<Col span={12}>
-														<Text type="secondary" style={{ fontSize: 12 }}>当前版本</Text>
-														<div style={{ fontWeight: 600 }}>{selectedConfig.latestVersion}</div>
+														<Text type="secondary" style={{ fontSize: 12 }}>
+															当前版本
+														</Text>
+														<div style={{ fontWeight: 600 }}>
+															{selectedConfig.latestVersion}
+														</div>
 													</Col>
 													<Col span={12}>
-														<Text type="secondary" style={{ fontSize: 12 }}>Owner</Text>
-														<div><UserTag value={selectedConfig.owner} /></div>
+														<Text type="secondary" style={{ fontSize: 12 }}>
+															Owner
+														</Text>
+														<div>
+															<UserTag value={selectedConfig.owner} />
+														</div>
 													</Col>
 													<Col span={12}>
-														<Text type="secondary" style={{ fontSize: 12 }}>最近更新</Text>
-														<div style={{ fontSize: 13 }}>{selectedConfig.updatedAt}</div>
+														<Text type="secondary" style={{ fontSize: 12 }}>
+															最近更新
+														</Text>
+														<div style={{ fontSize: 13 }}>
+															{selectedConfig.updatedAt}
+														</div>
 													</Col>
 												</Row>
 												{selectedConfig.lifecycle === "draft" ? (
-													<Alert type="warning" showIcon message="当前版本是 Draft，不能用于部署" style={{ marginBottom: 0 }} />
+													<Alert
+														type="warning"
+														showIcon
+														message="当前版本是 Draft，不能用于部署"
+														style={{ marginBottom: 0 }}
+													/>
 												) : selectedConfig.lifecycle === "deprecated" ? (
-													<Alert type="error" showIcon message="该配置已归档，不参与部署选择" style={{ marginBottom: 0 }} />
+													<Alert
+														type="error"
+														showIcon
+														message="该配置已归档，不参与部署选择"
+														style={{ marginBottom: 0 }}
+													/>
 												) : (
-													<Alert type="success" showIcon message={`当前部署可用版本：${selectedConfig.latestVersion} ${lifecycleDisplay(selectedConfig.lifecycle)}`} style={{ marginBottom: 0 }} />
+													<Alert
+														type="success"
+														showIcon
+														message={`当前部署可用版本：${selectedConfig.latestVersion} ${lifecycleDisplay(selectedConfig.lifecycle)}`}
+														style={{ marginBottom: 0 }}
+													/>
 												)}
 											</Space>
 										</Card>
-										<Collapse ghost items={[
-											{
-												key: "more",
-												label: "更多信息",
-												children: (
-													<Descriptions column={1} size="small">
-														<Descriptions.Item label="配置 ID">
-															<Space size={4}>
-																<Text code style={{ fontSize: 12 }}>{selectedConfig.id}</Text>
-																<Button type="link" size="small" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(selectedConfig.id); msg.success("已复制"); }} />
-															</Space>
-														</Descriptions.Item>
-														<Descriptions.Item label="文件类型"><Tag>{selectedConfig.fileType}</Tag></Descriptions.Item>
-														<Descriptions.Item label="描述">{selectedConfig.description}</Descriptions.Item>
-														<Descriptions.Item label="标签"><ConfigTagList tags={selectedConfig.tags} /></Descriptions.Item>
-													</Descriptions>
-												),
-											},
-										]} />
+										<Collapse
+											ghost
+											items={[
+												{
+													key: "more",
+													label: "更多信息",
+													children: (
+														<Descriptions column={1} size="small">
+															<Descriptions.Item label="配置 ID">
+																<Space size={4}>
+																	<Text code style={{ fontSize: 12 }}>
+																		{selectedConfig.id}
+																	</Text>
+																	<Button
+																		type="link"
+																		size="small"
+																		icon={<CopyOutlined />}
+																		onClick={() => {
+																			navigator.clipboard.writeText(
+																				selectedConfig.id,
+																			);
+																			msg.success("已复制");
+																		}}
+																	/>
+																</Space>
+															</Descriptions.Item>
+															<Descriptions.Item label="文件类型">
+																<Tag>{selectedConfig.fileType}</Tag>
+															</Descriptions.Item>
+															<Descriptions.Item label="描述">
+																{selectedConfig.description}
+															</Descriptions.Item>
+															<Descriptions.Item label="标签">
+																<ConfigTagList tags={selectedConfig.tags} />
+															</Descriptions.Item>
+														</Descriptions>
+													),
+												},
+											]}
+										/>
 									</Space>
 								),
 							},
 							{
 								key: "content",
 								label: "内容",
-								children: (
-									<ContentPreviewTab config={selectedConfig} />
-								),
+								children: <ContentPreviewTab config={selectedConfig} />,
 							},
 							{
 								key: "history",
 								label: "版本历史",
-								children: (
-									<VersionHistoryTab config={selectedConfig} />
-								),
+								children: <VersionHistoryTab config={selectedConfig} />,
 							},
 							{
 								key: "references",
 								label: "引用关系",
 								children: (
 									<Card size="small">
-										<Empty description="暂未接入引用数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+										<Empty
+											description="暂未接入引用数据"
+											image={Empty.PRESENTED_IMAGE_SIMPLE}
+										/>
 									</Card>
 								),
 							},
 						]}
 					/>
-					) : null}
+				) : null}
 			</Drawer>
 
 			<Modal
@@ -1767,8 +1879,12 @@ export default function RegistryCenterPage() {
 				okText={editingConfig ? "保存属性" : "创建"}
 				confirmLoading={savingConfig}
 				cancelText="取消"
-					style={{ top: 20 }}
-					bodyStyle={{ maxHeight: "calc(80vh - 120px)", overflowY: "auto", paddingTop: 12 }}
+				style={{ top: 20 }}
+				bodyStyle={{
+					maxHeight: "calc(80vh - 120px)",
+					overflowY: "auto",
+					paddingTop: 12,
+				}}
 				destroyOnHidden
 			>
 				<Form
@@ -1780,7 +1896,18 @@ export default function RegistryCenterPage() {
 					<Form.Item
 						name="name"
 						label="配置名称"
-						rules={[{ required: true, message: "请输入配置名称" },{ pattern: CONFIG_NAME_PATTERN, message: "仅小写字母、数字、连字符、点号，以 .yaml/.yml/.json 结尾" },{ max: CONFIG_NAME_MAX_LENGTH, message: `不能超过 ${CONFIG_NAME_MAX_LENGTH} 字符` }]}
+						rules={[
+							{ required: true, message: "请输入配置名称" },
+							{
+								pattern: CONFIG_NAME_PATTERN,
+								message:
+									"仅小写字母、数字、连字符、点号，以 .yaml/.yml/.json 结尾",
+							},
+							{
+								max: CONFIG_NAME_MAX_LENGTH,
+								message: `不能超过 ${CONFIG_NAME_MAX_LENGTH} 字符`,
+							},
+						]}
 						extra={configNameExtra(configNameValue)}
 					>
 						<Input placeholder="example.yaml" />
@@ -1839,9 +1966,7 @@ export default function RegistryCenterPage() {
 
 			<Modal
 				title={
-					versionTarget
-						? `创建新版本：${versionTarget.name}`
-						: "创建新版本"
+					versionTarget ? `创建新版本：${versionTarget.name}` : "创建新版本"
 				}
 				open={Boolean(versionTarget)}
 				width={1200}
@@ -1867,138 +1992,253 @@ export default function RegistryCenterPage() {
 				)}
 			>
 				{versionTarget && versionSource ? (
-				<Form form={versionForm} onFinish={handleCreateVersion}>
-					<div>
-						<div style={{
-							display: "flex", alignItems: "center", gap: 8, marginBottom: 16,
-							padding: "6px 12px", background: "#f6f8fa", borderRadius: 6, border: "1px solid #d0d7de",
-						}}>
-							<Tag color="blue" style={{ margin: 0 }}>Base {versionSource.version}</Tag>
-							<Text type="secondary">→</Text>
-							<Tag color="green" style={{ margin: 0 }}>Next v{(versionTarget.currentVersion || 0) + 1}</Tag>
-							<Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
-								{versionSource.summary} · {versionSource.updatedAt}
-							</Text>
-							<Tag color={diffPreviewRows.length > 0 ? "blue" : "default"} style={{ margin: 0, fontSize: 11 }}>
-								+{diffPreviewRows.filter(r => r.kind === "added").length} −{diffPreviewRows.filter(r => r.kind === "removed").length}
-							</Tag>
-							<Form.Item name="lifecycle" noStyle>
-								<Select
-									size="small"
-									style={{ width: 100 }}
-									options={[
-										{ label: "Draft", value: "draft" },
-										{ label: "Ready", value: "ready" },
-									]}
-								/>
-							</Form.Item>
-						</div>
-
-												<div style={{ marginBottom: 16 }}>
-							<Text strong style={{ fontSize: 13, display: "block", marginBottom: 6 }}>变更说明</Text>
-							<Form.Item
-								name="summary"
-								rules={[{ required: true, message: "请输入变更说明" }]}
-								style={{ marginBottom: 0 }}
+					<Form form={versionForm} onFinish={handleCreateVersion}>
+						<div>
+							<div
+								style={{
+									display: "flex",
+									alignItems: "center",
+									gap: 8,
+									marginBottom: 16,
+									padding: "6px 12px",
+									background: "#f6f8fa",
+									borderRadius: 6,
+									border: "1px solid #d0d7de",
+								}}
 							>
-								<Input.TextArea rows={2} placeholder={`基于 ${versionSource.version} 做了什么修改`} />
-							</Form.Item>
-						</div>
-					<Row gutter={16}>
-							<Col span={16}>
-								<div style={{ marginBottom: 8, fontWeight: 600, fontSize: 13 }}>YAML 编辑器</div>
-								<Form.Item
-									name="content"
-									rules={[{ required: true, message: "请输入配置内容" }]}
-									style={{ marginBottom: 0 }}
+								<Tag color="blue" style={{ margin: 0 }}>
+									Base {versionSource.version}
+								</Tag>
+								<Text type="secondary">→</Text>
+								<Tag color="green" style={{ margin: 0 }}>
+									Next v{(versionTarget.currentVersion || 0) + 1}
+								</Tag>
+								<Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
+									{versionSource.summary} · {versionSource.updatedAt}
+								</Text>
+								<Tag
+									color={diffPreviewRows.length > 0 ? "blue" : "default"}
+									style={{ margin: 0, fontSize: 11 }}
 								>
-									<Editor
-										height="420px"
-										defaultLanguage="yaml"
-										theme="vs"
-										options={{
-											minimap: { enabled: false },
-											lineNumbers: "on",
-											tabSize: 2,
-											renderWhitespace: "selection",
-											scrollBeyondLastLine: false,
-											fontSize: 12,
-											fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-										}}
-										beforeMount={(monaco: Monaco) => {
-											monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
-												validate: true,
-												allowComments: true,
-											});
-										}}
-									/>
-								</Form.Item>
-							</Col>
-							<Col span={8}>
-								<div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-									<Text strong style={{ fontSize: 13 }}>变更预览</Text>
+									+{diffPreviewRows.filter((r) => r.kind === "added").length} −
+									{diffPreviewRows.filter((r) => r.kind === "removed").length}
+								</Tag>
+								<Form.Item name="lifecycle" noStyle>
 									<Select
 										size="small"
-										style={{ width: 90 }}
-										value={diffBaseVersionNumber ?? versionSource.versionNumber}
-										onChange={async (vn: number) => {
-											setDiffBaseVersionNumber(vn);
-											await loadDiffBaseVersion(versionTarget.id, vn);
-										}}
-										options={versionTarget.versions.map((v) => ({
-											label: v.version,
-											value: v.versionNumber,
-										}))}
+										style={{ width: 100 }}
+										options={[
+											{ label: "Draft", value: "draft" },
+											{ label: "Ready", value: "ready" },
+										]}
 									/>
+								</Form.Item>
+							</div>
 
-								</div>
-								{diffPreviewRows.length > 0 ? (
-									<div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden" }}>
-										<div style={{
-											display: "grid", gridTemplateColumns: "40px minmax(0, 1fr) 40px minmax(0, 1fr)",
-											background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontWeight: 600, fontSize: 11,
-										}}>
-											<div style={{ padding: "4px 6px" }}></div>
-											<div style={{ padding: "4px 6px" }}>{versionSource.version}</div>
-											<div style={{ padding: "4px 6px" }}></div>
-											<div style={{ padding: "4px 6px" }}>当前</div>
-										</div>
-										<div style={{ maxHeight: 378, overflow: "auto" }}>
-											{diffPreviewRows.map((row) => (
-												<div key={row.key} style={{
-													display: "grid", gridTemplateColumns: "40px minmax(0, 1fr) 40px minmax(0, 1fr)",
-													borderBottom: "1px solid #f0f2f5", fontSize: 11,
-												}}>
-													<div style={{ padding: "1px 4px", color: "#94a3b8", background: "#f8fafc", textAlign: "right", fontFamily: "monospace" }}>
-														{row.leftLine ?? ""}
-													</div>
-													<pre style={{ margin: 0, padding: "1px 4px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace", background: diffCellBackground(row.kind, "left") }}>
-														{row.leftText ?? ""}
-													</pre>
-													<div style={{ padding: "1px 4px", color: "#94a3b8", background: "#f8fafc", textAlign: "right", fontFamily: "monospace" }}>
-														{row.rightLine ?? ""}
-													</div>
-													<pre style={{ margin: 0, padding: "1px 4px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "monospace", background: diffCellBackground(row.kind, "right") }}>
-														{row.rightText ?? ""}
-													</pre>
+							<div style={{ marginBottom: 16 }}>
+								<Text
+									strong
+									style={{ fontSize: 13, display: "block", marginBottom: 6 }}
+								>
+									变更说明
+								</Text>
+								<Form.Item
+									name="summary"
+									rules={[{ required: true, message: "请输入变更说明" }]}
+									style={{ marginBottom: 0 }}
+								>
+									<Input.TextArea
+										rows={2}
+										placeholder={`基于 ${versionSource.version} 做了什么修改`}
+									/>
+								</Form.Item>
+							</div>
+							<Row gutter={16}>
+								<Col span={16}>
+									<div
+										style={{ marginBottom: 8, fontWeight: 600, fontSize: 13 }}
+									>
+										YAML 编辑器
+									</div>
+									<Form.Item
+										name="content"
+										rules={[{ required: true, message: "请输入配置内容" }]}
+										style={{ marginBottom: 0 }}
+									>
+										<Editor
+											height="420px"
+											defaultLanguage="yaml"
+											theme="vs"
+											options={{
+												minimap: { enabled: false },
+												lineNumbers: "on",
+												tabSize: 2,
+												renderWhitespace: "selection",
+												scrollBeyondLastLine: false,
+												fontSize: 12,
+												fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+											}}
+											beforeMount={(monaco: Monaco) => {
+												monaco.languages.json.jsonDefaults.setDiagnosticsOptions(
+													{
+														validate: true,
+														allowComments: true,
+													},
+												);
+											}}
+										/>
+									</Form.Item>
+								</Col>
+								<Col span={8}>
+									<div
+										style={{
+											marginBottom: 8,
+											display: "flex",
+											alignItems: "center",
+											gap: 8,
+										}}
+									>
+										<Text strong style={{ fontSize: 13 }}>
+											变更预览
+										</Text>
+										<Select
+											size="small"
+											style={{ width: 90 }}
+											value={
+												diffBaseVersionNumber ?? versionSource.versionNumber
+											}
+											onChange={async (vn: number) => {
+												setDiffBaseVersionNumber(vn);
+												await loadDiffBaseVersion(versionTarget.id, vn);
+											}}
+											options={versionTarget.versions.map((v) => ({
+												label: v.version,
+												value: v.versionNumber,
+											}))}
+										/>
+									</div>
+									{diffPreviewRows.length > 0 ? (
+										<div
+											style={{
+												border: "1px solid #e2e8f0",
+												borderRadius: 6,
+												overflow: "hidden",
+											}}
+										>
+											<div
+												style={{
+													display: "grid",
+													gridTemplateColumns:
+														"40px minmax(0, 1fr) 40px minmax(0, 1fr)",
+													background: "#f8fafc",
+													borderBottom: "1px solid #e2e8f0",
+													fontWeight: 600,
+													fontSize: 11,
+												}}
+											>
+												<div style={{ padding: "4px 6px" }}></div>
+												<div style={{ padding: "4px 6px" }}>
+													{versionSource.version}
 												</div>
-											))}
+												<div style={{ padding: "4px 6px" }}></div>
+												<div style={{ padding: "4px 6px" }}>当前</div>
+											</div>
+											<div style={{ maxHeight: 378, overflow: "auto" }}>
+												{diffPreviewRows.map((row) => (
+													<div
+														key={row.key}
+														style={{
+															display: "grid",
+															gridTemplateColumns:
+																"40px minmax(0, 1fr) 40px minmax(0, 1fr)",
+															borderBottom: "1px solid #f0f2f5",
+															fontSize: 11,
+														}}
+													>
+														<div
+															style={{
+																padding: "1px 4px",
+																color: "#94a3b8",
+																background: "#f8fafc",
+																textAlign: "right",
+																fontFamily: "monospace",
+															}}
+														>
+															{row.leftLine ?? ""}
+														</div>
+														<pre
+															style={{
+																margin: 0,
+																padding: "1px 4px",
+																whiteSpace: "pre-wrap",
+																wordBreak: "break-word",
+																fontFamily: "monospace",
+																background: diffCellBackground(
+																	row.kind,
+																	"left",
+																),
+															}}
+														>
+															{row.leftText ?? ""}
+														</pre>
+														<div
+															style={{
+																padding: "1px 4px",
+																color: "#94a3b8",
+																background: "#f8fafc",
+																textAlign: "right",
+																fontFamily: "monospace",
+															}}
+														>
+															{row.rightLine ?? ""}
+														</div>
+														<pre
+															style={{
+																margin: 0,
+																padding: "1px 4px",
+																whiteSpace: "pre-wrap",
+																wordBreak: "break-word",
+																fontFamily: "monospace",
+																background: diffCellBackground(
+																	row.kind,
+																	"right",
+																),
+															}}
+														>
+															{row.rightText ?? ""}
+														</pre>
+													</div>
+												))}
+											</div>
 										</div>
-									</div>
-								) : (
-									<div style={{ height: 420, display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed #d9d9d9", borderRadius: 6 }}>
-										<Text type="secondary">编辑左侧 YAML 后，此处实时显示差异</Text>
-									</div>
-								)}
-							</Col>
-						</Row>
+									) : (
+										<div
+											style={{
+												height: 420,
+												display: "flex",
+												alignItems: "center",
+												justifyContent: "center",
+												border: "1px dashed #d9d9d9",
+												borderRadius: 6,
+											}}
+										>
+											<Text type="secondary">
+												编辑左侧 YAML 后，此处实时显示差异
+											</Text>
+										</div>
+									)}
+								</Col>
+							</Row>
 
-{/* DESCRIPTION_MOVED */}
-
-					</div>
-				</Form>
+							{/* DESCRIPTION_MOVED */}
+						</div>
+					</Form>
 				) : (
-					<Alert type="info" showIcon message="请先在配置列表中选择一个配置，再点击「新建版本」" />
+					<Alert
+						type="info"
+						showIcon
+						message="请先在配置列表中选择一个配置，再点击「新建版本」"
+					/>
 				)}
 			</Modal>
 
@@ -2042,7 +2282,7 @@ export default function RegistryCenterPage() {
 					<div style={{ marginBottom: 6, fontWeight: 500 }}>变更说明</div>
 					<Input.TextArea
 						rows={2}
-						defaultValue={editVersionState.summary}
+						value={editVersionState.summary}
 						onChange={(e) =>
 							setEditVersionState((prev) => ({
 								...prev,
@@ -2054,7 +2294,7 @@ export default function RegistryCenterPage() {
 					<div style={{ marginBottom: 6, fontWeight: 500 }}>文件内容</div>
 					<Input.TextArea
 						rows={12}
-						defaultValue={editVersionState.content}
+						value={editVersionState.content}
 						onChange={(e) =>
 							setEditVersionState((prev) => ({
 								...prev,

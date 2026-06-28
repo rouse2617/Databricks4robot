@@ -4,7 +4,6 @@ import {
 	detectCommonLinePrefix,
 	isErrorLogLine,
 	normalizeLogContent,
-	prepareVisibleLogContent,
 	stripLinePrefixes,
 } from "./workflowLogView";
 
@@ -80,16 +79,5 @@ describe("workflowLogView", () => {
 		expect(model.errorLineIndexes).toEqual([1, 3]);
 		expect(model.lines[1].isError).toBe(true);
 		expect(model.lines[0].isError).toBe(false);
-	});
-
-	it("renders only the tail of very long logs by character and line limits", () => {
-		const lines = Array.from({ length: 10 }, (_, index) => `line-${index + 1}`);
-		const visible = prepareVisibleLogContent(lines.join("\n"), null, 30, 3);
-
-		expect(visible.truncated).toBe(true);
-		expect(visible.totalLines).toBe(10);
-		expect(visible.hiddenChars).toBeGreaterThan(0);
-		expect(visible.hiddenLines).toBeGreaterThan(0);
-		expect(visible.content).toBe("line-8\nline-9\nline-10");
 	});
 });

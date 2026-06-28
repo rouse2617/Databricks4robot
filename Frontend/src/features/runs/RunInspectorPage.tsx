@@ -35,17 +35,16 @@ export function RunInspectorPage() {
 	}
 	if (!runId || workflowName === null) {
 		return (
-			<div className="flex items-center justify-center" style={{ height: "60vh" }}>
+			<div
+				className="flex items-center justify-center"
+				style={{ height: "60vh" }}
+			>
 				<Spin size="large" />
 			</div>
 		);
 	}
 
-	return (
-		<WorkflowDetailPage
-			legacyRoute={false}
-		/>
-	);
+	return <WorkflowDetailPage legacyRoute={false} />;
 }
 
 export function RunRedirectFromWorkflowName() {
@@ -75,7 +74,10 @@ export function RunRedirectFromWorkflowName() {
 	}
 	if (!targetRunId) {
 		return (
-			<div className="flex items-center justify-center" style={{ height: "60vh" }}>
+			<div
+				className="flex items-center justify-center"
+				style={{ height: "60vh" }}
+			>
 				<Spin size="large" />
 			</div>
 		);

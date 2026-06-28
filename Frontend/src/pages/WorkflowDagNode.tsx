@@ -105,7 +105,8 @@ function ProgressRing({ percent, color }: { percent: number; color: string }) {
 export function WorkflowDagNode({
 	data,
 }: NodeProps<Node<WorkflowDagNodeData>>): React.JSX.Element {
-	const { workflowNode, selected, dimmed, progressPercent, pipelineLabels } = data;
+	const { workflowNode, selected, dimmed, progressPercent, pipelineLabels } =
+		data;
 	const displayText = getWorkflowNodeDisplayText(workflowNode, pipelineLabels);
 	const phase = workflowNode.phase;
 	const accent = PHASE_COLORS[phase] || "#64748b";

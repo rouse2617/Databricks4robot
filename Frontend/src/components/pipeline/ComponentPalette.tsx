@@ -75,7 +75,9 @@ export function ComponentPalette({
 	disabled = false,
 }: Props) {
 	const [query, setQuery] = useState("");
-	const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
+	const [expandedKeys, setExpandedKeys] = useState<Set<string>>(
+		() => new Set(),
+	);
 	const interactionDisabled = loading || disabled;
 	const filteredComponents = useMemo(() => {
 		const keyword = query.trim().toLowerCase();
@@ -256,9 +258,7 @@ export function ComponentPalette({
 												{versionText}
 											</span>
 											{index === 0 ? (
-												<Tag className="palette-version-default">
-													默认
-												</Tag>
+												<Tag className="palette-version-default">默认</Tag>
 											) : null}
 											{version.sourceCommit ? (
 												<span className="palette-version-row__commit">

@@ -61,6 +61,7 @@ import type {
 } from "../../components/pipeline/types";
 import { usePipelineComponents } from "../../hooks/usePipelineComponents";
 import { usePipelineKeyboardShortcuts } from "../../hooks/usePipelineKeyboardShortcuts";
+import { computeDagreLayout } from "../../lib/autoLayout";
 import { MAX_BATCH_ASSET_COUNT } from "../../lib/batchAssetLimits";
 import {
 	DATA_EDGE_STYLE,
@@ -108,7 +109,6 @@ import {
 } from "./hooks/useDesignerReducer";
 import { usePipelineDeploy } from "./hooks/usePipelineDeploy";
 import { usePipelineTemplateLoader } from "./hooks/usePipelineTemplateLoader";
-import { computeDagreLayout } from "../../lib/autoLayout";
 
 import "../../styles/pipeline.css";
 
@@ -1214,26 +1214,26 @@ function PipelineDesignerCanvasInner({
 					<Typography.Title level={5} className="pipeline-toolbar__title">
 						流水线设计
 					</Typography.Title>
-				<div className="pipeline-toolbar__name">
-					<span className="pipeline-toolbar__name-label">名称</span>
-					<Input
-						id="pipeline-name-input"
-						name="pipelineName"
-						value={pipelineName}
-						onChange={(e) => {
-							dispatch({
-								type: "canvas/setPipelineName",
-								name: e.target.value,
-							});
-						}}
-						maxLength={48}
-						placeholder="输入流水线名称"
-						aria-label="流水线名称"
-						autoComplete="off"
-						className="pipeline-toolbar__name-input"
-						size="small"
-					/>
-				</div>
+					<div className="pipeline-toolbar__name">
+						<span className="pipeline-toolbar__name-label">名称</span>
+						<Input
+							id="pipeline-name-input"
+							name="pipelineName"
+							value={pipelineName}
+							onChange={(e) => {
+								dispatch({
+									type: "canvas/setPipelineName",
+									name: e.target.value,
+								});
+							}}
+							maxLength={48}
+							placeholder="输入流水线名称"
+							aria-label="流水线名称"
+							autoComplete="off"
+							className="pipeline-toolbar__name-input"
+							size="small"
+						/>
+					</div>
 					{templateVersions.length > 0 ? (
 						<Select
 							size="small"

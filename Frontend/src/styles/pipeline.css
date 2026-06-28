@@ -197,7 +197,6 @@
 	display: flex;
 	align-items: flex-start;
 	flex-wrap: wrap;
-	row-gap: 4px;
 	gap: 10px;
 	padding: 8px 8px 8px 10px;
 	background: #fff;

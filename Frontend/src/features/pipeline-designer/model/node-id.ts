@@ -1,7 +1,10 @@
 /** Stable unique IDs for designer canvas nodes. */
 
 export function createPipelineNodeId(): string {
-	if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+	if (
+		typeof crypto !== "undefined" &&
+		typeof crypto.randomUUID === "function"
+	) {
 		return `node-${crypto.randomUUID()}`;
 	}
 	return `node-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;

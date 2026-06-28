@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
+import {
+	startTransition,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import type {
 	PipelineRun,
 	PipelineRunAssetNode,
@@ -313,7 +320,7 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 
 function calculateBackoff(attempt: number): number {
 	return Math.min(
-		INITIAL_RECONNECT_DELAY_MS * Math.pow(2, attempt),
+		INITIAL_RECONNECT_DELAY_MS * 2 ** attempt,
 		MAX_RECONNECT_DELAY_MS,
 	);
 }
@@ -916,7 +923,11 @@ export function useWorkflowDetail(
 		if (lastEventIdRef.current) {
 			params.lastEventId = lastEventIdRef.current;
 		}
-		const url = getWorkflowLogStreamUrl(runtimeWorkflowName, selectedNodeId, params);
+		const url = getWorkflowLogStreamUrl(
+			runtimeWorkflowName,
+			selectedNodeId,
+			params,
+		);
 		const source = new EventSource(url);
 		followSourceRef.current = source;
 
@@ -995,37 +1006,37 @@ export function useWorkflowDetail(
 				followStatus: "ended",
 				followMessage: reason,
 			}));
-			});
+		});
 
-			source.onerror = () => {
-				flushBufferedLogLines();
-				clearLogStreamConnectTimer();
-				source.close();
-				if (followSourceRef.current === source) {
-					followSourceRef.current = null;
-				}
-				if (reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
-					const delay = calculateBackoff(reconnectAttemptRef.current);
-					reconnectAttemptRef.current += 1;
-					setLogState((prev) => ({
-						...prev,
-						following: true,
-						followStatus: "reconnecting",
-						followMessage: `重连中... (${reconnectAttemptRef.current}/${MAX_RECONNECT_ATTEMPTS})`,
-					}));
-					reconnectTimerRef.current = window.setTimeout(() => {
-						reconnectTimerRef.current = null;
-						startFollowLogs();
-					}, delay);
-				} else {
-					setLogState((prev) => ({
-						...prev,
-						following: false,
-						followStatus: "error",
-						followMessage: "实时日志重连失败，请手动连接",
-					}));
-				}
-			};
+		source.onerror = () => {
+			flushBufferedLogLines();
+			clearLogStreamConnectTimer();
+			source.close();
+			if (followSourceRef.current === source) {
+				followSourceRef.current = null;
+			}
+			if (reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
+				const delay = calculateBackoff(reconnectAttemptRef.current);
+				reconnectAttemptRef.current += 1;
+				setLogState((prev) => ({
+					...prev,
+					following: true,
+					followStatus: "reconnecting",
+					followMessage: `重连中... (${reconnectAttemptRef.current}/${MAX_RECONNECT_ATTEMPTS})`,
+				}));
+				reconnectTimerRef.current = window.setTimeout(() => {
+					reconnectTimerRef.current = null;
+					startFollowLogs();
+				}, delay);
+			} else {
+				setLogState((prev) => ({
+					...prev,
+					following: false,
+					followStatus: "error",
+					followMessage: "实时日志重连失败，请手动连接",
+				}));
+			}
+		};
 	}, [
 		clearLogStreamConnectTimer,
 		clearLogStreamFlushTimer,
@@ -1073,6 +1084,7 @@ export function useWorkflowDetail(
 		};
 	}, [clearLogStreamConnectTimer, clearLogStreamFlushTimer]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally fetch only on node change, not on every workflow poll (see comment below)
 	useEffect(() => {
 		if (!selectedNodeId || !runtimeWorkflowName) {
 			return;

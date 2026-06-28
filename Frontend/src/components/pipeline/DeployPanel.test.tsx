@@ -279,7 +279,7 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
-		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
 		const deployBtn = document.querySelector(
 			".ant-modal-footer .ant-btn-primary",
 		);
@@ -310,7 +310,7 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
-		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
 		const deployBtn = document.querySelector(
 			".ant-modal-footer .ant-btn-primary",
 		);
@@ -339,7 +339,7 @@ describe("DeployPanel", () => {
 
 		// Modal should open
 		await waitFor(() => {
-			expect(screen.getByText("运行流水线")).toBeTruthy();
+			expect(screen.getByText(/运行流水线/)).toBeTruthy();
 		});
 
 		// Asset picker is shown
@@ -428,7 +428,7 @@ describe("DeployPanel", () => {
 		fireEvent.click(screen.getByText("运行"));
 
 		await waitFor(() => {
-			expect(screen.getByText("运行流水线")).toBeTruthy();
+			expect(screen.getByText(/运行流水线/)).toBeTruthy();
 			expect(screen.getByText("将创建批量任务，共 2 个子任务")).toBeTruthy();
 			expect(screen.getByTestId("mock-asset-picker").textContent).toContain(
 				"Selected: ast-a,ast-b",
@@ -472,7 +472,7 @@ describe("DeployPanel", () => {
 		fireEvent.click(screen.getByText("运行"));
 
 		await waitFor(() => {
-			expect(screen.getByText("运行流水线")).toBeTruthy();
+			expect(screen.getByText(/运行流水线/)).toBeTruthy();
 		});
 
 		// Verify no assets are pre-selected
@@ -615,7 +615,7 @@ describe("DeployPanel", () => {
 
 		expect(await screen.findByText("运行")).toBeTruthy();
 		fireEvent.click(screen.getByText("运行"));
-		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
 		const deployBtn = document.querySelector(
 			".ant-modal-footer .ant-btn-primary",
 		);
@@ -670,7 +670,7 @@ describe("DeployPanel", () => {
 					"本次运行不会注入资产环境变量，适合调试不依赖资产输入的流水线。",
 				),
 			).toBeTruthy();
-			expect(screen.getByText("运行流水线")).toBeTruthy();
+			expect(screen.getByText(/运行流水线/)).toBeTruthy();
 		});
 	});
 
@@ -718,12 +718,12 @@ describe("DeployPanel", () => {
 		renderDeployPanel();
 
 		fireEvent.click(await screen.findByText("运行"));
-		expect(await screen.findByText("运行流水线")).toBeTruthy();
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
 		expect(screen.getByTestId("deploy-config-panel")).toBeTruthy();
-		expect(screen.getByText("高级全局配置（兼容）")).toBeTruthy();
+		expect(screen.getByText("高级全局配置（可选）")).toBeTruthy();
 		expect(mockListPipelineConfigs).not.toHaveBeenCalled();
 
-		fireEvent.click(screen.getByText("启用全局配置 fallback"));
+		fireEvent.click(screen.getByText("启用全局配置"));
 		expect(screen.getByText("选择已保存配置")).toBeTruthy();
 
 		await waitFor(() => {
@@ -743,8 +743,8 @@ describe("DeployPanel", () => {
 		renderDeployPanel();
 
 		fireEvent.click(await screen.findByText("运行"));
-		expect(await screen.findByText("运行流水线")).toBeTruthy();
-		fireEvent.click(screen.getByText("启用全局配置 fallback"));
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		fireEvent.click(screen.getByText("启用全局配置"));
 		fireEvent.click(screen.getByText("上传本地文件"));
 
 		const input = screen.getByLabelText("上传配置文件") as HTMLInputElement;
@@ -765,8 +765,8 @@ describe("DeployPanel", () => {
 		renderDeployPanel();
 
 		fireEvent.click(await screen.findByText("运行"));
-		expect(await screen.findByText("运行流水线")).toBeTruthy();
-		fireEvent.click(screen.getByText("启用全局配置 fallback"));
+		expect(await screen.findByText(/运行流水线/)).toBeTruthy();
+		fireEvent.click(screen.getByText("启用全局配置"));
 		fireEvent.click(screen.getByText("在线编辑"));
 
 		fireEvent.change(screen.getByLabelText("在线编辑文件名"), {

@@ -7,8 +7,8 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { validateBackfillAssets } from "../../api/batchJobApi";
 import type { SearchAssetResult } from "../../api/search";
 import { searchApi } from "../../api/search";
@@ -352,9 +352,7 @@ describe("AssetPicker", () => {
 		fireEvent.click(
 			screen.getByText("批量粘贴 asset ID（换行 / 逗号 / 分号分隔）"),
 		);
-		const textarea = document.querySelector(
-			"textarea",
-		) as HTMLTextAreaElement;
+		const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
 		fireEvent.change(textarea, {
 			target: { value: "a1\na2" },
 		});
@@ -385,8 +383,6 @@ describe("AssetPicker", () => {
 			]);
 		});
 		expect(screen.getByText(/目录中已注册 1 个，1 个尚未注册/)).toBeTruthy();
-		expect(
-			screen.getByText(/未注册 ID 仍可创建批次/),
-		).toBeTruthy();
+		expect(screen.getByText(/未注册 ID 仍可创建批次/)).toBeTruthy();
 	});
 });

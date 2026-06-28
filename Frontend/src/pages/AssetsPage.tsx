@@ -2,8 +2,22 @@
 // Wires all extracted components to the centralized reducer.
 // Validates: Requirements R1, R7, R13
 
-import { FilterOutlined, AppstoreOutlined, TableOutlined, UnorderedListOutlined } from "@ant-design/icons";
-import { Alert, Badge, Button, Drawer, Modal, message, Segmented, Typography } from "antd";
+import {
+	AppstoreOutlined,
+	FilterOutlined,
+	TableOutlined,
+	UnorderedListOutlined,
+} from "@ant-design/icons";
+import {
+	Alert,
+	Badge,
+	Button,
+	Drawer,
+	Modal,
+	message,
+	Segmented,
+	Typography,
+} from "antd";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ActiveFilterChipsRow from "../components/assets/ActiveFilterChipsRow";
@@ -28,8 +42,8 @@ const CreateDeliveryModal = lazy(
 import { useAssetsDiscoveryReducer } from "../hooks/assets/useAssetsDiscoveryReducer";
 import { useAssetsHotkeys } from "../hooks/assets/useAssetsHotkeys";
 import { useAssetsQuerySync } from "../hooks/assets/useAssetsQuerySync";
-import { serializeQueryStateToUrl } from "../lib/assets/assetsDiscoveryUrl";
 import type { ViewMode } from "../lib/assets/assetsDiscoveryTypes";
+import { serializeQueryStateToUrl } from "../lib/assets/assetsDiscoveryUrl";
 import { navigateToAssetDetail } from "../lib/assets/assetWorkbenchNavigation";
 
 const { Title } = Typography;
