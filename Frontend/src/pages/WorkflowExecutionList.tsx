@@ -105,6 +105,7 @@ type ExecutionRecord = WorkflowSummary & {
 	pipelineName?: string;
 	templateName?: string;
 	owner?: string;
+	argoNamespace?: string;
 };
 
 type WorkflowErrorKind = "network" | "service-unavailable";
@@ -401,7 +402,7 @@ const workflowSummaryFromRun = (run: PipelineRun): ExecutionRecord => {
 		blockingReason: run.blockingReason,
 		blockingMessage: run.blockingMessage,
 		owner: run.owner,
-		argoNamespace: (run as any).argoNamespace,
+		argoNamespace: run.argoNamespace,
 		totalEstimatedCost:
 			typeof run.totalEstimatedCost === "number"
 				? run.totalEstimatedCost
