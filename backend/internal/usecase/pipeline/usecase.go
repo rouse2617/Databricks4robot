@@ -3518,9 +3518,14 @@ func (uc *Usecase) ListRunSummaries(ctx context.Context, filter ...models.Pipeli
 			uc.attachBatchNodeProgress(ctx, items)
 		}
 		annotateRunDiagnostics(items)
-		// Strip heavy fields that are only needed on the detail page.
+		// The default list view keeps per-run nodes so callers can render the
+		// estimated cost; the summary view drops them for a lighter payload.
+		keepNodes := !filter[0].SummaryOnly
+		if keepNodes && uc.runNodeRepo != nil {
+			uc.attachRunNodesForList(ctx, items)
+		}
 		for i := range items {
-			stripRunHeavyFields(&items[i])
+			stripRunListFields(&items[i], keepNodes)
 		}
 		return items, total, nil
 	}
@@ -3600,14 +3605,39 @@ func (uc *Usecase) ListAssetNodesByRunIDs(ctx context.Context, runIDs []string) 
 }
 
 func stripRunHeavyFields(run *models.PipelineRun) {
+	stripRunListFields(run, false)
+}
+
+// stripRunListFields removes fields that are only needed on the detail page.
+// When keepNodes is true the per-run nodes are preserved so list callers can
+// compute the estimated cost.
+func stripRunListFields(run *models.PipelineRun, keepNodes bool) {
 	if run == nil {
 		return
 	}
 	run.PipelineJSON = nil
 	run.Manifest = nil
 	run.TargetSnapshot = nil
-	run.Nodes = nil
 	run.ExecutionTarget = nil
+	if !keepNodes {
+		run.Nodes = nil
+	}
+}
+
+// attachRunNodesForList hydrates each run's nodes directly from the node repo
+// without the full GetRun status refresh, keeping the list path cheap.
+func (uc *Usecase) attachRunNodesForList(ctx context.Context, items []models.PipelineRun) {
+	for i := range items {
+		if len(items[i].Nodes) > 0 {
+			continue
+		}
+		nodes, err := uc.runNodeRepo.FindByRunID(ctx, items[i].ID)
+		if err != nil {
+			slog.Warn("list runs: load nodes failed", "runID", items[i].ID, "err", err)
+			continue
+		}
+		items[i].Nodes = nodes
+	}
 }
 
 // GetRunByWorkflowName returns a pipeline run by its Argo workflow name.

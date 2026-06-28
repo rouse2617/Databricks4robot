@@ -438,4 +438,8 @@ type PipelineRunListFilter struct {
 	Page           int
 	PageSize       int
 	RefreshActive  bool
+	// SummaryOnly drops per-run nodes (and other heavy fields) for lightweight
+	// list views. When false the default list keeps nodes so callers can show
+	// per-run estimated cost.
+	SummaryOnly bool
 }
