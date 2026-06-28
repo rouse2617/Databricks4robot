@@ -141,6 +141,46 @@ func (m *mockConfigRepo) Deprecate(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *mockConfigRepo) UpdateVersionStatus(_ context.Context, configID string, version int, status string) (*models.PipelineConfigVersion, error) {
+	cfg, ok := m.byID[configID]
+	if !ok {
+		return nil, repository.ErrPipelineConfigNotFound
+	}
+	for i := range cfg.Versions {
+		if cfg.Versions[i].Version == version {
+			cfg.Versions[i].Status = status
+			updated := cfg.Versions[i]
+			return &updated, nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *mockConfigRepo) UpdateLifecycle(_ context.Context, configID string, lifecycle string) error {
+	cfg, ok := m.byID[configID]
+	if !ok {
+		return repository.ErrPipelineConfigNotFound
+	}
+	cfg.Lifecycle = lifecycle
+	return nil
+}
+
+func (m *mockConfigRepo) UpdateVersionContent(_ context.Context, configID string, version int, content string, summary string) (*models.PipelineConfigVersion, error) {
+	cfg, ok := m.byID[configID]
+	if !ok {
+		return nil, repository.ErrPipelineConfigNotFound
+	}
+	for i := range cfg.Versions {
+		if cfg.Versions[i].Version == version {
+			cfg.Versions[i].Content = content
+			cfg.Versions[i].Summary = summary
+			updated := cfg.Versions[i]
+			return &updated, nil
+		}
+	}
+	return nil, nil
+}
+
 func versionSummary(version models.PipelineConfigVersion) models.PipelineConfigVersion {
 	version.Content = ""
 	return version
