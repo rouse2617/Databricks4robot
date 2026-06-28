@@ -166,6 +166,7 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 		Message    string            `json:"message,omitempty"`
 		NodeCount  int               `json:"nodeCount"`
 		CreatedAt  *string           `json:"createdAt,omitempty"`
+		StartedAt  *string           `json:"startedAt,omitempty"`
 		FinishedAt *string           `json:"finishedAt,omitempty"`
 		Labels     map[string]string `json:"labels,omitempty"`
 	}
@@ -179,6 +180,10 @@ func (h *Handler) ListWorkflows(c *gin.Context) {
 			NodeCount: len(wf.Status.Nodes),
 			CreatedAt: &created,
 			Labels:    wf.Labels,
+		}
+		if !wf.Status.StartedAt.IsZero() {
+			s := workflowTimeString(wf.Status.StartedAt.Time)
+			it.StartedAt = &s
 		}
 		if wf.Status.FinishedAt.IsZero() {
 			it.FinishedAt = nil
@@ -221,6 +226,9 @@ func (h *Handler) GetWorkflow(c *gin.Context) {
 		"labels":            wf.Labels,
 		"estimatedDuration": int64(wf.Status.EstimatedDuration),
 		"progress":          string(wf.Status.Progress),
+	}
+	if !wf.Status.StartedAt.IsZero() {
+		resp["startedAt"] = workflowTimeString(wf.Status.StartedAt.Time)
 	}
 	if !wf.Status.FinishedAt.IsZero() {
 		t := workflowTimeString(wf.Status.FinishedAt.Time)

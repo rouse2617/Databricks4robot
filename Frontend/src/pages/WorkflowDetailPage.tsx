@@ -2,6 +2,7 @@ import {
 	ApartmentOutlined,
 	ArrowLeftOutlined,
 	BarsOutlined,
+	ClockCircleOutlined,
 	CopyOutlined,
 	ExclamationCircleOutlined,
 	ReloadOutlined,
@@ -1059,7 +1060,8 @@ function WorkflowSummaryCards({
 			value: (
 				<DurationPanel
 					phase={workflow.status}
-					startedAt={workflow.createdAt}
+					createdAt={workflow.createdAt}
+					startedAt={workflow.startedAt}
 					finishedAt={workflow.finishedAt}
 				/>
 			),
@@ -1503,6 +1505,32 @@ function formatRunDiagnosticReason(reason: string) {
 		run_failed: "运行失败",
 	};
 	return labels[reason] || reason;
+}
+
+// 识别「排队 / 限流被推迟」状态：Argo 在并行度打满时会把工作流标记为 Pending
+// 并写入 message（如 "Workflow processing has been postponed because too many
+// workflows are already running"）。这类信息并非错误，应以排队提示而非红色错误透出。
+function isQueuedWorkflowMessage(message?: string): boolean {
+	if (!message) return false;
+	return /postpone|too many workflows|exceeded.*parallelism|reached.*parallelism|waiting.*queue|is held by/i.test(
+		message,
+	);
+}
+
+function isQueuedWorkflow(
+	status?: string,
+	startedAt?: string,
+	message?: string,
+): boolean {
+	if (isQueuedWorkflowMessage(message)) return true;
+	return status === "Pending" && !startedAt;
+}
+
+function formatQueueHint(message?: string): string {
+	if (isQueuedWorkflowMessage(message)) {
+		return "当前并发已达上限，工作流已进入排队，待前序任务释放资源后自动开始执行。";
+	}
+	return "工作流已提交，正在等待调度器分配资源后开始执行。";
 }
 
 function formatCost(value?: number | null) {
@@ -2564,7 +2592,17 @@ export default function WorkflowDetailPage({
 				) : (
 					<Tag color="orange">外部 Workflow</Tag>
 				)}
-				{displayWorkflow.message ? (
+				{isQueuedWorkflow(
+					displayWorkflow.status,
+					workflow.startedAt,
+					displayWorkflow.message,
+				) ? (
+					<Tooltip title={formatQueueHint(displayWorkflow.message)}>
+						<Tag color="gold" icon={<ClockCircleOutlined />}>
+							排队中
+						</Tag>
+					</Tooltip>
+				) : displayWorkflow.message ? (
 					<Tooltip title={displayWorkflow.message}>
 						<span
 							style={{
@@ -2582,7 +2620,8 @@ export default function WorkflowDetailPage({
 				) : null}
 				<DurationPanel
 					phase={displayWorkflow.status}
-					startedAt={workflow.createdAt}
+					createdAt={workflow.createdAt}
+					startedAt={workflow.startedAt}
 					finishedAt={displayWorkflow.finishedAt}
 					progress={workflow.progress}
 				/>
@@ -2640,6 +2679,29 @@ export default function WorkflowDetailPage({
 					/>
 				</div>
 			</div>
+			{isQueuedWorkflow(
+				displayWorkflow.status,
+				workflow.startedAt,
+				displayWorkflow.message,
+			) ? (
+				<Alert
+					type="warning"
+					showIcon
+					icon={<ClockCircleOutlined />}
+					style={{ margin: "0 8px 4px" }}
+					message="工作流排队中"
+					description={
+						<span>
+							{formatQueueHint(displayWorkflow.message)}
+							{displayWorkflow.message ? (
+								<span style={{ color: "#92400e", marginInlineStart: 6 }}>
+									（调度器原文：{displayWorkflow.message}）
+								</span>
+							) : null}
+						</span>
+					}
+				/>
+			) : null}
 			<WorkflowSummaryCards
 				workflow={displayWorkflow}
 				runEventState={runEventState}

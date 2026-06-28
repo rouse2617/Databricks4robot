@@ -9,6 +9,7 @@ export interface WorkflowSummary {
 	blockingMessage?: string;
 	nodeCount: number;
 	createdAt: string;
+	startedAt?: string;
 	finishedAt?: string;
 	labels?: Record<string, string>;
 	estimatedCostUsd?: number | null;
@@ -193,6 +194,7 @@ export interface WorkflowDetail {
 	nodes: WorkflowNodeStatus[];
 	edges?: WorkflowDagEdge[];
 	createdAt: string;
+	startedAt?: string;
 	finishedAt?: string;
 	labels?: Record<string, string>;
 	estimatedDuration?: number;

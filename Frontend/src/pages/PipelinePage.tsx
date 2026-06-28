@@ -1,5 +1,5 @@
 import { App, Spin, Tabs } from "antd";
-import { lazy, Suspense, useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import ErrorBoundary from "../components/ErrorBoundary";
 
@@ -78,35 +78,78 @@ function TabFallback() {
 	);
 }
 
+const CANONICAL_TABS: ReadonlySet<PipelineTab> = new Set([
+	"design",
+	"pipelines",
+	"executions",
+	"components",
+]);
+
+// 常见别名 → 规范 tab；命中别名时静默纠正 URL，不打扰用户。
+const TAB_ALIASES: Record<string, PipelineTab> = {
+	templates: "pipelines",
+	template: "pipelines",
+	manage: "pipelines",
+	saved: "pipelines",
+	runs: "executions",
+	run: "executions",
+	canvas: "design",
+	designer: "design",
+	component: "components",
+	steps: "components",
+};
+
+const TAB_DISPLAY_NAMES: Record<PipelineTab, string> = {
+	design: "设计",
+	pipelines: "流水线",
+	executions: "执行记录",
+	components: "组件",
+};
+
 function resolvePipelineTab(
 	raw: string | null,
 	defaultTab: PipelineTab = "design",
 ): PipelineTab {
-	switch (raw) {
-		case "design":
-			return "design";
-		case "templates":
-		case "pipelines":
-			return "pipelines";
-		case "executions":
-			return "executions";
-		case "components":
-			return "components";
-		default:
-			return defaultTab;
+	if (raw && CANONICAL_TABS.has(raw as PipelineTab)) {
+		return raw as PipelineTab;
 	}
+	if (raw && TAB_ALIASES[raw]) {
+		return TAB_ALIASES[raw];
+	}
+	return defaultTab;
 }
 
 export default function PipelinePage({
 	defaultTab = "design",
 }: PipelinePageProps) {
 	const [searchParams, setSearchParams] = useSearchParams();
-	const { modal } = App.useApp();
+	const { modal, message } = App.useApp();
 	const [designDirty, setDesignDirty] = useState(false);
 	const activeTab = useMemo(
 		() => resolvePipelineTab(searchParams.get("tab"), defaultTab),
 		[defaultTab, searchParams],
 	);
+
+	// 处理 URL 里的 tab 参数：别名静默纠正、未识别参数给出提示，
+	// 避免「打开 ?tab=xxx 却静默落到设计页」的困惑。
+	useEffect(() => {
+		const raw = searchParams.get("tab");
+		if (!raw || CANONICAL_TABS.has(raw as PipelineTab)) return;
+		const resolved = resolvePipelineTab(raw, defaultTab);
+		const isKnownAlias = Boolean(TAB_ALIASES[raw]);
+		if (!isKnownAlias) {
+			message.warning(
+				`未识别的标签参数 “${raw}”，已为你切换到「${TAB_DISPLAY_NAMES[resolved]}」`,
+			);
+		}
+		const next = new URLSearchParams(searchParams);
+		if (resolved === defaultTab) {
+			next.delete("tab");
+		} else {
+			next.set("tab", resolved);
+		}
+		setSearchParams(next, { replace: true });
+	}, [searchParams, defaultTab, message, setSearchParams]);
 	const onTabChange = useCallback(
 		async (nextTab: string) => {
 			if (nextTab !== activeTab && designDirty) {

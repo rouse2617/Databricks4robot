@@ -1318,18 +1318,33 @@ function PipelineDesignerCanvasInner({
 								</Button>
 							</Tooltip>
 							<Tooltip title={deployDisabledReason}>
-								<span>
+								{canDeploy ? (
+									// 启用态直接渲染 Button：多余的 <span> 包裹会吞掉首次点击，
+									// 导致需要点两次才能打开部署弹窗。
 									<Button
 										size="small"
 										type="primary"
 										className="pipeline-toolbar__deploy"
 										icon={<PlayCircleOutlined />}
 										onClick={openDeployDialog}
-										disabled={!canDeploy}
 									>
 										部署
 									</Button>
-								</span>
+								) : (
+									// 禁用态必须用 <span> 包裹，否则 disabled Button 不派发
+									// 鼠标事件，Tooltip 无法显示禁用原因。
+									<span>
+										<Button
+											size="small"
+											type="primary"
+											className="pipeline-toolbar__deploy"
+											icon={<PlayCircleOutlined />}
+											disabled
+										>
+											部署
+										</Button>
+									</span>
+								)}
 							</Tooltip>
 							<Tooltip title="保存 (⌘/Ctrl+S)">
 								<Button

@@ -148,13 +148,16 @@ const renderTimestamp = (value?: string) => {
 	if (!value) return "-";
 	const parsed = dayjs(value);
 	if (!parsed.isValid()) return new Date(value).toLocaleString();
-	const absolute = parsed.format("YYYY-MM-DD HH:mm:ss");
+	// 瘦身：相对时间为主（最易扫读），精简绝对时间为辅（去秒，同年省略年份），
+	// 完整时间放到 Tooltip，避免在窄列里堆叠两行长数字。
+	const sameYear = parsed.year() === dayjs().year();
+	const compactAbsolute = parsed.format(sameYear ? "MM-DD HH:mm" : "YYYY-MM-DD HH:mm");
 	return (
-		<Tooltip title={parsed.toDate().toLocaleString()}>
+		<Tooltip title={parsed.format("YYYY-MM-DD HH:mm:ss")}>
 			<div style={{ lineHeight: 1.35 }}>
-				<div>{absolute}</div>
+				<div>{parsed.fromNow()}</div>
 				<Typography.Text type="secondary" style={{ fontSize: 12 }}>
-					{parsed.fromNow()}
+					{compactAbsolute}
 				</Typography.Text>
 			</div>
 		</Tooltip>
@@ -202,7 +205,8 @@ const getTimestampSortValue = (value?: string): number => {
 };
 
 const getDurationSortValue = (record: WorkflowSummary): number => {
-	const startedAt = getTimestampSortValue(record.createdAt);
+	// 排序口径与展示一致：优先用真实执行起点 startedAt，缺失时回退到 createdAt。
+	const startedAt = getTimestampSortValue(record.startedAt ?? record.createdAt);
 	if (startedAt === Number.NEGATIVE_INFINITY) {
 		return Number.NEGATIVE_INFINITY;
 	}
@@ -213,6 +217,20 @@ const getDurationSortValue = (record: WorkflowSummary): number => {
 		return Number.NEGATIVE_INFINITY;
 	}
 	return endedAt - startedAt;
+};
+
+// 与运行详情口径一致：识别因并发限流被 Argo 推迟（postponed）或尚未起跑的排队态。
+const isQueuedSummary = (record: WorkflowSummary): boolean => {
+	const msg = record.blockingMessage || record.message;
+	if (
+		msg &&
+		/postpone|too many workflows|exceeded.*parallelism|reached.*parallelism|is held by/i.test(
+			msg,
+		)
+	) {
+		return true;
+	}
+	return record.status === "Pending" && !record.startedAt;
 };
 
 const getEstimatedCostTooltip = (record: WorkflowSummary): string => {
@@ -1181,6 +1199,11 @@ export function WorkflowExecutionList({
 							) : (
 								statusTag
 							)}
+							{isQueuedSummary(record) ? (
+								<Tooltip title="并发已达上限或等待调度，工作流正在排队，待资源释放后自动开始执行">
+									<Tag color="gold">排队中</Tag>
+								</Tooltip>
+							) : null}
 							{isStaleRunningWorkflow(record) ? (
 								<Tooltip title="运行时间超过 48 小时，同步任务将自动标记为失败">
 									<Tag color="warning">疑似僵尸</Tag>
@@ -1328,7 +1351,8 @@ export function WorkflowExecutionList({
 				render: (_: unknown, record: WorkflowSummary) => (
 					<DurationPanel
 						phase={record.status}
-						startedAt={record.createdAt}
+						createdAt={record.createdAt}
+						startedAt={record.startedAt}
 						finishedAt={record.finishedAt}
 					/>
 				),
@@ -1352,7 +1376,7 @@ export function WorkflowExecutionList({
 				title: "创建时间",
 				dataIndex: "createdAt",
 				key: "createdAt",
-				width: 190,
+				width: 150,
 				defaultSortOrder: "descend" as const,
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					getTimestampSortValue(a.createdAt) -
@@ -1364,7 +1388,7 @@ export function WorkflowExecutionList({
 				title: "完成时间",
 				dataIndex: "finishedAt",
 				key: "finishedAt",
-				width: 190,
+				width: 150,
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					getTimestampSortValue(a.finishedAt) -
 					getTimestampSortValue(b.finishedAt),

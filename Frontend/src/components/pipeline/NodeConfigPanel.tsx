@@ -1,6 +1,6 @@
 import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
 import type { Node } from "@xyflow/react";
-import { Alert, Button, Collapse, Form, Input, Modal, Select } from "antd";
+import { Alert, Button, Collapse, Drawer, Form, Input, Select } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import {
 	listRuntimeMounts,
@@ -777,11 +777,13 @@ export function NodeConfigPanel({
 	};
 
 	return (
-		<Modal
+		<Drawer
 			title="节点配置"
 			open={open}
-			onCancel={onCancel}
+			onClose={onCancel}
+			placement="right"
 			width={640}
+			maskClosable
 			footer={
 				<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
 					<Button onClick={onCancel}>取消</Button>
@@ -1233,6 +1235,6 @@ export function NodeConfigPanel({
 					]}
 				/>
 			</Form>
-		</Modal>
+		</Drawer>
 	);
 }
