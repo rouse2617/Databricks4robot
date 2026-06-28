@@ -2434,7 +2434,7 @@ func (uc *Usecase) maybeMarkStaleRun(ctx context.Context, run *models.PipelineRu
 	if uc.runRepo == nil || run == nil || wf == nil || !isActiveDeploymentStatus(run.Status) {
 		return
 	}
-	ref := run.UpdatedAt
+	ref := run.CreatedAt
 	if run.StartedAt != nil && !run.StartedAt.IsZero() {
 		ref = *run.StartedAt
 	}
@@ -2449,7 +2449,7 @@ func (uc *Usecase) maybeMarkStaleRun(ctx context.Context, run *models.PipelineRu
 	run.Status = string(wfv1.WorkflowFailed)
 	run.FinishedAt = &now
 	run.Message = fmt.Sprintf("stale run: exceeded maximum active duration (%s)", staleActiveRunMaxAge.Truncate(time.Hour))
-	logPipelineSideEffect("mark stale pipeline run failed", uc.runRepo.UpdateStatus(ctx, run.ID, run.Status, run.FinishedAt))
+	uc.persistRunObservation(ctx, run)
 }
 
 func (uc *Usecase) refreshPipelineRunStatus(ctx context.Context, run *models.PipelineRun) {
@@ -5025,7 +5025,12 @@ const staleActiveRunMaxAge = 48 * time.Hour
 const workflowCreateVisibilityGracePeriod = 5 * time.Minute
 
 func isActiveDeploymentStatus(status string) bool {
-	return status == "" || status == "Running" || status == "Pending" || status == "Unknown"
+	switch strings.TrimSpace(status) {
+	case "", "Running", "Pending", "Unknown", "Suspended":
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldWaitForWorkflowCreation(run *models.PipelineRun, now time.Time) bool {

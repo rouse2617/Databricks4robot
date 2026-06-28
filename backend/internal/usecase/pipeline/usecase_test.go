@@ -3832,6 +3832,47 @@ func TestRefreshRunForList_PersistsWorkflowStartedAt(t *testing.T) {
 	}
 }
 
+func TestRefreshRunStatus_MarksStaleRunWithPersistedMessage(t *testing.T) {
+	ctx := context.Background()
+	createdAt := time.Now().UTC().Add(-staleActiveRunMaxAge - 2*time.Hour)
+	runRepo := &mockRunRepo{
+		byID: map[string]*models.PipelineRun{
+			"run-1": {
+				ID:           "run-1",
+				WorkflowName: "wf-1",
+				Status:       "Running",
+				CreatedAt:    createdAt,
+				UpdatedAt:    createdAt,
+			},
+		},
+	}
+	wfClient := &mockWorkflowClient{}
+	wfClient.getWorkflowFn = func(_ context.Context, _, _ string) (*wfv1.Workflow, error) {
+		return &wfv1.Workflow{
+			ObjectMeta: metav1.ObjectMeta{Name: "wf-1", UID: "uid-1"},
+			Status: wfv1.WorkflowStatus{
+				Phase:     wfv1.WorkflowRunning,
+				StartedAt: metav1.Time{Time: createdAt.Add(time.Hour)},
+			},
+		}, nil
+	}
+	uc := New(&mockTemplateRepo{}, &mockDeploymentRepo{}, &mockAssetRepo{}, wfClient, "default")
+	uc.SetRunRepositories(&mockTargetRepo{}, runRepo, &mockRunNodeRepo{})
+
+	run := runRepo.byID["run-1"]
+	uc.refreshRunStatus(ctx, run)
+	if run.Status != string(wfv1.WorkflowFailed) {
+		t.Fatalf("expected stale run marked Failed, got %q", run.Status)
+	}
+	if !strings.Contains(run.Message, "stale run:") {
+		t.Fatalf("expected stale message on run, got %q", run.Message)
+	}
+	saved := runRepo.byID["run-1"]
+	if !strings.Contains(saved.Message, "stale run:") {
+		t.Fatalf("expected stale message persisted, got %q", saved.Message)
+	}
+}
+
 func TestRefreshRunForList_RevivesRecentTTLNotFoundMisclassification(t *testing.T) {
 	ctx := context.Background()
 	runRepo := &mockRunRepo{
