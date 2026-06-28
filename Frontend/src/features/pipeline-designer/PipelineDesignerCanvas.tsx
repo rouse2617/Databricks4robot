@@ -69,6 +69,10 @@ import {
 	isDependencyEdge,
 } from "../../lib/pipeline-design/edge-format";
 import {
+	defaultOutputPorts,
+	normalizePorts,
+} from "../../lib/pipeline-design/port-normalizer";
+import {
 	fromTranspilerPipeline,
 	toTranspilerPipeline,
 } from "../../lib/pipelineContract";
@@ -168,7 +172,9 @@ function nodeDataDeclaresOutput(
 ) {
 	if (!data) return false;
 	const safe = portName.replace(/\./g, "-");
-	return (data.outputPorts ?? []).some(
+	// Mirror canvas-to-dsl: an unset outputPorts still yields the default
+	// "output" port, so reuse the same normalization the deploy validator sees.
+	return normalizePorts(data.outputPorts, defaultOutputPorts).some(
 		(port) => port.name === portName || port.name.replace(/\./g, "-") === safe,
 	);
 }
@@ -181,7 +187,12 @@ function nodeDataWritesOutputPath(
 	const path = `/tmp/outputs/${outputName}`;
 	if (data.source?.includes(path)) return true;
 	if (data.command?.some((part) => part.includes(path))) return true;
-	if (data.args?.some((arg) => arg.value?.includes(path))) return true;
+	if (
+		data.args?.some(
+			(arg) => arg.value?.includes(path) || arg.name?.includes(path),
+		)
+	)
+		return true;
 	return false;
 }
 
