@@ -73,6 +73,15 @@ func resetPricingCache() {
 // the instance_type and provisioning_mode keys when present; when absent
 // it falls back to the "g2-standard-16" / "nvidia-l4" / "standard" path
 // as the default GPU pipeline configuration.
+//
+// Costing model and its known approximations (intentional — see decision A1):
+//   - cost = dominantResourceSeconds * instanceHourlyRate / 3600. We bill the
+//     whole instance by wall-clock, using one resource's duration (GPU > CPU >
+//     max) as a wall-clock proxy rather than summing cpu+memory+gpu durations.
+//   - When the node carries no embedded instance_type/gpu_type, we default to
+//     the GPU node pool rate. A CPU-only step therefore gets priced at the GPU
+//     instance hourly rate, which OVERESTIMATES non-GPU work. This is accepted
+//     for now; tighten by embedding per-node instance info during Argo refresh.
 func resourcesDurationToCost(rd map[string]any, pricing *PricingConfig) *float64 {
 	if pricing == nil || len(rd) == 0 {
 		return nil
