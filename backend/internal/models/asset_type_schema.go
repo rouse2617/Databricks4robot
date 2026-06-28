@@ -197,8 +197,10 @@ func validateAnnotationResultMetadata(metadata map[string]interface{}) error {
 			}
 		}
 	}
+	// quality_score and coverage are declared minimum:0, maximum:1 in the JSON
+	// schema, so enforce the unit-interval bound rather than just "is a number".
 	for _, key := range []string{"quality_score", "coverage"} {
-		if err := optionalNumber(metadata, key); err != nil {
+		if err := optionalUnitNumber(metadata, key); err != nil {
 			return err
 		}
 	}
