@@ -3,11 +3,11 @@ import {
 	ArrowLeftOutlined,
 	BarsOutlined,
 	CopyOutlined,
+	ExclamationCircleOutlined,
 	ReloadOutlined,
 	VerticalAlignBottomOutlined,
 } from "@ant-design/icons";
 import Ansi from "ansi-to-react";
-import { List, type ListImperativeAPI, type RowComponentProps } from "react-window";
 import {
 	Alert,
 	App,
@@ -17,6 +17,7 @@ import {
 	Drawer,
 	Input,
 	Modal,
+	Result,
 	Segmented,
 	Select,
 	Space,
@@ -27,8 +28,20 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import {
+	List,
+	type ListImperativeAPI,
+	type RowComponentProps,
+} from "react-window";
 import type {
 	PipelineRun,
 	PipelineRunAssetNode,
@@ -83,9 +96,11 @@ import {
 } from "./WorkflowDagView";
 import { WorkflowTimelineView } from "./WorkflowTimelineView";
 import {
-	LOG_ROW_HEIGHT,
 	buildContentModel,
+	detectCommonLinePrefix,
+	LOG_ROW_HEIGHT,
 	type LogContentModel,
+	stripLinePrefixes,
 } from "./workflowLogView";
 import "../styles/pipeline.css";
 
@@ -354,21 +369,52 @@ function buildDisplayWorkflowNodes(
 }
 
 /** Single row renderer for the virtual log list. */
-function LogRow({ index, style, ariaAttributes, data: model }: RowComponentProps<{ data: LogContentModel }>) {
+function LogRow({
+	index,
+	style,
+	ariaAttributes,
+	data: model,
+}: RowComponentProps<{ data: LogContentModel }>) {
 	const line = model.lines[index];
 	if (!line) return null;
+	const background = line.searchMatch
+		? "rgba(250, 204, 21, 0.18)"
+		: line.isError
+			? "rgba(248, 113, 113, 0.14)"
+			: "transparent";
 	return (
 		<div
 			{...ariaAttributes}
 			style={{
 				...style,
-				background: line.searchMatch ? "#fff3cd" : "transparent",
+				display: "flex",
+				background,
 				whiteSpace: "pre",
 				overflow: "hidden",
-				textOverflow: "ellipsis",
 			}}
 		>
-			<Ansi>{line.text}</Ansi>
+			<span
+				style={{
+					flex: "0 0 auto",
+					width: 52,
+					paddingRight: 12,
+					textAlign: "right",
+					color: line.isError ? "#f87171" : "#475569",
+					userSelect: "none",
+				}}
+			>
+				{line.index + 1}
+			</span>
+			<span
+				style={{
+					flex: 1,
+					overflow: "hidden",
+					textOverflow: "ellipsis",
+					color: line.isError ? "#fca5a5" : "#e2e8f0",
+				}}
+			>
+				<Ansi>{line.text}</Ansi>
+			</span>
 		</div>
 	);
 }
@@ -409,17 +455,31 @@ function WorkflowLogPanel({
 	const listOuterRef = useRef<HTMLDivElement | null>(null);
 	const userScrolledUpRef = useRef(false);
 	const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-
+	const [hidePrefix, setHidePrefix] = useState(true);
 
 	// Measure available space for the virtual list whenever content model changes
 	const [listSize, setListSize] = useState({ height: 0, width: 0 });
 
+	// Argo log lines repeat a long pod/step identifier on every row, which eats
+	// most of the horizontal space. Detect it and let the user fold it away.
+	const commonPrefix = useMemo(
+		() => detectCommonLinePrefix(logLines),
+		[logLines],
+	);
+	const displayLines = useMemo(
+		() =>
+			hidePrefix && commonPrefix
+				? stripLinePrefixes(logLines, commonPrefix)
+				: logLines,
+		[logLines, hidePrefix, commonPrefix],
+	);
+
 	const contentModel = useMemo(
 		() =>
-			logLines.length === 0
+			displayLines.length === 0
 				? null
-				: buildContentModel(logLines, search, false),
-		[logLines, selectedNode],
+				: buildContentModel(displayLines, search, false),
+		[displayLines, selectedNode],
 	);
 
 	useLayoutEffect(() => {
@@ -431,7 +491,10 @@ function WorkflowLogPanel({
 		}
 		const observer = new ResizeObserver((entries) => {
 			for (const entry of entries) {
-				setListSize({ height: entry.contentRect.height, width: entry.contentRect.width });
+				setListSize({
+					height: entry.contentRect.height,
+					width: entry.contentRect.width,
+				});
 			}
 		});
 		observer.observe(el);
@@ -452,11 +515,24 @@ function WorkflowLogPanel({
 
 	const scrollToLogBottom = useCallback(() => {
 		if (contentModel) {
-			listRef.current?.scrollToRow({ index: contentModel.lines.length - 1, align: "end" });
+			listRef.current?.scrollToRow({
+				index: contentModel.lines.length - 1,
+				align: "end",
+			});
 		}
 		userScrolledUpRef.current = false;
 		setShowScrollToBottom(false);
 	}, [contentModel]);
+
+	const errorLineIndexes = contentModel?.errorLineIndexes ?? [];
+	const scrollToFirstError = useCallback(() => {
+		if (errorLineIndexes.length === 0) return;
+		userScrolledUpRef.current = true;
+		listRef.current?.scrollToRow({
+			index: errorLineIndexes[0],
+			align: "center",
+		});
+	}, [errorLineIndexes]);
 
 	const followStatusMeta: Record<
 		WorkflowLogFollowStatus,
@@ -474,8 +550,17 @@ function WorkflowLogPanel({
 		logResponse?.pagination && logResponse.pagination.available === false;
 	// Scroll to bottom on initial load (new node selected)
 	useEffect(() => {
-		if (selectedNode && !loading && !error && contentModel && contentModel.lines.length > 0) {
-			listRef.current?.scrollToRow({ index: contentModel.lines.length - 1, align: "end" });
+		if (
+			selectedNode &&
+			!loading &&
+			!error &&
+			contentModel &&
+			contentModel.lines.length > 0
+		) {
+			listRef.current?.scrollToRow({
+				index: contentModel.lines.length - 1,
+				align: "end",
+			});
 			userScrolledUpRef.current = false;
 			setShowScrollToBottom(false);
 		}
@@ -483,9 +568,13 @@ function WorkflowLogPanel({
 
 	// Auto-scroll on new content, but only when user hasn't scrolled up
 	useEffect(() => {
-		if (!contentModel || contentModel.lines.length === 0 || loading || error) return;
+		if (!contentModel || contentModel.lines.length === 0 || loading || error)
+			return;
 		if (userScrolledUpRef.current) return;
-		listRef.current?.scrollToRow({ index: contentModel.lines.length - 1, align: "end" });
+		listRef.current?.scrollToRow({
+			index: contentModel.lines.length - 1,
+			align: "end",
+		});
 	});
 
 	return (
@@ -521,13 +610,18 @@ function WorkflowLogPanel({
 				) : (
 					<Button
 						disabled={!selectedNode}
-						loading={followStatus === "connecting" || followStatus === "reconnecting"}
+						loading={
+							followStatus === "connecting" || followStatus === "reconnecting"
+						}
 						onClick={onFollow}
 					>
 						实时日志
 					</Button>
 				)}
-				<Button disabled={!selectedNode || logLines.length === 0} onClick={onDownload}>
+				<Button
+					disabled={!selectedNode || logLines.length === 0}
+					onClick={onDownload}
+				>
 					下载当前窗口
 				</Button>
 			</div>
@@ -559,6 +653,35 @@ function WorkflowLogPanel({
 					<Typography.Text type="secondary" style={{ fontSize: 12 }}>
 						{followMessage}
 					</Typography.Text>
+				) : null}
+				{commonPrefix ? (
+					<Tooltip
+						title={
+							hidePrefix
+								? `已折叠每行重复的 Pod 前缀：${commonPrefix}`
+								: `Pod 前缀：${commonPrefix}`
+						}
+					>
+						<Button
+							size="small"
+							type={hidePrefix ? "default" : "primary"}
+							onClick={() => setHidePrefix((value) => !value)}
+						>
+							{hidePrefix ? "展开 Pod 前缀" : "折叠 Pod 前缀"}
+						</Button>
+					</Tooltip>
+				) : null}
+				{errorLineIndexes.length > 0 ? (
+					<Tooltip title="滚动到日志中第一处错误行">
+						<Button
+							size="small"
+							danger
+							icon={<ExclamationCircleOutlined />}
+							onClick={scrollToFirstError}
+						>
+							跳到首个错误（{errorLineIndexes.length}）
+						</Button>
+					</Tooltip>
 				) : null}
 			</div>
 
@@ -595,7 +718,10 @@ function WorkflowLogPanel({
 							type="warning"
 							showIcon
 							style={{ marginBottom: 8 }}
-							message={`日志较大，当前仅显示尾部 ${contentModel.lines.map(l => l.text).join("\n").length.toLocaleString()} 字符 / ${Math.min(contentModel.totalLines, logLines.length).toLocaleString()} 行。`}
+							message={`日志较大，当前仅显示尾部 ${contentModel.lines
+								.map((l) => l.text)
+								.join("\n")
+								.length.toLocaleString()} 字符 / ${Math.min(contentModel.totalLines, logLines.length).toLocaleString()} 行。`}
 							description="完整大日志需要后端 tail、分页或流式接口支持；当前视图会限制渲染量以避免浏览器卡顿。"
 						/>
 					)}
@@ -620,7 +746,7 @@ function WorkflowLogPanel({
 						}}
 					>
 						<span>
-							显示 {(logLines.join("\n").length).toLocaleString()} 字符 /{" "}
+							显示 {logLines.join("\n").length.toLocaleString()} 字符 /{" "}
 							{contentModel?.totalLines.toLocaleString() ?? 0} 行
 							{logResponse?.truncated ? "，服务端已按字节上限截断" : ""}
 							{search.trim() ? `，搜索：${search.trim()}` : ""}
@@ -630,54 +756,85 @@ function WorkflowLogPanel({
 							icon={<CopyOutlined />}
 							onClick={async () => {
 								if (!contentModel) return;
-								await navigator.clipboard.writeText(contentModel.lines.map(l => l.text).join("\n"));
+								await navigator.clipboard.writeText(
+									contentModel.lines.map((l) => l.text).join("\n"),
+								);
 								messageApi.success?.("已复制当前可见日志");
 							}}
 						>
 							复制可见日志
 						</Button>
 					</div>
-						<div
-							ref={listOuterRef}
-							style={{ position: "relative", flex: 1, minHeight: 0 }}
-						>
-							{contentModel && contentModel.lines.length > 0 ? (
-										<List
-											listRef={listRef}
-											rowComponent={LogRow}
-											rowCount={contentModel.lines.length}
-											rowHeight={LOG_ROW_HEIGHT}
-											rowProps={{ data: contentModel }}
-											style={{
-												height: listSize.height || 400,
-												width: listSize.width || 800,
-												fontSize: 11,
-												fontFamily: '"SF Mono", "Fira Code", monospace',
-												background: "#f8f9fa",
-												borderRadius: 6,
-												border: "1px solid #e5e7eb",
-											}}
-										/>
+					<div
+						ref={listOuterRef}
+						style={{ position: "relative", flex: 1, minHeight: 0 }}
+					>
+						{contentModel && contentModel.lines.length > 0 ? (
+							<List
+								listRef={listRef}
+								rowComponent={LogRow}
+								rowCount={contentModel.lines.length}
+								rowHeight={LOG_ROW_HEIGHT}
+								rowProps={{ data: contentModel }}
+								style={{
+									height: listSize.height || 400,
+									width: listSize.width || 800,
+									fontSize: 11,
+									fontFamily: '"SF Mono", "Fira Code", monospace',
+									background: "#0f172a",
+									color: "#e2e8f0",
+									borderRadius: 6,
+									border: "1px solid #1e293b",
+								}}
+							/>
 						) : null}
-							{showScrollToBottom && (
-								<Button
-									type="primary"
-									size="small"
-									icon={<VerticalAlignBottomOutlined />}
-									onClick={scrollToLogBottom}
-									style={{
-										position: "absolute",
-										bottom: 16,
-										right: 16,
-										borderRadius: 20,
-										boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-										zIndex: 10,
-									}}
-								>
-									回到底部
-								</Button>
-							)}
-						</div>
+						{contentModel && contentModel.totalLines > 0
+							? errorLineIndexes.map((lineIndex) => (
+									<button
+										type="button"
+										key={lineIndex}
+										aria-label={`跳到第 ${lineIndex + 1} 行错误`}
+										onClick={() =>
+											listRef.current?.scrollToRow({
+												index: lineIndex,
+												align: "center",
+											})
+										}
+										style={{
+											position: "absolute",
+											right: 2,
+											top: `${(lineIndex / contentModel.totalLines) * 100}%`,
+											width: 6,
+											height: 3,
+											padding: 0,
+											border: "none",
+											cursor: "pointer",
+											background: "#f87171",
+											borderRadius: 1,
+											zIndex: 11,
+										}}
+									/>
+								))
+							: null}
+						{showScrollToBottom && (
+							<Button
+								type="primary"
+								size="small"
+								icon={<VerticalAlignBottomOutlined />}
+								onClick={scrollToLogBottom}
+								style={{
+									position: "absolute",
+									bottom: 16,
+									right: 16,
+									borderRadius: 20,
+									boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+									zIndex: 10,
+								}}
+							>
+								回到底部
+							</Button>
+						)}
+					</div>
 				</>
 			)}
 			{selectedNode && (
@@ -1109,8 +1266,10 @@ function ExpiredWorkflowLedgerView({
 	runMetadataState,
 	onBack,
 	onRefreshEvents,
+	isLivePolling,
 }: {
 	name?: string;
+	isLivePolling?: boolean;
 	runEventState: ReturnType<typeof useWorkflowDetail>["runEventState"];
 	runMetadataState: ReturnType<typeof useWorkflowDetail>["runMetadataState"];
 	onBack: () => void;
@@ -1129,13 +1288,15 @@ function ExpiredWorkflowLedgerView({
 		run?.pipelineName || run?.workflowName || name || run?.id || "运行详情";
 	const assetIds =
 		run?.assetIds && run.assetIds.length > 0 ? run.assetIds : undefined;
-		const isBatchParent =
-			run?.workflowName?.startsWith("batch-parent-") ||
-			run?.workflowName?.startsWith("backfill-parent-");
+	const isBatchParent =
+		run?.workflowName?.startsWith("batch-parent-") ||
+		run?.workflowName?.startsWith("backfill-parent-");
 	const reason =
 		run?.blockingReason ||
 		run?.failureReason ||
-		(!isRuntimeNotSubmitted && !isBatchParent && hasRuntimeReference ? "runtime_missing" : "");
+		(!isRuntimeNotSubmitted && !isBatchParent && hasRuntimeReference
+			? "runtime_missing"
+			: "");
 	const reasonLabel = reason ? formatRunDiagnosticReason(reason) : undefined;
 	const reasonMessage = run?.blockingMessage || run?.message;
 
@@ -1150,9 +1311,20 @@ function ExpiredWorkflowLedgerView({
 						{runTitle}
 					</Typography.Title>
 					{run?.status ? (
-						<Tag color={STATUS_COLORS[run.status] || "default"}>
+						<Tag
+							color={STATUS_COLORS[run.status] || "default"}
+							className={isLivePolling ? "workflow-status-tag-live" : undefined}
+						>
 							{formatWorkflowPhaseLabel(run.status)}
 						</Tag>
+					) : null}
+					{isLivePolling ? (
+						<Tooltip title="运行中，每 8 秒自动刷新账本">
+							<span className="workflow-live-indicator">
+								<span className="workflow-live-dot" />
+								实时刷新
+							</span>
+						</Tooltip>
 					) : null}
 				</Space>
 				<Alert
@@ -1403,12 +1575,47 @@ function assetNodeMessageSummary(message?: string): string | null {
 	return `${normalized.slice(0, maxLength - 1)}…`;
 }
 
+const WORKFLOW_SPLIT_RATIO_KEY = "workflow-detail-split-ratio";
+const WORKFLOW_SPLIT_RATIO_MIN = 0.2;
+const WORKFLOW_SPLIT_RATIO_MAX = 0.8;
+const WORKFLOW_SPLIT_RATIO_DEFAULT = 0.55;
+
+function readStoredSplitRatio(): number {
+	try {
+		const raw = window.localStorage.getItem(WORKFLOW_SPLIT_RATIO_KEY);
+		const parsed = raw ? Number.parseFloat(raw) : Number.NaN;
+		if (Number.isFinite(parsed)) {
+			return Math.max(
+				WORKFLOW_SPLIT_RATIO_MIN,
+				Math.min(WORKFLOW_SPLIT_RATIO_MAX, parsed),
+			);
+		}
+	} catch {
+		/* ignore storage failures (private mode / disabled) */
+	}
+	return WORKFLOW_SPLIT_RATIO_DEFAULT;
+}
+
+function assetNodeMatchesSelected(
+	row: PipelineRunAssetNode,
+	selectedNode: WorkflowNodeStatus | null,
+): boolean {
+	if (!selectedNode) return false;
+	return (
+		row.argoNodeId === selectedNode.id ||
+		row.pipelineNodeId === selectedNode.id ||
+		(!!row.displayName && row.displayName === selectedNode.displayName) ||
+		(!!row.displayName && row.displayName === selectedNode.name)
+	);
+}
+
 function WorkflowAssetNodePanel({
 	assetNodeState,
 	costSummaryState,
 	workflowNodeCount,
 	pipelineNodeLabels,
 	onSelectAssetNode,
+	selectedNode,
 }: {
 	assetNodeState: ReturnType<typeof useWorkflowDetail>["assetNodeState"];
 	costSummaryState: ReturnType<typeof useWorkflowDetail>["costSummaryState"];
@@ -1418,7 +1625,19 @@ function WorkflowAssetNodePanel({
 		row: PipelineRunAssetNode,
 		action: WorkflowDagNodeAction,
 	) => void;
+	selectedNode: WorkflowNodeStatus | null;
 }) {
+	const tableWrapRef = useRef<HTMLDivElement>(null);
+	const selectedNodeId = selectedNode?.id ?? null;
+	// When a node is picked on the canvas, scroll its matching detail row into
+	// view so the canvas↔明细 linkage stays in sync without manual searching.
+	useEffect(() => {
+		if (!selectedNodeId) return;
+		const active = tableWrapRef.current?.querySelector(
+			"tr.asset-node-row-active",
+		);
+		active?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+	}, [selectedNodeId]);
 	const summary = assetNodeState.summary;
 	const noAssetOnly =
 		assetNodeState.items.length > 0 &&
@@ -1454,6 +1673,7 @@ function WorkflowAssetNodePanel({
 	const showCostSummary = !costUnavailable;
 	return (
 		<div
+			ref={tableWrapRef}
 			style={{
 				margin: "0 8px 4px",
 				border: "1px solid #e5e7eb",
@@ -1521,6 +1741,11 @@ function WorkflowAssetNodePanel({
 				rowKey="id"
 				loading={assetNodeState.loading}
 				dataSource={assetNodeState.items}
+				rowClassName={(row) =>
+					assetNodeMatchesSelected(row, selectedNode)
+						? "asset-node-row-active"
+						: ""
+				}
 				pagination={
 					assetNodeState.items.length > 10
 						? { pageSize: 10, size: "small", showSizeChanger: false }
@@ -1740,7 +1965,14 @@ function WorkflowRunMetadataPanel({
 				/>
 			) : null}
 			<div style={{ padding: "8px 10px" }}>
-				<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "2px 16px", fontSize: 12 }}>
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+						gap: "2px 16px",
+						fontSize: 12,
+					}}
+				>
 					{[
 						{ label: "Runtime", val: runtime?.runtimeType },
 						{ label: "Workflow", val: runtime?.workflowName, mono: true },
@@ -1748,26 +1980,72 @@ function WorkflowRunMetadataPanel({
 						{ label: "UID", val: runtime?.uid, mono: true },
 						{ label: "状态", val: runtime?.status },
 						{ label: "执行目标", val: runtime?.executionTargetId, mono: true },
-					].filter((kv) => kv.val).map((kv) => (
-						<div key={kv.label} title={kv.val}>
-							<span style={{ color: "#94a3b8", marginRight: 6 }}>{kv.label}</span>
-							<span style={{ fontFamily: kv.mono ? "var(--font-mono)" : "inherit", fontWeight: 500, color: "#1e293b" }}>
-								{kv.val && kv.val.length > 40 ? kv.val.slice(0, 40) + "…" : kv.val ?? ""}
-							</span>
-						</div>
-					))}
+					]
+						.filter((kv) => kv.val)
+						.map((kv) => (
+							<div key={kv.label} title={kv.val}>
+								<span style={{ color: "#94a3b8", marginRight: 6 }}>
+									{kv.label}
+								</span>
+								<span
+									style={{
+										fontFamily: kv.mono ? "var(--font-mono)" : "inherit",
+										fontWeight: 500,
+										color: "#1e293b",
+									}}
+								>
+									{kv.val && kv.val.length > 40
+										? kv.val.slice(0, 40) + "…"
+										: (kv.val ?? "")}
+								</span>
+							</div>
+						))}
 				</div>
 
 				{inputs.length > 0 ? (
 					<div style={{ marginTop: 6, fontSize: 12 }}>
-						<span style={{ color: "#475569", fontWeight: 500, fontSize: 11 }}>输入 ({inputs.length})</span>
+						<span style={{ color: "#475569", fontWeight: 500, fontSize: 11 }}>
+							输入 ({inputs.length})
+						</span>
 						{inputs.slice(0, 6).map((row) => (
-							<div key={row.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "1px 0" }}>
-								<Tag style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px", margin: 0 }}>{row.type}</Tag>
-								<span style={{ fontFamily: "var(--font-mono)", color: "#64748b", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{runInputRef(row) || "-"}</span>
+							<div
+								key={row.id}
+								style={{
+									display: "flex",
+									gap: 8,
+									alignItems: "center",
+									padding: "1px 0",
+								}}
+							>
+								<Tag
+									style={{
+										fontSize: 10,
+										lineHeight: "16px",
+										padding: "0 4px",
+										margin: 0,
+									}}
+								>
+									{row.type}
+								</Tag>
+								<span
+									style={{
+										fontFamily: "var(--font-mono)",
+										color: "#64748b",
+										flex: 1,
+										overflow: "hidden",
+										textOverflow: "ellipsis",
+										whiteSpace: "nowrap",
+									}}
+								>
+									{runInputRef(row) || "-"}
+								</span>
 							</div>
 						))}
-						{inputs.length > 6 ? <span style={{ color: "#94a3b8", fontSize: 10, marginTop: 2 }}>+{inputs.length - 6} 更多</span> : null}
+						{inputs.length > 6 ? (
+							<span style={{ color: "#94a3b8", fontSize: 10, marginTop: 2 }}>
+								+{inputs.length - 6} 更多
+							</span>
+						) : null}
 					</div>
 				) : null}
 
@@ -1828,7 +2106,17 @@ export default function WorkflowDetailPage({
 		? "返回批次详情"
 		: "返回";
 	const [viewMode, setViewMode] = useState<"dag" | "timeline">("dag");
-	const [splitRatio, setSplitRatio] = useState(0.55);
+	const [splitRatio, setSplitRatio] = useState(readStoredSplitRatio);
+	useEffect(() => {
+		try {
+			window.localStorage.setItem(
+				WORKFLOW_SPLIT_RATIO_KEY,
+				splitRatio.toFixed(3),
+			);
+		} catch {
+			/* ignore storage failures (private mode / quota) */
+		}
+	}, [splitRatio]);
 	const [operationLoading, setOperationLoading] =
 		useState<WorkflowOperationKey | null>(null);
 	const [confirmOperation, setConfirmOperation] =
@@ -1853,6 +2141,7 @@ export default function WorkflowDetailPage({
 		costSummaryState,
 		runMetadataState,
 		setLogSearch,
+		isLivePolling,
 		startFollowLogs,
 		stopFollowLogs,
 		downloadLogs,
@@ -2189,24 +2478,32 @@ export default function WorkflowDetailPage({
 					runMetadataState={runMetadataState}
 					onBack={() => navigate(backTarget)}
 					onRefreshEvents={loadRunEvents}
+					isLivePolling={isLivePolling}
 				/>
 			);
 		}
 		return (
-			<div style={{ padding: 24 }}>
-				<Alert
-					type="warning"
-					showIcon
-					message="未找到工作流"
-					description={loadError.message}
-					action={
+			<div
+				style={{
+					minHeight: "60vh",
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "center",
+				}}
+			>
+				<Result
+					status="404"
+					title="未找到该工作流"
+					subTitle={
+						loadError.message ||
+						"它可能已被删除、尚未同步，或链接已失效。可以返回列表重新选择，或稍后重试。"
+					}
+					extra={
 						<Space>
-							<Button size="small" onClick={() => navigate(backTarget)}>
-								返回
+							<Button type="primary" onClick={() => navigate(backTarget)}>
+								返回流水线列表
 							</Button>
-							<Button size="small" onClick={loadWorkflow}>
-								重试
-							</Button>
+							<Button onClick={loadWorkflow}>重试</Button>
 						</Space>
 					}
 				/>
@@ -2239,8 +2536,6 @@ export default function WorkflowDetailPage({
 	const displayableNodeCount = countDisplayableWorkflowNodes(
 		displayWorkflow.nodes,
 	);
-	const graphHeight =
-		displayableNodeCount <= 1 ? 240 : displayableNodeCount <= 5 ? 320 : 400;
 
 	return (
 		<div
@@ -2262,9 +2557,20 @@ export default function WorkflowDetailPage({
 				<h3 className="workflow-detail-title" title={workflow.name}>
 					{workflow.name}
 				</h3>
-				<Tag color={STATUS_COLORS[displayWorkflow.status] || "default"}>
+				<Tag
+					color={STATUS_COLORS[displayWorkflow.status] || "default"}
+					className={isLivePolling ? "workflow-status-tag-live" : undefined}
+				>
 					{formatWorkflowPhaseLabel(displayWorkflow.status)}
 				</Tag>
+				{isLivePolling ? (
+					<Tooltip title="运行中，每 8 秒自动刷新状态">
+						<span className="workflow-live-indicator">
+							<span className="workflow-live-dot" />
+							实时刷新
+						</span>
+					</Tooltip>
+				) : null}
 				{runEventState.run || runEventState.items.length > 0 ? (
 					<Tag color="green">DataBrew 运行</Tag>
 				) : (
@@ -2303,16 +2609,23 @@ export default function WorkflowDetailPage({
 				<div className="workflow-detail-actions">
 					<Space size={4} wrap>
 						{availableOperations.map((operation) => (
-							<Button
+							<Tooltip
 								key={operation.key}
-								size="small"
-								icon={operation.icon}
-								danger={operation.danger}
-								loading={operationLoading === operation.key}
-								onClick={() => runOperation(operation)}
+								title={
+									getWorkflowOperationConfirmText(operation.key) ??
+									operation.title
+								}
 							>
-								{operation.title}
-							</Button>
+								<Button
+									size="small"
+									icon={operation.icon}
+									danger={operation.danger}
+									loading={operationLoading === operation.key}
+									onClick={() => runOperation(operation)}
+								>
+									{operation.title}
+								</Button>
+							</Tooltip>
 						))}
 					</Space>
 					<Segmented
@@ -2344,12 +2657,20 @@ export default function WorkflowDetailPage({
 				runEventState={runEventState}
 				costSummaryState={costSummaryState}
 			/>
-			<div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+			<div
+				style={{
+					display: "flex",
+					flexDirection: "column",
+					flex: 1,
+					minHeight: 0,
+				}}
+			>
 				{/* Canvas — top zone */}
 				<div
 					className="workflow-detail-graph-shell"
 					style={{
-						height: viewMode === "timeline" ? "auto" : `calc(100% * ${splitRatio})`,
+						height:
+							viewMode === "timeline" ? "auto" : `calc(100% * ${splitRatio})`,
 						minHeight: viewMode === "timeline" ? 200 : 280,
 						position: "relative",
 						overflow: viewMode === "timeline" ? "visible" : "hidden",
@@ -2358,31 +2679,66 @@ export default function WorkflowDetailPage({
 						flexShrink: 1,
 					}}
 				>
-					{/* Drag handle — resize canvas/bottom split */}
-					<div
-						onMouseDown={(e) => {
-							e.preventDefault();
-							const el = (e.target as HTMLElement).parentElement;
-							if (!el) return;
-							const h = el.parentElement?.clientHeight || 600;
-							const sy = e.clientY;
-							const sr = splitRatio;
-							const mv = (ev: MouseEvent) => setSplitRatio(Math.max(0.2, Math.min(0.8, sr + (ev.clientY - sy) / h)));
-							const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
-							window.addEventListener("mousemove", mv);
-							window.addEventListener("mouseup", up);
-						}}
-						style={{
-							position: "absolute",
-							bottom: -4,
-							left: 0,
-							right: 0,
-							height: 8,
-							zIndex: 10,
-							cursor: "row-resize",
-							background: "transparent",
-						}}
-					/>
+					{/* Drag handle — resize canvas/bottom split (dag mode only) */}
+					{viewMode === "dag" ? (
+						// biome-ignore lint/a11y/useSemanticElements: a focusable, draggable separator has no native HTML element
+						<div
+							className="workflow-split-resizer"
+							role="separator"
+							aria-orientation="horizontal"
+							aria-label="拖拽调整画布与明细的高度比例"
+							aria-valuemin={Math.round(WORKFLOW_SPLIT_RATIO_MIN * 100)}
+							aria-valuemax={Math.round(WORKFLOW_SPLIT_RATIO_MAX * 100)}
+							aria-valuenow={Math.round(splitRatio * 100)}
+							tabIndex={0}
+							title="拖拽调整上下高度（双击重置）"
+							onMouseDown={(e) => {
+								e.preventDefault();
+								const el = (e.target as HTMLElement).closest(
+									".workflow-detail-graph-shell",
+								) as HTMLElement | null;
+								if (!el) return;
+								const h = el.parentElement?.clientHeight || 600;
+								const sy = e.clientY;
+								const sr = splitRatio;
+								const mv = (ev: MouseEvent) =>
+									setSplitRatio(
+										Math.max(
+											WORKFLOW_SPLIT_RATIO_MIN,
+											Math.min(
+												WORKFLOW_SPLIT_RATIO_MAX,
+												sr + (ev.clientY - sy) / h,
+											),
+										),
+									);
+								const up = () => {
+									window.removeEventListener("mousemove", mv);
+									window.removeEventListener("mouseup", up);
+									document.body.style.userSelect = "";
+								};
+								document.body.style.userSelect = "none";
+								window.addEventListener("mousemove", mv);
+								window.addEventListener("mouseup", up);
+							}}
+							onDoubleClick={() =>
+								setSplitRatio(WORKFLOW_SPLIT_RATIO_DEFAULT)
+							}
+							onKeyDown={(e) => {
+								if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+									e.preventDefault();
+									const delta = e.key === "ArrowUp" ? -0.03 : 0.03;
+									setSplitRatio((prev) =>
+										Math.max(
+											WORKFLOW_SPLIT_RATIO_MIN,
+											Math.min(WORKFLOW_SPLIT_RATIO_MAX, prev + delta),
+										),
+									);
+								}
+							}}
+						>
+							<span className="workflow-split-resizer__grip" />
+						</div>
+					) : null}
 					{viewMode === "dag" ? (
 						<WorkflowDagView
 							nodes={displayWorkflow.nodes}
@@ -2404,37 +2760,60 @@ export default function WorkflowDetailPage({
 					)}
 				</div>
 				{/* Bottom — tabbed panel */}
-				<div style={{ flex: 1, minHeight: 0, borderTop: "1px solid #e2e8f0", background: "#fff", display: "flex", flexDirection: "column" }}>
+				<div
+					style={{
+						flex: 1,
+						minHeight: 0,
+						borderTop: "1px solid #e2e8f0",
+						background: "#fff",
+						display: "flex",
+						flexDirection: "column",
+					}}
+				>
 					<Tabs
 						size="small"
 						defaultActiveKey="detail"
-						style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+						style={{
+							flex: 1,
+							minHeight: 0,
+							display: "flex",
+							flexDirection: "column",
+						}}
 						items={[
 							{
 								key: "detail",
 								label: "节点明细",
-								children: runEventState.run || runEventState.items.length > 0 ? (
-									<div style={{ flex: 1, overflow: "auto" }}>
-										<WorkflowAssetNodePanel
-											assetNodeState={assetNodeState}
-											costSummaryState={costSummaryState}
-											workflowNodeCount={displayableNodeCount}
-											pipelineNodeLabels={pipelineNodeLabels}
-											onSelectAssetNode={handleSelectAssetNode}
+								children:
+									runEventState.run || runEventState.items.length > 0 ? (
+										<div style={{ flex: 1, overflow: "auto" }}>
+											<WorkflowAssetNodePanel
+												assetNodeState={assetNodeState}
+												costSummaryState={costSummaryState}
+												workflowNodeCount={displayableNodeCount}
+												pipelineNodeLabels={pipelineNodeLabels}
+												onSelectAssetNode={handleSelectAssetNode}
+												selectedNode={displaySelectedNode}
+											/>
+										</div>
+									) : (
+										<Alert
+											type="info"
+											showIcon
+											message="暂无资产节点明细"
+											style={{ margin: 8 }}
 										/>
-									</div>
-								) : (
-									<Alert type="info" showIcon message="暂无资产节点明细" style={{ margin: 8 }} />
-								)
+									),
 							},
 							{
 								key: "metadata",
 								label: "运行上下文",
 								children: runEventState.run ? (
 									<div style={{ flex: 1, overflow: "auto" }}>
-										<WorkflowRunMetadataPanel runMetadataState={runMetadataState} />
+										<WorkflowRunMetadataPanel
+											runMetadataState={runMetadataState}
+										/>
 									</div>
-								) : null
+								) : null,
 							},
 							{
 								key: "events",
@@ -2450,7 +2829,7 @@ export default function WorkflowDetailPage({
 											onSelectNodeEvent={handleSelectEventNode}
 										/>
 									</div>
-								)
+								),
 							},
 						]}
 					/>

@@ -7,22 +7,31 @@ import {
 	FundProjectionScreenOutlined,
 	HistoryOutlined,
 	LogoutOutlined,
+	MenuFoldOutlined,
+	MenuUnfoldOutlined,
 	RobotOutlined,
 	SendOutlined,
 	SettingOutlined,
 	UnorderedListOutlined,
 	UserOutlined,
 } from "@ant-design/icons";
-import { Avatar, Dropdown, Grid, Layout, Menu, Typography } from "antd";
+import {
+	Avatar,
+	Button,
+	Dropdown,
+	Layout,
+	Menu,
+	Tooltip,
+	Typography,
+} from "antd";
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { getAppVersionLabel } from "../lib/appVersion";
 import CmdKSearch from "./CmdKSearch";
 
 const { Sider, Content } = Layout;
-const { useBreakpoint } = Grid;
 
 const menuItems = [
 	{ key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
@@ -94,9 +103,17 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const { logout } = useAuth();
-	const screens = useBreakpoint();
-	const isMobile = !screens.lg;
 	const siderWidth = 220;
+	const [collapsed, setCollapsed] = useState<boolean>(
+		() => localStorage.getItem("db.sider.collapsed") === "1",
+	);
+	const toggleCollapsed = () => {
+		setCollapsed((prev) => {
+			const next = !prev;
+			localStorage.setItem("db.sider.collapsed", next ? "1" : "0");
+			return next;
+		});
+	};
 	const fullBleed = isFullBleedPage(location.pathname);
 	const pageContainerClass = resolvePageContainerClass(location.pathname);
 	const versionLabel = getAppVersionLabel();
@@ -111,7 +128,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 			<Sider
 				width={siderWidth}
 				breakpoint="lg"
+				collapsed={collapsed}
 				collapsedWidth={0}
+				onBreakpoint={(broken) => setCollapsed(broken)}
 				trigger={null}
 				className="app-sider"
 				style={{
@@ -167,17 +186,29 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 					</div>
 				</div>
 			</Sider>
-			<Layout style={{ marginLeft: isMobile ? 0 : siderWidth }}>
+			<Layout style={{ marginLeft: collapsed ? 0 : siderWidth }}>
 				<Content style={{ minHeight: "100vh" }}>
 					<div
 						style={{
 							display: "flex",
-							justifyContent: "flex-end",
+							justifyContent: "space-between",
+							alignItems: "center",
 							padding: "12px 24px",
 							background: "#fff",
 							borderBottom: "1px solid #f0f0f0",
 						}}
 					>
+						<Tooltip
+							title={collapsed ? "展开导航栏" : "收起导航栏，扩大工作区"}
+							placement="right"
+						>
+							<Button
+								type="text"
+								aria-label={collapsed ? "展开导航栏" : "收起导航栏"}
+								icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+								onClick={toggleCollapsed}
+							/>
+						</Tooltip>
 						<Dropdown
 							menu={{
 								items: [

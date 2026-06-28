@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildContentModel,
+	detectCommonLinePrefix,
+	isErrorLogLine,
 	normalizeLogContent,
 	prepareVisibleLogContent,
+	stripLinePrefixes,
 } from "./workflowLogView";
 
 describe("workflowLogView", () => {
@@ -32,6 +36,50 @@ describe("workflowLogView", () => {
 		expect(normalizeLogContent(content, { podName: "wf.step" })).toBe(
 			"wf-step-123456 first\nwf-step-123456 second\nwf-step-123456 third",
 		);
+	});
+
+	it("detects a dominant repeated pod prefix across lines", () => {
+		const lines = [
+			"wf-step-1234567890-abc: starting",
+			"wf-step-1234567890-abc: processing",
+			"wf-step-1234567890-abc: done",
+		];
+		expect(detectCommonLinePrefix(lines)).toBe("wf-step-1234567890-abc:");
+	});
+
+	it("ignores short or non-dominant first words", () => {
+		expect(detectCommonLinePrefix(["ok one", "ok two", "different line"])).toBe(
+			"",
+		);
+	});
+
+	it("strips the detected prefix from every line", () => {
+		const prefix = "wf-step-1234567890-abc:";
+		const lines = [`${prefix} starting`, `${prefix} done`, "no-prefix line"];
+		expect(stripLinePrefixes(lines, prefix)).toEqual([
+			"starting",
+			"done",
+			"no-prefix line",
+		]);
+	});
+
+	it("flags error/failure lines and ignores ordinary lines", () => {
+		expect(isErrorLogLine("PermissionDenied: 403 Secret Manager API")).toBe(
+			true,
+		);
+		expect(isErrorLogLine("process exited with exit status 1")).toBe(true);
+		expect(isErrorLogLine("step completed successfully")).toBe(false);
+	});
+
+	it("collects error line indexes when building the content model", () => {
+		const model = buildContentModel(
+			["starting", "ERROR failed to connect", "retrying", "fatal: boom"],
+			"",
+			false,
+		);
+		expect(model.errorLineIndexes).toEqual([1, 3]);
+		expect(model.lines[1].isError).toBe(true);
+		expect(model.lines[0].isError).toBe(false);
 	});
 
 	it("renders only the tail of very long logs by character and line limits", () => {
