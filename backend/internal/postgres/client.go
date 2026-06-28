@@ -217,7 +217,7 @@ func (c *Client) Query(ctx context.Context, sql string, args ...any) (interface 
 // does not support real transactions), WithTx degrades to calling fn with
 // the plain ctx; the caller is then responsible for ensuring its mock
 // honours the contract.
-func (c *Client) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+func (c *Client) WithTx(ctx context.Context, fn func(ctx context.Context) error) (err error) {
 	real, ok := c.db.(*realDB)
 	if !ok {
 		// Test/mocked client: no real transaction available; pass ctx as-is.
@@ -227,13 +227,25 @@ func (c *Client) WithTx(ctx context.Context, fn func(ctx context.Context) error)
 	if err != nil {
 		return fmt.Errorf("postgres WithTx begin: %w", err)
 	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		// Roll back on any non-commit exit (error return or panic). A fresh
+		// background ctx is used so a cancelled request ctx — the very reason
+		// fn often fails — cannot prevent the rollback from being sent.
+		rbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(rbCtx)
+	}()
 	txCtx := context.WithValue(ctx, txKey{}, &realTx{tx: tx})
-	if err := fn(txCtx); err != nil {
-		_ = tx.Rollback(ctx)
+	if err = fn(txCtx); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("postgres WithTx commit: %w", err)
 	}
+	committed = true
 	return nil
 }
