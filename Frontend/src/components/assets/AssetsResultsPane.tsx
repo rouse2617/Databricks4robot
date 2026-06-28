@@ -118,7 +118,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 				<Tooltip title="复制 Asset ID">
 					<button
 						type="button"
-						className="link-like-button"
+						className="link-like-button row-hover-action"
 						aria-label={`复制 Asset ${id}`}
 						onClick={(e) => {
 							e.stopPropagation();
@@ -155,7 +155,7 @@ const COLUMN_BUILDERS: Record<string, ColumnBuilder> = {
 					<Tooltip title="复制 MCAP ID">
 						<button
 							type="button"
-							className="link-like-button"
+							className="link-like-button row-hover-action"
 							aria-label={`复制 MCAP ${v}`}
 							onClick={(e) => {
 								e.stopPropagation();

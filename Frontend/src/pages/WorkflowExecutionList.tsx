@@ -269,6 +269,17 @@ const RUN_REASON_COLORS: Record<string, string> = {
 const formatRunReasonLabel = (reason?: string): string =>
 	reason ? (RUN_REASON_LABELS[reason] ?? reason) : "";
 
+// Generic failure reasons whose tag would only repeat the status tag
+// (e.g. status "失败" + reason "运行失败"). Specific reasons such as
+// "调度失败 / 资源不匹配 / 超时" still carry extra signal and are kept.
+const GENERIC_FAILURE_REASONS = new Set(["run_failed"]);
+
+const isRedundantRunReason = (reason?: string, status?: string): boolean => {
+	if (!reason) return false;
+	if (!GENERIC_FAILURE_REASONS.has(reason)) return false;
+	return status === "Failed" || status === "Error";
+};
+
 const renderRunReasonTag = (reason?: string, message?: string) => {
 	if (!reason) return null;
 	const tag = (
@@ -1150,25 +1161,34 @@ export function WorkflowExecutionList({
 				width: isBatchScope ? 110 : 130,
 				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
 					(a.status ?? "").localeCompare(b.status ?? ""),
-				render: (s: string, record: ExecutionRecord) => (
-					<Space size={4} wrap>
+				render: (s: string, record: ExecutionRecord) => {
+					const reason = record.blockingReason || record.failureReason;
+					const reasonMessage = record.blockingMessage || record.message;
+					const redundant = isRedundantRunReason(reason, s);
+					const statusTag = (
 						<Tag
 							color={STATUS_COLORS[s] || STATUS_ACCENT_COLORS[s] || "default"}
 							style={{ padding: "2px 8px" }}
 						>
 							{formatWorkflowPhaseLabel(s)}
 						</Tag>
-						{isStaleRunningWorkflow(record) ? (
-							<Tooltip title="运行时间超过 48 小时，同步任务将自动标记为失败">
-								<Tag color="warning">疑似僵尸</Tag>
-							</Tooltip>
-						) : null}
-						{renderRunReasonTag(
-							record.blockingReason || record.failureReason,
-							record.blockingMessage || record.message,
-						)}
-					</Space>
-				),
+					);
+					return (
+						<Space size={4} wrap>
+							{redundant && reasonMessage ? (
+								<Tooltip title={reasonMessage}>{statusTag}</Tooltip>
+							) : (
+								statusTag
+							)}
+							{isStaleRunningWorkflow(record) ? (
+								<Tooltip title="运行时间超过 48 小时，同步任务将自动标记为失败">
+									<Tag color="warning">疑似僵尸</Tag>
+								</Tooltip>
+							) : null}
+							{redundant ? null : renderRunReasonTag(reason, reasonMessage)}
+						</Space>
+					);
+				},
 			},
 			...(isBatchScope
 				? [
@@ -1235,40 +1255,50 @@ export function WorkflowExecutionList({
 						},
 					]
 				: []),
-				{
-					title: "所属用户",
-					dataIndex: "owner",
-					key: "owner",
-					width: 160,
-					sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
-						((a as any).owner ?? "").localeCompare((b as any).owner ?? ""),
-					render: (owner: string) =>
-						owner ? (
-							<Typography.Text copyable={{ text: owner }}>{owner}</Typography.Text>
-						) : (
-							<Typography.Text type="secondary">—</Typography.Text>
-						),
+			{
+				title: "所属用户",
+				dataIndex: "owner",
+				key: "owner",
+				width: 160,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					((a as any).owner ?? "").localeCompare((b as any).owner ?? ""),
+				render: (owner: string) =>
+					owner ? (
+						<Typography.Text copyable={{ text: owner }}>
+							{owner}
+						</Typography.Text>
+					) : (
+						<Typography.Text type="secondary">—</Typography.Text>
+					),
+			},
+			{
+				title: "命名空间",
+				dataIndex: "argoNamespace",
+				key: "argoNamespace",
+				width: 150,
+				sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
+					((a as any).argoNamespace ?? "").localeCompare(
+						(b as any).argoNamespace ?? "",
+					),
+				render: (ns: string) => {
+					if (!ns) return <Typography.Text type="secondary">—</Typography.Text>;
+					const color = ns.includes("prod")
+						? "red"
+						: ns.includes("dev")
+							? "blue"
+							: "purple";
+					const shortName = ns.split("/").pop() || ns;
+					return (
+						<Tooltip title={ns}>
+							<Tag color={color} style={{ fontSize: 11 }}>
+								{shortName}
+							</Tag>
+						</Tooltip>
+					);
 				},
-				{
-					title: "命名空间",
-					dataIndex: "argoNamespace",
-					key: "argoNamespace",
-					width: 150,
-					sorter: (a: WorkflowSummary, b: WorkflowSummary) =>
-						((a as any).argoNamespace ?? "").localeCompare((b as any).argoNamespace ?? ""),
-					render: (ns: string) => {
-						if (!ns) return <Typography.Text type="secondary">—</Typography.Text>;
-						const color = ns.includes("prod") ? "red" : ns.includes("dev") ? "blue" : "purple";
-						const shortName = ns.split("/").pop() || ns;
-						return (
-							<Tooltip title={ns}>
-								<Tag color={color} style={{ fontSize: 11 }}>{shortName}</Tag>
-							</Tooltip>
-						);
-					},
-				},
-				{
-					title: "节点数",
+			},
+			{
+				title: "节点数",
 				dataIndex: "nodeCount",
 				key: "nodeCount",
 				width: isBatchScope ? 70 : 90,

@@ -210,6 +210,18 @@ function AssetRunSummary({
 	);
 }
 
+// Auto-generated throwaway drafts use a timestamp default name like
+// `pipeline-1782564077864` and usually carry a single step. They flood the
+// list and bury the curated pipelines, so we let users hide them in one click.
+const AUTO_DRAFT_NAME_RE = /^pipeline-\d{10,}$/;
+function isAutoNamedDraft(template: PipelineTemplate): boolean {
+	return (
+		template.scope !== "prod" &&
+		AUTO_DRAFT_NAME_RE.test(template.name) &&
+		(template.nodeCount == null || template.nodeCount <= 1)
+	);
+}
+
 function TemplateCard({
 	template,
 	onRun,
@@ -239,6 +251,37 @@ function TemplateCard({
 	selected?: boolean;
 	onSelect?: (id: string, selected: boolean) => void;
 }) {
+	// The version actually running in production may lag behind the latest
+	// saved draft. Surface the *active* version as the primary badge so users
+	// don't mistake the latest edit for what's live; the latest is demoted to
+	// a muted secondary tag.
+	const hasDistinctActive =
+		activeVersion != null && activeVersion < template.version;
+	const versionTags = (
+		<>
+			<Tag
+				color={hasDistinctActive ? "green" : "blue"}
+				style={{ cursor: "pointer" }}
+				onClick={(e) => {
+					e.stopPropagation();
+					onVersionHistory?.(template);
+				}}
+				title="点击查看版本历史"
+			>
+				{hasDistinctActive ? "活跃 " : ""}v
+				{hasDistinctActive ? activeVersion : template.version}{" "}
+				<HistoryOutlined />
+			</Tag>
+			{hasDistinctActive ? (
+				<Tag
+					style={{ fontSize: 11, color: "#94a3b8", borderColor: "#e2e8f0" }}
+					title="最新已保存版本（尚未设为活跃）"
+				>
+					最新 v{template.version}
+				</Tag>
+			) : null}
+		</>
+	);
 	return (
 		<div
 			key={template.id}
@@ -262,17 +305,7 @@ function TemplateCard({
 				</div>
 				{!compactActions ? (
 					<div className="dep-card-meta">
-						<Tag
-							color="blue"
-							style={{ cursor: "pointer" }}
-							onClick={(e) => {
-								e.stopPropagation();
-								onVersionHistory?.(template);
-							}}
-							title="点击查看版本历史"
-						>
-							v{template.version} <HistoryOutlined />
-						</Tag>
+						{versionTags}
 						{template.scope === "prod" ? (
 							<Tag color="green" style={{ fontSize: 11 }}>
 								<LockOutlined /> 正式版
@@ -284,11 +317,6 @@ function TemplateCard({
 						)}
 						{template.owner ? (
 							<Tag style={{ fontSize: 11, marginLeft: 4 }}>{template.owner}</Tag>
-						) : null}
-						{activeVersion != null && activeVersion < template.version ? (
-							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
-								活跃: v{activeVersion}
-							</Tag>
 						) : null}
 						{recommended ? (
 							<Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>
@@ -304,17 +332,7 @@ function TemplateCard({
 					</div>
 				) : (
 					<div className="dep-card-meta dep-card-meta--compact">
-						<Tag
-							color="blue"
-							style={{ cursor: "pointer" }}
-							onClick={(e) => {
-								e.stopPropagation();
-								onVersionHistory?.(template);
-							}}
-							title="点击查看版本历史"
-						>
-							v{template.version} <HistoryOutlined />
-						</Tag>
+						{versionTags}
 						{template.scope === "prod" ? (
 							<Tag color="green" style={{ fontSize: 11 }}>
 								<LockOutlined /> 正式版
@@ -326,11 +344,6 @@ function TemplateCard({
 						)}
 						{template.owner ? (
 							<Tag style={{ fontSize: 11, marginLeft: 4 }}>{template.owner}</Tag>
-						) : null}
-						{activeVersion != null && activeVersion < template.version ? (
-							<Tag color="orange" style={{ fontSize: 11, marginLeft: 4 }}>
-								活跃: v{activeVersion}
-							</Tag>
 						) : null}
 						{recommended ? (
 							<Tag color="gold" style={{ fontSize: 11, marginLeft: 4 }}>
@@ -475,6 +488,9 @@ export function DeployPanel({
 	const [templateSort, setTemplateSort] =
 		useState<ListPipelinesParams["sort"]>("updated_at_desc");
 	const [loadingMoreTemplates, setLoadingMoreTemplates] = useState(false);
+	const [hideAutoDrafts, setHideAutoDrafts] = useState<boolean>(
+		() => localStorage.getItem("db.pipeline.hideAutoDrafts") === "1",
+	);
 	const [deployments, setDeployments] = useState<Deployment[]>([]);
 	const [targets, setTargets] = useState<ExecutionTarget[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -1308,7 +1324,10 @@ export function DeployPanel({
 		);
 	}
 
-	const visibleTemplates = displayTemplates;
+	const autoDraftCount = displayTemplates.filter(isAutoNamedDraft).length;
+	const visibleTemplates = hideAutoDrafts
+		? displayTemplates.filter((template) => !isAutoNamedDraft(template))
+		: displayTemplates;
 	const deletableVisibleTemplates = visibleTemplates.filter(
 		(template) => template.scope !== "prod",
 	);
@@ -1486,6 +1505,25 @@ export function DeployPanel({
 						]}
 						data-testid="pipeline-template-sort"
 					/>
+					<Tooltip title="隐藏形如 pipeline-1782564077864 的自动命名单步草稿，只看正式/已命名流水线">
+						<Checkbox
+							checked={hideAutoDrafts}
+							onChange={(event) => {
+								const next = event.target.checked;
+								setHideAutoDrafts(next);
+								localStorage.setItem(
+									"db.pipeline.hideAutoDrafts",
+									next ? "1" : "0",
+								);
+								setTemplatePage(1);
+							}}
+							data-testid="pipeline-hide-auto-drafts"
+							style={{ alignSelf: "center" }}
+						>
+							隐藏自动命名草稿
+							{autoDraftCount > 0 ? ` (${autoDraftCount})` : ""}
+						</Checkbox>
+					</Tooltip>
 				</div>
 				<div className="deploy-section">
 					{renderTemplateSection(visibleTemplates)}

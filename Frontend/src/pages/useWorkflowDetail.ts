@@ -121,6 +121,9 @@ interface UseWorkflowDetailResult {
 	costSummaryState: CostSummaryState;
 	runMetadataState: RunMetadataState;
 	setLogSearch: (query: string) => void;
+	// True while the run is active (Running/Pending) and the hook is auto-polling
+	// the backend, so the UI can surface a live "实时刷新" breathing indicator.
+	isLivePolling: boolean;
 	startFollowLogs: () => void;
 	stopFollowLogs: () => void;
 	downloadLogs: () => void;
@@ -1104,6 +1107,7 @@ export function useWorkflowDetail(
 		workflow,
 		loading,
 		loadError,
+		isLivePolling: shouldPollWorkflow || shouldPollLedgerOnly,
 		selectedNode,
 		loadWorkflow,
 		selectNode,
