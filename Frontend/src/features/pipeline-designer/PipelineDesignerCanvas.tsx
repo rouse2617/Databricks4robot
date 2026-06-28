@@ -162,6 +162,29 @@ function findDuplicateTargetInput(edges: PipelineFlowEdge[]) {
 	return null;
 }
 
+function nodeDataDeclaresOutput(
+	data: PipelineNodeData | undefined,
+	portName: string,
+) {
+	if (!data) return false;
+	const safe = portName.replace(/\./g, "-");
+	return (data.outputPorts ?? []).some(
+		(port) => port.name === portName || port.name.replace(/\./g, "-") === safe,
+	);
+}
+
+function nodeDataWritesOutputPath(
+	data: PipelineNodeData | undefined,
+	outputName: string,
+) {
+	if (!data) return false;
+	const path = `/tmp/outputs/${outputName}`;
+	if (data.source?.includes(path)) return true;
+	if (data.command?.some((part) => part.includes(path))) return true;
+	if (data.args?.some((arg) => arg.value?.includes(path))) return true;
+	return false;
+}
+
 function replaceAppendedValue(previous: string, next: string) {
 	if (!previous || next === previous) return next;
 	if (next.startsWith(previous) && next.length > previous.length) {
@@ -474,6 +497,17 @@ function PipelineDesignerCanvasInner({
 				targetHandle,
 				style: DATA_EDGE_STYLE,
 			};
+			const sourceData = nodes.find(
+				(node) => node.id === connection.source,
+			)?.data;
+			const willWarnContract =
+				nodeDataDeclaresOutput(sourceData, sourceHandle) &&
+				!nodeDataWritesOutputPath(sourceData, sourceHandle);
+			const prospective = [
+				...edges.filter((edge) => edge.id !== nextEdge.id),
+				nextEdge,
+			];
+			const willBeDuplicate = Boolean(findDuplicateTargetInput(prospective));
 			setEdges((current) => {
 				const withoutSameEdge = current.filter(
 					(edge) => edge.id !== nextEdge.id,
@@ -488,8 +522,13 @@ function PipelineDesignerCanvasInner({
 				}
 				return next;
 			});
+			if (!willBeDuplicate && willWarnContract) {
+				messageApi.warning(
+					`数据连线已创建，但 ${connection.source} 的脚本未写入 /tmp/outputs/${sourceHandle}；若只需控制先后顺序请改用「顺序」连线，否则部署会失败。`,
+				);
+			}
 		},
-		[edgeMode, messageApi, setEdges],
+		[edgeMode, messageApi, setEdges, nodes, edges],
 	);
 	const convertDataEdgesToDependencies = useCallback(() => {
 		let convertedCount = 0;

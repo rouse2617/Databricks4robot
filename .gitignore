@@ -58,6 +58,7 @@ openspec/changes/**/*.png
 .agent/tasks/
 .agent/context/
 .agent/screenshots/
+.agent/tmp/
 .omm/
 *.swp
 

@@ -73,6 +73,11 @@ export function DesignerFlowSurface({
 				onPaneContextMenu={onPaneContextMenu}
 				onError={onError}
 				onlyRenderVisibleElements
+				snapToGrid
+				snapGrid={[20, 20]}
+				deleteKeyCode={readOnlyMode ? null : ["Delete", "Backspace"]}
+				edgesFocusable={!readOnlyMode}
+				defaultEdgeOptions={{ interactionWidth: 24 }}
 				minZoom={0.2}
 				maxZoom={2}
 				proOptions={{ hideAttribution: true }}
