@@ -217,10 +217,18 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		}
 	}
 
-	summary, err := uc.backfillRepo.SummarizeItemStatuses(ctx, jobID)
+	// Terminal bookkeeping must not run on the (possibly cancelled) job ctx:
+	// when StopBatchRuns cancels the batch, reusing it would make the summary
+	// query and the final status write fail with context.Canceled, leaving the
+	// job stuck in "processing". jobCtx carries no request deadline, so a fresh
+	// background ctx is the correct scope for recording the final state.
+	finalCtx, cancelFinal := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelFinal()
+
+	summary, err := uc.backfillRepo.SummarizeItemStatuses(finalCtx, jobID)
 	if err != nil {
 		slog.Warn("batch job: summarize failed", "batchID", jobID, "err", err)
-		_ = uc.backfillRepo.UpdateJobStatus(ctx, jobID, "failed")
+		_ = uc.backfillRepo.UpdateJobStatus(finalCtx, jobID, "failed")
 		return
 	}
 
@@ -234,7 +242,7 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		status = "failed"
 	}
 	total := summary.Completed + summary.Failed + summary.Pending + summary.Running
-	if err := uc.backfillRepo.UpdateJobProgress(ctx, jobID, summary.Completed, summary.Failed, status); err != nil {
+	if err := uc.backfillRepo.UpdateJobProgress(finalCtx, jobID, summary.Completed, summary.Failed, status); err != nil {
 		slog.Warn("batch job: update final progress failed", "batchID", jobID, "err", err)
 	}
 

@@ -25,11 +25,20 @@ func (m *cancelBatchRepo) UpdateItemStatus(context.Context, string, string, stri
 	return nil
 }
 
-func (m *cancelBatchRepo) SummarizeItemStatuses(context.Context, string) (repository.BackfillItemStatusSummary, error) {
+// SummarizeItemStatuses and UpdateJobProgress honour ctx cancellation the way
+// pgx does, so the cancelled-batch test fails if processBatchJob ever performs
+// terminal bookkeeping on the cancelled job ctx instead of a detached one.
+func (m *cancelBatchRepo) SummarizeItemStatuses(ctx context.Context, _ string) (repository.BackfillItemStatusSummary, error) {
+	if err := ctx.Err(); err != nil {
+		return repository.BackfillItemStatusSummary{}, err
+	}
 	return repository.BackfillItemStatusSummary{}, nil
 }
 
-func (m *cancelBatchRepo) UpdateJobProgress(_ context.Context, _ string, _, _ int, status string) error {
+func (m *cancelBatchRepo) UpdateJobProgress(ctx context.Context, _ string, _, _ int, status string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	m.finalStatus = status
 	m.progressCalls++
