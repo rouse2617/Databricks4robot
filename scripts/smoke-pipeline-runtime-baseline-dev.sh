@@ -171,6 +171,63 @@ wait_for_node() {
   return 1
 }
 
+pod_has_running_container() {
+  local bodyfile="$1"
+  python3 - "$bodyfile" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1]))
+for container in body.get("containers") or []:
+    if (container.get("state") or "").lower() == "running":
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+try_create_terminal() {
+  local workflow="$1" node="$2" payload code bodyfile session_id term_code term_bodyfile
+  payload="$(mktemp)"
+  printf '{"command":"sh"}' >"$payload"
+  read -r code bodyfile < <(request_json POST "/api/v1/workflows/$(urlencode "$workflow")/nodes/$(urlencode "$node")/terminal-sessions" "$payload")
+  rm -f "$payload"
+  if [[ "$code" == "201" ]]; then
+    session_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "$bodyfile")"
+    rm -f "$bodyfile"
+    if [[ -n "$session_id" ]]; then
+      read -r term_code term_bodyfile < <(request_json POST "/api/v1/pod-terminal/sessions/$(urlencode "$session_id")/terminate" || true)
+      rm -f "${term_bodyfile:-}"
+    fi
+    return 0
+  fi
+  rm -f "$bodyfile"
+  if [[ "$code" == "409" || "$code" == "503" ]]; then
+    return 1
+  fi
+  if [[ "$code" == "403" && "$REQUIRE_TERMINAL" != "1" ]]; then
+    return 2
+  fi
+  return 3
+}
+
+wait_and_check_terminal() {
+  local workflow="$1" node="$2" deadline code bodyfile rc
+  deadline=$((SECONDS + WAIT_SECONDS))
+  while (( SECONDS < deadline )); do
+    read -r code bodyfile < <(request_json GET "/api/v1/workflows/$(urlencode "$workflow")/nodes/$(urlencode "$node")/pod")
+    if [[ "$code" == "200" ]] && pod_has_running_container "$bodyfile"; then
+      rm -f "$bodyfile"
+      if try_create_terminal "$workflow" "$node"; then
+        ok "terminal create/terminate: $workflow/$node"
+        return 0
+      fi
+    else
+      rm -f "$bodyfile"
+    fi
+    sleep 1
+  done
+  bad "terminal never attached while pod was running: $workflow/$node"
+  return 1
+}
+
 check_logs() {
   local workflow="$1" node="$2" code bodyfile streamfile log_count
   read -r code bodyfile < <(request_json GET "/api/v1/workflows/$(urlencode "$workflow")/logs?nodeId=$(urlencode "$node")&tailLines=2000&limitBytes=1048576")
@@ -188,7 +245,7 @@ PY
   rm -f "$bodyfile"
 
   streamfile="$(mktemp)"
-  timeout 12s curl -sS -N "${API_HDR[@]}" \
+  curl -sS -N -m 12 "${API_HDR[@]}" \
     "$BASE/api/v1/workflows/$(urlencode "$workflow")/logs/stream?nodeId=$(urlencode "$node")&limitBytes=1048576" \
     >"$streamfile" || true
   log_count="$(grep -c '^event: log' "$streamfile" || true)"
@@ -201,24 +258,18 @@ PY
 }
 
 check_terminal() {
-  local workflow="$1" node="$2" payload code bodyfile session_id term_code term_bodyfile
-  payload="$(mktemp)"
-  printf '{"command":"sh"}' >"$payload"
-  read -r code bodyfile < <(request_json POST "/api/v1/workflows/$(urlencode "$workflow")/nodes/$(urlencode "$node")/terminal-sessions" "$payload")
-  rm -f "$payload"
-  if [[ "$code" == "201" ]]; then
-    session_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id",""))' "$bodyfile")"
-    if [[ -n "$session_id" ]]; then
-      read -r term_code term_bodyfile < <(request_json POST "/api/v1/pod-terminal/sessions/$(urlencode "$session_id")/terminate" || true)
-      rm -f "${term_bodyfile:-}"
-    fi
+  local workflow="$1" node="$2" rc
+  try_create_terminal "$workflow" "$node"
+  rc=$?
+  if [[ "$rc" == "0" ]]; then
     ok "terminal create/terminate: $workflow/$node"
-  elif [[ "$code" == "403" && "$REQUIRE_TERMINAL" != "1" ]]; then
-    skip "terminal disabled by policy: $workflow/$node"
-  else
-    bad "terminal failed for $workflow/$node (HTTP $code)" "$(cat "$bodyfile")"
+    return 0
   fi
-  rm -f "$bodyfile"
+  if [[ "$rc" == "2" ]]; then
+    skip "terminal disabled by policy: $workflow/$node"
+    return 0
+  fi
+  wait_and_check_terminal "$workflow" "$node"
 }
 
 check_pod_and_resources() {
@@ -268,14 +319,20 @@ LOG_WORKFLOW="${LOG_WORKFLOW:-}"
 LOG_NODE_ID="${LOG_NODE_ID:-}"
 RESOURCE_WORKFLOW="${RESOURCE_WORKFLOW:-}"
 RESOURCE_NODE_ID="${RESOURCE_NODE_ID:-}"
+SLEEP_TERMINAL_CHECKED=0
 
 if [[ "$RUN_SMOKE_PIPELINES" == "1" ]]; then
-  mapfile -t sleep_created < <(create_smoke_run sleep)
-  SLEEP_WORKFLOW="${sleep_created[0]:-}"
-  mapfile -t log_created < <(create_smoke_run log)
-  LOG_WORKFLOW="${log_created[0]:-}"
-  mapfile -t resource_created < <(create_smoke_run resource)
-  RESOURCE_WORKFLOW="${resource_created[0]:-}"
+  read -r SLEEP_WORKFLOW _ < <(create_smoke_run sleep)
+  if [[ -n "$SLEEP_WORKFLOW" ]]; then
+    SLEEP_NODE_ID="$(wait_for_node "$SLEEP_WORKFLOW" || true)"
+    if [[ -n "$SLEEP_NODE_ID" ]] && wait_and_check_terminal "$SLEEP_WORKFLOW" "$SLEEP_NODE_ID"; then
+      SLEEP_TERMINAL_CHECKED=1
+    elif [[ -n "$SLEEP_NODE_ID" ]]; then
+      bad "sleep terminal check failed: $SLEEP_WORKFLOW"
+    fi
+  fi
+  read -r LOG_WORKFLOW _ < <(create_smoke_run log)
+  read -r RESOURCE_WORKFLOW _ < <(create_smoke_run resource)
 fi
 
 if [[ -n "$SLEEP_WORKFLOW" && -z "$SLEEP_NODE_ID" ]]; then
@@ -288,7 +345,9 @@ if [[ -n "$RESOURCE_WORKFLOW" && -z "$RESOURCE_NODE_ID" ]]; then
   RESOURCE_NODE_ID="$(wait_for_node "$RESOURCE_WORKFLOW" || true)"
 fi
 
-run_or_skip "sleep terminal" "$SLEEP_WORKFLOW" "$SLEEP_NODE_ID" check_terminal
+if [[ "$SLEEP_TERMINAL_CHECKED" != "1" ]]; then
+  run_or_skip "sleep terminal" "$SLEEP_WORKFLOW" "$SLEEP_NODE_ID" check_terminal
+fi
 run_or_skip "sleep Pod diagnostics" "$SLEEP_WORKFLOW" "$SLEEP_NODE_ID" check_pod_and_resources
 run_or_skip "log-spam" "$LOG_WORKFLOW" "$LOG_NODE_ID" check_logs
 run_or_skip "resource request" "$RESOURCE_WORKFLOW" "$RESOURCE_NODE_ID" check_pod_and_resources
