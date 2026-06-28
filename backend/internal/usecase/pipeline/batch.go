@@ -14,7 +14,7 @@ import (
 
 // CreateBatchJob creates an async batch job that will create pipeline runs
 // for each asset ID in the background. Returns immediately with a batch ID.
-func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int, owner string) (*models.BackfillJob, error) {
+func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, assetIDs []string, targetID string, templateVersion int, maxConcurrency int, owner string) (*models.BackfillJob, error) {
 	if uc.backfillRepo == nil {
 		return nil, fmt.Errorf("%w: backfill repository is not configured", ErrInvalidArgument)
 	}
@@ -85,7 +85,7 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 	}
 
 	// Process in background — never use request context for goroutines.
-	go uc.processBatchJob(context.Background(), batchID, templateID, targetID, resolvedVersion, items, owner)
+	go uc.processBatchJob(context.Background(), batchID, templateID, targetID, resolvedVersion, items, owner, maxConcurrency)
 
 	return job, nil
 }
@@ -102,52 +102,82 @@ func (uc *Usecase) GetBatchJobStatus(ctx context.Context, batchID string) (*mode
 	return job, nil
 }
 
-// processBatchJob runs assets concurrently (max 5 at a time) and creates
-// pipeline runs via CreateRunByTemplateID. Errors are per-item — one failure
-// does not cancel the batch.
-func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targetID string, templateVersion int, items []models.BackfillItem, owner string) {
-	slog.Info("batch job started", "batchID", jobID, "totalItems", len(items))
+// defaultSubmitWorkers controls how many goroutines submit workflows to Argo
+// in parallel. 20 is safe for Argo Server (~200 QPS × 3ms each = 666/s).
+const defaultSubmitWorkers = 20
+
+// processBatchJob submits all items to Argo using a parallel worker pool and
+// lets the controller manage concurrency via parallelism config. Errors are
+// per-item — one failure does not cancel the batch.
+func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targetID string, templateVersion int, items []models.BackfillItem, owner string, submitWorkers int) {
+	if submitWorkers <= 0 {
+		submitWorkers = defaultSubmitWorkers
+	}
+	slog.Info("batch job started", "batchID", jobID, "totalItems", len(items), "workers", submitWorkers)
 
 	if err := uc.backfillRepo.UpdateJobStatus(ctx, jobID, "processing"); err != nil {
 		slog.Warn("batch job: failed to update status to processing", "batchID", jobID, "err", err)
 		return
 	}
 
-	sem := make(chan struct{}, 5)
-	var wg sync.WaitGroup
-
-	for i := range items {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(item models.BackfillItem) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			_ = uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "processing", "", "")
-
-			opts := []DeployOptions{{
-				TargetID:          targetID,
-				TemplateVersion:   templateVersion,
-				BatchJobID:        jobID,
-				AllowUnknownAssets: true,
-				Owner:             owner,
-			}}
-
-			run, err := uc.CreateRunByTemplateID(ctx, templateID, "", []string{item.AssetID}, opts...)
-			if err != nil {
-				errMsg := err.Error()
-				slog.Warn("batch job: asset failed", "assetID", item.AssetID, "err", errMsg)
-				_ = uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "failed", "", errMsg)
-				_ = uc.backfillRepo.IncrementFailed(ctx, jobID)
-				return
-			}
-
-			_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, item.ID, run.ID, run.WorkflowName, "completed")
-			_ = uc.backfillRepo.IncrementCompleted(ctx, jobID)
-		}(items[i])
+	type result struct {
+		item  models.BackfillItem
+		runID string
+		err   error
 	}
 
-	wg.Wait()
+	work := make(chan models.BackfillItem, len(items))
+	results := make(chan result, len(items))
+
+	// Feed all items into the work channel
+	for _, item := range items {
+		work <- item
+	}
+	close(work)
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	for w := 0; w < submitWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range work {
+				_ = uc.backfillRepo.UpdateItemStatus(ctx, item.ID, "processing", "", "")
+				opts := []DeployOptions{{
+					TargetID:          targetID,
+					TemplateVersion:   templateVersion,
+					BatchJobID:        jobID,
+					AllowUnknownAssets: true,
+					Owner:             owner,
+				}}
+				run, err := uc.CreateRunByTemplateID(ctx, templateID, "", []string{item.AssetID}, opts...)
+				if err != nil {
+					results <- result{item: item, err: err}
+				} else {
+					results <- result{item: item, runID: run.ID}
+				}
+			}
+		}()
+	}
+
+	// Close results when all workers are done
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	for r := range results {
+		if r.err != nil {
+			errMsg := r.err.Error()
+			slog.Warn("batch job: asset failed", "assetID", r.item.AssetID, "err", errMsg)
+			_ = uc.backfillRepo.UpdateItemStatus(ctx, r.item.ID, "failed", "", errMsg)
+			_ = uc.backfillRepo.IncrementFailed(ctx, jobID)
+		} else {
+			_ = uc.backfillRepo.UpdateItemPipelineRun(ctx, r.item.ID, r.runID, "", "completed")
+			_ = uc.backfillRepo.IncrementCompleted(ctx, jobID)
+		}
+	}
 
 	summary, err := uc.backfillRepo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {

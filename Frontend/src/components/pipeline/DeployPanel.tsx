@@ -539,6 +539,15 @@ export function DeployPanel({
 		string | undefined
 	>();
 	const [selectedConfigVersion, setSelectedConfigVersion] = useState<number>(1);
+	const [quotaMap, setQuotaMap] = useState<Record<string, { cpu: { used: string; hard: string }; memory: { used: string; hard: string } }>>({});
+
+	// Fetch live quota data
+	useEffect(() => {
+		fetch("/api/v1/resource-quotas")
+			.then((r) => r.json())
+			.then((data) => setQuotaMap(data.items || {}))
+			.catch(() => {});
+	}, []);
 	const [configVersions, setConfigVersions] = useState<PipelineConfigVersion[]>([]);
 	const [uploadDraftFile, setUploadDraftFile] =
 		useState<UploadDraftFile | null>(null);
@@ -1601,11 +1610,16 @@ export function DeployPanel({
 										argoServerConfigured: false,
 									} satisfies ExecutionTarget,
 								]
-						).map((target) => ({
-							value: target.id,
-							label: target.description ? `${target.name}  ${target.description}` : target.name,
-							disabled: target.status !== "available",
-						}))}
+						).map((target) => {
+							const q = quotaMap[target.namespace];
+							const usage = q ? `  ⚡${q.cpu.used}/${q.cpu.hard}C` : "";
+							return {
+								value: target.id,
+								label: `${target.name}${usage}`,
+								title: q ? `CPU: ${q.cpu.used}/${q.cpu.hard}  MEM: ${q.memory.used}/${q.memory.hard}` : "",
+								disabled: target.status !== "available",
+							};
+						})}
 					/>
 				</div>
 				<div className="deploy-run-field" data-testid="deploy-config-panel">

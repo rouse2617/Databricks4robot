@@ -15,6 +15,7 @@ import (
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
+	"github.com/google/uuid"
 	runKernel "github.com/CyberOrigin2077/cyber-databrew/internal/runtimeos/run"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
@@ -348,6 +349,46 @@ func (h *Handler) CreateRunByTemplate(c *gin.Context) {
 }
 
 // ListExecutionTargets handles GET /api/v1/execution-targets.
+func (h *Handler) CreateExecutionTarget(c *gin.Context) {
+	var t models.ExecutionTarget
+	if err := c.ShouldBindJSON(&t); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+	if t.ID == "" {
+		t.ID = uuid.New().String()
+	}
+	if err := h.uc.CreateExecutionTarget(c.Request.Context(), &t); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, t)
+}
+
+func (h *Handler) UpdateExecutionTarget(c *gin.Context) {
+	id := c.Param("id")
+	var t models.ExecutionTarget
+	if err := c.ShouldBindJSON(&t); err != nil {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+	t.ID = id
+	if err := h.uc.UpdateExecutionTarget(c.Request.Context(), &t); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, t)
+}
+
+func (h *Handler) DeleteExecutionTarget(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.uc.DeleteExecutionTarget(c.Request.Context(), id); err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusNoContent, nil)
+}
+
 func (h *Handler) ListExecutionTargets(c *gin.Context) {
 	items, err := h.uc.ListExecutionTargets(c.Request.Context())
 	if err != nil {
@@ -380,34 +421,37 @@ func (h *Handler) ListRuns(c *gin.Context) {
 	page, _ := strconv.Atoi(strings.TrimSpace(c.Query("page")))
 	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.Query("pageSize")))
 
+	// Hard cap pageSize to prevent runaway queries
+	// Default to 50, max 200 (hard cap against runaway queries)
+	if pageSize <= 0 {
+		pageSize = 50
+	} else if pageSize > 200 {
+		pageSize = 200
+	}
+	if page <= 0 {
+		page = 1
+	}
+
 	var (
 		items []models.PipelineRun
 		total int
 		err   error
 	)
-	if summaryView {
-		filter := models.PipelineRunListFilter{
-			BatchJobID:     batchJobID,
-			ExcludeBatch:   excludeBatch,
-			Status:         statusFilter,
-			Query:          query,
-			PipelineNodeID: pipelineNodeID,
-			NodeStatus:     nodeStatus,
-			Page:           page,
-			PageSize:       pageSize,
-			RefreshActive:  refreshActive,
-		}
-		if batchJobID != "" && refreshActive && h.batchRuns != nil {
-			_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
-		}
-		items, total, err = h.runs.ListRunSummaries(c.Request.Context(), filter)
-	} else {
-		if batchJobID != "" && h.batchRuns != nil {
-			_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
-		}
-		items, err = h.runs.ListRuns(c.Request.Context(), refreshActive)
-		total = len(items)
+	filter := models.PipelineRunListFilter{
+		BatchJobID:     batchJobID,
+		ExcludeBatch:   excludeBatch,
+		Status:         statusFilter,
+		Query:          query,
+		PipelineNodeID: pipelineNodeID,
+		NodeStatus:     nodeStatus,
+		Page:           page,
+		PageSize:       pageSize,
+		RefreshActive:  refreshActive,
 	}
+	if batchJobID != "" && refreshActive && h.batchRuns != nil {
+		_ = h.batchRuns.ReconcileSubtaskRuns(c.Request.Context(), batchJobID)
+	}
+	items, total, err = h.runs.ListRunSummaries(c.Request.Context(), filter)
 	if err != nil {
 		httpresp.Internal(c, err.Error())
 		return

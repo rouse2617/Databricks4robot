@@ -775,6 +775,49 @@ func (uc *Usecase) ListExecutionTargets(ctx context.Context) ([]models.Execution
 	return targets, nil
 }
 
+func (uc *Usecase) CreateExecutionTarget(ctx context.Context, t *models.ExecutionTarget) error {
+	return uc.targetRepo.Save(ctx, t)
+}
+
+func (uc *Usecase) UpdateExecutionTarget(ctx context.Context, t *models.ExecutionTarget) error {
+	_, err := uc.targetRepo.FindByID(ctx, t.ID)
+	if err != nil {
+		return err
+	}
+	return uc.targetRepo.Save(ctx, t)
+}
+
+func (uc *Usecase) DeleteExecutionTarget(ctx context.Context, id string) error {
+	_, err := uc.targetRepo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	return uc.targetRepo.Delete(ctx, id)
+}
+
+func (uc *Usecase) StopBatchRuns(ctx context.Context, batchJobID, owner string) (stopped, failed int, _ error) {
+	items, err := uc.backfillRepo.FindItemsByJobID(ctx, batchJobID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("list batch items: %w", err)
+	}
+	for _, item := range items {
+		runID := ""
+		if item.PipelineRunID != nil {
+			runID = *item.PipelineRunID
+		}
+		if runID == "" {
+			continue
+		}
+		if err := uc.StopRun(ctx, runID); err != nil {
+			failed++
+			continue
+		}
+		stopped++
+	}
+	_ = uc.backfillRepo.UpdateJobStatus(ctx, batchJobID, "cancelled")
+	return stopped, failed, nil
+}
+
 func (uc *Usecase) defaultExecutionTarget() models.ExecutionTarget {
 	status := "available"
 	if uc.wfClient == nil || strings.TrimSpace(uc.namespace) == "" {

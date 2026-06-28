@@ -80,6 +80,7 @@ type ExecutionTargetRepository interface {
 	FindAll(ctx context.Context) ([]models.ExecutionTarget, error)
 	FindByID(ctx context.Context, id string) (*models.ExecutionTarget, error)
 	FindDefault(ctx context.Context) (*models.ExecutionTarget, error)
+	Delete(ctx context.Context, id string) error
 }
 
 // PipelineRunRepository defines persistence operations for first-class

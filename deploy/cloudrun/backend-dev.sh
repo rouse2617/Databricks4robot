@@ -58,6 +58,9 @@ PIPELINE_RESOURCE_MAX_DISK_OVERRIDE="${PIPELINE_RESOURCE_MAX_DISK_OVERRIDE:-250G
 PIPELINE_RESOURCE_MAX_GPU_OVERRIDE="${PIPELINE_RESOURCE_MAX_GPU_OVERRIDE:-1}"
 PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD_OVERRIDE="${PIPELINE_UNSCHEDULABLE_PENDING_THRESHOLD_OVERRIDE:-15m}"
 K8S_API_ENDPOINT_OVERRIDE="${K8S_API_ENDPOINT_OVERRIDE:-https://34.59.48.233}"
+K8S_AUDIENCE_OVERRIDE="${K8S_AUDIENCE_OVERRIDE:-}"
+K8S_USE_METADATA_TOKEN_OVERRIDE="${K8S_USE_METADATA_TOKEN_OVERRIDE:-}"
+K8S_INSECURE_SKIP_VERIFY_OVERRIDE="${K8S_INSECURE_SKIP_VERIFY_OVERRIDE:-}"
 K8S_BEARER_TOKEN_SECRET="${K8S_BEARER_TOKEN_SECRET:-cyber-databrew-dev-k8s-bearer-token}"
 K8S_BEARER_TOKEN_SECRET_VERSION="${K8S_BEARER_TOKEN_SECRET_VERSION:-latest}"
 K8S_CA_DATA_SECRET="${K8S_CA_DATA_SECRET:-cyber-databrew-dev-k8s-ca-data}"
@@ -144,6 +147,58 @@ for item in svc.get("spec", {}).get("template", {}).get("spec", {}).get("contain
         print(item.get("value") or "")
         break
 ' "${key}"
+}
+
+# preserve_all_cloudrun_env_vars reads ALL env vars from the current Cloud Run
+# service and adds any that are NOT in the deploy file AND NOT in the exclude
+# list. This prevents silently dropping manually-configured env vars (e.g.
+# K8S_USE_METADATA_TOKEN, PIPELINE_TEMPLATE_TOLERATIONS_JSON) every time
+# backend-dev.sh runs with --env-vars-file.
+preserve_all_cloudrun_env_vars() {
+  local file="$1"
+  local exclude="^(PORT|K8S_CA_DATA|K8S_CA_B64|K8S_BEARER_TOKEN|ELASTICSEARCH_PASSWORD|DB_PASSWORD|ARGO_BASE_URL|ARGO_SERVER_URL|ARGO_TOKEN|ARGO_AUTH_TOKEN|TRINO_ENABLED|TRINO_URL|TRINO_CATALOG|TRINO_SCHEMA)$"
+
+  gcloud run services describe "${SERVICE_NAME}" \
+    --project "${PROJECT_ID}" \
+    --region "${REGION}" \
+    --format=json 2>/dev/null \
+    | python3 -c '
+import json, re, sys
+
+svc = json.load(sys.stdin)
+file_path = "'"${file}"'"
+exclude = re.compile(r"'"${exclude}"'")
+
+# Read keys already in the deploy env file
+file_keys = set()
+with open(file_path, "r") as f:
+    for line in f:
+        line = line.strip()
+        if "=" in line:
+            file_keys.add(line.split("=", 1)[0])
+
+# Check each Cloud Run env var
+preserved = 0
+for item in svc.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("env", []):
+    key = item.get("name", "")
+    value = item.get("value", "")
+    if not key or not value:
+        continue  # skip Secret Manager refs and empty vars
+    if exclude.match(key):
+        continue  # intentionally removed by this script
+    if key in file_keys:
+        continue  # already in deploy file
+    # Preserve: not excluded, not in deploy file
+    with open(file_path, "a") as f:
+        f.write(f"{key}={value}\n")
+    preserved += 1
+    print(f"INFO: Preserving existing Cloud Run env {key}.", file=sys.stderr)
+
+if preserved == 0:
+    print("INFO: No additional Cloud Run env vars to preserve.", file=sys.stderr)
+else:
+    print(f"INFO: Preserved {preserved} env var(s) from existing Cloud Run service.", file=sys.stderr)
+'
 }
 
 preserve_current_cloudrun_env_if_unset() {
@@ -315,6 +370,12 @@ if [[ -n "${K8S_CA_DATA_SECRET}" ]]; then
   secret_mappings+=("K8S_CA_B64=${K8S_CA_DATA_SECRET}:${K8S_CA_DATA_SECRET_VERSION}")
 fi
 
+# Workload Identity K8s auth — apply explicit override when set.
+# (preserve_all_cloudrun_env_vars handles keeping existing Cloud Run values.)
+	[[ -n "${K8S_AUDIENCE_OVERRIDE}" ]] && upsert_env "K8S_AUDIENCE" "${K8S_AUDIENCE_OVERRIDE}" "${ENV_KV_FILE}"
+	[[ -n "${K8S_USE_METADATA_TOKEN_OVERRIDE}" ]] && upsert_env "K8S_USE_METADATA_TOKEN" "${K8S_USE_METADATA_TOKEN_OVERRIDE}" "${ENV_KV_FILE}"
+	[[ -n "${K8S_INSECURE_SKIP_VERIFY_OVERRIDE}" ]] && upsert_env "K8S_INSECURE_SKIP_VERIFY" "${K8S_INSECURE_SKIP_VERIFY_OVERRIDE}" "${ENV_KV_FILE}"
+
 # Argo Workflows server lives in K8s, not on Cloud Run. Drop any K8s-merged
 # ARGO_BASE_URL (which points at the Cloud Run pipeline-ui proxy) and force
 # ARGO_SERVER_URL to the in-cluster Argo API. No ARGO_TOKEN needed with
@@ -363,6 +424,8 @@ if [[ "${effective_db_host}" == "postgres" ]]; then
     fi
   fi
 fi
+
+preserve_all_cloudrun_env_vars "${ENV_KV_FILE}"
 
 python3 - "${ENV_KV_FILE}" "${ENV_VARS_FILE}" <<'PY'
 import json

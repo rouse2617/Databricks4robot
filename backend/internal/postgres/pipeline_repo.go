@@ -514,6 +514,11 @@ func NewExecutionTargetRepo(c *Client) *ExecutionTargetRepo { return &ExecutionT
 
 var _ repository.ExecutionTargetRepository = (*ExecutionTargetRepo)(nil)
 
+func (r *ExecutionTargetRepo) Delete(ctx context.Context, id string) error {
+	err := r.c.Exec(ctx, "DELETE FROM execution_targets WHERE id = $1", id)
+	return err
+}
+
 const executionTargetSelectCols = `id, name, description, cluster, namespace, service_account,
   argo_server_url, argo_auth_secret_ref, argo_insecure_skip_verify, argo_ca_cert_ref,
   enabled, status, is_default, resource_defaults, quota_policy, labels, created_at, updated_at`

@@ -13,13 +13,30 @@ import (
 )
 
 // CreateBatchRun handles POST /api/v1/runs/batch
+func (h *Handler) StopBatchRun(c *gin.Context) {
+	batchID := strings.TrimSpace(c.Param("batchId"))
+	if batchID == "" {
+		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "batchId is required", nil)
+		return
+	}
+
+	owner := middleware.GetUserEmail(c)
+	stopped, failed, err := h.uc.StopBatchRuns(c.Request.Context(), batchID, owner)
+	if err != nil {
+		httpresp.Internal(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "batch stop initiated", "stopped": stopped, "failed": failed})
+}
+
 func (h *Handler) CreateBatchRun(c *gin.Context) {
 	var req struct {
-		TemplateID string   `json:"template_id"`
-		AssetIDs   []string `json:"asset_ids"`
-		TargetID   string   `json:"target_id"`
-		Version    int      `json:"version"`
-		Name       string   `json:"name"`
+		TemplateID     string   `json:"template_id"`
+		AssetIDs       []string `json:"asset_ids"`
+		TargetID       string   `json:"target_id"`
+		Version        int      `json:"version"`
+		Name           string   `json:"name"`
+		MaxConcurrency int      `json:"max_concurrency"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -41,7 +58,7 @@ func (h *Handler) CreateBatchRun(c *gin.Context) {
 	}
 
 	owner := middleware.GetUserEmail(c)
-	job, err := h.uc.CreateBatchJob(c.Request.Context(), req.TemplateID, req.Name, req.AssetIDs, req.TargetID, req.Version, owner)
+	job, err := h.uc.CreateBatchJob(c.Request.Context(), req.TemplateID, req.Name, req.AssetIDs, req.TargetID, req.Version, req.MaxConcurrency, owner)
 	if err != nil {
 		if errors.Is(err, pipelineUC.ErrTemplateNotFound) {
 			httpresp.NotFound(c, httpresp.CodeAssetNotFound, err.Error())

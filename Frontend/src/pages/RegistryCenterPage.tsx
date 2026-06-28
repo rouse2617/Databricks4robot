@@ -57,6 +57,7 @@ import {
 } from "../components/common/PageContentState";
 import { COLUMN_LABELS } from "../lib/productVocabulary";
 
+import PoolManager from "../components/pipeline/PoolManager";
 const { Title, Text, Paragraph } = Typography;
 
 interface UserConfigRecord {
@@ -1548,6 +1549,13 @@ export default function RegistryCenterPage() {
 												版本，归档配置只用于查看、内容追溯和版本对比。
 											</Paragraph>
 										</Space>
+									),
+								},
+								{
+									key: "pools",
+									label: `资源池`,
+									children: (
+										<PoolManager />
 									),
 								},
 								{

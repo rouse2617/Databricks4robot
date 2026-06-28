@@ -1979,6 +1979,15 @@ function WorkflowRunMetadataPanel({
 						{ label: "Namespace", val: runtime?.namespace, mono: true },
 						{ label: "UID", val: runtime?.uid, mono: true },
 						{ label: "状态", val: runtime?.status },
+						{ label: "存储池", val: runtime?.executionTargetId, mono: true },
+					].filter((kv) => kv.val).map((kv) => (
+						<div key={kv.label} title={kv.val}>
+							<span style={{color: "#94a3b8", marginRight: 6}}>{kv.label}</span>
+							<span style={{fontFamily: kv.mono ? "var(--font-mono)" : "inherit", fontWeight: 500, color: "#1e293b"}}>
+								{kv.val && kv.val.length > 40 ? kv.val.slice(0, 40) + "…" : kv.val ?? ""}
+							</span>
+						</div>
+					))}
 				</div>
 
 				{inputs.length > 0 ? (
