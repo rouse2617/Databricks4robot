@@ -55,7 +55,9 @@ func (e *ValidationError) Details() map[string]any {
 	return details
 }
 
-// NormalizeAssetIDs trims and drops empty values.
+// NormalizeAssetIDs trims, drops empty values, and removes duplicates while
+// preserving first-seen order so a single request never creates redundant runs
+// for the same asset.
 // It does not check whether assets exist in the database.
 func NormalizeAssetIDs(field string, assetIDs []string) ([]string, error) {
 	if len(assetIDs) == 0 {
@@ -63,6 +65,7 @@ func NormalizeAssetIDs(field string, assetIDs []string) ([]string, error) {
 	}
 
 	result := make([]string, 0, len(assetIDs))
+	seen := make(map[string]struct{}, len(assetIDs))
 	var invalid []string
 
 	for _, raw := range assetIDs {
@@ -71,6 +74,10 @@ func NormalizeAssetIDs(field string, assetIDs []string) ([]string, error) {
 			invalid = append(invalid, raw)
 			continue
 		}
+		if _, dup := seen[assetID]; dup {
+			continue
+		}
+		seen[assetID] = struct{}{}
 		result = append(result, assetID)
 	}
 
