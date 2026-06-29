@@ -64,12 +64,10 @@ jobs:
           ssh -i ~/.ssh/vm_key ${{ env.VM_USER }}@${{ env.VM_HOST }} bash << ENDSSH
           set -euo pipefail
           echo "$AR_TOKEN" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev
-          docker buildx create --driver docker-container --use --name databrew-builder 2>/dev/null || docker buildx use databrew-builder
           docker buildx build \
             --progress=plain \
             --platform=linux/amd64 \
             --cache-from=type=registry,ref=${{ env.CACHE_IMAGE }} \
-            --cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max \
             -f ${{ env.VM_BUILD_DIR }}/backend/Dockerfile \
             -t ${{ env.IMAGE }} \
             --push \
