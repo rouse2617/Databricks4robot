@@ -1,6 +1,6 @@
 name: deploy-frontend-dev
 
-# Last updated: 2026-06-29 — VM build box, Cloud Run dev.
+# Last updated: 2026-06-29 — VM build box, Cloud Run dev. (verify run)
 on:
   push:
     branches: [dev]
