@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { message } from "antd";
 import AssetInputBar from "./AssetInputBar";
 import PreviewLayout from "./PreviewLayout";
@@ -7,6 +8,18 @@ import SidebarPanel from "./SidebarPanel";
 import UnifiedTimeline from "./UnifiedTimeline";
 import LayoutSerializer from "./LayoutSerializer";
 import type { LayoutSnapshot } from "./LayoutSerializer";
+
+function readSessionToken(): string | null {
+  if (typeof document === "undefined" || !document.cookie) return null;
+  for (const part of document.cookie.split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k !== "databrew_session") continue;
+    const raw = rest.join("=");
+    if (!raw) return null;
+    try { return decodeURIComponent(raw); } catch { return raw; }
+  }
+  return null;
+}
 
 interface PreviewChannel {
   topic: string;
@@ -58,6 +71,7 @@ function deriveDurationMs(raw: Record<string, unknown>): number {
 }
 
 export default function PreviewPage() {
+  const [searchParams] = useSearchParams();
   const [loaded, setLoaded] = useState<LoadedState | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTopics, setActiveTopics] = useState<string[]>([]);
@@ -71,7 +85,7 @@ export default function PreviewPage() {
     try {
       const res = await fetch(
         `${PREVIEW_BASE}/api/v1/preview/assets/${assetId}/manifest`,
-        { headers: { "X-Databrew-Token": "dev-token" } },
+        { credentials: "include" },
       );
       if (!res.ok) {
         message.error(`加载失败: ${res.status}`);
@@ -110,7 +124,7 @@ export default function PreviewPage() {
       // Prewarm the MCAP reader cache (segment endpoint is slow on first load)
       fetch(`${PREVIEW_BASE}/api/v1/preview/assets/${assetId}/prewarm`, {
         method: "POST",
-        headers: { "X-Databrew-Token": "dev-token" },
+        credentials: "include",
       }).catch(() => {/* non-blocking */});
     } catch (err) {
       message.error(`请求失败: ${String(err)}`);
@@ -130,7 +144,9 @@ export default function PreviewPage() {
       const src = loaded?.sources.find((s) => s.topic === ch.topic || s.id === ch.topic);
       if (!src) return "";
       const sep = src.url.includes("?") ? "&" : "?";
-      return `${PREVIEW_BASE}${src.url}${sep}databrew_token=dev-token`;
+      const token = readSessionToken();
+      const tokenPart = token ? `${sep}databrew_token=${encodeURIComponent(token)}` : "";
+      return `${PREVIEW_BASE}${src.url}${tokenPart}`;
     },
     [loaded?.sources],
   );
@@ -143,6 +159,21 @@ export default function PreviewPage() {
     | undefined;
   /** Effective start timestamp for Unix-time display — falls back from window to stats. */
   const effectiveStartNs = win?.start_timestamp_ns || statsWin?.window_effective_start_ns || 0;
+
+  // Auto-load asset from URL params: /preview?asset=<id>&start=<sec>&end=<sec>
+  useEffect(() => {
+    const assetId = searchParams.get("asset");
+    if (!assetId) return;
+    handleLoad(assetId).then(() => {
+      const startSec = Number(searchParams.get("start"));
+      const endSec = Number(searchParams.get("end"));
+      if (startSec > 0 && endSec > startSec) {
+        setPreviewRange({ startSec, endSec });
+      }
+    });
+  // Only run on mount — intentionally ignore handleLoad dep (stable useCallback)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleImportLayout = useCallback((snapshot: LayoutSnapshot) => {
     setActiveTopics(snapshot.activeTopics);

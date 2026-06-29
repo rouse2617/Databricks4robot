@@ -19,6 +19,7 @@ import {
 	Tooltip,
 	Typography,
 } from "antd";
+import { useNavigate } from "react-router-dom";
 import type { Asset } from "../../api/types";
 import {
 	formatDurationSeconds,
@@ -114,12 +115,14 @@ function AlgoSummaryInline({ asset }: { asset: Asset }) {
 
 function PreviewMediaPanel({
 	manifest,
+	asset,
 	isNarrow,
 }: {
 	manifest: PreviewManifest | null;
 	asset: Asset;
 	isNarrow: boolean;
 }) {
+	const navigate = useNavigate();
 	const availability = manifest?.availability ?? "missing";
 	const badge = AVAILABILITY_BADGE[availability];
 	if (manifest?.mode === "mcap") {
@@ -135,7 +138,7 @@ function PreviewMediaPanel({
 				}}
 			>
 				<PreviewPlayer manifest={manifest} />
-				<div style={{ marginTop: 8, textAlign: "center" }}>
+				<div style={{ marginTop: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
 					<Badge
 						status={badge.status}
 						text={
@@ -144,6 +147,15 @@ function PreviewMediaPanel({
 							</Text>
 						}
 					/>
+					<Button
+						size="small"
+						type="link"
+						icon={<ExpandOutlined />}
+						style={{ padding: 0, fontSize: 12 }}
+						onClick={() => navigate(`/preview?asset=${encodeURIComponent(asset.asset_id)}`)}
+					>
+						完整预览
+					</Button>
 				</div>
 			</div>
 		);
@@ -228,11 +240,13 @@ function PreviewMediaPanel({
 						查找相似
 					</Button>
 				</Tooltip>
-				<Tooltip title="Coming in Phase 3">
-					<Button size="small" icon={<ExpandOutlined />} disabled>
-						完整预览
-					</Button>
-				</Tooltip>
+				<Button
+					size="small"
+					icon={<ExpandOutlined />}
+					onClick={() => navigate(`/preview?asset=${encodeURIComponent(asset.asset_id)}`)}
+				>
+					完整预览
+				</Button>
 			</div>
 		</div>
 	);
