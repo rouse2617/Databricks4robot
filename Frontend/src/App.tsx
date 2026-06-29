@@ -30,6 +30,7 @@ const PipelinePage = lazy(() => import("./pages/PipelinePage"));
 const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
 const BatchJobDetailPage = lazy(() => import("./pages/BatchJobDetailPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
+const PreviewPage = lazy(() => import("./components/preview/PreviewPage"));
 
 function PageLoader() {
 	return (
@@ -97,6 +98,7 @@ function ProtectedRoutes() {
 							element={<BatchJobDetailPage />}
 						/>
 						<Route path="/settings" element={<SettingsPage />} />
+						<Route path="/preview" element={<PreviewPage />} />
 						<Route path="*" element={<Navigate to="/dashboard" replace />} />
 					</Routes>
 				</Suspense>

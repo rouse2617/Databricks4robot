@@ -254,7 +254,7 @@ func pickTopic(rs io.ReadSeeker, hint string) (string, error) {
 			if !isSupportedSchema(s.Name) {
 				return "", fmt.Errorf("requested topic %q is not a supported video schema", hint)
 			}
-			if codec, ok := detectTopicCodec(rs, hint); ok && (codec == "h264" || codec == "jpeg") {
+			if codec, ok := detectTopicCodec(rs, hint); ok && (codec == "h264" || codec == "h265" || codec == "jpeg") {
 				return hint, nil
 			}
 			break
@@ -262,8 +262,7 @@ func pickTopic(rs io.ReadSeeker, hint string) (string, error) {
 		if !foundHint {
 			return "", fmt.Errorf("requested topic %q not found in mcap", hint)
 		}
-		// Hint exists but may be unsupported codec (for example h265).
-		// Fall through to global H264 selection so preview still works.
+		// Hint exists but codec detection failed — fall through to auto-select.
 	}
 	ids := make([]uint16, 0, len(info.Channels))
 	for id := range info.Channels {

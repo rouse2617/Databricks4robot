@@ -98,6 +98,12 @@ export default defineConfig({
 		port: DEV_PORT,
 		strictPort: true,
 		proxy: {
+			"/api/v1/preview": {
+				target: process.env.VITE_MCAP_PREVIEW_URL ?? "https://mcap-preview-dev-wtttm6suaq-uc.a.run.app",
+				changeOrigin: true,
+				timeout: 300000,
+				proxyTimeout: 300000,
+			},
 			"/api": apiProxyConfig(),
 		},
 	},
