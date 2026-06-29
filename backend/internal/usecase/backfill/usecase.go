@@ -765,7 +765,7 @@ func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, 
 	if job == nil {
 		return nil, nil
 	}
-	_ = uc.syncJobProgressForce(ctx, id)
+	// syncJobProgressForce is already called by GetBatchNodeSummary
 	_ = uc.ReconcileSubtaskRuns(ctx, id)
 	return uc.repo.FindJobByID(ctx, id)
 }
