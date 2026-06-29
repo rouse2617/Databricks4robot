@@ -1,0 +1,43 @@
+name: deploy-backend-dev
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "backend/**"
+      - "deploy/cloudrun/backend-cloudbuild.yaml"
+      - "deploy/cloudrun/backend-dev.sh"
+      - ".github/workflows/deploy-backend-dev.yml"
+
+concurrency:
+  group: deploy-backend-dev
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Build & Deploy to Cloud Run dev
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: green-valley-442103
+
+      - name: Build via Cloud Build + Deploy (preserve existing config)
+        run: |
+          USE_CLOUD_BUILD=true \
+          SOURCE_K8S_ENV=false \
+          bash deploy/cloudrun/backend-dev.sh
