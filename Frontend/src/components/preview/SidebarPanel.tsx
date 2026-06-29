@@ -1,5 +1,5 @@
 import { Checkbox, Descriptions, Divider, Segmented, Typography } from "antd";
-import { useState } from "react";
+import { memo, useMemo, useState } from "react";
 import Viewport3D from "./Viewport3D";
 import TimeSeriesChart, { generateMockData } from "./TimeSeriesChart";
 
@@ -39,7 +39,7 @@ function fmtDuration(ms: number): string {
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
-export default function SidebarPanel({
+function SidebarPanel({
   channels,
   activeTopics,
   onToggle,
@@ -47,13 +47,12 @@ export default function SidebarPanel({
 }: SidebarPanelProps) {
   const [vizMode, setVizMode] = useState("3d");
 
-  const mockData = generateMockData(500, 0.3);
-  const mockData2 = generateMockData(500, 0.8);
-  const combinedData: [number[], number[], number[]] = [
-    mockData[0],
-    mockData[1],
-    mockData2[1],
-  ];
+  // Mock chart data is static — generate once, not on every render.
+  const combinedData = useMemo<[number[], number[], number[]]>(() => {
+    const mockData = generateMockData(500, 0.3);
+    const mockData2 = generateMockData(500, 0.8);
+    return [mockData[0], mockData[1], mockData2[1]];
+  }, []);
 
   return (
     <div
@@ -169,3 +168,8 @@ export default function SidebarPanel({
     </div>
   );
 }
+
+// Memoized: props are stabilized by the parent (metadata via useMemo, callbacks
+// via useCallback), so the sidebar — and its 3D viewport / charts — no longer
+// re-renders on every currentTime tick.
+export default memo(SidebarPanel);

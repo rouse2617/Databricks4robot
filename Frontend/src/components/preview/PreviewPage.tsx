@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { message } from "antd";
 import AssetInputBar from "./AssetInputBar";
@@ -151,6 +151,43 @@ export default function PreviewPage() {
     [loaded?.sources],
   );
 
+  // ── Throttle video timeupdate → React state ──
+  // Native <video> fires timeupdate up to ~60Hz, and every active panel fires
+  // its own. Feeding each one into setCurrentTime re-renders the whole preview
+  // subtree dozens of times/sec → jank. Throttle to ~10Hz: the timeline + overlay
+  // stay visually smooth while React work drops ~6-12x.
+  /** Tracks user seek target so timeupdate doesn't jump back until video catches up. */
+  const seekTargetRef = useRef<{ time: number; deadline: number } | null>(null);
+  const lastEmitRef = useRef(0);
+  const handleVideoTimeUpdate = useCallback((t: number) => {
+    const st = seekTargetRef.current;
+    if (st) {
+      // Block stale timeupdate until the video reaches the seek target (or 10s).
+      if (performance.now() < st.deadline && Math.abs(t - st.time) > 0.5) return;
+      seekTargetRef.current = null;
+      lastEmitRef.current = 0; // force an immediate emit once the seek settles
+    }
+    const now = performance.now();
+    if (now - lastEmitRef.current < 90) return;
+    lastEmitRef.current = now;
+    setCurrentTime(t);
+  }, []);
+
+  // Stable metadata object so the memoized SidebarPanel (3D viewport + charts)
+  // doesn't re-render on every currentTime tick.
+  const sidebarMetadata = useMemo(
+    () =>
+      loaded
+        ? {
+            durationMs: loaded.durationMs,
+            fileSize: loaded.fileSize,
+            channelCount: loaded.channels.length,
+            assetId: loaded.assetId,
+          }
+        : null,
+    [loaded],
+  );
+
   const statsWin = loaded?.rawManifest?.stats as
     | { window_effective_start_ns?: number }
     | undefined;
@@ -186,8 +223,6 @@ export default function PreviewPage() {
   // ── Keyboard shortcuts ──
   const durationSecRef = useRef(0);
   durationSecRef.current = loaded ? loaded.durationMs / 1000 : 0;
-  /** Tracks user seek target so timeupdate doesn't jump back until video catches up. */
-  const seekTargetRef = useRef<{ time: number; deadline: number } | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -268,32 +303,18 @@ export default function PreviewPage() {
               currentTime={currentTime}
               playing={playing}
               coverMode={coverMode}
-              onTimeUpdate={(t) => {
-                // If user seeks recently, only accept timeupdate when the video
-                // actually reaches near the target — avoids jumping back to 0
-                // when the video hasn't loaded the seeked range yet.
-                const st = seekTargetRef.current;
-                if (st) {
-                    // Safety timeout: force-release after 10 seconds
-                    if (performance.now() < st.deadline && Math.abs(t - st.time) > 0.5) return;
-                    seekTargetRef.current = null; // video caught up or deadline passed
-                }
-                setCurrentTime(t);
-              }}
+              onTimeUpdate={handleVideoTimeUpdate}
             />
           }
           sidebar={
-            <SidebarPanel
-              channels={loaded.channels}
-              activeTopics={activeTopics}
-              onToggle={toggleTopic}
-              metadata={{
-                durationMs: loaded.durationMs,
-                fileSize: loaded.fileSize,
-                channelCount: loaded.channels.length,
-                assetId: loaded.assetId,
-              }}
-            />
+            sidebarMetadata && (
+              <SidebarPanel
+                channels={loaded.channels}
+                activeTopics={activeTopics}
+                onToggle={toggleTopic}
+                metadata={sidebarMetadata}
+              />
+            )
           }
           timeline={
             <UnifiedTimeline

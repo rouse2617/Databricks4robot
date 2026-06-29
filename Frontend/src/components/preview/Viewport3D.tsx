@@ -204,12 +204,22 @@ export default function Viewport3D({ cameras = DEFAULT_CAMERAS }: Viewport3DProp
       scene.add(createCameraLabel(cam.label, labelPos, cam.color));
     });
 
-    // Animation loop
+    // On-demand render loop. A static frustum scene has nothing to animate, so
+    // rendering at a constant 60fps just burns GPU/CPU and starves video decode
+    // → jank. Instead we only re-render while the camera is actually moving:
+    // OrbitControls.update() returns true while damping settles, and emits a
+    // "change" event on user interaction which flags the next frame dirty.
     let running = true;
+    let needsRender = true;
+    controls.addEventListener("change", () => { needsRender = true; });
     const animate = () => {
       if (!running) return;
-      controls.update();
-      renderer.render(scene, camera3d);
+      // update() advances damping and returns true if the camera moved.
+      const moved = controls.update();
+      if (moved || needsRender) {
+        renderer.render(scene, camera3d);
+        needsRender = false;
+      }
       requestAnimationFrame(animate);
     };
     animate();
@@ -221,6 +231,7 @@ export default function Viewport3D({ cameras = DEFAULT_CAMERAS }: Viewport3DProp
       camera3d.aspect = w2 / h2;
       camera3d.updateProjectionMatrix();
       renderer.setSize(w2, h2);
+      needsRender = true;
     };
     window.addEventListener("resize", onResize);
 

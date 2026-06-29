@@ -26,6 +26,10 @@ interface CanvasVideoPanelProps {
   gazePoint?: { x: number; y: number };
 }
 
+// Stable empty default so the overlay effect's dep array doesn't change identity
+// on every render (a fresh `[]` literal would force a redraw each time).
+const NO_BOXES: BoundingBox[] = [];
+
 /**
  * Canvas-based video panel with WebCodecs H.264 decoding + Canvas rendering.
  * Falls back to native <video> when WebCodecs is unavailable.
@@ -40,12 +44,13 @@ export default function CanvasVideoPanel({
   playing = false,
   objectFit = "cover",
   onTimeUpdate,
-  boxes = [],
+  boxes = NO_BOXES,
   gazePoint,
 }: CanvasVideoPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const canvasSizeRef = useRef({ w: 0, h: 0 });
   const useNative = true // force native video;
 
   // ── Video state tracking ──
@@ -179,10 +184,18 @@ export default function CanvasVideoPanel({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Only touch canvas.width/height when the size actually changed. Assigning
+    // them every frame reallocates the backing buffer (expensive) and reading
+    // clientWidth/Height every frame forces a synchronous layout reflow.
     const parent = canvas.parentElement;
     if (parent) {
-      canvas.width = parent.clientWidth;
-      canvas.height = parent.clientHeight;
+      const pw = parent.clientWidth;
+      const ph = parent.clientHeight;
+      if (pw !== canvasSizeRef.current.w || ph !== canvasSizeRef.current.h) {
+        canvas.width = pw;
+        canvas.height = ph;
+        canvasSizeRef.current = { w: pw, h: ph };
+      }
     }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
