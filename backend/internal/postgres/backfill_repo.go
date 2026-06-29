@@ -536,7 +536,7 @@ func (r *BackfillRepo) FindItemsByScope(ctx context.Context, filter repository.B
 	}
 	q := `SELECT
   bi.id, bi.job_id, bi.asset_id, bi.status,
-  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.started_at, bi.finished_at, bi.created_at
+  bi.pipeline_run_id, bi.workflow_name, bi.error_message, bi.attempts, bi.started_at, bi.finished_at, bi.created_at
 ` + from + `
 WHERE ` + strings.Join(where, " AND ") + `
 ORDER BY bi.created_at ASC`
