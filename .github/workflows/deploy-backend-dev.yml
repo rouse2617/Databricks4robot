@@ -1,6 +1,6 @@
 name: deploy-backend-dev
 
-# Last updated: 2026-06-29 — VM build box (shiqi-test-cpu); fixed docker credHelper conflict.
+# Last updated: 2026-06-29 — VM pulls code via GITHUB_TOKEN (no rsync, no deploy key).
 on:
   push:
     branches: [dev]
@@ -20,7 +20,7 @@ permissions:
 env:
   VM_HOST: 136.119.82.209
   VM_USER: rick
-  VM_BUILD_DIR: /home/rick/databrew-build
+  REPO_DIR: /home/rick/cyber-databrew
   IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest
   CACHE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:buildcache
 
@@ -50,19 +50,23 @@ jobs:
           chmod 600 ~/.ssh/vm_key
           ssh-keyscan -H ${{ env.VM_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Sync backend source to VM
-        run: |
-          ssh -i ~/.ssh/vm_key ${{ env.VM_USER }}@${{ env.VM_HOST }} \
-            "mkdir -p ${{ env.VM_BUILD_DIR }}/backend"
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/vm_key" \
-            backend/ ${{ env.VM_USER }}@${{ env.VM_HOST }}:${{ env.VM_BUILD_DIR }}/backend/
-
       - name: Build & push image on VM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           AR_TOKEN=$(gcloud auth print-access-token)
+          CLONE_URL="https://x-access-token:${GH_TOKEN}@github.com/CyberOrigin2077/cyber-databrew.git"
           ssh -i ~/.ssh/vm_key ${{ env.VM_USER }}@${{ env.VM_HOST }} bash << ENDSSH
           set -euo pipefail
+          if [ -d ${{ env.REPO_DIR }}/.git ]; then
+            git -C ${{ env.REPO_DIR }} remote set-url origin "$CLONE_URL"
+            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin $COMMIT_SHA
+          else
+            git clone --depth=1 "$CLONE_URL" ${{ env.REPO_DIR }}
+          fi
+          git -C ${{ env.REPO_DIR }} checkout $COMMIT_SHA
+
           echo "$AR_TOKEN" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev
           docker buildx create --driver docker-container --use --name databrew-builder 2>/dev/null || docker buildx use databrew-builder
           docker buildx build \
@@ -70,10 +74,10 @@ jobs:
             --platform=linux/amd64 \
             --cache-from=type=registry,ref=${{ env.CACHE_IMAGE }} \
             --cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max \
-            -f ${{ env.VM_BUILD_DIR }}/backend/Dockerfile \
+            -f ${{ env.REPO_DIR }}/backend/Dockerfile \
             -t ${{ env.IMAGE }} \
             --push \
-            ${{ env.VM_BUILD_DIR }}/backend
+            ${{ env.REPO_DIR }}/backend
           ENDSSH
 
       - name: Deploy to Cloud Run dev
