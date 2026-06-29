@@ -5,12 +5,13 @@ Applies to **all AI agents** (Cursor, Codex, Claude Code, etc.) when changing ru
 When you finish implementing a change targeting Backend / Frontend / SDK / Dagster, you MUST NOT run `git commit` or `git push` until the following sequence has completed and the user has explicitly approved:
 
 0. **Apply migrations** — If the diff includes new files under `backend/migrations/*.sql`, apply them to dev BEFORE building/deploying: `bash scripts/apply-migration-dev.sh "$(pwd)/backend/migrations/NNN_name.sql"`. Verify the migration succeeded before proceeding.
-1. **Build image**. Prefer local `docker build` for routine deploys. For backend-only deploys where local Docker is slow or unavailable, use `deploy/cloudrun/backend-cloudbuild-fast.yaml`, which submits only `backend/`, respects `backend/.gcloudignore`, uses `E2_HIGHCPU_32`, and exports BuildKit registry cache to `:buildcache`. Use `--platform=linux/amd64` on ARM Macs (Cloud Run is amd64). On Docker Desktop + BuildKit, also pass `--output=type=docker` to force a single-platform Docker manifest — otherwise BuildKit produces a multi-platform OCI index that Cloud Run rejects with "Container manifest type must support amd64/linux".
+1. **Build image**.
+   - **Backend**: `bash deploy/cloudrun/local-build-deploy.sh` — rsyncs `backend/` (including uncommitted changes) to the VM build box, builds `linux/amd64` with BuildKit cache, pushes to AR, and deploys. One command, ~40 s when warm. Alternatively, push to `dev` and let GHA do it (~1 min), but you'd need to commit first, which the gate exists to prevent.
+   - **Frontend**: push to `dev` auto-deploys to Cloudflare Workers via GHA. For a pre-commit local deploy, run `wrangler deploy --env dev` from `Frontend/`.
    - **Tag with git SHA** (immutable) **and** push `cloudrun-dev-latest` (mutable convenience). See [Image tags and revision record](#image-tags-and-revision-record) below — do **not** push only `:cloudrun-dev-latest` without a SHA tag.
    - Backend / Frontend build commands: same section below.
-   - Do NOT call `bash deploy/cloudrun/backend-dev.sh` / `frontend-dev.sh` without `USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false`, because the script's default path is Cloud Build.
 2. **Push image** to Artifact Registry with `docker push` for **both** the SHA tag and `cloudrun-dev-latest` (auth via `gcloud auth configure-docker us-central1-docker.pkg.dev`).
-3. **Deploy** to Cloud Run dev using the **SHA-tagged** image: `USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false IMAGE=<…>:<sha> … bash deploy/cloudrun/backend-dev.sh` (or frontend). Then **record revision + image tag** (see below).
+3. **Deploy** to Cloud Run dev using the **SHA-tagged** image: `USE_EXISTING_IMAGE=true IMAGE=<…>:<sha> … bash deploy/cloudrun/backend-dev.sh` (or `local-build-deploy.sh` which handles build+push+deploy in one shot). Then **record revision + image tag** (see below).
 4. **Verify on dev** — Follow [`deploy-verification.md`](deploy-verification.md):
    - **Diff 含 `Frontend/`**：部署 frontend dev → Agent **必须**用 **Chrome DevTools MCP** 验收（截图 + console），不得默认让用户点浏览器。
    - **仅 backend / sdk 等（无 `Frontend/`）**：部署对应服务 + API smoke/curl；**不需要** Chrome DevTools MCP。
@@ -61,7 +62,7 @@ docker tag "${BACKEND_IMAGE}" "${BACKEND_LATEST}"
 docker push "${BACKEND_IMAGE}"
 docker push "${BACKEND_LATEST}"
 
-USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
+USE_EXISTING_IMAGE=true \
   IMAGE="${BACKEND_IMAGE}" \
   bash deploy/cloudrun/backend-dev.sh
 ```
@@ -88,13 +89,12 @@ script or pass explicit overrides.
 ### Backend component release sync token
 
 If the backend revision is expected to receive component release sync calls from
-Cloud Build, the dev Cloud Run service MUST bind a dedicated CI ingest token.
+CI, the dev Cloud Run service MUST bind a dedicated CI ingest token.
 Set either `COMPONENT_RELEASE_INGEST_TOKEN` or `DATABREW_CI_INGEST_TOKEN` from
 Secret Manager secret `cyber-databrew-dev-component-release-ingest-token`.
 
 Without this binding, `scripts/databrew_sync_component_release.py` and task
-Cloud Build sync steps fail with `401 UNAUTHORIZED` when they use
-`X-Databrew-CI-Token`.
+sync steps fail with `401 UNAUTHORIZED` when they use `X-Databrew-CI-Token`.
 
 Verify the binding after backend deploy:
 
@@ -171,7 +171,10 @@ gcloud run services describe cyber-databrew-frontend-dev \
 | frontend-dev | cyber-databrew-frontend:`<sha>` | cyber-databrew-frontend-dev-00xxx-xyz | https://… |
 ```
 
-**Tekton / dev deploy policy:** Push to `dev` or feature branches **does not** auto-deploy Cloud Run (see `.tekton/push-*-cloudrun-dev.yaml`, `on-cel-expression: false`). Use **local** build + `backend-dev.sh` / `frontend-dev.sh` (this doc), or open a PR to `main`/`dev` and comment **`/deploy-cloudrun-dev`** on the PR. Prod `main` push pipelines are unchanged. Tag images with git `SHA` in both paths.
+**Dev auto-deploy policy:** Push to `dev` triggers GHA auto-deploy:
+- **Backend** (`backend/**`): `.github/workflows/deploy-backend-dev.yml` → VM build box → Cloud Run dev (~1 min for a Go change, ~33 s no change).
+- **Frontend** (`Frontend/**`): separate GHA workflow → Cloudflare Workers dev.
+For pre-commit verification without a push, use `bash deploy/cloudrun/local-build-deploy.sh` (backend) or `wrangler deploy --env dev` (frontend). Tag images with git `SHA`.
 
 ### Rollback (dev)
 
@@ -190,7 +193,7 @@ gcloud run services update-traffic cyber-databrew-backend-dev \
 **Redeploy old image** (when you recorded SHA tag):
 
 ```bash
-USE_EXISTING_IMAGE=true USE_CLOUD_BUILD=false \
+USE_EXISTING_IMAGE=true \
   IMAGE="${REG}/cyber-databrew-images/cyber-databrew-backend:<old-sha>" \
   DB_PASSWORD_SECRET=cyber-databrew-dev-postgres-password \
   bash deploy/cloudrun/backend-dev.sh

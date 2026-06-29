@@ -526,7 +526,7 @@ Week 2:
 | Schema 参考 | `docs/review/schema-reference.md` |
 | Pipeline 指南 | `docs/review/pipeline-frontend-guide.md` |
 | 流水线设计 | `docs/review/data-production-line.md` |
-| 部署配置 | `deploy/cloudrun/frontend-cloudbuild.yaml` |
+| 部署配置 | `deploy/cloudrun/frontend-dev.sh` |
 
 ### B. Cloud Run 服务创建命令（仅首次）
 
