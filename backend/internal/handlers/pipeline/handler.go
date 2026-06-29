@@ -740,6 +740,10 @@ func (h *Handler) ListRunChildren(c *gin.Context) {
 		httpresp.Internal(c, err.Error())
 		return
 	}
+	for i := range result.Items {
+		result.Items[i].Manifest = nil
+		result.Items[i].PipelineJSON = nil
+	}
 	c.JSON(200, result)
 }
 

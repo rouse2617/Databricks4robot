@@ -4271,6 +4271,10 @@ func (uc *Usecase) ListRunChildren(ctx context.Context, id string, filters ...mo
 		result.Total = len(result.Items)
 	}
 	result.Summary = runstate.AggregateChildRuns(result.Items)
+	for i := range result.Items {
+		result.Items[i].Manifest = nil
+		result.Items[i].PipelineJSON = nil
+	}
 	return result, nil
 }
 
@@ -4388,6 +4392,10 @@ func (uc *Usecase) listBatchRunChildren(ctx context.Context, batchJobID, parentR
 		children = append(children, child)
 	}
 	annotateRunDiagnostics(children)
+	for i := range children {
+		children[i].Manifest = nil
+		children[i].PipelineJSON = nil
+	}
 	relations := runstate.BuildBatchChildRelations(parentRunID, children)
 	return &models.RunChildList{
 		RunID:     parentRunID,
