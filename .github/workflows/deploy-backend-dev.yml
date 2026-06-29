@@ -74,12 +74,19 @@ jobs:
           echo "$AR_TOKEN" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev 2>&1 | grep -v "^$"
 
           echo "--- [3/3] build & push ---"
-          docker buildx create --driver docker-container --use --name databrew-builder 2>/dev/null || docker buildx use databrew-builder
+          if docker buildx inspect databrew-builder &>/dev/null; then
+            echo "    builder warm — skipping registry cache pull"
+            docker buildx use databrew-builder
+            CACHE_ARGS="--cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          else
+            echo "    builder cold — pulling registry cache"
+            docker buildx create --driver docker-container --use --name databrew-builder
+            CACHE_ARGS="--cache-from=type=registry,ref=${{ env.CACHE_IMAGE }} --cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          fi
           docker buildx build \
             --progress=auto \
             --platform=linux/amd64 \
-            --cache-from=type=registry,ref=${{ env.CACHE_IMAGE }} \
-            --cache-to=type=registry,ref=${{ env.CACHE_IMAGE }},mode=max \
+            $CACHE_ARGS \
             -f ${{ env.REPO_DIR }}/backend/Dockerfile \
             -t ${{ env.IMAGE }} \
             --push \
