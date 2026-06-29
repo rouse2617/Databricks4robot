@@ -25,11 +25,12 @@ K8S_SECRET_NAME="${K8S_SECRET_NAME:-cyber-databrew-secrets}"
 ENV_FILE="${ENV_FILE:-}"
 
 CPU="${CPU:-1}"
-MEMORY="${MEMORY:-512Mi}"
+MEMORY="${MEMORY:-2Gi}"
 MIN_INSTANCES="${MIN_INSTANCES:-0}"
 MAX_INSTANCES="${MAX_INSTANCES:-5}"
 TIMEOUT="${TIMEOUT:-60}"
 CPU_THROTTLING="${CPU_THROTTLING:-false}"
+CPU_BOOST="${CPU_BOOST:-true}"
 ALLOW_UNAUTHENTICATED="${ALLOW_UNAUTHENTICATED:-true}"
 
 VPC_CONNECTOR="${VPC_CONNECTOR:-cr-central-conn}"
@@ -464,6 +465,11 @@ if [[ "${CPU_THROTTLING}" == "true" ]]; then
   deploy_args+=(--cpu-throttling)
 else
   deploy_args+=(--no-cpu-throttling)
+fi
+if [[ "${CPU_BOOST}" == "true" ]]; then
+  deploy_args+=(--cpu-boost)
+else
+  deploy_args+=(--no-cpu-boost)
 fi
 if [[ ${#secret_mappings[@]} -gt 0 ]]; then
   secret_arg="$(IFS=,; echo "${secret_mappings[*]}")"
