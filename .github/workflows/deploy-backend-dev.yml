@@ -61,11 +61,11 @@ jobs:
           set -euo pipefail
           if [ -d ${{ env.REPO_DIR }}/.git ]; then
             git -C ${{ env.REPO_DIR }} remote set-url origin "$CLONE_URL"
-            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin $COMMIT_SHA
+            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin dev
+            git -C ${{ env.REPO_DIR }} reset --hard FETCH_HEAD
           else
-            git clone --depth=1 "$CLONE_URL" ${{ env.REPO_DIR }}
+            git clone --depth=1 --branch dev "$CLONE_URL" ${{ env.REPO_DIR }}
           fi
-          git -C ${{ env.REPO_DIR }} checkout $COMMIT_SHA
 
           echo "$AR_TOKEN" | docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev
           docker buildx create --driver docker-container --use --name databrew-builder 2>/dev/null || docker buildx use databrew-builder
