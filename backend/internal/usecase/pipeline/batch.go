@@ -115,6 +115,12 @@ func (uc *Usecase) GetBatchJobStatus(ctx context.Context, batchID string) (*mode
 // in parallel. 20 is safe for Argo Server (~200 QPS × 3ms each = 666/s).
 const defaultSubmitWorkers = 20
 
+// deployTimeout caps how long a single CreateRunByTemplateID call may take
+// before the worker gives up and marks the item as failed. Without this,
+// a hanging Argo API call holds the worker goroutine forever, preventing
+// the batch job from ever reaching a terminal state.
+const deployTimeout = 60 * time.Second
+
 // processBatchJob submits all items to Argo using a parallel worker pool and
 // lets the controller manage concurrency via parallelism config. Errors are
 // per-item — one failure does not cancel the batch.
@@ -174,7 +180,9 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 						AllowUnknownAssets: true,
 						Owner:              owner,
 					}}
-					run, err := uc.CreateRunByTemplateID(ctx, templateID, "", []string{item.AssetID}, opts...)
+					itemCtx, itemCancel := context.WithTimeout(ctx, deployTimeout)
+					run, err := uc.CreateRunByTemplateID(itemCtx, templateID, "", []string{item.AssetID}, opts...)
+					itemCancel()
 					if err != nil {
 						results <- result{item: item, err: err}
 					} else {
@@ -196,9 +204,11 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 		if r.err != nil {
 			// A cancelled batch surfaces context errors on in-flight submits;
 			// these are not real asset failures, so leave the item untouched.
-			if errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded) {
+			if errors.Is(r.err, context.Canceled) {
 				continue
 			}
+			// DeadlineExceeded from the per-item timeout IS a real failure — mark
+			// the item as failed so the batch can proceed to a terminal state.
 			errMsg := r.err.Error()
 			slog.Warn("batch job: asset failed", "assetID", r.item.AssetID, "err", errMsg)
 			if err := uc.backfillRepo.UpdateItemStatus(ctx, r.item.ID, "failed", "", errMsg); err != nil {

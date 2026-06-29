@@ -21,6 +21,11 @@ import (
 )
 
 const maxConcurrentBatchItems = 5
+// deployTimeout caps how long a single executeItem call may take
+// before the worker gives up. Without this, a hanging Argo API call
+// holds the worker goroutine forever, blocking wg.Wait() and
+// preventing the batch job from ever reaching a terminal state.
+const deployTimeout = 60 * time.Second
 const backfillItemChunkSize = 500
 
 var ErrNotFound = errors.New("backfill job not found")
@@ -362,9 +367,21 @@ func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, templ
 				if uc.isJobPaused(ctx, jobID) {
 					continue
 				}
-				if err := uc.executeItem(ctx, item, templateID, templateVersion, jobID); err != nil {
-					slog.Warn("runItems: executeItem failed",
-						"jobID", jobID, "itemID", item.ID, "assetID", item.AssetID, "err", err)
+				itemCtx, itemCancel := context.WithTimeout(ctx, deployTimeout)
+				err := uc.executeItem(itemCtx, item, templateID, templateVersion, jobID)
+				itemCancel()
+				if err != nil {
+					if errors.Is(err, context.DeadlineExceeded) {
+						// executeItem's internal error handling used the timed-out ctx,
+						// so the failure status may not have persisted. Retry with outer ctx.
+						slog.Warn("runItems: item deploy timeout, recording failure",
+							"jobID", jobID, "itemID", item.ID, "assetID", item.AssetID)
+						_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", "", "deploy timeout after 60s")
+						_ = uc.syncJobProgress(ctx, jobID)
+					} else {
+						slog.Warn("runItems: executeItem failed",
+							"jobID", jobID, "itemID", item.ID, "assetID", item.AssetID, "err", err)
+					}
 				}
 			}
 		}()
