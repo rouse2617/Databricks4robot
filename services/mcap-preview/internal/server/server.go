@@ -196,6 +196,13 @@ func accessLogger() gin.HandlerFunc {
 //   - `X-Databrew-Token` header (server-to-server callers, curl)
 //   - `?databrew_token=` query (HTML <video> tags can't add headers)
 //   - `databrew_session` cookie (browser session set by backend /auth/login)
+// looksLikeJWT returns true when s is a three-part base64url JWT
+// (header.payload.signature). Used to choose the right upstream auth header.
+func looksLikeJWT(s string) bool {
+	parts := strings.SplitN(s, ".", 3)
+	return len(parts) == 3 && len(parts[0]) > 0 && len(parts[1]) > 0 && len(parts[2]) > 0
+}
+
 func extractDatabrewToken(c *gin.Context) string {
 	if t := c.GetHeader("X-Databrew-Token"); t != "" {
 		return t
@@ -311,7 +318,15 @@ func fetchLocator(c *gin.Context, cfg Config, assetID, token string) (*upstreamL
 		return nil, 0, err
 	}
 	if cfg.DatabrewTokenPassthrough {
-		req.Header.Set("X-Databrew-Token", token)
+		// The backend's JWTAuth middleware short-circuits on X-Databrew-Token
+		// and only accepts the static API key there. Session JWTs (from the
+		// databrew_session cookie) must go via Authorization: Bearer so the
+		// backend falls through to JWT validation.
+		if looksLikeJWT(token) {
+			req.Header.Set("Authorization", "Bearer "+token)
+		} else {
+			req.Header.Set("X-Databrew-Token", token)
+		}
 	}
 	if rid, _ := c.Get("request_id"); rid != nil {
 		if s, ok := rid.(string); ok && s != "" {
