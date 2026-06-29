@@ -1,6 +1,6 @@
 name: deploy-backend-dev
 
-# Last updated: 2026-06-29 — VM build box (shiqi-test-cpu) via SSH; GHA token for AR auth.
+# Last updated: 2026-06-29 — VM build box (shiqi-test-cpu); fixed docker credHelper conflict.
 on:
   push:
     branches: [dev]
