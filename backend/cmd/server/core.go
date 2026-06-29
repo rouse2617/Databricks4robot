@@ -151,6 +151,8 @@ func setupCore(inf *infra) *coreHandlers {
 	backfillResultRepo := postgres.NewBackfillResultRepo(pg)
 	backfillUC := backfillUC.New(backfillRepo, puc)
 	backfillUC.SetResultRepositories(backfillResultRepo, assetRepo)
+	backfillUC.StartReaper()
+	backfillUC.ResumeIncompleteBatches(context.Background())
 	backfillHandler := backfillH.New(backfillUC)
 
 	pipelineHandler := pipelineH.New(puc, inf.cfg.PricingConfigPath, backfillUC)

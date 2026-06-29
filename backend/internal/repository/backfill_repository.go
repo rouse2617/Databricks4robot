@@ -38,6 +38,20 @@ type BackfillRepository interface {
 	CountRunsWithNodeRowsByBatchJobID(ctx context.Context, jobID string) (int, error)
 	FindItemsByAssetID(ctx context.Context, assetID string) ([]models.BackfillItem, error)
 	FindItemByJobAndAssetID(ctx context.Context, jobID, assetID string) (*models.BackfillItem, error)
+
+	// ClaimNextItem atomically claims one pending item for processing.
+	// It selects an item with FOR UPDATE SKIP LOCKED, updates status to
+	// running and started_at to now, and returns the claimed item.
+	ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error)
+
+	// ResetStaleItems reclaims items stuck in running status beyond
+	// the lease timeout for jobs that are still active (not paused/cancelled).
+	// Returns the number of items reclaimed.
+	ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error)
+
+	// FindIncompleteJobs returns all backfill jobs that are still running
+	// and have at least one pending item. Used for startup recovery.
+	FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error)
 }
 
 // BackfillItemStatusSummary aggregates item counts by coarse status bucket.

@@ -103,6 +103,19 @@ func (s *stubBackfillRepo) FindItemByJobAndAssetID(_ context.Context, jobID, ass
 	}
 	return nil, nil
 }
+
+func (s *stubBackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
+	return nil, nil
+}
+
+func (s *stubBackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
+	return 0, nil
+}
+
+func (s *stubBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	return nil, nil
+}
+
 func (s *stubBackfillRepo) UpdateItemStatus(_ context.Context, id, status, _, _ string) error {
 	for i := range s.items {
 		if s.items[i].ID == id {

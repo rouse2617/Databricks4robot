@@ -76,6 +76,19 @@ func (m *mockBackfillRepo) FindItemByJobAndAssetID(_ context.Context, jobID, ass
 	}
 	return nil, nil
 }
+
+func (m *mockBackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
+	return nil, nil
+}
+
+func (m *mockBackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
+	return 0, nil
+}
+
+func (m *mockBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	return nil, nil
+}
+
 func (m *mockBackfillRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range m.items {
 		if m.items[i].ID == id {
@@ -700,6 +713,19 @@ func (r *trackingBackfillRepo) CountRunsWithNodeRowsByBatchJobID(_ context.Conte
 	return r.runsWithNodeRows, nil
 }
 func (r *trackingBackfillRepo) FindItemsByAssetID(_ context.Context, _ string) ([]models.BackfillItem, error) {
+	return nil, nil
+}
+
+
+func (r *trackingBackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
+	return nil, nil
+}
+
+func (r *trackingBackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
+	return 0, nil
+}
+
+func (r *trackingBackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
 	return nil, nil
 }
 

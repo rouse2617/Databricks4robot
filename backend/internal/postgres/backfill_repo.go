@@ -175,13 +175,13 @@ func (r *BackfillRepo) IncrementFailed(ctx context.Context, id string) error {
 // ── Items ───────────────────────────────────────────────────────────────────
 
 const backfillItemSelectCols = `id, job_id, asset_id, status,
-  pipeline_run_id, workflow_name, error_message, started_at, finished_at, created_at`
+  pipeline_run_id, workflow_name, error_message, attempts, started_at, finished_at, created_at`
 
 func scanBackfillItem(rs rowScanner) (*models.BackfillItem, error) {
 	var item models.BackfillItem
 	if err := rs.Scan(
 		&item.ID, &item.JobID, &item.AssetID, &item.Status,
-		&item.PipelineRunID, &item.WorkflowName, &item.ErrorMessage, &item.StartedAt, &item.FinishedAt,
+		&item.PipelineRunID, &item.WorkflowName, &item.ErrorMessage, &item.Attempts, &item.StartedAt, &item.FinishedAt,
 		&item.CreatedAt,
 	); err != nil {
 		return nil, err
@@ -906,4 +906,93 @@ FROM (
 		return nil, fmt.Errorf("postgres BackfillRepo.FindItemByJobAndAssetID: %w", err)
 	}
 	return item, nil
+}
+
+// ClaimNextItem atomically claims one pending item using FOR UPDATE SKIP LOCKED.
+func (r *BackfillRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
+	const q = `
+	UPDATE backfill_items
+	SET status = 'running',
+	    started_at = NOW(),
+	    attempts = attempts + 1
+	WHERE id = (
+		SELECT id FROM backfill_items
+		WHERE job_id = $1 AND status = 'pending'
+		ORDER BY created_at ASC
+		LIMIT 1
+		FOR UPDATE SKIP LOCKED
+	)
+	RETURNING id, job_id, asset_id, status,
+	  pipeline_run_id, workflow_name, error_message, attempts, started_at, finished_at,
+	  created_at`
+	db := dbFromCtx(ctx, r.c.db)
+	item, err := scanBackfillItem(db.QueryRow(ctx, q, jobID))
+	if err != nil {
+		if errors.Is(err, errNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres BackfillRepo.ClaimNextItem: %w", err)
+	}
+	return item, nil
+}
+
+// ResetStaleItems reclaims items stuck in running status beyond lease timeout.
+func (r *BackfillRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
+	const q = `
+	WITH reclaimed AS (
+		UPDATE backfill_items bi
+		SET status = CASE WHEN bi.attempts >= $2 THEN 'failed' ELSE 'pending' END,
+		    started_at = NULL,
+		    error_message = CASE WHEN bi.attempts >= $2
+			  THEN 'max attempts exceeded after lease timeout'
+			  ELSE 'reclaimed: lease expired'
+		    END
+		FROM backfill_jobs bj
+		WHERE bi.job_id = bj.id
+		  AND bi.status = 'running'
+		  AND bi.started_at < NOW() - ($1 || ' seconds')::interval
+		  AND bj.status = 'running'
+		RETURNING bi.id
+	)
+	SELECT COUNT(*) FROM reclaimed`
+	db := dbFromCtx(ctx, r.c.db)
+	var count int
+	if err := db.QueryRow(ctx, q, leaseTimeoutSec, maxAttempts).Scan(&count); err != nil {
+		return 0, fmt.Errorf("postgres BackfillRepo.ResetStaleItems: %w", err)
+	}
+	return count, nil
+}
+
+// FindIncompleteJobs returns running backfill jobs with at least one pending item.
+func (r *BackfillRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	const q = `
+	SELECT DISTINCT bj.id, bj.template_id, bj.name, bj.status,
+	  bj.completed_count, bj.failed_count, bj.total_count,
+	  bj.pilot_phase, bj.pilot_count,
+	  bj.filter_json, bj.created_at, bj.updated_at
+	FROM backfill_jobs bj
+	JOIN backfill_items bi ON bi.job_id = bj.id
+	WHERE bj.status = 'running'
+	  AND bi.status = 'pending'
+	ORDER BY bj.created_at ASC`
+	db := dbFromCtx(ctx, r.c.db)
+	rows, err := db.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("postgres BackfillRepo.FindIncompleteJobs: %w", err)
+	}
+	defer rows.Close()
+	var jobs []models.BackfillJob
+	for rows.Next() {
+		var j models.BackfillJob
+		if err := rows.Scan(
+			&j.ID, &j.TemplateID, &j.Name, &j.Status,
+			&j.CompletedCount, &j.FailedCount, &j.TotalCount,
+			&j.PilotPhase, &j.PilotCount,
+			&j.FilterJSON, &j.CreatedAt, &j.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("postgres BackfillRepo.FindIncompleteJobs scan: %w", err)
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
 }

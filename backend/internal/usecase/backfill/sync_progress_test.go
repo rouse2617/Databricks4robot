@@ -73,6 +73,19 @@ func (r *pausedSyncRepo) FindItemByPipelineRunID(context.Context, string) (*mode
 func (r *pausedSyncRepo) FindItemByJobAndAssetID(context.Context, string, string) (*models.BackfillItem, error) {
 	return nil, nil
 }
+
+func (r *pausedSyncRepo) ClaimNextItem(ctx context.Context, jobID string) (*models.BackfillItem, error) {
+	return nil, nil
+}
+
+func (r *pausedSyncRepo) ResetStaleItems(ctx context.Context, leaseTimeoutSec int, maxAttempts int) (int, error) {
+	return 0, nil
+}
+
+func (r *pausedSyncRepo) FindIncompleteJobs(ctx context.Context) ([]models.BackfillJob, error) {
+	return nil, nil
+}
+
 func (r *pausedSyncRepo) UpdateItemStatus(_ context.Context, id, status, wf, errMsg string) error {
 	for i := range r.items {
 		if r.items[i].ID == id {

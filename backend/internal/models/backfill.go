@@ -29,6 +29,7 @@ type BackfillItem struct {
 	PipelineRunID *string    `json:"pipelineRunId,omitempty"`
 	WorkflowName  *string    `json:"workflowName,omitempty"`
 	ErrorMessage  *string    `json:"errorMessage,omitempty"`
+	Attempts      int        `json:"attempts,omitempty"`
 	StartedAt     *time.Time `json:"startedAt,omitempty"`
 	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
 	CreatedAt     time.Time  `json:"createdAt"`

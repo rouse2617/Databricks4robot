@@ -32,6 +32,17 @@ var ErrNotFound = errors.New("backfill job not found")
 var ErrInvalidRerunScope = errors.New("invalid backfill rerun scope")
 
 // Usecase orchestrates backfill job operations.
+// reaperInterval controls how often the stale reaper scans for stuck items.
+const reaperInterval = 90 * time.Second
+
+// maxItemAttempts caps how many times a batch item can be reclaimed before
+// it is marked as failed permanently.
+const maxItemAttempts = 3
+
+// leaseTimeout is how long a worker has to complete a claimed item before
+// the stale reaper can reclaim it.
+const leaseTimeout = 120 * time.Second
+
 type Usecase struct {
 	repo       repository.BackfillRepository
 	resultRepo repository.BackfillResultRepository
@@ -42,6 +53,9 @@ type Usecase struct {
 
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
+
+	reaperStop chan struct{}
+	reaperWg   sync.WaitGroup
 }
 
 // New creates a Usecase without transaction support.
@@ -52,6 +66,60 @@ func New(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase) *Us
 // NewWithPostgres creates a Usecase with transaction support via the postgres client.
 func NewWithPostgres(repo repository.BackfillRepository, pipelineUC *pipelineUC.Usecase, pgClient any) *Usecase {
 	return &Usecase{repo: repo, pipelineUC: pipelineUC, pgClient: pgClient}
+}
+
+// StartReaper launches the stale reaper goroutine that reclaims items stuck
+// in running status beyond the lease timeout. It runs until StopReaper is called.
+func (uc *Usecase) StartReaper() {
+	uc.reaperStop = make(chan struct{})
+	uc.reaperWg.Add(1)
+	go func() {
+		defer uc.reaperWg.Done()
+		ticker := time.NewTicker(reaperInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-uc.reaperStop:
+				return
+			case <-ticker.C:
+				count, err := uc.repo.ResetStaleItems(context.Background(), int(leaseTimeout.Seconds()), maxItemAttempts)
+				if err != nil {
+					slog.Warn("stale reaper: reset stale items failed", "err", err)
+					continue
+				}
+				if count > 0 {
+					slog.Info("stale reaper: reclaimed stale items", "count", count)
+				}
+			}
+		}
+	}()
+}
+
+// StopReaper signals the stale reaper goroutine to stop and waits for it.
+func (uc *Usecase) StopReaper() {
+	if uc.reaperStop != nil {
+		close(uc.reaperStop)
+	}
+	uc.reaperWg.Wait()
+}
+
+// ResumeIncompleteBatches scans for running batch jobs with pending items
+// and starts worker pools for them. Call after constructing the Usecase to
+// recover from prior service interruptions.
+func (uc *Usecase) ResumeIncompleteBatches(ctx context.Context) {
+	jobs, err := uc.repo.FindIncompleteJobs(ctx)
+	if err != nil {
+		slog.Warn("resume incomplete batches: find jobs failed", "err", err)
+		return
+	}
+	for _, job := range jobs {
+		templateVersion := job.TemplateVersion
+		if templateVersion <= 0 {
+			templateVersion = uc.resolveTemplateVersion(ctx, job.TemplateID)
+		}
+		slog.Info("resume incomplete batch", "jobID", job.ID, "templateID", job.TemplateID, "pendingItems", job.TotalCount-job.CompletedCount-job.FailedCount)
+		go uc.runItems(context.Background(), job.ID, job.TemplateID, templateVersion, nil)
+	}
 }
 
 // SetResultRepositories wires staging upload dependencies.
@@ -352,28 +420,30 @@ func (uc *Usecase) materializeAndRunBatch(jobID, templateID string, templateVers
 }
 
 func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, templateVersion int, items []models.BackfillItem, allowed ...string) {
-	allowedSet := make(map[string]struct{}, len(allowed))
-	for _, status := range allowed {
-		allowedSet[status] = struct{}{}
-	}
-
-	work := make(chan models.BackfillItem)
 	var wg sync.WaitGroup
 	for range maxConcurrentBatchItems {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for item := range work {
+			for {
 				if uc.isJobPaused(ctx, jobID) {
+					return
+				}
+				item, err := uc.repo.ClaimNextItem(ctx, jobID)
+				if err != nil {
+					slog.Warn("runItems: claim next item failed", "jobID", jobID, "err", err)
+					time.Sleep(time.Second)
 					continue
 				}
+				if item == nil {
+					// No more pending items — exit this worker.
+					return
+				}
 				itemCtx, itemCancel := context.WithTimeout(ctx, deployTimeout)
-				err := uc.executeItem(itemCtx, item, templateID, templateVersion, jobID)
+				err = uc.executeItem(itemCtx, *item, templateID, templateVersion, jobID)
 				itemCancel()
 				if err != nil {
 					if errors.Is(err, context.DeadlineExceeded) {
-						// executeItem's internal error handling used the timed-out ctx,
-						// so the failure status may not have persisted. Retry with outer ctx.
 						slog.Warn("runItems: item deploy timeout, recording failure",
 							"jobID", jobID, "itemID", item.ID, "assetID", item.AssetID)
 						_ = uc.repo.UpdateItemStatus(ctx, item.ID, "failed", "", "deploy timeout after 60s")
@@ -386,20 +456,6 @@ func (uc *Usecase) runItems(ctx context.Context, jobID, templateID string, templ
 			}
 		}()
 	}
-
-enqueue:
-	for _, item := range items {
-		if len(allowedSet) > 0 {
-			if _, ok := allowedSet[item.Status]; !ok {
-				continue
-			}
-		}
-		if uc.isJobPaused(ctx, jobID) {
-			break enqueue
-		}
-		work <- item
-	}
-	close(work)
 	wg.Wait()
 	_ = uc.syncJobProgress(ctx, jobID)
 }
