@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +22,16 @@ import (
 	pipelineUC "github.com/CyberOrigin2077/cyber-databrew/internal/usecase/pipeline"
 )
 
-const maxConcurrentBatchItems = 5
+// maxConcurrentBatchItems controls how many goroutines submit batch items
+// to Argo in parallel. Set via BACKFILL_CONCURRENCY env var (default 5).
+var maxConcurrentBatchItems = func() int {
+	if v := os.Getenv("BACKFILL_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 5
+}()
 // deployTimeout caps how long a single executeItem call may take
 // before the worker gives up. Without this, a hanging Argo API call
 // holds the worker goroutine forever, blocking wg.Wait() and
@@ -48,7 +59,6 @@ type Usecase struct {
 	resultRepo repository.BackfillResultRepository
 	assetRepo  repository.AssetRepository
 	pipelineUC *pipelineUC.Usecase
-	// pgClient enables WithTx for transactional SaveJob+SaveItems in CreateBackfill.
 	pgClient any // *postgres.Client — set via NewWithPostgres
 
 	lastSync   map[string]time.Time
