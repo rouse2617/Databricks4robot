@@ -8,25 +8,41 @@ from GKE to Cloud Run.
 - `mcap-preview-dev.sh`: deploys `mcap-preview` to Cloud Run in `us-central1`.
 - `backend-dev.sh`: deploys `cyber-databrew-backend-dev` and can source env
   values from `cyber-databrew-dev` K8s ConfigMap/Secret.
-- `local-build-deploy.sh`: local dev shortcut — rsync `backend/` (including
+- `local-build-deploy.sh`: local backend shortcut — rsync `backend/` (including
   uncommitted changes) to the VM build box, build+push the image, then deploy
   to Cloud Run dev. Run `bash deploy/cloudrun/local-build-deploy.sh` from repo
   root. Typical total ~40 s when the BuildKit builder is warm.
+- `local-frontend-deploy.sh`: same pattern for frontend — rsyncs `Frontend/`
+  and Cloud Run wrapper assets to the VM, builds both images (SPA + nginx
+  wrapper), then deploys `cyber-databrew-frontend-dev`. Run
+  `bash deploy/cloudrun/local-frontend-deploy.sh` from repo root.
 
 ## Backend build flow
 
-**Auto-trigger (git push):** `.github/workflows/deploy-backend-dev.yml` fires
-on every push to `dev` that touches `backend/`. It SSHes into the VM build box
-(shiqi-test-cpu, 136.119.82.209), fetches the exact commit, builds a
-`linux/amd64` image with BuildKit layer cache, pushes to Artifact Registry, and
-calls `backend-dev.sh` with `USE_EXISTING_IMAGE=true`. Typical total ~1 min for
-a Go code change, ~33 s with no code change.
+### Backend
 
-**Local (rapid iteration):** `bash deploy/cloudrun/local-build-deploy.sh`
-rsyncs your local `backend/` to the VM, builds and pushes, then deploys. No git
-push needed — picks up uncommitted edits.
+**Auto-trigger:** `.github/workflows/deploy-backend-dev.yml` fires on push to
+`dev` touching `backend/`. SSHes into the VM build box (shiqi-test-cpu), fetches
+the commit, builds `linux/amd64` with BuildKit cache, pushes to AR, then calls
+`backend-dev.sh USE_EXISTING_IMAGE=true`. Typical ~1 min (Go change), ~33 s (no
+code change).
 
-**Deploy only (image already pushed):** `USE_EXISTING_IMAGE=true bash deploy/cloudrun/backend-dev.sh`
+**Local:** `bash deploy/cloudrun/local-build-deploy.sh` — rsyncs `backend/`,
+builds on VM, deploys. ~40 s warm.
+
+**Deploy only:** `USE_EXISTING_IMAGE=true bash deploy/cloudrun/backend-dev.sh`
+
+### Frontend
+
+**Auto-trigger:** `.github/workflows/deploy-frontend-dev.yml` fires on push to
+`dev` touching `Frontend/`. Same VM build box flow — builds the SPA image
+(`Frontend/Dockerfile`) then the Cloud Run nginx wrapper, pushes both, then
+calls `frontend-dev.sh USE_EXISTING_IMAGE=true`.
+
+**Local:** `bash deploy/cloudrun/local-frontend-deploy.sh` — rsyncs `Frontend/`
+and the nginx wrapper files, builds on VM, deploys.
+
+**Deploy only:** `USE_EXISTING_IMAGE=true BUILD_ARGO_UI=false bash deploy/cloudrun/frontend-dev.sh`
 
 ## Notes
 

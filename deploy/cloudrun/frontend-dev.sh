@@ -6,7 +6,7 @@ REGION="${REGION:-us-central1}"
 SERVICE_NAME="${SERVICE_NAME:-cyber-databrew-frontend-dev}"
 BASE_IMAGE="${BASE_IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:dev-latest}"
 IMAGE="${IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-frontend:cloudrun-dev-latest}"
-USE_CLOUD_BUILD="${USE_CLOUD_BUILD:-false}"
+USE_EXISTING_IMAGE="${USE_EXISTING_IMAGE:-false}"
 BUILD_ARGO_UI="${BUILD_ARGO_UI:-auto}" # auto | true | false
 ARGO_UI_DIST_SOURCE="${ARGO_UI_DIST_SOURCE:-}"
 
@@ -19,7 +19,6 @@ BUILD_REF="${BUILD_REF:-${GIT_BRANCH}#${GIT_SHA}}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-CLOUDBUILD_CFG="${SCRIPT_DIR}/frontend-cloudbuild.yaml"
 FRONTEND_DOCKERFILE="${REPO_ROOT}/Frontend/Dockerfile"
 FRONTEND_CLOUDRUN_DOCKERFILE="${SCRIPT_DIR}/frontend-cloudrun.Dockerfile"
 ARGO_UI_DIR="${REPO_ROOT}/databrew-pipeline/argo-ui"
@@ -62,29 +61,33 @@ ensure_argo_ui_dist() {
   )
 }
 
-ensure_argo_ui_dist
+if [[ "${USE_EXISTING_IMAGE}" != "true" ]]; then
+  ensure_argo_ui_dist
 
-echo "Building SPA base image: ${BASE_IMAGE}"
-echo "  Version: ${APP_VERSION}, Ref: ${BUILD_REF}"
-docker build \
-  --platform linux/amd64 \
-  --build-arg "VITE_APP_VERSION=${APP_VERSION}" \
-  --build-arg "VITE_BUILD_REF=${BUILD_REF}" \
-  -f "${FRONTEND_DOCKERFILE}" \
-  -t "${BASE_IMAGE}" \
-  "${REPO_ROOT}/Frontend"
+  echo "Building SPA base image: ${BASE_IMAGE}"
+  echo "  Version: ${APP_VERSION}, Ref: ${BUILD_REF}"
+  docker build \
+    --platform linux/amd64 \
+    --build-arg "VITE_APP_VERSION=${APP_VERSION}" \
+    --build-arg "VITE_BUILD_REF=${BUILD_REF}" \
+    -f "${FRONTEND_DOCKERFILE}" \
+    -t "${BASE_IMAGE}" \
+    "${REPO_ROOT}/Frontend"
 
-echo "Building Cloud Run frontend image: ${IMAGE}"
-docker build \
-  --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-  --platform linux/amd64 \
-  -f "${FRONTEND_CLOUDRUN_DOCKERFILE}" \
-  -t "${IMAGE}" \
-  "${REPO_ROOT}"
+  echo "Building Cloud Run frontend image: ${IMAGE}"
+  docker build \
+    --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+    --platform linux/amd64 \
+    -f "${FRONTEND_CLOUDRUN_DOCKERFILE}" \
+    -t "${IMAGE}" \
+    "${REPO_ROOT}"
 
-echo "Pushing images..."
-docker push "${BASE_IMAGE}"
-docker push "${IMAGE}"
+  echo "Pushing images..."
+  docker push "${BASE_IMAGE}"
+  docker push "${IMAGE}"
+else
+  echo "Skipping build — reusing image: ${IMAGE}"
+fi
 
 echo "Deploying ${SERVICE_NAME} to Cloud Run (${REGION}, ${PROJECT_ID})"
 gcloud run deploy "${SERVICE_NAME}" \
