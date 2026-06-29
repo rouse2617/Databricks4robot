@@ -1,5 +1,6 @@
 name: deploy-backend-dev
 
+# Last verified: 2026-06-29 — IaC PR #117 in cyber-iac applied SA + IAM bindings.
 on:
   push:
     branches: [dev]
