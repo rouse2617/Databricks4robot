@@ -6,10 +6,27 @@ from GKE to Cloud Run.
 ## Current scope
 
 - `mcap-preview-dev.sh`: deploys `mcap-preview` to Cloud Run in `us-central1`.
-- `frontend-dev.sh`: builds a Cloud Run-specific frontend image and deploys
-  `cyber-databrew-frontend-dev`.
 - `backend-dev.sh`: deploys `cyber-databrew-backend-dev` and can source env
   values from `cyber-databrew-dev` K8s ConfigMap/Secret.
+- `local-build-deploy.sh`: local dev shortcut — rsync `backend/` (including
+  uncommitted changes) to the VM build box, build+push the image, then deploy
+  to Cloud Run dev. Run `bash deploy/cloudrun/local-build-deploy.sh` from repo
+  root. Typical total ~40 s when the BuildKit builder is warm.
+
+## Backend build flow
+
+**Auto-trigger (git push):** `.github/workflows/deploy-backend-dev.yml` fires
+on every push to `dev` that touches `backend/`. It SSHes into the VM build box
+(shiqi-test-cpu, 136.119.82.209), fetches the exact commit, builds a
+`linux/amd64` image with BuildKit layer cache, pushes to Artifact Registry, and
+calls `backend-dev.sh` with `USE_EXISTING_IMAGE=true`. Typical total ~1 min for
+a Go code change, ~33 s with no code change.
+
+**Local (rapid iteration):** `bash deploy/cloudrun/local-build-deploy.sh`
+rsyncs your local `backend/` to the VM, builds and pushes, then deploys. No git
+push needed — picks up uncommitted edits.
+
+**Deploy only (image already pushed):** `USE_EXISTING_IMAGE=true bash deploy/cloudrun/backend-dev.sh`
 
 ## Notes
 
@@ -22,7 +39,6 @@ from GKE to Cloud Run.
   `deploy/cloudrun/frontend-nginx.conf`: **`/api/v1/preview/` → mcap-preview-dev**,
   **`/api/` → cyber-databrew-backend-dev** (same layout as `Frontend/nginx.conf`).
 - `frontend-dev.sh` defaults to local `docker build && docker push` for speed.
-  Set `USE_CLOUD_BUILD=true` to use remote Cloud Build instead.
   Optional: `BASE_IMAGE=<registry/.../cyber-databrew-frontend:tag>` passes
   `--build-arg BASE_IMAGE=...` so the SPA bundle is not silently taken from
   the Dockerfile default (`dev-latest`).
@@ -32,9 +48,9 @@ from GKE to Cloud Run.
   `yarn install && yarn build` in `databrew-pipeline/argo-ui`. If another
   worktree or CI artifact already has the bundle, set
   `ARGO_UI_DIST_SOURCE=/path/to/dist` to copy it into place.
-- `backend-dev.sh` defaults to local `docker build && docker push`; set
-  `USE_CLOUD_BUILD=true` for remote build, or `USE_EXISTING_IMAGE=true` to
-  skip build and deploy the provided image directly.
+- `backend-dev.sh` normally runs with `USE_EXISTING_IMAGE=true` (image built on
+  VM by GHA or `local-build-deploy.sh`). Set `USE_EXISTING_IMAGE=false` to build
+  locally with `docker build && docker push` instead.
 - `backend-dev.sh` supports `DB_PASSWORD_SECRET=<secret-name>` to load
   `DB_PASSWORD` from GCP Secret Manager at deploy time (recommended over
   plaintext `DB_PASSWORD_OVERRIDE`).

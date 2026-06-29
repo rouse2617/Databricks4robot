@@ -16,7 +16,6 @@ REGION="${REGION:-us-central1}"
 SERVICE_NAME="${SERVICE_NAME:-cyber-databrew-backend-dev}"
 IMAGE="${IMAGE:-us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:cloudrun-dev-latest}"
 
-USE_CLOUD_BUILD="${USE_CLOUD_BUILD:-false}"
 USE_EXISTING_IMAGE="${USE_EXISTING_IMAGE:-false}"
 SOURCE_K8S_ENV="${SOURCE_K8S_ENV:-true}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-cyber-databrew-dev}"
@@ -109,7 +108,6 @@ CLOUDRUN_OUTBOX_RELAY_BATCH_SIZE="${CLOUDRUN_OUTBOX_RELAY_BATCH_SIZE:-500}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 BACKEND_DIR="${REPO_ROOT}/backend"
-CLOUDBUILD_CFG="${REPO_ROOT}/deploy/cloudrun/backend-cloudbuild.yaml"
 
 upsert_env() {
   local key="$1"
@@ -262,20 +260,12 @@ apply_cloudrun_env_fix() {
 
 if [[ "${USE_EXISTING_IMAGE}" != "true" ]]; then
   echo "Building backend image: ${IMAGE}"
-  if [[ "${USE_CLOUD_BUILD}" == "true" ]]; then
-    gcloud builds submit \
-      --project "${PROJECT_ID}" \
-      --config "${CLOUDBUILD_CFG}" \
-      --substitutions "_IMAGE=${IMAGE}" \
-      "${REPO_ROOT}"
-  else
-    docker build \
-      --platform linux/amd64 \
-      -f "${BACKEND_DIR}/Dockerfile" \
-      -t "${IMAGE}" \
-      "${BACKEND_DIR}"
-    docker push "${IMAGE}"
-  fi
+  docker build \
+    --platform linux/amd64 \
+    -f "${BACKEND_DIR}/Dockerfile" \
+    -t "${IMAGE}" \
+    "${BACKEND_DIR}"
+  docker push "${IMAGE}"
 else
   echo "Skipping build and reusing image: ${IMAGE}"
 fi
