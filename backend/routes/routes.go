@@ -1,3 +1,4 @@
+// Package routes wires HTTP handlers and middleware for the DataBrew API server.
 package routes
 
 import (
