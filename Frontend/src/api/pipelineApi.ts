@@ -556,3 +556,41 @@ export function deleteDeployment(id: string): Promise<void> {
 export function retryDeployment(id: string): Promise<Deployment> {
 	return request<Deployment>("POST", `/deployments/${id}/retry`, {});
 }
+
+// Pipeline stats and recommendations for smart grouping
+export interface PipelineStats {
+	userStats: {
+		clickCounts: Record<string, number>;
+		runCounts: Record<string, number>;
+		executionTimes: Record<string, number>;
+		lastAccessTimes: Record<string, string>;
+		window: string;
+		computedAt: string;
+	};
+	recommendations: Array<{
+		pipelineId: string;
+		name: string;
+		score: number;
+		reason: string;
+		clickCount: number;
+		runCount: number;
+		lastAccess?: string;
+	}>;
+}
+
+export function getPipelineStats(window = "30d"): Promise<PipelineStats> {
+	return request<PipelineStats>("GET", `/pipelines/stats?window=${window}`);
+}
+
+export function updatePipelineWithVersion(
+	id: string,
+	pipeline: Pipeline,
+	baseVersion: number,
+	note?: string,
+): Promise<{ version: number; updatedAt: string }> {
+	return request<{ version: number; updatedAt: string }>(
+		"PUT",
+		`/pipelines/${id}`,
+		{ pipeline, baseVersion, note },
+	);
+}

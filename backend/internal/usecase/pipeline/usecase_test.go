@@ -131,6 +131,26 @@ func (m *mockTemplateRepo) SetActiveVersion(_ context.Context, name string, vers
 	return nil
 }
 
+func (m *mockTemplateRepo) GetUserPipelineStatsAfter(_ context.Context, _ string, _ time.Time) (*models.PipelineUserStats, error) {
+	return &models.PipelineUserStats{
+		ClickCounts:     make(map[string]int),
+		RunCounts:       make(map[string]int),
+		ExecutionTimes:  make(map[string]int64),
+		LastAccessTimes: make(map[string]time.Time),
+		Window:          "30d",
+		ComputedAt:      time.Now(),
+	}, nil
+}
+
+func (m *mockTemplateRepo) GetLatestVersionWithConflictCheck(_ context.Context, id string, baseVersion int) (*models.PipelineTemplate, bool, error) {
+	t := m.byID[id]
+	if t == nil {
+		return nil, false, nil
+	}
+	conflict := (baseVersion > 0 && t.Version != baseVersion)
+	return t, conflict, nil
+}
+
 type mockDeploymentRepo struct {
 	saved []*models.PipelineDeployment
 	byID  map[string]*models.PipelineDeployment

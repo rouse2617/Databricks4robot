@@ -68,9 +68,9 @@ type graceAlgoVariantResp struct {
 func (g *GraceResolver) Resolve(ctx context.Context, id, env string) (string, error) {
 	// Parse id: "video_id" or "video_id/sub_path"
 	videoID, subPath, _ := strings.Cut(id, "/")
-	baseURL, username, password := g.devURL, g.devUsername, g.devPassword
+	baseURL, username, password := g.devURL, g.devUsername, g.devPassword // pragma: allowlist secret
 	if env == "prod" {
-		baseURL, username, password = g.prodURL, g.prodUsername, g.prodPassword
+		baseURL, username, password = g.prodURL, g.prodUsername, g.prodPassword // pragma: allowlist secret
 	}
 	if baseURL == "" || username == "" || password == "" {
 		return "", fmt.Errorf("grace resolver: %s credentials not configured", env)

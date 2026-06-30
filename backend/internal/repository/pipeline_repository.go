@@ -44,6 +44,14 @@ type PipelineTemplateRepository interface {
 	// Delete removes a pipeline template by id. It is a no-op when the row
 	// does not exist.
 	Delete(ctx context.Context, id string) error
+
+	// GetUserPipelineStatsAfter returns aggregated usage statistics for a user's
+	// pipelines after a given timestamp, used for smart grouping (e.g. "most used").
+	GetUserPipelineStatsAfter(ctx context.Context, userEmail string, after time.Time) (*models.PipelineUserStats, error)
+
+	// GetLatestVersionWithConflictCheck returns the latest version of a pipeline
+	// and checks for version conflict. Returns 409 if baseVersion doesn't match.
+	GetLatestVersionWithConflictCheck(ctx context.Context, pipelineID string, baseVersion int) (*models.PipelineTemplate, bool, error)
 }
 
 // PipelineDeploymentRepository defines persistence operations for the
