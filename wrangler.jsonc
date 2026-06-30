@@ -5,5 +5,16 @@
   "assets": {
     "directory": "./site",
     "binding": "ASSETS"
+  },
+  "env": {
+    "prod": {
+      "name": "cyber-databrew",
+      "routes": [
+        {
+          "pattern": "cyber-databrew.cyberorigin.ai/*",
+          "zone_name": "cyberorigin.ai"
+        }
+      ]
+    }
   }
 }
