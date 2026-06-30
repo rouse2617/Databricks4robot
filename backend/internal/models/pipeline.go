@@ -443,3 +443,24 @@ type PipelineRunListFilter struct {
 	// per-run estimated cost.
 	SummaryOnly bool
 }
+
+// PipelineUserStats aggregates usage metrics for smart pipeline grouping.
+type PipelineUserStats struct {
+	ClickCounts      map[string]int       `json:"clickCounts"`      // pipeline_id → click count
+	RunCounts        map[string]int       `json:"runCounts"`        // pipeline_id → run count
+	ExecutionTimes   map[string]int64     `json:"executionTimes"`   // pipeline_id → total ms
+	LastAccessTimes  map[string]time.Time `json:"lastAccessTimes"`  // pipeline_id → last access
+	Window           string               `json:"window"`           // e.g. "30d"
+	ComputedAt       time.Time            `json:"computedAt"`
+}
+
+// PipelineRecommendation ranks a pipeline for display in "most used" grouping.
+type PipelineRecommendation struct {
+	PipelineID  string  `json:"pipelineId"`
+	Name        string  `json:"name"`
+	Score       float64 `json:"score"`       // 0-10 composite score
+	Reason      string  `json:"reason"`      // human-readable explanation
+	ClickCount  int     `json:"clickCount"`
+	RunCount    int     `json:"runCount"`
+	LastAccess  *time.Time `json:"lastAccess,omitempty"`
+}

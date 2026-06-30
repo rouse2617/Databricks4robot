@@ -365,7 +365,9 @@ func RegisterAll(
 		// Pipeline (Argo Workflows) — templates, deploy, deployments
 		api.POST("/pipelines", pipelineHandler.SaveTemplate)
 		api.GET("/pipelines", pipelineHandler.ListTemplates)
+		api.GET("/pipelines/stats", pipelineHandler.GetStats)
 		api.GET("/pipelines/:id", pipelineHandler.GetTemplate)
+		api.PUT("/pipelines/:id", pipelineHandler.UpdatePipeline)
 		api.DELETE("/pipelines/:id", pipelineHandler.DeleteTemplate)
 		api.GET("/pipelines/:id/versions", pipelineHandler.ListVersions)
 		api.PATCH("/pipelines/:id/active-version", pipelineHandler.SetActiveVersion)
