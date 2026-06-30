@@ -14,7 +14,7 @@ interface Props {
 	onSaveApi?: (
 		comp: RegisteredComponent,
 		isNew: boolean,
-	) => Promise<RegisteredComponent | void>;
+	) => Promise<RegisteredComponent | undefined>;
 	/** Called when a component is deleted. */
 	onDeleteApi?: (id: string) => Promise<void>;
 }
@@ -129,9 +129,7 @@ export function ComponentManager({
 				if (isNew) {
 					updated = [...components, savedComponent];
 				} else {
-					updated = components.map((x) =>
-						x.id === c.id ? savedComponent : x,
-					);
+					updated = components.map((x) => (x.id === c.id ? savedComponent : x));
 				}
 				onChange(updated);
 				setEditing(null);
