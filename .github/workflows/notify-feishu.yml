@@ -1,6 +1,58 @@
-# Disabled: push notifications were spamming Feishu group.
-# CI result notifications are handled by notify-feishu-ci.yml (main branch, success only).
-name: Feishu Push Notifications (disabled)
+# Feishu: notify when all CI checks pass on a PR targeting main.
+# Uses workflow_run on required CI workflows; only fires on success.
+name: Feishu PR CI Pass Notifications
 
 on:
-  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Pre-commit checks
+      - test-integration
+      - Commitlint
+      - OpenSpec Gate
+    types:
+      - completed
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify Feishu
+        env:
+          FEISHU_BOT_WEBHOOK_MAIN: ${{ secrets.FEISHU_BOT_WEBHOOK_MAIN }}
+          FEISHU_BOT_WEBHOOK_BRANCH: ${{ secrets.FEISHU_BOT_WEBHOOK_BRANCH }}
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_URL: ${{ github.event.workflow_run.html_url }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          PR_URL: ${{ github.event.workflow_run.pull_requests[0].url }}
+        run: |
+          set -euo pipefail
+
+          # Only fire on PR events with success conclusion
+          if [ "${RUN_EVENT}" != "pull_request" ]; then
+            echo "SKIP: not a PR event (${RUN_EVENT})"
+            exit 0
+          fi
+          if [ "${CONCLUSION}" != "success" ]; then
+            echo "SKIP: conclusion=${CONCLUSION}"
+            exit 0
+          fi
+
+          TITLE="【PR CI 全部通过】"
+          HINT="PR 所有检查已通过，可以 review 合入。"
+
+          PR_LINE="PR #${PR_NUMBER}：${PR_URL}"
+
+          export FEISHU_ROUTE_BRANCH="main"
+          export FEISHU_MESSAGE="$(printf '%s\n\n仓库：%s\n分支：%s\n关联：%s\n检查项：%s\n触发方式：%s\n结果：%s\n操作人：%s\n\n说明：%s\n\n日志：%s\n' \
+            "${TITLE}" "${REPO}" "${HEAD_BRANCH}" "${PR_LINE}" "${WORKFLOW_NAME}" \
+            "pull_request（PR 检查）" "${CONCLUSION}" "${ACTOR}" "${HINT}" "${WORKFLOW_URL}")"
+
+          bash .github/scripts/feishu-notify.sh
