@@ -128,12 +128,14 @@ test.describe("流水线批量任务", () => {
 	});
 
 	test("执行记录可切换批量任务并进入子任务详情", async ({ page }) => {
-		await page.route(api("/pipeline-runs?view=summary&excludeBatch=true*"), (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: "application/json",
-				body: JSON.stringify(singleRuns),
-			}),
+		await page.route(
+			api("/pipeline-runs?view=summary&excludeBatch=true*"),
+			(route) =>
+				route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify(singleRuns),
+				}),
 		);
 		await page.route(api("/backfill"), (route) => {
 			if (route.request().method() === "GET") {
@@ -249,15 +251,23 @@ test.describe("流水线批量任务", () => {
 		await page.getByRole("button", { name: "运行" }).click();
 		await expect(page.getByText("运行流水线")).toBeVisible();
 
-		const searchInput = page.getByPlaceholder("搜索资产（输入 asset_id 或名称）");
+		const searchInput = page.getByPlaceholder(
+			"搜索资产（输入 asset_id 或名称）",
+		);
 		await searchInput.fill("custom-asset-a");
-		await page.getByRole("button", { name: /添加「custom-asset-a」为资产 ID/ }).click();
+		await page
+			.getByRole("button", { name: /添加「custom-asset-a」为资产 ID/ })
+			.click();
 
 		await searchInput.fill("custom-asset-b");
-		await page.getByRole("button", { name: /添加「custom-asset-b」为资产 ID/ }).click();
+		await page
+			.getByRole("button", { name: /添加「custom-asset-b」为资产 ID/ })
+			.click();
 
 		const modal = page.getByRole("dialog", { name: "运行流水线" });
-		await expect(modal.getByText("将创建批量任务，共 2 个子任务")).toBeVisible();
+		await expect(
+			modal.getByText("将创建批量任务，共 2 个子任务"),
+		).toBeVisible();
 
 		await modal.getByRole("button", { name: "运行资产" }).click();
 

@@ -5,7 +5,10 @@ const hasIntegrationEnv = Boolean(
 );
 
 test.describe("批量任务 integration @integration", () => {
-	test.skip(!hasIntegrationEnv, "需要 E2E_DATABREW_TOKEN 或 VITE_DEV_ACCESS_TOKEN");
+	test.skip(
+		!hasIntegrationEnv,
+		"需要 E2E_DATABREW_TOKEN 或 VITE_DEV_ACCESS_TOKEN",
+	);
 
 	async function login(page: import("@playwright/test").Page) {
 		const token =
@@ -46,15 +49,22 @@ test.describe("批量任务 integration @integration", () => {
 			`/api/v1/pipeline-runs?view=summary&batchJobId=${encodeURIComponent(target.id)}&page=1&pageSize=${target.totalCount}`,
 		);
 		expect(runsRes.ok()).toBeTruthy();
-		const runsBody = (await runsRes.json()) as { items: unknown[]; total: number };
+		const runsBody = (await runsRes.json()) as {
+			items: unknown[];
+			total: number;
+		};
 		expect(runsBody.total).toBeGreaterThanOrEqual(target.totalCount);
 		expect(runsBody.items.length).toBeGreaterThanOrEqual(
 			Math.min(target.totalCount, 50),
 		);
 
 		await page.goto(`/pipeline/batch/${target.id}`);
-		await expect(page.getByText("子任务执行记录")).toBeVisible({ timeout: 15000 });
-		await expect(page.getByText("暂无执行记录，部署流水线后将自动生成")).toHaveCount(0);
+		await expect(page.getByText("子任务执行记录")).toBeVisible({
+			timeout: 15000,
+		});
+		await expect(
+			page.getByText("暂无执行记录，部署流水线后将自动生成"),
+		).toHaveCount(0);
 		await expect(page.locator(".ant-table-row").first()).toBeVisible({
 			timeout: 15000,
 		});
@@ -144,15 +154,17 @@ test.describe("批量任务 integration @integration", () => {
 		await modal
 			.getByText("批量粘贴 asset ID（换行 / 逗号 / 分号分隔）")
 			.click();
-		await modal
-			.getByPlaceholder(/单次批量最多/)
-			.fill(assetIds.join("\n"));
+		await modal.getByPlaceholder(/单次批量最多/).fill(assetIds.join("\n"));
 		await modal.getByPlaceholder(/单次批量最多/).blur();
-		await expect(modal.getByText("将创建批量任务，共 1000 个子任务")).toBeVisible();
+		await expect(
+			modal.getByText("将创建批量任务，共 1000 个子任务"),
+		).toBeVisible();
 		await modal.getByRole("button", { name: "运行资产" }).click();
 
 		await expect(page).toHaveURL(/\/pipeline\/batch\//, { timeout: 20000 });
-		await expect(page.getByText("子任务执行记录")).toBeVisible({ timeout: 15000 });
+		await expect(page.getByText("子任务执行记录")).toBeVisible({
+			timeout: 15000,
+		});
 		await expect(page.getByText("1000", { exact: true }).first()).toBeVisible();
 	});
 });

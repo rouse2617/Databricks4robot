@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, type Page, type Route, test } from "@playwright/test";
 
 /**
  * 全流程 E2E：流水线设计 → 保存 → 部署 → 批量下发 → 批次详情一致性。
@@ -178,7 +178,9 @@ test.describe("流水线全流程（mock）", () => {
 		// by a specific mock would otherwise hit the real dev backend, return 401,
 		// trip UNAUTHORIZED_EVENT and bounce us to the login page. Log + stub empty.
 		await page.route("**/api/v1/**", (route) => {
-			console.log(`[unmocked] ${route.request().method()} ${route.request().url()}`);
+			console.log(
+				`[unmocked] ${route.request().method()} ${route.request().url()}`,
+			);
 			return jsonRoute({ items: [], total: 0, page: 1, pageSize: 20 })(route);
 		});
 
@@ -233,8 +235,14 @@ test.describe("流水线全流程（mock）", () => {
 		});
 
 		// Batch detail page fetches.
-		await page.route(api(`/backfill/${BATCH_ID}/node-summary`), jsonRoute(nodeSummary));
-		await page.route(api(`/backfill/${BATCH_ID}`), jsonRoute({ job: batchJob() }));
+		await page.route(
+			api(`/backfill/${BATCH_ID}/node-summary`),
+			jsonRoute(nodeSummary),
+		);
+		await page.route(
+			api(`/backfill/${BATCH_ID}`),
+			jsonRoute({ job: batchJob() }),
+		);
 		await page.route(
 			api(`/pipeline-runs?view=summary&batchJobId=${BATCH_ID}*`),
 			jsonRoute(batchSubRuns),
@@ -266,7 +274,9 @@ test.describe("流水线全流程（mock）", () => {
 
 		await modal.getByRole("button", { name: "运行资产" }).click();
 
-		const confirmDialog = page.getByRole("dialog", { name: "确认创建批量任务" });
+		const confirmDialog = page.getByRole("dialog", {
+			name: "确认创建批量任务",
+		});
 		await expect(confirmDialog).toBeVisible();
 		await confirmDialog.getByRole("button", { name: "确认运行" }).click();
 
@@ -316,7 +326,9 @@ test.describe("流水线全流程 @integration", () => {
 		await expect(deployBtn).toBeEnabled();
 
 		await page.getByRole("button", { name: "保存" }).click();
-		await expect(page.getByText(/已保存为 v\d+/)).toBeVisible({ timeout: 20_000 });
+		await expect(page.getByText(/已保存为 v\d+/)).toBeVisible({
+			timeout: 20_000,
+		});
 
 		await deployBtn.click();
 		const modal = page.getByRole("dialog", { name: "部署流水线" });
@@ -324,7 +336,9 @@ test.describe("流水线全流程 @integration", () => {
 		await addAssets(modal, assetIds);
 		await expect(modal.getByText(`已选 ${assetIds.length} 个`)).toBeVisible();
 		await modal.getByRole("button", { name: "运行资产" }).click();
-		const confirmDialog = page.getByRole("dialog", { name: "确认创建批量任务" });
+		const confirmDialog = page.getByRole("dialog", {
+			name: "确认创建批量任务",
+		});
 		await expect(confirmDialog).toBeVisible();
 		await confirmDialog.getByRole("button", { name: "确认运行" }).click();
 

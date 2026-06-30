@@ -197,8 +197,8 @@ export default function PoolManager() {
 			render: (_: unknown, r: ExecutionTarget) => {
 				const q = quotas[r.namespace];
 				if (!q) return <Text type="secondary">—</Text>;
-				const used = parseInt(q.memory.used) || 0;
-				const hard = parseInt(q.memory.hard) || 1;
+				const used = parseInt(q.memory.used, 10) || 0;
+				const hard = parseInt(q.memory.hard, 10) || 1;
 				const pct = Math.min(100, Math.round(used / hard));
 				const color = pct > 80 ? "#ef4444" : pct > 60 ? "#f59e0b" : "#22c55e";
 				return (

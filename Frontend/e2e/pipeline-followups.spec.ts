@@ -156,7 +156,9 @@ test("execution list marks long-running workflows as stale zombies", async ({
 	await expect(page.getByText("疑似僵尸")).toBeVisible();
 });
 
-test("version history drawer shows structural diff preview", async ({ page }) => {
+test("version history drawer shows structural diff preview", async ({
+	page,
+}) => {
 	const versions = {
 		items: [
 			{
@@ -367,15 +369,13 @@ test("deploy modal bulk-pastes 1000 assets and creates batch job", async ({
 	await expect(page.getByText("运行流水线")).toBeVisible();
 
 	const modal = page.getByRole("dialog", { name: "运行流水线" });
-	await modal
-		.getByText("批量粘贴 asset ID（换行 / 逗号 / 分号分隔）")
-		.click();
-	await modal
-		.getByPlaceholder(/单次批量最多/)
-		.fill(assetIds.join("\n"));
+	await modal.getByText("批量粘贴 asset ID（换行 / 逗号 / 分号分隔）").click();
+	await modal.getByPlaceholder(/单次批量最多/).fill(assetIds.join("\n"));
 	await modal.getByPlaceholder(/单次批量最多/).blur();
 
-	await expect(modal.getByText("将创建批量任务，共 1000 个子任务")).toBeVisible();
+	await expect(
+		modal.getByText("将创建批量任务，共 1000 个子任务"),
+	).toBeVisible();
 	await expect(modal.getByText("+988")).toBeVisible();
 
 	await modal.getByRole("button", { name: "运行资产" }).click();
@@ -424,9 +424,7 @@ test("readonly design page disables component palette", async ({ page }) => {
 		});
 	});
 
-	await page.goto(
-		"/pipeline?templateId=tpl-prod&readonly=1&tab=design",
-	);
+	await page.goto("/pipeline?templateId=tpl-prod&readonly=1&tab=design");
 	await expect(page.getByText("只读模式")).toBeVisible();
 	const paletteButton = page.getByRole("button", { name: /添加组件 Echo/ });
 	await expect(paletteButton).toBeDisabled();

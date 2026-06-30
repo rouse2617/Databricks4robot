@@ -208,12 +208,14 @@ test.describe("batch node summary", () => {
 				body: JSON.stringify(nodeFailures),
 			}),
 		);
-		await page.route(api("/pipeline-runs?view=summary&batchJobId=batch-job-001*"), (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: "application/json",
-				body: JSON.stringify(batchSubRuns),
-			}),
+		await page.route(
+			api("/pipeline-runs?view=summary&batchJobId=batch-job-001*"),
+			(route) =>
+				route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify(batchSubRuns),
+				}),
 		);
 	});
 
@@ -223,14 +225,20 @@ test.describe("batch node summary", () => {
 		await expect(page.getByText("节点概览", { exact: true })).toBeVisible();
 		await expect(page.getByRole("cell", { name: "1. 抽特征" })).toBeVisible();
 		await page.getByRole("button", { name: "1 失败" }).click();
-		await expect(page.getByRole("cell", { name: "asset-b", exact: true })).toBeVisible();
+		await expect(
+			page.getByRole("cell", { name: "asset-b", exact: true }),
+		).toBeVisible();
 		await expect(page.getByText("exit code 1")).toBeVisible();
 	});
 
-	test("runs dry-run for selected rerun and allows cancel", async ({ page }) => {
+	test("runs dry-run for selected rerun and allows cancel", async ({
+		page,
+	}) => {
 		const rerunBodies: Array<Record<string, unknown>> = [];
 		await page.route(api("/backfill/batch-job-001/rerun"), async (route) => {
-			rerunBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+			rerunBodies.push(
+				route.request().postDataJSON() as Record<string, unknown>,
+			);
 			const body = route.request().postDataJSON() as Record<string, unknown>;
 			await route.fulfill({
 				status: 200,
@@ -269,7 +277,9 @@ test.describe("batch node summary", () => {
 	test("lets user pick template version before rerun", async ({ page }) => {
 		const rerunBodies: Array<Record<string, unknown>> = [];
 		await page.route(api("/backfill/batch-job-001/rerun"), async (route) => {
-			rerunBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+			rerunBodies.push(
+				route.request().postDataJSON() as Record<string, unknown>,
+			);
 			const body = route.request().postDataJSON() as Record<string, unknown>;
 			const isDryRun = Boolean(body.dryRun);
 			await route.fulfill({
@@ -293,7 +303,9 @@ test.describe("batch node summary", () => {
 		const rerunDialog = page.getByRole("dialog", { name: "确认重跑" });
 		await expect(rerunDialog).toBeVisible();
 		await expect(
-			rerunDialog.getByText("将重新提交 1 条子任务，模板版本 v4。旧 run 记录会保留。"),
+			rerunDialog.getByText(
+				"将重新提交 1 条子任务，模板版本 v4。旧 run 记录会保留。",
+			),
 		).toBeVisible();
 
 		await rerunDialog.locator(".ant-select").click();

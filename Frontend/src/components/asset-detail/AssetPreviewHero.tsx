@@ -138,7 +138,15 @@ function PreviewMediaPanel({
 				}}
 			>
 				<PreviewPlayer manifest={manifest} />
-				<div style={{ marginTop: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+				<div
+					style={{
+						marginTop: 8,
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "center",
+						gap: 12,
+					}}
+				>
 					<Badge
 						status={badge.status}
 						text={
@@ -152,7 +160,9 @@ function PreviewMediaPanel({
 						type="link"
 						icon={<ExpandOutlined />}
 						style={{ padding: 0, fontSize: 12 }}
-						onClick={() => navigate(`/preview?asset=${encodeURIComponent(asset.asset_id)}`)}
+						onClick={() =>
+							navigate(`/preview?asset=${encodeURIComponent(asset.asset_id)}`)
+						}
 					>
 						完整预览
 					</Button>
@@ -243,7 +253,9 @@ function PreviewMediaPanel({
 				<Button
 					size="small"
 					icon={<ExpandOutlined />}
-					onClick={() => navigate(`/preview?asset=${encodeURIComponent(asset.asset_id)}`)}
+					onClick={() =>
+						navigate(`/preview?asset=${encodeURIComponent(asset.asset_id)}`)
+					}
 				>
 					完整预览
 				</Button>

@@ -5,7 +5,10 @@ const hasIntegrationEnv = Boolean(
 );
 
 test.describe("批次重跑选版本 integration @integration", () => {
-	test.skip(!hasIntegrationEnv, "需要 E2E_DATABREW_TOKEN 或 VITE_DEV_ACCESS_TOKEN");
+	test.skip(
+		!hasIntegrationEnv,
+		"需要 E2E_DATABREW_TOKEN 或 VITE_DEV_ACCESS_TOKEN",
+	);
 
 	async function login(page: import("@playwright/test").Page) {
 		const token =
@@ -67,7 +70,8 @@ test.describe("批次重跑选版本 integration @integration", () => {
 			target.templateVersion && target.templateVersion > 0
 				? target.templateVersion
 				: Math.max(...versions);
-		const altVersion = versions.find((v) => v !== currentVersion) ?? versions[0];
+		const altVersion =
+			versions.find((v) => v !== currentVersion) ?? versions[0];
 
 		await page.goto(`/pipeline/batch/${target.id}`);
 		await expect(page.getByText("子任务执行记录")).toBeVisible({
@@ -88,7 +92,7 @@ test.describe("批次重跑选版本 integration @integration", () => {
 
 		const dryRunPromise = page.waitForResponse(async (res) => {
 			if (
-				!res.url().includes(`/api/v1/backfill/${target!.id}/rerun`) ||
+				!res.url().includes(`/api/v1/backfill/${target?.id}/rerun`) ||
 				res.request().method() !== "POST"
 			) {
 				return false;

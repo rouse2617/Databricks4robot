@@ -16,7 +16,9 @@ const previewHost = (
 	process.env.E2E_PREVIEW_HOST || "https://cyber-databrew-dev.cyberorigin.ai"
 ).replace(/\/$/, "");
 const apiBaseUrl = (
-	process.env.E2E_API_BASE_URL || process.env.VITE_API_BASE_URL || ""
+	process.env.E2E_API_BASE_URL ||
+	process.env.VITE_API_BASE_URL ||
+	""
 ).trim();
 const devToken = (
 	process.env.E2E_DATABREW_TOKEN ||

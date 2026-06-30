@@ -3,7 +3,7 @@ export async function onRequest(context) {
 	const { request } = context;
 	const url = new URL(request.url);
 	const backendHost = "cyber-databrew-backend-prod-wtttm6suaq-uc.a.run.app";
-	const targetUrl = "https://" + backendHost + url.pathname + url.search;
+	const targetUrl = `https://${backendHost}${url.pathname}${url.search}`;
 
 	const modifiedRequest = new Request(targetUrl, {
 		method: request.method,

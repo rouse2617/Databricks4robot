@@ -5,7 +5,10 @@ const hasIntegrationEnv = Boolean(
 );
 
 test.describe("pipeline follow-ups integration @integration", () => {
-	test.skip(!hasIntegrationEnv, "需要 E2E_DATABREW_TOKEN 或 VITE_DEV_ACCESS_TOKEN");
+	test.skip(
+		!hasIntegrationEnv,
+		"需要 E2E_DATABREW_TOKEN 或 VITE_DEV_ACCESS_TOKEN",
+	);
 
 	async function gotoPipelinesTab(page: import("@playwright/test").Page) {
 		const token =
@@ -43,7 +46,9 @@ test.describe("pipeline follow-ups integration @integration", () => {
 		expect(body.items.length).toBeLessThanOrEqual(5);
 	});
 
-	test("pipelines API respects page_size and scope filters", async ({ page }) => {
+	test("pipelines API respects page_size and scope filters", async ({
+		page,
+	}) => {
 		await gotoPipelinesTab(page);
 		const paged = await page.evaluate(async () => {
 			const res = await fetch("/api/v1/pipelines?page=1&page_size=10");
@@ -73,9 +78,7 @@ test.describe("pipeline follow-ups integration @integration", () => {
 			return res.json() as Promise<{ total: number }>;
 		});
 		const filtered = await page.evaluate(async () => {
-			const res = await fetch(
-				"/api/v1/pipelines?q=pipeline&page_size=200",
-			);
+			const res = await fetch("/api/v1/pipelines?q=pipeline&page_size=200");
 			if (!res.ok) throw new Error(`status ${res.status}`);
 			return res.json() as Promise<{ total: number; items: unknown[] }>;
 		});
@@ -134,7 +137,9 @@ test.describe("pipeline follow-ups integration @integration", () => {
 			});
 		}
 		await page.goto("/pipeline?tab=executions");
-		await expect(page.getByRole("heading", { name: "流水线执行记录" })).toBeVisible({
+		await expect(
+			page.getByRole("heading", { name: "流水线执行记录" }),
+		).toBeVisible({
 			timeout: 15000,
 		});
 		const table = page.locator(".ant-table");

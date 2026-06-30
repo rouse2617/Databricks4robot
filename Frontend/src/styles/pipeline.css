@@ -958,7 +958,7 @@
 
 /* deploy form: tight label-input, loose form-group */
 .deploy-run-field__label {
-	margin-bottom: 4px !important;
+	margin-bottom: 4px;
 	font-size: 13px;
 	color: #475569;
 	font-weight: 500;
@@ -1405,7 +1405,7 @@
 }
 
 .component-library-table .ant-table-column-sort {
-	background: transparent !important;
+	background: transparent;
 }
 
 .component-library-table .ant-table-container {
@@ -1502,7 +1502,7 @@
 .component-library-table
 	th.ant-table-column-has-sorters.ant-table-column-sort:hover,
 .component-library-table th.ant-table-column-has-sorters.ant-table-column-sort {
-	background: rgba(248, 250, 252, 0.9) !important;
+	background: rgba(248, 250, 252, 0.9);
 }
 
 .component-library-table
@@ -1649,14 +1649,14 @@
 }
 
 .component-library-release-table .ant-table-column-sort {
-	background: transparent !important;
+	background: transparent;
 }
 
 .component-library-release-table
 	th.ant-table-column-has-sorters.ant-table-column-sort:hover,
 .component-library-release-table
 	th.ant-table-column-has-sorters.ant-table-column-sort {
-	background: rgba(248, 250, 252, 0.9) !important;
+	background: rgba(248, 250, 252, 0.9);
 }
 
 .component-library-release-table .ant-table-thead > tr > th {

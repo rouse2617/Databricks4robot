@@ -596,6 +596,7 @@ export default function RegistryCenterPage() {
 		editVersionState.visible,
 		editVersionState.configId,
 		editVersionState.versionNumber,
+		msg.error,
 	]);
 
 	const versionContentValue = Form.useWatch("content", versionForm);

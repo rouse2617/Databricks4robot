@@ -2025,7 +2025,7 @@ function WorkflowRunMetadataPanel({
 									}}
 								>
 									{kv.val && kv.val.length > 40
-										? kv.val.slice(0, 40) + "…"
+										? `${kv.val.slice(0, 40)}…`
 										: (kv.val ?? "")}
 								</span>
 							</div>

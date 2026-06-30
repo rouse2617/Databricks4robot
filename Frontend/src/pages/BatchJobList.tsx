@@ -205,7 +205,8 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			dataIndex: "finishedAt",
 			key: "finishedAt",
 			width: 180,
-			render: (value?: string) => value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "—",
+			render: (value?: string) =>
+				value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "—",
 		},
 		{
 			title: "耗时",
@@ -213,7 +214,10 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			width: 100,
 			render: (_: unknown, record: BatchJob) => {
 				if (!record.finishedAt) return "—";
-				const secs = dayjs(record.finishedAt).diff(dayjs(record.createdAt), "second");
+				const secs = dayjs(record.finishedAt).diff(
+					dayjs(record.createdAt),
+					"second",
+				);
 				if (secs < 60) return `${secs}s`;
 				const m = Math.floor(secs / 60);
 				const s = secs % 60;
