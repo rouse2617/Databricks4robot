@@ -5,10 +5,7 @@ name: Feishu PR CI Pass Notifications
 on:
   workflow_run:
     workflows:
-      - Pre-commit checks
       - test-integration
-      - Commitlint
-      - OpenSpec Gate
     types:
       - completed
 
