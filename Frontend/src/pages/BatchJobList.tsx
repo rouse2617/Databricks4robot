@@ -8,7 +8,9 @@ import {
 	App,
 	Button,
 	Empty,
+	Input,
 	Progress,
+	Select,
 	Skeleton,
 	Space,
 	Table,
@@ -17,7 +19,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	type BatchJob,
@@ -52,10 +54,21 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 	const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
+	const [nameFilter, setNameFilter] = useState("");
+	const [statusFilter, setStatusFilter] = useState<string | undefined>();
 
 	const templateNameById = Object.fromEntries(
 		templates.map((item) => [item.id, item.name]),
 	);
+
+	const filteredJobs = useMemo(() => {
+		const q = nameFilter.trim().toLowerCase();
+		return jobs.filter((job) => {
+			if (q && !job.name.toLowerCase().includes(q)) return false;
+			if (statusFilter && job.status !== statusFilter) return false;
+			return true;
+		});
+	}, [jobs, nameFilter, statusFilter]);
 
 	const refresh = useCallback(
 		async (silent = false) => {
@@ -249,12 +262,35 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					display: "flex",
 					alignItems: "center",
 					gap: 12,
-					marginBottom: 16,
+					marginBottom: 12,
+					flexWrap: "wrap",
 				}}
 			>
 				<Title level={4} style={{ margin: 0 }}>
 					批量任务
 				</Title>
+				<Input.Search
+					allowClear
+					placeholder="搜索批次名称"
+					value={nameFilter}
+					onChange={(e) => setNameFilter(e.target.value)}
+					style={{ width: 220 }}
+					data-testid="batch-job-name-search"
+				/>
+				<Select
+					allowClear
+					placeholder="状态"
+					value={statusFilter}
+					onChange={(value) => setStatusFilter(value)}
+					style={{ width: 120 }}
+					data-testid="batch-job-status-filter"
+					options={[
+						{ value: "running", label: "运行中" },
+						{ value: "paused", label: "已暂停" },
+						{ value: "completed", label: "已完成" },
+						{ value: "failed", label: "失败" },
+					]}
+				/>
 				<Button
 					icon={<ReloadOutlined />}
 					onClick={() => void refresh()}
@@ -273,7 +309,7 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 					rowKey="id"
 					loading={loading}
 					columns={columns}
-					dataSource={jobs}
+					dataSource={filteredJobs}
 					scroll={{ x: 1190 }}
 					pagination={{ pageSize: 20, showSizeChanger: true }}
 					onRow={(record) => ({
