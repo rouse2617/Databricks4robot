@@ -1,0 +1,124 @@
+name: Deploy Prod on Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'  # 语义化版本号：v1.0.0, v1.2.3 等
+
+env:
+  PROJECT_ID: green-valley-442103
+  REGION: us-central1
+  REGISTRY: us-central1-docker.pkg.dev
+
+jobs:
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker ${REGISTRY}
+
+      - name: Build and push backend image
+        run: |
+          BACKEND_IMAGE="${REGISTRY}/${{ env.PROJECT_ID }}/cyber-databrew-images/cyber-databrew-backend:${{ steps.version.outputs.VERSION }}"
+          docker build --platform=linux/amd64 \
+            -f backend/Dockerfile \
+            -t "${BACKEND_IMAGE}" \
+            backend/
+          docker push "${BACKEND_IMAGE}"
+          echo "BACKEND_IMAGE=${BACKEND_IMAGE}" >> $GITHUB_ENV
+
+      - name: Build and push frontend image
+        run: |
+          FRONTEND_IMAGE="${REGISTRY}/${{ env.PROJECT_ID }}/cyber-databrew-images/cyber-databrew-frontend:${{ steps.version.outputs.VERSION }}"
+          docker build --platform=linux/amd64 \
+            --build-arg VITE_APP_VERSION="${{ steps.version.outputs.VERSION }}" \
+            --build-arg VITE_BUILD_REF="main#${{ steps.version.outputs.SHORT_SHA }}" \
+            -f Frontend/Dockerfile \
+            -t "${FRONTEND_IMAGE}" \
+            Frontend/
+          docker push "${FRONTEND_IMAGE}"
+          echo "FRONTEND_IMAGE=${FRONTEND_IMAGE}" >> $GITHUB_ENV
+
+      - name: Deploy backend to Cloud Run
+        run: |
+          gcloud run deploy cyber-databrew-backend-prod \
+            --image="${{ env.BACKEND_IMAGE }}" \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --platform=managed \
+            --service-account=cyber-databrew-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
+            --set-env-vars=DEPLOYMENT_VERSION=${{ steps.version.outputs.VERSION }}
+
+      - name: Deploy frontend to Cloud Run
+        run: |
+          gcloud run deploy cyber-databrew-frontend-prod \
+            --image="${{ env.FRONTEND_IMAGE }}" \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --platform=managed
+
+      - name: Verify deployment
+        run: |
+          echo "🚀 Deployment verification"
+          BACKEND_URL=$(gcloud run services describe cyber-databrew-backend-prod \
+            --region=${{ env.REGION }} --project=${{ env.PROJECT_ID }} \
+            --format='value(status.url)')
+          FRONTEND_URL=$(gcloud run services describe cyber-databrew-frontend-prod \
+            --region=${{ env.REGION }} --project=${{ env.PROJECT_ID }} \
+            --format='value(status.url)')
+
+          echo "Backend URL: ${BACKEND_URL}"
+          echo "Frontend URL: ${FRONTEND_URL}"
+
+          # 简单的健康检查
+          curl -sf "${BACKEND_URL}/healthz" > /dev/null && echo "✅ Backend healthy" || echo "⚠️ Backend check failed"
+
+      - name: Notify Feishu on success
+        if: success()
+        run: |
+          curl -X POST "${{ secrets.FEISHU_WEBHOOK }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"msg_type\": \"text\",
+              \"content\": {
+                \"text\": \"✅ **Production Release**: v${{ steps.version.outputs.VERSION }} deployed successfully\n\n**Commit**: ${{ steps.version.outputs.SHORT_SHA }}\n**Deployed at**: $(date)\n\n🔗 Backend: $(gcloud run services describe cyber-databrew-backend-prod --region=${{ env.REGION }} --project=${{ env.PROJECT_ID }} --format='value(status.url)')\n🔗 Frontend: $(gcloud run services describe cyber-databrew-frontend-prod --region=${{ env.REGION }} --project=${{ env.PROJECT_ID }} --format='value(status.url)')\n\"
+              }
+            }"
+
+      - name: Notify Feishu on failure
+        if: failure()
+        run: |
+          curl -X POST "${{ secrets.FEISHU_WEBHOOK }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"msg_type\": \"text\",
+              \"content\": {
+                \"text\": \"❌ **Production Release FAILED**: v${{ steps.version.outputs.VERSION }}\n\n**Commit**: ${{ steps.version.outputs.SHORT_SHA }}\n**Failed at**: $(date)\n\n🔗 Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n\"
+              }
+            }"
