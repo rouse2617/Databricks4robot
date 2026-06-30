@@ -108,6 +108,12 @@ func (m *mockTemplateRepo) GetNextVersion(_ context.Context, _ string) (int, err
 	m.ver++
 	return m.ver, nil
 }
+func (m *mockTemplateRepo) GetLatestVersionWithConflictCheck(_ context.Context, _ string, _ int) (*models.PipelineTemplate, bool, error) {
+	return nil, false, nil
+}
+func (m *mockTemplateRepo) GetUserPipelineStatsAfter(_ context.Context, _ string, _ time.Time) (*models.PipelineUserStats, error) {
+	return nil, nil
+}
 func (m *mockTemplateRepo) Delete(_ context.Context, id string) error {
 	delete(m.byID, id)
 	return nil
