@@ -100,7 +100,7 @@ export default function VersionSelector({
 					searchValue={searchQuery}
 					options={options}
 					filterOption={false}
-					optionLabelProp="label"
+					optionLabelProp="displayLabel"
 					style={{ width: "100%" }}
 				/>
 			</div>

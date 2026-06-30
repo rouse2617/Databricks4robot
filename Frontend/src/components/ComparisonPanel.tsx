@@ -134,6 +134,15 @@ function findDifferences(
 		const val1 = obj1?.[key];
 		const val2 = obj2?.[key];
 
+		// Recurse into nested objects/arrays so each leaf shows up as its
+		// own path entry, instead of a single big JSON string for the
+		// whole subtree.
+		if (isPlainObject(val1) || isPlainObject(val2)) {
+			const nested = findDifferences(val1 ?? {}, val2 ?? {}, currentPath);
+			Object.assign(diff, nested);
+			continue;
+		}
+
 		if (JSON.stringify(val1) !== JSON.stringify(val2)) {
 			diff[currentPath] = {
 				from: JSON.stringify(val1),
@@ -143,4 +152,13 @@ function findDifferences(
 	}
 
 	return diff;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+	return (
+		typeof v === "object" &&
+		v !== null &&
+		!Array.isArray(v) &&
+		Object.getPrototypeOf(v) === Object.prototype
+	);
 }

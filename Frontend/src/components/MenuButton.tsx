@@ -24,8 +24,23 @@ export default function MenuButton({
 				buttonRef.current?.focus();
 			}
 		};
+		const handleClickOutside = (e: MouseEvent) => {
+			const target = e.target as Node | null;
+			if (
+				isOpen &&
+				target &&
+				!menuRef.current?.contains(target) &&
+				!buttonRef.current?.contains(target)
+			) {
+				setIsOpen(false);
+			}
+		};
 		document.addEventListener("keydown", handleEscape);
-		return () => document.removeEventListener("keydown", handleEscape);
+		document.addEventListener("mousedown", handleClickOutside);
+		return () => {
+			document.removeEventListener("keydown", handleEscape);
+			document.removeEventListener("mousedown", handleClickOutside);
+		};
 	}, [isOpen]);
 
 	useEffect(() => {
