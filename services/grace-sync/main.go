@@ -157,11 +157,10 @@ func main() {
 			dayEnd = to.AddDate(0, 0, 1)
 		} else {
 			now := time.Now().In(loc)
-			yesterday := now.AddDate(0, 0, -1)
-			dayStart = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, loc)
-			dayEnd = dayStart.AddDate(0, 0, 1)
+			dayStart = now.Add(-1 * time.Hour)
+			dayEnd = now
 		}
-		log.Printf("Date: %s | step_key=%s", dayStart.Format("2006-01-02"), stepKey)
+		log.Printf("Query: %s to %s | step_key=%s", dayStart.Format("2006-01-02 15:04:05"), dayEnd.Format("2006-01-02 15:04:05"), stepKey)
 
 		ids, err := fetchVideoSteps(dayStart, dayEnd, stepKey)
 		if err != nil {
