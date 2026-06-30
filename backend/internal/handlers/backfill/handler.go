@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/httpresp"
+	"github.com/CyberOrigin2077/cyber-databrew/internal/middleware"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/models"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/repository"
 	"github.com/CyberOrigin2077/cyber-databrew/internal/usecase/assetvalidation"
@@ -52,6 +53,7 @@ func (h *Handler) CreateJob(c *gin.Context) {
 		TemplateVersion: req.TemplateVersion,
 		TargetID:        firstNonEmpty(req.TargetID, req.TargetIDLegacy),
 		PilotCount:      req.PilotCount,
+		Owner:           middleware.GetUserEmail(c),
 		ConfigSelection: func() *pipelineUC.RuntimeConfigSelection {
 			if req.Config == nil {
 				return nil

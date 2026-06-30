@@ -3079,8 +3079,10 @@ components:
         pilotCount: { type: integer }
         pilotPhase: { type: string, description: "none | running | review | done" }
         status: { type: string, description: "running | paused | completed | failed" }
+        createdBy: { type: string, nullable: true, description: "email of the user who created the job" }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time, nullable: true, description: "set when status reaches completed or failed" }
     BackfillItem:
       type: object
       properties:

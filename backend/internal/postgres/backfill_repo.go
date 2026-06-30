@@ -38,7 +38,8 @@ func nullIntIfZero(v int) any {
 const backfillJobSelectCols = `id, name, template_id, filter_json,
   total_count, completed_count, failed_count, status,
   COALESCE(template_version, 0), COALESCE(pilot_count, 0), COALESCE(pilot_phase, ''),
-  created_at, updated_at`
+  created_at, updated_at,
+  COALESCE(created_by, ''), finished_at`
 
 func scanBackfillJob(rs rowScanner) (*models.BackfillJob, error) {
 	var (
@@ -50,6 +51,7 @@ func scanBackfillJob(rs rowScanner) (*models.BackfillJob, error) {
 		&j.TotalCount, &j.CompletedCount, &j.FailedCount, &j.Status,
 		&j.TemplateVersion, &j.PilotCount, &j.PilotPhase,
 		&j.CreatedAt, &j.UpdatedAt,
+		&j.CreatedBy, &j.FinishedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -81,14 +83,14 @@ func (r *BackfillRepo) SaveJob(ctx context.Context, j *models.BackfillJob) error
 	const q = `
 	INSERT INTO backfill_jobs (id, name, template_id, filter_json,
 	  total_count, completed_count, failed_count, status,
-	  template_version, pilot_count, pilot_phase, created_at, updated_at)
-	VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+	  template_version, pilot_count, pilot_phase, created_at, updated_at, created_by)
+	VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q,
 		j.ID, j.Name, j.TemplateID, filterJSON,
 		j.TotalCount, j.CompletedCount, j.FailedCount, j.Status,
 		nullIntIfZero(j.TemplateVersion), j.PilotCount, nullIfEmpty(j.PilotPhase),
-		j.CreatedAt, j.UpdatedAt,
+		j.CreatedAt, j.UpdatedAt, nullIfEmpty(j.CreatedBy),
 	); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.SaveJob: %w", err)
 	}
@@ -134,8 +136,12 @@ func (r *BackfillRepo) FindJobByID(ctx context.Context, id string) (*models.Back
 }
 
 // UpdateJobStatus sets the status for a backfill job.
+// finished_at is stamped when the status is a terminal state (completed/failed).
 func (r *BackfillRepo) UpdateJobStatus(ctx context.Context, id, status string) error {
-	const q = `UPDATE backfill_jobs SET status = $2, updated_at = NOW() WHERE id = $1`
+	const q = `UPDATE backfill_jobs
+	  SET status = $2, updated_at = NOW(),
+	      finished_at = CASE WHEN $2 IN ('completed','failed') THEN NOW() ELSE finished_at END
+	  WHERE id = $1`
 	db := dbFromCtx(ctx, r.c.db)
 	if err := db.Exec(ctx, q, id, status); err != nil {
 		return fmt.Errorf("postgres BackfillRepo.UpdateJobStatus: %w", err)

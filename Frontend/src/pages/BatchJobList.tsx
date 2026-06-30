@@ -201,6 +201,34 @@ export function BatchJobList({ active = true }: BatchJobListProps) {
 			render: (value: string) => dayjs(value).format("YYYY-MM-DD HH:mm:ss"),
 		},
 		{
+			title: "完成时间",
+			dataIndex: "finishedAt",
+			key: "finishedAt",
+			width: 180,
+			render: (value?: string) => value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "—",
+		},
+		{
+			title: "耗时",
+			key: "duration",
+			width: 100,
+			render: (_: unknown, record: BatchJob) => {
+				if (!record.finishedAt) return "—";
+				const secs = dayjs(record.finishedAt).diff(dayjs(record.createdAt), "second");
+				if (secs < 60) return `${secs}s`;
+				const m = Math.floor(secs / 60);
+				const s = secs % 60;
+				return `${m}m ${s}s`;
+			},
+		},
+		{
+			title: "所属用户",
+			dataIndex: "createdBy",
+			key: "createdBy",
+			width: 160,
+			ellipsis: true,
+			render: (value?: string) => value || "—",
+		},
+		{
 			title: "操作",
 			key: "actions",
 			width: 220,

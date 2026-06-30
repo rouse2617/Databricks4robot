@@ -16,8 +16,10 @@ type BackfillJob struct {
 	PilotCount      int                    `json:"pilotCount,omitempty"`
 	PilotPhase      string                 `json:"pilotPhase,omitempty"` // none | running | review | done
 	Status          string                 `json:"status"`               // running | paused | completed | failed
+	CreatedBy       string                 `json:"createdBy,omitempty"`
 	CreatedAt       time.Time              `json:"createdAt"`
 	UpdatedAt       time.Time              `json:"updatedAt"`
+	FinishedAt      *time.Time             `json:"finishedAt,omitempty"`
 }
 
 // BackfillItem represents a single asset being processed in a backfill job.

@@ -143,6 +143,7 @@ type CreateBackfillOptions struct {
 	TemplateVersion int
 	PilotCount      int
 	ConfigSelection *pipelineUC.RuntimeConfigSelection
+	Owner           string
 }
 
 type RerunRequest struct {
@@ -212,6 +213,7 @@ func (uc *Usecase) CreateBackfill(ctx context.Context, name, templateID string, 
 		PilotPhase:      pilotPhase,
 		Status:          status,
 		CreatedAt:       time.Now().UTC(),
+		CreatedBy:       options.Owner,
 	}
 	filterJSON := map[string]interface{}{}
 	if targetID := strings.TrimSpace(options.TargetID); targetID != "" {

@@ -61,6 +61,7 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		FilterJSON:  map[string]interface{}{},
+		CreatedBy:   owner,
 	}
 
 	if targetID != "" && targetID != "default" {

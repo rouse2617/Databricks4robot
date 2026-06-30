@@ -16,8 +16,10 @@ export interface BatchJob {
 	pilotCount?: number;
 	pilotPhase?: "none" | "running" | "review" | "done" | string;
 	status: "running" | "paused" | "completed" | "failed" | string;
+	createdBy?: string;
 	createdAt: string;
 	updatedAt: string;
+	finishedAt?: string;
 }
 
 export interface CreateBatchJobRequest {
