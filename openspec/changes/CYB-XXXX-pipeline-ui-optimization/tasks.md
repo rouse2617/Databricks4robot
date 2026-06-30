@@ -118,7 +118,7 @@
 ### API 客户端
 
 - [ ] `Frontend/src/api/pipelineApi.ts` - API 方法新增
-  - [ ] `getPipelineStats(window?: string)` 
+  - [ ] `getPipelineStats(window?: string)`
   - [ ] `updatePipelineWithVersion(id, content, baseVersion, note)`
   - [ ] 冲突响应处理
 
@@ -204,7 +204,7 @@
   smoke test ──→ 部署前验证
       ↓
    部署验证 ──→ Chrome DevTools 测试
-      
+
 前端组件开发 ──→ 前端测试 ──→ 集成测试
 
 SDK 更新 ──→ SDK 测试 ──→ 随 PR 提交
@@ -242,4 +242,3 @@ SDK 更新 ──→ SDK 测试 ──→ 随 PR 提交
 | **总计** | 2-3 | **8 天** |
 
 *假设并行工作*
-

@@ -13,7 +13,7 @@ interface PipelineGroupViewProps {
   onSelectPipeline: (pipeline: PipelineTemplate) => void;
 }
 
-export function PipelineGroupView({ onSelectPipeline }: PipelineGroupViewProps) {
+export default function PipelineGroupView({ onSelectPipeline }: PipelineGroupViewProps) {
   const [groups, setGroups] = useState<GroupedPipelines[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');

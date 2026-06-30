@@ -1,9 +1,9 @@
 # 流水线 UI/UX 优化方案 - OpenSpec 提案
 
-**版本**: 1.0  
-**状态**: 待批准  
-**创建**: 2026-06-30  
-**优先级**: High  
+**版本**: 1.0
+**状态**: 待批准
+**创建**: 2026-06-30
+**优先级**: High
 
 ---
 
@@ -112,11 +112,11 @@ Response: 409 ConflictError | 200 Success
 🔥 最常用 (自动生成，基于 30 天点击频次)
   ├─ my-pipeline (评分 8.6)
   ├─ perf-echo-1000 (评分 7.2)
-  
+
 📌 我的标记 (用户手动标记)
   ├─ [production]
   ├─ [testing]
-  
+
 📋 所有 (280 个)
 ```
 
@@ -204,4 +204,3 @@ Response: 409 ConflictError | 200 Success
 - 设计文档: `/Users/rick/cyber-databrew/openspec/changes/CYB-XXXX-pipeline-ui-optimization/design.md`
 - 任务清单: `/Users/rick/cyber-databrew/openspec/changes/CYB-XXXX-pipeline-ui-optimization/tasks.md`
 - 工程规格: https://claude.ai/code/artifact/850648df-9b08-43a6-9a60-7d8460258bed
-

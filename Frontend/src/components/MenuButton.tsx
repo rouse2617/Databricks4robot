@@ -8,7 +8,7 @@ interface MenuButtonProps {
   ariaLabel?: string;
 }
 
-export function MenuButton({ items, label = '⋯⋯', ariaLabel = '菜单' }: MenuButtonProps) {
+export default function MenuButton({ items, label = '⋯⋯', ariaLabel = '菜单' }: MenuButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
