@@ -1,6 +1,7 @@
 name: deploy-dev
 
-# Consolidated dev deploy: backend + frontend(CF Worker) + mcap-preview.
+# Consolidated dev deploy: backend + mcap-preview.
+# Frontend dev is deployed by Cloudflare GitHub App integration, not GHA.
 # Only the jobs whose paths changed actually run.
 on:
   push:
@@ -8,9 +9,6 @@ on:
     paths:
       - "backend/**"
       - "deploy/cloudrun/backend-dev.sh"
-      - "Frontend/**"
-      - "_worker.js"
-      - "wrangler.jsonc"
       - "services/mcap-preview/**"
       - "deploy/cloudrun/mcap-preview-dev.sh"
       - ".github/workflows/deploy-dev.yml"
@@ -29,7 +27,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
       mcap: ${{ steps.filter.outputs.mcap }}
     steps:
       - uses: actions/checkout@v4
@@ -40,11 +37,6 @@ jobs:
             backend:
               - 'backend/**'
               - 'deploy/cloudrun/backend-dev.sh'
-              - '.github/workflows/deploy-dev.yml'
-            frontend:
-              - 'Frontend/**'
-              - '_worker.js'
-              - 'wrangler.jsonc'
               - '.github/workflows/deploy-dev.yml'
             mcap:
               - 'services/mcap-preview/**'
@@ -135,46 +127,6 @@ jobs:
           USE_EXISTING_IMAGE=true \
           SOURCE_K8S_ENV=false \
           bash deploy/cloudrun/backend-dev.sh
-
-  # ─── Frontend (Cloudflare Worker) ───────────────────────────────────────────
-  deploy-frontend:
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
-    name: Build & Deploy frontend → Cloudflare Worker dev
-    runs-on: ubuntu-latest
-    concurrency:
-      group: deploy-frontend-dev
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: Frontend/package-lock.json
-
-      - name: Install dependencies
-        working-directory: Frontend
-        run: npm ci --no-audit --no-fund
-
-      - name: Build frontend
-        working-directory: Frontend
-        env:
-          VITE_APP_VERSION: ${{ github.sha }}
-          VITE_BUILD_REF: dev#${{ github.sha }}
-        run: npm run build
-
-      - name: Sync dist → site/
-        run: |
-          rm -rf site
-          cp -r Frontend/dist site
-
-      - name: Deploy to Cloudflare Worker (dev)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy
 
   # ─── MCAP Preview ───────────────────────────────────────────────────────────
   deploy-mcap:
