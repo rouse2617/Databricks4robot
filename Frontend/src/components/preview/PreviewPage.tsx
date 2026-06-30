@@ -108,18 +108,24 @@ export default function PreviewPage() {
       }));
 
       const mcapEntry = data.mcap as { size_bytes?: number } | undefined;
+      const durationMs = deriveDurationMs(data);
 
       setLoaded({
         assetId,
         channels,
         sources,
-        durationMs: deriveDurationMs(data),
+        durationMs,
         fileSize: mcapEntry?.size_bytes,
         rawManifest: data,
       });
       setActiveTopics(channels.filter((c) => !c.topic.toLowerCase().includes('side')).map((c) => c.topic));
       setCurrentTime(0);
       setPlaying(false);
+      // Default to a 120s window so the H.265→H.264 transcode finishes quickly
+      // and the browser gets a stable cached fMP4 with Range support instead of
+      // repeatedly aborting a live-stream 200 that ignores Range headers.
+      const durationSec = durationMs / 1000;
+      setPreviewRange({ startSec: 0, endSec: Math.min(120, Math.max(durationSec, 10)) });
 
       // Prewarm the MCAP reader cache (segment endpoint is slow on first load)
       fetch(`${PREVIEW_BASE}/api/v1/preview/assets/${assetId}/prewarm`, {
