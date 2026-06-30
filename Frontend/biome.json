@@ -1,0 +1,13 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
+	"javascript": {
+		"globals": []
+	},
+	"linter": {
+		"rules": {
+			"suspicious": {
+				"noExplicitAny": "warn"
+			}
+		}
+	}
+}
