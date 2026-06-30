@@ -20,7 +20,10 @@ export async function onRequest(context) {
 		const responseHeaders = new Headers(response.headers);
 		responseHeaders.delete("alt-svc");
 		responseHeaders.delete("server");
-		return new Response(response.body, {
+		// Cloudflare Response: null-body statuses (204, 304) cannot have a body
+		const isNullBodyStatus =
+			response.status === 204 || response.status === 304;
+		return new Response(isNullBodyStatus ? null : response.body, {
 			status: response.status,
 			statusText: response.statusText,
 			headers: responseHeaders,

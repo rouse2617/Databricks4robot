@@ -38,10 +38,12 @@ export default function DeliveryHistoryTab({ assetId }: Props) {
 				const items = [];
 				for (let i = 0; i < ids.length; i += concurrency) {
 					const batch = ids.slice(i, i + concurrency);
-					const batchResults = await Promise.all(
+					const batchResults = await Promise.allSettled(
 						batch.map((id) => deliveriesApi.get(id)),
 					);
-					items.push(...batchResults);
+					for (const r of batchResults) {
+						if (r.status === "fulfilled") items.push(r.value);
+					}
 					if (cancelled) return;
 				}
 				if (!cancelled) setDeliveries(items);

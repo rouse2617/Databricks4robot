@@ -154,6 +154,17 @@ export default function TagsTab({
 			return;
 		}
 		setSaving(true);
+		// Optimistic local insert so the new tag shows up immediately,
+		// matching the UX of handleDeleteSource.
+		const optimisticTag: LocalTag = {
+			key: newKey,
+			value: newValue,
+			source: newSource,
+			sourceName: newSourceName || undefined,
+			sourceVersion: newSourceVersion || undefined,
+		};
+		setLocalTags((prev) => [...prev, optimisticTag]);
+		setLocalDetailed((prev) => [...prev, optimisticTag]);
 		try {
 			await assetsApi.upsertTag(assetId, {
 				key: newKey,
@@ -170,6 +181,9 @@ export default function TagsTab({
 			setAddOpen(false);
 			onUpdate();
 		} catch (err) {
+			// Roll back optimistic insert on failure
+			setLocalTags((prev) => prev.filter((t) => t !== optimisticTag));
+			setLocalDetailed((prev) => prev.filter((t) => t !== optimisticTag));
 			message.error(err instanceof Error ? err.message : "添加标签失败");
 		} finally {
 			setSaving(false);

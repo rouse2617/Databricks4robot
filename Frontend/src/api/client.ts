@@ -1,6 +1,6 @@
 import axios from "axios";
 
-export const UNAUTHORIZED_EVENT = "***";
+export const UNAUTHORIZED_EVENT = "app:unauthorized";
 const DEV_ACCESS_TOKEN = import.meta.env.DEV
 	? (import.meta.env.VITE_DEV_ACCESS_TOKEN ?? "").trim()
 	: "";

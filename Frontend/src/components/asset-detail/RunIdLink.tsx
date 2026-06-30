@@ -63,7 +63,7 @@ export default function RunIdLink({
 
 	const handleOpenChange = (next: boolean) => {
 		setOpen(next);
-		if (next && !run && !loadError) {
+		if (next && !run) {
 			void fetchRun();
 		}
 	};
