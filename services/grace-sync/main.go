@@ -190,7 +190,8 @@ func main() {
 	}
 	log.Printf("DataBrew login OK")
 
-	batchResp, err := submitBatch(client, tmplID, targetID, videoIDs)
+	batchName := "grace-sync-" + time.Now().UTC().Format("20060102-150405")
+	batchResp, err := submitBatch(client, tmplID, targetID, videoIDs, batchName)
 	if err != nil {
 		log.Fatalf("Batch submit: %v", err)
 	}
@@ -292,11 +293,12 @@ func databrewLogin(client *http.Client) error {
 	return nil
 }
 
-func submitBatch(client *http.Client, tmplID, targetID string, assetIDs []string) (*BatchResponse, error) {
+func submitBatch(client *http.Client, tmplID, targetID string, assetIDs []string, name string) (*BatchResponse, error) {
 	b, _ := json.Marshal(BatchRequest{
 		TemplateID: tmplID,
 		AssetIDs:   assetIDs,
 		TargetID:   targetID,
+		Name:       name,
 	})
 	resp, err := client.Post(
 		cfg.Databrew.APIURL+"/runs/batch",
