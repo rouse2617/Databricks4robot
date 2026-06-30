@@ -45,8 +45,8 @@ const DeployPanel = lazy(async () => {
 });
 
 const ExecutionRecordsPanel = lazy(async () => {
-	const mod = await import("./ExecutionRecordsPanel");
-	return { default: mod.ExecutionRecordsPanel };
+	const mod = await import("./EnhancedExecutionRecordsPanel");
+	return { default: mod.EnhancedExecutionRecordsPanel };
 });
 
 const ComponentManager = lazy(async () => {
