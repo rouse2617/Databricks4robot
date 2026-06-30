@@ -25,7 +25,7 @@ func (r *PipelineTemplateRepo) GetUserPipelineStatsAfter(ctx context.Context, us
 	LIMIT 200
 	`
 
-	rows, err := r.c.db.QueryContext(ctx, query, userEmail)
+	rows, err := r.c.db.Query(ctx, query, userEmail)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query pipeline stats: %w", err)
 	}
@@ -76,7 +76,7 @@ func (r *PipelineTemplateRepo) GetLatestVersionWithConflictCheck(ctx context.Con
 	LIMIT 1
 	`
 
-	rs := r.c.db.QueryRowContext(ctx, query, pipelineID)
+	rs := r.c.db.QueryRow(ctx, query, pipelineID)
 	pt, err := scanPipelineTemplate(rs)
 	if err != nil {
 		if err == sql.ErrNoRows {
