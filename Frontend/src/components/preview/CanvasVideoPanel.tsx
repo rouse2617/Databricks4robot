@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState, useMemo } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { LoadingOutlined } from "@ant-design/icons";
 
 export interface BoundingBox {
