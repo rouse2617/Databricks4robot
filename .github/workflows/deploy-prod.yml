@@ -61,8 +61,8 @@ jobs:
           echo "--- [1/3] sync code: $VERSION ($COMMIT_SHA) ---"
           if [ -d ${{ env.REPO_DIR }}/.git ]; then
             git -C ${{ env.REPO_DIR }} remote set-url origin "$CLONE_URL" 2>/dev/null
-            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin tag $VERSION -q
-            git -C ${{ env.REPO_DIR }} reset --hard $COMMIT_SHA -q
+            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin refs/tags/$VERSION -q
+            git -C ${{ env.REPO_DIR }} reset --hard FETCH_HEAD -q
           else
             git clone --depth=1 --branch $VERSION "$CLONE_URL" ${{ env.REPO_DIR }} -q
           fi
@@ -97,7 +97,7 @@ jobs:
             --region=${{ env.REGION }} \
             --project=${{ env.PROJECT_ID }} \
             --platform=managed \
-            --service-account=cyber-databrew-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
+            --service-account=cyber-databrew-cloudrun-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
             --set-env-vars=DEPLOYMENT_VERSION=${{ github.ref_name }}
 
       - name: Verify backend health
