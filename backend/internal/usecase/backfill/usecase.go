@@ -767,8 +767,12 @@ func (uc *Usecase) GetJob(ctx context.Context, id string) (*models.BackfillJob, 
 	if job == nil {
 		return nil, nil
 	}
-	// syncJobProgressForce is already called by GetBatchNodeSummary
+	// GetJob returns the freshly-reconciled view; force sync so a recent
+	// throttle doesn't hide terminal state from a single-job read.
 	_ = uc.ReconcileSubtaskRuns(ctx, id)
+	if err := uc.syncJobProgressForce(ctx, id); err != nil {
+		slog.Warn("GetJob: syncJobProgressForce failed", "jobID", id, "err", err)
+	}
 	return uc.repo.FindJobByID(ctx, id)
 }
 
