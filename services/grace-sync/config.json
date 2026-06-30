@@ -7,7 +7,7 @@
     "api_url": "https://cyber-databrew-dev.cyberorigin.ai/api/v1"
   },
   "pipeline": {
-    "template_id": "555b133e-406d-4bea-b0bc-78b95193cf56",
+    "template_id": "a69cc98f-9136-4652-a3f5-b5338394d529",
     "target_id": "a03ad932-397f-4a3b-a3d8-1cfb13a6dd54"
   },
   "sync": {
