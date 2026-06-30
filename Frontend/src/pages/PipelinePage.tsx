@@ -54,6 +54,11 @@ const ComponentManager = lazy(async () => {
 	return { default: mod.ComponentManager };
 });
 
+const PipelineListPanel = lazy(async () => {
+	const mod = await import("./PipelineListPanel");
+	return { default: mod.PipelineListPanel };
+});
+
 function confirmLeaveWithUnsavedChanges(
 	modal: ReturnType<typeof App.useApp>["modal"],
 ): Promise<boolean> {
@@ -216,11 +221,11 @@ export default function PipelinePage({
 					},
 					{
 						key: "pipelines",
-						label: tabLabel("流水线", "管理已保存的流水线"),
+						label: tabLabel("流水线", "智能分组与管理"),
 						children: (
 							<div className="pipeline-tab-content pipeline-tab-content--panel pipeline-tab-content--management">
 								<Suspense fallback={<TabFallback />}>
-									<DeployPanel variant="full" />
+									<PipelineListPanel />
 								</Suspense>
 							</div>
 						),
