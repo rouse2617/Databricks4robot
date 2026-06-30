@@ -1,0 +1,33 @@
+/* Repo-wiki extra styling for Material for MkDocs.
+   Source of truth is the markdown; this only themes the rendered view. */
+
+/* Qoder <cite> "Referenced Files" block */
+.cite {
+  background: var(--md-code-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-left: 4px solid var(--md-default-fg-color--light);
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  margin: 0 0 1.2rem;
+  font-size: 0.78rem;
+}
+.cite > p:first-child strong {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.68rem;
+  color: var(--md-default-fg-color--light);
+}
+.cite ul {
+  margin: 0.3rem 0 0;
+}
+
+/* "Section sources" / "Diagram sources" emphasis lines read as captions */
+.md-typeset p > strong:only-child {
+  color: var(--md-default-fg-color--light);
+}
+
+/* Give mermaid diagrams room to breathe */
+.md-typeset .mermaid {
+  margin: 1.2rem 0;
+  text-align: center;
+}

@@ -1,0 +1,931 @@
+# Repo-wiki structural backbone — see docs/agents/skills/repo-wiki/references/manifest-schema.md
+# Markdown under docs/repo-wiki/ is the single source of truth. Pages follow the Qoder
+# layout (English, detailed): <cite> block, ToC, standard section skeleton, mermaid,
+# Section/Diagram sources with real file://path#Lx-Ly ranges. `sources` lists the code
+# each page is derived from; scaffold.py and the repo-wiki skill both consume it.
+title: cyber-databrew Repository Wiki
+generated: 2026-06-02
+
+pages:
+  # ── Top level ────────────────────────────────────────────────
+  - title: Project Overview
+    path: overview.md
+    sources:
+      - README.md
+      - backend/cmd/server/main.go
+      - backend/cmd/server/server.go
+      - Frontend/src/App.tsx
+      - sdk/src/cyber_databrew_sdk/client.py
+      - api/openapi.yaml
+      - docs/review/data-platform-design.md
+      - Makefile
+
+  - title: Quick Start
+    path: quick-start.md
+    sources:
+      - README.md
+      - Makefile
+      - backend/Makefile
+      - deploy/local/README.md
+      - deploy/local/docker-compose.yml
+      - backend/.env.example
+      - Frontend/.env.example
+
+  # ── Architecture ─────────────────────────────────────────────
+  - title: System Architecture Overview
+    path: architecture/system-architecture-overview.md
+    section: Architecture
+    sources:
+      - backend/cmd/server/main.go
+      - backend/cmd/server/server.go
+      - backend/cmd/server/infra.go
+      - backend/cmd/server/core.go
+      - backend/cmd/server/optional.go
+      - backend/routes/routes.go
+      - Frontend/src/App.tsx
+      - sdk/src/cyber_databrew_sdk/client.py
+
+  - title: Modular Design
+    path: architecture/modular-design.md
+    section: Architecture
+    sources:
+      - backend/internal/handlers
+      - backend/internal/usecase
+      - backend/internal/repository
+      - backend/internal/postgres
+      - backend/internal/middleware
+
+  - title: Event & CDC Architecture
+    path: architecture/event-cdc-architecture.md
+    section: Architecture
+    sources:
+      - backend/internal/outbox/relay.go
+      - backend/internal/outbox/publisher.go
+      - backend/internal/outbox/bus.go
+      - backend/internal/outbox/es_subscriber.go
+      - backend/internal/outbox/pubsub_subscriber.go
+      - backend/schemas/events
+
+  - title: Search & Query Architecture
+    path: architecture/search-query-architecture.md
+    section: Architecture
+    sources:
+      - backend/internal/queryir
+      - backend/internal/queryplan
+      - backend/internal/queryexec
+      - backend/internal/elasticsearch
+      - backend/internal/searchindex
+
+  - title: Lakehouse Architecture
+    path: architecture/lakehouse-architecture.md
+    section: Architecture
+    sources:
+      - backend/internal/lakehouse/lakehouse.go
+      - backend/internal/lakehouse/bigquery
+      - docs/review/lakehouse-incremental-ingestion.md
+
+  - title: Deployment Architecture
+    path: architecture/deployment-architecture.md
+    section: Architecture
+    sources:
+      - deploy/k8s
+      - deploy/cloudrun
+      - deploy/iac/terraform
+      - .tekton
+
+  - title: Security Architecture
+    path: architecture/security-architecture.md
+    section: Architecture
+    sources:
+      - backend/internal/auth
+      - backend/internal/middleware
+
+  # ── Asset Management ─────────────────────────────────────────
+  - title: Asset Management Module
+    path: modules/asset-management/index.md
+    section: Asset Management
+    sources:
+      - backend/internal/handlers/asset
+      - backend/internal/usecase/asset
+      - backend/internal/models/asset.go
+
+  - title: Asset Lifecycle
+    path: modules/asset-management/asset-lifecycle.md
+    section: Asset Management
+    sources:
+      - backend/internal/usecase/asset
+      - backend/internal/lifecycle
+      - backend/internal/models/asset.go
+
+  - title: Asset Types & Schema
+    path: modules/asset-management/asset-types-and-schema.md
+    section: Asset Management
+    sources:
+      - backend/internal/models/asset_type_schema.go
+      - backend/internal/models/schema_evolution.go
+      - backend/internal/handlers/asset
+
+  - title: Tags & Lineage
+    path: modules/asset-management/tags-and-lineage.md
+    section: Asset Management
+    sources:
+      - backend/internal/repository/asset_lineage_repository.go
+      - backend/internal/repository/asset_relation_writer.go
+      - backend/internal/postgres/logical_assets.go
+
+  - title: Events & Timeline
+    path: modules/asset-management/events-and-timeline.md
+    section: Asset Management
+    sources:
+      - backend/internal/handlers/asset
+      - backend/internal/models/algo_event.go
+      - backend/schemas/events
+
+  # ── MCAP & Object Storage ────────────────────────────────────
+  - title: MCAP & Object Storage Module
+    path: modules/mcap-storage/index.md
+    section: MCAP & Storage
+    sources:
+      - backend/internal/handlers/mcap
+      - services/mcap-preview/README.md
+
+  - title: MCAP Files & Messages
+    path: modules/mcap-storage/mcap-files-and-messages.md
+    section: MCAP & Storage
+    sources:
+      - backend/internal/handlers/mcap
+      - backend/internal/models/segment_locator.go
+
+  - title: Byte Serving & Locators
+    path: modules/mcap-storage/byte-serving-and-locators.md
+    section: MCAP & Storage
+    sources:
+      - backend/internal/handlers/mcap
+      - backend/internal/models/segment_locator.go
+
+  - title: MCAP Preview Service
+    path: modules/mcap-storage/preview-service.md
+    section: MCAP & Storage
+    sources:
+      - services/mcap-preview/internal/server/server.go
+      - services/mcap-preview/internal/server/segment.go
+      - services/mcap-preview/internal/server/preview_cache.go
+      - services/mcap-preview/cmd/server/main.go
+
+  # ── Delivery ─────────────────────────────────────────────────
+  - title: Delivery Module
+    path: modules/delivery/index.md
+    section: Delivery
+    sources:
+      - backend/internal/handlers/delivery
+      - backend/internal/handlers/deliveryrule
+      - backend/internal/models/delivery_rule.go
+
+  - title: Delivery Commit & Items
+    path: modules/delivery/delivery-commit-and-items.md
+    section: Delivery
+    sources:
+      - backend/internal/handlers/delivery
+      - backend/internal/models/delivery_transition.go
+      - backend/internal/postgres/delivery_rules.go
+
+  - title: Delivery Rules & Eligibility
+    path: modules/delivery/delivery-rules-and-eligibility.md
+    section: Delivery
+    sources:
+      - backend/internal/handlers/deliveryrule
+      - backend/internal/outbox/delivery_eligibility_projector.go
+      - backend/internal/models/delivery_rule.go
+
+  # ── Algorithm Lifecycle ──────────────────────────────────────
+  - title: Algorithm Lifecycle Module
+    path: modules/algorithm-lifecycle/index.md
+    section: Algorithm Lifecycle
+    sources:
+      - backend/internal/handlers/algorun
+      - backend/internal/usecase/algorun
+      - backend/internal/models/algo_run.go
+
+  - title: Algorithm State Machine
+    path: modules/algorithm-lifecycle/algo-state-machine.md
+    section: Algorithm Lifecycle
+    sources:
+      - backend/internal/models/algo_run.go
+      - backend/internal/models/algo_event.go
+      - backend/internal/lifecycle
+      - docs/review/algo-lifecycle-and-data-model.md
+
+  - title: Algorithm Runs
+    path: modules/algorithm-lifecycle/algo-runs.md
+    section: Algorithm Lifecycle
+    sources:
+      - backend/internal/usecase/algorun
+      - backend/internal/postgres/algo_runs.go
+      - backend/internal/outbox/algo_run_subscriber.go
+
+  # ── Search & Query Workbench ─────────────────────────────────
+  - title: Search & Query Workbench Module
+    path: modules/search-query/index.md
+    section: Search & Query
+    sources:
+      - backend/internal/handlers/query
+      - backend/internal/handlers/search
+      - backend/internal/queryir
+
+  - title: Query IR
+    path: modules/search-query/query-ir.md
+    section: Search & Query
+    sources:
+      - backend/internal/queryir
+      - backend/internal/transpiler
+
+  - title: Query Plan & Execution
+    path: modules/search-query/query-plan-and-exec.md
+    section: Search & Query
+    sources:
+      - backend/internal/queryplan
+      - backend/internal/queryexec
+      - backend/internal/elasticsearch
+
+  - title: Saved Queries
+    path: modules/search-query/saved-queries.md
+    section: Search & Query
+    sources:
+      - backend/internal/models/saved_query.go
+      - backend/internal/postgres/saved_queries.go
+      - backend/internal/handlers/query
+
+  - title: Sync & Reindex
+    path: modules/search-query/sync-and-reindex.md
+    section: Search & Query
+    sources:
+      - backend/internal/handlers/search
+      - backend/internal/searchindex
+      - backend/internal/postgres/reindex_job_repo.go
+      - backend/internal/repository/search_reindex_job_repository.go
+
+  # ── Lakehouse Analytics ──────────────────────────────────────
+  - title: Lakehouse Analytics Module
+    path: modules/lakehouse/index.md
+    section: Lakehouse
+    sources:
+      - backend/internal/handlers/lakehouse
+      - backend/internal/lakehouse/lakehouse.go
+
+  - title: BigQuery & BigLake
+    path: modules/lakehouse/bigquery-biglake.md
+    section: Lakehouse
+    sources:
+      - backend/internal/lakehouse/bigquery
+      - backend/internal/lakehouse/lakehouse.go
+      - backend/internal/lakehouse/nop.go
+
+  - title: Incremental Ingestion
+    path: modules/lakehouse/incremental-ingestion.md
+    section: Lakehouse
+    sources:
+      - backend/internal/postgres/lakehouse_bronze_checkpoint.go
+      - docs/review/lakehouse-incremental-ingestion.md
+
+  # ── Pipeline & Workflows ─────────────────────────────────────
+  - title: Pipeline & Workflows Module
+    path: modules/pipeline-workflows/index.md
+    section: Pipeline & Workflows
+    sources:
+      - backend/internal/handlers/pipeline
+      - backend/internal/handlers/workflow
+      - backend/internal/usecase/pipeline
+
+  - title: Pipeline Templates
+    path: modules/pipeline-workflows/pipeline-templates.md
+    section: Pipeline & Workflows
+    sources:
+      - backend/internal/models/pipeline.go
+      - backend/internal/usecase/pipeline
+      - backend/internal/postgres/pipeline_repo.go
+
+  - title: Deployments
+    path: modules/pipeline-workflows/deployments.md
+    section: Pipeline & Workflows
+    sources:
+      - backend/internal/handlers/pipeline
+      - backend/internal/usecase/pipeline
+
+  - title: Argo Integration
+    path: modules/pipeline-workflows/argo-integration.md
+    section: Pipeline & Workflows
+    sources:
+      - backend/internal/argo/argo.go
+      - backend/internal/argo/client.go
+      - backend/internal/argo/logs.go
+      - backend/internal/handlers/workflow
+      - docs/review/argo-integration-research.md
+
+  - title: Pipeline Components
+    path: modules/pipeline-workflows/pipeline-components.md
+    section: Pipeline & Workflows
+    sources:
+      - backend/internal/models/pipeline_component.go
+      - backend/internal/usecase/pipeline_component
+      - backend/internal/postgres/pipeline_component_repo.go
+
+  # ── Registry ─────────────────────────────────────────────────
+  - title: Registry Module
+    path: modules/registry/index.md
+    section: Registry
+    sources:
+      - backend/internal/handlers/registry
+      - backend/internal/config
+      - backend/config
+
+  - title: Registry Types
+    path: modules/registry/registry-types.md
+    section: Registry
+    sources:
+      - backend/config/algo_registry.yaml
+      - backend/config/tag_registry.yaml
+      - backend/config/metric_registry.yaml
+      - backend/config/query_field_registry.yaml
+      - backend/config/action_label_registry.yaml
+
+  # ── Event Processing & CDC ───────────────────────────────────
+  - title: Event Processing & CDC Module
+    path: modules/event-cdc/index.md
+    section: Event Processing
+    sources:
+      - backend/internal/outbox
+      - backend/schemas/events/VERSIONING.md
+
+  - title: Outbox Pattern
+    path: modules/event-cdc/outbox-pattern.md
+    section: Event Processing
+    sources:
+      - backend/internal/outbox/relay.go
+      - backend/internal/outbox/publisher.go
+      - backend/internal/outbox/bus.go
+      - backend/internal/outbox/internal_bus.go
+
+  - title: Event Schemas
+    path: modules/event-cdc/event-schemas.md
+    section: Event Processing
+    sources:
+      - backend/schemas/events
+      - backend/internal/models/algo_event.go
+
+  - title: Elasticsearch Subscriber
+    path: modules/event-cdc/es-subscriber.md
+    section: Event Processing
+    sources:
+      - backend/internal/outbox/es_subscriber.go
+      - backend/internal/postgres/es_sync_checkpoint.go
+      - backend/internal/elasticsearch
+
+  - title: Pub/Sub & Kafka Subscribers
+    path: modules/event-cdc/pubsub-and-kafka-subscribers.md
+    section: Event Processing
+    sources:
+      - backend/internal/outbox/pubsub_subscriber.go
+      - backend/internal/outbox/kafka_subscriber.go
+      - backend/internal/outbox/algo_run_subscriber.go
+      - backend/internal/outbox/delivery_eligibility_projector.go
+
+  - title: Search Indexing
+    path: modules/event-cdc/search-indexing.md
+    section: Event Processing
+    sources:
+      - backend/internal/searchindex
+      - backend/internal/elasticsearch
+
+  # ── Database Design ──────────────────────────────────────────
+  # DDL-first review section, mirroring the Qoder "数据库设计" layout:
+  # a Database Design index (full ERD + core entities) -> a "Data Model
+  # Design" sub-group (per-domain pages) -> Integrity / Performance /
+  # Migrations as siblings. Source of truth is backend/migrations/*.sql.
+  - title: Database Design
+    path: data-model/index.md
+    section: Database Design
+    sources:
+      - backend/migrations
+      - backend/internal/models
+      - backend/internal/postgres
+
+  - title: Data Model Design
+    path: data-model/model-design.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/000_initial.sql
+      - backend/migrations/039_pipeline_tables.sql
+      - backend/migrations/040_pipeline_components.sql
+      - backend/migrations/041_pipeline_template_version.sql
+      - backend/migrations/042_backfill_tables.sql
+      - backend/migrations/043_asset_model_expansion_p1.sql
+      - backend/migrations/044_asset_model_p2.sql
+      - backend/internal/models
+
+  - title: Asset Model
+    path: data-model/asset-model.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/000_initial.sql
+      - backend/migrations/043_asset_model_expansion_p1.sql
+      - backend/migrations/044_asset_model_p2.sql
+      - backend/internal/models/asset.go
+      - backend/internal/models/asset_type_schema.go
+      - backend/internal/models/asset_usage_stat.go
+      - backend/internal/postgres/logical_assets.go
+
+  - title: MCAP & Segment Model
+    path: data-model/mcap-model.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/000_initial.sql
+      - backend/internal/models/segment_locator.go
+
+  - title: Delivery Model
+    path: data-model/delivery-model.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/000_initial.sql
+      - backend/internal/models/delivery_rule.go
+      - backend/internal/models/delivery_transition.go
+      - backend/internal/postgres/delivery_rules.go
+
+  - title: Algorithm Run Model
+    path: data-model/algo-run-model.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/000_initial.sql
+      - backend/internal/models/algo_run.go
+      - backend/internal/models/algo_event.go
+      - backend/internal/postgres/algo_runs.go
+
+  - title: Action Model
+    path: data-model/action-model.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/000_initial.sql
+      - backend/internal/models/action.go
+      - backend/internal/postgres/actions.go
+
+  - title: Pipeline Model
+    path: data-model/pipeline-model.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/039_pipeline_tables.sql
+      - backend/migrations/040_pipeline_components.sql
+      - backend/migrations/041_pipeline_template_version.sql
+      - backend/internal/models/pipeline.go
+      - backend/internal/models/pipeline_component.go
+      - backend/internal/postgres/pipeline_repo.go
+
+  - title: Saved Query & Customer Models
+    path: data-model/saved-query-customer-model.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/000_initial.sql
+      - backend/internal/models/saved_query.go
+      - backend/internal/models/customer.go
+      - backend/internal/postgres/saved_queries.go
+      - backend/internal/postgres/customers.go
+
+  - title: Backfill & Checkpoint Models
+    path: data-model/backfill-checkpoint-model.md
+    section: Database Design
+    subsection: Data Model Design
+    sources:
+      - backend/migrations/000_initial.sql
+      - backend/migrations/042_backfill_tables.sql
+      - backend/internal/models/backfill.go
+      - backend/internal/postgres/backfill_repo.go
+      - backend/internal/postgres/es_sync_checkpoint.go
+      - backend/internal/postgres/lakehouse_bronze_checkpoint.go
+
+  - title: Data Integrity & Constraints
+    path: data-model/integrity-and-constraints.md
+    section: Database Design
+    sources:
+      - backend/migrations
+      - backend/internal/postgres/client.go
+
+  - title: Performance & Indexing
+    path: data-model/performance-and-indexing.md
+    section: Database Design
+    sources:
+      - backend/migrations
+      - backend/internal/postgres/batch_ops.go
+
+  - title: Migration Management
+    path: data-model/migrations.md
+    section: Database Design
+    sources:
+      - backend/migrations
+
+  # ── Backend API Reference ────────────────────────────────────
+  - title: Backend API Reference
+    path: api/index.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/routes/routes.go
+      - docs/review/api-guide.md
+
+  - title: Authentication API
+    path: api/authentication.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/asset/asset_id.go
+      - backend/internal/auth
+      - backend/routes/routes.go
+
+  - title: Assets API
+    path: api/assets-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/asset
+      - backend/routes/routes.go
+
+  - title: Actions & Eval API
+    path: api/actions-eval-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/action
+      - backend/internal/handlers/eval
+
+  - title: MCAP API
+    path: api/mcap-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/mcap
+
+  - title: Deliveries API
+    path: api/deliveries-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/delivery
+      - backend/internal/handlers/deliveryrule
+      - backend/internal/handlers/customer
+
+  - title: Algorithm API
+    path: api/algo-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/algorun
+
+  - title: Query Workbench API
+    path: api/query-workbench-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/query
+
+  - title: Search & Admin API
+    path: api/search-admin-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/search
+      - backend/internal/handlers/admin
+      - backend/internal/handlers/backfill
+
+  - title: Lakehouse API
+    path: api/lakehouse-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/lakehouse
+
+  - title: Pipeline & Workflow API
+    path: api/pipeline-workflow-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/pipeline
+      - backend/internal/handlers/pipeline_component
+      - backend/internal/handlers/workflow
+
+  - title: Registry API
+    path: api/registry-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/registry
+
+  - title: Infrastructure & Audit API
+    path: api/infrastructure-api.md
+    section: API Reference
+    sources:
+      - api/openapi.yaml
+      - backend/internal/handlers/audit
+      - backend/routes/routes.go
+
+  # ── Frontend Design ──────────────────────────────────────────
+  - title: Frontend Design
+    path: frontend/index.md
+    section: Frontend
+    sources:
+      - Frontend/src/App.tsx
+      - Frontend/package.json
+      - Frontend/src/main.tsx
+
+  - title: Layout & Routing
+    path: frontend/layout-and-routing.md
+    section: Frontend
+    sources:
+      - Frontend/src/App.tsx
+      - Frontend/src/components/AppLayout.tsx
+
+  - title: API Layer
+    path: frontend/api-layer.md
+    section: Frontend
+    sources:
+      - Frontend/src/api/client.ts
+      - Frontend/src/api/types.ts
+      - Frontend/src/api
+
+  - title: Hooks System
+    path: frontend/hooks-system.md
+    section: Frontend
+    sources:
+      - Frontend/src/hooks
+
+  - title: Dashboard Page
+    path: frontend/dashboard-page.md
+    section: Frontend
+    sources:
+      - Frontend/src/pages/DashboardPage.tsx
+      - Frontend/src/components/analytics
+
+  - title: Asset Pages
+    path: frontend/asset-pages.md
+    section: Frontend
+    sources:
+      - Frontend/src/pages/AssetsPage.tsx
+      - Frontend/src/pages/AssetDetailPage.tsx
+      - Frontend/src/components/assets
+      - Frontend/src/components/asset-detail
+
+  - title: MCAP Page
+    path: frontend/mcap-page.md
+    section: Frontend
+    sources:
+      - Frontend/src/pages/McapFilesPage.tsx
+      - Frontend/src/components/mcap
+
+  - title: Algorithm Pages
+    path: frontend/algo-pages.md
+    section: Frontend
+    sources:
+      - Frontend/src/pages/AlgoProcessingPage.tsx
+      - Frontend/src/pages/AlgoRunsPage.tsx
+      - Frontend/src/pages/AlgoRunDetailPage.tsx
+      - Frontend/src/components/algo-matrix
+
+  - title: Delivery Pages
+    path: frontend/delivery-pages.md
+    section: Frontend
+    sources:
+      - Frontend/src/pages/DeliveriesPage.tsx
+      - Frontend/src/pages/DeliveryDetailPage.tsx
+      - Frontend/src/components/deliveries
+
+  - title: Registry & Tag Pages
+    path: frontend/registry-tag-pages.md
+    section: Frontend
+    sources:
+      - Frontend/src/pages/RegistryCenterPage.tsx
+      - Frontend/src/pages/TagDictionaryPage.tsx
+
+  - title: Metrics & Events Pages
+    path: frontend/metrics-events-pages.md
+    section: Frontend
+    sources:
+      - Frontend/src/pages/MetricsSearchPage.tsx
+      - Frontend/src/pages/EventsPage.tsx
+      - Frontend/src/pages/SavedQueriesPage.tsx
+
+  - title: Pipeline & Workflow Pages
+    path: frontend/pipeline-workflow-pages.md
+    section: Frontend
+    sources:
+      - Frontend/src/pages/PipelinePage.tsx
+      - Frontend/src/pages/ComponentListPage.tsx
+      - Frontend/src/pages/WorkflowListPage.tsx
+      - Frontend/src/pages/WorkflowDetailPage.tsx
+      - Frontend/src/components/pipeline
+      - Frontend/src/pages/pipeline
+
+  - title: Shared UI Components
+    path: frontend/shared-ui-components.md
+    section: Frontend
+    sources:
+      - Frontend/src/components/common
+      - Frontend/src/lib
+
+  # ── SDK ──────────────────────────────────────────────────────
+  - title: SDK Guide
+    path: sdk/index.md
+    section: SDK
+    sources:
+      - sdk/README.md
+      - sdk/src/cyber_databrew_sdk/client.py
+
+  - title: Client & Requestor
+    path: sdk/client-and-requestor.md
+    section: SDK
+    sources:
+      - sdk/src/cyber_databrew_sdk/client.py
+      - sdk/src/cyber_databrew_sdk/_requestor.py
+      - sdk/src/cyber_databrew_sdk/_base_manager.py
+
+  - title: Managers
+    path: sdk/managers.md
+    section: SDK
+    sources:
+      - sdk/src/cyber_databrew_sdk/managers
+
+  - title: Configuration Resolution
+    path: sdk/config-resolution.md
+    section: SDK
+    sources:
+      - sdk/src/cyber_databrew_sdk/config
+      - sdk/src/cyber_databrew_sdk/_config.py
+      - sdk/src/cyber_databrew_sdk/_endpoints.py
+
+  # ── Security & Authentication ────────────────────────────────
+  - title: Security & Authentication
+    path: security/index.md
+    section: Security
+    sources:
+      - backend/internal/auth
+      - backend/internal/middleware
+
+  - title: Authentication Mechanism
+    path: security/authentication-mechanism.md
+    section: Security
+    sources:
+      - backend/internal/auth
+
+  - title: Authorization & Roles
+    path: security/authorization-and-roles.md
+    section: Security
+    sources:
+      - backend/internal/middleware
+      - backend/internal/auth
+
+  - title: Middleware
+    path: security/middleware.md
+    section: Security
+    sources:
+      - backend/internal/middleware
+
+  - title: Data Protection
+    path: security/data-protection.md
+    section: Security
+    sources:
+      - backend/internal/auth
+      - backend/.env.example
+
+  # ── Testing Strategy ─────────────────────────────────────────
+  - title: Testing Strategy
+    path: testing/index.md
+    section: Testing
+    sources:
+      - backend/Makefile
+      - Frontend/package.json
+      - Makefile
+
+  - title: Backend Tests
+    path: testing/backend-tests.md
+    section: Testing
+    sources:
+      - backend/internal/postgres/repos_test.go
+      - backend/internal/handlers/asset/handler_test.go
+      - backend/internal/outbox/relay_test.go
+
+  - title: Frontend Tests
+    path: testing/frontend-tests.md
+    section: Testing
+    sources:
+      - Frontend/src/pages/EventsPage.test.tsx
+      - Frontend/src/api/search.test.ts
+      - Frontend/src/setupTests.ts
+
+  - title: E2E & Smoke Tests
+    path: testing/e2e-and-smoke.md
+    section: Testing
+    sources:
+      - Makefile
+      - scripts
+
+  # ── Deployment & Operations ──────────────────────────────────
+  - title: Deployment & Operations
+    path: operations/index.md
+    section: Operations
+    sources:
+      - deploy
+      - Makefile
+
+  - title: Local Compose
+    path: operations/local-compose.md
+    section: Operations
+    sources:
+      - deploy/local/docker-compose.yml
+      - deploy/local/README.md
+      - Makefile
+
+  - title: Kubernetes
+    path: operations/kubernetes.md
+    section: Operations
+    sources:
+      - deploy/k8s
+
+  - title: Cloud Run
+    path: operations/cloud-run.md
+    section: Operations
+    sources:
+      - deploy/cloudrun
+      - docs/agents/deploy-before-commit.md
+      - docs/agents/deploy-verification.md
+
+  - title: Terraform
+    path: operations/terraform.md
+    section: Operations
+    sources:
+      - deploy/iac/terraform
+
+  - title: Tekton CI/CD
+    path: operations/tekton-cicd.md
+    section: Operations
+    sources:
+      - .tekton
+
+  - title: Migrations Runbook
+    path: operations/migrations-runbook.md
+    section: Operations
+    sources:
+      - scripts/apply-migration-dev.sh
+      - backend/migrations
+      - backend/Makefile
+
+  - title: Monitoring
+    path: operations/monitoring.md
+    section: Operations
+    sources:
+      - deploy/k8s
+      - backend/internal/middleware
+
+  # ── Development ──────────────────────────────────────────────
+  - title: Development Tooling
+    path: development/index.md
+    section: Development
+    sources:
+      - Makefile
+      - backend/Makefile
+      - scripts
+
+  - title: Makefile & Scripts
+    path: development/makefile-and-scripts.md
+    section: Development
+    sources:
+      - Makefile
+      - backend/Makefile
+      - scripts
+
+  - title: Agent Workflow & OpenSpec
+    path: development/agent-workflow-and-openspec.md
+    section: Development
+    sources:
+      - docs/agents/AI-RULES.md
+      - docs/agents/HARNESS.md
+      - openspec/config.yaml
+
+  - title: Contributing Guide
+    path: development/contributing.md
+    section: Development
+    sources:
+      - docs/agents/AI-RULES.md
+      - docs/agents/deploy-before-commit.md
+      - .githooks
+
+  # ── Troubleshooting ──────────────────────────────────────────
+  - title: Troubleshooting
+    path: troubleshooting.md
+    sources:
+      - backend/.env.example
+      - Frontend/vite.config.ts
+      - backend/routes/routes.go
+      - services/mcap-preview

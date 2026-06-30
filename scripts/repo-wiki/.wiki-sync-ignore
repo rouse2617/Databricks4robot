@@ -1,0 +1,21 @@
+# Code-side ignore list for scripts/repo-wiki/wiki_sync.py `check`.
+# Paths matching these globs never require a wiki update (they're not user-facing
+# behavior the wiki documents). One glob per line; `#` comments allowed.
+# Glob syntax: ** = any (crosses /), * = any non-/, ? = one non-/.
+
+# Tests
+**/*_test.go
+**/*_test.py
+**/*.test.ts
+**/*.test.tsx
+**/testdata/**
+**/__snapshots__/**
+**/*.snap
+
+# Generated / vendored
+**/__pycache__/**
+sdk/src/cyber_databrew_sdk/_version.py
+sdk/src/cyber_databrew_sdk/_generated/**
+
+# Docs are not "code" — wiki divergence is about code changes only
+docs/**
