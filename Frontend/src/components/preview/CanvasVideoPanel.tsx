@@ -51,16 +51,18 @@ export default function CanvasVideoPanel({
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasSizeRef = useRef({ w: 0, h: 0 });
+  const retryCountRef = useRef(0);
   const useNative = true // force native video;
 
   // ── Video state tracking ──
   const [status, setStatus] = useState<VideoStatus>(src ? "loading" : "idle");
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Reset status when src changes
+  // Reset status and retry counter when src changes
   useEffect(() => {
     setStatus(src ? "loading" : "idle");
     setErrorMsg("");
+    retryCountRef.current = 0;
   }, [src]);
 
   const handleVideoEvent = useCallback((type: string) => {
@@ -91,9 +93,20 @@ export default function CanvasVideoPanel({
   const handleVideoError = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
-    const msg = v.error
-      ? `MEDIA_${v.error.code}: ${v.error.message}`
-      : "视频加载失败";
+    const code = v.error?.code;
+    // MEDIA_ERR_DECODE (3): backend streams a cold H.265→H.264 transcode live;
+    // the fMP4 is sometimes malformed on first delivery but the cache is
+    // committed within seconds. Retry up to 2× after a 3s delay.
+    if (code === 3 && retryCountRef.current < 2) {
+      retryCountRef.current++;
+      setStatus("loading");
+      setTimeout(() => {
+        const vid = videoRef.current;
+        if (vid?.src) vid.load();
+      }, 3000);
+      return;
+    }
+    const msg = v.error ? `MEDIA_${code}: ${v.error.message}` : "视频加载失败";
     setErrorMsg(msg);
     setStatus("error");
   }, []);

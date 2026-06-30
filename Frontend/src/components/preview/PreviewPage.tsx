@@ -143,12 +143,20 @@ export default function PreviewPage() {
     (ch: PreviewChannel): string => {
       const src = loaded?.sources.find((s) => s.topic === ch.topic || s.id === ch.topic);
       if (!src) return "";
-      const sep = src.url.includes("?") ? "&" : "?";
+      const fullUrl = `${PREVIEW_BASE}${src.url}`;
+      const qIdx = fullUrl.indexOf("?");
+      const baseUrl = qIdx >= 0 ? fullUrl.slice(0, qIdx) : fullUrl;
+      const q = new URLSearchParams(qIdx >= 0 ? fullUrl.slice(qIdx + 1) : "");
+      if (previewRange) {
+        q.set("start_sec", String(previewRange.startSec));
+        q.set("end_sec", String(previewRange.endSec));
+      }
       const token = readSessionToken();
-      const tokenPart = token ? `${sep}databrew_token=${encodeURIComponent(token)}` : "";
-      return `${PREVIEW_BASE}${src.url}${tokenPart}`;
+      if (token) q.set("databrew_token", encodeURIComponent(token));
+      const qs = q.toString();
+      return qs ? `${baseUrl}?${qs}` : baseUrl;
     },
-    [loaded?.sources],
+    [loaded?.sources, previewRange],
   );
 
   // ── Throttle video timeupdate → React state ──
