@@ -52,16 +52,16 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 	}
 
 	job := &models.BackfillJob{
-		ID:          batchID,
-		TemplateID:  templateID,
-		Name:        name,
-		Status:      "pending",
-		PilotPhase:  "none",
-		TotalCount:  len(assetIDs),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		FilterJSON:  map[string]interface{}{},
-		CreatedBy:   owner,
+		ID:         batchID,
+		TemplateID: templateID,
+		Name:       name,
+		Status:     "pending",
+		PilotPhase: "none",
+		TotalCount: len(assetIDs),
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		FilterJSON: map[string]interface{}{},
+		CreatedBy:  owner,
 	}
 
 	if targetID != "" && targetID != "default" {
@@ -95,7 +95,7 @@ func (uc *Usecase) CreateBatchJob(ctx context.Context, templateID, name string, 
 	// A dedicated cancellable context lets StopBatchRuns halt submission.
 	jobCtx, cancel := context.WithCancel(context.Background())
 	uc.registerBatchCancel(batchID, cancel)
-	go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, submitWorkers)
+	go uc.processBatchJob(jobCtx, batchID, templateID, targetID, resolvedVersion, items, owner, submitWorkers, job.Name)
 
 	return job, nil
 }
@@ -127,7 +127,7 @@ const deployTimeout = 60 * time.Second
 // per-item — one failure does not cancel the batch.
 // Items are claimed from the database using ClaimNextItem so processing
 // survives service restarts.
-func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targetID string, templateVersion int, items []models.BackfillItem, owner string, submitWorkers int) {
+func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targetID string, templateVersion int, items []models.BackfillItem, owner string, submitWorkers int, batchName string) {
 	if submitWorkers <= 0 {
 		submitWorkers = defaultSubmitWorkers
 	}
@@ -170,7 +170,7 @@ func (uc *Usecase) processBatchJob(ctx context.Context, jobID, templateID, targe
 					Owner:              owner,
 				}}
 				itemCtx, itemCancel := context.WithTimeout(ctx, deployTimeout)
-				run, err := uc.CreateRunByTemplateID(itemCtx, templateID, "", []string{item.AssetID}, opts...)
+				run, err := uc.CreateRunByTemplateID(itemCtx, templateID, batchName, []string{item.AssetID}, opts...)
 				itemCancel()
 				if err != nil {
 					if errors.Is(err, context.Canceled) {

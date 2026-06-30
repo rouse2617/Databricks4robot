@@ -62,7 +62,7 @@ func TestProcessBatchJobCancelledContextPreservesCancelledStatus(t *testing.T) {
 		{ID: "i1", AssetID: "a1"},
 		{ID: "i2", AssetID: "a2"},
 	}
-	uc.processBatchJob(ctx, "job-1", "tmpl-1", "", 1, items, "owner", 4)
+	uc.processBatchJob(ctx, "job-1", "tmpl-1", "", 1, items, "owner", 4, "test-batch")
 
 	if repo.progressCalls != 1 {
 		t.Fatalf("UpdateJobProgress calls = %d, want 1", repo.progressCalls)
