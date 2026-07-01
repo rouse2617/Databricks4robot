@@ -3314,12 +3314,11 @@ func (uc *Usecase) DeployByTemplateID(ctx context.Context, templateID, name stri
 	if len(opts) > 0 {
 		requestedVersion = opts[0].TemplateVersion
 	}
-	// Resolve which version to deploy: explicit request > active pin > latest.
+	// Resolve which version to deploy: explicit request > current template version.
+	// Do NOT auto-apply activeVersion here; user's templateID choice must be respected.
 	resolvedVersion := t.Version
 	if requestedVersion > 0 && requestedVersion != t.Version {
 		resolvedVersion = requestedVersion
-	} else if requestedVersion == 0 && t.ActiveVersion > 0 && t.ActiveVersion != t.Version {
-		resolvedVersion = t.ActiveVersion
 	}
 	if resolvedVersion != t.Version {
 		versioned, err := uc.templateRepo.FindByNameAndVersion(ctx, t.Name, resolvedVersion)
