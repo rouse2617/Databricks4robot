@@ -3,3 +3,7 @@ bench
 megaTest
 .env
 test_report.md
+*.test
+coverage.out
+bin/
+vendor/
