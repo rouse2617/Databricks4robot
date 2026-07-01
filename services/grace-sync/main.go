@@ -42,8 +42,9 @@ type PipelineConfig struct {
 }
 
 type SyncConfig struct {
-	PageSize int    `json:"page_size"`
-	StepKey  string `json:"step_key"`
+	PageSize       int    `json:"page_size"`
+	StepKey        string `json:"step_key"`
+	LookbackHours  int    `json:"lookback_hours"`
 }
 
 // ─── types ────────────────────────────────────────────────
@@ -77,7 +78,7 @@ type BatchResponse struct {
 
 var (
 	cfg           Config
-	gracePassword = os.Getenv("GRACE_PASSWORD")
+	gracePassword = parseGracePassword(getEnv("GRACE_PASSWORD", ""))
 	databrewToken = getEnv("DATABREW_TOKEN", "dev-token")
 )
 
@@ -86,6 +87,31 @@ func getEnv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseGracePassword supports two formats for the GRACE_PASSWORD env var:
+//  1. Plain text: "<REDACTED-GRACE-PASSWORD>"
+//  2. JSON object (from GCP Secret Manager): {"AUTH_PASSWORD": "...", ...}
+//
+// GCP secrets often store credentials as JSON, so we extract AUTH_PASSWORD
+// when JSON is detected. This lets us mount the whole secret as a single
+// env var without splitting it into multiple.
+func parseGracePassword(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// Try JSON parse
+	if strings.HasPrefix(raw, "{") {
+		var creds struct {
+			AuthPassword string `json:"AUTH_PASSWORD"`
+		}
+		if err := json.Unmarshal([]byte(raw), &creds); err == nil && creds.AuthPassword != "" {
+			return creds.AuthPassword
+		}
+	}
+	// Fallback: treat as plain password
+	return raw
 }
 
 func main() {
@@ -156,8 +182,12 @@ func main() {
 			dayStart = from
 			dayEnd = to.AddDate(0, 0, 1)
 		} else {
+			lookback := cfg.Sync.LookbackHours
+			if lookback <= 0 {
+				lookback = 1
+			}
 			now := time.Now().In(loc)
-			dayStart = now.Add(-1 * time.Hour)
+			dayStart = now.Add(-time.Duration(lookback) * time.Hour)
 			dayEnd = now
 		}
 		log.Printf("Query: %s to %s | step_key=%s", dayStart.Format("2006-01-02 15:04:05"), dayEnd.Format("2006-01-02 15:04:05"), stepKey)
@@ -175,8 +205,11 @@ func main() {
 
 	log.Printf("Total: %d videos | template=%s | target=%s", len(videoIDs), tmplID, targetID)
 
-	if len(videoIDs) == 0 {
-		log.Printf("No videos — exiting")
+	createEmptyBatch := os.Getenv("CREATE_EMPTY_BATCH") == "true"
+	if len(videoIDs) == 0 && !createEmptyBatch {
+		log.Printf("No videos — sending notification")
+		notifyFeishu("", 0, tmplID)
+		log.Printf("Notification sent, exiting")
 		return
 	}
 
@@ -198,6 +231,9 @@ func main() {
 	log.Printf("Batch created: %s | status=%s | %d assets in %.1fs",
 		batchResp.BatchID, batchResp.Status, batchResp.AssetCount, time.Since(tStart).Seconds())
 	fmt.Printf("batch_id=%s\nstatus=%s\nassets=%d\n", batchResp.BatchID, batchResp.Status, batchResp.AssetCount)
+
+	// ─── Send Feishu notification ───
+	notifyFeishu(batchResp.BatchID, len(videoIDs), tmplID)
 }
 
 // ─── config loader ───────────────────────────────────────
@@ -210,20 +246,43 @@ func loadConfig(path string) error {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("parse: %w", err)
 	}
+	// ─── Environment variable overrides ───
+	// All config values can be overridden by env vars, allowing
+	// the same image to be deployed to dev/staging/prod without
+	// rebuilding or baking in secrets.
 	if v := os.Getenv("GRACE_API_URL"); v != "" {
 		cfg.Grace.APIURL = v
 	}
 	if v := os.Getenv("GRACE_USERNAME"); v != "" {
 		cfg.Grace.Username = v
 	}
+	if v := os.Getenv("GRACE_PASSWORD"); v != "" {
+		gracePassword = v
+	}
 	if v := os.Getenv("DATABREW_URL"); v != "" {
 		cfg.Databrew.APIURL = v
+	}
+	if v := os.Getenv("DATABREW_TOKEN"); v != "" {
+		databrewToken = v
 	}
 	if v := os.Getenv("PIPELINE_TEMPLATE_ID"); v != "" {
 		cfg.Pipeline.TemplateID = v
 	}
 	if v := os.Getenv("TARGET_ID"); v != "" {
 		cfg.Pipeline.TargetID = v
+	}
+	if v := os.Getenv("SYNC_PAGE_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Sync.PageSize = n
+		}
+	}
+	if v := os.Getenv("SYNC_STEP_KEY"); v != "" {
+		cfg.Sync.StepKey = v
+	}
+	if v := os.Getenv("SYNC_LOOKBACK_HOURS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Sync.LookbackHours = n
+		}
 	}
 	return nil
 }
@@ -290,6 +349,55 @@ func databrewLogin(client *http.Client) error {
 		return fmt.Errorf("login %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// ─── Feishu notification ──────────────────────────────────
+
+func notifyFeishu(batchID string, assetCount int, templateID string) {
+	webhook := os.Getenv("FEISHU_BOT_WEBHOOK")
+	if webhook == "" {
+		log.Printf("SKIP: FEISHU_BOT_WEBHOOK not set")
+		return
+	}
+
+	var message string
+	if batchID == "" {
+		// No videos found
+		message = fmt.Sprintf("⚠️ Grace-sync execution — no videos\n\n"+
+			"Time: %s\n"+
+			"Template: %s\n"+
+			"Status: no data to process",
+			time.Now().UTC().Format("2006-01-02 15:04:05 UTC"), templateID)
+	} else {
+		// Batch created
+		message = fmt.Sprintf("🚀 Grace-sync batch created\n\n"+
+			"Batch ID: %s\n"+
+			"Assets: %d\n"+
+			"Template: %s\n"+
+			"Time: %s\n"+
+			"Status: processing",
+			batchID, assetCount, templateID, time.Now().UTC().Format("2006-01-02 15:04:05 UTC"))
+	}
+
+	payload := map[string]interface{}{
+		"msg_type": "text",
+		"content": map[string]string{
+			"text": message,
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	resp, err := http.Post(webhook, "application/json", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("WARN: Feishu notification failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		log.Printf("WARN: Feishu webhook returned %d: %s", resp.StatusCode, string(respBody))
+	}
 }
 
 func submitBatch(client *http.Client, tmplID, targetID string, assetIDs []string, name string) (*BatchResponse, error) {
