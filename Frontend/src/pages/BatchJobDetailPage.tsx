@@ -500,43 +500,10 @@ export default function BatchJobDetailPage() {
 			if (!opts?.silent) {
 				setLoading(true);
 			}
-			const showNodeSummaryLoading = !opts?.silent;
-			if (showNodeSummaryLoading) {
-				setNodeSummaryLoading(true);
-			}
-			if (!opts?.silent) {
-				setRunTreeLoading(true);
-			}
 			const requestOptions = {
 				force: opts?.force,
 				useCache: opts?.useCache,
 			};
-			const nodeSummaryTask = loadBatchNodeSummary(id, requestOptions)
-				.then((summary) =>
-					setNodeSummary((current) =>
-						sameValue(current, summary) ? current : summary,
-					),
-				)
-				.catch(() =>
-					setNodeSummary((current) => (current === null ? current : null)),
-				)
-				.finally(() => {
-					if (showNodeSummaryLoading) {
-						setNodeSummaryLoading(false);
-					}
-				});
-			const runTreeTask = loadBatchRunTree(id, requestOptions)
-				.then((tree) =>
-					setRunTree((current) => (sameValue(current, tree) ? current : tree)),
-				)
-				.catch(() =>
-					setRunTree((current) => (current === null ? current : null)),
-				)
-				.finally(() => {
-					if (!opts?.silent) {
-						setRunTreeLoading(false);
-					}
-				});
 			try {
 				const jobData = await loadBatchJob(id, requestOptions);
 				setJob((current) => (sameValue(current, jobData) ? current : jobData));
@@ -554,17 +521,9 @@ export default function BatchJobDetailPage() {
 						current === meta.name ? current : meta.name,
 					);
 				}
-				void nodeSummaryTask;
-				void runTreeTask;
 			} catch (err) {
 				if (!opts?.silent) {
 					messageRef.current.error(`加载批次详情失败：${String(err)}`);
-				}
-				if (showNodeSummaryLoading) {
-					setNodeSummaryLoading(false);
-				}
-				if (!opts?.silent) {
-					setRunTreeLoading(false);
 				}
 			} finally {
 				if (!opts?.silent) {
@@ -578,6 +537,97 @@ export default function BatchJobDetailPage() {
 	useEffect(() => {
 		void refresh({ useCache: true });
 	}, [refresh]);
+
+	// 节点概览 / 子任务列表懒加载：这两个接口会聚合 1000+ run，是慢加载的主要瓶颈
+	// (CYB-2872)。mount 即 fetch 曾经是这个问题的根源，现在只在卡片/表格进入视口时才拉。
+	const loadHeavyDetailRef = useRef(false);
+	const loadHeavyDetail = useCallback(
+		async (opts?: { force?: boolean }) => {
+			if (!id) return;
+			if (loadHeavyDetailRef.current && !opts?.force) return;
+			loadHeavyDetailRef.current = true;
+			setNodeSummaryLoading(true);
+			setRunTreeLoading(true);
+			const requestOptions = { force: opts?.force };
+			try {
+				const [summary, tree] = await Promise.all([
+					loadBatchNodeSummary(id, requestOptions),
+					loadBatchRunTree(id, requestOptions),
+				]);
+				setNodeSummary((current) =>
+					sameValue(current, summary) ? current : summary,
+				);
+				setRunTree((current) => (sameValue(current, tree) ? current : tree));
+			} catch {
+				setNodeSummary((current) => (current === null ? current : null));
+				setRunTree((current) => (current === null ? current : null));
+			} finally {
+				setNodeSummaryLoading(false);
+				setRunTreeLoading(false);
+			}
+		},
+		[id],
+	);
+
+	// callback ref（而非 useRef+useEffect）：这个组件顶部有
+	// `if (loading && !job) return <Skeleton/>` 早退分支，首次渲染时该卡片根本不在
+	// DOM 树里。useEffect 只会在早退渲染后跑一次就永久错过挂载时机；callback ref
+	// 在 DOM 节点真正挂载的那次渲染都会被调用，不受早退路径影响。
+	const nodeOverviewObserverRef = useRef<IntersectionObserver | null>(null);
+	const nodeOverviewCallbackRef = useCallback(
+		(el: HTMLDivElement | null) => {
+			nodeOverviewObserverRef.current?.disconnect();
+			nodeOverviewObserverRef.current = null;
+			if (!el) return;
+			if (import.meta.env.TEST) {
+				void loadHeavyDetail();
+				return;
+			}
+			const observer = new IntersectionObserver(
+				(entries) => {
+					for (const entry of entries) {
+						if (entry.isIntersecting) {
+							void loadHeavyDetail();
+							observer.disconnect();
+							break;
+						}
+					}
+				},
+				{ threshold: 0.1 },
+			);
+			observer.observe(el);
+			nodeOverviewObserverRef.current = observer;
+		},
+		[loadHeavyDetail],
+	);
+
+	// 子任务执行记录表格懒加载：表格位于页面底部，滚动到视口前不挂载
+	// WorkflowExecutionList（避免它内部 mount 即触发的 listRuns 调用）。
+	const [subtaskListStarted, setSubtaskListStarted] = useState(false);
+	const subtaskListObserverRef = useRef<IntersectionObserver | null>(null);
+	const subtaskListCallbackRef = useCallback((el: HTMLDivElement | null) => {
+		subtaskListObserverRef.current?.disconnect();
+		subtaskListObserverRef.current = null;
+		if (!el) return;
+		if (import.meta.env.TEST) {
+			setSubtaskListStarted(true);
+			return;
+		}
+		const observer = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (entry.isIntersecting) {
+						setSubtaskListStarted(true);
+						observer.disconnect();
+						break;
+					}
+				}
+			},
+			{ threshold: 0.1 },
+		);
+		observer.observe(el);
+		subtaskListObserverRef.current = observer;
+	}, []);
 
 	const pollIntervalMs = batchJobPollIntervalMs(job?.status);
 
@@ -786,7 +836,12 @@ export default function BatchJobDetailPage() {
 				</Button>
 				<Button
 					icon={<ReloadOutlined />}
-					onClick={() => void refresh({ force: true })}
+					onClick={() => {
+						void refresh({ force: true });
+						if (loadHeavyDetailRef.current) {
+							void loadHeavyDetail({ force: true });
+						}
+					}}
 				>
 					刷新
 				</Button>
@@ -1087,107 +1142,123 @@ export default function BatchJobDetailPage() {
 				</Card>
 			) : null}
 
-			<Card
-				className="pipeline-batch-node-overview"
-				title="节点概览"
-				style={{ marginBottom: 16 }}
+			<div
+				ref={nodeOverviewCallbackRef}
+				data-testid="batch-node-overview-anchor"
 			>
-				{nodeSummary && !nodeSummary.dataCoverage.complete ? (
-					<Alert
-						type="info"
-						showIcon
-						message="节点状态仍在同步中，概览会随刷新更新"
-						style={{ marginBottom: 12 }}
+				<Card
+					className="pipeline-batch-node-overview"
+					title="节点概览"
+					style={{ marginBottom: 16 }}
+				>
+					{nodeSummary && !nodeSummary.dataCoverage.complete ? (
+						<Alert
+							type="info"
+							showIcon
+							message="节点状态仍在同步中，概览会随刷新更新"
+							style={{ marginBottom: 12 }}
+						/>
+					) : null}
+					{nodeSummaryLoading && !nodeSummary ? (
+						<Skeleton active paragraph={{ rows: 4 }} title={false} />
+					) : (
+						<Table
+							size="small"
+							rowKey="pipelineNodeId"
+							dataSource={nodeSummary?.nodes ?? []}
+							loading={nodeSummaryLoading}
+							locale={{ emptyText: "节点进度尚未生成" }}
+							pagination={false}
+							columns={[
+								{
+									title: "节点",
+									render: (_, record) =>
+										`${record.dagOrder}. ${record.displayName}`,
+								},
+								{ title: "成功", dataIndex: ["counts", "Succeeded"] },
+								{
+									title: "失败",
+									render: (_, record) => {
+										const failed =
+											(record.counts.Failed ?? 0) + (record.counts.Error ?? 0);
+										return failed > 0 ? (
+											<Button
+												type="link"
+												size="small"
+												onClick={() => openNodeDrawer(record, "failed")}
+											>
+												{failed} 失败
+											</Button>
+										) : (
+											0
+										);
+									},
+								},
+								{
+									title: "运行中",
+									render: (_, record) => {
+										const running = record.counts.Running ?? 0;
+										return running > 0 ? (
+											<Button
+												type="link"
+												size="small"
+												onClick={() => openNodeDrawer(record, "running")}
+											>
+												{running}
+											</Button>
+										) : (
+											0
+										);
+									},
+								},
+								{
+									title: "未开始",
+									render: (_, record) => {
+										const pending = record.counts.Pending ?? 0;
+										return pending > 0 ? (
+											<Button
+												type="link"
+												size="small"
+												onClick={() => openNodeDrawer(record, "pending")}
+											>
+												{pending}
+											</Button>
+										) : (
+											0
+										);
+									},
+								},
+								{
+									title: "失败率",
+									render: (_, record) =>
+										`${(record.failureRate * 100).toFixed(2)}%`,
+								},
+							]}
+						/>
+					)}
+				</Card>
+			</div>
+
+			<div ref={subtaskListCallbackRef} data-testid="batch-subtask-list-anchor">
+				{subtaskListStarted ? (
+					<WorkflowExecutionList
+						active
+						batchJobId={job.id}
+						embedded
+						nodeFilter={subtaskNodeFilter ?? undefined}
+						onClearNodeFilter={() => setSubtaskNodeFilter(null)}
+						onSelectionChange={setSelectedRuns}
+						title="子任务执行记录"
 					/>
-				) : null}
-				{nodeSummaryLoading && !nodeSummary ? (
-					<Skeleton active paragraph={{ rows: 4 }} title={false} />
 				) : (
-					<Table
-						size="small"
-						rowKey="pipelineNodeId"
-						dataSource={nodeSummary?.nodes ?? []}
-						loading={nodeSummaryLoading}
-						locale={{ emptyText: "节点进度尚未生成" }}
-						pagination={false}
-						columns={[
-							{
-								title: "节点",
-								render: (_, record) =>
-									`${record.dagOrder}. ${record.displayName}`,
-							},
-							{ title: "成功", dataIndex: ["counts", "Succeeded"] },
-							{
-								title: "失败",
-								render: (_, record) => {
-									const failed =
-										(record.counts.Failed ?? 0) + (record.counts.Error ?? 0);
-									return failed > 0 ? (
-										<Button
-											type="link"
-											size="small"
-											onClick={() => openNodeDrawer(record, "failed")}
-										>
-											{failed} 失败
-										</Button>
-									) : (
-										0
-									);
-								},
-							},
-							{
-								title: "运行中",
-								render: (_, record) => {
-									const running = record.counts.Running ?? 0;
-									return running > 0 ? (
-										<Button
-											type="link"
-											size="small"
-											onClick={() => openNodeDrawer(record, "running")}
-										>
-											{running}
-										</Button>
-									) : (
-										0
-									);
-								},
-							},
-							{
-								title: "未开始",
-								render: (_, record) => {
-									const pending = record.counts.Pending ?? 0;
-									return pending > 0 ? (
-										<Button
-											type="link"
-											size="small"
-											onClick={() => openNodeDrawer(record, "pending")}
-										>
-											{pending}
-										</Button>
-									) : (
-										0
-									);
-								},
-							},
-							{
-								title: "失败率",
-								render: (_, record) =>
-									`${(record.failureRate * 100).toFixed(2)}%`,
-							},
-						]}
+					<Skeleton
+						active
+						paragraph={{ rows: 6 }}
+						title={false}
+						style={{ width: "100%", marginTop: 16 }}
 					/>
 				)}
-			</Card>
-
-			<WorkflowExecutionList
-				active
-				batchJobId={job.id}
-				embedded
-				nodeFilter={subtaskNodeFilter ?? undefined}
-				onClearNodeFilter={() => setSubtaskNodeFilter(null)}
-				onSelectionChange={setSelectedRuns}
-				title="子任务执行记录"
-			/>
+			</div>
 
 			<Drawer
 				title={
