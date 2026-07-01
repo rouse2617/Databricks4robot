@@ -90,12 +90,14 @@ func getEnv(key, def string) string {
 }
 
 // parseGracePassword supports two formats for the GRACE_PASSWORD env var:
-//  1. Plain text: "<REDACTED-GRACE-PASSWORD>"
+//  1. Plain text password
 //  2. JSON object (from GCP Secret Manager): {"AUTH_PASSWORD": "...", ...}
 //
 // GCP secrets often store credentials as JSON, so we extract AUTH_PASSWORD
 // when JSON is detected. This lets us mount the whole secret as a single
-// env var without splitting it into multiple.
+// env var without splitting it into multiple. Do NOT commit a real password
+// into this file — even in a comment. See decisions.md for the original
+// example.
 func parseGracePassword(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -182,12 +184,20 @@ func main() {
 			dayStart = from
 			dayEnd = to.AddDate(0, 0, 1)
 		} else {
-			lookback := cfg.Sync.LookbackHours
-			if lookback <= 0 {
-				lookback = 1
+			lookbackHours := cfg.Sync.LookbackHours
+			if lookbackHours <= 0 {
+				lookbackHours = 1
+			}
+			// Lookback = hours (SYNC_LOOKBACK_HOURS) + extra minutes (SYNC_LOOKBACK_MINUTES)
+			// Use SYNC_LOOKBACK_MINUTES=30 with 30-min scheduler to avoid duplicate lookups.
+			extraMin := 0
+			if v := os.Getenv("SYNC_LOOKBACK_MINUTES"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					extraMin = n
+				}
 			}
 			now := time.Now().In(loc)
-			dayStart = now.Add(-time.Duration(lookback) * time.Hour)
+			dayStart = now.Add(-time.Duration(lookbackHours)*time.Hour - time.Duration(extraMin)*time.Minute)
 			dayEnd = now
 		}
 		log.Printf("Query: %s to %s | step_key=%s", dayStart.Format("2006-01-02 15:04:05"), dayEnd.Format("2006-01-02 15:04:05"), stepKey)
@@ -208,7 +218,7 @@ func main() {
 	createEmptyBatch := os.Getenv("CREATE_EMPTY_BATCH") == "true"
 	if len(videoIDs) == 0 && !createEmptyBatch {
 		log.Printf("No videos — sending notification")
-		notifyFeishu("", 0, tmplID)
+		notifyFeishu("", 0, tmplID, time.Since(tStart).Seconds())
 		log.Printf("Notification sent, exiting")
 		return
 	}
@@ -228,12 +238,13 @@ func main() {
 		log.Fatalf("Batch submit: %v", err)
 	}
 
+	elapsed := time.Since(tStart).Seconds()
 	log.Printf("Batch created: %s | status=%s | %d assets in %.1fs",
-		batchResp.BatchID, batchResp.Status, batchResp.AssetCount, time.Since(tStart).Seconds())
+		batchResp.BatchID, batchResp.Status, batchResp.AssetCount, elapsed)
 	fmt.Printf("batch_id=%s\nstatus=%s\nassets=%d\n", batchResp.BatchID, batchResp.Status, batchResp.AssetCount)
 
 	// ─── Send Feishu notification ───
-	notifyFeishu(batchResp.BatchID, len(videoIDs), tmplID)
+	notifyFeishu(batchResp.BatchID, len(videoIDs), tmplID, elapsed)
 }
 
 // ─── config loader ───────────────────────────────────────
@@ -353,30 +364,54 @@ func databrewLogin(client *http.Client) error {
 
 // ─── Feishu notification ──────────────────────────────────
 
-func notifyFeishu(batchID string, assetCount int, templateID string) {
+func notifyFeishu(batchID string, assetCount int, templateID string, elapsed float64) {
 	webhook := os.Getenv("FEISHU_BOT_WEBHOOK")
 	if webhook == "" {
 		log.Printf("SKIP: FEISHU_BOT_WEBHOOK not set")
 		return
 	}
 
+	now := time.Now().UTC()
+	nowCST := now.In(time.FixedZone("CST", 8*3600))
+
+	// Determine the query window string for the notification
+	lookbackHours := cfg.Sync.LookbackHours
+	if lookbackHours <= 0 {
+		lookbackHours = 1
+	}
+	extraMin := 0
+	if v := os.Getenv("SYNC_LOOKBACK_MINUTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			extraMin = n
+		}
+	}
+	windowStr := fmt.Sprintf("past %dh", lookbackHours)
+	if extraMin > 0 {
+		windowStr = fmt.Sprintf("past %dh%dm", lookbackHours, extraMin)
+	}
+
 	var message string
 	if batchID == "" {
 		// No videos found
 		message = fmt.Sprintf("⚠️ Grace-sync execution — no videos\n\n"+
-			"Time: %s\n"+
-			"Template: %s\n"+
-			"Status: no data to process",
-			time.Now().UTC().Format("2006-01-02 15:04:05 UTC"), templateID)
+			"⏰ Time: %s (UTC: %s)\n"+
+			"📊 Query: %s\n"+
+			"🎬 Template: %s\n"+
+			"⏱️ Elapsed: %.1fs\n"+
+			"📌 Status: no data to process",
+			nowCST.Format("2006-01-02 15:04:05"), now.Format("15:04:05"), windowStr, templateID, elapsed)
 	} else {
 		// Batch created
 		message = fmt.Sprintf("🚀 Grace-sync batch created\n\n"+
-			"Batch ID: %s\n"+
-			"Assets: %d\n"+
-			"Template: %s\n"+
-			"Time: %s\n"+
-			"Status: processing",
-			batchID, assetCount, templateID, time.Now().UTC().Format("2006-01-02 15:04:05 UTC"))
+			"📦 Batch: %s\n"+
+			"📊 Assets: %d\n"+
+			"🎬 Template: %s\n"+
+			"⏰ Time: %s (UTC: %s)\n"+
+			"📊 Query: %s\n"+
+			"⏱️ Elapsed: %.1fs\n"+
+			"📌 Status: processing",
+			batchID, assetCount, templateID,
+			nowCST.Format("2006-01-02 15:04:05"), now.Format("15:04:05"), windowStr, elapsed)
 	}
 
 	payload := map[string]interface{}{
@@ -397,6 +432,8 @@ func notifyFeishu(batchID string, assetCount int, templateID string) {
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		log.Printf("WARN: Feishu webhook returned %d: %s", resp.StatusCode, string(respBody))
+	} else {
+		log.Printf("INFO: Feishu notification sent successfully")
 	}
 }
 

@@ -1,0 +1,36 @@
+---
+name: gitleaks
+
+# Secret scanning gate. Catches tokens, passwords, API keys, GCP service-account
+# JSON, etc. in PRs and direct pushes to protected branches. Fails the workflow
+# on any finding so the PR cannot merge with leaked credentials.
+# Pre-commit runs detect-secrets locally for the same purpose; gitleaks is the
+# CI-side counterpart with a richer rule set.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # Repo-owned config; allowed list excludes .secrets.baseline.
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # Upload SARIF so the GitHub Code Scanning UI surfaces findings.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

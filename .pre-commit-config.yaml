@@ -15,11 +15,15 @@ repos:
         exclude: ^(package-lock\.json|site/)
 
   # 2. Scanning for specific cloud provider signatures
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.18.2
-    hooks:
-      - id: gitleaks
-        args: ["--config=.gitleaks.toml"]
+  # The pre-commit gitleaks hook manifest is broken for current gitleaks versions;
+  # the gitleaks scan is owned by .github/workflows/gitleaks.yml instead. Detect-secrets
+  # above is the local pre-commit gate and is intentionally left enabled for fast local
+  # checks (it catches plain high-entropy strings like the dev GRACE_PASSWORD).
+  # - repo: https://github.com/gitleaks/gitleaks
+  #   rev: v8.18.2
+  #   hooks:
+  #     - id: gitleaks
+  #       args: ["--config=.gitleaks.toml"]
 
   # 3. Standard Git "Sanity" Checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
