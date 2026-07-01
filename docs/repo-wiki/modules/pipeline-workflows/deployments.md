@@ -625,3 +625,22 @@ The `asset_ids` value is also added as a workflow-level `transpiler.Param`.
 
 **Section sources**
 - [backend/internal/usecase/pipeline/usecase.go](file://backend/internal/usecase/pipeline/usecase.go#L179-L217)
+
+## 2026-07 Update (PR #270): Pipeline P2
+
+`Pipeline` deploys now carry an `executionTarget?: ExecutionTarget` so a single
+backend can dispatch to the cyber-databrew-dev, video-proc-dev, and
+video-proc-prod namespaces without requiring a separate deployment per target
+(see [Argo Integration](argo-integration.md) and
+[Architecture → Execution Targets](../architecture/deployment-architecture.md)).
+
+The new
+[backend/internal/usecase/pipeline/scheduling.go](file://backend/internal/usecase/pipeline/scheduling.go)
+hides the target lookup behind a single helper (`ResolveTarget`); callers in
+the usecase layer no longer reach into the registry directly. New
+[backend/internal/handlers/pipeline/batch_handler.go](file://backend/internal/handlers/pipeline/batch_handler.go)
+exposes the `/runs/batch` endpoint used by the `grace-sync` service to create
+batches from external video sets. The complementary frontend
+[Frontend/src/components/pipeline/DeployPanel.tsx](file://Frontend/src/components/pipeline/DeployPanel.tsx)
+now includes the target selector and asset-binding UI that surface these new
+fields to operators.

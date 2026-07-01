@@ -602,4 +602,40 @@ carries `source` and `target`.
 - [backend/internal/postgres/pipeline_repo.go](file://backend/internal/postgres/pipeline_repo.go#L26-L26)
 - [backend/internal/postgres/pipeline_repo.go](file://backend/internal/postgres/pipeline_repo.go#L187-L188)
 </content>
+
+## 2026-07 Update (PR #270): Pipeline P2
+
+**Templates become versioned.** `PipelineTemplate` now carries `version`,
+`versionCount?`, `activeVersion?`, `scope?`, `owner?`, and `updatedAt?`. The
+`scope` / `owner` columns correspond to migration
+[backend/migrations/051_template_scope_owner.sql](file://backend/migrations/051_template_scope_owner.sql);
+`version` and the active-version pointer come from
+[backend/migrations/050_pipeline_template_active_version.sql](file://backend/migrations/050_pipeline_template_active_version.sql).
+The Go model
+[backend/internal/models/pipeline.go](file://backend/internal/models/pipeline.go)
+and the Postgres repository
+[backend/internal/postgres/pipeline_repo.go](file://backend/internal/postgres/pipeline_repo.go)
+were updated together; the `activeVersion` pointer is what `DeployPanel` reads
+when the caller does not specify an explicit templateVersion. **Migrations 050
+and 051 must be applied to dev before the new backend image rolls out** or the
+new columns 500 every deploy that touches the table.
+
+**Deployments carry template lineage.** `Deployment` now exposes
+`templateId?`, `templateVersion?`, `assetIds?`, `assetCount?`, and
+`executionTarget?: ExecutionTarget`. The frontend client
+[Frontend/src/api/pipelineApi.ts](file://Frontend/src/api/pipelineApi.ts) was
+updated in lockstep so the typed surface matches the Go struct exactly. Per
+the repo's API-contract-first rule, both `api/openapi.yaml` and
+`docs/repo-wiki/api/pipeline-workflow-api.md` must be re-generated alongside
+this change.
+
+**New runtime support surface.** A new
+[backend/internal/usecase/pipeline/runtime_mounts.go](file://backend/internal/usecase/pipeline/runtime_mounts.go)
+handles runtime volume mounts for pipeline components, and a new
+[backend/internal/handlers/workflow/terminal.go](file://backend/internal/handlers/workflow/terminal.go)
+exposes the pod terminal for interactive debugging. The companion
+[backend/internal/usecase/runs/usecase.go](file://backend/internal/usecase/runs/usecase.go)
+subsystem powers the new "databrew_runs" pipeline-run query path introduced
+in migration
+[backend/migrations/054_databrew_runs.sql](file://backend/migrations/054_databrew_runs.sql).
 </invoke>

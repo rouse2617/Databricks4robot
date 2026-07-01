@@ -9,6 +9,12 @@
 - [services/mcap-preview/internal/server/mcap_reader_cache.go](file://services/mcap-preview/internal/server/mcap_reader_cache.go)
 - [services/mcap-preview/cmd/server/main.go](file://services/mcap-preview/cmd/server/main.go)
 - [services/mcap-preview/README.md](file://services/mcap-preview/README.md)
+- [Frontend/src/components/preview/VideoPanel.tsx](file://Frontend/src/components/preview/VideoPanel.tsx)
+- [Frontend/src/components/preview/CanvasVideoPanel.tsx](file://Frontend/src/components/preview/CanvasVideoPanel.tsx)
+- [Frontend/src/components/preview/UnifiedTimeline.tsx](file://Frontend/src/components/preview/UnifiedTimeline.tsx)
+- [Frontend/src/components/preview/RangeSlider.tsx](file://Frontend/src/components/preview/RangeSlider.tsx)
+- [Frontend/src/components/preview/LogPanel.tsx](file://Frontend/src/components/preview/LogPanel.tsx)
+- [Frontend/src/components/preview/PreviewPage.tsx](file://Frontend/src/components/preview/PreviewPage.tsx)
 </cite>
 
 ## Table of Contents
@@ -713,3 +719,25 @@ gateway.
 - [services/mcap-preview/internal/server/segment.go](file://services/mcap-preview/internal/server/segment.go#L27-L58)
 - [services/mcap-preview/cmd/server/main.go](file://services/mcap-preview/cmd/server/main.go#L62-L103)
 - [services/mcap-preview/internal/server/mcap_reader_cache.go](file://services/mcap-preview/internal/server/mcap_reader_cache.go#L48-L50)
+
+## 2026-07 Update (PR #270)
+
+**Codec allow-list widened.** The `pickTopic` logic in
+[services/mcap-preview/internal/server/segment.go](file://services/mcap-preview/internal/server/segment.go#L246-L290)
+now accepts h264, h265, and JPEG (in addition to the original h264-only
+selection) for any topic whose schema name contains `compressedvideo` or
+`safari_sdk.protos.image`. The schema-name check is extracted into a
+`isSupportedSchema` helper to remove the inline `strings.Contains` repetition.
+The muxer's downstream must already handle h265/jpeg, otherwise accepted topics
+will fail later in the fMP4 muxer.
+
+**New frontend preview module.** The React app gained a new
+`Frontend/src/components/preview/` directory (14 new components) that powers the
+in-browser preview experience: `VideoPanel` (default `<video>`-based player),
+`CanvasVideoPanel` (canvas-based renderer for h265/JPEG), `UnifiedTimeline` and
+`RangeSlider` (time-window UI), `StateBand` (state-bands on the timeline),
+`LogPanel` (sibling consumer of the SSE log stream — see
+[Argo Integration](../pipeline-workflows/argo-integration.md)), `JsonTreeView`,
+`TimeSeriesChart`, and the orchestrating `PreviewPage` route component.
+`VideoGrid` and `AssetInputBar` are the entry points. The page is mounted under
+the standard asset-detail flow.

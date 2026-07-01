@@ -643,4 +643,35 @@ README but are not yet present in the directory.
 - [.tekton/push-frontend-cloudrun-prod.yaml](file://.tekton/push-frontend-cloudrun-prod.yaml#L14-L138)
 - [.tekton/README.md](file://.tekton/README.md#L42-L106)
 </content>
+
+## 2026-07 Update (PR #270): Tekton → GitHub Actions
+
+**Tekton is retired.** The whole `.tekton/` tree is deleted (7 files, ~1,589
+lines). The `tekton-builder` and `tekton-catalog-runner` service accounts
+remain in the GCP project but no new pipeline YAML is consumed.
+
+**GitHub Actions is the new CI.** Three workflow files replace Tekton:
+
+- [.github/workflows/deploy-dev.yml](file://.github/workflows/deploy-dev.yml) —
+  path-filtered deploy of `backend/` and `services/mcap-preview/` to Cloud Run
+  on push to `dev`. Uses `dorny/paths-filter@v3` so unrelated pushes don't
+  redeploy. Frontend dev is intentionally excluded — the Cloudflare GitHub App
+  integration owns the frontend deploy.
+- [.github/workflows/deploy-prod.yml](file://.github/workflows/deploy-prod.yml) —
+  production deploys.
+- [.github/workflows/preview-cloudrun.yml](file://.github/workflows/preview-cloudrun.yml) —
+  per-PR preview environments.
+
+**Auth model.** The workflows use OIDC (`id-token: write`) with Workload
+Identity. The deploy steps still run as `cyber-databrew-dev@…` against the dev
+project, and `K8S_USE_METADATA_TOKEN=true` enables token auto-refresh (see the
+[Cloud Run runbook](cloud-run.md#auth) for the env-var contract). The legacy
+`K8S_BEARER_TOKEN` static-token approach is **deprecated** — do not revert to
+it.
+
+**VM deploy path.** The local
+[deploy/cloudrun/backend-dev.sh](file://deploy/cloudrun/backend-dev.sh) script
+still exists for direct-from-VM deploys. It now sources secrets via
+`--set-secrets=GRACE_PASSWORD=grace-api-dev:AUTH_PASSWORD:latest` and references
+GCP Secret Manager rather than embedding any value inline.
 </invoke>
