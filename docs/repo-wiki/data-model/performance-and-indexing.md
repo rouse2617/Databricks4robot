@@ -4,8 +4,8 @@
 **Referenced Files in This Document**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql)
 - [backend/internal/postgres/batch_ops.go](file://backend/internal/postgres/batch_ops.go)
 - [backend/internal/handlers/pagination.go](file://backend/internal/handlers/pagination.go)
 - [backend/internal/postgres/customers.go](file://backend/internal/postgres/customers.go)
@@ -78,7 +78,7 @@ graph TB
 
 **Section sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L1-L5)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L1-L34)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L1-L34)
 
 ## Core Components
 
@@ -172,8 +172,8 @@ statement — the cited line is the exact definition.
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L682-L818)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L914-L929)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql#L16-L17)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L18-L18)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L17-L34)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L18-L18)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L17-L34)
 
 #### Partial indexes and the `is_deleted` gate
 
@@ -449,7 +449,7 @@ bulk ops and the data layer scales predictably.
 **Section sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L629-L680)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L919-L929)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L18-L18)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L18-L18)
 
 ### Default limits and chunk sizes
 

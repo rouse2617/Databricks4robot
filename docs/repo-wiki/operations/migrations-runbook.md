@@ -13,10 +13,10 @@
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql)
 </cite>
 
 ## Table of Contents
@@ -296,9 +296,9 @@ pod *inside* the GKE cluster that already has network reach to the private host.
 The invocation accepts either a path or a bare filename:
 
 ```bash
-bash scripts/apply-migration-dev.sh backend/migrations/044_asset_model_p2.sql
+bash scripts/apply-migration-dev.sh backend/migrations/045_asset_model_p2.sql
 # or, with overridable namespace:
-K8S_NAMESPACE=cyber-databrew-dev bash scripts/apply-migration-dev.sh 044_asset_model_p2.sql
+K8S_NAMESPACE=cyber-databrew-dev bash scripts/apply-migration-dev.sh 045_asset_model_p2.sql
 ```
 
 Resolution logic: the script accepts the argument verbatim if it is a file,
@@ -360,12 +360,12 @@ what makes lexical order match intended order. Two boundaries matter:
   never double-applied, and it iterates the remaining `*.sql` in sorted order.
   As a result the active set begins at `039`.
 - **The active deltas (`039`–`044`).** These are applied on top of the
-  baseline. Their dependencies are real: `042_backfill_tables.sql` declares
+  baseline. Their dependencies are real: `043_backfill_tables.sql` declares
   `template_id TEXT NOT NULL REFERENCES pipeline_templates(id)`, which only
   exists because `039_pipeline_tables.sql` created `pipeline_templates`. A
   backfill table cannot be created before the pipeline tables. Likewise
-  `044_asset_model_p2.sql` re-declares the `chk_relation_type` and
-  `chk_mcap_file_required` constraints that `043_asset_model_expansion_p1.sql`
+  `045_asset_model_p2.sql` re-declares the `chk_relation_type` and
+  `chk_mcap_file_required` constraints that `044_asset_model_expansion_p1.sql`
   first introduced, broadening the allowed `relation_type` and `asset_type`
   sets — `044` must run after `043`.
 
@@ -385,16 +385,16 @@ graph LR
 
 **Diagram sources**
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L5-L26)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L4-L15)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L3-L22)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L3-L37)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L4-L15)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L3-L22)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L3-L37)
 
 **Section sources**
 - [backend/scripts/apply_pg_deltas.sh](file://backend/scripts/apply_pg_deltas.sh#L58-L80)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L1-L26)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L1-L35)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L1-L22)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L1-L37)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L1-L35)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L1-L22)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L1-L37)
 
 ### The dev-before-deploy rule
 
@@ -496,7 +496,7 @@ graph LR
   leaving a half-applied migration. Keep migrations transactional and idempotent
   (`IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS ... ADD CONSTRAINT`) so a retry
   after a partial failure is safe — the active deltas already follow this style.
-- **Idempotent indexes.** `042_backfill_tables.sql` uses
+- **Idempotent indexes.** `043_backfill_tables.sql` uses
   `CREATE INDEX IF NOT EXISTS`, so re-applying it does not error and does not
   rebuild existing indexes.
 - **Ledger-based skip.** `apply_pg_deltas.sh` records applied files in
@@ -513,7 +513,7 @@ graph LR
 **Section sources**
 - [scripts/apply-migration-dev.sh](file://scripts/apply-migration-dev.sh#L66-L72)
 - [backend/scripts/apply_pg_deltas.sh](file://backend/scripts/apply_pg_deltas.sh#L24-L53)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L17-L34)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L17-L34)
 
 ## Troubleshooting Guide
 
@@ -627,14 +627,14 @@ single rule that prevents the most common schema-related outage.
 | `000_initial.sql` | Squashed baseline: extensions, functions, all tables/indexes/constraints |
 | `039_pipeline_tables.sql` | `pipeline_templates`, `pipeline_deployments` |
 | `040_pipeline_components.sql` | Pipeline component definitions |
-| `041_pipeline_template_version.sql` | Pipeline template versioning |
-| `042_backfill_tables.sql` | `backfill_jobs`, `backfill_items` (FK → `pipeline_templates`) |
-| `043_asset_model_expansion_p1.sql` | Widen `chk_relation_type` / `chk_mcap_file_required` (dataset, annotation) |
-| `044_asset_model_p2.sql` | Further widen both constraints (`ml_model`, `evaluation_report`) + `asset_relations.metadata` |
+| `042_pipeline_template_version.sql` | Pipeline template versioning |
+| `043_backfill_tables.sql` | `backfill_jobs`, `backfill_items` (FK → `pipeline_templates`) |
+| `044_asset_model_expansion_p1.sql` | Widen `chk_relation_type` / `chk_mcap_file_required` (dataset, annotation) |
+| `045_asset_model_p2.sql` | Further widen both constraints (`ml_model`, `evaluation_report`) + `asset_relations.metadata` |
 
 **Section sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L1-L4)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L1-L26)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L1-L34)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L1-L22)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L1-L37)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L1-L34)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L1-L22)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L1-L37)

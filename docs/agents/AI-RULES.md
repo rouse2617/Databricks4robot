@@ -267,7 +267,7 @@ Since 2026-06-24, DataBrew supports UUID-format asset IDs alongside the original
 - Uses UUID as `asset_id` (Grace segmentation_id)
 - Does NOT require `mcap_file_id` (schema bypasses it)
 - DB constraints updated: `assets_asset_id_check`, `chk_mcap_file_required`, etc.
-- Migration: `backend/migrations/058_grace_video_asset_id.sql`
+- Migration: `backend/migrations/060_grace_video_asset_id.sql`
 - Trigger: `trg_nullify_empty_mcap` converts empty mcap_file_id to NULL
 - When creating grace_video assets, set `asset_type: "grace_video"` and skip `mcap_file_id`
 Argo Workflows API server runs inside the dev K8s cluster (e.g. `http://10.2.1.211:2746`), NOT on Cloud Run. The Cloud Run service `cyber-databrew-pipeline-ui-dev` is a separate UI proxy, not the Argo API.

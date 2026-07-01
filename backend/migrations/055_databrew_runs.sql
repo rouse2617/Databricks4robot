@@ -1,4 +1,4 @@
--- 054: Unified DataBrew Run core table and build extension tables.
+-- 055: Unified DataBrew Run core table and build extension tables.
 
 CREATE TABLE IF NOT EXISTS databrew_runs (
     id                      TEXT PRIMARY KEY,

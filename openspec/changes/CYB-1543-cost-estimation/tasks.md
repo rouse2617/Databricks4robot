@@ -13,7 +13,7 @@
   - `ComputeCost(resourcesDuration map[string]interface{}, pricing PricingConfig) *float64`
   - Lookup: resourcesDuration keys ("cpu", "nvidia.com/gpu") → pricing → hourly rate → cost
 
-- [x] **B4: Migration** — `backend/migrations/045_pipeline_run_nodes_cost.sql`
+- [x] **B4: Migration** — `backend/migrations/046_pipeline_run_nodes_cost.sql`
   ```sql
   ALTER TABLE pipeline_run_nodes ADD COLUMN estimated_cost_usd DECIMAL(12,4);
   ```

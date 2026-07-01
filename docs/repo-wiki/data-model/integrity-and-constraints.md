@@ -5,10 +5,10 @@
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql)
 - [backend/internal/postgres/client.go](file://backend/internal/postgres/client.go)
 </cite>
 
@@ -70,10 +70,10 @@ graph TB
     M000["000_initial.sql<br/>baseline schema, PK/FK/CHECK/UNIQUE/defaults/triggers"]
     M039["039_pipeline_tables.sql"]
     M040["040_pipeline_components.sql"]
-    M041["041_pipeline_template_version.sql"]
-    M042["042_backfill_tables.sql"]
-    M043["043_asset_model_expansion_p1.sql"]
-    M044["044_asset_model_p2.sql"]
+    M041["042_pipeline_template_version.sql"]
+    M042["043_backfill_tables.sql"]
+    M043["044_asset_model_expansion_p1.sql"]
+    M044["045_asset_model_p2.sql"]
   end
   subgraph "Runtime (application-enforced integrity)"
     CLIENT["postgres.Client"]
@@ -152,7 +152,7 @@ erDiagram
 **Diagram sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L850-L911)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql#L14-L17)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L4-L31)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L4-L31)
 
 **Section sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L850-L911)
@@ -253,7 +253,7 @@ flowchart TD
 
 **Section sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L850-L911)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L21-L23)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L21-L23)
 
 ### CHECK Constraints
 
@@ -309,8 +309,8 @@ timestamps because the database derives it.
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L352-L357)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L475-L478)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L519-L520)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L3-L22)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L3-L37)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L3-L22)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L3-L37)
 
 ### NOT NULL Columns and Defaults
 
@@ -382,7 +382,7 @@ indexes** on `mcap_files` and `assets`:
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L628-L680)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L913-L929)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L276-L279)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql#L17-L18)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql#L17-L18)
 
 ### Soft Delete
 

@@ -6,10 +6,10 @@
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql)
 - [backend/migrations/039_pipeline_tables.sql](file://backend/migrations/039_pipeline_tables.sql)
 - [backend/migrations/040_pipeline_components.sql](file://backend/migrations/040_pipeline_components.sql)
-- [backend/migrations/041_pipeline_template_version.sql](file://backend/migrations/041_pipeline_template_version.sql)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql)
+- [backend/migrations/042_pipeline_template_version.sql](file://backend/migrations/042_pipeline_template_version.sql)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql)
 - [backend/internal/models/asset.go](file://backend/internal/models/asset.go)
 - [backend/internal/models/schema_evolution.go](file://backend/internal/models/schema_evolution.go)
 - [backend/internal/models/algo_run.go](file://backend/internal/models/algo_run.go)
@@ -224,7 +224,7 @@ baseline migration) and one general-purpose edge table:
 **Section sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L246-L258)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L851-L911)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L21-L33)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L21-L33)
 
 ### JSONB usage principles
 

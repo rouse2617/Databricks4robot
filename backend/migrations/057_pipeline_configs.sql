@@ -1,4 +1,4 @@
--- 055: Standalone pipeline config files and immutable file versions.
+-- 057: Standalone pipeline config files and immutable file versions.
 
 CREATE TABLE IF NOT EXISTS pipeline_configs (
     id TEXT PRIMARY KEY,

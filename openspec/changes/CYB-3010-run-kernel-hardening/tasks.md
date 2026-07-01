@@ -1,9 +1,9 @@
 # Tasks - CYB-3010
 
 ## Context files
-- `backend/migrations/040_pipeline_run_model.sql`
-- `backend/migrations/046_pipeline_run_events.sql`
-- `backend/migrations/052_batch_job_pipeline_runs.sql`
+- `backend/migrations/041_pipeline_run_model.sql`
+- `backend/migrations/047_pipeline_run_events.sql`
+- `backend/migrations/053_batch_job_pipeline_runs.sql`
 - `backend/internal/models/pipeline.go`
 - `backend/internal/repository/pipeline_repository.go`
 - `backend/internal/postgres/pipeline_repo.go`
@@ -49,7 +49,7 @@
 - [x] [repo] `git diff --check`.
 
 ## Deploy Verification
-- [x] [db] Apply `backend/migrations/056_run_kernel_facts.sql` to dev before backend deploy.
+- [x] [db] Apply `backend/migrations/058_run_kernel_facts.sql` to dev before backend deploy.
 - [x] [backend] Deploy backend dev with SHA image and record revision.
 - [x] [backend] Smoke `/readyz`, `/api/v1/runs`, `/api/v1/runs/{id}/inputs`, and `/api/v1/runs/{id}/children`.
 - [x] [Frontend] Start local frontend against dev backend and verify Batch Detail aggregate health and Run Inspector metadata.
@@ -60,7 +60,7 @@
 | backend-dev | `cyber-databrew-backend:bba96db-cyb3010-run-facts-20260620210151` | `cyber-databrew-backend-dev-00972-7rv` | `https://cyber-databrew-backend-dev-wtttm6suaq-uc.a.run.app` |
 
 ### Verification evidence
-- Migration applied to dev: `backend/migrations/056_run_kernel_facts.sql`.
+- Migration applied to dev: `backend/migrations/058_run_kernel_facts.sql`.
 - Backend smoke: `scripts/smoke-runs-dev.sh` -> `23 passed, 0 failed`.
 - API spot checks:
   - `/readyz` -> 200.

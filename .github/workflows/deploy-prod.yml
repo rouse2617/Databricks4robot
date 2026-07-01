@@ -1,12 +1,20 @@
 name: deploy-prod
 
 # Consolidated prod deploy: backend(Cloud Run) + frontend(CF Worker).
-# Triggers on semantic version tags only. Both jobs require production approval.
+# Triggers on semantic version tags, or manual dispatch with an explicit
+# version_tag input (workflow_dispatch does NOT run on a tag ref, so
+# github.ref_name would otherwise resolve to a branch name like "main" —
+# see resolve-version below). Both jobs require production approval.
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Semver tag to deploy (e.g. v1.2.3) — must already exist as a git tag'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -20,16 +28,39 @@ env:
   REGION: us-central1
 
 jobs:
+  # ─── Resolve & validate the version to deploy ────────────────────────────────
+  resolve-version:
+    name: Resolve deploy version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve and validate version tag
+        id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version_tag }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$VERSION' does not match the required vX.Y.Z tag pattern"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
   # ─── Backend ────────────────────────────────────────────────────────────────
   deploy-backend:
     name: Build & Deploy backend → Cloud Run prod
+    needs: resolve-version
     runs-on: ubuntu-latest
     environment: production
     concurrency:
       group: deploy-backend-prod
       cancel-in-progress: false
     env:
-      IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:${{ github.ref_name }}
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+      IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:${{ needs.resolve-version.outputs.version }}
       CACHE_IMAGE: us-central1-docker.pkg.dev/green-valley-442103/cyber-databrew-images/cyber-databrew-backend:buildcache
     steps:
       - id: auth
@@ -50,21 +81,28 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMMIT_SHA: ${{ github.sha }}
-          VERSION: ${{ github.ref_name }}
         run: |
           AR_TOKEN=$(gcloud auth print-access-token)
-          CLONE_URL="https://x-access-token:${GH_TOKEN}@github.com/CyberOrigin2077/cyber-databrew.git"
+
+          # NOTE: the token-bearing URL below is only ever used as a
+          # one-shot fetch/clone source — it is never written to `origin`
+          # via `git remote set-url`, so it can't be read back out of
+          # .git/config on the VM after this step finishes. For a fresh
+          # clone (which does briefly set `origin` to this URL), we
+          # immediately rewrite `origin` to the public, token-free URL.
+          AUTH_URL="https://x-access-token:${GH_TOKEN}@github.com/CyberOrigin2077/cyber-databrew.git"
+          PUBLIC_URL="https://github.com/CyberOrigin2077/cyber-databrew.git"
 
           ssh -i ~/.ssh/vm_key ${{ env.VM_USER }}@${{ env.VM_HOST }} bash << ENDSSH
           set -euo pipefail
 
           echo "--- [1/3] sync code: $VERSION ($COMMIT_SHA) ---"
           if [ -d ${{ env.REPO_DIR }}/.git ]; then
-            git -C ${{ env.REPO_DIR }} remote set-url origin "$CLONE_URL" 2>/dev/null
-            git -C ${{ env.REPO_DIR }} fetch --depth=1 origin refs/tags/$VERSION -q
+            git -C ${{ env.REPO_DIR }} fetch --depth=1 "$AUTH_URL" "refs/tags/$VERSION" -q
             git -C ${{ env.REPO_DIR }} reset --hard FETCH_HEAD -q
           else
-            git clone --depth=1 --branch $VERSION "$CLONE_URL" ${{ env.REPO_DIR }} -q
+            git clone --depth=1 --branch "$VERSION" "$AUTH_URL" ${{ env.REPO_DIR }} -q
+            git -C ${{ env.REPO_DIR }} remote set-url origin "$PUBLIC_URL"
           fi
           echo "    code ready: \$(git -C ${{ env.REPO_DIR }} log -1 --oneline)"
 
@@ -92,46 +130,51 @@ jobs:
 
       - name: Deploy to Cloud Run prod
         run: |
+          # --update-env-vars merges into the existing env var set; --set-env-vars
+          # would REPLACE the entire set (gcloud docs: "All existing environment
+          # variables will be removed first"), which would wipe JWT_SECRET,
+          # DATABREW_TOKEN, DB_HOST, and every other prod env var on first run.
           gcloud run deploy cyber-databrew-backend-prod \
             --image="${{ env.IMAGE }}" \
             --region=${{ env.REGION }} \
             --project=${{ env.PROJECT_ID }} \
             --platform=managed \
             --service-account=cyber-databrew-cloudrun-prod@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
-            --set-env-vars=DEPLOYMENT_VERSION=${{ github.ref_name }}
+            --update-env-vars=DEPLOYMENT_VERSION=${{ env.VERSION }}
 
       - name: Verify backend health
         run: |
           BACKEND_URL=$(gcloud run services describe cyber-databrew-backend-prod \
             --region=${{ env.REGION }} --project=${{ env.PROJECT_ID }} \
             --format='value(status.url)')
-          curl -sf "${BACKEND_URL}/healthz" > /dev/null && echo "backend healthy" || echo "WARNING: backend health check failed"
+          if curl -sf "${BACKEND_URL}/healthz" > /dev/null; then
+            echo "backend healthy"
+          else
+            echo "::error::backend health check failed at ${BACKEND_URL}/healthz — failing the deploy"
+            exit 1
+          fi
 
   # ─── Frontend (Cloudflare Worker) ───────────────────────────────────────────
   deploy-frontend:
     name: Build & Deploy frontend → Cloudflare Worker prod
+    needs: resolve-version
     runs-on: ubuntu-latest
     environment: production
     concurrency:
       group: deploy-frontend-prod
       cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.VERSION }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: Frontend/package-lock.json
-
-      - name: Extract version
-        id: version
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          else
-            echo "VERSION=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          fi
 
       - name: Install dependencies
         working-directory: Frontend
@@ -140,8 +183,8 @@ jobs:
       - name: Build frontend
         working-directory: Frontend
         env:
-          VITE_APP_VERSION: ${{ steps.version.outputs.VERSION }}
-          VITE_BUILD_REF: main#${{ steps.version.outputs.VERSION }}
+          VITE_APP_VERSION: ${{ env.VERSION }}
+          VITE_BUILD_REF: main#${{ env.VERSION }}
         run: npm run build
 
       - name: Sync dist → site/

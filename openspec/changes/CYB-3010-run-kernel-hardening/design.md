@@ -75,11 +75,11 @@ GET /runs/:id/inputs
 
 - **Table**: `run_relations`
 - **Change**: Add durable parent/child Run relation facts with relation type, optional asset id, source, and timestamps.
-- **Migration**: `backend/migrations/056_run_kernel_facts.sql`
+- **Migration**: `backend/migrations/058_run_kernel_facts.sql`
 
 - **Table**: `run_inputs`
 - **Change**: Add durable Run input facts with type, node, reference, version, mount target, content hash, source, snapshot, and timestamps.
-- **Migration**: `backend/migrations/056_run_kernel_facts.sql`
+- **Migration**: `backend/migrations/058_run_kernel_facts.sql`
 
 ## Risks / Trade-offs
 

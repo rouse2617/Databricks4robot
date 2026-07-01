@@ -64,7 +64,11 @@ openspec/changes/**/*.png
 .agent/context/
 .agent/screenshots/
 .agent/tmp/
+.agent/reports/
 .omm/
+
+# Vite internal cache (never meant to be committed; regenerated on `npm run dev`/`build`)
+.vite/
 *.swp
 
 # OS
@@ -75,6 +79,7 @@ Thumbs.db
 Frontend/e2e/test-results/
 Frontend/e2e/report/
 Frontend/e2e/screenshots/*.png
+Frontend/e2e/*.png
 /e2e-screenshots/
 
 # Agent QA dumps (keep under docs/screenshots/ if needed)

@@ -1,4 +1,4 @@
--- 040_pipeline_run_model.sql — First-class pipeline runs and execution targets.
+-- 041_pipeline_run_model.sql — First-class pipeline runs and execution targets.
 
 CREATE TABLE IF NOT EXISTS execution_targets (
     id TEXT PRIMARY KEY,

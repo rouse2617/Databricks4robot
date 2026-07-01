@@ -608,9 +608,9 @@ carries `source` and `target`.
 **Templates become versioned.** `PipelineTemplate` now carries `version`,
 `versionCount?`, `activeVersion?`, `scope?`, `owner?`, and `updatedAt?`. The
 `scope` / `owner` columns correspond to migration
-[backend/migrations/051_template_scope_owner.sql](file://backend/migrations/051_template_scope_owner.sql);
+[backend/migrations/052_template_scope_owner.sql](file://backend/migrations/052_template_scope_owner.sql);
 `version` and the active-version pointer come from
-[backend/migrations/050_pipeline_template_active_version.sql](file://backend/migrations/050_pipeline_template_active_version.sql).
+[backend/migrations/051_pipeline_template_active_version.sql](file://backend/migrations/051_pipeline_template_active_version.sql).
 The Go model
 [backend/internal/models/pipeline.go](file://backend/internal/models/pipeline.go)
 and the Postgres repository
@@ -637,5 +637,5 @@ exposes the pod terminal for interactive debugging. The companion
 [backend/internal/usecase/runs/usecase.go](file://backend/internal/usecase/runs/usecase.go)
 subsystem powers the new "databrew_runs" pipeline-run query path introduced
 in migration
-[backend/migrations/054_databrew_runs.sql](file://backend/migrations/054_databrew_runs.sql).
+[backend/migrations/055_databrew_runs.sql](file://backend/migrations/055_databrew_runs.sql).
 </invoke>

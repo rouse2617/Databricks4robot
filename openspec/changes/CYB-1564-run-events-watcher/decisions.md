@@ -8,7 +8,7 @@
 
 ## 2026-06-03 — Migration approval granted
 - **Context**: The user confirmed "然后开始编码，在新的workttree 里面" after the OpenSpec checkpoint explicitly asked for migration approval.
-- **Decision**: Proceed with `backend/migrations/046_pipeline_run_events.sql` in the isolated `/Users/rick/cyber-databrew-cyb1564` worktree.
+- **Decision**: Proceed with `backend/migrations/047_pipeline_run_events.sql` in the isolated `/Users/rick/cyber-databrew-cyb1564` worktree.
 - **Alternatives**: Defer persistence and implement only frontend placeholders.
 - **Rationale**: Durable run history, audit, and watcher deduplication require a real table and indexes.
 

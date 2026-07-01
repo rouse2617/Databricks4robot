@@ -1,8 +1,8 @@
 # Context Files - CYB-3010
 
-- `backend/migrations/040_pipeline_run_model.sql`
-- `backend/migrations/046_pipeline_run_events.sql`
-- `backend/migrations/052_batch_job_pipeline_runs.sql`
+- `backend/migrations/041_pipeline_run_model.sql`
+- `backend/migrations/047_pipeline_run_events.sql`
+- `backend/migrations/053_batch_job_pipeline_runs.sql`
 - `backend/internal/models/pipeline.go`
 - `backend/internal/repository/pipeline_repository.go`
 - `backend/internal/postgres/pipeline_repo.go`

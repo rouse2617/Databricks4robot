@@ -12,7 +12,7 @@
 
 ## 2026-06-17 — Migration off-limits exception
 - **Context**: Project rules mark `backend/migrations/` as off-limits without explicit approval. This backend implementation requires new tables.
-- **Decision**: Add `backend/migrations/055_pipeline_configs.sql` under the user's current backend approval for config-management persistence work.
+- **Decision**: Add `backend/migrations/057_pipeline_configs.sql` under the user's current backend approval for config-management persistence work.
 - **Alternatives**: Mock persistence without migration, or defer backend implementation.
 - **Rationale**: A real config center needs durable config/version tables. This decision requires second-review attention and dev migration application before backend deploy.
 

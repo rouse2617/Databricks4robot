@@ -5,8 +5,8 @@
 
 - [backend/internal/models/segment_locator.go](file://backend/internal/models/segment_locator.go)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql)
 - [backend/internal/postgres/repos.go](file://backend/internal/postgres/repos.go)
 </cite>
 
@@ -69,8 +69,8 @@ write path that applies the locator.
   primary key and foreign keys that tie the two together (lines 664–665,
   889–911), and the index set that makes lookups by locator, hash, tenant, and
   ingest state fast (lines 754–922).
-- **`backend/migrations/043_asset_model_expansion_p1.sql`** and
-  **`backend/migrations/044_asset_model_p2.sql`** — incremental migrations that
+- **`backend/migrations/044_asset_model_expansion_p1.sql`** and
+  **`backend/migrations/045_asset_model_p2.sql`** — incremental migrations that
   re-state the `chk_mcap_file_required` constraint as the asset taxonomy
   expanded. They confirm which `asset_type` values are exempt from requiring an
   `mcap_file_id`.
@@ -106,8 +106,8 @@ graph TB
 **Section sources**
 - [backend/internal/models/segment_locator.go](file://backend/internal/models/segment_locator.go#L1-L19)
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L481-L521)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L19-L21)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L33-L36)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L19-L21)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L33-L36)
 
 ## Core Components
 
@@ -337,13 +337,13 @@ flowchart TD
 
 **Diagram sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L357-L357)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L19-L21)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L33-L36)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L19-L21)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L33-L36)
 
 **Section sources**
 - [backend/migrations/000_initial.sql](file://backend/migrations/000_initial.sql#L352-L357)
-- [backend/migrations/043_asset_model_expansion_p1.sql](file://backend/migrations/043_asset_model_expansion_p1.sql#L19-L21)
-- [backend/migrations/044_asset_model_p2.sql](file://backend/migrations/044_asset_model_p2.sql#L33-L36)
+- [backend/migrations/044_asset_model_expansion_p1.sql](file://backend/migrations/044_asset_model_expansion_p1.sql#L19-L21)
+- [backend/migrations/045_asset_model_p2.sql](file://backend/migrations/045_asset_model_p2.sql#L33-L36)
 
 ## Dependency Analysis
 

@@ -7,7 +7,7 @@
 - [backend/internal/postgres/backfill_repo.go](file://backend/internal/postgres/backfill_repo.go)
 - [backend/internal/postgres/es_sync_checkpoint.go](file://backend/internal/postgres/es_sync_checkpoint.go)
 - [backend/internal/postgres/lakehouse_bronze_checkpoint.go](file://backend/internal/postgres/lakehouse_bronze_checkpoint.go)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql)
 - [backend/migrations/archive/022_es_sync_checkpoint.sql](file://backend/migrations/archive/022_es_sync_checkpoint.sql)
 - [backend/migrations/archive/023_lakehouse_bronze_checkpoint.sql](file://backend/migrations/archive/023_lakehouse_bronze_checkpoint.sql)
 - [backend/internal/outbox/es_subscriber.go](file://backend/internal/outbox/es_subscriber.go)
@@ -83,7 +83,7 @@ read the watermarks.
   - `lakehouse_bronze_checkpoint.go` — read-only `Get` of the singleton row.
 - **Repository contract** — `backend/internal/repository/backfill_repository.go`
   declares the `BackfillRepository` interface that `BackfillRepo` satisfies.
-- **Schema** — `backend/migrations/042_backfill_tables.sql` for the backfill
+- **Schema** — `backend/migrations/043_backfill_tables.sql` for the backfill
   tables; the checkpoint tables live in `backend/migrations/archive/` (022, 023)
   and are also folded into `000_initial.sql`.
 - **Consumers** —
@@ -136,7 +136,7 @@ graph TB
 **Section sources**
 - [backend/internal/models/backfill.go](file://backend/internal/models/backfill.go#L1-L32)
 - [backend/internal/postgres/backfill_repo.go](file://backend/internal/postgres/backfill_repo.go#L1-L26)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L1-L35)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L1-L35)
 
 ## Core Components
 
@@ -240,12 +240,12 @@ flat regardless of event volume; `lakehouse_bronze_checkpoint` is a *singleton*
 high-water mark per run.
 
 **Diagram sources**
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L4-L34)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L4-L34)
 - [backend/migrations/archive/022_es_sync_checkpoint.sql](file://backend/migrations/archive/022_es_sync_checkpoint.sql#L13-L22)
 - [backend/migrations/archive/023_lakehouse_bronze_checkpoint.sql](file://backend/migrations/archive/023_lakehouse_bronze_checkpoint.sql#L10-L23)
 
 **Section sources**
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L1-L35)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L1-L35)
 - [backend/migrations/archive/022_es_sync_checkpoint.sql](file://backend/migrations/archive/022_es_sync_checkpoint.sql#L1-L22)
 - [backend/migrations/archive/023_lakehouse_bronze_checkpoint.sql](file://backend/migrations/archive/023_lakehouse_bronze_checkpoint.sql#L1-L23)
 
@@ -470,7 +470,7 @@ Key dependencies:
 **Section sources**
 - [backend/internal/postgres/backfill_repo.go](file://backend/internal/postgres/backfill_repo.go#L26-L26)
 - [backend/internal/repository/backfill_repository.go](file://backend/internal/repository/backfill_repository.go#L9-L10)
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L4-L31)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L4-L31)
 
 ## Performance Considerations
 
@@ -498,7 +498,7 @@ Key dependencies:
   cheapest possible read.
 
 **Section sources**
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L17-L34)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L17-L34)
 - [backend/internal/postgres/backfill_repo.go](file://backend/internal/postgres/backfill_repo.go#L195-L224)
 - [backend/migrations/archive/022_es_sync_checkpoint.sql](file://backend/migrations/archive/022_es_sync_checkpoint.sql#L10-L17)
 
@@ -612,7 +612,7 @@ quorum gating, `(nil, nil)` "unknown") rather than failing closed.
 | `CountItemsByStatus` | authoritative per-status count for a job |
 
 **Section sources**
-- [backend/migrations/042_backfill_tables.sql](file://backend/migrations/042_backfill_tables.sql#L4-L31)
+- [backend/migrations/043_backfill_tables.sql](file://backend/migrations/043_backfill_tables.sql#L4-L31)
 - [backend/migrations/archive/022_es_sync_checkpoint.sql](file://backend/migrations/archive/022_es_sync_checkpoint.sql#L13-L22)
 - [backend/migrations/archive/023_lakehouse_bronze_checkpoint.sql](file://backend/migrations/archive/023_lakehouse_bronze_checkpoint.sql#L10-L23)
 - [backend/internal/postgres/backfill_repo.go](file://backend/internal/postgres/backfill_repo.go#L52-L288)
