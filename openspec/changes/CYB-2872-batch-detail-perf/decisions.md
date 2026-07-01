@@ -90,3 +90,31 @@
 - **Context**: 重做版 proposal.md/tasks.md/design.md 完成，含 P1c 决策修正
 - **Decision**: 用户回复「ok，你来吧」，确认按当前 tasks.md 开始实现
 - **Rationale**: 用户明确批准
+
+## 2026-07-01 — P0 缓存在多实例场景下未生效：已知限制，暂不修复
+
+- **Context**: 部署后在 live dev 上用 `curl --next`（复用同一 TCP 连接）连续打 10 次
+  `node-summary`，间隔 ~400ms（远小于 5s TTL），响应体 `generatedAt` **10 次全部不同**——
+  缓存从未命中。用 `curl -v` 确认连接确实被复用（"Re-using existing connection"），
+  排除"每次新连接"的可能。
+- **Root cause**: `globalBatchNodeSummaryCache` 是进程内 `var`（package-level map），
+  只在单个 Cloud Run 实例内共享。该 dev 服务 `autoscaling.knative.dev/maxScale=5`，
+  Google 前端负载均衡器（GFE）**不保证**同一客户端连接上的连续请求会被转发到同一个
+  后端容器实例——即使客户端连接复用，GFE 到后端的转发仍可能落在不同实例上。本 session
+  期间的大量并发测试（Chrome MCP + curl 压测）很可能已把 dev 服务撑到多实例，
+  导致缓存表现为"每次都是新实例、每次都 miss"。
+  代码逻辑本身经过审查确认无误（单一 handler 绑定、单一 route 注册、无重复声明，
+  单元测试覆盖单实例场景），这是架构假设（"进程内缓存 = 全局缓存"）在可横向扩容的
+  服务上不成立，不是实现 bug。
+- **Decision**: 保留现状，不引入共享缓存（如 Redis/Memorystore）或调整 `maxScale`。
+  用户确认「没事，就这样吧」。
+- **Alternatives**（未采纳，供后续参考）：
+  - 共享缓存（Redis/Memorystore）：能彻底解决，但引入新依赖 + 运维成本，超出本次改动范围
+  - 降低 `maxScale` 强制单实例：治标，且会牺牲真实高并发时的横向扩容能力，不是长期方案
+  - `run.googleapis.com/sessionAffinity` 注解：只对携带 session cookie 的客户端生效，
+    对普通 API 轮询/curl 不适用，收益有限
+- **Impact**: node-summary 接口在单实例时（如真实低并发的典型 dev 使用场景）缓存仍会生效；
+  一旦服务横向扩容到多实例，缓存退化为"总是 miss"，等同于改动前的行为——**不会更差，
+  只是收益不保证**。P1b（懒加载减少 eager 请求数）与 P1c（SQL 分页消除页深惩罚）
+  不受此限制影响，两者均为单请求内的算法改进，与实例数无关，已通过 live 数据验证生效。
+- **Follow-up**: 若后续 node-summary 在生产环境的多实例场景下仍是明显瓶颈，再评估共享缓存
