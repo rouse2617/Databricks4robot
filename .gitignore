@@ -6,6 +6,11 @@ backend/vendor/
 backend/server
 backend/bench
 backend/megaTest
+# Compiled binaries from services/ (each is a self-contained Go service with a
+# Dockerfile that builds from source — see services/mcap-preview/Dockerfile,
+# services/grace-sync/Dockerfile). Keep the git tree to source only.
+services/*/server
+services/*/grace-sync
 
 # Python
 __pycache__/

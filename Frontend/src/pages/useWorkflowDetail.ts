@@ -990,12 +990,12 @@ export function useWorkflowDetail(
 				// text matches the most recently queued line (covers servers
 				// that don't emit lastEventId).
 				const duplicateById =
-					event.lastEventId &&
-					lastEventIdRef.current === event.lastEventId;
+					event.lastEventId && lastEventIdRef.current === event.lastEventId;
 				const duplicateByText =
 					line !== "" &&
 					logStreamBufferRef.current.length > 0 &&
-					logStreamBufferRef.current[logStreamBufferRef.current.length - 1] === line;
+					logStreamBufferRef.current[logStreamBufferRef.current.length - 1] ===
+						line;
 				if (line && !duplicateById && !duplicateByText) {
 					queueLogLine(line);
 				}

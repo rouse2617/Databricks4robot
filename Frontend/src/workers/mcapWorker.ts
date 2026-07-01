@@ -12,8 +12,29 @@
  *   { type: "progress", loaded: number, total: number }
  */
 
-// Dynamically import @mcap/core — the worker has its own scope
-let McapStreamReader: any;
+// Dynamically import @mcap/core — the worker has its own scope.
+// @mcap/core's TypeScript types don't expose the discriminator we need
+// (`record.type`), so we treat records as `unknown` and narrow inline.
+type McapRecord = {
+	type?: "Schema" | "Channel" | "Message" | string;
+	id?: number;
+	name?: string;
+	encoding?: string;
+	schemaId?: number;
+	channelId?: number;
+	topic?: string;
+	messageEncoding?: string;
+	schemaName?: string;
+	logTime?: bigint;
+	data?: Uint8Array;
+};
+type McapStreamReaderCtor = new (opts: {
+	decompressHandlers: Record<string, unknown>;
+}) => {
+	append(data: Uint8Array): void;
+	nextRecord(): McapRecord | null;
+};
+let McapStreamReader: McapStreamReaderCtor | null = null;
 
 interface McapWorkerMessage {
 	type: "load" | "seek" | "close";
@@ -25,8 +46,8 @@ interface McapWorkerMessage {
 self.onmessage = async (e: MessageEvent<McapWorkerMessage>) => {
 	const msg = e.data;
 
-	if (msg.type === "load") {
-		await loadMCAP(msg.data!, msg.url!);
+	if (msg.type === "load" && msg.data && msg.url) {
+		await loadMCAP(msg.data, msg.url);
 	}
 };
 
@@ -34,13 +55,16 @@ async function loadMCAP(data: ArrayBuffer, url: string) {
 	try {
 		// Dynamic import
 		const mcap = await import("@mcap/core");
-		McapStreamReader = mcap.McapStreamReader;
+		McapStreamReader = mcap.McapStreamReader as unknown as McapStreamReaderCtor;
 
 		const reader = new McapStreamReader({ decompressHandlers: {} });
 		reader.append(new Uint8Array(data));
 
-		const channels: Record<number, any> = {};
-		const schemas: Record<number, any> = {};
+		const channels: Record<
+			number,
+			{ schemaName?: string; topic?: string; messageEncoding?: string }
+		> = {};
+		const schemas: Record<number, { name?: string; encoding?: string }> = {};
 		let minTime = Infinity;
 		let maxTime = -Infinity;
 		let videoCount = 0;
@@ -50,9 +74,9 @@ async function loadMCAP(data: ArrayBuffer, url: string) {
 			const record = reader.nextRecord();
 			if (!record) break;
 
-			if (record.type === "Schema") {
+			if (record.type === "Schema" && record.id != null) {
 				schemas[record.id] = record;
-			} else if (record.type === "Channel") {
+			} else if (record.type === "Channel" && record.id != null) {
 				channels[record.id] = record;
 			} else if (record.type === "Message") {
 				minTime = Math.min(minTime, Number(record.logTime));
@@ -63,10 +87,8 @@ async function loadMCAP(data: ArrayBuffer, url: string) {
 
 		// Build channel list with video topics
 		const channelList = Object.entries(channels)
-			.filter(([_, ch]: [string, any]) =>
-				ch.schemaName?.includes("CompressedVideo"),
-			)
-			.map(([id, ch]: [string, any]) => ({
+			.filter(([_id, ch]) => ch.schemaName?.includes("CompressedVideo"))
+			.map(([id, ch]) => ({
 				id: Number(id),
 				topic: ch.topic,
 				schemaName: ch.schemaName,
@@ -93,16 +115,17 @@ async function loadMCAP(data: ArrayBuffer, url: string) {
 			const record = reader2.nextRecord();
 			if (!record) break;
 
-			if (record.type === "Message") {
-				const ch = channels[record.channelId];
+			if (record.type === "Message" && record.channelId != null) {
+				const channelId = record.channelId;
+				const ch = channels[channelId];
 				if (
 					ch?.schemaName?.includes("CompressedVideo") &&
-					!frameSamples[record.channelId]
+					!frameSamples[channelId]
 				) {
-					frameSamples[record.channelId] = true;
+					frameSamples[channelId] = true;
 					self.postMessage({
 						type: "frame",
-						channelId: record.channelId,
+						channelId,
 						topic: ch.topic,
 						data: record.data,
 						timestampNs: Number(record.logTime),
@@ -112,7 +135,8 @@ async function loadMCAP(data: ArrayBuffer, url: string) {
 		}
 
 		self.postMessage({ type: "done" });
-	} catch (err: any) {
-		self.postMessage({ type: "error", message: err.message || String(err) });
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		self.postMessage({ type: "error", message });
 	}
 }
