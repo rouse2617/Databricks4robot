@@ -175,11 +175,16 @@ func (h *Handler) GetNodeSummary(c *gin.Context) {
 		httpresp.BadRequest(c, httpresp.CodeInvalidArgument, "id is required", nil)
 		return
 	}
+	if cached, ok := globalBatchNodeSummaryCache.get(id); ok {
+		c.JSON(200, cached)
+		return
+	}
 	summary, err := h.uc.GetBatchNodeSummary(c.Request.Context(), id)
 	if err != nil {
 		mapBackfillError(c, err)
 		return
 	}
+	globalBatchNodeSummaryCache.set(id, summary)
 	c.JSON(200, summary)
 }
 

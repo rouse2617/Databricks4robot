@@ -1692,6 +1692,62 @@ ORDER BY created_at ASC, child_run_id ASC, relation_type ASC`
 	return out, nil
 }
 
+// ListByParentRunIDPage returns one page of relations plus the total count.
+// We push pagination into SQL (LIMIT/OFFSET) so a batch with 1000+ child
+// runs does not stream every row just to slice 20 of them in memory.
+//
+// Ordering must match ListByParentRunID (created_at ASC, child_run_id ASC,
+// relation_type ASC) so a caller paging through gets stable slices.
+func (r *RunRelationRepo) ListByParentRunIDPage(ctx context.Context, parentRunID string, page, pageSize int) ([]models.RunRelation, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	offset := (page - 1) * pageSize
+
+	db := dbFromCtx(ctx, r.c.db)
+
+	var total int
+	if err := db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM run_relations WHERE parent_run_id = $1`,
+		parentRunID,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("postgres RunRelationRepo.ListByParentRunIDPage count: %w", err)
+	}
+
+	if total == 0 || offset >= total {
+		return []models.RunRelation{}, total, nil
+	}
+
+	q := `SELECT ` + runRelationSelectCols + `
+FROM run_relations
+WHERE parent_run_id = $1
+ORDER BY created_at ASC, child_run_id ASC, relation_type ASC
+LIMIT $2 OFFSET $3`
+	rows, err := db.Query(ctx, q, parentRunID, pageSize, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("postgres RunRelationRepo.ListByParentRunIDPage: %w", err)
+	}
+	defer rows.Close()
+	out := []models.RunRelation{}
+	for rows.Next() {
+		relation, err := scanRunRelation(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("postgres RunRelationRepo.ListByParentRunIDPage scan: %w", err)
+		}
+		out = append(out, *relation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("postgres RunRelationRepo.ListByParentRunIDPage rows: %w", err)
+	}
+	return out, total, nil
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // RunInputRepo
 // ──────────────────────────────────────────────────────────────────────────────

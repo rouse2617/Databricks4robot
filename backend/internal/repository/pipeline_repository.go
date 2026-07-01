@@ -130,6 +130,11 @@ type PipelineRunEventRepository interface {
 type RunRelationRepository interface {
 	Upsert(ctx context.Context, relation *models.RunRelation) error
 	ListByParentRunID(ctx context.Context, parentRunID string) ([]models.RunRelation, error)
+	// ListByParentRunIDPage returns one page of relations plus the total
+	// count for pagination. Use this instead of ListByParentRunID when the
+	// caller only needs a page's worth of children — it pushes LIMIT/OFFSET
+	// into SQL instead of fetching every relation to slice in memory.
+	ListByParentRunIDPage(ctx context.Context, parentRunID string, page, pageSize int) ([]models.RunRelation, int, error)
 }
 
 // RunInputRepository stores durable product Run input facts.

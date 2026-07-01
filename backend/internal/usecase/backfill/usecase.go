@@ -32,6 +32,7 @@ var maxConcurrentBatchItems = func() int {
 	}
 	return 5
 }()
+
 // deployTimeout caps how long a single executeItem call may take
 // before the worker gives up. Without this, a hanging Argo API call
 // holds the worker goroutine forever, blocking wg.Wait() and
@@ -59,7 +60,7 @@ type Usecase struct {
 	resultRepo repository.BackfillResultRepository
 	assetRepo  repository.AssetRepository
 	pipelineUC *pipelineUC.Usecase
-	pgClient any // *postgres.Client — set via NewWithPostgres
+	pgClient   any // *postgres.Client — set via NewWithPostgres
 
 	lastSync   map[string]time.Time
 	lastSyncMu sync.Mutex
@@ -1006,9 +1007,12 @@ func (uc *Usecase) GetBatchNodeSummary(ctx context.Context, jobID string) (*mode
 	if job == nil {
 		return nil, ErrNotFound
 	}
-	uc.refreshBatchReadModel(ctx, jobID)
-	if fresh, err := uc.repo.FindJobByID(ctx, jobID); err == nil && fresh != nil {
-		job = fresh
+	if uc.shouldSyncProgress(jobID) {
+		uc.refreshBatchReadModel(ctx, jobID)
+		uc.markSyncProgressDone(jobID)
+		if fresh, err := uc.repo.FindJobByID(ctx, jobID); err == nil && fresh != nil {
+			job = fresh
+		}
 	}
 	summary, err := uc.repo.SummarizeItemStatuses(ctx, jobID)
 	if err != nil {
@@ -1290,8 +1294,10 @@ func (uc *Usecase) ContinueFull(ctx context.Context, jobID string) error {
 
 // syncProgressMinInterval avoids back-to-back full syncs when multiple
 // callers (GetJob, GetBatchNodeSummary, refreshBatchReadModel) trigger
-// syncJobProgress on the same page load.
-const syncProgressMinInterval = 30 * time.Second
+// syncJobProgress on the same page load. Set to 10s (down from 30s) to run
+// slightly ahead of the 5s node-summary cache TTL, so a cache miss picks up
+// reasonably fresh data instead of waiting up to 30s for the next sync.
+const syncProgressMinInterval = 10 * time.Second
 
 func (uc *Usecase) shouldSyncProgress(jobID string) bool {
 	uc.lastSyncMu.Lock()

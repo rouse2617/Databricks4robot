@@ -440,6 +440,31 @@ func (m *mockRunRelationRepo) ListByParentRunID(_ context.Context, parentRunID s
 	return out, nil
 }
 
+func (m *mockRunRelationRepo) ListByParentRunIDPage(_ context.Context, parentRunID string, page, pageSize int) ([]models.RunRelation, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	matched := []models.RunRelation{}
+	for _, relation := range m.relations {
+		if relation.ParentRunID == parentRunID {
+			matched = append(matched, relation)
+		}
+	}
+	total := len(matched)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return matched[start:end], total, nil
+}
+
 type mockRunInputRepo struct {
 	inputs []models.RunInput
 }
