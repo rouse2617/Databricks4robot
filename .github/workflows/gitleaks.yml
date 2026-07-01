@@ -6,6 +6,10 @@ name: gitleaks
 # on any finding so the PR cannot merge with leaked credentials.
 # Pre-commit runs detect-secrets locally for the same purpose; gitleaks is the
 # CI-side counterpart with a richer rule set.
+#
+# We use gitleaks-action@v1 (not v2) because v2 requires a paid GITLEAKS_LICENSE
+# secret. v1 still uses the latest gitleaks binary; it just runs the scan
+# in-process and uploads SARIF for the Code Scanning UI.
 
 on:
   pull_request:
@@ -16,6 +20,8 @@ on:
 
 permissions:
   contents: read
+  # Required for gitleaks-action to upload SARIF to the Code Scanning UI.
+  security-events: write
 
 jobs:
   gitleaks:
@@ -28,9 +34,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v1
         env:
-          # Repo-owned config; allowed list excludes .secrets.baseline.
-          GITLEAKS_CONFIG: .gitleaks.toml
-          # Upload SARIF so the GitHub Code Scanning UI surfaces findings.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
