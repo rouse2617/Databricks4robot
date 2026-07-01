@@ -138,6 +138,7 @@ function mockWorkflowDetailState(
 		setLogSearch: vi.fn(),
 		startFollowLogs: vi.fn(),
 		stopFollowLogs: vi.fn(),
+		userStopFollowLogs: vi.fn(),
 		downloadLogs: vi.fn(),
 		...overrides,
 	});

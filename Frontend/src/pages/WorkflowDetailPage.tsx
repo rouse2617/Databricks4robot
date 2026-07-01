@@ -503,17 +503,21 @@ function WorkflowLogPanel({
 		return () => observer.disconnect();
 	}, [contentModel]);
 
-	// const handleLogVirtualScroll = useCallback(
-	// 	({ scrollOffset, scrollUpdateWasRequested }: { scrollOffset: number; scrollUpdateWasRequested: boolean }) => {
-	// 		const el = listOuterRef.current;
-	// 		if (!el) return;
-	// 		const threshold = Math.max(el.clientHeight * 0.3, 60);
-	// 		const atBottom = el.scrollHeight - scrollOffset - el.clientHeight < threshold;
-	// 		userScrolledUpRef.current = !atBottom && !scrollUpdateWasRequested;
-	// 		setShowScrollToBottom(!atBottom && !scrollUpdateWasRequested);
-	// 	},
-	// 	[],
-	// );
+	// Track whether the user has scrolled away from the bottom of the log
+	// list. Auto-scroll only runs while userScrolledUp is false, and the
+	// "back to bottom" button only appears when this is true.
+	const handleLogVirtualScroll = useCallback(
+		(event: React.UIEvent<HTMLDivElement>) => {
+			const el = event.currentTarget;
+			if (!el) return;
+			const threshold = Math.max(el.clientHeight * 0.3, 60);
+			const atBottom =
+				el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+			userScrolledUpRef.current = !atBottom;
+			setShowScrollToBottom(!atBottom);
+		},
+		[],
+	);
 
 	const scrollToLogBottom = useCallback(() => {
 		if (contentModel) {
@@ -779,6 +783,7 @@ function WorkflowLogPanel({
 								rowCount={contentModel.lines.length}
 								rowHeight={LOG_ROW_HEIGHT}
 								rowProps={{ data: contentModel }}
+								onScroll={handleLogVirtualScroll}
 								style={{
 									height: listSize.height || 400,
 									width: listSize.width || 800,
@@ -2173,7 +2178,7 @@ export default function WorkflowDetailPage({
 		setLogSearch,
 		isLivePolling,
 		startFollowLogs,
-		stopFollowLogs,
+		userStopFollowLogs,
 		downloadLogs,
 	} = useWorkflowDetail(
 		detailName,
@@ -2960,7 +2965,7 @@ export default function WorkflowDetailPage({
 					clientTruncated={logState.clientTruncated}
 					onSearch={setLogSearch}
 					onFollow={startFollowLogs}
-					onStop={stopFollowLogs}
+					onStop={userStopFollowLogs}
 					onDownload={downloadLogs}
 				/>
 			</Drawer>

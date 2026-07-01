@@ -133,6 +133,7 @@ interface UseWorkflowDetailResult {
 	isLivePolling: boolean;
 	startFollowLogs: () => void;
 	stopFollowLogs: () => void;
+	userStopFollowLogs: () => void;
 	downloadLogs: () => void;
 }
 
@@ -891,6 +892,10 @@ export function useWorkflowDetail(
 		return workflow.nodes.find((node) => node.id === selectedNodeId) ?? null;
 	}, [workflow, selectedNodeId]);
 
+	// stopFollowLogs tears down the active stream but PRESERVES the
+	// reconnect-attempt counter. It is safe to call from startFollowLogs
+	// (which re-enters here at the top of a re-connect attempt) without
+	// resetting the backoff.
 	const stopFollowLogs = useCallback(() => {
 		flushBufferedLogLines();
 		clearLogStreamConnectTimer();
@@ -898,18 +903,24 @@ export function useWorkflowDetail(
 			window.clearTimeout(reconnectTimerRef.current);
 			reconnectTimerRef.current = null;
 		}
-		reconnectAttemptRef.current = 0;
 		if (followSourceRef.current) {
 			followSourceRef.current.close();
 			followSourceRef.current = null;
 		}
+	}, [clearLogStreamConnectTimer, flushBufferedLogLines]);
+
+	// userStopFollowLogs is the user-initiated counterpart: it also resets
+	// the reconnect backoff so the next "connect" starts fresh.
+	const userStopFollowLogs = useCallback(() => {
+		stopFollowLogs();
+		reconnectAttemptRef.current = 0;
 		setLogState((prev) => ({
 			...prev,
 			following: false,
 			followStatus: "idle",
 			followMessage: "实时日志已停止",
 		}));
-	}, [clearLogStreamConnectTimer, flushBufferedLogLines]);
+	}, [stopFollowLogs]);
 
 	const startFollowLogs = useCallback(() => {
 		if (!runtimeWorkflowName || !selectedNodeId) return;
@@ -973,8 +984,26 @@ export function useWorkflowDetail(
 						: typeof data.content === "string"
 							? data.content
 							: "";
-				if (line) {
+				// De-duplicate: an SSE re-connect can replay the last
+				// delivered events. We skip if (a) the EventSource's
+				// lastEventId matches what we already saw, or (b) the line
+				// text matches the most recently queued line (covers servers
+				// that don't emit lastEventId).
+				const duplicateById =
+					event.lastEventId &&
+					lastEventIdRef.current === event.lastEventId;
+				const duplicateByText =
+					line !== "" &&
+					logStreamBufferRef.current.length > 0 &&
+					logStreamBufferRef.current[logStreamBufferRef.current.length - 1] === line;
+				if (line && !duplicateById && !duplicateByText) {
 					queueLogLine(line);
+				}
+				// Persist the SSE event id so a subsequent re-connect (e.g.
+				// transient network blip) can resume from the last delivered
+				// event instead of replaying the entire log.
+				if (event.lastEventId) {
+					lastEventIdRef.current = event.lastEventId;
 				}
 			} catch {
 				// ignore malformed events
@@ -1125,6 +1154,7 @@ export function useWorkflowDetail(
 		selectNode,
 		startFollowLogs,
 		stopFollowLogs,
+		userStopFollowLogs,
 		downloadLogs,
 		logState: {
 			...logState,
