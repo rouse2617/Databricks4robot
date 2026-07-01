@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/fnv"
+	"sync"
 	"time"
 
 	"github.com/CyberOrigin2077/cyber-databrew/internal/metrics"
@@ -12,16 +13,70 @@ import (
 )
 
 // InMemoryBus is an in-process event bus for default local transport mode.
+//
+// It is a fan-out / broadcast bus: every subscriber receives every published
+// event. This mirrors the semantics of a Pub/Sub topic with one subscription
+// per subscriber, or a Kafka topic with one consumer group per subscriber —
+// the "competing consumer" anti-pattern is avoided at the transport layer so
+// downstream consumers (asset ES, algo_run ES, delivery eligibility projector,
+// openlineage emitter, …) can each filter the full event stream without
+// stealing events from siblings.
+//
+// Each subscriber holds a private buffered channel; the publisher writes a
+// copy of every event into each channel synchronously. A slow subscriber
+// back-pressures the publisher once its channel fills — intentional, so a
+// stuck handler surfaces immediately rather than silently dropping events.
 type InMemoryBus struct {
-	ch chan internalMessage
+	mu      sync.RWMutex
+	subs    []chan internalMessage
+	bufSize int
 }
 
-// NewInMemoryBus creates a buffered in-process bus.
+// NewInMemoryBus creates a fan-out in-process bus. The buffer size applies
+// to each subscriber's channel.
 func NewInMemoryBus(buffer int) *InMemoryBus {
 	if buffer <= 0 {
 		buffer = 1024
 	}
-	return &InMemoryBus{ch: make(chan internalMessage, buffer)}
+	if buffer < 16 {
+		buffer = 16
+	}
+	return &InMemoryBus{bufSize: buffer}
+}
+
+// subscribe registers a new subscriber channel. Called by NewInternalSubscriber.
+func (b *InMemoryBus) subscribe() chan internalMessage {
+	if b == nil {
+		return nil
+	}
+	ch := make(chan internalMessage, b.bufSize)
+	b.mu.Lock()
+	b.subs = append(b.subs, ch)
+	b.mu.Unlock()
+	return ch
+}
+
+// unsubscribe removes a previously-registered channel.
+func (b *InMemoryBus) unsubscribe(ch chan internalMessage) {
+	if b == nil || ch == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i, s := range b.subs {
+		if s == ch {
+			b.subs = append(b.subs[:i], b.subs[i+1:]...)
+			return
+		}
+	}
+}
+
+// Run is a no-op kept for API stability; the pre-PR fan-out design does not
+// need a background dispatcher (publish() writes to every subscriber channel
+// synchronously). It exists so older call-sites that launched `go bus.Run(ctx)`
+// keep working without panicking.
+func (b *InMemoryBus) Run(ctx context.Context) {
+	<-ctx.Done()
 }
 
 type internalMessage struct {
@@ -29,42 +84,73 @@ type internalMessage struct {
 	ack  chan error
 }
 
-func (b *InMemoryBus) publish(ctx context.Context, data []byte) (PublishReceipt, error) {
-	if b == nil || b.ch == nil {
+// Publish fans the message out to every subscribed channel. The returned
+// receipt resolves only when EVERY subscriber has acked; if any one fails,
+// the receipt's first error is returned and the relay retries the entire
+// event_seq (at-least-once delivery per subscriber).
+func (b *InMemoryBus) Publish(ctx context.Context, data []byte) (PublishReceipt, error) {
+	if b == nil {
 		return nil, errors.New("outbox internal bus is not initialized")
 	}
-	msg := internalMessage{
-		data: append([]byte(nil), data...),
-		ack:  make(chan error, 1),
+	b.mu.RLock()
+	subs := make([]chan internalMessage, len(b.subs))
+	copy(subs, b.subs)
+	b.mu.RUnlock()
+
+	if len(subs) == 0 {
+		// No subscribers yet (startup race) — return an already-resolved
+		// receipt so the relay doesn't deadlock waiting for an ack that
+		// will never arrive. The event will be visible to the next poll.
+		return immediateReceipt{}, nil
 	}
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case b.ch <- msg:
-		metrics.OutboxInternalBusDepth.Set(float64(len(b.ch)))
-		return internalReceipt{ack: msg.ack}, nil
+
+	acks := make([]chan error, len(subs))
+	for i, ch := range subs {
+		payload := append([]byte(nil), data...)
+		ack := make(chan error, 1)
+		acks[i] = ack
+		msg := internalMessage{data: payload, ack: ack}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case ch <- msg:
+			metrics.OutboxInternalBusDepth.Set(float64(len(ch)))
+		}
 	}
+	return fanoutReceipt{acks: acks}, nil
 }
 
-type internalReceipt struct {
-	ack <-chan error
+// fanoutReceipt aggregates per-subscriber acks into a single relay-facing
+// receipt. The first non-nil error short-circuits and is returned to the
+// relay so the publisher retries the underlying event_seq.
+type fanoutReceipt struct {
+	acks []chan error
 }
 
-func (r internalReceipt) Get(ctx context.Context) (string, error) {
-	if r.ack == nil {
-		return "", errors.New("outbox internal receipt: nil ack channel")
+func (r fanoutReceipt) Get(ctx context.Context) (string, error) {
+	for _, ack := range r.acks {
+		if ack == nil {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case err := <-ack:
+			if err != nil {
+				return "", err
+			}
+		}
 	}
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case err := <-r.ack:
-		return "", err
-	}
+	return "", nil
 }
 
-// InternalSubscriber consumes events from an in-process bus.
+// InternalSubscriber consumes events from an in-process bus. Each subscriber
+// holds its own private channel — the bus fans published events out to every
+// subscriber's channel independently, so the order events are observed by one
+// subscriber is independent of the order observed by any other.
 type InternalSubscriber struct {
 	bus     *InMemoryBus
+	ch      chan internalMessage
 	workers int // <=1 means serial single-handler loop (legacy behaviour).
 }
 
@@ -78,11 +164,15 @@ func NewInternalSubscriber(bus *InMemoryBus, workers int) (*InternalSubscriber, 
 	if workers < 1 {
 		workers = 1
 	}
-	return &InternalSubscriber{bus: bus, workers: workers}, nil
+	return &InternalSubscriber{
+		bus:     bus,
+		ch:      bus.subscribe(),
+		workers: workers,
+	}, nil
 }
 
 func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.Context, []byte) error) error {
-	if s == nil || s.bus == nil || s.bus.ch == nil {
+	if s == nil || s.bus == nil || s.ch == nil {
 		return errors.New("outbox internal subscriber is not initialized")
 	}
 	if s.workers <= 1 {
@@ -106,7 +196,7 @@ func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.C
 					err := handler(gctx, msg.data)
 					select {
 					case msg.ack <- err:
-						metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
+						metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 					case <-gctx.Done():
 						return gctx.Err()
 					}
@@ -120,8 +210,8 @@ func (s *InternalSubscriber) Receive(ctx context.Context, handler func(context.C
 			select {
 			case <-gctx.Done():
 				return gctx.Err()
-			case msg := <-s.bus.ch:
-				metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
+			case msg := <-s.ch:
+				metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 				idx := routingWorkerIndex(msg.data, w)
 				select {
 				case workerChs[idx] <- msg:
@@ -140,12 +230,12 @@ func (s *InternalSubscriber) receiveSerial(ctx context.Context, handler func(con
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case msg := <-s.bus.ch:
-			metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
+		case msg := <-s.ch:
+			metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 			err := handler(ctx, msg.data)
 			select {
 			case msg.ack <- err:
-				metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
+				metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -177,7 +267,7 @@ func (s *InternalSubscriber) ReceiveBatch(
 	waitFor time.Duration,
 	handler func(context.Context, [][]byte) error,
 ) error {
-	if s == nil || s.bus == nil || s.bus.ch == nil {
+	if s == nil || s.bus == nil || s.ch == nil {
 		return errors.New("outbox internal subscriber is not initialized")
 	}
 	if handler == nil {
@@ -218,8 +308,8 @@ func (s *InternalSubscriber) ReceiveBatch(
 			select {
 			case <-gctx.Done():
 				return gctx.Err()
-			case msg := <-s.bus.ch:
-				metrics.OutboxInternalBusDepth.Set(float64(len(s.bus.ch)))
+			case msg := <-s.ch:
+				metrics.OutboxInternalBusDepth.Set(float64(len(s.ch)))
 				idx := routingWorkerIndex(msg.data, w)
 				select {
 				case workerChs[idx] <- msg:
@@ -239,7 +329,7 @@ func (s *InternalSubscriber) receiveBatchSerial(
 	waitFor time.Duration,
 	handler func(context.Context, [][]byte) error,
 ) error {
-	return runBatchWorker(ctx, s.bus.ch, batchSize, waitFor, handler)
+	return runBatchWorker(ctx, s.ch, batchSize, waitFor, handler)
 }
 
 // runBatchWorker drains source up to batchSize, bounded by waitFor (per batch),
@@ -349,6 +439,13 @@ func routingKeyFromPayload(data []byte) string {
 	return "_na"
 }
 
+// Close removes this subscriber from the bus's fan-out list. The subscriber's
+// private channel is not closed; in-flight handlers should observe ctx
+// cancellation instead.
 func (s *InternalSubscriber) Close() error {
+	if s == nil || s.bus == nil {
+		return nil
+	}
+	s.bus.unsubscribe(s.ch)
 	return nil
 }
