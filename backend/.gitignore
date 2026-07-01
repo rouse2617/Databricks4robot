@@ -1,0 +1,11 @@
+# Local Go test binaries (not covered by root .gitignore)
+*.test
+
+# Coverage output
+coverage.out
+
+# Notes:
+#   - `server`, `bin/`, `bench`, `megaTest`, `*.exe`, `*.out`, `vendor/`
+#     are already covered by the root `.gitignore`.
+#   - This file is for backend-specific extensions. If you add a rule
+#     here, also consider whether it belongs in root `.gitignore`.
