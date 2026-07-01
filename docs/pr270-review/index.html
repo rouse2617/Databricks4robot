@@ -1,0 +1,614 @@
+<title>PR #270 Review Console — cyber-databrew</title>
+<style>
+  :root{
+    --ink:#0e1620; --panel:#151f2b; --panel-2:#1b2733; --line:#26333f;
+    --fg:#d7dee7; --muted:#8493a4; --faint:#5d6c7d;
+    --accent:#4c9fff; --accent-dim:rgba(76,159,255,.14);
+    --add:#3fb950; --add-bg:rgba(63,185,80,.12); --add-gut:rgba(63,185,80,.28);
+    --del:#f0616d; --del-bg:rgba(240,97,109,.11); --del-gut:rgba(240,97,109,.30);
+    --crit:#f0616d; --warn:#d6a029; --ok:#3fb950;
+    --mono:"SF Mono","JetBrains Mono","Fira Code",ui-monospace,"Cascadia Code",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --maxw:1120px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ink); color:var(--fg);
+    font-family:var(--sans); font-size:14.5px; line-height:1.62;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    overflow-x:hidden;
+  }
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline}
+  ::selection{background:var(--accent-dim)}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 22px}
+  .eyebrow{
+    font-family:var(--mono); font-size:11px; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--muted); font-weight:600;
+  }
+  .num{font-variant-numeric:tabular-nums}
+  .mono{font-family:var(--mono)}
+
+  /* ---- top console bar ---- */
+  header.bar{
+    position:sticky; top:0; z-index:20;
+    background:rgba(14,22,32,.86); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+  }
+  .bar-in{
+    max-width:var(--maxw); margin:0 auto; padding:11px 22px;
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  }
+  .prtag{
+    font-family:var(--mono); font-weight:700; font-size:13px;
+    color:var(--ink); background:var(--accent); padding:3px 8px; border-radius:5px;
+    letter-spacing:.02em;
+  }
+  .bar-title{font-family:var(--mono); font-size:12.5px; color:var(--fg); font-weight:600}
+  .bar-range{font-family:var(--mono); font-size:11.5px; color:var(--muted)}
+  .bar-range b{color:var(--accent); font-weight:600}
+  .bar-spacer{flex:1 1 40px}
+  .bar-stat{font-family:var(--mono); font-size:12px; color:var(--muted); white-space:nowrap}
+  .bar-stat .plus{color:var(--add)} .bar-stat .minus{color:var(--del)}
+  .bar-stat .files{color:var(--fg); font-weight:600}
+
+  /* ---- hero ---- */
+  .hero{padding:52px 0 30px; border-bottom:1px solid var(--line)}
+  .hero h1{
+    font-family:var(--mono); font-weight:700; font-size:clamp(23px,3.4vw,31px);
+    line-height:1.18; margin:12px 0 10px; letter-spacing:-.01em; text-wrap:balance;
+  }
+  .hero .lede{max-width:64ch; color:#bcc7d2; font-size:15.5px; margin:0}
+  .hero .lede b{color:var(--fg); font-weight:600}
+  .kpis{display:flex; gap:34px; flex-wrap:wrap; margin-top:26px}
+  .kpi .k{font-family:var(--mono); font-size:26px; font-weight:700; letter-spacing:-.01em; line-height:1}
+  .kpi .l{font-family:var(--mono); font-size:10.5px; letter-spacing:.13em; text-transform:uppercase; color:var(--muted); margin-top:7px}
+  .kpi .k.pos{color:var(--add)} .kpi .k.neg{color:var(--del)}
+
+  /* ---- section scaffold ---- */
+  section{padding:40px 0; border-bottom:1px solid var(--line)}
+  .sec-head{display:flex; align-items:baseline; gap:14px; margin-bottom:22px; flex-wrap:wrap}
+  .sec-head h2{font-family:var(--mono); font-weight:700; font-size:18px; margin:0; letter-spacing:-.01em}
+  .sec-head .idx{font-family:var(--mono); color:var(--faint); font-size:13px; font-weight:600}
+  .sec-note{color:var(--muted); font-size:13px; margin:-8px 0 20px}
+
+  /* ---- theme cards ---- */
+  .themes{display:grid; grid-template-columns:repeat(2,1fr); gap:14px}
+  .tcard{
+    background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    padding:17px 18px; position:relative; overflow:hidden;
+  }
+  .tcard::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--accent)}
+  .tcard.c1::before{background:#4c9fff} .tcard.c2::before{background:#d6a029}
+  .tcard.c3::before{background:#a371f7} .tcard.c4::before{background:#3fb950}
+  .tcard .tn{display:flex; align-items:baseline; gap:9px; margin-bottom:7px}
+  .tcard .tn .n{font-family:var(--mono); font-size:15px; font-weight:700}
+  .tcard .tn .tag{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted)}
+  .tcard p{margin:0 0 11px; font-size:13.3px; color:#b9c4cf; line-height:1.55}
+  .tcard .stat{font-family:var(--mono); font-size:11.5px; color:var(--muted)}
+  .tcard .stat .plus{color:var(--add)} .tcard .stat .minus{color:var(--del)}
+
+  /* ---- module map ---- */
+  .mapwrap{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px}
+  .mapscroll{overflow-x:auto}
+  svg.map{display:block; width:100%; min-width:720px; height:auto}
+  .map text{font-family:var(--mono); fill:var(--fg)}
+  .node rect{rx:7; stroke:var(--line); stroke-width:1}
+  .node .t{font-size:12px; font-weight:700}
+  .node .s{font-size:9.5px; fill:var(--muted); letter-spacing:.04em}
+  .edge{fill:none; stroke:var(--accent); stroke-width:1.4; opacity:.5}
+  .edge.rm{stroke:var(--del); stroke-dasharray:4 3; opacity:.7}
+
+  /* bulk-movement bars */
+  .bulk{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px}
+  .bulk .bar{background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:14px 16px}
+  .bulk .bar .top{display:flex; justify-content:space-between; align-items:baseline; gap:10px}
+  .bulk .bar .top .nm{font-family:var(--mono); font-weight:700; font-size:13px}
+  .bulk .bar .top .fc{font-family:var(--mono); font-size:11px; color:var(--muted)}
+  .bulk .bar .amt{font-family:var(--mono); font-size:22px; font-weight:700; margin:8px 0 4px; letter-spacing:-.01em}
+  .bulk .bar.rm .amt{color:var(--del)} .bulk .bar.gen .amt{color:var(--faint)}
+  .bulk .bar .why{font-size:12.5px; color:#b3bfca; margin:0}
+  .track{height:6px; border-radius:3px; background:var(--panel-2); margin-top:11px; overflow:hidden}
+  .track i{display:block; height:100%}
+  .track i.rm{background:var(--del)} .track i.gen{background:var(--faint)}
+
+  /* ---- area/risk table ---- */
+  .tablescroll{overflow-x:auto; border:1px solid var(--line); border-radius:9px}
+  table{border-collapse:collapse; width:100%; min-width:620px; font-size:13px}
+  th,td{text-align:left; padding:9px 14px; border-bottom:1px solid var(--line)}
+  thead th{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--muted); font-weight:600; background:var(--panel-2);
+  }
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:var(--panel)}
+  td.path{font-family:var(--mono); font-size:12.5px}
+  td.n{font-family:var(--mono); text-align:right; font-variant-numeric:tabular-nums}
+  td.n .plus{color:var(--add)} td.n .minus{color:var(--del)}
+
+  /* severity chips */
+  .chip{
+    display:inline-flex; align-items:center; gap:5px; font-family:var(--mono);
+    font-size:10.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+    padding:2px 8px; border-radius:20px; white-space:nowrap;
+  }
+  .chip::before{content:""; width:6px; height:6px; border-radius:50%}
+  .chip.crit{color:#ffd7db; background:rgba(240,97,109,.16)} .chip.crit::before{background:var(--crit)}
+  .chip.warn{color:#f4e2b6; background:rgba(214,160,41,.15)}  .chip.warn::before{background:var(--warn)}
+  .chip.ok{color:#c7eccf; background:rgba(63,185,80,.14)}     .chip.ok::before{background:var(--ok)}
+
+  /* ---- diff blocks ---- */
+  .diffgrid{display:grid; grid-template-columns:1fr 300px; gap:16px; align-items:start}
+  .diffbox{border:1px solid var(--line); border-radius:9px; overflow:hidden; background:var(--panel-2); min-width:0}
+  .diffhead{
+    display:flex; align-items:center; gap:10px; padding:9px 13px;
+    background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap;
+  }
+  .diffhead .fp{font-family:var(--mono); font-size:12px; color:var(--fg); font-weight:600; word-break:break-all}
+  .diffhead .st{font-family:var(--mono); font-size:11px; color:var(--muted); margin-left:auto; white-space:nowrap}
+  .diffhead .st .plus{color:var(--add)} .diffhead .st .minus{color:var(--del)}
+  .diffscroll{overflow-x:auto}
+  pre.diff{margin:0; font-family:var(--mono); font-size:12.3px; line-height:1.55; min-width:max-content}
+  .dl{display:flex; white-space:pre}
+  .dl .lo,.dl .ln{
+    flex:0 0 auto; width:38px; text-align:right; padding:0 8px; color:var(--faint);
+    font-variant-numeric:tabular-nums; user-select:none; -webkit-user-select:none;
+  }
+  .dl .sg{flex:0 0 auto; width:16px; text-align:center; user-select:none; -webkit-user-select:none}
+  .dl .cd{flex:1 1 auto; padding-right:16px}
+  .dl.ctx{color:#aebaca}
+  .dl.add{background:var(--add-bg)} .dl.add .sg{color:var(--add)} .dl.add .cd{color:#c6ead0}
+  .dl.add .ln{box-shadow:inset 2px 0 0 var(--add-gut)}
+  .dl.del{background:var(--del-bg)} .dl.del .sg{color:var(--del)} .dl.del .cd{color:#f2c7cc}
+  .dl.del .lo{box-shadow:inset 2px 0 0 var(--del-gut)}
+  .dl.hunk{color:var(--accent); background:rgba(76,159,255,.06)}
+  .dl.hunk .cd{color:#8fbdf0}
+
+  /* annotation rail */
+  .notes{display:flex; flex-direction:column; gap:10px}
+  .note{background:var(--panel); border:1px solid var(--line); border-left-width:3px; border-radius:7px; padding:10px 12px}
+  .note.crit{border-left-color:var(--crit)} .note.warn{border-left-color:var(--warn)} .note.ok{border-left-color:var(--ok)}
+  .note .nh{display:flex; align-items:center; gap:8px; margin-bottom:5px}
+  .note .lref{font-family:var(--mono); font-size:10.5px; color:var(--muted); font-weight:600}
+  .note p{margin:0; font-size:12.6px; color:#b9c4cf; line-height:1.5}
+  .note code{font-family:var(--mono); font-size:11.5px; background:var(--panel-2); padding:1px 5px; border-radius:4px; color:#cdd7e1}
+
+  .whywhat{margin:0 0 16px; max-width:70ch}
+  .whywhat p{margin:0 0 8px; color:#bcc7d2; font-size:14px}
+  .whywhat .wk{font-family:var(--mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-right:8px}
+
+  /* review focus list */
+  .focus{display:flex; flex-direction:column; gap:11px}
+  .fitem{
+    display:grid; grid-template-columns:auto 1fr; gap:14px; align-items:start;
+    background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:14px 16px;
+  }
+  .fitem .ftxt h3{font-family:var(--mono); font-size:13.5px; margin:0 0 4px; font-weight:700}
+  .fitem .ftxt h3 code{font-family:var(--mono); font-size:12.5px; background:var(--panel-2); padding:1px 6px; border-radius:4px; color:#cdd7e1}
+  .fitem .ftxt p{margin:0; font-size:13px; color:#b3bfca}
+  .fitem .ftxt .amt{font-family:var(--mono); color:var(--muted); font-size:11.5px}
+  .fitem .ftxt .amt .minus{color:var(--del)} .fitem .ftxt .amt .plus{color:var(--add)}
+
+  .callout{
+    background:var(--accent-dim); border:1px solid rgba(76,159,255,.3); border-radius:9px;
+    padding:14px 17px; margin-bottom:22px; font-size:13.5px; color:#cfe0f5;
+  }
+  .callout b{color:#fff}
+
+  footer{padding:34px 0 60px; color:var(--muted); font-size:12.5px}
+  footer .fg{display:flex; gap:26px; flex-wrap:wrap; align-items:baseline}
+  footer .mono{color:var(--faint)}
+  footer .gate{
+    margin-top:16px; padding:12px 15px; border:1px dashed var(--line); border-radius:8px;
+    color:var(--muted); font-size:12.5px; max-width:74ch;
+  }
+  footer .gate b{color:var(--fg)}
+
+  .reveal{opacity:0; transform:translateY(14px); transition:opacity .5s ease, transform .5s ease}
+  .reveal.in{opacity:1; transform:none}
+
+  @media (max-width:860px){
+    .themes{grid-template-columns:1fr}
+    .diffgrid{grid-template-columns:1fr}
+    .bulk{grid-template-columns:1fr}
+    .kpis{gap:22px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .reveal{opacity:1; transform:none; transition:none}
+    *{scroll-behavior:auto}
+  }
+</style>
+
+<header class="bar">
+  <div class="bar-in">
+    <span class="prtag">PR #270</span>
+    <span class="bar-title">video preview · log viewer rewrite · pipeline P2 · CI migration</span>
+    <span class="bar-range mono"><b>main</b> &larr; <b>dev</b></span>
+    <span class="bar-spacer"></span>
+    <span class="bar-stat"><span class="files">1,573</span> files &nbsp;<span class="plus">+160,432</span> &nbsp;<span class="minus">&minus;58,276</span></span>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="hero reveal">
+      <div class="eyebrow">Reviewer orientation &middot; release diff</div>
+      <h1>A 1,573-file release, mapped so you know where to look.</h1>
+      <p class="lede">This PR folds four largely independent efforts into one <b>dev &rarr; main</b> release. The literal diff is far too large to read line-by-line &mdash; GitHub's own diff API refuses it. Below is the <b>shape</b> of the change: what each theme touches, a module map, and a representative real diff per theme with margin notes flagging where review attention pays off.</p>
+      <div class="kpis">
+        <div class="kpi"><div class="k num">4</div><div class="l">themes</div></div>
+        <div class="kpi"><div class="k num">1,573</div><div class="l">files</div></div>
+        <div class="kpi"><div class="k pos num">+160,432</div><div class="l">insertions</div></div>
+        <div class="kpi"><div class="k neg num">&minus;58,276</div><div class="l">deletions</div></div>
+      </div>
+    </div>
+
+    <!-- 1. THEMES -->
+    <section class="reveal">
+      <div class="sec-head"><span class="idx">01</span><h2>The four themes</h2></div>
+      <div class="themes">
+        <div class="tcard c1">
+          <div class="tn"><span class="n">Video preview</span><span class="tag">frontend + service</span></div>
+          <p>A brand-new <code>Frontend/src/components/preview/</code> module (14 components: canvas video, 3D viewport, timeline, range slider, state bands). Backend <code>mcap-preview</code> gains H.265 / JPEG codecs and a new image schema.</p>
+          <div class="stat mono">preview/ &nbsp;<span class="plus">+3,800</span> new &nbsp;&middot;&nbsp; segment.go <span class="plus">+157</span> <span class="minus">&minus;11</span></div>
+        </div>
+        <div class="tcard c2">
+          <div class="tn"><span class="n">Log viewer rewrite</span><span class="tag">backend SSE</span></div>
+          <p>The vendored argo-ui log viewer is deleted; logs now stream from the backend over SSE with a bounded ring buffer for reconnect replay, rendered by a new frontend <code>LogPanel</code>.</p>
+          <div class="stat mono">logs_sse.go <span class="plus">+239</span> <span class="minus">&minus;59</span> &nbsp;&middot;&nbsp; old viewer <span class="minus">&minus;357</span></div>
+        </div>
+        <div class="tcard c3">
+          <div class="tn"><span class="n">Pipeline P2</span><span class="tag">full stack</span></div>
+          <p>The largest theme: template versioning, scope/owner, batch jobs, pod terminal, runtime mounts and a new runs usecase. Spans <code>usecase.go</code> (<span class="mono">+5,176</span>), the designer canvas, and 12 migrations.</p>
+          <div class="stat mono">backend/internal <span class="plus">+34,394</span> &nbsp;&middot;&nbsp; Frontend/src <span class="plus">+37,400</span></div>
+        </div>
+        <div class="tcard c4">
+          <div class="tn"><span class="n">CI migration</span><span class="tag">infra</span></div>
+          <p>Tekton is retired (7 files, <span class="mono">&minus;1,589</span>) in favour of GitHub Actions: path-filtered <code>deploy-dev</code> / <code>deploy-prod</code> / <code>preview-cloudrun</code> workflows deploying to Cloud Run.</p>
+          <div class="stat mono">.github/workflows <span class="plus">+555</span> &nbsp;&middot;&nbsp; .tekton <span class="minus">&minus;1,589</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. MODULE MAP -->
+    <section class="reveal">
+      <div class="sec-head"><span class="idx">02</span><h2>Module map</h2></div>
+      <p class="sec-note">Which theme touches which part of the tree. Solid edges = code added/changed; dashed red = removal.</p>
+      <div class="mapwrap"><div class="mapscroll">
+        <svg class="map" viewBox="0 0 900 380" role="img" aria-label="Module relationship map from the four themes to the parts of the repository they touch">
+          <defs>
+            <marker id="ah" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+              <path d="M0,0 L7,3.5 L0,7 z" fill="var(--accent)" opacity="0.6"/>
+            </marker>
+          </defs>
+          <!-- edges (theme right x=220 -> module left x=630) -->
+          <path class="edge" marker-end="url(#ah)" d="M220,47 C420,47 440,38 630,38"/>
+          <path class="edge" marker-end="url(#ah)" d="M220,47 C430,47 440,188 630,188"/>
+          <path class="edge" marker-end="url(#ah)" d="M220,137 C430,137 440,113 630,113"/>
+          <path class="edge" marker-end="url(#ah)" d="M220,137 C420,137 440,38 630,38"/>
+          <path class="edge" marker-end="url(#ah)" d="M220,227 C430,227 440,38 630,38"/>
+          <path class="edge" marker-end="url(#ah)" d="M220,227 C420,227 440,113 630,113"/>
+          <path class="edge" marker-end="url(#ah)" d="M220,227 C430,227 440,338 630,338"/>
+          <path class="edge" marker-end="url(#ah)" d="M220,317 C430,317 440,263 630,263"/>
+
+          <!-- theme nodes (left) -->
+          <g class="node" transform="translate(20,20)">
+            <rect width="200" height="54" fill="#182634" stroke="#4c9fff"/>
+            <text class="t" x="14" y="24">Video preview</text><text class="s" x="14" y="41">preview/ + mcap-preview</text>
+          </g>
+          <g class="node" transform="translate(20,110)">
+            <rect width="200" height="54" fill="#20211a" stroke="#d6a029"/>
+            <text class="t" x="14" y="24">Log viewer rewrite</text><text class="s" x="14" y="41">SSE + LogPanel</text>
+          </g>
+          <g class="node" transform="translate(20,200)">
+            <rect width="200" height="54" fill="#1d1a26" stroke="#a371f7"/>
+            <text class="t" x="14" y="24">Pipeline P2</text><text class="s" x="14" y="41">usecase + designer + runs</text>
+          </g>
+          <g class="node" transform="translate(20,290)">
+            <rect width="200" height="54" fill="#16241a" stroke="#3fb950"/>
+            <text class="t" x="14" y="24">CI migration</text><text class="s" x="14" y="41">Tekton &rarr; GH Actions</text>
+          </g>
+
+          <!-- module nodes (right) -->
+          <g class="node" transform="translate(630,15)">
+            <rect width="250" height="46" fill="#151f2b"/>
+            <text class="t" x="14" y="21">Frontend/src</text><text class="s" x="14" y="37">200 files &middot; +37,400</text>
+          </g>
+          <g class="node" transform="translate(630,90)">
+            <rect width="250" height="46" fill="#151f2b"/>
+            <text class="t" x="14" y="21">backend/internal</text><text class="s" x="14" y="37">133 files &middot; +34,394</text>
+          </g>
+          <g class="node" transform="translate(630,165)">
+            <rect width="250" height="46" fill="#151f2b"/>
+            <text class="t" x="14" y="21">services/mcap-preview</text><text class="s" x="14" y="37">codecs + schema</text>
+          </g>
+          <g class="node" transform="translate(630,240)">
+            <rect width="250" height="46" fill="#151f2b"/>
+            <text class="t" x="14" y="21">.github + deploy/</text><text class="s" x="14" y="37">GH Actions + Cloud Run</text>
+          </g>
+          <g class="node" transform="translate(630,315)">
+            <rect width="250" height="46" fill="#151f2b"/>
+            <text class="t" x="14" y="21">backend/migrations</text><text class="s" x="14" y="37">12 new &middot; 050&ndash;060</text>
+          </g>
+        </svg>
+      </div></div>
+
+      <div class="bulk">
+        <div class="bar rm">
+          <div class="top"><span class="nm">databrew-pipeline/</span><span class="fc num">367 files</span></div>
+          <div class="amt num">&minus;38,058</div>
+          <div class="track"><i class="rm" style="width:100%"></i></div>
+          <p class="why">The vendored argo-ui fork (argo-ui / ui / transpiler) removed wholesale. The single biggest change by volume &mdash; but it's a deletion, so it reads fast. <b>Confirm nothing still imports it.</b></p>
+        </div>
+        <div class="bar gen">
+          <div class="top"><span class="nm">site/</span><span class="fc num">316 files</span></div>
+          <div class="amt num">+31,829</div>
+          <div class="track"><i class="gen" style="width:84%"></i></div>
+          <p class="why">Committed frontend build output (<code>_worker.js</code>, <code>index.html</code>, hashed assets). Generated, not hand-written &mdash; skim, don't read. Same for <code>openspec/changes</code> (+16,029).</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. AREA TABLE -->
+    <section class="reveal">
+      <div class="sec-head"><span class="idx">03</span><h2>Where the lines are</h2></div>
+      <p class="sec-note">Sorted by review priority, not size. The two largest blocks are the lowest priority.</p>
+      <div class="tablescroll">
+        <table>
+          <thead><tr><th>Area</th><th style="text-align:right">Files</th><th style="text-align:right">Added</th><th style="text-align:right">Deleted</th><th>Review priority</th></tr></thead>
+          <tbody>
+            <tr><td class="path">backend/internal</td><td class="n num">133</td><td class="n num"><span class="plus">+34,394</span></td><td class="n num"><span class="minus">&minus;1,289</span></td><td><span class="chip warn">focus</span></td></tr>
+            <tr><td class="path">Frontend/src</td><td class="n num">200</td><td class="n num"><span class="plus">+37,400</span></td><td class="n num"><span class="minus">&minus;3,655</span></td><td><span class="chip warn">focus</span></td></tr>
+            <tr><td class="path">.github/workflows + deploy/</td><td class="n num">15</td><td class="n num"><span class="plus">+1,100</span></td><td class="n num"><span class="minus">&minus;67</span></td><td><span class="chip warn">focus</span></td></tr>
+            <tr><td class="path">backend/migrations</td><td class="n num">19</td><td class="n num"><span class="plus">+598</span></td><td class="n num"><span class="minus">&minus;6</span></td><td><span class="chip warn">focus</span></td></tr>
+            <tr><td class="path">databrew-pipeline (removed)</td><td class="n num">367</td><td class="n num">0</td><td class="n num"><span class="minus">&minus;38,058</span></td><td><span class="chip crit">verify removal</span></td></tr>
+            <tr><td class="path">sdk/src</td><td class="n num">32</td><td class="n num"><span class="plus">+4,286</span></td><td class="n num"><span class="minus">&minus;192</span></td><td><span class="chip ok">scan</span></td></tr>
+            <tr><td class="path">Frontend/package-lock.json</td><td class="n num">1</td><td class="n num"><span class="plus">+6,390</span></td><td class="n num"><span class="minus">&minus;9,613</span></td><td><span class="chip ok">scan deps</span></td></tr>
+            <tr><td class="path">site/ (generated build)</td><td class="n num">316</td><td class="n num"><span class="plus">+31,829</span></td><td class="n num">0</td><td><span class="chip ok">skip</span></td></tr>
+            <tr><td class="path">openspec/changes</td><td class="n num">312</td><td class="n num"><span class="plus">+16,029</span></td><td class="n num">0</td><td><span class="chip ok">skip</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 4. DIFF: log viewer -->
+    <section class="reveal">
+      <div class="sec-head"><span class="idx">04</span><h2>Diff &middot; log viewer rewrite</h2><span class="chip warn">focus</span></div>
+      <div class="whywhat">
+        <p><span class="wk">what</span>Server-side SSE log streaming replaces the deleted argo-ui viewer. A bounded ring buffer lets a reconnecting client replay recent lines instead of losing them.</p>
+        <p><span class="wk">where</span><code>backend/internal/handlers/workflow/logs_sse.go</code> &mdash; plus the frontend <code>preview/LogPanel.tsx</code> consumer.</p>
+      </div>
+      <div class="diffgrid">
+        <div class="diffbox"><div class="diffhead">
+          <span class="fp">backend/internal/handlers/workflow/logs_sse.go</span>
+          <span class="st mono"><span class="plus">+239</span> <span class="minus">&minus;59</span></span>
+        </div><div class="diffscroll"><pre class="diff">
+<div class="dl hunk"><span class="lo"></span><span class="ln"></span><span class="sg"></span><span class="cd">@@ -5,8 +5,10 @@ import (</span></div>
+<div class="dl ctx"><span class="lo">5</span><span class="ln">5</span><span class="sg"> </span><span class="cd">	"encoding/json"</span></div>
+<div class="dl ctx"><span class="lo">6</span><span class="ln">6</span><span class="sg"> </span><span class="cd">	"fmt"</span></div>
+<div class="dl del"><span class="lo">8</span><span class="ln"></span><span class="sg">-</span><span class="cd">	"net/http"</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">8</span><span class="sg">+</span><span class="cd">	"strconv"</span></div>
+<div class="dl ctx"><span class="lo">9</span><span class="ln">9</span><span class="sg"> </span><span class="cd">	"strings"</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">10</span><span class="sg">+</span><span class="cd">	"sync"</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">11</span><span class="sg">+</span><span class="cd">	"time"</span></div>
+<div class="dl hunk"><span class="lo"></span><span class="ln"></span><span class="sg"></span><span class="cd">@@ -15,10 +17,133 @@</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">20</span><span class="sg">+</span><span class="cd">const (</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">21</span><span class="sg">+</span><span class="cd">	sseRingBufferSize    = 1000</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">22</span><span class="sg">+</span><span class="cd">	sseRingBufferMaxAge  = 5 * time.Minute</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">23</span><span class="sg">+</span><span class="cd">	sseRingBufferCleanup = 1 * time.Minute</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">24</span><span class="sg">+</span><span class="cd">)</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">25</span><span class="sg">+</span><span class="cd"></span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">31</span><span class="sg">+</span><span class="cd">type logRingBuffer struct {</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">32</span><span class="sg">+</span><span class="cd">	mu     sync.Mutex</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">33</span><span class="sg">+</span><span class="cd">	buffer []sseEvent</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">34</span><span class="sg">+</span><span class="cd">	nextID int64</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">35</span><span class="sg">+</span><span class="cd">}</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">48</span><span class="sg">+</span><span class="cd">func (rb *logRingBuffer) push(event sseEvent) {</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">54</span><span class="sg">+</span><span class="cd">	if len(rb.buffer) &gt;= rb.maxSize {</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">55</span><span class="sg">+</span><span class="cd">		rb.buffer = rb.buffer[1:]</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">56</span><span class="sg">+</span><span class="cd">	}</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">57</span><span class="sg">+</span><span class="cd">	rb.buffer = append(rb.buffer, event)</span></div>
+</pre></div></div>
+        <aside class="notes">
+          <div class="note ok"><div class="nh"><span class="chip ok">low</span><span class="lref">&rarr; L20&ndash;24</span></div>
+            <p>Replay is bounded: 1,000 events / 5&nbsp;min TTL. Sensible caps &mdash; a slow client can't grow memory without limit.</p></div>
+          <div class="note warn"><div class="nh"><span class="chip warn">check</span><span class="lref">&rarr; L55</span></div>
+            <p><code>buffer = buffer[1:]</code> reslices on every overflow, keeping the backing array's head pinned. Fine at a 1,000 cap; worth a glance if the cap ever grows.</p></div>
+          <div class="note warn"><div class="nh"><span class="chip warn">check</span><span class="lref">&rarr; cleanup</span></div>
+            <p>A <code>sseRingBufferCleanup</code> ticker implies a goroutine. Confirm it's stopped on client disconnect so streams don't leak.</p></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 5. DIFF: video preview -->
+    <section class="reveal">
+      <div class="sec-head"><span class="idx">05</span><h2>Diff &middot; video preview</h2><span class="chip warn">focus</span></div>
+      <div class="whywhat">
+        <p><span class="wk">what</span>The mcap preview service accepts more codecs. Video topic selection widens from H.264-only to H.264 / H.265 / JPEG, and a new <code>safari_sdk.protos.image</code> schema is recognised alongside <code>CompressedVideo</code>.</p>
+        <p><span class="wk">where</span><code>services/mcap-preview/internal/server/segment.go</code> &mdash; feeds the new <code>preview/</code> component module on the frontend.</p>
+      </div>
+      <div class="diffgrid">
+        <div class="diffbox"><div class="diffhead">
+          <span class="fp">services/mcap-preview/internal/server/segment.go</span>
+          <span class="st mono"><span class="plus">+157</span> <span class="minus">&minus;11</span></span>
+        </div><div class="diffscroll"><pre class="diff">
+<div class="dl hunk"><span class="lo"></span><span class="ln"></span><span class="sg"></span><span class="cd">@@ -32,6 +32,11 @@ const (</span></div>
+<div class="dl ctx"><span class="lo">32</span><span class="ln">32</span><span class="sg"> </span><span class="cd">	codeWindowTimebaseMismatch = "WINDOW_TIMEBASE_MISMATCH"</span></div>
+<div class="dl ctx"><span class="lo">33</span><span class="ln">33</span><span class="sg"> </span><span class="cd">)</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">35</span><span class="sg">+</span><span class="cd">func isSupportedSchema(name string) bool {</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">36</span><span class="sg">+</span><span class="cd">	n := strings.ToLower(name)</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">37</span><span class="sg">+</span><span class="cd">	return strings.Contains(n, "compressedvideo") ||</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">38</span><span class="sg">+</span><span class="cd">		strings.Contains(n, "safari_sdk.protos.image")</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">39</span><span class="sg">+</span><span class="cd">}</span></div>
+<div class="dl hunk"><span class="lo"></span><span class="ln"></span><span class="sg"></span><span class="cd">@@ -246,10 +251,10 @@ func pickTopic(</span></div>
+<div class="dl del"><span class="lo">249</span><span class="ln"></span><span class="sg">-</span><span class="cd">			if !strings.Contains(strings.ToLower(s.Name), "compressedvideo") {</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">254</span><span class="sg">+</span><span class="cd">			if !isSupportedSchema(s.Name) {</span></div>
+<div class="dl ctx"><span class="lo">250</span><span class="ln">255</span><span class="sg"> </span><span class="cd">				return "", fmt.Errorf("topic %q not a supported video schema", hint)</span></div>
+<div class="dl ctx"><span class="lo">251</span><span class="ln">256</span><span class="sg"> </span><span class="cd">			}</span></div>
+<div class="dl del"><span class="lo">252</span><span class="ln"></span><span class="sg">-</span><span class="cd">			if codec, ok := detectTopicCodec(rs, hint); ok &amp;&amp; codec == "h264" {</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">257</span><span class="sg">+</span><span class="cd">			if codec, ok := detectTopicCodec(rs, hint); ok &amp;&amp;</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">258</span><span class="sg">+</span><span class="cd">				(codec == "h264" || codec == "h265" || codec == "jpeg") {</span></div>
+<div class="dl ctx"><span class="lo">253</span><span class="ln">259</span><span class="sg"> </span><span class="cd">				return hint, nil</span></div>
+</pre></div></div>
+        <aside class="notes">
+          <div class="note ok"><div class="nh"><span class="chip ok">low</span><span class="lref">&rarr; L35&ndash;39</span></div>
+            <p>Schema check extracted to one helper and reused at both call sites &mdash; the old inline <code>strings.Contains</code> checks collapse into <code>isSupportedSchema</code>. Clean.</p></div>
+          <div class="note warn"><div class="nh"><span class="chip warn">check</span><span class="lref">&rarr; L257&ndash;258</span></div>
+            <p>Codec allow-list widens to h264/h265/jpeg. Confirm the fMP4 muxer downstream actually handles h265 &amp; jpeg &mdash; accepting a topic it can't encode would fail later, not here.</p></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 6. DIFF: pipeline P2 -->
+    <section class="reveal">
+      <div class="sec-head"><span class="idx">06</span><h2>Diff &middot; pipeline P2</h2><span class="chip warn">focus</span></div>
+      <div class="whywhat">
+        <p><span class="wk">what</span>Pipeline templates become versioned and ownable; deployments carry template lineage, asset bindings and an execution target. These API types mirror migrations <code>050</code> (active version) and <code>051</code> (scope/owner).</p>
+        <p><span class="wk">where</span><code>Frontend/src/api/pipelineApi.ts</code> is the type surface; the logic lives in <code>backend/internal/usecase/pipeline/usecase.go</code> (+5,176).</p>
+      </div>
+      <div class="diffgrid">
+        <div class="diffbox"><div class="diffhead">
+          <span class="fp">Frontend/src/api/pipelineApi.ts</span>
+          <span class="st mono"><span class="plus">+530</span> <span class="minus">&minus;8</span></span>
+        </div><div class="diffscroll"><pre class="diff">
+<div class="dl hunk"><span class="lo"></span><span class="ln"></span><span class="sg"></span><span class="cd">@@ -4,23 +4,273 @@ import { request } from "./pipelineClient";</span></div>
+<div class="dl ctx"><span class="lo">4</span><span class="ln">4</span><span class="sg"> </span><span class="cd">export interface PipelineTemplate {</span></div>
+<div class="dl ctx"><span class="lo">5</span><span class="ln">5</span><span class="sg"> </span><span class="cd">	id: string;</span></div>
+<div class="dl ctx"><span class="lo">6</span><span class="ln">6</span><span class="sg"> </span><span class="cd">	name: string;</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">7</span><span class="sg">+</span><span class="cd">	version: number;</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">8</span><span class="sg">+</span><span class="cd">	versionCount?: number;</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">9</span><span class="sg">+</span><span class="cd">	activeVersion?: number;</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">10</span><span class="sg">+</span><span class="cd">	scope?: string;</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">11</span><span class="sg">+</span><span class="cd">	owner?: string;</span></div>
+<div class="dl ctx"><span class="lo">7</span><span class="ln">12</span><span class="sg"> </span><span class="cd">	pipeline: Pipeline;</span></div>
+<div class="dl ctx"><span class="lo">8</span><span class="ln">13</span><span class="sg"> </span><span class="cd">	nodeCount: number;</span></div>
+<div class="dl ctx"><span class="lo">14</span><span class="ln">18</span><span class="sg"> </span><span class="cd">export interface Deployment {</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">20</span><span class="sg">+</span><span class="cd">	templateId?: string;</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">21</span><span class="sg">+</span><span class="cd">	templateVersion?: number;</span></div>
+<div class="dl ctx"><span class="lo">15</span><span class="ln">22</span><span class="sg"> </span><span class="cd">	pipelineName: string;</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">28</span><span class="sg">+</span><span class="cd">	assetIds?: string[];</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">29</span><span class="sg">+</span><span class="cd">	executionTarget?: ExecutionTarget;</span></div>
+</pre></div></div>
+        <aside class="notes">
+          <div class="note ok"><div class="nh"><span class="chip ok">low</span><span class="lref">&rarr; L7&ndash;11</span></div>
+            <p>New template fields line up 1:1 with migrations <code>050</code>/<code>051</code>. Types and schema agree &mdash; good sign the contract is coherent.</p></div>
+          <div class="note warn"><div class="nh"><span class="chip warn">check</span><span class="lref">&rarr; L7&ndash;29</span></div>
+            <p>Most fields are optional (<code>?</code>) except <code>version</code>. Per the repo's API-contract-first rule, confirm the backend <code>c.JSON()</code> shape returns <code>version</code> on every path, or the frontend reads <code>undefined</code>.</p></div>
+          <div class="note warn"><div class="nh"><span class="chip warn">scope</span><span class="lref">&rarr; usecase.go</span></div>
+            <p>This file is only the type surface. The <span class="mono">+5,176</span>-line <code>usecase.go</code> is where versioning logic actually lives &mdash; the real review target.</p></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 7. DIFF: CI migration -->
+    <section class="reveal">
+      <div class="sec-head"><span class="idx">07</span><h2>Diff &middot; CI migration</h2><span class="chip crit">verify infra</span></div>
+      <div class="whywhat">
+        <p><span class="wk">what</span>Deploys move from Tekton (deleted) to GitHub Actions. The new <code>deploy-dev</code> workflow triggers only on <code>dev</code> pushes that touch backend or mcap-preview paths, then deploys to Cloud Run.</p>
+        <p><span class="wk">where</span><code>.github/workflows/deploy-dev.yml</code> (new, +212) replaces seven <code>.tekton/*.yaml</code> files (&minus;1,589).</p>
+      </div>
+      <div class="diffgrid">
+        <div class="diffbox"><div class="diffhead">
+          <span class="fp">.github/workflows/deploy-dev.yml</span>
+          <span class="st mono">new &middot; <span class="plus">+212</span></span>
+        </div><div class="diffscroll"><pre class="diff">
+<div class="dl hunk"><span class="lo"></span><span class="ln"></span><span class="sg"></span><span class="cd">@@ -0,0 +1,212 @@</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">1</span><span class="sg">+</span><span class="cd">name: deploy-dev</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">5</span><span class="sg">+</span><span class="cd"># Frontend dev is deployed by the Cloudflare GitHub App, not GHA.</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">6</span><span class="sg">+</span><span class="cd">on:</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">7</span><span class="sg">+</span><span class="cd">  push:</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">8</span><span class="sg">+</span><span class="cd">    branches: [dev]</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">9</span><span class="sg">+</span><span class="cd">    paths:</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">10</span><span class="sg">+</span><span class="cd">      - "backend/**"</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">11</span><span class="sg">+</span><span class="cd">      - "services/mcap-preview/**"</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">16</span><span class="sg">+</span><span class="cd">permissions:</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">17</span><span class="sg">+</span><span class="cd">  contents: read</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">18</span><span class="sg">+</span><span class="cd">  id-token: write</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">20</span><span class="sg">+</span><span class="cd">env:</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">21</span><span class="sg">+</span><span class="cd">  VM_HOST: 136.119.82.209</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">22</span><span class="sg">+</span><span class="cd">  VM_USER: rick</span></div>
+<div class="dl add"><span class="lo"></span><span class="ln">23</span><span class="sg">+</span><span class="cd">  REPO_DIR: /home/rick/cyber-databrew</span></div>
+</pre></div></div>
+        <aside class="notes">
+          <div class="note crit"><div class="nh"><span class="chip crit">high</span><span class="lref">&rarr; L21&ndash;23</span></div>
+            <p>Deploy targets a hard-coded host as <code>rick</code> against <code>/home/rick/...</code>. Confirm this is shared deploy infra, not a personal box &mdash; a single-user path is a bus-factor and access risk for the whole dev deploy.</p></div>
+          <div class="note warn"><div class="nh"><span class="chip warn">check</span><span class="lref">&rarr; L18</span></div>
+            <p><code>id-token: write</code> enables OIDC. Verify the GCP Workload Identity binding exists for this workflow, or deploy auth fails at runtime.</p></div>
+          <div class="note ok"><div class="nh"><span class="chip ok">low</span><span class="lref">&rarr; L9&ndash;11</span></div>
+            <p>Path filter keeps unrelated pushes from redeploying. Frontend intentionally excluded (Cloudflare owns it).</p></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 8. REVIEW FOCUS -->
+    <section class="reveal">
+      <div class="sec-head"><span class="idx">08</span><h2>Review focus</h2></div>
+      <div class="callout">
+        Severity here means <b>review priority</b>, not confirmed defects. These are evidence-based &ldquo;look here&rdquo; flags from the diff shape &mdash; no line-by-line audit has been run (see the note in the footer).
+      </div>
+      <div class="focus">
+        <div class="fitem">
+          <span class="chip crit">high</span>
+          <div class="ftxt"><h3><code>databrew-pipeline/</code> deleted wholesale</h3>
+            <p>367 files removed <span class="amt"><span class="minus">&minus;38,058</span></span>. Grep the tree for any surviving import or build reference to the vendored argo-ui before merge &mdash; a stray dependency breaks the build only after the delete lands.</p></div>
+        </div>
+        <div class="fitem">
+          <span class="chip crit">high</span>
+          <div class="ftxt"><h3>Deploy path fundamentally changed</h3>
+            <p>Tekton &rarr; GitHub Actions, deploying via a hard-coded VM as a personal user. Verify OIDC / Workload Identity, secrets, and that the deploy host is intended shared infra.</p></div>
+        </div>
+        <div class="fitem">
+          <span class="chip warn">focus</span>
+          <div class="ftxt"><h3><code>usecase/pipeline/usecase.go</code></h3>
+            <p>The largest single logic change <span class="amt"><span class="plus">+5,176</span> <span class="minus">&minus;224</span></span> &mdash; the heart of pipeline P2 (versioning, scope/owner, runs). Read alongside <code>usecase_test.go</code> (+4,694).</p></div>
+        </div>
+        <div class="fitem">
+          <span class="chip warn">focus</span>
+          <div class="ftxt"><h3>12 new migrations (050&ndash;060)</h3>
+            <p>Template versioning, <code>databrew_runs</code>, pipeline configs, backfill. Per repo rule, apply to dev <b>before</b> the backend image deploys, or requests touching new columns 500.</p></div>
+        </div>
+        <div class="fitem">
+          <span class="chip ok">scan</span>
+          <div class="ftxt"><h3><code>package-lock.json</code> churn</h3>
+            <p><span class="amt"><span class="plus">+6,390</span> <span class="minus">&minus;9,613</span></span>. Skim for unexpected major bumps; otherwise lockfile noise.</p></div>
+        </div>
+        <div class="fitem">
+          <span class="chip ok">skip</span>
+          <div class="ftxt"><h3><code>site/</code> and <code>openspec/changes</code></h3>
+            <p>Generated build output (+31,829) and spec docs (+16,029). No hand-written logic &mdash; safe to collapse in the GitHub diff view.</p></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <div class="wrap">
+      <div class="fg">
+        <span class="eyebrow">PR&nbsp;#270 &middot; cyber-databrew</span>
+        <span class="mono">range: main&hellip;dev @ merge-base 814f8f0b</span>
+        <span class="mono">1,573 files &middot; +160,432 / &minus;58,276</span>
+      </div>
+      <div class="gate">
+        <b>Deeper review layer is gated.</b> This page maps the change and flags where to look; it is not a line-by-line audit. A full per-hunk review overlay (confirmed findings, severity-voted) should be added only after a human signs off on running it &mdash; per the request. Ask to enable it and it can be generated as a second pass.
+      </div>
+    </div>
+  </footer>
+</main>
+
+<script>
+  (function(){
+    var rm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var els = document.querySelectorAll('.reveal');
+    if (rm || !('IntersectionObserver' in window)) {
+      els.forEach(function(el){ el.classList.add('in'); });
+      return;
+    }
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, {rootMargin: '0px 0px -8% 0px', threshold: 0.06});
+    els.forEach(function(el){ io.observe(el); });
+  })();
+</script>
