@@ -130,14 +130,12 @@ remove_env() {
 
 current_cloudrun_env_value() {
   local key="$1"
-  gcloud run services describe "${SERVICE_NAME}" \
-    --project "${PROJECT_ID}" \
-    --region "${REGION}" \
-    --format=json 2>/dev/null \
-    | python3 -c 'import json,sys
+  python3 -c 'import json,sys
 key=sys.argv[1]
+fp=sys.argv[2]
 try:
-    svc=json.load(sys.stdin)
+    with open(fp) as f:
+        svc=json.load(f)
 except Exception:
     print("")
     raise SystemExit(0)
@@ -145,7 +143,7 @@ for item in svc.get("spec", {}).get("template", {}).get("spec", {}).get("contain
     if item.get("name") == key and "value" in item:
         print(item.get("value") or "")
         break
-' "${key}"
+' "${key}" "${PRESERVED_SERVICE_JSON}"
 }
 
 # preserve_all_cloudrun_env_vars reads ALL env vars from the current Cloud Run
@@ -157,14 +155,11 @@ preserve_all_cloudrun_env_vars() {
   local file="$1"
   local exclude="^(PORT|K8S_CA_DATA|K8S_CA_B64|K8S_BEARER_TOKEN|ELASTICSEARCH_PASSWORD|DB_PASSWORD|ARGO_BASE_URL|ARGO_SERVER_URL|ARGO_TOKEN|ARGO_AUTH_TOKEN|TRINO_ENABLED|TRINO_URL|TRINO_CATALOG|TRINO_SCHEMA)$"
 
-  gcloud run services describe "${SERVICE_NAME}" \
-    --project "${PROJECT_ID}" \
-    --region "${REGION}" \
-    --format=json 2>/dev/null \
-    | python3 -c '
+  python3 -c '
 import json, re, sys
 
-svc = json.load(sys.stdin)
+with open("'"${PRESERVED_SERVICE_JSON}"'") as f:
+    svc = json.load(f)
 file_path = "'"${file}"'"
 exclude = re.compile(r"'"${exclude}"'")
 
@@ -272,7 +267,8 @@ fi
 
 ENV_KV_FILE="$(mktemp)"
 ENV_VARS_FILE="$(mktemp)"
-trap 'rm -f "${ENV_KV_FILE}" "${ENV_VARS_FILE}"' EXIT
+PRESERVED_SERVICE_JSON="$(mktemp)"
+trap 'rm -f "${ENV_KV_FILE}" "${ENV_VARS_FILE}" "${PRESERVED_SERVICE_JSON}"' EXIT
 
 if [[ "${SOURCE_K8S_ENV}" == "true" ]]; then
   echo "Loading env from k8s namespace ${K8S_NAMESPACE} (${K8S_CONFIGMAP_NAME}, ${K8S_SECRET_NAME})"
@@ -286,6 +282,13 @@ if [[ "${SOURCE_K8S_ENV}" == "true" ]]; then
     printf '%s=%s\n' "${key}" "${value}" >> "${ENV_KV_FILE}"
   done < <(kubectl -n "${K8S_NAMESPACE}" get secret "${K8S_SECRET_NAME}" -o go-template='{{range $k,$v := .data}}{{printf "%s\n" $k}}{{end}}')
 fi
+
+# Fetch current Cloud Run service once for env-preservation lookups below.
+# Replaces ~9 sequential `gcloud run services describe` calls with one.
+gcloud run services describe "${SERVICE_NAME}" \
+  --project "${PROJECT_ID}" --region "${REGION}" \
+  --format=json > "${PRESERVED_SERVICE_JSON}" 2>/dev/null \
+  || echo '{}' > "${PRESERVED_SERVICE_JSON}"
 
 if [[ -n "${ENV_FILE}" ]]; then
   if [[ ! -f "${ENV_FILE}" ]]; then
