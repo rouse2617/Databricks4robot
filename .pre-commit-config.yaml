@@ -15,15 +15,29 @@ repos:
         exclude: ^(package-lock\.json|site/)
 
   # 2. Scanning for specific cloud provider signatures
-  # The pre-commit gitleaks hook manifest is broken for current gitleaks versions;
-  # the gitleaks scan is owned by .github/workflows/gitleaks.yml instead. Detect-secrets
-  # above is the local pre-commit gate and is intentionally left enabled for fast local
-  # checks (it catches plain high-entropy strings like the dev GRACE_PASSWORD).
-  # - repo: https://github.com/gitleaks/gitleaks
-  #   rev: v8.18.2
-  #   hooks:
-  #     - id: gitleaks
-  #       args: ["--config=.gitleaks.toml"]
+  # Local gitleaks gate so secrets never reach `git commit`. We invoke the
+  # gitleaks binary directly because the upstream pre-commit hook manifest is
+  # broken for current gitleaks versions. Requires gitleaks on PATH
+  # (`brew install gitleaks`).
+  #
+  # We run `gitleaks detect --source . --no-git` instead of `gitleaks protect`
+  # because:
+  #  - gitleaks's default ruleset catches vendor fingerprints (AWS, GCP, GitHub
+  #    tokens, etc.) but does NOT catch truly random passwords — those are
+  #    detect-secrets's job above.
+  #  - `gitleaks protect --staged` reads from a different config precedence and
+  #    ignores --config. We need --config .gitleaks.toml so the project allowlist
+  #    is honoured (it excludes .secrets.baseline).
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: gitleaks
+        description: Scan working tree for known-vendor secrets via gitleaks
+        entry: gitleaks detect --no-git --source . --redact --config .gitleaks.toml --exit-code 1
+        language: system
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-commit]
 
   # 3. Standard Git "Sanity" Checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
