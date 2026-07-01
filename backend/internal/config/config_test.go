@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -69,5 +70,58 @@ func TestLoadPipelineResourceGuardConfig(t *testing.T) {
 	cfg = Load()
 	if got := cfg.PipelineUnschedulablePendingThresholdDuration(); got != 15*time.Minute {
 		t.Fatalf("expected default pending threshold, got %s", got)
+	}
+}
+
+func TestValidate_NonProductionSkipsChecks(t *testing.T) {
+	for _, env := range []string{"development", "staging", "test", ""} {
+		cfg := &Config{Env: env, DatabrewToken: devDefaultDatabrewToken, JWTSecret: devDefaultJWTSecret}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("env=%q: expected nil error for non-production, got %v", env, err)
+		}
+	}
+}
+
+func TestValidate_ProductionRejectsDevDefaults(t *testing.T) {
+	cfg := &Config{
+		Env:           "production",
+		DatabrewToken: devDefaultDatabrewToken,
+		JWTSecret:     devDefaultJWTSecret,
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for production with dev-default secrets, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "DATABREW_TOKEN") {
+		t.Errorf("expected error to mention DATABREW_TOKEN, got: %s", msg)
+	}
+	if !strings.Contains(msg, "JWT_SECRET") {
+		t.Errorf("expected error to mention JWT_SECRET, got: %s", msg)
+	}
+}
+
+func TestValidate_ProductionRejectsEmptySecrets(t *testing.T) {
+	cfg := &Config{Env: "production", DatabrewToken: "", JWTSecret: ""}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for production with empty secrets, got nil")
+	}
+}
+
+func TestValidate_ProductionAcceptsRealSecrets(t *testing.T) {
+	cfg := &Config{
+		Env:           "production",
+		DatabrewToken: "a-real-random-token-value",
+		JWTSecret:     "a-real-random-jwt-secret-value",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected nil error for production with real secrets, got %v", err)
+	}
+}
+
+func TestValidate_NilConfig(t *testing.T) {
+	var cfg *Config
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for nil config, got nil")
 	}
 }

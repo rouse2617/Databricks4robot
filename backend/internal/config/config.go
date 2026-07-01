@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -266,6 +268,43 @@ func (c *Config) AdminRoutesEnabled() bool {
 		return true
 	}
 	return c.Env != "production"
+}
+
+// devDefaultDatabrewToken and devDefaultJWTSecret mirror the fallback values
+// in Load(). Kept as named constants (not re-reading getenv) so Validate
+// checks the exact strings a dev/local deployment would end up with if the
+// corresponding env var were left unset.
+const (
+	devDefaultDatabrewToken = "dev-token"
+	devDefaultJWTSecret     = "dev-jwt-secret"
+)
+
+// Validate fails fast when a production deployment is about to run with
+// dev-only defaults. Load() intentionally falls back to dev-token /
+// dev-jwt-secret so local/dev environments work with zero configuration;
+// the same fallback reaching a production process means DATABREW_TOKEN or
+// JWT_SECRET was never set, which would otherwise silently accept the
+// well-known dev credential in prod. Call this once at startup — non-nil
+// error means the process must not serve traffic.
+func (c *Config) Validate() error {
+	if c == nil {
+		return errors.New("config: nil")
+	}
+	if c.Env != "production" {
+		return nil
+	}
+	var errs []error
+	if c.DatabrewToken == "" || c.DatabrewToken == devDefaultDatabrewToken {
+		errs = append(errs, fmt.Errorf("DATABREW_TOKEN must be set to a non-default value in production (got %q)", c.DatabrewToken))
+	}
+	if c.JWTSecret == "" || c.JWTSecret == devDefaultJWTSecret {
+		errs = append(errs, fmt.Errorf("JWT_SECRET must be set to a non-default value in production (got %q)", c.JWTSecret))
+	}
+	// ADMIN_TOKEN is intentionally NOT validated here: AdminRoutesEnabled()
+	// already treats an unset token as "admin routes disabled" (a safe
+	// degraded state), and infra.go logs a warning for it. Failing startup
+	// here would turn an intentional safe-default into a hard outage.
+	return errors.Join(errs...)
 }
 
 func getenv(key, fallback string) string {

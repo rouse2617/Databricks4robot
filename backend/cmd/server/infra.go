@@ -29,6 +29,10 @@ func setupInfra() *infra {
 	}
 
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		slog.Error("config validation failed", "err", err)
+		os.Exit(1)
+	}
 
 	validate.RegisterCustomValidators()
 
