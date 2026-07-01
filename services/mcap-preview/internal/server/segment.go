@@ -330,7 +330,7 @@ func detectTopicCodec(rs io.ReadSeeker, topic string) (string, bool) {
 			continue
 		}
 		// Try safari protos image first (JPEG wrapped in protobuf)
-		if jpeg, _, _, derr := remux.DecodeSafariImage(m.Data); derr == nil && len(jpeg) > 0 {
+		if jpeg, _, _, derr := remux.DecodeSafariImage(m.Data); derr == nil && len(jpeg) >= 2 {
 			if jpeg[0] == 0xFF && jpeg[1] == 0xD8 {
 				return "jpeg", true
 			}

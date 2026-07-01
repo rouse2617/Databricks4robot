@@ -317,7 +317,11 @@ func fetchVideoSteps(start, end time.Time, stepKey string) ([]string, error) {
 		req, _ := http.NewRequest("GET", reqURL, nil)
 		req.SetBasicAuth(cfg.Grace.Username, gracePassword)
 
-		resp, err := http.DefaultClient.Do(req)
+		// Use the same 30s-timeout client as DataBrew login so a hung
+		// Grace connection can't block the Cloud Run Job indefinitely.
+		// The job has its own overall timeout; per-request timeout keeps
+		// a single bad page from eating the whole budget.
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", page, err)
 		}

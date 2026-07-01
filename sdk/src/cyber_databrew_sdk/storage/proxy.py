@@ -37,7 +37,7 @@ class ProxyBackend(Backend):
 
     def _sign_url(self, bucket: str, obj: str, method: str = "GET") -> str:
         """Get a signed URL from the backend."""
-        result = self._requestor._request("POST", "storage_sign_url", json_body={
+        result = self._requestor.request("POST", "storage_sign_url", json_body={
             "bucket": bucket,
             "object": obj,
             "method": method,
