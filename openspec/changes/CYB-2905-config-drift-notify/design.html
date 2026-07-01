@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CYB-2905 · 配置漂移通知 · 设计</title>
+<style>
+  :root{--bg:#f5f7fa;--card:#fff;--border:#e8eaef;--border-soft:#f0f2f5;--fg:#1f2329;--muted:#646a73;--accent:#1677ff;--accent-soft:#e6f4ff;--ok:#52c41a;--ok-soft:#f6ffed;--warn:#faad14;--warn-soft:#fffbe6;--err:#ff4d4f;--err-soft:#fff2f0;--note:#722ed1;--mono:ui-monospace,SFMono-Regular,Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.6}
+  .doc{max-width:1240px;margin:0 auto;padding:24px 32px}
+  h1{font-size:22px;font-weight:600;margin:0 0 4px}
+  .meta{color:var(--muted);font-size:12.5px;margin-bottom:16px}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px}
+  .badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:11.5px;border:1px solid var(--border);background:#fafafa;color:var(--muted)}
+  .badge.b{color:var(--accent);border-color:#91caff;background:#e6f4ff}
+  .badge.d{color:var(--warn);border-color:#ffe58f;background:var(--warn-soft)}
+  .badge.g{color:var(--ok);border-color:#b7eb8f;background:var(--ok-soft)}
+  h2{font-size:17px;font-weight:600;margin:36px 0 10px;color:#1f2329}
+  h3{font-size:14px;font-weight:600;margin:18px 0 6px;color:#1f2329}
+  p{margin:6px 0}p.lede{font-size:15px;line-height:1.7;color:#3b3f45}
+  ul,ol{padding-left:22px;margin:6px 0}li{margin:3px 0}
+  code{font-family:var(--mono);background:#f5f5f5;padding:1px 5px;border-radius:3px;font-size:12.5px;color:#cf1322;border:1px solid #e8e8e8}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+
+  /* ===== Mock shell ===== */
+  .shell{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03);display:grid;grid-template-columns:208px 1fr;min-height:520px}
+  .sider{background:#001529;color:rgba(255,255,255,.65);padding:0;display:flex;flex-direction:column}
+  .sider .brand{padding:18px 20px 16px;display:flex;align-items:center;gap:8px;font-weight:600;color:#fff;font-size:15px}
+  .sider .brand .dot{width:24px;height:24px;border-radius:5px;background:#1677ff;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700}
+  .sider .menu{flex:1;padding:8px 8px;font-size:13.5px}
+  .sider .menu .item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:6px;color:rgba(255,255,255,.65);cursor:default;margin:1px 0}
+  .sider .menu .item .ico{width:18px;text-align:center;font-size:14px;color:rgba(255,255,255,.45)}
+  .sider .menu .item.active{background:#1677ff;color:#fff;font-weight:500}
+  .sider .menu .item.active .ico{color:#fff}
+  .sider .div{height:1px;background:rgba(255,255,255,.06);margin:6px 14px}
+  .sider .ver{margin-top:auto;padding:14px 20px;color:rgba(255,255,255,.35);font-size:11.5px;border-top:1px solid rgba(255,255,255,.06)}
+  .main{padding:0;background:#fff;display:flex;flex-direction:column}
+  .topbar{padding:14px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border-soft)}
+  .topbar .left{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:18px}
+  .topbar .right{display:flex;align-items:center;gap:14px}
+  .topbar .avatar{width:32px;height:32px;border-radius:50%;background:#1677ff;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600}
+  .topbar .who{font-size:13px;color:var(--muted)}
+  .content{padding:20px 24px;flex:1;background:#fff}
+  .content h1{margin:0 0 4px;font-size:18px}
+  .breadcrumb{color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  .breadcrumb a{color:var(--muted);text-decoration:none}.breadcrumb a:hover{color:var(--accent)}
+
+  /* ===== Antd-like bits ===== */
+  .alert{background:#e6f4ff;border:1px solid #91d5ff;border-radius:8px;padding:12px 16px;display:flex;gap:10px;margin:0 0 14px}
+  .alert .ico{color:var(--accent);font-size:16px;flex-shrink:0;margin-top:2px}
+  .alert.warm{background:var(--warn-soft);border-color:#ffe58f}.alert.warm .ico{color:var(--warn)}
+  .alert.danger{background:var(--err-soft);border-color:#ffccc7}.alert.danger .ico{color:var(--err)}
+  .alert.ok{background:var(--ok-soft);border-color:#b7eb8f}.alert.ok .ico{color:var(--ok)}
+  .alert .body{flex:1;font-size:13px}
+  .alert .body strong{display:block;margin-bottom:4px;font-size:13.5px}
+  .alert .body p{margin:2px 0;color:var(--muted);font-size:12.5px}
+
+  .tabs{display:flex;border-bottom:1px solid var(--border-soft);margin:0 0 16px;gap:8px}
+  .tabs .tab{padding:10px 4px;color:var(--muted);font-size:14px;cursor:default;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tabs .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:500}
+  .tabs .tab .count{display:inline-block;margin-left:6px;background:#f0f0f0;color:var(--muted);font-size:11px;padding:0 6px;border-radius:8px}
+  .tabs .tab.active .count{background:var(--accent-soft);color:var(--accent)}
+
+  .tag{display:inline-flex;align-items:center;font-size:12px;padding:1px 8px;border-radius:2px;border:1px solid;line-height:20px;height:22px}
+  .tag.green{color:var(--ok);border-color:#b7eb8f;background:var(--ok-soft)}
+  .tag.gold{color:var(--warn);border-color:#ffe58f;background:var(--warn-soft)}
+  .tag.blue{color:var(--accent);border-color:#91caff;background:var(--accent-soft)}
+  .tag.purple{color:var(--note);border-color:#d3adf7;background:#f9f0ff}
+  .tag.gray{color:#646a73;border-color:#d9d9d9;background:#fafafa}
+  .tag.red{color:var(--err);border-color:#ffccc7;background:var(--err-soft)}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  .stat{background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px 18px}
+  .stat .v{font-size:24px;font-weight:600;color:#1f2329;line-height:1.2}
+  .stat .l{color:var(--muted);font-size:13px;margin-top:4px}
+  .stat .d{color:var(--muted);font-size:12px;margin-top:6px}
+
+  .seg{display:flex;border:1px solid var(--border);border-radius:6px;padding:2px;gap:2px;background:#f0f2f5;width:fit-content}
+  .seg button{padding:4px 14px;font-size:13px;border:0;background:transparent;border-radius:4px;cursor:default;color:var(--muted)}
+  .seg button.on{background:#fff;color:#1f2329;box-shadow:0 1px 2px rgba(0,0,0,.06);font-weight:500}
+
+  .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .search{flex:1;display:flex;align-items:center;border:1px solid var(--border);border-radius:6px;padding:6px 12px;background:#fff;gap:8px;max-width:400px}
+  .search input{border:0;outline:none;flex:1;font-size:13px;background:transparent}
+  .btn{padding:5px 14px;border-radius:6px;border:1px solid var(--border);background:#fff;color:#1f2329;font-size:13px;cursor:default;display:inline-flex;align-items:center;gap:6px}
+  .btn.pri{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .btn.warn{background:var(--warn);color:#fff;border-color:var(--warn)}
+  .btn.danger{background:var(--err);color:#fff;border-color:var(--err)}
+  .btn.solid{background:#f0f0f0;border-color:#d9d9d9}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:#fafafa;border-bottom:1px solid var(--border);padding:10px 12px;text-align:left;font-weight:600;color:#1f2329;white-space:nowrap}
+  td{border-bottom:1px solid var(--border-soft);padding:12px;vertical-align:middle}
+  tr:hover td{background:#fafbfc}
+  td .name{font-weight:600;color:#1f2329}
+  td .name code{font-weight:400;color:#cf1322;background:#fff5f5;border-color:#ffa39e;margin-left:6px;font-size:11.5px}
+  td .vcode{font-family:var(--mono);font-size:11.5px;color:#1677ff;background:#e6f4ff;border-color:#91caff;padding:1px 6px;border-radius:3px}
+  td .meta{color:var(--muted);font-size:12px;margin-top:2px}
+
+  .banner{background:#fff2f0;border:1px solid #ffccc7;border-radius:6px;padding:10px 14px;display:flex;align-items:center;gap:12px;font-size:13.5px;color:#cf1322}
+  .banner .ico{font-size:18px}
+  .banner a{color:var(--accent);text-decoration:none;font-weight:500}
+
+  .diff{background:#fafafa;border:1px solid var(--border);border-radius:6px;padding:12px 14px;font-family:var(--mono);font-size:12.5px;white-space:pre;overflow-x:auto;color:#3b3f45;line-height:1.55}
+  .diff .add{background:#f6ffed;color:#389e0d;display:block}
+  .diff .del{background:#fff1f0;color:#cf1322;display:block}
+  .diff .ctx{color:#646a73}
+
+  /* ===== Feishu (kept) ===== */
+  .feishu{max-width:520px;background:#1f1f1f;border:1px solid #3a3a3a;border-radius:8px;padding:14px 16px;margin:8px 0;font-size:14px;line-height:1.5;color:#e6e6e6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .feishu .bot{display:flex;gap:8px;align-items:flex-start}
+  .feishu .avatar{width:36px;height:36px;border-radius:4px;background:#3370ff;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:13px}
+  .feishu .who{font-weight:600;color:#fff;display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:6px}
+  .feishu .who .bot-tag{font-size:10px;padding:1px 5px;border-radius:3px;background:#3370ff;color:#fff}
+  .feishu .content{white-space:pre-wrap;word-wrap:break-word}
+  .feishu .at{background:#3370ff33;color:#84a9ff;padding:2px 6px;border-radius:4px}
+  .feishu .href{color:#5b8eff;text-decoration:underline}
+  .feishu hr{border:0;border-top:1px solid #3a3a3a;margin:10px 0}
+  .feishu .meta{color:#8b949e;font-size:12px;margin-top:6px}
+
+  /* ===== util ===== */
+  .ok-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px}
+  .warn-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warn);margin-right:6px}
+  .meta-line{color:var(--muted);font-size:12.5px;margin-bottom:8px}
+  @media(max-width:900px){.shell{grid-template-columns:1fr}.sider{display:none}.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1>Pipeline 配置版本漂移通知</h1>
+<div class="meta">CYB-2905 · 起草 2026-07-01 · Rick · UI 与现有 DataBrew 风格一致</div>
+<div class="badges">
+  <span class="badge b">Backend</span>
+  <span class="badge b">Frontend</span>
+  <span class="badge d">Feature</span>
+  <span class="badge g">Draft</span>
+</div>
+
+<h2>TL;DR</h2>
+<p class="lede">用户 a 改了 PipelineConfig（algorithm hyperparameters / threshold / 规则文件）v1 → v2，所有依赖该 config 的 b 的 batch 在下次部署时静默升级。dev 实测所有 batch 的 <code>pipelineJSON.nodes</code> 都没有 <code>runtimeConfig</code> block（frontend pipeline-designer 未暴露），DeployPanel 默认 <code>version ?? currentVersion</code> 静默 follow latest。<strong>b 完全无感知</strong>，出现复现性丢失 + 资源浪费 + 信任成本。</p>
+<p class="lede">本设计目标：让 b 在 a 改 config 时<strong>立刻看到影响</strong>，并在明确 ops surface 上<strong>主动选择</strong>升级 / 忽略。</p>
+
+<h2>用户 &amp; Use Cases</h2>
+
+<table>
+  <tr><th>ID</th><th>Actor</th><th>Goal（user 视角）</th><th>入口</th></tr>
+  <tr><td>UC-1</td><td><strong>Bobby</strong>（跑 pipeline 的工程师）</td><td>"我的 batch 里有 stale 配置吗？"</td><td>Drift tab 在注册中心</td></tr>
+  <tr><td>UC-2</td><td>Bobby</td><td>"把这条 batch 升到 v2"</td><td>Drift 详情 → Bump</td></tr>
+  <tr><td>UC-3</td><td>Bobby</td><td>"bump 后批量重跑，参数真的换了"</td><td>Bump 完成后 list diff</td></tr>
+  <tr><td>UC-4</td><td><strong>Alicia</strong>（config owner）</td><td>"我推了 v2 后谁还没升"</td><td>Config 详情 → 推送历史</td></tr>
+  <tr><td>UC-5</td><td><strong>Cora</strong>（平台管理员）</td><td>"全平台有哪些漂移没人管"</td><td>Drift 总览 /admin/drift</td></tr>
+</table>
+
+<h2>核心机制（5 步）</h2>
+<table>
+  <tr><th>L</th><th>层</th><th>做什么</th></tr>
+  <tr><td>1</td><td>事件捕获</td><td>PipelineConfig.CreateVersion 后 → emit outbox event</td></tr>
+  <tr><td>2</td><td>反查受众</td><td><code>run_inputs.ref_id=X AND ref_version&lt;N</code> → group by owner</td></tr>
+  <tr><td>3</td><td>drift 表</td><td>每 affected user 一行 status=pending</td></tr>
+  <tr><td>4</td><td>推送</td><td>飞书群 @mention + dashboard API</td></tr>
+  <tr><td>5</td><td>用户反应</td><td>Bump / Ignore / 一键 Bump all</td></tr>
+</table>
+
+<h2>UI — Bobby 的体验</h2>
+
+<h3>J-1 · 注册中心 · Drift tab 入口</h3>
+<p>Drift 不是顶级菜单 —— 是注册中心 / 配置库 tab 内的 sub-tab（在 工作区 / 归档区 segmented 旁边）。这样 Danny 已有"找配置"的工作流不被打乱。</p>
+
+<div class="shell">
+  <aside class="sider">
+    <div class="brand"><span class="dot">DB</span> DataBrew</div>
+    <div class="menu">
+      <div class="item"><span class="ico">⌂</span>概览</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">▤</span>资产管理</div>
+      <div class="item"><span class="ico">▶</span>视频预览</div>
+      <div class="item"><span class="ico">📄</span>MCAP 文件</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">✈</span>交付管理</div>
+      <div class="item"><span class="ico">≡</span>事件流</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⏱</span>算法运行</div>
+      <div class="item"><span class="ico">⚙</span>算法处理</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⌥</span>流水线</div>
+      <div class="div"></div>
+      <div class="item active"><span class="ico">🏢</span>注册中心</div>
+      <div class="item"><span class="ico">⬚</span>指标检索</div>
+      <div class="item"><span class="ico">⚙</span>设置</div>
+    </div>
+    <div class="ver">v0.1.1 (10094b91)</div>
+  </aside>
+  <div class="main">
+    <div class="topbar">
+      <div class="left">≡</div>
+      <div class="right"><span class="who">rick@cyberorigin.ai</span><span class="avatar">R</span></div>
+    </div>
+    <div class="content">
+      <h1>注册中心</h1>
+      <div class="alert">
+        <span class="ico">ⓘ</span>
+        <div class="body">
+          <strong>注册中心现在分成两层：用户配置库 + 只读平台字典</strong>
+          <p>配置中心是用户自己注册和维护的独立文件库，支持多版本管理；Algo / Tag / Metric / Lifecycle 继续作为平台字典，只提供口径和校验。</p>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="v">31</div><div class="l">只读注册表</div><div class="d">平台字典，不做编辑</div></div>
+        <div class="stat"><div class="v">10</div><div class="l">配置总数</div><div class="d">工作区 6 / 归档 4</div></div>
+        <div class="stat"><div class="v">6</div><div class="l">可部署配置</div><div class="d">ready 状态可被选择</div></div>
+        <div class="stat"><div class="v">26</div><div class="l">版本总数</div><div class="d">配置可回滚和审计</div></div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab">资源池</div>
+        <div class="tab">平台字典</div>
+        <div class="tab active">配置库 (10) <span class="count">3 drift</span></div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="tag green">可用 6</span>
+          <span class="tag gold">草稿 0</span>
+          <span class="tag gray">已归档 4</span>
+          <span class="tag blue">版本 26</span>
+          <span class="tag purple">部署可见</span>
+        </div>
+        <div class="seg">
+          <button class="on">工作区 6</button>
+          <button>归档区 4</button>
+        </div>
+      </div>
+
+      <div class="subtabs" style="display:flex;gap:8px;font-size:13px;margin-bottom:12px;color:var(--muted)">
+        <span class="tag" style="background:#e6f4ff;border-color:#91caff;color:#1677ff">漂移 (3)</span>
+        <span>工作区配置 (6)</span>
+        <span>归档配置</span>
+      </div>
+
+      <table>
+        <thead><tr><th>配置</th><th>拥有者</th><th>状态</th><th>当前</th><th>版本</th><th>标签</th><th>影响</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><div class="name">v2-gv-dev.yaml <code>yaml</code></div><div class="meta">grace-sync 视频检测</div></td>
+            <td>ruipeng.huang</td>
+            <td><span class="tag green">ready</span></td>
+            <td><span class="vcode">v2</span></td>
+            <td>3</td>
+            <td>—</td>
+            <td><span class="tag red">3 待 bump</span></td>
+            <td><button class="btn pri">处理</button></td>
+          </tr>
+          <tr>
+            <td><div class="name">smpl.yaml <code>yaml</code></div><div class="meta">简单采样流程</div></td>
+            <td>ruipeng.huang</td>
+            <td><span class="tag green">ready</span></td>
+            <td><span class="vcode">v6</span></td>
+            <td>6</td>
+            <td><span class="tag">df</span></td>
+            <td><span class="tag red">5 待 bump</span></td>
+            <td><button class="btn pri">处理</button></td>
+          </tr>
+          <tr>
+            <td><div class="name">flow-control.yaml <code>yaml</code></div><div class="meta">流量整形</div></td>
+            <td>ruipeng.huang</td>
+            <td><span class="tag green">ready</span></td>
+            <td><span class="vcode">v4</span></td>
+            <td>4</td>
+            <td>—</td>
+            <td><span class="tag green">已 bump</span></td>
+            <td><button class="btn">查看历史</button></td>
+          </tr>
+          <tr>
+            <td><div class="name">test-edit.yaml <code>yaml</code></div><div class="meta">testing the edit button</div></td>
+            <td>ruipeng.huang</td>
+            <td><span class="tag green">ready</span></td>
+            <td><span class="vcode">v3</span></td>
+            <td>3</td>
+            <td>—</td>
+            <td>—</td>
+            <td><button class="btn solid">新建版本</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">J-2 · Drift 详情 · "我受影响的有哪些 batch？"</h3>
+
+<div class="shell" style="min-height:560px">
+  <aside class="sider">
+    <div class="brand"><span class="dot">DB</span> DataBrew</div>
+    <div class="menu">
+      <div class="item"><span class="ico">⌂</span>概览</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">▤</span>资产管理</div>
+      <div class="item"><span class="ico">▶</span>视频预览</div>
+      <div class="item"><span class="ico">📄</span>MCAP 文件</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">✈</span>交付管理</div>
+      <div class="item"><span class="ico">≡</span>事件流</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⏱</span>算法运行</div>
+      <div class="item"><span class="ico">⚙</span>算法处理</div>
+      <div class="div"></div>
+      <div class="item active"><span class="ico">⌥</span>流水线</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">🏢</span>注册中心</div>
+      <div class="item"><span class="ico">⬚</span>指标检索</div>
+      <div class="item"><span class="ico">⚙</span>设置</div>
+    </div>
+    <div class="ver">v0.1.1 (10094b91)</div>
+  </aside>
+  <div class="main">
+    <div class="topbar">
+      <div class="left">≡</div>
+      <div class="right"><span class="who">rick@cyberorigin.ai</span><span class="avatar">R</span></div>
+    </div>
+    <div class="content">
+
+      <div class="breadcrumb"><a>注册中心</a> / <a>配置库</a> / <a>v2-gv-dev.yaml</a> / Drift</div>
+
+      <div class="alert warm">
+        <span class="ico">⚠</span>
+        <div class="body">
+          <strong>你有 3 个 batch 仍然用 v1，v2 已发布 2 小时</strong>
+          <p>v2 主要改动：threshold 0.85 → 0.90，新增 model_name "v2-large"。这些 batch 跑出的结果就跟上周不一样了。</p>
+        </div>
+      </div>
+
+      <table>
+        <thead><tr><th>Batch</th><th>Run ID</th><th>Template</th><th>使用版本</th><th>状态</th><th>最后动作</th><th>操作</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><div class="name">grace-sync-v4-…</div><div class="meta">45 子任务</div></td>
+            <td><code>9eda9042-…</code></td>
+            <td>youxin-1782182330729</td>
+            <td><span class="tag gray">v1</span></td>
+            <td><span class="tag red">stale</span></td>
+            <td>—</td>
+            <td><button class="btn pri">Bump → v2</button> <button class="btn solid">忽略</button></td>
+          </tr>
+          <tr>
+            <td><div class="name">demo-batch-…</div><div class="meta">5 子任务</div></td>
+            <td><code>a466a315-…</code></td>
+            <td>youxin-1782182330729</td>
+            <td><span class="tag gray">v1</span></td>
+            <td><span class="tag red">stale</span></td>
+            <td>—</td>
+            <td><button class="btn pri">Bump → v2</button> <button class="btn solid">忽略</button></td>
+          </tr>
+          <tr>
+            <td><div class="name">exp-run-…</div><div class="meta">10 子任务</div></td>
+            <td><code>26982493-…</code></td>
+            <td>youxin-1782182330729</td>
+            <td><span class="tag gray">v1</span></td>
+            <td><span class="tag red">stale</span></td>
+            <td>—</td>
+            <td><button class="btn pri">Bump → v2</button> <button class="btn solid">忽略</button></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="actions">
+        <button class="btn pri">一键 Bump 全部到 v2</button>
+        <button class="btn">只 Bump 选中的</button>
+        <button class="btn solid">忽略此 drift</button>
+      </div>
+
+      <h3 style="margin-top:24px">v1 → v2 内容差异</h3>
+      <pre class="diff"><span class="ctx">  threshold: 0.85</span>
+<span class="add">+ threshold: 0.90              <span class="meta"># 新增</span></span>
+<span class="ctx">  batch_size: 64</span>
+<span class="ctx">  retry_count: 3</span>
+<span class="add">+ model_name: "v2-large"        <span class="meta"># 新增</span></span></pre>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">J-3 · 概览页 · Drift 顶部 banner</h3>
+
+<div class="shell" style="min-height:380px">
+  <aside class="sider">
+    <div class="brand"><span class="dot">DB</span> DataBrew</div>
+    <div class="menu">
+      <div class="item active"><span class="ico">⌂</span>概览</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">▤</span>资产管理</div>
+      <div class="item"><span class="ico">▶</span>视频预览</div>
+      <div class="item"><span class="ico">📄</span>MCAP 文件</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">✈</span>交付管理</div>
+      <div class="item"><span class="ico">≡</span>事件流</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⏱</span>算法运行</div>
+      <div class="item"><span class="ico">⚙</span>算法处理</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⌥</span>流水线</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">🏢</span>注册中心</div>
+      <div class="item"><span class="ico">⬚</span>指标检索</div>
+      <div class="item"><span class="ico">⚙</span>设置</div>
+    </div>
+    <div class="ver">v0.1.1 (10094b91)</div>
+  </aside>
+  <div class="main">
+    <div class="topbar">
+      <div class="left">≡</div>
+      <div class="right"><span class="who">rick@cyberorigin.ai</span><span class="avatar">R</span></div>
+    </div>
+    <div class="content">
+      <h1>概览</h1>
+
+      <div class="banner">
+        <span class="ico">⚠</span>
+        <span>你有 <strong>3 个 batch</strong> 用了过期配置<br/>v2-gv-dev.yaml v2 已发布 · 影响 3 个 run</span>
+        <a>立即处理 →</a>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="v" style="color:var(--warn)">3</div><div class="l">Stale Drift</div><div class="d">2 个 config 影响你</div></div>
+        <div class="stat"><div class="v">12</div><div class="l">本周 Batch</div></div>
+        <div class="stat"><div class="v" style="color:var(--ok)">98%</div><div class="l">成功率</div></div>
+        <div class="stat"><div class="v">5</div><div class="l">活跃 Pipeline</div></div>
+      </div>
+
+      <div class="toolbar">
+        <div class="search">
+          <span style="color:var(--muted)">⚲</span>
+          <input placeholder="搜索 Batch / Config / Pipeline...">
+        </div>
+      </div>
+
+      <table>
+        <thead><tr><th>Drift 配置</th><th>Latest</th><th>推送者</th><th>时间</th><th>影响 batch</th><th></th></tr></thead>
+        <tbody>
+          <tr>
+            <td><div class="name">v2-gv-dev.yaml</div></td>
+            <td><span class="tag red">v1 → v2</span></td>
+            <td>jinyao.luo@…</td>
+            <td>2 h ago</td>
+            <td>3</td>
+            <td><button class="btn">查看</button></td>
+          </tr>
+          <tr>
+            <td><div class="name">smpl.yaml</div></td>
+            <td><span class="tag red">v5 → v6</span></td>
+            <td>xin.you@…</td>
+            <td>1 d ago</td>
+            <td>5</td>
+            <td><button class="btn">查看</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<h2>UI — Alicia 的视角</h2>
+
+<h3>J-4 · 配置详情 · "我推的 v2 谁 bump 了？"</h3>
+<p>Alicia 进入自己 push 的 config 详情页（push 后由 email / 飞书通知引导过来）。</p>
+
+<div class="shell" style="min-height:380px">
+  <aside class="sider">
+    <div class="brand"><span class="dot">DB</span> DataBrew</div>
+    <div class="menu">
+      <div class="item"><span class="ico">⌂</span>概览</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">▤</span>资产管理</div>
+      <div class="item"><span class="ico">▶</span>视频预览</div>
+      <div class="item"><span class="ico">📄</span>MCAP 文件</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">✈</span>交付管理</div>
+      <div class="item"><span class="ico">≡</span>事件流</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⏱</span>算法运行</div>
+      <div class="item"><span class="ico">⚙</span>算法处理</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⌥</span>流水线</div>
+      <div class="div"></div>
+      <div class="item active"><span class="ico">🏢</span>注册中心</div>
+      <div class="item"><span class="ico">⬚</span>指标检索</div>
+      <div class="item"><span class="ico">⚙</span>设置</div>
+    </div>
+    <div class="ver">v0.1.1 (10094b91)</div>
+  </aside>
+  <div class="main">
+    <div class="topbar"><div class="left">≡</div><div class="right"><span class="who">alicia@cyberorigin.ai</span><span class="avatar">A</span></div></div>
+    <div class="content">
+      <div class="breadcrumb"><a>注册中心</a> / <a>配置库</a> / v2-gv-dev.yaml / 推送历史</div>
+
+      <div class="alert">
+        <span class="ico">ⓘ</span>
+        <div class="body">
+          <strong>你推送的 v2 → 落地进度</strong>
+          <p>3 个用户受影响 · 1 已 bump · 1 已忽略 · 1 待 bump</p>
+        </div>
+      </div>
+
+      <table>
+        <thead><tr><th>User</th><th>受影响 batch</th><th>当前状态</th><th>最后动作</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>bobby@cyberorigin.ai</code></td>
+            <td>3</td>
+            <td><span class="tag red">待 bump</span></td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td><code>charlie@cyberorigin.ai</code></td>
+            <td>5</td>
+            <td><span class="tag green">已 bump</span></td>
+            <td>今天 10:14</td>
+          </tr>
+          <tr>
+            <td><code>diana@cyberorigin.ai</code></td>
+            <td>2</td>
+            <td><span class="tag green">已忽略</span></td>
+            <td>昨天</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:24px">v1 → v2 内容差异</h3>
+      <pre class="diff"><span class="ctx">  threshold: 0.85</span>
+<span class="add">+ threshold: 0.90              <span class="meta"># 新增</span></span>
+<span class="ctx">  batch_size: 64</span>
+<span class="ctx">  retry_count: 3</span>
+<span class="add">+ model_name: "v2-large"        <span class="meta"># 新增</span></span></pre>
+    </div>
+  </div>
+</div>
+
+<h2>UI — Cora 的总览（管理员）</h2>
+
+<h3>J-5 · /admin/drift 全平台漂移总览</h3>
+
+<div class="shell" style="min-height:380px">
+  <aside class="sider">
+    <div class="brand"><span class="dot">DB</span> DataBrew</div>
+    <div class="menu">
+      <div class="item"><span class="ico">⌂</span>概览</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">▤</span>资产管理</div>
+      <div class="item"><span class="ico">▶</span>视频预览</div>
+      <div class="item"><span class="ico">📄</span>MCAP 文件</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">✈</span>交付管理</div>
+      <div class="item"><span class="ico">≡</span>事件流</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⏱</span>算法运行</div>
+      <div class="item"><span class="ico">⚙</span>算法处理</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">⌥</span>流水线</div>
+      <div class="div"></div>
+      <div class="item"><span class="ico">🏢</span>注册中心</div>
+      <div class="item"><span class="ico">⬚</span>指标检索</div>
+      <div class="item"><span class="ico">⚙</span>设置</div>
+    </div>
+    <div class="ver">v0.1.1 (10094b91)</div>
+  </aside>
+  <div class="main">
+    <div class="topbar"><div class="left">≡</div><div class="right"><span class="who">cora@cyberorigin.ai</span><span class="avatar">C</span></div></div>
+    <div class="content">
+      <h1>Drift 总览</h1>
+      <div class="meta-line">本周 vs 上周 · 漂移活跃度、孤儿 drift、bump 率</div>
+
+      <div class="stats">
+        <div class="stat"><div class="v" style="color:var(--warn)">8</div><div class="l">活跃 Drift</div><div class="d">3 个 config</div></div>
+        <div class="stat"><div class="v">18</div><div class="l">受影响 batch</div></div>
+        <div class="stat"><div class="v" style="color:var(--err)">2</div><div class="l">孤儿 drift &gt; 7 天</div></div>
+        <div class="stat"><div class="v">67%</div><div class="l">本周 bump 率</div></div>
+      </div>
+
+      <table>
+        <thead><tr><th>Config</th><th>Owner</th><th>Pending</th><th>已 bump</th><th>已忽略</th><th>最老 drift</th></tr></thead>
+        <tbody>
+          <tr><td><strong>v2-gv-dev.yaml</strong></td><td>ruipeng.huang</td><td><span class="tag red">3</span></td><td><span class="tag green">1</span></td><td><span class="tag green">1</span></td><td>2 h</td></tr>
+          <tr><td><strong>smpl.yaml</strong></td><td>ruipeng.huang</td><td><span class="tag red">5</span></td><td><span class="tag green">3</span></td><td><span class="tag green">0</span></td><td>1 d</td></tr>
+          <tr><td><strong>flow-control.yaml</strong></td><td>ruipeng.huang</td><td><span class="tag green">0</span></td><td><span class="tag green">2</span></td><td><span class="tag green">0</span></td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<h2>J-6 · 飞书群消息（Bobby 的离线通道）</h2>
+
+<div class="feishu">
+  <div class="bot">
+    <div class="avatar">DB</div>
+    <div class="body">
+      <div class="who">DataBrew Bot <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:#3370ff;color:#fff;margin-left:6px">应用</span></div>
+      <div class="content"><strong>配置版本更新</strong>
+v2-gv-dev.yaml <strong>v2</strong> 已发布 · by jinyao.luo@cyberorigin.ai
+
+你的 batch 还在用 stale <strong>v1</strong>：
+  • grace-sync-v4-20260701-022547
+  • demo-batch-2026-06-30
+  • exp-run-batch-19
+
+<span class="at">@bobby</span> 进 drift 处理 →
+<span class="href">https://cyber-databrew-dev.cyberorigin.ai/registry/configs/9cdc4b91-.../drift</span></div>
+      <hr />
+      <div class="meta">2026-07-01 14:32 · #databrew-drift-notify</div>
+    </div>
+  </div>
+</div>
+
+<h2>Status 状态机</h2>
+<pre class="diff"><span class="ctx">  created</span>  <span class="ctx">──→</span>  pending  <span class="ctx">──→ (Bump) ──→</span>  <span class="add">bumped</span>
+           <span class="ctx">└──→ (Ignore) ──→</span>  <span class="add">ignored</span>
+           <span class="ctx">└──→ (Auto Bump) ──→</span>  <span class="add">auto_bumped</span>  <span class="ctx"> ← [Phase 3+ 不做]</span></pre>
+
+<p>drift 记录不会物理删除，只更新 status。后续查询"曾经有什么 drift"仍能看到历史。</p>
+
+<h2>关键交互 & 异常 fallback</h2>
+<table>
+  <tr><th>场景</th><th>fallback</th><th>用户感受</th></tr>
+  <tr><td>飞书推送失败</td><td><code>notified_at IS NULL</code>，留给 cron 重试</td><td>登录 dashboard 仍可见</td></tr>
+  <tr><td>同 user 同一 config 短时间多次 drift（CI auto-publish）</td><td>drift_event_id UNIQUE（5 分钟窗口去重）</td><td>不会刷屏</td></tr>
+  <tr><td>Bump 后 run_inputs ref_version 写新值失败</td><td>drift 状态保持 pending，用户可以重试</td><td>无副作用（run 还是用旧版）</td></tr>
+  <tr><td>config 被归档（lifecycle=archived）</td><td>drift 标 archived_out，不在主列表</td><td>不再推送</td></tr>
+</table>
+
+<h2>关键交互细节</h2>
+<table>
+  <tr><th>方式</th><th>效果</th><th>适合</th></tr>
+  <tr><td><strong>Bump 单条</strong></td><td>写 <code>run_inputs.ref_version = latest</code>，下次部署用新参数</td><td>少量 batch、有选择</td></tr>
+  <tr><td><strong>一键 Bump 全部</strong></td><td>同 config 下的所有 affected batch 一起升</td><td>信任度高、想全升</td></tr>
+  <tr><td><strong>Ignore</strong></td><td>drift 状态置 ignored；后续同 config 不再给此 user 推</td><td>明确不受影响</td></tr>
+  <tr><td><strong>迁移到 template（M2+）</strong></td><td>写 <code>runtimeConfig</code> 到 template 节点 — 长期 fix</td><td>owner 想强制所有人用新参数</td></tr>
+</table>
+
+<h2>实施 Roadmap（3 Phase）</h2>
+<table>
+  <tr><th>Phase</th><th>范围</th><th>用户能做什么</th><th>≈ sprint</th></tr>
+  <tr><td><strong>1 数据基础</strong></td><td>migration 060 + outbox emit + 反查 SQL + drift API</td><td>（开发者查表，UI 未接）</td><td>0.5</td></tr>
+  <tr><td><strong>2 Dashboard + 操作</strong></td><td>Drift sub-tab + 详情页 + Bump/Ignore API</td><td>登录 → 看 drift → 点 Bump 升级</td><td>0.5</td></tr>
+  <tr><td><strong>3 飞书推送</strong></td><td>subscriber → webhook + cron 摘要</td><td>飞书群被 @ 提醒</td><td>0.5</td></tr>
+</table>
+<p>总估 <strong>1 ~ 1.5 sprint</strong>。Phase 1 跑通后就能在 DB 看见数据正确。</p>
+
+<h2>明确不做</h2>
+<ul>
+  <li>❌ <strong>自动 bump</strong>（auto_bump） — 用户没主动确认，绝不自动升级 batch 参数</li>
+  <li>❌ <strong>飞书 DM 个人推送</strong> — 依赖额外权限（tenant_access_token + open_id），ROI 低</li>
+  <li>❌ <strong>强制 pipeline-designer 暴露 runtimeConfig</strong> — 本方案 advisory，不强改 UX（后续 PR 可加）</li>
+  <li>❌ <strong>drift 自动删除</strong> — 只标 status，保留审计链路</li>
+</ul>
+
+<h2>技术要点（摘要）</h2>
+<p>具体 schema / API / 代码实现放在 Phase 1 起 PR 时写，本设计锁定 5 层 + 反查路径：</p>
+<ul>
+  <li><strong>触发</strong>：<code>PipelineConfig.CreateVersion</code> 后 → outbox event <code>pipeline_config_version_published</code></li>
+  <li><strong>反查</strong>：<code>run_inputs.ref_id=X AND ref_version&lt;N</code> GROUP BY owner</li>
+  <li><strong>drift 表</strong>：<code>UNIQUE (event_id, config_id, user_email)</code> 去重</li>
+  <li><strong>推送</strong>：飞书 webhook (group chat) + dashboard API；不 DM</li>
+</ul>
+
+<h2>待定</h2>
+<ol>
+  <li>CYB Linear issue ID（draft 阶段先用占位）</li>
+  <li>Bump 是否允许「跨多个 drift 一次性 bump 全部」</li>
+  <li>飞书频道：单 <code>#databrew-drift-notify</code> vs 每 team 一频道</li>
+  <li>drift 数据保留期（建议 90 天后归档，再清理）</li>
+</ol>
+
+<footer style="margin-top:48px;padding:20px 0;border-top:1px solid var(--border);color:var(--muted);font-size:12.5px">
+<div>openspec/changes/draft-config-drift-notify/design.html · 2026-07-01 · Rick</div>
+<div style="margin-top:4px">草案 — CYB-2905 · https://linear.app/cyberorigin/issue/CYB-2905</div>
+</footer>
+
+</div>
+</body>
+</html>
