@@ -664,10 +664,10 @@ remain in the GCP project but no new pipeline YAML is consumed.
 
 **Auth model.** The workflows use OIDC (`id-token: write`) with Workload
 Identity. The deploy steps still run as `cyber-databrew-dev@…` against the dev
-project, and `K8S_USE_METADATA_TOKEN=true` enables token auto-refresh (see the
-[Cloud Run runbook](cloud-run.md#auth) for the env-var contract). The legacy
-`K8S_BEARER_TOKEN` static-token approach is **deprecated** — do not revert to
-it.
+project, and `K8S_USE_METADATA_TOKEN=true` enables token auto-refresh. The
+[Cloud Run runbook](cloud-run.md) documents the env-var contract in detail.
+The legacy `K8S_BEARER_TOKEN` static-token approach is **deprecated** — do not
+revert to it.
 
 **VM deploy path.** The local
 [deploy/cloudrun/backend-dev.sh](file://deploy/cloudrun/backend-dev.sh) script

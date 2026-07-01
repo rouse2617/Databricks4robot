@@ -632,7 +632,7 @@ The `asset_ids` value is also added as a workflow-level `transpiler.Param`.
 backend can dispatch to the cyber-databrew-dev, video-proc-dev, and
 video-proc-prod namespaces without requiring a separate deployment per target
 (see [Argo Integration](argo-integration.md) and
-[Architecture → Execution Targets](../architecture/deployment-architecture.md)).
+[Architecture → Execution Targets](../../architecture/deployment-architecture.md)).
 
 The new
 [backend/internal/usecase/pipeline/scheduling.go](file://backend/internal/usecase/pipeline/scheduling.go)
