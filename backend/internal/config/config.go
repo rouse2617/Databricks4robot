@@ -276,7 +276,7 @@ func (c *Config) AdminRoutesEnabled() bool {
 // corresponding env var were left unset.
 const (
 	devDefaultDatabrewToken = "dev-token"
-	devDefaultJWTSecret     = "dev-jwt-secret"
+	devDefaultJWTSecret     = "dev-jwt-secret" // pragma: allowlist secret
 )
 
 // Validate fails fast when a production deployment is about to run with
@@ -297,7 +297,7 @@ func (c *Config) Validate() error {
 	if c.DatabrewToken == "" || c.DatabrewToken == devDefaultDatabrewToken {
 		errs = append(errs, fmt.Errorf("DATABREW_TOKEN must be set to a non-default value in production (got %q)", c.DatabrewToken))
 	}
-	if c.JWTSecret == "" || c.JWTSecret == devDefaultJWTSecret {
+	if c.JWTSecret == "" || c.JWTSecret == devDefaultJWTSecret { // pragma: allowlist secret
 		errs = append(errs, fmt.Errorf("JWT_SECRET must be set to a non-default value in production (got %q)", c.JWTSecret))
 	}
 	// ADMIN_TOKEN is intentionally NOT validated here: AdminRoutesEnabled()

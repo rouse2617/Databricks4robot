@@ -40,4 +40,3 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_configs_lifecycle
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_config_versions_config_id
     ON pipeline_config_versions(config_id, version DESC);
-
