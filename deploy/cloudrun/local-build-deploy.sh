@@ -17,6 +17,10 @@ SSH="ssh -i ${VM_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
 echo "[1/3] syncing backend/ → VM (includes uncommitted changes)..."
 rsync -az --delete \
   -e "ssh -i ${VM_KEY} -o StrictHostKeyChecking=no" \
+  --exclude='server' \
+  --exclude='*.test' \
+  --exclude='coverage.out' \
+  --exclude='bin/' \
   "${REPO_ROOT}/backend/" "${VM_USER}@${VM_HOST}:${REPO_DIR}/backend/"
 
 echo "[2/3] building on VM..."
