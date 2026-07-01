@@ -1,5 +1,6 @@
 import { e as h, m } from "./editor.api-DXaA56bm.js";
 import { p as n, r as y } from "./index-DXdSO-bO.js";
+
 function M(r) {
 	return /^\d+$/.test(r) ? "".concat(r, "px") : r;
 }
@@ -8,7 +9,7 @@ var w = (() => {
 		var r = (o, e) => (
 			(r =
 				Object.setPrototypeOf ||
-				({ __proto__: [] } instanceof Array &&
+				(Array.isArray({ __proto__: [] }) &&
 					((t, i) => {
 						t.__proto__ = i;
 					})) ||
@@ -18,9 +19,9 @@ var w = (() => {
 			r(o, e)
 		);
 		return (o, e) => {
-			if (typeof e != "function" && e !== null)
+			if (typeof e !== "function" && e !== null)
 				throw new TypeError(
-					"Class extends value " + String(e) + " is not a constructor or null",
+					`Class extends value ${String(e)} is not a constructor or null`,
 				);
 			r(o, e);
 			function t() {
@@ -149,9 +150,9 @@ var w = (() => {
 					var e = this.editor.getModel(),
 						t = e.original,
 						i = e.modified;
-					t && t.dispose(), i && i.dispose();
+					t?.dispose(), i?.dispose();
 				}
-				this._subscription && this._subscription.dispose();
+				this._subscription?.dispose();
 			}),
 			(o.prototype.render = function () {
 				var e = this.props,
@@ -205,7 +206,7 @@ var w = (() => {
 		var r = (o, e) => (
 			(r =
 				Object.setPrototypeOf ||
-				({ __proto__: [] } instanceof Array &&
+				(Array.isArray({ __proto__: [] }) &&
 					((t, i) => {
 						t.__proto__ = i;
 					})) ||
@@ -215,9 +216,9 @@ var w = (() => {
 			r(o, e)
 		);
 		return (o, e) => {
-			if (typeof e != "function" && e !== null)
+			if (typeof e !== "function" && e !== null)
 				throw new TypeError(
-					"Class extends value " + String(e) + " is not a constructor or null",
+					`Class extends value ${String(e)} is not a constructor or null`,
 				);
 			r(o, e);
 			function t() {
@@ -244,7 +245,7 @@ var w = (() => {
 	W = (r, o) => {
 		var e = {};
 		for (var t in r) Object.hasOwn(r, t) && o.indexOf(t) < 0 && (e[t] = r[t]);
-		if (r != null && typeof Object.getOwnPropertySymbols == "function")
+		if (r != null && typeof Object.getOwnPropertySymbols === "function")
 			for (var i = 0, t = Object.getOwnPropertySymbols(r); i < t.length; i++)
 				o.indexOf(t[i]) < 0 &&
 					Object.prototype.propertyIsEnumerable.call(r, t[i]) &&
@@ -306,9 +307,9 @@ var w = (() => {
 				if (this.editor) {
 					this.editorWillUnmount(this.editor), this.editor.dispose();
 					var e = this.editor.getModel();
-					e && e.dispose();
+					e?.dispose();
 				}
-				this._subscription && this._subscription.dispose();
+				this._subscription?.dispose();
 			}),
 			(o.prototype.initMonaco = function () {
 				var e =
@@ -401,4 +402,5 @@ var w = (() => {
 			o
 		);
 	})(y.Component);
+
 export { D as default, m as monaco, U as MonacoDiffEditor };

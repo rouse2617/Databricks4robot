@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunkdocs_site=self.webpackChunkdocs_site||[]).push([["452"],{5146(e,s,t){t.r(s),t.d(s,{default:()=>n});var c=t(6540),u=t(6347);function n(){let e=(0,u.zy)();return(0,c.useEffect)(()=>{window.location.href="/doc/overview"},[e]),null}}}]);
