@@ -15,11 +15,25 @@ while read LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
   # Only process the first ref being pushed.
   if [[ -z "${CL_LOCAL_RANGE}" ]]; then
     if [[ "${LOCAL_SHA}" != "0000000000000000000000000000000000000000" ]]; then
-      if [[ "${REMOTE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+      if [[ "${REMOTE_SHA}" != "0000000000000000000000000000000000000000" ]] \
+        && git merge-base --is-ancestor "${REMOTE_SHA}" "${LOCAL_SHA}" 2>/dev/null; then
+        # Fast-forward-style push: lint only what's new since the last push.
         CL_LOCAL_RANGE="${REMOTE_SHA}..${LOCAL_SHA}"
+      else
+        # New branch, OR history was rewritten (rebase + force-push): the old
+        # remote SHA is no longer an ancestor, so REMOTE_SHA..LOCAL_SHA would
+        # sweep in every commit the rebase picked up from the base branch
+        # (already reviewed/merged there) along with this branch's own new
+        # commits. Re-anchor on the merge-base with the actual long-lived
+        # base branch so only commits genuinely introduced by this branch
+        # get linted.
+        BASE_SHA="$(git merge-base origin/dev "${LOCAL_SHA}" 2>/dev/null || true)"
+        if [[ -n "${BASE_SHA}" ]]; then
+          CL_LOCAL_RANGE="${BASE_SHA}..${LOCAL_SHA}"
+        fi
+        # origin/dev unavailable: leave CL_LOCAL_RANGE empty →
+        # ci-local.sh falls back to merge-base(CI_LOCAL_BASE)..HEAD.
       fi
-      # New branch (remote SHA all zeros): leave CL_LOCAL_RANGE empty
-      # → ci-local.sh falls back to merge-base..HEAD
     fi
   fi
 done
